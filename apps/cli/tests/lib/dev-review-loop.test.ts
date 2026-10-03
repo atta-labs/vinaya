@@ -490,7 +490,7 @@ describe('devReviewLoop — the loop’s exit sites (O6)', () => {
     // lazily searching forward will eventually reach this same unique marker
     // regardless of which catch it started at — a loose pattern can never
     // reliably isolate this ONE block. Plain string indexing does.
-    const markerIndex = source.indexOf("recordDriverExited('error')")
+    const markerIndex = source.indexOf("recordDriverExited('error', { error: err })")
     expect(markerIndex).toBeGreaterThan(-1)
     const catchStart = source.lastIndexOf('catch (err) {', markerIndex)
     expect(catchStart).toBeGreaterThan(-1)
@@ -1486,9 +1486,9 @@ describe('devReviewLoop — the driver_exited lifecycle event (#949, O2/O3)', ()
 
   it('the reexec and signal exit paths each record their own driver_exited reason (#949, O2)', () => {
     const source = readFileSync(join(import.meta.dir, '..', '..', 'src', 'lib', 'dev-review-loop.ts'), 'utf8')
-    expect(source).toMatch(/recordDriverExited\('reexec'\)/)
-    expect(source).toMatch(/recordDriverExited\('signal'\)/)
-    expect(source).toMatch(/recordDriverExited\('error'\)/)
+    expect(source).toMatch(/recordDriverExited\('reexec', \{ exitCode \}\)/)
+    expect(source).toMatch(/recordDriverExited\('signal', \{ exitCode: \d+ \}\)/)
+    expect(source).toMatch(/recordDriverExited\('error', \{ error: err \}\)/)
     // The round-loop chokepoint maps a publish to `finished`, any pause to `paused`.
     expect(source).toMatch(
       /recordDriverExited\(loopResult\.finalDecision\.type === 'publish' \? 'finished' : 'paused'\)/
