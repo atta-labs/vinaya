@@ -16,6 +16,7 @@ import { chmodSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runPath } from '../../../src/lib/run-paths'
+import { codexGitMetadataWritableDirs } from '../../../src/lib/dispatch'
 import {
   buildWorkerEnv,
   buildWorkerSandboxProfile,
@@ -2975,6 +2976,47 @@ describe('buildCodexSandboxConfigToml — O1/O2/O5 the generated config.toml', (
     const toml = buildCodexSandboxConfigToml(request({ allowedHosts: ['exa"mple.com', 'back\\slash.com'] }))
     expect(toml).toContain('"exa\\"mple.com" = "allow"')
     expect(toml).toContain('"back\\\\slash.com" = "allow"')
+  })
+})
+
+describe('codexGitMetadataWritableDirs — Ruling 1 fix, Step 0 git worktree add inside the Codex sandbox', () => {
+  function makeGitRepo(): string {
+    const dir = tempDir('vinaya-codex-git-common-')
+    const g = (args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
+    g(['init', '-q', '-b', 'main'])
+    g(['config', 'user.email', 't@example.com'])
+    g(['config', 'user.name', 'test'])
+    writeFileSync(join(dir, 'a.txt'), 'x\n')
+    g(['add', '-A'])
+    g(['commit', '-qm', 'init'])
+    return dir
+  }
+
+  it('grants exactly the git common dir refs/logs/worktrees subdirectories, never hooks or config', () => {
+    const repo = makeGitRepo()
+    const commonDir = realpathSync(join(repo, '.git'))
+    expect(codexGitMetadataWritableDirs(repo)).toEqual([
+      join(commonDir, 'refs'),
+      join(commonDir, 'logs'),
+      join(commonDir, 'worktrees')
+    ])
+  })
+
+  it('resolves the SAME shared common dir from inside an already-created linked worktree, whose own .git is a gitlink file', () => {
+    const repo = makeGitRepo()
+    const worktreeDir = join(repo, '.worktrees', 'task', '1')
+    execFileSync('git', ['worktree', 'add', '-b', 'task/1', worktreeDir], { cwd: repo, stdio: 'ignore' })
+    const commonDir = realpathSync(join(repo, '.git'))
+    expect(codexGitMetadataWritableDirs(worktreeDir)).toEqual([
+      join(commonDir, 'refs'),
+      join(commonDir, 'logs'),
+      join(commonDir, 'worktrees')
+    ])
+  })
+
+  it('returns no grant when the directory is not inside a git repository at all — boundary construction, not this helper, is the fail-closed response', () => {
+    const notARepo = tempDir('vinaya-codex-not-a-repo-')
+    expect(codexGitMetadataWritableDirs(notARepo)).toEqual([])
   })
 })
 
