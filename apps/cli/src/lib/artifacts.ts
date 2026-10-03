@@ -1220,7 +1220,10 @@ const HOOK_PREAMBLE = '#!/usr/bin/env sh\n'
  * and git-ignored, so it is legitimately absent in a fresh clone and in every
  * new worktree; the hook says which command builds it and fails until it is
  * run. Deliberately not auto-building: a hook that silently spends a build on
- * someone's commit is worse than one that tells them what to run.
+ * someone's commit is worse than one that tells them what to run. The
+ * dev-review-loop driver is the deliberate exception outside this hook: it
+ * builds a missing vendored CLI before making its own publication commit, so
+ * the hook itself remains a pure gate and never spends that build.
  */
 // `VINAYA_HOST=hook` marks every gate observation
 // emitted from THIS invocation as `meta.host: 'hook'` — never inferred after
