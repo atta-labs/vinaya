@@ -484,12 +484,13 @@ export function driverDecidedPauseEvents(
   loopId: string,
   state: LoopState,
   round: number,
-  stats: RoundStats
+  stats: RoundStats,
+  reasonCode: string
 ): DevReviewLoopEventInput[] {
   const envelope = { kind: 'dev_review_loop' as const, payload: {} }
   return [
     { ...envelope, loop_id: loopId, event: 'stop_condition_met', round, condition: 'principal_stop' },
-    { ...envelope, loop_id: loopId, event: 'paused', round, reason: 'principal_item' },
+    { ...envelope, loop_id: loopId, event: 'paused', round, reason: 'principal_item', reason_code: reasonCode },
     {
       ...envelope,
       loop_id: loopId,
@@ -543,7 +544,7 @@ export function driverCrashEvents(
 ): DevReviewLoopEventInput[] {
   const envelope = { kind: 'dev_review_loop' as const, payload: {} }
   return [
-    { ...envelope, loop_id: loopId, event: 'paused', round, reason: 'principal_item' },
+    { ...envelope, loop_id: loopId, event: 'paused', round, reason: 'principal_item', reason_code: 'infrastructure' },
     {
       ...envelope,
       loop_id: loopId,
@@ -556,4 +557,21 @@ export function driverCrashEvents(
       result: 'stopped'
     }
   ]
+}
+
+/** The shape `driver_exited.error_class` accepts: letters, digits, dot, dash, underscore, 64 at most. */
+const ERROR_CLASS_PATTERN = /^[A-Za-z0-9._-]{1,64}$/
+
+/**
+ * The class of a thrown value, for `driver_exited.error_class`: the error's
+ * own string `code` when it has one, else its constructor name — never its
+ * message or stack, which can carry a path or a secret. A value that is not
+ * a short token (letters, digits, dot, dash, underscore, 64 at most) reads
+ * `unknown`, so no path or message text can reach the record.
+ */
+export function errorClassOf(err: unknown): string {
+  const code = typeof err === 'object' && err !== null ? (err as { code?: unknown }).code : undefined
+  const name = typeof err === 'object' && err !== null ? err.constructor?.name : undefined
+  const candidate = typeof code === 'string' && code !== '' ? code : name
+  return typeof candidate === 'string' && ERROR_CLASS_PATTERN.test(candidate) ? candidate : 'unknown'
 }

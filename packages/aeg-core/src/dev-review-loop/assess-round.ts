@@ -173,6 +173,38 @@ function toReviewFinding(f: VerdictObservation['findings'][number]): {
   }
 }
 
+/** The doctrine role a verdict's own role names — `VerdictObservation.role` says `'reviewer'` where the log's role vocabulary says `'code-reviewer'`. */
+function verdictLogRole(role: VerdictObservation['role']): string {
+  return role === 'reviewer' ? 'code-reviewer' : role
+}
+
+/**
+ * One entry per reviewer role the loop held or expected a verdict from, taken
+ * from the verdicts themselves (never from the findings): a role that
+ * approved with no findings appears, and a configured role with no verdict
+ * reads `not_reviewed`. A blocking verdict contributes one blocker, so the
+ * entries add up to the event's own `blockers`; an `ESCALATE` verdict is not
+ * an approval and not a counted blocker, so it reads `changes_requested`
+ * with none.
+ */
+function reviewerEntries(
+  state: LoopState,
+  verdicts: VerdictObservation[]
+): NonNullable<Extract<DevReviewLoopEventInput, { event: 'verdicts_read' }>['reviewers']> {
+  const held = new Map(verdicts.map((v) => [verdictLogRole(v.role), v]))
+  const roles = [...new Set([...state.config.reviewers, ...held.keys()])]
+  return roles.map((role) => {
+    const v = held.get(role)
+    const entry =
+      v === undefined
+        ? { outcome: 'not_reviewed' as const, blockers: 0 }
+        : v.verdict === 'APPROVE' || v.verdict === 'PASS'
+          ? { outcome: 'approve' as const, blockers: 0 }
+          : { outcome: 'changes_requested' as const, blockers: v.verdict === 'ESCALATE' ? 0 : 1 }
+    return { role: role as never, ...entry }
+  })
+}
+
 function verdictsReadEvent(state: LoopState, round: number, verdicts: VerdictObservation[]): DevReviewLoopEventInput {
   const allApprove = verdicts.every((v) => v.verdict === 'APPROVE' || v.verdict === 'PASS')
   const head = pendingHead(state, round)
@@ -185,7 +217,8 @@ function verdictsReadEvent(state: LoopState, round: number, verdicts: VerdictObs
     head,
     all_approve: allApprove,
     blockers,
-    findings
+    findings,
+    reviewers: reviewerEntries(state, verdicts)
   }
 }
 
@@ -215,9 +248,10 @@ function stopConditionMetEvent(
 function pausedEvent(
   state: LoopState,
   round: number,
-  reason: 'escalation' | 'principal_item'
+  reason: 'escalation' | 'principal_item',
+  reasonCode: string
 ): DevReviewLoopEventInput {
-  return { ...loopEventEnvelope(state), event: 'paused', round, reason }
+  return { ...loopEventEnvelope(state), event: 'paused', round, reason, reason_code: reasonCode }
 }
 
 function roundEndedEvent(
@@ -470,7 +504,7 @@ function assessGate(
     const { failure, repeat } = matchFailure(state, obs.failure)
     if (repeat && failure !== null) {
       events.push(stopConditionMetEvent(state, obs.round, 'repeat_failure'))
-      events.push(pausedEvent(state, obs.round, 'principal_item'))
+      events.push(pausedEvent(state, obs.round, 'principal_item', 'repeat_failure'))
       events.push(roundEndedEvent(state, obs.round, obs.stats, 'changes_requested'))
       const record = buildUnreviewedRecord(obs.round, null, 'stopped', 'checks_red')
       const preFinalize: LoopState = {
@@ -524,7 +558,7 @@ function assessGate(
   if (confidence === 'absent') {
     if (priorAskCount >= 1) {
       events.push(stopConditionMetEvent(state, obs.round, 'confidence'))
-      events.push(pausedEvent(state, obs.round, 'principal_item'))
+      events.push(pausedEvent(state, obs.round, 'principal_item', 'confidence'))
       events.push(roundEndedEvent(state, obs.round, obs.stats, 'changes_requested'))
       const record = buildRoundRecord(obs.round, [], null, 'stopped')
       const preFinalize: LoopState = {
@@ -550,7 +584,7 @@ function assessGate(
   if (confidence.value < 50) {
     if (state.extraTurnUsed) {
       events.push(stopConditionMetEvent(state, obs.round, 'confidence'))
-      events.push(pausedEvent(state, obs.round, 'principal_item'))
+      events.push(pausedEvent(state, obs.round, 'principal_item', 'confidence'))
       events.push(roundEndedEvent(state, obs.round, obs.stats, 'changes_requested'))
       const record = buildRoundRecord(obs.round, [], confidence, 'stopped')
       const preFinalize: LoopState = {
@@ -612,7 +646,7 @@ function assessVerdicts(
   const hasEscalate = obs.verdicts.some((v) => v.verdict === 'ESCALATE')
   if (hasEscalate) {
     events.push(stopConditionMetEvent(state, obs.round, 'escalated'))
-    events.push(pausedEvent(state, obs.round, 'escalation'))
+    events.push(pausedEvent(state, obs.round, 'escalation', 'escalation'))
     events.push(roundEndedEvent(state, obs.round, pending.stats, 'escalated'))
     const record = buildRoundRecord(obs.round, obs.verdicts, confidence, 'escalated')
     const preFinalize: LoopState = {
@@ -649,7 +683,7 @@ function assessVerdicts(
 
   if (fc.recurring.length > 0) {
     events.push(stopConditionMetEvent(state, obs.round, 'reappearance'))
-    events.push(pausedEvent(state, obs.round, 'principal_item'))
+    events.push(pausedEvent(state, obs.round, 'principal_item', 'reappearance'))
     events.push(roundEndedEvent(state, obs.round, pending.stats, 'changes_requested'))
     const record = buildRoundRecord(obs.round, obs.verdicts, confidence, 'stopped')
     const preFinalize: LoopState = {
@@ -666,7 +700,7 @@ function assessVerdicts(
 
   if (repeatedBlocking.length > 0) {
     events.push(stopConditionMetEvent(state, obs.round, 'repeat_finding'))
-    events.push(pausedEvent(state, obs.round, 'principal_item'))
+    events.push(pausedEvent(state, obs.round, 'principal_item', 'repeat_finding'))
     events.push(roundEndedEvent(state, obs.round, pending.stats, 'changes_requested'))
     const record = buildRoundRecord(obs.round, obs.verdicts, confidence, 'stopped')
     const preFinalize: LoopState = {
@@ -693,7 +727,7 @@ function assessVerdicts(
 
   if (obs.round >= state.config.maxRounds) {
     events.push(stopConditionMetEvent(state, obs.round, 'max_rounds'))
-    events.push(pausedEvent(state, obs.round, 'principal_item'))
+    events.push(pausedEvent(state, obs.round, 'principal_item', 'max_rounds'))
     events.push(roundEndedEvent(state, obs.round, pending.stats, 'changes_requested'))
     const record = buildRoundRecord(obs.round, obs.verdicts, confidence, 'stopped')
     const preFinalize: LoopState = {
@@ -745,7 +779,7 @@ function assessMechanicalFailure(
   if (repeat && failure !== null) {
     const events: DevReviewLoopEventInput[] = [
       stopConditionMetEvent(state, obs.round, 'repeat_failure'),
-      pausedEvent(state, obs.round, 'principal_item'),
+      pausedEvent(state, obs.round, 'principal_item', 'repeat_failure'),
       roundEndedEvent(state, obs.round, obs.stats, 'changes_requested')
     ]
     const record = buildUnreviewedRecord(obs.round, null, 'stopped', 'mechanical_failure')
@@ -858,7 +892,7 @@ function timeBudgetPause(
 ): { decision: Decision; state: LoopState; events: DevReviewLoopEventInput[] } {
   const events: DevReviewLoopEventInput[] = [
     stopConditionMetEvent(state, obs.round, 'time_budget'),
-    pausedEvent(state, obs.round, 'principal_item'),
+    pausedEvent(state, obs.round, 'principal_item', 'time_budget'),
     roundEndedEvent(state, obs.round, obs.stats, 'changes_requested')
   ]
   const record = buildUnreviewedRecord(obs.round, null, 'stopped', 'time_budget')

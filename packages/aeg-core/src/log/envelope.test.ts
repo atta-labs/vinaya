@@ -204,6 +204,13 @@ describe('buildHeader', () => {
     expect(a).toBe(b)
   })
 
+  it('parses VINAYA_PR into subject.pr, and leaves it out when absent or not a positive integer', () => {
+    expect(buildHeader({ ...baseInput, env: { pr: '977' } }).subject.pr).toBe(977)
+    for (const pr of [undefined, '', 'x', '0', '-3', '1.5']) {
+      expect('pr' in buildHeader({ ...baseInput, env: { pr } }).subject).toBe(false)
+    }
+  })
+
   it('parses VINAYA_ROUND into subject.round', () => {
     const { subject } = buildHeader({ ...baseInput, env: { round: '2' } })
     expect(subject.round).toBe(2)

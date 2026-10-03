@@ -54,6 +54,13 @@ function roundFromEnv(round: string | undefined): number | undefined {
   return Number.isInteger(n) ? n : undefined
 }
 
+/** `VINAYA_PR` parses to `subject.pr`; anything not a positive integer is absent — never invented. */
+function prFromEnv(pr: string | undefined): number | undefined {
+  if (pr === undefined || pr === '') return undefined
+  const n = Number(pr)
+  return Number.isInteger(n) && n > 0 ? n : undefined
+}
+
 /** Every value `buildHeader` needs, already read by the caller (the sink). Pure — no I/O here. */
 export type HeaderInput = {
   now: Date
@@ -68,6 +75,8 @@ export type HeaderInput = {
     role?: string
     task?: string
     round?: string
+    /** `VINAYA_PR` — the pull request number once the loop has one; absent or not a positive integer reads as no number. */
+    pr?: string
     run?: string
     attempt?: string
     parent?: string
@@ -117,10 +126,12 @@ export type HeaderInput = {
 export function buildHeader(input: HeaderInput): Header {
   const role: Subject['role'] = isRole(input.env.role) ? input.env.role : 'unattributed'
   const round = roundFromEnv(input.env.round)
+  const pr = prFromEnv(input.env.pr)
   const subject: Subject = {
     issue: issueFromTask(input.env.task) ?? input.branchIssue ?? null,
     role,
     ...(round !== undefined ? { round } : {}),
+    ...(pr !== undefined ? { pr } : {}),
     ...(input.subject ?? {})
   }
   const issue = subject.issue

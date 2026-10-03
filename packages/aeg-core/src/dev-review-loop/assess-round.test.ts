@@ -71,7 +71,11 @@ describe('assessRound — Part 1 (O1, O5): green path', () => {
         head: 'head1',
         all_approve: true,
         blockers: 0,
-        findings: []
+        findings: [],
+        reviewers: [
+          { role: 'code-reviewer', outcome: 'approve', blockers: 0 },
+          { role: 'security', outcome: 'approve', blockers: 0 }
+        ]
       },
       {
         kind: 'dev_review_loop',
@@ -1041,7 +1045,9 @@ describe('assessRound — the task time budget (O1, O2)', () => {
     expect(events[0]).toEqual(
       expect.objectContaining({ event: 'stop_condition_met', round: 1, condition: 'time_budget' })
     )
-    expect(events[1]).toEqual(expect.objectContaining({ event: 'paused', round: 1, reason: 'principal_item' }))
+    expect(events[1]).toEqual(
+      expect.objectContaining({ event: 'paused', round: 1, reason: 'principal_item', reason_code: 'time_budget' })
+    )
     expect(events[3]).toEqual(expect.objectContaining({ event: 'journal_finalized', result: 'stopped' }))
   })
 

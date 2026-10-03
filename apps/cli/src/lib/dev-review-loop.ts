@@ -192,6 +192,7 @@ import {
   DEVELOPER_ROUND_RESPONSE_FILE_NAME,
   driverCrashEvents,
   driverDecidedPauseEvents,
+  errorClassOf,
   MAX_GATE_STALLED_TURNS,
   MAX_INFRASTRUCTURE_RETRIES,
   parseConfidenceReply,
@@ -1930,10 +1931,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   // alive past this call — a test runner, `task-tools serve`'s shared
   // process — never keeps reading `'loop'` for work this call never did.
   const prevHost = process.env.VINAYA_HOST
+  // The pull request number reaches the log sink through `VINAYA_PR`, set the
+  // moment this driver has a pull request and restored here — the same
+  // save/restore as `VINAYA_HOST`. Cleared first, so a number inherited from
+  // another task's environment is never recorded against this one.
+  const prevPr = process.env.VINAYA_PR
+  delete process.env.VINAYA_PR
+  function announcePr(): void {
+    if (prNumber > 0) process.env.VINAYA_PR = String(prNumber)
+  }
 
   try {
     return await runDevReviewLoopBody()
   } finally {
+    if (prevPr === undefined) delete process.env.VINAYA_PR
+    else process.env.VINAYA_PR = prevPr
     // O3: every pause decision (including an uncaught error, converted to
     // `pause{reason:'infrastructure'}` by `runDevReviewLoopBody`'s own crash
     // catch) and every clean publish all return through here — the ONE
@@ -3626,7 +3638,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // and a stray heartbeat can never land after the exit line.
     let stopHeartbeat: () => void = () => {}
     let exitTraceWritten = false
-    function recordDriverExited(reason: 'finished' | 'paused' | 'reexec' | 'error' | 'signal'): void {
+    function recordDriverExited(
+      reason: 'finished' | 'paused' | 'reexec' | 'error' | 'signal',
+      detail: { exitCode?: number; error?: unknown } = {}
+    ): void {
       if (exitTraceWritten) return
       exitTraceWritten = true
       stopHeartbeat()
@@ -3660,7 +3675,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           event: 'driver_exited',
           task,
           reason,
-          last_decision: describedDecision
+          last_decision: describedDecision,
+          ...(detail.exitCode !== undefined ? { exit_code: detail.exitCode } : {}),
+          ...('error' in detail ? { error_class: errorClassOf(detail.error) } : {})
         }
         log(event)
       } catch {
@@ -3684,7 +3701,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     process.on('SIGTERM', async () => {
       d.terminateInFlightLaunchesOnShutdown(task, dispatchAgent, repo)
       cleanupAllReviewerIsolationArtifacts(root, task)
-      recordDriverExited('signal')
+      recordDriverExited('signal', { exitCode: 143 })
       // O3: this driver's own sink may still have a `log()` call in flight
       // (`context()` unresolved, or a webhook drain still running) — a bare
       // `process.exit` here tears the process down with no microtask
@@ -3696,7 +3713,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     process.on('SIGINT', async () => {
       d.terminateInFlightLaunchesOnShutdown(task, dispatchAgent, repo)
       cleanupAllReviewerIsolationArtifacts(root, task)
-      recordDriverExited('signal')
+      recordDriverExited('signal', { exitCode: 130 })
       await drainAllLogSinks()
       process.exit(130)
     })
@@ -3803,7 +3820,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // `paused`/`publish` decision — nothing else traces it. `finally`
           // never runs on this path (`d.exitProcess` below is real
           // `process.exit`), so this is the only chance to write it.
-          recordDriverExited('reexec')
+          recordDriverExited('reexec', { exitCode })
           await drainAllLogSinks()
           d.exitProcess(exitCode)
           // `exitProcess` is typed `(code: number) => never` — real process.exit
@@ -3830,7 +3847,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const head = d.resolveHead(branch)
       const stats = computeStats(head, roundStartMs)
       const detail = `base moved from ${baseHeadAtStart} to ${currentBaseHead}, touching this driver's own code (${touching.join('; ')}) — ${reexecFailureNote}`
-      await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+      await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats, 'stale_driver'))
       decision = { type: 'pause', reason: 'stale_driver', detail }
       // Cumulative, never reset by a
       // restart — see `MAX_INFRASTRUCTURE_RETRIES`'s own doc comment.
@@ -3962,6 +3979,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // next, unmodified, straight off `firstPass` — UNLESS O4 (below)
           // recovers a real round from held state.
           prNumber = existingPr.number
+          announcePr()
           // O3: reconcile the prior launch before a later round resumes it —
           // an open PR means the branch is real work (`artifactsPresent`).
           reconcileDeveloperResume(true)
@@ -4010,7 +4028,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               const markerPresent = existsSync(marker)
               if (markerPresent || alreadyDeliveredInStore) {
                 const stats = computeStats(currentHead, d.now())
-                await logEvents(driverDecidedPauseEvents(config.loopId, state, held.round + 1, stats))
+                await logEvents(driverDecidedPauseEvents(config.loopId, state, held.round + 1, stats, 'no_progress'))
                 // O3: names WHICH of the two independent guard inputs was
                 // observed true — a local marker this machine wrote
                 // earlier, a control-store identity a (possibly different)
@@ -4051,6 +4069,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // resumes once to open it, the pre-existing safety net).
             await finishPublicationFromRecord()
             prNumber = await afterDeveloperTurnBeforePrPoll(true)
+            announcePr()
           } else {
             // O1: the branch exists neither as an open PR (checked above) nor
             // on the remote (`resolveHead` just threw) — create the task's own
@@ -4125,6 +4144,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
             try {
               prNumber = await afterDeveloperTurnBeforePrPoll(false)
+              announcePr()
             } catch (err) {
               if (!(err instanceof DeveloperStopSignal)) throw err
               // O9: no branch ever reached the remote, and the developer
@@ -4407,7 +4427,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // enclosing `devReviewLoop`) is set here too — the same lock-stays-alive
       // treatment as the shared pause-return branch's own
       // 'infrastructure'/'stale_driver' cases below.
-      recordDriverExited('error')
+      recordDriverExited('error', { error: err })
       let head = 'unknown'
       try {
         head = d.resolveHead(branch)
@@ -4741,7 +4761,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                       resolvedByUnpushedResume = true
                     } else {
                       const detail = noPushPauseDetail(branch, stillUnpushed)
-                      await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+                      await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats, 'no_push'))
                       decision = { type: 'pause', reason: 'no_push', detail }
                       continue
                     }
@@ -4808,7 +4828,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 if (gateStalledStreak < MAX_GATE_STALLED_TURNS) {
                   continue
                 }
-                await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+                await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats, 'infrastructure'))
                 decision = { type: 'pause', reason: 'infrastructure', detail }
                 infrastructureRetries += 1
                 continue
@@ -5202,7 +5222,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               duration_ms: err.attemptDurationMs ?? d.now() - roundStartMs
             })
             const stats = computeStats(head, roundStartMs)
-            await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+            await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats, 'infrastructure'))
             decision = { type: 'pause', reason: 'infrastructure', detail: err.message }
             infrastructureRetries += 1
           } finally {
@@ -5251,22 +5271,22 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 reassessedObjectives.version ?? 'none'
               } between reviewer dispatch and assessment — superseded by \`${command}\``
               const stats = computeStats(head, roundStartMs)
-              await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+              await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats, 'objectives_changed'))
               decision = { type: 'pause', reason: 'objectives_changed', detail }
             } else if (!binding.rulingOrdinal) {
               const detail = `a new ruling landed between reviewer dispatch and assessment — ruling ordinal moved from ${facts.manifest.rulingOrdinal} to ${reassessedRulingOrdinal} — superseded by ruling ${prNumber}-${reassessedRulingOrdinal}`
               const stats = computeStats(head, roundStartMs)
-              await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+              await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats, 'ruling_posted'))
               decision = { type: 'pause', reason: 'ruling_posted', detail }
             } else if (!binding.briefHash) {
               const detail = `the frozen brief was superseded between reviewer dispatch and assessment — brief hash moved from ${facts.manifest.briefHash ?? 'none'} to ${currentManifest.briefHash ?? 'none'}`
               const stats = computeStats(head, roundStartMs)
-              await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+              await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats, 'brief_superseded'))
               decision = { type: 'pause', reason: 'brief_superseded', detail }
             } else if (!binding.policyDigest) {
               const detail = `the review policy changed between reviewer dispatch and assessment — policy digest moved from ${facts.manifest.policyDigest} to ${currentManifest.policyDigest}`
               const stats = computeStats(head, roundStartMs)
-              await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+              await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats, 'policy_changed'))
               decision = { type: 'pause', reason: 'policy_changed', detail }
             } else {
               const [reviewer, security] = verdicts
