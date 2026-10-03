@@ -105,13 +105,6 @@ const KNOWN_FAILURES: readonly KnownFailure[] = [
     denial:
       'bun install exits 1: "bun is unable to write files to tempdir: EROFS" — its temp directory is outside the writable roots'
   },
-  {
-    id: 'check-all',
-    agent: 'codex',
-    platform: 'linux',
-    denial:
-      'check --all exits 1 and its log outbox hits "EROFS: read-only file system, mkdir ~/.vinaya" — the real home is outside the writable roots'
-  },
   { id: 'check-dispatch-readiness', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
   { id: 'verify-dispatch', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
   { id: 'check-all', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
