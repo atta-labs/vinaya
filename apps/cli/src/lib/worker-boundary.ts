@@ -2452,8 +2452,14 @@ function roundEntryBelongsToRole(name: string, role: Role): boolean {
   return name === prefix || name.startsWith(`${prefix}-retry`)
 }
 
-/** The sessions-area filename `<role>-<agent>.json`/`<role>-<agent>-config` names its role as everything before the first `-` — the one segment of `AgentVendor` (`claude`, `codex`, `gemini`) none of which itself contains a `-`, so this split is unambiguous. */
+/** Every role this file's sessions area ever names in a filename — the three worker roles a turn can actually be dispatched as. `code-reviewer` itself contains a `-`, so matching against this list (longest/most-specific first) is what makes the split unambiguous; splitting on the first `-` alone (round 2 review, BLOCKER) misreads `code-reviewer-<agent>.json` as role `code`. */
+const SESSION_ENTRY_ROLES: readonly Role[] = ['code-reviewer', 'developer', 'security']
+
+/** The sessions-area filename `<role>-<agent>.json`/`<role>-<agent>-config` names its role as one of `SESSION_ENTRY_ROLES`, matched by prefix — never a bare first-`-` split, which breaks on `code-reviewer`'s own hyphen. Falls back to the first segment for a name this task's roles never produce, so an unrecognized file is still a plausible string here, never a crash. */
 function sessionEntryRole(name: string): string {
+  for (const role of SESSION_ENTRY_ROLES) {
+    if (name === role || name.startsWith(`${role}-`)) return role
+  }
   return name.split('-')[0] ?? name
 }
 
@@ -2528,21 +2534,36 @@ function sourceReceiptPaths(hooksDir: string): ProtectedPathEntry[] {
   return entries
 }
 
-/** The concrete, per-turn protected-path list O1 names: the control store (effect records live inside it — `effectDir`/`effectPath`, `packages/aeg-core/src/control-store/local.ts` — so one entry covers both), the source receipts, every other role's folder (scoped per `otherRolesProtectedPaths`'s own doc comment), and the policy configuration file. The dispatched role's own worktree and scratch directory are never named here — they are what this turn is expected to change. */
+/**
+ * The concrete, per-turn protected-path list O1 names: the control store
+ * (effect records live inside it — `effectDir`/`effectPath`,
+ * `packages/aeg-core/src/control-store/local.ts` — so one entry covers
+ * both), the source receipts, every other role's folder (scoped per
+ * `otherRolesProtectedPaths`'s own doc comment), and the policy
+ * configuration file. The dispatched role's own worktree and scratch
+ * directory are never named here — they are what this turn is expected to
+ * change.
+ *
+ * `vinayaConfigPath: null` (the caller's `configPath()` found neither a
+ * repo-local nor a global config) drops ONLY the one config-file entry —
+ * every other entry here reads straight off `runtimeDir`/`task`/`role` and
+ * owes nothing to the config file's own existence, so an unreadable config
+ * must never fail the WHOLE per-turn check open (round 2 review, MINOR).
+ */
 export function protectedPathsForTurn(input: {
   runtimeDir: string
   task: number
   round: number
   role: Role
-  vinayaConfigPath: string
+  vinayaConfigPath: string | null
 }): ProtectedPathEntry[] {
   const taskDir = join(input.runtimeDir, 'tasks-execution', String(input.task))
   const entries: ProtectedPathEntry[] = [
     { path: join(taskDir, 'control'), kind: 'dir' },
     ...sourceReceiptPaths(join(taskDir, 'hooks')),
-    ...otherRolesProtectedPaths(input),
-    { path: input.vinayaConfigPath, kind: 'file' }
+    ...otherRolesProtectedPaths(input)
   ]
+  if (input.vinayaConfigPath !== null) entries.push({ path: input.vinayaConfigPath, kind: 'file' })
   return entries
 }
 

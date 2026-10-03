@@ -2556,14 +2556,23 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      */
     let lastPushRefusal: string | null = null
     /**
-     * O1/O2: the protected-path hashes taken right before the current
-     * Developer dispatch (`snapshotTurnConfinement`, below) — compared again
-     * once the dispatch returns, before publication ever runs. `null` before
-     * the first dispatch of the loop, and whenever `protectedPathsForTurn`
-     * resolves to no entries (never treated as "unchanged" by omission; the
-     * comparison below is simply a no-op in that case).
+     * O1/O2: the protected-path hashes taken right before a dispatch
+     * (`snapshotTurnConfinement`, below) — compared again once that SAME
+     * dispatch returns, before its own publication/trust decision ever runs.
+     * Keyed by role, never a single shared slot: `code-reviewer` and
+     * `security` dispatch CONCURRENTLY in one `Promise.all`, and a shared
+     * scalar here let the second snapshot silently overwrite the first, so
+     * both roles' checks ran against whichever role's entries/baseline
+     * happened to be written last (round 2 review, MAJOR). No entry for a
+     * role before its first dispatch of the loop, and no entry whenever
+     * `protectedPathsForTurn` resolves to no entries for it (never treated
+     * as "unchanged" by omission; the comparison below is simply a no-op in
+     * that case).
      */
-    let turnConfinementBefore: { entries: ProtectedPathEntry[]; before: Record<string, string | null> } | null = null
+    const turnConfinementByRole = new Map<
+      Role,
+      { entries: ProtectedPathEntry[]; before: Record<string, string | null> }
+    >()
 
     /**
      * O11: the task Issue, branch, worktree path,
@@ -2614,33 +2623,37 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * "never cached across a round" posture elsewhere in this file.
      */
     function snapshotTurnConfinement(role: Role, roundNum: number): void {
+      // O1/MINOR fix: a missing config (`configPath()` found neither a
+      // repo-local nor a global file) drops only the one config-file entry
+      // `protectedPathsForTurn` would otherwise add — control store, source
+      // receipts and other roles' folders are still resolved and hashed, so
+      // an unreadable config never fails this role's WHOLE check open.
       const vinayaConfigPath = configPath()
-      if (vinayaConfigPath === null) {
-        turnConfinementBefore = null
-        return
-      }
       const entries = protectedPathsForTurn({ runtimeDir: root, task, round: roundNum, role, vinayaConfigPath })
-      turnConfinementBefore = { entries, before: snapshotProtectedPaths(entries) }
+      turnConfinementByRole.set(role, { entries, before: snapshotProtectedPaths(entries) })
     }
 
     /**
      * O1/O2: compares the live filesystem against `snapshotTurnConfinement`'s
-     * own snapshot, taken right before this same dispatch started, and scans
-     * `scanTexts` (the turn's own raw output, and — for a Developer turn only
-     * — its worktree diff) for a recognized credential shape. Returns the
-     * empty-violations shape when nothing to compare was ever snapshotted
-     * (`configPath()` resolved to nothing) — a missing config is a separate,
-     * pre-existing failure mode every other reader of it already reports,
+     * own snapshot for THIS role, taken right before this same dispatch
+     * started, and scans `scanTexts` (the turn's own raw output, and — for a
+     * Developer turn only — its worktree diff) for a recognized credential
+     * shape. Returns the empty-violations shape when nothing was ever
+     * snapshotted for `role` (no dispatch of it has happened yet this loop) —
      * never a reason to treat this check as silently passed OR to refuse a
-     * turn for a problem this check does not itself diagnose.
+     * turn for a problem this check does not itself diagnose. Keyed by role
+     * (round 2 review, MAJOR) so `code-reviewer` and `security`'s
+     * concurrent dispatches never read each other's snapshot.
      */
-    function checkTurnConfinement(scanTexts: readonly { text: string; location: string }[]): {
+    function checkTurnConfinement(
+      role: Role,
+      scanTexts: readonly { text: string; location: string }[]
+    ): {
       changedPaths: string[]
       credentialFindings: CredentialFinding[]
     } {
-      const changedPaths = turnConfinementBefore
-        ? changedProtectedPaths(turnConfinementBefore.entries, turnConfinementBefore.before)
-        : []
+      const snapshot = turnConfinementByRole.get(role)
+      const changedPaths = snapshot ? changedProtectedPaths(snapshot.entries, snapshot.before) : []
       const credentialFindings = scanTexts.flatMap(({ text, location }) => findCredentialPatterns(text, location))
       return { changedPaths, credentialFindings }
     }
@@ -2882,7 +2895,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // same way a bad commit header already is; it never reaches
         // `publishDeveloperTurn`, so nothing this turn touched is ever
         // committed or pushed.
-        const confinement = checkTurnConfinement(developerScanTexts(handle))
+        const confinement = checkTurnConfinement('developer', developerScanTexts(handle))
         if (confinement.changedPaths.length > 0 || confinement.credentialFindings.length > 0) {
           if (publishReasks >= MAX_PUBLISH_REASKS) return handle
           publishReasks += 1
@@ -3648,7 +3661,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // protected path changed or a recognized credential pattern
         // appeared — thrown before `missingReviewerArtifacts` or
         // `buildVerdictFromReport` ever reads them.
-        const confinement = checkTurnConfinement(reviewerScanTexts(handle))
+        const confinement = checkTurnConfinement(dispatchRoleName, reviewerScanTexts(handle))
         if (confinement.changedPaths.length > 0 || confinement.credentialFindings.length > 0) {
           throw new ReviewerConfinementViolation(
             role,

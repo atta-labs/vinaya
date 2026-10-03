@@ -3747,6 +3747,24 @@ describe('protectedPathsForTurn — O1 the concrete per-turn protected-path list
     expect(entries).toContainEqual({ path: vinayaConfigPath, kind: 'file' })
   })
 
+  it('a null config path (round 2 review, MINOR) drops only the config-file entry, never the whole list', () => {
+    dir = tempDir('vinaya-wb-turn-')
+    const sessionsDir = join(taskDir(dir, 1), 'sessions')
+    mkdirSync(sessionsDir, { recursive: true })
+    writeFileSync(join(sessionsDir, 'security-claude.json'), '{}')
+    const entries = protectedPathsForTurn({
+      runtimeDir: dir,
+      task: 1,
+      round: 1,
+      role: 'developer',
+      vinayaConfigPath: null
+    })
+    const paths = entries.map((e) => e.path)
+    expect(paths).toContain(join(taskDir(dir, 1), 'control'))
+    expect(paths).toContain(join(sessionsDir, 'security-claude.json'))
+    expect(entries.some((e) => e.kind === 'file' && e.path.endsWith('vinaya.config.json'))).toBe(false)
+  })
+
   it('names the documentation-sources manifest but never the append-only documentation log', () => {
     dir = tempDir('vinaya-wb-turn-')
     const hooksDir = join(taskDir(dir, 1), 'hooks', 'developer')
@@ -3781,6 +3799,29 @@ describe('protectedPathsForTurn — O1 the concrete per-turn protected-path list
     const paths = entries.map((e) => e.path)
     expect(paths).toContain(join(sessionsDir, 'security-claude.json'))
     expect(paths).not.toContain(join(sessionsDir, 'developer-claude.json'))
+  })
+
+  it("never protects the code-reviewer's own hyphenated session record as an 'other role' path (round 2 review, BLOCKER)", () => {
+    dir = tempDir('vinaya-wb-turn-')
+    const sessionsDir = join(taskDir(dir, 1), 'sessions')
+    mkdirSync(sessionsDir, { recursive: true })
+    writeFileSync(join(sessionsDir, 'code-reviewer-claude.json'), '{}')
+    writeFileSync(join(sessionsDir, 'developer-claude.json'), '{}')
+    const entries = protectedPathsForTurn({
+      runtimeDir: dir,
+      task: 1,
+      round: 1,
+      role: 'code-reviewer',
+      vinayaConfigPath: join(dir, 'vinaya.config.json')
+    })
+    const paths = entries.map((e) => e.path)
+    // A naive split on the first `-` reads `code-reviewer-claude.json` as
+    // role `code`, which matches neither `code-reviewer` nor its concurrent
+    // sibling `security` — so it was wrongly treated as an "other role"
+    // path and its own legitimate per-dispatch rewrite tripped a
+    // false-positive confinement violation from round 2 onward.
+    expect(paths).not.toContain(join(sessionsDir, 'code-reviewer-claude.json'))
+    expect(paths).toContain(join(sessionsDir, 'developer-claude.json'))
   })
 
   it("names another role's round work directory but never this role's own, for a developer turn", () => {
