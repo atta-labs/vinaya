@@ -1,0 +1,153 @@
+{
+  "about": "Every command the Developer doctrine and the rendered brief name, one entry each. `forms` are the exact command forms read off the texts (command-sources.ts); `run` is the command the suite runs inside each agent's sandbox, from the task worktree; an entry with `notRun` instead names why no Developer runs it inside its sandbox. `{tranche}` and `{n}` are the task branch's own identity; an entry with `needsTaskBranch` runs only when the suite runs on a task branch.",
+  "commands": [
+    {
+      "id": "bun-install",
+      "forms": ["bun install --frozen-lockfile --silent", "bun install …"],
+      "run": "bun install --frozen-lockfile --silent"
+    },
+    { "id": "git-status", "forms": ["git status"], "run": "git status" },
+    { "id": "git-diff", "forms": ["git diff main --stat"], "run": "git diff origin/main --stat" },
+    { "id": "git-log", "forms": ["git log --oneline -3"], "run": "git log --oneline -3" },
+    {
+      "id": "git-log-header-length",
+      "forms": [
+        "git log origin/main..HEAD --format=\"%s\" | awk '{ if (length > 72) print NR\": \"length\" chars (OVER LIMIT): \"$0 }'"
+      ],
+      "run": "git log origin/main..HEAD --format=\"%s\" | awk '{ if (length > 72) print NR\": \"length\" chars (OVER LIMIT): \"$0 }'"
+    },
+    { "id": "git-worktree-list", "forms": ["git worktree list"], "run": "git worktree list" },
+    { "id": "git-branch", "forms": ["git branch"], "run": "git branch" },
+    {
+      "id": "git-grep",
+      "forms": ["git grep -n -iE"],
+      "run": "git grep -n -iE 'conformance|sandbox' -- apps/cli/specs/isolation.md"
+    },
+    {
+      "id": "bun-test-one-file",
+      "forms": [],
+      "run": "bun test --timeout=30000 apps/cli/tests/isolation/isolation-contract.test.ts"
+    },
+    { "id": "typecheck", "forms": ["bun run typecheck"], "run": "bun run typecheck" },
+    { "id": "format-and-lint", "forms": ["bun run format-and-lint"], "run": "bun run format-and-lint" },
+    {
+      "id": "doctrine-developer",
+      "forms": ["vinaya doctrine --role developer --print"],
+      "run": "bun apps/cli/src/index.ts doctrine --role developer --print"
+    },
+    {
+      "id": "doctrine-pr-report",
+      "forms": ["vinaya doctrine --template pr-report --print"],
+      "run": "bun apps/cli/src/index.ts doctrine --template pr-report --print"
+    },
+    {
+      "id": "check-dispatch-readiness",
+      "forms": ["vinaya check dispatch-readiness"],
+      "run": "bun apps/cli/src/index.ts check dispatch-readiness"
+    },
+    {
+      "id": "verify-dispatch",
+      "forms": [
+        "bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n>",
+        "bun packages/aeg-core/bin/verify-dispatch.ts [tranche-slug] [n]",
+        "bun packages/aeg-core/bin/verify-dispatch.ts conformance-fixture-v1 1"
+      ],
+      "run": "bun packages/aeg-core/bin/verify-dispatch.ts {tranche} {n}",
+      "needsTaskBranch": true
+    },
+    { "id": "check-all", "forms": ["vinaya check --all"], "run": "bun apps/cli/src/index.ts check --all" },
+    { "id": "gh-issue-view", "forms": [], "run": "gh issue view 1026 --json number,title" },
+    { "id": "gh-pr-view", "forms": ["gh pr view"], "run": "gh pr view 1010 --json number,state" },
+    {
+      "id": "gh-pr-view-reviews",
+      "forms": ["gh pr view <n> --json reviews,statusCheckRollup,body"],
+      "run": "gh pr view 1010 --json reviews,statusCheckRollup,body"
+    },
+    {
+      "id": "verify-dispatch-premise",
+      "forms": ["bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n> --premise <body-file>"],
+      "notRun": "re-asserts a brief's Premise block — it needs the dispatched brief text as its body file, which only a real dispatch has"
+    },
+    {
+      "id": "verify-docs",
+      "forms": [
+        "bun run verify-docs --pr",
+        "bun packages/aeg-core/bin/verify-docs.ts --pr",
+        "vinaya check doc-coverage"
+      ],
+      "notRun": "judges the PR body the Developer wrote (PR_BODY); with no body its verdict is about the body, never the sandbox"
+    },
+    {
+      "id": "verify-task",
+      "forms": ["bun packages/aeg-core/bin/verify-task.ts"],
+      "notRun": "the composite of typecheck, format-and-lint, the pre-push test selection and verify-docs — the driver runs it at PR-open time, and its sandbox-relevant parts are entries of their own here"
+    },
+    {
+      "id": "pre-push-tests",
+      "forms": ["bun apps/cli/src/lib/pre-push-select-tests.ts | xargs -r bun test --timeout=30000 --"],
+      "notRun": "the pre-push hook's own command — under the review loop the driver pushes, outside the sandbox, and the doctrine forbids hand-running it"
+    },
+    {
+      "id": "full-test-suite",
+      "forms": ["bun run test"],
+      "notRun": "the doctrine forbids a local full-suite run — CI's shards run it"
+    },
+    {
+      "id": "worktree-add",
+      "forms": [
+        "git worktree add .worktrees/task/<tranche>/<n> -b task/<tranche>/<n> --no-track origin/main",
+        "git worktree add .worktrees/task/[tranche-slug]/[n] -b task/[tranche-slug]/[n] --no-track origin/main",
+        "git config push.autoSetupRemote true"
+      ],
+      "notRun": "the driver creates the task worktree, outside any sandbox, before the Developer's first turn"
+    },
+    {
+      "id": "commit-and-push",
+      "forms": ["git commit", "git push", "git commit -m \"Chore: WIP checkpoint\""],
+      "notRun": "under the review loop the driver commits and pushes, outside the sandbox; the Developer leaves changes uncommitted"
+    },
+    {
+      "id": "pr-open-and-report",
+      "forms": [
+        "vinaya pr create --body-file <path> --title \"<title above>\"",
+        "vinaya pr report",
+        "vinaya pr report --write",
+        "vinaya pr report --write <body-file>",
+        "vinaya pr report --push",
+        "vinaya pr report --push <n>"
+      ],
+      "notRun": "under the review loop the driver opens the pull request from the Developer's body file, outside the sandbox"
+    },
+    {
+      "id": "dispatch-and-loop",
+      "forms": [
+        "vinaya dispatch",
+        "vinaya dispatch developer --agent <vendor>",
+        "vinaya task run",
+        "vinaya task dispatch",
+        "vinaya brief render"
+      ],
+      "notRun": "the Operator's and the driver's commands — they start a Developer, never run inside one"
+    },
+    {
+      "id": "superseded-archival-gate",
+      "forms": [
+        "gh pr list --state merged --json number,headRefName,mergedAt | jq '[.[] | select(.headRefName | startswith(\"task/<tranche>/\"))] | sort_by(.mergedAt) | last'",
+        "gh pr view <N> --json comments | jq '.comments[].body | select(test(\"AEG.*provenance|provenance.*task\"; \"i\"))'"
+      ],
+      "notRun": "the superseded prior-archival precondition — preserved as history, the doctrine says not to enforce it"
+    },
+    {
+      "id": "named-not-run",
+      "forms": [
+        "vinaya check",
+        "vinaya review status",
+        "vinaya tokens",
+        "bun <dir>/src/index.ts",
+        "git stash",
+        "git merge --dry-run"
+      ],
+      "notRun": "named, not run: the CLI's name and invocation shape, a status read and a token read for a human, bare git stash (the doctrine forbids it), and an anti-pattern's example"
+    }
+  ]
+}
