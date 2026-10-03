@@ -39,6 +39,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync
 } from 'node:fs'
@@ -2347,4 +2348,256 @@ export function resolveCodexConfinement(
     ok: false,
     reason: `Codex's own sandbox and network proxy name no mechanism for platform '${deps.platform}'`
   }
+}
+
+// --- O1/O2: after-turn verification, outside the agent ---------------------
+//
+// `isolation.md` §4a/§4b's own disclosed gaps (neither vendor's shipped
+// sandbox scopes READS the way the retired Seatbelt profile did, and egress
+// is destination-allowlisted, never content-inspected) are never closed by
+// anything below. This section is the driver's OWN check, run from the
+// trusted Controller after a dispatch returns, never during it — detection
+// of a persisted change or a recognizable credential value, not a third
+// confinement mechanism. `isolation.md`'s own new section states this
+// distinction and what it cannot see; the functions here are its mechanism.
+
+/** One path this task's after-turn check hashes — `'dir'` walks the whole tree; `'file'` hashes the one file. */
+export type ProtectedPathEntry = { path: string; kind: 'file' | 'dir' }
+
+/** `null` when `path` does not exist or cannot be read — never throws. The hash of an absent path and the hash of a path that genuinely holds nothing are both `null`, which is fine: a path that goes from absent to present, or back, still compares unequal against the hash of real content. */
+function hashFileContent(path: string): string | null {
+  try {
+    return createHash('sha256').update(readFileSync(path)).digest('hex')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Deterministic hash of a directory's whole tree: every entry's path
+ * (relative to `dir`, forward-slash-joined, sorted so traversal order never
+ * changes the digest), folded together with its own content hash — a
+ * regular file's bytes, or a symlink's literal target text, NEVER the
+ * target's own content. A symlink is read as its link text, not followed:
+ * replacing a protected file with a symlink into an unprotected path must
+ * register as the change it is, not silently re-hash whatever the link
+ * happens to resolve to. `null` when `dir` does not exist (a store that has
+ * not written anything yet is a legitimate starting state, not a read
+ * failure to report as one).
+ */
+function hashDirectoryTree(dir: string): string | null {
+  if (!existsSync(dir)) return null
+  const digest = createHash('sha256')
+  const walk = (current: string, rel: string): void => {
+    const entries = readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))
+    for (const entry of entries) {
+      const abs = join(current, entry.name)
+      const relPath = rel.length > 0 ? `${rel}/${entry.name}` : entry.name
+      if (entry.isSymbolicLink()) {
+        let target = ''
+        try {
+          target = execFileSync('readlink', [abs], { encoding: 'utf8' }).trim()
+        } catch {
+          target = '<unreadable-symlink>'
+        }
+        digest.update(`L ${relPath} ${target}\n`)
+      } else if (entry.isDirectory()) {
+        walk(abs, relPath)
+      } else if (entry.isFile()) {
+        digest.update(`F ${relPath} ${hashFileContent(abs) ?? '<unreadable-file>'}\n`)
+      }
+    }
+  }
+  walk(dir, '')
+  return digest.digest('hex')
+}
+
+function hashProtectedPath(entry: ProtectedPathEntry): string | null {
+  return entry.kind === 'dir' ? hashDirectoryTree(entry.path) : hashFileContent(entry.path)
+}
+
+/** The "before" half of O1's check — one hash per entry, taken fresh from disk, never from a cached copy (Traps to avoid). */
+export function snapshotProtectedPaths(entries: readonly ProtectedPathEntry[]): Record<string, string | null> {
+  const snapshot: Record<string, string | null> = {}
+  for (const entry of entries) snapshot[entry.path] = hashProtectedPath(entry)
+  return snapshot
+}
+
+/** The "after" half — re-hashes every entry fresh and returns exactly the paths whose hash no longer matches `before`, in `entries` order. Empty when nothing changed. */
+export function changedProtectedPaths(
+  entries: readonly ProtectedPathEntry[],
+  before: Readonly<Record<string, string | null>>
+): string[] {
+  const changed: string[] = []
+  for (const entry of entries) {
+    const after = hashProtectedPath(entry)
+    if (after !== (before[entry.path] ?? null)) changed.push(entry.path)
+  }
+  return changed
+}
+
+/** `statSync`-based, not name-based — a sessions-area entry is a `.json` file for one role+agent or a `-config` directory for the same; asking the filesystem is simpler than parsing the name and cannot drift from it. `'file'` on any stat failure (an entry that vanished between listing and stat is reported as a file that is now simply absent, never a crash). */
+function entryKind(path: string): 'file' | 'dir' {
+  try {
+    return statSync(path).isDirectory() ? 'dir' : 'file'
+  } catch {
+    return 'file'
+  }
+}
+
+/** The directory name `rounds/<n>` holds for each role — `developer` is literal; a reviewer/security round directory is named `reviewer-work`/`security-work`, with a `-retry<k>` suffix for a later attempt (`reviewerWorkDir`, `dev-review-loop/reviewer-dispatch.ts`) — so a prefix match, not an exact one, is what "belongs to this role" means for those two. */
+function roundEntryBelongsToRole(name: string, role: Role): boolean {
+  if (role === 'developer') return name === 'developer'
+  const prefix = role === 'code-reviewer' ? 'reviewer-work' : 'security-work'
+  return name === prefix || name.startsWith(`${prefix}-retry`)
+}
+
+/** Every role this file's sessions area ever names in a filename — the three worker roles a turn can actually be dispatched as. `code-reviewer` itself contains a `-`, so matching against this list (longest/most-specific first) is what makes the split unambiguous; splitting on the first `-` alone (round 2 review, BLOCKER) misreads `code-reviewer-<agent>.json` as role `code`. */
+const SESSION_ENTRY_ROLES: readonly Role[] = ['code-reviewer', 'developer', 'security']
+
+/** The sessions-area filename `<role>-<agent>.json`/`<role>-<agent>-config` names its role as one of `SESSION_ENTRY_ROLES`, matched by prefix — never a bare first-`-` split, which breaks on `code-reviewer`'s own hyphen. Falls back to the first segment for a name this task's roles never produce, so an unrecognized file is still a plausible string here, never a crash. */
+function sessionEntryRole(name: string): string {
+  for (const role of SESSION_ENTRY_ROLES) {
+    if (name === role || name.startsWith(`${role}-`)) return role
+  }
+  return name.split('-')[0] ?? name
+}
+
+/**
+ * O1: the paths this task's after-turn check calls "other roles' folders" —
+ * every OTHER role's session record/staged config directory and every OTHER
+ * role's round work directory, for every round this task has on disk, minus
+ * two deliberate exceptions:
+ *
+ * - This role's own entries are never in the list at all — this IS the
+ *   dispatch whose turn is ending, and it is expected to write there.
+ * - `code-reviewer` and `security` dispatch CONCURRENTLY, in one
+ *   `Promise.all` (`dev-review-loop.ts`), for the SAME round — so a
+ *   reviewer's own check must not protect its sibling's SAME-round folder,
+ *   which may still be mid-write when this dispatch's own turn ends. Every
+ *   OTHER round's sibling folder stays protected; only `round`'s is excused,
+ *   and only for the sibling, never for a THIRD role (there is none here).
+ */
+function otherRolesProtectedPaths(input: {
+  runtimeDir: string
+  task: number
+  round: number
+  role: Role
+}): ProtectedPathEntry[] {
+  const entries: ProtectedPathEntry[] = []
+  const concurrentSibling: Role | null =
+    input.role === 'code-reviewer' ? 'security' : input.role === 'security' ? 'code-reviewer' : null
+
+  const sessionsDir = join(input.runtimeDir, 'tasks-execution', String(input.task), 'sessions')
+  if (existsSync(sessionsDir)) {
+    for (const name of readdirSync(sessionsDir)) {
+      const role = sessionEntryRole(name)
+      if (role === input.role) continue
+      if (concurrentSibling !== null && role === concurrentSibling) continue
+      const path = join(sessionsDir, name)
+      entries.push({ path, kind: entryKind(path) })
+    }
+  }
+
+  const roundsDir = join(input.runtimeDir, 'tasks-execution', String(input.task), 'rounds')
+  if (existsSync(roundsDir)) {
+    for (const roundName of readdirSync(roundsDir)) {
+      const roundNum = Number(roundName)
+      if (!Number.isInteger(roundNum)) continue
+      const roundDir = join(roundsDir, roundName)
+      for (const name of readdirSync(roundDir)) {
+        if (roundEntryBelongsToRole(name, input.role)) continue
+        if (concurrentSibling !== null && roundNum === input.round && roundEntryBelongsToRole(name, concurrentSibling))
+          continue
+        const path = join(roundDir, name)
+        entries.push({ path, kind: entryKind(path) })
+      }
+    }
+  }
+  return entries
+}
+
+/** The per-run required-sources manifest the Documentation read-gate's Stop hook reads (`writeDispatchSettings`'s `documentation-sources-<runId>.json`) — written once, by the trusted Controller, before dispatch, and never legitimately rewritten during a turn. Its sibling `documentation-log-<runId>.jsonl` is deliberately NOT protected here: the hook itself appends to it as the direct, legitimate effect of the dispatched session's own successful fetch, so hashing it as "must not change" would refuse the very thing the gate exists to observe. */
+const SOURCE_RECEIPT_FILE_PATTERN = /^documentation-sources-.*\.json$/
+
+function sourceReceiptPaths(hooksDir: string): ProtectedPathEntry[] {
+  const entries: ProtectedPathEntry[] = []
+  const walk = (dir: string): void => {
+    if (!existsSync(dir)) return
+    for (const name of readdirSync(dir, { withFileTypes: true })) {
+      const abs = join(dir, name.name)
+      if (name.isDirectory()) walk(abs)
+      else if (name.isFile() && SOURCE_RECEIPT_FILE_PATTERN.test(name.name)) entries.push({ path: abs, kind: 'file' })
+    }
+  }
+  walk(hooksDir)
+  return entries
+}
+
+/**
+ * The concrete, per-turn protected-path list O1 names: the control store
+ * (effect records live inside it — `effectDir`/`effectPath`,
+ * `packages/aeg-core/src/control-store/local.ts` — so one entry covers
+ * both), the source receipts, every other role's folder (scoped per
+ * `otherRolesProtectedPaths`'s own doc comment), and the policy
+ * configuration file. The dispatched role's own worktree and scratch
+ * directory are never named here — they are what this turn is expected to
+ * change.
+ *
+ * `vinayaConfigPath: null` (the caller's `configPath()` found neither a
+ * repo-local nor a global config) drops ONLY the one config-file entry —
+ * every other entry here reads straight off `runtimeDir`/`task`/`role` and
+ * owes nothing to the config file's own existence, so an unreadable config
+ * must never fail the WHOLE per-turn check open (round 2 review, MINOR).
+ */
+export function protectedPathsForTurn(input: {
+  runtimeDir: string
+  task: number
+  round: number
+  role: Role
+  vinayaConfigPath: string | null
+}): ProtectedPathEntry[] {
+  const taskDir = join(input.runtimeDir, 'tasks-execution', String(input.task))
+  const entries: ProtectedPathEntry[] = [
+    { path: join(taskDir, 'control'), kind: 'dir' },
+    ...sourceReceiptPaths(join(taskDir, 'hooks')),
+    ...otherRolesProtectedPaths(input)
+  ]
+  if (input.vinayaConfigPath !== null) entries.push({ path: input.vinayaConfigPath, kind: 'file' })
+  return entries
+}
+
+// --- O2: credential recognition, never the value itself --------------------
+
+/** One recognizable credential SHAPE — a real vendor/format-specific prefix or structure, never a generic field name (`access_token`, `password`), which this codebase's own tests and fixtures use constantly for values that are not secrets at all). */
+type CredentialPattern = { name: string; pattern: RegExp }
+
+/** Deliberately narrow: every pattern here matches a specific, real credential FORMAT (a vendor's own documented token prefix, a PEM key header, a three-part JWT), never a variable or field name — scanning for `/password|secret|token/i` would flag this very file's own doc comments and this task's own test fixtures, which talk ABOUT credentials constantly without ever holding one. `isolation.md`'s own new section names this list as what the check recognizes, and that it recognizes nothing outside it. */
+export const RECOGNIZED_CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
+  { name: 'GitHub token', pattern: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/ },
+  { name: 'GitHub fine-grained token', pattern: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/ },
+  { name: 'AWS access key ID', pattern: /\bAKIA[0-9A-Z]{16}\b/ },
+  { name: 'Anthropic API key', pattern: /\bsk-ant-[A-Za-z0-9-]{20,}\b/ },
+  { name: 'OpenAI API key', pattern: /\bsk-[A-Za-z0-9]{32,}\b/ },
+  { name: 'Slack token', pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
+  { name: 'PEM private key block', pattern: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----/ },
+  { name: 'JSON Web Token', pattern: /\bey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/ }
+] as const
+
+/** Where a recognized credential pattern appeared (O2's own label, never the match), and which pattern recognized it. */
+export type CredentialFinding = { pattern: string; location: string }
+
+/**
+ * Scans `text` for a recognized credential shape (`RECOGNIZED_CREDENTIAL_PATTERNS`)
+ * and reports, for each pattern that matches at least once, the pattern's
+ * own name and the caller-supplied `location` label — NEVER the matched
+ * substring, and never the surrounding text either, so a refusal built from
+ * this can name where a credential appeared without ever printing it.
+ */
+export function findCredentialPatterns(text: string, location: string): CredentialFinding[] {
+  const findings: CredentialFinding[] = []
+  for (const { name, pattern } of RECOGNIZED_CREDENTIAL_PATTERNS) {
+    if (pattern.test(text)) findings.push({ pattern: name, location })
+  }
+  return findings
 }

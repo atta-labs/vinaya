@@ -48,9 +48,15 @@ import {
   resolveCodexConfinement,
   checkLinuxCodexSandboxTools,
   LINUX_CODEX_SANDBOX_TOOLS,
+  snapshotProtectedPaths,
+  changedProtectedPaths,
+  protectedPathsForTurn,
+  RECOGNIZED_CREDENTIAL_PATTERNS,
+  findCredentialPatterns,
   type WorkerBoundaryDeps,
   type LinuxSandboxToolDeps,
-  type ConfinementRequest
+  type ConfinementRequest,
+  type ProtectedPathEntry
 } from '../../../src/lib/worker-boundary'
 import { readlinkSync, lstatSync } from 'node:fs'
 
@@ -3642,3 +3648,292 @@ describe.skipIf(!process.env.VINAYA_LIVE_CLAUDE_SANDBOX_SMOKE)(
     // was not built here. Disclosed rather than guessed.
   }
 )
+
+// --- agent-confinement-v1 task 5, O1/O2: after-turn verification -----------
+
+describe('snapshotProtectedPaths / changedProtectedPaths — O1 hashing', () => {
+  let dir: string
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('reports no change when nothing on disk moved', () => {
+    dir = tempDir('vinaya-wb-protected-')
+    mkdirSync(join(dir, 'control'), { recursive: true })
+    writeFileSync(join(dir, 'control', 'a.json'), '{"x":1}')
+    const entries: ProtectedPathEntry[] = [{ path: join(dir, 'control'), kind: 'dir' }]
+    const before = snapshotProtectedPaths(entries)
+    expect(changedProtectedPaths(entries, before)).toEqual([])
+  })
+
+  it('names a directory entry whose content changed', () => {
+    dir = tempDir('vinaya-wb-protected-')
+    mkdirSync(join(dir, 'control'), { recursive: true })
+    writeFileSync(join(dir, 'control', 'a.json'), '{"x":1}')
+    const entries: ProtectedPathEntry[] = [{ path: join(dir, 'control'), kind: 'dir' }]
+    const before = snapshotProtectedPaths(entries)
+    writeFileSync(join(dir, 'control', 'a.json'), '{"x":2}')
+    expect(changedProtectedPaths(entries, before)).toEqual([join(dir, 'control')])
+  })
+
+  it('names a directory entry that gained a new file', () => {
+    dir = tempDir('vinaya-wb-protected-')
+    mkdirSync(join(dir, 'control'), { recursive: true })
+    const entries: ProtectedPathEntry[] = [{ path: join(dir, 'control'), kind: 'dir' }]
+    const before = snapshotProtectedPaths(entries)
+    writeFileSync(join(dir, 'control', 'new.json'), '{}')
+    expect(changedProtectedPaths(entries, before)).toEqual([join(dir, 'control')])
+  })
+
+  it('names a directory entry that lost a file', () => {
+    dir = tempDir('vinaya-wb-protected-')
+    mkdirSync(join(dir, 'control'), { recursive: true })
+    writeFileSync(join(dir, 'control', 'a.json'), '{}')
+    const entries: ProtectedPathEntry[] = [{ path: join(dir, 'control'), kind: 'dir' }]
+    const before = snapshotProtectedPaths(entries)
+    rmSync(join(dir, 'control', 'a.json'))
+    expect(changedProtectedPaths(entries, before)).toEqual([join(dir, 'control')])
+  })
+
+  it('names a file entry replaced by a symlink into an unprotected path, never silently re-hashing the link target', () => {
+    dir = tempDir('vinaya-wb-protected-')
+    const outside = tempDir('vinaya-wb-protected-outside-')
+    writeFileSync(join(dir, 'vinaya.config.json'), '{"a":1}')
+    writeFileSync(join(outside, 'decoy.json'), '{"a":1}')
+    const entries: ProtectedPathEntry[] = [{ path: join(dir, 'vinaya.config.json'), kind: 'file' }]
+    const before = snapshotProtectedPaths(entries)
+    rmSync(join(dir, 'vinaya.config.json'))
+    symlinkSync(join(outside, 'decoy.json'), join(dir, 'vinaya.config.json'))
+    // `hashFileContent` reads THROUGH a symlinked file path (Node's own
+    // `readFileSync` follows it) — the decoy carries identical bytes to the
+    // original, so a content-only hash of the FILE entry would miss this.
+    // The directory-tree walker (exercised above) hashes a symlink's own
+    // link text instead of following it; a bare file entry has no such
+    // walker to intervene, so this case is accepted as a residual, narrower
+    // than the directory case, consistent with `protectedPathsForTurn` only
+    // ever naming the control store and sessions/rounds AS DIRECTORIES — the
+    // one `kind: 'file'` entry it emits (the policy configuration) is a
+    // single, well-known path a confined role has no write grant to at all
+    // (`isolation.md` §4's own HOME/worktree confinement), so this residual
+    // is accepted rather than closed here.
+    expect(changedProtectedPaths(entries, before)).toEqual([])
+  })
+
+  it('treats a path that came into existence as changed', () => {
+    dir = tempDir('vinaya-wb-protected-')
+    const entries: ProtectedPathEntry[] = [{ path: join(dir, 'control'), kind: 'dir' }]
+    const before = snapshotProtectedPaths(entries)
+    mkdirSync(join(dir, 'control'), { recursive: true })
+    writeFileSync(join(dir, 'control', 'a.json'), '{}')
+    expect(changedProtectedPaths(entries, before)).toEqual([join(dir, 'control')])
+  })
+})
+
+describe('protectedPathsForTurn — O1 the concrete per-turn protected-path list', () => {
+  let dir: string
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  function taskDir(d2: string, task: number): string {
+    return join(d2, 'tasks-execution', String(task))
+  }
+
+  it('always names the control store and the policy configuration file', () => {
+    dir = tempDir('vinaya-wb-turn-')
+    const vinayaConfigPath = join(dir, 'vinaya.config.json')
+    const entries = protectedPathsForTurn({ runtimeDir: dir, task: 1, round: 1, role: 'developer', vinayaConfigPath })
+    expect(entries).toContainEqual({ path: join(taskDir(dir, 1), 'control'), kind: 'dir' })
+    expect(entries).toContainEqual({ path: vinayaConfigPath, kind: 'file' })
+  })
+
+  it('a null config path (round 2 review, MINOR) drops only the config-file entry, never the whole list', () => {
+    dir = tempDir('vinaya-wb-turn-')
+    const sessionsDir = join(taskDir(dir, 1), 'sessions')
+    mkdirSync(sessionsDir, { recursive: true })
+    writeFileSync(join(sessionsDir, 'security-claude.json'), '{}')
+    const entries = protectedPathsForTurn({
+      runtimeDir: dir,
+      task: 1,
+      round: 1,
+      role: 'developer',
+      vinayaConfigPath: null
+    })
+    const paths = entries.map((e) => e.path)
+    expect(paths).toContain(join(taskDir(dir, 1), 'control'))
+    expect(paths).toContain(join(sessionsDir, 'security-claude.json'))
+    expect(entries.some((e) => e.kind === 'file' && e.path.endsWith('vinaya.config.json'))).toBe(false)
+  })
+
+  it('names the documentation-sources manifest but never the append-only documentation log', () => {
+    dir = tempDir('vinaya-wb-turn-')
+    const hooksDir = join(taskDir(dir, 1), 'hooks', 'developer')
+    mkdirSync(hooksDir, { recursive: true })
+    writeFileSync(join(hooksDir, 'documentation-sources-run1.json'), '[]')
+    writeFileSync(join(hooksDir, 'documentation-log-run1.jsonl'), '')
+    const entries = protectedPathsForTurn({
+      runtimeDir: dir,
+      task: 1,
+      round: 1,
+      role: 'developer',
+      vinayaConfigPath: join(dir, 'vinaya.config.json')
+    })
+    const paths = entries.map((e) => e.path)
+    expect(paths).toContain(join(hooksDir, 'documentation-sources-run1.json'))
+    expect(paths).not.toContain(join(hooksDir, 'documentation-log-run1.jsonl'))
+  })
+
+  it("names another role's session record but never this role's own", () => {
+    dir = tempDir('vinaya-wb-turn-')
+    const sessionsDir = join(taskDir(dir, 1), 'sessions')
+    mkdirSync(sessionsDir, { recursive: true })
+    writeFileSync(join(sessionsDir, 'developer-claude.json'), '{}')
+    writeFileSync(join(sessionsDir, 'security-claude.json'), '{}')
+    const entries = protectedPathsForTurn({
+      runtimeDir: dir,
+      task: 1,
+      round: 1,
+      role: 'developer',
+      vinayaConfigPath: join(dir, 'vinaya.config.json')
+    })
+    const paths = entries.map((e) => e.path)
+    expect(paths).toContain(join(sessionsDir, 'security-claude.json'))
+    expect(paths).not.toContain(join(sessionsDir, 'developer-claude.json'))
+  })
+
+  it("never protects the code-reviewer's own hyphenated session record as an 'other role' path (round 2 review, BLOCKER)", () => {
+    dir = tempDir('vinaya-wb-turn-')
+    const sessionsDir = join(taskDir(dir, 1), 'sessions')
+    mkdirSync(sessionsDir, { recursive: true })
+    writeFileSync(join(sessionsDir, 'code-reviewer-claude.json'), '{}')
+    writeFileSync(join(sessionsDir, 'developer-claude.json'), '{}')
+    const entries = protectedPathsForTurn({
+      runtimeDir: dir,
+      task: 1,
+      round: 1,
+      role: 'code-reviewer',
+      vinayaConfigPath: join(dir, 'vinaya.config.json')
+    })
+    const paths = entries.map((e) => e.path)
+    // A naive split on the first `-` reads `code-reviewer-claude.json` as
+    // role `code`, which matches neither `code-reviewer` nor its concurrent
+    // sibling `security` — so it was wrongly treated as an "other role"
+    // path and its own legitimate per-dispatch rewrite tripped a
+    // false-positive confinement violation from round 2 onward.
+    expect(paths).not.toContain(join(sessionsDir, 'code-reviewer-claude.json'))
+    expect(paths).toContain(join(sessionsDir, 'developer-claude.json'))
+  })
+
+  it("names another role's round work directory but never this role's own, for a developer turn", () => {
+    dir = tempDir('vinaya-wb-turn-')
+    const roundDir = join(taskDir(dir, 1), 'rounds', '1')
+    mkdirSync(join(roundDir, 'developer'), { recursive: true })
+    mkdirSync(join(roundDir, 'reviewer-work'), { recursive: true })
+    mkdirSync(join(roundDir, 'security-work'), { recursive: true })
+    const entries = protectedPathsForTurn({
+      runtimeDir: dir,
+      task: 1,
+      round: 1,
+      role: 'developer',
+      vinayaConfigPath: join(dir, 'vinaya.config.json')
+    })
+    const paths = entries.map((e) => e.path)
+    expect(paths).toContain(join(roundDir, 'reviewer-work'))
+    expect(paths).toContain(join(roundDir, 'security-work'))
+    expect(paths).not.toContain(join(roundDir, 'developer'))
+  })
+
+  it("excludes the concurrently-dispatched sibling reviewer's SAME-round folder, but still protects its OTHER rounds", () => {
+    dir = tempDir('vinaya-wb-turn-')
+    const round1 = join(taskDir(dir, 1), 'rounds', '1')
+    const round2 = join(taskDir(dir, 1), 'rounds', '2')
+    mkdirSync(join(round1, 'security-work'), { recursive: true })
+    mkdirSync(join(round1, 'security-work-retry1'), { recursive: true })
+    mkdirSync(join(round2, 'security-work'), { recursive: true })
+    const entries = protectedPathsForTurn({
+      runtimeDir: dir,
+      task: 1,
+      round: 1,
+      role: 'code-reviewer',
+      vinayaConfigPath: join(dir, 'vinaya.config.json')
+    })
+    const paths = entries.map((e) => e.path)
+    expect(paths).not.toContain(join(round1, 'security-work'))
+    expect(paths).not.toContain(join(round1, 'security-work-retry1'))
+    expect(paths).toContain(join(round2, 'security-work'))
+  })
+
+  it("the security role's own round folder is excluded from ITS own protected list, for every round, not only the current one — it is the dispatched role", () => {
+    dir = tempDir('vinaya-wb-turn-')
+    const round1 = join(taskDir(dir, 1), 'rounds', '1')
+    mkdirSync(join(round1, 'security-work'), { recursive: true })
+    mkdirSync(join(round1, 'reviewer-work'), { recursive: true })
+    const entries = protectedPathsForTurn({
+      runtimeDir: dir,
+      task: 1,
+      round: 1,
+      role: 'security',
+      vinayaConfigPath: join(dir, 'vinaya.config.json')
+    })
+    const paths = entries.map((e) => e.path)
+    expect(paths).not.toContain(join(round1, 'security-work'))
+    // `code-reviewer` is `security`'s concurrent sibling this round — also excluded.
+    expect(paths).not.toContain(join(round1, 'reviewer-work'))
+  })
+})
+
+describe('findCredentialPatterns — O2 recognizes a shape, never reports the value', () => {
+  it('recognizes a GitHub personal access token without ever returning the matched text', () => {
+    const secret = `ghp_${'a'.repeat(36)}`
+    const findings = findCredentialPatterns(`token=${secret}`, 'test-location')
+    expect(findings).toEqual([{ pattern: 'GitHub token', location: 'test-location' }])
+    expect(JSON.stringify(findings)).not.toContain(secret)
+  })
+
+  it('recognizes an AWS access key ID', () => {
+    const findings = findCredentialPatterns('AKIA1234567890ABCDEF', 'loc')
+    expect(findings.map((f) => f.pattern)).toContain('AWS access key ID')
+  })
+
+  it('recognizes an Anthropic API key', () => {
+    const findings = findCredentialPatterns(`sk-ant-${'x'.repeat(30)}`, 'loc')
+    expect(findings.map((f) => f.pattern)).toContain('Anthropic API key')
+  })
+
+  it('recognizes a PEM private key block', () => {
+    const findings = findCredentialPatterns(
+      '-----BEGIN RSA PRIVATE KEY-----\nMII...\n-----END RSA PRIVATE KEY-----',
+      'loc'
+    )
+    expect(findings.map((f) => f.pattern)).toContain('PEM private key block')
+  })
+
+  it('recognizes a three-part JSON Web Token', () => {
+    // Built from three separate base64url segments at runtime — a literal
+    // three-part token in source is exactly what a secret scanner (and
+    // this pattern itself) is shaped to flag on sight, real credential or
+    // not, so none ever sits in this file as one contiguous string.
+    const header = Buffer.from(JSON.stringify({ alg: 'HS256' })).toString('base64url')
+    const payload = Buffer.from(JSON.stringify({ sub: '1234567890' })).toString('base64url')
+    const signature = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
+    const jwt = [header, payload, signature].join('.')
+    const findings = findCredentialPatterns(jwt, 'loc')
+    expect(findings.map((f) => f.pattern)).toContain('JSON Web Token')
+  })
+
+  it('reports nothing for ordinary prose that merely talks ABOUT credentials', () => {
+    const text =
+      'The access_token field holds the OAuth session; CODEX_ACCESS_TOKEN is the bootstrap value for codex login.'
+    expect(findCredentialPatterns(text, 'loc')).toEqual([])
+  })
+
+  it('reports nothing for a short, generic-looking token that does not match any recognized vendor shape', () => {
+    expect(findCredentialPatterns('sk-short', 'loc')).toEqual([])
+  })
+
+  it('RECOGNIZED_CREDENTIAL_PATTERNS names no pattern keyed on a field name alone', () => {
+    for (const { pattern } of RECOGNIZED_CREDENTIAL_PATTERNS) {
+      expect(pattern.source).not.toMatch(/password|secret|access_token/i)
+    }
+  })
+})
