@@ -2503,7 +2503,8 @@ function otherRolesProtectedPaths(input: {
         if (roundEntryBelongsToRole(name, input.role)) continue
         if (concurrentSibling !== null && roundNum === input.round && roundEntryBelongsToRole(name, concurrentSibling))
           continue
-        entries.push({ path: join(roundDir, name), kind: 'dir' })
+        const path = join(roundDir, name)
+        entries.push({ path, kind: entryKind(path) })
       }
     }
   }
