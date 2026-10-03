@@ -40,6 +40,8 @@ import {
   parseClaudeModel,
   parseClaudeResumeId,
   parseClaudeUsage,
+  readClaudeTranscriptUsage,
+  resolveClaudeUsageUnits,
   parseGeminiModel,
   parseGeminiUsage,
   renderClaudeEvent,
@@ -907,6 +909,194 @@ describe('dispatchRole — timeout ceiling', () => {
     expect(usageEvent?.unknown_reason).toBeNull()
     expect(lines.find((l) => l.kind === 'role_attempt')).toMatchObject({ outcome: 'timed_out' })
   }, 10_000)
+})
+
+// A Claude dispatch whose stream ends without a usage line records the usage
+// its session transcript holds instead, and records unknown only with a reason.
+const SESSION_ID = 'a1b2c3d4-0000-4000-8000-000000000001'
+
+function transcriptLine(id: string, input: number, output: number, cacheCreate: number, cacheRead: number): string {
+  return JSON.stringify({
+    type: 'assistant',
+    message: {
+      id,
+      model: 'claude-opus-x',
+      usage: {
+        input_tokens: input,
+        output_tokens: output,
+        cache_creation_input_tokens: cacheCreate,
+        cache_read_input_tokens: cacheRead
+      }
+    }
+  })
+}
+
+function plantTranscript(configDir: string, sessionId: string, lines: string[]): string {
+  const dir = join(configDir, 'projects', '-some-project')
+  mkdirSync(dir, { recursive: true })
+  const file = join(dir, `${sessionId}.jsonl`)
+  writeFileSync(file, `${lines.join('\n')}\n`)
+  return file
+}
+
+describe('readClaudeTranscriptUsage', () => {
+  it('sums input, output and cache once per unique message', () => {
+    const configDir = tempDir('vinaya-transcript-cfg-')
+    plantTranscript(configDir, SESSION_ID, [
+      transcriptLine('m1', 10, 5, 100, 200),
+      transcriptLine('m1', 10, 5, 100, 200),
+      transcriptLine('m2', 1, 2, 3, 4)
+    ])
+    expect(readClaudeTranscriptUsage(SESSION_ID, configDir)).toEqual({
+      units: { input: 11, output: 7, cache: 307 },
+      unknownReason: null
+    })
+  })
+
+  it('is unknown with a reason, never zero, when there is no session id, no file, or no message', () => {
+    const configDir = tempDir('vinaya-transcript-cfg-')
+    const noId = readClaudeTranscriptUsage(null, configDir)
+    expect(noId.units).toEqual({ input: null, output: null, cache: null })
+    expect(noId.unknownReason).toContain('session identifier')
+    const missing = readClaudeTranscriptUsage(SESSION_ID, configDir)
+    expect(missing.units).toEqual({ input: null, output: null, cache: null })
+    expect(missing.unknownReason).toContain('session transcript')
+    plantTranscript(configDir, SESSION_ID, ['not json', JSON.stringify({ type: 'user' })])
+    const empty = readClaudeTranscriptUsage(SESSION_ID, configDir)
+    expect(empty.units).toEqual({ input: null, output: null, cache: null })
+    expect(empty.unknownReason).toContain('no assistant message')
+  })
+
+  it('refuses an identifier that would escape the transcript directory', () => {
+    const configDir = tempDir('vinaya-transcript-cfg-')
+    const outside = join(configDir, 'secret')
+    writeFileSync(`${outside}.jsonl`, `${transcriptLine('m1', 9, 9, 9, 9)}\n`)
+    mkdirSync(join(configDir, 'projects', 'p'), { recursive: true })
+    const r = readClaudeTranscriptUsage('../../secret', configDir)
+    expect(r.units).toEqual({ input: null, output: null, cache: null })
+    expect(r.unknownReason).not.toBeNull()
+  })
+})
+
+describe('resolveClaudeUsageUnits', () => {
+  const streamKnown = { units: { input: 1, output: 2, cache: 3 }, unknownReason: null }
+  const streamUnknown = {
+    units: { input: null, output: null, cache: null },
+    unknownReason: 'claude emitted no stream-json line'
+  }
+
+  it('keeps the stream figures and never reads the transcript when the stream carried usage', () => {
+    const configDir = tempDir('vinaya-transcript-cfg-')
+    plantTranscript(configDir, SESSION_ID, [transcriptLine('m1', 999, 999, 999, 999)])
+    expect(resolveClaudeUsageUnits(streamKnown, SESSION_ID, configDir)).toEqual({
+      observation: streamKnown,
+      source: 'stream'
+    })
+  })
+
+  it('uses the transcript alone, labelled as its source, when the stream had none', () => {
+    const configDir = tempDir('vinaya-transcript-cfg-')
+    plantTranscript(configDir, SESSION_ID, [transcriptLine('m1', 10, 5, 1, 2)])
+    expect(resolveClaudeUsageUnits(streamUnknown, SESSION_ID, configDir)).toEqual({
+      observation: { units: { input: 10, output: 5, cache: 3 }, unknownReason: null },
+      source: 'claude-transcript'
+    })
+  })
+
+  it('names both sources in the reason when neither yields usage', () => {
+    const configDir = tempDir('vinaya-transcript-cfg-')
+    const r = resolveClaudeUsageUnits(streamUnknown, SESSION_ID, configDir)
+    expect(r.source).toBe('stream')
+    expect(r.observation.units).toEqual({ input: null, output: null, cache: null })
+    expect(r.observation.unknownReason).toContain('claude emitted no stream-json line')
+    expect(r.observation.unknownReason).toContain('session transcript')
+  })
+})
+
+describe('dispatchRole — transcript usage fallback', () => {
+  const initLine = JSON.stringify({ type: 'system', subtype: 'init', session_id: SESSION_ID })
+
+  it('a clean exit with no usage line records the transcript totals as the claude-transcript source', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    plantTranscript(join(home, '.claude'), SESSION_ID, [
+      transcriptLine('m1', 100, 20, 30, 40),
+      transcriptLine('m1', 100, 20, 30, 40),
+      transcriptLine('m2', 1, 2, 3, 4)
+    ])
+    writeFakeBinary(binDir, 'claude', `#!/bin/sh\ncat > /dev/null\necho '${initLine}'\nexit 0\n`)
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+    const usageEvents = (outboxLines(home, 'none') as Array<Record<string, unknown>>).filter((l) => l.kind === 'usage')
+    expect(usageEvents).toHaveLength(1)
+    expect(usageEvents[0]).toMatchObject({
+      source: 'claude-transcript',
+      semantics: 'cumulative',
+      units: { input: 101, output: 22, cache: 77 },
+      unknown_reason: null
+    })
+  }, 20_000)
+
+  it('a killed dispatch still records the usage its transcript holds so far', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    plantTranscript(join(home, '.claude'), SESSION_ID, [transcriptLine('m1', 7, 8, 9, 10)])
+    writeFakeBinary(binDir, 'claude', `#!/bin/sh\necho '${initLine}'\ntrap '' TERM\ncat > /dev/null &\nsleep 30\n`)
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ dispatch: { timeoutMs: 2500, killGraceMs: 200 } }))
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(1)
+    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
+    expect(lines.find((l) => l.event === 'dispatch_failed')).toMatchObject({ reason: 'timeout' })
+    expect(lines.find((l) => l.kind === 'usage')).toMatchObject({
+      source: 'claude-transcript',
+      units: { input: 7, output: 8, cache: 19 },
+      unknown_reason: null
+    })
+  }, 20_000)
+
+  it('with neither a stream usage line nor a transcript the units are unknown and the reason names both', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    writeFakeBinary(binDir, 'claude', `#!/bin/sh\ncat > /dev/null\necho '${initLine}'\nexit 0\n`)
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+    const usage = (outboxLines(home, 'none') as Array<Record<string, unknown>>).find((l) => l.kind === 'usage') as {
+      source: string
+      units: Record<string, unknown>
+      unknown_reason: string
+    }
+    expect(usage.source).toBe('claude')
+    expect(usage.units).toEqual({ input: null, output: null, cache: null })
+    expect(usage.unknown_reason).toContain('claude emitted no stream-json line')
+    expect(usage.unknown_reason).toContain('session transcript')
+  }, 20_000)
 })
 
 // O4 — the Vinaya log's `usage` event is the record of a turn's token use now
