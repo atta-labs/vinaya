@@ -47,8 +47,17 @@ import { existsSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
-import { loadTrustAnchorConfig, resolveSecurityScanCommand } from './config.js'
-import { agentOwnConfigSubpaths, WORKER_ENV_ALLOWLIST_KEYS } from './worker-boundary.js'
+import { configPath, loadTrustAnchorConfig, resolveSecurityScanCommand } from './config.js'
+import {
+  agentOwnConfigSubpaths,
+  changedProtectedPaths,
+  findCredentialPatterns,
+  protectedPathsForTurn,
+  snapshotProtectedPaths,
+  WORKER_ENV_ALLOWLIST_KEYS,
+  type CredentialFinding,
+  type ProtectedPathEntry
+} from './worker-boundary.js'
 import {
   activeBudgetMs,
   assessRound,
@@ -79,6 +88,7 @@ import {
   type ReconstructedJournal,
   type ReviewInputManifest,
   type ReviewPolicy,
+  type Role,
   type RoundHeadIdentity,
   type RoundStats,
   type TaskClock,
@@ -641,6 +651,8 @@ export type LoopDeps = {
   readWorktreeBranch: (worktreePath: string) => string | null
   /** O7: every path the worktree changed since `base` (committed AND uncommitted — `git diff --name-only <base>`), for the Surface check. Best-effort: `[]` when unreadable. */
   gitWorktreeChangedPaths: (worktreePath: string, base: string) => string[]
+  /** O1/O2: the worktree's own diff text since `base`, for the after-turn credential scan. `null` when unreadable. */
+  gitWorktreeDiffText: (worktreePath: string, base: string) => string | null
   /**
    * O2: stages every change in the worktree and makes ONE commit under
    * `header`, returning the new HEAD sha. The commit runs the repository's
@@ -995,6 +1007,19 @@ function defaultGitWorktreeChangedPaths(worktreePath: string, base: string): str
       .filter((l) => l.length > 0)
   } catch {
     return []
+  }
+}
+
+/** O1/O2: the worktree's own uncommitted-and-committed diff text since `base` (`git diff --unified=0 <base>`, run inside the worktree so a linked worktree's own working-tree state is what is compared, never the main checkout's) — what the after-turn credential scan reads. `null` on any failure, so the scan simply has nothing to read rather than treating an unreadable diff as clean. */
+function defaultGitWorktreeDiffText(worktreePath: string, base: string): string | null {
+  try {
+    return execFileSync('git', ['-C', worktreePath, 'diff', '--unified=0', base], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 64 * 1024 * 1024
+    })
+  } catch {
+    return null
   }
 }
 
@@ -1412,6 +1437,7 @@ function defaultDeps(): LoopDeps {
     readUnpushedWorkDetail: defaultReadUnpushedWorkDetail,
     readWorktreeBranch: defaultReadWorktreeBranch,
     gitWorktreeChangedPaths: defaultGitWorktreeChangedPaths,
+    gitWorktreeDiffText: defaultGitWorktreeDiffText,
     commitWorktree: defaultCommitWorktree,
     pushTaskBranch: defaultPushTaskBranch,
     openTaskPullRequest: defaultOpenTaskPullRequest,
@@ -2529,6 +2555,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * so a reader sees why the push never landed. Cleared on a landed push.
      */
     let lastPushRefusal: string | null = null
+    /**
+     * O1/O2: the protected-path hashes taken right before the current
+     * Developer dispatch (`snapshotTurnConfinement`, below) — compared again
+     * once the dispatch returns, before publication ever runs. `null` before
+     * the first dispatch of the loop, and whenever `protectedPathsForTurn`
+     * resolves to no entries (never treated as "unchanged" by omission; the
+     * comparison below is simply a no-op in that case).
+     */
+    let turnConfinementBefore: { entries: ProtectedPathEntry[]; before: Record<string, string | null> } | null = null
 
     /**
      * O11: the task Issue, branch, worktree path,
@@ -2570,6 +2605,115 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * `skipResumeContext: true` explicitly.
      */
     /**
+     * O1: the task's own protected-path list for THIS turn (control store,
+     * source receipts, other roles' folders, the policy configuration —
+     * `protectedPathsForTurn`'s own doc comment), hashed fresh right before a
+     * dispatch starts. `vinaya.config.json`'s own path is resolved here too
+     * (`configPath()`, repo-local or the global fallback) rather than
+     * resolved once at loop start, matching `resolveTaskSurface`'s own
+     * "never cached across a round" posture elsewhere in this file.
+     */
+    function snapshotTurnConfinement(role: Role, roundNum: number): void {
+      const vinayaConfigPath = configPath()
+      if (vinayaConfigPath === null) {
+        turnConfinementBefore = null
+        return
+      }
+      const entries = protectedPathsForTurn({ runtimeDir: root, task, round: roundNum, role, vinayaConfigPath })
+      turnConfinementBefore = { entries, before: snapshotProtectedPaths(entries) }
+    }
+
+    /**
+     * O1/O2: compares the live filesystem against `snapshotTurnConfinement`'s
+     * own snapshot, taken right before this same dispatch started, and scans
+     * `scanTexts` (the turn's own raw output, and — for a Developer turn only
+     * — its worktree diff) for a recognized credential shape. Returns the
+     * empty-violations shape when nothing to compare was ever snapshotted
+     * (`configPath()` resolved to nothing) — a missing config is a separate,
+     * pre-existing failure mode every other reader of it already reports,
+     * never a reason to treat this check as silently passed OR to refuse a
+     * turn for a problem this check does not itself diagnose.
+     */
+    function checkTurnConfinement(scanTexts: readonly { text: string; location: string }[]): {
+      changedPaths: string[]
+      credentialFindings: CredentialFinding[]
+    } {
+      const changedPaths = turnConfinementBefore
+        ? changedProtectedPaths(turnConfinementBefore.entries, turnConfinementBefore.before)
+        : []
+      const credentialFindings = scanTexts.flatMap(({ text, location }) => findCredentialPatterns(text, location))
+      return { changedPaths, credentialFindings }
+    }
+
+    /** O1/O2: one human-readable refusal line naming every changed path and every credential pattern's own name/location — never the credential's own matched value. */
+    function describeTurnConfinementViolation(result: {
+      changedPaths: string[]
+      credentialFindings: CredentialFinding[]
+    }): string {
+      const parts: string[] = []
+      if (result.changedPaths.length > 0) {
+        parts.push(`protected path(s) changed during this turn: ${result.changedPaths.join(', ')}`)
+      }
+      if (result.credentialFindings.length > 0) {
+        parts.push(
+          `a recognized credential pattern appeared in ${result.credentialFindings
+            .map((f) => `${f.location} (${f.pattern})`)
+            .join(', ')} — the value itself is never reported, only where it was found`
+        )
+      }
+      return parts.join('; ')
+    }
+
+    /** O2: a dispatch's own raw vendor output (the dispatch tee, `output/<effectId>.log`) as a scan-text entry, when `handle.effectId` resolves to one that is actually readable — `null` otherwise, never faked. Shared by the Developer and Reviewer scan-text builders below. */
+    function rawOutputScanText(handle: DispatchHandle): { text: string; location: string } | null {
+      if (!handle.effectId) return null
+      const teePath = runPath(root, task, { area: 'output', file: `${handle.effectId}.log` })
+      const raw = readIfExists(teePath)
+      return raw ? { text: raw, location: `the turn's own raw output (${teePath})` } : null
+    }
+
+    /** O2: the texts a Developer turn's after-dispatch credential scan reads — the turn's own raw vendor output, and the worktree's own diff since this turn started (`turnPreHead`, captured by `dispatchDeveloperOnce`). Either half is simply omitted, never faked, when it cannot be read. */
+    function developerScanTexts(handle: DispatchHandle): { text: string; location: string }[] {
+      const texts: { text: string; location: string }[] = []
+      const output = rawOutputScanText(handle)
+      if (output) texts.push(output)
+      const worktree = worktreePathForBranch()
+      if (turnPreHead !== null && existsSync(worktree)) {
+        const diff = d.gitWorktreeDiffText(worktree, turnPreHead)
+        if (diff) texts.push({ text: diff, location: "the worktree's own diff since this turn started" })
+      }
+      return texts
+    }
+
+    /** O2: a Reviewer/security turn never writes into a worktree of its own (its three hand-off files sit outside it) — the after-dispatch scan reads only its own raw vendor output. */
+    function reviewerScanTexts(handle: DispatchHandle): { text: string; location: string }[] {
+      const output = rawOutputScanText(handle)
+      return output ? [output] : []
+    }
+
+    /**
+     * O1/O2: thrown when a Reviewer/security turn's own after-dispatch
+     * confinement check (`checkTurnConfinement`) finds a changed protected
+     * path or a recognized credential pattern — caught by the SAME generic
+     * handler `ReviewerInfrastructureFailure`/`ReviewerReportParseFailure`
+     * already are (`role`/`attemptEffectId`/`attemptDurationMs` match their
+     * shape on purpose), which already knows how to record a failed attempt
+     * and pause the round. This round's verdict is never trusted when this
+     * is thrown — it is thrown before `missingReviewerArtifacts`/
+     * `buildVerdictFromReport` ever run.
+     */
+    class ReviewerConfinementViolation extends Error {
+      constructor(
+        public readonly role: 'reviewer' | 'security',
+        violation: string,
+        public readonly attemptEffectId: string | null = null,
+        public readonly attemptDurationMs: number | null = null
+      ) {
+        super(`${role}'s turn failed the after-turn confinement check: ${violation}`)
+      }
+    }
+
+    /**
      * O1: one Developer dispatch — the frozen brief/resume prompt, its
      * connection-failure retries and its dispatch-or-escalate assertion. Every
      * publication the turn then needs (commit, push, pull-request open) runs
@@ -2599,6 +2743,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // fresh round-1 turn whose worktree the Developer's own Step 0 is still
       // creating records `null`, and the head check is then inactive.
       turnPreHead = devWorktreeDir ? d.readWorktreeHead(devWorktreeDir) : null
+      // O1/O2: the protected-path snapshot this turn's after-dispatch check
+      // (`dispatchDeveloper`, below) compares against — taken here, right
+      // before the dispatch, never from a cached copy (Traps to avoid).
+      snapshotTurnConfinement('developer', roundNum)
       // O1/O3: this round's own confidence
       // and/or round-response files, when this prompt named any — the
       // parent directory must exist before dispatch, both so a confined
@@ -2727,6 +2875,24 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // A dispatch whose own turn failed, or one that only answers a
         // confidence question (O1), publishes nothing.
         if (opts.skipPublish || handle.failureReason) return handle
+        // O1/O2: refuse BEFORE any commit or credential use — the same
+        // "before any commit or credential use" discipline
+        // `checkPublicationPreconditions` already applies, below, to the
+        // branch/head/Surface checks. A violation is a reask, bounded the
+        // same way a bad commit header already is; it never reaches
+        // `publishDeveloperTurn`, so nothing this turn touched is ever
+        // committed or pushed.
+        const confinement = checkTurnConfinement(developerScanTexts(handle))
+        if (confinement.changedPaths.length > 0 || confinement.credentialFindings.length > 0) {
+          if (publishReasks >= MAX_PUBLISH_REASKS) return handle
+          publishReasks += 1
+          currentPrompt = [
+            'Your previous turn was refused by the driver — the after-turn confinement check (isolation.md) found:',
+            describeTurnConfinementViolation(confinement),
+            'Fix the problem above and end your turn — leave your changes UNCOMMITTED and (re)write your commit-header and (round 1) PR-body files; the driver commits and publishes, never you.'
+          ].join('\n\n')
+          continue
+        }
         const published = await publishDeveloperTurn(roundNum)
         if (published.kind === 'published' || published.kind === 'nothing') return handle
         // O4: a refused push stays committed-but-unpushed; the existing
@@ -3440,6 +3606,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         const scratchDir = candidateDir ? buildReviewerScratch(root, task, roundNum, role, attempt, candidateDir) : null
         const candidateInputPaths = scratchDir && candidateInputsReady ? reviewerCandidateInputPaths(scratchDir) : null
         const prompt = renderReviewerDispatchPrompt(role, facts, workDir, roleDoctrine, candidateInputPaths)
+        // O1/O2: the protected-path snapshot this attempt's own after-dispatch
+        // check compares against — taken right before this dispatch, never
+        // from a cached copy (Traps to avoid).
+        snapshotTurnConfinement(dispatchRoleName, roundNum)
         const handle = await withPromptFile(prompt, (promptFile) =>
           d.dispatchRole(dispatchRoleName, dispatchAgent, prompt, {
             task: task,
@@ -3474,6 +3644,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           role === 'reviewer' ? 'the reviewer' : 'the security reviewer'
         )
         lastHandle = handle
+        // O1/O2: never trust this attempt's own hand-off files once a
+        // protected path changed or a recognized credential pattern
+        // appeared — thrown before `missingReviewerArtifacts` or
+        // `buildVerdictFromReport` ever reads them.
+        const confinement = checkTurnConfinement(reviewerScanTexts(handle))
+        if (confinement.changedPaths.length > 0 || confinement.credentialFindings.length > 0) {
+          throw new ReviewerConfinementViolation(
+            role,
+            describeTurnConfinementViolation(confinement),
+            handle.effectId ?? null,
+            handle.durationMs
+          )
+        }
         const missing = missingReviewerArtifacts(workDir, hasObjectives)
         if (missing.length > 0) {
           lastMissing = missing
@@ -5190,7 +5373,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               )
             }
           } catch (err) {
-            if (!(err instanceof ReviewerInfrastructureFailure) && !(err instanceof ReviewerReportParseFailure))
+            if (
+              !(err instanceof ReviewerInfrastructureFailure) &&
+              !(err instanceof ReviewerReportParseFailure) &&
+              !(err instanceof ReviewerConfinementViolation)
+            )
               throw err
             // An invalid report is a failure
             // observation, never something a reader could mistake for a
