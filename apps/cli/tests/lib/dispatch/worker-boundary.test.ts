@@ -16,6 +16,7 @@ import { chmodSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runPath } from '../../../src/lib/run-paths'
+import { addCodexWritableDirs } from '../../../src/lib/dispatch'
 import {
   buildWorkerEnv,
   buildWorkerSandboxProfile,
@@ -38,10 +39,15 @@ import {
   LINUX_CLAUDE_SANDBOX_TOOLS,
   gitConfigReadOnlyPaths,
   resolveGitFirstPath,
+  resolveGitCommonDir,
   agentOwnConfigSubpaths,
   agentConfigProtectedSubpaths,
   CLAUDE_OWN_CONFIG_SUBPATHS,
   CODEX_OWN_CONFIG_SUBPATHS,
+  buildCodexSandboxConfigToml,
+  resolveCodexConfinement,
+  checkLinuxCodexSandboxTools,
+  LINUX_CODEX_SANDBOX_TOOLS,
   type WorkerBoundaryDeps,
   type LinuxSandboxToolDeps,
   type ConfinementRequest
@@ -2875,6 +2881,61 @@ describe('stageCodexPolicyHome — Issue #884 round 2 (F1): the floor rides a no
     expect(second).not.toBeNull()
     expect(readFileSync(join(targetDir, 'rules', CODEX_POLICY_RULES_FILE), 'utf8')).toBe(RULES)
   })
+
+  describe('O1–O3, O7 (task 4): sandboxConfigToml given — copy, never symlink, auth.json/config.toml', () => {
+    const SANDBOX_TOML = 'sandbox_mode = "workspace-write"\n'
+
+    it('copies auth.json as a real file, never a symlink, and its content matches the operator real file', () => {
+      const realHome = operatorHome('vinaya-codex-sandbox-op-')
+      const targetDir = join(tempDir('vinaya-codex-sandbox-target-'), 'codex-home')
+
+      const result = stageCodexPolicyHome({
+        targetDir,
+        realHome,
+        execpolicyRules: RULES,
+        sandboxConfigToml: SANDBOX_TOML
+      })
+      expect(result).not.toBeNull()
+      expect(lstatSync(join(targetDir, 'auth.json')).isSymbolicLink()).toBe(false)
+      expect(readFileSync(join(targetDir, 'auth.json'), 'utf8')).toContain('operator-token')
+      // O7: never the operator's own real path — a real file has no link target to read.
+      expect(() => readlinkSync(join(targetDir, 'auth.json'))).toThrow()
+    })
+
+    it("writes this run's OWN config.toml as a real file, never a symlink to — or the content of — the operator's real one", () => {
+      const realHome = operatorHome('vinaya-codex-sandbox-op-cfg-')
+      const targetDir = join(tempDir('vinaya-codex-sandbox-target-cfg-'), 'codex-home')
+
+      const result = stageCodexPolicyHome({
+        targetDir,
+        realHome,
+        execpolicyRules: RULES,
+        sandboxConfigToml: SANDBOX_TOML
+      })
+      expect(result).not.toBeNull()
+      expect(lstatSync(join(targetDir, 'config.toml')).isSymbolicLink()).toBe(false)
+      expect(readFileSync(join(targetDir, 'config.toml'), 'utf8')).toBe(SANDBOX_TOML)
+    })
+
+    it('still symlinks every OTHER operator ~/.codex entry through, unaffected by the auth.json/config.toml exclusion', () => {
+      const realHome = operatorHome('vinaya-codex-sandbox-op-other-', { extraRule: true })
+      const targetDir = join(tempDir('vinaya-codex-sandbox-target-other-'), 'codex-home')
+
+      stageCodexPolicyHome({ targetDir, realHome, execpolicyRules: RULES, sandboxConfigToml: SANDBOX_TOML })
+      expect(lstatSync(join(targetDir, 'rules')).isSymbolicLink()).toBe(false)
+      expect(lstatSync(join(targetDir, 'rules', 'operator.rules')).isSymbolicLink()).toBe(true)
+    })
+
+    it('omitted (every pre-O1 caller): both files are symlinked through exactly as before, byte for byte', () => {
+      const realHome = operatorHome('vinaya-codex-sandbox-omitted-')
+      const targetDir = join(tempDir('vinaya-codex-sandbox-omitted-target-'), 'codex-home')
+
+      const result = stageCodexPolicyHome({ targetDir, realHome, execpolicyRules: RULES })
+      expect(result).not.toBeNull()
+      expect(lstatSync(join(targetDir, 'auth.json')).isSymbolicLink()).toBe(true)
+      expect(lstatSync(join(targetDir, 'config.toml')).isSymbolicLink()).toBe(true)
+    })
+  })
 })
 
 // --- O1/O2/O5: the provider-neutral confinement interface -------------------
@@ -3108,6 +3169,165 @@ describe('resolveClaudeConfinement — O1/O2/O5 the Claude half of the provider-
     })
     expect(result.confined).toBe(true)
     if (result.confined) expect(result.scratchDir).toBe(req.scratchDir)
+  })
+})
+
+describe('buildCodexSandboxConfigToml — O1/O2/O5 the generated config.toml', () => {
+  function request(overrides: Partial<ConfinementRequest> = {}): ConfinementRequest {
+    return {
+      role: 'developer',
+      agent: 'codex',
+      worktreeDir: tempDir('vinaya-codex-settings-wt-'),
+      scratchDir: tempDir('vinaya-codex-settings-scratch-'),
+      allowedHosts: [...CLAUDE_SANDBOX_ALLOWED_DOMAINS],
+      ...overrides
+    }
+  }
+
+  it('sets sandbox_mode to workspace-write and sandbox_workspace_write.network_access to true', () => {
+    const toml = buildCodexSandboxConfigToml(request())
+    expect(toml).toContain('sandbox_mode = "workspace-write"')
+    expect(toml).toContain('[sandbox_workspace_write]')
+    expect(toml).toContain('network_access = true')
+  })
+
+  it('enables the network_proxy feature and names every allowed host under features.network_proxy.domains as "allow"', () => {
+    const toml = buildCodexSandboxConfigToml(request({ allowedHosts: ['github.com', 'registry.npmjs.org'] }))
+    expect(toml).toContain('[features.network_proxy]')
+    expect(toml).toContain('enabled = true')
+    expect(toml).toContain('[features.network_proxy.domains]')
+    expect(toml).toContain('"github.com" = "allow"')
+    expect(toml).toContain('"registry.npmjs.org" = "allow"')
+    // O5: a domain list limits WHERE traffic goes, never WHAT is sent to an
+    // already-allowed host — this function never writes a "deny" entry,
+    // since nothing dispatched here needs one named to stay refused by
+    // default (an absent entry already refuses).
+    expect(toml).not.toContain('"deny"')
+  })
+
+  it('never names sandbox_workspace_write.writable_roots — the task worktree is the implicit primary workspace, and the scratch/extra dirs travel through addCodexWritableDirs instead', () => {
+    const toml = buildCodexSandboxConfigToml(request())
+    expect(toml).not.toContain('writable_roots')
+  })
+
+  it('escapes a double quote or backslash in a substituted host for the TOML string-literal syntax', () => {
+    const toml = buildCodexSandboxConfigToml(request({ allowedHosts: ['exa"mple.com', 'back\\slash.com'] }))
+    expect(toml).toContain('"exa\\"mple.com" = "allow"')
+    expect(toml).toContain('"back\\\\slash.com" = "allow"')
+  })
+})
+
+describe('resolveGitCommonDir — round 3 Principal ruling: the ONE resolver both Claude and Codex grant, replacing codexGitMetadataWritableDirs', () => {
+  it('resolves the real git common dir from inside an already-created linked worktree, whose own .git is a gitlink file', () => {
+    const { worktreeDir, gitCommonDir } = initRealGitWorktree()
+    expect(resolveGitCommonDir(worktreeDir)).toBe(gitCommonDir)
+  })
+
+  it('resolves the SAME common dir from the main checkout itself, not only from a linked worktree', () => {
+    const { repoDir, gitCommonDir } = initRealGitWorktree()
+    expect(resolveGitCommonDir(repoDir)).toBe(gitCommonDir)
+  })
+
+  it('returns null when the directory is not inside a git repository at all — boundary construction, not this helper, is the fail-closed response', () => {
+    const notARepo = tempDir('vinaya-codex-not-a-repo-')
+    expect(resolveGitCommonDir(notARepo)).toBeNull()
+  })
+
+  it("addCodexWritableDirs threads the resolved common dir into Codex's own --add-dir writable roots, never scoped to just refs/logs/worktrees", () => {
+    const { worktreeDir, gitCommonDir } = initRealGitWorktree()
+    const commonDir = resolveGitCommonDir(worktreeDir)
+    expect(commonDir).not.toBeNull()
+    const args = addCodexWritableDirs(['exec'], [commonDir as string], false)
+    expect(args).toEqual(['exec', '--add-dir', gitCommonDir])
+  })
+})
+
+describe('checkLinuxCodexSandboxTools — O4 detection (fakes, never a real install check)', () => {
+  function deps(present: readonly string[]): LinuxSandboxToolDeps {
+    return { commandExists: (bin) => present.includes(bin) }
+  }
+
+  it('reports available when bwrap resolves', () => {
+    const result = checkLinuxCodexSandboxTools(deps([...LINUX_CODEX_SANDBOX_TOOLS]))
+    expect(result).toEqual({ available: true, missing: [] })
+  })
+
+  it('names bwrap as missing when absent — never socat, which Codex own network proxy does not need', () => {
+    const result = checkLinuxCodexSandboxTools(deps([]))
+    expect(result.available).toBe(false)
+    expect(result.missing).toEqual(['bwrap'])
+  })
+
+  it("socat presence alone does not satisfy this check — it is Claude's own egress-bridge tool, not Codex's", () => {
+    const result = checkLinuxCodexSandboxTools(deps(['socat']))
+    expect(result.available).toBe(false)
+    expect(result.missing).toEqual(['bwrap'])
+  })
+})
+
+describe('resolveCodexConfinement — O1/O2/O4/O5 the Codex half of the provider-neutral interface', () => {
+  function request(): ConfinementRequest {
+    return {
+      role: 'developer',
+      agent: 'codex',
+      worktreeDir: tempDir('vinaya-codex-confinement-wt-'),
+      scratchDir: tempDir('vinaya-codex-confinement-scratch-'),
+      allowedHosts: [...CLAUDE_SANDBOX_ALLOWED_DOMAINS]
+    }
+  }
+
+  it('is always available on darwin — needs nothing installed', () => {
+    const result = resolveCodexConfinement(request(), {
+      platform: 'darwin',
+      linuxTools: { available: false, missing: ['bwrap'] },
+      developerDir: null
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.configToml).toContain('sandbox_mode = "workspace-write"')
+  })
+
+  it('is available on linux when bwrap is present', () => {
+    const result = resolveCodexConfinement(request(), {
+      platform: 'linux',
+      linuxTools: { available: true, missing: [] },
+      developerDir: null
+    })
+    expect(result.ok).toBe(true)
+  })
+
+  it('O4: refuses — never a silent unconfined fallback — on linux without bwrap, naming the missing capability', () => {
+    const result = resolveCodexConfinement(request(), {
+      platform: 'linux',
+      linuxTools: { available: false, missing: ['bwrap'] },
+      developerDir: null
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toContain('bwrap')
+      expect(result.reason.toLowerCase()).not.toContain('install this for you')
+    }
+  })
+
+  it('O4: refuses, naming the platform, on a platform with no named mechanism', () => {
+    const result = resolveCodexConfinement(request(), {
+      platform: 'win32',
+      linuxTools: { available: false, missing: ['bwrap'] },
+      developerDir: null
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toContain('win32')
+  })
+
+  it('a resolved launch carries the SAME allowed hosts the request named, mapped to "allow"', () => {
+    const result = resolveCodexConfinement(request(), {
+      platform: 'darwin',
+      linuxTools: { available: true, missing: [] },
+      developerDir: null
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      for (const host of CLAUDE_SANDBOX_ALLOWED_DOMAINS) expect(result.configToml).toContain(`"${host}" = "allow"`)
+    }
   })
 })
 
