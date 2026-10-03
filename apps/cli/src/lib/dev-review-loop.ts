@@ -4247,13 +4247,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             }
           }
         } else {
-          let branchExists = true
+          let branchHead: string | null = null
           try {
-            d.resolveHead(branch)
+            branchHead = d.resolveHead(branch)
           } catch {
-            branchExists = false
+            branchHead = null
           }
-          if (branchExists) {
+          // A task branch created at origin/main before the first Developer
+          // turn is only an address reservation: it contains no task work to
+          // recover. Treat that commit-free ref exactly like an absent branch
+          // so round 1 still receives the frozen brief. Recovery begins only
+          // once the task branch has moved beyond the default-branch head.
+          const branchHasTaskCommits = branchHead !== null && branchHead !== d.gitRevParseOriginMain()
+          if (branchHasTaskCommits) {
             // Crash-recovery re-entry: the branch already exists (pushed by a
             // prior process), no dispatch here. O8: first finish any
             // publication a crash interrupted — push a recorded-but-unpushed
@@ -4277,8 +4283,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             prNumber = await afterDeveloperTurnBeforePrPoll(true)
             announcePr()
           } else {
-            // O1: the branch exists neither as an open PR (checked above) nor
-            // on the remote (`resolveHead` just threw) — create the task's own
+            // O1/O7: the branch either does not exist on the remote or is the
+            // commit-free address reservation at origin/main — create/reuse the task's own
             // worktree now, outside any sandbox, and push it to the remote FROM
             // that worktree, BEFORE the first Developer turn below. This is
             // what makes `devWorktreeDir` (below) non-null from round 1 on, so

@@ -493,6 +493,20 @@ describe('devReviewLoop — round 1 entry attaches to an open PR, resuming the r
 // --- O4: a remote branch with no open PR resumes once to open it -----------
 
 describe('devReviewLoop — a remote branch with no open PR resumes the recorded session once to open it (O4)', () => {
+  it('dispatches the frozen brief fresh when the remote branch is still the commit-free default-branch ref', async () => {
+    const world = makeWorld({ remoteBranchExists: true, head: 'b'.repeat(40) })
+    const { deps, prompts, resumeIds } = withCapturedDeveloperDispatch(world)
+
+    const result = await runLoopInProcessSafe(world, deps)
+
+    expect(result.finalDecision.type).toBe('publish')
+    expect(prompts).toHaveLength(1)
+    expect(resumeIds).toEqual([undefined])
+    expect(prompts[0]).toContain(world.frozenBrief)
+    expect(prompts[0]).not.toMatch(/pushed but has no open pull request/)
+    expect(world.remoteBranchCreations).toEqual([world.branch])
+  })
+
   it('never starts a fresh developer — resumes the pre-recorded session with the pr-create instruction, then waits for the PR', async () => {
     const world = makeWorld({ developerPushed: true })
     const { deps, prompts, resumeIds } = controlledDeveloperDeps(world, { openPrAfterCall: 1 })

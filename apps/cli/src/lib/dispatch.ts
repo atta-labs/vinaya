@@ -4137,6 +4137,10 @@ export async function dispatchRole(
       VINAYA_ROLE: role,
       VINAYA_TASK: opts.task !== undefined ? String(opts.task) : undefined,
       VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined,
+      // GitHub CLI telemetry goes to a host deliberately outside the confined
+      // worker allowlist. Disable it for every child so governed `gh` effects
+      // do not fail after their intended forge request has completed.
+      GH_TELEMETRY: '0',
       // This process — the one that launched this role, and so the role's own
       // driver: the `vinaya task run` / `dev-review-loop` process whose own
       // loop-log header already names this same `process.pid` (`loop-log.ts`'s
