@@ -1,0 +1,9 @@
+---
+'@attalabs/vinaya': patch
+---
+
+An unattended Codex dispatch is no longer wrapped in a hand-built Seatbelt profile either — it now runs inside Codex's own documented `workspace-write` sandbox and network proxy, configured through a config.toml this task stages into Codex's own per-task home, so a fresh dispatch and a resumed one (which accepts no `--sandbox` flag at all) read the identical policy.
+
+`worker-boundary.ts` gains the Codex half of the provider-neutral confinement interface (`resolveCodexConfinement`/`buildCodexSandboxConfigToml`), returning `sandbox_mode = "workspace-write"`, `sandbox_workspace_write.network_access = true`, and `features.network_proxy` enabled with a `domains` map naming GitHub and the npm registry as `"allow"` — a host with no entry is refused by the proxy, never allowed by default. Unlike Claude, an unattended Codex dispatch whose sandbox or network proxy is unavailable (Linux without `bwrap`) REFUSES before any spawn, naming the missing capability, rather than degrading unconfined — Codex carries no per-dispatch floor outside this boundary the way Claude's settings file does. The task worktree itself needs no grant: it is the implicit, always-writable "primary workspace" under `workspace-write`, and Codex's own documentation states `.git` stays read-only there regardless. `stageCodexPolicyHome` now copies the operator's real `auth.json` into the staged home instead of symlinking it or running `codex login --with-access-token` (which the installed Codex rejects for a subscription session token) — a copy is independent of the operator's own real credential file, and is the only route that authenticates today.
+
+The hand-built Seatbelt profile (`resolveWorkerBoundaryLaunch`/`buildWorkerSandboxProfile`) is no longer applied to either vendor now, so no sandbox runs inside another — deleting that now-unreferenced code is a separate, later task.
