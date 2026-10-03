@@ -1105,6 +1105,35 @@ describe('devReviewLoop — round 1 start creates the task branch on the remote 
     expect(result.finalDecision.type).toBe('publish')
     expect(world.dispatchCountByRole.developer).toBe(1)
   })
+
+  // Round 3 Principal ruling: round-1 Codex was reported running with the
+  // repo root as its sandboxed workspace, because `createTaskWorktree` had
+  // not yet run when the Developer's `cwd` option was computed. The driver
+  // now creates the worktree, on disk, before the first Developer dispatch
+  // of every round — this fixture makes the fake `createTaskWorktree`
+  // actually create `<repoRoot>/.worktrees/<branch>` (the real
+  // `existsSync` check `dispatchDeveloperOnce` runs finds it), exactly as
+  // the real, git-backed `createTaskWorktree` does — and asserts the
+  // Developer dispatch's own `cwd` is that worktree, on a GENUINELY FRESH
+  // round 1, for Codex specifically (the agent the Reviewer's BLOCKER named).
+  it('passes the task worktree as the Developer dispatch cwd on a fresh round 1 — never the repository root (Codex)', async () => {
+    const world = makeWorld()
+    const worktreeDir = join(world.repoRoot, '.worktrees', world.branch)
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex' },
+      {
+        createTaskWorktree: (branch: string) => {
+          world.remoteBranchCreations.push(branch)
+          mkdirSync(join(world.repoRoot, '.worktrees', branch), { recursive: true })
+        }
+      }
+    )
+    expect(result.finalDecision.type).toBe('publish')
+    const developerDispatch = world.dispatches.find((d) => d.role === 'developer' && d.round === 1)
+    expect(developerDispatch?.cwd).toBe(worktreeDir)
+    expect(developerDispatch?.cwd).not.toBe(world.repoRoot)
+  })
 })
 
 describe('devReviewLoop — the developer flow still works on the loop-created branch (O3)', () => {

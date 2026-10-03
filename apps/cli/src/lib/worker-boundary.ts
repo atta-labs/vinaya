@@ -2292,9 +2292,18 @@ export type CodexConfinementResolution =
       readonly reason: string
     }
 
-/** Real platform/tool facts for Codex's own mechanism — mirrors `realConfinementPlatformDeps`, over `checkLinuxCodexSandboxTools` rather than Claude's tool list, so the two never share one (possibly stale) cached answer. */
+/**
+ * Real platform/tool facts for Codex's own mechanism — mirrors
+ * `realConfinementPlatformDeps`, over `checkLinuxCodexSandboxTools` rather
+ * than Claude's tool list, so the two never share one (possibly stale)
+ * cached answer. `developerDir` is always `null` here: `resolveCodexConfinement`
+ * never reads it (Codex's own `buildCodexSandboxConfigToml` carries no PATH
+ * override — that is `dispatch.ts`'s Claude-only `resolveGitFirstPath`
+ * concern) — the field exists only so Codex can share `ConfinementPlatformDeps`
+ * with Claude's own resolver rather than needing a second, near-identical type.
+ */
 export function realCodexConfinementPlatformDeps(): ConfinementPlatformDeps {
-  return { platform: process.platform, linuxTools: checkLinuxCodexSandboxTools() }
+  return { platform: process.platform, linuxTools: checkLinuxCodexSandboxTools(), developerDir: null }
 }
 
 /**

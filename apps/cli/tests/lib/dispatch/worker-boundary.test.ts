@@ -16,7 +16,7 @@ import { chmodSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runPath } from '../../../src/lib/run-paths'
-import { codexGitMetadataWritableDirs } from '../../../src/lib/dispatch'
+import { addCodexWritableDirs } from '../../../src/lib/dispatch'
 import {
   buildWorkerEnv,
   buildWorkerSandboxProfile,
@@ -3217,44 +3217,28 @@ describe('buildCodexSandboxConfigToml — O1/O2/O5 the generated config.toml', (
   })
 })
 
-describe('codexGitMetadataWritableDirs — Ruling 1 fix, Step 0 git worktree add inside the Codex sandbox', () => {
-  function makeGitRepo(): string {
-    const dir = tempDir('vinaya-codex-git-common-')
-    const g = (args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
-    g(['init', '-q', '-b', 'main'])
-    g(['config', 'user.email', 't@example.com'])
-    g(['config', 'user.name', 'test'])
-    writeFileSync(join(dir, 'a.txt'), 'x\n')
-    g(['add', '-A'])
-    g(['commit', '-qm', 'init'])
-    return dir
-  }
-
-  it('grants exactly the git common dir refs/logs/worktrees subdirectories, never hooks or config', () => {
-    const repo = makeGitRepo()
-    const commonDir = realpathSync(join(repo, '.git'))
-    expect(codexGitMetadataWritableDirs(repo)).toEqual([
-      join(commonDir, 'refs'),
-      join(commonDir, 'logs'),
-      join(commonDir, 'worktrees')
-    ])
+describe('resolveGitCommonDir — round 3 Principal ruling: the ONE resolver both Claude and Codex grant, replacing codexGitMetadataWritableDirs', () => {
+  it('resolves the real git common dir from inside an already-created linked worktree, whose own .git is a gitlink file', () => {
+    const { worktreeDir, gitCommonDir } = initRealGitWorktree()
+    expect(resolveGitCommonDir(worktreeDir)).toBe(gitCommonDir)
   })
 
-  it('resolves the SAME shared common dir from inside an already-created linked worktree, whose own .git is a gitlink file', () => {
-    const repo = makeGitRepo()
-    const worktreeDir = join(repo, '.worktrees', 'task', '1')
-    execFileSync('git', ['worktree', 'add', '-b', 'task/1', worktreeDir], { cwd: repo, stdio: 'ignore' })
-    const commonDir = realpathSync(join(repo, '.git'))
-    expect(codexGitMetadataWritableDirs(worktreeDir)).toEqual([
-      join(commonDir, 'refs'),
-      join(commonDir, 'logs'),
-      join(commonDir, 'worktrees')
-    ])
+  it('resolves the SAME common dir from the main checkout itself, not only from a linked worktree', () => {
+    const { repoDir, gitCommonDir } = initRealGitWorktree()
+    expect(resolveGitCommonDir(repoDir)).toBe(gitCommonDir)
   })
 
-  it('returns no grant when the directory is not inside a git repository at all — boundary construction, not this helper, is the fail-closed response', () => {
+  it('returns null when the directory is not inside a git repository at all — boundary construction, not this helper, is the fail-closed response', () => {
     const notARepo = tempDir('vinaya-codex-not-a-repo-')
-    expect(codexGitMetadataWritableDirs(notARepo)).toEqual([])
+    expect(resolveGitCommonDir(notARepo)).toBeNull()
+  })
+
+  it("addCodexWritableDirs threads the resolved common dir into Codex's own --add-dir writable roots, never scoped to just refs/logs/worktrees", () => {
+    const { worktreeDir, gitCommonDir } = initRealGitWorktree()
+    const commonDir = resolveGitCommonDir(worktreeDir)
+    expect(commonDir).not.toBeNull()
+    const args = addCodexWritableDirs(['exec'], [commonDir as string], false)
+    expect(args).toEqual(['exec', '--add-dir', gitCommonDir])
   })
 })
 
@@ -3295,7 +3279,8 @@ describe('resolveCodexConfinement — O1/O2/O4/O5 the Codex half of the provider
   it('is always available on darwin — needs nothing installed', () => {
     const result = resolveCodexConfinement(request(), {
       platform: 'darwin',
-      linuxTools: { available: false, missing: ['bwrap'] }
+      linuxTools: { available: false, missing: ['bwrap'] },
+      developerDir: null
     })
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.configToml).toContain('sandbox_mode = "workspace-write"')
@@ -3304,7 +3289,8 @@ describe('resolveCodexConfinement — O1/O2/O4/O5 the Codex half of the provider
   it('is available on linux when bwrap is present', () => {
     const result = resolveCodexConfinement(request(), {
       platform: 'linux',
-      linuxTools: { available: true, missing: [] }
+      linuxTools: { available: true, missing: [] },
+      developerDir: null
     })
     expect(result.ok).toBe(true)
   })
@@ -3312,7 +3298,8 @@ describe('resolveCodexConfinement — O1/O2/O4/O5 the Codex half of the provider
   it('O4: refuses — never a silent unconfined fallback — on linux without bwrap, naming the missing capability', () => {
     const result = resolveCodexConfinement(request(), {
       platform: 'linux',
-      linuxTools: { available: false, missing: ['bwrap'] }
+      linuxTools: { available: false, missing: ['bwrap'] },
+      developerDir: null
     })
     expect(result.ok).toBe(false)
     if (!result.ok) {
@@ -3324,7 +3311,8 @@ describe('resolveCodexConfinement — O1/O2/O4/O5 the Codex half of the provider
   it('O4: refuses, naming the platform, on a platform with no named mechanism', () => {
     const result = resolveCodexConfinement(request(), {
       platform: 'win32',
-      linuxTools: { available: false, missing: ['bwrap'] }
+      linuxTools: { available: false, missing: ['bwrap'] },
+      developerDir: null
     })
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.reason).toContain('win32')
@@ -3333,7 +3321,8 @@ describe('resolveCodexConfinement — O1/O2/O4/O5 the Codex half of the provider
   it('a resolved launch carries the SAME allowed hosts the request named, mapped to "allow"', () => {
     const result = resolveCodexConfinement(request(), {
       platform: 'darwin',
-      linuxTools: { available: true, missing: [] }
+      linuxTools: { available: true, missing: [] },
+      developerDir: null
     })
     expect(result.ok).toBe(true)
     if (result.ok) {

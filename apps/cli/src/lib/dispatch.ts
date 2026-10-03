@@ -95,7 +95,7 @@ import {
   scopeFromSegment,
   tasksExecutionRoot
 } from './run-paths.js'
-import { basename, dirname, isAbsolute, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import {
   CLAUDE_KEYCHAIN_SERVICE,
   CLAUDE_SANDBOX_ALLOWED_DOMAINS,
@@ -420,43 +420,6 @@ export function addCodexWritableDirs(
     ? ['--config', `sandbox_workspace_write.writable_roots=${JSON.stringify(uniqueDirs)}`]
     : uniqueDirs.flatMap((dir) => ['--add-dir', dir])
   return [...args.slice(0, insertionIndex), ...writableArgs, ...args.slice(insertionIndex)]
-}
-
-/**
- * Ruling 1 fix: Codex's own `.git` protection (`buildCodexSandboxConfigToml`'s
- * doc comment — "some environments keep `.git/` ... read-only even when the
- * rest of the workspace is writable") holds even though `worktreeDir` is
- * Codex's writable primary workspace, so Step 0's `git worktree add -b
- * <branch>` could not lock the new branch's ref — live-reproduced on the
- * Principal's Mac (`fatal: cannot lock ref ... Operation not permitted`).
- *
- * Scoped to exactly the three git-internal directories that operation
- * writes: `refs/` (the new branch's loose ref — a brand-new branch is always
- * written loose, never through `packed-refs`, so that file is never touched
- * here), `logs/` (its reflog), and `worktrees/` (the new linked worktree's
- * own private gitdir, created fresh under here, which already holds ITS OWN
- * `index`/`HEAD`/`ORIG_HEAD`/`logs/HEAD` — granting this one parent root
- * covers all of them without a second, name-the-worktree-in-advance grant).
- * Deliberately never the common dir's top-level `hooks/` or `config` — round
- * 3 security review, HIGH: those are the unconfined driver's own trusted
- * files, and a bare common-dir grant would hand a confined Codex child write
- * access to both.
- *
- * `null`/caught `git` failure resolves to no extra grant — boundary
- * construction's own fail-closed path (Codex's pre-spawn refusal) is the
- * authoritative response to a genuinely broken `git`, not this helper.
- */
-export function codexGitMetadataWritableDirs(worktreeDir: string): string[] {
-  try {
-    const commonDir = execFileSync('git', ['-C', worktreeDir, 'rev-parse', '--git-common-dir'], {
-      encoding: 'utf8'
-    }).trim()
-    if (commonDir === '') return []
-    const absCommonDir = isAbsolute(commonDir) ? commonDir : join(worktreeDir, commonDir)
-    return ['refs', 'logs', 'worktrees'].map((sub) => join(absCommonDir, sub))
-  } catch {
-    return []
-  }
 }
 
 /**
@@ -3706,14 +3669,21 @@ export async function dispatchRole(
   const codexScratchDir = codexRequireIsolation
     ? realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-codex-sandbox-')))
     : null
-  // Ruling 1 fix: Step 0's `git worktree add` runs INSIDE this same confined
-  // dispatch, before the task worktree exists — see `codexGitMetadataWritableDirs`'s
-  // own doc comment for why `refs/`/`logs/`/`worktrees/` under the git common
-  // dir need an explicit grant despite `worktreeDir` already being Codex's
-  // writable primary workspace.
-  const codexGitWritableDirs = codexRequireIsolation
-    ? codexGitMetadataWritableDirs(opts.cwd ?? repoRoot() ?? process.cwd())
-    : []
+  // Round 3 Principal ruling: the driver now creates the task worktree,
+  // outside any sandbox, before every Developer dispatch — round 1 included
+  // (`dev-review-loop.ts`'s `createTaskWorktree`) — so `opts.cwd` is always
+  // the real worktree here, never the repo root a round-1 bootstrap used to
+  // fall back to. A linked worktree's `.git` resolves into the repository's
+  // git common dir, which git itself writes on an ordinary `status`/`commit`
+  // (the index lock, `HEAD`, `ORIG_HEAD`), not only on a ref-creating
+  // `worktree add` — `resolveGitCommonDir` (`worker-boundary.ts`) is the SAME
+  // resolver `buildClaudeSandboxSettings` already uses for Claude, reused
+  // here rather than re-derived, in place of the narrower, Codex-only
+  // `codexGitMetadataWritableDirs` this replaces. `null` when `opts.cwd` is
+  // absent (no worktree to confine to) or `git` cannot resolve one —
+  // contributes nothing extra to the grant, the same best-effort posture
+  // every other optional grant in this module already takes.
+  const codexGitCommonDir = codexRequireIsolation && opts.cwd !== undefined ? resolveGitCommonDir(opts.cwd) : null
   const vendorArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
   const baseArgs =
     agent === 'codex'
@@ -3722,7 +3692,7 @@ export async function dispatchRole(
           [
             ...(opts.extraWritableDirs ?? []),
             ...(codexScratchDir !== null ? [codexScratchDir] : []),
-            ...codexGitWritableDirs
+            ...(codexGitCommonDir !== null ? [codexGitCommonDir] : [])
           ],
           opts.resumeId !== undefined,
           opts.developerFiles ?? []
@@ -3800,7 +3770,10 @@ export async function dispatchRole(
       ? resolveCodexConfinement({
           role,
           agent,
-          worktreeDir: opts.cwd ?? repoRoot() ?? process.cwd(),
+          // Round 3 Principal ruling: never a repo-root bootstrap fallback —
+          // the driver always creates and passes the task worktree, round 1
+          // included, before an unattended Codex dispatch starts.
+          worktreeDir: opts.cwd ?? process.cwd(),
           scratchDir: codexScratchDir,
           allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS
         })

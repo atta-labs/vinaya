@@ -102,7 +102,8 @@ export const CLEAN_SECURITY: RoleOutcome = {
 export type PostedComment = { kind: 'issue' | 'pr'; ref: string; marker: string; body: string }
 
 /** One dispatch the fake `dispatchRole` recorded — role, round, and the exact prompt it was handed (dropped before; recorded now so a test can assert the reviewer prompt carries its role doctrine — Traps to avoid). `prompt` is optional so the file-local fakes that predate this recording still type-check. */
-export type DispatchRecord = { role: string; round: number; resumeId: string | null; prompt?: string }
+/** `cwd` is optional so the many pre-existing fixtures that never inspect it still type-check — it carries `opts.cwd`, the worktree a Developer dispatch is confined to (round 3 Principal ruling: always set, round 1 included, once `createTaskWorktree` runs). */
+export type DispatchRecord = { role: string; round: number; resumeId: string | null; prompt?: string; cwd?: string }
 
 export type LoopWorld = {
   task: number
@@ -408,7 +409,7 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       if (role === 'developer') {
         world.developerPushed = true
         const sessionId = world.roleOutcomes[round]?.developer?.sessionId ?? 'dev-session-1'
-        world.dispatches.push({ role, round, resumeId: sessionId, prompt })
+        world.dispatches.push({ role, round, resumeId: sessionId, prompt, cwd: opts.cwd })
         return handle(sessionId, `eff-dev-${++dispatchSeq}`)
       }
       // code-reviewer | security: write the role's artifacts into the work
