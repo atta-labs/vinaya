@@ -12,6 +12,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   cleanupWorlds,
+  developerDir,
   makeInProcessDeps,
   makeWorld,
   outboxLines as ipOutboxLines,
@@ -19,7 +20,6 @@ import {
   taskRunDir as ipTaskRunDir
 } from '../dev-review-loop-harness.js'
 import { readDriverLock, readPauseState } from '../../../src/lib/dev-review-loop/pause-resume.js'
-import { runPath } from '../../../src/lib/run-paths.js'
 
 afterEach(cleanupWorlds)
 
@@ -294,10 +294,7 @@ describe('the driver-run dispatch-readiness gate', () => {
     expect((result.finalDecision as { reason?: string }).reason).toBe('infrastructure')
     expect(readPauseState(world.runtimeDir, world.task)?.detail).toContain('dispatch-readiness gate failed')
 
-    const staged = readFileSync(
-      runPath(world.runtimeDir, world.task, { area: 'developer', round: 1, file: 'dispatch-readiness.txt' }),
-      'utf8'
-    )
+    const staged = readFileSync(join(developerDir(world, 1), 'dispatch-readiness.txt'), 'utf8')
     expect(staged).toBe(gateOutput)
   })
 
@@ -309,10 +306,7 @@ describe('the driver-run dispatch-readiness gate', () => {
     })
 
     expect(world.dispatches.filter((d) => d.role === 'developer').length).toBeGreaterThan(0)
-    const staged = readFileSync(
-      runPath(world.runtimeDir, world.task, { area: 'developer', round: 1, file: 'dispatch-readiness.txt' }),
-      'utf8'
-    )
+    const staged = readFileSync(join(developerDir(world, 1), 'dispatch-readiness.txt'), 'utf8')
     expect(staged).toBe(gateOutput)
   })
 })
