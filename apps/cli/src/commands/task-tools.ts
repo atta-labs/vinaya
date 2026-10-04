@@ -15,6 +15,7 @@
 
 import { ownVersion } from '../lib/artifacts.js'
 import { devToolsBridgeCommand } from '../lib/task-tools/dev-tools-bridge.js'
+import { devToolsProofCommand } from '../lib/task-tools/dev-proof.js'
 import { serveTaskToolsStdio } from '../lib/task-tools/server.js'
 
 export async function taskToolsServeCommand(_args: string[]): Promise<void> {
@@ -29,6 +30,17 @@ export async function taskToolsServeCommand(_args: string[]): Promise<void> {
  */
 export async function taskToolsDevBridgeCommand(args: string[]): Promise<void> {
   await devToolsBridgeCommand(args)
+}
+
+/**
+ * `vinaya task-tools dev-proof --agent <claude|codex>` — the O1 live proof,
+ * committed as a repeatable command. Starts the driver-run dev-tools server,
+ * registers it per-dispatch, dispatches a real agent session (sandbox on where
+ * the host supports it), and prints the tool call and its result. See
+ * `dev-proof.ts`.
+ */
+export async function taskToolsDevProofCommand(args: string[]): Promise<void> {
+  await devToolsProofCommand(args)
 }
 
 import type { SurfaceExemption } from '../lib/surface-exemption'
