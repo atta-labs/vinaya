@@ -3492,7 +3492,7 @@ export function codexSpawnEnvExtras(
     attribution: {
       ...(isCodex && codexHomeDir !== null ? { CODEX_HOME: codexHomeDir } : {}),
       ...(isCodex && scratchDir !== null
-        ? { TMPDIR: scratchDir, TMP: scratchDir, TEMP: scratchDir, TURBO_CACHE_DIR: confinedTurboCacheDir(scratchDir) }
+        ? { TMPDIR: scratchDir, TMP: scratchDir, TEMP: scratchDir, ...confinedTurboEnv(scratchDir) }
         : {})
     }
   }
@@ -3514,6 +3514,28 @@ export function codexSpawnEnvExtras(
  */
 export function confinedTurboCacheDir(scratchDir: string): string {
   return join(scratchDir, 'turbo-cache')
+}
+
+/**
+ * O5 (#1046): the full set of turbo environment overrides EVERY confined
+ * Developer carries, for Claude and for Codex alike — the cache-directory
+ * redirect above, AND `TURBO_TELEMETRY_DISABLED`. `turbo` (which `bun run
+ * typecheck` invokes) pings `telemetry.vercel.com` on startup; a confined
+ * dispatch's egress is destination-allowlisted and does NOT include that host,
+ * so the ping is blocked and `bun run typecheck` fails outright with "Network
+ * access to \"telemetry.vercel.com\" was blocked" — found live on a confined
+ * Codex Developer. Disabling telemetry removes the ping entirely. Returned as
+ * ONE object both agents' confined-env builders spread, so the two can never
+ * drift apart (the same anti-drift reason `codexSpawnEnvExtras` folded the
+ * TMPDIR/cache overrides into one shared function).
+ */
+export function confinedTurboEnv(scratchDir: string): Record<string, string> {
+  return {
+    TURBO_CACHE_DIR: confinedTurboCacheDir(scratchDir),
+    // turbo reads this exact variable; `1` disables its telemetry collector and
+    // the startup network ping that a confined sandbox's allowlist blocks.
+    TURBO_TELEMETRY_DISABLED: '1'
+  }
 }
 
 /**
@@ -4353,10 +4375,13 @@ export async function dispatchRole(
               // own override must name the same granted scratch directory.
               CLAUDE_CODE_TMPDIR: claudeConfinement.scratchDir,
               // O4: turbo's cache-miss write goes inside the granted scratch,
-              // never the repo-root `.turbo/` the sandbox denies — see
-              // `confinedTurboCacheDir`. Codex gets the same key via
-              // `codexSpawnEnvExtras` above.
-              TURBO_CACHE_DIR: confinedTurboCacheDir(claudeConfinement.scratchDir),
+              // never the repo-root `.turbo/` the sandbox denies. O5 (#1046):
+              // and its telemetry ping (`telemetry.vercel.com`) is disabled, so
+              // `bun run typecheck`'s own `turbo` run is not blocked by the
+              // confined egress allowlist. Both keys ride `confinedTurboEnv`,
+              // the SAME object Codex spreads via `codexSpawnEnvExtras` above —
+              // the two agents' turbo env can never drift apart.
+              ...confinedTurboEnv(claudeConfinement.scratchDir),
               // O2: see the Codex branch's own comment on this same guard,
               // above — `resolveGitFirstPath`'s result, puts the real `git`
               // ahead of the `/usr/bin/git` xcrun shim on macOS.

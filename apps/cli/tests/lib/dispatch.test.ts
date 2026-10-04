@@ -69,6 +69,7 @@ import {
   missingSubscriptionLoginReason,
   NO_SUBSCRIPTION_LOGIN_REASON,
   codexBoundaryFailureReason,
+  confinedTurboEnv,
   developerWrittenTextFromVendorOutput,
   type DispatchTeeRecoveryDeps
 } from '../../src/lib/dispatch.js'
@@ -4740,7 +4741,7 @@ describe('codexSpawnEnvExtras — round 6 security review, CRITICAL (Issue #676)
 // from, pointed at the same writable scratch directory, rather than each
 // building its own (possibly-drifting) copy.
 describe('codexSpawnEnvExtras — TMPDIR/TMP/TEMP pointed at the writable scratch directory (round 5 Principal ruling)', () => {
-  it('a codex dispatch with a scratch directory carries TMPDIR, TMP, TEMP and TURBO_CACHE_DIR all under it', () => {
+  it('a codex dispatch with a scratch directory carries TMPDIR, TMP, TEMP, TURBO_CACHE_DIR and TURBO_TELEMETRY_DISABLED all under it', () => {
     const extras = codexSpawnEnvExtras('codex', '/tmp/scratch/codex-home', '/tmp/scratch/codex-tmp')
     expect(extras.attribution).toEqual({
       CODEX_HOME: '/tmp/scratch/codex-home',
@@ -4749,7 +4750,10 @@ describe('codexSpawnEnvExtras — TMPDIR/TMP/TEMP pointed at the writable scratc
       TEMP: '/tmp/scratch/codex-tmp',
       // O4: turbo's cache-miss write goes inside the granted scratch, never
       // the repo-root `.turbo/` the sandbox denies.
-      TURBO_CACHE_DIR: '/tmp/scratch/codex-tmp/turbo-cache'
+      TURBO_CACHE_DIR: '/tmp/scratch/codex-tmp/turbo-cache',
+      // O5 (#1046): turbo's telemetry ping is disabled so the confined egress
+      // allowlist does not fail `bun run typecheck`.
+      TURBO_TELEMETRY_DISABLED: '1'
     })
   })
 
@@ -4761,6 +4765,32 @@ describe('codexSpawnEnvExtras — TMPDIR/TMP/TEMP pointed at the writable scratc
 
   it('a non-codex vendor never gets TMPDIR/TMP/TEMP even if a scratch directory were somehow passed', () => {
     expect(codexSpawnEnvExtras('claude', null, '/tmp/scratch/codex-tmp').attribution).toEqual({})
+  })
+})
+
+describe('confinedTurboEnv — turbo telemetry is off in BOTH confined Developers (O5, #1046)', () => {
+  it('the shared turbo env carries both the cache redirect and the telemetry disable', () => {
+    expect(confinedTurboEnv('/tmp/scratch')).toEqual({
+      TURBO_CACHE_DIR: '/tmp/scratch/turbo-cache',
+      TURBO_TELEMETRY_DISABLED: '1'
+    })
+  })
+
+  it("Codex's confined environment carries TURBO_TELEMETRY_DISABLED", () => {
+    // `codexSpawnEnvExtras(...).attribution` IS the Codex dispatch's confined
+    // environment addition — it spreads `confinedTurboEnv`.
+    const codexEnv = codexSpawnEnvExtras('codex', '/tmp/scratch/codex-home', '/tmp/scratch/codex-tmp').attribution
+    expect(codexEnv.TURBO_TELEMETRY_DISABLED).toBe('1')
+  })
+
+  it("Claude's confined environment carries TURBO_TELEMETRY_DISABLED too", () => {
+    // `dispatchRole`'s Claude branch spreads this SAME `confinedTurboEnv` object
+    // into its confined `buildWorkerEnv(...)` child environment (dispatch.ts),
+    // so the variable the helper carries is exactly what the confined Claude
+    // Developer's environment carries — the two agents can never drift apart.
+    const claudeTurboEnv = confinedTurboEnv('/tmp/scratch/claude-tmp')
+    expect(claudeTurboEnv.TURBO_TELEMETRY_DISABLED).toBe('1')
+    expect(claudeTurboEnv.TURBO_CACHE_DIR).toBe('/tmp/scratch/claude-tmp/turbo-cache')
   })
 })
 
