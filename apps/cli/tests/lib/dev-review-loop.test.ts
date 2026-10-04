@@ -928,7 +928,19 @@ function runCancel(home: string, cwd: string, path: string, pr: number): CliResu
  */
 const DEFAULT_FAST_POLL_ENV: Record<string, string> = {
   VINAYA_DEV_REVIEW_LOOP_PR_POLL_INTERVAL_MS: '5',
-  VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '5'
+  VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '5',
+  // Every fixture in this file carries no real forge
+  // identity by design (`AEG_REPO` deleted above, the fake `git` binary
+  // answers no remote) — the driver's own dispatch-readiness gate
+  // (`dev-review-loop.ts`'s `checkTaskDispatchReadiness`) shells out to
+  // `check-dispatch-readiness.ts`/`verify-dispatch.ts`, which read the live
+  // forge over real HTTPS (never through the fake `gh` stand-in — the same
+  // `@octokit/graphql` route `brief-render.test.ts`'s own doc comment
+  // already names as unstubbable this way), so every fixture here would
+  // otherwise refuse (or time out) before ever reaching the developer
+  // dispatch it means to exercise. A fixture testing the gate itself
+  // overrides this back via its own `extraEnv`.
+  VINAYA_DEV_REVIEW_LOOP_FAKE_DISPATCH_READINESS: '1'
 }
 
 function fixtureChildEnv(home: string, path: string, extraEnv: Record<string, string>): NodeJS.ProcessEnv {

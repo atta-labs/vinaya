@@ -1639,7 +1639,22 @@ function defaultDeps(): LoopDeps {
     resolveIssueObjectives,
     fetchSourceRevision,
     developerBranchFor: (n) => developerBranchFor(n),
-    checkTaskDispatchReadiness,
+    // `VINAYA_DEV_REVIEW_LOOP_FAKE_DISPATCH_READINESS=1` exists only so a
+    // real subprocess test (`dev-review-loop.test.ts`'s own fixtures, which
+    // carry no real forge identity by design — AEG_REPO deleted, the fake
+    // `git` binary answers no remote) can skip the real forge-dependent
+    // shell-out `checkTaskDispatchReadiness` makes, the same "test env
+    // escape hatch, unset in every real invocation" posture
+    // `gatePollEnvOverride` already uses above. An in-process test
+    // (`dev-review-loop-harness.ts`'s own `makeInProcessDeps`) overrides
+    // this whole field directly instead and never needs the env var.
+    checkTaskDispatchReadiness:
+      process.env.VINAYA_DEV_REVIEW_LOOP_FAKE_DISPATCH_READINESS === '1'
+        ? (_branch) => ({
+            ready: true,
+            output: 'VINAYA_DEV_REVIEW_LOOP_FAKE_DISPATCH_READINESS=1 — skipped for a test fixture'
+          })
+        : checkTaskDispatchReadiness,
     findOpenPrForBranch,
     fetchIssueTitle,
     createTaskWorktree,
