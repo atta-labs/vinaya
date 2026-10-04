@@ -1,6 +1,11 @@
 /**
  * Unit tests for `round-assess.ts`'s `parseConfidenceReply` — the developer's
  * `.vinaya-confidence` reply, parsed once, destructively, at the gate read.
+ *
+ * This file is also this directory's own precedent for where a dev-review-loop
+ * contract test lives: `dev-review-engine-state-contract.test.ts`, beside it,
+ * is the target Atta-Engine state model's contract test, the same way this
+ * file is the standalone loop's.
  */
 
 import { describe, expect, it } from 'bun:test'

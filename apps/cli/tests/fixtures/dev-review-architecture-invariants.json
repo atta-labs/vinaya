@@ -64,6 +64,11 @@
         "path": "apps/cli/tests/lib/dev-review-loop/developer-publication.test.ts",
         "kind": "test",
         "reason": "The unit tests of developer-publication.ts, landed in the same change."
+      },
+      {
+        "path": "apps/cli/tests/lib/dev-review-loop/dev-review-engine-state-contract.test.ts",
+        "kind": "test",
+        "reason": "Landed with apps/cli/specs/dev-review-engine-state-machine.md (Task 2 of developer-review-architecture-v1): the target provider-neutral Atta-Engine state model's own contract test, over the fixture data in dev-review-engine-state-contract.fixture.ts."
       }
     ]
   },
@@ -77,6 +82,11 @@
       "path": "apps/cli/tests/lib/dev-review-loop-real-process-debt.test.ts",
       "kind": "test",
       "reason": "A ratchet over the source text of dev-review-loop.test.ts (real-process helper call sites minus reasoned ones must stay under a fixed count); it never runs the loop and asserts no loop behavior."
+    },
+    {
+      "path": "apps/cli/tests/lib/dev-review-loop/dev-review-engine-state-contract.test.ts",
+      "kind": "test",
+      "reason": "Validates the TARGET engine state model's own internal consistency (state/transition/terminal-outcome/node-contract completeness and provider-neutrality); it builds and runs no execution and asserts nothing about the standalone loop this map tracks, so it maps to no INV- entry here."
     }
   ],
   "supportFiles": [
@@ -87,6 +97,10 @@
     {
       "path": "apps/cli/tests/lib/dev-review-loop-harness.ts",
       "reason": "Shared in-process harness backing a full LoopDeps with one mutable fake world; it is imported by the in-process tests and asserts nothing itself."
+    },
+    {
+      "path": "apps/cli/tests/lib/dev-review-loop/dev-review-engine-state-contract.fixture.ts",
+      "reason": "Declares the target engine state model's own data (ENGINE_STATES, ENGINE_TRANSITIONS, TERMINAL_OUTCOMES, NODE_CONTRACTS, PROVIDER_ADAPTER_EXTENSION_POINTS); imported only by its contract test and not re-exported from an index, so it is neither an implementation module nor a test file."
     }
   ],
   "invariants": [

@@ -8,6 +8,8 @@ Status: draft
 
 Every behavior this file describes is also inventoried, one entry per observed behavior, in `apps/cli/specs/dev-review-invariants.md`: each classified as a product guarantee, an implementation accident, a named defect, an advisory mechanism, or a question awaiting a Principal ruling, with its sources and tests. That inventory is the oracle the Atta Engine path is measured against. A loop module or test file added, removed or renamed updates it in the same change, since its architecture test fails otherwise.
 
+The TARGET state model those guarantees migrate into — states, transitions, terminal outcomes, node contracts, the human-handoff contract, cancellation behavior and effect-once boundaries for the Atta-Engine-backed workflow — is `apps/cli/specs/dev-review-engine-state-machine.md`. It consumes this file and the invariant map's own ruled ambiguity register; it does not change anything this file describes.
+
 ## The command
 
 `vinaya task run <tranche> <n> --agent <claude|codex|gemini>` (`apps/cli/src/commands/task-run.ts`, `taskRunCommand`) is the normal entry: it composes `task brief`'s own preparation (renders and freezes the brief, starts no agent) with this loop, so one command runs the whole way from a planned Issue — `n` a tranche task ordinal there, resolved to its real forge Issue by preparation — to a reviewed pull request, exactly one developer started. `dev-review-loop` below is `task run`'s own debug/direct entry, kept for resuming a paused run and for driving the loop straight off an Issue number without going through preparation:
