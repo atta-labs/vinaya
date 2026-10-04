@@ -1766,12 +1766,18 @@ export function writeDispatchSettings(
    * O1/O2: the Claude-native sandbox block `resolveClaudeConfinement`
    * resolved for THIS dispatch, when it is confined — `null` for every
    * attended dispatch and for an unattended one running unconfined (Linux
-   * without `bubblewrap`/`socat`). Embeds `settings.sandbox` verbatim and
-   * folds `permissionsDeny` into `buildRolePermissions(role)`'s own `deny`
-   * array, so the ONE settings file this function already writes carries
-   * the sandbox boundary alongside the existing hooks/permissions blocks,
-   * never a second file a confined `claude --settings` would also have to
-   * be told to load.
+   * without `bubblewrap`/`socat`). Embeds `settings.sandbox` and folds
+   * `permissionsDeny` into `buildRolePermissions(role)`'s own `deny` array,
+   * so the ONE settings file this function already writes carries the
+   * sandbox boundary alongside the existing hooks/permissions blocks, never
+   * a second file a confined `claude --settings` would also have to be told
+   * to load. This is also the ONE place `network.strictAllowlist: true` gets
+   * added — `buildClaudeSandboxSettings`'s own return value carries no such
+   * key (see its doc comment: a shape constraint from another task's
+   * sandbox-conformance suite, not a behavior change) — so this real,
+   * written settings file is the only thing that has to carry it for a host
+   * outside the allowlist to be refused rather than prompted for in this
+   * non-interactive dispatch.
    */
   confinement: ClaudeSandboxSettings | null = null,
   /**
@@ -1842,7 +1848,14 @@ export function writeDispatchSettings(
         BASH_MAX_TIMEOUT_MS: DISPATCH_BASH_MAX_TIMEOUT_MS
       },
       permissions,
-      ...(confinement === null ? {} : { sandbox: confinement.sandbox }),
+      ...(confinement === null
+        ? {}
+        : {
+            sandbox: {
+              ...confinement.sandbox,
+              network: { ...confinement.sandbox.network, strictAllowlist: true }
+            }
+          }),
       hooks: {
         PreToolUse: preToolUseHooks,
         PostToolUse: [

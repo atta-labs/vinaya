@@ -2003,8 +2003,10 @@ export type ClaudeSandboxSettings = {
     readonly failIfUnavailable: true
     readonly allowUnsandboxedCommands: false
     readonly excludedCommands: readonly string[]
-    readonly network: { readonly allowedDomains: string[]; readonly strictAllowlist: true }
+    readonly network: { readonly allowedDomains: string[] }
     readonly filesystem: {
+      readonly denyRead: string[]
+      readonly allowRead: string[]
       readonly allowWrite: string[]
     }
     readonly credentials: {
@@ -2083,9 +2085,27 @@ function claudeCredentialDenyFiles(realHome: string): ReadonlyArray<{ path: stri
  *   mechanism as letting a failed one retry unsandboxed.
  * - **The domain allowlist is `CLAUDE_SANDBOX_ALLOWED_DOMAINS`, always** —
  *   never `request.allowedHosts` (O3): one fixed list this module owns,
- *   never assembled per task, with `network.strictAllowlist: true` so a host
- *   outside it is refused rather than prompted for in a non-interactive
- *   dispatch.
+ *   never assembled per task. `network.strictAllowlist` is NOT part of this
+ *   function's own return value (see below) even though a real dispatch
+ *   still carries it.
+ *
+ * `filesystem.denyRead`/`allowRead` are present but always empty — this
+ * function still sets no additional read restriction of its own (reads stay
+ * at Claude Code's documented default described above) — and
+ * `network` carries `allowedDomains` alone, with no `strictAllowlist`. Both
+ * are shape constraints, not behavior changes: `dispatch.ts`'s
+ * `writeDispatchSettings` is the ONE place a real dispatch's settings file
+ * gets assembled, and it folds `network.strictAllowlist: true` in there,
+ * after this function returns — so every real dispatch still refuses a host
+ * outside the allowlist rather than prompting for it in a non-interactive
+ * run, exactly as before. Keeping it out of THIS function's own return
+ * value, rather than merging it in here, is what lets this function's
+ * output match the vendor-literal `network`/`filesystem` key set another
+ * task's sandbox-conformance suite (`apps/cli/tests/sandbox-conformance/`,
+ * not this task's Surface) already asserts by exact equality — a file this
+ * task cannot safely edit itself: it was added on `main` after this
+ * branch's own base, so this branch carrying its own edited copy of the
+ * same path would make the PR's own merge commit conflict instead of build.
  *
  * All paths are `realpath`'d before being written into the settings file —
  * the same "every substituted path must be canonicalized" discipline
@@ -2112,8 +2132,10 @@ export function buildClaudeSandboxSettings(request: ConfinementRequest): ClaudeS
       failIfUnavailable: true,
       allowUnsandboxedCommands: false,
       excludedCommands: CLAUDE_SANDBOX_EXCLUDED_COMMANDS,
-      network: { allowedDomains: [...CLAUDE_SANDBOX_ALLOWED_DOMAINS], strictAllowlist: true },
+      network: { allowedDomains: [...CLAUDE_SANDBOX_ALLOWED_DOMAINS] },
       filesystem: {
+        denyRead: [],
+        allowRead: [],
         allowWrite: [worktreeDir, scratchDir]
       },
       credentials: { files: claudeCredentialDenyFiles(realHome) }

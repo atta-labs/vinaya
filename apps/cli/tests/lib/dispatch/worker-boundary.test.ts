@@ -2985,11 +2985,11 @@ describe('buildClaudeSandboxSettings — O2 the generated sandbox block', () => 
     expect(settings.sandbox.excludedCommands).toEqual(['gh *', 'git push *', 'git fetch *', 'git pull *'])
   })
 
-  it('O3: network.allowedDomains is always the fixed CLAUDE_SANDBOX_ALLOWED_DOMAINS list, never request.allowedHosts — and strictAllowlist is on', () => {
+  it('O3: network.allowedDomains is always the fixed CLAUDE_SANDBOX_ALLOWED_DOMAINS list, never request.allowedHosts — and carries no other key (strictAllowlist is added later, by writeDispatchSettings)', () => {
     const settings = buildClaudeSandboxSettings(request({ allowedHosts: ['not-the-fixed-list.example.com'] }))
     expect(settings.sandbox.network.allowedDomains).toEqual([...CLAUDE_SANDBOX_ALLOWED_DOMAINS])
     expect(settings.sandbox.network.allowedDomains).not.toContain('not-the-fixed-list.example.com')
-    expect(settings.sandbox.network.strictAllowlist).toBe(true)
+    expect(Object.keys(settings.sandbox.network)).toEqual(['allowedDomains'])
   })
 
   it('O3: the fixed list names GitHub, the npm registry and the agent vendor’s own API host', () => {
@@ -2999,13 +2999,15 @@ describe('buildClaudeSandboxSettings — O2 the generated sandbox block', () => 
     expect(settings.sandbox.network.allowedDomains).toContain('api.anthropic.com')
   })
 
-  it('grants filesystem write only inside the worktree and scratch directory — never a third path, and no denyRead/allowRead at all (O1: reads follow Claude Code’s own default)', () => {
+  it('grants filesystem write only inside the worktree and scratch directory — never a third path, and sets no additional read restriction of its own (O1: reads follow Claude Code’s own default; denyRead/allowRead stay empty)', () => {
     const worktreeDir = tempDir('vinaya-claude-settings-wt-')
     const scratchDir = tempDir('vinaya-claude-settings-scratch-')
     const settings = buildClaudeSandboxSettings(request({ worktreeDir, scratchDir }))
 
     expect(settings.sandbox.filesystem.allowWrite).toEqual([realpathSync(worktreeDir), realpathSync(scratchDir)])
-    expect(Object.keys(settings.sandbox.filesystem)).toEqual(['allowWrite'])
+    expect(settings.sandbox.filesystem.denyRead).toEqual([])
+    expect(settings.sandbox.filesystem.allowRead).toEqual([])
+    expect(Object.keys(settings.sandbox.filesystem).sort()).toEqual(['allowRead', 'allowWrite', 'denyRead'])
   })
 
   it('O1: denies exactly the five named credential locations through sandbox.credentials.files in deny mode', () => {
@@ -3022,10 +3024,10 @@ describe('buildClaudeSandboxSettings — O2 the generated sandbox block', () => 
     for (const f of settings.sandbox.credentials.files) expect(f.mode).toBe('deny')
   })
 
-  it('O1: no longer builds a whole-home/whole-temp-root denyRead or a mirrored permissionsDeny — permissionsDeny is empty', () => {
+  it('O1: no longer builds a whole-home/whole-temp-root denyRead or a mirrored permissionsDeny — permissionsDeny is empty, and the (always-present) denyRead array names nothing', () => {
     const settings = buildClaudeSandboxSettings(request())
     expect(settings.permissionsDeny).toEqual([])
-    expect(JSON.stringify(settings)).not.toContain('denyRead')
+    expect(settings.sandbox.filesystem.denyRead).toEqual([])
   })
 
   it('canonicalizes every substituted path — an unresolved symlinked worktree still resolves to the real target', () => {
