@@ -254,3 +254,28 @@ The Boundary this task was dispatched against names six boundaries — the same 
 | **Parent process** | No mechanism named — §4a describes filesystem and network controls for the confined Bash tool call only; nothing describes a `signal`/`process-info*`-equivalent denial the retired profile's own `(deny signal)`/`(deny process-info* (target others))` rules (§3 item 6) provided. | Same absence in §4b. | **Not held, either vendor** — no signal/process-introspection-denial mechanism is named, and no test exercises it. |
 
 **O5 — the decision this table requires.** Five of the six boundaries — HOME (for Codex), Keychain, credential helper, socket, and parent process — are **not held**, by this table's own evidence, for at least one vendor; four of those five are not held for **either** vendor. Per this task's own stop condition (§10 of the dispatched brief: "If any of the six boundaries is not held by Claude's or Codex's mechanism with a passing test, stop before removing anything and escalate `severity:strategy` for a Principal decision, naming the boundary and vendor"), **the hand-built Seatbelt profile builder (`buildWorkerSandboxProfile`/`resolveWorkerBoundaryLaunch`) and its staging code are NOT removed by this task.** They remain exactly where §1 already says they sit: built, proved, and unreferenced from the live dispatch path for either vendor (retired in favor of each vendor's own native mechanism), kept rather than deleted because deleting them is conditioned on every boundary holding for both vendors — which this table shows is not yet the case. This task escalates the five gaps above, naming the boundary and vendor for each, for an explicit Principal decision, rather than removing anything or re-scoping the six boundaries to make a gap disappear.
+
+## 9. The conformance suite — the proof of both boundaries
+
+<!-- AEG:CLAIM: apps/cli/tests/sandbox-conformance/sandbox-launch.ts contains:resolveClaudeConfinement(request('claude', worktreeDir, scratchDir)) -->
+<!-- AEG:CLAIM: apps/cli/tests/sandbox-conformance/sandbox-launch.ts contains:const staged = stageCodexPolicyHome({ -->
+The proof that §4a's and §4b's boundaries let a Developer do its job, and of what each one refuses today, is the sandbox conformance suite, `apps/cli/tests/sandbox-conformance/sandbox-conformance.test.ts`. It runs every command the Developer doctrine and the rendered brief tell a Developer to run inside each agent's real sandbox, in a fresh linked worktree of its own. Claude Code's sandbox runs through `bunx @anthropic-ai/sandbox-runtime`, with the `sandbox` block `resolveClaudeConfinement` builds for a confined dispatch and the `PATH` the driver gives the child. Codex's runs through `codex sandbox`, with `CODEX_HOME` pointed at the home `stageCodexPolicyHome` stages (the confinement `config.toml` and the machine-state rules) and the writable roots the driver grants. `codex sandbox` runs read-only unless `sandbox_mode` arrives as a `--config` override, where `codex exec` reads it from the staged config, so the suite passes the staged config's own `sandbox_mode` that way too. The suite only calls those exports. It never builds or widens a setting of its own, so it judges the boundary the driver actually ships.
+
+<!-- AEG:CLAIM: apps/cli/tests/sandbox-conformance/command-sources.ts contains:export function commandsTheTextsName( -->
+The command list is one data file, `apps/cli/tests/sandbox-conformance/commands.json`. The suite reads every command form out of `aeg-root/roles/developer.md`, `aeg-root/roles/developer/reference.md`, `aeg-root/templates/brief-template.md` and one brief `renderBrief` renders from that template. A form with no entry fails the suite, and so does an entry form no text still names. Each entry either runs or says why no Developer runs it inside its sandbox: the driver's own commit, push and PR-open, a command the doctrine forbids, or a name that is not a command.
+
+<!-- AEG:CLAIM: apps/cli/tests/sandbox-conformance/sandbox-conformance.test.ts contains:const KNOWN_FAILURES: readonly KnownFailure[] = [ -->
+Every run entry either exits 0 under both sandboxes or is listed in the suite's `KNOWN_FAILURES`, with its agent, its platform and the denial it hits today. A listed command that exits 0 fails the suite until its entry is removed, so the list only shrinks as the boundaries are fixed.
+
+How to run it:
+
+- **CI, Linux.** `ci.yml`'s `sandbox-conformance` job runs it on every pull request, after installing `bubblewrap`, `socat` and `ripgrep` and lifting Ubuntu's user-namespace restriction. It needs no agent login. The job token only serves the read-only `gh` lines.
+- **A Mac.** From `apps/cli`, in a terminal outside any agent's sandbox (a sandbox cannot start another one inside itself):
+
+  ```
+  VINAYA_SANDBOX_CONFORMANCE=1 bun test --timeout=900000 tests/sandbox-conformance/sandbox-conformance.test.ts
+  ```
+
+  It prints each command's exit status under each agent. Every entry runs on inputs it can pass on: `verify-dispatch` on a tranche task that is dispatchable now, `check --all` with the body of the branch's open pull request. Where the forge offers neither, that entry is skipped and says so. A listed known failure is also run with no sandbox around it, in the same worktree with the same inputs; if it fails there too, it is no sandbox denial and the suite fails until the entry is removed.
+
+Without `VINAYA_SANDBOX_CONFORMANCE=1`, an ordinary run of the test file runs only the command-list checks.
