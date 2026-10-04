@@ -45,6 +45,13 @@ import {
 } from '../worker-boundary.js'
 import { startDevToolsHost } from './dev-tools-host.js'
 import { DEV_TOOLS_MCP_SERVER_NAME, type DevToolContext } from './dev-tools-server.js'
+import {
+  type BridgeInvocation,
+  claudeDevToolName,
+  claudeDevToolsArgs,
+  codexDevToolsConfigToml,
+  devToolsMcpConfigFileBody
+} from './dev-tools-registration.js'
 
 /** The one allowlisted tool the proof session may call — a read-only check, no publish, no forge write. */
 const PROOF_TOOL = 'run_checks'
@@ -63,9 +70,6 @@ export function parseDevProofArgs(args: readonly string[]): { agent: ProofAgent 
   }
   return { agent }
 }
-
-/** The per-dispatch dev-tools registration, as the agent's own config shape expects, pointing at the bridge relay. */
-type BridgeInvocation = { command: string; args: string[] }
 
 /**
  * The bridge the agent's MCP client spawns — the running vinaya entrypoint
@@ -297,23 +301,20 @@ function buildAgentLaunch(
   scratchDir: string,
   confinement: ConfinementDisclosure
 ): { command: string; args: string[]; env: NodeJS.ProcessEnv } {
-  const allowed = `mcp__${DEV_TOOLS_MCP_SERVER_NAME}__${PROOF_TOOL}`
+  const allowed = claudeDevToolName(PROOF_TOOL)
   if (agent === 'claude') {
+    // The SAME per-dispatch registration the real dispatch uses
+    // (`dev-tools-registration.ts`): a driver-written `--mcp-config` file with
+    // `--strict-mcp-config`, so the worktree's committed `.mcp.json` is never
+    // loaded. The proof allows only the one read-only tool.
     const mcpConfigPath = join(scratchDir, 'dev-tools.mcp.json')
-    writeFileSync(
-      mcpConfigPath,
-      `${JSON.stringify({ mcpServers: { [DEV_TOOLS_MCP_SERVER_NAME]: { type: 'stdio', ...bridge } } }, null, 2)}\n`
-    )
+    writeFileSync(mcpConfigPath, devToolsMcpConfigFileBody(bridge))
     const args = [
       '-p',
       '--verbose',
       '--output-format',
       'stream-json',
-      '--strict-mcp-config',
-      '--mcp-config',
-      mcpConfigPath,
-      '--allowedTools',
-      allowed,
+      ...claudeDevToolsArgs(mcpConfigPath, [allowed]),
       ...(confinement.settingsPath ? ['--settings', confinement.settingsPath] : [])
     ]
     // F1 (round 2 security review, MEDIUM): never spread the driver/operator's
@@ -334,14 +335,10 @@ function buildAgentLaunch(
   // hand-made home with no `auth.json` cannot authenticate). The mcp table
   // rides the staged `config.toml` so the one generated file carries both.
   const codexHome = confinement.codexHome ?? join(scratchDir, 'codex-home')
-  const tomlArgs = `[${bridge.args.map((a) => JSON.stringify(a)).join(', ')}]`
-  const mcpTable = [
-    `[mcp_servers.${DEV_TOOLS_MCP_SERVER_NAME}]`,
-    `command = ${JSON.stringify(bridge.command)}`,
-    `args = ${tomlArgs}`,
-    ''
-  ].join('\n')
-  const combinedToml = confinement.codexSandboxToml ? `${confinement.codexSandboxToml}\n${mcpTable}` : mcpTable
+  // The SAME registration the real dispatch stages (`dev-tools-registration.ts`):
+  // the sandbox config followed by the `[mcp_servers.<name>]` table, in the one
+  // staged `config.toml` that a confined Codex reads from its `CODEX_HOME`.
+  const combinedToml = codexDevToolsConfigToml(bridge, confinement.codexSandboxToml)
   const staged =
     confinement.codexSandboxToml !== null
       ? stageCodexPolicyHome({
