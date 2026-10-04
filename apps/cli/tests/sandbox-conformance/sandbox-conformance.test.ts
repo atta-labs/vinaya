@@ -83,13 +83,6 @@ const BUN_HIDDEN_LINUX =
  * suite fails until you do.
  */
 const KNOWN_FAILURES: readonly KnownFailure[] = [
-  {
-    id: 'bun-install',
-    agent: 'codex',
-    platform: 'linux',
-    denial:
-      'bun install exits 1: "bun is unable to write files to tempdir: EROFS" — its temp directory is outside the writable roots'
-  },
   { id: 'check-all', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
   { id: 'gh-issue-view', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
   { id: 'gh-pr-view', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
