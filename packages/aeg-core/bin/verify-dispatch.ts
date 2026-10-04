@@ -22,6 +22,7 @@
  * Usage:
  *   bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n>
  *   bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n> --premise <body-file>
+ *   bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n> --existing-work
  *   bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n> --simulate <body-file>
  *   bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n> --check-baseline <file>
  *   bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n> --surfaces <glob1,glob2,...>
@@ -94,6 +95,7 @@ import {
   checkIssueRationale,
   checkPremises,
   classifyLeftover,
+  leftoverBlocksDispatch,
   compareToBaseline,
   type DispatchConflictsWithFact,
   type DispatchDependsOnFact,
@@ -1240,7 +1242,9 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
   for (const b of gateResult.blockers) console.log(`  ✗ ${b}`)
   if (ambiguousEdge) console.log(`  ✗ ${ambiguousEdge}`)
 
-  console.log(`\nleftover-detection: ${leftover.verdict}`)
+  console.log(
+    `\nleftover-detection: ${leftover.verdict}${EXISTING_WORK && leftover.verdict === 'stop' ? ' (expected: --existing-work, the caller resumes this work)' : ''}`
+  )
   console.log(`  ${leftover.reason}`)
 
   console.log('\nbaseline (informational — captured this run, not a committed file):')
@@ -1255,7 +1259,8 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
     if (raw.diagnostic) console.log(`    ↳ ${raw.diagnostic}`)
   }
 
-  const overallReady = gateResult.ready && leftover.verdict !== 'stop' && !ambiguousEdge
+  const overallReady =
+    gateResult.ready && !leftoverBlocksDispatch(leftover.verdict, { existingWork: EXISTING_WORK }) && !ambiguousEdge
   console.log(`\nverify-dispatch: ${overallReady ? 'READY TO DISPATCH' : 'NOT READY'}`)
   process.exit(overallReady ? 0 : 1)
 }
@@ -1350,7 +1355,9 @@ async function runGateModeForIssue(issueNumber: number): Promise<void> {
   for (const b of gateResult.blockers) console.log(`  ✗ ${b}`)
   if (ambiguousEdge) console.log(`  ✗ ${ambiguousEdge}`)
 
-  console.log(`\nleftover-detection: ${leftover.verdict}`)
+  console.log(
+    `\nleftover-detection: ${leftover.verdict}${EXISTING_WORK && leftover.verdict === 'stop' ? ' (expected: --existing-work, the caller resumes this work)' : ''}`
+  )
   console.log(`  ${leftover.reason}`)
 
   console.log('\nbaseline (informational — captured this run, not a committed file):')
@@ -1365,7 +1372,8 @@ async function runGateModeForIssue(issueNumber: number): Promise<void> {
     if (raw.diagnostic) console.log(`    ↳ ${raw.diagnostic}`)
   }
 
-  const overallReady = gateResult.ready && leftover.verdict !== 'stop' && !ambiguousEdge
+  const overallReady =
+    gateResult.ready && !leftoverBlocksDispatch(leftover.verdict, { existingWork: EXISTING_WORK }) && !ambiguousEdge
   console.log(`\nverify-dispatch: ${overallReady ? 'READY TO DISPATCH' : 'NOT READY'}`)
   process.exit(overallReady ? 0 : 1)
 }
@@ -1378,6 +1386,9 @@ function resolvePriorTaskRaw(tranche: Tranche, taskId: string): Task | null {
 }
 
 // ---- CLI entry point -----------------------------------------------------------
+
+/** `--existing-work`: the caller resumes this task's existing worktree (the review-loop driver), so commits already ahead of main are expected and never refuse dispatch. */
+const EXISTING_WORK = process.argv.includes('--existing-work')
 
 if (import.meta.main) {
   const argv = process.argv.slice(2)

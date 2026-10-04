@@ -367,7 +367,7 @@ export { checkPremises, parsePremiseBlock } from './premise-check'
 export type { PremiseAssertion, PremiseCheckResult } from './premise-check'
 export { checkDocClaims } from './doc-claim'
 export type { ClaimBinding, ClaimFinding, ClaimVoice, DocClaimSourceFile } from './doc-claim'
-export { classifyLeftover } from './leftover-detection'
+export { classifyLeftover, leftoverBlocksDispatch } from './leftover-detection'
 export type { LeftoverInput, LeftoverResult, LeftoverVerdict } from './leftover-detection'
 export { checkDeadBranchPush } from './dead-branch-push-guard'
 export type {

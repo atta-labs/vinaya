@@ -682,17 +682,21 @@ export function checkTaskDispatchReadiness(
     identity.kind === 'tranche' ? [identity.tranche, identity.taskId] : ['--issue', String(identity.issueNumber)]
   const sections: string[] = []
   let ready = true
-  const run = (script: string): void => {
-    const label = `$ bun ${script} ${gateArgs.join(' ')}`
+  const run = (script: string, extraArgs: readonly string[] = []): void => {
+    const args = [...gateArgs, ...extraArgs]
+    const label = `$ bun ${script} ${args.join(' ')}`
     try {
-      sections.push(`${label}\n${runGate(script, gateArgs)}`.trim())
+      sections.push(`${label}\n${runGate(script, args)}`.trim())
     } catch (err) {
       ready = false
       sections.push(`${label}\n${gateRunOutput(err)}`.trim())
     }
   }
   run('apps/cli/src/checks/bin/check-dispatch-readiness.ts')
-  run('packages/aeg-core/bin/verify-dispatch.ts')
+  // `--existing-work`: the driver created this worktree itself and runs this
+  // gate before every Developer turn, so from the second turn on the branch
+  // always carries commits ahead of main — expected work, never a leftover.
+  run('packages/aeg-core/bin/verify-dispatch.ts', ['--existing-work'])
   return { ready, output: sections.join('\n\n') }
 }
 

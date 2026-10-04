@@ -70,3 +70,15 @@ export function classifyLeftover(input: LeftoverInput): LeftoverResult {
     reason: 'No branch, no worktree, no commits ahead of main — safe to run Step 0 fresh.'
   }
 }
+
+/**
+ * Whether a leftover verdict refuses dispatch. `stop` protects real work from
+ * a fresh Step 0 — but a caller that resumes the task's existing worktree
+ * (`existingWork`: the review-loop driver, before every Developer turn after
+ * it created the worktree itself) expects commits ahead of main from the
+ * second turn on, and nothing it does can orphan them, so for it no verdict
+ * blocks.
+ */
+export function leftoverBlocksDispatch(verdict: LeftoverVerdict, opts: { existingWork: boolean }): boolean {
+  return verdict === 'stop' && !opts.existingWork
+}

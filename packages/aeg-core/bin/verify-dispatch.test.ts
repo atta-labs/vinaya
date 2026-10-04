@@ -716,7 +716,9 @@ describe('O3 wiring reaches both gate modes, not just checkBareEdgeQualification
   })
 
   it('both gate modes fold ambiguousEdge into overallReady — a found ambiguity is never printed but ignored', () => {
-    const occurrences = src.split("leftover.verdict !== 'stop' && !ambiguousEdge").length - 1
+    const occurrences =
+      src.split('!leftoverBlocksDispatch(leftover.verdict, { existingWork: EXISTING_WORK }) && !ambiguousEdge').length -
+      1
     expect(occurrences).toBe(2)
   })
 
