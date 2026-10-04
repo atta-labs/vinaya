@@ -87,17 +87,6 @@ const GH_HOSTS_DENIED_INSIDE =
   'the gh token store ~/.config/gh/hosts.yml is a denied credential and no GITHUB_TOKEN/GH_TOKEN is in the macOS environment, so gh cannot authenticate and the forge read fails'
 
 /**
- * `bun run typecheck` runs `turbo`, whose cache write lands at the MAIN
- * repository root's `.turbo/` — outside the worktree and scratch the sandbox
- * grants — so a cache MISS (which any PR that changes the package produces)
- * is denied there. It passes with no sandbox around it, where that write
- * succeeds. The same denial hits both agents. (Observed live, CI Linux:
- * `IO error: failed to create directory .../vinaya/.turbo/`.)
- */
-const TURBO_CACHE_WRITE_DENIED =
-  'bun run typecheck runs turbo, whose cache miss writes the main repository root .turbo/ dir — outside the granted worktree/scratch — so the sandbox denies it (a warm cache that only reads would not write; a PR that changes the package misses and writes)'
-
-/**
  * Today's denials. Remove an entry the moment its command passes — the
  * suite fails until you do.
  *
@@ -107,17 +96,20 @@ const TURBO_CACHE_WRITE_DENIED =
  * `gh-chained` is added as a Claude/darwin denial (alongside the kept
  * `check-all`/darwin): a chained line is not a bare excluded command, so it
  * runs inside.
- * O3/O4: `check-all` on claude/darwin and claude/linux stays (the CLI's own
- * forge reads are not staged from outside, escalated on Issue #1034).
- * `typecheck` is listed for CLAUDE/linux only — claude runs first, against a
- * cold turbo cache, so its cache-miss write is denied (above). It is NOT
- * listed for codex: the claude entry's own known-failure control re-runs
- * `typecheck` with NO sandbox (warming the shared, content-hashed turbo cache
- * at the main repo root) BEFORE codex's block runs, so codex's own
- * `typecheck` hits that warm cache, reads only, and exits 0 — listing it fails
- * the suite the moment it passes (observed live, CI Linux). Removing the
- * claude entry needs a write beyond the worktree (or a redirected turbo
- * cache), folded into the same Issue #1034 escalation.
+ * O4: `typecheck` is NOT listed for either agent. `bun run typecheck` runs
+ * `turbo`, whose cache-miss write used to land at the MAIN repository root's
+ * `.turbo/` — outside the granted worktree/scratch, so the sandbox denied it
+ * (`IO error: failed to create directory .../vinaya/.turbo/`). The driver now
+ * points turbo's cache-directory override (`TURBO_CACHE_DIR`,
+ * `confinedTurboCacheDir`) inside the confined dispatch's OWN granted scratch
+ * for both agents, and the harness mirrors it (`sandbox-launch.ts`), so each
+ * agent's cold-cache miss writes where the sandbox already allows writes and
+ * `typecheck` exits 0 under both — no repository-root grant, no cross-agent
+ * warm-cache dependency.
+ * O3: `check-all` on claude/darwin and claude/linux stays — the CLI's own
+ * forge reads are not staged from outside here. Under the publishing-tools
+ * design the controller runs the checks that need the forge, so closing these
+ * two moves to Issue #1040; each keeps its current-cause denial below.
  */
 const KNOWN_FAILURES: readonly KnownFailure[] = [
   {
@@ -132,7 +124,6 @@ const KNOWN_FAILURES: readonly KnownFailure[] = [
     platform: 'darwin',
     denial: `a chained gh line is not a bare excluded command, so Claude Code runs it inside the sandbox, where ${GH_HOSTS_DENIED_INSIDE}`
   },
-  { id: 'typecheck', agent: 'claude', platform: 'linux', denial: TURBO_CACHE_WRITE_DENIED },
   {
     id: 'check-all',
     agent: 'claude',

@@ -19,7 +19,6 @@ import {
   mkdirSync,
   lstatSync,
   openSync,
-  readdirSync,
   readFileSync,
   renameSync,
   writeFileSync,
@@ -983,79 +982,89 @@ export function outboxPathFor(
  * log events, run from the TRUSTED controller, OUTSIDE the sandbox. A confined
  * child's `log()` appended to `spoolDir` (`VINAYA_LOG_SPOOL_DIR`, inside its
  * granted scratch) rather than the real `<runtimeDir>/logs/` folder it cannot
- * reach; this walks the spool's `<owner>-<repo>/<issue>.ndjson` tree and
- * appends each file's bytes verbatim to the same relative path under
- * `destinationFolder` (the real log folder the controller CAN write), so the
- * events land exactly where an unconfined run would have put them — the agent
- * is never granted write access to that folder itself. Returns the number of
- * spool files delivered. Never throws: a drain failure must never fail the
- * turn it is draining (the same honest-best-effort posture `log()` itself
- * takes); it is called after the child exits and before its scratch directory
- * is removed.
+ * reach; this delivers THIS dispatch's own `<owner>-<repo>/<issue>.ndjson`
+ * file's bytes verbatim to the same relative path under `destinationFolder`
+ * (the real log folder the controller CAN write), so the events land exactly
+ * where an unconfined run would have put them — the agent is never granted
+ * write access to that folder itself. Returns the number of spool files
+ * delivered (0 or 1). Never throws: a drain failure must never fail the turn
+ * it is draining (the same honest-best-effort posture `log()` itself takes);
+ * it is called after the child exits and before its scratch directory is
+ * removed.
+ *
+ * OWN-PATH-ONLY (round 3 security review, LOW): the driver delivers ONLY the
+ * one relative path its OWN `(repo, issue)` names — the same leaf `log()`
+ * resolves inside the child (`outboxPathFor`) — and ignores every OTHER file
+ * the confined agent may have written into its writable spool scratch, whether
+ * under another task's `<owner>-<repo>/<issue>` path or under any name at all.
+ * Without this scope a compromised or prompt-injected confined agent could
+ * write `log-spool/<any>/<any>.ndjson` (a plain-Bash-reachable writable path)
+ * and have this trusted, unconfined driver append forged telemetry into
+ * ANOTHER task's log file under the same repo — a confined-deputy
+ * telemetry-integrity gap confinement had removed and an unconfined run never
+ * had across tasks.
  *
  * SYMLINK-REFUSING (round 2 security review, LOW): the spool lives inside the
  * agent's OWN granted scratch, so the confined agent could plant a symlink —
- * the spool root itself, a subdirectory, or a leaf file — pointing OUTSIDE the
- * spool, which would make this trusted, unconfined driver read an arbitrary
- * driver-readable host file and append it into the operator's log folder (a
- * confused deputy). Every stat here is an `lstatSync` (NEVER following a link),
- * and only a REAL directory is descended, only a REAL regular file is read;
- * any symlink — or any other non-regular entry — is skipped, and a spool root
- * that is not a real directory delivers nothing. This is the same
- * copy-never-symlink posture `isolation.md` O7 already takes for Codex's
- * `auth.json`. (No TOCTOU race: the agent's turn has already ended when this
- * runs, so no concurrent process can swap a checked path.)
+ * the spool root itself, the `<owner>-<repo>` directory, or the leaf file —
+ * pointing OUTSIDE the spool, which would make this trusted, unconfined driver
+ * read an arbitrary driver-readable host file and append it into the operator's
+ * log folder (a confused deputy). The spool root must be a REAL directory, and
+ * every path segment of the delivered leaf is resolved with `lstatSync` (NEVER
+ * following a link): each intermediate segment must be a REAL directory and the
+ * leaf a REAL regular file — any symlink, or any other non-regular entry,
+ * refuses the drain. This is the same copy-never-symlink posture `isolation.md`
+ * O7 already takes for Codex's `auth.json`. (No TOCTOU race: the agent's turn
+ * has already ended when this runs, so no concurrent process can swap a checked
+ * path.)
  */
-export function drainLogSpool(spoolDir: string, destinationFolder: string): number {
-  let delivered = 0
+export function drainLogSpool(
+  spoolDir: string,
+  destinationFolder: string,
+  repo: { owner: string; repo: string } | null,
+  issue: number | null
+): number {
   // The spool root must itself be a REAL directory — never a symlink the agent
-  // substituted for it (which `readdirSync` would otherwise follow out of the
-  // spool). Anything else: refuse the whole drain.
+  // substituted for it (which the leaf lstat below would otherwise traverse
+  // out of the spool). Anything else: refuse the whole drain.
   try {
     if (!lstatSync(spoolDir).isDirectory()) return 0
   } catch {
     return 0
   }
-  const walk = (relative: string): void => {
-    const here = relative === '' ? spoolDir : join(spoolDir, relative)
-    let names: string[]
+  // The ONE relative path this dispatch owns — the exact `<owner>-<repo>`
+  // directory and `<issue>.ndjson` file `log()`'s folder destination
+  // (`outboxPathFor`) wrote to inside the child. Nothing else is delivered.
+  const dirName = repo ? `${repo.owner}-${repo.repo}` : 'unresolved'
+  const fileName = `${issue ?? 'none'}.ndjson`
+  const segments = [dirName, fileName]
+  // Resolve each segment with `lstatSync`, never `statSync`: a symlink reports
+  // as a symlink (isDirectory/isFile both false) and refuses the drain, never
+  // resolved. Intermediate segments must be real directories, the leaf a real
+  // regular file.
+  let current = spoolDir
+  for (const [i, segment] of segments.entries()) {
+    current = join(current, segment)
+    let stat: ReturnType<typeof lstatSync>
     try {
-      names = readdirSync(here)
+      stat = lstatSync(current)
     } catch {
-      return
+      return 0
     }
-    for (const name of names) {
-      const childRelative = relative === '' ? name : join(relative, name)
-      let stat: ReturnType<typeof lstatSync>
-      try {
-        // lstat, never stat: a symlink is reported AS a symlink (isDirectory /
-        // isFile both false) and skipped below, never resolved.
-        stat = lstatSync(join(spoolDir, childRelative))
-      } catch {
-        continue
-      }
-      if (stat.isDirectory()) {
-        walk(childRelative)
-        continue
-      }
-      // Only a real regular file is read — a symlink, FIFO, socket or device is
-      // skipped, so the driver never follows a link out of the agent's spool.
-      if (!stat.isFile()) continue
-      try {
-        const bytes = readFileSync(join(spoolDir, childRelative))
-        if (bytes.length === 0) continue
-        const target = join(destinationFolder, childRelative)
-        mkdirSync(dirname(target), { recursive: true, mode: 0o700 })
-        appendFileSync(target, bytes)
-        delivered += 1
-      } catch {
-        // Best-effort per file — one unreadable/unwritable entry never aborts
-        // the rest of the drain.
-      }
-    }
+    const isLeaf = i === segments.length - 1
+    if (isLeaf ? !stat.isFile() : !stat.isDirectory()) return 0
   }
-  walk('')
-  return delivered
+  try {
+    const bytes = readFileSync(current)
+    if (bytes.length === 0) return 0
+    const target = join(destinationFolder, ...segments)
+    mkdirSync(dirname(target), { recursive: true, mode: 0o700 })
+    appendFileSync(target, bytes)
+    return 1
+  } catch {
+    // Best-effort: a drain fault never fails the turn it is draining.
+    return 0
+  }
 }
 
 /**

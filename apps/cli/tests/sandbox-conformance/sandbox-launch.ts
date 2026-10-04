@@ -31,7 +31,12 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { addCodexWritableDirs, buildCodexExecpolicyRules, codexSpawnEnvExtras } from '../../src/lib/dispatch.js'
+import {
+  addCodexWritableDirs,
+  buildCodexExecpolicyRules,
+  codexSpawnEnvExtras,
+  confinedTurboCacheDir
+} from '../../src/lib/dispatch.js'
 import {
   CLAUDE_SANDBOX_ALLOWED_DOMAINS,
   claudeRunsCommandUnsandboxed,
@@ -188,6 +193,11 @@ function claudeSession(): SandboxSession {
               ...stripVinayaEnv(),
               ...(resolution.pathOverride !== undefined ? { PATH: resolution.pathOverride } : {}),
               TMPDIR: scratchDir,
+              // O4: the same turbo cache redirect the driver ships for a
+              // confined Claude child (`dispatch.ts`), so the suite judges
+              // the real boundary — turbo writes inside the granted scratch,
+              // never the repo-root `.turbo/`.
+              TURBO_CACHE_DIR: confinedTurboCacheDir(scratchDir),
               ...env
             },
             `claude: ${command}`

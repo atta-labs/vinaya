@@ -3452,9 +3452,29 @@ export function codexSpawnEnvExtras(
   return {
     attribution: {
       ...(isCodex && codexHomeDir !== null ? { CODEX_HOME: codexHomeDir } : {}),
-      ...(isCodex && scratchDir !== null ? { TMPDIR: scratchDir, TMP: scratchDir, TEMP: scratchDir } : {})
+      ...(isCodex && scratchDir !== null
+        ? { TMPDIR: scratchDir, TMP: scratchDir, TEMP: scratchDir, TURBO_CACHE_DIR: confinedTurboCacheDir(scratchDir) }
+        : {})
     }
   }
+}
+
+/**
+ * O4: the turbo filesystem cache directory for a confined dispatch, inside
+ * its OWN granted scratch (writable) rather than the default `.turbo/` at the
+ * main repository root — which is outside the worktree/scratch the sandbox
+ * grants, so a cache MISS (any PR that changes a package) died there with
+ * `IO error: failed to create directory .../vinaya/.turbo/`. `bun run
+ * typecheck` runs `turbo`, and `turbo`'s `--cache-dir` has this env override
+ * (`TURBO_CACHE_DIR`); pointing it inside the scratch sends every cache-miss
+ * write where the sandbox already allows writes, never a repository-root
+ * grant. Set for both confined agents' children (here for Codex via
+ * `codexSpawnEnvExtras`, and in `dispatchRole`'s Claude branch) and mirrored
+ * by the conformance harness (`sandbox-launch.ts`) so the suite judges the
+ * same redirect the driver ships.
+ */
+export function confinedTurboCacheDir(scratchDir: string): string {
+  return join(scratchDir, 'turbo-cache')
 }
 
 /**
@@ -4293,6 +4313,11 @@ export async function dispatchRole(
               // `/tmp/claude-<uid>` and ignores `TMPDIR` for them, so its
               // own override must name the same granted scratch directory.
               CLAUDE_CODE_TMPDIR: claudeConfinement.scratchDir,
+              // O4: turbo's cache-miss write goes inside the granted scratch,
+              // never the repo-root `.turbo/` the sandbox denies — see
+              // `confinedTurboCacheDir`. Codex gets the same key via
+              // `codexSpawnEnvExtras` above.
+              TURBO_CACHE_DIR: confinedTurboCacheDir(claudeConfinement.scratchDir),
               // O2: see the Codex branch's own comment on this same guard,
               // above — `resolveGitFirstPath`'s result, puts the real `git`
               // ahead of the `/usr/bin/git` xcrun shim on macOS.
@@ -4509,7 +4534,10 @@ export async function dispatchRole(
       // drain fault never blocks `finish()`.
       if (logSpoolDir !== null) {
         try {
-          drainLogSpool(logSpoolDir, join(runtimeDirForRepo(repo), 'logs'))
+          // Deliver ONLY this dispatch's OWN `<owner>-<repo>/<issue>.ndjson`
+          // spool file — never another task's path the confined agent may
+          // have written into its writable spool (round 3 security, LOW).
+          drainLogSpool(logSpoolDir, join(runtimeDirForRepo(repo), 'logs'), repo, opts.task ?? null)
         } catch {
           // best-effort, same reasoning as the scratch cleanup below.
         }
