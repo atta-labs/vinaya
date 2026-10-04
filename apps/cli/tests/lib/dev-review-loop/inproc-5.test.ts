@@ -1080,6 +1080,37 @@ describe('devReviewLoop — the driver commits and publishes each Developer turn
     expect((result.finalDecision as { detail: string }).detail).toContain(protectedPath)
   })
 
+  it('O1: an untracked protected file is named only after the driver commits it, then refused before push', async () => {
+    const remoteHead = 'r'.repeat(40)
+    const protectedPath = '.github/workflows/new.yml'
+    const world = makeWorld({
+      worktreeExists: true,
+      developerPushed: false,
+      prOpened: false,
+      remoteBranchExists: true,
+      head: remoteHead,
+      worktreeHead: remoteHead
+    })
+    const deps = developerLeavesWorkDeps(world, { changedPaths: [protectedPath] })
+    const diffHeads: string[] = []
+    deps.gitWorktreeChangedPaths = () => {
+      diffHeads.push(world.worktreeHead)
+      return world.worktreeHead === world.nextCommitSha ? [protectedPath] : []
+    }
+    const pushedPaths: string[][] = []
+    deps.pushTaskBranch = (input) => {
+      pushedPaths.push([...input.touchedPaths])
+      return { ok: false, hook: true, refusal: `protected path refused: ${input.touchedPaths.join(', ')}` }
+    }
+
+    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
+
+    expect(diffHeads.slice(0, 2)).toEqual([remoteHead, world.nextCommitSha])
+    expect(world.commits.length).toBeGreaterThanOrEqual(1)
+    expect(pushedPaths[0]).toEqual([protectedPath])
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+  })
+
   it('O5: does nothing on a turn with nothing new — a clean worktree and an open PR', async () => {
     // The default dispatch fake is the pre-task "fakes a published turn" shape:
     // it leaves the worktree clean and the PR open. With the worktree present,
@@ -1217,6 +1248,47 @@ describe('devReviewLoop — a restart finishes an interrupted publication exactl
     expect(world.pushes).toHaveLength(1) // recovery pushes the recorded commit
     expect(world.prOpens).toHaveLength(1) // then opens the PR
     expect(readDeveloperPublicationRecord(world.runtimeDir, world.task)?.prNumber).toBe(world.prNumber)
+  })
+
+  it('a first-push restart resolves the recorded commit base and authorizes its protected paths', async () => {
+    const commitSha = 'c'.repeat(40)
+    const protectedPath = '.github/workflows/recovered.yml'
+    const world = makeWorld({
+      worktreeExists: true,
+      remoteBranchExists: false,
+      worktreeHead: commitSha
+    })
+    seedBody(world)
+    writeDeveloperPublicationRecord(world.runtimeDir, world.task, {
+      round: 1,
+      preTurnHead: world.mergeBase,
+      commitSha,
+      pushed: false,
+      prNumber: null
+    })
+    const deps = makeInProcessDeps(world)
+    let resolveCalls = 0
+    deps.resolveHead = () => {
+      resolveCalls += 1
+      if (resolveCalls === 1) return commitSha
+      throw new Error('the remote branch disappeared before recovery push authorization')
+    }
+    const bases: string[] = []
+    const pushedPaths: string[][] = []
+    deps.gitWorktreeChangedPaths = (_worktree, base) => {
+      bases.push(base)
+      return [protectedPath]
+    }
+    deps.pushTaskBranch = (input) => {
+      pushedPaths.push([...input.touchedPaths])
+      return { ok: false, hook: true, refusal: `protected path refused: ${input.touchedPaths.join(', ')}` }
+    }
+
+    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
+
+    expect(bases[0]).toBe(world.mergeBase)
+    expect(pushedPaths[0]).toEqual([protectedPath])
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
   })
 
   it('restart after the push (not yet opened) finishes by opening only — no second commit or push', async () => {

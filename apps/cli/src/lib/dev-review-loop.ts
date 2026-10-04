@@ -3348,7 +3348,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // Authorize only the commits in this push. An existing remote head
       // bounds the range; a first push still names the whole new branch.
       const pushedRangeBase = pushedCommitRangeBase(remoteHeadBeforePush, publicationExpectedBase)
-      const changedPaths = pushedRangeBase ? d.gitWorktreeChangedPaths(worktree, pushedRangeBase) : []
+      let changedPaths = pushedRangeBase ? d.gitWorktreeChangedPaths(worktree, pushedRangeBase) : []
+      // `git diff <base>` cannot see an untracked file until `commitWorktree`
+      // stages it. Include porcelain's dirty-file list in the pre-commit
+      // Surface check, then recompute the authoritative pushed range below
+      // after the commit has made every path visible to git diff.
+      const preCommitChangedPaths = [...new Set([...changedPaths, ...unpushed.dirtyFiles])]
       const check = checkPublicationPreconditions({
         worktreeBranch: d.readWorktreeBranch(worktree),
         expectedBranch: branch,
@@ -3356,7 +3361,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         recordedHead: turnPreHead,
         base,
         expectedBase: publicationExpectedBase,
-        changedPaths,
+        changedPaths: preCommitChangedPaths,
         surface: d.resolveTaskSurface ? d.resolveTaskSurface(task) : null
       })
       if (!check.ok) return publicationRefusal('publication-preconditions', check.reason)
@@ -3387,6 +3392,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const localHead = d.readWorktreeHead(worktree)
       const remoteHead = remoteHeadBeforePush
       if (localHead !== null && localHead !== remoteHead) {
+        // The pushed commit is now the source of truth. In particular, a new
+        // file that was untracked before `commitWorktree` is now included.
+        changedPaths = pushedRangeBase ? d.gitWorktreeChangedPaths(worktree, pushedRangeBase) : []
         const push = d.pushTaskBranch({
           task,
           branch,
@@ -3455,8 +3463,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           remoteHead = null
         }
         if (remoteHead !== record.commitSha) {
-          const pushedRangeBase = pushedCommitRangeBase(remoteHead, publicationExpectedBase)
-          const changedPaths = pushedRangeBase ? d.gitWorktreeChangedPaths(worktree, pushedRangeBase) : []
+          // A fresh process has no in-memory `publicationExpectedBase`. Resolve
+          // it from the recorded commit before a first-push recovery; an
+          // absent remote and an unresolved base must never authorize an empty
+          // path list for an unknown commit range.
+          const branchBase = await resolvePublicationBase(record.commitSha)
+          const pushedRangeBase = pushedCommitRangeBase(remoteHead, branchBase)
+          if (pushedRangeBase === null) {
+            return publicationRefusal(
+              'publication-preconditions',
+              'could not resolve the branch base required to authorize the interrupted first push'
+            )
+          }
+          const changedPaths = d.gitWorktreeChangedPaths(worktree, pushedRangeBase)
           const push = d.pushTaskBranch({
             task,
             branch,
