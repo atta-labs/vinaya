@@ -5774,6 +5774,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // that was never written.
           const candidateInputsReady = candidateDir
             ? writeReviewerCandidateInputs(candidateDir, {
+                brief: (() => {
+                  try {
+                    return d.fetchFrozenBrief(task)
+                  } catch (err) {
+                    return `(the task's frozen brief could not be fetched this round: ${err instanceof Error ? err.message : String(err)})`
+                  }
+                })(),
                 prBody: (() => {
                   try {
                     return d.fetchPrBody(prNumber)

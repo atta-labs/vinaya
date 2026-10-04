@@ -510,7 +510,7 @@ describe('renderReviewerDispatchPrompt — carries the role doctrine as a fact',
 
 // --- the driver-staged pull-request inputs: no gh, no forge credential (task 992, O1/O2/O3) ---
 
-describe('candidateInputPieces / renderReviewerDispatchPrompt — the driver-staged PR body/diff/prior-findings', () => {
+describe('candidateInputPieces / renderReviewerDispatchPrompt — the driver-staged brief/PR body/diff/prior-findings', () => {
   const MANIFEST: ReviewInputManifest = {
     headSha: 'a'.repeat(40),
     baseSha: 'e'.repeat(40),
@@ -528,6 +528,7 @@ describe('candidateInputPieces / renderReviewerDispatchPrompt — the driver-sta
     manifest: MANIFEST
   }
   const PATHS = {
+    brief: '/scratch/.vinaya-reviewer-inputs/brief.md',
     prBody: '/scratch/.vinaya-reviewer-inputs/pr-body.md',
     diff: '/scratch/.vinaya-reviewer-inputs/diff.patch',
     priorFindings: '/scratch/.vinaya-reviewer-inputs/prior-findings.md'
@@ -537,18 +538,29 @@ describe('candidateInputPieces / renderReviewerDispatchPrompt — the driver-sta
     expect(candidateInputPieces(null)).toEqual([])
   })
 
-  it('names all three files, and states no gh/no credential, as driver text the lint reads', () => {
+  it('names all four files, and states no gh/no credential, as driver text the lint reads', () => {
     const pieces = candidateInputPieces(PATHS)
     const rendered = joinReviewerPromptPieces(pieces)
+    expect(rendered).toContain(PATHS.brief)
     expect(rendered).toContain(PATHS.prBody)
     expect(rendered).toContain(PATHS.diff)
     expect(rendered).toContain(PATHS.priorFindings)
     expect(rendered).toContain('no GitHub credential')
     expect(rendered).toContain('no `gh` command')
-    // The three interpolated paths are facts, never read by the banned-framing
+    // The four interpolated paths are facts, never read by the banned-framing
     // lint; everything else in this block is the renderer's own fixed text.
     const driverText = driverAuthoredPromptText(pieces)
     expect(lintReviewerPrompt(driverText)).toEqual([])
+  })
+
+  it('O1: names the brief file as the standard to judge against, in BOTH reviewer and security prompts', () => {
+    const reviewerPrompt = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work', null, PATHS)
+    const securityPrompt = renderReviewerDispatchPrompt('security', FACTS, '/tmp/work', null, PATHS)
+    for (const prompt of [reviewerPrompt, securityPrompt]) {
+      expect(prompt).toContain(PATHS.brief)
+      expect(prompt).toContain('TASK BRIEF')
+      expect(prompt).toContain('judge the PR against it')
+    }
   })
 
   it('renderReviewerDispatchPrompt injects the block for either role when paths are given', () => {
