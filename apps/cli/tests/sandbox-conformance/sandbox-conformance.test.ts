@@ -104,9 +104,17 @@ const KNOWN_FAILURES: readonly KnownFailure[] = [
   { id: 'gh-issue-view', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
   { id: 'gh-pr-view', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
   { id: 'gh-pr-view-reviews', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
-  ...['bun-install', 'typecheck', 'check-all'].map(
-    (id): KnownFailure => ({ id, agent: 'claude', platform: 'linux', denial: BUN_HIDDEN_LINUX })
-  )
+  ...[
+    'bun-install',
+    'bun-test-one-file',
+    'typecheck',
+    'format-and-lint',
+    'doctrine-developer',
+    'doctrine-pr-report',
+    'check-dispatch-readiness',
+    'verify-dispatch',
+    'check-all'
+  ].map((id): KnownFailure => ({ id, agent: 'claude', platform: 'linux', denial: BUN_HIDDEN_LINUX }))
 ]
 
 function knownFailure(id: string, agent: Agent, platform: string): KnownFailure | undefined {

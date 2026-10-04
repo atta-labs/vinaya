@@ -3417,8 +3417,9 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash all
     for (const rule of [
       'Bash(git worktree add:*)',
       'Bash(git fetch:*)',
+      'Bash(git pull:*)',
       'Bash(git commit:*)',
-      'Bash(gh:*)',
+      'Bash(gh pr view:*)',
       'Bash(bun install:*)',
       'Bash(bun test:*)',
       'Bash(bun run:*)',
@@ -3432,14 +3433,31 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash all
   it('developer: now granted push and PR-open — a Claude Code Developer publishes its own work (agent-confinement-v1/7, O2/O7)', () => {
     const perms = buildRolePermissions('developer')
     // Granted outright — the driver no longer publishes for a Claude Code
-    // Developer, so it needs its own `git push`/`gh` to commit, push and open
-    // its own pull request, through the SAME commands the sandbox excludes
-    // (`CLAUDE_SANDBOX_EXCLUDED_COMMANDS`). This permissions file is
-    // Claude-only (`writeDispatchSettings`), so a Codex dispatch — whose
-    // driver still publishes for it — never reads this grant at all.
+    // Developer, so it needs its own `git push`/`git pull`/`gh` to commit,
+    // push, keep its branch current and open its own pull request, through
+    // the SAME commands the sandbox excludes (`CLAUDE_SANDBOX_EXCLUDED_COMMANDS`).
+    // This permissions file is Claude-only (`writeDispatchSettings`), so a
+    // Codex dispatch — whose driver still publishes for it — never reads
+    // this grant at all.
     expect(perms.allow).toContain('Bash(git push:*)')
-    expect(perms.allow).toContain('Bash(gh:*)')
+    expect(perms.allow).toContain('Bash(git pull:*)')
     expect(perms.allow).toContain('Bash(bun apps/cli/src/index.ts:*)')
+    // `gh` is enumerated to exactly what O7 needs, never a blanket `gh:*`
+    // (round 2 security review, HIGH: `gh` runs outside the sandbox, so this
+    // allow-list is the only remaining gate against `gh api`/`gh pr merge`/
+    // `gh secret`/`gh repo`).
+    for (const rule of [
+      'Bash(gh pr create:*)',
+      'Bash(gh pr edit:*)',
+      'Bash(gh pr view:*)',
+      'Bash(gh pr comment:*)',
+      'Bash(gh pr diff:*)',
+      'Bash(gh issue view:*)',
+      'Bash(gh issue comment:*)'
+    ]) {
+      expect(perms.allow).toContain(rule)
+    }
+    expect(perms.allow).not.toContain('Bash(gh:*)')
     // Only the destructive/verify-skipping shapes stay revoked — see the next test.
     expect(perms.deny).not.toContain('Bash(git push:*)')
     expect(perms.deny).not.toContain('Bash(gh pr create:*)')
@@ -3564,16 +3582,24 @@ describe('buildRolePermissions — Issue #865, O1/O2/O3: machine-state commands 
   })
 
   it('O3: the written policy names a version later than the one that denied no machine-state command', () => {
-    expect(PERMISSION_POLICY_VERSION).toBe('v5')
+    expect(PERMISSION_POLICY_VERSION).toBe('v6')
     expect(PERMISSION_POLICY_VERSION).not.toBe('v2')
   })
 
   it('nothing else in either role’s policy regressed — every rule the previous policy carried is still there', () => {
     const developer = buildRolePermissions('developer')
-    // `git push`/`gh` are granted (O2/O7, agent-confinement-v1/7) — a Claude
-    // Code Developer now publishes its own work; every other capability the
-    // Developer carries stays.
-    for (const rule of ['Bash(git commit:*)', 'Bash(git push:*)', 'Bash(gh:*)', 'Bash(bun apps/cli/src/index.ts:*)']) {
+    // `git push`/`git pull`/`gh` are granted (O2/O7, agent-confinement-v1/7)
+    // — a Claude Code Developer now publishes its own work; every other
+    // capability the Developer carries stays. `gh` is the enumerated
+    // subcommand list, never the blanket `Bash(gh:*)` (round 2 security
+    // review, HIGH).
+    for (const rule of [
+      'Bash(git commit:*)',
+      'Bash(git push:*)',
+      'Bash(git pull:*)',
+      'Bash(gh pr view:*)',
+      'Bash(bun apps/cli/src/index.ts:*)'
+    ]) {
       expect(developer.allow).toContain(rule)
     }
     for (const rule of [

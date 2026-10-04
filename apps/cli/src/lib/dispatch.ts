@@ -1152,12 +1152,20 @@ const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
  * `v4`: `writeAccessHookScript` now also denies an `exact-files`-scoped
  * Write/Edit outside its granted hand-off files instead of falling through —
  * neither touches `buildRolePermissions`'s own `allow`/`deny` arrays, but all
- * are as much "the written policy" as those arrays are) —
+ * are as much "the written policy" as those arrays are; the bump to `v6`:
+ * the Developer's `gh` allow narrows from a blanket `Bash(gh:*)` to the
+ * enumerated subcommands O7 actually needs (`gh pr create/edit/view/comment/
+ * diff`, `gh issue view/comment`) — `gh` runs outside the sandbox
+ * (`CLAUDE_SANDBOX_EXCLUDED_COMMANDS`), so this allow-list was the only
+ * remaining gate against `gh api`/`gh pr merge`/`gh secret`/`gh repo` (round
+ * 2 security review, HIGH) — and adds a matching `Bash(git pull:*)` allow
+ * for the `git pull *` entry `CLAUDE_SANDBOX_EXCLUDED_COMMANDS` already
+ * listed with no permission grant of its own (round 2 code review, O2 gap)) —
  * `writeDispatchSettings`'s own first lifecycle line for a role names it, so
  * a run's own log says which policy shape it started under without needing
  * to diff `dispatch.ts` against the run's own timestamp.
  */
-export const PERMISSION_POLICY_VERSION = 'v5'
+export const PERMISSION_POLICY_VERSION = 'v6'
 
 type RolePermissions = { allow: string[]; deny: string[] }
 
@@ -1298,6 +1306,7 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(git worktree add:*)',
         'Bash(git worktree list:*)',
         'Bash(git fetch:*)',
+        'Bash(git pull:*)',
         'Bash(git status:*)',
         'Bash(git diff:*)',
         'Bash(git log:*)',
@@ -1308,16 +1317,27 @@ export function buildRolePermissions(role: Role): RolePermissions {
         // — it commits, pushes its task branch and opens or updates its own
         // pull request, through the SAME excluded commands
         // (`CLAUDE_SANDBOX_EXCLUDED_COMMANDS`, `worker-boundary.ts`) that let
-        // `git push`/`gh` run with full access despite the sandbox. `gh:*`
-        // replaces the prior per-subcommand allow list below (it matched
-        // only read/comment subcommands when the driver still published) —
-        // the broader grant now covers `gh pr create` too, matching the
-        // excluded command's own `gh *` shape. The driver still publishes for
-        // Codex, whose `workspace-write` sandbox keeps `.git` read-only by
-        // design, so this grant only ever takes effect on the Claude side
-        // (`buildRolePermissions`/`writeDispatchSettings` are Claude-only).
+        // `git push`/`git pull`/`git fetch`/`gh` run with full access despite
+        // the sandbox. The `gh` grant below is enumerated to exactly the
+        // subcommands O7 requires — read PR/Issue state and publish the
+        // Developer's own PR — never a blanket `gh:*`: the Developer holds
+        // the operator's full-privilege forge token, and `gh` runs OUTSIDE
+        // the sandbox (`excludedCommands`), so this allow-list is the only
+        // remaining gate against `gh api`, `gh pr merge`, `gh secret`, `gh
+        // repo` and the rest of the forge surface a prompt-injected turn
+        // could otherwise reach (round 2 security review, HIGH). The driver
+        // still publishes for Codex, whose `workspace-write` sandbox keeps
+        // `.git` read-only by design, so this grant only ever takes effect
+        // on the Claude side (`buildRolePermissions`/`writeDispatchSettings`
+        // are Claude-only).
         'Bash(git push:*)',
-        'Bash(gh:*)',
+        'Bash(gh pr create:*)',
+        'Bash(gh pr edit:*)',
+        'Bash(gh pr view:*)',
+        'Bash(gh pr comment:*)',
+        'Bash(gh pr diff:*)',
+        'Bash(gh issue view:*)',
+        'Bash(gh issue comment:*)',
         'Bash(git config:*)',
         'Bash(git branch:*)',
         'Bash(git checkout:*)',

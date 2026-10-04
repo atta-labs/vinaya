@@ -2102,10 +2102,12 @@ function claudeCredentialDenyFiles(realHome: string): ReadonlyArray<{ path: stri
  * value, rather than merging it in here, is what lets this function's
  * output match the vendor-literal `network`/`filesystem` key set another
  * task's sandbox-conformance suite (`apps/cli/tests/sandbox-conformance/`,
- * not this task's Surface) already asserts by exact equality — a file this
- * task cannot safely edit itself: it was added on `main` after this
- * branch's own base, so this branch carrying its own edited copy of the
- * same path would make the PR's own merge commit conflict instead of build.
+ * not this task's own Technical Surface) already asserts by exact equality —
+ * that suite was added on `main` after this branch's own base, so this
+ * branch merges `main` in (rather than carrying an independent copy of the
+ * same path, which would make the PR's own merge commit conflict) and edits
+ * its `KNOWN_FAILURES` list directly once this function's own shape change
+ * makes a listed Claude-on-Linux denial stop reproducing.
  *
  * All paths are `realpath`'d before being written into the settings file —
  * the same "every substituted path must be canonicalized" discipline
