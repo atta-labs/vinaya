@@ -1019,6 +1019,8 @@ describe('devReviewLoop — the driver commits and publishes each Developer turn
     expect(world.pushes).toHaveLength(1)
     expect(world.prOpens).toHaveLength(1)
     expect(world.prOpens[0]!.title).toBe(world.issueTitle)
+    expect(world.prOpens[0]!.body).toContain('Head: prepared-before-open')
+    expect(world.prOpens[0]!.body).not.toContain('[The driver populates this block from the committed head.]')
     // The durable record reflects the completed publication (O8's own trace).
     const rec = readDeveloperPublicationRecord(world.runtimeDir, world.task)
     expect(rec?.pushed).toBe(true)
