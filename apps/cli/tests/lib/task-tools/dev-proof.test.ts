@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import {
   devBridgeInvocation,
   parseAgentStream,
+  parseCodexProofStream,
   parseDevProofArgs,
   proofContext
 } from '../../../src/lib/task-tools/dev-proof.js'
@@ -85,5 +86,56 @@ describe('parseAgentStream', () => {
     expect(parsed.isError).toBeNull()
     expect(parsed.resultText).toBeNull()
     expect(parsed.permissionDenials).toEqual([])
+  })
+})
+
+describe('parseCodexProofStream', () => {
+  it('collects mcp_tool_call items and the final agent message (the call reached the tool)', () => {
+    const lines = [
+      JSON.stringify({ type: 'thread.started', thread_id: 't1' }),
+      JSON.stringify({ type: 'turn.started' }),
+      JSON.stringify({
+        type: 'item.completed',
+        item: { type: 'mcp_tool_call', server: 'vinaya-dev-tools', tool: 'run_checks', status: 'success' }
+      }),
+      JSON.stringify({
+        type: 'item.completed',
+        item: { type: 'agent_message', text: 'dev-proof: answered in driver pid 42' }
+      }),
+      JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } })
+    ].join('\n')
+    const parsed = parseCodexProofStream(lines)
+    expect(parsed.codex.mcpToolCalls).toHaveLength(1)
+    expect(parsed.codex.mcpToolCalls[0]?.tool).toBe('run_checks')
+    expect(parsed.codex.errorEvents).toHaveLength(0)
+    expect(parsed.resultText).toBe('dev-proof: answered in driver pid 42')
+    expect(parsed.codex.finalMessage).toBe('dev-proof: answered in driver pid 42')
+    expect(parsed.isError).toBeNull()
+  })
+  it('surfaces a top-level error event and flags the turn as errored', () => {
+    const lines = [
+      JSON.stringify({ type: 'error', message: 'MCP server vinaya-dev-tools failed to start' }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'I could not find the tool.' } })
+    ].join('\n')
+    const parsed = parseCodexProofStream(lines)
+    expect(parsed.codex.errorEvents).toHaveLength(1)
+    expect(parsed.isError).toBe(true)
+    expect(parsed.codex.mcpToolCalls).toHaveLength(0)
+  })
+  it('reports no call and a null stamp when the agent answered without calling the tool', () => {
+    // The round-2 symptom: exit 0, a final message, but no mcp_tool_call item.
+    const lines = [
+      JSON.stringify({ type: 'thread.started', thread_id: 't2' }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'done' } }),
+      JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } })
+    ].join('\n')
+    const parsed = parseCodexProofStream(lines)
+    expect(parsed.codex.mcpToolCalls).toHaveLength(0)
+    expect(parsed.resultText).toBe('done')
+  })
+  it('tolerates non-JSON lines', () => {
+    const parsed = parseCodexProofStream('not json\n\n{"type":"turn.started"}')
+    expect(parsed.codex.mcpToolCalls).toEqual([])
+    expect(parsed.resultText).toBeNull()
   })
 })

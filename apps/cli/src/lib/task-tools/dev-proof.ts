@@ -110,10 +110,46 @@ export function proofContext(recorded: RecordedCall[]): DevToolContext {
   }
 }
 
-/** The one-shot instruction the proof session runs — call the tool, echo the stamped `output` back verbatim. */
-const PROOF_PROMPT =
-  `Call the \`mcp__${DEV_TOOLS_MCP_SERVER_NAME}__${PROOF_TOOL}\` tool now with no arguments. ` +
-  'When it returns, reply with EXACTLY the value of the `output` field it returned, and nothing else — no quotes, no commentary.'
+/**
+ * The one-shot instruction the proof session runs — call the tool, echo the
+ * stamped `output` back verbatim. The tool's model-facing name differs by
+ * vendor, so the prompt does too:
+ *
+ *  - Claude exposes an MCP tool as `mcp__<server>__<tool>` and the proven
+ *    macOS PASS used that literal name (ruling 1040-2/round-1) — keep it.
+ *  - Codex namespaces the SAME tool as `<server>__<tool>` (no `mcp__`
+ *    prefix). Round-2 bug: naming the Claude form made the Codex model unable
+ *    to find any such tool, so it answered the prompt directly and the
+ *    driver-run server received no call (exit 0, echoed text null, TOOL CALL
+ *    null). Describe the tool by its server and bare name instead, so the
+ *    model calls whatever namespaced handle Codex actually assigned it.
+ */
+function proofPrompt(agent: ProofAgent): string {
+  if (agent === 'claude') {
+    return (
+      `Call the \`mcp__${DEV_TOOLS_MCP_SERVER_NAME}__${PROOF_TOOL}\` tool now with no arguments. ` +
+      'When it returns, reply with EXACTLY the value of the `output` field it returned, and nothing else — no quotes, no commentary.'
+    )
+  }
+  return (
+    `You have exactly one MCP tool available, named \`${PROOF_TOOL}\`, provided by the MCP server \`${DEV_TOOLS_MCP_SERVER_NAME}\`. ` +
+    'Call that tool now with no arguments (an empty JSON object). ' +
+    'When it returns, reply with EXACTLY the value of the `output` field it returned, and nothing else — no quotes, no commentary.'
+  )
+}
+
+/**
+ * Codex's own `--json` events, reduced to what the proof must SHOW so a macOS
+ * run reveals whether the bridge started, whether the tool was listed, and
+ * whether a call was attempted or refused (ruling round-2): every
+ * `mcp_tool_call` item, any error event (an MCP server that failed to start
+ * surfaces here), and the final agent message.
+ */
+type CodexDiagnostics = {
+  mcpToolCalls: Record<string, unknown>[]
+  errorEvents: Record<string, unknown>[]
+  finalMessage: string | null
+}
 
 /** The parsed shape the agent's stream-json run yields, reduced to what the proof reports. */
 type AgentOutcome = {
@@ -121,9 +157,11 @@ type AgentOutcome = {
   isError: boolean | null
   permissionDenials: unknown[]
   resultText: string | null
+  /** Codex-only event detail (null for Claude, whose `result` event carries everything the proof needs). */
+  codex: CodexDiagnostics | null
 }
 
-/** Reads newline-delimited stream-json, pulling the terminal `result` event's fields. */
+/** Reads Claude's newline-delimited stream-json, pulling the terminal `result` event's fields. */
 export function parseAgentStream(stdout: string): Pick<AgentOutcome, 'isError' | 'permissionDenials' | 'resultText'> {
   let isError: boolean | null = null
   let permissionDenials: unknown[] = []
@@ -144,6 +182,54 @@ export function parseAgentStream(stdout: string): Pick<AgentOutcome, 'isError' |
     }
   }
   return { isError, permissionDenials, resultText }
+}
+
+/**
+ * Reads Codex's `--json` stream (one event per line — `thread.started`,
+ * `turn.started`, `item.completed`, `turn.completed`; confirmed-live schema in
+ * `dispatch.ts`). Codex emits NO Claude-style terminal `result` event, which
+ * is why the old Claude parser reported `resultText: null` even on a clean
+ * exit-0 Codex run (ruling round-2). The final agent message is the last
+ * `agent_message` item's text — that is the value the proof's stamp check
+ * reads. `mcp_tool_call` items and error events are collected for display.
+ */
+export function parseCodexProofStream(
+  stdout: string
+): Pick<AgentOutcome, 'isError' | 'permissionDenials' | 'resultText'> & { codex: CodexDiagnostics } {
+  const mcpToolCalls: Record<string, unknown>[] = []
+  const errorEvents: Record<string, unknown>[] = []
+  let finalMessage: string | null = null
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed.length === 0) continue
+    let event: Record<string, unknown>
+    try {
+      event = JSON.parse(trimmed)
+    } catch {
+      continue
+    }
+    const type = typeof event.type === 'string' ? event.type : ''
+    // A top-level error event — a `[mcp_servers.*]` entry that failed to
+    // start (bad command, socket refused) is reported here, the single
+    // clearest signal of whether the bridge came up.
+    if (type === 'error' || type.endsWith('.error')) {
+      errorEvents.push(event)
+      continue
+    }
+    const item = (event.item ?? null) as Record<string, unknown> | null
+    const itemType = item && typeof item.type === 'string' ? item.type : ''
+    if (itemType === 'mcp_tool_call') mcpToolCalls.push(item as Record<string, unknown>)
+    else if (itemType === 'error') errorEvents.push(item as Record<string, unknown>)
+    else if (itemType === 'agent_message' && typeof item?.text === 'string') finalMessage = item.text
+  }
+  return {
+    // No vendor `is_error` flag exists in Codex's stream; an error event is
+    // the honest signal that the turn did not complete cleanly.
+    isError: errorEvents.length > 0 ? true : null,
+    permissionDenials: [],
+    resultText: finalMessage,
+    codex: { mcpToolCalls, errorEvents, finalMessage }
+  }
 }
 
 type ConfinementDisclosure = {
@@ -272,21 +358,38 @@ function buildAgentLaunch(
     mkdirSync(codexHome, { recursive: true })
     writeFileSync(join(codexHome, 'config.toml'), combinedToml)
   }
+  // The SAME argv a real Developer dispatch uses (`dispatch.ts` VENDOR_TABLE):
+  // `--json` so the proof can read Codex's own events (ruling round-2), the
+  // prompt read from stdin (`-`), and `--strict-config`/`--skip-git-repo-check`/
+  // `--dangerously-bypass-hook-trust` so the proof runs exactly the production
+  // path rather than a reduced one. `--sandbox workspace-write` matches the
+  // real fresh-exec argv; on macOS the sandbox itself still comes from the
+  // staged `config.toml` `sandbox_mode`.
   return {
     command: 'codex',
-    args: ['exec', '--skip-git-repo-check', PROOF_PROMPT],
+    args: [
+      'exec',
+      '--sandbox',
+      'workspace-write',
+      '--strict-config',
+      '--dangerously-bypass-hook-trust',
+      '--skip-git-repo-check',
+      '--json',
+      '-'
+    ],
     env: buildWorkerEnv(process.env, { CODEX_HOME: codexHome, ...confinedTmpEnv(confinement.confined, scratchDir) })
   }
 }
 
-/** Runs the agent child, returning its outcome (or an ENOENT-style spawn failure the caller discloses). */
+/** Runs the agent child, returning its outcome + raw stderr (or an ENOENT-style spawn failure the caller discloses). */
 function runAgent(
+  agent: ProofAgent,
   command: string,
   args: string[],
   env: NodeJS.ProcessEnv,
   stdin: string | null,
   cwd: string
-): Promise<{ outcome: AgentOutcome } | { spawnError: string }> {
+): Promise<{ outcome: AgentOutcome; stderr: string } | { spawnError: string }> {
   return new Promise((resolve) => {
     const child = spawn(command, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
     let stdout = ''
@@ -297,14 +400,12 @@ function runAgent(
     child.stderr.on('data', (c: string) => (stderr += c))
     child.on('error', (err) => resolve({ spawnError: `${command}: ${err.message}` }))
     child.on('close', (exitCode) => {
-      const parsed = parseAgentStream(stdout)
-      if (parsed.resultText === null && stderr.trim().length > 0) {
-        process.stderr.write(`dev-proof: ${command} stderr tail — ${stderr.split('\n').slice(-3).join(' / ')}\n`)
-      }
-      resolve({ outcome: { exitCode, ...parsed } })
+      const parsed = agent === 'codex' ? parseCodexProofStream(stdout) : { ...parseAgentStream(stdout), codex: null }
+      resolve({ outcome: { exitCode, ...parsed }, stderr })
     })
-    // Always close stdin — a child reading its prompt from argv (Codex) still
-    // waits on EOF and would hang to the timeout otherwise (ruling bug 1).
+    // Always close stdin — a child reading its prompt from argv would still
+    // wait on EOF and hang to the timeout otherwise (ruling bug 1). Both
+    // agents now read the prompt from stdin (`claude -p`, `codex exec … -`).
     if (stdin !== null) child.stdin.write(stdin)
     child.stdin.end()
   })
@@ -332,7 +433,9 @@ export async function devToolsProofCommand(args: string[]): Promise<void> {
   const confinement = resolveProofConfinement(agent, 'developer', cwd, scratchDir)
   const bridge = devBridgeInvocation(socketPath)
   const launch = buildAgentLaunch(agent, bridge, scratchDir, confinement)
-  const stdin = agent === 'claude' ? PROOF_PROMPT : null
+  // Both agents now read the one-shot prompt from stdin — `claude -p` and
+  // `codex exec … -` alike (ruling round-2: Codex no longer takes it as argv).
+  const stdin = proofPrompt(agent)
 
   process.stdout.write(`\n=== O1 dev-tools proof — agent: ${agent} ===\n`)
   process.stdout.write(`driver pid (hosts the server): ${process.pid}\n`)
@@ -342,7 +445,7 @@ export async function devToolsProofCommand(args: string[]): Promise<void> {
     `registration: ${agent === 'claude' ? '--strict-mcp-config --mcp-config <file>' : 'staged config.toml [mcp_servers]'} → bridge ${JSON.stringify(bridge)}\n`
   )
 
-  const ran = await runAgent(launch.command, launch.args, launch.env, stdin, cwd)
+  const ran = await runAgent(agent, launch.command, launch.args, launch.env, stdin, cwd)
   try {
     if ('spawnError' in ran) {
       process.stdout.write(`\nAGENT DISPATCH: could not spawn ${agent} on this host — ${ran.spawnError}\n`)
@@ -353,6 +456,31 @@ export async function devToolsProofCommand(args: string[]): Promise<void> {
       )
       process.exitCode = 1
       return
+    }
+    // Codex emits no Claude-style `result` event — print its own events so a
+    // macOS run SHOWS whether the bridge started, whether the tool was listed
+    // and whether a call was attempted or refused (ruling round-2).
+    if (agent === 'codex' && ran.outcome.codex) {
+      const { mcpToolCalls, errorEvents, finalMessage } = ran.outcome.codex
+      process.stdout.write("\nCODEX OWN EVENTS (what the agent's own --json stream reported):\n")
+      process.stdout.write(`  mcp_tool_call items (${mcpToolCalls.length}):\n`)
+      if (mcpToolCalls.length === 0) {
+        process.stdout.write('    (none — the agent made no MCP tool call)\n')
+      } else {
+        for (const item of mcpToolCalls) process.stdout.write(`    ${JSON.stringify(item)}\n`)
+      }
+      process.stdout.write(`  error events (${errorEvents.length}):\n`)
+      if (errorEvents.length === 0) {
+        process.stdout.write('    (none — no MCP server startup error reported on the event stream)\n')
+      } else {
+        for (const err of errorEvents) process.stdout.write(`    ${JSON.stringify(err)}\n`)
+      }
+      process.stdout.write(`  final agent message: ${JSON.stringify(finalMessage)}\n`)
+      const stderrTail = ran.stderr.trim()
+      if (stderrTail.length > 0) {
+        process.stdout.write('  stderr tail (MCP startup errors often land here, not on the event stream):\n')
+        for (const l of stderrTail.split('\n').slice(-8)) process.stdout.write(`    ${l}\n`)
+      }
     }
     const call = recorded[0]
     process.stdout.write('\nTOOL CALL received by the driver-run server:\n')
