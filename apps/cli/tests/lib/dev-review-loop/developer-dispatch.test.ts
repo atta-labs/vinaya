@@ -82,7 +82,7 @@ describe('checkTaskDispatchReadiness', () => {
     expect(result.ready).toBe(true)
     expect(calls).toEqual([
       { script: 'apps/cli/src/checks/bin/check-dispatch-readiness.ts', args: ['agent-confinement-v1', '7'] },
-      { script: 'packages/aeg-core/bin/verify-dispatch.ts', args: ['agent-confinement-v1', '7'] }
+      { script: 'packages/aeg-core/bin/verify-dispatch.ts', args: ['agent-confinement-v1', '7', '--existing-work'] }
     ])
     expect(result.output).toContain('check-dispatch-readiness.ts ok')
     expect(result.output).toContain('verify-dispatch.ts ok')
@@ -96,7 +96,7 @@ describe('checkTaskDispatchReadiness', () => {
     })
     expect(calls.map((c) => c.args)).toEqual([
       ['--issue', '600'],
-      ['--issue', '600']
+      ['--issue', '600', '--existing-work']
     ])
   })
 

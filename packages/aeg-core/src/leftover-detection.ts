@@ -6,7 +6,8 @@
  *
  * Exists to answer, deterministically, "is it safe to (re)run
  * `git worktree add -b <branch> origin/main` for this task?" — asked by the
- * driver before the first Developer dispatch (O1: the driver creates the
+ * driver before every Developer turn, with `--existing-work` so its own
+ * commits never refuse (`leftoverBlocksDispatch`) (O1: the driver creates the
  * task's worktree now, not Step 0 — see
  * `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts`'s
  * `createTaskWorktree`) and, for a brief rendered before that changed, still
@@ -69,4 +70,16 @@ export function classifyLeftover(input: LeftoverInput): LeftoverResult {
     verdict: 'clean',
     reason: 'No branch, no worktree, no commits ahead of main — safe to run Step 0 fresh.'
   }
+}
+
+/**
+ * Whether a leftover verdict refuses dispatch. `stop` protects real work from
+ * a fresh Step 0 — but a caller that resumes the task's existing worktree
+ * (`existingWork`: the review-loop driver, before every Developer turn after
+ * it created the worktree itself) expects commits ahead of main from the
+ * second turn on, and nothing it does can orphan them, so for it no verdict
+ * blocks.
+ */
+export function leftoverBlocksDispatch(verdict: LeftoverVerdict, opts: { existingWork: boolean }): boolean {
+  return verdict === 'stop' && !opts.existingWork
 }

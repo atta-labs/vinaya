@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyLeftover } from './leftover-detection'
+import { classifyLeftover, leftoverBlocksDispatch } from './leftover-detection'
 
 describe('classifyLeftover', () => {
   it('is clean when nothing exists', () => {
@@ -55,5 +55,22 @@ describe('classifyLeftover', () => {
 
     const omitted = classifyLeftover({ branchExistsRemote: true, worktreeExistsLocal: false, commitsAheadOfMain: 1 })
     expect(omitted.reason).not.toContain('PR #')
+  })
+})
+
+describe('leftoverBlocksDispatch', () => {
+  it('a stop verdict blocks a fresh dispatch', () => {
+    expect(leftoverBlocksDispatch('stop', { existingWork: false })).toBe(true)
+  })
+
+  it('a stop verdict never blocks a caller resuming the existing work', () => {
+    expect(leftoverBlocksDispatch('stop', { existingWork: true })).toBe(false)
+  })
+
+  it('clean and resume never block, either way', () => {
+    for (const verdict of ['clean', 'resume'] as const) {
+      expect(leftoverBlocksDispatch(verdict, { existingWork: false })).toBe(false)
+      expect(leftoverBlocksDispatch(verdict, { existingWork: true })).toBe(false)
+    }
   })
 })
