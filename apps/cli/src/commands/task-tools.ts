@@ -14,10 +14,21 @@
  */
 
 import { ownVersion } from '../lib/artifacts.js'
+import { devToolsBridgeCommand } from '../lib/task-tools/dev-tools-bridge.js'
 import { serveTaskToolsStdio } from '../lib/task-tools/server.js'
 
 export async function taskToolsServeCommand(_args: string[]): Promise<void> {
   await serveTaskToolsStdio(ownVersion())
+}
+
+/**
+ * `vinaya task-tools dev-bridge --socket <path>` — the stdio↔socket bridge the
+ * per-dispatch dev-tools registration names as its server command. Spawned by
+ * the agent inside its sandbox, it relays JSON-RPC to the driver's dev-tools
+ * host over the unix socket at `<path>`. See `dev-tools-bridge.ts`.
+ */
+export async function taskToolsDevBridgeCommand(args: string[]): Promise<void> {
+  await devToolsBridgeCommand(args)
 }
 
 import type { SurfaceExemption } from '../lib/surface-exemption'

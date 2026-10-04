@@ -35,10 +35,11 @@ import {
   type TaskToolName,
   taskToolError
 } from '@attalabs/aeg-core'
-import { type Readable, Writable } from 'node:stream'
+import { Writable } from 'node:stream'
 import { defaultTaskCancelHandler } from './cancel.js'
 import type { TaskToolCallResult } from './handlers.js'
 import { taskEscalationReadHandler, taskStatusHandler } from './handlers.js'
+import { createMcpServerCore, type McpServerCore } from './mcp-protocol.js'
 import { taskPrReadHandler } from './pr-read.js'
 import { refuseUngrantedTool } from './router.js'
 import { defaultTaskResumeHandler } from './resume.js'
@@ -210,47 +211,14 @@ export function toolListEntry(def: TaskToolDefinition): {
   }
 }
 
-// --- JSON-RPC 2.0 message handling ------------------------------------------
+// --- JSON-RPC 2.0 message handling (the wire protocol lives in mcp-protocol) -
 
-type JsonRpcId = string | number | null
-type JsonRpcRequest = { jsonrpc?: unknown; id?: JsonRpcId; method?: unknown; params?: unknown }
-
-function rpcResult(id: JsonRpcId, result: unknown): string {
-  return JSON.stringify({ jsonrpc: '2.0', id, result })
-}
-
-function rpcError(id: JsonRpcId, code: number, message: string, data?: unknown): string {
-  return JSON.stringify({ jsonrpc: '2.0', id, error: data === undefined ? { code, message } : { code, message, data } })
-}
-
-/** The MCP `tools/call` result shape for one handler outcome — the structured value in both `content` (text) and `structuredContent`, `isError` set on a refusal. */
-function toolCallResult(outcome: TaskToolCallResult<unknown>): Record<string, unknown> {
-  if (outcome.ok) {
-    return {
-      content: [{ type: 'text', text: JSON.stringify(outcome.result) }],
-      structuredContent: outcome.result,
-      isError: false
-    }
-  }
-  const error: TaskToolError = outcome.error
-  return {
-    content: [{ type: 'text', text: JSON.stringify(error) }],
-    structuredContent: { error },
-    isError: true
-  }
-}
-
-export type TaskToolsMcpServer = {
-  /**
-   * Handles one already-parsed-or-raw JSON-RPC message line. Returns the
-   * response line to write, or `null` for a notification (no response) and for
-   * a blank line. Never throws — a malformed line becomes a JSON-RPC parse
-   * error response, exactly as the spec requires.
-   */
-  handleLine: (line: string) => Promise<string | null>
-  /** Wires `handleLine` to a newline-delimited stdio pair for the CLI subcommand. */
-  serve: (input: Readable, output: Writable) => Promise<void>
-}
+/**
+ * Backwards-compatible alias for the shared `McpServerCore` — the task-tools
+ * server has always returned `{ handleLine, serve }`, and every fixture that
+ * drives it over newline-delimited framing uses exactly those two methods.
+ */
+export type TaskToolsMcpServer = McpServerCore
 
 export type CreateTaskToolsMcpServerOptions = {
   serverVersion: string
@@ -261,171 +229,21 @@ export type CreateTaskToolsMcpServerOptions = {
 /**
  * Builds the server over an explicit handler set and caller context — both
  * injectable so a fixture can drive the real protocol with recording handlers
- * (O3) while the CLI subcommand wires the production defaults.
+ * (O3) while the CLI subcommand wires the production defaults. The wire
+ * protocol itself is the shared `createMcpServerCore` (`mcp-protocol.ts`); this
+ * function binds it to the task-tools catalog and `dispatchToolCall`, the same
+ * binding the driver-run dev-tools server makes against its own catalog.
  */
 export function createTaskToolsMcpServer(opts: CreateTaskToolsMcpServerOptions): TaskToolsMcpServer {
   const handlers = opts.handlers ?? defaultTaskToolHandlers
   const ctx = opts.callerContext ?? { caller: null }
-
-  async function handle(msg: JsonRpcRequest): Promise<string | null> {
-    const id: JsonRpcId = msg.id === undefined ? null : msg.id
-    const isNotification = msg.id === undefined
-    const method = typeof msg.method === 'string' ? msg.method : null
-
-    if (method === null) {
-      return isNotification ? null : rpcError(id, -32600, 'Invalid Request: missing method')
-    }
-
-    switch (method) {
-      case 'initialize':
-        return rpcResult(id, {
-          protocolVersion: MCP_PROTOCOL_VERSION,
-          capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: TASK_TOOLS_MCP_SERVER_NAME, version: opts.serverVersion }
-        })
-      case 'ping':
-        return rpcResult(id, {})
-      case 'tools/list':
-        return rpcResult(id, { tools: TASK_TOOL_CATALOG.map((def) => toolListEntry(def)) })
-      case 'tools/call': {
-        const params = (typeof msg.params === 'object' && msg.params !== null ? msg.params : {}) as {
-          name?: unknown
-          arguments?: unknown
-        }
-        if (typeof params.name !== 'string') {
-          return rpcError(id, -32602, 'Invalid params: tools/call requires a string `name`')
-        }
-        // A handler can throw or reject for reasons that have nothing to do
-        // with the call's own validity (`task_status`'s forge read shells out
-        // to `gh`, which fails on a transient network error or missing auth).
-        // That must become one caller's refusal, never an uncaught rejection —
-        // this `await` sits inside `handle`'s own caller (`handleLine`'s
-        // "never throws" contract), and an escaped rejection here is fatal to
-        // the whole process, taking every other in-flight and future call
-        // down with it.
-        let outcome: TaskToolCallResult<unknown>
-        try {
-          outcome = await dispatchToolCall(handlers, params.name, params.arguments ?? {}, ctx)
-        } catch (err) {
-          outcome = {
-            ok: false,
-            error: taskToolError(
-              'infrastructure',
-              `${params.name} failed: ${err instanceof Error ? err.message : String(err)}`
-            )
-          }
-        }
-        // `toolCallResult`/`rpcResult` both `JSON.stringify` the handler's own
-        // result — a value that isn't serializable (a `BigInt` field, say)
-        // throws there, OUTSIDE the `try` above (round 3 security review,
-        // HIGH). Before `serve`'s serialized dispatch chain existed, an
-        // escaped throw here only orphaned this one call's own `.then()`
-        // (`serve`'s earlier `void handleLine(line).then(...)` never awaited
-        // it); now that every line is chained through one `Promise`
-        // (`chain.then(...)`), an uncaught rejection here would otherwise
-        // skip every later queued `.then` forever — silently wedging every
-        // OTHER task's future call on this shared server, not just this
-        // one's. Caught here so a bad result becomes this call's own error
-        // response, same as a handler that threw outright.
-        try {
-          return rpcResult(id, toolCallResult(outcome))
-        } catch (err) {
-          return rpcError(
-            id,
-            -32603,
-            `${params.name}: result could not be serialized — ${err instanceof Error ? err.message : String(err)}`
-          )
-        }
-      }
-      default:
-        // Every `notifications/*` message (initialized, cancelled, …) is a
-        // notification with no response; any other unknown method with an id
-        // is a real method-not-found error.
-        if (isNotification || method.startsWith('notifications/')) return null
-        return rpcError(id, -32601, `Method not found: ${method}`)
-    }
-  }
-
-  async function handleLine(line: string): Promise<string | null> {
-    const trimmed = line.trim()
-    if (trimmed.length === 0) return null
-    let parsed: JsonRpcRequest
-    try {
-      parsed = JSON.parse(trimmed) as JsonRpcRequest
-    } catch {
-      return rpcError(null, -32700, 'Parse error')
-    }
-    if (typeof parsed !== 'object' || parsed === null) {
-      return rpcError(null, -32600, 'Invalid Request')
-    }
-    return handle(parsed)
-  }
-
-  async function serve(input: Readable, output: Writable): Promise<void> {
-    let buffer = ''
-    input.setEncoding('utf8')
-    const write = (s: string): Promise<void> =>
-      new Promise<void>((resolve) => {
-        output.write(`${s}\n`, () => resolve())
-      })
-
-    // Sequential per line, dispatch included: each line's `handleLine` runs
-    // to completion and its response is written before the NEXT line's
-    // `handleLine` even starts. This is not just about response ordering —
-    // `resume.ts`/`cancel.ts`'s handlers mutate `process.env.VINAYA_TASK`
-    // for the duration of their own `log()` calls (the same save/restore
-    // discipline `log-flush.ts`'s `logForFlush` and `dev-review-loop.ts`'s
-    // `cancelDevReviewLoop` use), and this server is the one caller that can
-    // hold calls for DIFFERENT tasks in flight at once. Letting two lines'
-    // `handleLine` run concurrently would let one call's restore of
-    // `VINAYA_TASK` race another's mutation of it, misattributing an event
-    // to the wrong task's outbox (round 2 review, HIGH). A single chained
-    // promise makes that race structurally impossible: at most one
-    // `handleLine` is ever in flight.
-    //
-    // Each link swallows its own failure rather than letting it reject the
-    // chain (round 3 security review, HIGH): standard `Promise.then` chain
-    // semantics mean one rejected link skips every `.then(onFulfilled)`
-    // already queued behind it, so an unguarded rejection here — a `write`
-    // that throws synchronously, or any defect `handleLine`'s own "never
-    // throws" contract fails to cover — would silently stop dispatching
-    // EVERY later line for the rest of the process's life, not just the one
-    // that failed. `handleLine` itself is hardened to return an error
-    // response rather than throw (see `handle`'s `tools/call` branch), but
-    // this catch is this chain's own last line of defense, independent of
-    // that contract holding.
-    let chain: Promise<void> = Promise.resolve()
-
-    await new Promise<void>((resolve) => {
-      input.on('data', (chunk: string) => {
-        buffer += chunk
-        let idx = buffer.indexOf('\n')
-        while (idx !== -1) {
-          const line = buffer.slice(0, idx)
-          buffer = buffer.slice(idx + 1)
-          chain = chain.then(async () => {
-            try {
-              const response = await handleLine(line)
-              if (response !== null) await write(response)
-            } catch (err) {
-              process.stderr.write(
-                `vinaya task-tools serve: dropped one line after an internal error — ${err instanceof Error ? err.message : String(err)}\n`
-              )
-            }
-          })
-          idx = buffer.indexOf('\n')
-        }
-      })
-      input.on('end', () => {
-        void chain.then(() => resolve())
-      })
-      input.on('close', () => {
-        void chain.then(() => resolve())
-      })
-    })
-  }
-
-  return { handleLine, serve }
+  return createMcpServerCore({
+    protocolVersion: MCP_PROTOCOL_VERSION,
+    serverName: TASK_TOOLS_MCP_SERVER_NAME,
+    serverVersion: opts.serverVersion,
+    listTools: () => TASK_TOOL_CATALOG.map((def) => toolListEntry(def)),
+    callTool: (name, args) => dispatchToolCall(handlers, name, args, ctx)
+  })
 }
 
 /**
