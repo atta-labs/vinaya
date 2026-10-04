@@ -494,7 +494,11 @@ describe('devReviewLoop — round 1 entry attaches to an open PR, resuming the r
 
 describe('devReviewLoop — a remote branch with no open PR resumes the recorded session once to open it (O4)', () => {
   it('dispatches the frozen brief fresh when the remote branch is still the commit-free default-branch ref', async () => {
-    const world = makeWorld({ remoteBranchExists: true, head: 'b'.repeat(40) })
+    // O3 (#1046): the branch sits at the commit-free ref AT the default tip —
+    // `branchAtBaseTip`, the exact state the driver's `createTaskWorktree`
+    // leaves it in — so `resolveHead` returns `world.base`, never a throw. The
+    // dev's fresh turn then pushes real work (`world.head`) and publishes.
+    const world = makeWorld({ branchAtBaseTip: true })
     const ancestryChecks: Array<[string, string]> = []
     const { deps, prompts, resumeIds } = withCapturedDeveloperDispatch(world, {
       gitIsAncestor: (ancestor, descendant) => {
@@ -511,16 +515,26 @@ describe('devReviewLoop — a remote branch with no open PR resumes the recorded
     expect(prompts[0]).toContain(world.frozenBrief)
     expect(prompts[0]).not.toMatch(/pushed but has no open pull request/)
     expect(world.remoteBranchCreations).toEqual([world.branch])
-    expect(ancestryChecks).toEqual([[world.head, world.base]])
+    // Entry reads the commit-free ref (base) as having no task commits beyond
+    // the tip → fresh; after the push, the real head (world.head) is not at the
+    // tip → no false no-push, so the loop publishes.
+    expect(ancestryChecks).toContainEqual([world.base, world.base])
+    expect(ancestryChecks).toContainEqual([world.head, world.base])
   })
 
   it('dispatches the frozen brief fresh when the commit-free remote branch is behind the default branch', async () => {
-    const world = makeWorld({ remoteBranchExists: true, head: '7'.repeat(40) })
+    // O3 (#1046): the default branch advanced after the driver created the
+    // branch, so the commit-free ref (world.base) is now strictly BEHIND
+    // origin/main (world's moved main) — still no task commits, so round 1
+    // dispatches fresh, and the pushed head is not behind the moved main.
+    const movedMain = 'e'.repeat(40)
+    const world = makeWorld({ branchAtBaseTip: true })
     const ancestryChecks: Array<[string, string]> = []
     const { deps, prompts, resumeIds } = withCapturedDeveloperDispatch(world, {
+      gitRevParseOriginMain: () => movedMain,
       gitIsAncestor: (ancestor, descendant) => {
         ancestryChecks.push([ancestor, descendant])
-        return ancestor === world.head && descendant === world.base
+        return ancestor === world.base && descendant === movedMain
       }
     })
 
@@ -532,7 +546,10 @@ describe('devReviewLoop — a remote branch with no open PR resumes the recorded
     expect(prompts[0]).toContain(world.frozenBrief)
     expect(prompts[0]).not.toMatch(/pushed but has no open pull request/)
     expect(world.remoteBranchCreations).toEqual([world.branch])
-    expect(ancestryChecks).toEqual([[world.head, world.base]])
+    // Entry: the commit-free ref IS an ancestor of the moved main → fresh.
+    // no-push: the pushed head is NOT → publishes, no false no-push.
+    expect(ancestryChecks).toContainEqual([world.base, movedMain])
+    expect(ancestryChecks).toContainEqual([world.head, movedMain])
   })
 
   it('never starts a fresh developer — resumes the pre-recorded session with the pr-create instruction, then waits for the PR', async () => {
@@ -773,7 +790,10 @@ describe('devReviewLoop — the pull-request poll gives up naming what it waited
     const detail = String(pauseState.detail)
     expect(detail).toMatch(new RegExp(`branch: ${world.branch.replace(/\//g, '\\/')}`))
     expect(detail).toMatch(/local head: \(worktree not found/)
-    expect(detail).toMatch(/remote head: \(no head on origin\)/)
+    // O3 (#1046): the driver's `createTaskWorktree` leaves the branch at the
+    // default tip (`world.base`), never missing — so the remote head reads as
+    // that tip, not "(no head on origin)".
+    expect(detail).toMatch(new RegExp(`remote head: ${world.base}`))
     expect(detail).toMatch(/pull request: none open/)
 
     // The PUBLIC PR comment gets a SEPARATELY sanitized detail — first line
@@ -903,6 +923,44 @@ describe('devReviewLoop — a refusal/escalation posted before any push ends the
     >
     expect(pauseState.reason).toBe('escalation')
     expect(pauseState.prNumber).toBeNull()
+  })
+})
+
+// --- O3 (#1046): round-1 no-push fires on a branch at the default tip --------
+
+describe('devReviewLoop — O3 (#1046): round-1 no-push fires on a branch at the default tip, not only a missing one', () => {
+  it('a round-1 turn that pushes nothing reaches the no-push outcome, with the branch modeled AT the default tip (never missing)', async () => {
+    // The driver's `createTaskWorktree` leaves the branch at `origin/main`'s
+    // tip — a commit-free ref, never a missing branch — before round 1. A
+    // round-1 turn that pushes nothing leaves it there, so `resolveHead`
+    // returns that tip rather than throwing. The no-push detection must still
+    // fire, EXACTLY as it does for a missing branch: here it reaches the same
+    // O9 escalation a posted developer stop produces, in one turn, never a
+    // resume-then-poll.
+    const world = makeWorld({
+      developerStop: 'Entry gate refused: brief is missing tier/scope/stop-conditions.' as never
+    })
+    const ancestryChecks: Array<[string, string]> = []
+    const { deps, prompts } = controlledDeveloperDeps(world, {})
+    const result = await runLoopInProcessSafe(world, {
+      ...deps,
+      gitIsAncestor: (ancestor, descendant) => {
+        ancestryChecks.push([ancestor, descendant])
+        return ancestor === descendant
+      }
+    })
+
+    // The no-push outcome — the same escalation a missing branch reaches, in
+    // exactly one developer turn (never a resume).
+    expect(result.finalDecision.type).toBe('pause')
+    expect((result.finalDecision as { reason: string }).reason).toBe('escalation')
+    expect(prompts).toHaveLength(1)
+
+    // The branch was created and modeled AT the default tip — never stubbed as
+    // missing — and the no-push detection read its remote head as that tip
+    // (`world.base`) and tested it for task commits against origin/main.
+    expect(world.remoteBranchCreations).toEqual([world.branch])
+    expect(ancestryChecks).toContainEqual([world.base, world.base])
   })
 })
 

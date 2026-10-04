@@ -126,6 +126,18 @@ export type LoopWorld = {
    * PR and `createTaskWorktree` must NOT fire. Defaults `false`.
    */
   remoteBranchExists: boolean
+  /**
+   * O3 (#1046): the remote task branch exists but still sits at the DEFAULT
+   * BRANCH'S TIP (`world.base`) — the commit-free ref the driver's own round-1
+   * `createTaskWorktree` leaves it at BEFORE the first Developer turn, carrying
+   * no task commits. While this holds AND nothing has pushed real work yet
+   * (`!developerPushed`), `resolveHead` returns `world.base`, never a throw — so
+   * the branch is modeled AT THE TIP, never as missing (Traps to avoid), which
+   * is the state the round-1 no-push detection must fire on. Set by the fake
+   * `createTaskWorktree`, cleared by the fake `pushTaskBranch` (a real push
+   * advances the branch beyond the tip). Defaults `false`.
+   */
+  branchAtBaseTip?: boolean
   /** The developer's local worktree head; defaults to `head` (nothing unpushed). */
   worktreeHead: string
   gate: 'green' | 'red' | 'pending'
@@ -439,6 +451,14 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     // pre-task shape).
     resolveDeveloperDoctrine: async () => world.developerDoctrine ?? null,
     resolveHead: (_branch) => {
+      // O3 (#1046): the branch sits at the default branch's tip — the
+      // commit-free ref the driver created before round 1 — until a real push
+      // advances it beyond the tip (`pushTaskBranch` clears
+      // `branchAtBaseTip`) or a fixture models the push with `developerPushed`.
+      // Returns `world.base` (the tip), NEVER a throw: the branch EXISTS, it
+      // just carries no task commits yet. This is what the round-1 no-push
+      // detection fires on, modeled at the tip rather than as a missing branch.
+      if (world.branchAtBaseTip && !world.developerPushed) return world.base
       // The branch resolves once the Developer has pushed, OR when a fixture
       // declares the remote branch already exists with no push behind it yet
       // (`remoteBranchExists`) — the latter reaches O2's branch-exists-with-no-
@@ -484,6 +504,15 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     // attach/reentry.
     createTaskWorktree: (branch: string) => {
       world.remoteBranchCreations.push(branch)
+      // O3 (#1046): the driver creates `.worktrees/<branch>` and pushes the
+      // branch to the remote AT `origin/main`'s tip — a commit-free ref —
+      // before the first Developer turn. Model exactly that: the remote branch
+      // now EXISTS (never missing) and sits at the default branch's tip, so the
+      // round-1 no-push detection fires on that state rather than on a stubbed
+      // missing branch (Traps to avoid). A real push later clears
+      // `branchAtBaseTip` (`pushTaskBranch`).
+      world.remoteBranchExists = true
+      world.branchAtBaseTip = true
     },
     readResumeRecord: () => null,
     runtimeDir: () => world.runtimeDir,
@@ -553,10 +582,13 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       if (world.pushRefusal !== null) return { ok: false, refusal: world.pushRefusal, hook: true }
       world.pushes.push({ sha: input.sha })
       // The push lands: the remote head is now the pushed sha, the branch is no
-      // longer ahead, and the branch resolves on the remote.
+      // longer ahead, and the branch resolves on the remote. O3 (#1046): a real
+      // push advances the branch beyond the default tip, so it no longer sits at
+      // that commit-free ref — `resolveHead` returns the pushed sha, not base.
       world.head = input.sha
       world.worktreeAhead = 0
       world.remoteBranchExists = true
+      world.branchAtBaseTip = false
       return { ok: true }
     },
     openTaskPullRequest: (input) => {

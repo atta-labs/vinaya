@@ -3761,12 +3761,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * BEFORE any poll for a pull request — the poll never starts against a
      * branch the developer has not pushed (Traps to avoid). Covers both
      * round-1 entries this driver can reach here: a fresh dispatch just
-     * ran (`alreadyPushed: false` — the branch may or may not have a head
-     * on the remote yet) and a crash-recovery re-entry (`alreadyPushed:
-     * true` — the branch already exists, no fresh dispatch this call).
-     * Resumes the developer AT MOST ONCE (Traps: never resume twice for
-     * this) — a still-missing push after that one resume is left to the
-     * poll's own bounded timeout rather than a second dispatch.
+     * ran (`alreadyPushed: false` — the branch may or may not carry task
+     * commits beyond the default tip yet) and a crash-recovery re-entry
+     * (`alreadyPushed: true` — the branch already exists, no fresh dispatch
+     * this call). Resumes the developer AT MOST ONCE (Traps: never resume
+     * twice for this) — a still-missing push after that one resume is left to
+     * the poll's own bounded timeout rather than a second dispatch.
      */
     async function afterDeveloperTurnBeforePrPoll(alreadyPushed: boolean): Promise<number> {
       let remoteHead: string | null
@@ -3776,7 +3776,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         remoteHead = null
       }
 
-      if (!alreadyPushed && remoteHead === null) {
+      // O3: "no push" is not only a branch with no remote head at all — it is
+      // ALSO a branch whose remote head is still the default branch's tip (or
+      // any ancestor of it), carrying no task commits. That is exactly the
+      // state the driver's own round-1 `createTaskWorktree` leaves the branch
+      // in BEFORE the first Developer turn (a commit-free ref at `origin/main`),
+      // so a round-1 turn that pushes nothing leaves the branch there — never a
+      // `null` remote head. The same `gitIsAncestor(head, origin/main)` test the
+      // round-1 entry already uses to decide `branchHasTaskCommits` (above)
+      // decides it here too, so "the developer pushed nothing" is detected
+      // identically whether the branch was missing or sat at the tip.
+      const noTaskCommits = remoteHead === null || d.gitIsAncestor(remoteHead, d.gitRevParseOriginMain())
+      if (!alreadyPushed && noTaskCommits) {
         // O9: no push at all yet. A posted refusal/escalation ends the loop
         // now, never entering the pull-request poll.
         const stop = d.fetchDeveloperStop(task)
