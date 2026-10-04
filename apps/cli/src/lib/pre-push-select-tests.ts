@@ -18,7 +18,7 @@ import {
   changedFileDiffsSinceRemoteBase,
   changedFilesSinceRemoteBaseAbsolute
 } from './remote-base.js'
-import { changesImportEdges, selectAffectedTestFiles } from './test-selector.js'
+import { selectAffectedTestFiles } from './test-selector.js'
 import { loadTypeScript } from './ts-module-graph.js'
 
 function main(): void {
@@ -26,16 +26,11 @@ function main(): void {
   const started = performance.now()
   const changed = changedFilesSinceRemoteBaseAbsolute(repoRoot)
   const addedOrRenamed = addedOrRenamedFilesSinceRemoteBaseAbsolute(repoRoot)
-  const diffs = changedFileDiffsSinceRemoteBase(repoRoot)
-  const configuredAlwaysRun = loadConfig()?.prePush?.alwaysRun ?? []
+  const alwaysRun = loadConfig()?.prePush?.alwaysRun ?? []
   // The changed NAMES, when the compiler is there to parse them; without it the
   // selector falls back to the file-level answer on its own.
   const typescript = loadTypeScript(repoRoot)
-  const names = typescript ? affectedNames(typescript, diffs) : undefined
-  const alwaysRun = [
-    ...configuredAlwaysRun,
-    ...(typescript && changesImportEdges(typescript, diffs) ? ['apps/cli/tests/lib/test-selector.test.ts'] : [])
-  ]
+  const names = typescript ? affectedNames(typescript, changedFileDiffsSinceRemoteBase(repoRoot)) : undefined
   // Never the full transitive closure a push away from
   // main can grow to — that stays CI's job (every shard still runs every
   // test). Depth-one keeps a push to a widely-imported module small: the

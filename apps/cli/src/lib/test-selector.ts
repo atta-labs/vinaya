@@ -118,7 +118,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { globToRegex } from '@attalabs/aeg-core'
-import type { FileDiff } from './changed-names.js'
 import { cliSpawnEdgeOf } from './cli-spawn-tests.js'
 import { scannedRootsOf } from './repo-scanner-tests.js'
 import {
@@ -133,7 +132,6 @@ import {
   SCAN_PREFIX,
   TOUCH_PREFIX
 } from './ts-module-graph.js'
-import type { TypeScriptApi } from './ts-module-graph.js'
 
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'build', 'coverage'])
@@ -992,22 +990,6 @@ export const DEFAULT_CLI_ENTRYPOINT = 'apps/cli/src/index.ts'
  * module matches on.
  */
 export const ROOT_CONFIG_FILENAME = 'vinaya.config.json'
-
-/** Whether a diff changes the module-specifier edges that build the import graph. */
-export function changesImportEdges(ts: TypeScriptApi, diffs: readonly FileDiff[]): boolean {
-  const imports = (source: string | null): string[] =>
-    source === null
-      ? []
-      : ts
-          .preProcessFile(source, true, true)
-          .importedFiles.map((entry) => entry.fileName)
-          .sort()
-  return diffs.some((diff) => {
-    const before = imports(diff.before)
-    const after = imports(diff.after)
-    return before.length !== after.length || before.some((name, index) => name !== after[index])
-  })
-}
 
 /**
  * The whole pipeline: given the changed files (repo-root-relative or absolute,
