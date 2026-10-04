@@ -87,6 +87,17 @@ const GH_HOSTS_DENIED_INSIDE =
   'the gh token store ~/.config/gh/hosts.yml is a denied credential and no GITHUB_TOKEN/GH_TOKEN is in the macOS environment, so gh cannot authenticate and the forge read fails'
 
 /**
+ * `bun run typecheck` runs `turbo`, whose cache write lands at the MAIN
+ * repository root's `.turbo/` — outside the worktree and scratch the sandbox
+ * grants — so a cache MISS (which any PR that changes the package produces)
+ * is denied there. It passes with no sandbox around it, where that write
+ * succeeds. The same denial hits both agents. (Observed live, CI Linux:
+ * `IO error: failed to create directory .../vinaya/.turbo/`.)
+ */
+const TURBO_CACHE_WRITE_DENIED =
+  'bun run typecheck runs turbo, whose cache miss writes the main repository root .turbo/ dir — outside the granted worktree/scratch — so the sandbox denies it (a warm cache that only reads would not write; a PR that changes the package misses and writes)'
+
+/**
  * Today's denials. Remove an entry the moment its command passes — the
  * suite fails until you do.
  *
@@ -95,13 +106,12 @@ const GH_HOSTS_DENIED_INSIDE =
  * now runs OUTSIDE the sandbox, with the forge credential, so they exit 0.
  * `gh-chained` replaces them as the one Claude darwin denial: a chained line
  * is not a bare excluded command, so it runs inside.
- * O4: the two claude/linux entries (`typecheck`, `check-all`) are gone —
- * under #1029's read-everywhere model bun is no longer hidden (typecheck
- * passes) and the CI runner's own ambient `GH_TOKEN` reaches check --all's
- * forge reads (check-all passes).
- * O3: `check-all` on claude/darwin stays — on macOS it runs inside the
- * sandbox with no token and the denied hosts.yml, and the CLI's own forge
- * reads are not yet staged from outside (escalated on Issue #1034).
+ * O3/O4: `check-all` on claude/darwin and claude/linux stays (the CLI's own
+ * forge reads are not staged from outside, escalated on Issue #1034), and
+ * `typecheck` stays listed for BOTH agents on linux — its true cause on this
+ * branch is the turbo cache-write denial above, not the retired
+ * bun-not-found reason, and removing it needs a write beyond the worktree
+ * (or a redirected turbo cache), folded into the same Issue #1034 escalation.
  */
 const KNOWN_FAILURES: readonly KnownFailure[] = [
   {
@@ -115,6 +125,15 @@ const KNOWN_FAILURES: readonly KnownFailure[] = [
     agent: 'claude',
     platform: 'darwin',
     denial: `a chained gh line is not a bare excluded command, so Claude Code runs it inside the sandbox, where ${GH_HOSTS_DENIED_INSIDE}`
+  },
+  { id: 'typecheck', agent: 'claude', platform: 'linux', denial: TURBO_CACHE_WRITE_DENIED },
+  { id: 'typecheck', agent: 'codex', platform: 'linux', denial: TURBO_CACHE_WRITE_DENIED },
+  {
+    id: 'check-all',
+    agent: 'claude',
+    platform: 'linux',
+    denial:
+      "check --all runs inside the sandbox; the secret scanner (atta-labs/secret-scan) cannot run confined and errors, and the gh token store ~/.config/gh/hosts.yml is a denied credential so the forge-reading checks cannot authenticate either — the CLI's own forge reads are not staged from outside (O3/O4, Issue #1034)"
   }
 ]
 
