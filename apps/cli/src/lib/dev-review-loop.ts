@@ -137,9 +137,11 @@ import {
   sh
 } from './dev-review-loop/gate-reading.js'
 import {
+  checkTaskDispatchReadiness,
   createTaskWorktree,
   describeObjectivesEdit,
   developerBranchFor,
+  type DispatchReadinessCheckResult,
   DeveloperStopSignal,
   fetchDeveloperStop,
   fetchFrozenBrief,
@@ -282,6 +284,7 @@ export {
 export type { MergeableState, PrOpenState } from './dev-review-loop/gate-reading.js'
 export { DRIVER_OWNED_PATHS, fetchPrState, parseMergeTreeConflictFiles } from './dev-review-loop/gate-reading.js'
 export {
+  checkTaskDispatchReadiness,
   describeObjectivesEdit,
   developerBranchFor,
   DeveloperStopSignal,
@@ -309,6 +312,7 @@ export {
   taskFromPrBody
 } from './dev-review-loop/developer-dispatch.js'
 export type {
+  DispatchReadinessCheckResult,
   MarkerComment,
   ObjectivesEditParse,
   ObjectivesEditSource,
@@ -385,6 +389,15 @@ export type LoopDeps = {
   /** O2: the frozen brief's own source revision, named to the reviewer as a fact. */
   fetchSourceRevision: typeof fetchSourceRevision
   developerBranchFor: (issueNumber: number) => string
+  /**
+   * Runs the task's dispatch-readiness gate from this (unsandboxed) driver
+   * process, before every Developer turn — `dispatchDeveloperOnce` calls
+   * this and stages its result for the Developer to read rather than
+   * re-running `check dispatch-readiness`/`verify-dispatch.ts` itself, where
+   * either script's own `gh` call would hit the sandbox's denied forge-token
+   * file (`isolation.md` §4a).
+   */
+  checkTaskDispatchReadiness: typeof checkTaskDispatchReadiness
   findOpenPrForBranch: typeof findOpenPrForBranch
   /** O3: the task Issue's own title — used verbatim as the pull request's title when the publication step opens it. */
   fetchIssueTitle: typeof fetchIssueTitle
@@ -1626,6 +1639,7 @@ function defaultDeps(): LoopDeps {
     resolveIssueObjectives,
     fetchSourceRevision,
     developerBranchFor: (n) => developerBranchFor(n),
+    checkTaskDispatchReadiness,
     findOpenPrForBranch,
     fetchIssueTitle,
     createTaskWorktree,
@@ -2988,13 +3002,35 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // before the dispatch, never from a cached copy (Traps to avoid).
       snapshotTurnConfinement('developer', roundNum)
       // O1/O3: this round's own confidence
-      // and/or round-response files, when this prompt named any — the
-      // parent directory must exist before dispatch, both so a confined
-      // Write's own `fs.realpathSync(path.dirname(filePath))` resolves and
-      // so a Seatbelt-confined child's `mkdirSync(dirname(path), {
-      // recursive: true })` needs only the pre-existing traversal grant.
-      if (opts.developerFiles && opts.developerFiles.length > 0) {
-        ensureRunDir(runPath(root, task, { area: 'developer', round: roundNum }), root)
+      // and/or round-response files, when this prompt named any, plus the
+      // dispatch-readiness result staged below — the parent directory must
+      // exist before dispatch, both so a confined Write's own
+      // `fs.realpathSync(path.dirname(filePath))` resolves and so a
+      // Seatbelt-confined child's `mkdirSync(dirname(path), { recursive:
+      // true })` needs only the pre-existing traversal grant.
+      ensureRunDir(runPath(root, task, { area: 'developer', round: roundNum }), root)
+      // Principal ruling: the driver, never the Developer's own sandbox,
+      // runs this task's dispatch-readiness gate — found live, CI, Linux:
+      // a `gh` call either `check dispatch-readiness` or `verify-dispatch.ts`
+      // makes is spawned by a `bun` process, never typed directly, so it
+      // runs INSIDE Claude's sandbox, where the forge token file is denied
+      // (`isolation.md` §4a), and both exit 1. Staged here, before every
+      // dispatch (round 1, a resume, a reask alike), so the Developer reads
+      // a driver-confirmed verdict instead of re-deriving one it cannot
+      // actually reach. A NOT READY verdict refuses this turn outright —
+      // the same uncaught-error-to-`pause{reason:'infrastructure'}` path
+      // every other driver-side gate failure in this file already takes.
+      const dispatchReadinessPath = runPath(root, task, {
+        area: 'developer',
+        round: roundNum,
+        file: 'dispatch-readiness.txt'
+      })
+      const dispatchReadiness = d.checkTaskDispatchReadiness(branch)
+      writeFileSync(dispatchReadinessPath, dispatchReadiness.output)
+      if (!dispatchReadiness.ready) {
+        throw new Error(
+          `dispatch-readiness gate failed for branch '${branch}' — staged at ${dispatchReadinessPath}:\n${dispatchReadiness.output}`
+        )
       }
       // O3: resolved fresh per dispatch, the same "never cached across a
       // round" posture `resolveTaskSurface` already has at its two existing

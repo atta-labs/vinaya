@@ -60,7 +60,6 @@ const ALWAYS_RUN_IDS = [
   'bun-install',
   'bun-test-one-file',
   'doctrine-developer',
-  'check-dispatch-readiness',
   'gh-issue-view'
 ]
 
@@ -91,12 +90,11 @@ const KNOWN_FAILURES: readonly KnownFailure[] = [
     denial:
       'bun install exits 1: "bun is unable to write files to tempdir: EROFS" — its temp directory is outside the writable roots'
   },
-  { id: 'verify-dispatch', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
   { id: 'check-all', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
   { id: 'gh-issue-view', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
   { id: 'gh-pr-view', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
   { id: 'gh-pr-view-reviews', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
-  ...['bun-install', 'typecheck', 'check-all'].map(
+  ...['typecheck', 'check-all'].map(
     (id): KnownFailure => ({ id, agent: 'claude', platform: 'linux', denial: BUN_HIDDEN_LINUX })
   )
 ]

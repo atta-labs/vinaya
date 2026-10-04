@@ -3428,12 +3428,33 @@ export function missingSubscriptionLoginReason(
   return NO_SUBSCRIPTION_LOGIN_REASON
 }
 
+/**
+ * Round 5 Principal ruling: a live Mac run found `bun install
+ * --frozen-lockfile` failing under Codex's own sandbox with "bun is unable
+ * to write files to tempdir: EPERM" in the sandbox-conformance suite's own
+ * `codexSession()` (`sandbox-launch.ts`), which rebuilds Codex's spawn env
+ * independently of `dispatchRole` rather than sharing this function — the
+ * TMPDIR/TMP/TEMP override a real Codex dispatch already carried (pointed
+ * at its own writable scratch directory) folded into this ONE shared,
+ * exported function instead of staying an inline object literal only
+ * `dispatchRole` built, so both callers carry the identical override rather
+ * than risking one quietly drifting from the other (found live: the
+ * conformance harness's own hand-rolled copy named `TMPDIR` alone, never
+ * `TMP`/`TEMP`). `scratchDir` is `null` for an attended dispatch or any
+ * non-Codex agent, same as `codexHomeDir`.
+ */
 export function codexSpawnEnvExtras(
   agent: AgentVendor,
-  codexHomeDir: string | null
+  codexHomeDir: string | null,
+  scratchDir: string | null = null
 ): { attribution: Record<string, string> } {
-  const staged = agent === 'codex' && codexHomeDir !== null
-  return { attribution: staged ? { CODEX_HOME: codexHomeDir as string } : {} }
+  const isCodex = agent === 'codex'
+  return {
+    attribution: {
+      ...(isCodex && codexHomeDir !== null ? { CODEX_HOME: codexHomeDir } : {}),
+      ...(isCodex && scratchDir !== null ? { TMPDIR: scratchDir, TMP: scratchDir, TEMP: scratchDir } : {})
+    }
+  }
 }
 
 /**
@@ -4197,7 +4218,7 @@ export async function dispatchRole(
       // nobody wrote to. It also saves the child a network round trip.
       [RUNTIME_DIR_ENV_KEY]: runtimeDirForRepo(repo)
     }
-    const codexEnvExtras = agent === 'codex' ? codexSpawnEnvExtras(agent, codexHomeDir) : null
+    const codexEnvExtras = agent === 'codex' ? codexSpawnEnvExtras(agent, codexHomeDir, codexScratchDir) : null
     const child = spawn(spawnCommand, spawnCommandArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
       ...(spawnCwd ? { cwd: spawnCwd } : {}),
@@ -4209,12 +4230,12 @@ export async function dispatchRole(
           // even though Codex's own OS-level confinement no longer comes
           // from a profile this repo builds. No credential value at all:
           // the staged, COPIED `auth.json` (O7) inside `CODEX_HOME` is the
-          // whole route, named via `codexEnvExtras` below.
+          // whole route; `TMPDIR`/`TMP`/`TEMP` are folded in by
+          // `codexEnvExtras` below too (round 5 Principal ruling), pointed
+          // at the SAME scratch directory `addCodexWritableDirs` already
+          // grants.
           buildWorkerEnv(process.env, {
             ...attribution,
-            TMPDIR: codexScratchDir as string,
-            TMP: codexScratchDir as string,
-            TEMP: codexScratchDir as string,
             ...codexEnvExtras!.attribution
           })
         : claudeConfinement?.confined === true

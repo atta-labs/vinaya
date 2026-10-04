@@ -4642,6 +4642,34 @@ describe('codexSpawnEnvExtras — round 6 security review, CRITICAL (Issue #676)
   })
 })
 
+// Round 5 Principal ruling: `bun install` failed under Codex's own sandbox
+// with "bun is unable to write files to tempdir: EPERM" — this function is
+// now the ONE shared place both a real Codex dispatch (`dispatchRole`) and
+// the sandbox-conformance suite's own `codexSession()` get TMPDIR/TMP/TEMP
+// from, pointed at the same writable scratch directory, rather than each
+// building its own (possibly-drifting) copy.
+describe('codexSpawnEnvExtras — TMPDIR/TMP/TEMP pointed at the writable scratch directory (round 5 Principal ruling)', () => {
+  it('a codex dispatch with a scratch directory carries TMPDIR, TMP and TEMP all set to it', () => {
+    const extras = codexSpawnEnvExtras('codex', '/tmp/scratch/codex-home', '/tmp/scratch/codex-tmp')
+    expect(extras.attribution).toEqual({
+      CODEX_HOME: '/tmp/scratch/codex-home',
+      TMPDIR: '/tmp/scratch/codex-tmp',
+      TMP: '/tmp/scratch/codex-tmp',
+      TEMP: '/tmp/scratch/codex-tmp'
+    })
+  })
+
+  it('no scratch directory (an attended dispatch) sets none of TMPDIR/TMP/TEMP — the default parameter value', () => {
+    expect(codexSpawnEnvExtras('codex', '/tmp/scratch/codex-home')).toEqual({
+      attribution: { CODEX_HOME: '/tmp/scratch/codex-home' }
+    })
+  })
+
+  it('a non-codex vendor never gets TMPDIR/TMP/TEMP even if a scratch directory were somehow passed', () => {
+    expect(codexSpawnEnvExtras('claude', null, '/tmp/scratch/codex-tmp').attribution).toEqual({})
+  })
+})
+
 describe('missingSubscriptionLoginReason — O3 (names where Vinaya looked and how to sign in, never an API key)', () => {
   it('claude: names the credential file in the Claude config directory and the sign-in command', () => {
     const reason = missingSubscriptionLoginReason('claude', { CLAUDE_CONFIG_DIR: '/custom/claude' })

@@ -671,20 +671,20 @@ function renderSection4(facts: BriefFacts): string {
  */
 function renderSection5(facts: BriefFacts): string {
   const branch = developerBranchForFacts(facts)
-  // The portable form first — `dispatch-readiness` is a shipped check every
-  // reader of this brief can run. The authoring repository's own fuller
-  // derivation follows only when `facts` says that repository has one, and
-  // takes the task arguments from this render rather than from a placeholder.
-  const unabridgedTarget =
-    facts.trancheSlug !== null ? `${facts.trancheSlug} ${facts.taskId}` : `--issue ${facts.issue}`
+  // Never names the shipped check's or the authoring repository's own
+  // fuller derivation as a literal command the Developer runs — the driver
+  // runs both itself, from its own unsandboxed process, and stages the
+  // result (`dev-review-loop.ts`'s `dispatchDeveloperOnce`); naming the
+  // invocation here would read as an instruction to re-run it inside the
+  // Developer's own sandbox, where either script's own `gh` call fails
+  // (`isolation.md` §4a).
   const unabridged =
     facts.localGateCommands.dispatchReadiness !== null
-      ? ` This repository also ships the unabridged derivation — \`${facts.localGateCommands.dispatchReadiness} ${unabridgedTarget}\` → \`READY TO DISPATCH\`.`
+      ? ' plus, on this repository toolchain, its own fuller derivation'
       : ''
   const verifyLine =
-    `2. \`${facts.cliInvocation} check dispatch-readiness\` → pass (re-derived at render time: it was ready).` +
-    ' Known gap: its prior-tranche-archival predicate always reports empty — confirm that predicate yourself.' +
-    unabridged
+    `2. Under \`${facts.cliInvocation} dispatch\`/the review loop, the driver has already run the dispatch-readiness gate${unabridged} from its own unsandboxed process before dispatching you (re-derived at render time: it was ready), and staged the combined verdict in this round's own Developer folder — read it there; either script's own \`gh\` call fails inside your sandbox. Working manually, with no driver behind you, fall back to ` +
+    "`roles/developer.md`'s own items 3/5/7 prose — each a complete, hand-run forge check in its own right."
   const lines = [
     '## 5. Pre-flight checks',
     '',

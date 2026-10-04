@@ -469,6 +469,13 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     },
     fetchSourceRevision: (_issue) => world.sourceRevision,
     developerBranchFor: (_n) => world.branch,
+    // Stubbed READY by default — no in-process fixture's fake branch
+    // resolves on a real forge, so the real implementation (which shells
+    // out to `check-dispatch-readiness.ts`/`verify-dispatch.ts`) would fail
+    // every fixture's dispatch before it ever reaches `dispatchRole`. A
+    // fixture exercising a NOT READY gate overrides this with its own
+    // `{ready: false, ...}`.
+    checkTaskDispatchReadiness: (_branch) => ({ ready: true, output: 'stubbed ready — in-process fixture' }),
     findOpenPrForBranch: (branch) =>
       world.developerPushed || world.prOpened ? { number: world.prNumber, branch } : null,
     fetchIssueTitle: (_issue) => world.issueTitle,

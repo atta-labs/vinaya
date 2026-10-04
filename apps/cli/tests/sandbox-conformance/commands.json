@@ -41,21 +41,6 @@
       "run": "bun apps/cli/src/index.ts doctrine --template pr-report --print"
     },
     {
-      "id": "check-dispatch-readiness",
-      "forms": ["vinaya check dispatch-readiness"],
-      "run": "bun apps/cli/src/index.ts check dispatch-readiness"
-    },
-    {
-      "id": "verify-dispatch",
-      "forms": [
-        "bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n>",
-        "bun packages/aeg-core/bin/verify-dispatch.ts [tranche-slug] [n]",
-        "bun packages/aeg-core/bin/verify-dispatch.ts conformance-fixture-v1 1"
-      ],
-      "run": "bun packages/aeg-core/bin/verify-dispatch.ts {tranche} {n}",
-      "needsDispatchableTask": true
-    },
-    {
       "id": "check-all",
       "forms": ["vinaya check --all"],
       "run": "bun apps/cli/src/index.ts check --all",

@@ -25,6 +25,7 @@ import {
   objectivesVersion,
   type OutcomeSignals,
   extractSourceRevision,
+  parseTaskBranchIdentity,
   resolveNewestFrozenBrief,
   type ReviewPolicy
 } from '@attalabs/aeg-core'
@@ -631,6 +632,68 @@ export function createTaskWorktree(branch: string): void {
   sh('git', ['config', 'push.autoSetupRemote', 'true'])
   sh('git', ['push', '--no-verify', 'origin', `origin/main:refs/heads/${branch}`])
   sh('git', ['-C', worktreeDir, 'branch', '-u', `origin/${branch}`])
+}
+
+export type DispatchReadinessCheckResult = { ready: boolean; output: string }
+
+function gateRunOutput(err: unknown): string {
+  const stdout =
+    typeof err === 'object' && err !== null && 'stdout' in err ? String((err as { stdout?: unknown }).stdout ?? '') : ''
+  const stderr =
+    typeof err === 'object' && err !== null && 'stderr' in err ? String((err as { stderr?: unknown }).stderr ?? '') : ''
+  const combined = `${stdout}${stderr}`.trim()
+  return combined.length > 0 ? combined : err instanceof Error ? err.message : String(err)
+}
+
+/**
+ * Runs the task's dispatch-readiness gate from the driver's own unsandboxed
+ * process, before the Developer's turn ever starts — never inside the
+ * Developer's own sandbox, where a `gh` call either script makes (spawned by
+ * a `bun` process, never typed directly, so `CLAUDE_SANDBOX_EXCLUDED_COMMANDS`'s
+ * plain-`gh *` escape hatch never covers it) hits the denied forge-token file
+ * (`isolation.md` §4a; found live, CI, Linux: `gh issue list --repo … --label
+ * vinaya/tranche:…` and `gh-issue-view` both exit 1 under Claude's sandbox).
+ * Runs both the portable `check-dispatch-readiness` bin and this repository's
+ * own unabridged `verify-dispatch.ts` derivation (closing the shipped check's
+ * prior-tranche-archival parity gap, `roles/developer.md`'s own "Known gap"
+ * line) against the SAME `<tranche> <n>`/`--issue <n>` identity
+ * `parseTaskBranchIdentity` reads off `branch` — the one parser every other
+ * branch-keyed check in this repo already shares, never a second regex.
+ *
+ * `ready` is `false` the moment either command exits non-zero; `output`
+ * concatenates both commands' own stdout+stderr, unredacted — staged to a
+ * file only the driver and the Developer's own (already read-anywhere-but-
+ * named-credentials) sandbox ever see, never posted to the forge. `runGate`
+ * is `sh('bun', [script, ...args])` for a real run, injectable so a test can
+ * assert the pass/fail/output composition without a live forge or `bun`.
+ */
+export function checkTaskDispatchReadiness(
+  branch: string,
+  runGate: (script: string, args: readonly string[]) => string = (script, args) => sh('bun', [script, ...args])
+): DispatchReadinessCheckResult {
+  const identity = parseTaskBranchIdentity(branch)
+  if (identity === null) {
+    return {
+      ready: false,
+      output: `branch '${branch}' matches neither task/<tranche>/<n> nor task/issue-<n> — cannot resolve this task's dispatch-readiness gate.`
+    }
+  }
+  const gateArgs =
+    identity.kind === 'tranche' ? [identity.tranche, identity.taskId] : ['--issue', String(identity.issueNumber)]
+  const sections: string[] = []
+  let ready = true
+  const run = (script: string): void => {
+    const label = `$ bun ${script} ${gateArgs.join(' ')}`
+    try {
+      sections.push(`${label}\n${runGate(script, gateArgs)}`.trim())
+    } catch (err) {
+      ready = false
+      sections.push(`${label}\n${gateRunOutput(err)}`.trim())
+    }
+  }
+  run('apps/cli/src/checks/bin/check-dispatch-readiness.ts')
+  run('packages/aeg-core/bin/verify-dispatch.ts')
+  return { ready, output: sections.join('\n\n') }
 }
 
 type PrRef = { number: number; branch: string }

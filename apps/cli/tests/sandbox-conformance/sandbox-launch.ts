@@ -31,10 +31,11 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { addCodexWritableDirs, buildCodexExecpolicyRules } from '../../src/lib/dispatch.js'
+import { addCodexWritableDirs, buildCodexExecpolicyRules, codexSpawnEnvExtras } from '../../src/lib/dispatch.js'
 import {
   CLAUDE_SANDBOX_ALLOWED_DOMAINS,
   type ConfinementRequest,
+  resolveBunInstallCacheDir,
   resolveClaudeConfinement,
   resolveCodexConfinement,
   resolveGitCommonDir,
@@ -192,11 +193,22 @@ function codexSession(): SandboxSession {
   const sandboxMode = resolution.configToml.match(/^sandbox_mode = ("[^"]+")$/m)?.[1]
   if (sandboxMode === undefined) throw new Error('the staged Codex config names no sandbox_mode')
   const gitCommonDir = resolveGitCommonDir(worktreeDir)
+  // Round 5 Principal ruling: `bun install` writes its package cache under
+  // the operator's real home (`resolveBunInstallCacheDir`), the same gap a
+  // real Codex dispatch already closes (`dispatch.ts`'s own
+  // `codexBunCacheDir`) — this harness rebuilds its own writable-roots list
+  // rather than sharing that one, so it needs the same grant named here too.
+  const bunCacheDir = resolveBunInstallCacheDir()
   const sandboxArgs = addCodexWritableDirs(
     ['sandbox', '--config', `sandbox_mode=${sandboxMode}`],
-    [scratchDir, ...(gitCommonDir ? [gitCommonDir] : [])],
+    [scratchDir, bunCacheDir, ...(gitCommonDir ? [gitCommonDir] : [])],
     true
   )
+  // Round 5 Principal ruling: TMPDIR/TMP/TEMP now come from the SAME
+  // `codexSpawnEnvExtras` a real Codex dispatch builds its own spawn env
+  // from, rather than this harness's own hand-rolled `TMPDIR` alone (which
+  // never set `TMP`/`TEMP`, a real drift this task closes).
+  const envExtras = codexSpawnEnvExtras('codex', staged.codexHome, scratchDir).attribution
   return {
     agent: 'codex',
     worktreeDir,
@@ -205,7 +217,7 @@ function codexSession(): SandboxSession {
       runIn(
         [process.execPath, 'x', CODEX_PACKAGE, ...sandboxArgs, '--', 'bash', '-c', withAbsoluteBun(command)],
         worktreeDir,
-        { ...stripVinayaEnv(), CODEX_HOME: staged.codexHome, TMPDIR: scratchDir, ...env },
+        { ...stripVinayaEnv(), ...envExtras, ...env },
         `codex: ${command}`
       ),
     dispose: () => {

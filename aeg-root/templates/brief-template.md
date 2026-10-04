@@ -68,7 +68,7 @@ git worktree add .worktrees/task/[tranche-slug]/[n] -b task/[tranche-slug]/[n] -
 ```
 
 1. Clean status; parent `origin/main`; branch suffix literal-matches topology `#` column (`[n]`).
-2. `vinaya check dispatch-readiness` → pass required; else STOP. (Known gap: its prior-tranche-archival predicate always reports empty — confirm that predicate yourself regardless. A repository that ships an unabridged derivation of its own has the render name that too — in this repo, `bun packages/aeg-core/bin/verify-dispatch.ts [tranche-slug] [n]`.)
+2. Under `vinaya dispatch`/the review loop, the driver has already run the dispatch-readiness gate (the shipped check, plus this repository's own fuller derivation where it ships one) from its own unsandboxed process before dispatching you, and staged the combined verdict in this round's own Developer folder — read it there; either script's own `gh` call fails inside your sandbox. Working manually, with no driver behind you, fall back to `roles/developer.md`'s own items 3/5/7 prose — each a complete, hand-run forge check in its own right.
 3. [any task-specific pre-flight checks — required tools present, reference files readable, re-digs to confirm the §2 citations]
 
 On any failure: STOP and report.
