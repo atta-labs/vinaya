@@ -32,10 +32,17 @@
 
 import { spawn } from 'node:child_process'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ownVersion } from '../artifacts.js'
-import { realConfinementPlatformDeps, resolveClaudeConfinement, resolveCodexConfinement } from '../worker-boundary.js'
+import { buildCodexExecpolicyRules } from '../dispatch.js'
+import {
+  buildWorkerEnv,
+  realConfinementPlatformDeps,
+  resolveClaudeConfinement,
+  resolveCodexConfinement,
+  stageCodexPolicyHome
+} from '../worker-boundary.js'
 import { startDevToolsHost } from './dev-tools-host.js'
 import { DEV_TOOLS_MCP_SERVER_NAME, type DevToolContext } from './dev-tools-server.js'
 
@@ -187,6 +194,16 @@ function resolveProofConfinement(
   return { confined: false, detail: resolved.reason, settingsPath: null, codexHome: null, codexSandboxToml: null }
 }
 
+/**
+ * The TMPDIR-family redirect a confined child's env carries (the SAME shape the
+ * confined dispatch uses), keeping the agent's own working files inside the
+ * granted scratch. Empty for an unconfined run.
+ */
+function confinedTmpEnv(confined: boolean, scratchDir: string): Record<string, string> {
+  if (!confined) return {}
+  return { TMPDIR: scratchDir, TMP: scratchDir, TEMP: scratchDir, CLAUDE_CODE_TMPDIR: scratchDir }
+}
+
 /** Builds the spawn command/args/env for the named agent, registering the dev-tools server per-dispatch. */
 function buildAgentLaunch(
   agent: ProofAgent,
@@ -213,12 +230,24 @@ function buildAgentLaunch(
       allowed,
       ...(confinement.settingsPath ? ['--settings', confinement.settingsPath] : [])
     ]
-    return { command: 'claude', args, env: { ...process.env } }
+    // F1 (round 2 security review, MEDIUM): never spread the driver/operator's
+    // whole environment into the spawned agent — the agent's own sandbox
+    // confines its tools' filesystem and network, never their env. Build the
+    // child env from the SAME `buildWorkerEnv` named allowlist the confined
+    // dispatch uses (`dispatch.ts`); it keeps HOME/PATH/USER/LOGNAME so
+    // `claude -p` still authenticates and resolves its binary.
+    return {
+      command: 'claude',
+      args,
+      env: buildWorkerEnv(process.env, confinedTmpEnv(confinement.confined, scratchDir))
+    }
   }
-  // Codex: stage the [mcp_servers.<name>] table (plus the sandbox config, when
-  // the host supports it) into a CODEX_HOME the dispatch points at.
+  // Codex: a CODEX_HOME carrying a real `auth.json` copy, the sandbox config and
+  // the `[mcp_servers.<name>]` table — staged through the SAME
+  // `stageCodexPolicyHome` the confined dispatch uses (ruling bug 2: a
+  // hand-made home with no `auth.json` cannot authenticate). The mcp table
+  // rides the staged `config.toml` so the one generated file carries both.
   const codexHome = confinement.codexHome ?? join(scratchDir, 'codex-home')
-  mkdirSync(codexHome, { recursive: true })
   const tomlArgs = `[${bridge.args.map((a) => JSON.stringify(a)).join(', ')}]`
   const mcpTable = [
     `[mcp_servers.${DEV_TOOLS_MCP_SERVER_NAME}]`,
@@ -226,12 +255,27 @@ function buildAgentLaunch(
     `args = ${tomlArgs}`,
     ''
   ].join('\n')
-  const toml = confinement.codexSandboxToml ? `${confinement.codexSandboxToml}\n${mcpTable}` : mcpTable
-  writeFileSync(join(codexHome, 'config.toml'), toml)
+  const combinedToml = confinement.codexSandboxToml ? `${confinement.codexSandboxToml}\n${mcpTable}` : mcpTable
+  const staged =
+    confinement.codexSandboxToml !== null
+      ? stageCodexPolicyHome({
+          targetDir: codexHome,
+          realHome: homedir(),
+          execpolicyRules: buildCodexExecpolicyRules('developer') ?? '',
+          sandboxConfigToml: combinedToml
+        })
+      : null
+  if (staged === null) {
+    // No operator `~/.codex/auth.json` to copy (this VPS; or no Codex login) —
+    // write the registration alone so the command still runs and discloses.
+    // Codex itself ENOENTs here anyway; the staged path is exercised on macOS.
+    mkdirSync(codexHome, { recursive: true })
+    writeFileSync(join(codexHome, 'config.toml'), combinedToml)
+  }
   return {
     command: 'codex',
     args: ['exec', '--skip-git-repo-check', PROOF_PROMPT],
-    env: { ...process.env, CODEX_HOME: codexHome }
+    env: buildWorkerEnv(process.env, { CODEX_HOME: codexHome, ...confinedTmpEnv(confinement.confined, scratchDir) })
   }
 }
 
@@ -259,10 +303,10 @@ function runAgent(
       }
       resolve({ outcome: { exitCode, ...parsed } })
     })
-    if (stdin !== null) {
-      child.stdin.write(stdin)
-      child.stdin.end()
-    }
+    // Always close stdin — a child reading its prompt from argv (Codex) still
+    // waits on EOF and would hang to the timeout otherwise (ruling bug 1).
+    if (stdin !== null) child.stdin.write(stdin)
+    child.stdin.end()
   })
 }
 
