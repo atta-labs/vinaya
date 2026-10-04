@@ -13,7 +13,7 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -26,6 +26,7 @@ import {
 import {
   createLogSink,
   describeFolderFallback,
+  drainLogSpool,
   logsCredentialMissing,
   resolveLogAppendPath,
   resolveLogDestinationFrom,
@@ -167,6 +168,30 @@ describe('resolveLogDestinationFrom (pure) — who is allowed to name the destin
         trustAnchorConfig: null,
         unattended: false,
         env: {},
+        defaultFolder: DEFAULT_FOLDER
+      })
+    ).toEqual({ kind: 'folder', folder: DEFAULT_FOLDER })
+  })
+
+  it('O6: a staged VINAYA_LOG_SPOOL_DIR wins over everything — a confined dispatch spools there, the driver delivers after', () => {
+    expect(
+      resolveLogDestinationFrom({
+        localConfig: { logs: { url: 'https://logs.example.com' } } as VinayaConfig,
+        trustAnchorConfig: { logs: { url: 'https://logs.example.com' } } as VinayaConfig,
+        unattended: true,
+        env: { VINAYA_LOG_SPOOL_DIR: '/scratch/log-spool', GITHUB_ACTIONS: 'true' },
+        defaultFolder: DEFAULT_FOLDER
+      })
+    ).toEqual({ kind: 'folder', folder: '/scratch/log-spool' })
+  })
+
+  it('O6: an empty VINAYA_LOG_SPOOL_DIR is ignored — normal resolution continues', () => {
+    expect(
+      resolveLogDestinationFrom({
+        localConfig: null,
+        trustAnchorConfig: null,
+        unattended: false,
+        env: { VINAYA_LOG_SPOOL_DIR: '  ' },
         defaultFolder: DEFAULT_FOLDER
       })
     ).toEqual({ kind: 'folder', folder: DEFAULT_FOLDER })
@@ -921,5 +946,117 @@ describe('log-sink — the drain before an abrupt exit is what keeps a pending w
     // fork) had no chance to land the append before `process.exit()` tore
     // the process down.
     expect(existsSync(folderEventPath(logsFolder))).toBe(false)
+  })
+})
+
+describe('drainLogSpool (O6) — the driver delivers a confined dispatch spool after the turn, outside the sandbox', () => {
+  let root = ''
+  afterEach(() => {
+    if (root) rmSync(root, { recursive: true, force: true })
+    root = ''
+  })
+
+  it('appends every spooled <owner>-<repo>/<issue>.ndjson file to the same relative path under the real log folder', () => {
+    root = mkdtempSync(join(tmpdir(), 'vinaya-spool-'))
+    const spool = join(root, 'log-spool')
+    const dest = join(root, 'logs')
+    mkdirSync(join(spool, 'atta-labs-vinaya'), { recursive: true })
+    writeFileSync(join(spool, 'atta-labs-vinaya', '1034.ndjson'), '{"a":1}\n{"a":2}\n')
+    // A pre-existing real-folder line is preserved — the drain APPENDS.
+    mkdirSync(join(dest, 'atta-labs-vinaya'), { recursive: true })
+    writeFileSync(join(dest, 'atta-labs-vinaya', '1034.ndjson'), '{"a":0}\n')
+
+    const delivered = drainLogSpool(spool, dest, { owner: 'atta-labs', repo: 'vinaya' }, 1034)
+    expect(delivered).toBe(1)
+    expect(readFileSync(join(dest, 'atta-labs-vinaya', '1034.ndjson'), 'utf8')).toBe('{"a":0}\n{"a":1}\n{"a":2}\n')
+  })
+
+  it('delivers ONLY this dispatch own <owner>-<repo>/<issue> file — a file under another task path is ignored (round 3 security, confined-deputy)', () => {
+    root = mkdtempSync(join(tmpdir(), 'vinaya-spool-'))
+    const spool = join(root, 'log-spool')
+    const dest = join(root, 'logs')
+    // This dispatch's own spool file — the (repo, issue) the driver passes.
+    mkdirSync(join(spool, 'atta-labs-vinaya'), { recursive: true })
+    writeFileSync(join(spool, 'atta-labs-vinaya', '1034.ndjson'), '{"mine":true}\n')
+    // Files a compromised/prompt-injected agent wrote into its own writable
+    // spool under ANOTHER task's path — another issue in the same repo, and
+    // another repo entirely. Neither is this dispatch's own file.
+    writeFileSync(join(spool, 'atta-labs-vinaya', '9999.ndjson'), '{"forged":"other-task"}\n')
+    mkdirSync(join(spool, 'victim-org-victim-repo'), { recursive: true })
+    writeFileSync(join(spool, 'victim-org-victim-repo', '1.ndjson'), '{"forged":"other-repo"}\n')
+
+    const delivered = drainLogSpool(spool, dest, { owner: 'atta-labs', repo: 'vinaya' }, 1034)
+    // Exactly one file delivered: this dispatch's own.
+    expect(delivered).toBe(1)
+    expect(readFileSync(join(dest, 'atta-labs-vinaya', '1034.ndjson'), 'utf8')).toBe('{"mine":true}\n')
+    // The forged other-task and other-repo files were never appended anywhere
+    // under the operator log folder.
+    expect(existsSync(join(dest, 'atta-labs-vinaya', '9999.ndjson'))).toBe(false)
+    expect(existsSync(join(dest, 'victim-org-victim-repo', '1.ndjson'))).toBe(false)
+  })
+
+  it('returns 0 and creates nothing when the spool directory does not exist', () => {
+    root = mkdtempSync(join(tmpdir(), 'vinaya-spool-'))
+    const dest = join(root, 'logs')
+    expect(drainLogSpool(join(root, 'absent-spool'), dest, { owner: 'atta-labs', repo: 'vinaya' }, 1034)).toBe(0)
+    expect(existsSync(dest)).toBe(false)
+  })
+
+  it('returns 0 and creates nothing when this dispatch own spool file is absent', () => {
+    root = mkdtempSync(join(tmpdir(), 'vinaya-spool-'))
+    const spool = join(root, 'log-spool')
+    const dest = join(root, 'logs')
+    mkdirSync(spool, { recursive: true })
+    expect(drainLogSpool(spool, dest, { owner: 'atta-labs', repo: 'vinaya' }, 1034)).toBe(0)
+    expect(existsSync(join(dest, 'atta-labs-vinaya', '1034.ndjson'))).toBe(false)
+  })
+
+  it('skips an empty spool file, so an append of nothing never happens', () => {
+    root = mkdtempSync(join(tmpdir(), 'vinaya-spool-'))
+    const spool = join(root, 'log-spool')
+    const dest = join(root, 'logs')
+    mkdirSync(join(spool, 'unresolved'), { recursive: true })
+    writeFileSync(join(spool, 'unresolved', 'none.ndjson'), '')
+    expect(drainLogSpool(spool, dest, null, null)).toBe(0)
+    expect(existsSync(join(dest, 'unresolved', 'none.ndjson'))).toBe(false)
+  })
+
+  it('refuses a symlinked LEAF in the spool — never follows it out to a host file (round 2 security, confused-deputy)', () => {
+    root = mkdtempSync(join(tmpdir(), 'vinaya-spool-'))
+    const spool = join(root, 'log-spool')
+    const dest = join(root, 'logs')
+    const secret = join(root, 'outside-secret.ndjson')
+    writeFileSync(secret, '{"stolen":true}\n')
+    mkdirSync(join(spool, 'atta-labs-vinaya'), { recursive: true })
+    // The confined agent plants a symlink in its own spool pointing OUTSIDE it.
+    symlinkSync(secret, join(spool, 'atta-labs-vinaya', '1034.ndjson'))
+    expect(drainLogSpool(spool, dest, { owner: 'atta-labs', repo: 'vinaya' }, 1034)).toBe(0)
+    // The host file's bytes never reach the operator log folder.
+    expect(existsSync(join(dest, 'atta-labs-vinaya', '1034.ndjson'))).toBe(false)
+  })
+
+  it('refuses a symlinked SUBDIRECTORY in the spool — never descends it', () => {
+    root = mkdtempSync(join(tmpdir(), 'vinaya-spool-'))
+    const spool = join(root, 'log-spool')
+    const dest = join(root, 'logs')
+    const outsideDir = join(root, 'outside-dir')
+    mkdirSync(outsideDir, { recursive: true })
+    writeFileSync(join(outsideDir, 'none.ndjson'), '{"stolen":true}\n')
+    mkdirSync(spool, { recursive: true })
+    symlinkSync(outsideDir, join(spool, 'atta-labs-vinaya'))
+    expect(drainLogSpool(spool, dest, { owner: 'atta-labs', repo: 'vinaya' }, null)).toBe(0)
+    expect(existsSync(join(dest, 'atta-labs-vinaya', 'none.ndjson'))).toBe(false)
+  })
+
+  it('refuses a spool ROOT that is itself a symlink — delivers nothing', () => {
+    root = mkdtempSync(join(tmpdir(), 'vinaya-spool-'))
+    const realElsewhere = join(root, 'elsewhere')
+    const dest = join(root, 'logs')
+    mkdirSync(join(realElsewhere, 'atta-labs-vinaya'), { recursive: true })
+    writeFileSync(join(realElsewhere, 'atta-labs-vinaya', '1034.ndjson'), '{"stolen":true}\n')
+    const spool = join(root, 'log-spool')
+    symlinkSync(realElsewhere, spool)
+    expect(drainLogSpool(spool, dest, { owner: 'atta-labs', repo: 'vinaya' }, 1034)).toBe(0)
+    expect(existsSync(join(dest, 'atta-labs-vinaya', '1034.ndjson'))).toBe(false)
   })
 })

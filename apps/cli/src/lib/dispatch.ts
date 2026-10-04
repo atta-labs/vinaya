@@ -83,7 +83,7 @@ import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { homedir, hostname as osHostname, tmpdir } from 'node:os'
 import { parseIssueDocumentation, redact, summarizeTranscript } from '@attalabs/aeg-core'
 import type { IssueDocumentationSource, Role, RoleAttemptOutcome, TranscriptSummary } from '@attalabs/aeg-core'
-import { createLogSink, resolveLogAppendPath } from './log-sink.js'
+import { createLogSink, drainLogSpool, resolveLogAppendPath } from './log-sink.js'
 import { appendRoleLine } from './loop-log.js'
 import { loadConfig } from './config.js'
 import {
@@ -3452,9 +3452,29 @@ export function codexSpawnEnvExtras(
   return {
     attribution: {
       ...(isCodex && codexHomeDir !== null ? { CODEX_HOME: codexHomeDir } : {}),
-      ...(isCodex && scratchDir !== null ? { TMPDIR: scratchDir, TMP: scratchDir, TEMP: scratchDir } : {})
+      ...(isCodex && scratchDir !== null
+        ? { TMPDIR: scratchDir, TMP: scratchDir, TEMP: scratchDir, TURBO_CACHE_DIR: confinedTurboCacheDir(scratchDir) }
+        : {})
     }
   }
+}
+
+/**
+ * O4: the turbo filesystem cache directory for a confined dispatch, inside
+ * its OWN granted scratch (writable) rather than the default `.turbo/` at the
+ * main repository root — which is outside the worktree/scratch the sandbox
+ * grants, so a cache MISS (any PR that changes a package) died there with
+ * `IO error: failed to create directory .../vinaya/.turbo/`. `bun run
+ * typecheck` runs `turbo`, and `turbo`'s `--cache-dir` has this env override
+ * (`TURBO_CACHE_DIR`); pointing it inside the scratch sends every cache-miss
+ * write where the sandbox already allows writes, never a repository-root
+ * grant. Set for both confined agents' children (here for Codex via
+ * `codexSpawnEnvExtras`, and in `dispatchRole`'s Claude branch) and mirrored
+ * by the conformance harness (`sandbox-launch.ts`) so the suite judges the
+ * same redirect the driver ships.
+ */
+export function confinedTurboCacheDir(scratchDir: string): string {
+  return join(scratchDir, 'turbo-cache')
 }
 
 /**
@@ -3836,6 +3856,28 @@ export async function dispatchRole(
           allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS
         })
       : null
+  // O6: a CONFINED dispatch's own log-spool directory, inside its granted
+  // scratch (writable), where its `log()` calls land — the real log folder
+  // (`<runtimeDir>/logs/`) is outside the worktree/scratch the sandbox grants,
+  // so a direct append there died with "log outbox target could not be
+  // opened". `VINAYA_LOG_SPOOL_DIR` (below, on the confined child's env)
+  // points `log()` here; this trusted driver drains it to the real folder
+  // after the turn, outside the sandbox (`finish()` → `drainLogSpool`). `null`
+  // for an unconfined dispatch, which reaches the real folder directly.
+  const confinedScratchDir =
+    codexRequireIsolation && codexScratchDir !== null
+      ? codexScratchDir
+      : claudeConfinement?.confined === true
+        ? claudeConfinement.scratchDir
+        : null
+  const logSpoolDir = confinedScratchDir !== null ? join(confinedScratchDir, 'log-spool') : null
+  if (logSpoolDir !== null) {
+    try {
+      mkdirSync(logSpoolDir, { recursive: true })
+    } catch {
+      // best-effort; the confined child's own `appendLine` also mkdirs it.
+    }
+  }
   // O1: claude only — see `writeDispatchSettings`'s own doc comment for why
   // Codex/Gemini are not silently included. Computed here, once, before the
   // 'dispatched' log line — moved up from inside the spawn `Promise`
@@ -4236,7 +4278,10 @@ export async function dispatchRole(
           // grants.
           buildWorkerEnv(process.env, {
             ...attribution,
-            ...codexEnvExtras!.attribution
+            ...codexEnvExtras!.attribution,
+            // O6: spool this confined dispatch's log events into its granted
+            // scratch; the driver delivers them after the turn (`finish()`).
+            ...(logSpoolDir !== null ? { VINAYA_LOG_SPOOL_DIR: logSpoolDir } : {})
           })
         : claudeConfinement?.confined === true
           ? // Round 2 security review, CRITICAL: a confined Claude dispatch
@@ -4268,10 +4313,18 @@ export async function dispatchRole(
               // `/tmp/claude-<uid>` and ignores `TMPDIR` for them, so its
               // own override must name the same granted scratch directory.
               CLAUDE_CODE_TMPDIR: claudeConfinement.scratchDir,
+              // O4: turbo's cache-miss write goes inside the granted scratch,
+              // never the repo-root `.turbo/` the sandbox denies — see
+              // `confinedTurboCacheDir`. Codex gets the same key via
+              // `codexSpawnEnvExtras` above.
+              TURBO_CACHE_DIR: confinedTurboCacheDir(claudeConfinement.scratchDir),
               // O2: see the Codex branch's own comment on this same guard,
               // above — `resolveGitFirstPath`'s result, puts the real `git`
               // ahead of the `/usr/bin/git` xcrun shim on macOS.
-              ...(claudeConfinement.pathOverride !== undefined ? { PATH: claudeConfinement.pathOverride } : {})
+              ...(claudeConfinement.pathOverride !== undefined ? { PATH: claudeConfinement.pathOverride } : {}),
+              // O6: spool this confined dispatch's log events into its granted
+              // scratch; the driver delivers them after the turn (`finish()`).
+              ...(logSpoolDir !== null ? { VINAYA_LOG_SPOOL_DIR: logSpoolDir } : {})
             })
           : {
               ...process.env,
@@ -4473,6 +4526,22 @@ export async function dispatchRole(
       clearInterval(heartbeatTimer)
       clearTimeout(warnTimer)
       outputTee.end()
+      // O6: deliver the confined dispatch's spooled log events to the real log
+      // folder (`<runtimeDir>/logs/`) from this trusted driver, OUTSIDE the
+      // sandbox — BEFORE the scratch that holds the spool is removed below.
+      // The confined child could not reach that folder itself; this is the
+      // "delivered after the turn by the driver" half of O6. Best-effort: a
+      // drain fault never blocks `finish()`.
+      if (logSpoolDir !== null) {
+        try {
+          // Deliver ONLY this dispatch's OWN `<owner>-<repo>/<issue>.ndjson`
+          // spool file — never another task's path the confined agent may
+          // have written into its writable spool (round 3 security, LOW).
+          drainLogSpool(logSpoolDir, join(runtimeDirForRepo(repo), 'logs'), repo, opts.task ?? null)
+        } catch {
+          // best-effort, same reasoning as the scratch cleanup below.
+        }
+      }
       // O1/O2: the scratch directory minted for a Claude or Codex dispatch's
       // own confinement (`claudeScratchDir`/`codexScratchDir`, above) never
       // outlives the dispatch that created it — best-effort, matching every

@@ -73,23 +73,64 @@ type KnownFailure = {
   readonly denial: string
 }
 
-const GH_CONFIG_DENIED =
-  'gh exits before reaching the forge: "failed to read configuration: open ~/.config/gh/config.yml: operation not permitted" — the real home is denied read'
-const BUN_HIDDEN_LINUX =
-  'bun is not found: the runner installs it under ~/.bun, and the denied home is mounted empty, so the binary is gone inside the sandbox'
+/**
+ * O2/O7: a line that is NOT a bare excluded command runs INSIDE Claude's
+ * sandbox (`claudeRunsCommandUnsandboxed` in `sandbox-launch.ts` routes a bare
+ * `gh`/`git push`/… outside it, as Claude Code does). Inside, the gh token
+ * store `~/.config/gh/hosts.yml` is a denied credential and no
+ * `GITHUB_TOKEN`/`GH_TOKEN` sits in the Developer's own macOS environment, so
+ * `gh` cannot authenticate and any forge read fails. (Named for darwin: on a
+ * Linux CI runner a `GH_TOKEN` IS in the ambient job environment and flows in,
+ * so the same lines authenticate there — see O3/O4 below.)
+ */
+const GH_HOSTS_DENIED_INSIDE =
+  'the gh token store ~/.config/gh/hosts.yml is a denied credential and no GITHUB_TOKEN/GH_TOKEN is in the macOS environment, so gh cannot authenticate and the forge read fails'
 
 /**
  * Today's denials. Remove an entry the moment its command passes — the
  * suite fails until you do.
+ *
+ * O2: the three bare `gh` lines (`gh-issue-view`/`gh-pr-view`/
+ * `gh-pr-view-reviews`) are gone — each is a bare excluded command Claude Code
+ * now runs OUTSIDE the sandbox, with the forge credential, so they exit 0.
+ * `gh-chained` is added as a Claude/darwin denial (alongside the kept
+ * `check-all`/darwin): a chained line is not a bare excluded command, so it
+ * runs inside.
+ * O4: `typecheck` is NOT listed for either agent. `bun run typecheck` runs
+ * `turbo`, whose cache-miss write used to land at the MAIN repository root's
+ * `.turbo/` — outside the granted worktree/scratch, so the sandbox denied it
+ * (`IO error: failed to create directory .../vinaya/.turbo/`). The driver now
+ * points turbo's cache-directory override (`TURBO_CACHE_DIR`,
+ * `confinedTurboCacheDir`) inside the confined dispatch's OWN granted scratch
+ * for both agents, and the harness mirrors it (`sandbox-launch.ts`), so each
+ * agent's cold-cache miss writes where the sandbox already allows writes and
+ * `typecheck` exits 0 under both — no repository-root grant, no cross-agent
+ * warm-cache dependency.
+ * O3: `check-all` on claude/darwin and claude/linux stays — the CLI's own
+ * forge reads are not staged from outside here. Under the publishing-tools
+ * design the controller runs the checks that need the forge, so closing these
+ * two moves to Issue #1040; each keeps its current-cause denial below.
  */
 const KNOWN_FAILURES: readonly KnownFailure[] = [
-  { id: 'check-all', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
-  { id: 'gh-issue-view', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
-  { id: 'gh-pr-view', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
-  { id: 'gh-pr-view-reviews', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
-  ...['typecheck', 'check-all'].map(
-    (id): KnownFailure => ({ id, agent: 'claude', platform: 'linux', denial: BUN_HIDDEN_LINUX })
-  )
+  {
+    id: 'check-all',
+    agent: 'claude',
+    platform: 'darwin',
+    denial: `check --all runs inside the sandbox and ${GH_HOSTS_DENIED_INSIDE} — the CLI's forge reads are not yet staged from outside (O3, Issue #1034)`
+  },
+  {
+    id: 'gh-chained',
+    agent: 'claude',
+    platform: 'darwin',
+    denial: `a chained gh line is not a bare excluded command, so Claude Code runs it inside the sandbox, where ${GH_HOSTS_DENIED_INSIDE}`
+  },
+  {
+    id: 'check-all',
+    agent: 'claude',
+    platform: 'linux',
+    denial:
+      'check --all runs inside the sandbox, where the confined secret scanner (atta-labs/secret-scan) cannot run and errors — the dominant denial on a Linux CI runner, whose ambient GH_TOKEN otherwise flows in and lets the forge-reading checks authenticate (unlike macOS, where the denied gh token store additionally blocks them). Removing it is folded into the O3/O4 forge-staging escalation (Issue #1034)'
+  }
 ]
 
 function knownFailure(id: string, agent: Agent, platform: string): KnownFailure | undefined {

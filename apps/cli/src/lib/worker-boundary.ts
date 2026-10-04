@@ -2018,6 +2018,32 @@ export const CLAUDE_SANDBOX_ALLOWED_DOMAINS: readonly string[] = [
   'api.anthropic.com'
 ]
 
+/**
+ * O5: the official agent-vendor DOCUMENTATION hosts a confined Codex
+ * Developer may read, named one by one — never a broad "any documentation"
+ * allowance (the brief's own Trap). A live Codex `task run` found its web
+ * search COMPLETED but it could not read the page's content, and a `curl` to
+ * `developers.openai.com` was refused ("domain is not on the allowlist"):
+ * `web_search = "live"` lets Codex FIND a page, but READING its content is a
+ * sandboxed-command network fetch, gated by `[features.network_proxy.domains]`
+ * (`buildCodexSandboxConfigToml`), so the host must be named there too. These
+ * are the vendors' own documentation hosts this repo already cites — OpenAI's
+ * (`developers.openai.com`, `platform.openai.com`) and Anthropic's/Claude's
+ * (`docs.anthropic.com`, `code.claude.com`) — a fixed, driver-known list, not
+ * a per-task value: a Developer reading its agent's own documented behaviour
+ * reaches exactly these, so the driver can name them in advance rather than
+ * escalating for a host list it cannot predict (§10). Codex only: a Claude
+ * Developer reads documentation through its UNCONFINED main process's own
+ * fetch, never a sandboxed-command network call, so this list rides Codex's
+ * network proxy alone.
+ */
+export const DOCUMENTATION_HOSTS: readonly string[] = [
+  'developers.openai.com',
+  'platform.openai.com',
+  'docs.anthropic.com',
+  'code.claude.com'
+]
+
 export type ConfinementRequest = {
   readonly role: Role
   /** A plain string, never `AgentVendor` — that type lives in `dispatch.ts`, which imports this module, and importing it back here would cycle; `hasSubscriptionLogin` (above) already takes the same shape for the same reason. */
@@ -2058,6 +2084,33 @@ export type ClaudeSandboxSettings = {
  * states stay sandboxed regardless of any entry here).
  */
 export const CLAUDE_SANDBOX_EXCLUDED_COMMANDS: readonly string[] = ['gh *', 'git push *', 'git fetch *', 'git pull *']
+
+/**
+ * O2: how Claude Code itself decides whether a Bash line runs OUTSIDE the
+ * sandbox — a line runs outside only when the WHOLE line, on its own, matches
+ * one of `CLAUDE_SANDBOX_EXCLUDED_COMMANDS`. Any shell operator that chains it
+ * to something else — a `cd …&&` prefix, a `; echo` suffix, a pipe, a
+ * background `&`, a backtick/`$(…)` substitution — keeps the whole line
+ * sandboxed, exactly as `code.claude.com/docs/en/sandboxing` states (`git -C
+ * <dir> push *` and a `cd …&&` prefix "stay sandboxed regardless").
+ *
+ * This is a whole-line glob match against the patterns, NOT a shell-text
+ * parser that splits a compound line and runs part of it outside (the brief's
+ * own Trap): the presence of any chaining operator alone disqualifies the
+ * line, and otherwise the line must start with an excluded command's plain
+ * form. The conformance suite uses it to launch a Developer's commands the
+ * way Claude Code does.
+ */
+export function claudeRunsCommandUnsandboxed(command: string): boolean {
+  const line = command.trim()
+  // Any operator that could introduce or chain a second command keeps the
+  // whole line inside the sandbox.
+  if (/[\n;&|`]|\$\(/.test(line)) return false
+  return CLAUDE_SANDBOX_EXCLUDED_COMMANDS.some((pattern) => {
+    const prefix = pattern.replace(/\s*\*$/, '')
+    return line === prefix || line.startsWith(`${prefix} `)
+  })
+}
 
 /**
  * O1: at least the five credential locations the brief names, denied
@@ -2347,22 +2400,32 @@ function tomlString(value: string): string {
  *   O5: a request to a host with no entry here is refused by the proxy
  *   (never allowed by a missing-entry default) — a domain list limits WHERE
  *   traffic goes, never WHAT is sent to an allowed host (`isolation.md` O5).
- *   Only `request.allowedHosts` ever appears here, each mapped to `"allow"`
- *   — this function never writes a `"deny"` entry, since nothing this task
- *   dispatches needs one named explicitly to stay refused by default.
+ *   `request.allowedHosts` (GitHub, the npm registry) PLUS the official
+ *   vendor documentation hosts (`DOCUMENTATION_HOSTS`) appear here, each
+ *   mapped to `"allow"` — this function never writes a `"deny"` entry, since
+ *   nothing this task dispatches needs one named explicitly to stay refused
+ *   by default.
  * - `web_search = "live"` (O9) — a TOP-LEVEL key, confirmed live and
  *   cross-checked against the vendor's own `config-reference` page as
  *   independent of every setting above: "These search-domain filters are
  *   separate from sandboxed-command network domain rules and do not
- *   restrict connectors or MCP servers." Setting it here lets a confined
- *   Codex Developer read official documentation pages (the Documentation
- *   read-gate's own obligation) without touching
- *   `[features.network_proxy.domains]` at all — the sandboxed-command
- *   network allowlist above stays exactly what `request.allowedHosts` names,
- *   unwidened.
+ *   restrict connectors or MCP servers." It lets a confined Codex Developer
+ *   FIND an official documentation page; READING that page's content is a
+ *   sandboxed-command network fetch, so O5 ALSO names the vendors' own
+ *   documentation hosts (`DOCUMENTATION_HOSTS`) in
+ *   `[features.network_proxy.domains]` above — a live Codex run found web
+ *   search alone completed but the page read was refused as "domain is not
+ *   on the allowlist". Named one by one, never a broad documentation
+ *   allowance (the brief's Trap).
  */
 export function buildCodexSandboxConfigToml(request: ConfinementRequest): string {
-  const domainLines = request.allowedHosts.map((host) => `${tomlString(host)} = "allow"`)
+  // O5: the sandboxed-command network allowlist is `request.allowedHosts`
+  // (GitHub, the npm registry) PLUS the official vendor documentation hosts
+  // (`DOCUMENTATION_HOSTS`), so a confined Codex Developer can READ a
+  // documentation page its web search found, not merely find it. De-duped so
+  // a host already in `allowedHosts` is never written twice.
+  const hosts = [...new Set([...request.allowedHosts, ...DOCUMENTATION_HOSTS])]
+  const domainLines = hosts.map((host) => `${tomlString(host)} = "allow"`)
   return [
     'sandbox_mode = "workspace-write"',
     'web_search = "live"',

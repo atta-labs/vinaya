@@ -843,6 +843,29 @@ export function renderDeveloperDoctrineBlock(doctrine: string): string {
 }
 
 /**
+ * O1: the bare-forge-command rule that rides every CLAUDE Code Developer
+ * dispatch prompt, and NO Codex one. A Claude Code Worker publishes its own
+ * work through its sandbox's own `excludedCommands` (`worker-boundary.ts`'s
+ * `CLAUDE_SANDBOX_EXCLUDED_COMMANDS`): a line that matches one of those
+ * patterns ON ITS OWN runs OUTSIDE the sandbox, with the forge credential,
+ * while any OTHER line — including one that chains an excluded command onto
+ * anything else — runs INSIDE, where the credential is denied. So a chained
+ * `gh`/`git push`/`git pull`/`git fetch` silently loses its forge access and
+ * fails; a bare one does not. The rule lives in the DRIVER's prompt (not the
+ * doctrine or the brief template), stated once, so the Developer knows to
+ * keep each forge command on its own Bash line. Returns `null` for Codex,
+ * whose driver publishes for it and whose `workspace-write` sandbox keeps
+ * `.git` read-only regardless — it never runs a forge command itself.
+ */
+export function bareForgeCommandRule(agent: AgentVendor): string | null {
+  if (agent !== 'claude') return null
+  return [
+    'SANDBOX NOTE (Claude Code) — run each `gh`, `git push`, `git pull` and `git fetch` as its OWN Bash command, with nothing chained before or after it: no `&&`, `;` or `|`, no leading `cd …`, no command substitution on the same line.',
+    'Only a line that matches one of these on its own runs outside the sandbox with your forge credential; chain anything onto it and the WHOLE line runs inside the sandbox, where the credential is denied and the command fails. Keep every other command on its own line too, and the forge commands alone.'
+  ].join(' ')
+}
+
+/**
  * Dispatches the developer through `dispatchRole`, with the brief text read
  * from the Issue's frozen `aeg:brief:v1` comment, waits for the PR the
  * developer opens, then runs rounds by calling `assessRound` with

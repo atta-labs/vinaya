@@ -4649,13 +4649,16 @@ describe('codexSpawnEnvExtras — round 6 security review, CRITICAL (Issue #676)
 // from, pointed at the same writable scratch directory, rather than each
 // building its own (possibly-drifting) copy.
 describe('codexSpawnEnvExtras — TMPDIR/TMP/TEMP pointed at the writable scratch directory (round 5 Principal ruling)', () => {
-  it('a codex dispatch with a scratch directory carries TMPDIR, TMP and TEMP all set to it', () => {
+  it('a codex dispatch with a scratch directory carries TMPDIR, TMP, TEMP and TURBO_CACHE_DIR all under it', () => {
     const extras = codexSpawnEnvExtras('codex', '/tmp/scratch/codex-home', '/tmp/scratch/codex-tmp')
     expect(extras.attribution).toEqual({
       CODEX_HOME: '/tmp/scratch/codex-home',
       TMPDIR: '/tmp/scratch/codex-tmp',
       TMP: '/tmp/scratch/codex-tmp',
-      TEMP: '/tmp/scratch/codex-tmp'
+      TEMP: '/tmp/scratch/codex-tmp',
+      // O4: turbo's cache-miss write goes inside the granted scratch, never
+      // the repo-root `.turbo/` the sandbox denies.
+      TURBO_CACHE_DIR: '/tmp/scratch/codex-tmp/turbo-cache'
     })
   })
 
