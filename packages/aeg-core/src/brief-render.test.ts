@@ -719,16 +719,18 @@ describe('renderBrief', () => {
     expect(validated.status).toBe('pass')
   })
 
-  it('§5 Step 0 only enters the task worktree the driver already created, then installs — it no longer creates the worktree itself (O1)', () => {
+  it("§5 Step 0 runs as-written from the Developer's own worktree cwd — it no longer enters or creates one (O2)", () => {
     const result = renderBrief(baseFacts(), TEMPLATE)
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    // O1: the driver (`dev-review-loop.ts`'s
-    // `createTaskWorktree`) now creates `.worktrees/<branch>` — with
-    // `--no-track`, so a plain `git push` from inside it reaches the task's
-    // own ref rather than tracking `origin/main` — and pushes it to the
-    // remote with `-u`, so Step 0 only enters it.
-    expect(result.brief).toContain('cd .worktrees/task/review-convergence-v1/42 && bun install')
+    // O2: the driver (`dev-review-loop.ts`'s `createTaskWorktree`) already
+    // created `.worktrees/<branch>` and the dispatched session's `cwd` IS
+    // that worktree, so Step 0 is just the install — never a leading `cd
+    // .worktrees/<branch> &&` (which would read as entering a `.worktrees/`
+    // path that does not exist relative to a cwd already inside it), and never
+    // a `git worktree add` creating one.
+    expect(result.brief).toContain('bun install --frozen-lockfile --silent')
+    expect(result.brief).not.toContain('cd .worktrees/')
     expect(result.brief).not.toContain('git worktree add')
     expect(result.brief).not.toContain('git config push.autoSetupRemote')
   })

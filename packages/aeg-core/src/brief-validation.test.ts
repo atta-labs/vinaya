@@ -263,6 +263,12 @@ describe('checkWorktreeStep0', () => {
   it('passes when a git worktree add command is present', () => {
     expect(checkWorktreeStep0(WELL_FORMED).status).toBe('pass')
   })
+  it('passes when only a cd .worktrees/ command is present (the middle generation)', () => {
+    expect(checkWorktreeStep0('cd .worktrees/task/x/1 && bun install --frozen-lockfile --silent').status).toBe('pass')
+  })
+  it('O2: passes when Step 0 is a bare frozen-lockfile install, no worktree command at all', () => {
+    expect(checkWorktreeStep0('bun install --frozen-lockfile --silent').status).toBe('pass')
+  })
   it('fails when missing', () => {
     expect(checkWorktreeStep0('no worktree command here').status).toBe('fail')
   })
@@ -634,6 +640,14 @@ describe('inferBranchFromBody', () => {
   it('reads a non-task branch the same way', () => {
     expect(inferBranchFromBody('git worktree add .worktrees/fix/x -b fix/x origin/main')).toBe('fix/x')
   })
+  it('reads the branch from a cd .worktrees/ Step 0 (the middle generation)', () => {
+    expect(inferBranchFromBody('cd .worktrees/task/x/3 && bun install --frozen-lockfile --silent')).toBe('task/x/3')
+  })
+  it("O2: falls back to §2's Branch identity line when Step 0 carries no branch (the newest generation)", () => {
+    const body =
+      '- **Backlog Issue:** #1046, no tranche. Branch `task/issue-1046`. `Depends-on: —`.\n\n```\nbun install --frozen-lockfile --silent\n```\n'
+    expect(inferBranchFromBody(body)).toBe('task/issue-1046')
+  })
   it('returns empty when the body has no Step 0', () => {
     expect(inferBranchFromBody('## Summary\n\nA dependency bump.')).toBe('')
   })
@@ -832,6 +846,20 @@ Step 0 (mandatory, verbatim):
 
 \`\`\`
 git worktree add .worktrees/task/x/1 -b task/x/1 origin/main
+\`\`\`
+`
+    const result = checkCommandsCarryOutput(body)
+    expect(result.status).toBe('pass')
+  })
+
+  it('O2: passes a bare frozen-lockfile install Step 0 block alone, with nothing fenced after it', () => {
+    const body = `
+### 5. Pre-flight checks
+
+Step 0 (mandatory, verbatim):
+
+\`\`\`
+bun install --frozen-lockfile --silent
 \`\`\`
 `
     const result = checkCommandsCarryOutput(body)
