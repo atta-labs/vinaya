@@ -61,10 +61,30 @@ export function claudeDevToolName(tool: string): string {
 }
 
 /**
+ * Codex's per-server key approving THIS server's tools without an interactive
+ * prompt. A confined `codex exec` runs under `approval_policy = "never"`, which
+ * in non-interactive mode means "auto-reject any tool that needs approval," so
+ * a managed MCP call fails with "MCP tool call requires approval, but approval
+ * policy is never" (Principal ruling 1051-3, confirmed live on macOS). The
+ * documented per-server override is `mcp_servers.<id>.default_tools_approval_mode`
+ * — "Default approval behavior for MCP tools on this server unless a per-tool
+ * override exists," values `auto | prompt | writes | approve` — set to
+ * `approve` so the driver-run server's own tools (and ONLY those: no other
+ * server is registered) are approved for this one dispatch, with the global
+ * `approval_policy` and the sandbox left untouched. Documented at
+ * https://developers.openai.com/codex/config-file/config-reference
+ * ([mcp_servers.<name>] table).
+ */
+export const CODEX_DEV_TOOLS_APPROVAL_MODE = 'approve'
+
+/**
  * The `[mcp_servers.<name>]` TOML table Codex reads from its `CODEX_HOME`
  * `config.toml`. Appended after any sandbox config in the same staged file so
  * the one generated home carries both. String/array values are JSON-encoded,
- * which is valid TOML for these scalar shapes.
+ * which is valid TOML for these scalar shapes. Carries
+ * `default_tools_approval_mode` so Codex approves this server's tools under its
+ * non-interactive `approval_policy = "never"` (see
+ * `CODEX_DEV_TOOLS_APPROVAL_MODE`).
  */
 export function codexDevToolsMcpTable(bridge: BridgeInvocation): string {
   const argsToml = `[${bridge.args.map((a) => JSON.stringify(a)).join(', ')}]`
@@ -72,6 +92,7 @@ export function codexDevToolsMcpTable(bridge: BridgeInvocation): string {
     `[mcp_servers.${DEV_TOOLS_MCP_SERVER_NAME}]`,
     `command = ${JSON.stringify(bridge.command)}`,
     `args = ${argsToml}`,
+    `default_tools_approval_mode = ${JSON.stringify(CODEX_DEV_TOOLS_APPROVAL_MODE)}`,
     ''
   ].join('\n')
 }

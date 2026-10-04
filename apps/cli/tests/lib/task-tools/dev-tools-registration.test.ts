@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import {
+  CODEX_DEV_TOOLS_APPROVAL_MODE,
   claudeDevToolName,
   claudeDevToolsArgs,
   codexDevToolsConfigToml,
@@ -65,6 +66,16 @@ describe('codexDevToolsMcpTable', () => {
     expect(table).toContain(`command = ${JSON.stringify(BRIDGE.command)}`)
     expect(table).toContain('args = [')
     for (const a of BRIDGE.args) expect(table).toContain(JSON.stringify(a))
+  })
+  it('approves this server’s tools for the non-interactive run (ruling 1051-3)', () => {
+    // Without this, a confined `codex exec` (approval_policy = "never")
+    // auto-rejects the call: "MCP tool call requires approval, but approval
+    // policy is never". The key is scoped to this one server table; the global
+    // approval_policy and sandbox are untouched.
+    const table = codexDevToolsMcpTable(BRIDGE)
+    expect(table).toContain(`default_tools_approval_mode = "${CODEX_DEV_TOOLS_APPROVAL_MODE}"`)
+    expect(CODEX_DEV_TOOLS_APPROVAL_MODE).toBe('approve')
+    expect(table).not.toContain('approval_policy')
   })
 })
 
