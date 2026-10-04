@@ -3801,16 +3801,22 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
 
       // O3: "no push" is not only a branch with no remote head at all — it is
-      // ALSO a branch whose remote head is still the default branch's tip (or
-      // any ancestor of it), carrying no task commits. That is exactly the
-      // state the driver's own round-1 `createTaskWorktree` leaves the branch
-      // in BEFORE the first Developer turn (a commit-free ref at `origin/main`),
-      // so a round-1 turn that pushes nothing leaves the branch there — never a
-      // `null` remote head. The same `gitIsAncestor(head, origin/main)` test the
-      // round-1 entry already uses to decide `branchHasTaskCommits` (above)
-      // decides it here too, so "the developer pushed nothing" is detected
-      // identically whether the branch was missing or sat at the tip.
-      const noTaskCommits = remoteHead === null || d.gitIsAncestor(remoteHead, d.gitRevParseOriginMain())
+      // ALSO a branch whose remote head still sits at the default branch's tip,
+      // carrying no task commits. That is exactly the state the driver's own
+      // round-1 `createTaskWorktree` leaves the branch in BEFORE the first
+      // Developer turn (a commit-free ref at `origin/main`'s tip), so a round-1
+      // turn that pushes nothing leaves the branch there — never a `null` remote
+      // head. We detect it by EQUALITY with `origin/main`'s current tip rather
+      // than `gitIsAncestor`: the round-1 entry's own `branchHasTaskCommits` uses
+      // `gitIsAncestor(head, origin/main)` and the two want opposite answers for
+      // the same head (the entry treats a tip-only head as fresh, this treats it
+      // as no-push), so reusing that ancestry test here would couple them. A
+      // developer that pushed real work moves the remote head off the tip, so
+      // the equality no longer holds and this does not fire. (An `origin/main`
+      // that advanced mid-turn with no push leaves the branch at an OLDER tip
+      // that no longer equals the current one — the existing PR poll's own
+      // bounded timeout still covers that rarer case, exactly as before.)
+      const noTaskCommits = remoteHead === null || remoteHead === d.gitRevParseOriginMain()
       if (!alreadyPushed && noTaskCommits) {
         // O9: no push at all yet. A posted refusal/escalation ends the loop
         // now, never entering the pull-request poll.
