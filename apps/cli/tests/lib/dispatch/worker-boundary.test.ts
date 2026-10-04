@@ -38,6 +38,8 @@ import {
   checkLinuxSandboxTools,
   CLAUDE_SANDBOX_ALLOWED_DOMAINS,
   CLAUDE_SANDBOX_EXCLUDED_COMMANDS,
+  claudeRunsCommandUnsandboxed,
+  DOCUMENTATION_HOSTS,
   LINUX_CLAUDE_SANDBOX_TOOLS,
   gitConfigReadOnlyPaths,
   resolveGitFirstPath,
@@ -3245,6 +3247,47 @@ describe('buildCodexSandboxConfigToml — O1/O2/O5 the generated config.toml', (
     const toml = buildCodexSandboxConfigToml(request({ allowedHosts: ['exa"mple.com', 'back\\slash.com'] }))
     expect(toml).toContain('"exa\\"mple.com" = "allow"')
     expect(toml).toContain('"back\\\\slash.com" = "allow"')
+  })
+
+  it('O5: names every official documentation host under features.network_proxy.domains, alongside the request hosts, so a confined Codex Developer can READ a page its web search found', () => {
+    const toml = buildCodexSandboxConfigToml(request({ allowedHosts: ['github.com'] }))
+    expect(toml).toContain('"github.com" = "allow"')
+    for (const host of DOCUMENTATION_HOSTS) {
+      expect(toml).toContain(`"${host}" = "allow"`)
+    }
+    // The live gap this closes: curl to developers.openai.com was refused as
+    // "domain is not on the allowlist" — web search found the page, the proxy
+    // blocked reading it.
+    expect(toml).toContain('"developers.openai.com" = "allow"')
+  })
+
+  it('O5: does not duplicate a host already in allowedHosts even if it is also a documentation host', () => {
+    const toml = buildCodexSandboxConfigToml(request({ allowedHosts: ['developers.openai.com', 'github.com'] }))
+    const occurrences = toml.split('"developers.openai.com" = "allow"').length - 1
+    expect(occurrences).toBe(1)
+  })
+})
+
+describe('claudeRunsCommandUnsandboxed — O2 Claude Code runs a bare excluded command outside the sandbox', () => {
+  it('runs a bare gh/git-push/git-fetch/git-pull line outside the sandbox', () => {
+    expect(claudeRunsCommandUnsandboxed('gh issue view 1026 --json number,title')).toBe(true)
+    expect(claudeRunsCommandUnsandboxed('git push origin HEAD')).toBe(true)
+    expect(claudeRunsCommandUnsandboxed('git fetch origin')).toBe(true)
+    expect(claudeRunsCommandUnsandboxed('git pull --ff-only')).toBe(true)
+  })
+
+  it('keeps a CHAINED excluded command inside the sandbox — a suffix `; echo`, a `&&`, a pipe, a `cd …&&` prefix, a substitution', () => {
+    expect(claudeRunsCommandUnsandboxed('gh issue view 1026 --json number,title; echo "gh exit $?"')).toBe(false)
+    expect(claudeRunsCommandUnsandboxed('gh pr view 1 && echo done')).toBe(false)
+    expect(claudeRunsCommandUnsandboxed('gh pr view 1 | cat')).toBe(false)
+    expect(claudeRunsCommandUnsandboxed('cd /tmp && git push origin HEAD')).toBe(false)
+    expect(claudeRunsCommandUnsandboxed('gh pr view "$(cat x)"')).toBe(false)
+  })
+
+  it('keeps a non-excluded command inside the sandbox (its forge reads must be denied, not run with the credential)', () => {
+    expect(claudeRunsCommandUnsandboxed('bun apps/cli/src/index.ts check --all')).toBe(false)
+    expect(claudeRunsCommandUnsandboxed('git status')).toBe(false)
+    expect(claudeRunsCommandUnsandboxed('git -C /some/dir push origin HEAD')).toBe(false)
   })
 })
 

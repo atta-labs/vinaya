@@ -13,7 +13,7 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -26,6 +26,7 @@ import {
 import {
   createLogSink,
   describeFolderFallback,
+  drainLogSpool,
   logsCredentialMissing,
   resolveLogAppendPath,
   resolveLogDestinationFrom,
@@ -167,6 +168,30 @@ describe('resolveLogDestinationFrom (pure) — who is allowed to name the destin
         trustAnchorConfig: null,
         unattended: false,
         env: {},
+        defaultFolder: DEFAULT_FOLDER
+      })
+    ).toEqual({ kind: 'folder', folder: DEFAULT_FOLDER })
+  })
+
+  it('O6: a staged VINAYA_LOG_SPOOL_DIR wins over everything — a confined dispatch spools there, the driver delivers after', () => {
+    expect(
+      resolveLogDestinationFrom({
+        localConfig: { logs: { url: 'https://logs.example.com' } } as VinayaConfig,
+        trustAnchorConfig: { logs: { url: 'https://logs.example.com' } } as VinayaConfig,
+        unattended: true,
+        env: { VINAYA_LOG_SPOOL_DIR: '/scratch/log-spool', GITHUB_ACTIONS: 'true' },
+        defaultFolder: DEFAULT_FOLDER
+      })
+    ).toEqual({ kind: 'folder', folder: '/scratch/log-spool' })
+  })
+
+  it('O6: an empty VINAYA_LOG_SPOOL_DIR is ignored — normal resolution continues', () => {
+    expect(
+      resolveLogDestinationFrom({
+        localConfig: null,
+        trustAnchorConfig: null,
+        unattended: false,
+        env: { VINAYA_LOG_SPOOL_DIR: '  ' },
         defaultFolder: DEFAULT_FOLDER
       })
     ).toEqual({ kind: 'folder', folder: DEFAULT_FOLDER })
@@ -921,5 +946,45 @@ describe('log-sink — the drain before an abrupt exit is what keeps a pending w
     // fork) had no chance to land the append before `process.exit()` tore
     // the process down.
     expect(existsSync(folderEventPath(logsFolder))).toBe(false)
+  })
+})
+
+describe('drainLogSpool (O6) — the driver delivers a confined dispatch spool after the turn, outside the sandbox', () => {
+  let root = ''
+  afterEach(() => {
+    if (root) rmSync(root, { recursive: true, force: true })
+    root = ''
+  })
+
+  it('appends every spooled <owner>-<repo>/<issue>.ndjson file to the same relative path under the real log folder', () => {
+    root = mkdtempSync(join(tmpdir(), 'vinaya-spool-'))
+    const spool = join(root, 'log-spool')
+    const dest = join(root, 'logs')
+    mkdirSync(join(spool, 'atta-labs-vinaya'), { recursive: true })
+    writeFileSync(join(spool, 'atta-labs-vinaya', '1034.ndjson'), '{"a":1}\n{"a":2}\n')
+    // A pre-existing real-folder line is preserved — the drain APPENDS.
+    mkdirSync(join(dest, 'atta-labs-vinaya'), { recursive: true })
+    writeFileSync(join(dest, 'atta-labs-vinaya', '1034.ndjson'), '{"a":0}\n')
+
+    const delivered = drainLogSpool(spool, dest)
+    expect(delivered).toBe(1)
+    expect(readFileSync(join(dest, 'atta-labs-vinaya', '1034.ndjson'), 'utf8')).toBe('{"a":0}\n{"a":1}\n{"a":2}\n')
+  })
+
+  it('returns 0 and creates nothing when the spool directory does not exist', () => {
+    root = mkdtempSync(join(tmpdir(), 'vinaya-spool-'))
+    const dest = join(root, 'logs')
+    expect(drainLogSpool(join(root, 'absent-spool'), dest)).toBe(0)
+    expect(existsSync(dest)).toBe(false)
+  })
+
+  it('skips an empty spool file, so an append of nothing never happens', () => {
+    root = mkdtempSync(join(tmpdir(), 'vinaya-spool-'))
+    const spool = join(root, 'log-spool')
+    const dest = join(root, 'logs')
+    mkdirSync(join(spool, 'unresolved'), { recursive: true })
+    writeFileSync(join(spool, 'unresolved', 'none.ndjson'), '')
+    expect(drainLogSpool(spool, dest)).toBe(0)
+    expect(existsSync(join(dest, 'unresolved', 'none.ndjson'))).toBe(false)
   })
 })

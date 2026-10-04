@@ -73,23 +73,49 @@ type KnownFailure = {
   readonly denial: string
 }
 
-const GH_CONFIG_DENIED =
-  'gh exits before reaching the forge: "failed to read configuration: open ~/.config/gh/config.yml: operation not permitted" — the real home is denied read'
-const BUN_HIDDEN_LINUX =
-  'bun is not found: the runner installs it under ~/.bun, and the denied home is mounted empty, so the binary is gone inside the sandbox'
+/**
+ * O2/O7: a line that is NOT a bare excluded command runs INSIDE Claude's
+ * sandbox (`claudeRunsCommandUnsandboxed` in `sandbox-launch.ts` routes a bare
+ * `gh`/`git push`/… outside it, as Claude Code does). Inside, the gh token
+ * store `~/.config/gh/hosts.yml` is a denied credential and no
+ * `GITHUB_TOKEN`/`GH_TOKEN` sits in the Developer's own macOS environment, so
+ * `gh` cannot authenticate and any forge read fails. (Named for darwin: on a
+ * Linux CI runner a `GH_TOKEN` IS in the ambient job environment and flows in,
+ * so the same lines authenticate there — see O3/O4 below.)
+ */
+const GH_HOSTS_DENIED_INSIDE =
+  'the gh token store ~/.config/gh/hosts.yml is a denied credential and no GITHUB_TOKEN/GH_TOKEN is in the macOS environment, so gh cannot authenticate and the forge read fails'
 
 /**
  * Today's denials. Remove an entry the moment its command passes — the
  * suite fails until you do.
+ *
+ * O2: the three bare `gh` lines (`gh-issue-view`/`gh-pr-view`/
+ * `gh-pr-view-reviews`) are gone — each is a bare excluded command Claude Code
+ * now runs OUTSIDE the sandbox, with the forge credential, so they exit 0.
+ * `gh-chained` replaces them as the one Claude darwin denial: a chained line
+ * is not a bare excluded command, so it runs inside.
+ * O4: the two claude/linux entries (`typecheck`, `check-all`) are gone —
+ * under #1029's read-everywhere model bun is no longer hidden (typecheck
+ * passes) and the CI runner's own ambient `GH_TOKEN` reaches check --all's
+ * forge reads (check-all passes).
+ * O3: `check-all` on claude/darwin stays — on macOS it runs inside the
+ * sandbox with no token and the denied hosts.yml, and the CLI's own forge
+ * reads are not yet staged from outside (escalated on Issue #1034).
  */
 const KNOWN_FAILURES: readonly KnownFailure[] = [
-  { id: 'check-all', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
-  { id: 'gh-issue-view', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
-  { id: 'gh-pr-view', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
-  { id: 'gh-pr-view-reviews', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
-  ...['typecheck', 'check-all'].map(
-    (id): KnownFailure => ({ id, agent: 'claude', platform: 'linux', denial: BUN_HIDDEN_LINUX })
-  )
+  {
+    id: 'check-all',
+    agent: 'claude',
+    platform: 'darwin',
+    denial: `check --all runs inside the sandbox and ${GH_HOSTS_DENIED_INSIDE} — the CLI's forge reads are not yet staged from outside (O3, Issue #1034)`
+  },
+  {
+    id: 'gh-chained',
+    agent: 'claude',
+    platform: 'darwin',
+    denial: `a chained gh line is not a bare excluded command, so Claude Code runs it inside the sandbox, where ${GH_HOSTS_DENIED_INSIDE}`
+  }
 ]
 
 function knownFailure(id: string, agent: Agent, platform: string): KnownFailure | undefined {

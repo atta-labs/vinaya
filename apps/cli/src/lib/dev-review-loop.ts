@@ -152,6 +152,7 @@ import {
   fetchNewestRulingAuthor,
   fetchNewestRulingOrdinal,
   fetchPrBody,
+  bareForgeCommandRule,
   fetchRulings,
   fetchSourceRevision,
   findOpenPrForBranch,
@@ -2995,7 +2996,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       opts: { skipResumeContext?: boolean; developerFiles?: readonly string[] }
     ): Promise<DispatchHandle> {
       const isResume = devResumeId !== null
-      const fullPrompt = opts.skipResumeContext ? promptText : `${resumeContextBlock()}\n\n${promptText}`
+      const base = opts.skipResumeContext ? promptText : `${resumeContextBlock()}\n\n${promptText}`
+      // O1: the bare-forge-command rule rides EVERY Claude Code Developer
+      // dispatch prompt (round 1 and every resume), prepended OUTSIDE the
+      // frozen brief so the brief stays the prompt's contiguous suffix — and
+      // no Codex one (`bareForgeCommandRule` returns `null` for Codex, whose
+      // driver publishes for it).
+      const forgeRule = bareForgeCommandRule(dispatchAgent)
+      const fullPrompt = forgeRule ? `${forgeRule}\n\n${base}` : base
       // O1/O3: confine the Developer to
       // its own worktree — this driver's own round-1 `createTaskWorktree`
       // call (above, in the branch-creation branch) already created it before

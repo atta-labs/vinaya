@@ -83,7 +83,7 @@ import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { homedir, hostname as osHostname, tmpdir } from 'node:os'
 import { parseIssueDocumentation, redact, summarizeTranscript } from '@attalabs/aeg-core'
 import type { IssueDocumentationSource, Role, RoleAttemptOutcome, TranscriptSummary } from '@attalabs/aeg-core'
-import { createLogSink, resolveLogAppendPath } from './log-sink.js'
+import { createLogSink, drainLogSpool, resolveLogAppendPath } from './log-sink.js'
 import { appendRoleLine } from './loop-log.js'
 import { loadConfig } from './config.js'
 import {
@@ -3836,6 +3836,28 @@ export async function dispatchRole(
           allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS
         })
       : null
+  // O6: a CONFINED dispatch's own log-spool directory, inside its granted
+  // scratch (writable), where its `log()` calls land — the real log folder
+  // (`<runtimeDir>/logs/`) is outside the worktree/scratch the sandbox grants,
+  // so a direct append there died with "log outbox target could not be
+  // opened". `VINAYA_LOG_SPOOL_DIR` (below, on the confined child's env)
+  // points `log()` here; this trusted driver drains it to the real folder
+  // after the turn, outside the sandbox (`finish()` → `drainLogSpool`). `null`
+  // for an unconfined dispatch, which reaches the real folder directly.
+  const confinedScratchDir =
+    codexRequireIsolation && codexScratchDir !== null
+      ? codexScratchDir
+      : claudeConfinement?.confined === true
+        ? claudeConfinement.scratchDir
+        : null
+  const logSpoolDir = confinedScratchDir !== null ? join(confinedScratchDir, 'log-spool') : null
+  if (logSpoolDir !== null) {
+    try {
+      mkdirSync(logSpoolDir, { recursive: true })
+    } catch {
+      // best-effort; the confined child's own `appendLine` also mkdirs it.
+    }
+  }
   // O1: claude only — see `writeDispatchSettings`'s own doc comment for why
   // Codex/Gemini are not silently included. Computed here, once, before the
   // 'dispatched' log line — moved up from inside the spawn `Promise`
@@ -4236,7 +4258,10 @@ export async function dispatchRole(
           // grants.
           buildWorkerEnv(process.env, {
             ...attribution,
-            ...codexEnvExtras!.attribution
+            ...codexEnvExtras!.attribution,
+            // O6: spool this confined dispatch's log events into its granted
+            // scratch; the driver delivers them after the turn (`finish()`).
+            ...(logSpoolDir !== null ? { VINAYA_LOG_SPOOL_DIR: logSpoolDir } : {})
           })
         : claudeConfinement?.confined === true
           ? // Round 2 security review, CRITICAL: a confined Claude dispatch
@@ -4271,7 +4296,10 @@ export async function dispatchRole(
               // O2: see the Codex branch's own comment on this same guard,
               // above — `resolveGitFirstPath`'s result, puts the real `git`
               // ahead of the `/usr/bin/git` xcrun shim on macOS.
-              ...(claudeConfinement.pathOverride !== undefined ? { PATH: claudeConfinement.pathOverride } : {})
+              ...(claudeConfinement.pathOverride !== undefined ? { PATH: claudeConfinement.pathOverride } : {}),
+              // O6: spool this confined dispatch's log events into its granted
+              // scratch; the driver delivers them after the turn (`finish()`).
+              ...(logSpoolDir !== null ? { VINAYA_LOG_SPOOL_DIR: logSpoolDir } : {})
             })
           : {
               ...process.env,
@@ -4473,6 +4501,19 @@ export async function dispatchRole(
       clearInterval(heartbeatTimer)
       clearTimeout(warnTimer)
       outputTee.end()
+      // O6: deliver the confined dispatch's spooled log events to the real log
+      // folder (`<runtimeDir>/logs/`) from this trusted driver, OUTSIDE the
+      // sandbox — BEFORE the scratch that holds the spool is removed below.
+      // The confined child could not reach that folder itself; this is the
+      // "delivered after the turn by the driver" half of O6. Best-effort: a
+      // drain fault never blocks `finish()`.
+      if (logSpoolDir !== null) {
+        try {
+          drainLogSpool(logSpoolDir, join(runtimeDirForRepo(repo), 'logs'))
+        } catch {
+          // best-effort, same reasoning as the scratch cleanup below.
+        }
+      }
       // O1/O2: the scratch directory minted for a Claude or Codex dispatch's
       // own confinement (`claudeScratchDir`/`codexScratchDir`, above) never
       // outlives the dispatch that created it — best-effort, matching every

@@ -11,14 +11,17 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import {
+  appendFileSync,
   closeSync,
   constants as fsConstants,
   existsSync,
   fstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
+  statSync,
   writeFileSync,
   writeSync
 } from 'node:fs'
@@ -337,6 +340,20 @@ export function resolveLogDestinationFrom(input: {
   defaultFolder: string
   repoRoot?: string | null
 }): ResolvedLogDestination {
+  // O6: a confined dispatch cannot write the real log folder
+  // (`<runtimeDir>/logs/…`, outside its granted worktree/scratch) nor reach a
+  // log server, so its `log()` calls died with "log outbox target could not
+  // be opened". When the driver stages a spool directory inside the granted
+  // scratch (`VINAYA_LOG_SPOOL_DIR`, `dispatch.ts`), `log()` appends there
+  // instead — a real, writable folder — and the driver drains it to the real
+  // destination AFTER the turn, from outside the sandbox (`drainLogSpool`).
+  // This wins over every branch below: inside the boundary neither a server
+  // nor the real folder is reachable, and the spool is where delivery is
+  // handed back to the trusted driver.
+  const spoolDir = input.env.VINAYA_LOG_SPOOL_DIR
+  if (spoolDir !== undefined && spoolDir.trim() !== '') {
+    return { kind: 'folder', folder: spoolDir }
+  }
   const local = resolveLogsSetting(input.localConfig)
   let effective: LogsDestination | null = null
   // Set only when an unattended run declared a `logs.url` server destination
@@ -959,6 +976,61 @@ export function outboxPathFor(
   const dirName = repo ? `${repo.owner}-${repo.repo}` : 'unresolved'
   const fileName = `${issue ?? 'none'}.ndjson`
   return join(deps.outboxRoot(), dirName, fileName)
+}
+
+/**
+ * O6: the driver's own after-turn delivery of a confined dispatch's spooled
+ * log events, run from the TRUSTED controller, OUTSIDE the sandbox. A confined
+ * child's `log()` appended to `spoolDir` (`VINAYA_LOG_SPOOL_DIR`, inside its
+ * granted scratch) rather than the real `<runtimeDir>/logs/` folder it cannot
+ * reach; this walks the spool's `<owner>-<repo>/<issue>.ndjson` tree and
+ * appends each file's bytes verbatim to the same relative path under
+ * `destinationFolder` (the real log folder the controller CAN write), so the
+ * events land exactly where an unconfined run would have put them — the agent
+ * is never granted write access to that folder itself. Returns the number of
+ * spool files delivered. Never throws: a drain failure must never fail the
+ * turn it is draining (the same honest-best-effort posture `log()` itself
+ * takes); it is called after the child exits and before its scratch directory
+ * is removed.
+ */
+export function drainLogSpool(spoolDir: string, destinationFolder: string): number {
+  let delivered = 0
+  const walk = (relative: string): void => {
+    const here = relative === '' ? spoolDir : join(spoolDir, relative)
+    let names: string[]
+    try {
+      names = readdirSync(here)
+    } catch {
+      return
+    }
+    for (const name of names) {
+      const childRelative = relative === '' ? name : join(relative, name)
+      let stat: ReturnType<typeof statSync>
+      try {
+        stat = statSync(join(spoolDir, childRelative))
+      } catch {
+        continue
+      }
+      if (stat.isDirectory()) {
+        walk(childRelative)
+        continue
+      }
+      if (!stat.isFile()) continue
+      try {
+        const bytes = readFileSync(join(spoolDir, childRelative))
+        if (bytes.length === 0) continue
+        const target = join(destinationFolder, childRelative)
+        mkdirSync(dirname(target), { recursive: true, mode: 0o700 })
+        appendFileSync(target, bytes)
+        delivered += 1
+      } catch {
+        // Best-effort per file — one unreadable/unwritable entry never aborts
+        // the rest of the drain.
+      }
+    }
+  }
+  walk('')
+  return delivered
 }
 
 /**

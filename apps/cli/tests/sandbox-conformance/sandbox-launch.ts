@@ -34,6 +34,7 @@ import { join } from 'node:path'
 import { addCodexWritableDirs, buildCodexExecpolicyRules, codexSpawnEnvExtras } from '../../src/lib/dispatch.js'
 import {
   CLAUDE_SANDBOX_ALLOWED_DOMAINS,
+  claudeRunsCommandUnsandboxed,
   type ConfinementRequest,
   resolveBunInstallCacheDir,
   resolveClaudeConfinement,
@@ -131,19 +132,29 @@ function claudeSession(): SandboxSession {
   if (!resolution.confined) {
     throw new Error(`Claude's sandbox cannot run on this host: ${resolution.warning}`)
   }
-  const { network, filesystem } = resolution.settings.sandbox
-  // The settings file carries exactly what the driver ships. Fail if the driver grows a deny list this file would drop.
-  const shipped = JSON.stringify([Object.keys(network).sort(), Object.keys(filesystem).sort()])
-  if (shipped !== JSON.stringify([['allowedDomains'], ['allowRead', 'allowWrite', 'denyRead']])) {
+  const { network, filesystem, credentials } = resolution.settings.sandbox
+  // The settings file carries exactly what the driver ships. Fail if the driver grows a block this file would drop.
+  const shipped = JSON.stringify([
+    Object.keys(network).sort(),
+    Object.keys(filesystem).sort(),
+    Object.keys(credentials).sort()
+  ])
+  if (shipped !== JSON.stringify([['allowedDomains'], ['allowRead', 'allowWrite', 'denyRead'], ['files']])) {
     throw new Error(`resolveClaudeConfinement emits settings the conformance file does not carry: ${shipped}`)
   }
+  // O2: Claude Code enforces `sandbox.credentials.files` (deny) by denying
+  // read on those paths; the raw sandbox runtime this suite drives has no
+  // `credentials` concept of its own, so the suite translates them into
+  // `filesystem.denyRead` — the same end the vendor reaches — so the gh token
+  // store (`~/.config/gh/hosts.yml`) is really denied inside the sandbox.
+  const credentialDenyRead = credentials.files.filter((f) => f.mode === 'deny').map((f) => f.path)
   const settingsPath = join(settingsDir, 'srt-settings.json')
   writeFileSync(
     settingsPath,
     JSON.stringify({
       network: { allowedDomains: network.allowedDomains, deniedDomains: [] },
       filesystem: {
-        denyRead: filesystem.denyRead,
+        denyRead: [...filesystem.denyRead, ...credentialDenyRead],
         allowRead: filesystem.allowRead,
         allowWrite: filesystem.allowWrite,
         denyWrite: []
@@ -154,18 +165,33 @@ function claudeSession(): SandboxSession {
     agent: 'claude',
     worktreeDir,
     runOutside: (command, env) => runOutsideSandbox(worktreeDir, command, env),
+    // O2: Claude Code runs a line matching one of its `excludedCommands` ON
+    // ITS OWN outside the sandbox, with the forge credential; every other
+    // line runs inside it. `claudeRunsCommandUnsandboxed` is the vendor's own
+    // whole-line decision (`worker-boundary.ts`), so a bare `gh`/`git push`
+    // passes while a chained one stays sandboxed and is denied the credential.
     run: (command, env) =>
-      runIn(
-        [process.execPath, 'x', SANDBOX_RUNTIME_PACKAGE, '--settings', settingsPath, '-c', withAbsoluteBun(command)],
-        worktreeDir,
-        {
-          ...stripVinayaEnv(),
-          ...(resolution.pathOverride !== undefined ? { PATH: resolution.pathOverride } : {}),
-          TMPDIR: scratchDir,
-          ...env
-        },
-        `claude: ${command}`
-      ),
+      claudeRunsCommandUnsandboxed(command)
+        ? runOutsideSandbox(worktreeDir, command, env)
+        : runIn(
+            [
+              process.execPath,
+              'x',
+              SANDBOX_RUNTIME_PACKAGE,
+              '--settings',
+              settingsPath,
+              '-c',
+              withAbsoluteBun(command)
+            ],
+            worktreeDir,
+            {
+              ...stripVinayaEnv(),
+              ...(resolution.pathOverride !== undefined ? { PATH: resolution.pathOverride } : {}),
+              TMPDIR: scratchDir,
+              ...env
+            },
+            `claude: ${command}`
+          ),
     dispose: () => {
       removeWorktree(worktreeDir)
       rmSync(scratchDir, { recursive: true, force: true })
