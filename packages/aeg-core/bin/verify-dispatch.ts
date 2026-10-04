@@ -1403,7 +1403,7 @@ if (import.meta.main) {
     const issueArg = argv[issueIdx + 1]
     const issueNumber = issueArg !== undefined ? Number.parseInt(issueArg, 10) : Number.NaN
     if (!issueArg || !Number.isInteger(issueNumber) || String(issueNumber) !== issueArg) {
-      console.error('Usage: verify-dispatch --issue <n>')
+      console.error('Usage: verify-dispatch --issue <n> [--existing-work]')
       process.exit(1)
     }
     await runGateModeForIssue(issueNumber)
@@ -1413,8 +1413,8 @@ if (import.meta.main) {
 
     if (!trancheSlug || !taskId || trancheSlug.startsWith('--')) {
       console.error(
-        'Usage: verify-dispatch <tranche> <n> [--premise [file]] [--simulate <file>] [--check-baseline <file>] [--surfaces <glob1,glob2,...>]\n' +
-          '   or: verify-dispatch --issue <n>'
+        'Usage: verify-dispatch <tranche> <n> [--existing-work] [--premise [file]] [--simulate <file>] [--check-baseline <file>] [--surfaces <glob1,glob2,...>]\n' +
+          '   or: verify-dispatch --issue <n> [--existing-work]'
       )
       process.exit(1)
     }

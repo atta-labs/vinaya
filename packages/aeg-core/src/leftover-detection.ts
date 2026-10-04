@@ -6,7 +6,8 @@
  *
  * Exists to answer, deterministically, "is it safe to (re)run
  * `git worktree add -b <branch> origin/main` for this task?" — asked by the
- * driver before the first Developer dispatch (O1: the driver creates the
+ * driver before every Developer turn, with `--existing-work` so its own
+ * commits never refuse (`leftoverBlocksDispatch`) (O1: the driver creates the
  * task's worktree now, not Step 0 — see
  * `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts`'s
  * `createTaskWorktree`) and, for a brief rendered before that changed, still
