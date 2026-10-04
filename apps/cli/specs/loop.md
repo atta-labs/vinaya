@@ -10,6 +10,12 @@ Every behavior this file describes is also inventoried, one entry per observed b
 
 ## The command
 
+The Codex publication push authorizes only the paths changed between the
+remote task-branch head and the local head. On the branch's first push, when
+no remote head exists, it authorizes the whole new branch from its main-base
+revision. Earlier commits already present on the remote are never re-judged as
+part of a later push.
+
 `vinaya task run <tranche> <n> --agent <claude|codex|gemini>` (`apps/cli/src/commands/task-run.ts`, `taskRunCommand`) is the normal entry: it composes `task brief`'s own preparation (renders and freezes the brief, starts no agent) with this loop, so one command runs the whole way from a planned Issue — `n` a tranche task ordinal there, resolved to its real forge Issue by preparation — to a reviewed pull request, exactly one developer started. `dev-review-loop` below is `task run`'s own debug/direct entry, kept for resuming a paused run and for driving the loop straight off an Issue number without going through preparation:
 
 ```

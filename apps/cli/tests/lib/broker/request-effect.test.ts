@@ -6,7 +6,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type ControlStoreDeps, defaultControlStoreDeps, StaleEpochWriteError } from '@attalabs/aeg-core'
@@ -22,6 +22,8 @@ import {
   UngrantedOperationError
 } from '../../../src/lib/broker'
 import type { LogEventInput } from '../../../src/lib/log-sink'
+import { resolveCheckBin } from '../../../src/checks/registry'
+import { pushedCommitRangeBase } from '../../../src/lib/dev-review-loop'
 
 let dir: string
 let deps: ControlStoreDeps
@@ -50,6 +52,32 @@ const worker = authenticateWorkerInvocation(
 const neverReconcile = () => {
   throw new Error('reconcile should not be called for a fresh key')
 }
+
+describe('push publication boundaries (Issue #1036)', () => {
+  it('uses the remote branch head for a later push and the branch base only for a first push', () => {
+    expect(pushedCommitRangeBase('remote-head', 'main-head')).toBe('remote-head')
+    expect(pushedCommitRangeBase(null, 'main-head')).toBe('main-head')
+  })
+
+  it('a source run selects source checks even when an older dist directory is present', () => {
+    const root = mkdtempSync(join(tmpdir(), 'vinaya-check-bin-'))
+    try {
+      const source = join(root, 'src', 'checks', 'registry.ts')
+      const bundled = join(root, 'dist', 'checks', 'bin', 'check-demo.js')
+      mkdirSync(join(source, '..'), { recursive: true })
+      mkdirSync(join(bundled, '..'), { recursive: true })
+      writeFileSync(source, '')
+      writeFileSync(bundled, '')
+      utimesSync(bundled, new Date(0), new Date(0))
+      expect(resolveCheckBin(root, new URL(`file://${source}`).href)).toEqual({
+        dir: join(root, 'src', 'checks', 'bin'),
+        ext: '.ts'
+      })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
 
 describe('requestEffect', () => {
   it('grants a Worker operation and calls the effect executor exactly once (O1)', () => {

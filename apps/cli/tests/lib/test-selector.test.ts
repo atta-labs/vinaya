@@ -13,6 +13,7 @@ import { loadConfig } from '../../src/lib/config'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 import {
   discoverWorkspacePackages,
+  changesImportEdges,
   extractImportSpecifiers,
   isTestFile,
   ROOT_CONFIG_FILENAME,
@@ -22,6 +23,24 @@ import {
 import { cliSpawnEdgeOf } from '../../src/lib/cli-spawn-tests'
 import { scannedRootsOf } from '../../src/lib/repo-scanner-tests'
 import { loadTypeScript } from '../../src/lib/ts-module-graph'
+
+describe('changesImportEdges (Issue #1036, O3)', () => {
+  it('detects changed module specifiers but ignores edits within an unchanged edge set', () => {
+    const ts = loadTypeScript(process.cwd())
+    expect(ts).not.toBeNull()
+    const diff = (before: string, after: string) => [
+      {
+        file: '/fixture.ts',
+        before,
+        after,
+        beforeRanges: [],
+        afterRanges: []
+      }
+    ]
+    expect(changesImportEdges(ts!, diff("import './a'\n", "import './b'\n"))).toBe(true)
+    expect(changesImportEdges(ts!, diff("import './a'\nconst n = 1\n", "import './a'\nconst n = 2\n"))).toBe(false)
+  })
+})
 
 function fixtureRepo(): string {
   const root = mkdtempSync(join(tmpdir(), 'vinaya-selector-'))

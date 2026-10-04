@@ -1044,6 +1044,11 @@ function defaultGitWorktreeChangedPaths(worktreePath: string, base: string): str
   }
 }
 
+/** The exclusive lower bound for paths attributed to one branch push. */
+export function pushedCommitRangeBase(remoteHead: string | null, branchBase: string | null): string | null {
+  return remoteHead ?? branchBase
+}
+
 /**
  * O1/O2: the worktree's own uncommitted-and-committed diff text since `base`
  * (`git diff --unified=0 <base>`, run inside the worktree so a linked
@@ -3335,7 +3340,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // O7: branch, base, head and Surface — before any commit or credential use.
       const worktreeHead = d.readWorktreeHead(worktree)
       const base = await resolvePublicationBase(worktreeHead)
-      const changedPaths = publicationExpectedBase ? d.gitWorktreeChangedPaths(worktree, publicationExpectedBase) : []
+      let remoteHeadBeforePush: string | null
+      try {
+        remoteHeadBeforePush = d.resolveHead(branch)
+      } catch {
+        remoteHeadBeforePush = null
+      }
+      // Authorize only the commits in this push. An existing remote head
+      // bounds the range; a first push still names the whole new branch.
+      const pushedRangeBase = pushedCommitRangeBase(remoteHeadBeforePush, publicationExpectedBase)
+      const changedPaths = pushedRangeBase ? d.gitWorktreeChangedPaths(worktree, pushedRangeBase) : []
       const check = checkPublicationPreconditions({
         worktreeBranch: d.readWorktreeBranch(worktree),
         expectedBranch: branch,
@@ -3372,12 +3386,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
       // O3/O4: push the branch when the local head is ahead of the remote.
       const localHead = d.readWorktreeHead(worktree)
-      let remoteHead: string | null
-      try {
-        remoteHead = d.resolveHead(branch)
-      } catch {
-        remoteHead = null
-      }
+      const remoteHead = remoteHeadBeforePush
       if (localHead !== null && localHead !== remoteHead) {
         const push = d.pushTaskBranch({
           task,
@@ -3447,9 +3456,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           remoteHead = null
         }
         if (remoteHead !== record.commitSha) {
-          const changedPaths = publicationExpectedBase
-            ? d.gitWorktreeChangedPaths(worktree, publicationExpectedBase)
-            : []
+          const pushedRangeBase = pushedCommitRangeBase(remoteHead, publicationExpectedBase)
+          const changedPaths = pushedRangeBase ? d.gitWorktreeChangedPaths(worktree, pushedRangeBase) : []
           const push = d.pushTaskBranch({
             task,
             branch,

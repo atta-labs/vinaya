@@ -1,5 +1,5 @@
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { packageRoot } from '../lib/package-root.js'
 import type { CheckSpec } from './contract'
 
@@ -21,14 +21,20 @@ import type { CheckSpec } from './contract'
 // where `src/checks/bin/*.ts` genuinely exists). `scripts/build.ts` now
 // bundles each `src/checks/bin/*.ts` to its own standalone, self-contained
 // `dist/checks/bin/*.js` (same `Bun.build` shape as the main `dist/index.js`
-// entrypoint) — that bundled output is what actually ships. Prefer it when
-// present; fall back to the raw `.ts` source so `bun src/index.ts check
-// --all` still works for local, unbundled dev without requiring a build
-// first.
-const DIST_BIN_DIR = join(packageRoot(import.meta.url), 'dist', 'checks', 'bin')
-const SRC_BIN_DIR = join(packageRoot(import.meta.url), 'src', 'checks', 'bin')
-const BIN_DIR = existsSync(DIST_BIN_DIR) ? DIST_BIN_DIR : SRC_BIN_DIR
-const BIN_EXT = BIN_DIR === DIST_BIN_DIR ? '.js' : '.ts'
+// entrypoint) — that bundled output is what actually ships. A bundled entry
+// uses it; a raw source entry uses the `.ts` checks even when a stale `dist`
+// directory is present.
+export function resolveCheckBin(packageDir: string, moduleUrl: string): { dir: string; ext: '.js' | '.ts' } {
+  const fromPackage = relative(packageDir, fileURLToPath(moduleUrl))
+  const bundled = fromPackage === 'dist' || fromPackage.startsWith(`dist${sep}`)
+  return bundled
+    ? { dir: join(packageDir, 'dist', 'checks', 'bin'), ext: '.js' }
+    : { dir: join(packageDir, 'src', 'checks', 'bin'), ext: '.ts' }
+}
+
+const CHECK_BIN = resolveCheckBin(packageRoot(import.meta.url), import.meta.url)
+const BIN_DIR = CHECK_BIN.dir
+const BIN_EXT = CHECK_BIN.ext
 
 /** `bin('check-brief-shape')` → the real, resolvable path to that check's executable — bundled `.js` when shipped, raw `.ts` in local dev. */
 function bin(name: string): string {
