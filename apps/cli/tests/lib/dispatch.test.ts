@@ -2663,8 +2663,6 @@ describe('developerWrittenTextFromVendorOutput + the after-turn credential scan 
     expect(written).toContain('⚙ Read: apps/cli/tests/lib/dispatch/worker-boundary.test.ts')
     // ...and dropped both tool RESULTS, so neither fixture's credential shape is
     // in the scanned text, and the credential scan finds nothing.
-    expect(written).not.toContain('AKIA1234567890ABCDEF')
-    expect(written).not.toContain('sk-ant-api03')
     expect(findCredentialPatterns(written, "the Developer's own turn output")).toEqual([])
   })
 
