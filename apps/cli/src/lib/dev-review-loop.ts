@@ -3140,7 +3140,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           currentPrompt = [
             'Your previous turn was refused by the driver — the after-turn confinement check (isolation.md) found:',
             describeTurnConfinementViolation(confinement),
-            'Fix the problem above and end your turn — leave your changes UNCOMMITTED and (re)write your commit-header and (round 1) PR-body files; the driver commits and publishes, never you.'
+            `Fix the problem above and end your turn — ${publishingInstructionLine()}`
           ].join('\n\n')
           continue
         }
@@ -3162,7 +3162,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       return [
         `The driver's publication check \`${refusal.check}\` refused your previous turn:`,
         refusal.reason,
-        'Fix the problem above and end your turn — leave your changes UNCOMMITTED and (re)write your commit-header and (round 1) PR-body files; the driver commits and publishes, never you.'
+        `Fix the problem above and end your turn — ${publishingInstructionLine()}`
       ].join('\n\n')
     }
 
@@ -3171,6 +3171,22 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
     /** O7: at most this many times the publication step re-asks the same Developer session to fix a missing header or a failed check before leaving the unmoved head to the poll/`no_push` safety net. */
     const MAX_PUBLISH_REASKS = 2
+
+    /**
+     * O7: the publishing-instruction clause every
+     * reask prompt in this file ends with — Codex still hands its commit/
+     * push/PR-open off to the driver via the `.vinaya-commit-header`/
+     * `.vinaya-pr-body` hand-off files (its own `workspace-write` sandbox
+     * keeps `.git` read-only by design); a Claude Code Developer now holds
+     * its own forge credential and publishes the same commit/push/PR-open
+     * itself.
+     */
+    function publishingInstructionLine(): string {
+      if (dispatchAgent === 'codex') {
+        return 'leave your changes UNCOMMITTED and (re)write your commit-header and (round 1) PR-body files; the driver commits and publishes, never you.'
+      }
+      return 'commit, push and open (or update) your pull request yourself, on this same branch — the driver does not publish for you.'
+    }
 
     /**
      * O7: resolve the task branch's base (its merge base with the default
@@ -3238,6 +3254,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * mechanical-failure path and returns `push_refused`.
      */
     async function publishDeveloperTurn(roundNum: number): Promise<PublishTurnResult> {
+      // O7: the driver no longer commits, pushes or
+      // opens the pull request for a Claude Code Developer — it now holds its
+      // own forge credential and publishes its own work, through the
+      // sandbox-excluded `git`/`gh` commands (`worker-boundary.ts`'s
+      // `CLAUDE_SANDBOX_EXCLUDED_COMMANDS`) and the matching permission grant
+      // (`dispatch.ts`'s `buildRolePermissions('developer')`). Still Codex-
+      // only below: Codex's own `workspace-write` sandbox keeps `.git`
+      // read-only by design, so its driver keeps publishing exactly as
+      // before.
+      if (dispatchAgent !== 'codex') return { kind: 'nothing' }
       const worktree = worktreePathForBranch()
       // No worktree here — a driver running on a different host than the
       // Developer's own machine, or this driver's own round-1 `createTaskWorktree`
@@ -3478,12 +3504,20 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       ].join('\n')
     }
 
-    // O6: the Developer never pushes or opens the pull request itself — the
-    // driver's publication step does. These resume prompts ask the Developer
-    // to (re)do its work and leave it uncommitted, writing the commit-header
-    // and (where a PR must open) the PR-body file; the driver commits, pushes
-    // and opens from those.
+    // O6: for Codex, the Developer never pushes or opens the pull request
+    // itself — the driver's publication step does. These resume prompts ask
+    // the Developer to (re)do its work and leave it uncommitted, writing the
+    // commit-header and (where a PR must open) the PR-body file; the driver
+    // commits, pushes and opens from those. O7: a
+    // Claude Code Developer now holds its own forge credential, so it is
+    // asked to (re)do the SAME work and publish it itself instead.
     function pushAndOpenPrompt(headerPath: string, bodyPath: string): string {
+      if (dispatchAgent !== 'codex') {
+        return [
+          'Your previous turn left no commit on this branch yet, and no open pull request.',
+          'Per your role doctrine (`bun apps/cli/src/index.ts doctrine --role developer --print`): commit your work, push this branch and open (or update) its pull request yourself.'
+        ].join('\n\n')
+      }
       return [
         'Your previous turn left no commit on the remote for this branch yet.',
         'Per your role doctrine (`bun apps/cli/src/index.ts doctrine --role developer --print`): leave all your changes UNCOMMITTED. The driver commits them, pushes the branch and opens the pull request for you — you never run `git push` or open the pull request yourself.',
@@ -3493,6 +3527,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     function openPrPrompt(bodyPath: string): string {
+      if (dispatchAgent !== 'codex') {
+        return [
+          'This branch is pushed but has no open pull request yet.',
+          'Per your role doctrine (`bun apps/cli/src/index.ts doctrine --role developer --print`): open (or update) its pull request yourself.'
+        ].join('\n\n')
+      }
       return [
         'This branch is pushed but has no open pull request yet.',
         'Per your role doctrine (`bun apps/cli/src/index.ts doctrine --role developer --print`): write the pull-request body file below and end your turn — the driver opens the pull request from it; you never open it yourself.',
@@ -3503,8 +3543,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     /** Mid-round unpushed-work resume — distinct from `pushAndOpenPrompt` (round-1 entry, no head at all yet): this branch already has commits on the remote, the developer's LATEST turn just left work the driver could not publish. Names the pre-push hook's own refusal (O4) when one is pending. */
     function commitAndPushPrompt(headerPath: string): string {
       const refusalBlock = lastPushRefusal
-        ? `\n\nThe driver's last push of this branch was refused by the pre-push hook:\n\n${lastPushRefusal}\n\nFix the cause of that refusal before leaving your changes.`
+        ? `\n\nYour last push of this branch was refused by the pre-push hook:\n\n${lastPushRefusal}\n\nFix the cause of that refusal before pushing again.`
         : ''
+      if (dispatchAgent !== 'codex') {
+        return [
+          'Your previous turn left work that is not yet on the remote.',
+          `Per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`): commit and push your changes yourself, on this SAME branch.${refusalBlock}`
+        ].join('\n\n')
+      }
       return [
         'Your previous turn left work that is not yet on the remote.',
         `Per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`): leave your changes UNCOMMITTED — the driver commits and pushes them on the SAME branch; you never run \`git commit\` or \`git push\` yourself.${refusalBlock}`,
@@ -4575,6 +4621,33 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             try {
               d.createTaskWorktree(branch)
               console.error(`vinaya dev-review-loop: created task worktree and branch ${branch} on origin at start`)
+              // O11: `createTaskWorktree`'s own
+              // commit-free ref push just moved the REMOTE branch to
+              // `origin/main`'s CURRENT tip (always safe here — this whole
+              // branch only runs when the task branch is missing or
+              // at-or-behind main, never when real commits exist). When the
+              // worktree already existed on disk (a prior, interrupted round
+              // that never got any Developer commits), that ref push leaves
+              // the LOCAL checkout exactly where it was created — possibly a
+              // now-stale `main` tip. Fast-forward it to match, so the
+              // Developer's first turn never starts from, or is told to
+              // reset to, a stale default-branch commit. Best-effort,
+              // swallowed the same way the push above is: a failure here
+              // leaves the worktree at its old commit, recoverable by hand
+              // at the Developer's own Step 0.
+              const worktreeDir = join('.worktrees', branch)
+              try {
+                execFileSync('git', ['-C', worktreeDir, 'fetch', '--quiet', 'origin', branch], {
+                  stdio: ['ignore', 'ignore', 'pipe']
+                })
+                execFileSync('git', ['-C', worktreeDir, 'merge', '--ff-only', `origin/${branch}`], {
+                  stdio: ['ignore', 'ignore', 'pipe']
+                })
+              } catch (ffErr) {
+                console.error(
+                  `vinaya dev-review-loop: could not fast-forward task worktree ${worktreeDir} to origin/${branch}: ${ffErr instanceof Error ? ffErr.message : String(ffErr)} — continuing`
+                )
+              }
             } catch (err) {
               console.error(
                 `vinaya dev-review-loop: could not create task worktree/branch ${branch} on origin at start: ${err instanceof Error ? err.message : String(err)} — continuing; the developer's first push will create it`
@@ -4606,8 +4679,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // commits under it) and the PR-body file (the driver opens the PR
             // from it) — granted to the session as `developerFiles`, named in
             // the prompt the same way the confidence file is.
+            // O7: Codex only — a Claude Code Developer now
+            // commits, pushes and opens its own pull request itself, so it
+            // needs neither hand-off file nor the instruction to leave its
+            // changes uncommitted; its own doctrine block (just above, O8)
+            // and the brief's own Deliverable section already say how.
             const round1HeaderPath = commitHeaderPathFor(root, task, round)
             const round1BodyPath = prBodyPathFor(root, task, round)
+            const round1SelfPublishFiles = dispatchAgent === 'codex' ? [round1HeaderPath, round1BodyPath] : []
             // O6: the commit-header and PR-body instructions sit in the
             // preamble OUTSIDE the frozen brief — after the doctrine, before the
             // brief — so the brief stays the prompt's contiguous, byte-for-byte
@@ -4617,15 +4696,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // brief holds unchanged.
             const round1Prompt = [
               developerDoctrine ? renderDeveloperDoctrineBlock(developerDoctrine) : null,
-              commitHeaderPromptLine(round1HeaderPath),
-              prBodyPromptLine(round1BodyPath),
+              dispatchAgent === 'codex' ? commitHeaderPromptLine(round1HeaderPath) : null,
+              dispatchAgent === 'codex' ? prBodyPromptLine(round1BodyPath) : null,
               brief
             ]
               .filter((part): part is string => part !== null)
               .join('\n\n')
             await dispatchDeveloper(round1Prompt, round, {
               skipResumeContext: true,
-              developerFiles: [round1HeaderPath, round1BodyPath]
+              developerFiles: round1SelfPublishFiles
             })
 
             try {
@@ -5082,6 +5161,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             const thisRoundConfidencePath = confidenceFilePathFor(round)
             const thisRoundResponsePath = roundResponseFilePathFor(round)
             const thisRoundHeaderPath = commitHeaderPathFor(root, task, round)
+            // O7: Codex still leaves its fix
+            // uncommitted for the driver to commit/push on the SAME branch;
+            // a Claude Code Developer now commits and pushes that same fix
+            // itself (never opening a new PR — the existing one stays).
+            const fixPublishClause =
+              dispatchAgent === 'codex'
+                ? 'leave your changes uncommitted; the driver commits and pushes the fix as a new commit on the SAME branch'
+                : 'commit and push the fix yourself, as a new commit on this SAME branch — do not open a new PR'
             const prompt = [
               conflictFiles !== null
                 ? renderConflictPrompt(conflictFiles)
@@ -5090,25 +5177,29 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                   : isGateRedRetry
                     ? `CI is red on the last head. Failing check-run(s): ${
                         lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
-                      }. Fix the failing check(s) and leave your changes uncommitted; the driver commits and pushes the fix as a new commit on the SAME branch.`
+                      }. Fix the failing check(s) and ${fixPublishClause}.`
                     : // `isGateRedRetry` is false here only when this dispatch came from
                       // `assessVerdicts`' review-findings fallback, which requires
                       // `dispatch_reviewers` to have already run and set `lastReviewContext`
                       // — so it is never null in this branch (code review, round 1, MINOR:
                       // the prior 'CI was red...' fallback below this was unreachable).
                       `Round ${round} review findings:\n\n${lastReviewContext}\n`,
-              // O6: the Developer leaves its fix uncommitted and writes the
-              // commit header; the driver makes the single commit, pushes it on
-              // the SAME branch, and opens no new PR.
-              'Address the findings above per your role doctrine (`bun apps/cli/src/index.ts doctrine --role developer --print`). Leave your changes UNCOMMITTED — the driver commits and pushes the fix as a new commit on the SAME branch; do not open a new PR.',
-              commitHeaderPromptLine(thisRoundHeaderPath),
+              // O6: for Codex, the Developer leaves its fix uncommitted and
+              // writes the commit header; the driver makes the single
+              // commit, pushes it on the SAME branch, and opens no new PR.
+              `Address the findings above per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`). ${
+                dispatchAgent === 'codex'
+                  ? 'Leave your changes UNCOMMITTED — the driver commits and pushes them on the SAME branch; do not open a new PR.'
+                  : 'Commit and push your changes yourself, on this SAME branch; do not open a new PR.'
+              }`,
+              dispatchAgent === 'codex' ? commitHeaderPromptLine(thisRoundHeaderPath) : '',
               round >= 2 ? confidencePromptLine(thisRoundConfidencePath) : '',
               isReviewFindingsRetry ? roundResponsePromptLine(thisRoundResponsePath) : ''
             ]
               .filter(Boolean)
               .join('\n\n')
             const thisRoundDeveloperFiles = [
-              thisRoundHeaderPath,
+              ...(dispatchAgent === 'codex' ? [thisRoundHeaderPath] : []),
               ...(round >= 2 ? [thisRoundConfidencePath] : []),
               ...(isReviewFindingsRetry ? [thisRoundResponsePath] : [])
             ]

@@ -1157,7 +1157,7 @@ const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
  * a run's own log says which policy shape it started under without needing
  * to diff `dispatch.ts` against the run's own timestamp.
  */
-export const PERMISSION_POLICY_VERSION = 'v4'
+export const PERMISSION_POLICY_VERSION = 'v5'
 
 type RolePermissions = { allow: string[]; deny: string[] }
 
@@ -1304,24 +1304,25 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(git show:*)',
         'Bash(git add:*)',
         'Bash(git commit:*)',
-        // The Developer no longer pushes or opens the pull request itself — the
-        // review-loop driver commits each turn and publishes it through the
-        // Broker's governed `branch-push`/`pr-open` operations, so a confined
-        // Developer holding no forge credential never needs `git push`, `gh pr
-        // create` or the repository's own `pr create` command. They are revoked
-        // from the grant here (the `pr create` subcommand by the deny rule
-        // below); every other git/gh/CLI capability the Developer uses stays.
+        // O2/O7: a confined Claude Code Developer now publishes its own work
+        // — it commits, pushes its task branch and opens or updates its own
+        // pull request, through the SAME excluded commands
+        // (`CLAUDE_SANDBOX_EXCLUDED_COMMANDS`, `worker-boundary.ts`) that let
+        // `git push`/`gh` run with full access despite the sandbox. `gh:*`
+        // replaces the prior per-subcommand allow list below (it matched
+        // only read/comment subcommands when the driver still published) —
+        // the broader grant now covers `gh pr create` too, matching the
+        // excluded command's own `gh *` shape. The driver still publishes for
+        // Codex, whose `workspace-write` sandbox keeps `.git` read-only by
+        // design, so this grant only ever takes effect on the Claude side
+        // (`buildRolePermissions`/`writeDispatchSettings` are Claude-only).
+        'Bash(git push:*)',
+        'Bash(gh:*)',
         'Bash(git config:*)',
         'Bash(git branch:*)',
         'Bash(git checkout:*)',
         'Bash(git merge:*)',
         'Bash(git rebase:*)',
-        'Bash(gh pr edit:*)',
-        'Bash(gh pr view:*)',
-        'Bash(gh pr comment:*)',
-        'Bash(gh pr diff:*)',
-        'Bash(gh issue view:*)',
-        'Bash(gh issue comment:*)',
         'Bash(bun install:*)',
         'Bash(bun run:*)',
         'Bash(bun test:*)',
@@ -1331,19 +1332,14 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(bun apps/cli/src/index.ts:*)'
       ],
       deny: [
-        // O6: the Developer does not push or open the pull request — the driver
-        // publishes each turn. `git push` and `gh pr create` are already absent
-        // from the allow list above; `pr create` reaches the repository CLI
-        // through the broad `Bash(bun apps/cli/src/index.ts:*)` allow, so it is
-        // denied explicitly here (deny overrides allow) while every other
-        // `vinaya` subcommand the Developer uses stays granted.
-        'Bash(bun apps/cli/src/index.ts pr create:*)',
-        'Bash(git push:*)',
+        // O7: force-pushing and `--no-verify` stay forbidden even though
+        // plain `git push`/`git commit` are now granted above — a narrower
+        // deny wins over a broader allow that also matches (confirmed live,
+        // this function's own doc comment).
         'Bash(git push --force*)',
         'Bash(git push -f*)',
         'Bash(git push --force-with-lease*)',
         'Bash(git push --no-verify*)',
-        'Bash(gh pr create:*)',
         'Bash(git commit --no-verify*)',
         'Bash(git commit -n*)',
         'Bash(git stash*)',
