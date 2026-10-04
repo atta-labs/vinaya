@@ -5190,7 +5190,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               `Address the findings above per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`). ${
                 dispatchAgent === 'codex'
                   ? 'Leave your changes UNCOMMITTED — the driver commits and pushes them on the SAME branch; do not open a new PR.'
-                  : 'Commit and push your changes yourself, on this SAME branch; do not open a new PR.'
+                  : 'Commit your changes and run `git push` yourself, on this SAME branch; do not open a new PR.'
               }`,
               dispatchAgent === 'codex' ? commitHeaderPromptLine(thisRoundHeaderPath) : '',
               round >= 2 ? confidencePromptLine(thisRoundConfidencePath) : '',

@@ -203,10 +203,10 @@ describe('devReviewLoop — O2 (#543): unpushed real work is resumed once, then 
     // `.dev-prompt-3.txt` existing and `.dev-prompt-4.txt` not). The resume
     // prompt itself names the uncommitted changes and how to push them.
     expect(prompts).toHaveLength(3)
-    // O6: the resume prompt now tells the Developer to leave its work
-    // uncommitted — the driver commits and pushes it; the Developer never pushes.
+    // O7: a Claude Code Developer now holds its own forge credential, so the
+    // resume prompt tells it to commit and push the work itself.
     expect(prompts[2]).toMatch(/left work that is not yet on the remote/)
-    expect(prompts[2]).toMatch(/leave your changes UNCOMMITTED/)
+    expect(prompts[2]).toMatch(/commit and push your changes yourself, on this SAME branch/)
 
     const pauseState = JSON.parse(readFileSync(join(controlDir(world), 'pause-state.json'), 'utf8')) as Record<
       string,
@@ -749,12 +749,10 @@ describe("devReviewLoop — the developer's first turn ends with no push at all,
     expect(prompts).toHaveLength(2)
 
     const resumedPrompt = prompts[1] as string
-    // O6: the resume asks the Developer to leave its changes uncommitted and
-    // write the header/body files — the driver commits, pushes and opens the PR.
-    expect(resumedPrompt).toMatch(/left no commit on the remote for this branch yet/)
-    expect(resumedPrompt).toMatch(/The driver commits them, pushes the branch and opens the pull request/i)
-    expect(resumedPrompt).toMatch(/\.vinaya-commit-header/)
-    expect(resumedPrompt).toMatch(/\.vinaya-pr-body/)
+    // O7: a Claude Code Developer now holds its own forge credential, so the
+    // resume asks it to commit, push and open the pull request itself.
+    expect(resumedPrompt).toMatch(/left no commit on this branch yet, and no open pull request/)
+    expect(resumedPrompt).toMatch(/commit your work, push this branch and open \(or update\) its pull request yourself/)
   })
 })
 
@@ -998,7 +996,7 @@ describe('devReviewLoop — the driver commits and publishes each Developer turn
       return commitWorktree(worktree, header)
     }
 
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'claude' }, deps)
+    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
 
     expect(result.finalDecision.type).toBe('publish')
     expect(calls.slice(0, 2)).toEqual(['build', 'commit'])
@@ -1008,7 +1006,7 @@ describe('devReviewLoop — the driver commits and publishes each Developer turn
     const world = makeWorld({ worktreeExists: true })
     const result = await runLoopInProcess(
       world,
-      { task: world.task, agent: 'claude' },
+      { task: world.task, agent: 'codex' },
       developerLeavesWorkDeps(world, {
         header: 'Feat(cli): leave the work for the driver',
         changedPaths: ['apps/cli/src/lib/x.ts']
@@ -1044,7 +1042,7 @@ describe('devReviewLoop — the driver commits and publishes each Developer turn
     const world = makeWorld({ worktreeExists: true, surface: { in: ['apps/cli'], out: ['packages'] } })
     await runLoopInProcess(
       world,
-      { task: world.task, agent: 'claude' },
+      { task: world.task, agent: 'codex' },
       developerLeavesWorkDeps(world, { changedPaths: ['packages/aeg-core/src/x.ts'] })
     )
     // The pre-publication check refuses — nothing is committed or pushed.
@@ -1062,7 +1060,7 @@ describe('devReviewLoop — the driver commits and publishes each Developer turn
     const world = makeWorld({ worktreeExists: true })
     await runLoopInProcess(
       world,
-      { task: world.task, agent: 'claude' },
+      { task: world.task, agent: 'codex' },
       developerLeavesWorkDeps(world, { writeNoHeader: true })
     )
     expect(world.commits).toHaveLength(0)
@@ -1075,7 +1073,7 @@ describe('devReviewLoop — the driver commits and publishes each Developer turn
 
   it('O3/O5: a repeated pre-push-hook refusal re-asks immediately, then pauses naming the hook', async () => {
     const world = makeWorld({ worktreeExists: true, pushRefusal: 'pre-push hook refused: 2 tests failed' })
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'claude' }, developerLeavesWorkDeps(world))
+    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, developerLeavesWorkDeps(world))
     expect(world.commits.length).toBeGreaterThanOrEqual(1)
     // The push never landed, so the PR never opened and the round never published.
     expect(world.pushes).toHaveLength(0)
@@ -1096,7 +1094,7 @@ describe('devReviewLoop — the driver commits and publishes each Developer turn
       output: 'ci-shard-coverage: missing shard entry'
     })
 
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'claude' }, deps)
+    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
 
     expect(world.pushes).toHaveLength(0)
     expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
@@ -1125,7 +1123,7 @@ describe('devReviewLoop — the driver commits and publishes each Developer turn
       }
     ]
 
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'claude' }, deps)
+    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
 
     expect(world.prOpens).toHaveLength(0)
     expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
