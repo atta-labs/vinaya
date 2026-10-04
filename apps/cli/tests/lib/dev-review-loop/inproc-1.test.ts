@@ -19,6 +19,7 @@ import {
   taskRunDir as ipTaskRunDir
 } from '../dev-review-loop-harness.js'
 import { readDriverLock, readPauseState } from '../../../src/lib/dev-review-loop/pause-resume.js'
+import { runPath } from '../../../src/lib/run-paths.js'
 
 afterEach(cleanupWorlds)
 
@@ -275,5 +276,43 @@ describe('devReviewLoop — a fresh developer session is prepended its role doct
     // round 1 carries no commit-header/PR-body hand-off instructions, and
     // with no doctrine block either the prompt is exactly the frozen brief.
     expect(prompt).toBe(world.frozenBrief)
+  })
+})
+
+describe('the driver-run dispatch-readiness gate', () => {
+  it('a NOT READY verdict refuses the Developer turn: no developer dispatch, a decided pause(infrastructure), the gate output staged for the Developer', async () => {
+    const world = makeWorld()
+    const gateOutput =
+      '$ bun apps/cli/src/checks/bin/check-dispatch-readiness.ts --issue 1\nNOT READY: a dependency is still open'
+    const result = await runLoopInProcess(world, undefined, {
+      checkTaskDispatchReadiness: (_branch) => ({ ready: false, output: gateOutput })
+    })
+
+    expect(world.dispatches.filter((d) => d.role === 'developer')).toHaveLength(0)
+    expect(world.dispatchCountByRole.developer ?? 0).toBe(0)
+    expect(result.finalDecision.type).toBe('pause')
+    expect((result.finalDecision as { reason?: string }).reason).toBe('infrastructure')
+    expect(readPauseState(world.runtimeDir, world.task)?.detail).toContain('dispatch-readiness gate failed')
+
+    const staged = readFileSync(
+      runPath(world.runtimeDir, world.task, { area: 'developer', round: 1, file: 'dispatch-readiness.txt' }),
+      'utf8'
+    )
+    expect(staged).toBe(gateOutput)
+  })
+
+  it('a READY verdict is staged where the Developer reads it, and the turn is dispatched', async () => {
+    const world = makeWorld()
+    const gateOutput = '$ bun packages/aeg-core/bin/verify-dispatch.ts --issue 1\nREADY'
+    await runLoopInProcess(world, undefined, {
+      checkTaskDispatchReadiness: (_branch) => ({ ready: true, output: gateOutput })
+    })
+
+    expect(world.dispatches.filter((d) => d.role === 'developer').length).toBeGreaterThan(0)
+    const staged = readFileSync(
+      runPath(world.runtimeDir, world.task, { area: 'developer', round: 1, file: 'dispatch-readiness.txt' }),
+      'utf8'
+    )
+    expect(staged).toBe(gateOutput)
   })
 })
