@@ -339,6 +339,63 @@ jobs:
         working-directory: apps/cli
         run: bun test --timeout=30000 $(tr '\n' ' ' < tests/ci-shards/shard-${{ matrix.shard }}.txt)
 
+  # The sandbox conformance suite (`apps/cli/tests/sandbox-conformance/`,
+  # `apps/cli/specs/isolation.md`): every command the Developer doctrine and
+  # the rendered brief name, run inside Claude Code's sandbox (the sandbox
+  # runtime, via `bunx`) and inside Codex's (`codex sandbox`), each set up as
+  # the driver sets up a confined dispatch. A command either exits 0 under
+  # both or is in the suite's known-failures list, which only shrinks.
+  #
+  # Every pull request, docs-only included: a doctrine or brief-template
+  # edit is exactly what adds a command to the list. No agent login — both
+  # runtimes run a single command under their policy; the job token only
+  # serves the suite's read-only `gh` lines.
+  sandbox-conformance:
+    name: Sandbox conformance (Linux)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `origin/main` is a real ref the suite's `git diff`/`git log`
+          # lines name.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - name: Restore Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'bun.lockb') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      # What both runtimes need on Linux: bubblewrap (both), socat and
+      # ripgrep (the sandbox runtime). Ubuntu 24.04 strips capabilities from
+      # unprivileged user namespaces by default, which bubblewrap needs —
+      # the sandbox runtime's own README names this sysctl as the remedy.
+      # Host setup only; neither sandbox's policy is touched.
+      - name: Install the Linux sandbox tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap socat ripgrep
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # The tools this repository's own checks need (`ci.setup`, today
+      # gitleaks), as a Developer's machine has them — so `check --all`
+      # inside a sandbox fails only on what the sandbox denies.
+      - name: Install the checks' own tools
+        run: bun -e 'process.stdout.write(require("./vinaya.config.json").ci.setup)' | bash
+      - name: Run the suite under both sandboxes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VINAYA_SANDBOX_CONFORMANCE: '1'
+        working-directory: apps/cli
+        run: bun test --timeout=900000 tests/sandbox-conformance/sandbox-conformance.test.ts
+
   # The one job branch protection should require. Depends on every job
   # above and reports under the historical "Vinaya CI" name (`run-name`
   # left unset — the JOB name is what a required-check setting matches),
@@ -348,7 +405,7 @@ jobs:
   # fail loudly) when an upstream job fails, never be skipped alongside it.
   aggregate:
     name: Vinaya CI
-    needs: [build, test-shared-packages, test-cli, test-cli-config-anchor]
+    needs: [build, test-shared-packages, test-cli, test-cli-config-anchor, sandbox-conformance]
     if: always()
     runs-on: ubuntu-latest
     # Least-privilege, matching every other job in this file — this job does
@@ -359,7 +416,7 @@ jobs:
     steps:
       - name: Every upstream job succeeded or was correctly skipped (docs-only)
         run: |
-          for result in "${{ needs.build.result }}" "${{ needs.test-shared-packages.result }}" "${{ needs.test-cli.result }}" "${{ needs.test-cli-config-anchor.result }}"; do
+          for result in "${{ needs.build.result }}" "${{ needs.test-shared-packages.result }}" "${{ needs.test-cli.result }}" "${{ needs.test-cli-config-anchor.result }}" "${{ needs.sandbox-conformance.result }}"; do
             if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
               echo "A required job did not succeed: $result" >&2
               exit 1
