@@ -2760,7 +2760,7 @@ export function findCredentialPatterns(text: string, location: string): Credenti
 }
 
 /**
- * O4 (#1046): the lines a unified diff ADDED — the content the turn actually
+ * O4: the lines a unified diff ADDED — the content the turn actually
  * wrote into the worktree, for the after-turn credential scan. A hunk's `+`
  * lines, with their leading `+` stripped; NEVER a context line (unchanged, a
  * leading space), a removed line (`-`), or a file/hunk header (`+++ `, `--- `,

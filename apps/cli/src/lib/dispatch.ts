@@ -3191,7 +3191,7 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
 }
 
 /**
- * O4 (#1046): the text a Developer turn's own author (the agent) WROTE, pulled
+ * O4: the text a Developer turn's own author (the agent) WROTE, pulled
  * out of its raw vendor stream for the after-turn credential scan — its own
  * messages and the tool invocations it issued (a path, a command, a pattern),
  * and NEVER the contents of a file it read or a command's output. This is not a
@@ -3517,7 +3517,7 @@ export function confinedTurboCacheDir(scratchDir: string): string {
 }
 
 /**
- * O5 (#1046): the full set of turbo environment overrides EVERY confined
+ * O5: the full set of turbo environment overrides EVERY confined
  * Developer carries, for Claude and for Codex alike — the cache-directory
  * redirect above, AND `TURBO_TELEMETRY_DISABLED`. `turbo` (which `bun run
  * typecheck` invokes) pings `telemetry.vercel.com` on startup; a confined
@@ -4375,8 +4375,8 @@ export async function dispatchRole(
               // own override must name the same granted scratch directory.
               CLAUDE_CODE_TMPDIR: claudeConfinement.scratchDir,
               // O4: turbo's cache-miss write goes inside the granted scratch,
-              // never the repo-root `.turbo/` the sandbox denies. O5 (#1046):
-              // and its telemetry ping (`telemetry.vercel.com`) is disabled, so
+              // never the repo-root `.turbo/` the sandbox denies. O5: and its
+              // telemetry ping (`telemetry.vercel.com`) is disabled, so
               // `bun run typecheck`'s own `turbo` run is not blocked by the
               // confined egress allowlist. Both keys ride `confinedTurboEnv`,
               // the SAME object Codex spreads via `codexSpawnEnvExtras` above —
