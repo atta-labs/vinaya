@@ -107,11 +107,16 @@ const TURBO_CACHE_WRITE_DENIED =
  * `gh-chained` replaces them as the one Claude darwin denial: a chained line
  * is not a bare excluded command, so it runs inside.
  * O3/O4: `check-all` on claude/darwin and claude/linux stays (the CLI's own
- * forge reads are not staged from outside, escalated on Issue #1034), and
- * `typecheck` stays listed for BOTH agents on linux — its true cause on this
- * branch is the turbo cache-write denial above, not the retired
- * bun-not-found reason, and removing it needs a write beyond the worktree
- * (or a redirected turbo cache), folded into the same Issue #1034 escalation.
+ * forge reads are not staged from outside, escalated on Issue #1034).
+ * `typecheck` is listed for CLAUDE/linux only — claude runs first, against a
+ * cold turbo cache, so its cache-miss write is denied (above). It is NOT
+ * listed for codex: the claude entry's own known-failure control re-runs
+ * `typecheck` with NO sandbox (warming the shared, content-hashed turbo cache
+ * at the main repo root) BEFORE codex's block runs, so codex's own
+ * `typecheck` hits that warm cache, reads only, and exits 0 — listing it fails
+ * the suite the moment it passes (observed live, CI Linux). Removing the
+ * claude entry needs a write beyond the worktree (or a redirected turbo
+ * cache), folded into the same Issue #1034 escalation.
  */
 const KNOWN_FAILURES: readonly KnownFailure[] = [
   {
@@ -127,7 +132,6 @@ const KNOWN_FAILURES: readonly KnownFailure[] = [
     denial: `a chained gh line is not a bare excluded command, so Claude Code runs it inside the sandbox, where ${GH_HOSTS_DENIED_INSIDE}`
   },
   { id: 'typecheck', agent: 'claude', platform: 'linux', denial: TURBO_CACHE_WRITE_DENIED },
-  { id: 'typecheck', agent: 'codex', platform: 'linux', denial: TURBO_CACHE_WRITE_DENIED },
   {
     id: 'check-all',
     agent: 'claude',
