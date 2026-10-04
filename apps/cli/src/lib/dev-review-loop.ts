@@ -49,6 +49,7 @@ import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import { configPath, loadTrustAnchorConfig, resolveSecurityScanCommand } from './config.js'
 import {
+  addedDiffLines,
   agentOwnConfigSubpaths,
   changedProtectedPaths,
   findCredentialPatterns,
@@ -97,6 +98,7 @@ import {
 import {
   AGENT_VENDOR_NAMES,
   type AgentVendor,
+  developerWrittenTextFromVendorOutput,
   dispatchRole as realDispatchRole,
   type DispatchHandle,
   isAgentVendor,
@@ -2946,15 +2948,37 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       return raw ? { text: raw, location: `the turn's own raw output (${teePath})` } : null
     }
 
-    /** O2: the texts a Developer turn's after-dispatch credential scan reads — the turn's own raw vendor output, and the worktree's own diff since this turn started (`turnPreHead`, captured by `dispatchDeveloperOnce`). Either half is simply omitted, never faked, when it cannot be read. */
+    /**
+     * O4: the texts a Developer turn's after-dispatch credential scan reads —
+     * ONLY what the turn itself WROTE, never what it read. Two halves, each
+     * omitted (never faked) when it cannot be read:
+     *
+     *  - the Developer's OWN authored turn output — its messages and the tool
+     *    invocations it issued — pulled from the raw vendor tee through that
+     *    vendor's own event renderer (`developerWrittenTextFromVendorOutput`),
+     *    which drops a tool RESULT (a file it read, a command's output) to
+     *    nothing. Scanning the raw tee whole instead flagged this repository's
+     *    own credential-shaped test FIXTURES the moment a turn merely READ one
+     *    (round 2 security), refusing a turn that leaked nothing.
+     *  - the lines this turn ADDED to the worktree (`addedDiffLines`), never the
+     *    unchanged context a hunk sits beside — which, again, can carry a
+     *    credential-shaped fixture the turn did not write.
+     */
     function developerScanTexts(handle: DispatchHandle): { text: string; location: string }[] {
       const texts: { text: string; location: string }[] = []
       const output = rawOutputScanText(handle)
-      if (output) texts.push(output)
+      if (output) {
+        const written = developerWrittenTextFromVendorOutput(output.text, dispatchAgent)
+        if (written)
+          texts.push({ text: written, location: "the Developer's own turn output (its messages and tool invocations)" })
+      }
       const worktree = worktreePathForBranch()
       if (turnPreHead !== null && existsSync(worktree)) {
         const diff = d.gitWorktreeDiffText(worktree, turnPreHead)
-        if (diff) texts.push({ text: diff, location: "the worktree's own diff since this turn started" })
+        if (diff) {
+          const added = addedDiffLines(diff)
+          if (added) texts.push({ text: added, location: 'the diff lines this turn added to the worktree' })
+        }
       }
       return texts
     }

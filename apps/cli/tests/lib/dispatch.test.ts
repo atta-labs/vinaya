@@ -69,9 +69,10 @@ import {
   missingSubscriptionLoginReason,
   NO_SUBSCRIPTION_LOGIN_REASON,
   codexBoundaryFailureReason,
+  developerWrittenTextFromVendorOutput,
   type DispatchTeeRecoveryDeps
 } from '../../src/lib/dispatch.js'
-import { agentConfigProtectedSubpaths } from '../../src/lib/worker-boundary.js'
+import { addedDiffLines, agentConfigProtectedSubpaths, findCredentialPatterns } from '../../src/lib/worker-boundary.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -2603,6 +2604,96 @@ describe('dispatch streaming output (#447 O5)', () => {
     expect(parseClaudeResumeId(stream)).toBe('the-real-one')
     expect(parseClaudeResumeId(JSON.stringify({ session_id: 'single-blob' }))).toBe('single-blob')
     expect(parseClaudeResumeId('')).toBeNull()
+  })
+})
+
+describe('developerWrittenTextFromVendorOutput + the after-turn credential scan — O4 (#1046): only what the turn wrote', () => {
+  const REPO_ROOT = join(CLI_ROOT, '..', '..')
+  // The two credential-shaped test FIXTURES the brief names, read VERBATIM — so
+  // this test proves the scan tolerates the actual bytes this repo ships, not a
+  // stand-in. Both carry real credential shapes (an AWS key, a Slack token, an
+  // Anthropic key, a PEM block) as fixture values that are not secrets at all.
+  const workerBoundaryFixture = readFileSync(
+    join(CLI_ROOT, 'tests', 'lib', 'dispatch', 'worker-boundary.test.ts'),
+    'utf8'
+  )
+  const redactFixture = readFileSync(join(REPO_ROOT, 'packages', 'aeg-core', 'src', 'log', 'redact.test.ts'), 'utf8')
+
+  // A Claude `--output-format stream-json` tee for a turn that READ both
+  // fixtures: the agent's own message, a `Read` tool_use naming each file (the
+  // PATH only), each file's full content coming back as a tool_result (where the
+  // credential shapes live), and a benign closing message.
+  function readingTurnTee(): string {
+    return [
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Reading the fixtures.' }] } }),
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              name: 'Read',
+              input: { file_path: 'apps/cli/tests/lib/dispatch/worker-boundary.test.ts' }
+            }
+          ]
+        }
+      }),
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', content: workerBoundaryFixture }] } }),
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'tool_use', name: 'Read', input: { file_path: 'packages/aeg-core/src/log/redact.test.ts' } }
+          ]
+        }
+      }),
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', content: redactFixture }] } }),
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'Done reading; nothing to change.' }] }
+      })
+    ].join('\n')
+  }
+
+  it('a turn that READS the two credential-shaped fixtures is not refused — their contents arrive as tool results the extractor drops', () => {
+    const written = developerWrittenTextFromVendorOutput(readingTurnTee(), 'claude')
+    // It kept the agent's own messages and the Read tool-use PATHS...
+    expect(written).toContain('Reading the fixtures.')
+    expect(written).toContain('⚙ Read: apps/cli/tests/lib/dispatch/worker-boundary.test.ts')
+    // ...and dropped both tool RESULTS, so neither fixture's credential shape is
+    // in the scanned text, and the credential scan finds nothing.
+    expect(written).not.toContain('AKIA1234567890ABCDEF')
+    expect(written).not.toContain('sk-ant-api03')
+    expect(findCredentialPatterns(written, "the Developer's own turn output")).toEqual([])
+  })
+
+  it('a turn whose diff ADDS a credential-shaped line is still refused; the same shape only in unchanged context is not', () => {
+    const secret = `ghp_${'A'.repeat(40)}`
+    const addsIt = ['--- a/src/x.ts', '+++ b/src/x.ts', '@@ -1 +1,2 @@', ' const a = 1', `+const t = '${secret}'`].join(
+      '\n'
+    )
+    const added = addedDiffLines(addsIt)
+    expect(added).toContain(secret)
+    expect(findCredentialPatterns(added, 'the diff lines this turn added').length).toBeGreaterThan(0)
+
+    // The same secret sitting only in an UNCHANGED context line (a hunk the turn
+    // edited nearby but did not write the secret into) is never flagged.
+    const contextOnly = [
+      '--- a/src/x.ts',
+      '+++ b/src/x.ts',
+      '@@ -1,2 +1,2 @@',
+      ` const t = '${secret}'`,
+      '-const a = 1',
+      '+const a = 2'
+    ].join('\n')
+    const addedCtx = addedDiffLines(contextOnly)
+    expect(addedCtx).not.toContain(secret)
+    expect(findCredentialPatterns(addedCtx, 'the diff lines this turn added')).toEqual([])
+  })
+
+  it('the `+++` file header is never treated as an added line, even though it begins with `+`', () => {
+    const diff = ['--- a/x.ts', '+++ b/x.ts', '@@ -0,0 +1 @@', '+real content'].join('\n')
+    expect(addedDiffLines(diff)).toBe('real content')
   })
 })
 

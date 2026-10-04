@@ -3191,6 +3191,45 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
 }
 
 /**
+ * O4 (#1046): the text a Developer turn's own author (the agent) WROTE, pulled
+ * out of its raw vendor stream for the after-turn credential scan — its own
+ * messages and the tool invocations it issued (a path, a command, a pattern),
+ * and NEVER the contents of a file it read or a command's output. This is not a
+ * new parse: it reuses each vendor's OWN `renderEvent` (`VENDOR_TABLE`), the
+ * exact per-line renderer the driver already streams to the operator and the
+ * role log — and that renderer deliberately renders a tool RESULT (a file read,
+ * a command's output: "the bulk of a run") as nothing, so what comes back here
+ * is only what the agent itself authored. A line the vendor's renderer cannot
+ * parse contributes nothing (never a guess), the same defensive posture every
+ * other reader of this stream takes. The scan reading THIS, rather than the raw
+ * tee, is what stops this repository's own credential-shaped test FIXTURES from
+ * tripping a false refusal the moment a Developer turn merely READS one.
+ */
+export function developerWrittenTextFromVendorOutput(raw: string, agent: AgentVendor): string {
+  const renderEvent = VENDOR_TABLE[agent].renderEvent
+  const out: string[] = []
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    let obj: Record<string, unknown>
+    try {
+      obj = JSON.parse(trimmed) as Record<string, unknown>
+    } catch {
+      // Not a structured event line — never guessed at, the same posture
+      // `parseClaudeUsage`/`parseCodexUsage` take reading this same stream.
+      continue
+    }
+    try {
+      const rendered = renderEvent(obj)
+      if (rendered) out.push(rendered)
+    } catch {
+      // A malformed event the renderer rejected — skipped, never fatal.
+    }
+  }
+  return out.join('\n')
+}
+
+/**
  * Confirmed live, not assumed: `claude --model`'s own help text names
  * `fable`/`opus`/`sonnet` as aliases (haiku is the same family's fourth
  * tier), and its "full name" example (`claude-fable-5`) establishes the
