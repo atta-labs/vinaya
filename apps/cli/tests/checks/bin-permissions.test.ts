@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'bun:test'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { chmodSync, statSync, utimesSync } from 'node:fs'
 import { join } from 'node:path'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture'
 
 /**
  * Every `apps/cli/src/checks/bin/*.ts` file must carry mode `100755` in the
@@ -37,11 +38,11 @@ describe('every checks/bin executable carries mode 100755 in the git index', () 
     try {
       chmodSync(staleDistCheck, 0o000)
       utimesSync(staleDistCheck, new Date(0), new Date(0))
-      const result = spawnSync(process.execPath, ['apps/cli/src/index.ts', 'check', 'pr-report-density'], {
+      const result = spawnSyncBudgeted(process.execPath, ['apps/cli/src/index.ts', 'check', 'pr-report-density'], {
         cwd: REPO_ROOT,
         encoding: 'utf8',
         env: {
-          ...process.env,
+          ...stripVinayaEnv(),
           PR_BODY: '## Scope\n\nSource execution.\n<!-- AEG:TIER:START -->\n**Tier:** 0\n<!-- AEG:TIER:END -->'
         }
       })
