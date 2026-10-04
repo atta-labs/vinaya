@@ -13,7 +13,7 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -986,5 +986,44 @@ describe('drainLogSpool (O6) — the driver delivers a confined dispatch spool a
     writeFileSync(join(spool, 'unresolved', 'none.ndjson'), '')
     expect(drainLogSpool(spool, dest)).toBe(0)
     expect(existsSync(join(dest, 'unresolved', 'none.ndjson'))).toBe(false)
+  })
+
+  it('refuses a symlinked LEAF in the spool — never follows it out to a host file (round 2 security, confused-deputy)', () => {
+    root = mkdtempSync(join(tmpdir(), 'vinaya-spool-'))
+    const spool = join(root, 'log-spool')
+    const dest = join(root, 'logs')
+    const secret = join(root, 'outside-secret.ndjson')
+    writeFileSync(secret, '{"stolen":true}\n')
+    mkdirSync(join(spool, 'atta-labs-vinaya'), { recursive: true })
+    // The confined agent plants a symlink in its own spool pointing OUTSIDE it.
+    symlinkSync(secret, join(spool, 'atta-labs-vinaya', '1034.ndjson'))
+    expect(drainLogSpool(spool, dest)).toBe(0)
+    // The host file's bytes never reach the operator log folder.
+    expect(existsSync(join(dest, 'atta-labs-vinaya', '1034.ndjson'))).toBe(false)
+  })
+
+  it('refuses a symlinked SUBDIRECTORY in the spool — never descends it', () => {
+    root = mkdtempSync(join(tmpdir(), 'vinaya-spool-'))
+    const spool = join(root, 'log-spool')
+    const dest = join(root, 'logs')
+    const outsideDir = join(root, 'outside-dir')
+    mkdirSync(outsideDir, { recursive: true })
+    writeFileSync(join(outsideDir, 'none.ndjson'), '{"stolen":true}\n')
+    mkdirSync(spool, { recursive: true })
+    symlinkSync(outsideDir, join(spool, 'atta-labs-vinaya'))
+    expect(drainLogSpool(spool, dest)).toBe(0)
+    expect(existsSync(join(dest, 'atta-labs-vinaya', 'none.ndjson'))).toBe(false)
+  })
+
+  it('refuses a spool ROOT that is itself a symlink — delivers nothing', () => {
+    root = mkdtempSync(join(tmpdir(), 'vinaya-spool-'))
+    const realElsewhere = join(root, 'elsewhere')
+    const dest = join(root, 'logs')
+    mkdirSync(join(realElsewhere, 'atta-labs-vinaya'), { recursive: true })
+    writeFileSync(join(realElsewhere, 'atta-labs-vinaya', '1034.ndjson'), '{"stolen":true}\n')
+    const spool = join(root, 'log-spool')
+    symlinkSync(realElsewhere, spool)
+    expect(drainLogSpool(spool, dest)).toBe(0)
+    expect(existsSync(join(dest, 'atta-labs-vinaya', '1034.ndjson'))).toBe(false)
   })
 })

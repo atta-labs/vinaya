@@ -17,11 +17,11 @@ import {
   existsSync,
   fstatSync,
   mkdirSync,
+  lstatSync,
   openSync,
   readdirSync,
   readFileSync,
   renameSync,
-  statSync,
   writeFileSync,
   writeSync
 } from 'node:fs'
@@ -992,9 +992,30 @@ export function outboxPathFor(
  * turn it is draining (the same honest-best-effort posture `log()` itself
  * takes); it is called after the child exits and before its scratch directory
  * is removed.
+ *
+ * SYMLINK-REFUSING (round 2 security review, LOW): the spool lives inside the
+ * agent's OWN granted scratch, so the confined agent could plant a symlink —
+ * the spool root itself, a subdirectory, or a leaf file — pointing OUTSIDE the
+ * spool, which would make this trusted, unconfined driver read an arbitrary
+ * driver-readable host file and append it into the operator's log folder (a
+ * confused deputy). Every stat here is an `lstatSync` (NEVER following a link),
+ * and only a REAL directory is descended, only a REAL regular file is read;
+ * any symlink — or any other non-regular entry — is skipped, and a spool root
+ * that is not a real directory delivers nothing. This is the same
+ * copy-never-symlink posture `isolation.md` O7 already takes for Codex's
+ * `auth.json`. (No TOCTOU race: the agent's turn has already ended when this
+ * runs, so no concurrent process can swap a checked path.)
  */
 export function drainLogSpool(spoolDir: string, destinationFolder: string): number {
   let delivered = 0
+  // The spool root must itself be a REAL directory — never a symlink the agent
+  // substituted for it (which `readdirSync` would otherwise follow out of the
+  // spool). Anything else: refuse the whole drain.
+  try {
+    if (!lstatSync(spoolDir).isDirectory()) return 0
+  } catch {
+    return 0
+  }
   const walk = (relative: string): void => {
     const here = relative === '' ? spoolDir : join(spoolDir, relative)
     let names: string[]
@@ -1005,9 +1026,11 @@ export function drainLogSpool(spoolDir: string, destinationFolder: string): numb
     }
     for (const name of names) {
       const childRelative = relative === '' ? name : join(relative, name)
-      let stat: ReturnType<typeof statSync>
+      let stat: ReturnType<typeof lstatSync>
       try {
-        stat = statSync(join(spoolDir, childRelative))
+        // lstat, never stat: a symlink is reported AS a symlink (isDirectory /
+        // isFile both false) and skipped below, never resolved.
+        stat = lstatSync(join(spoolDir, childRelative))
       } catch {
         continue
       }
@@ -1015,6 +1038,8 @@ export function drainLogSpool(spoolDir: string, destinationFolder: string): numb
         walk(childRelative)
         continue
       }
+      // Only a real regular file is read — a symlink, FIFO, socket or device is
+      // skipped, so the driver never follows a link out of the agent's spool.
       if (!stat.isFile()) continue
       try {
         const bytes = readFileSync(join(spoolDir, childRelative))

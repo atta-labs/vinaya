@@ -104,8 +104,9 @@ const TURBO_CACHE_WRITE_DENIED =
  * O2: the three bare `gh` lines (`gh-issue-view`/`gh-pr-view`/
  * `gh-pr-view-reviews`) are gone — each is a bare excluded command Claude Code
  * now runs OUTSIDE the sandbox, with the forge credential, so they exit 0.
- * `gh-chained` replaces them as the one Claude darwin denial: a chained line
- * is not a bare excluded command, so it runs inside.
+ * `gh-chained` is added as a Claude/darwin denial (alongside the kept
+ * `check-all`/darwin): a chained line is not a bare excluded command, so it
+ * runs inside.
  * O3/O4: `check-all` on claude/darwin and claude/linux stays (the CLI's own
  * forge reads are not staged from outside, escalated on Issue #1034).
  * `typecheck` is listed for CLAUDE/linux only — claude runs first, against a
@@ -137,7 +138,7 @@ const KNOWN_FAILURES: readonly KnownFailure[] = [
     agent: 'claude',
     platform: 'linux',
     denial:
-      "check --all runs inside the sandbox; the secret scanner (atta-labs/secret-scan) cannot run confined and errors, and the gh token store ~/.config/gh/hosts.yml is a denied credential so the forge-reading checks cannot authenticate either — the CLI's own forge reads are not staged from outside (O3/O4, Issue #1034)"
+      'check --all runs inside the sandbox, where the confined secret scanner (atta-labs/secret-scan) cannot run and errors — the dominant denial on a Linux CI runner, whose ambient GH_TOKEN otherwise flows in and lets the forge-reading checks authenticate (unlike macOS, where the denied gh token store additionally blocks them). Removing it is folded into the O3/O4 forge-staging escalation (Issue #1034)'
   }
 ]
 
