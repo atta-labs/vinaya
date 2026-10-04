@@ -482,6 +482,7 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     runtimeDir: () => world.runtimeDir,
     repoRoot: () => world.repoRoot,
     gitRevParseOriginMain: () => world.base,
+    gitIsAncestor: (ancestor, descendant) => ancestor === descendant,
     gitMergeBase: async (_head) => world.mergeBase,
     gitFetch: () => {},
     gitDiffShortstat: (_base, _head) => world.shortstat,
@@ -523,6 +524,13 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     // --- developer publication (agent-confinement-v1/1) ---
     readWorktreeBranch: (_worktreePath) => world.worktreeBranchName ?? world.branch,
     gitWorktreeChangedPaths: (_worktreePath, _base) => [...world.worktreeChangedPaths],
+    // This fake world never models diff CONTENT, only changed-path lists —
+    // the O1/O2 after-turn credential scan then simply has nothing to read
+    // from the worktree side in a harness-driven test, the same fidelity
+    // level every other content-shaped (not path-shaped) git read already
+    // has here.
+    gitWorktreeDiffText: (_worktreePath, _base) => null,
+    buildVendoredCliIfMissing: () => {},
     commitWorktree: (_worktreePath, header) => {
       const commitSha = world.nextCommitSha
       world.commits.push({ header, sha: commitSha })
@@ -531,10 +539,11 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       world.worktreeDirty = []
       world.worktreeHead = commitSha
       world.worktreeAhead = world.worktreeAhead + 1
-      return commitSha
+      return { ok: true, sha: commitSha }
     },
+    validatePrBodyForCreate: async () => [],
     pushTaskBranch: (input) => {
-      if (world.pushRefusal !== null) return { ok: false, refusal: world.pushRefusal }
+      if (world.pushRefusal !== null) return { ok: false, refusal: world.pushRefusal, hook: true }
       world.pushes.push({ sha: input.sha })
       // The push lands: the remote head is now the pushed sha, the branch is no
       // longer ahead, and the branch resolves on the remote.

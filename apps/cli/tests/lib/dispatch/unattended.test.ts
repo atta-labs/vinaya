@@ -246,7 +246,7 @@ function buildGitFixture(opts: { homeCredential?: string } = {}): Fixture & { en
     [
       '#!/bin/bash',
       `touch "${markerFile}"`,
-      `printf '{"claudeConfigDir":"%s"}' "$CLAUDE_CONFIG_DIR" > "${envCaptureFile}"`,
+      `printf '{"claudeConfigDir":"%s","ghTelemetry":"%s"}' "$CLAUDE_CONFIG_DIR" "$GH_TELEMETRY" > "${envCaptureFile}"`,
       'cat > /dev/null',
       `printf '%s' '{"session_id":"sess-x","usage":{"input_tokens":1,"output_tokens":1}}'`,
       'exit 0'
@@ -303,8 +303,12 @@ describe('vinaya dispatch --unattended — task 3: Claude stages and pre-checks 
     expect(result.status, `stderr: ${result.stderr}`).toBe(0)
     expect(existsSync(fixture.markerFile)).toBe(true)
 
-    const captured = JSON.parse(readFileSync(fixture.envCaptureFile, 'utf8')) as { claudeConfigDir: string }
+    const captured = JSON.parse(readFileSync(fixture.envCaptureFile, 'utf8')) as {
+      claudeConfigDir: string
+      ghTelemetry: string
+    }
     expect(captured.claudeConfigDir, 'dispatch.ts never sets CLAUDE_CONFIG_DIR for Claude any more').toBe('')
+    expect(captured.ghTelemetry).toBe('0')
   })
 
   it('still never stages or rewrites CLAUDE_CONFIG_DIR when a real OAuth session credential exists at the fixture HOME', () => {

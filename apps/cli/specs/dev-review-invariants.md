@@ -136,15 +136,22 @@ demonstrates. The most consequential are:
 - reviewers can be dispatched on a head whose CI never passed the gate;
 - the below-50 extra developer turn is re-granted after a restart.
 
-The **ambiguity register** (`ambiguities`) holds 13 questions, all marked
-`awaiting-principal`. Among them:
+The **ambiguity register** (`ambiguities`) holds 13 questions, each ruled by
+the Principal: the entry's `rulingStatus` is `ruled` and its `ruling` field
+holds the ruling. Among them:
 
-- exit precedence when several exits apply;
-- what counts as a reappearance;
-- whether stale-driver pauses resume unattended;
+- exit precedence when several exits apply: the most severe wins;
+- what counts as a reappearance: any resolved finding re-reported as open or
+  with no state;
+- whether stale-driver pauses resume unattended: they do, within a retry bound;
 - whether CI that is stuck pending, or absent entirely, is a developer
-  failure or an infrastructure pause;
-- whether a reviewer with no verified candidate should pause the round.
+  failure or an infrastructure pause: neither is the developer's fault;
+- whether a reviewer with no verified candidate should pause the round: it
+  re-stages and retries, and never runs unisolated.
+
+The rulings share one principle: infrastructure is never a stop for a human.
+It is a bounded retry with backoff that resumes by itself; only an
+escalation, a principal item and max rounds stop for the Principal.
 
 No agent may resolve one of these by editing this map. Only a Principal
 ruling can, and that ruling's status is then recorded on the entry.

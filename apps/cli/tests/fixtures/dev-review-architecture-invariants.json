@@ -1991,7 +1991,8 @@
       "id": "AMB-01",
       "question": "When several exits apply to one round, which pause reason wins?",
       "citations": ["packages/aeg-core/src/dev-review-loop/assess-round.ts", "apps/cli/specs/loop.md"],
-      "rulingStatus": "awaiting-principal"
+      "rulingStatus": "ruled",
+      "ruling": "Several exits in one round: the most severe wins — escalation, then principal item, then repeat, then max rounds, then infrastructure. Every applicable reason is recorded; the top one is shown."
     },
     {
       "id": "AMB-02",
@@ -2000,25 +2001,29 @@
         "packages/aeg-core/src/dev-review-loop/assess-round.ts",
         "packages/aeg-core/src/dev-review-loop/types.ts"
       ],
-      "rulingStatus": "awaiting-principal"
+      "rulingStatus": "ruled",
+      "ruling": "Yes. A resolved finding re-reported as open, or with no state, counts as a reappearance; silence never hides a regression."
     },
     {
       "id": "AMB-03",
       "question": "Should journal_finalized.rounds count attempts or distinct reviewed rounds?",
       "citations": ["packages/aeg-core/src/dev-review-loop/assess-round.ts", "apps/cli/specs/loop.md"],
-      "rulingStatus": "awaiting-principal"
+      "rulingStatus": "ruled",
+      "ruling": "Distinct reviewed rounds. Attempts are recorded in their own field."
     },
     {
       "id": "AMB-04",
       "question": "May a resume run under a different developer model than the paused run?",
       "citations": ["apps/cli/src/lib/dev-review-loop.ts", "apps/cli/specs/loop.md"],
-      "rulingStatus": "awaiting-principal"
+      "rulingStatus": "ruled",
+      "ruling": "Yes. A resume may run under a different developer model; the resume event records it."
     },
     {
       "id": "AMB-05",
       "question": "Is a commit-hook refusal of the driver's commit a send-back to the developer or an infrastructure pause?",
       "citations": ["apps/cli/src/lib/dev-review-loop.ts", "apps/cli/specs/loop.md"],
-      "rulingStatus": "awaiting-principal"
+      "rulingStatus": "ruled",
+      "ruling": "A send-back to the developer, at once, with the refusing hook output — never an infrastructure pause."
     },
     {
       "id": "AMB-06",
@@ -2027,49 +2032,57 @@
         "apps/cli/src/lib/dev-review-loop/publication.ts",
         "apps/cli/tests/lib/dev-review-loop/publication.test.ts"
       ],
-      "rulingStatus": "awaiting-principal"
+      "rulingStatus": "ruled",
+      "ruling": "No. An identical head means the same code was reviewed; publication re-checks only mergeability."
     },
     {
       "id": "AMB-07",
       "question": "May a republish after a restart shrink an existing deferred-findings Issue?",
       "citations": ["apps/cli/src/lib/forge-write.ts", "apps/cli/specs/loop.md"],
-      "rulingStatus": "awaiting-principal"
+      "rulingStatus": "ruled",
+      "ruling": "No. A republish only appends to a deferred-findings Issue, and each entry carries the finding text, not only its location."
     },
     {
       "id": "AMB-08",
       "question": "May the bootstrap task-branch push bypass the Broker and the repository's hooks?",
       "citations": ["apps/cli/src/lib/dev-review-loop/developer-dispatch.ts", "apps/cli/specs/loop.md"],
-      "rulingStatus": "awaiting-principal"
+      "rulingStatus": "ruled",
+      "ruling": "The ref-only bootstrap push of the default branch may skip the repository hooks; it never bypasses the Broker."
     },
     {
       "id": "AMB-09",
       "question": "Should a reviewer without a verified candidate pause the round instead of running unisolated without staged evidence?",
       "citations": ["apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts", "apps/cli/specs/loop.md"],
-      "rulingStatus": "awaiting-principal"
+      "rulingStatus": "ruled",
+      "ruling": "Re-stage the candidate and retry the reviewer. Only after a bound does it become an infrastructure retry, which resumes by itself. A reviewer never runs unisolated."
     },
     {
       "id": "AMB-10",
       "question": "Is CI stuck pending, or absent entirely, red-for-the-developer or an infrastructure pause?",
       "citations": ["apps/cli/src/lib/dev-review-loop.ts", "apps/cli/src/lib/dev-review-loop/gate-reading.ts"],
-      "rulingStatus": "awaiting-principal"
+      "rulingStatus": "ruled",
+      "ruling": "Neither is the developer's fault. Stuck-pending or absent CI is re-run, then retried as infrastructure. A check that waits on the Principal is waited on, never sent to the developer."
     },
     {
       "id": "AMB-11",
       "question": "Does a stale_driver pause resume unattended without a ruling, like infrastructure?",
       "citations": ["apps/cli/src/lib/dev-review-loop.ts", "apps/cli/specs/loop.md"],
-      "rulingStatus": "awaiting-principal"
+      "rulingStatus": "ruled",
+      "ruling": "Yes. A stale_driver pause resumes unattended, like infrastructure, within a retry bound."
     },
     {
       "id": "AMB-12",
       "question": "When the escalation record could not be written, should the pause stay unrecoverable or be re-raised?",
       "citations": ["apps/cli/src/lib/dev-review-loop/pause-resume.ts", "apps/cli/src/lib/dev-review-loop.ts"],
-      "rulingStatus": "awaiting-principal"
+      "rulingStatus": "ruled",
+      "ruling": "Re-raised on the next driver start; a pause is never left silently unrecoverable."
     },
     {
       "id": "AMB-13",
       "question": "Must the stale-driver check fetch the remote, and how does it behave when the default branch is not main?",
       "citations": ["apps/cli/src/lib/dev-review-loop.ts", "apps/cli/specs/loop.md"],
-      "rulingStatus": "awaiting-principal"
+      "rulingStatus": "ruled",
+      "ruling": "Yes, it fetches the remote, and it compares against the actual default branch of the repository, never a hard-coded main."
     }
   ]
 }

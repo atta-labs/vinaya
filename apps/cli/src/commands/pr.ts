@@ -306,6 +306,32 @@ async function collectPrWriteErrors(input: {
   return errors
 }
 
+/**
+ * The driver's publication step uses this exact aggregation before handing a
+ * Developer-authored body to the forge. Keeping the adapter here means
+ * `dev-review-loop` cannot drift from `pr create`'s configured sections,
+ * bare-digit, Premise-own-additions, or registered body checks.
+ */
+export async function validatePrBodyForCreate(input: {
+  body: string
+  title: string
+  changedFiles: string[]
+  branch: string
+  baseBranch?: string
+}): Promise<CheckError[]> {
+  return collectPrWriteErrors({
+    body: input.body,
+    title: input.title,
+    sections: resolveSections('pr', RETRY_CREATE),
+    changedFiles: input.changedFiles,
+    branch: input.branch,
+    premiseBaseBranch: input.baseBranch ?? 'main',
+    prNumber: undefined,
+    retryCommand: RETRY_CREATE,
+    checkLegacyBriefMarkers: true
+  })
+}
+
 export async function prCreateCommand(args: string[]): Promise<void> {
   const json = args.includes('--json')
   const validateOnly = args.includes('--validate-only')
