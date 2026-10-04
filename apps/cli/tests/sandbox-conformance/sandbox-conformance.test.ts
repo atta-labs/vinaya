@@ -60,7 +60,6 @@ const ALWAYS_RUN_IDS = [
   'bun-install',
   'bun-test-one-file',
   'doctrine-developer',
-  'check-dispatch-readiness',
   'gh-issue-view'
 ]
 
@@ -84,37 +83,13 @@ const BUN_HIDDEN_LINUX =
  * suite fails until you do.
  */
 const KNOWN_FAILURES: readonly KnownFailure[] = [
-  {
-    id: 'typecheck',
-    agent: 'claude',
-    platform: 'darwin',
-    denial:
-      'turbo exits 1: "Encountered an I/O error while attempting to read ~/Library/Application Support/com.vercel.cli/auth.json" — the real home is denied read'
-  },
-  {
-    id: 'bun-install',
-    agent: 'codex',
-    platform: 'linux',
-    denial:
-      'bun install exits 1: "bun is unable to write files to tempdir: EROFS" — its temp directory is outside the writable roots'
-  },
-  { id: 'check-dispatch-readiness', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
-  { id: 'verify-dispatch', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
   { id: 'check-all', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
   { id: 'gh-issue-view', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
   { id: 'gh-pr-view', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
   { id: 'gh-pr-view-reviews', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
-  ...[
-    'bun-install',
-    'bun-test-one-file',
-    'typecheck',
-    'format-and-lint',
-    'doctrine-developer',
-    'doctrine-pr-report',
-    'check-dispatch-readiness',
-    'verify-dispatch',
-    'check-all'
-  ].map((id): KnownFailure => ({ id, agent: 'claude', platform: 'linux', denial: BUN_HIDDEN_LINUX }))
+  ...['typecheck', 'check-all'].map(
+    (id): KnownFailure => ({ id, agent: 'claude', platform: 'linux', denial: BUN_HIDDEN_LINUX })
+  )
 ]
 
 function knownFailure(id: string, agent: Agent, platform: string): KnownFailure | undefined {

@@ -779,11 +779,18 @@ describe('renderBrief', () => {
       )
     })
 
-    it('an adopter runs the shipped checks, with no unabridged local derivation offered (O1)', () => {
+    it('an adopter runs the shipped checks, with no unabridged local derivation offered, and §5 never names the dispatch-readiness gate as a command of its own to run (O1, round 4 Principal ruling)', () => {
       const result = renderBrief(baseFacts(ADOPTER), TEMPLATE)
       expect(result.ok).toBe(true)
       if (!result.ok) return
-      expect(result.brief).toContain('`npx --yes @attalabs/vinaya@9.9.9 check dispatch-readiness`')
+      // §5 names the gate as something the driver already ran, never as a
+      // command for the Developer's own sandbox to run — `check
+      // dispatch-readiness`/`verify-dispatch.ts` never appear literally.
+      expect(result.brief).toContain(
+        'driver has already run the dispatch-readiness gate from its own unsandboxed process before dispatching you'
+      )
+      expect(result.brief).not.toContain('check dispatch-readiness`')
+      expect(result.brief).not.toContain('verify-dispatch.ts')
       expect(result.brief).toContain(
         '`PR_BODY="$(cat <body-file>)" npx --yes @attalabs/vinaya@9.9.9 check doc-coverage` green'
       )
@@ -846,22 +853,27 @@ describe('renderBrief', () => {
       expect(result.brief).not.toContain('`vinaya ')
     })
 
-    it('a repository that vendors the CLI keeps every command it runs today, plus its own unabridged derivations (O3)', () => {
+    it('a repository that vendors the CLI keeps every command it runs today, plus its own unabridged derivations where one is still named literally — but never for the dispatch-readiness gate, which §5 now names only as the driver-already-ran-this prose (O3, round 4 Principal ruling)', () => {
       const result = renderBrief(baseFacts(), TEMPLATE)
       expect(result.ok).toBe(true)
       if (!result.ok) return
-      expect(result.brief).toContain('`bun apps/cli/src/index.ts check dispatch-readiness`')
-      expect(result.brief).toContain('`bun packages/aeg-core/bin/verify-dispatch.ts review-convergence-v1 42`')
+      expect(result.brief).toContain('plus, on this repository toolchain, its own fuller derivation')
+      expect(result.brief).not.toContain('check dispatch-readiness`')
+      expect(result.brief).not.toContain('verify-dispatch.ts')
       expect(result.brief).toContain('`PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr`')
       expect(result.brief).toContain('`bun apps/cli/src/index.ts pr create --body-file <path>')
       expect(result.brief).toContain('`bun apps/cli/src/index.ts pr report --write`')
     })
 
-    it("a backlog task's unabridged dispatch derivation names the Issue it re-derives (O3)", () => {
+    it("a backlog task's §5 names the dispatch-readiness gate the same command-free way a tranche task's does — no Issue-specific target leaks into the rendered text any more (O3, round 4 Principal ruling)", () => {
       const result = renderBrief(baseFacts({ trancheSlug: null }), TEMPLATE)
       expect(result.ok).toBe(true)
       if (!result.ok) return
-      expect(result.brief).toContain('`bun packages/aeg-core/bin/verify-dispatch.ts --issue 42`')
+      expect(result.brief).not.toContain('verify-dispatch.ts')
+      expect(result.brief).not.toContain('--issue 42')
+      expect(result.brief).toContain(
+        'driver has already run the dispatch-readiness gate plus, on this repository toolchain, its own fuller derivation'
+      )
     })
 
     it('refuses to render at all when the caller states no invocation — never a default', () => {

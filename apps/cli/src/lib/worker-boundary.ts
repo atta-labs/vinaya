@@ -264,19 +264,30 @@ export function stageCodexPolicyHome(input: {
   try {
     mkdirSync(input.targetDir, { recursive: true, mode: 0o700 })
     // Idempotent across a resumed turn that reuses the same run-scoped path:
-    // clear any prior contents before re-symlinking.
+    // clear any prior contents before re-staging.
     for (const entry of readdirSync(input.targetDir)) {
       rmSync(join(input.targetDir, entry), { recursive: true, force: true })
     }
-    const ownedEntries =
-      input.sandboxConfigToml !== undefined ? new Set([CODEX_AUTH_FILE_NAME, 'config.toml']) : new Set()
-    for (const entry of readdirSync(operatorHome)) {
-      if (entry === 'rules' || ownedEntries.has(entry)) continue
-      symlinkSync(join(operatorHome, entry), join(input.targetDir, entry))
-    }
     if (input.sandboxConfigToml !== undefined) {
+      // O4: a confined run's own CODEX_HOME holds ONLY these two files plus
+      // the `rules` directory below — no OTHER entry of the operator's real
+      // `~/.codex` (an installed plugin, a cached session, `instructions.md`)
+      // is symlinked into it, so nothing this run writes under `targetDir`
+      // can ever reach back into the operator's own `~/.codex` through a
+      // shared inode. `auth.json` is a real COPY (O7's own reasoning, above);
+      // `config.toml` is this run's own generated content, never the
+      // operator's file.
       writeFileSync(join(input.targetDir, CODEX_AUTH_FILE_NAME), readFileSync(operatorAuthPath), { mode: 0o600 })
       writeFileSync(join(input.targetDir, 'config.toml'), input.sandboxConfigToml, { mode: 0o600 })
+    } else {
+      // Pre-O1, attended-only path (this task does not confine it, Boundary):
+      // every operator `~/.codex` entry symlinked through unchanged,
+      // `auth.json`/`config.toml` included — byte-for-byte the behavior
+      // every caller before O1 already got.
+      for (const entry of readdirSync(operatorHome)) {
+        if (entry === 'rules') continue
+        symlinkSync(join(operatorHome, entry), join(input.targetDir, entry))
+      }
     }
     const scopedRules = join(input.targetDir, 'rules')
     mkdirSync(scopedRules, { recursive: true, mode: 0o700 })
@@ -1157,10 +1168,12 @@ function developerBinDir(developerDir: string | null): string | null {
 }
 
 /**
- * O2: both vendor adapters' confined child is already granted read+exec on
- * `developerDir` (Claude via `buildClaudeSandboxSettings`'s `filesystem.allowRead`,
- * Codex via `resolveWorkerBoundaryLaunch`'s `execAllowDirs`) — but a grant
- * alone does not make a bare `git` invocation USE the real binary there: PATH
+ * O2: both vendor adapters' confined child can already read+exec
+ * `developerDir` (Claude implicitly, since O1 leaves reads open everywhere
+ * except the named credential files — no `filesystem.allowRead` grant is
+ * needed any more; Codex via `resolveWorkerBoundaryLaunch`'s
+ * `execAllowDirs`) — but that alone does not make a bare `git` invocation
+ * USE the real binary there: PATH
  * order decides which `git` a plain exec resolves, and the real host's
  * ambient PATH still lists `/usr/bin` (the `xcrun` shim) ahead of it. The
  * shim itself still execs fine under either grant, but on first use it
@@ -1292,6 +1305,36 @@ function resolveBunExecDir(): string | null {
     return out.length > 0 ? dirname(realpathSync(out)) : null
   } catch {
     return null
+  }
+}
+
+/**
+ * Principal ruling (round 4): a live Mac probe found `bun install
+ * --frozen-lockfile` failing under BOTH agents' sandboxes with "bun is
+ * unable to write files to tempdir: EPERM" — `bun install` writes its
+ * package cache under the operator's real home (`bun pm cache`), a path
+ * neither `buildClaudeSandboxSettings`'s `allowWrite` nor
+ * `addCodexWritableDirs`'s roots ever named. Resolved live, the same
+ * `which`-then-`realpath` posture `resolveBunExecDir` already takes for
+ * bun's own binary, so this never grants a guessed path on a host where the
+ * cache actually lives somewhere `bun pm cache` itself would report
+ * differently (`BUN_INSTALL`, a non-default XDG layout). Falls back to
+ * bun's own documented default (`~/.bun/install/cache`) only when the
+ * command itself is unavailable — never `null`: every writable-root caller
+ * here needs a path to add, not an absence to skip.
+ */
+export function resolveBunInstallCacheDir(): string {
+  try {
+    const out = execFileSync('bun', ['pm', 'cache'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    if (out.length > 0) return realpathSync(out)
+  } catch {
+    // Falls through to the documented default below.
+  }
+  const fallback = join(homedir(), '.bun', 'install', 'cache')
+  try {
+    return realpathSync(fallback)
+  } catch {
+    return fallback
   }
 }
 
@@ -1953,12 +1996,17 @@ export function checkLinuxSandboxTools(
 }
 
 /**
- * O2: the two network destinations a confined Developer's own Bash-tool
- * subprocesses (`git fetch`, `gh pr`/`issue` read calls, `bun install`) need
- * to reach. Never the model-runtime endpoint itself — Claude Code's own MAIN
- * process reaches that unconfined; it is not inside its own sandbox, only
- * the tools it dispatches are (`apps/cli/specs/isolation.md` §4) — so the
- * model endpoint needs no entry here at all.
+ * O3: the fixed set of network destinations this list ever names — GitHub
+ * (what the Developer's own `git fetch`/`gh pr`/`issue` read calls reach,
+ * though O2 now also excludes those from the sandbox outright rather than
+ * relying on this allowlist for them), the package registry the repository
+ * installs from (`bun install`), and the agent vendor's own API host
+ * (`api.anthropic.com`) — named here even though Claude Code's own MAIN
+ * process reaches the model runtime unconfined (it is not inside its own
+ * sandbox, only the tools it dispatches are, `apps/cli/specs/isolation.md`
+ * §4): a Bash-tool-spawned subprocess that itself shells out to the model
+ * API (a nested `claude -p` call, a hand-rolled health check) stays confined
+ * and needs this entry to succeed rather than fail closed.
  */
 export const CLAUDE_SANDBOX_ALLOWED_DOMAINS: readonly string[] = [
   'github.com',
@@ -1966,7 +2014,8 @@ export const CLAUDE_SANDBOX_ALLOWED_DOMAINS: readonly string[] = [
   'raw.githubusercontent.com',
   'codeload.github.com',
   'objects.githubusercontent.com',
-  'registry.npmjs.org'
+  'registry.npmjs.org',
+  'api.anthropic.com'
 ]
 
 export type ConfinementRequest = {
@@ -1983,57 +2032,112 @@ export type ClaudeSandboxSettings = {
     readonly enabled: true
     readonly failIfUnavailable: true
     readonly allowUnsandboxedCommands: false
+    readonly excludedCommands: readonly string[]
     readonly network: { readonly allowedDomains: string[] }
     readonly filesystem: {
-      readonly allowWrite: string[]
-      readonly allowRead: string[]
       readonly denyRead: string[]
+      readonly allowRead: string[]
+      readonly allowWrite: string[]
+    }
+    readonly credentials: {
+      readonly files: ReadonlyArray<{ readonly path: string; readonly mode: 'deny' }>
     }
   }
   readonly permissionsDeny: readonly string[]
 }
 
 /**
- * O2: Claude Code's own `sandbox` settings block — `enabled`,
- * `failIfUnavailable` and `allowUnsandboxedCommands: false` exactly as the
- * brief specifies, and deliberately no `excludedCommands` key: an entry
- * there runs a command OUTSIDE the sandbox, which is the one thing a loaded
- * settings source must never be able to add back (O3's own trap).
+ * O2: the Go-based `gh` CLI fails TLS verification under Seatbelt on macOS,
+ * and `git`'s own SSH-backed network commands cannot authenticate through
+ * the sandbox's own proxy tunnel on macOS either (both confirmed live
+ * against `code.claude.com/docs/en/sandboxing`'s own "Troubleshooting"
+ * section, "Go-based CLIs fail TLS verification on macOS" and "`git` over
+ * SSH fails with the sandbox on") — the documented fix for both is the same
+ * `excludedCommands` escape hatch, naming the PLAIN command form (`git push
+ * *`, never `git -C <dir> push *` or a `cd …&&` prefix, which the same page
+ * states stay sandboxed regardless of any entry here).
+ */
+export const CLAUDE_SANDBOX_EXCLUDED_COMMANDS: readonly string[] = ['gh *', 'git push *', 'git fetch *', 'git pull *']
+
+/**
+ * O1: at least the five credential locations the brief names, denied
+ * through Claude Code's own `sandbox.credentials.files` setting rather than
+ * a blanket `filesystem.denyRead` over the whole real home (O1's own
+ * replacement) — `~/.ssh` and `~/.aws` (the two example paths
+ * `code.claude.com/docs/en/sandboxing` itself uses for "Protect
+ * credentials"), `~/.config/gh/hosts.yml` (the `gh` CLI's own token store,
+ * the same file the docs' own "Mask credential files" example names),
+ * `~/.codex/auth.json` (Codex's own cached ChatGPT session, confirmed
+ * elsewhere in this module as the one file `stageCodexPolicyHome` ever
+ * COPIES rather than symlinks, for exactly this reason) and
+ * `~/.claude/.credentials.json` (`OAUTH_CREDENTIAL_FILE_NAME`, Claude's own
+ * OAuth session file this module stages a scoped COPY of via
+ * `stageOAuthCredential` rather than ever granting read on the real path).
+ */
+function claudeCredentialDenyFiles(realHome: string): ReadonlyArray<{ path: string; mode: 'deny' }> {
+  return [
+    join(realHome, '.ssh'),
+    join(realHome, '.aws'),
+    join(realHome, '.config', 'gh', 'hosts.yml'),
+    join(realHome, '.codex', CODEX_AUTH_FILE_NAME),
+    join(realHome, '.claude', OAUTH_CREDENTIAL_FILE_NAME)
+  ].map((path) => ({ path, mode: 'deny' as const }))
+}
+
+/**
+ * O1/O2/O3: Claude Code's own `sandbox` settings block, following its
+ * documented default rather than widening or narrowing it by hand:
  *
- * `filesystem.allowWrite` grants exactly the two directories a confined role
- * is trusted to write: its own worktree (a Developer's worktree, or a
- * Reviewer's candidate checkout) and this dispatch's own scratch
- * directory — never a third path, and never the real `HOME`.
- * `filesystem.denyRead`/`allowRead` together express "readable inside the
- * worktree and scratch directory, denied in the real home outside them":
- * `denyRead` names the real home broadly, and `allowRead` re-permits the two
- * granted directories, which on an ordinary checkout sit nested inside it.
- * Confirmed against the installed binary's own schema, whose `denyRead` doc
- * comment reads "Merged with paths from `Read(...)` deny permission rules" —
- * so `permissionsDeny`'s matching `Read(<home>/**)` entry (below) reaches the
- * SAME merged sandbox list from the permission layer, not a second,
- * independent restriction; `Write`/`Edit` mirror it for the same reason.
+ * - **Reads** are left at Claude Code's own default — "read access to the
+ *   entire computer, except certain denied directories" (confirmed live
+ *   against `code.claude.com/docs/en/sandboxing`, "How sandboxing works") —
+ *   so this function sets no `filesystem.denyRead`/`allowRead` at all
+ *   (O1's own replacement of the prior whole-home deny, below).
+ * - **Writes** are granted on the worktree, this dispatch's own scratch
+ *   directory, and — round 4 Principal ruling, below — bun's own resolved
+ *   install cache (`resolveBunInstallCacheDir`), never a fourth path and
+ *   never the real `HOME`. `filesystem.allowWrite` no longer also names the worktree's own git
+ *   common dir: for a LINKED worktree (every Developer/Reviewer worktree
+ *   this module confines), Claude Code's sandbox already "allows writes to
+ *   the main repository's shared `.git` directory so commands such as `git
+ *   commit` can update refs and the index" on its own (same page, "Git
+ *   worktrees") — the hand-made `resolveGitCommonDir` grant this function
+ *   used to add was redundant with that documented default, not a widening
+ *   of it (O1's own trap).
+ * - **Named credentials** are denied through `credentials.files` in `deny`
+ *   mode (`claudeCredentialDenyFiles`) — the one mechanism O1 names, in
+ *   place of the blanket real-home `denyRead`/mirrored `permissionsDeny`
+ *   this function used to build.
+ * - **`gh`/git's network commands** are excluded from the sandbox
+ *   (`CLAUDE_SANDBOX_EXCLUDED_COMMANDS`) so they run with full access rather
+ *   than failing inside it (O2's own doc comment); `allowUnsandboxedCommands`
+ *   stays `false` regardless — excluding a command is never the same
+ *   mechanism as letting a failed one retry unsandboxed.
+ * - **The domain allowlist is `CLAUDE_SANDBOX_ALLOWED_DOMAINS`, always** —
+ *   never `request.allowedHosts` (O3): one fixed list this module owns,
+ *   never assembled per task. `network.strictAllowlist` is NOT part of this
+ *   function's own return value (see below) even though a real dispatch
+ *   still carries it.
  *
- * `denyRead` ALSO names the real OS temp root (round 2 review, MAJOR —
- * worker-boundary.ts:1832 finding), not only the real home: `scratchDir`
- * is always a fresh `mkdtemp` under `os.tmpdir()` (`dispatch.ts`'s
- * `claudeScratchDir`), so that root is the ONE other directory, beside
- * home, every confined dispatch's own allowed paths are nested inside —
- * and, left unnamed, it would leave a SIBLING task's own scratch
- * directory (the exact sibling-exposure shape `isolation.md` §4's own
- * `vinayaHomeWritableFiles` discussion already closes for the outbox/
- * resume-record files) freely readable by this one. **This narrows, but
- * does not close, O2's full "outside the worktree and scratch directory"
- * wording**: a path outside BOTH the real home and the real temp root
- * (`/etc`, `/opt`, a second filesystem mount) is covered by neither
- * `denyRead` nor `permissionsDeny` here — closing that fully would mean
- * denying read from the filesystem root and re-allowing only the two
- * granted directories, and `allowManagedReadPathsOnly` (the installed
- * binary's own documented route to exactly that shape) is honored only
- * from MANAGED settings, never from a per-dispatch `--settings` file this
- * module writes — so a stronger close is not expressible here. Disclosed,
- * not silently assumed closed, the same posture `isolation.md` §4 already
- * takes for its own residual gaps.
+ * `filesystem.denyRead`/`allowRead` are present but always empty — this
+ * function still sets no additional read restriction of its own (reads stay
+ * at Claude Code's documented default described above) — and
+ * `network` carries `allowedDomains` alone, with no `strictAllowlist`. Both
+ * are shape constraints, not behavior changes: `dispatch.ts`'s
+ * `writeDispatchSettings` is the ONE place a real dispatch's settings file
+ * gets assembled, and it folds `network.strictAllowlist: true` in there,
+ * after this function returns — so every real dispatch still refuses a host
+ * outside the allowlist rather than prompting for it in a non-interactive
+ * run, exactly as before. Keeping it out of THIS function's own return
+ * value, rather than merging it in here, is what lets this function's
+ * output match the vendor-literal `network`/`filesystem` key set another
+ * task's sandbox-conformance suite (`apps/cli/tests/sandbox-conformance/`,
+ * not this task's own Technical Surface) already asserts by exact equality —
+ * that suite was added on `main` after this branch's own base, so this
+ * branch merges `main` in (rather than carrying an independent copy of the
+ * same path, which would make the PR's own merge commit conflict) and edits
+ * its `KNOWN_FAILURES` list directly once this function's own shape change
+ * makes a listed Claude-on-Linux denial stop reproducing.
  *
  * All paths are `realpath`'d before being written into the settings file —
  * the same "every substituted path must be canonicalized" discipline
@@ -2043,10 +2147,7 @@ export type ClaudeSandboxSettings = {
  * otherwise make the sandbox's own resolved-path check disagree with the
  * literal string this settings file names.
  */
-export function buildClaudeSandboxSettings(
-  request: ConfinementRequest,
-  developerDir: string | null = null
-): ClaudeSandboxSettings {
+export function buildClaudeSandboxSettings(request: ConfinementRequest): ClaudeSandboxSettings {
   const real = (p: string): string => {
     try {
       return realpathSync(p)
@@ -2057,39 +2158,21 @@ export function buildClaudeSandboxSettings(
   const worktreeDir = real(request.worktreeDir)
   const scratchDir = real(request.scratchDir)
   const realHome = real(homedir())
-  const realTmpRoot = real(tmpdir())
-  const denyRoots = realTmpRoot === realHome ? [realHome] : [realHome, realTmpRoot]
-  // O2: read-only carve-outs re-permitting exactly the git-config paths and
-  // the active Apple developer directory (never write) despite `denyRead`
-  // naming the whole real home above — the same "named, narrow carve-out
-  // inside a broader deny" shape `worktreeDir`/`scratchDir` already use on
-  // this same list. The developer dir needs read here (not only exec) so a
-  // confined Bash subprocess can actually load the real `git` binary and its
-  // adjacent `libxcrun.dylib` once `resolveGitFirstPath` points PATH at it.
-  const gitConfigPaths = gitConfigReadOnlyPaths(realHome).map(real)
-  const extraAllowRead = [...gitConfigPaths, ...(developerDir ? [real(developerDir)] : [])]
-  // Principal ruling 1, failure 2: a linked worktree's `.git` resolves into
-  // the main repository's git common dir — granted read AND write (git
-  // itself writes the index lock/`HEAD`/`ORIG_HEAD` there on an ordinary
-  // `status`/`commit`, not only on an explicit worktree operation), the
-  // same way `worktreeDir`/`scratchDir` already are, rather than folded
-  // into the read-only `extraAllowRead` carve-out above. `null` (no `git`,
-  // or `worktreeDir` not actually a worktree) adds nothing.
-  const gitCommonDir = resolveGitCommonDir(worktreeDir)
-  const extraReadWrite = gitCommonDir ? [real(gitCommonDir)] : []
   return {
     sandbox: {
       enabled: true,
       failIfUnavailable: true,
       allowUnsandboxedCommands: false,
-      network: { allowedDomains: [...request.allowedHosts] },
+      excludedCommands: CLAUDE_SANDBOX_EXCLUDED_COMMANDS,
+      network: { allowedDomains: [...CLAUDE_SANDBOX_ALLOWED_DOMAINS] },
       filesystem: {
-        allowWrite: [worktreeDir, scratchDir, ...extraReadWrite],
-        allowRead: [worktreeDir, scratchDir, ...extraAllowRead, ...extraReadWrite],
-        denyRead: denyRoots
-      }
+        denyRead: [],
+        allowRead: [],
+        allowWrite: [worktreeDir, scratchDir, resolveBunInstallCacheDir()]
+      },
+      credentials: { files: claudeCredentialDenyFiles(realHome) }
     },
-    permissionsDeny: denyRoots.flatMap((root) => [`Read(${root}/**)`, `Write(${root}/**)`, `Edit(${root}/**)`])
+    permissionsDeny: []
   }
 }
 
@@ -2153,7 +2236,7 @@ export function resolveClaudeConfinement(
     return {
       ok: true,
       confined: true,
-      settings: buildClaudeSandboxSettings(request, deps.developerDir),
+      settings: buildClaudeSandboxSettings(request),
       scratchDir: request.scratchDir,
       pathOverride
     }
@@ -2163,7 +2246,7 @@ export function resolveClaudeConfinement(
       return {
         ok: true,
         confined: true,
-        settings: buildClaudeSandboxSettings(request, deps.developerDir),
+        settings: buildClaudeSandboxSettings(request),
         scratchDir: request.scratchDir,
         pathOverride
       }
@@ -2267,11 +2350,22 @@ function tomlString(value: string): string {
  *   Only `request.allowedHosts` ever appears here, each mapped to `"allow"`
  *   — this function never writes a `"deny"` entry, since nothing this task
  *   dispatches needs one named explicitly to stay refused by default.
+ * - `web_search = "live"` (O9) — a TOP-LEVEL key, confirmed live and
+ *   cross-checked against the vendor's own `config-reference` page as
+ *   independent of every setting above: "These search-domain filters are
+ *   separate from sandboxed-command network domain rules and do not
+ *   restrict connectors or MCP servers." Setting it here lets a confined
+ *   Codex Developer read official documentation pages (the Documentation
+ *   read-gate's own obligation) without touching
+ *   `[features.network_proxy.domains]` at all — the sandboxed-command
+ *   network allowlist above stays exactly what `request.allowedHosts` names,
+ *   unwidened.
  */
 export function buildCodexSandboxConfigToml(request: ConfinementRequest): string {
   const domainLines = request.allowedHosts.map((host) => `${tomlString(host)} = "allow"`)
   return [
     'sandbox_mode = "workspace-write"',
+    'web_search = "live"',
     '',
     '[sandbox_workspace_write]',
     'network_access = true',

@@ -3417,9 +3417,9 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash all
     for (const rule of [
       'Bash(git worktree add:*)',
       'Bash(git fetch:*)',
+      'Bash(git pull:*)',
       'Bash(git commit:*)',
-      'Bash(gh pr edit:*)',
-      'Bash(gh issue view:*)',
+      'Bash(gh pr view:*)',
       'Bash(bun install:*)',
       'Bash(bun test:*)',
       'Bash(bun run:*)',
@@ -3430,19 +3430,38 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash all
     expect(perms.allow.some((r) => r.startsWith('Write(') || r.startsWith('Edit('))).toBe(false)
   })
 
-  it('developer: no longer granted push or PR-open — the driver publishes each turn (O6)', () => {
+  it('developer: now granted push and PR-open — a Claude Code Developer publishes its own work (agent-confinement-v1/7, O2/O7)', () => {
     const perms = buildRolePermissions('developer')
-    // Revoked from the allow list outright.
-    expect(perms.allow).not.toContain('Bash(git push:*)')
-    expect(perms.allow).not.toContain('Bash(gh pr create:*)')
-    // And denied explicitly (deny overrides any broader allow): `git push` and
-    // `gh pr create` directly, and the repository's own `pr create` subcommand,
-    // which the broad `Bash(bun apps/cli/src/index.ts:*)` allow would otherwise cover.
-    expect(perms.deny).toContain('Bash(git push:*)')
-    expect(perms.deny).toContain('Bash(gh pr create:*)')
-    expect(perms.deny).toContain('Bash(bun apps/cli/src/index.ts pr create:*)')
-    // Every other vinaya CLI subcommand the Developer uses stays granted.
+    // Granted outright — the driver no longer publishes for a Claude Code
+    // Developer, so it needs its own `git push`/`git pull`/`gh` to commit,
+    // push, keep its branch current and open its own pull request, through
+    // the SAME commands the sandbox excludes (`CLAUDE_SANDBOX_EXCLUDED_COMMANDS`).
+    // This permissions file is Claude-only (`writeDispatchSettings`), so a
+    // Codex dispatch — whose driver still publishes for it — never reads
+    // this grant at all.
+    expect(perms.allow).toContain('Bash(git push:*)')
+    expect(perms.allow).toContain('Bash(git pull:*)')
     expect(perms.allow).toContain('Bash(bun apps/cli/src/index.ts:*)')
+    // `gh` is enumerated to exactly what O7 needs, never a blanket `gh:*`
+    // (round 2 security review, HIGH: `gh` runs outside the sandbox, so this
+    // allow-list is the only remaining gate against `gh api`/`gh pr merge`/
+    // `gh secret`/`gh repo`).
+    for (const rule of [
+      'Bash(gh pr create:*)',
+      'Bash(gh pr edit:*)',
+      'Bash(gh pr view:*)',
+      'Bash(gh pr comment:*)',
+      'Bash(gh pr diff:*)',
+      'Bash(gh issue view:*)',
+      'Bash(gh issue comment:*)'
+    ]) {
+      expect(perms.allow).toContain(rule)
+    }
+    expect(perms.allow).not.toContain('Bash(gh:*)')
+    // Only the destructive/verify-skipping shapes stay revoked — see the next test.
+    expect(perms.deny).not.toContain('Bash(git push:*)')
+    expect(perms.deny).not.toContain('Bash(gh pr create:*)')
+    expect(perms.deny).not.toContain('Bash(bun apps/cli/src/index.ts pr create:*)')
   })
 
   it('developer: forbidden shapes doctrine names are denied, narrower than the broader allow rule that would otherwise cover them', () => {
@@ -3450,6 +3469,8 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash all
     for (const rule of [
       'Bash(git push --force*)',
       'Bash(git push -f*)',
+      'Bash(git push --force-with-lease*)',
+      'Bash(git push --no-verify*)',
       'Bash(git commit --no-verify*)',
       'Bash(git stash*)',
       'Bash(git reset --hard*)',
@@ -3458,10 +3479,11 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash all
     ]) {
       expect(perms.deny).toContain(rule)
     }
-    // `git commit:*` stays as the broader allow whose narrower `--no-verify`
-    // shape the deny list overrides — proving these are real overrides, not
-    // merely commands that were never allowed at all. (`git push` is now
-    // revoked outright, O6, so it is no longer the example here.)
+    // `git push:*`/`git commit:*` stay as the broader allow whose narrower
+    // force-push/`--no-verify` shapes the deny list overrides — proving
+    // these are real overrides, not merely commands that were never allowed
+    // at all.
+    expect(perms.allow).toContain('Bash(git push:*)')
     expect(perms.allow).toContain('Bash(git commit:*)')
     expect(perms.deny).toContain('Bash(git commit --no-verify*)')
   })
@@ -3560,21 +3582,27 @@ describe('buildRolePermissions — Issue #865, O1/O2/O3: machine-state commands 
   })
 
   it('O3: the written policy names a version later than the one that denied no machine-state command', () => {
-    expect(PERMISSION_POLICY_VERSION).toBe('v4')
+    expect(PERMISSION_POLICY_VERSION).toBe('v6')
     expect(PERMISSION_POLICY_VERSION).not.toBe('v2')
   })
 
   it('nothing else in either role’s policy regressed — every rule the previous policy carried is still there', () => {
     const developer = buildRolePermissions('developer')
-    // `git push`/`gh pr create` are revoked (O6, agent-confinement-v1/1) — the
-    // driver publishes each turn; every other capability the Developer carries stays.
-    for (const rule of ['Bash(git commit:*)', 'Bash(gh pr edit:*)', 'Bash(bun apps/cli/src/index.ts:*)']) {
+    // `git push`/`git pull`/`gh` are granted (O2/O7, agent-confinement-v1/7)
+    // — a Claude Code Developer now publishes its own work; every other
+    // capability the Developer carries stays. `gh` is the enumerated
+    // subcommand list, never the blanket `Bash(gh:*)` (round 2 security
+    // review, HIGH).
+    for (const rule of [
+      'Bash(git commit:*)',
+      'Bash(git push:*)',
+      'Bash(git pull:*)',
+      'Bash(gh pr view:*)',
+      'Bash(bun apps/cli/src/index.ts:*)'
+    ]) {
       expect(developer.allow).toContain(rule)
     }
     for (const rule of [
-      'Bash(git push:*)',
-      'Bash(gh pr create:*)',
-      'Bash(bun apps/cli/src/index.ts pr create:*)',
       'Bash(git push --force*)',
       'Bash(git push -f*)',
       'Bash(git commit --no-verify*)',
@@ -4611,6 +4639,34 @@ describe('codexSpawnEnvExtras — round 6 security review, CRITICAL (Issue #676)
 
   it('a non-codex vendor never gets CODEX_HOME even if codexHomeDir were somehow non-null', () => {
     expect(codexSpawnEnvExtras('claude', '/tmp/scratch/codex-home').attribution).toEqual({})
+  })
+})
+
+// Round 5 Principal ruling: `bun install` failed under Codex's own sandbox
+// with "bun is unable to write files to tempdir: EPERM" — this function is
+// now the ONE shared place both a real Codex dispatch (`dispatchRole`) and
+// the sandbox-conformance suite's own `codexSession()` get TMPDIR/TMP/TEMP
+// from, pointed at the same writable scratch directory, rather than each
+// building its own (possibly-drifting) copy.
+describe('codexSpawnEnvExtras — TMPDIR/TMP/TEMP pointed at the writable scratch directory (round 5 Principal ruling)', () => {
+  it('a codex dispatch with a scratch directory carries TMPDIR, TMP and TEMP all set to it', () => {
+    const extras = codexSpawnEnvExtras('codex', '/tmp/scratch/codex-home', '/tmp/scratch/codex-tmp')
+    expect(extras.attribution).toEqual({
+      CODEX_HOME: '/tmp/scratch/codex-home',
+      TMPDIR: '/tmp/scratch/codex-tmp',
+      TMP: '/tmp/scratch/codex-tmp',
+      TEMP: '/tmp/scratch/codex-tmp'
+    })
+  })
+
+  it('no scratch directory (an attended dispatch) sets none of TMPDIR/TMP/TEMP — the default parameter value', () => {
+    expect(codexSpawnEnvExtras('codex', '/tmp/scratch/codex-home')).toEqual({
+      attribution: { CODEX_HOME: '/tmp/scratch/codex-home' }
+    })
+  })
+
+  it('a non-codex vendor never gets TMPDIR/TMP/TEMP even if a scratch directory were somehow passed', () => {
+    expect(codexSpawnEnvExtras('claude', null, '/tmp/scratch/codex-tmp').attribution).toEqual({})
   })
 })
 

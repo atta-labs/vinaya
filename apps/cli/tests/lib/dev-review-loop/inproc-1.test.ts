@@ -12,6 +12,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   cleanupWorlds,
+  developerDir,
   makeInProcessDeps,
   makeWorld,
   outboxLines as ipOutboxLines,
@@ -263,20 +264,49 @@ describe('devReviewLoop — a fresh developer session is prepended its role doct
     expect(prompt.indexOf('YOUR ROLE DOCTRINE')).toBeLessThan(prompt.indexOf(world.frozenBrief))
   })
 
-  it('prepends no doctrine when none resolves — the publication-file instructions still frame the frozen brief, carried verbatim as the suffix', async () => {
+  it('prepends no doctrine when none resolves — the frozen brief then stands alone for a self-publishing Claude Developer', async () => {
     const world = makeWorld({ developerDoctrine: null })
     await runLoopInProcess(world)
     const dev = world.dispatches.find((d) => d.role === 'developer')
     const prompt = dev?.prompt ?? ''
     // No doctrine block is prepended when none resolves.
     expect(prompt).not.toContain('YOUR ROLE DOCTRINE')
-    // O6: the round-1 dispatch now always carries the commit-header and PR-body
-    // instructions (the driver publishes the turn, so the Developer leaves its
-    // work uncommitted and writes those files) — so it is no longer the frozen
-    // brief alone. The brief is still carried VERBATIM as the contiguous suffix,
-    // the instructions prepended OUTSIDE it, so its hash-bound text is untouched.
-    expect(prompt).toContain('Leave all your changes UNCOMMITTED')
-    expect(prompt).toContain(world.frozenBrief)
-    expect(prompt.endsWith(world.frozenBrief)).toBe(true)
+    // O7: a Claude Code Developer now holds its own forge credential and
+    // publishes its own round-1 commit, push and pull request itself — so
+    // round 1 carries no commit-header/PR-body hand-off instructions, and
+    // with no doctrine block either the prompt is exactly the frozen brief.
+    expect(prompt).toBe(world.frozenBrief)
+  })
+})
+
+describe('the driver-run dispatch-readiness gate', () => {
+  it('a NOT READY verdict refuses the Developer turn: no developer dispatch, a decided pause(infrastructure), the gate output staged for the Developer', async () => {
+    const world = makeWorld()
+    const gateOutput =
+      '$ bun apps/cli/src/checks/bin/check-dispatch-readiness.ts --issue 1\nNOT READY: a dependency is still open'
+    const result = await runLoopInProcess(world, undefined, {
+      checkTaskDispatchReadiness: (_branch) => ({ ready: false, output: gateOutput })
+    })
+
+    expect(world.dispatches.filter((d) => d.role === 'developer')).toHaveLength(0)
+    expect(world.dispatchCountByRole.developer ?? 0).toBe(0)
+    expect(result.finalDecision.type).toBe('pause')
+    expect((result.finalDecision as { reason?: string }).reason).toBe('infrastructure')
+    expect(readPauseState(world.runtimeDir, world.task)?.detail).toContain('dispatch-readiness gate failed')
+
+    const staged = readFileSync(join(developerDir(world, 1), 'dispatch-readiness.txt'), 'utf8')
+    expect(staged).toBe(gateOutput)
+  })
+
+  it('a READY verdict is staged where the Developer reads it, and the turn is dispatched', async () => {
+    const world = makeWorld()
+    const gateOutput = '$ bun packages/aeg-core/bin/verify-dispatch.ts --issue 1\nREADY'
+    await runLoopInProcess(world, undefined, {
+      checkTaskDispatchReadiness: (_branch) => ({ ready: true, output: gateOutput })
+    })
+
+    expect(world.dispatches.filter((d) => d.role === 'developer').length).toBeGreaterThan(0)
+    const staged = readFileSync(join(developerDir(world, 1), 'dispatch-readiness.txt'), 'utf8')
+    expect(staged).toBe(gateOutput)
   })
 })

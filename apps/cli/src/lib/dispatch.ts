@@ -104,6 +104,7 @@ import {
   buildWorkerEnv,
   hasSubscriptionLogin,
   REAL_WORKER_BOUNDARY_DEPS,
+  resolveBunInstallCacheDir,
   resolveClaudeConfinement,
   resolveCodexConfinement,
   resolveGitCommonDir,
@@ -1152,12 +1153,20 @@ const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
  * `v4`: `writeAccessHookScript` now also denies an `exact-files`-scoped
  * Write/Edit outside its granted hand-off files instead of falling through —
  * neither touches `buildRolePermissions`'s own `allow`/`deny` arrays, but all
- * are as much "the written policy" as those arrays are) —
+ * are as much "the written policy" as those arrays are; the bump to `v6`:
+ * the Developer's `gh` allow narrows from a blanket `Bash(gh:*)` to the
+ * enumerated subcommands O7 actually needs (`gh pr create/edit/view/comment/
+ * diff`, `gh issue view/comment`) — `gh` runs outside the sandbox
+ * (`CLAUDE_SANDBOX_EXCLUDED_COMMANDS`), so this allow-list was the only
+ * remaining gate against `gh api`/`gh pr merge`/`gh secret`/`gh repo` (round
+ * 2 security review, HIGH) — and adds a matching `Bash(git pull:*)` allow
+ * for the `git pull *` entry `CLAUDE_SANDBOX_EXCLUDED_COMMANDS` already
+ * listed with no permission grant of its own (round 2 code review, O2 gap)) —
  * `writeDispatchSettings`'s own first lifecycle line for a role names it, so
  * a run's own log says which policy shape it started under without needing
  * to diff `dispatch.ts` against the run's own timestamp.
  */
-export const PERMISSION_POLICY_VERSION = 'v4'
+export const PERMISSION_POLICY_VERSION = 'v6'
 
 type RolePermissions = { allow: string[]; deny: string[] }
 
@@ -1298,30 +1307,43 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(git worktree add:*)',
         'Bash(git worktree list:*)',
         'Bash(git fetch:*)',
+        'Bash(git pull:*)',
         'Bash(git status:*)',
         'Bash(git diff:*)',
         'Bash(git log:*)',
         'Bash(git show:*)',
         'Bash(git add:*)',
         'Bash(git commit:*)',
-        // The Developer no longer pushes or opens the pull request itself — the
-        // review-loop driver commits each turn and publishes it through the
-        // Broker's governed `branch-push`/`pr-open` operations, so a confined
-        // Developer holding no forge credential never needs `git push`, `gh pr
-        // create` or the repository's own `pr create` command. They are revoked
-        // from the grant here (the `pr create` subcommand by the deny rule
-        // below); every other git/gh/CLI capability the Developer uses stays.
-        'Bash(git config:*)',
-        'Bash(git branch:*)',
-        'Bash(git checkout:*)',
-        'Bash(git merge:*)',
-        'Bash(git rebase:*)',
+        // O2/O7: a confined Claude Code Developer now publishes its own work
+        // — it commits, pushes its task branch and opens or updates its own
+        // pull request, through the SAME excluded commands
+        // (`CLAUDE_SANDBOX_EXCLUDED_COMMANDS`, `worker-boundary.ts`) that let
+        // `git push`/`git pull`/`git fetch`/`gh` run with full access despite
+        // the sandbox. The `gh` grant below is enumerated to exactly the
+        // subcommands O7 requires — read PR/Issue state and publish the
+        // Developer's own PR — never a blanket `gh:*`: the Developer holds
+        // the operator's full-privilege forge token, and `gh` runs OUTSIDE
+        // the sandbox (`excludedCommands`), so this allow-list is the only
+        // remaining gate against `gh api`, `gh pr merge`, `gh secret`, `gh
+        // repo` and the rest of the forge surface a prompt-injected turn
+        // could otherwise reach (round 2 security review, HIGH). The driver
+        // still publishes for Codex, whose `workspace-write` sandbox keeps
+        // `.git` read-only by design, so this grant only ever takes effect
+        // on the Claude side (`buildRolePermissions`/`writeDispatchSettings`
+        // are Claude-only).
+        'Bash(git push:*)',
+        'Bash(gh pr create:*)',
         'Bash(gh pr edit:*)',
         'Bash(gh pr view:*)',
         'Bash(gh pr comment:*)',
         'Bash(gh pr diff:*)',
         'Bash(gh issue view:*)',
         'Bash(gh issue comment:*)',
+        'Bash(git config:*)',
+        'Bash(git branch:*)',
+        'Bash(git checkout:*)',
+        'Bash(git merge:*)',
+        'Bash(git rebase:*)',
         'Bash(bun install:*)',
         'Bash(bun run:*)',
         'Bash(bun test:*)',
@@ -1331,19 +1353,14 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(bun apps/cli/src/index.ts:*)'
       ],
       deny: [
-        // O6: the Developer does not push or open the pull request — the driver
-        // publishes each turn. `git push` and `gh pr create` are already absent
-        // from the allow list above; `pr create` reaches the repository CLI
-        // through the broad `Bash(bun apps/cli/src/index.ts:*)` allow, so it is
-        // denied explicitly here (deny overrides allow) while every other
-        // `vinaya` subcommand the Developer uses stays granted.
-        'Bash(bun apps/cli/src/index.ts pr create:*)',
-        'Bash(git push:*)',
+        // O7: force-pushing and `--no-verify` stay forbidden even though
+        // plain `git push`/`git commit` are now granted above — a narrower
+        // deny wins over a broader allow that also matches (confirmed live,
+        // this function's own doc comment).
         'Bash(git push --force*)',
         'Bash(git push -f*)',
         'Bash(git push --force-with-lease*)',
         'Bash(git push --no-verify*)',
-        'Bash(gh pr create:*)',
         'Bash(git commit --no-verify*)',
         'Bash(git commit -n*)',
         'Bash(git stash*)',
@@ -1770,12 +1787,18 @@ export function writeDispatchSettings(
    * O1/O2: the Claude-native sandbox block `resolveClaudeConfinement`
    * resolved for THIS dispatch, when it is confined — `null` for every
    * attended dispatch and for an unattended one running unconfined (Linux
-   * without `bubblewrap`/`socat`). Embeds `settings.sandbox` verbatim and
-   * folds `permissionsDeny` into `buildRolePermissions(role)`'s own `deny`
-   * array, so the ONE settings file this function already writes carries
-   * the sandbox boundary alongside the existing hooks/permissions blocks,
-   * never a second file a confined `claude --settings` would also have to
-   * be told to load.
+   * without `bubblewrap`/`socat`). Embeds `settings.sandbox` and folds
+   * `permissionsDeny` into `buildRolePermissions(role)`'s own `deny` array,
+   * so the ONE settings file this function already writes carries the
+   * sandbox boundary alongside the existing hooks/permissions blocks, never
+   * a second file a confined `claude --settings` would also have to be told
+   * to load. This is also the ONE place `network.strictAllowlist: true` gets
+   * added — `buildClaudeSandboxSettings`'s own return value carries no such
+   * key (see its doc comment: a shape constraint from another task's
+   * sandbox-conformance suite, not a behavior change) — so this real,
+   * written settings file is the only thing that has to carry it for a host
+   * outside the allowlist to be refused rather than prompted for in this
+   * non-interactive dispatch.
    */
   confinement: ClaudeSandboxSettings | null = null,
   /**
@@ -1846,7 +1869,14 @@ export function writeDispatchSettings(
         BASH_MAX_TIMEOUT_MS: DISPATCH_BASH_MAX_TIMEOUT_MS
       },
       permissions,
-      ...(confinement === null ? {} : { sandbox: confinement.sandbox }),
+      ...(confinement === null
+        ? {}
+        : {
+            sandbox: {
+              ...confinement.sandbox,
+              network: { ...confinement.sandbox.network, strictAllowlist: true }
+            }
+          }),
       hooks: {
         PreToolUse: preToolUseHooks,
         PostToolUse: [
@@ -3398,12 +3428,33 @@ export function missingSubscriptionLoginReason(
   return NO_SUBSCRIPTION_LOGIN_REASON
 }
 
+/**
+ * Round 5 Principal ruling: a live Mac run found `bun install
+ * --frozen-lockfile` failing under Codex's own sandbox with "bun is unable
+ * to write files to tempdir: EPERM" in the sandbox-conformance suite's own
+ * `codexSession()` (`sandbox-launch.ts`), which rebuilds Codex's spawn env
+ * independently of `dispatchRole` rather than sharing this function — the
+ * TMPDIR/TMP/TEMP override a real Codex dispatch already carried (pointed
+ * at its own writable scratch directory) folded into this ONE shared,
+ * exported function instead of staying an inline object literal only
+ * `dispatchRole` built, so both callers carry the identical override rather
+ * than risking one quietly drifting from the other (found live: the
+ * conformance harness's own hand-rolled copy named `TMPDIR` alone, never
+ * `TMP`/`TEMP`). `scratchDir` is `null` for an attended dispatch or any
+ * non-Codex agent, same as `codexHomeDir`.
+ */
 export function codexSpawnEnvExtras(
   agent: AgentVendor,
-  codexHomeDir: string | null
+  codexHomeDir: string | null,
+  scratchDir: string | null = null
 ): { attribution: Record<string, string> } {
-  const staged = agent === 'codex' && codexHomeDir !== null
-  return { attribution: staged ? { CODEX_HOME: codexHomeDir as string } : {} }
+  const isCodex = agent === 'codex'
+  return {
+    attribution: {
+      ...(isCodex && codexHomeDir !== null ? { CODEX_HOME: codexHomeDir } : {}),
+      ...(isCodex && scratchDir !== null ? { TMPDIR: scratchDir, TMP: scratchDir, TEMP: scratchDir } : {})
+    }
+  }
 }
 
 /**
@@ -3684,6 +3735,12 @@ export async function dispatchRole(
   // contributes nothing extra to the grant, the same best-effort posture
   // every other optional grant in this module already takes.
   const codexGitCommonDir = codexRequireIsolation && opts.cwd !== undefined ? resolveGitCommonDir(opts.cwd) : null
+  // Round 4 Principal ruling: `bun install` writes its package cache under
+  // the operator's real home (`resolveBunInstallCacheDir`, `worker-
+  // boundary.ts`) — the same gap `codexGitCommonDir` above closes for git's
+  // own metadata, now closed for bun's cache too, only when this dispatch
+  // actually enforces Codex's own sandbox.
+  const codexBunCacheDir = codexRequireIsolation ? resolveBunInstallCacheDir() : null
   const vendorArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
   const baseArgs =
     agent === 'codex'
@@ -3692,7 +3749,8 @@ export async function dispatchRole(
           [
             ...(opts.extraWritableDirs ?? []),
             ...(codexScratchDir !== null ? [codexScratchDir] : []),
-            ...(codexGitCommonDir !== null ? [codexGitCommonDir] : [])
+            ...(codexGitCommonDir !== null ? [codexGitCommonDir] : []),
+            ...(codexBunCacheDir !== null ? [codexBunCacheDir] : [])
           ],
           opts.resumeId !== undefined,
           opts.developerFiles ?? []
@@ -4160,7 +4218,7 @@ export async function dispatchRole(
       // nobody wrote to. It also saves the child a network round trip.
       [RUNTIME_DIR_ENV_KEY]: runtimeDirForRepo(repo)
     }
-    const codexEnvExtras = agent === 'codex' ? codexSpawnEnvExtras(agent, codexHomeDir) : null
+    const codexEnvExtras = agent === 'codex' ? codexSpawnEnvExtras(agent, codexHomeDir, codexScratchDir) : null
     const child = spawn(spawnCommand, spawnCommandArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
       ...(spawnCwd ? { cwd: spawnCwd } : {}),
@@ -4172,12 +4230,12 @@ export async function dispatchRole(
           // even though Codex's own OS-level confinement no longer comes
           // from a profile this repo builds. No credential value at all:
           // the staged, COPIED `auth.json` (O7) inside `CODEX_HOME` is the
-          // whole route, named via `codexEnvExtras` below.
+          // whole route; `TMPDIR`/`TMP`/`TEMP` are folded in by
+          // `codexEnvExtras` below too (round 5 Principal ruling), pointed
+          // at the SAME scratch directory `addCodexWritableDirs` already
+          // grants.
           buildWorkerEnv(process.env, {
             ...attribution,
-            TMPDIR: codexScratchDir as string,
-            TMP: codexScratchDir as string,
-            TEMP: codexScratchDir as string,
             ...codexEnvExtras!.attribution
           })
         : claudeConfinement?.confined === true

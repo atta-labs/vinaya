@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   assembleDeveloperDoctrine,
+  checkTaskDispatchReadiness,
   createTaskWorktree,
   DEVELOPER_CHECKLIST_HEADINGS,
   developerBranchFor,
@@ -61,6 +62,66 @@ describe('developerBranchFor', () => {
       () => []
     )
     expect(branch).toBe('task/issue-602')
+  })
+})
+
+// Principal ruling: the driver runs this task's dispatch-readiness gate
+// from its own unsandboxed process, before every Developer turn — never
+// inside the Developer's own sandbox, where either script's own `gh` call
+// (spawned by `bun`, never typed directly) hits the denied forge-token
+// file. `checkTaskDispatchReadiness` is the pure composition this gets
+// built from — `runGate` injected so these tests never shell out to a real
+// `bun`/forge.
+describe('checkTaskDispatchReadiness', () => {
+  it('runs both scripts with <tranche> <n> derived from a task/<tranche>/<n> branch, and is ready when both exit clean', () => {
+    const calls: { script: string; args: readonly string[] }[] = []
+    const result = checkTaskDispatchReadiness('task/agent-confinement-v1/7', (script, args) => {
+      calls.push({ script, args })
+      return `${script} ok`
+    })
+    expect(result.ready).toBe(true)
+    expect(calls).toEqual([
+      { script: 'apps/cli/src/checks/bin/check-dispatch-readiness.ts', args: ['agent-confinement-v1', '7'] },
+      { script: 'packages/aeg-core/bin/verify-dispatch.ts', args: ['agent-confinement-v1', '7'] }
+    ])
+    expect(result.output).toContain('check-dispatch-readiness.ts ok')
+    expect(result.output).toContain('verify-dispatch.ts ok')
+  })
+
+  it('runs both scripts with --issue <n> derived from a task/issue-<n> branch', () => {
+    const calls: { script: string; args: readonly string[] }[] = []
+    checkTaskDispatchReadiness('task/issue-600', (script, args) => {
+      calls.push({ script, args })
+      return 'ok'
+    })
+    expect(calls.map((c) => c.args)).toEqual([
+      ['--issue', '600'],
+      ['--issue', '600']
+    ])
+  })
+
+  it('is NOT ready, and stages the thrown stdout/stderr, when either script exits non-zero', () => {
+    const result = checkTaskDispatchReadiness('task/agent-confinement-v1/7', (script) => {
+      if (script.includes('check-dispatch-readiness')) return 'READY TO DISPATCH'
+      const err = new Error('Command failed') as Error & { stdout: string; stderr: string }
+      err.stdout = ''
+      err.stderr = 'dispatch-gate depends-on-not-merged: task 6 is not merged yet.'
+      throw err
+    })
+    expect(result.ready).toBe(false)
+    expect(result.output).toContain('READY TO DISPATCH')
+    expect(result.output).toContain('dispatch-gate depends-on-not-merged')
+  })
+
+  it('is NOT ready, with no script ever run, when the branch matches neither task shape', () => {
+    const calls: unknown[] = []
+    const result = checkTaskDispatchReadiness('main', (script, args) => {
+      calls.push({ script, args })
+      return 'unreachable'
+    })
+    expect(result.ready).toBe(false)
+    expect(calls).toEqual([])
+    expect(result.output).toContain("branch 'main' matches neither")
   })
 })
 
