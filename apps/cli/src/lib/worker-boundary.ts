@@ -2758,3 +2758,23 @@ export function findCredentialPatterns(text: string, location: string): Credenti
   }
   return findings
 }
+
+/**
+ * O4: the lines a unified diff ADDED — the content the turn actually
+ * wrote into the worktree, for the after-turn credential scan. A hunk's `+`
+ * lines, with their leading `+` stripped; NEVER a context line (unchanged, a
+ * leading space), a removed line (`-`), or a file/hunk header (`+++ `, `--- `,
+ * `@@`, `diff `, `index `). Scanning the WHOLE diff instead would re-scan
+ * context the turn merely moved past — including an existing credential-shaped
+ * test fixture a hunk happens to sit beside — which is not what this turn
+ * wrote. The `+++ ` file header is explicitly excluded even though it starts
+ * with `+`: it is git's own framing, never added content.
+ */
+export function addedDiffLines(diff: string): string {
+  const added: string[] = []
+  for (const line of diff.split(/\r?\n/)) {
+    if (line.startsWith('+++')) continue
+    if (line.startsWith('+')) added.push(line.slice(1))
+  }
+  return added.join('\n')
+}

@@ -49,6 +49,7 @@ import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import { configPath, loadTrustAnchorConfig, resolveSecurityScanCommand } from './config.js'
 import {
+  addedDiffLines,
   agentOwnConfigSubpaths,
   changedProtectedPaths,
   findCredentialPatterns,
@@ -97,6 +98,7 @@ import {
 import {
   AGENT_VENDOR_NAMES,
   type AgentVendor,
+  developerWrittenTextFromVendorOutput,
   dispatchRole as realDispatchRole,
   type DispatchHandle,
   isAgentVendor,
@@ -2946,15 +2948,37 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       return raw ? { text: raw, location: `the turn's own raw output (${teePath})` } : null
     }
 
-    /** O2: the texts a Developer turn's after-dispatch credential scan reads — the turn's own raw vendor output, and the worktree's own diff since this turn started (`turnPreHead`, captured by `dispatchDeveloperOnce`). Either half is simply omitted, never faked, when it cannot be read. */
+    /**
+     * O4: the texts a Developer turn's after-dispatch credential scan reads —
+     * ONLY what the turn itself WROTE, never what it read. Two halves, each
+     * omitted (never faked) when it cannot be read:
+     *
+     *  - the Developer's OWN authored turn output — its messages and the tool
+     *    invocations it issued — pulled from the raw vendor tee through that
+     *    vendor's own event renderer (`developerWrittenTextFromVendorOutput`),
+     *    which drops a tool RESULT (a file it read, a command's output) to
+     *    nothing. Scanning the raw tee whole instead flagged this repository's
+     *    own credential-shaped test FIXTURES the moment a turn merely READ one
+     *    (round 2 security), refusing a turn that leaked nothing.
+     *  - the lines this turn ADDED to the worktree (`addedDiffLines`), never the
+     *    unchanged context a hunk sits beside — which, again, can carry a
+     *    credential-shaped fixture the turn did not write.
+     */
     function developerScanTexts(handle: DispatchHandle): { text: string; location: string }[] {
       const texts: { text: string; location: string }[] = []
       const output = rawOutputScanText(handle)
-      if (output) texts.push(output)
+      if (output) {
+        const written = developerWrittenTextFromVendorOutput(output.text, dispatchAgent)
+        if (written)
+          texts.push({ text: written, location: "the Developer's own turn output (its messages and tool invocations)" })
+      }
       const worktree = worktreePathForBranch()
       if (turnPreHead !== null && existsSync(worktree)) {
         const diff = d.gitWorktreeDiffText(worktree, turnPreHead)
-        if (diff) texts.push({ text: diff, location: "the worktree's own diff since this turn started" })
+        if (diff) {
+          const added = addedDiffLines(diff)
+          if (added) texts.push({ text: added, location: 'the diff lines this turn added to the worktree' })
+        }
       }
       return texts
     }
@@ -3761,12 +3785,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * BEFORE any poll for a pull request — the poll never starts against a
      * branch the developer has not pushed (Traps to avoid). Covers both
      * round-1 entries this driver can reach here: a fresh dispatch just
-     * ran (`alreadyPushed: false` — the branch may or may not have a head
-     * on the remote yet) and a crash-recovery re-entry (`alreadyPushed:
-     * true` — the branch already exists, no fresh dispatch this call).
-     * Resumes the developer AT MOST ONCE (Traps: never resume twice for
-     * this) — a still-missing push after that one resume is left to the
-     * poll's own bounded timeout rather than a second dispatch.
+     * ran (`alreadyPushed: false` — the branch may or may not carry task
+     * commits beyond the default tip yet) and a crash-recovery re-entry
+     * (`alreadyPushed: true` — the branch already exists, no fresh dispatch
+     * this call). Resumes the developer AT MOST ONCE (Traps: never resume
+     * twice for this) — a still-missing push after that one resume is left to
+     * the poll's own bounded timeout rather than a second dispatch.
      */
     async function afterDeveloperTurnBeforePrPoll(alreadyPushed: boolean): Promise<number> {
       let remoteHead: string | null
@@ -3776,7 +3800,24 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         remoteHead = null
       }
 
-      if (!alreadyPushed && remoteHead === null) {
+      // O3: "no push" is not only a branch with no remote head at all — it is
+      // ALSO a branch whose remote head still sits at the default branch's tip,
+      // carrying no task commits. That is exactly the state the driver's own
+      // round-1 `createTaskWorktree` leaves the branch in BEFORE the first
+      // Developer turn (a commit-free ref at `origin/main`'s tip), so a round-1
+      // turn that pushes nothing leaves the branch there — never a `null` remote
+      // head. We detect it by EQUALITY with `origin/main`'s current tip rather
+      // than `gitIsAncestor`: the round-1 entry's own `branchHasTaskCommits` uses
+      // `gitIsAncestor(head, origin/main)` and the two want opposite answers for
+      // the same head (the entry treats a tip-only head as fresh, this treats it
+      // as no-push), so reusing that ancestry test here would couple them. A
+      // developer that pushed real work moves the remote head off the tip, so
+      // the equality no longer holds and this does not fire. (An `origin/main`
+      // that advanced mid-turn with no push leaves the branch at an OLDER tip
+      // that no longer equals the current one — the existing PR poll's own
+      // bounded timeout still covers that rarer case, exactly as before.)
+      const noTaskCommits = remoteHead === null || remoteHead === d.gitRevParseOriginMain()
+      if (!alreadyPushed && noTaskCommits) {
         // O9: no push at all yet. A posted refusal/escalation ends the loop
         // now, never entering the pull-request poll.
         const stop = d.fetchDeveloperStop(task)
@@ -5774,6 +5815,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // that was never written.
           const candidateInputsReady = candidateDir
             ? writeReviewerCandidateInputs(candidateDir, {
+                brief: (() => {
+                  try {
+                    return d.fetchFrozenBrief(task)
+                  } catch (err) {
+                    return `(the task's frozen brief could not be fetched this round: ${err instanceof Error ? err.message : String(err)})`
+                  }
+                })(),
                 prBody: (() => {
                   try {
                     return d.fetchPrBody(prNumber)

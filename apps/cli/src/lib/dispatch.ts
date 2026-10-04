@@ -3191,6 +3191,45 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
 }
 
 /**
+ * O4: the text a Developer turn's own author (the agent) WROTE, pulled
+ * out of its raw vendor stream for the after-turn credential scan — its own
+ * messages and the tool invocations it issued (a path, a command, a pattern),
+ * and NEVER the contents of a file it read or a command's output. This is not a
+ * new parse: it reuses each vendor's OWN `renderEvent` (`VENDOR_TABLE`), the
+ * exact per-line renderer the driver already streams to the operator and the
+ * role log — and that renderer deliberately renders a tool RESULT (a file read,
+ * a command's output: "the bulk of a run") as nothing, so what comes back here
+ * is only what the agent itself authored. A line the vendor's renderer cannot
+ * parse contributes nothing (never a guess), the same defensive posture every
+ * other reader of this stream takes. The scan reading THIS, rather than the raw
+ * tee, is what stops this repository's own credential-shaped test FIXTURES from
+ * tripping a false refusal the moment a Developer turn merely READS one.
+ */
+export function developerWrittenTextFromVendorOutput(raw: string, agent: AgentVendor): string {
+  const renderEvent = VENDOR_TABLE[agent].renderEvent
+  const out: string[] = []
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    let obj: Record<string, unknown>
+    try {
+      obj = JSON.parse(trimmed) as Record<string, unknown>
+    } catch {
+      // Not a structured event line — never guessed at, the same posture
+      // `parseClaudeUsage`/`parseCodexUsage` take reading this same stream.
+      continue
+    }
+    try {
+      const rendered = renderEvent(obj)
+      if (rendered) out.push(rendered)
+    } catch {
+      // A malformed event the renderer rejected — skipped, never fatal.
+    }
+  }
+  return out.join('\n')
+}
+
+/**
  * Confirmed live, not assumed: `claude --model`'s own help text names
  * `fable`/`opus`/`sonnet` as aliases (haiku is the same family's fourth
  * tier), and its "full name" example (`claude-fable-5`) establishes the
@@ -3453,7 +3492,7 @@ export function codexSpawnEnvExtras(
     attribution: {
       ...(isCodex && codexHomeDir !== null ? { CODEX_HOME: codexHomeDir } : {}),
       ...(isCodex && scratchDir !== null
-        ? { TMPDIR: scratchDir, TMP: scratchDir, TEMP: scratchDir, TURBO_CACHE_DIR: confinedTurboCacheDir(scratchDir) }
+        ? { TMPDIR: scratchDir, TMP: scratchDir, TEMP: scratchDir, ...confinedTurboEnv(scratchDir) }
         : {})
     }
   }
@@ -3475,6 +3514,28 @@ export function codexSpawnEnvExtras(
  */
 export function confinedTurboCacheDir(scratchDir: string): string {
   return join(scratchDir, 'turbo-cache')
+}
+
+/**
+ * O5: the full set of turbo environment overrides EVERY confined
+ * Developer carries, for Claude and for Codex alike — the cache-directory
+ * redirect above, AND `TURBO_TELEMETRY_DISABLED`. `turbo` (which `bun run
+ * typecheck` invokes) pings `telemetry.vercel.com` on startup; a confined
+ * dispatch's egress is destination-allowlisted and does NOT include that host,
+ * so the ping is blocked and `bun run typecheck` fails outright with "Network
+ * access to \"telemetry.vercel.com\" was blocked" — found live on a confined
+ * Codex Developer. Disabling telemetry removes the ping entirely. Returned as
+ * ONE object both agents' confined-env builders spread, so the two can never
+ * drift apart (the same anti-drift reason `codexSpawnEnvExtras` folded the
+ * TMPDIR/cache overrides into one shared function).
+ */
+export function confinedTurboEnv(scratchDir: string): Record<string, string> {
+  return {
+    TURBO_CACHE_DIR: confinedTurboCacheDir(scratchDir),
+    // turbo reads this exact variable; `1` disables its telemetry collector and
+    // the startup network ping that a confined sandbox's allowlist blocks.
+    TURBO_TELEMETRY_DISABLED: '1'
+  }
 }
 
 /**
@@ -4314,10 +4375,13 @@ export async function dispatchRole(
               // own override must name the same granted scratch directory.
               CLAUDE_CODE_TMPDIR: claudeConfinement.scratchDir,
               // O4: turbo's cache-miss write goes inside the granted scratch,
-              // never the repo-root `.turbo/` the sandbox denies — see
-              // `confinedTurboCacheDir`. Codex gets the same key via
-              // `codexSpawnEnvExtras` above.
-              TURBO_CACHE_DIR: confinedTurboCacheDir(claudeConfinement.scratchDir),
+              // never the repo-root `.turbo/` the sandbox denies. O5: and its
+              // telemetry ping (`telemetry.vercel.com`) is disabled, so
+              // `bun run typecheck`'s own `turbo` run is not blocked by the
+              // confined egress allowlist. Both keys ride `confinedTurboEnv`,
+              // the SAME object Codex spreads via `codexSpawnEnvExtras` above —
+              // the two agents' turbo env can never drift apart.
+              ...confinedTurboEnv(claudeConfinement.scratchDir),
               // O2: see the Codex branch's own comment on this same guard,
               // above — `resolveGitFirstPath`'s result, puts the real `git`
               // ahead of the `/usr/bin/git` xcrun shim on macOS.

@@ -320,21 +320,24 @@ export function buildVerifiedReviewerCandidate(
 
 /**
  * O1: the pull request's own facts the driver stages for both reviewer
- * roles — the PR body, the unified diff of the judged head against its
- * base, and the prior round's findings (rendered verdict text, or an
- * explicit "no prior round" note) — so a dispatched reviewer that holds no
- * `gh` command and no forge credential (O2) can still read what it judges.
- * All three are plain strings the caller (`dev-review-loop.ts`) has already
- * resolved; this module only places them on disk.
+ * roles — the task's frozen brief (the standard each reviewer's doctrine
+ * tells it to judge against), the PR body, the unified diff of the judged
+ * head against its base, and the prior round's findings (rendered verdict
+ * text, or an explicit "no prior round" note) — so a dispatched reviewer that
+ * holds no `gh` command and no forge credential (O2) can still read what it
+ * judges. All four are plain strings the caller (`dev-review-loop.ts`) has
+ * already resolved; this module only places them on disk.
  */
 export type ReviewerCandidateInputs = {
+  readonly brief: string
   readonly prBody: string
   readonly diff: string
   readonly priorFindings: string
 }
 
-/** The absolute paths `reviewerCandidateInputPaths` resolves the three staged input files to, inside whatever copy (`candidateDir` or a role's own scratch copy) they are read from. */
+/** The absolute paths `reviewerCandidateInputPaths` resolves the four staged input files to, inside whatever copy (`candidateDir` or a role's own scratch copy) they are read from. */
 export type ReviewerCandidateInputPaths = {
+  readonly brief: string
   readonly prBody: string
   readonly diff: string
   readonly priorFindings: string
@@ -342,12 +345,13 @@ export type ReviewerCandidateInputPaths = {
 
 /** Never a path a real pull request would ever carry — dot-prefixed and `vinaya`-namespaced, inside the candidate/scratch tree but never mistaken for part of the reviewed repository itself. */
 export const REVIEWER_INPUTS_DIR_NAME = '.vinaya-reviewer-inputs'
+const BRIEF_INPUT_FILE_NAME = 'brief.md'
 const PR_BODY_INPUT_FILE_NAME = 'pr-body.md'
 const DIFF_INPUT_FILE_NAME = 'diff.patch'
 const PRIOR_FINDINGS_INPUT_FILE_NAME = 'prior-findings.md'
 
 /**
- * O1: the three staged input files' absolute paths inside `dir` — `dir`
+ * O1: the four staged input files' absolute paths inside `dir` — `dir`
  * being either the shared candidate (never read directly by a reviewer
  * attempt) or a role's own scratch copy of it (what a reviewer attempt's
  * `cwd` actually is) — the SAME relative layout either way, since
@@ -358,6 +362,7 @@ const PRIOR_FINDINGS_INPUT_FILE_NAME = 'prior-findings.md'
 export function reviewerCandidateInputPaths(dir: string): ReviewerCandidateInputPaths {
   const base = join(dir, REVIEWER_INPUTS_DIR_NAME)
   return {
+    brief: join(base, BRIEF_INPUT_FILE_NAME),
     prBody: join(base, PR_BODY_INPUT_FILE_NAME),
     diff: join(base, DIFF_INPUT_FILE_NAME),
     priorFindings: join(base, PRIOR_FINDINGS_INPUT_FILE_NAME)
@@ -387,6 +392,7 @@ export function writeReviewerCandidateInputs(candidateDir: string, inputs: Revie
     chmodTree(candidateDir, UNLOCK_OWNER_WRITE)
     removeIfPresent(dir)
     mkdirSync(dir, { recursive: true, mode: 0o700 })
+    writeFileSync(join(dir, BRIEF_INPUT_FILE_NAME), inputs.brief, 'utf8')
     writeFileSync(join(dir, PR_BODY_INPUT_FILE_NAME), inputs.prBody, 'utf8')
     writeFileSync(join(dir, DIFF_INPUT_FILE_NAME), inputs.diff, 'utf8')
     writeFileSync(join(dir, PRIOR_FINDINGS_INPUT_FILE_NAME), inputs.priorFindings, 'utf8')

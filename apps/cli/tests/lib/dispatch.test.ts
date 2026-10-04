@@ -69,9 +69,11 @@ import {
   missingSubscriptionLoginReason,
   NO_SUBSCRIPTION_LOGIN_REASON,
   codexBoundaryFailureReason,
+  confinedTurboEnv,
+  developerWrittenTextFromVendorOutput,
   type DispatchTeeRecoveryDeps
 } from '../../src/lib/dispatch.js'
-import { agentConfigProtectedSubpaths } from '../../src/lib/worker-boundary.js'
+import { addedDiffLines, agentConfigProtectedSubpaths, findCredentialPatterns } from '../../src/lib/worker-boundary.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -2606,6 +2608,94 @@ describe('dispatch streaming output (#447 O5)', () => {
   })
 })
 
+describe('developerWrittenTextFromVendorOutput + the after-turn credential scan — O4 (#1046): only what the turn wrote', () => {
+  const REPO_ROOT = join(CLI_ROOT, '..', '..')
+  // The two credential-shaped test FIXTURES the brief names, read VERBATIM — so
+  // this test proves the scan tolerates the actual bytes this repo ships, not a
+  // stand-in. Both carry real credential shapes (an AWS key, a Slack token, an
+  // Anthropic key, a PEM block) as fixture values that are not secrets at all.
+  const workerBoundaryFixture = readFileSync(
+    join(CLI_ROOT, 'tests', 'lib', 'dispatch', 'worker-boundary.test.ts'),
+    'utf8'
+  )
+  const redactFixture = readFileSync(join(REPO_ROOT, 'packages', 'aeg-core', 'src', 'log', 'redact.test.ts'), 'utf8')
+
+  // A Claude `--output-format stream-json` tee for a turn that READ both
+  // fixtures: the agent's own message, a `Read` tool_use naming each file (the
+  // PATH only), each file's full content coming back as a tool_result (where the
+  // credential shapes live), and a benign closing message.
+  function readingTurnTee(): string {
+    return [
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Reading the fixtures.' }] } }),
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              name: 'Read',
+              input: { file_path: 'apps/cli/tests/lib/dispatch/worker-boundary.test.ts' }
+            }
+          ]
+        }
+      }),
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', content: workerBoundaryFixture }] } }),
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'tool_use', name: 'Read', input: { file_path: 'packages/aeg-core/src/log/redact.test.ts' } }
+          ]
+        }
+      }),
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', content: redactFixture }] } }),
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'Done reading; nothing to change.' }] }
+      })
+    ].join('\n')
+  }
+
+  it('a turn that READS the two credential-shaped fixtures is not refused — their contents arrive as tool results the extractor drops', () => {
+    const written = developerWrittenTextFromVendorOutput(readingTurnTee(), 'claude')
+    // It kept the agent's own messages and the Read tool-use PATHS...
+    expect(written).toContain('Reading the fixtures.')
+    expect(written).toContain('⚙ Read: apps/cli/tests/lib/dispatch/worker-boundary.test.ts')
+    // ...and dropped both tool RESULTS, so neither fixture's credential shape is
+    // in the scanned text, and the credential scan finds nothing.
+    expect(findCredentialPatterns(written, "the Developer's own turn output")).toEqual([])
+  })
+
+  it('a turn whose diff ADDS a credential-shaped line is still refused; the same shape only in unchanged context is not', () => {
+    const secret = `ghp_${'A'.repeat(40)}`
+    const addsIt = ['--- a/src/x.ts', '+++ b/src/x.ts', '@@ -1 +1,2 @@', ' const a = 1', `+const t = '${secret}'`].join(
+      '\n'
+    )
+    const added = addedDiffLines(addsIt)
+    expect(added).toContain(secret)
+    expect(findCredentialPatterns(added, 'the diff lines this turn added').length).toBeGreaterThan(0)
+
+    // The same secret sitting only in an UNCHANGED context line (a hunk the turn
+    // edited nearby but did not write the secret into) is never flagged.
+    const contextOnly = [
+      '--- a/src/x.ts',
+      '+++ b/src/x.ts',
+      '@@ -1,2 +1,2 @@',
+      ` const t = '${secret}'`,
+      '-const a = 1',
+      '+const a = 2'
+    ].join('\n')
+    const addedCtx = addedDiffLines(contextOnly)
+    expect(addedCtx).not.toContain(secret)
+    expect(findCredentialPatterns(addedCtx, 'the diff lines this turn added')).toEqual([])
+  })
+
+  it('the `+++` file header is never treated as an added line, even though it begins with `+`', () => {
+    const diff = ['--- a/x.ts', '+++ b/x.ts', '@@ -0,0 +1 @@', '+real content'].join('\n')
+    expect(addedDiffLines(diff)).toBe('real content')
+  })
+})
+
 describe('sawVendorConnectionRetry (pure) — [task-operator-v1]/Issue #662, O2', () => {
   it('true for a real api_retry line, confirmed-live shape (claude CLI 2.1.197)', () => {
     const stream = [
@@ -4649,7 +4739,7 @@ describe('codexSpawnEnvExtras — round 6 security review, CRITICAL (Issue #676)
 // from, pointed at the same writable scratch directory, rather than each
 // building its own (possibly-drifting) copy.
 describe('codexSpawnEnvExtras — TMPDIR/TMP/TEMP pointed at the writable scratch directory (round 5 Principal ruling)', () => {
-  it('a codex dispatch with a scratch directory carries TMPDIR, TMP, TEMP and TURBO_CACHE_DIR all under it', () => {
+  it('a codex dispatch with a scratch directory carries TMPDIR, TMP, TEMP, TURBO_CACHE_DIR and TURBO_TELEMETRY_DISABLED all under it', () => {
     const extras = codexSpawnEnvExtras('codex', '/tmp/scratch/codex-home', '/tmp/scratch/codex-tmp')
     expect(extras.attribution).toEqual({
       CODEX_HOME: '/tmp/scratch/codex-home',
@@ -4658,7 +4748,10 @@ describe('codexSpawnEnvExtras — TMPDIR/TMP/TEMP pointed at the writable scratc
       TEMP: '/tmp/scratch/codex-tmp',
       // O4: turbo's cache-miss write goes inside the granted scratch, never
       // the repo-root `.turbo/` the sandbox denies.
-      TURBO_CACHE_DIR: '/tmp/scratch/codex-tmp/turbo-cache'
+      TURBO_CACHE_DIR: '/tmp/scratch/codex-tmp/turbo-cache',
+      // O5 (#1046): turbo's telemetry ping is disabled so the confined egress
+      // allowlist does not fail `bun run typecheck`.
+      TURBO_TELEMETRY_DISABLED: '1'
     })
   })
 
@@ -4670,6 +4763,32 @@ describe('codexSpawnEnvExtras — TMPDIR/TMP/TEMP pointed at the writable scratc
 
   it('a non-codex vendor never gets TMPDIR/TMP/TEMP even if a scratch directory were somehow passed', () => {
     expect(codexSpawnEnvExtras('claude', null, '/tmp/scratch/codex-tmp').attribution).toEqual({})
+  })
+})
+
+describe('confinedTurboEnv — turbo telemetry is off in BOTH confined Developers (O5, #1046)', () => {
+  it('the shared turbo env carries both the cache redirect and the telemetry disable', () => {
+    expect(confinedTurboEnv('/tmp/scratch')).toEqual({
+      TURBO_CACHE_DIR: '/tmp/scratch/turbo-cache',
+      TURBO_TELEMETRY_DISABLED: '1'
+    })
+  })
+
+  it("Codex's confined environment carries TURBO_TELEMETRY_DISABLED", () => {
+    // `codexSpawnEnvExtras(...).attribution` IS the Codex dispatch's confined
+    // environment addition — it spreads `confinedTurboEnv`.
+    const codexEnv = codexSpawnEnvExtras('codex', '/tmp/scratch/codex-home', '/tmp/scratch/codex-tmp').attribution
+    expect(codexEnv.TURBO_TELEMETRY_DISABLED).toBe('1')
+  })
+
+  it("Claude's confined environment carries TURBO_TELEMETRY_DISABLED too", () => {
+    // `dispatchRole`'s Claude branch spreads this SAME `confinedTurboEnv` object
+    // into its confined `buildWorkerEnv(...)` child environment (dispatch.ts),
+    // so the variable the helper carries is exactly what the confined Claude
+    // Developer's environment carries — the two agents can never drift apart.
+    const claudeTurboEnv = confinedTurboEnv('/tmp/scratch/claude-tmp')
+    expect(claudeTurboEnv.TURBO_TELEMETRY_DISABLED).toBe('1')
+    expect(claudeTurboEnv.TURBO_CACHE_DIR).toBe('/tmp/scratch/claude-tmp/turbo-cache')
   })
 })
 

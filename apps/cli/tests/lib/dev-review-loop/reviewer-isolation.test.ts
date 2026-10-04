@@ -315,13 +315,14 @@ describe('buildReviewerScratch — O2, a fresh writable copy per reviewer, deriv
   })
 })
 
-describe('writeReviewerCandidateInputs — O1, the PR body/diff/prior-findings staged beside the candidate', () => {
-  it('writes all three files into the candidate, readable at the paths reviewerCandidateInputPaths names', () => {
+describe('writeReviewerCandidateInputs — O1, the brief/PR body/diff/prior-findings staged beside the candidate', () => {
+  it('writes all four files into the candidate, readable at the paths reviewerCandidateInputPaths names', () => {
     const root = tempDir('vinaya-riso-root-')
     const src = writeSourceWorktree()
     const candidate = buildReviewerCandidate(root, 9001, 1, src) as string
 
     const ok = writeReviewerCandidateInputs(candidate, {
+      brief: 'the frozen brief, verbatim',
       prBody: 'the PR report, verbatim',
       diff: '--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new\n',
       priorFindings: 'This is round 1 — there is no prior round.'
@@ -329,20 +330,45 @@ describe('writeReviewerCandidateInputs — O1, the PR body/diff/prior-findings s
 
     expect(ok).toBe(true)
     const paths = reviewerCandidateInputPaths(candidate)
+    expect(readFileSync(paths.brief, 'utf8')).toBe('the frozen brief, verbatim')
     expect(readFileSync(paths.prBody, 'utf8')).toBe('the PR report, verbatim')
     expect(readFileSync(paths.diff, 'utf8')).toContain('+new')
     expect(readFileSync(paths.priorFindings, 'utf8')).toBe('This is round 1 — there is no prior round.')
   })
 
-  it('a scratch copy taken AFTER staging carries the same three files at the same relative path', () => {
+  it("O1: the frozen brief is staged with its EXACT text — the standard the reviewer's doctrine judges against", () => {
     const root = tempDir('vinaya-riso-root-')
     const src = writeSourceWorktree()
     const candidate = buildReviewerCandidate(root, 9001, 1, src) as string
-    writeReviewerCandidateInputs(candidate, { prBody: 'body text', diff: 'diff text', priorFindings: 'findings text' })
+    const frozenBrief =
+      '<!-- aeg:brief:v1 -->\nBrief hash: deadbeef\n\n## Objectives\n\nO1. Do the thing, exactly, with | and `backticks`.\n'
+
+    writeReviewerCandidateInputs(candidate, {
+      brief: frozenBrief,
+      prBody: 'body',
+      diff: 'diff',
+      priorFindings: 'findings'
+    })
+
+    const paths = reviewerCandidateInputPaths(candidate)
+    expect(readFileSync(paths.brief, 'utf8')).toBe(frozenBrief)
+  })
+
+  it('a scratch copy taken AFTER staging carries the same four files at the same relative path', () => {
+    const root = tempDir('vinaya-riso-root-')
+    const src = writeSourceWorktree()
+    const candidate = buildReviewerCandidate(root, 9001, 1, src) as string
+    writeReviewerCandidateInputs(candidate, {
+      brief: 'brief text',
+      prBody: 'body text',
+      diff: 'diff text',
+      priorFindings: 'findings text'
+    })
 
     const scratch = buildReviewerScratch(root, 9001, 1, 'reviewer', 1, candidate) as string
 
     const paths = reviewerCandidateInputPaths(scratch)
+    expect(readFileSync(paths.brief, 'utf8')).toBe('brief text')
     expect(readFileSync(paths.prBody, 'utf8')).toBe('body text')
     expect(readFileSync(paths.diff, 'utf8')).toBe('diff text')
     expect(readFileSync(paths.priorFindings, 'utf8')).toBe('findings text')
@@ -352,7 +378,7 @@ describe('writeReviewerCandidateInputs — O1, the PR body/diff/prior-findings s
     const root = tempDir('vinaya-riso-root-')
     const src = writeSourceWorktree()
     const candidate = buildReviewerCandidate(root, 9001, 1, src) as string
-    writeReviewerCandidateInputs(candidate, { prBody: 'b', diff: 'd', priorFindings: 'f' })
+    writeReviewerCandidateInputs(candidate, { brief: 'br', prBody: 'b', diff: 'd', priorFindings: 'f' })
     expect(attemptWrite(join(candidate, 'README.md'))).toBe('refused')
     const paths = reviewerCandidateInputPaths(candidate)
     expect(attemptWrite(paths.prBody)).toBe('refused')
@@ -362,9 +388,15 @@ describe('writeReviewerCandidateInputs — O1, the PR body/diff/prior-findings s
     const root = tempDir('vinaya-riso-root-')
     const src = writeSourceWorktree()
     const candidate = buildReviewerCandidate(root, 9001, 1, src) as string
-    writeReviewerCandidateInputs(candidate, { prBody: 'first', diff: 'first', priorFindings: 'first' })
-    writeReviewerCandidateInputs(candidate, { prBody: 'second', diff: 'second', priorFindings: 'second' })
+    writeReviewerCandidateInputs(candidate, { brief: 'first', prBody: 'first', diff: 'first', priorFindings: 'first' })
+    writeReviewerCandidateInputs(candidate, {
+      brief: 'second',
+      prBody: 'second',
+      diff: 'second',
+      priorFindings: 'second'
+    })
     const paths = reviewerCandidateInputPaths(candidate)
+    expect(readFileSync(paths.brief, 'utf8')).toBe('second')
     expect(readFileSync(paths.prBody, 'utf8')).toBe('second')
   })
 })

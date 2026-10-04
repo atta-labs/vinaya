@@ -658,19 +658,21 @@ function renderSection4(facts: BriefFacts): string {
 }
 
 /**
- * O1 : Step 0 only ENTERS the task's own
- * worktree — it no longer creates it. The driver (`dev-review-loop.ts`'s
- * `createTaskWorktree`) now creates `.worktrees/<branch>` and pushes the
- * branch to the remote, FROM that worktree, before the first Developer
- * dispatch ever runs — outside any sandbox, so neither vendor's own
- * filesystem confinement (which denies writing the main checkout's `.git`)
- * stands between a dispatched Developer and a worktree it would otherwise
- * have had to create itself. `bun install` stays in Step 0: a fresh worktree
- * still needs its own `node_modules` before the dispatched session can run
- * its own toolchain.
+ * O2 : Step 0 runs as-written from the Developer's own working directory,
+ * which IS the task worktree the driver created — it neither creates nor even
+ * ENTERS one. The driver (`dev-review-loop.ts`'s `createTaskWorktree`) creates
+ * `.worktrees/<branch>` and pushes the branch to the remote, FROM that
+ * worktree, before the first Developer dispatch ever runs — outside any
+ * sandbox, so neither vendor's own filesystem confinement (which denies
+ * writing the main checkout's `.git`) stands between a dispatched Developer and
+ * a worktree it would otherwise have had to create itself. The dispatched
+ * session's `cwd` IS that worktree, so Step 0 no longer starts with `cd
+ * .worktrees/<branch> &&` — a leading `cd` would read as entering a
+ * `.worktrees/` path that does not exist relative to a cwd already inside it.
+ * `bun install` stays in Step 0: a fresh worktree still needs its own
+ * `node_modules` before the dispatched session can run its own toolchain.
  */
 function renderSection5(facts: BriefFacts): string {
-  const branch = developerBranchForFacts(facts)
   // Never names the shipped check's or the authoring repository's own
   // fuller derivation as a literal command the Developer runs — the driver
   // runs both itself, from its own unsandboxed process, and stages the
@@ -691,7 +693,7 @@ function renderSection5(facts: BriefFacts): string {
     '**Step 0 (mandatory, verbatim):**',
     '',
     '```',
-    `cd .worktrees/${branch} && bun install --frozen-lockfile --silent`,
+    'bun install --frozen-lockfile --silent',
     '```',
     '',
     '1. Clean status; parent `origin/main`; branch suffix literal-matches the task id.',

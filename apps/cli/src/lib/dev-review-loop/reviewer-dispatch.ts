@@ -254,23 +254,26 @@ export function securityScanPieces(outcome: SecurityScanOutcome | undefined): re
 // --- the driver-staged pull-request inputs (O1/O2/O3) -----------------------
 
 /**
- * O1/O2/O3: names the three files the driver staged into the reviewer's own
+ * O1/O2/O3: names the four files the driver staged into the reviewer's own
  * read-only checkout (`reviewer-isolation.ts`'s `writeReviewerCandidateInputs`
- * / `reviewerCandidateInputPaths`) — the pull request's body, the unified
- * diff of the judged head against its base, and the prior round's findings —
- * so a dispatched reviewer holding no `gh` command and no forge credential
- * still has a way to read what it judges. `paths` is `null` exactly when no
- * candidate copy exists for this attempt (the existing no-`cwd` fallback
- * shape, or a staging write that failed) — then this contributes no pieces at
- * all, the dispatch's pre-task shape, same as `securityScanPieces`'s own
- * `undefined` case.
+ * / `reviewerCandidateInputPaths`) — the task's frozen brief (the standard this
+ * reviewer's own doctrine tells it to judge the PR against), the pull request's
+ * body, the unified diff of the judged head against its base, and the prior
+ * round's findings — so a dispatched reviewer holding no `gh` command and no
+ * forge credential still has a way to read what it judges. `paths` is `null`
+ * exactly when no candidate copy exists for this attempt (the existing
+ * no-`cwd` fallback shape, or a staging write that failed) — then this
+ * contributes no pieces at all, the dispatch's pre-task shape, same as
+ * `securityScanPieces`'s own `undefined` case.
  */
 export function candidateInputPieces(paths: ReviewerCandidateInputPaths | null): readonly ReviewerPromptPiece[] {
   if (paths === null) return []
   return [
     driverPiece(
-      '\n\nYou hold no GitHub credential for this dispatch, and your tool grant carries no `gh` command — read the pull request only through the three files below, inside your own checkout, never through `gh`.\n\nPULL REQUEST BODY: '
+      '\n\nYou hold no GitHub credential for this dispatch, and your tool grant carries no `gh` command — read the pull request only through the four files below, inside your own checkout, never through `gh`.\n\nTASK BRIEF (the frozen brief this task was dispatched against — judge the PR against it): '
     ),
+    factPiece(paths.brief),
+    driverPiece('\nPULL REQUEST BODY: '),
     factPiece(paths.prBody),
     driverPiece('\nDIFF (base...head): '),
     factPiece(paths.diff),

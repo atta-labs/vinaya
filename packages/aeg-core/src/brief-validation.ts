@@ -250,20 +250,26 @@ export function checkDocUpdateList(prBody: string): BriefSectionResult {
 }
 
 /**
- * O1: Step 0 no longer creates the worktree
- * (`git worktree add`) — the driver does that before the first Developer
- * dispatch, and Step 0 only ENTERS the already-existing worktree
- * (`cd .worktrees/<branch> && …`). Accepts EITHER shape so a brief rendered
- * before this task (still carrying `git worktree add`) and one rendered
- * after it (carrying only `cd .worktrees/`) both pass — this gate judges
- * presence of a Step 0 worktree marker, never which generation rendered it.
+ * Step 0 no longer creates the worktree (`git worktree add`) — the driver does
+ * that before the first Developer dispatch — and no longer enters one either
+ * (`cd .worktrees/<branch> && …`): O2, the dispatched session's own `cwd` IS
+ * that worktree, so Step 0 is just `bun install --frozen-lockfile …`. Accepts
+ * ALL THREE shapes so a brief rendered at any generation passes — the oldest
+ * (`git worktree add`), the middle one (`cd .worktrees/`), and the newest
+ * (a bare frozen-lockfile install). This gate judges presence of a Step 0
+ * marker, never which generation rendered it.
  */
 export function checkWorktreeStep0(prBody: string): BriefSectionResult {
-  if (/git worktree add/.test(prBody) || /cd \.worktrees\//.test(prBody)) return { status: 'pass', errors: [] }
+  if (
+    /git worktree add/.test(prBody) ||
+    /cd \.worktrees\//.test(prBody) ||
+    /bun install --frozen-lockfile/.test(prBody)
+  )
+    return { status: 'pass', errors: [] }
   return {
     status: 'fail',
     errors: [
-      'brief-validation worktree Step 0: no `git worktree add` or `cd .worktrees/` command found in the PR body.'
+      'brief-validation worktree Step 0: no `git worktree add`, `cd .worktrees/`, or `bun install --frozen-lockfile` command found in the PR body.'
     ]
   }
 }
@@ -513,23 +519,26 @@ export function isBriefShaped(prBody: string): boolean {
 }
 
 /**
- * The branch a brief declares for itself, read from its Step 0 command. At
- * authoring time there is no `BRANCH` env var and no branch yet — but every
- * brief carries either `git worktree add <path> -b <branch> origin/main`
- * (an older rendering) or `cd .worktrees/<branch> && …` (O1: the driver now
- * creates the worktree, so Step 0 only enters it), so the brief states what
- * it is going to be either way, and
- * `verify-brief --body-file` can grade it as that. Matched on the RAW body,
- * not `stripCode`'s output: Step 0 lives inside a fence in every real brief,
- * so the stripped text never contains it. The `-b` form is tried first so an
- * OLD brief quoting both shapes (unlikely, but never assumed impossible)
- * still reads the worktree-creation branch, not a later, unrelated `cd`.
+ * The branch a brief declares for itself. Older generations stated it in
+ * their Step 0 command — `git worktree add <path> -b <branch> origin/main`
+ * (oldest) or `cd .worktrees/<branch> && …` (the driver creates the worktree,
+ * Step 0 only enters it) — so those are read first, on the RAW body (Step 0
+ * lives inside a fence, so `stripCode`'s output never contains it); the `-b`
+ * form is tried first so an OLD brief quoting both shapes still reads the
+ * worktree-creation branch, not a later, unrelated `cd`. O2: the newest
+ * generation's Step 0 carries no branch at all — it is a bare `bun install`,
+ * run from a `cwd` already inside the worktree — so this falls back to §2's own
+ * `Branch \`<branch>\`` identity line, the one other place every brief states
+ * its branch, letting `verify-brief --body-file` grade a brief of any
+ * generation.
  */
 export function inferBranchFromBody(prBody: string): string {
   const created = prBody.match(/git worktree add\s+\S+\s+-b\s+(\S+)/)
   if (created) return created[1] ?? ''
   const entered = prBody.match(/cd \.worktrees\/(\S+?)(?=\s|&&|$)/)
-  return entered?.[1] ?? ''
+  if (entered?.[1]) return entered[1]
+  const declared = prBody.match(/Branch `([^`]+)`/)
+  return declared?.[1] ?? ''
 }
 
 /**
@@ -803,13 +812,19 @@ function isCommandBlock(content: string): boolean {
 
 /**
  * The Step 0 exemption — a command with no separate output block by
- * convention. Matches either generation: `git worktree add …` (an older
- * rendering) or `cd .worktrees/… && …` (O1: the driver now creates the
- * worktree, Step 0 only enters it).
+ * convention. Matches any generation: `git worktree add …` (an older
+ * rendering), `cd .worktrees/… && …` (the driver creates the worktree, Step 0
+ * only enters it), or a bare `bun install --frozen-lockfile …` (O2: the driver
+ * now ALSO places the Developer's own `cwd` inside that worktree, so Step 0 no
+ * longer enters one either — it is just the install).
  */
 function isStep0Block(content: string): boolean {
   const first = firstNonBlankLine(content)
-  return first.startsWith('git worktree add') || first.startsWith('cd .worktrees/')
+  return (
+    first.startsWith('git worktree add') ||
+    first.startsWith('cd .worktrees/') ||
+    first.startsWith('bun install --frozen-lockfile')
+  )
 }
 
 /**
