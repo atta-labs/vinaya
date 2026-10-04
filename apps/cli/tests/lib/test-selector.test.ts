@@ -40,6 +40,47 @@ describe('changesImportEdges (Issue #1036, O3)', () => {
     expect(changesImportEdges(ts!, diff("import './a'\n", "import './b'\n"))).toBe(true)
     expect(changesImportEdges(ts!, diff("import './a'\nconst n = 1\n", "import './a'\nconst n = 2\n"))).toBe(false)
   })
+
+  it('the pre-push entrypoint includes the ceiling suite for a one-file import-edge change within five minutes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'vinaya-pre-push-import-edge-'))
+    const repoRoot = resolve(import.meta.dir, '../../../..')
+    const run = (command: string, args: string[]) =>
+      spawnSyncBudgeted(command, args, { cwd: root, encoding: 'utf8', env: stripVinayaEnv() }, 30_000, command)
+    try {
+      mkdirSync(join(root, 'apps/cli/src'), { recursive: true })
+      mkdirSync(join(root, 'apps/cli/tests/lib'), { recursive: true })
+      writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces: ['apps/*'] }))
+      writeFileSync(join(root, 'apps/cli/package.json'), JSON.stringify({ name: '@fixture/cli' }))
+      writeFileSync(join(root, 'apps/cli/src/dep-a.ts'), 'export const value = 1\n')
+      writeFileSync(join(root, 'apps/cli/src/dep-b.ts'), 'export const value = 2\n')
+      writeFileSync(join(root, 'apps/cli/src/subject.ts'), "import { value } from './dep-a'\nexport { value }\n")
+      writeFileSync(join(root, 'apps/cli/tests/lib/test-selector.test.ts'), "import '../../src/subject'\n")
+      symlinkSync(join(repoRoot, 'node_modules'), join(root, 'node_modules'), 'dir')
+      for (const args of [
+        ['init', '-q'],
+        ['config', 'user.email', 'fixture@example.com'],
+        ['config', 'user.name', 'Fixture'],
+        ['add', '.'],
+        ['commit', '-qm', 'initial'],
+        ['update-ref', 'refs/remotes/origin/main', 'HEAD']
+      ]) {
+        expect(run('git', args).status).toBe(0)
+      }
+      writeFileSync(join(root, 'apps/cli/src/subject.ts'), "import { value } from './dep-b'\nexport { value }\n")
+      expect(run('git', ['add', 'apps/cli/src/subject.ts']).status).toBe(0)
+      expect(run('git', ['commit', '-qm', 'change import edge']).status).toBe(0)
+
+      const result = run(process.execPath, [join(repoRoot, 'apps/cli/src/lib/pre-push-select-tests.ts')])
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0)
+      expect(result.stdout).toContain(join(root, 'apps/cli/tests/lib/test-selector.test.ts'))
+      expect(result.stderr).toMatch(/selected \d+ of \d+ test file\(s\)/)
+      const selectorMs = Number(result.stderr.match(/, (\d+) ms selector,/)?.[1])
+      expect(selectorMs).toBeLessThan(300_000)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
 })
 
 function fixtureRepo(): string {

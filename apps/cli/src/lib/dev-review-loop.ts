@@ -141,7 +141,6 @@ import {
   createTaskWorktree,
   describeObjectivesEdit,
   developerBranchFor,
-  type DispatchReadinessCheckResult,
   DeveloperStopSignal,
   fetchDeveloperStop,
   fetchFrozenBrief,
@@ -222,7 +221,7 @@ import {
   spendsInfrastructureRetry,
   waitForOwnLoopLine
 } from './dev-review-loop/round-assess.js'
-import { buildReport, gh, replaceEvidenceBlock, resolveMergeBase, runReportForOpenPr } from './pr-report-engine.js'
+import { buildReport, gh, resolveMergeBase, runReportForOpenPr } from './pr-report-engine.js'
 import { reassertPrBodyPremise } from '../checks/bin/check-pr-premise-reassert.js'
 import type { PremiseReassertResult } from '../checks/premise-reassert-logic.js'
 import { postForgeEffectOnce, publishRound, unboundFields } from './dev-review-loop/publication.js'
@@ -585,12 +584,6 @@ export type LoopDeps = {
     cwd: string,
     branch: string
   ) => Promise<{ ok: true; gatesFailed: boolean } | { ok: false; reason: string }>
-  /** Builds the first fresh Evidence block before opening a PR, so the opened event can never race CI with the template placeholder. */
-  prepareEvidenceForOpen: (
-    body: string,
-    cwd: string,
-    branch: string
-  ) => Promise<{ ok: true; body: string } | { ok: false; reason: string }>
   /**
    * O1 (widened after a round-3 review found a MAJOR/HIGH gap): called from the
    * driver's own `SIGTERM`/`SIGINT` handlers, before it exits. Terminates
@@ -1616,26 +1609,6 @@ async function defaultRunEvidenceReport(
   }
 }
 
-async function defaultPrepareEvidenceForOpen(
-  body: string,
-  cwd: string,
-  branch: string
-): Promise<{ ok: true; body: string } | { ok: false; reason: string }> {
-  try {
-    const result = await buildReport({
-      body,
-      gradedBodySource: 'write',
-      cwd,
-      envOverlay: { ...process.env, PR_BODY: body, BRANCH: branch }
-    })
-    if (result.gatesFailed)
-      return { ok: false, reason: 'the generated pre-open Evidence report contains a failing gate' }
-    return { ok: true, body: replaceEvidenceBlock(body, result.blockInner) }
-  } catch (err) {
-    return { ok: false, reason: err instanceof Error ? err.message : String(err) }
-  }
-}
-
 /**
  * O1 (widened after a round-3 review found a MAJOR/HIGH gap): every role this driver ever
  * dispatches through `dispatchRole` — developer AND both reviewers, which
@@ -1736,7 +1709,6 @@ function defaultDeps(): LoopDeps {
     reexecSelf: defaultReexecSelf,
     exitProcess: (code) => process.exit(code),
     runEvidenceReport: defaultRunEvidenceReport,
-    prepareEvidenceForOpen: defaultPrepareEvidenceForOpen,
     terminateInFlightLaunchesOnShutdown: defaultTerminateInFlightLaunchesOnShutdown,
     sweepTasksAtStart: defaultSweepTasksAtStart,
     // issue-709, O2: the real forge-write operations — unchanged for a real
@@ -3312,25 +3284,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       } catch {
         title = `[task ${task}]`
       }
-      const prepared = await d.prepareEvidenceForOpen(body, worktreePathForBranch(), branch)
-      if (!prepared.ok) return publicationRefusal('pr-evidence', prepared.reason)
       const bodyErrors = await d.validatePrBodyForCreate({
-        body: prepared.body,
+        body,
         title,
         changedFiles: changedPaths,
         branch,
         baseBranch: 'main'
       })
       if (bodyErrors.length > 0) return bodyGateRefusal(bodyErrors)
-      const prNumber = d.openTaskPullRequest({
-        task,
-        branch,
-        title,
-        body: prepared.body,
-        round: roundNum,
-        agent: dispatchAgent,
-        repo
-      })
+      const prNumber = d.openTaskPullRequest({ task, branch, title, body, round: roundNum, agent: dispatchAgent, repo })
       return { kind: 'opened', prNumber }
     }
 
@@ -3449,14 +3411,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           prNumber: existingPr?.number ?? null
         }
         writeDeveloperPublicationRecord(root, task, record)
-        // An existing PR's next CI run is triggered by the Evidence body
-        // edit, not by `synchronize`. Refresh immediately after this push so
-        // CI never grades the previous head's block and the driver never
-        // waits for green before performing the edit that can make it green.
-        if (existingPr) {
-          const evidence = await d.runEvidenceReport(existingPr.number, worktree, branch)
-          if (!evidence.ok) return publicationRefusal('pr-evidence', evidence.reason)
-        }
       }
 
       // O3: open the pull request when none is open, from the Developer's body file.

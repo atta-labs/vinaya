@@ -590,12 +590,6 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       }
       return world.evidenceOutcome
     },
-    prepareEvidenceForOpen: async (body) => ({
-      ok: true,
-      body: body.includes('<!-- AEG:EVIDENCE:START -->')
-        ? body.replace('[The driver populates this block from the committed head.]', 'Head: prepared-before-open')
-        : body.replace('## Scope', '## Evidence\n\nHead: prepared-before-open\n\n## Scope')
-    }),
     terminateInFlightLaunchesOnShutdown: (_task) => {
       world.terminateCalls.push(_task)
     },

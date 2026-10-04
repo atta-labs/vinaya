@@ -1019,12 +1019,65 @@ describe('devReviewLoop — the driver commits and publishes each Developer turn
     expect(world.pushes).toHaveLength(1)
     expect(world.prOpens).toHaveLength(1)
     expect(world.prOpens[0]!.title).toBe(world.issueTitle)
-    expect(world.prOpens[0]!.body).toContain('Head: prepared-before-open')
-    expect(world.prOpens[0]!.body).not.toContain('[The driver populates this block from the committed head.]')
     // The durable record reflects the completed publication (O8's own trace).
     const rec = readDeveloperPublicationRecord(world.runtimeDir, world.task)
     expect(rec?.pushed).toBe(true)
     expect(rec?.prNumber).toBe(world.prNumber)
+  })
+
+  it('O1: a later push authorizes only paths since the remote head, not protected paths already remote', async () => {
+    const remoteHead = 'r'.repeat(40)
+    const world = makeWorld({
+      worktreeExists: true,
+      developerPushed: false,
+      prOpened: false,
+      remoteBranchExists: true,
+      head: remoteHead,
+      worktreeHead: remoteHead
+    })
+    const deps = developerLeavesWorkDeps(world, { changedPaths: ['apps/cli/src/lib/current.ts'] })
+    const bases: string[] = []
+    deps.gitWorktreeChangedPaths = (_worktree, base) => {
+      bases.push(base)
+      return base === remoteHead ? ['apps/cli/src/lib/current.ts'] : ['.github/workflows/already-remote.yml']
+    }
+    const pushedPaths: string[][] = []
+    const push = deps.pushTaskBranch!
+    deps.pushTaskBranch = (input) => {
+      pushedPaths.push([...input.touchedPaths])
+      return push(input)
+    }
+
+    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
+
+    expect(result.finalDecision.type).toBe('publish')
+    expect(bases[0]).toBe(remoteHead)
+    expect(pushedPaths[0]).toEqual(['apps/cli/src/lib/current.ts'])
+  })
+
+  it('O1: a protected path changed by the commits being pushed is still refused', async () => {
+    const remoteHead = 'r'.repeat(40)
+    const world = makeWorld({
+      worktreeExists: true,
+      developerPushed: false,
+      prOpened: false,
+      remoteBranchExists: true,
+      head: remoteHead,
+      worktreeHead: remoteHead
+    })
+    const protectedPath = '.github/workflows/current.yml'
+    const deps = developerLeavesWorkDeps(world, { changedPaths: [protectedPath] })
+    deps.gitWorktreeChangedPaths = () => [protectedPath]
+    deps.pushTaskBranch = (input) => ({
+      ok: false,
+      hook: true,
+      refusal: `protected path refused: ${input.touchedPaths.join(', ')}`
+    })
+
+    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+    expect((result.finalDecision as { detail: string }).detail).toContain(protectedPath)
   })
 
   it('O5: does nothing on a turn with nothing new — a clean worktree and an open PR', async () => {
