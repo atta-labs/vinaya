@@ -104,6 +104,7 @@ import {
   buildWorkerEnv,
   hasSubscriptionLogin,
   REAL_WORKER_BOUNDARY_DEPS,
+  resolveBunInstallCacheDir,
   resolveClaudeConfinement,
   resolveCodexConfinement,
   resolveGitCommonDir,
@@ -3713,6 +3714,12 @@ export async function dispatchRole(
   // contributes nothing extra to the grant, the same best-effort posture
   // every other optional grant in this module already takes.
   const codexGitCommonDir = codexRequireIsolation && opts.cwd !== undefined ? resolveGitCommonDir(opts.cwd) : null
+  // Round 4 Principal ruling: `bun install` writes its package cache under
+  // the operator's real home (`resolveBunInstallCacheDir`, `worker-
+  // boundary.ts`) — the same gap `codexGitCommonDir` above closes for git's
+  // own metadata, now closed for bun's cache too, only when this dispatch
+  // actually enforces Codex's own sandbox.
+  const codexBunCacheDir = codexRequireIsolation ? resolveBunInstallCacheDir() : null
   const vendorArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
   const baseArgs =
     agent === 'codex'
@@ -3721,7 +3728,8 @@ export async function dispatchRole(
           [
             ...(opts.extraWritableDirs ?? []),
             ...(codexScratchDir !== null ? [codexScratchDir] : []),
-            ...(codexGitCommonDir !== null ? [codexGitCommonDir] : [])
+            ...(codexGitCommonDir !== null ? [codexGitCommonDir] : []),
+            ...(codexBunCacheDir !== null ? [codexBunCacheDir] : [])
           ],
           opts.resumeId !== undefined,
           opts.developerFiles ?? []

@@ -47,6 +47,7 @@ import {
   CLAUDE_OWN_CONFIG_SUBPATHS,
   CODEX_OWN_CONFIG_SUBPATHS,
   buildCodexSandboxConfigToml,
+  resolveBunInstallCacheDir,
   resolveCodexConfinement,
   checkLinuxCodexSandboxTools,
   LINUX_CODEX_SANDBOX_TOOLS,
@@ -2530,6 +2531,18 @@ describe('resolveBunExecDir — independent of the DISPATCHER process own runtim
   )
 })
 
+describe('resolveBunInstallCacheDir — round 4 Principal ruling: the bun install cache as a writable root', () => {
+  it('resolves to the same directory `bun pm cache` itself reports, realpath’d', () => {
+    const reported = execFileSync('bun', ['pm', 'cache'], { encoding: 'utf8' }).trim()
+    expect(resolveBunInstallCacheDir()).toBe(realpathSync(reported))
+  })
+
+  it('never returns null — every writable-root caller needs a path to add, not an absence to skip', () => {
+    expect(typeof resolveBunInstallCacheDir()).toBe('string')
+    expect(resolveBunInstallCacheDir().length).toBeGreaterThan(0)
+  })
+})
+
 /** `null` when no real `node` binary is on this host's PATH — best-effort, never assumed, the same posture `resolveGitExecPath`/`resolveBunExecDir` already take in `worker-boundary.ts` itself. */
 const REAL_NODE_PATH: string | null = (() => {
   try {
@@ -3004,7 +3017,11 @@ describe('buildClaudeSandboxSettings — O2 the generated sandbox block', () => 
     const scratchDir = tempDir('vinaya-claude-settings-scratch-')
     const settings = buildClaudeSandboxSettings(request({ worktreeDir, scratchDir }))
 
-    expect(settings.sandbox.filesystem.allowWrite).toEqual([realpathSync(worktreeDir), realpathSync(scratchDir)])
+    expect(settings.sandbox.filesystem.allowWrite).toEqual([
+      realpathSync(worktreeDir),
+      realpathSync(scratchDir),
+      resolveBunInstallCacheDir()
+    ])
     expect(settings.sandbox.filesystem.denyRead).toEqual([])
     expect(settings.sandbox.filesystem.allowRead).toEqual([])
     expect(Object.keys(settings.sandbox.filesystem).sort()).toEqual(['allowRead', 'allowWrite', 'denyRead'])
@@ -3047,7 +3064,11 @@ describe('buildClaudeSandboxSettings — O2 the generated sandbox block', () => 
     const scratchDir = tempDir('vinaya-claude-settings-scratch-')
     try {
       const settings = buildClaudeSandboxSettings(request({ worktreeDir, scratchDir }))
-      expect(settings.sandbox.filesystem.allowWrite).toEqual([realpathSync(worktreeDir), realpathSync(scratchDir)])
+      expect(settings.sandbox.filesystem.allowWrite).toEqual([
+        realpathSync(worktreeDir),
+        realpathSync(scratchDir),
+        resolveBunInstallCacheDir()
+      ])
       expect(settings.sandbox.filesystem.allowWrite).not.toContain(gitCommonDir)
     } finally {
       rmSync(repoDir, { recursive: true, force: true })
@@ -3249,6 +3270,26 @@ describe('resolveGitCommonDir — round 3 Principal ruling: the ONE resolver bot
     expect(commonDir).not.toBeNull()
     const args = addCodexWritableDirs(['exec'], [commonDir as string], false)
     expect(args).toEqual(['exec', '--add-dir', gitCommonDir])
+  })
+})
+
+describe("addCodexWritableDirs threads the resolved bun install cache into Codex's own writable roots (round 4 Principal ruling)", () => {
+  it('names the bun cache dir via --add-dir on a fresh exec', () => {
+    const cacheDir = resolveBunInstallCacheDir()
+    const args = addCodexWritableDirs(['exec'], [cacheDir], false)
+    expect(args).toEqual(['exec', '--add-dir', cacheDir])
+  })
+
+  it('names the bun cache dir via the writable_roots --config override on a resumed exec', () => {
+    const cacheDir = resolveBunInstallCacheDir()
+    const args = addCodexWritableDirs(['exec', 'resume', 'abc'], [cacheDir], true)
+    expect(args).toEqual([
+      'exec',
+      'resume',
+      'abc',
+      '--config',
+      `sandbox_workspace_write.writable_roots=${JSON.stringify([cacheDir])}`
+    ])
   })
 })
 

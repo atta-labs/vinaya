@@ -1309,6 +1309,36 @@ function resolveBunExecDir(): string | null {
 }
 
 /**
+ * Principal ruling (round 4): a live Mac probe found `bun install
+ * --frozen-lockfile` failing under BOTH agents' sandboxes with "bun is
+ * unable to write files to tempdir: EPERM" — `bun install` writes its
+ * package cache under the operator's real home (`bun pm cache`), a path
+ * neither `buildClaudeSandboxSettings`'s `allowWrite` nor
+ * `addCodexWritableDirs`'s roots ever named. Resolved live, the same
+ * `which`-then-`realpath` posture `resolveBunExecDir` already takes for
+ * bun's own binary, so this never grants a guessed path on a host where the
+ * cache actually lives somewhere `bun pm cache` itself would report
+ * differently (`BUN_INSTALL`, a non-default XDG layout). Falls back to
+ * bun's own documented default (`~/.bun/install/cache`) only when the
+ * command itself is unavailable — never `null`: every writable-root caller
+ * here needs a path to add, not an absence to skip.
+ */
+export function resolveBunInstallCacheDir(): string {
+  try {
+    const out = execFileSync('bun', ['pm', 'cache'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    if (out.length > 0) return realpathSync(out)
+  } catch {
+    // Falls through to the documented default below.
+  }
+  const fallback = join(homedir(), '.bun', 'install', 'cache')
+  try {
+    return realpathSync(fallback)
+  } catch {
+    return fallback
+  }
+}
+
+/**
  * Ruling 986-1: the `node` the task-tools MCP server's own
  * registration starts (`taskToolsServerInvocation`'s `node <bin>` self-host
  * form, and `npx`'s own node too — `adapters.ts`). A confined Claude/Codex
@@ -2063,10 +2093,10 @@ function claudeCredentialDenyFiles(realHome: string): ReadonlyArray<{ path: stri
  *   against `code.claude.com/docs/en/sandboxing`, "How sandboxing works") —
  *   so this function sets no `filesystem.denyRead`/`allowRead` at all
  *   (O1's own replacement of the prior whole-home deny, below).
- * - **Writes** are granted on exactly the two directories a confined role is
- *   trusted to write — its own worktree and this dispatch's own scratch
- *   directory — never a third path and never the real `HOME`.
- *   `filesystem.allowWrite` no longer also names the worktree's own git
+ * - **Writes** are granted on the worktree, this dispatch's own scratch
+ *   directory, and — round 4 Principal ruling, below — bun's own resolved
+ *   install cache (`resolveBunInstallCacheDir`), never a fourth path and
+ *   never the real `HOME`. `filesystem.allowWrite` no longer also names the worktree's own git
  *   common dir: for a LINKED worktree (every Developer/Reviewer worktree
  *   this module confines), Claude Code's sandbox already "allows writes to
  *   the main repository's shared `.git` directory so commands such as `git
@@ -2138,7 +2168,7 @@ export function buildClaudeSandboxSettings(request: ConfinementRequest): ClaudeS
       filesystem: {
         denyRead: [],
         allowRead: [],
-        allowWrite: [worktreeDir, scratchDir]
+        allowWrite: [worktreeDir, scratchDir, resolveBunInstallCacheDir()]
       },
       credentials: { files: claudeCredentialDenyFiles(realHome) }
     },
