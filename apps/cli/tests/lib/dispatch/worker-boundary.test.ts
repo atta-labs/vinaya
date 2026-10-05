@@ -18,6 +18,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runPath } from '../../../src/lib/run-paths'
 import { addCodexWritableDirs } from '../../../src/lib/dispatch'
+import { devToolsSocketRoot } from '../../../src/lib/task-tools/dev-tools-registration'
 import {
   buildWorkerEnv,
   buildWorkerSandboxProfile,
@@ -2994,10 +2995,10 @@ describe('buildClaudeSandboxSettings — O2 the generated sandbox block', () => 
     expect(settings.sandbox.allowUnsandboxedCommands).toBe(false)
   })
 
-  it('O4: excludes only git fetch */git pull * — `gh *` and `git push *` are gone, the Developer holds no forge write', () => {
+  it('runs no Bash command outside Claude’s sandbox, including git fetch and pull', () => {
     const settings = buildClaudeSandboxSettings(request())
     expect(settings.sandbox.excludedCommands).toEqual(CLAUDE_SANDBOX_EXCLUDED_COMMANDS)
-    expect(settings.sandbox.excludedCommands).toEqual(['git fetch *', 'git pull *'])
+    expect(settings.sandbox.excludedCommands).toEqual([])
     expect(settings.sandbox.excludedCommands).not.toContain('gh *')
     expect(settings.sandbox.excludedCommands).not.toContain('git push *')
   })
@@ -3016,7 +3017,7 @@ describe('buildClaudeSandboxSettings — O2 the generated sandbox block', () => 
     expect(settings.sandbox.network.allowedDomains).toContain('api.anthropic.com')
   })
 
-  it('grants filesystem write only inside the worktree and scratch directory — never a third path, and sets no additional read restriction of its own (O1: reads follow Claude Code’s own default; denyRead/allowRead stay empty)', () => {
+  it('grants writes only to the worktree and scratch and hides all driver-tool sockets from Bash reads', () => {
     const worktreeDir = tempDir('vinaya-claude-settings-wt-')
     const scratchDir = tempDir('vinaya-claude-settings-scratch-')
     const settings = buildClaudeSandboxSettings(request({ worktreeDir, scratchDir }))
@@ -3026,7 +3027,7 @@ describe('buildClaudeSandboxSettings — O2 the generated sandbox block', () => 
       realpathSync(scratchDir),
       resolveBunInstallCacheDir()
     ])
-    expect(settings.sandbox.filesystem.denyRead).toEqual([])
+    expect(settings.sandbox.filesystem.denyRead).toEqual([devToolsSocketRoot()])
     expect(settings.sandbox.filesystem.allowRead).toEqual([])
     expect(Object.keys(settings.sandbox.filesystem).sort()).toEqual(['allowRead', 'allowWrite', 'denyRead'])
   })
@@ -3045,10 +3046,10 @@ describe('buildClaudeSandboxSettings — O2 the generated sandbox block', () => 
     for (const f of settings.sandbox.credentials.files) expect(f.mode).toBe('deny')
   })
 
-  it('O1: no longer builds a whole-home/whole-temp-root denyRead or a mirrored permissionsDeny — permissionsDeny is empty, and the (always-present) denyRead array names nothing', () => {
+  it('O1: keeps the home readable except named credentials and the driver-tool socket root', () => {
     const settings = buildClaudeSandboxSettings(request())
     expect(settings.permissionsDeny).toEqual([])
-    expect(settings.sandbox.filesystem.denyRead).toEqual([])
+    expect(settings.sandbox.filesystem.denyRead).toEqual([devToolsSocketRoot()])
   })
 
   it('canonicalizes every substituted path — an unresolved symlinked worktree still resolves to the real target', () => {
@@ -3270,10 +3271,11 @@ describe('buildCodexSandboxConfigToml — O1/O2/O5 the generated config.toml', (
   })
 })
 
-describe('claudeRunsCommandUnsandboxed — O2 Claude Code runs a bare excluded command outside the sandbox', () => {
-  it('runs a bare git-fetch/git-pull line outside the sandbox', () => {
-    expect(claudeRunsCommandUnsandboxed('git fetch origin')).toBe(true)
-    expect(claudeRunsCommandUnsandboxed('git pull --ff-only')).toBe(true)
+describe('claudeRunsCommandUnsandboxed — every Bash command stays sandboxed', () => {
+  it('keeps bare git fetch/pull inside the sandbox', () => {
+    expect(claudeRunsCommandUnsandboxed('git fetch origin')).toBe(false)
+    expect(claudeRunsCommandUnsandboxed('git pull --ff-only')).toBe(false)
+    expect(claudeRunsCommandUnsandboxed('git fetch --upload-pack=./script .')).toBe(false)
   })
 
   it('O4: keeps bare `gh` and `git push` INSIDE the sandbox — they are no longer excluded, so a forge write/read runs confined and its credential is denied', () => {

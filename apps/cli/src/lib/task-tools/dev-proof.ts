@@ -31,6 +31,7 @@
  */
 
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -50,6 +51,7 @@ import {
   claudeDevToolName,
   claudeDevToolsArgs,
   codexDevToolsConfigToml,
+  devToolsSocketPath,
   devToolsMcpConfigFileBody,
   driverDevBridgeInvocation
 } from './dev-tools-registration.js'
@@ -444,7 +446,7 @@ export async function devToolsProofCommand(args: string[]): Promise<void> {
   const { agent } = parsed
   const cwd = process.cwd()
   const scratchDir = mkdtempSync(join(tmpdir(), `vinaya-dev-proof-${agent}-`))
-  const socketPath = join(scratchDir, 'dev-tools.sock')
+  const socketPath = devToolsSocketPath(`proof:${randomUUID()}`)
   const recorded: RecordedCall[] = []
   const host = await startDevToolsHost({
     socketPath,

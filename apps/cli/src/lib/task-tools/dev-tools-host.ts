@@ -19,6 +19,7 @@
 import net from 'node:net'
 import { chmodSync, mkdirSync, rmSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { devToolsSocketRoot } from './dev-tools-registration.js'
 import { createDevToolsMcpServer, type DevToolContext } from './dev-tools-server.js'
 
 export type DevToolsHost = {
@@ -49,6 +50,7 @@ export async function startDevToolsHost(opts: StartDevToolsHostOptions): Promise
   const socketDir = dirname(opts.socketPath)
   mkdirSync(socketDir, { recursive: true, mode: 0o700 })
   chmodSync(socketDir, 0o700)
+  if (dirname(socketDir) === devToolsSocketRoot()) chmodSync(devToolsSocketRoot(), 0o700)
   try {
     rmSync(opts.socketPath, { force: true })
   } catch {

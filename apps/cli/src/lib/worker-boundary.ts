@@ -48,6 +48,7 @@ import { createHash } from 'node:crypto'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import type { Role } from '@attalabs/aeg-core'
+import { devToolsSocketRoot } from './task-tools/dev-tools-registration.js'
 
 /** The same allowlist discipline `apps/cli/src/checks/runner.ts`'s `buildCheckEnv` already applies to a custom check's child — named here again, deliberately, rather than imported: `checks/runner.ts` sits outside this task's surface (`apps/cli/src/checks` is explicitly named `out:` in the dispatched brief), and this list is small enough that naming it twice costs less than reaching across that boundary. `apps/cli/specs/isolation.md` §2 documents this precedent as the pattern this module extends to the Worker/Reviewer dispatch path. */
 export const WORKER_ENV_ALLOWLIST_KEYS = [
@@ -2079,15 +2080,11 @@ export type ClaudeSandboxSettings = {
  * — the conformance suite lists those as Claude known failures on each
  * platform the CI job reports them.
  *
- * What remains is only `git`'s own SSH-backed READ network commands, which
- * still fail TLS/proxy under Seatbelt on macOS (confirmed live against
- * `code.claude.com/docs/en/sandboxing`'s "Troubleshooting", "`git` over SSH
- * fails with the sandbox on") and so still need the documented
- * `excludedCommands` escape hatch, naming the PLAIN command form (`git fetch
- * *`, never `git -C <dir> fetch *` or a `cd …&&` prefix, which the same page
- * states stay sandboxed regardless of any entry here).
+ * No Bash command may run outside the sandbox. Even a plain `git fetch` can
+ * execute a worker-controlled upload-pack program, so excluding it would let
+ * a worker reach another task's driver socket with the controller's OS UID.
  */
-export const CLAUDE_SANDBOX_EXCLUDED_COMMANDS: readonly string[] = ['git fetch *', 'git pull *']
+export const CLAUDE_SANDBOX_EXCLUDED_COMMANDS: readonly string[] = []
 
 /**
  * O2: how Claude Code itself decides whether a Bash line runs OUTSIDE the
@@ -2148,8 +2145,8 @@ function claudeCredentialDenyFiles(realHome: string): ReadonlyArray<{ path: stri
  * - **Reads** are left at Claude Code's own default — "read access to the
  *   entire computer, except certain denied directories" (confirmed live
  *   against `code.claude.com/docs/en/sandboxing`, "How sandboxing works") —
- *   so this function sets no `filesystem.denyRead`/`allowRead` at all
- *   (O1's own replacement of the prior whole-home deny, below).
+ *   except the dedicated driver-tool socket root, which `denyRead` hides
+ *   even when Unix-socket seccomp is unavailable. `allowRead` stays empty.
  * - **Writes** are granted on the worktree, this dispatch's own scratch
  *   directory, and — round 4 Principal ruling, below — bun's own resolved
  *   install cache (`resolveBunInstallCacheDir`), never a fourth path and
@@ -2165,20 +2162,18 @@ function claudeCredentialDenyFiles(realHome: string): ReadonlyArray<{ path: stri
  *   mode (`claudeCredentialDenyFiles`) — the one mechanism O1 names, in
  *   place of the blanket real-home `denyRead`/mirrored `permissionsDeny`
  *   this function used to build.
- * - **`gh`/git's network commands** are excluded from the sandbox
- *   (`CLAUDE_SANDBOX_EXCLUDED_COMMANDS`) so they run with full access rather
- *   than failing inside it (O2's own doc comment); `allowUnsandboxedCommands`
- *   stays `false` regardless — excluding a command is never the same
- *   mechanism as letting a failed one retry unsandboxed.
+ * - **No Bash command is excluded.** `git fetch` and `git pull` remain inside
+ *   the sandbox because Git can execute a worker-chosen program while fetching.
+ *   `allowUnsandboxedCommands` stays `false`.
  * - **The domain allowlist is `CLAUDE_SANDBOX_ALLOWED_DOMAINS`, always** —
  *   never `request.allowedHosts` (O3): one fixed list this module owns,
  *   never assembled per task. `network.strictAllowlist` is NOT part of this
  *   function's own return value (see below) even though a real dispatch
  *   still carries it.
  *
- * `filesystem.denyRead`/`allowRead` are present but always empty — this
- * function still sets no additional read restriction of its own (reads stay
- * at Claude Code's documented default described above) — and
+ * `filesystem.denyRead` names only the driver-tool socket root and
+ * `allowRead` is empty; other reads stay at Claude Code's documented
+ * default described above. The
  * `network` carries `allowedDomains` alone, with no `strictAllowlist`. Both
  * are shape constraints, not behavior changes: `dispatch.ts`'s
  * `writeDispatchSettings` is the ONE place a real dispatch's settings file
@@ -2223,7 +2218,7 @@ export function buildClaudeSandboxSettings(request: ConfinementRequest): ClaudeS
       excludedCommands: CLAUDE_SANDBOX_EXCLUDED_COMMANDS,
       network: { allowedDomains: [...CLAUDE_SANDBOX_ALLOWED_DOMAINS] },
       filesystem: {
-        denyRead: [],
+        denyRead: [devToolsSocketRoot()],
         allowRead: [],
         allowWrite: [worktreeDir, scratchDir, resolveBunInstallCacheDir()]
       },

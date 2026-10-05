@@ -1179,9 +1179,9 @@ const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
  * diff`, `gh issue view/comment`) — `gh` runs outside the sandbox
  * (`CLAUDE_SANDBOX_EXCLUDED_COMMANDS`), so this allow-list was the only
  * remaining gate against `gh api`/`gh pr merge`/`gh secret`/`gh repo` (round
- * 2 security review, HIGH) — and adds a matching `Bash(git pull:*)` allow
- * for the `git pull *` entry `CLAUDE_SANDBOX_EXCLUDED_COMMANDS` already
- * listed with no permission grant of its own (round 2 code review, O2 gap)) —
+ * 2 security review, HIGH) — and added a `Bash(git pull:*)` permission.
+ * The exclusion list is now empty; both fetch and pull run sandboxed because
+ * Git can execute a worker-chosen program during a fetch.
  * `writeDispatchSettings`'s own first lifecycle line for a role names it, so
  * a run's own log says which policy shape it started under without needing
  * to diff `dispatch.ts` against the run's own timestamp.

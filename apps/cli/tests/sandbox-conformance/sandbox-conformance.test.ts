@@ -26,14 +26,21 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createConnection, createServer } from 'node:net'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { devToolsSocketPath, devToolsSocketRoot } from '../../src/lib/task-tools/dev-tools-registration.js'
+import { buildClaudeSandboxSettings, CLAUDE_SANDBOX_ALLOWED_DOMAINS } from '../../src/lib/worker-boundary.js'
+import { spawnBudgetedAsync } from '../lib/process-fixture.js'
 import { commandsTheTextsName } from './command-sources.js'
 import {
   AGENTS,
   type Agent,
   COMMAND_BUDGET_MS,
   openSandboxSession,
+  SANDBOX_RUNTIME_PACKAGE,
   type SandboxSession,
   sourceBranch
 } from './sandbox-launch.js'
@@ -74,9 +81,8 @@ type KnownFailure = {
 }
 
 /**
- * O2/O7: a line that is NOT a bare excluded command runs INSIDE Claude's
- * sandbox (`claudeRunsCommandUnsandboxed` in `sandbox-launch.ts` routes a bare
- * `gh`/`git push`/… outside it, as Claude Code does). Inside, the gh token
+ * O2/O7: every Bash line runs INSIDE Claude's sandbox because the exclusion
+ * list is empty (`claudeRunsCommandUnsandboxed` in `sandbox-launch.ts`). Inside, the gh token
  * store `~/.config/gh/hosts.yml` is a denied credential and no
  * `GITHUB_TOKEN`/`GH_TOKEN` sits in the Developer's own macOS environment, so
  * `gh` cannot authenticate and any forge read fails. (Named for darwin: on a
@@ -198,6 +204,86 @@ describe('sandbox conformance — the known-failures list', () => {
 })
 
 const LIVE = process.env.VINAYA_SANDBOX_CONFORMANCE === '1'
+
+describe.skipIf(!LIVE || process.platform !== 'linux')('driver socket boundary without Unix-socket seccomp', () => {
+  it('hides a live sibling socket from Claude Bash while the outside control connects', async () => {
+    const socketPath = devToolsSocketPath(`conformance-victim:${randomUUID()}`)
+    const socketDir = dirname(socketPath)
+    const scratchDir = mkdtempSync(join(tmpdir(), 'vinaya-socket-conformance-'))
+    mkdirSync(socketDir, { recursive: true, mode: 0o700 })
+    chmodSync(devToolsSocketRoot(), 0o700)
+    chmodSync(socketDir, 0o700)
+    const server = createServer((socket) => socket.end())
+    let connections = 0
+    server.on('connection', () => connections++)
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject)
+        server.listen(socketPath, resolve)
+      })
+      chmodSync(socketPath, 0o600)
+      await new Promise<void>((resolve, reject) => {
+        const socket = createConnection(socketPath)
+        socket.once('connect', () => {
+          socket.destroy()
+          resolve()
+        })
+        socket.once('error', reject)
+      })
+      expect(connections).toBe(1)
+
+      const settings = buildClaudeSandboxSettings({
+        role: 'developer',
+        agent: 'claude',
+        worktreeDir: scratchDir,
+        scratchDir,
+        allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS
+      })
+      expect(settings.sandbox.filesystem.denyRead).toContain(devToolsSocketRoot())
+      const settingsPath = join(scratchDir, 'settings.json')
+      const scriptPath = join(scratchDir, 'connect.mjs')
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({
+          network: {
+            allowedDomains: settings.sandbox.network.allowedDomains,
+            deniedDomains: [],
+            allowAllUnixSockets: true
+          },
+          filesystem: { ...settings.sandbox.filesystem, denyWrite: [] }
+        })
+      )
+      writeFileSync(
+        scriptPath,
+        `import { createConnection } from 'node:net'\n` +
+          `const socket = createConnection(${JSON.stringify(socketPath)})\n` +
+          `socket.once('connect', () => { console.log('CONNECTED'); process.exit(1) })\n` +
+          `socket.once('error', (e) => { console.log('DENIED:' + e.code); process.exit(0) })\n`
+      )
+      const run = await spawnBudgetedAsync(
+        [
+          process.execPath,
+          'x',
+          SANDBOX_RUNTIME_PACKAGE,
+          '--settings',
+          settingsPath,
+          '-c',
+          `${process.execPath} ${scriptPath}`
+        ],
+        { cwd: scratchDir },
+        30_000,
+        'Claude socket-boundary conformance'
+      )
+      expect(run.status, run.stderr).toBe(0)
+      expect(run.stdout).toMatch(/DENIED:(EACCES|EPERM|ENOENT)/)
+      expect(connections).toBe(1)
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+      rmSync(socketDir, { recursive: true, force: true })
+      rmSync(scratchDir, { recursive: true, force: true })
+    }
+  }, 60_000)
+})
 
 for (const agent of AGENTS) {
   describe.skipIf(!LIVE)(`sandbox conformance — ${agent}'s sandbox`, () => {

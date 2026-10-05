@@ -28,7 +28,7 @@ export type BridgeInvocation = { command: string; args: string[] }
 
 /**
  * The owner-only private directory the driver creates for a task's dev-tools
- * socket — a per-task `vinaya-dev-tools-<digest>` directory under `tmpdir()`.
+ * socket — a per-task digest directory under one `vinaya-dev-tools` root.
  * `startDevToolsHost` creates it mode 0700 so no other local user can traverse
  * into it, which is what keeps the socket inside it unreachable to anyone but
  * the driver's own user (a predictable path in the world-writable shared temp
@@ -36,7 +36,12 @@ export type BridgeInvocation = { command: string; args: string[] }
  */
 export function devToolsSocketDir(key: string): string {
   const digest = createHash('sha256').update(key).digest('hex').slice(0, 16)
-  return join(tmpdir(), `vinaya-dev-tools-${digest}`)
+  return join(devToolsSocketRoot(), digest)
+}
+
+/** A single literal parent that the Claude Bash sandbox can hide at launch. */
+export function devToolsSocketRoot(): string {
+  return join(tmpdir(), 'vinaya-dev-tools')
 }
 
 /**
