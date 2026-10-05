@@ -90,12 +90,15 @@ const GH_HOSTS_DENIED_INSIDE =
  * Today's denials. Remove an entry the moment its command passes — the
  * suite fails until you do.
  *
- * O2: the three bare `gh` lines (`gh-issue-view`/`gh-pr-view`/
- * `gh-pr-view-reviews`) are gone — each is a bare excluded command Claude Code
- * now runs OUTSIDE the sandbox, with the forge credential, so they exit 0.
- * `gh-chained` is added as a Claude/darwin denial (alongside the kept
- * `check-all`/darwin): a chained line is not a bare excluded command, so it
- * runs inside.
+ * O4: the three bare `gh` read lines (`gh-issue-view`/`gh-pr-view`/
+ * `gh-pr-view-reviews`) are BACK as Claude/darwin denials — `gh` is no longer
+ * an excluded command, so every `gh` line (bare or chained) now runs INSIDE
+ * the sandbox, where on macOS gh cannot authenticate. The Developer reads
+ * its PR through the driver-run `read_pull_request` tool instead. On a Linux CI
+ * runner the ambient `GH_TOKEN` flows in and the sandbox network allows
+ * `api.github.com`, so the same bare reads authenticate and PASS there — they
+ * are darwin-only failures, like `check-all`'s own macOS cause. `gh-chained`
+ * stays for the same reason it always did (a chained line runs inside).
  * O4: `typecheck` is NOT listed for either agent. `bun run typecheck` runs
  * `turbo`, whose cache-miss write used to land at the MAIN repository root's
  * `.turbo/` — outside the granted worktree/scratch, so the sandbox denied it
@@ -109,7 +112,7 @@ const GH_HOSTS_DENIED_INSIDE =
  * O3: `check-all` on claude/darwin and claude/linux stays — the CLI's own
  * forge reads are not staged from outside here. Under the publishing-tools
  * design the controller runs the checks that need the forge, so closing these
- * two moves to Issue #1040; each keeps its current-cause denial below.
+ * two moves to the publishing-tools task; each keeps its current-cause denial below.
  */
 const KNOWN_FAILURES: readonly KnownFailure[] = [
   {
@@ -123,6 +126,24 @@ const KNOWN_FAILURES: readonly KnownFailure[] = [
     agent: 'claude',
     platform: 'darwin',
     denial: `a chained gh line is not a bare excluded command, so Claude Code runs it inside the sandbox, where ${GH_HOSTS_DENIED_INSIDE}`
+  },
+  {
+    id: 'gh-issue-view',
+    agent: 'claude',
+    platform: 'darwin',
+    denial: `O4: gh is no longer an excluded command, so this bare read runs inside the sandbox, where ${GH_HOSTS_DENIED_INSIDE}`
+  },
+  {
+    id: 'gh-pr-view',
+    agent: 'claude',
+    platform: 'darwin',
+    denial: `O4: gh is no longer an excluded command, so this bare read runs inside the sandbox, where ${GH_HOSTS_DENIED_INSIDE}`
+  },
+  {
+    id: 'gh-pr-view-reviews',
+    agent: 'claude',
+    platform: 'darwin',
+    denial: `O4: gh is no longer an excluded command, so this bare read runs inside the sandbox, where ${GH_HOSTS_DENIED_INSIDE}`
   },
   {
     id: 'check-all',

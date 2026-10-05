@@ -153,7 +153,6 @@ import {
   fetchNewestRulingAuthor,
   fetchNewestRulingOrdinal,
   fetchPrBody,
-  bareForgeCommandRule,
   fetchRulings,
   fetchSourceRevision,
   findOpenPrForBranch,
@@ -229,15 +228,12 @@ import { reassertPrBodyPremise } from '../checks/bin/check-pr-premise-reassert.j
 import type { PremiseReassertResult } from '../checks/premise-reassert-logic.js'
 import { postForgeEffectOnce, publishRound, unboundFields } from './dev-review-loop/publication.js'
 import {
-  checkPublicationPreconditions,
   commitHeaderPathFor,
   commitHeaderPromptLine,
-  type DeveloperPublicationRecord,
   PR_BODY_FILE_NAME,
   prBodyPathFor,
   prBodyPromptLine,
   readDeveloperPublicationRecord,
-  validateCommitHeader,
   writeDeveloperPublicationRecord
 } from './dev-review-loop/developer-publication.js'
 import { patchIdAt } from './patch-id.js'
@@ -3172,14 +3168,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       opts: { skipResumeContext?: boolean; developerFiles?: readonly string[] }
     ): Promise<DispatchHandle> {
       const isResume = devResumeId !== null
-      const base = opts.skipResumeContext ? promptText : `${resumeContextBlock()}\n\n${promptText}`
-      // O1: the bare-forge-command rule rides EVERY Claude Code Developer
-      // dispatch prompt (round 1 and every resume), prepended OUTSIDE the
-      // frozen brief so the brief stays the prompt's contiguous suffix — and
-      // no Codex one (`bareForgeCommandRule` returns `null` for Codex, whose
-      // driver publishes for it).
-      const forgeRule = bareForgeCommandRule(dispatchAgent)
-      const fullPrompt = forgeRule ? `${forgeRule}\n\n${base}` : base
+      // O4: no bare-forge-command rule rides the prompt any longer — the
+      // Developer holds no `gh`/`git push` credential and publishes only
+      // through the driver-run tools, so there is no excluded command to run
+      // on its own line. The brief stays the prompt's contiguous suffix.
+      const fullPrompt = opts.skipResumeContext ? promptText : `${resumeContextBlock()}\n\n${promptText}`
       // O1/O3: confine the Developer to
       // its own worktree — this driver's own round-1 `createTaskWorktree`
       // call (above, in the branch-creation branch) already created it before
@@ -3430,19 +3423,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     const MAX_PUBLISH_REASKS = 2
 
     /**
-     * O7: the publishing-instruction clause every
-     * reask prompt in this file ends with — Codex still hands its commit/
-     * push/PR-open off to the driver via the `.vinaya-commit-header`/
-     * `.vinaya-pr-body` hand-off files (its own `workspace-write` sandbox
-     * keeps `.git` read-only by design); a Claude Code Developer now holds
-     * its own forge credential and publishes the same commit/push/PR-open
-     * itself.
+     * O4: the publishing-instruction clause every reask prompt in this file
+     * ends with — the SAME for both agents now: the Developer publishes only
+     * through the driver-run tools, holding no forge credential of its own. The
+     * driver hosts the tools and runs every gate; it never commits, pushes or
+     * opens on the Developer's behalf.
      */
     function publishingInstructionLine(): string {
-      if (dispatchAgent === 'codex') {
-        return 'leave your changes UNCOMMITTED and (re)write your commit-header and (round 1) PR-body files; the driver commits and publishes, never you.'
-      }
-      return 'commit, push and open (or update) your pull request yourself, on this same branch — the driver does not publish for you.'
+      return 'publish through the driver-run tools — `publish_changes` to commit and push the task branch, `open_pull_request` to open the PR, `update_pull_request_body`/`refresh_evidence` for a body-only change; you hold no `gh`/`git push` credential and the driver does not publish for you.'
     }
 
     /**
@@ -3676,135 +3664,41 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * records the hook's own text in `lastPushRefusal` for the existing
      * mechanical-failure path and returns `push_refused`.
      */
-    async function publishDeveloperTurn(roundNum: number): Promise<PublishTurnResult> {
-      // O7: the driver no longer commits, pushes or
-      // opens the pull request for a Claude Code Developer — it now holds its
-      // own forge credential and publishes its own work, through the
-      // sandbox-excluded `git`/`gh` commands (`worker-boundary.ts`'s
-      // `CLAUDE_SANDBOX_EXCLUDED_COMMANDS`) and the matching permission grant
-      // (`dispatch.ts`'s `buildRolePermissions('developer')`). Still Codex-
-      // only below: Codex's own `workspace-write` sandbox keeps `.git`
-      // read-only by design, so its driver keeps publishing exactly as
-      // before.
-      if (dispatchAgent !== 'codex') return { kind: 'nothing' }
+    async function publishDeveloperTurn(_roundNum: number): Promise<PublishTurnResult> {
+      // O4: the driver no longer commits, pushes or opens a pull request on its
+      // own after a turn. The Developer publishes through the driver-run tools
+      // (`publish_changes`, `open_pull_request`, `update_pull_request_body`,
+      // `refresh_evidence`) DURING its turn — each running IN THIS driver,
+      // behind the very gates this step used to run (commit-header,
+      // publication-preconditions, protected-path, pre-push, PR-body;
+      // `createDeveloperDevToolContext`). This step only DETECTS work the turn
+      // left unpublished and re-asks the SAME session to call the tool; it
+      // writes nothing to the forge itself.
       const worktree = worktreePathForBranch()
       // No worktree here — a driver running on a different host than the
       // Developer's own machine, or this driver's own round-1 `createTaskWorktree`
-      // call has not run/failed. Nothing to publish from here; the existing
+      // call has not run/failed. Nothing to detect from here; the existing
       // poll machinery still covers a branch another host published.
       if (!existsSync(worktree)) return { kind: 'nothing' }
 
       const existingPr = d.findOpenPrForBranch(branch)
       const unpushed = d.readUnpushedWorkDetail(worktree)
-      // O5: nothing new — a clean worktree, nothing ahead of the remote, a
-      // pull request already open. The step does nothing, so a Developer that
-      // published by itself and every existing fixture that fakes a published
-      // turn behave exactly as before.
+      // Nothing left unpublished — a clean worktree, nothing ahead of the
+      // remote, a pull request already open: the agent published through the
+      // tools, and there is nothing to re-ask.
       if (unpushed.dirtyFiles.length === 0 && unpushed.aheadCount === 0 && existingPr) {
         return { kind: 'nothing' }
       }
 
-      // O7: branch, base, head and Surface — before any commit or credential use.
-      const worktreeHead = d.readWorktreeHead(worktree)
-      const base = await resolvePublicationBase(worktreeHead)
-      let remoteHeadBeforePush: string | null
-      try {
-        remoteHeadBeforePush = d.resolveHead(branch)
-      } catch {
-        remoteHeadBeforePush = null
-      }
-      // Authorize only the commits in this push. An existing remote head
-      // bounds the range; a first push still names the whole new branch.
-      const pushedRangeBase = pushedCommitRangeBase(remoteHeadBeforePush, publicationExpectedBase)
-      let changedPaths = pushedRangeBase ? d.gitWorktreeChangedPaths(worktree, pushedRangeBase) : []
-      // `git diff <base>` cannot see an untracked file until `commitWorktree`
-      // stages it. Include porcelain's dirty-file list in the pre-commit
-      // Surface check, then recompute the authoritative pushed range below
-      // after the commit has made every path visible to git diff.
-      const preCommitChangedPaths = [...new Set([...changedPaths, ...unpushed.dirtyFiles])]
-      const check = checkPublicationPreconditions({
-        worktreeBranch: d.readWorktreeBranch(worktree),
-        expectedBranch: branch,
-        worktreeHead,
-        recordedHead: turnPreHead,
-        base,
-        expectedBase: publicationExpectedBase,
-        changedPaths: preCommitChangedPaths,
-        surface: d.resolveTaskSurface ? d.resolveTaskSurface(task) : null
-      })
-      if (!check.ok) return publicationRefusal('publication-preconditions', check.reason)
-
-      // O2: commit the uncommitted changes under the Developer's header,
-      // recording the SHA before the push (O8).
-      let record: DeveloperPublicationRecord | null = readDeveloperPublicationRecord(root, task)
-      if (unpushed.dirtyFiles.length > 0) {
-        const header = validateCommitHeader(readIfExists(commitHeaderPathFor(root, task, roundNum)))
-        if (!header.ok) return publicationRefusal('commit-header', header.reason)
-        d.buildVendoredCliIfMissing(worktree)
-        const committed = d.commitWorktree(worktree, header.header)
-        if (!committed.ok) {
-          return publicationRefusal(committed.check, committed.errorLine, committed.output)
-        }
-        const sha = committed.sha
-        record = {
-          round: roundNum,
-          preTurnHead: turnPreHead,
-          commitSha: sha,
-          pushed: false,
-          prNumber: existingPr?.number ?? null
-        }
-        writeDeveloperPublicationRecord(root, task, record)
-      }
-
-      // O3/O4: push the branch when the local head is ahead of the remote.
-      const localHead = d.readWorktreeHead(worktree)
-      const remoteHead = remoteHeadBeforePush
-      if (localHead !== null && localHead !== remoteHead) {
-        // The pushed commit is now the source of truth. In particular, a new
-        // file that was untracked before `commitWorktree` is now included.
-        changedPaths = pushedRangeBase ? d.gitWorktreeChangedPaths(worktree, pushedRangeBase) : []
-        const push = d.pushTaskBranch({
-          task,
-          branch,
-          sha: localHead,
-          touchedPaths: changedPaths,
-          round: roundNum,
-          agent: dispatchAgent,
-          repo,
-          worktreePath: worktree
-        })
-        if (!push.ok) {
-          if (!push.hook) throw new Error(`task branch push failed outside the pre-push hook: ${push.refusal}`)
-          lastPushRefusal = push.refusal
-          return publicationRefusal('pre-push-hook', firstErrorLine(push.refusal, 'push hook refused'), push.refusal)
-        }
-        lastPushRefusal = null
-        record = {
-          round: roundNum,
-          preTurnHead: turnPreHead,
-          commitSha: record?.commitSha ?? localHead,
-          pushed: true,
-          prNumber: existingPr?.number ?? null
-        }
-        writeDeveloperPublicationRecord(root, task, record)
-      }
-
-      // O3: open the pull request when none is open, from the Developer's body file.
-      if (!existingPr) {
-        const opened = await openPullRequestFromBody(roundNum, changedPaths)
-        if (opened.kind === 'refused') return opened
-        if (opened.prNumber !== null) {
-          record = {
-            round: roundNum,
-            preTurnHead: turnPreHead,
-            commitSha: record?.commitSha ?? localHead,
-            pushed: true,
-            prNumber: opened.prNumber
-          }
-          writeDeveloperPublicationRecord(root, task, record)
-        }
-      }
-      return { kind: 'published' }
+      // Work the turn left unpublished — re-ask the same session to publish it
+      // through the tool. Bounded the same way a refused publication already is
+      // (`dispatchDeveloper`): after the bound, the unmoved head is left to the
+      // existing poll/`no_push` safety net.
+      const missingPr = existingPr ? '' : '; no open pull request'
+      return publicationRefusal(
+        'unpublished-work',
+        `work the turn left unpublished — ${noPushPauseDetail(branch, unpushed)}${missingPr}`
+      )
     }
 
     /**

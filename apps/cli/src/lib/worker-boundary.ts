@@ -2073,17 +2073,24 @@ export type ClaudeSandboxSettings = {
 }
 
 /**
- * O2: the Go-based `gh` CLI fails TLS verification under Seatbelt on macOS,
- * and `git`'s own SSH-backed network commands cannot authenticate through
- * the sandbox's own proxy tunnel on macOS either (both confirmed live
- * against `code.claude.com/docs/en/sandboxing`'s own "Troubleshooting"
- * section, "Go-based CLIs fail TLS verification on macOS" and "`git` over
- * SSH fails with the sandbox on") — the documented fix for both is the same
- * `excludedCommands` escape hatch, naming the PLAIN command form (`git push
- * *`, never `git -C <dir> push *` or a `cd …&&` prefix, which the same page
+ * O4: `gh *` and `git push *` are GONE from this list. A Developer no
+ * longer holds any forge WRITE: it publishes, opens its PR and reads it only
+ * through the driver-run dev-tools (`task-tools/dev-tools-host.ts`), which run
+ * the credentialed forge operations in the driver, outside the sandbox. With
+ * `gh` no longer excluded, a bare `gh` read (`gh issue view`, `gh pr view`)
+ * now runs INSIDE the sandbox, where the forge-token file is denied, and fails
+ * — the conformance suite lists those as Claude known failures on each
+ * platform the CI job reports them.
+ *
+ * What remains is only `git`'s own SSH-backed READ network commands, which
+ * still fail TLS/proxy under Seatbelt on macOS (confirmed live against
+ * `code.claude.com/docs/en/sandboxing`'s "Troubleshooting", "`git` over SSH
+ * fails with the sandbox on") and so still need the documented
+ * `excludedCommands` escape hatch, naming the PLAIN command form (`git fetch
+ * *`, never `git -C <dir> fetch *` or a `cd …&&` prefix, which the same page
  * states stay sandboxed regardless of any entry here).
  */
-export const CLAUDE_SANDBOX_EXCLUDED_COMMANDS: readonly string[] = ['gh *', 'git push *', 'git fetch *', 'git pull *']
+export const CLAUDE_SANDBOX_EXCLUDED_COMMANDS: readonly string[] = ['git fetch *', 'git pull *']
 
 /**
  * O2: how Claude Code itself decides whether a Bash line runs OUTSIDE the

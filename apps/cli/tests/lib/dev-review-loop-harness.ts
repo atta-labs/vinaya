@@ -773,6 +773,59 @@ export function developerLeavesWorkDeps(
   }
 }
 
+/**
+ * O4/O5: a Developer that publishes through the driver-run tools, the way a
+ * real agent does — its dispatch calls the gate-backed `DevToolContext` the
+ * driver captured into `world.devToolContext` this turn (every gate real, the
+ * forge faked by `makeInProcessDeps`). `publish_changes` commits+pushes the
+ * dirty work; `open_pull_request` opens the PR when none is open; a body-only
+ * turn (`bodyOnly`) instead calls `update_pull_request_body` + `refresh_evidence`.
+ */
+export function developerPublishesViaToolsDeps(
+  world: LoopWorld,
+  opts: {
+    changedPaths?: string[]
+    header?: string
+    body?: string
+    /** A body-only turn: publish a new body through the tools, touch no code. */
+    bodyOnly?: boolean
+  } = {}
+): Partial<LoopDeps> {
+  const base = makeInProcessDeps(world)
+  let devSeq = 0
+  return {
+    ...base,
+    dispatchRole: async (role, agent, prompt, dOpts) => {
+      if (role !== 'developer') return base.dispatchRole!(role, agent, prompt, dOpts)
+      const round = dOpts.round ?? 1
+      devSeq += 1
+      world.dispatchCountByRole.developer = (world.dispatchCountByRole.developer ?? 0) + 1
+      const ctx = world.devToolContext
+      if (ctx) {
+        if (opts.bodyOnly) {
+          await ctx.updatePullRequestBody(opts.body ?? '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n')
+          await ctx.refreshEvidence()
+        } else {
+          const changed = opts.changedPaths ?? ['apps/cli/src/lib/x.ts']
+          world.worktreeDirty = [...changed]
+          world.worktreeChangedPaths = [...changed]
+          const published = await ctx.publishChanges(opts.header ?? 'Feat(cli): publish via the driver-run tools')
+          // Open the PR only when the publish actually landed — a gate refusal
+          // (e.g. a Surface violation) leaves nothing to open.
+          if (published.ok && !world.prOpened) {
+            await ctx.openPullRequest(
+              world.issueTitle,
+              opts.body ?? '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n'
+            )
+          }
+        }
+      }
+      world.dispatches.push({ role, round, resumeId: 'dev-session-1', prompt })
+      return handle('dev-session-1', `eff-dev-${devSeq}`)
+    }
+  }
+}
+
 /** Thrown by the fake `exitProcess` so a test can observe "the driver would hand off here" without killing the test process. */
 export class InProcessExit extends Error {
   constructor(public readonly code: number) {

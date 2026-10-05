@@ -5,7 +5,6 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   assembleDeveloperDoctrine,
-  bareForgeCommandRule,
   checkTaskDispatchReadiness,
   createTaskWorktree,
   DEVELOPER_CHECKLIST_HEADINGS,
@@ -327,25 +326,6 @@ describe('renderDeveloperDoctrineBlock', () => {
     expect(block).toContain('## Stop conditions')
     expect(block).toContain('bun apps/cli/src/index.ts doctrine --role developer --print')
     expect(block).not.toContain('aeg-root/roles/developer.md')
-  })
-})
-
-describe('bareForgeCommandRule (O1)', () => {
-  it('states the bare-command rule for a Claude dispatch, naming each forge command', () => {
-    const rule = bareForgeCommandRule('claude')
-    expect(rule).not.toBeNull()
-    const text = rule ?? ''
-    for (const command of ['`gh`', '`git push`', '`git pull`', '`git fetch`']) {
-      expect(text).toContain(command)
-    }
-    // Its own Bash command, nothing chained — the whole point of the rule.
-    expect(text.toLowerCase()).toContain('own bash command')
-    expect(text).toContain('outside the sandbox')
-    expect(text.toLowerCase()).toContain('chain')
-  })
-
-  it('states NO rule for a Codex dispatch — its driver publishes for it', () => {
-    expect(bareForgeCommandRule('codex')).toBeNull()
   })
 })
 

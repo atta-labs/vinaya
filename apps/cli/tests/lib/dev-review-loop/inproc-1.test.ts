@@ -271,17 +271,12 @@ describe('devReviewLoop — a fresh developer session is prepended its role doct
     const prompt = dev?.prompt ?? ''
     // No doctrine block is prepended when none resolves.
     expect(prompt).not.toContain('YOUR ROLE DOCTRINE')
-    // O7: a Claude Code Developer now holds its own forge credential and
-    // publishes its own round-1 commit, push and pull request itself — so
-    // round 1 carries no commit-header/PR-body hand-off instructions.
-    // issue-1034 O1: the bare-forge-command rule IS prepended to every Claude
-    // dispatch, OUTSIDE the frozen brief — so with no doctrine block the prompt
-    // is that rule followed by the frozen brief, which stays the contiguous,
-    // byte-for-byte suffix (its hash untouched).
-    expect(prompt).toContain('SANDBOX NOTE')
-    expect(prompt).toContain('runs outside the sandbox')
+    // O4: the Developer publishes only through the driver-run tools and holds
+    // no forge credential, so no bare-forge-command rule is prepended any
+    // longer — with no doctrine block the frozen brief stands alone as the
+    // whole prompt (its hash untouched).
+    expect(prompt).not.toContain('SANDBOX NOTE')
     expect(prompt.endsWith(world.frozenBrief)).toBe(true)
-    expect(prompt.indexOf('SANDBOX NOTE')).toBeLessThan(prompt.indexOf(world.frozenBrief))
   })
 })
 

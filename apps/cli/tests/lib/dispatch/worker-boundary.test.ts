@@ -2994,10 +2994,12 @@ describe('buildClaudeSandboxSettings — O2 the generated sandbox block', () => 
     expect(settings.sandbox.allowUnsandboxedCommands).toBe(false)
   })
 
-  it('O2: excludes exactly gh */git push */git fetch */git pull * — the plain forms, matching the doctrine commands', () => {
+  it('O4: excludes only git fetch */git pull * — `gh *` and `git push *` are gone, the Developer holds no forge write', () => {
     const settings = buildClaudeSandboxSettings(request())
     expect(settings.sandbox.excludedCommands).toEqual(CLAUDE_SANDBOX_EXCLUDED_COMMANDS)
-    expect(settings.sandbox.excludedCommands).toEqual(['gh *', 'git push *', 'git fetch *', 'git pull *'])
+    expect(settings.sandbox.excludedCommands).toEqual(['git fetch *', 'git pull *'])
+    expect(settings.sandbox.excludedCommands).not.toContain('gh *')
+    expect(settings.sandbox.excludedCommands).not.toContain('git push *')
   })
 
   it('O3: network.allowedDomains is always the fixed CLAUDE_SANDBOX_ALLOWED_DOMAINS list, never request.allowedHosts — and carries no other key (strictAllowlist is added later, by writeDispatchSettings)', () => {
@@ -3269,19 +3271,23 @@ describe('buildCodexSandboxConfigToml — O1/O2/O5 the generated config.toml', (
 })
 
 describe('claudeRunsCommandUnsandboxed — O2 Claude Code runs a bare excluded command outside the sandbox', () => {
-  it('runs a bare gh/git-push/git-fetch/git-pull line outside the sandbox', () => {
-    expect(claudeRunsCommandUnsandboxed('gh issue view 1026 --json number,title')).toBe(true)
-    expect(claudeRunsCommandUnsandboxed('git push origin HEAD')).toBe(true)
+  it('runs a bare git-fetch/git-pull line outside the sandbox', () => {
     expect(claudeRunsCommandUnsandboxed('git fetch origin')).toBe(true)
     expect(claudeRunsCommandUnsandboxed('git pull --ff-only')).toBe(true)
   })
 
+  it('O4: keeps bare `gh` and `git push` INSIDE the sandbox — they are no longer excluded, so a forge write/read runs confined and its credential is denied', () => {
+    expect(claudeRunsCommandUnsandboxed('gh issue view 1026 --json number,title')).toBe(false)
+    expect(claudeRunsCommandUnsandboxed('gh pr view 1')).toBe(false)
+    expect(claudeRunsCommandUnsandboxed('git push origin HEAD')).toBe(false)
+  })
+
   it('keeps a CHAINED excluded command inside the sandbox — a suffix `; echo`, a `&&`, a pipe, a `cd …&&` prefix, a substitution', () => {
-    expect(claudeRunsCommandUnsandboxed('gh issue view 1026 --json number,title; echo "gh exit $?"')).toBe(false)
-    expect(claudeRunsCommandUnsandboxed('gh pr view 1 && echo done')).toBe(false)
-    expect(claudeRunsCommandUnsandboxed('gh pr view 1 | cat')).toBe(false)
-    expect(claudeRunsCommandUnsandboxed('cd /tmp && git push origin HEAD')).toBe(false)
-    expect(claudeRunsCommandUnsandboxed('gh pr view "$(cat x)"')).toBe(false)
+    expect(claudeRunsCommandUnsandboxed('git fetch origin; echo "exit $?"')).toBe(false)
+    expect(claudeRunsCommandUnsandboxed('git pull --ff-only && echo done')).toBe(false)
+    expect(claudeRunsCommandUnsandboxed('git fetch origin | cat')).toBe(false)
+    expect(claudeRunsCommandUnsandboxed('cd /tmp && git fetch origin')).toBe(false)
+    expect(claudeRunsCommandUnsandboxed('git fetch "$(cat x)"')).toBe(false)
   })
 
   it('keeps a non-excluded command inside the sandbox (its forge reads must be denied, not run with the credential)', () => {

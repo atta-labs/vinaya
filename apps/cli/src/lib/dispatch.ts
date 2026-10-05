@@ -1334,31 +1334,15 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(git show:*)',
         'Bash(git add:*)',
         'Bash(git commit:*)',
-        // O2/O7: a confined Claude Code Developer now publishes its own work
-        // — it commits, pushes its task branch and opens or updates its own
-        // pull request, through the SAME excluded commands
-        // (`CLAUDE_SANDBOX_EXCLUDED_COMMANDS`, `worker-boundary.ts`) that let
-        // `git push`/`git pull`/`git fetch`/`gh` run with full access despite
-        // the sandbox. The `gh` grant below is enumerated to exactly the
-        // subcommands O7 requires — read PR/Issue state and publish the
-        // Developer's own PR — never a blanket `gh:*`: the Developer holds
-        // the operator's full-privilege forge token, and `gh` runs OUTSIDE
-        // the sandbox (`excludedCommands`), so this allow-list is the only
-        // remaining gate against `gh api`, `gh pr merge`, `gh secret`, `gh
-        // repo` and the rest of the forge surface a prompt-injected turn
-        // could otherwise reach (round 2 security review, HIGH). The driver
-        // still publishes for Codex, whose `workspace-write` sandbox keeps
-        // `.git` read-only by design, so this grant only ever takes effect
-        // on the Claude side (`buildRolePermissions`/`writeDispatchSettings`
-        // are Claude-only).
-        'Bash(git push:*)',
-        'Bash(gh pr create:*)',
-        'Bash(gh pr edit:*)',
-        'Bash(gh pr view:*)',
-        'Bash(gh pr comment:*)',
-        'Bash(gh pr diff:*)',
-        'Bash(gh issue view:*)',
-        'Bash(gh issue comment:*)',
+        // O4: the Developer holds NO forge write. It no longer gets a
+        // `git push` or any `gh` permission allow — it publishes, opens its
+        // PR, updates the body, refreshes evidence, reads its PR and runs
+        // checks ONLY through the driver-run dev-tools (`task-tools/
+        // dev-tools-host.ts`), which run the credentialed forge operations in
+        // the driver, outside the sandbox. A dispatch test asserts the absence
+        // of `git push`/`gh` here (`dispatch.test.ts`). `git commit` stays —
+        // the driver's `publish_changes` tool commits the worktree the agent
+        // prepared, and a local commit touches no forge credential.
         'Bash(git config:*)',
         'Bash(git branch:*)',
         'Bash(git checkout:*)',
@@ -1373,14 +1357,16 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(bun apps/cli/src/index.ts:*)'
       ],
       deny: [
-        // O7: force-pushing and `--no-verify` stay forbidden even though
-        // plain `git push`/`git commit` are now granted above — a narrower
-        // deny wins over a broader allow that also matches (confirmed live,
-        // this function's own doc comment).
-        'Bash(git push --force*)',
-        'Bash(git push -f*)',
-        'Bash(git push --force-with-lease*)',
-        'Bash(git push --no-verify*)',
+        // O4: the whole `git push` and `gh` families are denied — the
+        // Developer holds no forge write and publishes only through the
+        // driver-run dev-tools. Denying them outright (not merely leaving them
+        // ungranted) is the explicit floor a prompt-injected turn hits, and
+        // what the dispatch test asserts.
+        'Bash(git push:*)',
+        'Bash(gh:*)',
+        // `--no-verify`/`-n` stay forbidden for the commit the `publish_changes`
+        // tool makes from the worktree — a narrower deny wins over the broader
+        // `git commit:*` allow above (confirmed live, this function's doc).
         'Bash(git commit --no-verify*)',
         'Bash(git commit -n*)',
         'Bash(git stash*)',

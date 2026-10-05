@@ -778,7 +778,11 @@ function renderSection6(facts: BriefFacts): string {
     return lines.join('\n')
   })
 
-  return ['## 6. Numbered parts — commit after EACH part; push once, before opening the PR', '', ...rendered].join('\n')
+  return [
+    '## 6. Numbered parts — call `publish_changes` after EACH part; `open_pull_request` once the first part is published',
+    '',
+    ...rendered
+  ].join('\n')
 }
 
 function renderSection7(section7Pointers: string[]): string {
@@ -815,7 +819,7 @@ function renderSection8(facts: BriefFacts): string {
     // never a command a check or `pr report` executes — `evidence-fresh`
     // re-running it under the twenty-six sibling checks CI had just built
     // deleted their own `dist` out from under them.
-    `- The pre-push hook already ran the affected suite on your one push and refused it on failure — do not additionally run it yourself; \`${facts.cliInvocation} pr report --write\`/\`--push\` separately re-runs it with \`--force\` to attest the command and its output in the Evidence block.`,
+    "- The pre-push hook already ran the affected suite on your one push and refused it on failure — do not additionally run it yourself; the `refresh_evidence` tool regenerates the PR body's Evidence block for the current head, re-running the checks it attests to record their command and output there.",
     "- The full `bun run test` suite is CI's to run, on the one push — never run it locally.",
     '- Every blast-radius consumer named in §4, re-verified by name.',
     `- The tier checklist in \`${facts.cliInvocation} doctrine --role developer --print\` genuinely satisfied, and ${docGateCommand(facts)}.`
@@ -909,7 +913,7 @@ function renderSection12(facts: BriefFacts): string {
     '## 12. Deliverable',
     '',
     `- PR title (exact): \`${prTitle}\``,
-    `- Open the PR only via \`${facts.cliInvocation} pr create --body-file <path> --title "<title above>"\`.`,
+    '- Open the PR only via the `open_pull_request` tool (title and body); publish your commits with `publish_changes` and update the body with `update_pull_request_body`/`refresh_evidence` — you hold no `gh`/`git push` credential.',
     `- PR body = the Developer's PR report (print it with \`${facts.cliInvocation} doctrine --template pr-report --print\`), with this entire brief pasted as the reference copy inside a collapsed \`<details>\` block, and \`Closes #${facts.issue}\` at the top of the header block.`,
     `- Pre-open gate: tier checklist satisfied, and ${docGateCommand(facts)}.`,
     '- Include `git diff main --stat` and a token report (if unavailable, state so).',

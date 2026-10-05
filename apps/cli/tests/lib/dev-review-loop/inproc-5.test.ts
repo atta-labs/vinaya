@@ -13,6 +13,7 @@ import {
   controlDir,
   developerDir,
   developerLeavesWorkDeps,
+  developerPublishesViaToolsDeps,
   makeInProcessDeps,
   makeWorld,
   outboxLines,
@@ -1034,241 +1035,95 @@ function runLoopInProcessSafe(world: LoopWorld, deps: Partial<LoopDeps>, extra: 
 // agent-confinement-v1/1 — the driver publishes each Developer turn
 // ---------------------------------------------------------------------------
 
-describe('devReviewLoop — the driver commits and publishes each Developer turn (agent-confinement-v1/1)', () => {
-  it('O1: builds a missing vendored CLI immediately before the publication commit', async () => {
-    const world = makeWorld({ worktreeExists: true })
-    const calls: string[] = []
-    const deps = developerLeavesWorkDeps(world)
-    const commitWorktree = deps.commitWorktree!
-    deps.buildVendoredCliIfMissing = () => calls.push('build')
-    deps.commitWorktree = (worktree, header) => {
-      calls.push('commit')
-      return commitWorktree(worktree, header)
-    }
-
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
-
-    expect(result.finalDecision.type).toBe('publish')
-    expect(calls.slice(0, 2)).toEqual(['build', 'commit'])
-  })
-
-  it('O1/O2/O3: commits the turn under its header, pushes and opens the PR before any poll', async () => {
+describe('devReviewLoop — the Developer publishes through the driver-run tools, not the driver (O4/O5)', () => {
+  it('O4/O5: a turn that publishes through the tools lands the commit, push and PR, and the driver proceeds', async () => {
     const world = makeWorld({ worktreeExists: true })
     const result = await runLoopInProcess(
       world,
       { task: world.task, agent: 'codex' },
-      developerLeavesWorkDeps(world, {
-        header: 'Feat(cli): leave the work for the driver',
+      developerPublishesViaToolsDeps(world, {
+        header: 'Feat(cli): publish via the driver-run tools',
         changedPaths: ['apps/cli/src/lib/x.ts']
       })
     )
     expect(result.finalDecision.type).toBe('publish')
-    // The driver — not the Developer — made the single commit, the push and the open.
+    // The commit, push and open all happened — but through the gate-backed
+    // tools the agent called, not a driver-after-turn publish.
     expect(world.commits).toHaveLength(1)
-    expect(world.commits[0]!.header).toBe('Feat(cli): leave the work for the driver')
+    expect(world.commits[0]!.header).toBe('Feat(cli): publish via the driver-run tools')
     expect(world.pushes).toHaveLength(1)
     expect(world.prOpens).toHaveLength(1)
-    expect(world.prOpens[0]!.title).toBe(world.issueTitle)
-    // The durable record reflects the completed publication (O8's own trace).
-    const rec = readDeveloperPublicationRecord(world.runtimeDir, world.task)
-    expect(rec?.pushed).toBe(true)
-    expect(rec?.prNumber).toBe(world.prNumber)
   })
 
-  it('O1: a later push authorizes only paths since the remote head, not protected paths already remote', async () => {
-    const remoteHead = 'r'.repeat(40)
-    const world = makeWorld({
-      worktreeExists: true,
-      developerPushed: false,
-      prOpened: false,
-      remoteBranchExists: true,
-      head: remoteHead,
-      worktreeHead: remoteHead
-    })
-    const deps = developerLeavesWorkDeps(world, { changedPaths: ['apps/cli/src/lib/current.ts'] })
-    const bases: string[] = []
-    deps.gitWorktreeChangedPaths = (_worktree, base) => {
-      bases.push(base)
-      return base === remoteHead ? ['apps/cli/src/lib/current.ts'] : ['.github/workflows/already-remote.yml']
-    }
-    const pushedPaths: string[][] = []
-    const push = deps.pushTaskBranch!
-    deps.pushTaskBranch = (input) => {
-      pushedPaths.push([...input.touchedPaths])
-      return push(input)
-    }
-
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
-
-    expect(result.finalDecision.type).toBe('publish')
-    expect(bases[0]).toBe(remoteHead)
-    expect(pushedPaths[0]).toEqual(['apps/cli/src/lib/current.ts'])
-  })
-
-  it('O1: a protected path changed by the commits being pushed is still refused', async () => {
-    const remoteHead = 'r'.repeat(40)
-    const world = makeWorld({
-      worktreeExists: true,
-      developerPushed: false,
-      prOpened: false,
-      remoteBranchExists: true,
-      head: remoteHead,
-      worktreeHead: remoteHead
-    })
-    const protectedPath = '.github/workflows/current.yml'
-    const deps = developerLeavesWorkDeps(world, { changedPaths: [protectedPath] })
-    deps.gitWorktreeChangedPaths = () => [protectedPath]
-    deps.pushTaskBranch = (input) => ({
-      ok: false,
-      hook: true,
-      refusal: `protected path refused: ${input.touchedPaths.join(', ')}`
-    })
-
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
-
-    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
-    expect((result.finalDecision as { detail: string }).detail).toContain(protectedPath)
-  })
-
-  it('O1: an untracked protected file is named only after the driver commits it, then refused before push', async () => {
-    const remoteHead = 'r'.repeat(40)
-    const protectedPath = '.github/workflows/new.yml'
-    const world = makeWorld({
-      worktreeExists: true,
-      developerPushed: false,
-      prOpened: false,
-      remoteBranchExists: true,
-      head: remoteHead,
-      worktreeHead: remoteHead
-    })
-    const deps = developerLeavesWorkDeps(world, { changedPaths: [protectedPath] })
-    const diffHeads: string[] = []
-    deps.gitWorktreeChangedPaths = () => {
-      diffHeads.push(world.worktreeHead)
-      return world.worktreeHead === world.nextCommitSha ? [protectedPath] : []
-    }
-    const pushedPaths: string[][] = []
-    deps.pushTaskBranch = (input) => {
-      pushedPaths.push([...input.touchedPaths])
-      return { ok: false, hook: true, refusal: `protected path refused: ${input.touchedPaths.join(', ')}` }
-    }
-
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
-
-    expect(diffHeads.slice(0, 2)).toEqual([remoteHead, world.nextCommitSha])
-    expect(world.commits.length).toBeGreaterThanOrEqual(1)
-    expect(pushedPaths[0]).toEqual([protectedPath])
-    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
-  })
-
-  it('O5: does nothing on a turn with nothing new — a clean worktree and an open PR', async () => {
-    // The default dispatch fake is the pre-task "fakes a published turn" shape:
-    // it leaves the worktree clean and the PR open. With the worktree present,
-    // the publication step still reaches its no-op check and commits/pushes/opens
-    // nothing — exactly as before this task.
+  it('O4/O5: the same publish works for a Claude Developer (both agents publish only through the tools)', async () => {
     const world = makeWorld({ worktreeExists: true })
-    const result = await runLoopInProcess(world)
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      developerPublishesViaToolsDeps(world)
+    )
     expect(result.finalDecision.type).toBe('publish')
-    expect(world.commits).toHaveLength(0)
-    expect(world.pushes).toHaveLength(0)
-    expect(world.prOpens).toHaveLength(0)
+    expect(world.pushes).toHaveLength(1)
+    expect(world.prOpens).toHaveLength(1)
   })
 
-  it('O7: sends the turn back and commits nothing when a changed path is outside the Surface', async () => {
-    const world = makeWorld({ worktreeExists: true, surface: { in: ['apps/cli'], out: ['packages'] } })
-    await runLoopInProcess(
-      world,
-      { task: world.task, agent: 'codex' },
-      developerLeavesWorkDeps(world, { changedPaths: ['packages/aeg-core/src/x.ts'] })
-    )
-    // The pre-publication check refuses — nothing is committed or pushed.
-    expect(world.commits).toHaveLength(0)
-    expect(world.pushes).toHaveLength(0)
-    // The same Developer session was sent back naming the Surface problem.
-    expect(world.dispatchCountByRole.developer ?? 0).toBeGreaterThanOrEqual(2)
-    const reask = world.dispatches.find(
-      (dd) => dd.role === 'developer' && (dd.prompt ?? '').includes("outside the task's Surface")
-    )
-    expect(reask).toBeDefined()
-  })
-
-  it('O2: sends the turn back and commits nothing when the commit header is missing', async () => {
+  it('O4: a turn that leaves work unpublished is re-asked naming publish_changes, then left to the no_push net — the driver commits nothing', async () => {
     const world = makeWorld({ worktreeExists: true })
-    await runLoopInProcess(
-      world,
-      { task: world.task, agent: 'codex' },
-      developerLeavesWorkDeps(world, { writeNoHeader: true })
-    )
-    expect(world.commits).toHaveLength(0)
-    expect(world.dispatchCountByRole.developer ?? 0).toBeGreaterThanOrEqual(2)
-    const reask = world.dispatches.find(
-      (dd) => dd.role === 'developer' && (dd.prompt ?? '').includes('commit header file')
-    )
-    expect(reask).toBeDefined()
-  })
-
-  it('O3/O5: a repeated pre-push-hook refusal re-asks immediately, then pauses naming the hook', async () => {
-    const world = makeWorld({ worktreeExists: true, pushRefusal: 'pre-push hook refused: 2 tests failed' })
+    // `developerLeavesWorkDeps` dirties the worktree but never calls a tool —
+    // the driver no longer publishes it, so it stays unpublished.
     const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, developerLeavesWorkDeps(world))
-    expect(world.commits.length).toBeGreaterThanOrEqual(1)
-    // The push never landed, so the PR never opened and the round never published.
+    expect(world.commits).toHaveLength(0)
     expect(world.pushes).toHaveLength(0)
     expect(world.prOpens).toHaveLength(0)
-    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
-    expect((result.finalDecision as { detail: string }).detail).toContain('pre-push-hook')
-    expect((result.finalDecision as { detail: string }).detail).toContain('2 tests failed')
-    expect(world.dispatchCountByRole.developer ?? 0).toBe(2)
-  })
-
-  it('O2/O5: a repeated commit-hook refusal re-asks once, then pauses naming the hook', async () => {
-    const world = makeWorld({ worktreeExists: true })
-    const deps = developerLeavesWorkDeps(world)
-    deps.commitWorktree = () => ({
-      ok: false,
-      check: 'commit-hook',
-      errorLine: 'ci-shard-coverage: missing shard entry',
-      output: 'ci-shard-coverage: missing shard entry'
-    })
-
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
-
-    expect(world.pushes).toHaveLength(0)
-    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
-    expect((result.finalDecision as { detail: string }).detail).toContain('commit-hook')
-    expect((result.finalDecision as { detail: string }).detail).toContain('ci-shard-coverage')
-    expect(world.dispatchCountByRole.developer ?? 0).toBe(2)
-  })
-
-  it('O4/O5: PR-body gates re-ask with every message and repeat-stop before opening', async () => {
-    const world = makeWorld({ worktreeExists: true })
-    const deps = developerLeavesWorkDeps(world)
-    deps.validatePrBodyForCreate = async () => [
-      {
-        schema: 1,
-        check: 'pr-premise-own-additions',
-        severity: 'error',
-        message: 'Premise names this PR own addition',
-        agent_recovery_prompt: 'Drop the self-referential pin.'
-      },
-      {
-        schema: 1,
-        check: 'body-bare-digits',
-        severity: 'error',
-        message: 'body-bare-digits: bare digit on line 7',
-        agent_recovery_prompt: 'Backtick the digit.'
-      }
-    ]
-
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
-
-    expect(world.prOpens).toHaveLength(0)
-    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
-    expect((result.finalDecision as { detail: string }).detail).toContain('pr-premise-own-additions')
+    expect(world.dispatchCountByRole.developer ?? 0).toBeGreaterThanOrEqual(2)
     const reask = world.dispatches.find(
-      (dispatch) => dispatch.role === 'developer' && (dispatch.prompt ?? '').includes('body-bare-digits')
+      (dd) => dd.role === 'developer' && (dd.prompt ?? '').includes('publish_changes')
     )
-    expect(reask?.prompt).toContain('Premise names this PR own addition')
-    expect(reask?.prompt).toContain('bare digit on line 7')
+    expect(reask).toBeDefined()
+    expect(result.finalDecision.type).toBe('pause')
+  })
+
+  it('O5: a body-only fix publishes through update_pull_request_body and refresh_evidence, touching no commit', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    // First, a normal turn publishes through the tools and opens the PR.
+    await runLoopInProcess(world, { task: world.task, agent: 'codex' }, developerPublishesViaToolsDeps(world))
+    expect(world.prOpened).toBe(true)
+    const commitsAfterOpen = world.commits.length
+    // Now drive the captured gate-backed context the way a body-only turn does:
+    // update the body and refresh the Evidence block — no new commit or push.
+    const ctx = world.devToolContext!
+    const updated = await ctx.updatePullRequestBody('## Decisions\n\nRevised.\n\n## Scope\n\n**Tier:** 1\n')
+    expect(updated.ok).toBe(true)
+    const refreshed = await ctx.refreshEvidence()
+    expect(refreshed.ok).toBe(true)
+    expect(world.prBodyUpdates).toHaveLength(1)
+    expect(world.evidenceRefreshes).toBe(1)
+    expect(world.commits.length).toBe(commitsAfterOpen)
+  })
+
+  it('O3/O5: run_checks runs vinaya check --all through the driver-run tool, forge faked and gate real', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    await runLoopInProcess(world, { task: world.task, agent: 'codex' }, developerPublishesViaToolsDeps(world))
+    const ctx = world.devToolContext!
+    const checked = await ctx.runChecks()
+    expect(checked.ok).toBe(true)
+    if (checked.ok) expect(checked.result.passed).toBe(true)
+    expect(world.runChecksCalls).toBeGreaterThanOrEqual(1)
+  })
+
+  it('O3/O5: a Surface-violating publish_changes is refused by the gate in the driver, committing nothing', async () => {
+    const world = makeWorld({ worktreeExists: true, surface: { in: ['apps/cli'], out: ['packages'] } })
+    // The agent calls publish_changes with a path outside the task's Surface —
+    // the publication-precondition gate runs IN THE DRIVER and refuses before
+    // any commit, so nothing lands and no PR opens.
+    await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex' },
+      developerPublishesViaToolsDeps(world, { changedPaths: ['packages/aeg-core/src/x.ts'] })
+    )
+    expect(world.commits).toHaveLength(0)
+    expect(world.pushes).toHaveLength(0)
+    expect(world.prOpens).toHaveLength(0)
   })
 })
 
