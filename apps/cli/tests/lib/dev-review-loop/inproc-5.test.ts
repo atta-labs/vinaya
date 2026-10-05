@@ -1073,6 +1073,96 @@ function runLoopInProcessSafe(world: LoopWorld, deps: Partial<LoopDeps>, extra: 
 // ---------------------------------------------------------------------------
 
 describe('devReviewLoop — the Developer publishes through the driver-run tools, not the driver (O4/O5)', () => {
+  for (const agent of ['claude', 'codex'] as const) {
+    it(`O5: ${agent} corrects a blocking review in round 2 and republishes through the tool`, async () => {
+      const world = makeWorld({
+        worktreeExists: true,
+        roleOutcomes: {
+          1: {
+            reviewer: {
+              findings: 'BLOCKER|apps/cli/src/lib/x.ts:1|fix the behavior',
+              report: 'BRIEF_CONFORMANCE: yes\nSPEC_CONFORMANCE: yes\nSCOPE: small\nTESTS: pass\nDOCS: n/a\n',
+              objectives: 'O1|MET|done.\n',
+              sessionId: 'rev-session-1'
+            }
+          }
+        }
+      })
+      const publishing = developerPublishesViaToolsDeps(world, { header: 'Fix(cli): address blocking review' })
+      const dispatch = publishing.dispatchRole!
+      const result = await runLoopInProcess(
+        world,
+        { task: world.task, agent },
+        {
+          ...publishing,
+          dispatchRole: async (role, selectedAgent, prompt, opts) => {
+            const handle = await dispatch(role, selectedAgent, prompt, opts)
+            if (role === 'developer' && (opts.round ?? 1) === 1) world.nextCommitSha = 'd'.repeat(40)
+            if (role === 'developer' && (opts.round ?? 1) === 2) {
+              mkdirSync(developerDir(world, 2), { recursive: true })
+              writeFileSync(join(developerDir(world, 2), CONFIDENCE_FILE_NAME), 'CONFIDENCE: 90 — fixed blocker\n')
+            }
+            return handle
+          }
+        }
+      )
+      expect(result.finalDecision).toEqual({ type: 'publish' })
+      expect(world.dispatches.some((dispatch) => dispatch.role === 'developer' && dispatch.round === 2)).toBe(true)
+      expect(world.commits.map((commit) => commit.header)).toEqual([
+        'Fix(cli): address blocking review',
+        'Fix(cli): address blocking review'
+      ])
+      expect(world.pushes).toHaveLength(2)
+      expect(world.pushes[1]!.sha).not.toBe(world.pushes[0]!.sha)
+      expect(world.head).toBe(world.pushes[1]!.sha)
+    })
+
+    it(`O5: ${agent} corrects only the PR body in the round-2 Developer dispatch`, async () => {
+      const world = makeWorld({
+        worktreeExists: true,
+        developerPushed: true,
+        prOpened: true,
+        worktreeChangedPaths: ['apps/cli/src/lib/x.ts'],
+        roleOutcomes: {
+          1: {
+            reviewer: {
+              findings: 'BLOCKER|apps/cli/src/lib/x.ts:1|clarify the PR body',
+              report: 'BRIEF_CONFORMANCE: yes\nSPEC_CONFORMANCE: yes\nSCOPE: small\nTESTS: pass\nDOCS: n/a\n',
+              objectives: 'O1|MET|done.\n',
+              sessionId: 'rev-session-1'
+            }
+          }
+        }
+      })
+      const publishing = developerPublishesViaToolsDeps(world, { bodyOnly: true })
+      const dispatch = publishing.dispatchRole!
+      const originalHead = world.head
+      const result = await runLoopInProcess(
+        world,
+        { task: world.task, agent },
+        {
+          ...publishing,
+          dispatchRole: async (role, selectedAgent, prompt, opts) => {
+            if (role === 'developer') expect(world.devToolContext).not.toBeNull()
+            const handle = await dispatch(role, selectedAgent, prompt, opts)
+            if (role === 'developer' && (opts.round ?? 1) === 2) {
+              mkdirSync(developerDir(world, 2), { recursive: true })
+              writeFileSync(join(developerDir(world, 2), CONFIDENCE_FILE_NAME), 'CONFIDENCE: 90 — corrected PR body\n')
+            }
+            return handle
+          }
+        }
+      )
+      expect(result.finalDecision).toEqual({ type: 'publish' })
+      expect(world.dispatches.some((dispatch) => dispatch.role === 'developer' && dispatch.round === 2)).toBe(true)
+      expect(world.prBodyUpdates).toHaveLength(1)
+      expect(world.evidenceRefreshes).toBe(1)
+      expect(world.commits).toHaveLength(0)
+      expect(world.pushes).toHaveLength(0)
+      expect(world.head).toBe(originalHead)
+    })
+  }
+
   it('O4/O5: a turn that publishes through the tools lands the commit, push and PR, and the driver proceeds', async () => {
     const world = makeWorld({ worktreeExists: true })
     const result = await runLoopInProcess(

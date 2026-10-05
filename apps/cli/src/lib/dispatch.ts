@@ -4252,9 +4252,17 @@ export async function dispatchRole(
   // `codexUnattendedFailureReason`. This replaces the pre-task-4
   // `resolveWorkerBoundaryLaunch`/boundary-unavailable refusal with the same
   // fail-closed shape, classified through the same `codexBoundaryFailureReason`
-  // this repo's own Codex refusals have always used.
-  if (codexUnattendedFailureReason !== null) {
-    const failureReason = codexBoundaryFailureReason(agent, codexUnattendedFailureReason)
+  // this repo's own Codex refusals have always used. The same pre-spawn
+  // refusal path protects the driver-run bridge when Claude is unconfined.
+  // A driver-run dev-tools host carries task-scoped forge authority. On the
+  // Linux Claude fallback without bwrap/socat, another same-UID worker could
+  // reach a different task's Unix socket. Ordinary Claude dispatches retain
+  // their documented unconfined fallback; a credentialed bridge cannot.
+  const unconfinedDevTools = agent === 'claude' && devToolsBridge !== null && claudeConfinement?.confined === false
+  if (codexUnattendedFailureReason !== null || unconfinedDevTools) {
+    const failureReason: DispatchFailureReason = unconfinedDevTools
+      ? 'refused'
+      : codexBoundaryFailureReason(agent, codexUnattendedFailureReason!)
     const durationMs = Date.now() - start
     const priorSize = sizeOfSafe(outboxPath)
     log({
@@ -4270,8 +4278,10 @@ export async function dispatchRole(
       duration_ms: durationMs
     })
     writeLifecycle(
-      `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires Codex's own sandbox ` +
-        `and network proxy plus this task's staged CODEX_HOME, which are unavailable: ${codexUnattendedFailureReason}`
+      unconfinedDevTools
+        ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — driver-run dev-tools require a confined worker sandbox; ${claudeConfinement?.warning ?? 'confinement unavailable'}`
+        : `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires Codex's own sandbox ` +
+            `and network proxy plus this task's staged CODEX_HOME, which are unavailable: ${codexUnattendedFailureReason}`
     )
     // O1: never leak the scratch directory minted for Codex's own
     // confinement (above) on this early refusal.
@@ -4280,6 +4290,13 @@ export async function dispatchRole(
         rmSync(codexScratchDir, { recursive: true, force: true })
       } catch {
         // best-effort, same reasoning as `finish()`'s own cleanup.
+      }
+    }
+    if (claudeScratchDir !== null) {
+      try {
+        rmSync(claudeScratchDir, { recursive: true, force: true })
+      } catch {
+        // best-effort cleanup on this early refusal.
       }
     }
     patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })

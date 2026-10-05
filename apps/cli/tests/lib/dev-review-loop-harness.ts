@@ -791,8 +791,12 @@ export function developerPublishesViaToolsDeps(
       const ctx = world.devToolContext
       if (ctx) {
         if (opts.bodyOnly) {
-          await ctx.updatePullRequestBody(opts.body ?? '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n')
-          await ctx.refreshEvidence()
+          const updated = await ctx.updatePullRequestBody(
+            opts.body ?? '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n'
+          )
+          if (!updated.ok) throw new Error(`update_pull_request_body refused: ${updated.error.output}`)
+          const refreshed = await ctx.refreshEvidence()
+          if (!refreshed.ok) throw new Error(`refresh_evidence refused: ${refreshed.error.output}`)
         } else {
           const changed = opts.changedPaths ?? ['apps/cli/src/lib/x.ts']
           world.worktreeDirty = [...changed]

@@ -209,6 +209,7 @@ describe('devReviewLoop — the host attribution set at loop start', () => {
   it("does not special-case CI — still sets VINAYA_HOST to 'loop' unconditionally when GITHUB_ACTIONS is set and VINAYA_HOST is unset; log-sink.ts's own precedence (GITHUB_ACTIONS checked before VINAYA_HOST, unchanged by this task) is what keeps the reported host 'ci'", async () => {
     const world = makeWorld({ developerStop: 'ESCALATE: no brief section names this repo at all.' as never })
     const base = makeInProcessDeps(world)
+    let stopReads = 0
     let hostSeenAtDeveloperDispatch: string | undefined
     let ciSeenAtDeveloperDispatch: string | undefined
     const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
@@ -222,7 +223,14 @@ describe('devReviewLoop — the host attribution set at loop start', () => {
     let hostAfterReturn: string | undefined
     const result = await withWorldEnv(world, async () => {
       process.env.GITHUB_ACTIONS = 'true'
-      const r = await devReviewLoop({ task: world.task, agent: 'claude' }, { ...base, dispatchRole })
+      const r = await devReviewLoop(
+        { task: world.task, agent: 'claude' },
+        {
+          ...base,
+          dispatchRole,
+          fetchDeveloperStop: () => (++stopReads === 1 ? null : { body: world.developerStop!, identity: 'new-stop-1' })
+        }
+      )
       hostAfterReturn = process.env.VINAYA_HOST
       return r
     })
@@ -236,6 +244,7 @@ describe('devReviewLoop — the host attribution set at loop start', () => {
   it('restores the host after a pause too, not only after a clean publish', async () => {
     const world = makeWorld({ developerStop: 'ESCALATE: no brief section names this repo at all.' as never })
     const base = makeInProcessDeps(world)
+    let stopReads = 0
     // The default fake always marks a developer dispatch as pushed, which
     // skips the one branch that reads `fetchDeveloperStop` — replaced here
     // with one that never pushes, the same shape the escalation-pause
@@ -248,7 +257,14 @@ describe('devReviewLoop — the host attribution set at loop start', () => {
     }
     let hostAfterReturn: string | undefined
     const result = await withWorldEnv(world, async () => {
-      const r = await devReviewLoop({ task: world.task, agent: 'claude' }, { ...base, dispatchRole })
+      const r = await devReviewLoop(
+        { task: world.task, agent: 'claude' },
+        {
+          ...base,
+          dispatchRole,
+          fetchDeveloperStop: () => (++stopReads === 1 ? null : { body: world.developerStop!, identity: 'new-stop-1' })
+        }
+      )
       hostAfterReturn = process.env.VINAYA_HOST
       return r
     })

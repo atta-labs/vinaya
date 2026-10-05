@@ -22,6 +22,7 @@ import { join } from 'node:path'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../../src/lib/dev-review-loop/round-assess.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
 import {
+  developerPublishesViaToolsDeps,
   cleanupWorlds,
   controlDir as ipControlDir,
   makeInProcessDeps,
@@ -221,6 +222,31 @@ describe('devReviewLoop — O5 (#595): an infrastructure pause resumes on the ba
 // --- escalation pauses, --resume continues after a ruling ------------------
 
 describe('devReviewLoop — escalation pauses, --resume continues after a ruling', () => {
+  for (const agent of ['claude', 'codex'] as const) {
+    it(`O5: ${agent} resumes after a Principal ruling and publishes the fix through the tool`, async () => {
+      const world = makeEscalationWorld({ worktreeExists: true })
+      const paused = await runLoopInProcess(world, { task: world.task, agent })
+      expect(paused.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+      const originalHead = world.head
+      seedRuling(world)
+      world.roleOutcomes[1]!.reviewer = undefined
+      const published = await runLoopInProcess(
+        world,
+        { resumePr: world.prNumber, agent },
+        developerPublishesViaToolsDeps(world, { header: 'Fix(cli): follow principal ruling' })
+      )
+      expect(published.finalDecision).toEqual({ type: 'publish' })
+      expect(
+        world.dispatches.some(
+          (dispatch) => dispatch.role === 'developer' && dispatch.prompt?.includes('Principal ruling on this pause')
+        )
+      ).toBe(true)
+      expect(world.commits.map((commit) => commit.header)).toEqual(['Fix(cli): follow principal ruling'])
+      expect(world.pushes).toHaveLength(1)
+      expect(world.head).not.toBe(originalHead)
+    })
+  }
+
   it('pauses with a marked comment and a non-zero exit, then --resume publishes after a ruling', async () => {
     const world = makeEscalationWorld()
 
