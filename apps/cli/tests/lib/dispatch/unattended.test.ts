@@ -4,14 +4,13 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { checkLinuxSandboxTools } from '../../../src/lib/worker-boundary.js'
 
 /**
  * O3: `--unattended` (`DispatchOpts.unattended`) marks a `vinaya dispatch`
- * invocation as an unattended start. There is no setting behind it: the
- * worker sandbox is on wherever it is supported (macOS), so an unattended
- * dispatch there refuses before any spawn when the boundary cannot be
- * established, and elsewhere a Claude start runs as it always has while a
- * Codex start refuses. Exercised through the real `vinaya dispatch` CLI entry
+ * invocation as an unattended start. There is no setting behind it: both
+ * Claude and Codex refuse before spawn when their worker sandbox cannot be
+ * established. Exercised through the real `vinaya dispatch` CLI entry
  * point (`execFileSync('bun', [INDEX, ...])`), the same discipline and the
  * same scratch-`HOME`/non-git-`cwd` reasoning `apps/cli/tests/lib/dispatch.test.ts`'s
  * own header documents — never by importing `dispatchRole` in-process, which
@@ -137,7 +136,7 @@ function outboxLines(home: string): unknown[] {
     .map((l) => JSON.parse(l))
 }
 
-describe('vinaya dispatch --unattended — task 3: Claude never refuses for confinement, it degrades instead', () => {
+describe('vinaya dispatch --unattended — Claude confinement', () => {
   it.skipIf(process.platform !== 'darwin')(
     "on darwin, confines via Claude Code's own sandbox settings and still spawns the vendor binary, even with no git worktree",
     () => {
@@ -159,8 +158,8 @@ describe('vinaya dispatch --unattended — task 3: Claude never refuses for conf
     }
   )
 
-  it.skipIf(process.platform === 'darwin')(
-    'on a linux host without bubblewrap/socat, runs unconfined rather than refusing, and records the fact in the Vinaya Log (O5)',
+  it.skipIf(process.platform !== 'linux' || checkLinuxSandboxTools().available)(
+    'on a linux host without bubblewrap/socat, refuses before spawn and records the missing confinement in the Vinaya Log',
     () => {
       // `runVinayaDispatch` only captures `stderr` on a NON-zero exit (its
       // own `try` branch returns `stderr: ''` on success), so the warning
@@ -169,8 +168,8 @@ describe('vinaya dispatch --unattended — task 3: Claude never refuses for conf
       // `worker-boundary.test.ts`'s own unit-level coverage of
       // `resolveClaudeConfinement`'s `warning` field, not observable through
       // this subprocess harness. What IS observable here, through the
-      // fixture's own isolated outbox: the dispatch still succeeds and
-      // still spawns the vendor, AND (round 2 review, MAJOR) the fallback
+      // fixture's own isolated outbox: the dispatch refuses before the vendor
+      // starts, AND (round 2 review, MAJOR) the missing confinement
       // reaches the Vinaya Log itself, not only `writeLifecycle`'s own
       // stderr/driver.log mirror — a real `operation`/`completed` line,
       // read back from the SAME fixture `HOME` every other assertion in
@@ -178,8 +177,8 @@ describe('vinaya dispatch --unattended — task 3: Claude never refuses for conf
       const fixture = buildFixture()
       const result = runDispatch(fixture, ['--unattended'])
 
-      expect(result.status).toBe(0)
-      expect(existsSync(fixture.markerFile)).toBe(true)
+      expect(result.status).not.toBe(0)
+      expect(existsSync(fixture.markerFile)).toBe(false)
 
       const lines = outboxLines(fixture.home) as Array<{
         kind?: string
@@ -193,8 +192,48 @@ describe('vinaya dispatch --unattended — task 3: Claude never refuses for conf
       expect(confinementLine?.event).toBe('completed')
       expect(confinementLine?.result).toBe('unavailable')
       expect(confinementLine?.target).toContain('bwrap')
+      expect(lines.find((l) => l.event === 'dispatch_failed')).toBeDefined()
     }
   )
+
+  for (const bridge of [false, true]) {
+    it(`refuses an unconfined unattended Claude worker ${bridge ? 'with' : 'without'} a dev-tools bridge`, () => {
+      const fixture = buildFixture()
+      const outputFile = join(fixture.cwd, 'dispatch-result.json')
+      const scriptFile = join(fixture.cwd, 'dispatch-probe.ts')
+      const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+      writeFileSync(
+        scriptFile,
+        [
+          "import { writeFileSync } from 'node:fs'",
+          `import { dispatchRole } from ${JSON.stringify(dispatchLib)}`,
+          // Force the unsupported-platform branch in this isolated child so
+          // the refusal is exercised on macOS and Linux CI alike.
+          "Object.defineProperty(process, 'platform', { value: 'win32' })",
+          "const result = await dispatchRole('developer', 'claude', 'probe', {",
+          `  promptFile: ${JSON.stringify(fixture.promptFile)},`,
+          `  cwd: ${JSON.stringify(fixture.cwd)},`,
+          '  unattended: true,',
+          ...(bridge ? ["  devToolsBridge: { command: 'false', args: [] },"] : []),
+          '})',
+          `writeFileSync(${JSON.stringify(outputFile)}, JSON.stringify(result))`
+        ].join('\n')
+      )
+      execFileSync('bun', [scriptFile], {
+        cwd: fixture.cwd,
+        env: {
+          ...stripVinayaEnv(process.env),
+          HOME: fixture.home,
+          PATH: `${fixture.binDir}:${pathWithoutRealVendors()}`
+        },
+        timeout: SUBPROCESS_BUDGET_MS
+      })
+      const result = JSON.parse(readFileSync(outputFile, 'utf8')) as { failureReason: string; exitCode: number | null }
+      expect(result.failureReason).toBe('refused')
+      expect(result.exitCode).toBeNull()
+      expect(existsSync(fixture.markerFile)).toBe(false)
+    })
+  }
 
   it('an attended dispatch (no --unattended) is entirely unaffected — the pre-task-3 regression guard', () => {
     const fixture = buildFixture()

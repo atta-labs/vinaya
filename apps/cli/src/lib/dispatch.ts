@@ -3868,9 +3868,9 @@ export async function dispatchRole(
   // the provider-neutral interface (`ConfinementRequest`/
   // `resolveClaudeConfinement`) rather than this function branching on
   // platform itself. `null` for every non-Claude agent and every attended
-  // dispatch; otherwise always a resolution (never a refusal — Claude
-  // degrades to an unconfined run with a `warning` rather than ever
-  // requiring an install, Principal ruling 2026-10-02). The scratch
+  // dispatch; otherwise always a resolution. A `confined: false` resolution
+  // is refused before spawning below: an unconfined same-UID worker could
+  // reach another task's driver-run dev-tools socket. The scratch
   // directory is minted fresh per dispatch, the same `mkdtemp`-in-`tmpdir()`
   // discipline `resolveWorkerBoundaryLaunch`'s own `scratchTmpDir` already
   // uses, and is removed in `finish()` below alongside every other
@@ -4253,14 +4253,15 @@ export async function dispatchRole(
   // `resolveWorkerBoundaryLaunch`/boundary-unavailable refusal with the same
   // fail-closed shape, classified through the same `codexBoundaryFailureReason`
   // this repo's own Codex refusals have always used. The same pre-spawn
-  // refusal path protects the driver-run bridge when Claude is unconfined.
-  // A driver-run dev-tools host carries task-scoped forge authority. On the
-  // Linux Claude fallback without bwrap/socat, another same-UID worker could
-  // reach a different task's Unix socket. Ordinary Claude dispatches retain
-  // their documented unconfined fallback; a credentialed bridge cannot.
-  const unconfinedDevTools = agent === 'claude' && devToolsBridge !== null && claudeConfinement?.confined === false
-  if (codexUnattendedFailureReason !== null || unconfinedDevTools) {
-    const failureReason: DispatchFailureReason = unconfinedDevTools
+  // refusal path prevents an unconfined Claude worker from reaching another
+  // task's driver-run bridge.
+  // A driver-run dev-tools host carries task-scoped forge authority. An
+  // unconfined, same-UID worker can reach ANOTHER task's Unix socket even when
+  // it was not given a bridge of its own. Refuse every unattended Claude
+  // dispatch without confinement, before spawning any agent process.
+  const unconfinedClaude = agent === 'claude' && claudeConfinement?.confined === false
+  if (codexUnattendedFailureReason !== null || unconfinedClaude) {
+    const failureReason: DispatchFailureReason = unconfinedClaude
       ? 'refused'
       : codexBoundaryFailureReason(agent, codexUnattendedFailureReason!)
     const durationMs = Date.now() - start
@@ -4278,8 +4279,8 @@ export async function dispatchRole(
       duration_ms: durationMs
     })
     writeLifecycle(
-      unconfinedDevTools
-        ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — driver-run dev-tools require a confined worker sandbox; ${claudeConfinement?.warning ?? 'confinement unavailable'}`
+      unconfinedClaude
+        ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended Claude requires a confined worker sandbox while driver-run dev-tools are available; ${claudeConfinement?.warning ?? 'confinement unavailable'}`
         : `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires Codex's own sandbox ` +
             `and network proxy plus this task's staged CODEX_HOME, which are unavailable: ${codexUnattendedFailureReason}`
     )

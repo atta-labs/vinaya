@@ -3147,7 +3147,7 @@ describe('resolveClaudeConfinement — O1/O2/O5 the Claude half of the provider-
     expect(result.confined).toBe(true)
   })
 
-  it('falls back unconfined, with a warning naming the missing tool, on linux without bubblewrap — never requires an install', () => {
+  it('reports missing confinement, naming the missing tool, on linux without bubblewrap — never installs it', () => {
     const result = resolveClaudeConfinement(request(), {
       platform: 'linux',
       linuxTools: { available: false, missing: ['bwrap'] },
@@ -3163,7 +3163,7 @@ describe('resolveClaudeConfinement — O1/O2/O5 the Claude half of the provider-
     }
   })
 
-  it('falls back unconfined, with a warning naming both missing tools, on linux without either', () => {
+  it('reports missing confinement, naming both missing tools, on linux without either', () => {
     const result = resolveClaudeConfinement(request(), {
       platform: 'linux',
       linuxTools: { available: false, missing: ['bwrap', 'socat'] },
@@ -3177,7 +3177,7 @@ describe('resolveClaudeConfinement — O1/O2/O5 the Claude half of the provider-
     }
   })
 
-  it('falls back unconfined, naming the platform, on a platform with no named mechanism', () => {
+  it('reports missing confinement, naming the platform, when no mechanism exists', () => {
     const result = resolveClaudeConfinement(request(), {
       platform: 'win32',
       linuxTools: { available: false, missing: ['bwrap', 'socat'] },

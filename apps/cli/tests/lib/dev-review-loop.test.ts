@@ -183,6 +183,17 @@ function writeFakeBinary(dir: string, name: string, script: string): void {
   const p = join(dir, name)
   writeFileSync(p, script)
   chmodSync(p, 0o755)
+  if (name === 'claude') {
+    // The real-process loop fixture substitutes a fake vendor binary. Mark
+    // Claude's Linux sandbox prerequisites as available too, so dispatch
+    // reaches that binary under the now-required unattended boundary. These
+    // stubs are never invoked by the fake vendor.
+    for (const tool of ['bwrap', 'socat']) {
+      const toolPath = join(dir, tool)
+      writeFileSync(toolPath, '#!/bin/sh\nexit 0\n')
+      chmodSync(toolPath, 0o755)
+    }
+  }
 }
 
 function writeFakeClaude(dir: string): void {
@@ -415,7 +426,7 @@ describe('devReviewLoop — the mechanical gate excludes the review gate’s own
     () => {
       const { home, cwd, path } = setUpReviewGateOwnCheckFails()
       const r = runLoop(home, cwd, path)
-      expect(r.status).toBe(0)
+      expect(r.status, r.stderr).toBe(0)
       expect(r.stdout).toMatch(/publish/)
 
       const loopEvents = outboxLines(home)

@@ -1957,12 +1957,9 @@ export function resolveWorkerBoundaryLaunch(
  * proxy into it — confirmed live against the installed binary (2.1.197,
  * `grep -a` over its own strings: `"bubblewrap (bwrap) not installed"`,
  * `sta(){let{seccompConfig:t,bwrapPath:n,socatPath:r}=e??{}...`). Named here,
- * once, so `resolveClaudeConfinement`'s own refusal to set
- * `sandbox.enabled`/`failIfUnavailable` on a host that cannot satisfy them —
- * falling back to an unconfined run with a named warning instead (Principal
- * ruling, 2026-10-02: nobody is ever required to install anything) — and
- * `apps/cli/specs/self-hosting.md`'s own description of that same fallback
- * read the identical list, never a second one that could drift.
+ * once, so `resolveClaudeConfinement` can name missing requirements and
+ * `dispatchRole` can refuse before spawning an unattended worker. Vinaya
+ * never installs either tool on the operator's behalf.
  */
 export const LINUX_CLAUDE_SANDBOX_TOOLS = ['bwrap', 'socat'] as const
 
@@ -2277,15 +2274,10 @@ export function realConfinementPlatformDeps(): ConfinementPlatformDeps {
  * Always confined on macOS — Claude Code's own sandbox there "needs nothing
  * installed" (it ships with the OS, Seatbelt-backed). On Linux, confined
  * only when both `LINUX_CLAUDE_SANDBOX_TOOLS` are present; otherwise returns
- * the unconfined fallback carrying a `warning` naming the missing tool(s),
- * rather than setting `failIfUnavailable: true` on a host that cannot
- * satisfy it — which would make `claude` itself exit with "Sandbox required
- * but unavailable" instead of merely running unconfined (see
- * `LINUX_CLAUDE_SANDBOX_TOOLS`'s own doc comment). Never refuses the
- * dispatch, and never installs anything (Principal ruling, 2026-10-02): the
- * one degraded outcome this function reports is `confined: false`, always
- * paired with a `warning` the caller surfaces in the run's own output and
- * the Vinaya Log.
+ * `confined: false` with a warning naming the missing tool(s). The caller
+ * refuses that outcome before spawning an unattended worker, because a
+ * same-UID unconfined worker could reach another task's driver-run dev-tools
+ * socket. The resolver itself never installs anything or starts the vendor.
  */
 export function resolveClaudeConfinement(
   request: ConfinementRequest,
@@ -2316,15 +2308,14 @@ export function resolveClaudeConfinement(
       confined: false,
       warning:
         `Claude Code's own sandbox needs ${LINUX_CLAUDE_SANDBOX_TOOLS.join(' and ')} on Linux; missing: ` +
-        `${deps.linuxTools.missing.join(', ')} — running this dispatch unconfined rather than requiring an ` +
-        'install (Principal ruling, 2026-10-02).',
+        `${deps.linuxTools.missing.join(', ')}.`,
       missingTools: deps.linuxTools.missing
     }
   }
   return {
     ok: true,
     confined: false,
-    warning: `Claude Code's own sandbox names no mechanism for platform '${deps.platform}' — running this dispatch unconfined.`,
+    warning: `Claude Code's own sandbox names no mechanism for platform '${deps.platform}'.`,
     missingTools: []
   }
 }
