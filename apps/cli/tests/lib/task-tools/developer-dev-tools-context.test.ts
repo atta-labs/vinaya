@@ -111,6 +111,21 @@ describe('publishChanges gates', () => {
 })
 
 describe('PR-body gate', () => {
+  it('validates the exact title submitted to open_pull_request', async () => {
+    const seen: Array<string | undefined> = []
+    const ctx = createDeveloperDevToolContext(
+      deps({
+        validatePrBody: (_body, title) => {
+          seen.push(title)
+          return { ok: true }
+        }
+      })
+    )
+    await ctx.openPullRequest('invalid submitted title', 'good body')
+    await ctx.updatePullRequestBody('good body')
+    expect(seen).toEqual(['invalid submitted title', undefined])
+  })
+
   it('open_pull_request refuses a body the gate rejects, before opening', async () => {
     let opened = false
     const ctx = createDeveloperDevToolContext(

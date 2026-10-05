@@ -1189,6 +1189,7 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
   it('validates a body against the full PR diff after the push and refuses a second open', async () => {
     const world = makeWorld({ worktreeExists: true })
     const validatedPaths: string[][] = []
+    const validatedTitles: string[] = []
     await runLoopInProcess(
       world,
       { task: world.task, agent: 'codex' },
@@ -1196,6 +1197,7 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
         ...developerPublishesViaToolsDeps(world),
         validatePrBodyForCreate: async (input) => {
           validatedPaths.push([...input.changedFiles])
+          validatedTitles.push(input.title)
           return []
         }
       }
@@ -1206,6 +1208,7 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
     expect(reopened.ok).toBe(false)
     if (!reopened.ok) expect(reopened.error.check).toBe('pr-exists')
     expect(world.prOpens).toHaveLength(1)
+    expect(validatedTitles).toEqual([world.issueTitle, 'Another title'])
   })
 
   it('refuses credential-shaped additions and PR bodies before any new push or body write', async () => {

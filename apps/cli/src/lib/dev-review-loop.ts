@@ -3648,7 +3648,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           if (pushedHead) turnPreHead = pushedHead
           return { ok: true, result: { pushedHead } }
         },
-        validatePrBody: async (body) => {
+        validatePrBody: async (body, title) => {
           const bodyCredentials = findCredentialPatterns(body, 'the proposed PR body')
           if (bodyCredentials.length > 0) {
             return {
@@ -3662,7 +3662,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
           const errors = await d.validatePrBodyForCreate({
             body,
-            title: issueTitle(),
+            title: title ?? issueTitle(),
             changedFiles,
             branch,
             baseBranch: 'main'
