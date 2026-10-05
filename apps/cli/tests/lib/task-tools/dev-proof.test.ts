@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import {
+  codexProofToolCallOk,
   devBridgeInvocation,
   parseAgentStream,
   parseCodexProofStream,
@@ -137,5 +138,48 @@ describe('parseCodexProofStream', () => {
     const parsed = parseCodexProofStream('not json\n\n{"type":"turn.started"}')
     expect(parsed.codex.mcpToolCalls).toEqual([])
     expect(parsed.resultText).toBeNull()
+  })
+})
+
+describe('codexProofToolCallOk', () => {
+  it('passes when the proof tool call reached the driver with no error, ignoring bypass-hook-trust error events', () => {
+    const parsed = parseCodexProofStream(
+      [
+        // The warnings Codex emits for --dangerously-bypass-hook-trust — these set isError true…
+        JSON.stringify({ type: 'error', message: 'using --dangerously-bypass-hook-trust' }),
+        JSON.stringify({
+          type: 'item.completed',
+          item: { type: 'mcp_tool_call', server: 'vinaya-dev-tools', tool: 'run_checks', status: 'success' }
+        }),
+        JSON.stringify({
+          type: 'item.completed',
+          item: { type: 'agent_message', text: 'dev-proof: answered in driver pid 7' }
+        })
+      ].join('\n')
+    )
+    // …but the tool-call verdict is still ok — the call reached the driver and returned.
+    expect(parsed.isError).toBe(true)
+    expect(codexProofToolCallOk(parsed.codex).ok).toBe(true)
+  })
+  it('fails when the proof tool call itself failed (approval refusal)', () => {
+    const parsed = parseCodexProofStream(
+      JSON.stringify({
+        type: 'item.completed',
+        item: {
+          type: 'mcp_tool_call',
+          server: 'vinaya-dev-tools',
+          tool: 'run_checks',
+          status: 'failed',
+          error: { message: 'MCP tool call requires approval, but approval policy is never' }
+        }
+      })
+    )
+    expect(codexProofToolCallOk(parsed.codex).ok).toBe(false)
+  })
+  it('fails when no call was made', () => {
+    const parsed = parseCodexProofStream(
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'done' } })
+    )
+    expect(codexProofToolCallOk(parsed.codex).ok).toBe(false)
   })
 })

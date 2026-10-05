@@ -236,6 +236,31 @@ export function parseCodexProofStream(
   }
 }
 
+/**
+ * The Codex proof's verdict signal (ruling 1040-3-round on `062054e6`). Codex
+ * emits `error` events for its own `--dangerously-bypass-hook-trust` warnings
+ * even on a clean round trip, so `isError` (which those events set) is the
+ * WRONG thing to gate PASS on — it made a proven call print INCOMPLETE. Judge
+ * instead on the `mcp_tool_call` item Codex itself reported for the proof tool:
+ * a terminal item with no `error` and a non-`failed` status is a call that
+ * reached the driver and returned. Paired with the driver-received call and the
+ * echoed pid stamp, that is the honest Codex verdict.
+ */
+export function codexProofToolCallOk(codex: CodexDiagnostics): { ok: boolean; detail: string } {
+  const relevant = codex.mcpToolCalls.filter((c) => c.tool === PROOF_TOOL)
+  if (relevant.length === 0) {
+    return { ok: false, detail: `no mcp_tool_call item for ${PROOF_TOOL} — the agent made no call` }
+  }
+  const failed = relevant.find((c) => c.status === 'failed' || c.error != null)
+  if (failed) {
+    return {
+      ok: false,
+      detail: `mcp_tool_call for ${PROOF_TOOL} failed: ${JSON.stringify(failed.error ?? failed.status)}`
+    }
+  }
+  return { ok: true, detail: `mcp_tool_call for ${PROOF_TOOL} reached the driver with no error` }
+}
+
 type ConfinementDisclosure = {
   confined: boolean
   detail: string
@@ -491,7 +516,18 @@ export async function devToolsProofCommand(args: string[]): Promise<void> {
     process.stdout.write(`  echoed result text: ${JSON.stringify(ran.outcome.resultText)}\n`)
     const echoedStamp =
       typeof ran.outcome.resultText === 'string' && ran.outcome.resultText.includes(`driver pid ${process.pid}`)
-    const proven = call !== undefined && echoedStamp && ran.outcome.isError !== true
+    // Codex's verdict ignores `is_error` (set only by its bypass-hook-trust
+    // warnings) and judges the `mcp_tool_call` status/error plus the
+    // driver-received call (ruling on `062054e6`); Claude's `result` event
+    // carries a trustworthy `is_error`, so keep gating on it there.
+    let proven: boolean
+    if (agent === 'codex' && ran.outcome.codex) {
+      const callOk = codexProofToolCallOk(ran.outcome.codex)
+      process.stdout.write(`  codex tool-call verdict: ${callOk.ok ? 'ok' : 'not ok'} — ${callOk.detail}\n`)
+      proven = call !== undefined && echoedStamp && callOk.ok
+    } else {
+      proven = call !== undefined && echoedStamp && ran.outcome.isError !== true
+    }
     process.stdout.write(
       `\nPROOF: ${proven ? 'PASS' : 'INCOMPLETE'} — ${proven ? 'the driver-run server answered a dispatched agent and the result reached it through the bridge.' : 'see the fields above.'}\n`
     )
