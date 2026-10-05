@@ -299,3 +299,4 @@ How to run it:
 Without `VINAYA_SANDBOX_CONFORMANCE=1`, an ordinary run of the test file runs only the command-list checks.
 
 [Claude Code sandboxing documentation](https://code.claude.com/docs/en/sandboxing)
+[Codex sandboxing documentation](https://developers.openai.com/codex/security)
