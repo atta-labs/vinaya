@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkLinuxSandboxTools } from '../../../src/lib/worker-boundary.js'
+import { spawnSyncBudgeted } from '../process-fixture.js'
 
 /**
  * O3: `--unattended` (`DispatchOpts.unattended`) marks a `vinaya dispatch`
@@ -219,15 +220,22 @@ describe('vinaya dispatch --unattended — Claude confinement', () => {
           `writeFileSync(${JSON.stringify(outputFile)}, JSON.stringify(result))`
         ].join('\n')
       )
-      execFileSync('bun', [scriptFile], {
-        cwd: fixture.cwd,
-        env: {
-          ...stripVinayaEnv(process.env),
-          HOME: fixture.home,
-          PATH: `${fixture.binDir}:${pathWithoutRealVendors()}`
+      const probe = spawnSyncBudgeted(
+        'bun',
+        [scriptFile],
+        {
+          cwd: fixture.cwd,
+          encoding: 'utf8',
+          env: {
+            ...stripVinayaEnv(process.env),
+            HOME: fixture.home,
+            PATH: `${fixture.binDir}:${pathWithoutRealVendors()}`
+          }
         },
-        timeout: SUBPROCESS_BUDGET_MS
-      })
+        SUBPROCESS_BUDGET_MS,
+        'unconfined Claude dispatch probe'
+      )
+      expect(probe.status, probe.stderr).toBe(0)
       const result = JSON.parse(readFileSync(outputFile, 'utf8')) as { failureReason: string; exitCode: number | null }
       expect(result.failureReason).toBe('refused')
       expect(result.exitCode).toBeNull()
@@ -263,6 +271,13 @@ function buildGitFixture(opts: { homeCredential?: string } = {}): Fixture & { en
   const home = tempDir('vinaya-unattended-oauth-home-')
   const cwd = tempDir('vinaya-unattended-oauth-cwd-')
   const binDir = tempDir('vinaya-unattended-oauth-bin-')
+  // These credential tests require a resolvable unattended boundary on Linux.
+  // The fake vendor never invokes either sandbox helper.
+  for (const tool of ['bwrap', 'socat']) {
+    const toolPath = join(binDir, tool)
+    writeFileSync(toolPath, '#!/bin/sh\nexit 0\n')
+    chmodSync(toolPath, 0o755)
+  }
   execFileSync('git', ['init', '-q'], { cwd })
   const promptFile = join(cwd, 'prompt.txt')
   writeFileSync(promptFile, 'do the thing')
@@ -497,7 +512,7 @@ describe('vinaya dispatch --unattended — O4 a Codex start never runs outside t
   )
 })
 
-describe('vinaya dispatch — a host with no sandbox support behaves exactly as today', () => {
+describe('vinaya dispatch — attended Claude retains the operator environment', () => {
   it.skipIf(process.platform === 'darwin')(
     'an unconfined dispatch inherits the operator environment unchanged, so the agent signs in with its own subscription login',
     () => {
@@ -519,7 +534,7 @@ describe('vinaya dispatch — a host with no sandbox support behaves exactly as 
       )
       chmodSync(join(fixture.binDir, 'claude'), 0o755)
 
-      const result = runDispatchNoAmbientLogin(fixture, ['--unattended'], 'claude', {
+      const result = runDispatchNoAmbientLogin(fixture, [], 'claude', {
         ISOLATION_FIXTURE_MARKER: 'inherited-from-the-operator'
       })
 
