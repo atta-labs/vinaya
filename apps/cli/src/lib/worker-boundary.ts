@@ -30,6 +30,7 @@
  */
 
 import {
+  chmodSync,
   accessSync,
   constants as fsConstants,
   existsSync,
@@ -2200,6 +2201,11 @@ function claudeCredentialDenyFiles(realHome: string): ReadonlyArray<{ path: stri
  * literal string this settings file names.
  */
 export function buildClaudeSandboxSettings(request: ConfinementRequest): ClaudeSandboxSettings {
+  // The denied parent must exist before any Claude Bash sandbox starts. A
+  // missing denyRead path can be skipped by the runtime at command launch;
+  // creating it only when a later Developer starts its host leaves a race.
+  mkdirSync(devToolsSocketRoot(), { recursive: true, mode: 0o700 })
+  chmodSync(devToolsSocketRoot(), 0o700)
   const real = (p: string): string => {
     try {
       return realpathSync(p)

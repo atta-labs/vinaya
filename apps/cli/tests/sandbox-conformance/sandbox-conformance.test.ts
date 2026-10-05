@@ -27,7 +27,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createConnection, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -206,42 +206,27 @@ describe('sandbox conformance — the known-failures list', () => {
 const LIVE = process.env.VINAYA_SANDBOX_CONFORMANCE === '1'
 
 describe.skipIf(!LIVE || process.platform !== 'linux')('driver socket boundary without Unix-socket seccomp', () => {
-  it('hides a live sibling socket from Claude Bash while the outside control connects', async () => {
+  it('hides a sibling socket created after Claude Bash starts, without seccomp', async () => {
     const socketPath = devToolsSocketPath(`conformance-victim:${randomUUID()}`)
     const socketDir = dirname(socketPath)
     const scratchDir = mkdtempSync(join(tmpdir(), 'vinaya-socket-conformance-'))
-    mkdirSync(socketDir, { recursive: true, mode: 0o700 })
-    chmodSync(devToolsSocketRoot(), 0o700)
-    chmodSync(socketDir, 0o700)
     const server = createServer((socket) => socket.end())
     let connections = 0
     server.on('connection', () => connections++)
     try {
-      await new Promise<void>((resolve, reject) => {
-        server.once('error', reject)
-        server.listen(socketPath, resolve)
-      })
-      chmodSync(socketPath, 0o600)
-      await new Promise<void>((resolve, reject) => {
-        const socket = createConnection(socketPath)
-        socket.once('connect', () => {
-          socket.destroy()
-          resolve()
-        })
-        socket.once('error', reject)
-      })
-      expect(connections).toBe(1)
-
       const settings = buildClaudeSandboxSettings({
-        role: 'developer',
+        role: 'code-reviewer',
         agent: 'claude',
         worktreeDir: scratchDir,
         scratchDir,
         allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS
       })
       expect(settings.sandbox.filesystem.denyRead).toContain(devToolsSocketRoot())
+      expect(existsSync(devToolsSocketRoot())).toBe(true)
       const settingsPath = join(scratchDir, 'settings.json')
       const scriptPath = join(scratchDir, 'connect.mjs')
+      const readyPath = join(scratchDir, 'ready')
+      const signalPath = join(scratchDir, 'signal')
       writeFileSync(
         settingsPath,
         JSON.stringify({
@@ -256,11 +241,14 @@ describe.skipIf(!LIVE || process.platform !== 'linux')('driver socket boundary w
       writeFileSync(
         scriptPath,
         `import { createConnection } from 'node:net'\n` +
+          `import { existsSync, writeFileSync } from 'node:fs'\n` +
+          `writeFileSync(${JSON.stringify(readyPath)}, 'ready')\n` +
+          `while (!existsSync(${JSON.stringify(signalPath)})) await new Promise((r) => setTimeout(r, 20))\n` +
           `const socket = createConnection(${JSON.stringify(socketPath)})\n` +
           `socket.once('connect', () => { console.log('CONNECTED'); process.exit(1) })\n` +
           `socket.once('error', (e) => { console.log('DENIED:' + e.code); process.exit(0) })\n`
       )
-      const run = await spawnBudgetedAsync(
+      const runPromise = spawnBudgetedAsync(
         [
           process.execPath,
           'x',
@@ -274,11 +262,34 @@ describe.skipIf(!LIVE || process.platform !== 'linux')('driver socket boundary w
         30_000,
         'Claude socket-boundary conformance'
       )
+      const deadline = Date.now() + 15_000
+      while (!existsSync(readyPath) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+      expect(existsSync(readyPath)).toBe(true)
+      mkdirSync(socketDir, { recursive: true, mode: 0o700 })
+      chmodSync(socketDir, 0o700)
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject)
+        server.listen(socketPath, resolve)
+      })
+      chmodSync(socketPath, 0o600)
+      await new Promise<void>((resolve, reject) => {
+        const socket = createConnection(socketPath)
+        socket.once('connect', () => {
+          socket.destroy()
+          resolve()
+        })
+        socket.once('error', reject)
+      })
+      expect(connections).toBe(1)
+      writeFileSync(signalPath, 'go')
+      const run = await runPromise
       expect(run.status, run.stderr).toBe(0)
       expect(run.stdout).toMatch(/DENIED:(EACCES|EPERM|ENOENT)/)
       expect(connections).toBe(1)
     } finally {
-      await new Promise<void>((resolve) => server.close(() => resolve()))
+      if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()))
       rmSync(socketDir, { recursive: true, force: true })
       rmSync(scratchDir, { recursive: true, force: true })
     }
