@@ -1,52 +1,23 @@
 /**
- * `dev-review-loop`'s developer-publication concern — the pure logic the
- * driver runs right after every Developer turn to commit, push and open the
- * pull request the turn left behind, so no dispatched Developer ever holds a
- * forge credential or writes to `.git` itself (the task's whole point; see
- * `apps/cli/specs/loop.md` § "Publishing each Developer turn").
+ * `dev-review-loop`'s developer-publication concern — the pure gate logic the
+ * driver's own publishing tools run before they touch the forge, so no
+ * dispatched Developer ever holds a forge credential or writes to `.git`
+ * itself (the task's whole point; see `apps/cli/specs/loop.md` § "Publishing
+ * each Developer turn"). The Developer publishes by calling the driver-run
+ * tools (`publish_changes`, `open_pull_request`, …); these pure checks run
+ * inside the driver's tool context (`developer-dev-tools-context.ts`) before
+ * the irreducible git/`gh` side effect.
  *
- * Everything here is pure — header validation, the pre-publication checks,
- * the durable publication record's read/write — so it is exercised directly
- * by unit tests and by the in-process loop harness, never shelling out. The
- * governed push and pull-request open themselves (the one part that holds a
- * credential) are the driver's own `LoopDeps` closures in
- * `dev-review-loop.ts`, faked wholesale by the harness exactly as
- * `publishRound`/`createTaskWorktree` already are.
+ * Everything here is pure — the commit-header validation and the
+ * pre-publication checks — so it is exercised directly by unit tests and by
+ * the in-process loop harness, never shelling out. The governed commit, push
+ * and pull-request open themselves (the one part that holds a credential) are
+ * the driver's own `LoopDeps` closures in `dev-review-loop.ts`, faked
+ * wholesale by the harness exactly as `publishRound`/`createTaskWorktree`
+ * already are.
  */
 
-import { writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
 import { COMMIT_TYPE_STYLE, COMMIT_TYPES, globCoversPath, type IssueSurface } from '@attalabs/aeg-core'
-import { ensureRunDir, runPath } from '../run-paths.js'
-import { readIfExists } from './reviewer-dispatch.js'
-
-/**
- * The Developer writes its one-line commit header here, in the round's own
- * Developer folder beside the confidence file (`CONFIDENCE_FILE_NAME`), never
- * at the worktree root — a control-file name at the worktree root gets no
- * Surface exemption, so a header file there would read as an out-of-Surface
- * change. The driver reads it, validates it, and commits the turn's work
- * under it (O2).
- */
-export const COMMIT_HEADER_FILE_NAME = '.vinaya-commit-header'
-
-/**
- * The Developer writes its pull-request body here, the same way and in the
- * same place as the commit header — read by the driver only when it opens the
- * pull request (O3: round 1, or a crash-recovery open), never on a later
- * fix-push round that opens nothing.
- */
-export const PR_BODY_FILE_NAME = '.vinaya-pr-body'
-
-/** Appended to a Developer dispatch's prompt — the commit-header counterpart to `confidencePromptLine`. `filePath` is this round's own absolute path, granted to the session as a `developerFiles` entry. */
-export function commitHeaderPromptLine(filePath: string): string {
-  return `Leave all your changes UNCOMMITTED. Before ending this turn, write the one-line commit header for this turn's work to a file at the absolute path \`${filePath}\` — exactly \`Type(scope): Description\` (${COMMIT_TYPES.join(', ')} — start-case, an optional lower-case scope in parens, a colon, a space, then a sentence-case description), 72 characters or fewer, no trailing newline needed. The driver commits your uncommitted changes under this header and pushes the branch for you; you never run \`git commit\`, \`git push\` or open the pull request yourself.`
-}
-
-/** Appended to a round-1 Developer dispatch's prompt — the pull-request-body counterpart to `commitHeaderPromptLine`. */
-export function prBodyPromptLine(filePath: string): string {
-  return `Before ending this turn, write the full pull-request body (your Developer PR report — print the template with \`bun apps/cli/src/index.ts doctrine --template pr-report --print\`) to a file at the absolute path \`${filePath}\`. The driver opens the pull request from this file; you never open it yourself.`
-}
 
 // --- commit-header validation (O2) ------------------------------------------
 
@@ -65,21 +36,21 @@ export type HeaderValidation = { ok: true; header: string } | { ok: false; reaso
  */
 export function validateCommitHeader(raw: string | null): HeaderValidation {
   if (raw === null) {
-    return {
-      ok: false,
-      reason: `no commit header file was written at this round's \`${COMMIT_HEADER_FILE_NAME}\` path`
-    }
+    return { ok: false, reason: '`publish_changes` was called with no commit header' }
   }
   const allLines = raw.split('\n')
   const header = (allLines[0] ?? '').trim()
   if (header.length === 0) {
-    return { ok: false, reason: 'the commit header file is empty — write one `Type(scope): Description` line' }
+    return {
+      ok: false,
+      reason: 'the commit header is empty — pass one `Type(scope): Description` line to `publish_changes`'
+    }
   }
   if (allLines.slice(1).some((l) => l.trim().length > 0)) {
     return {
       ok: false,
       reason:
-        'the commit header file has more than one non-empty line — write only the single `Type(scope): Description` header line, not a body'
+        'the commit header has more than one non-empty line — pass only the single `Type(scope): Description` header line, not a body'
     }
   }
   if (!COMMIT_TYPE_STYLE.test(header)) {
@@ -148,7 +119,7 @@ export function checkPublicationPreconditions(
   if (input.recordedHead !== null && input.worktreeHead !== null && input.worktreeHead !== input.recordedHead) {
     return {
       ok: false,
-      reason: `the worktree head moved to \`${input.worktreeHead}\` during your turn (expected the recorded \`${input.recordedHead}\`) — leave your changes UNCOMMITTED; the driver makes the single commit for this turn`
+      reason: `the worktree head moved to \`${input.worktreeHead}\` during your turn (expected the recorded \`${input.recordedHead}\`) — do not commit yourself; call \`publish_changes\` to make this turn's single commit`
     }
   }
   if (input.surface) {
@@ -170,60 +141,4 @@ export function checkPublicationPreconditions(
     }
   }
   return { ok: true }
-}
-
-// --- the durable publication record (O2, O8) --------------------------------
-
-/**
- * One record per task, overwritten by each published turn — the single
- * durable trace a crashed driver reads to finish a publication exactly once
- * (O8). `commitSha` is recorded BEFORE the push, so a crash between the
- * commit and the push reconciles from this record (pushing the recorded
- * commit) rather than committing the same work twice; `pushed` and
- * `prNumber` advance as each later step confirms, so a restart after the push
- * (but before the open) opens the pull request without re-pushing, and a
- * restart after the open does neither.
- */
-export type DeveloperPublicationRecord = {
-  round: number
-  /** The head recorded before the turn — what the commit was made on top of. */
-  preTurnHead: string | null
-  /** The sha the driver committed this turn, or `null` when the turn produced no commit (an open-only recovery, or a nothing-new turn). */
-  commitSha: string | null
-  /** True once `branch-push` confirmed the commit reached the remote. */
-  pushed: boolean
-  /** The pull request this task's publication opened, or `null` before one exists. */
-  prNumber: number | null
-}
-
-function publicationRecordPath(root: string, task: number): string {
-  return runPath(root, task, { area: 'control', file: 'developer-publication.json' })
-}
-
-export function readDeveloperPublicationRecord(root: string, task: number): DeveloperPublicationRecord | null {
-  const raw = readIfExists(publicationRecordPath(root, task))
-  if (!raw) return null
-  try {
-    const parsed = JSON.parse(raw) as DeveloperPublicationRecord
-    if (typeof parsed.round !== 'number' || typeof parsed.pushed !== 'boolean') return null
-    return parsed
-  } catch {
-    return null
-  }
-}
-
-export function writeDeveloperPublicationRecord(root: string, task: number, record: DeveloperPublicationRecord): void {
-  const path = publicationRecordPath(root, task)
-  ensureRunDir(dirname(path), root)
-  writeFileSync(path, JSON.stringify(record), 'utf8')
-}
-
-// --- round-file paths -------------------------------------------------------
-
-export function commitHeaderPathFor(root: string, task: number, round: number): string {
-  return runPath(root, task, { area: 'developer', round, file: COMMIT_HEADER_FILE_NAME })
-}
-
-export function prBodyPathFor(root: string, task: number, round: number): string {
-  return runPath(root, task, { area: 'developer', round, file: PR_BODY_FILE_NAME })
 }

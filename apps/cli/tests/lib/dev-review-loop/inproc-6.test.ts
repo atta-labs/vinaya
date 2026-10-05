@@ -136,7 +136,9 @@ describe('devReviewLoop — a clean head falls into conflict while reviewers wor
     expect(conflictPrompt).toMatch(/^Worktree: `.*\.worktrees\//m)
     expect(conflictPrompt).toMatch(/^Remote head: [0-9a-f]{40}$/m)
     expect(conflictPrompt).toMatch(/`git merge origin\/main`/)
-    expect(conflictPrompt).toMatch(/`git push`/)
+    // O4: after resolving, the developer publishes through the driver-run
+    // `publish_changes`, not a self-push.
+    expect(conflictPrompt).toMatch(/publish_changes/)
   })
 })
 

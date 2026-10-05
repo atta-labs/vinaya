@@ -23,11 +23,6 @@ import {
 } from '../dev-review-loop-harness.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
 import { CONFIDENCE_FILE_NAME } from '../../../src/lib/dev-review-loop.js'
-import {
-  prBodyPathFor,
-  readDeveloperPublicationRecord,
-  writeDeveloperPublicationRecord
-} from '../../../src/lib/dev-review-loop/developer-publication.js'
 import type { DispatchHandle } from '../../../src/lib/dispatch.js'
 
 afterEach(cleanupWorlds)
@@ -130,7 +125,10 @@ describe('devReviewLoop — O1 (#595): one failing CI check never ends the drive
     // failing check is prompts[1] — never a third.
     expect(prompts).toHaveLength(2)
     expect(prompts[1]).toMatch(/evidence-fresh/)
-    expect(prompts[1]).toMatch(/`git push`/)
+    // O4: the gate-red retry names the driver-run publishing tools, not a
+    // self-push.
+    expect(prompts[1]).toMatch(/publish_changes/)
+    expect(prompts[1]).not.toMatch(/commit and push the fix yourself/)
 
     // Never a pause of any kind — this run reaches a clean publish.
     expect(existsSync(join(controlDir(world), 'pause-state.json'))).toBe(false)
@@ -170,7 +168,8 @@ describe('devReviewLoop — a stale Premise pin pauses like a red gate, never a 
     expect(premisePrompt).toMatch(/dispatch-gate premise:/)
     expect(premisePrompt).toMatch(/pinned\.ts/)
     expect(premisePrompt).toMatch(/OLD_SYMBOL/)
-    expect(premisePrompt).toMatch(/`git push`/)
+    // O4: the resume names the driver-run `publish_changes`, not a self-push.
+    expect(premisePrompt).toMatch(/publish_changes/)
 
     const pauseState = JSON.parse(readFileSync(join(controlDir(world), 'pause-state.json'), 'utf8')) as Record<
       string,
@@ -204,10 +203,11 @@ describe('devReviewLoop — O2 (#543): unpushed real work is resumed once, then 
     // `.dev-prompt-3.txt` existing and `.dev-prompt-4.txt` not). The resume
     // prompt itself names the uncommitted changes and how to push them.
     expect(prompts).toHaveLength(3)
-    // O7: a Claude Code Developer now holds its own forge credential, so the
-    // resume prompt tells it to commit and push the work itself.
+    // O4: the resume prompt names the driver-run tool for both agents — it
+    // tells the Developer to publish the work through `publish_changes`.
     expect(prompts[2]).toMatch(/left work that is not yet on the remote/)
-    expect(prompts[2]).toMatch(/commit and push your changes yourself, on this SAME branch/)
+    expect(prompts[2]).toMatch(/publish_changes/)
+    expect(prompts[2]).not.toMatch(/commit and push your changes yourself/)
 
     const pauseState = JSON.parse(readFileSync(join(controlDir(world), 'pause-state.json'), 'utf8')) as Record<
       string,
@@ -753,10 +753,12 @@ describe("devReviewLoop — the developer's first turn ends with no push at all,
     expect(prompts).toHaveLength(2)
 
     const resumedPrompt = prompts[1] as string
-    // O7: a Claude Code Developer now holds its own forge credential, so the
-    // resume asks it to commit, push and open the pull request itself.
+    // O4: the resume names the driver-run tools for both agents — publish the
+    // work through `publish_changes` and open the pull request through
+    // `open_pull_request`.
     expect(resumedPrompt).toMatch(/left no commit on this branch yet, and no open pull request/)
-    expect(resumedPrompt).toMatch(/commit your work, push this branch and open \(or update\) its pull request yourself/)
+    expect(resumedPrompt).toMatch(/publish_changes/)
+    expect(resumedPrompt).toMatch(/open_pull_request/)
   })
 })
 
@@ -1127,107 +1129,95 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
   })
 })
 
-describe('devReviewLoop — a restart finishes an interrupted publication exactly once (agent-confinement-v1/1, O8)', () => {
-  // Each restart seeds the branch as present on the remote with no open PR and a
-  // durable publication record left at one of the three boundaries, then enters
-  // the loop-start already-pushed path.
-  function seedBody(world: LoopWorld): void {
-    const bodyPath = prBodyPathFor(world.runtimeDir, world.task, 1)
-    mkdirSync(join(bodyPath, '..'), { recursive: true })
-    writeFileSync(bodyPath, '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n')
-  }
-
-  it('restart after the commit (not yet pushed) finishes by pushing and opening — no second commit', async () => {
-    const world = makeWorld({ worktreeExists: true, remoteBranchExists: true, head: 'a'.repeat(40) })
-    seedBody(world)
-    writeDeveloperPublicationRecord(world.runtimeDir, world.task, {
-      round: 1,
-      preTurnHead: 'a'.repeat(40),
-      commitSha: 'c'.repeat(40),
-      pushed: false,
-      prNumber: null
-    })
-    const result = await runLoopInProcess(world)
-    expect(result.finalDecision.type).toBe('publish')
-    expect(world.commits).toHaveLength(0) // the commit was already made before the crash
-    expect(world.pushes).toHaveLength(1) // recovery pushes the recorded commit
-    expect(world.prOpens).toHaveLength(1) // then opens the PR
-    expect(readDeveloperPublicationRecord(world.runtimeDir, world.task)?.prNumber).toBe(world.prNumber)
-  })
-
-  it('a first-push restart resolves the recorded commit base and authorizes its protected paths', async () => {
-    const commitSha = 'c'.repeat(40)
-    const protectedPath = '.github/workflows/recovered.yml'
-    const world = makeWorld({
-      worktreeExists: true,
-      remoteBranchExists: false,
-      worktreeHead: commitSha
-    })
-    seedBody(world)
-    writeDeveloperPublicationRecord(world.runtimeDir, world.task, {
-      round: 1,
-      preTurnHead: world.mergeBase,
-      commitSha,
-      pushed: false,
-      prNumber: null
-    })
-    const deps = makeInProcessDeps(world)
-    let resolveCalls = 0
-    deps.resolveHead = () => {
-      resolveCalls += 1
-      if (resolveCalls === 1) return commitSha
-      throw new Error('the remote branch disappeared before recovery push authorization')
-    }
-    const bases: string[] = []
-    const pushedPaths: string[][] = []
-    deps.gitWorktreeChangedPaths = (_worktree, base) => {
-      bases.push(base)
-      return [protectedPath]
-    }
-    deps.pushTaskBranch = (input) => {
-      pushedPaths.push([...input.touchedPaths])
-      return { ok: false, hook: true, refusal: `protected path refused: ${input.touchedPaths.join(', ')}` }
-    }
-
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
-
-    expect(bases[0]).toBe(world.mergeBase)
-    expect(pushedPaths[0]).toEqual([protectedPath])
-    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
-  })
-
-  it('restart after the push (not yet opened) finishes by opening only — no second commit or push', async () => {
-    const world = makeWorld({ worktreeExists: true, remoteBranchExists: true, head: 'c'.repeat(40) })
-    seedBody(world)
-    writeDeveloperPublicationRecord(world.runtimeDir, world.task, {
-      round: 1,
-      preTurnHead: 'a'.repeat(40),
-      commitSha: 'c'.repeat(40),
-      pushed: true,
-      prNumber: null
-    })
-    const result = await runLoopInProcess(world)
-    expect(result.finalDecision.type).toBe('publish')
-    expect(world.commits).toHaveLength(0)
-    expect(world.pushes).toHaveLength(0)
-    expect(world.prOpens).toHaveLength(1)
-  })
-
-  it('restart after the PR opened finishes by doing nothing — no second commit, push or open', async () => {
-    // The PR is already open, so the loop attaches at start and never reaches
-    // the recovery path at all.
+describe('devReviewLoop — a restart keeps no durable publication record; the Developer republishes through the tools (agent-confinement-v1, O4)', () => {
+  it('restart on an already-pushed branch with the PR already open publishes nothing new — the loop attaches at start', async () => {
+    // The driver no longer keeps a durable publication record to finish on
+    // restart. With the branch pushed and the PR open, the loop attaches at
+    // start and makes no second commit, push or open.
     const world = makeWorld({ worktreeExists: true, developerPushed: true, prOpened: true, head: 'c'.repeat(40) })
-    writeDeveloperPublicationRecord(world.runtimeDir, world.task, {
-      round: 1,
-      preTurnHead: 'a'.repeat(40),
-      commitSha: 'c'.repeat(40),
-      pushed: true,
-      prNumber: world.prNumber
-    })
     const result = await runLoopInProcess(world)
     expect(result.finalDecision.type).toBe('publish')
     expect(world.commits).toHaveLength(0)
     expect(world.pushes).toHaveLength(0)
     expect(world.prOpens).toHaveLength(0)
   })
+})
+
+describe('devReviewLoop — every Developer prompt names the driver-run tools and carries no retired commit/push wording (agent-confinement-v1, O4)', () => {
+  // The driver no longer commits, pushes or opens on the Developer's behalf,
+  // and the Developer holds no forge credential of its own — Claude and Codex
+  // alike publish only through the driver-run tools. No prompt the driver gives
+  // a Developer may still describe the retired model (leave-uncommitted /
+  // driver-commits / commit-push-open-yourself / write the header or body to a
+  // file), and every publishing prompt must name those tools.
+  const RETIRED_WORDING: RegExp[] = [
+    /leave (all )?your changes uncommitted/i,
+    /the driver commits/i,
+    /commit,? and push (and open )?.*yourself/i,
+    /commit and push your changes yourself/i,
+    /commit your work, push this branch/i,
+    /open \(or update\) its pull request yourself/i,
+    /commit your changes and run `git push` yourself/i,
+    /you never run `git commit`/i,
+    /write the (one-line )?commit header .* to a file/i,
+    /write the (full )?pull-request body .* to a file/i,
+    /the driver opens the pull request from (it|this)/i
+  ]
+  const TOOL_NAMES = ['publish_changes', 'open_pull_request', 'read_pull_request', 'run_checks']
+
+  /**
+   * Collect every Developer prompt the driver emits across the representative
+   * prompt paths — round 1, a red-gate retry, the mid-round unpushed-work
+   * resume (`commitAndPushPrompt`), and the first-turn push-and-open resume
+   * (`pushAndOpenPrompt`) — for one agent.
+   */
+  async function developerPromptsFor(agent: 'claude' | 'codex'): Promise<string[]> {
+    const collected: string[] = []
+
+    const redWorld = makeWorld({ gate: 'red' })
+    const redCapture = withCapturedDeveloperDispatch(redWorld, {
+      readUnpushedWorkDetail: () => ({ dirtyFiles: ['smoke.ts'], aheadCount: 0 })
+    })
+    await runLoopInProcess(
+      redWorld,
+      { task: redWorld.task, agent },
+      { ...redCapture.deps, gatePollMaxAttempts: 2, gatePollIntervalMs: 5 }
+    ).catch(() => undefined)
+    collected.push(...redCapture.prompts)
+
+    const noPushWorld = makeWorld()
+    const noPushCapture = controlledDeveloperDeps(noPushWorld, {})
+    await runLoopInProcess(
+      noPushWorld,
+      { task: noPushWorld.task, agent },
+      { ...noPushCapture.deps, prPollMaxAttempts: 2, prPollIntervalMs: 5 }
+    ).catch(() => undefined)
+    collected.push(...noPushCapture.prompts)
+
+    return collected
+  }
+
+  for (const agent of ['claude', 'codex'] as const) {
+    it(`no ${agent} Developer prompt contains the retired commit/push wording`, async () => {
+      const prompts = await developerPromptsFor(agent)
+      expect(prompts.length).toBeGreaterThanOrEqual(4)
+      for (const prompt of prompts) {
+        for (const pattern of RETIRED_WORDING) {
+          expect(prompt).not.toMatch(pattern)
+        }
+      }
+    })
+
+    it(`every ${agent} publishing prompt names the driver-run tools`, async () => {
+      const prompts = await developerPromptsFor(agent)
+      // Every prompt that gives a publishing instruction names the tools; the
+      // shared `publishingInstructionLine` lists them all, so each such prompt
+      // carries every tool name.
+      const publishingPrompts = prompts.filter((p) => /publish_changes/.test(p))
+      expect(publishingPrompts.length).toBeGreaterThanOrEqual(4)
+      for (const prompt of publishingPrompts) {
+        for (const tool of TOOL_NAMES) expect(prompt).toContain(tool)
+      }
+    })
+  }
 })

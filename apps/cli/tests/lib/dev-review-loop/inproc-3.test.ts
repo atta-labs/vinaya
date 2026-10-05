@@ -239,12 +239,13 @@ describe('devReviewLoop — round 1 blocked, round 2 genuinely resumes', () => {
     expect(round2Prompt).toMatch(/deliberate round-1 blocker/)
     // O11 (task-run-v1 21, #541, round 2 review MAJOR): the round-findings
     // resume prompt names the task/branch/worktree/head context AND the
-    // exact command expected — not just "push fixes" in prose.
+    // exact tool expected — not just "push fixes" in prose. O4: the tool is
+    // the driver-run `publish_changes`, not a self-push.
     expect(round2Prompt).toMatch(new RegExp(`^Resuming task Issue #${world.task}\\.$`, 'm'))
     expect(round2Prompt).toMatch(new RegExp(`^Branch: \`${world.branch}\`$`, 'm'))
     expect(round2Prompt).toMatch(/^Worktree: `.*\.worktrees\//m)
     expect(round2Prompt).toMatch(/^Remote head: [0-9a-f]{40}$/m)
-    expect(round2Prompt).toMatch(/`git push`/)
+    expect(round2Prompt).toMatch(/publish_changes/)
 
     const round1Verdict = readFileSync(join(ipRoundDir(world, 1), 'reviewer.md'), 'utf8')
     expect(round1Verdict).toMatch(/^VERDICT: REQUEST CHANGES$/m)

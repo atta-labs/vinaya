@@ -270,13 +270,14 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     expect(resumePrompt).toMatch(/Principal ruling on this pause/)
     expect(resumePrompt).toMatch(/Go ahead and fix it\./)
     // O11 (task-run-v1 21, #541, round 2 review MAJOR): the ruling-resume
-    // prompt names the task/branch/worktree/head context AND the exact
-    // command expected — not just "push fixes" in prose.
+    // prompt names the task/branch/worktree/head context AND the exact tool
+    // expected — not just "push fixes" in prose. O4: the tool is the
+    // driver-run `publish_changes`, not a self-push.
     expect(resumePrompt).toMatch(new RegExp(`^Resuming task Issue #${world.task}\\.$`, 'm'))
     expect(resumePrompt).toMatch(new RegExp(`^Branch: \`${world.branch}\`$`, 'm'))
     expect(resumePrompt).toMatch(/^Worktree: `.*\.worktrees\//m)
     expect(resumePrompt).toMatch(/^Remote head: [0-9a-f]{40}$/m)
-    expect(resumePrompt).toMatch(/`git push`/)
+    expect(resumePrompt).toMatch(/publish_changes/)
 
     // Published: the round marker and the original pause comment, then the
     // three publish comments (reviewer verdict, security verdict, summary) —

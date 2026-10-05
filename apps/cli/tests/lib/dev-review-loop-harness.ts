@@ -36,7 +36,7 @@
  */
 
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
   devReviewLoop,
@@ -49,7 +49,6 @@ import {
 } from '../../src/lib/dev-review-loop.js'
 import { resetDefaultLogSinkContext, resetTrustAnchorConfigMemo } from '../../src/lib/log-sink.js'
 import { resetRuntimeDirCache } from '../../src/lib/run-paths.js'
-import { commitHeaderPathFor, prBodyPathFor } from '../../src/lib/dev-review-loop/developer-publication.js'
 import type { DispatchHandle } from '../../src/lib/dispatch.js'
 import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server.js'
 import {
@@ -722,25 +721,19 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
 }
 
 /**
- * agent-confinement-v1/1 — deps whose Developer dispatch models the new
- * confined shape: it leaves its changes UNCOMMITTED (sets `worktreeDirty`/
- * `worktreeChangedPaths`) and writes its commit-header (and, round 1, PR-body)
- * file into that round's own Developer folder, then returns — it never pushes
- * or opens the PR itself. The driver's own publication step (commit, push,
- * open) then runs against the world's publication fakes. Pair with
+ * agent-confinement-v1 — deps whose Developer dispatch dirties the worktree
+ * (sets `worktreeDirty`/`worktreeChangedPaths`) but NEVER calls a driver-run
+ * publishing tool, then returns. The driver no longer commits, pushes or opens
+ * on the Developer's behalf, so the work stays unpublished — the driver detects
+ * it and re-asks the session to call `publish_changes` (O4). Pair with
  * `makeWorld({ worktreeExists: true })`.
  */
 export function developerLeavesWorkDeps(
   world: LoopWorld,
   opts: {
     changedPaths?: string[]
-    header?: string
-    headerByRound?: Record<number, string>
-    body?: string
-    /** When true, the Developer "commits" itself (advances the worktree head) — the O7 head-check violation. */
+    /** When true, the Developer "commits" itself (advances the worktree head) — the head-check violation. */
     developerCommits?: boolean
-    /** When true, writes NO header file — the O2 missing-header path. */
-    writeNoHeader?: boolean
   } = {}
 ): Partial<LoopDeps> {
   const base = makeInProcessDeps(world)
@@ -756,17 +749,6 @@ export function developerLeavesWorkDeps(
       world.worktreeDirty = [...changed]
       world.worktreeChangedPaths = [...changed]
       if (opts.developerCommits) world.worktreeHead = sha('z')
-      if (!opts.writeNoHeader) {
-        const header = opts.headerByRound?.[round] ?? opts.header ?? 'Feat(cli): leave the work for the driver'
-        const headerPath = commitHeaderPathFor(world.runtimeDir, world.task, round)
-        mkdirSync(dirname(headerPath), { recursive: true })
-        writeFileSync(headerPath, header)
-      }
-      if (round === 1) {
-        const bodyPath = prBodyPathFor(world.runtimeDir, world.task, round)
-        mkdirSync(dirname(bodyPath), { recursive: true })
-        writeFileSync(bodyPath, opts.body ?? '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n')
-      }
       world.dispatches.push({ role, round, resumeId: 'dev-session-1', prompt })
       return handle('dev-session-1', `eff-dev-${devSeq}`)
     }
