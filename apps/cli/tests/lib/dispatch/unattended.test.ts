@@ -271,13 +271,6 @@ function buildGitFixture(opts: { homeCredential?: string } = {}): Fixture & { en
   const home = tempDir('vinaya-unattended-oauth-home-')
   const cwd = tempDir('vinaya-unattended-oauth-cwd-')
   const binDir = tempDir('vinaya-unattended-oauth-bin-')
-  // These credential tests require a resolvable unattended boundary on Linux.
-  // The fake vendor never invokes either sandbox helper.
-  for (const tool of ['bwrap', 'socat']) {
-    const toolPath = join(binDir, tool)
-    writeFileSync(toolPath, '#!/bin/sh\nexit 0\n')
-    chmodSync(toolPath, 0o755)
-  }
   execFileSync('git', ['init', '-q'], { cwd })
   const promptFile = join(cwd, 'prompt.txt')
   writeFileSync(promptFile, 'do the thing')
@@ -327,6 +320,15 @@ function runDispatchNoAmbientLogin(
   agent = 'claude',
   extraEnv: NodeJS.ProcessEnv = {}
 ): { status: number; stdout: string; stderr: string } {
+  if (agent === 'claude' && extraArgs.includes('--unattended')) {
+    // Only Claude success fixtures need sandbox prerequisites. The Codex
+    // refusal fixture below must still see a host without them.
+    for (const tool of ['bwrap', 'socat']) {
+      const toolPath = join(fixture.binDir, tool)
+      writeFileSync(toolPath, '#!/bin/sh\nexit 0\n')
+      chmodSync(toolPath, 0o755)
+    }
+  }
   const { CLAUDE_CONFIG_DIR: _drop, ...envWithoutConfigDir } = process.env
   return runVinayaDispatch(
     fixture.cwd,

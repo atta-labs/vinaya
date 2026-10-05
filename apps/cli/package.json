@@ -50,6 +50,7 @@
     "verify-published-lifecycle": "bun scripts/verify-published-lifecycle.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.78",
     "gray-matter": "^4.0.3",
     "zod": "3.25.76"
   },
