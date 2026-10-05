@@ -225,6 +225,8 @@ export const LoopStateRecordSchema = z
       })
       .strict()
       .optional(),
+    /** The original or deliberately advanced task-branch base used by publication checks. */
+    publicationExpectedBase: z.string().regex(/^[0-9a-f]{40}$/).nullable().optional(),
     /**
      * When the loop FIRST started on this task, as the first driver to persist
      * state for it recorded — carried forward unchanged by every later write,

@@ -226,6 +226,12 @@ describe('parseLoopStateRecord (control-store-v1 task 4, O1)', () => {
     expect(parseLoopStateRecord(JSON.stringify(validLoopState))).toEqual({ status: 'ok', value: validLoopState })
   })
 
+  it('round-trips the publication base and rejects an invalid SHA', () => {
+    const withBase: LoopStateRecord = { ...validLoopState, publicationExpectedBase: 'c'.repeat(40) }
+    expect(parseLoopStateRecord(JSON.stringify(withBase))).toEqual({ status: 'ok', value: withBase })
+    expect(parseLoopStateRecord(JSON.stringify({ ...withBase, publicationExpectedBase: 'invalid' })).status).toBe('corrupt')
+  })
+
   it('accepts a pause phase with a reason, and null held-result/delivered-findings', () => {
     const paused: LoopStateRecord = {
       ...validLoopState,

@@ -137,6 +137,7 @@ export function codexDevToolsMcpTable(bridge: BridgeInvocation): string {
     `command = ${JSON.stringify(bridge.command)}`,
     `args = ${argsToml}`,
     `default_tools_approval_mode = ${JSON.stringify(CODEX_DEV_TOOLS_APPROVAL_MODE)}`,
+    'tool_timeout_sec = 1800',
     ''
   ].join('\n')
 }

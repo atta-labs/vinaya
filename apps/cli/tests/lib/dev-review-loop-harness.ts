@@ -219,6 +219,8 @@ export type LoopWorld = {
   worktreeAhead: number
   /** `gitWorktreeChangedPaths` — the paths the turn changed, for the O7 Surface check; default `[]`. */
   worktreeChangedPaths: string[]
+  /** Added-content diff visible to the pre-publication credential scan; default an empty readable diff. */
+  worktreeDiffText: string | null
   /** The sha `commitWorktree` returns and sets the worktree head to; default `sha('c')`. */
   nextCommitSha: string
   /** When set, `pushTaskBranch` refuses with this text (O4); default `null` (the push lands). */
@@ -353,6 +355,7 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     worktreeDirty: [],
     worktreeAhead: 0,
     worktreeChangedPaths: [],
+    worktreeDiffText: '',
     nextCommitSha: sha('c'),
     pushRefusal: null,
     prOpened: false,
@@ -581,7 +584,7 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     // from the worktree side in a harness-driven test, the same fidelity
     // level every other content-shaped (not path-shaped) git read already
     // has here.
-    gitWorktreeDiffText: (_worktreePath, _base) => null,
+    gitWorktreeDiffText: (_worktreePath, _base) => world.worktreeDiffText,
     buildVendoredCliIfMissing: () => {},
     commitWorktree: (_worktreePath, header) => {
       const commitSha = world.nextCommitSha

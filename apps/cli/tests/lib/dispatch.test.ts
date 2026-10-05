@@ -2694,6 +2694,12 @@ describe('developerWrittenTextFromVendorOutput + the after-turn credential scan 
     const diff = ['--- a/x.ts', '+++ b/x.ts', '@@ -0,0 +1 @@', '+real content'].join('\n')
     expect(addedDiffLines(diff)).toBe('real content')
   })
+
+  it('retains added content whose first characters are plus signs', () => {
+    const secret = `ghp_${'A'.repeat(40)}`
+    const diff = ['--- a/x.ts', '+++ b/x.ts', '@@ -0,0 +1 @@', `+++${secret}`].join('\n')
+    expect(findCredentialPatterns(addedDiffLines(diff), 'added diff')).toHaveLength(1)
+  })
 })
 
 describe('sawVendorConnectionRetry (pure) — [task-operator-v1]/Issue #662, O2', () => {

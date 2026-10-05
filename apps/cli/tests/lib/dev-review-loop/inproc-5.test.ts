@@ -1018,6 +1018,8 @@ describe('devReviewLoop — a conflicting head is sent back to the developer, ne
     const conflictPrompt = prompts[1] as string
     expect(conflictPrompt).toMatch(/behind the base in a way that conflicts/)
     expect(conflictPrompt).toMatch(/apps\/cli\/src\/lib\/dev-review-loop\.ts/)
+    expect(conflictPrompt).toContain('git merge --no-commit origin/main')
+    expect(conflictPrompt).toContain('publish_changes tool makes the merge commit')
 
     const pauseComment = world.postedComments.find((c) => c.marker === '<!-- aeg:loop:paused:repeat_failure -->')
     expect(pauseComment).toBeDefined()
@@ -1056,6 +1058,8 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
     expect(world.commits[0]!.header).toBe('Feat(cli): publish via the driver-run tools')
     expect(world.pushes).toHaveLength(1)
     expect(world.prOpens).toHaveLength(1)
+    const persisted = JSON.parse(readFileSync(join(controlDir(world), 'loop-state.json'), 'utf8')) as Record<string, unknown>
+    expect(persisted.publicationExpectedBase).toBe(world.mergeBase)
   })
 
   it('O4: publish_changes works more than once in a turn — a second publish lands its own commit and push', async () => {
@@ -1119,6 +1123,67 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
     expect(world.prBodyUpdates).toHaveLength(1)
     expect(world.evidenceRefreshes).toBe(1)
     expect(world.commits.length).toBe(commitsAfterOpen)
+  })
+
+  it('validates a body against the full PR diff after the push and refuses a second open', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    const validatedPaths: string[][] = []
+    await runLoopInProcess(world, { task: world.task, agent: 'codex' }, {
+      ...developerPublishesViaToolsDeps(world),
+      validatePrBodyForCreate: async (input) => {
+        validatedPaths.push([...input.changedFiles])
+        return []
+      }
+    })
+    expect(validatedPaths).toEqual([['apps/cli/src/lib/x.ts']])
+    const ctx = world.devToolContext!
+    const reopened = await ctx.openPullRequest('Another title', '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n')
+    expect(reopened.ok).toBe(false)
+    if (!reopened.ok) expect(reopened.error.check).toBe('pr-exists')
+    expect(world.prOpens).toHaveLength(1)
+  })
+
+  it('refuses credential-shaped additions and PR bodies before any new push or body write', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    await runLoopInProcess(world, { task: world.task, agent: 'codex' }, developerPublishesViaToolsDeps(world))
+    const ctx = world.devToolContext!
+    const secret = `ghp_${'a'.repeat(36)}`
+    const commitsBefore = world.commits.length
+    const pushesBefore = world.pushes.length
+    world.worktreeDirty = ['apps/cli/src/lib/new.ts']
+    world.worktreeChangedPaths = ['apps/cli/src/lib/new.ts']
+    world.worktreeDiffText = `diff --git a/new.ts b/new.ts\n+const token = '${secret}'\n`
+    const refused = await ctx.publishChanges('Fix(cli): remove leaked credential')
+    expect(refused.ok).toBe(false)
+    if (!refused.ok) {
+      expect(refused.error.check).toBe('credential-scan')
+      expect(refused.error.output).not.toContain(secret)
+    }
+    expect(world.commits).toHaveLength(commitsBefore)
+    expect(world.pushes).toHaveLength(pushesBefore)
+    const body = await ctx.updatePullRequestBody(`## Decisions\n\n${secret}\n\n## Scope\n\n**Tier:** 1\n`)
+    expect(body.ok).toBe(false)
+    expect(world.prBodyUpdates).toHaveLength(0)
+  })
+
+  it('retries a hook-refused push of the same commit without making another commit', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    await runLoopInProcess(world, { task: world.task, agent: 'codex' }, developerPublishesViaToolsDeps(world))
+    const ctx = world.devToolContext!
+    world.nextCommitSha = 'd'.repeat(40)
+    world.worktreeDirty = ['apps/cli/src/lib/new.ts']
+    world.worktreeChangedPaths = ['apps/cli/src/lib/new.ts']
+    world.pushRefusal = 'hook refused this push'
+    const first = await ctx.publishChanges('Fix(cli): retry after hook refusal')
+    expect(first.ok).toBe(false)
+    expect(world.commits).toHaveLength(2)
+    const pushesBefore = world.pushes.length
+    world.pushRefusal = null
+    const retried = await ctx.publishChanges('Fix(cli): retry after hook refusal')
+    expect(retried.ok).toBe(true)
+    expect(world.commits).toHaveLength(2)
+    expect(world.pushes).toHaveLength(pushesBefore + 1)
+    expect(world.pushes.at(-1)?.sha).toBe('d'.repeat(40))
   })
 
   it('O3/O5: run_checks runs vinaya check --all through the driver-run tool, forge faked and gate real', async () => {

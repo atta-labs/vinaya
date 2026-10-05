@@ -1092,8 +1092,7 @@ export function pushedCommitRangeBase(remoteHead: string | null, branchBase: str
  * untracked file's own raw content (`git ls-files --others
  * --exclude-standard`, read directly off the worktree) is appended, never
  * diffed, named by its own path so a finding's `location` still points
- * somewhere real. Best-effort per file — an unreadable (binary, removed
- * mid-scan) file is skipped, never a reason to fail the whole scan.
+ * somewhere real. An unreadable file fails the scan closed before publication.
  */
 function defaultGitWorktreeDiffText(worktreePath: string, base: string): string | null {
   let text: string | null
@@ -1116,14 +1115,14 @@ function defaultGitWorktreeDiffText(worktreePath: string, base: string): string 
       .map((line) => line.trim())
       .filter(Boolean)
   } catch {
-    untrackedPaths = []
+    return null
   }
   for (const path of untrackedPaths) {
     try {
       const content = readFileSync(join(worktreePath, path), 'utf8')
-      text += `\n--- untracked: ${path} ---\n${content}`
+      text += `\n--- untracked: ${path} ---\n${content.split(/\r?\n/).map((line) => `+${line}`).join('\n')}`
     } catch {
-      // Binary, removed mid-scan, or otherwise unreadable — skipped.
+      return null
     }
   }
   return text
@@ -2818,6 +2817,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // fresh `LoopState`, so without this the next round would re-send the
         // developer at a finding or a failure that had already repeated.
         repeatMemory: { blockingFindings: state.lastBlockingFindings, lastFailure: state.lastFailure },
+        publicationExpectedBase,
         // The task's own clock, carried forward unchanged (`taskStartedAt`) and
         // accumulated (`phaseMs`), so the next driver to take this task over
         // measures the same budget from the same instant.
@@ -2968,7 +2968,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * lazily (not at loop start) so a fresh round-1 run with no head yet never
      * has to resolve one.
      */
-    let publicationExpectedBase: string | null = null
+    let publicationExpectedBase: string | null =
+      recoveredLoopState.status === 'ok' ? recoveredLoopState.value.publicationExpectedBase : null
     /**
      * O4: the pre-push hook's own refusal text from the most recent refused
      * driver push, carried into the existing mechanical-failure path's message
@@ -3460,7 +3461,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       } catch {
         base = null
       }
-      if (publicationExpectedBase === null) publicationExpectedBase = base
+      if (base !== null && (publicationExpectedBase === null || d.gitIsAncestor(publicationExpectedBase, base))) {
+        publicationExpectedBase = base
+      }
       return base
     }
 
@@ -3493,9 +3496,24 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
       const worktreeChangedPaths = (): string[] => {
         const unpushed = d.readUnpushedWorkDetail(worktree)
-        const rangeBase = pushedCommitRangeBase(safeRemoteHead(), publicationExpectedBase)
+        const rangeBase =
+          pendingConflictFiles !== null ? 'origin/main' : pushedCommitRangeBase(safeRemoteHead(), publicationExpectedBase)
         const diffPaths = rangeBase ? d.gitWorktreeChangedPaths(worktree, rangeBase) : []
         return [...new Set([...diffPaths, ...unpushed.dirtyFiles])]
+      }
+      const prChangedPaths = async (): Promise<string[] | null> => {
+        const head = d.readWorktreeHead(worktree)
+        if (head === null) return null
+        let base: string
+        try {
+          base = await d.gitMergeBase(head)
+        } catch {
+          return null
+        }
+        const paths = d.gitWorktreeChangedPaths(worktree, base)
+        const dirty = d.readUnpushedWorkDetail(worktree).dirtyFiles
+        const changed = [...new Set([...paths, ...dirty])]
+        return changed.length > 0 ? changed : null
       }
       const deps: DeveloperDevToolDeps = {
         readPublicationCheckInput: async () => {
@@ -3514,9 +3532,43 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         },
         commitAndPush: async (header) => {
           const remoteHeadBefore = safeRemoteHead()
+          if (d.readUnpushedWorkDetail(worktree).dirtyFiles.length > 0) d.buildVendoredCliIfMissing(worktree)
+          const scanBase =
+            pendingConflictFiles !== null ? 'origin/main' : pushedCommitRangeBase(remoteHeadBefore, publicationExpectedBase)
+          if (scanBase === null) {
+            return {
+              ok: false,
+              error: {
+                check: 'credential-scan',
+                output: 'the branch base could not be resolved before publication',
+                fix: 'Restore the branch base and call publish_changes again.'
+              }
+            }
+          }
+          const diff = d.gitWorktreeDiffText(worktree, scanBase)
+          if (diff === null) {
+            return {
+              ok: false,
+              error: {
+                check: 'credential-scan',
+                output: 'the added diff lines could not be read before publication',
+                fix: 'Restore a readable worktree and call publish_changes again.'
+              }
+            }
+          }
+          const credentials = findCredentialPatterns(addedDiffLines(diff), 'the added worktree diff')
+          if (credentials.length > 0) {
+            return {
+              ok: false,
+              error: {
+                check: 'credential-scan',
+                output: `recognized credential pattern(s): ${credentials.map((finding) => finding.pattern).join(', ')}`,
+                fix: 'Remove the credential-shaped addition before publishing.'
+              }
+            }
+          }
           const unpushed = d.readUnpushedWorkDetail(worktree)
           if (unpushed.dirtyFiles.length > 0) {
-            d.buildVendoredCliIfMissing(worktree)
             const committed = d.commitWorktree(worktree, header)
             if (!committed.ok) {
               return {
@@ -3531,7 +3583,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
           const localHead = d.readWorktreeHead(worktree)
           if (localHead !== null && localHead !== remoteHeadBefore) {
-            const rangeBase = pushedCommitRangeBase(remoteHeadBefore, publicationExpectedBase)
+            // A commit made by this tool remains valid work if the push hook
+            // refuses. Remember it so the next call can retry that same head.
+            if (unpushed.dirtyFiles.length > 0) turnPreHead = localHead
+            const rangeBase =
+              pendingConflictFiles !== null ? 'origin/main' : pushedCommitRangeBase(remoteHeadBefore, publicationExpectedBase)
             const changedPaths = rangeBase ? d.gitWorktreeChangedPaths(worktree, rangeBase) : []
             const push = d.pushTaskBranch({
               task,
@@ -3568,10 +3624,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           return { ok: true, result: { pushedHead } }
         },
         validatePrBody: async (body) => {
+          const bodyCredentials = findCredentialPatterns(body, 'the proposed PR body')
+          if (bodyCredentials.length > 0) {
+            return {
+              ok: false,
+              reason: `credential-scan: recognized credential pattern(s): ${bodyCredentials.map((finding) => finding.pattern).join(', ')}`
+            }
+          }
+          const changedFiles = await prChangedPaths()
+          if (changedFiles === null) {
+            return { ok: false, reason: 'could not resolve the task’s changed files against its PR base' }
+          }
           const errors = await d.validatePrBodyForCreate({
             body,
             title: issueTitle(),
-            changedFiles: worktreeChangedPaths(),
+            changedFiles,
             branch,
             baseBranch: 'main'
           })
@@ -3580,6 +3647,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             : { ok: false, reason: errors.map((e) => `${e.check}: ${e.message}`).join('; ') }
         },
         openPullRequest: async (title, body) => {
+          const existingPr = prNumberNow()
+          if (existingPr !== null) {
+            return {
+              ok: false,
+              error: {
+                check: 'pr-exists',
+                output: `pull request ${existingPr} is already open for branch ${branch}`,
+                fix: 'Use update_pull_request_body to replace its body.'
+              }
+            }
+          }
           const prNumber = d.openTaskPullRequest({
             task,
             branch,
@@ -3668,6 +3746,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
       const existingPr = d.findOpenPrForBranch(branch)
       const unpushed = d.readUnpushedWorkDetail(worktree)
+      // A stopped round-1 Developer belongs to the existing escalation path,
+      // not the publication re-ask. It may have left a clean worktree and no PR.
+      if (d.fetchDeveloperStop(task) !== null) return { kind: 'nothing' }
+      if (unpushed.dirtyFiles.length === 0 && unpushed.aheadCount === 0 && !existingPr) {
+        return { kind: 'nothing' }
+      }
       // Nothing left unpublished — a clean worktree, nothing ahead of the
       // remote, a pull request already open: the agent published through the
       // tools, and there is nothing to re-ask.
@@ -3899,7 +3983,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         files.length > 0 ? files.map((f) => `- ${f}`).join('\n') : '(no specific file could be determined)'
       return [
         'This branch is behind the base in a way that conflicts — it cannot merge as-is.',
-        `Merge or rebase the base and resolve before publishing again, per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`): run \`git merge origin/main\` (or \`git rebase origin/main\`) from this worktree and resolve the conflicting file(s) below, then ${publishingInstructionLine()} Conflicting file(s):`,
+        `Start a merge without committing it: run \`git merge --no-commit origin/main\` from this worktree, resolve the conflicting file(s) below, then ${publishingInstructionLine()} The publish_changes tool makes the merge commit, so do not run git commit or rebase yourself. Conflicting file(s):`,
         fileList
       ].join('\n\n')
     }
