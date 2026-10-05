@@ -38,7 +38,7 @@
   "reviewPolicy": {
     "codeReviewThreshold": "MAJOR",
     "securityThreshold": "HIGH",
-    "maxTaskMinutes": 360
+    "maxTaskMinutes": 600
   },
   "securityScan": {
     "command": ["npx", "--yes", "ecc-agentshield@1.6.0", "scan"]
