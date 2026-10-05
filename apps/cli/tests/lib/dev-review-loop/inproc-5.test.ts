@@ -800,6 +800,38 @@ describe('devReviewLoop — the pull-request poll gives up naming what it waited
 // --- task-run-v1 13 (#508), O9: a refusal/escalation before any push ends the loop at once ---
 
 describe('devReviewLoop — a refusal/escalation posted before any push ends the loop at once (O9, task-run-v1 13, #508)', () => {
+  it('does not replay an old stop as a new Developer turn’s escalation', async () => {
+    const world = makeWorld({ worktreeExists: true, developerStop: 'prior stopped run' as never })
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex' },
+      {
+        ...developerLeavesWorkDeps(world),
+        fetchDeveloperStop: () => ({ body: 'prior stopped run', identity: 'old-stop' })
+      }
+    )
+    expect(result.finalDecision.type).toBe('pause')
+    if (result.finalDecision.type === 'pause') expect(result.finalDecision.reason).not.toBe('escalation')
+    expect(world.dispatchCountByRole.developer ?? 0).toBeGreaterThan(1)
+  })
+
+  it('recognizes a newly posted stop even when its text repeats an older stop', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    let stopReads = 0
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex' },
+      {
+        ...developerLeavesWorkDeps(world),
+        fetchDeveloperStop: () => ({
+          body: 'same stop text',
+          identity: ++stopReads === 1 ? 'old-stop' : 'new-stop'
+        })
+      }
+    )
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+  })
+
   it('never enters the pull-request poll, posts on the Issue (no PR exists yet), and exits non-zero', async () => {
     const world = makeWorld({
       developerStop: 'Entry gate refused: brief is missing tier/scope/stop-conditions.' as never
@@ -1058,8 +1090,37 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
     expect(world.commits[0]!.header).toBe('Feat(cli): publish via the driver-run tools')
     expect(world.pushes).toHaveLength(1)
     expect(world.prOpens).toHaveLength(1)
-    const persisted = JSON.parse(readFileSync(join(controlDir(world), 'loop-state.json'), 'utf8')) as Record<string, unknown>
+    const persisted = JSON.parse(readFileSync(join(controlDir(world), 'loop-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(persisted.publicationExpectedBase).toBe(world.mergeBase)
+  })
+
+  it('persists the publication base before the Developer tool can commit', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    const deps = developerPublishesViaToolsDeps(world)
+    const dispatch = deps.dispatchRole!
+    let checked = false
+    await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex' },
+      {
+        ...deps,
+        dispatchRole: async (role, agent, prompt, opts) => {
+          if (role === 'developer' && !checked) {
+            const persisted = JSON.parse(readFileSync(join(controlDir(world), 'loop-state.json'), 'utf8')) as Record<
+              string,
+              unknown
+            >
+            expect(persisted.publicationExpectedBase).toBe(world.mergeBase)
+            checked = true
+          }
+          return dispatch(role, agent, prompt, opts)
+        }
+      }
+    )
+    expect(checked).toBe(true)
   })
 
   it('O4: publish_changes works more than once in a turn — a second publish lands its own commit and push', async () => {
@@ -1128,13 +1189,17 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
   it('validates a body against the full PR diff after the push and refuses a second open', async () => {
     const world = makeWorld({ worktreeExists: true })
     const validatedPaths: string[][] = []
-    await runLoopInProcess(world, { task: world.task, agent: 'codex' }, {
-      ...developerPublishesViaToolsDeps(world),
-      validatePrBodyForCreate: async (input) => {
-        validatedPaths.push([...input.changedFiles])
-        return []
+    await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex' },
+      {
+        ...developerPublishesViaToolsDeps(world),
+        validatePrBodyForCreate: async (input) => {
+          validatedPaths.push([...input.changedFiles])
+          return []
+        }
       }
-    })
+    )
     expect(validatedPaths).toEqual([['apps/cli/src/lib/x.ts']])
     const ctx = world.devToolContext!
     const reopened = await ctx.openPullRequest('Another title', '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n')
@@ -1152,7 +1217,7 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
     const pushesBefore = world.pushes.length
     world.worktreeDirty = ['apps/cli/src/lib/new.ts']
     world.worktreeChangedPaths = ['apps/cli/src/lib/new.ts']
-    world.worktreeDiffText = `diff --git a/new.ts b/new.ts\n+const token = '${secret}'\n`
+    world.worktreeDiffText = `diff --git a/new.ts b/new.ts\n--- a/new.ts\n+++ b/new.ts\n@@ -0,0 +1 @@\n+const token = '${secret}'\n`
     const refused = await ctx.publishChanges('Fix(cli): remove leaked credential')
     expect(refused.ok).toBe(false)
     if (!refused.ok) {
@@ -1164,6 +1229,24 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
     const body = await ctx.updatePullRequestBody(`## Decisions\n\n${secret}\n\n## Scope\n\n**Tier:** 1\n`)
     expect(body.ok).toBe(false)
     expect(world.prBodyUpdates).toHaveLength(0)
+  })
+
+  it('refuses credential-shaped commit headers and PR titles before publishing', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    await runLoopInProcess(world, { task: world.task, agent: 'codex' }, developerPublishesViaToolsDeps(world))
+    const ctx = world.devToolContext!
+    const secret = `ghp_${'a'.repeat(36)}`
+    world.worktreeDirty = ['apps/cli/src/lib/new.ts']
+    world.worktreeChangedPaths = ['apps/cli/src/lib/new.ts']
+    const commitsBefore = world.commits.length
+    const header = await ctx.publishChanges(`Fix(cli): ${secret}`)
+    expect(header.ok).toBe(false)
+    if (!header.ok) expect(header.error.check).toBe('credential-scan')
+    expect(world.commits).toHaveLength(commitsBefore)
+    const title = await ctx.openPullRequest(secret, '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n')
+    expect(title.ok).toBe(false)
+    if (!title.ok) expect(title.error.check).toBe('credential-scan')
+    expect(world.prOpens).toHaveLength(1)
   })
 
   it('retries a hook-refused push of the same commit without making another commit', async () => {

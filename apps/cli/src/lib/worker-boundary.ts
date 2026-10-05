@@ -2779,9 +2779,11 @@ export function findCredentialPatterns(text: string, location: string): Credenti
  */
 export function addedDiffLines(diff: string): string {
   const added: string[] = []
+  let inHunk = false
   for (const line of diff.split(/\r?\n/)) {
-    if (line.startsWith('+++ ')) continue
-    if (line.startsWith('+')) added.push(line.slice(1))
+    if (line.startsWith('diff --git ')) inHunk = false
+    else if (line.startsWith('@@ ') || line.startsWith('--- untracked: ')) inHunk = true
+    else if (inHunk && line.startsWith('+')) added.push(line.slice(1))
   }
   return added.join('\n')
 }

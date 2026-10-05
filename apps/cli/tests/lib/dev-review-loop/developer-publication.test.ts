@@ -101,6 +101,12 @@ describe('checkPublicationPreconditions (O7)', () => {
     if (!r.ok) expect(r.reason).toMatch(/not the expected base/)
   })
 
+  it('fails closed when the branch base cannot be read', () => {
+    const r = checkPublicationPreconditions({ ...ok, base: null })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.reason).toMatch(/could not read the worktree branch base/)
+  })
+
   it('fails when the head moved during the turn (the Developer committed)', () => {
     const r = checkPublicationPreconditions({ ...ok, worktreeHead: 'z'.repeat(40) })
     expect(r.ok).toBe(false)
@@ -119,7 +125,7 @@ describe('checkPublicationPreconditions (O7)', () => {
     if (!r.ok) expect(r.reason).toMatch(/no `in:` glob/)
   })
 
-  it('is inactive for base/head/Surface when their inputs are null', () => {
+  it('allows an initial unrecorded expected base and inactive head/Surface checks', () => {
     expect(
       checkPublicationPreconditions({
         worktreeBranch: 'task/t/1',

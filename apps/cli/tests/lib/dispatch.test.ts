@@ -2697,7 +2697,7 @@ describe('developerWrittenTextFromVendorOutput + the after-turn credential scan 
 
   it('retains added content whose first characters are plus signs', () => {
     const secret = `ghp_${'A'.repeat(40)}`
-    const diff = ['--- a/x.ts', '+++ b/x.ts', '@@ -0,0 +1 @@', `+++${secret}`].join('\n')
+    const diff = ['--- a/x.ts', '+++ b/x.ts', '@@ -0,0 +1 @@', `+++ ${secret}`].join('\n')
     expect(findCredentialPatterns(addedDiffLines(diff), 'added diff')).toHaveLength(1)
   })
 })

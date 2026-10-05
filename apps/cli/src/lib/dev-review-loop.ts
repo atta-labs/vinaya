@@ -1120,7 +1120,10 @@ function defaultGitWorktreeDiffText(worktreePath: string, base: string): string 
   for (const path of untrackedPaths) {
     try {
       const content = readFileSync(join(worktreePath, path), 'utf8')
-      text += `\n--- untracked: ${path} ---\n${content.split(/\r?\n/).map((line) => `+${line}`).join('\n')}`
+      text += `\n--- untracked: ${path} ---\n${content
+        .split(/\r?\n/)
+        .map((line) => `+${line}`)
+        .join('\n')}`
     } catch {
       return null
     }
@@ -2961,6 +2964,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * creation attempt (`createTaskWorktree`) could not establish.
      */
     let turnPreHead: string | null = null
+    let turnPreStop: string | null = null
     /**
      * O7: the branch's base, recorded on the first publication and checked
      * against on every later one — a base that changed between turns means the
@@ -3203,6 +3207,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // fresh round-1 turn whose worktree the Developer's own Step 0 is still
       // creating records `null`, and the head check is then inactive.
       turnPreHead = devWorktreeDir ? d.readWorktreeHead(devWorktreeDir) : null
+      const priorBase = publicationExpectedBase
+      await resolvePublicationBase(turnPreHead)
+      if (publicationExpectedBase !== priorBase) persistCurrentLoopState(currentPhase ?? 'dispatch_developer')
+      turnPreStop = d.fetchDeveloperStop(task)?.identity ?? null
       // O1/O2: the protected-path snapshot this turn's after-dispatch check
       // (`dispatchDeveloper`, below) compares against — taken here, right
       // before the dispatch, never from a cached copy (Traps to avoid).
@@ -3497,7 +3505,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const worktreeChangedPaths = (): string[] => {
         const unpushed = d.readUnpushedWorkDetail(worktree)
         const rangeBase =
-          pendingConflictFiles !== null ? 'origin/main' : pushedCommitRangeBase(safeRemoteHead(), publicationExpectedBase)
+          pendingConflictFiles !== null
+            ? 'origin/main'
+            : pushedCommitRangeBase(safeRemoteHead(), publicationExpectedBase)
         const diffPaths = rangeBase ? d.gitWorktreeChangedPaths(worktree, rangeBase) : []
         return [...new Set([...diffPaths, ...unpushed.dirtyFiles])]
       }
@@ -3531,10 +3541,23 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
         },
         commitAndPush: async (header) => {
+          const headerCredentials = findCredentialPatterns(header, 'the proposed commit header')
+          if (headerCredentials.length > 0) {
+            return {
+              ok: false,
+              error: {
+                check: 'credential-scan',
+                output: `recognized credential pattern(s) in commit header: ${headerCredentials.map((finding) => finding.pattern).join(', ')}`,
+                fix: 'Remove the credential-shaped value from the commit header.'
+              }
+            }
+          }
           const remoteHeadBefore = safeRemoteHead()
           if (d.readUnpushedWorkDetail(worktree).dirtyFiles.length > 0) d.buildVendoredCliIfMissing(worktree)
           const scanBase =
-            pendingConflictFiles !== null ? 'origin/main' : pushedCommitRangeBase(remoteHeadBefore, publicationExpectedBase)
+            pendingConflictFiles !== null
+              ? 'origin/main'
+              : pushedCommitRangeBase(remoteHeadBefore, publicationExpectedBase)
           if (scanBase === null) {
             return {
               ok: false,
@@ -3587,7 +3610,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // refuses. Remember it so the next call can retry that same head.
             if (unpushed.dirtyFiles.length > 0) turnPreHead = localHead
             const rangeBase =
-              pendingConflictFiles !== null ? 'origin/main' : pushedCommitRangeBase(remoteHeadBefore, publicationExpectedBase)
+              pendingConflictFiles !== null
+                ? 'origin/main'
+                : pushedCommitRangeBase(remoteHeadBefore, publicationExpectedBase)
             const changedPaths = rangeBase ? d.gitWorktreeChangedPaths(worktree, rangeBase) : []
             const push = d.pushTaskBranch({
               task,
@@ -3647,6 +3672,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             : { ok: false, reason: errors.map((e) => `${e.check}: ${e.message}`).join('; ') }
         },
         openPullRequest: async (title, body) => {
+          const titleCredentials = findCredentialPatterns(title, 'the proposed PR title')
+          if (titleCredentials.length > 0) {
+            return {
+              ok: false,
+              error: {
+                check: 'credential-scan',
+                output: `recognized credential pattern(s) in PR title: ${titleCredentials.map((finding) => finding.pattern).join(', ')}`,
+                fix: 'Remove the credential-shaped value from the PR title.'
+              }
+            }
+          }
           const existingPr = prNumberNow()
           if (existingPr !== null) {
             return {
@@ -3748,7 +3784,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const unpushed = d.readUnpushedWorkDetail(worktree)
       // A stopped round-1 Developer belongs to the existing escalation path,
       // not the publication re-ask. It may have left a clean worktree and no PR.
-      if (d.fetchDeveloperStop(task) !== null) return { kind: 'nothing' }
+      const currentStop = d.fetchDeveloperStop(task)
+      if (currentStop !== null && currentStop.identity !== turnPreStop) return { kind: 'nothing' }
       if (unpushed.dirtyFiles.length === 0 && unpushed.aheadCount === 0 && !existingPr) {
         return { kind: 'nothing' }
       }
@@ -4029,7 +4066,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // O9: no push at all yet. A posted refusal/escalation ends the loop
         // now, never entering the pull-request poll.
         const stop = d.fetchDeveloperStop(task)
-        if (stop !== null) throw new DeveloperStopSignal(stop)
+        if (stop !== null && stop.identity !== turnPreStop) throw new DeveloperStopSignal(stop.body)
 
         // O2/O3: reconcile the prior launch, then resume once, foreground —
         // this single resume's own prompt covers both the missing push and

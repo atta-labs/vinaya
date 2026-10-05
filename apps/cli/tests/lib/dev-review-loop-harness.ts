@@ -644,7 +644,10 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       return { passed: world.runChecksPassed, output: 'fake-check-all-output' }
     },
     fetchPrBody: (_pr) => world.prBody,
-    fetchDeveloperStop: (_issue) => (world.developerStop === null ? null : (world.developerStop as never)),
+    fetchDeveloperStop: (_issue) =>
+      (world.dispatchCountByRole.developer ?? 0) === 0 || world.developerStop === null
+        ? null
+        : { body: world.developerStop, identity: 'new-stop-1' },
     fetchMergeableState: (_pr) => world.mergeable,
     fetchConflictingFiles: (_head, _base) => [...world.conflictingFiles],
     gitCommitsTouchingDriverPaths: (_a, _b) => [],

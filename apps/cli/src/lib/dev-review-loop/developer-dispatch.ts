@@ -205,10 +205,20 @@ export function filterDeveloperStops(comments: readonly MarkerComment[], allowli
     .map((c) => contentAfterOneLine(c.body).trim())
 }
 
-/** The newest developer-stop comment's body on Issue `issueNumber`, or `null` when none exists. */
-export function fetchDeveloperStop(issueNumber: number): string | null {
-  const stops = filterDeveloperStops(fetchIssueComments(issueNumber, 'fetchDeveloperStop'), principalAllowlist())
-  return stops.length > 0 ? (stops[stops.length - 1] ?? null) : null
+/** The newest developer-stop comment and its stable identity on the task Issue. */
+export function fetchDeveloperStop(issueNumber: number): { body: string; identity: string } | null {
+  const allowlist = principalAllowlist()
+  const stops = fetchIssueComments(issueNumber, 'fetchDeveloperStop').flatMap((comment, index) => {
+    if (!isPrincipal(comment.author, allowlist as string[])) return []
+    if (!DEVELOPER_STOP_MARKER.test(comment.body.split('\n')[0] ?? '')) return []
+    return [
+      {
+        body: contentAfterOneLine(comment.body).trim(),
+        identity: comment.url && comment.url.length > 0 ? comment.url : `comment-index:${index}`
+      }
+    ]
+  })
+  return stops.at(-1) ?? null
 }
 
 /**

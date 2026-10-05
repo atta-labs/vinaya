@@ -19,8 +19,8 @@ const PASSING_PRECHECK: PublicationCheckInput = {
   expectedBranch: 'task/issue-1040',
   worktreeHead: null,
   recordedHead: null,
-  base: null,
-  expectedBase: null,
+  base: 'b'.repeat(40),
+  expectedBase: 'b'.repeat(40),
   changedPaths: ['apps/cli/src/x.ts'],
   surface: null
 }

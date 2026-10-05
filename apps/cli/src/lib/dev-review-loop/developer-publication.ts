@@ -81,7 +81,7 @@ export type PublicationCheckInput = {
   recordedHead: string | null
   /** The worktree branch's base (merge base with the default branch), or `null` when unreadable. */
   base: string | null
-  /** The base this task was cut from — what `base` must equal. `null` when the driver could not resolve one; the base check is then inactive. */
+  /** The base this task was cut from — what `base` must equal. `null` only before a known base has been recorded. */
   expectedBase: string | null
   /** Every path the turn changed, relative to the repo root. */
   changedPaths: readonly string[]
@@ -110,7 +110,10 @@ export function checkPublicationPreconditions(
       reason: `the worktree is on branch \`${input.worktreeBranch}\`, not the task branch \`${input.expectedBranch}\` — refusing to commit or publish from the wrong branch`
     }
   }
-  if (input.expectedBase !== null && input.base !== null && input.base !== input.expectedBase) {
+  if (input.base === null) {
+    return { ok: false, reason: 'could not read the worktree branch base — refusing to publish without the base check' }
+  }
+  if (input.expectedBase !== null && input.base !== input.expectedBase) {
     return {
       ok: false,
       reason: `the worktree branch's base is \`${input.base}\`, not the expected base \`${input.expectedBase}\` — rebase onto the base this task was cut from before leaving changes to publish`

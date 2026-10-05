@@ -251,6 +251,7 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
     // does — matching "no branch ever reached the remote" for real.
     const world = makeWorld({ developerStop: 'ESCALATE: no brief section names this repo at all.' as never })
     const base = makeInProcessDeps(world)
+    let stopReads = 0
     const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
       if (role === 'developer') {
         return { exitCode: 0, durationMs: 1, usage: null, resumeId: null, timedOut: false, effectId: 'eff-dev-1' }
@@ -258,7 +259,15 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
       return base.dispatchRole!(role, agent, prompt, opts)
     }
 
-    const result = await runDriverLoopInProcess(world, { task: world.task, agent: 'claude' }, { dispatchRole }, {})
+    const result = await runDriverLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        dispatchRole,
+        fetchDeveloperStop: () => (++stopReads === 1 ? null : { body: world.developerStop!, identity: 'new-stop-1' })
+      },
+      {}
+    )
 
     expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
     expect(result.prNumber).toBe(0)
