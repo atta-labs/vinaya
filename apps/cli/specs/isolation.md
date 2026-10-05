@@ -297,3 +297,5 @@ How to run it:
   It prints each command's exit status under each agent. Every entry runs on inputs it can pass on: `verify-dispatch` on a tranche task that is dispatchable now, `check --all` with the body of the branch's open pull request. Where the forge offers neither, that entry is skipped and says so. A listed known failure is also run with no sandbox around it, in the same worktree with the same inputs; if it fails there too, it is no sandbox denial and the suite fails until the entry is removed.
 
 Without `VINAYA_SANDBOX_CONFORMANCE=1`, an ordinary run of the test file runs only the command-list checks.
+
+Claude Code sandboxing documentation: https://code.claude.com/docs/en/sandboxing
