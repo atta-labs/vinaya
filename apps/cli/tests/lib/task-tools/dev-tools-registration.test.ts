@@ -67,7 +67,7 @@ describe('codexDevToolsMcpTable', () => {
     expect(table).toContain('args = [')
     for (const a of BRIDGE.args) expect(table).toContain(JSON.stringify(a))
   })
-  it('approves this server’s tools for the non-interactive run (ruling 1051-3)', () => {
+  it('approves this server’s tools for the non-interactive run (ruling 1040-3)', () => {
     // Without this, a confined `codex exec` (approval_policy = "never")
     // auto-rejects the call: "MCP tool call requires approval, but approval
     // policy is never". The key is scoped to this one server table; the global

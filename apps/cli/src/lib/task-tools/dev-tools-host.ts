@@ -9,14 +9,16 @@
  * the forge login and running the real gates — never in the sandboxed child.
  * The child only ever reaches a bridge that relays bytes to this socket.
  *
- * The socket path lives inside the dispatch's own scratch directory (writable
- * from inside both agents' sandboxes), so a confined bridge can connect to it;
- * a unix socket connect is a filesystem operation on that path, not a network
- * egress the domain allowlist gates.
+ * The socket lives inside an owner-only private directory the driver creates
+ * (mode 0700) with the socket itself mode 0600, so no other local user can
+ * reach it, while the driver's own confined bridge still can; a unix socket
+ * connect is a filesystem operation on that path, not a network egress the
+ * domain allowlist gates.
  */
 
 import net from 'node:net'
-import { rmSync } from 'node:fs'
+import { chmodSync, mkdirSync, rmSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { createDevToolsMcpServer, type DevToolContext } from './dev-tools-server.js'
 
 export type DevToolsHost = {
@@ -39,6 +41,14 @@ export type StartDevToolsHostOptions = {
  * the host. A stale socket file from a crashed prior run is removed first.
  */
 export async function startDevToolsHost(opts: StartDevToolsHostOptions): Promise<DevToolsHost> {
+  // Create the socket's parent directory owner-only (mode 0700) so no other
+  // local user can traverse into it and reach the socket — the socket itself is
+  // then chmod'd 0600 below. `mode` is subject to the process umask, so chmod
+  // after to pin 0700 regardless of umask; recursive is a no-op when it exists
+  // (a reused per-task directory across rounds), and we re-pin its mode then.
+  const socketDir = dirname(opts.socketPath)
+  mkdirSync(socketDir, { recursive: true, mode: 0o700 })
+  chmodSync(socketDir, 0o700)
   try {
     rmSync(opts.socketPath, { force: true })
   } catch {
@@ -67,6 +77,14 @@ export async function startDevToolsHost(opts: StartDevToolsHostOptions): Promise
     netServer.once('error', reject)
     netServer.listen(opts.socketPath, () => {
       netServer.removeListener('error', reject)
+      // Make the socket owner-only (mode 0600) so only the driver's own user can
+      // connect — belt-and-braces with the 0700 parent directory above.
+      try {
+        chmodSync(opts.socketPath, 0o600)
+      } catch {
+        // A platform that cannot chmod a socket (or a vanished path) still has
+        // the 0700 parent directory as the access boundary.
+      }
       resolve()
     })
   })

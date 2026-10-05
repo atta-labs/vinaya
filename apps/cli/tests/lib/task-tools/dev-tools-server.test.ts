@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 import net from 'node:net'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { parseBridgeArgs } from '../../../src/lib/task-tools/dev-tools-bridge.js'
 import { startDevToolsHost } from '../../../src/lib/task-tools/dev-tools-host.js'
+import { devToolsSocketPath } from '../../../src/lib/task-tools/dev-tools-registration.js'
 import {
   createDevToolsMcpServer,
   DEV_TOOL_NAMES,
@@ -154,6 +155,21 @@ describe('dev-tools host — a real unix socket is the driver transport', () => 
     } finally {
       await host.close()
       rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('creates the socket owner-only (0600) inside an owner-only private directory (0700)', async () => {
+    const socketPath = devToolsSocketPath('mode-test:owner/repo:tranche/1')
+    const socketDir = dirname(socketPath)
+    // A clean slate so the host itself, not a prior run, creates the directory.
+    rmSync(socketDir, { recursive: true, force: true })
+    const host = await startDevToolsHost({ socketPath, serverVersion: '0.0.0-test', context: okContext() })
+    try {
+      expect(statSync(socketDir).mode & 0o777).toBe(0o700)
+      expect(statSync(socketPath).mode & 0o777).toBe(0o600)
+    } finally {
+      await host.close()
+      rmSync(socketDir, { recursive: true, force: true })
     }
   })
 })

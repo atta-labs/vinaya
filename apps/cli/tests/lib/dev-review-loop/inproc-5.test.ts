@@ -14,6 +14,7 @@ import {
   developerDir,
   developerLeavesWorkDeps,
   developerPublishesViaToolsDeps,
+  developerPublishesTwiceViaToolsDeps,
   makeInProcessDeps,
   makeWorld,
   outboxLines,
@@ -1055,6 +1056,23 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
     expect(world.commits[0]!.header).toBe('Feat(cli): publish via the driver-run tools')
     expect(world.pushes).toHaveLength(1)
     expect(world.prOpens).toHaveLength(1)
+  })
+
+  it('O4: publish_changes works more than once in a turn — a second publish lands its own commit and push', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex' },
+      developerPublishesTwiceViaToolsDeps(world)
+    )
+    expect(result.finalDecision.type).toBe('publish')
+    // Both publishes in the one turn landed: the driver advanced the recorded
+    // pre-turn head after the first push, so the second publish's precondition
+    // saw an unmoved head rather than refusing on the first commit.
+    expect(world.commits).toHaveLength(2)
+    expect(world.commits[0]!.header).toBe('Feat(cli): first publish of the turn')
+    expect(world.commits[1]!.header).toBe('Feat(cli): second publish of the turn')
+    expect(world.pushes).toHaveLength(2)
   })
 
   it('O4/O5: the same publish works for a Claude Developer (both agents publish only through the tools)', async () => {

@@ -808,6 +808,47 @@ export function developerPublishesViaToolsDeps(
   }
 }
 
+/**
+ * agent-confinement-v1: a Developer that calls `publish_changes` TWICE in one
+ * turn, each time on a fresh change with its own commit sha. The second publish
+ * only lands if the driver advanced the recorded pre-turn head after the first
+ * push (else `checkPublicationPreconditions` sees the first commit as a moved
+ * head and refuses) — so a test asserting two commits and two pushes proves a
+ * Developer may publish more than once per turn.
+ */
+export function developerPublishesTwiceViaToolsDeps(world: LoopWorld): Partial<LoopDeps> {
+  const base = makeInProcessDeps(world)
+  let devSeq = 0
+  return {
+    ...base,
+    dispatchRole: async (role, agent, prompt, dOpts) => {
+      if (role !== 'developer') return base.dispatchRole!(role, agent, prompt, dOpts)
+      const round = dOpts.round ?? 1
+      devSeq += 1
+      world.dispatchCountByRole.developer = (world.dispatchCountByRole.developer ?? 0) + 1
+      const ctx = world.devToolContext
+      if (ctx) {
+        // First publish: a commit+push of the first change.
+        world.worktreeDirty = ['apps/cli/src/lib/x.ts']
+        world.worktreeChangedPaths = ['apps/cli/src/lib/x.ts']
+        world.nextCommitSha = sha('c')
+        const first = await ctx.publishChanges('Feat(cli): first publish of the turn')
+        // A SECOND publish in the SAME turn: a fresh change on top of the first,
+        // with its own commit sha so the push genuinely advances the head.
+        world.worktreeDirty = ['apps/cli/src/lib/y.ts']
+        world.worktreeChangedPaths = ['apps/cli/src/lib/x.ts', 'apps/cli/src/lib/y.ts']
+        world.nextCommitSha = sha('d')
+        const second = await ctx.publishChanges('Feat(cli): second publish of the turn')
+        if (first.ok && second.ok && !world.prOpened) {
+          await ctx.openPullRequest(world.issueTitle, '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n')
+        }
+      }
+      world.dispatches.push({ role, round, resumeId: 'dev-session-1', prompt })
+      return handle('dev-session-1', `eff-dev-${devSeq}`)
+    }
+  }
+}
+
 /** Thrown by the fake `exitProcess` so a test can observe "the driver would hand off here" without killing the test process. */
 export class InProcessExit extends Error {
   constructor(public readonly code: number) {

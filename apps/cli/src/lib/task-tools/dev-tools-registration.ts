@@ -27,17 +27,31 @@ import { DEV_TOOLS_MCP_SERVER_NAME } from './dev-tools-names.js'
 export type BridgeInvocation = { command: string; args: string[] }
 
 /**
+ * The owner-only private directory the driver creates for a task's dev-tools
+ * socket — a per-task `vinaya-dev-tools-<digest>` directory under `tmpdir()`.
+ * `startDevToolsHost` creates it mode 0700 so no other local user can traverse
+ * into it, which is what keeps the socket inside it unreachable to anyone but
+ * the driver's own user (a predictable path in the world-writable shared temp
+ * dir would otherwise let another local user pre-create or connect to it).
+ */
+export function devToolsSocketDir(key: string): string {
+  const digest = createHash('sha256').update(key).digest('hex').slice(0, 16)
+  return join(tmpdir(), `vinaya-dev-tools-${digest}`)
+}
+
+/**
  * A stable, short unix-domain socket path for the driver-run dev-tools host,
- * derived from a per-task key. Short by construction (a 16-hex digest under
- * `tmpdir()`) so it stays inside the `sockaddr_un` path limit (~104 bytes on
- * macOS, ~108 on Linux) that a long runtime path would blow, and STABLE across
- * a task's rounds so a reused Codex `CODEX_HOME` whose staged `config.toml`
- * baked the bridge in round 1 still points at the host the driver restarts on
- * the same path each dispatch (`startDevToolsHost` unlinks a stale socket).
+ * derived from a per-task key. Lives inside the owner-only `devToolsSocketDir`
+ * (mode 0700) and is itself created mode 0600 by `startDevToolsHost`. Short by
+ * construction (a 16-hex digest directory under `tmpdir()`, a one-char socket
+ * name) so it stays inside the `sockaddr_un` path limit (~104 bytes on macOS,
+ * ~108 on Linux) that a long runtime path would blow, and STABLE across a
+ * task's rounds so a reused Codex `CODEX_HOME` whose staged `config.toml` baked
+ * the bridge in round 1 still points at the host the driver restarts on the
+ * same path each dispatch (`startDevToolsHost` unlinks a stale socket).
  */
 export function devToolsSocketPath(key: string): string {
-  const digest = createHash('sha256').update(key).digest('hex').slice(0, 16)
-  return join(tmpdir(), `vinaya-dev-tools-${digest}.sock`)
+  return join(devToolsSocketDir(key), 's.sock')
 }
 
 /**
@@ -95,7 +109,7 @@ export function claudeDevToolName(tool: string): string {
  * prompt. A confined `codex exec` runs under `approval_policy = "never"`, which
  * in non-interactive mode means "auto-reject any tool that needs approval," so
  * a managed MCP call fails with "MCP tool call requires approval, but approval
- * policy is never" (Principal ruling 1051-3, confirmed live on macOS). The
+ * policy is never" (Principal ruling 1040-3, confirmed live on macOS). The
  * documented per-server override is `mcp_servers.<id>.default_tools_approval_mode`
  * — "Default approval behavior for MCP tools on this server unless a per-tool
  * override exists," values `auto | prompt | writes | approve` — set to

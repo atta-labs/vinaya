@@ -3558,6 +3558,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             lastPushRefusal = null
           }
           const pushedHead = d.readWorktreeHead(worktree) ?? localHead ?? ''
+          // A successful commit+push advances the worktree head. Move the
+          // recorded pre-turn head forward to it so a SECOND (and third)
+          // `publish_changes` in the same turn sees an unmoved head
+          // (`checkPublicationPreconditions` compares `worktreeHead` against
+          // `recordedHead`) rather than refusing on the very commit this tool
+          // just made — a Developer may publish more than once per turn.
+          if (pushedHead) turnPreHead = pushedHead
           return { ok: true, result: { pushedHead } }
         },
         validatePrBody: async (body) => {
