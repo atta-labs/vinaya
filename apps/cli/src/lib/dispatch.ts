@@ -112,7 +112,6 @@ import {
   type ClaudeSandboxSettings
 } from './worker-boundary.js'
 import { repoRoot } from './diff-evidence.js'
-import { probeClaudeLinuxUnixSocket } from './claude-unix-socket-probe.js'
 import {
   type BridgeInvocation,
   claudeDevToolsArgs,
@@ -4261,18 +4260,8 @@ export async function dispatchRole(
   // it was not given a bridge of its own. Refuse every unattended Claude
   // dispatch without confinement, before spawning any agent process.
   const unconfinedClaude = agent === 'claude' && claudeConfinement?.confined === false
-  // bwrap+socat can both exist while Claude's Linux runtime lacks its
-  // seccomp AF_UNIX filter. That state leaves a same-UID shell able to reach
-  // another task's driver socket. Probe the exact settings just written,
-  // before the vendor spawn, and refuse unless a live socket connect is
-  // denied by the sandbox.
-  const unixSocketProbe =
-    process.platform === 'linux' && agent === 'claude' && claudeConfinement?.confined === true && dispatchSettingsPath
-      ? await probeClaudeLinuxUnixSocket(dispatchSettingsPath, claudeConfinement.scratchDir)
-      : null
-  const unsafeClaude = unconfinedClaude || unixSocketProbe?.ok === false
-  if (codexUnattendedFailureReason !== null || unsafeClaude) {
-    const failureReason: DispatchFailureReason = unsafeClaude
+  if (codexUnattendedFailureReason !== null || unconfinedClaude) {
+    const failureReason: DispatchFailureReason = unconfinedClaude
       ? 'refused'
       : codexBoundaryFailureReason(agent, codexUnattendedFailureReason!)
     const durationMs = Date.now() - start
@@ -4290,8 +4279,8 @@ export async function dispatchRole(
       duration_ms: durationMs
     })
     writeLifecycle(
-      unsafeClaude
-        ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended Claude requires a sandbox that denies same-UID Unix socket connects while driver-run dev-tools are available; ${unixSocketProbe?.ok === false ? unixSocketProbe.reason : claudeConfinement?.confined === false ? claudeConfinement.warning : 'confinement unavailable'}`
+      unconfinedClaude
+        ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended Claude requires a confined worker sandbox while driver-run dev-tools are available; ${claudeConfinement?.warning ?? 'confinement unavailable'}`
         : `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires Codex's own sandbox ` +
             `and network proxy plus this task's staged CODEX_HOME, which are unavailable: ${codexUnattendedFailureReason}`
     )
