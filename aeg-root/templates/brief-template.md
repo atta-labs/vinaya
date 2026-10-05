@@ -63,6 +63,8 @@ You are the AEG Developer. Run `vinaya doctrine --role developer --print` and re
 
 **Step 0 (mandatory, verbatim):**
 
+Under the review loop the driver has already created this worktree, outside any sandbox, and your working directory is it — the rendered Step 0 is only the install line of the command below, run from that worktree. Working manually, with no driver, run the whole command as written to create the worktree first, then enter it and install.
+
 ```
 git worktree add .worktrees/task/[tranche-slug]/[n] -b task/[tranche-slug]/[n] --no-track origin/main && cd .worktrees/task/[tranche-slug]/[n] && git config push.autoSetupRemote true && bun install --frozen-lockfile --silent
 ```
@@ -73,7 +75,7 @@ git worktree add .worktrees/task/[tranche-slug]/[n] -b task/[tranche-slug]/[n] -
 
 On any failure: STOP and report.
 
-## 6. Numbered parts — commit after EACH part; push once, before opening the PR
+## 6. Numbered parts — call `publish_changes` after EACH part; `open_pull_request` once the first part is published
 
 <!-- AEG:CLAIM: packages/aeg-core/src/brief-render.ts contains:function renderPartCitation(part: IssuePart): string { -->
 [Rendered from the Issue's `## Parts` section — `vinaya brief render` fills one numbered Part per `Part <k> (O<n>[, O<m>]) — <outcome>` line, citation reconstructed verbatim, files grouped by package as today. Hand-authoring the same: exact files + exact function/type signatures + constraints — not prose. A Part that depends on a fact about current code opens with the fenced command that establishes it, followed by the executed output (skill §2's rule). Cite at least one `O<n>` from the Objectives section above; an administrative Part with no objective of its own (a changeset commit, the final push) may omit the citation.]
@@ -121,7 +123,7 @@ STOP and report if: pre-flight fails; [the Planner's stop-and-escalate condition
 ## 12. Deliverable
 
 - PR title (exact): `[[tranche-slug]] [n] — [task title]`
-- Open the PR only via `vinaya pr create --body-file <path> --title "<title above>"` — written, like every command the render emits, the way this repository itself invokes the CLI.
+- Open the PR only via the `open_pull_request` tool (title and body); publish your commits with `publish_changes`, and update the body with `update_pull_request_body`/`refresh_evidence` — you hold no `gh`/`git push` credential of your own. (Working manually, with no driver, you publish these yourself with the CLI the way this repository invokes it.)
 - PR body = the Developer's PR report (print it with `vinaya doctrine --template pr-report --print`), with this entire brief pasted as the reference copy inside a collapsed `<details>` block, and `Closes #[N]` at the top of the header block.
 - [what to state in the PR body: decisions made, confirmations required by §8]
 - Pre-open gate: tier checklist satisfied, and `PR_BODY="$(cat <body-file>)" vinaya check doc-coverage` green (in this repo the render also names `PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr`).
