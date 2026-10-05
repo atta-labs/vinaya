@@ -1516,27 +1516,61 @@ async function defaultRunWorktreeChecks(worktreePath: string): Promise<{ passed:
   return { passed: res.status === 0, output }
 }
 
-/** O2/O3: regenerate the PR body's Evidence block for the worktree head and write it back — `vinaya pr report --write` in the worktree (the `refresh_evidence` tool). Throws on a failed run so the context returns a structured refusal. */
+/**
+ * The exact `vinaya pr report` argv `refresh_evidence` runs — `--push <pr>`,
+ * the forge-updating mode, never the bare `--write` the old code passed with
+ * no body-file (which `pr report`'s own usage gate rejected before touching
+ * anything: `Usage: vinaya pr report [--write <body-file> | --push <pr> …]`).
+ * `--push <n>` fetches the live PR body, splices a freshly-regenerated
+ * AEG:EVIDENCE block for the current head into it, and writes it back via
+ * `gh pr edit` — the driver runs this outside the sandbox, where the forge
+ * credential lives. Exported so a test can run this very shape through the
+ * real `prReportCommand` parser and prove it is not the usage refusal.
+ */
+export function prReportRefreshArgs(prNumber: number): string[] {
+  return ['pr', 'report', '--push', String(prNumber)]
+}
+
+/**
+ * The marker `vinaya pr report --push <n>` prints to stdout once the live PR
+ * body has actually been updated (`pr-report.ts`'s `'ok'` case). A run that
+ * reaches it pushed the block even when a red gate then makes the process
+ * exit non-zero; a run that never prints it (a splice refusal, an edit
+ * failure, a missing anchor) left the body untouched.
+ */
+function prReportDidPush(stdout: string, prNumber: number): boolean {
+  return stdout.includes(`Pushed AEG:EVIDENCE block to PR ${prNumber}`)
+}
+
+/** O2/O3: regenerate the PR body's Evidence block for the worktree's current head and write it back to the live PR — `vinaya pr report --push <prNumber>` in the worktree (the `refresh_evidence` tool). Throws only when the body was NOT updated (a genuine refusal) so the context returns a structured refusal; a red gate that still pushed the block returns `checksPassed: false`. */
 async function defaultRefreshPrEvidence(input: {
   worktreePath: string
   prNumber: number
   round: number
   repo: { owner: string; repo: string } | null
 }): Promise<{ head: string; checksPassed: boolean; evidence: string }> {
-  const res = spawnSync(process.argv[0] as string, [process.argv[1] as string, 'pr', 'report', '--write'], {
-    cwd: input.worktreePath,
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024
-  })
-  const output = `${res.stdout ?? ''}${res.stderr ?? ''}`
+  const res = spawnSync(
+    process.argv[0] as string,
+    [process.argv[1] as string, ...prReportRefreshArgs(input.prNumber)],
+    {
+      cwd: input.worktreePath,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024
+    }
+  )
+  const stdout = res.stdout ?? ''
+  const output = `${stdout}${res.stderr ?? ''}`
   let head = ''
   try {
     head = readWorktreeHead(input.worktreePath) ?? ''
   } catch {
     head = ''
   }
-  if (res.status !== 0) throw new Error(`pr report --write failed:\n${output}`)
-  return { head, checksPassed: true, evidence: output }
+  // A non-zero exit alone is not failure: `pr report` exits non-zero on a red
+  // gate while still pushing the block. Fail only when the body was never
+  // updated — then nothing reached the forge and the tool genuinely refused.
+  if (!prReportDidPush(stdout, input.prNumber)) throw new Error(`pr report --push ${input.prNumber} failed:\n${output}`)
+  return { head, checksPassed: res.status === 0, evidence: output }
 }
 
 /**
