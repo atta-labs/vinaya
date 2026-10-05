@@ -500,9 +500,7 @@
         "apps/cli/tests/lib/dev-review-loop/developer-dispatch.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts"
       ],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "Prompt text: the layout is deterministic, compliance is not enforced outside the worker."
     },
     {
@@ -544,9 +542,7 @@
         "apps/cli/tests/lib/dev-review-loop/developer-publication.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
       ],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "Pure driver-side check before the effect."
     },
     {
@@ -564,9 +560,7 @@
         "apps/cli/tests/lib/dev-review-loop/developer-publication.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
       ],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "Driver-owned paths and a driver-owned open."
     },
     {
@@ -586,9 +580,7 @@
         "apps/cli/tests/lib/dev-review-loop/developer-publication.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
       ],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "Deterministic precondition check outside the worker."
     },
     {
@@ -601,9 +593,7 @@
       "scenarios": ["restart", "isolation-refusal"],
       "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "publishDeveloperTurn" }],
       "tests": [],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "The spec says the base is recorded on the first publication and compared on every later one."
     },
     {
@@ -623,9 +613,7 @@
         "apps/cli/tests/lib/dev-review-loop/developer-publication.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
       ],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "Revision 7 section 16.12: prepare and record before commit."
     },
     {
@@ -638,9 +626,7 @@
       "scenarios": ["developer-failure"],
       "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "publishDeveloperTurn" }],
       "tests": [],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "The spec says hooks run but not what a refusal leads to."
     },
     {
@@ -652,9 +638,7 @@
       "scenarios": ["uncertain-effects"],
       "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "defaultPushTaskBranch" }],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "Revision 7 section 16.12: effects are authorized, keyed and reconciled."
     },
     {
@@ -666,9 +650,7 @@
       "scenarios": ["developer-failure"],
       "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "commitAndPushPrompt" }],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "Driver-side and deterministic."
     },
     {
@@ -680,9 +662,7 @@
       "scenarios": ["happy-path"],
       "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "publishDeveloperTurn" }],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "Promised no-op publication."
     },
     {
@@ -706,9 +686,7 @@
       "scenarios": ["restart", "uncertain-effects"],
       "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "finishPublicationFromRecord" }],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "Revision 7 section 16.12: resume reconciles, never blindly replays."
     },
     {
@@ -749,7 +727,7 @@
       "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "renderConflictPrompt" }],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
       "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)",
+        "Publishing each Developer turn (both agents, only through the driver-run tools)",
         "A conflicting head is sent back to the developer, never to a reviewer"
       ],
       "reason": "Contradicts no-agent-pushes; a real conflict resolution cannot pass the publication path."
@@ -840,9 +818,7 @@
         { "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts", "symbol": "commitHeaderPromptLine" }
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "The instruction is advisory; the sandbox's read-only .git is the enforcement where present."
     },
     {
@@ -858,9 +834,7 @@
         "apps/cli/tests/lib/dev-review-loop/developer-dispatch.test.ts",
         "apps/cli/tests/lib/dev-review-loop.test.ts"
       ],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "Every other push goes through the Broker with hooks; whether the bootstrap push may bypass both is unruled."
     },
     {
@@ -1856,7 +1830,7 @@
       "code": { "path": "apps/cli/src/lib/dev-review-loop.ts", "locator": "publicationExpectedBase" },
       "spec": {
         "path": "apps/cli/specs/loop.md",
-        "locator": "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
+        "locator": "Publishing each Developer turn (both agents, only through the driver-run tools)"
       },
       "status": "open"
     },
@@ -1866,7 +1840,7 @@
       "code": { "path": "apps/cli/src/lib/dev-review-loop.ts", "locator": "renderConflictPrompt" },
       "spec": {
         "path": "apps/cli/specs/loop.md",
-        "locator": "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
+        "locator": "Publishing each Developer turn (both agents, only through the driver-run tools)"
       },
       "status": "open"
     },
