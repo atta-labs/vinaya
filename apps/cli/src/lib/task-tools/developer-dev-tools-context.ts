@@ -38,12 +38,12 @@ export type BodyValidation = { ok: true } | { ok: false; reason: string }
  * themselves live in the factory, never here.
  */
 export type DeveloperDevToolDeps = {
-  /** The publication-precondition inputs (branch/head/base/changed paths/surface), read FRESH each time `publish_changes` runs. */
-  readPublicationCheckInput: () => PublicationCheckInput
+  /** The publication-precondition inputs (branch/head/base/changed paths/surface), read FRESH each time `publish_changes` runs. Async-tolerant: the loop resolves the merge base here. */
+  readPublicationCheckInput: () => PublicationCheckInput | Promise<PublicationCheckInput>
   /** Commit the worktree under the already-validated header and push; the protected-path and pre-push gates live inside this closure (the loop's real commit/push). */
   commitAndPush: (header: string) => Promise<DevToolResult<{ pushedHead: string }>>
-  /** The driver's PR-body gate — validates a body before it is written to the forge. */
-  validatePrBody: (body: string) => BodyValidation
+  /** The driver's PR-body gate — validates a body before it is written to the forge. Async-tolerant: the loop's real gate runs `vinaya pr create`'s body checks. */
+  validatePrBody: (body: string) => BodyValidation | Promise<BodyValidation>
   /** Open the task's PR with an already-validated title/body. */
   openPullRequest: (title: string, body: string) => Promise<DevToolResult<{ prNumber: number }>>
   /** Replace the PR body (already validated). */
@@ -94,7 +94,7 @@ export function createDeveloperDevToolContext(deps: DeveloperDevToolDeps): DevTo
             'Rewrite the header as a single `Type(scope): Description` line.'
           )
         }
-        const preconditions = checkPublicationPreconditions(deps.readPublicationCheckInput())
+        const preconditions = checkPublicationPreconditions(await deps.readPublicationCheckInput())
         if (!preconditions.ok) {
           return refuse(
             'publication-preconditions',
@@ -107,7 +107,7 @@ export function createDeveloperDevToolContext(deps: DeveloperDevToolDeps): DevTo
       }),
     openPullRequest: (title, body) =>
       guard('open_pull_request', async () => {
-        const validated = deps.validatePrBody(body)
+        const validated = await deps.validatePrBody(body)
         if (!validated.ok) {
           return refuse('pr-body-gate', validated.reason, 'Fix the PR body to satisfy the body gate, then reopen.')
         }
@@ -115,7 +115,7 @@ export function createDeveloperDevToolContext(deps: DeveloperDevToolDeps): DevTo
       }),
     updatePullRequestBody: (body) =>
       guard('update_pull_request_body', async () => {
-        const validated = deps.validatePrBody(body)
+        const validated = await deps.validatePrBody(body)
         if (!validated.ok) {
           return refuse(
             'pr-body-gate',

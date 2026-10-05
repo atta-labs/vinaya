@@ -31,8 +31,7 @@
  * exactly as a developer reads a failed command and fixes it.
  */
 
-import { createMcpServerCore, type McpServerCore } from './mcp-protocol.js'
-import { MCP_PROTOCOL_VERSION } from './server.js'
+import { createMcpServerCore, MCP_PROTOCOL_VERSION, type McpServerCore } from './mcp-protocol.js'
 import { DEV_TOOLS_MCP_SERVER_NAME } from './dev-tools-names.js'
 
 export { DEV_TOOLS_MCP_SERVER_NAME }

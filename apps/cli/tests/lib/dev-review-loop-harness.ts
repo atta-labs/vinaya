@@ -51,6 +51,7 @@ import { resetDefaultLogSinkContext, resetTrustAnchorConfigMemo } from '../../sr
 import { resetRuntimeDirCache } from '../../src/lib/run-paths.js'
 import { commitHeaderPathFor, prBodyPathFor } from '../../src/lib/dev-review-loop/developer-publication.js'
 import type { DispatchHandle } from '../../src/lib/dispatch.js'
+import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server.js'
 import {
   pauseMarker,
   renderNoPushStopComment,
@@ -233,6 +234,17 @@ export type LoopWorld = {
   pushes: Array<{ sha: string }>
   /** Each pull-request open the driver's publication step made (`openTaskPullRequest`). */
   prOpens: Array<{ title: string; body: string }>
+  // --- dev-tools (O2–O5): the gate-backed context the driver hosts per turn ---
+  /** The `DevToolContext` the loop built this turn — captured by the fake `startDevTools` so a test can drive the agent's tool calls directly (no real bridge exists in-process). `null` until the first dispatch. */
+  devToolContext: DevToolContext | null
+  /** Each body the agent published through `update_pull_request_body`. */
+  prBodyUpdates: string[]
+  /** How many times the agent called `refresh_evidence`. */
+  evidenceRefreshes: number
+  /** How many times the agent called `run_checks`. */
+  runChecksCalls: number
+  /** The result `run_checks`/`refresh_evidence` report — default a clean pass. */
+  runChecksPassed: boolean
   // --- recorded side effects, for assertions ---
   /** O1/O2: each developer branch the loop created on the remote at round-1 start (`createTaskWorktree`) — empty on a start that found the branch already there (an open PR, or a remote branch with none). */
   remoteBranchCreations: string[]
@@ -349,6 +361,11 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     commits: [],
     pushes: [],
     prOpens: [],
+    devToolContext: null,
+    prBodyUpdates: [],
+    evidenceRefreshes: 0,
+    runChecksCalls: 0,
+    runChecksPassed: true,
     remoteBranchCreations: [],
     evidenceOutcome: { ok: true, gatesFailed: false },
     blockEvidenceUntilReviewerStarts: false,
@@ -595,6 +612,34 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       world.prOpens.push({ title: input.title, body: input.body })
       world.prOpened = true
       return world.prNumber
+    },
+    // --- dev-tools (O2–O5): the driver-run server's seams, forge faked, gates
+    // real inside the captured `context` ---
+    startDevTools: async ({ context }) => {
+      // No real agent (hence no bridge) runs in-process — capture the
+      // gate-backed context so a test drives the agent's tool calls directly.
+      world.devToolContext = context
+      return { bridge: { command: 'fake-dev-bridge', args: [] }, close: async () => {} }
+    },
+    updatePrBody: async ({ body }) => {
+      world.prBodyUpdates.push(body)
+      world.prBody = body
+    },
+    refreshPrEvidence: async () => {
+      world.evidenceRefreshes += 1
+      return { head: world.head, checksPassed: world.runChecksPassed, evidence: 'fake-evidence-block' }
+    },
+    readPrView: async () => ({
+      prNumber: world.prOpened ? world.prNumber : null,
+      state: world.prOpened ? 'OPEN' : null,
+      head: world.head,
+      checks: null,
+      reviews: null,
+      body: world.prBody
+    }),
+    runWorktreeChecks: async () => {
+      world.runChecksCalls += 1
+      return { passed: world.runChecksPassed, output: 'fake-check-all-output' }
     },
     fetchPrBody: (_pr) => world.prBody,
     fetchDeveloperStop: (_issue) => (world.developerStop === null ? null : (world.developerStop as never)),

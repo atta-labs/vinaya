@@ -22,6 +22,15 @@
 
 import type { Readable, Writable } from 'node:stream'
 
+/**
+ * The MCP protocol version every server in this repo advertises — defined on
+ * this leaf module (no heavy imports) so the driver-run dev-tools server can
+ * read it without pulling the Operator's whole task-tools server (`server.ts`,
+ * which transitively reaches `dispatch`/`dev-review-loop`) into its — and
+ * therefore `dispatch.ts`'s — module graph.
+ */
+export const MCP_PROTOCOL_VERSION = '2025-06-18'
+
 /** The `tools/list` entry one server exposes for one tool — name, description, JSON-Schema input. */
 export type McpToolListEntry = {
   name: string

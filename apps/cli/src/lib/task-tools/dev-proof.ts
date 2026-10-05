@@ -50,7 +50,8 @@ import {
   claudeDevToolName,
   claudeDevToolsArgs,
   codexDevToolsConfigToml,
-  devToolsMcpConfigFileBody
+  devToolsMcpConfigFileBody,
+  driverDevBridgeInvocation
 } from './dev-tools-registration.js'
 
 /** The one allowlisted tool the proof session may call — a read-only check, no publish, no forge write. */
@@ -78,8 +79,7 @@ export function parseDevProofArgs(args: readonly string[]): { agent: ProofAgent 
  * task-tools dev-proof` or as the installed `vinaya` binary.
  */
 export function devBridgeInvocation(socketPath: string): BridgeInvocation {
-  const entry = process.argv[1] ?? 'vinaya'
-  return { command: process.execPath, args: [entry, 'task-tools', 'dev-bridge', '--socket', socketPath] }
+  return driverDevBridgeInvocation(socketPath)
 }
 
 /** What the host-side handler recorded for the one tool call it answered. */

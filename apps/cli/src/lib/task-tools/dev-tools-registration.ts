@@ -18,10 +18,40 @@
  *    again the worktree's committed `.mcp.json` plays no part.
  */
 
+import { createHash } from 'node:crypto'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { DEV_TOOLS_MCP_SERVER_NAME } from './dev-tools-names.js'
 
 /** The bridge the agent's MCP client spawns (command + args), pointing at a `dev-bridge --socket <path>` relay. */
 export type BridgeInvocation = { command: string; args: string[] }
+
+/**
+ * A stable, short unix-domain socket path for the driver-run dev-tools host,
+ * derived from a per-task key. Short by construction (a 16-hex digest under
+ * `tmpdir()`) so it stays inside the `sockaddr_un` path limit (~104 bytes on
+ * macOS, ~108 on Linux) that a long runtime path would blow, and STABLE across
+ * a task's rounds so a reused Codex `CODEX_HOME` whose staged `config.toml`
+ * baked the bridge in round 1 still points at the host the driver restarts on
+ * the same path each dispatch (`startDevToolsHost` unlinks a stale socket).
+ */
+export function devToolsSocketPath(key: string): string {
+  const digest = createHash('sha256').update(key).digest('hex').slice(0, 16)
+  return join(tmpdir(), `vinaya-dev-tools-${digest}.sock`)
+}
+
+/**
+ * The bridge the agent's own MCP client spawns INSIDE its sandbox — this
+ * running vinaya entrypoint (`process.execPath` + this process's entry script)
+ * relaying stdio to the driver-run host over `socketPath`. Repo-local and
+ * identical whether invoked as `bun …/index.ts` or the installed `vinaya`
+ * binary; the one builder both the production dispatch and the O1 proof use so
+ * they register the server identically.
+ */
+export function driverDevBridgeInvocation(socketPath: string): BridgeInvocation {
+  const entry = process.argv[1] ?? 'vinaya'
+  return { command: process.execPath, args: [entry, 'task-tools', 'dev-bridge', '--socket', socketPath] }
+}
 
 /**
  * The Claude MCP configuration object the driver writes and passes with

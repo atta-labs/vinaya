@@ -39,14 +39,14 @@ import { Writable } from 'node:stream'
 import { defaultTaskCancelHandler } from './cancel.js'
 import type { TaskToolCallResult } from './handlers.js'
 import { taskEscalationReadHandler, taskStatusHandler } from './handlers.js'
-import { createMcpServerCore, type McpServerCore } from './mcp-protocol.js'
+import { createMcpServerCore, MCP_PROTOCOL_VERSION, type McpServerCore } from './mcp-protocol.js'
 import { taskPrReadHandler } from './pr-read.js'
 import { refuseUngrantedTool } from './router.js'
 import { defaultTaskResumeHandler } from './resume.js'
 import { defaultTaskStartHandler } from './start.js'
 
 /** The MCP spec revision this server implements and both adapters were verified against. */
-export const MCP_PROTOCOL_VERSION = '2025-06-18'
+export { MCP_PROTOCOL_VERSION }
 
 /** The one MCP server name both adapters register — the key under `mcpServers`/`[mcp_servers.<name>]`. */
 export const TASK_TOOLS_MCP_SERVER_NAME = 'vinaya-task-tools'
