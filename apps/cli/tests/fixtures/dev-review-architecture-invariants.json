@@ -69,6 +69,11 @@
         "path": "apps/cli/tests/lib/dev-review-loop/dev-review-engine-state-contract.test.ts",
         "kind": "test",
         "reason": "Landed with apps/cli/specs/dev-review-engine-state-machine.md (Task 2 of developer-review-architecture-v1): the target provider-neutral Atta-Engine state model's own contract test, over the fixture data in dev-review-engine-state-contract.fixture.ts."
+      },
+      {
+        "path": "apps/cli/tests/lib/dev-review-loop/refresh-evidence-args.test.ts",
+        "kind": "test",
+        "reason": "Pins the argv the refresh_evidence tool runs (pr report --push <prNumber>, never the body-file-less --write the usage gate rejects) and proves the real pr report parser accepts the shape; landed with the refresh_evidence evidence-regeneration fix."
       }
     ]
   },
@@ -1789,6 +1794,24 @@
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
       "loopSpec": ["The command"],
       "reason": "The publication boundary is now explicit in the specification and exercised for later pushes, current protected changes and post-commit discovery."
+    },
+    {
+      "id": "INV-121",
+      "behavior": "The refresh_evidence tool regenerates the PR body's AEG:EVIDENCE block for the worktree's current head and writes it back to the live pull request by running `vinaya pr report --push <prNumber>` (never the body-file-less `--write`, which pr report's usage gate rejects); it fails only when the body was not updated, and reports a red gate that still pushed as checksPassed: false.",
+      "classification": "product-guarantee",
+      "owner": "governed-operation",
+      "authority": "forge",
+      "scenarios": ["happy-path", "stale-evidence"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "defaultRefreshPrEvidence" },
+        { "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "prReportRefreshArgs" }
+      ],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/refresh-evidence-args.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
+      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
+      "reason": "The body-only Evidence refresh is a forge-updating tool call, and its command shape (--push, not bare --write) is the live-gate bug this task fixed and now pins."
     }
   ],
   "defects": [
