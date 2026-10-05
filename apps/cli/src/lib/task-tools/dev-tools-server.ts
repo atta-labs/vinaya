@@ -33,9 +33,9 @@
 
 import { createMcpServerCore, type McpServerCore } from './mcp-protocol.js'
 import { MCP_PROTOCOL_VERSION } from './server.js'
+import { DEV_TOOLS_MCP_SERVER_NAME } from './dev-tools-names.js'
 
-/** The one MCP server name both per-dispatch registrations use — distinct from the Operator's `vinaya-task-tools`. */
-export const DEV_TOOLS_MCP_SERVER_NAME = 'vinaya-dev-tools'
+export { DEV_TOOLS_MCP_SERVER_NAME }
 
 // The three tool names the rendered brief and doctrine name in place of
 // commit/push, `pr create` and `pr report --write` (O6) — exported so

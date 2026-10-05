@@ -112,6 +112,12 @@ import {
   type ClaudeSandboxSettings
 } from './worker-boundary.js'
 import { repoRoot } from './diff-evidence.js'
+import {
+  type BridgeInvocation,
+  claudeDevToolsArgs,
+  codexDevToolsConfigToml,
+  devToolsMcpConfigFileBody
+} from './task-tools/dev-tools-registration.js'
 
 /**
  * Terminal colour, applied only at the point a line is written to a real
@@ -314,6 +320,20 @@ export type DispatchOpts = {
    * on its own.
    */
   agentConfigSurfaceCovered?: boolean
+  /**
+   * O2: the driver-run dev-tools MCP server's bridge invocation for THIS
+   * dispatch — a `dev-bridge --socket <path>` relay the agent's own MCP client
+   * spawns inside its sandbox, which pipes to the server the driver hosts
+   * outside it (`task-tools/dev-tools-host.ts`). Set only by the review loop,
+   * only for the `developer` role, and only once the driver has started the
+   * host for this turn. When present, this call registers the server through
+   * the vendor's OWN per-dispatch channel — Claude via `--strict-mcp-config
+   * --mcp-config <file>` (so the worktree's committed `.mcp.json` is never
+   * loaded), Codex via a `[mcp_servers.<name>]` table in the staged
+   * `config.toml` — and nothing else. Omitted by every other caller and role,
+   * which registers no dev-tools server and changes no argv.
+   */
+  devToolsBridge?: { command: string; args: readonly string[] }
 }
 
 /**
@@ -3568,6 +3588,15 @@ export async function dispatchRole(
     inputVersions: () => opts.inputVersions
   })
 
+  // O2: this dispatch's dev-tools bridge, normalized to the mutable
+  // `BridgeInvocation` the registration helpers take — `null` for every
+  // caller/role that registers no driver-run server (the common case). When
+  // set, Claude gets `--strict-mcp-config --mcp-config <file>` below and Codex
+  // gets a `[mcp_servers.<name>]` table in its staged `config.toml`.
+  const devToolsBridge: BridgeInvocation | null = opts.devToolsBridge
+    ? { command: opts.devToolsBridge.command, args: [...opts.devToolsBridge.args] }
+    : null
+
   // Mirrors `log()`'s own repo resolution so this file knows where to poll
   // for its own lines. Primes `resolveRepo()`'s process-wide cache, so
   // `log()`'s own internal call below resolves the identical value — the
@@ -4046,7 +4075,17 @@ export async function dispatchRole(
       realHome: homedir(),
       execpolicyRules: codexExecpolicyRules,
       ...(codexRequireIsolation && codexConfinement?.ok === true
-        ? { sandboxConfigToml: codexConfinement.configToml }
+        ? {
+            // O2: the dev-tools `[mcp_servers.<name>]` table (with the
+            // per-server approval key) rides the SAME staged `config.toml` as
+            // the sandbox config — the one home a confined Codex reads — so the
+            // worktree's committed `.mcp.json` plays no part. The socket path
+            // the loop passes is stable per task, so a reused `CODEX_HOME`
+            // (`codexHomeAlreadyStaged`) keeps a still-valid registration.
+            sandboxConfigToml: devToolsBridge
+              ? codexDevToolsConfigToml(devToolsBridge, codexConfinement.configToml)
+              : codexConfinement.configToml
+          }
         : {})
     })
     if (staged === null) {
@@ -4261,7 +4300,25 @@ export async function dispatchRole(
     await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
     return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason, effectId }
   }
-  const spawnArgs = dispatchSettingsPath ? [...baseArgs, '--settings', dispatchSettingsPath] : baseArgs
+  // O2: Claude's per-dispatch dev-tools registration — a driver-written
+  // `--mcp-config` file passed with `--strict-mcp-config`, so that file is the
+  // ONLY MCP source this session loads and the worktree's committed `.mcp.json`
+  // is never read. Written into this dispatch's own Claude scratch (minted for
+  // every unattended Claude start, confined or not), which the sandbox grants
+  // read access to — the SAME place the O1 proof wrote it and proved reachable
+  // from inside the sandbox on macOS. All six tools are exposed (no
+  // `--allowedTools` narrowing: the Developer uses the full set).
+  const devToolsClaudeArgs =
+    agent === 'claude' && devToolsBridge !== null && claudeScratchDir !== null
+      ? (() => {
+          const mcpConfigPath = join(claudeScratchDir, 'dev-tools.mcp.json')
+          writeFileSync(mcpConfigPath, devToolsMcpConfigFileBody(devToolsBridge), { mode: 0o600 })
+          return claudeDevToolsArgs(mcpConfigPath)
+        })()
+      : []
+  const spawnArgs = dispatchSettingsPath
+    ? [...baseArgs, ...devToolsClaudeArgs, '--settings', dispatchSettingsPath]
+    : [...baseArgs, ...devToolsClaudeArgs]
 
   {
     const priorSize = sizeOfSafe(outboxPath)

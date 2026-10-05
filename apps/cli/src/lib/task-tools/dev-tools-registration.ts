@@ -18,7 +18,7 @@
  *    again the worktree's committed `.mcp.json` plays no part.
  */
 
-import { DEV_TOOLS_MCP_SERVER_NAME } from './dev-tools-server.js'
+import { DEV_TOOLS_MCP_SERVER_NAME } from './dev-tools-names.js'
 
 /** The bridge the agent's MCP client spawns (command + args), pointing at a `dev-bridge --socket <path>` relay. */
 export type BridgeInvocation = { command: string; args: string[] }
