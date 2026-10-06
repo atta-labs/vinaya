@@ -15,9 +15,8 @@ import ts from 'typescript'
  * of the host platform: `process.platform`, `process['platform']`, a
  * destructured `platform` out of `process`, and a call to `platform()` from
  * `node:os`. A file that reads it must be on `REAL_SANDBOX_FILES` with the
- * real-sandbox reason that justifies it, or on `PENDING_INJECTION_FILES`, the
- * escalated debt of files that should be injected but cannot be yet. The list may only shrink: a file that
- * no longer reads the platform fails until its entry is deleted, and the list
+ * real-sandbox reason that justifies it. The list covers the tests that verify
+ * or spawn the real confinement path. It may only shrink: a file that no longer reads the platform fails until its entry is deleted, and the list
  * carries a size ceiling that only goes down.
  */
 
@@ -109,8 +108,8 @@ export function hostPlatformReads(fileName: string, source: string): number[] {
 }
 
 /**
- * The only test files allowed to read the host platform — each one verifies the
- * real vendor sandbox of the host it runs on, so its answer is per platform by
+ * The only test files allowed to read the host platform — each one verifies or
+ * spawns the real confinement path of the host it runs on, so its answer is per platform by
  * design. The list may only shrink; never add an entry without the real-sandbox
  * reason beside it.
  */
@@ -120,29 +119,17 @@ const REAL_SANDBOX_FILES: Readonly<Record<string, string>> = {
   'lib/dispatch/linux-sandbox-probe.test.ts':
     'its live block runs the real Linux sandbox probe, which exists only on a Linux host',
   'lib/dispatch/worker-boundary.test.ts':
-    "asserts the host's own Seatbelt boundary and bubblewrap detection against the real host facts"
-}
-
-/**
- * Files that read the host platform although they are NOT about a real sandbox:
- * each runs the real CLI in a child process, where the host's own worker
- * sandbox confines the fake vendor on macOS, so the case is skipped there. The
- * production code has no seam that injects a platform or switches the sandbox
- * off for a child, so moving them to injected values needs a production change
- * the task forbids; that is escalated as a strategy question. This is an
- * unresolved debt, not a justification: the list may only shrink.
- */
-const PENDING_INJECTION_FILES: Readonly<Record<string, string>> = {
+    "asserts the host's own Seatbelt boundary and bubblewrap detection against the real host facts",
   'lib/dispatch/unattended.test.ts':
-    'child-process dispatch cases skipped on macOS; mixes real confinement outcomes with attended cases that are not about a sandbox',
-  'commands/dispatch-task.test.ts': 'child-process dispatch of a fake vendor, skipped on macOS, not about a sandbox',
-  'lib/dev-review-loop.test.ts': 'child-process loop with a fake vendor, skipped on macOS, not about a sandbox'
+    "spawns the real dispatch command, whose confinement is the host's real sandbox, so its confinement cases are per platform",
+  'commands/dispatch-task.test.ts':
+    "spawns the real dispatch command, whose confinement is the host's real sandbox, so its cases are per platform",
+  'lib/dev-review-loop.test.ts':
+    "spawns the real dispatch command, whose confinement is the host's real sandbox, so its cases are per platform"
 }
 
 /** The size the list may not exceed. Lower it when an entry is removed. */
-const REAL_SANDBOX_FILES_CEILING = 3
-const PENDING_INJECTION_FILES_CEILING = 3
-const LISTED = { ...REAL_SANDBOX_FILES, ...PENDING_INJECTION_FILES }
+const REAL_SANDBOX_FILES_CEILING = 6
 
 function testFiles(dir: string): string[] {
   const out: string[] = []
@@ -192,7 +179,9 @@ describe('CLI tests do not read the host platform outside the real-sandbox list'
   }
 
   it('every file that reads the host platform is on the list', () => {
-    const unlisted = [...readers].filter(([file]) => !(file in LISTED)).map(([file, lines]) => `${file}:${lines[0]}`)
+    const unlisted = [...readers]
+      .filter(([file]) => !(file in REAL_SANDBOX_FILES))
+      .map(([file, lines]) => `${file}:${lines[0]}`)
     expect(
       unlisted,
       'inject the platform instead of reading the host, or list the file with its real-sandbox reason'
@@ -200,13 +189,12 @@ describe('CLI tests do not read the host platform outside the real-sandbox list'
   })
 
   it('every listed file still reads the host platform, so the list only shrinks', () => {
-    const stale = Object.keys(LISTED).filter((file) => !readers.has(file))
+    const stale = Object.keys(REAL_SANDBOX_FILES).filter((file) => !readers.has(file))
     expect(stale, 'delete the entry: the file no longer reads the host platform').toEqual([])
   })
 
   it('the list never exceeds its ceiling and every entry states a reason', () => {
     expect(Object.keys(REAL_SANDBOX_FILES).length).toBeLessThanOrEqual(REAL_SANDBOX_FILES_CEILING)
-    expect(Object.keys(PENDING_INJECTION_FILES).length).toBeLessThanOrEqual(PENDING_INJECTION_FILES_CEILING)
-    for (const reason of Object.values(LISTED)) expect(reason.trim().length).toBeGreaterThan(0)
+    for (const reason of Object.values(REAL_SANDBOX_FILES)) expect(reason.trim().length).toBeGreaterThan(0)
   })
 })
