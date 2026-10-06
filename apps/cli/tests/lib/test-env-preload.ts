@@ -44,6 +44,28 @@
  * override, or by mutating and restoring `process.env` inside its own
  * `it(...)`, both of which run AFTER this preload and are untouched by it.
  */
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 for (const key of ['GITHUB_ACTIONS', 'VINAYA_HOST', 'VINAYA_ROLE', 'VINAYA_ATTEMPT', 'VINAYA_PARENT_EVENT']) {
   delete process.env[key]
+}
+
+/**
+ * `VINAYA_RUNTIME_DIR` — a dispatched session carries it (the driver hands its
+ * runtime directory down), a CI runner or an operator's shell does not. Left
+ * unset, anything a test reaches through `runtimeDirForThisRepo()` — the
+ * test-run cache `pr report` writes, a driver log — resolves to the real
+ * `~/.vinaya/runtime/<owner>-<repo>`, so the same suite wrote into the real
+ * directory on CI and an operator's machine while staying clean in a
+ * dispatched run. Pointing it at a private temporary directory makes every
+ * environment behave like the dispatched one. A test that needs the default
+ * resolution (or a different directory) sets or deletes the key itself, as
+ * the ones that already run with it set do. `real-runtime-guard.test.ts`
+ * still fails a test that reaches the real directory some other way, such as
+ * a spawned child with `VINAYA_*` stripped.
+ */
+if (!process.env.VINAYA_RUNTIME_DIR) {
+  process.env.VINAYA_RUNTIME_DIR = mkdtempSync(join(tmpdir(), 'vinaya-test-runtime-'))
 }
