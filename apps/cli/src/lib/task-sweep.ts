@@ -60,7 +60,10 @@ import {
 } from './run-paths.js'
 
 function sh(cmd: string, args: string[]): string {
-  return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  return execFileSync(cmd, args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  }).trim()
 }
 
 function message(err: unknown): string {
@@ -84,7 +87,12 @@ export type PrLookup = { number: number; state: PrState; headSha?: string }
 const PR_LOOKUP_FIELDS = 'number,state,headRefName,headRefOid'
 
 function prLookupFrom(out: string, branch: string): PrLookup | null {
-  const list = JSON.parse(out) as { number: number; state: PrState; headRefName: string; headRefOid?: string }[]
+  const list = JSON.parse(out) as {
+    number: number
+    state: PrState
+    headRefName: string
+    headRefOid?: string
+  }[]
   const found = list.find((p) => p.headRefName === branch)
   if (!found) return null
   return found.headRefOid
@@ -107,10 +115,10 @@ function isIssueNotFound(err: unknown): boolean {
 }
 
 /** Throws on any read failure — the caller reads that as "forge unreadable," never as a fabricated state. Throws `IssueNotFoundError` only for the forge's not-found answer. */
-export function fetchIssueState(issue: number): IssueState {
+export function fetchIssueState(issue: number, repo: string): IssueState {
   let out: string
   try {
-    out = sh('gh', ['issue', 'view', String(issue), '--json', 'state'])
+    out = sh('gh', ['issue', 'view', String(issue), '--repo', repo, '--json', 'state'])
   } catch (err) {
     if (isIssueNotFound(err)) throw new IssueNotFoundError(issue)
     throw err
@@ -141,7 +149,7 @@ export type TaskSweepDeps = {
   isDriverPidAlive: (pid: number) => boolean
   readDriverLockForScope: (root: string, scope: RunScope) => DriverLockRecord | null
   readPauseStateForScope: (root: string, scope: RunScope) => PauseStateRecord | null
-  fetchIssueState: (issue: number) => IssueState
+  fetchIssueState: (issue: number, repo: string) => IssueState
   developerBranchFor: (issue: number) => string
   fetchPrForBranch: (branch: string) => PrLookup | null
   fetchPrBody: (pr: number) => string
@@ -208,13 +216,19 @@ export const defaultTaskSweepDeps: TaskSweepDeps = {
 function resolveIssueForScope(scope: RunScope, deps: TaskSweepDeps): { issue: number | null; reason?: string } {
   if (typeof scope === 'number') return { issue: scope }
   if (scope === 'unscoped') {
-    return { issue: null, reason: 'unscoped dispatch folder — no Issue or PR to check against the forge' }
+    return {
+      issue: null,
+      reason: 'unscoped dispatch folder — no Issue or PR to check against the forge'
+    }
   }
   let body: string
   try {
     body = deps.fetchPrBody(scope.pr)
   } catch (err) {
-    return { issue: null, reason: `could not read PR #${scope.pr}'s body to resolve its task: ${message(err)}` }
+    return {
+      issue: null,
+      reason: `could not read PR #${scope.pr}'s body to resolve its task: ${message(err)}`
+    }
   }
   const issue = deps.taskFromPrBody(body)
   if (issue === null) {
@@ -244,20 +258,37 @@ export function classifyTaskFolder(
 ): TaskFolderClass {
   const lock = deps.readDriverLockForScope(root, scope)
   if (lock && deps.isDriverPidAlive(lock.pid)) {
-    return { kind: 'live', reason: `driver lock names live pid ${lock.pid} (started ${lock.startedAt})` }
+    return {
+      kind: 'live',
+      reason: `driver lock names live pid ${lock.pid} (started ${lock.startedAt})`
+    }
   }
 
   const resolved = resolveIssueForScope(scope, deps)
   if (resolved.issue === null)
-    return { kind: 'unknown', reason: resolved.reason ?? 'could not resolve a task to check' }
+    return {
+      kind: 'unknown',
+      reason: resolved.reason ?? 'could not resolve a task to check'
+    }
   const issue = resolved.issue
+
+  // The Issue lookup must name this folder's repository: a missing Issue deletes the folder, so never read it from whatever repo `gh` infers from the cwd.
+  const repo = deps.resolveRepo()
+  if (!repo)
+    return {
+      kind: 'unknown',
+      reason: `could not resolve the repository to look up Issue #${issue} in`
+    }
 
   let issueState: IssueState
   try {
-    issueState = deps.fetchIssueState(issue)
+    issueState = deps.fetchIssueState(issue, `${repo.owner}/${repo.repo}`)
   } catch (err) {
     if (err instanceof IssueNotFoundError) return { kind: 'finished', reason: `${err.message} (orphaned folder)` }
-    return { kind: 'unknown', reason: `could not read Issue #${issue}'s state from the forge: ${message(err)}` }
+    return {
+      kind: 'unknown',
+      reason: `could not read Issue #${issue}'s state from the forge: ${message(err)}`
+    }
   }
   if (issueState === 'CLOSED') return { kind: 'finished', reason: `Issue #${issue} is closed` }
 
@@ -265,18 +296,27 @@ export function classifyTaskFolder(
   try {
     branch = deps.developerBranchFor(issue)
   } catch (err) {
-    return { kind: 'unknown', reason: `could not derive Issue #${issue}'s developer branch: ${message(err)}` }
+    return {
+      kind: 'unknown',
+      reason: `could not derive Issue #${issue}'s developer branch: ${message(err)}`
+    }
   }
 
   let pr: PrLookup | null
   try {
     pr = deps.fetchPrForBranch(branch)
   } catch (err) {
-    return { kind: 'unknown', reason: `could not read the pull request for branch \`${branch}\`: ${message(err)}` }
+    return {
+      kind: 'unknown',
+      reason: `could not read the pull request for branch \`${branch}\`: ${message(err)}`
+    }
   }
 
   if (pr && pr.state !== 'OPEN') {
-    return { kind: 'finished', reason: `Issue #${issue} is open but PR #${pr.number} is ${pr.state.toLowerCase()}` }
+    return {
+      kind: 'finished',
+      reason: `Issue #${issue} is open but PR #${pr.number} is ${pr.state.toLowerCase()}`
+    }
   }
 
   const pause = deps.readPauseStateForScope(root, scope)
@@ -338,7 +378,10 @@ export function sweepModernTasks(deps: TaskSweepDeps = defaultTaskSweepDeps, exc
     const scope = scopeFromSegment(name)
     const label = describeScope(scope)
     if (excludeScope !== undefined && scopesEqual(scope, excludeScope)) {
-      kept.push({ folder: label, reason: 'this run’s own task — never swept by its own driver' })
+      kept.push({
+        folder: label,
+        reason: 'this run’s own task — never swept by its own driver'
+      })
       continue
     }
     const folderPath = runPath(root, scope, { area: 'task' })
@@ -349,7 +392,10 @@ export function sweepModernTasks(deps: TaskSweepDeps = defaultTaskSweepDeps, exc
         deps.rm(folderPath)
         removed.push({ folder: label, reason: cls.reason })
       } catch (err) {
-        kept.push({ folder: label, reason: `finished (${cls.reason}) but could not be removed: ${message(err)}` })
+        kept.push({
+          folder: label,
+          reason: `finished (${cls.reason}) but could not be removed: ${message(err)}`
+        })
       }
     } else {
       kept.push({ folder: label, reason: `${cls.kind} — ${cls.reason}` })
@@ -382,10 +428,10 @@ async function shAsync(cmd: string, args: string[]): Promise<string> {
 }
 
 /** Async twin of `fetchIssueState` — same `gh` call and result shape, non-blocking. */
-export async function fetchIssueStateAsync(issue: number): Promise<IssueState> {
+export async function fetchIssueStateAsync(issue: number, repo: string): Promise<IssueState> {
   let out: string
   try {
-    out = await shAsync('gh', ['issue', 'view', String(issue), '--json', 'state'])
+    out = await shAsync('gh', ['issue', 'view', String(issue), '--repo', repo, '--json', 'state'])
   } catch (err) {
     if (isIssueNotFound(err)) throw new IssueNotFoundError(issue)
     throw err
@@ -436,7 +482,11 @@ export async function developerBranchForAsync(issueNumber: number): Promise<stri
   )
 }
 
-export type WorktreeEntry = { path: string; branch: string | null; locked: boolean }
+export type WorktreeEntry = {
+  path: string
+  branch: string | null
+  locked: boolean
+}
 export type WorktreeListing = { main: string; entries: WorktreeEntry[] }
 
 /** Parses `git worktree list --porcelain`: blank-line separated blocks, the first being the main worktree. The branch is read from the `branch refs/heads/…` line, never from the folder's name. */
@@ -482,12 +532,13 @@ export type TaskSweepAsyncDeps = {
   isDriverPidAlive: (pid: number) => boolean
   readDriverLockForScope: (root: string, scope: RunScope) => DriverLockRecord | null
   readPauseStateForScope: (root: string, scope: RunScope) => PauseStateRecord | null
-  fetchIssueState: (issue: number) => Promise<IssueState>
+  fetchIssueState: (issue: number, repo: string) => Promise<IssueState>
   developerBranchFor: (issue: number) => Promise<string>
   fetchPrForBranch: (branch: string) => Promise<PrLookup | null>
   fetchPrBody: (pr: number) => Promise<string>
   taskFromPrBody: (body: string) => number | null
   rm: (path: string) => void
+  resolveRepo: () => { owner: string; repo: string } | null
   /** The repository's main worktree and every worktree `git worktree list --porcelain` reports, from any checkout of it. */
   listWorktrees: () => Promise<WorktreeListing>
   /** True iff `git status --porcelain` in `path` names anything — tracked change or untracked, non-ignored file. */
@@ -509,6 +560,7 @@ export const defaultTaskSweepAsyncDeps: TaskSweepAsyncDeps = {
   fetchPrBody: fetchPrBodyAsync,
   taskFromPrBody: realTaskFromPrBody,
   rm: (path) => rmSync(path, { recursive: true, force: true }),
+  resolveRepo: resolveRepoSync,
   listWorktrees: listWorktreesAsync,
   worktreeHasUncommitted: worktreeHasUncommittedAsync,
   worktreeHasUnpushedCommits: worktreeHasUnpushedCommitsAsync,
@@ -521,13 +573,19 @@ async function resolveIssueForScopeAsync(
 ): Promise<{ issue: number | null; reason?: string }> {
   if (typeof scope === 'number') return { issue: scope }
   if (scope === 'unscoped') {
-    return { issue: null, reason: 'unscoped dispatch folder — no Issue or PR to check against the forge' }
+    return {
+      issue: null,
+      reason: 'unscoped dispatch folder — no Issue or PR to check against the forge'
+    }
   }
   let body: string
   try {
     body = await deps.fetchPrBody(scope.pr)
   } catch (err) {
-    return { issue: null, reason: `could not read PR #${scope.pr}'s body to resolve its task: ${message(err)}` }
+    return {
+      issue: null,
+      reason: `could not read PR #${scope.pr}'s body to resolve its task: ${message(err)}`
+    }
   }
   const issue = deps.taskFromPrBody(body)
   if (issue === null) {
@@ -554,20 +612,37 @@ export async function classifyTaskFolderAsync(
 ): Promise<TaskFolderClass> {
   const lock = deps.readDriverLockForScope(root, scope)
   if (lock && deps.isDriverPidAlive(lock.pid)) {
-    return { kind: 'live', reason: `driver lock names live pid ${lock.pid} (started ${lock.startedAt})` }
+    return {
+      kind: 'live',
+      reason: `driver lock names live pid ${lock.pid} (started ${lock.startedAt})`
+    }
   }
 
   const resolved = await resolveIssueForScopeAsync(scope, deps)
   if (resolved.issue === null)
-    return { kind: 'unknown', reason: resolved.reason ?? 'could not resolve a task to check' }
+    return {
+      kind: 'unknown',
+      reason: resolved.reason ?? 'could not resolve a task to check'
+    }
   const issue = resolved.issue
+
+  // The Issue lookup must name this folder's repository: a missing Issue deletes the folder, so never read it from whatever repo `gh` infers from the cwd.
+  const repo = deps.resolveRepo()
+  if (!repo)
+    return {
+      kind: 'unknown',
+      reason: `could not resolve the repository to look up Issue #${issue} in`
+    }
 
   let issueState: IssueState
   try {
-    issueState = await deps.fetchIssueState(issue)
+    issueState = await deps.fetchIssueState(issue, `${repo.owner}/${repo.repo}`)
   } catch (err) {
     if (err instanceof IssueNotFoundError) return { kind: 'finished', reason: `${err.message} (orphaned folder)` }
-    return { kind: 'unknown', reason: `could not read Issue #${issue}'s state from the forge: ${message(err)}` }
+    return {
+      kind: 'unknown',
+      reason: `could not read Issue #${issue}'s state from the forge: ${message(err)}`
+    }
   }
   if (issueState === 'CLOSED') return { kind: 'finished', reason: `Issue #${issue} is closed` }
 
@@ -575,18 +650,27 @@ export async function classifyTaskFolderAsync(
   try {
     branch = await deps.developerBranchFor(issue)
   } catch (err) {
-    return { kind: 'unknown', reason: `could not derive Issue #${issue}'s developer branch: ${message(err)}` }
+    return {
+      kind: 'unknown',
+      reason: `could not derive Issue #${issue}'s developer branch: ${message(err)}`
+    }
   }
 
   let pr: PrLookup | null
   try {
     pr = await deps.fetchPrForBranch(branch)
   } catch (err) {
-    return { kind: 'unknown', reason: `could not read the pull request for branch \`${branch}\`: ${message(err)}` }
+    return {
+      kind: 'unknown',
+      reason: `could not read the pull request for branch \`${branch}\`: ${message(err)}`
+    }
   }
 
   if (pr && pr.state !== 'OPEN') {
-    return { kind: 'finished', reason: `Issue #${issue} is open but PR #${pr.number} is ${pr.state.toLowerCase()}` }
+    return {
+      kind: 'finished',
+      reason: `Issue #${issue} is open but PR #${pr.number} is ${pr.state.toLowerCase()}`
+    }
   }
 
   const pause = deps.readPauseStateForScope(root, scope)
@@ -683,9 +767,18 @@ export async function sweepModernTasksAsync(
     try {
       assertSafeToRemove(folderPath, root)
       deps.rm(folderPath)
-      results[index] = { removed: true, entry: { folder: label, reason: recheck.reason } }
+      results[index] = {
+        removed: true,
+        entry: { folder: label, reason: recheck.reason }
+      }
       completed++
-      onDecision({ completed, total, folder: label, removed: true, reason: recheck.reason })
+      onDecision({
+        completed,
+        total,
+        folder: label,
+        removed: true,
+        reason: recheck.reason
+      })
     } catch (err) {
       const reason = `finished (${recheck.reason}) but could not be removed: ${message(err)}`
       results[index] = { removed: false, entry: { folder: label, reason } }
@@ -775,7 +868,10 @@ async function classifyWorktree(
   } catch (err) {
     return keep(`could not inspect the worktree: ${message(err)}`)
   }
-  return { kind: 'finished', reason: `PR #${pr.number} is ${pr.state.toLowerCase()}, fully pushed and clean` }
+  return {
+    kind: 'finished',
+    reason: `PR #${pr.number} is ${pr.state.toLowerCase()}, fully pushed and clean`
+  }
 }
 
 async function sweepWorktreesAsync(
@@ -812,7 +908,13 @@ async function sweepWorktreesAsync(
   const record = (label: string, wasRemoved: boolean, reason: string): void => {
     ;(wasRemoved ? removed : kept).push({ folder: label, reason })
     completed++
-    onDecision({ completed, total, folder: label, removed: wasRemoved, reason })
+    onDecision({
+      completed,
+      total,
+      folder: label,
+      removed: wasRemoved,
+      reason
+    })
   }
 
   for (const entry of candidates) {
@@ -880,7 +982,11 @@ function manifestRepositoryFor(taskDir: string): string | null {
 /** `pause-state.json`'s own `branch`/`prNumber` (the `outbox/dev-review-loop/<task>/` shape), or `escalation/*.json`'s own `branch`/`pr` (the `control-store/<task>/` shape) — the two record shapes this codebase's history actually wrote a branch+PR reference into, read the same way. */
 function branchAndPrFrom(raw: string): { branch: string; pr: number } | null {
   try {
-    const parsed = JSON.parse(raw) as { branch?: unknown; prNumber?: unknown; pr?: unknown }
+    const parsed = JSON.parse(raw) as {
+      branch?: unknown
+      prNumber?: unknown
+      pr?: unknown
+    }
     const branch = typeof parsed.branch === 'string' ? parsed.branch : null
     const pr = typeof parsed.prNumber === 'number' ? parsed.prNumber : typeof parsed.pr === 'number' ? parsed.pr : null
     return branch && pr !== null && pr > 0 ? { branch, pr } : null
@@ -966,9 +1072,15 @@ const LOOPS_LOG_RE = /^(\d+)\.log$/
 const DISPATCH_RESUME_RE = /-(issue(\d+)|pr(\d+)|unscoped)\.json$/
 const TASK_RESUME_ESCALATION_RE = /^(\d+)-\d+-.+\.json$/
 
-function currentRepoSegment(deps: TaskSweepDeps): { full: string | null; segment: string } {
+function currentRepoSegment(deps: TaskSweepDeps): {
+  full: string | null
+  segment: string
+} {
   const repo = deps.resolveRepo()
-  return { full: repo ? `${repo.owner}/${repo.repo}` : null, segment: repoSegment(repo) }
+  return {
+    full: repo ? `${repo.owner}/${repo.repo}` : null,
+    segment: repoSegment(repo)
+  }
 }
 
 /**
@@ -1019,7 +1131,10 @@ export function sweepLegacyLayout(
               ? { kind: 'this-repo', scope: Number(m[1]) }
               : m
                 ? { kind: 'other-repo' }
-                : { kind: 'unattributable', reason: 'filename does not carry a bare Issue number' }
+                : {
+                    kind: 'unattributable',
+                    reason: 'filename does not carry a bare Issue number'
+                  }
           entries.push(
             buildLegacyEntry(dirname, join(repoDir, logName), attribution, root, deps, removeAttributed, home)
           )
@@ -1113,7 +1228,10 @@ export function sweepLegacyLayout(
 }
 
 function unattributableNoTask(): LegacyAttribution {
-  return { kind: 'unattributable', reason: 'carries no repository or task marker in its own path or content' }
+  return {
+    kind: 'unattributable',
+    reason: 'carries no repository or task marker in its own path or content'
+  }
 }
 
 function attributeDispatchResumeRecord(
@@ -1125,7 +1243,10 @@ function attributeDispatchResumeRecord(
   if (repoDirName !== currentSegment) return { kind: 'other-repo' }
   if (match[2]) return { kind: 'this-repo', scope: Number(match[2]) }
   if (match[3]) return { kind: 'this-repo', scope: { pr: Number(match[3]) } }
-  return { kind: 'unattributable', reason: 'unscoped dispatch record — no task to verify finished' }
+  return {
+    kind: 'unattributable',
+    reason: 'unscoped dispatch record — no task to verify finished'
+  }
 }
 
 function buildLegacyEntry(
