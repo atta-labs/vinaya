@@ -1282,6 +1282,75 @@ class PushHookRefusal extends Error {
   }
 }
 
+/** A push's captured output is read in full: a hook that runs a whole suite prints far more than Node's default 1 MiB buffer, and a killed push would read as a failure outside the hook. */
+const PUSH_OUTPUT_MAX_BUFFER = 256 * 1024 * 1024
+
+/** How many lines of a push's output reach the Developer. */
+const PUSH_REFUSAL_MAX_LINES = 40
+
+/** The lines of a test runner's or check's output that name what failed. */
+const FAILING_LINE =
+  /\(fail\)|\bfail(?:ed|ing|ure)?\b|\berror\b|✗|✘|\bnot ok\b|\bexpect(?:ed)?\b|\breceived\b|\bselected \d+ of \d+/i
+
+/** A line naming one failing test or check, the lines the Developer must never lose to the detail lines around them. */
+const FAILING_TEST_LINE = /\(fail\)|✗|✘|\bnot ok\b/i
+
+/**
+ * A push's output as untrusted text for the Developer: the failing test and
+ * check names first, then the other failure and selection lines, else the
+ * output's tail, each line sanitized like any public detail and the whole
+ * bounded in lines. Detail lines only fill what the names leave free.
+ */
+export function boundedPushOutput(output: string, mode: 'failing' | 'tail'): string {
+  const lines = output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const names = mode === 'failing' ? lines.filter((line) => FAILING_TEST_LINE.test(line)) : []
+  const details =
+    mode === 'failing' ? lines.filter((line) => !FAILING_TEST_LINE.test(line) && FAILING_LINE.test(line)) : []
+  const kept =
+    names.length + details.length > 0
+      ? [...names.slice(0, PUSH_REFUSAL_MAX_LINES), ...details].slice(0, PUSH_REFUSAL_MAX_LINES)
+      : lines.slice(-PUSH_REFUSAL_MAX_LINES)
+  return kept.map((line) => sanitizePublicPauseDetail(line)).join('\n')
+}
+
+/**
+ * Runs `git push` for the task branch from its worktree under a trace2 event
+ * file. A push the repository's own pre-push hook refused throws
+ * `PushHookRefusal` carrying the hook's failing lines; any other failure
+ * throws an error naming the git exit and the push's own bounded error output.
+ */
+export function pushBranchClassified(worktreePath: string, branch: string): void {
+  const traceDir = mkdtempSync(join(tmpdir(), 'vinaya-push-trace-'))
+  const tracePath = join(traceDir, 'trace.jsonl')
+  try {
+    execFileSync('git', ['-C', worktreePath, 'push', 'origin', `HEAD:refs/heads/${branch}`], {
+      encoding: 'utf8',
+      env: { ...process.env, GIT_TRACE2_EVENT: tracePath },
+      maxBuffer: PUSH_OUTPUT_MAX_BUFFER,
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+  } catch (err) {
+    const raw =
+      err && typeof err === 'object'
+        ? (err as { stdout?: unknown; stderr?: unknown; status?: unknown; code?: unknown })
+        : {}
+    const output = `${String(raw.stdout ?? '')}\n${String(raw.stderr ?? '')}`.trim()
+    const trace = existsSync(tracePath) ? readFileSync(tracePath, 'utf8') : ''
+    if (traceHasRefusingHook(trace, new Set(['pre-push']))) {
+      throw new PushHookRefusal(boundedPushOutput(output, 'failing'))
+    }
+    const exit =
+      typeof raw.status === 'number' ? `git exit ${raw.status}` : `git failed (${String(raw.code ?? 'no exit status')})`
+    const detail = boundedPushOutput(output || (err instanceof Error ? err.message : String(err)), 'tail')
+    throw new Error(`${exit}: ${detail || 'no captured output'}`)
+  } finally {
+    rmSync(traceDir, { recursive: true, force: true })
+  }
+}
+
 /**
  * O3/O4: pushes the task branch through the Broker's governed `branch-push`
  * operation. The invocation context is authenticated from the Developer's own
@@ -1327,27 +1396,7 @@ function defaultPushTaskBranch(input: {
       key: `branch-push-${input.sha}`,
       payload: input.sha,
       poster: () => {
-        const traceDir = mkdtempSync(join(tmpdir(), 'vinaya-push-trace-'))
-        const tracePath = join(traceDir, 'trace.jsonl')
-        try {
-          execFileSync('git', ['-C', input.worktreePath, 'push', 'origin', `HEAD:refs/heads/${input.branch}`], {
-            encoding: 'utf8',
-            env: { ...process.env, GIT_TRACE2_EVENT: tracePath },
-            stdio: ['ignore', 'pipe', 'pipe']
-          })
-        } catch (err) {
-          const output =
-            err && typeof err === 'object'
-              ? `${'stdout' in err ? String((err as { stdout?: unknown }).stdout ?? '') : ''}\n${
-                  'stderr' in err ? String((err as { stderr?: unknown }).stderr ?? '') : ''
-                }`.trim()
-              : String(err)
-          const trace = existsSync(tracePath) ? readFileSync(tracePath, 'utf8') : ''
-          if (traceHasRefusingHook(trace, new Set(['pre-push']))) throw new PushHookRefusal(output)
-          throw err
-        } finally {
-          rmSync(traceDir, { recursive: true, force: true })
-        }
+        pushBranchClassified(input.worktreePath, input.branch)
         return input.sha
       },
       reconcile: () => {
@@ -1366,14 +1415,7 @@ function defaultPushTaskBranch(input: {
     // with the hook's own stderr on the error; any broker/credential refusal
     // surfaces the same way. Either is a failed push, returned for the
     // existing mechanical-failure path to carry (O4), never raised.
-    const message =
-      err instanceof PushHookRefusal
-        ? err.output
-        : err && typeof err === 'object' && 'stderr' in err && (err as { stderr?: unknown }).stderr
-          ? String((err as { stderr: unknown }).stderr)
-          : err instanceof Error
-            ? err.message
-            : String(err)
+    const message = err instanceof PushHookRefusal ? err.output : err instanceof Error ? err.message : String(err)
     return {
       ok: false,
       refusal: message.trim() || 'the push was refused with no captured output',
