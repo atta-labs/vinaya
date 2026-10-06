@@ -47,6 +47,13 @@ export type FindingObservation = {
    * a finding with none, simply has none to report.
    */
   location?: string
+  /**
+   * The finding's normalized description (lower-cased, whitespace and
+   * punctuation collapsed), built where reviewer output is parsed. The
+   * repeat-finding stop compares it with role and file, never the positional
+   * `id`. Optional: an observation without one falls back to its `id`.
+   */
+  fingerprint?: string
   state: FindingState
   severityScale?: string
   policyTreatment?: 'blocking' | 'non_blocking' | 'unavailable'
