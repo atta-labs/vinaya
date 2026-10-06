@@ -273,11 +273,25 @@ jobs:
             bun-${{ runner.os }}-
       - name: Install dependencies
         run: bun install --frozen-lockfile
+      # The JUnit report is written beside the usual console output, so the
+      # step below can name each failing file without parsing the log.
       - name: Test shard ${{ matrix.shard }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         working-directory: apps/cli
-        run: bun test --timeout=30000 $(tr '\n' ' ' < tests/ci-shards/shard-${{ matrix.shard }}.txt)
+        run: bun test --timeout=30000 --reporter=junit --reporter-outfile="$RUNNER_TEMP/junit.xml" $(tr '\n' ' ' < tests/ci-shards/shard-${{ matrix.shard }}.txt)
+      # The escape report: for each failing test file, whether the pre-push
+      # hook selects it for this pull request's diff — so a selection gap
+      # (pre-push never ran it) and a platform difference (pre-push ran it and
+      # it passed there) are told apart in the log. It only reports: it exits
+      # 0 whatever it finds, and `continue-on-error` keeps it from failing
+      # the job even if it cannot run. See `apps/cli/specs/self-hosting.md`.
+      - name: Name selection escapes
+        if: failure()
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: bun apps/cli/src/lib/pre-push-select-tests.ts --escape-report "$RUNNER_TEMP/junit.xml" --tests-cwd apps/cli --base "$BASE_SHA"
 
   # O1/O2/O3 (Issue #783): the pre-merge trust-anchor probe. Runs ONLY when
   # this PR's diff touches the root `vinaya.config.json` (`config_changed`
