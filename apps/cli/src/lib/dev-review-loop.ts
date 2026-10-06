@@ -1105,47 +1105,45 @@ export type MergedDefaultCommit = { commit: string; regressedPaths: string[] }
 /**
  * The exact default-branch commit a Developer turn merged into its worktree:
  * the in-progress merge's incoming commit (`MERGE_HEAD`), else the newest
- * merge commit in `sinceBase..HEAD` whose non-first parent is a default-branch
- * commit. The commit is read from the merge itself; the `origin/main` ref only
- * vets it, and a ref that is merely behind the merged commit (the commit
- * descends from it) never hides the merge. A commit unrelated to the ref in
- * either direction is not a default-branch commit and is ignored.
+ * merge parent in `sinceBase..HEAD` (nearest the head) that is a default-branch
+ * commit. The commit is read from the merge itself, never from a local
+ * default-branch ref by name.
  *
- * A commit ahead of the ref cannot be told from a Developer-authored commit
- * cut from it, so every path between the ref and that commit is reported too.
+ * The one source of truth for "is a default-branch commit" is the remote: the
+ * default branch's head S is read with `git ls-remote origin refs/heads/main`
+ * (fetching that one ref when S's object is missing locally), and a parent P
+ * qualifies only when `git merge-base --is-ancestor P S` holds. A commit that
+ * merely descends from the default branch (a side branch cut from it) fails
+ * that test, so its paths stay task changes, and a merge whose parent fails it
+ * never moves the base. `null` when the turn merged none or S is unreadable.
  *
  * Measuring against an older default-branch commit would hide a file the turn
- * reset to that older state, so when the merged commit is a strict ancestor of
- * the ref, every path that differs from the ref and that the default branch
- * changed after the merged commit is reported as `regressedPaths`.
- * `null` when the turn merged none.
+ * reset to that older state, so every path that differs from S and that the
+ * default branch changed after the merged commit is reported as `regressedPaths`.
  */
 export function defaultReadMergedDefaultCommit(
   worktreePath: string,
   sinceBase: string | null
 ): MergedDefaultCommit | null {
-  const isAncestor = (older: string, newer: string): boolean =>
-    gitOk(worktreePath, ['merge-base', '--is-ancestor', older, newer]) !== null
+  const remote = gitOk(worktreePath, ['ls-remote', 'origin', 'refs/heads/main'])
+  const head = remote?.split(/\s+/)[0]
+  if (!head || !/^[0-9a-f]{40,64}$/.test(head)) return null
+  if (gitOk(worktreePath, ['cat-file', '-e', `${head}^{commit}`]) === null) {
+    gitOk(worktreePath, ['fetch', '-q', 'origin', 'refs/heads/main'])
+    if (gitOk(worktreePath, ['cat-file', '-e', `${head}^{commit}`]) === null) return null
+  }
   const lines = (args: string[]): string[] =>
     (gitOk(worktreePath, args) ?? '').split('\n').filter((l) => l.trim().length > 0)
   const vetted = (sha: string): MergedDefaultCommit | null => {
-    if (isAncestor(sha, 'origin/main')) {
-      const advanced = new Set(lines(['diff', '--name-only', sha, 'origin/main']))
-      const regressedPaths = lines(['diff', '--name-only', 'origin/main']).filter((path) => advanced.has(path))
-      return { commit: sha, regressedPaths }
-    }
-    // A commit ahead of the ref may be the default branch's newer tip or a
-    // Developer-authored commit cut from it; the two cannot be told apart
-    // offline, so every path between the ref and it stays reported.
-    return isAncestor('origin/main', sha)
-      ? { commit: sha, regressedPaths: lines(['diff', '--name-only', 'origin/main', sha]) }
-      : null
+    if (gitOk(worktreePath, ['merge-base', '--is-ancestor', sha, head]) === null) return null
+    const advanced = new Set(lines(['diff', '--name-only', sha, head]))
+    return { commit: sha, regressedPaths: lines(['diff', '--name-only', head]).filter((path) => advanced.has(path)) }
   }
   const incoming = gitOk(worktreePath, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])
   const fromMergeHead = incoming ? vetted(incoming) : null
   if (fromMergeHead) return fromMergeHead
   const range = sinceBase ? [`^${sinceBase}`, 'HEAD'] : ['HEAD']
-  const merges = gitOk(worktreePath, ['rev-list', '--merges', '--parents', ...range])
+  const merges = gitOk(worktreePath, ['rev-list', '--topo-order', '--merges', '--parents', ...range])
   if (!merges) return null
   for (const line of merges.split('\n')) {
     const [, ...parents] = line.trim().split(/\s+/)

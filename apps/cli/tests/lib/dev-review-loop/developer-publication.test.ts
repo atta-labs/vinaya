@@ -153,14 +153,18 @@ describe('publication range after a default-branch merge', () => {
       stdio: ['ignore', 'pipe', 'pipe']
     }).trim()
 
-  /** A repo whose `origin/main` is a real remote-tracking ref, with a task branch cut from the first main commit. */
+  /** A repo with a real bare `origin` whose main is the first commit, and a task branch cut from it. */
   const fixture = (): { dir: string; base: string } => {
     const dir = mkdtempSync(join(tmpdir(), 'pub-range-'))
+    const remote = mkdtempSync(join(tmpdir(), 'pub-origin-'))
+    git(remote, 'init', '-q', '--bare', '-b', 'main')
     git(dir, 'init', '-q', '-b', 'main')
+    git(dir, 'remote', 'add', 'origin', remote)
     writeFileSync(join(dir, 'a.txt'), 'a\n')
     git(dir, 'add', '.')
     git(dir, 'commit', '-q', '-m', 'base')
     const base = git(dir, 'rev-parse', 'HEAD')
+    git(dir, 'push', '-q', 'origin', 'main')
     git(dir, 'checkout', '-q', '-b', 'task')
     writeFileSync(join(dir, 'own.txt'), 'own\n')
     git(dir, 'add', '.')
@@ -174,34 +178,47 @@ describe('publication range after a default-branch merge', () => {
     git(dir, 'add', '.')
     git(dir, 'commit', '-q', '-m', `main ${file}`)
     const tip = git(dir, 'rev-parse', 'HEAD')
-    git(dir, 'update-ref', 'refs/remotes/origin/main', tip)
+    git(dir, 'push', '-q', 'origin', 'main')
     git(dir, 'checkout', '-q', 'task')
     return tip
   }
 
   it('reads nothing when the turn merged no default-branch commit', () => {
     const { dir, base } = fixture()
-    git(dir, 'update-ref', 'refs/remotes/origin/main', base)
     expect(defaultReadMergedDefaultCommit(dir, base)).toBeNull()
   })
 
-  it('reports an out-of-Surface edit hidden in a side commit cut from the default branch', () => {
+  it('refuses a merged side branch cut from the default branch: its paths stay task changes', () => {
     const { dir, base } = fixture()
     const pushed = git(dir, 'rev-parse', 'HEAD')
-    git(dir, 'update-ref', 'refs/remotes/origin/main', base)
     git(dir, 'checkout', '-q', '-b', 'side', base)
     writeFileSync(join(dir, 'guarded.txt'), 'sneaky\n')
     git(dir, 'add', '.')
     git(dir, 'commit', '-q', '-m', 'side')
     git(dir, 'checkout', '-q', 'task')
     git(dir, 'merge', '-q', '--no-ff', '-m', 'merge side', 'side')
-    expect(defaultReadMergedDefaultCommit(dir, pushed)?.regressedPaths).toEqual(['guarded.txt'])
+    expect(defaultReadMergedDefaultCommit(dir, pushed)).toBeNull()
+    expect(defaultGitWorktreeChangedPaths(dir, pushed)).toContain('guarded.txt')
+  })
+
+  it('a crafted merge of a side commit never moves the base off a genuine default-branch merge', () => {
+    const { dir, base } = fixture()
+    const pushed = git(dir, 'rev-parse', 'HEAD')
+    const tip = advanceMain(dir, 'main-only.txt')
+    git(dir, 'merge', '-q', '--no-ff', '-m', 'merge main', 'main')
+    git(dir, 'checkout', '-q', '-b', 'side', base)
+    writeFileSync(join(dir, 'guarded.txt'), 'sneaky\n')
+    git(dir, 'add', '.')
+    git(dir, 'commit', '-q', '-m', 'side')
+    git(dir, 'checkout', '-q', 'task')
+    git(dir, 'merge', '-q', '--no-ff', '-m', 'merge side', 'side')
+    expect(defaultReadMergedDefaultCommit(dir, pushed)?.commit).toBe(tip)
+    expect(defaultGitWorktreeChangedPaths(dir, tip)).toContain('guarded.txt')
   })
 
   it('ignores a merged commit unrelated to the default branch', () => {
-    const { dir, base } = fixture()
+    const { dir } = fixture()
     const pushed = git(dir, 'rev-parse', 'HEAD')
-    git(dir, 'update-ref', 'refs/remotes/origin/main', base)
     git(dir, 'checkout', '-q', '--orphan', 'other')
     writeFileSync(join(dir, 'x.txt'), 'x\n')
     git(dir, 'add', 'x.txt')
@@ -211,19 +228,22 @@ describe('publication range after a default-branch merge', () => {
     expect(defaultReadMergedDefaultCommit(dir, pushed)).toBeNull()
   })
 
-  it('reads the committed merge parent, so main-only files are not the task change', () => {
-    const { dir, base } = fixture()
+  it('reads the committed merge parent of a genuine default-branch merge, fetching the remote head itself', () => {
+    const { dir } = fixture()
     const pushed = git(dir, 'rev-parse', 'HEAD')
     const tip = advanceMain(dir, 'main-only.txt')
     git(dir, 'merge', '-q', '--no-ff', '-m', 'merge main', 'main')
-    // A default-branch ref that is behind the merged commit must not hide the merge.
-    git(dir, 'update-ref', 'refs/remotes/origin/main', base)
-    expect(defaultReadMergedDefaultCommit(dir, pushed)).toEqual({ commit: tip, regressedPaths: ['main-only.txt'] })
-    git(dir, 'update-ref', 'refs/remotes/origin/main', tip)
-    const merged = defaultReadMergedDefaultCommit(dir, pushed)
-    expect(merged).toEqual({ commit: tip, regressedPaths: [] })
+    expect(defaultReadMergedDefaultCommit(dir, pushed)).toEqual({ commit: tip, regressedPaths: [] })
     expect(defaultGitWorktreeChangedPaths(dir, tip)).toEqual(['own.txt'])
     expect(defaultGitWorktreeChangedPaths(dir, pushed)).toContain('main-only.txt')
+    // The remote moves on; its new head is missing locally until the reader fetches it.
+    const clone = mkdtempSync(join(tmpdir(), 'pub-clone-'))
+    git(clone, 'clone', '-q', git(dir, 'remote', 'get-url', 'origin'), '.')
+    writeFileSync(join(clone, 'later.txt'), 'later\n')
+    git(clone, 'add', '.')
+    git(clone, 'commit', '-q', '-m', 'later')
+    git(clone, 'push', '-q', 'origin', 'main')
+    expect(defaultReadMergedDefaultCommit(dir, pushed)).toEqual({ commit: tip, regressedPaths: ['later.txt'] })
   })
 
   it('reports a file reset to an older default-branch state after merging an older commit', () => {
@@ -236,7 +256,7 @@ describe('publication range after a default-branch merge', () => {
     const older = git(dir, 'rev-parse', 'HEAD')
     writeFileSync(join(dir, 'guarded.txt'), 'new\n')
     git(dir, 'commit', '-q', '-am', 'guarded new')
-    git(dir, 'update-ref', 'refs/remotes/origin/main', git(dir, 'rev-parse', 'HEAD'))
+    git(dir, 'push', '-q', 'origin', 'main')
     git(dir, 'checkout', '-q', 'task')
     git(dir, 'merge', '-q', '--no-commit', '--no-ff', older)
     const merged = defaultReadMergedDefaultCommit(dir, pushed)
