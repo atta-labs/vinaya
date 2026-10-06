@@ -190,3 +190,155 @@ export function scannedRootsOf(ts: TypeScriptApi, file: string, source: string, 
   // subsumes it, and keeping both would only duplicate the same edge.
   return roots.filter((r) => !roots.some((other) => other !== r && r.startsWith(`${other}/`))).sort()
 }
+
+// ── Declared triggers ───────────────────────────────────────────────────────
+
+/**
+ * The kind of change a folder-scanning test judges — what the pre-push hook
+ * selects it for, since its scan edge selects it on ANY change under its roots,
+ * which on this repository is almost every push:
+ *
+ * - `tree-shape` — the test checks that every file under its roots is listed
+ *   somewhere (a CI shard, an inventory), so only a file ADDED, RENAMED or
+ *   REMOVED under them can break it; an edit to a file's content cannot.
+ * - `process-start` — the test checks how files under its roots start a
+ *   process, so it is selected when a changed or added file there starts one
+ *   in the lines the diff touched.
+ * - `content` — the test asserts something about what every file says, so any
+ *   edit under its roots can break it. The hook never selects it by its scan
+ *   (it still can by its own imports); CI runs it on every pull request and
+ *   names it as a selection escape when it fails there.
+ */
+export type ScannerTrigger = 'tree-shape' | 'process-start' | 'content'
+
+export type ScannerDeclaration = {
+  /** Repo-root-relative path of the folder-scanning test. */
+  test: string
+  /**
+   * Repo-root-relative path prefixes it reads: a directory with a trailing
+   * `/`, a file path or file-name prefix without one, `.` for the whole
+   * repository.
+   */
+  roots: readonly string[]
+  trigger: ScannerTrigger
+}
+
+/**
+ * Every folder-scanning test in this repository, with what it reads and what
+ * it judges. The selector reads this; a test checks that every file
+ * {@link scannedRootsOf} classifies has an entry here and that no entry names
+ * a file that no longer scans. Paths that do not exist in another repository
+ * select nothing there.
+ */
+export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
+  { test: 'apps/cli/tests/ci-shards.test.ts', roots: ['apps/cli/'], trigger: 'tree-shape' },
+  {
+    test: 'apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts',
+    roots: [
+      'apps/cli/src/commands/dev-review-loop.ts',
+      'apps/cli/src/lib/dev-review-loop.ts',
+      'apps/cli/src/lib/dev-review-loop/',
+      'packages/aeg-core/src/dev-review-loop/',
+      'apps/cli/tests/commands/dev-review-loop.test.ts',
+      'apps/cli/tests/lib/dev-review-loop'
+    ],
+    trigger: 'tree-shape'
+  },
+  { test: 'apps/cli/tests/process-fixture-coverage.test.ts', roots: ['apps/cli/tests/'], trigger: 'process-start' },
+  { test: 'apps/cli/scripts/bundle-doctrine.test.ts', roots: ['.'], trigger: 'content' },
+  { test: 'apps/cli/tests/checks/bin-permissions.test.ts', roots: ['.'], trigger: 'content' },
+  {
+    test: 'apps/cli/tests/checks/registry-gates.test.ts',
+    roots: ['apps/cli/src/checks/bin/check-registry-gates.ts'],
+    trigger: 'content'
+  },
+  {
+    test: 'apps/cli/tests/checks/shipped-bin-audience.test.ts',
+    roots: ['apps/cli/src/checks/bin/'],
+    trigger: 'content'
+  },
+  { test: 'apps/cli/tests/commands/sync.test.ts', roots: ['apps/cli/src/commands/sync.ts'], trigger: 'content' },
+  { test: 'apps/cli/tests/doctrine.test.ts', roots: ['apps/cli/src/index.ts'], trigger: 'content' },
+  { test: 'apps/cli/tests/import-boundary.test.ts', roots: ['apps/cli/'], trigger: 'content' },
+  { test: 'apps/cli/tests/lib/log-callers.test.ts', roots: ['.'], trigger: 'content' },
+  {
+    test: 'apps/cli/tests/lib/log-sink-no-sync-spawn.test.ts',
+    roots: ['apps/cli/src/lib/log-sink.ts'],
+    trigger: 'content'
+  },
+  { test: 'apps/cli/tests/lib/no-log-forge-writes.test.ts', roots: ['.'], trigger: 'content' },
+  {
+    test: 'apps/cli/tests/log-destination-isolation.test.ts',
+    roots: ['apps/cli/src/', 'apps/cli/tests/'],
+    trigger: 'content'
+  },
+  { test: 'apps/cli/tests/no-brief-author.test.ts', roots: ['.'], trigger: 'content' },
+  { test: 'apps/cli/tests/run-paths-only.test.ts', roots: ['.'], trigger: 'content' },
+  { test: 'apps/cli/tests/surface-index.test.ts', roots: ['apps/cli/src/commands/'], trigger: 'content' },
+  { test: 'apps/cli/tests/surface-spec-exports.test.ts', roots: ['apps/cli/src/commands/'], trigger: 'content' },
+  { test: 'packages/aeg-core/src/actions.test.ts', roots: ['aeg-root/roles/'], trigger: 'content' },
+  { test: 'packages/aeg-core/src/diagram-model.test.ts', roots: ['.'], trigger: 'content' },
+  {
+    test: 'packages/aeg-core/src/docs/docs-coherence.test.ts',
+    roots: ['packages/aeg-core/tests/fixtures/docs-coherence/'],
+    trigger: 'content'
+  },
+  { test: 'packages/aeg-core/src/docs/node-route.test.ts', roots: ['.'], trigger: 'content' },
+  { test: 'packages/aeg-core/src/gate-audience.test.ts', roots: ['packages/aeg-core/bin/'], trigger: 'content' },
+  { test: 'packages/aeg-core/src/no-binary-sources.test.ts', roots: ['.'], trigger: 'content' },
+  { test: 'packages/aeg-core/src/retired-vocabulary.test.ts', roots: ['.'], trigger: 'content' }
+]
+
+/** Whether a repo-root-relative path lies under one declared root. */
+export function underDeclaredRoot(path: string, root: string): boolean {
+  return root === '.' || path.startsWith(root)
+}
+
+/** Calls that start a process — the ones `process-fixture-coverage.test.ts` audits. */
+const PROCESS_CALLS = new Set([...SPAWN_CALLS, 'fork'])
+
+/**
+ * Whether `source` starts a process in one of the 1-based, inclusive line
+ * `ranges` — anywhere in the file when `ranges` is omitted (an added file, or a
+ * caller that has no hunks). A call counts when any line it spans was touched,
+ * so an edit to a spawn's own arguments counts as well as a new spawn. A
+ * member `.exec(...)` is not counted: it is `RegExp.prototype.exec` far more
+ * often than a child process.
+ */
+export function startsProcessIn(
+  ts: TypeScriptApi,
+  file: string,
+  source: string,
+  ranges?: readonly { start: number; end: number }[]
+): boolean {
+  let sourceFile: import('typescript').SourceFile
+  try {
+    sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.ES2022, true)
+  } catch {
+    return false
+  }
+  const touched = (node: import('typescript').Node): boolean => {
+    if (!ranges) return true
+    const first = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1
+    const last = sourceFile.getLineAndCharacterOfPosition(node.getEnd()).line + 1
+    return ranges.some((r) => r.start <= last && r.end >= first)
+  }
+  let found = false
+  const visit = (node: import('typescript').Node): void => {
+    if (found) return
+    if (ts.isCallExpression(node)) {
+      const callee = ts.isIdentifier(node.expression)
+        ? node.expression.text
+        : ts.isPropertyAccessExpression(node.expression) && node.expression.name.text !== 'exec'
+          ? node.expression.name.text
+          : ''
+      if (PROCESS_CALLS.has(callee) && touched(node)) {
+        found = true
+        return
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  ts.forEachChild(sourceFile, visit)
+  return found
+}

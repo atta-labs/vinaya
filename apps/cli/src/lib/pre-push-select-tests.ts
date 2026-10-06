@@ -10,38 +10,44 @@
  * nothing was selected — a valid, common outcome, not an error), and the
  * human-facing "selected N of M" line to STDERR, so the hook's own
  * `$(...)` capture of STDOUT is never polluted by it.
+ *
+ * `--escape-report <junit.xml> --tests-cwd <dir> [--base <ref>]` is CI's mode:
+ * for each test file the JUnit report records as failing, it prints whether
+ * this same selection would have run it for the diff from `--base`. It only
+ * reports — it exits 0 whatever it finds, and on any error of its own, so it
+ * never fails a job by itself.
  */
-import { affectedNames } from './changed-names.js'
-import { loadConfig } from './config.js'
-import {
-  addedOrRenamedFilesSinceRemoteBaseAbsolute,
-  changedFileDiffsSinceRemoteBase,
-  changedFilesSinceRemoteBaseAbsolute
-} from './remote-base.js'
-import { selectAffectedTestFiles } from './test-selector.js'
-import { loadTypeScript } from './ts-module-graph.js'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { escapeReportLines, failingTestFilesFromJunit, prePushSelection } from './pre-push-selection.js'
+
+function flag(argv: readonly string[], name: string): string | undefined {
+  const index = argv.indexOf(name)
+  return index === -1 ? undefined : argv[index + 1]
+}
+
+function escapeReport(repoRoot: string, argv: readonly string[]): void {
+  try {
+    const junit = flag(argv, '--escape-report') as string
+    const testsCwd = resolve(repoRoot, flag(argv, '--tests-cwd') ?? '.')
+    const failing = failingTestFilesFromJunit(readFileSync(junit, 'utf8'), testsCwd)
+    const { selected } = prePushSelection(repoRoot, flag(argv, '--base'))
+    for (const line of escapeReportLines(repoRoot, failing, selected)) process.stdout.write(`${line}\n`)
+  } catch (error) {
+    process.stdout.write(`vinaya escape report: could not run — ${(error as Error).message}\n`)
+  }
+}
 
 function main(): void {
   const repoRoot = process.cwd()
+  const argv = process.argv.slice(2)
+  if (argv.includes('--escape-report')) {
+    escapeReport(repoRoot, argv)
+    return
+  }
+
   const started = performance.now()
-  const changed = changedFilesSinceRemoteBaseAbsolute(repoRoot)
-  const addedOrRenamed = addedOrRenamedFilesSinceRemoteBaseAbsolute(repoRoot)
-  const alwaysRun = loadConfig()?.prePush?.alwaysRun ?? []
-  // The changed NAMES, when the compiler is there to parse them; without it the
-  // selector falls back to the file-level answer on its own.
-  const typescript = loadTypeScript(repoRoot)
-  const names = typescript ? affectedNames(typescript, changedFileDiffsSinceRemoteBase(repoRoot)) : undefined
-  // Never the full transitive closure a push away from
-  // main can grow to — that stays CI's job (every shard still runs every
-  // test). Depth-one keeps a push to a widely-imported module small: the
-  // test files this diff changed, the test files that import a changed
-  // name directly, and `prePush.alwaysRun`.
-  const { selected, totalTestFiles, resolver, programMs } = selectAffectedTestFiles(repoRoot, changed, {
-    alwaysRun,
-    addedOrRenamed,
-    affectedNames: names,
-    depth: 'one'
-  })
+  const { selected, totalTestFiles, resolver, programMs } = prePushSelection(repoRoot)
   const elapsed = performance.now() - started
 
   for (const file of selected) process.stdout.write(`${file}\n`)
