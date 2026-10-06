@@ -58,6 +58,7 @@ import {
   checkNewTestFilesCoverShards,
   checkNewLoopFilesCoverInvariantMap,
   checkDocumentationReadable,
+  isNonPublicHost,
   type DocumentationProbe,
   type PinnedFileImporters,
   checkPremiseDependencyDeclared,
@@ -1111,6 +1112,9 @@ export function probeDocumentationUrl(url: string): DocumentationProbe {
   } catch {
     return { kind: 'unreadable', detail: 'not a valid URL' }
   }
+  if (isNonPublicHost(new URL(url).hostname)) {
+    return { kind: 'unreadable', detail: 'a non-public host is never public documentation' }
+  }
   let current = url
   for (let hop = 0; hop <= DOCUMENTATION_PROBE_MAX_HOPS; hop++) {
     let out: string
@@ -1119,6 +1123,7 @@ export function probeDocumentationUrl(url: string): DocumentationProbe {
         'curl',
         [
           '-sS',
+          '--globoff',
           '-o',
           '/dev/null',
           '--max-time',
@@ -1145,6 +1150,7 @@ export function probeDocumentationUrl(url: string): DocumentationProbe {
       } catch {
         return { kind: 'unreadable', detail: 'redirects to an invalid location' }
       }
+      if (isNonPublicHost(next.hostname)) return { kind: 'unreadable', detail: 'redirects to a non-public host' }
       if (next.host !== host) return { kind: 'unreadable', detail: `redirects to another host, ${next.host}` }
       if (LOGIN_PATH_RE.test(next.pathname)) return { kind: 'unreadable', detail: 'redirects to a sign-in page' }
       current = next.href

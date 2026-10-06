@@ -285,6 +285,7 @@ export {
   checkNewTestFilesCoverShards,
   checkNewLoopFilesCoverInvariantMap,
   checkDocumentationReadable,
+  isNonPublicHost,
   documentationUrls,
   type DocumentationProbe,
   checkPremiseDependencyDeclared,

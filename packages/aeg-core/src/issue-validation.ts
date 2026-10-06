@@ -2972,6 +2972,34 @@ export function checkNewLoopFilesCoverInvariantMap(body: string, tracked: string
   }
 }
 
+/**
+ * Is this URL host a loopback, link-local, private-range or otherwise
+ * non-public address? A Documentation source is public documentation; probing
+ * an internal address from the Planner's machine is never the intent, so the
+ * probe refuses such a host instead of fetching it. A bare IPv4 literal is
+ * judged by its range, an IPv6 literal by its prefix, a name by the
+ * loopback/internal suffixes.
+ */
+export function isNonPublicHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal')) return true
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h)
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])]
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 100 && b >= 64 && b <= 127)
+    )
+  }
+  if (h.includes(':')) return h === '::1' || h === '::' || /^(fc|fd|fe[89ab])/.test(h) || h.startsWith('::ffff:')
+  return false
+}
+
 /** What an unauthenticated fetch of a Documentation URL came to. */
 export type DocumentationProbe = { kind: 'readable' } | { kind: 'unreadable'; detail: string } | { kind: 'unknown' }
 

@@ -21,6 +21,7 @@ import {
   checkNewTestFilesCoverShards,
   checkNewLoopFilesCoverInvariantMap,
   checkDocumentationReadable,
+  isNonPublicHost,
   type CommandReferenceFacts,
   type ConfigReferenceFacts,
   checkDocsWithinSurface,
@@ -3256,5 +3257,30 @@ describe('checkDocumentationReadable', () => {
     expect(checkDocumentationReadable(body('https://example.test/doc'), probe).status).toBe('pass')
     expect(checkDocumentationReadable(body('apps/cli/specs/loop.md'), probe).status).toBe('pass')
     expect(seen).toEqual(['https://example.test/doc'])
+  })
+})
+
+describe('isNonPublicHost', () => {
+  it('flags loopback, link-local, private-range and internal names', () => {
+    for (const h of [
+      'localhost',
+      'app.localhost',
+      'foo.internal',
+      '127.0.0.1',
+      '10.1.2.3',
+      '169.254.169.254',
+      '172.20.0.1',
+      '192.168.1.1',
+      '[::1]',
+      'fd00::1'
+    ]) {
+      expect(isNonPublicHost(h)).toBe(true)
+    }
+  })
+
+  it('passes public names and addresses', () => {
+    for (const h of ['example.com', 'code.claude.com', '93.184.216.34', '172.32.0.1', '8.8.8.8']) {
+      expect(isNonPublicHost(h)).toBe(false)
+    }
   })
 })
