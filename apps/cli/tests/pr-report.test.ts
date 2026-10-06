@@ -502,7 +502,7 @@ describe('groupCFailed', () => {
 describe('computeGroupC — extracts and runs, end to end', () => {
   it('runs every command in the fenced list and records its real output', async () => {
     const body = ['## Test Plan', '', '```', 'echo one → one', 'echo two → two', '```'].join('\n')
-    const groupC = await computeGroupC(body)
+    const groupC = await computeGroupC(body, undefined, {}, memoryTestRunCache())
     expect(groupC.commands).toHaveLength(2)
     expect(groupC.commands[0]).toEqual({
       command: 'echo one',
@@ -521,7 +521,9 @@ describe('computeGroupC — extracts and runs, end to end', () => {
   })
 
   it('is the empty commands list for a body with no Test Plan command list', async () => {
-    expect(await computeGroupC('Test Plan: unit-tests-only')).toEqual({ commands: [] })
+    expect(await computeGroupC('Test Plan: unit-tests-only', undefined, {}, memoryTestRunCache())).toEqual({
+      commands: []
+    })
   })
 
   // Round 3 review, F2 (test-honesty): a `[agent]` command that itself reads
@@ -531,15 +533,20 @@ describe('computeGroupC — extracts and runs, end to end', () => {
   // "→ exits 0" claim for such a command, no matter when it ran.
   it('threads the graded body through as PR_BODY, so a command that reads it sees the SAME text Group C extracted its own command list from', async () => {
     const body = ['## Test Plan', '', '```', 'echo "body was: $PR_BODY"', '```'].join('\n')
-    const groupC = await computeGroupC(body)
+    const groupC = await computeGroupC(body, undefined, {}, memoryTestRunCache())
     expect(groupC.commands[0]?.output).toBe(`body was: ${body}`)
   })
 
   it('threads PR_NUMBER/BRANCH through when the caller supplies them, never on its own', async () => {
     const body = ['## Test Plan', '', '```', 'echo "pr=$PR_NUMBER branch=$BRANCH"', '```'].join('\n')
-    const withoutExtras = await computeGroupC(body)
+    const withoutExtras = await computeGroupC(body, undefined, {}, memoryTestRunCache())
     expect(withoutExtras.commands[0]?.output).toBe('pr= branch=')
-    const withExtras = await computeGroupC(body, undefined, { PR_NUMBER: '623', BRANCH: 'task/worker-isolation-v1/3' })
+    const withExtras = await computeGroupC(
+      body,
+      undefined,
+      { PR_NUMBER: '623', BRANCH: 'task/worker-isolation-v1/3' },
+      memoryTestRunCache()
+    )
     expect(withExtras.commands[0]?.output).toBe('pr=623 branch=task/worker-isolation-v1/3')
   })
 })
@@ -1377,7 +1384,12 @@ describe('runAgentCommand — output-buffer overflow is its own outcome, never a
 describe('buildReport — Group C wiring', () => {
   it('renders every command and its output inside the Group C fence, and folds a failing command into gatesFailed', async () => {
     const body = ['## Test Plan', '', '```', 'echo hi → hi', 'exit 1 → never reached cleanly', '```'].join('\n')
-    const result = await buildReport({ groupA: FIXED_GROUP_A, gateRunner: () => PASSING_GATES, body })
+    const result = await buildReport({
+      groupA: FIXED_GROUP_A,
+      gateRunner: () => PASSING_GATES,
+      body,
+      testRunCache: memoryTestRunCache()
+    })
     expect(result.block).toContain('### Group C — Test Plan commands')
     expect(result.block).toContain('#### C1: `echo hi`')
     expect(result.block).toContain('hi')
