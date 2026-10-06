@@ -55,6 +55,11 @@ import {
   checkPartsCiteDefinedObjectives,
   checkPartsCoverageAndSequence,
   checkPinnedFileImportersCovered,
+  checkNewTestFilesCoverShards,
+  checkNewLoopFilesCoverInvariantMap,
+  checkDocumentationReadable,
+  isNonPublicHost,
+  type DocumentationProbe,
   type PinnedFileImporters,
   checkPremiseDependencyDeclared,
   checkPremiseCoverage,
@@ -1088,6 +1093,75 @@ export function tokenExistsInTree(root: string = repoRoot()): (token: string) =>
   }
 }
 
+const DOCUMENTATION_PROBE_TIMEOUT_SECONDS = 5
+const DOCUMENTATION_PROBE_MAX_HOPS = 5
+/** A path segment naming a sign-in page — where a login-gated host sends an unauthenticated reader. */
+const LOGIN_PATH_RE = /\/(?:log-?in|sign-?in|signin|sso|auth|oauth|authorize)(?:[/?#]|$)/i
+
+/**
+ * An unauthenticated fetch of one Documentation URL. Redirects are followed by
+ * hand, only while they stay on the URL's own host; a redirect to another host,
+ * to a sign-in path, or a non-success final status is `unreadable`. A timeout,
+ * a missing `curl` or no network is `unknown` — a warning, so planning offline
+ * still works. No host is special-cased.
+ */
+export function probeDocumentationUrl(url: string): DocumentationProbe {
+  let host: string
+  try {
+    host = new URL(url).host
+  } catch {
+    return { kind: 'unreadable', detail: 'not a valid URL' }
+  }
+  if (isNonPublicHost(new URL(url).hostname)) {
+    return { kind: 'unreadable', detail: 'a non-public host is never public documentation' }
+  }
+  let current = url
+  for (let hop = 0; hop <= DOCUMENTATION_PROBE_MAX_HOPS; hop++) {
+    let out: string
+    try {
+      out = execFileSync(
+        'curl',
+        [
+          '-sS',
+          '--globoff',
+          '-o',
+          '/dev/null',
+          '--max-time',
+          String(DOCUMENTATION_PROBE_TIMEOUT_SECONDS),
+          '-w',
+          '%{http_code} %{redirect_url}',
+          current
+        ],
+        {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+          timeout: (DOCUMENTATION_PROBE_TIMEOUT_SECONDS + 2) * 1000
+        }
+      ).trim()
+    } catch {
+      return { kind: 'unknown' }
+    }
+    const [codeText, location = ''] = out.split(' ')
+    const code = Number.parseInt(codeText as string, 10)
+    if (code >= 300 && code < 400 && location !== '') {
+      let next: URL
+      try {
+        next = new URL(location)
+      } catch {
+        return { kind: 'unreadable', detail: 'redirects to an invalid location' }
+      }
+      if (isNonPublicHost(next.hostname)) return { kind: 'unreadable', detail: 'redirects to a non-public host' }
+      if (next.host !== host) return { kind: 'unreadable', detail: `redirects to another host, ${next.host}` }
+      if (LOGIN_PATH_RE.test(next.pathname)) return { kind: 'unreadable', detail: 'redirects to a sign-in page' }
+      current = next.href
+      continue
+    }
+    if (code >= 200 && code < 300) return { kind: 'readable' }
+    return code === 0 ? { kind: 'unknown' } : { kind: 'unreadable', detail: `status ${code}` }
+  }
+  return { kind: 'unreadable', detail: 'too many redirects' }
+}
+
 /** Only a code module can be imported — a pinned `.md` spec or `.json` config has no importers, whatever its basename collides with. */
 const IMPORTABLE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'] as const
 
@@ -1235,6 +1309,12 @@ const ISSUE_CONTENT_RECOVERY = {
     "Add the named directory globs to `## Surface`'s `in:` list so this task can write both the configuration schema and its reference row, or drop the key from the Objectives and Parts. Then re-run `{cmd}`.",
   pinnedFileImporters:
     "Add the named directory glob to `## Surface`'s `in:` list so the call site can be updated, or name the importer (or its directory) in the Boundary's `Out:` clause to exclude it deliberately. Then re-run `{cmd}`.",
+  newTestFilesCoverShards:
+    "Add the named CI shard directory glob to `## Surface`'s `in:` list so the new test file can be listed in a shard, or pin an existing test file instead. Then re-run `{cmd}`.",
+  newLoopFilesCoverInvariantMap:
+    "Add the named directory globs to `## Surface`'s `in:` list so the loop invariant map's fixture and spec can map the new file, or pin an existing loop file instead. Then re-run `{cmd}`.",
+  documentationReadable:
+    'Put the knowledge the unreadable URL carries into an in-repository spec and cite the spec in `## Documentation` instead of the URL. Then re-run `{cmd}`.',
   issuePremises:
     'Fix the named `## Premises` line so the file really contains the text (re-read the code, then write what it holds), or — when a task that has not merged yet is what makes it true — prefix the premise `after #<n>:` and declare `Depends-on` on that Issue. Then re-run `{cmd}`.',
   premiseDependencyDeclared:
@@ -1299,6 +1379,10 @@ export type IssueContentInput = {
   pinnedFileImporters: PinnedFileImporters[]
   /** Does the tracked tree already carry this literal token? (`tokenExistsInTree`) — separates a token this Issue introduces from one it merely quotes. */
   existsInTree: (token: string) => boolean
+  /** Every tracked file (`listTrackedFiles`) — what separates a new pinned file from an existing one; absent or empty ⇒ the new-file rules are dormant. */
+  trackedFiles?: string[]
+  /** An unauthenticated fetch of a Documentation URL (`probeDocumentationUrl`) — absent ⇒ the readability rule is dormant. */
+  probeDocumentation?: (url: string) => DocumentationProbe
 }
 
 /**
@@ -1360,6 +1444,8 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
       'introducedConfigKeys'
     ],
     [checkPinnedFileImportersCovered(input.body, input.pinnedFileImporters).errors, 'pinnedFileImporters'],
+    [checkNewTestFilesCoverShards(input.body, input.trackedFiles ?? []).errors, 'newTestFilesCoverShards'],
+    [checkNewLoopFilesCoverInvariantMap(input.body, input.trackedFiles ?? []).errors, 'newLoopFilesCoverInvariantMap'],
     [checkIssuePremises(input.body, input.readFile).errors, 'issuePremises'],
     [checkPremiseDependencyDeclared(input.body).errors, 'premiseDependencyDeclared'],
     [checkBoundaryClaimsNeedPremise(input.body).errors, 'boundaryClaimsNeedPremise']
@@ -1369,6 +1455,24 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     const instruction = ISSUE_CONTENT_RECOVERY[kind].replace('{cmd}', input.retryCommand)
     for (const message of messages) {
       errors.push(makeCheckError(CHECK_ISSUE_CONTENT, message, nameTheFix(message, instruction)))
+    }
+  }
+
+  if (input.probeDocumentation !== undefined) {
+    const readable = checkDocumentationReadable(input.body, input.probeDocumentation)
+    const instruction = ISSUE_CONTENT_RECOVERY.documentationReadable.replace('{cmd}', input.retryCommand)
+    for (const message of readable.errors) {
+      errors.push(makeCheckError(CHECK_ISSUE_CONTENT, message, nameTheFix(message, instruction)))
+    }
+    for (const message of readable.warnings) {
+      errors.push(
+        makeCheckError(
+          CHECK_ISSUE_CONTENT,
+          message,
+          'No action required if the source is public — the check could not reach it, so planning offline still works.',
+          'warning'
+        )
+      )
     }
   }
 
@@ -2363,7 +2467,9 @@ export async function collectTaskIssueErrors(
       commandReference: readCommandReference(),
       configReference: readConfigReference(),
       pinnedFileImporters: readPinnedFileImporters(body),
-      existsInTree: tokenExistsInTree()
+      existsInTree: tokenExistsInTree(),
+      trackedFiles: allTrackedFiles,
+      probeDocumentation: probeDocumentationUrl
     })
   )
 

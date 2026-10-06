@@ -18,6 +18,10 @@ import {
   checkIntroducedCommandsCovered,
   checkIntroducedConfigKeysCovered,
   checkPinnedFileImportersCovered,
+  checkNewTestFilesCoverShards,
+  checkNewLoopFilesCoverInvariantMap,
+  checkDocumentationReadable,
+  isNonPublicHost,
   type CommandReferenceFacts,
   type ConfigReferenceFacts,
   checkDocsWithinSurface,
@@ -3139,5 +3143,144 @@ describe('checkBoundaryClaimsNeedPremise (O4)', () => {
   it('leaves a malformed `## Premises` section to `checkIssuePremises` rather than reporting it as absent', () => {
     const r = checkBoundaryClaimsNeedPremise(withBoundary('the signal is already wired.', 'not a premise'))
     expect(r.status).toBe('pass')
+  })
+})
+
+describe('checkNewTestFilesCoverShards', () => {
+  const body = (inGlobs: string, pinned = 'apps/cli/tests/lib/brand-new.test.ts') =>
+    issueBody({
+      boundary: `In: the gate. Pinned files: \`${pinned}\`. Out: nothing.`,
+      objectives: ['O1. The gate refuses the body.'],
+      partLines: ['Part 1 (O1) — the gate refuses the body.'],
+      in: inGlobs,
+      out: 'apps/log-server'
+    })
+  const tracked = ['apps/cli/tests/lib/old.test.ts', 'apps/cli/tests/ci-shards/shard-1.txt']
+
+  it('refuses a new CLI test file whose Surface misses the shard directory, naming the glob', () => {
+    const result = checkNewTestFilesCoverShards(body('apps/cli/tests/lib'), tracked)
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`apps/cli/tests/lib/brand-new.test.ts`')
+    expect(result.errors[0]).toContain('Add `apps/cli/tests/ci-shards` to `in:`')
+  })
+
+  it('passes when the Surface reaches the shard directory', () => {
+    expect(checkNewTestFilesCoverShards(body('apps/cli/tests/lib, apps/cli/tests/ci-shards'), tracked).status).toBe(
+      'pass'
+    )
+  })
+
+  it('passes for an existing test file and for a non-CLI test file', () => {
+    expect(
+      checkNewTestFilesCoverShards(body('apps/cli/tests/lib', 'apps/cli/tests/lib/old.test.ts'), tracked).status
+    ).toBe('pass')
+    expect(
+      checkNewTestFilesCoverShards(body('packages/aeg-core/src', 'packages/aeg-core/src/new.test.ts'), tracked).status
+    ).toBe('pass')
+  })
+
+  it('is dormant when the tracked tree is unknown', () => {
+    expect(checkNewTestFilesCoverShards(body('apps/cli/tests/lib'), []).status).toBe('pass')
+  })
+})
+
+describe('checkNewLoopFilesCoverInvariantMap', () => {
+  const body = (inGlobs: string, pinned = 'apps/cli/tests/lib/dev-review-loop-new.test.ts') =>
+    issueBody({
+      boundary: `In: the loop. Pinned files: \`${pinned}\`. Out: nothing.`,
+      objectives: ['O1. The loop refuses the body.'],
+      partLines: ['Part 1 (O1) — the loop refuses the body.'],
+      in: inGlobs,
+      out: 'apps/log-server'
+    })
+  const tracked = ['apps/cli/src/lib/dev-review-loop/gate-reading.ts']
+
+  it('refuses a new loop test file whose Surface misses the fixture and spec, naming both globs', () => {
+    const result = checkNewLoopFilesCoverInvariantMap(body('apps/cli/tests/lib'), tracked)
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`apps/cli/tests/fixtures` and `apps/cli/specs`')
+  })
+
+  it('refuses a new loop module, and names only the glob still missing', () => {
+    const result = checkNewLoopFilesCoverInvariantMap(
+      body('apps/cli/src/lib, apps/cli/tests/fixtures', 'apps/cli/src/lib/dev-review-loop/fresh.ts'),
+      tracked
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('Add `apps/cli/specs` to `in:`')
+  })
+
+  it('passes when both are reachable, for an existing loop file, and for a non-loop file', () => {
+    expect(checkNewLoopFilesCoverInvariantMap(body('apps/cli/tests/fixtures, apps/cli/specs'), tracked).status).toBe(
+      'pass'
+    )
+    expect(
+      checkNewLoopFilesCoverInvariantMap(
+        body('apps/cli/src/lib', 'apps/cli/src/lib/dev-review-loop/gate-reading.ts'),
+        tracked
+      ).status
+    ).toBe('pass')
+    expect(
+      checkNewLoopFilesCoverInvariantMap(body('apps/cli/src/lib', 'apps/cli/src/lib/other.ts'), tracked).status
+    ).toBe('pass')
+  })
+})
+
+describe('checkDocumentationReadable', () => {
+  const body = (source: string) =>
+    ['## Documentation', '', `- ${source} — the mechanism (O1)`, '', '## Objectives', '', 'O1. The gate refuses.'].join(
+      '\n'
+    )
+
+  it('refuses an unreadable URL, naming it and pointing at an in-repository spec', () => {
+    const result = checkDocumentationReadable(body('https://example.test/doc'), () => ({
+      kind: 'unreadable',
+      detail: 'status 401'
+    }))
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`https://example.test/doc`')
+    expect(result.errors[0]).toContain('in-repository spec')
+  })
+
+  it('warns, and never refuses, when the fetch could not be decided', () => {
+    const result = checkDocumentationReadable(body('https://example.test/doc'), () => ({ kind: 'unknown' }))
+    expect(result.status).toBe('pass')
+    expect(result.warnings).toHaveLength(1)
+  })
+
+  it('passes a readable URL and an in-repository path without fetching the path', () => {
+    const seen: string[] = []
+    const probe = (url: string) => {
+      seen.push(url)
+      return { kind: 'readable' } as const
+    }
+    expect(checkDocumentationReadable(body('https://example.test/doc'), probe).status).toBe('pass')
+    expect(checkDocumentationReadable(body('apps/cli/specs/loop.md'), probe).status).toBe('pass')
+    expect(seen).toEqual(['https://example.test/doc'])
+  })
+})
+
+describe('isNonPublicHost', () => {
+  it('flags loopback, link-local, private-range and internal names', () => {
+    for (const h of [
+      'localhost',
+      'app.localhost',
+      'foo.internal',
+      '127.0.0.1',
+      '10.1.2.3',
+      '169.254.169.254',
+      '172.20.0.1',
+      '192.168.1.1',
+      '[::1]',
+      'fd00::1'
+    ]) {
+      expect(isNonPublicHost(h)).toBe(true)
+    }
+  })
+
+  it('passes public names and addresses', () => {
+    for (const h of ['example.com', 'code.claude.com', '93.184.216.34', '172.32.0.1', '8.8.8.8']) {
+      expect(isNonPublicHost(h)).toBe(false)
+    }
   })
 })

@@ -2891,6 +2891,160 @@ export function checkPinnedFileImportersCovered(body: string, importers: PinnedF
   }
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }
+/** The CI shard directory a new CLI test file must be listed in, and one file in it for the Surface-coverage test. */
+const CI_SHARD_DIR = 'apps/cli/tests/ci-shards'
+const CI_SHARD_PROBE = `${CI_SHARD_DIR}/shard-1.txt`
+
+/** The loop invariant map's fixture and spec, which the map's own architecture test requires every loop module and test file to be mapped in. */
+const LOOP_INVARIANT_FIXTURE = 'apps/cli/tests/fixtures/dev-review-architecture-invariants.json'
+const LOOP_INVARIANT_SPEC = 'apps/cli/specs/dev-review-invariants.md'
+
+/** A CLI test file — a `*.test.ts` under `apps/cli`, never under `node_modules` or `dist` (`isCliTestFile`'s own rule). */
+function isCliTestPath(path: string): boolean {
+  if (!path.startsWith('apps/cli/') || !path.endsWith('.test.ts')) return false
+  const segments = path.split('/')
+  return !segments.includes('node_modules') && !segments.includes('dist')
+}
+
+/** A standalone review-loop module or loop test file, located the way the invariant map's own test discovers them (by directory listing). */
+function isLoopSurfacePath(path: string): boolean {
+  if (!path.endsWith('.ts')) return false
+  if (path === 'apps/cli/src/commands/dev-review-loop.ts' || path === 'apps/cli/src/lib/dev-review-loop.ts') return true
+  if (path === 'apps/cli/tests/commands/dev-review-loop.test.ts') return true
+  const direct = (dir: string): boolean => path.startsWith(`${dir}/`) && !path.slice(dir.length + 1).includes('/')
+  if (direct('apps/cli/src/lib/dev-review-loop') || direct('packages/aeg-core/src/dev-review-loop')) return true
+  if (direct('apps/cli/tests/lib/dev-review-loop')) return true
+  return direct('apps/cli/tests/lib') && path.slice('apps/cli/tests/lib/'.length).startsWith('dev-review-loop')
+}
+
+/** The Boundary-pinned files that are not tracked yet, restricted to those `matches` selects. */
+function newPinnedFiles(body: string, tracked: string[], matches: (path: string) => boolean): string[] {
+  const trackedSet = new Set(tracked)
+  return boundaryPinnedFiles(body).filter((p) => matches(p) && !trackedSet.has(p))
+}
+
+/**
+ * **A new CLI test file requires the CI shard directory in the Surface.** The
+ * shard directory lists every CLI test file exactly once, so the Developer who
+ * adds a test file must add one line there; a Surface that excludes the
+ * directory forbids the only change that clears the push. The new file is read
+ * from the Boundary's pinned-file list against the tracked tree, never from
+ * prose. Dormant when the tracked tree could not be listed.
+ */
+export function checkNewTestFilesCoverShards(body: string, tracked: string[]): IssueSectionResult {
+  if (tracked.length === 0) return { status: 'pass', errors: [] }
+  const surface = parseIssueSurface(body)
+  if (!surface.ok) return { status: 'pass', errors: [] }
+  if (surface.value.in.some((g) => globCoversPath(g, CI_SHARD_PROBE))) return { status: 'pass', errors: [] }
+  const created = newPinnedFiles(body, tracked, isCliTestPath)
+  if (created.length === 0) return { status: 'pass', errors: [] }
+  return {
+    status: 'fail',
+    errors: [
+      `issue-validation Surface/CI shards: the Boundary pins ${created.map((f) => `\`${f}\``).join(', ')}, which does not exist yet — every CLI test file must be listed in a CI shard file, but no \`## Surface\` \`in:\` glob covers \`${CI_SHARD_DIR}\`. Add \`${CI_SHARD_DIR}\` to \`in:\`, or pin an existing test file instead.`
+    ]
+  }
+}
+
+/**
+ * **A new loop module or loop test file requires the loop invariant map in
+ * the Surface.** The map's architecture test refuses a loop module or test
+ * file that is neither mapped to an invariant nor excluded with a reason, in
+ * the same change that adds it — and that edit lands in the map's fixture and
+ * its spec. Same pinned-file and tracked-tree reading as the shard rule.
+ */
+export function checkNewLoopFilesCoverInvariantMap(body: string, tracked: string[]): IssueSectionResult {
+  if (tracked.length === 0) return { status: 'pass', errors: [] }
+  const surface = parseIssueSurface(body)
+  if (!surface.ok) return { status: 'pass', errors: [] }
+  const created = newPinnedFiles(body, tracked, isLoopSurfacePath)
+  if (created.length === 0) return { status: 'pass', errors: [] }
+  const missing = [LOOP_INVARIANT_FIXTURE, LOOP_INVARIANT_SPEC].filter(
+    (f) => !surface.value.in.some((g) => globCoversPath(g, f))
+  )
+  if (missing.length === 0) return { status: 'pass', errors: [] }
+  const globs = [...new Set(missing.map(directoryGlobFor))]
+  return {
+    status: 'fail',
+    errors: [
+      `issue-validation Surface/loop invariant map: the Boundary pins ${created.map((f) => `\`${f}\``).join(', ')}, a review-loop file that does not exist yet — the loop invariant map must map or exclude it in the same change, but no \`## Surface\` \`in:\` glob covers ${missing.map((f) => `\`${f}\``).join(' or ')}. Add ${globs.map((g) => `\`${g}\``).join(' and ')} to \`in:\`.`
+    ]
+  }
+}
+
+/**
+ * Is this URL host a loopback, link-local, private-range or otherwise
+ * non-public address? A Documentation source is public documentation; probing
+ * an internal address from the Planner's machine is never the intent, so the
+ * probe refuses such a host instead of fetching it. A bare IPv4 literal is
+ * judged by its range, an IPv6 literal by its prefix, a name by the
+ * loopback/internal suffixes.
+ */
+export function isNonPublicHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal')) return true
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h)
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])]
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 100 && b >= 64 && b <= 127)
+    )
+  }
+  if (h.includes(':')) return h === '::1' || h === '::' || /^(fc|fd|fe[89ab])/.test(h) || h.startsWith('::ffff:')
+  return false
+}
+
+/** What an unauthenticated fetch of a Documentation URL came to. */
+export type DocumentationProbe = { kind: 'readable' } | { kind: 'unreadable'; detail: string } | { kind: 'unknown' }
+
+const DOCUMENTATION_URL_RE = /https?:\/\/[^\s<>()`'"\]]+/g
+
+/** Every URL a Documentation source names, trailing punctuation dropped, deduplicated. */
+export function documentationUrls(body: string): string[] {
+  const documentation = parseIssueDocumentation(body)
+  if (!documentation.ok || documentation.value.kind === 'none') return []
+  const urls = new Set<string>()
+  for (const { source } of documentation.value.sources) {
+    for (const m of source.matchAll(DOCUMENTATION_URL_RE)) urls.add(m[0].replace(/[.,;:!?]+$/, ''))
+  }
+  return [...urls]
+}
+
+/**
+ * **A Documentation URL is publicly readable on its own host.** A sandboxed
+ * Developer fetches the source unauthenticated; a page behind a login — or one
+ * that answers from another host — reads as read to the read check and is
+ * empty to the Developer. `probe` is injected (this module makes no request);
+ * it answers `unknown` for a timeout or an offline machine, which is a warning
+ * and never a refusal so planning offline still works. No host is special-cased.
+ */
+export function checkDocumentationReadable(
+  body: string,
+  probe: (url: string) => DocumentationProbe
+): IssueSectionResult & { warnings: string[] } {
+  const errors: string[] = []
+  const warnings: string[] = []
+  for (const url of documentationUrls(body)) {
+    const result = probe(url)
+    if (result.kind === 'unreadable') {
+      errors.push(
+        `issue-validation Documentation/readable: \`${url}\` is not publicly readable (${result.detail}) — an unauthenticated fetch must answer with a success status on its own host. Put that knowledge in an in-repository spec and cite the spec instead.`
+      )
+    } else if (result.kind === 'unknown') {
+      warnings.push(
+        `issue-validation Documentation/readable: \`${url}\` could not be reached in time, so its public readability was not checked. Confirm by hand that it answers an unauthenticated fetch, or cite an in-repository spec instead.`
+      )
+    }
+  }
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors, warnings }
+}
+
 // ---------------------------------------------------------------------------
 // O3 — an edit that changes
 // `## Objectives`, `## Surface`, or `## Parts` on a task Issue whose brief is
