@@ -7,11 +7,14 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   classifyTaskFolder,
+  classifyTaskFolderAsync,
+  fetchIssueState,
+  fetchIssueStateAsync,
   IssueNotFoundError,
   parseWorktreeList,
   removeWorktreeAsync,
@@ -766,5 +769,88 @@ describe('worktree removal against a real temporary repository', () => {
     expect(await worktreeHasUncommittedAsync(wtPath)).toBe(true)
     await expect(removeWorktreeAsync(main, wtPath)).rejects.toThrow()
     expect(existsSync(wtPath)).toBe(true)
+  })
+})
+
+describe("the forge's not-found answer for an Issue — the one read failure that makes a folder an orphan", () => {
+  const savedPath = process.env.PATH
+
+  afterEach(() => {
+    process.env.PATH = savedPath
+  })
+
+  /** Puts a `gh` first on PATH that prints `stderr` and exits 1, so the real `fetchIssueState*` run unmodified. */
+  function fakeGhFailingWith(stderr: string): void {
+    const bin = tempDir('vinaya-sweep-fake-gh-')
+    const gh = join(bin, 'gh')
+    writeFileSync(gh, `#!/bin/sh\necho '${stderr}' >&2\nexit 1\n`)
+    chmodSync(gh, 0o755)
+    process.env.PATH = `${bin}:${savedPath}`
+  }
+
+  const NOT_FOUND = 'GraphQL: Could not resolve to an Issue with the number of 99999. (repository.issue)'
+
+  it('fetchIssueState throws IssueNotFoundError for the not-found stderr', () => {
+    fakeGhFailingWith(NOT_FOUND)
+    expect(() => fetchIssueState(99999)).toThrow(IssueNotFoundError)
+  })
+
+  it('fetchIssueStateAsync throws IssueNotFoundError for the not-found stderr', async () => {
+    fakeGhFailingWith(NOT_FOUND)
+    await expect(fetchIssueStateAsync(99999)).rejects.toBeInstanceOf(IssueNotFoundError)
+  })
+
+  it('any other failure (network, auth) is not a not-found — it stays a plain error', async () => {
+    for (const stderr of ['error connecting to api.github.com', 'HTTP 401: Bad credentials', 'HTTP 502: Bad Gateway']) {
+      fakeGhFailingWith(stderr)
+      let syncErr: unknown
+      try {
+        fetchIssueState(1)
+      } catch (err) {
+        syncErr = err
+      }
+      expect(syncErr).toBeInstanceOf(Error)
+      expect(syncErr).not.toBeInstanceOf(IssueNotFoundError)
+      const asyncErr = await fetchIssueStateAsync(1).catch((err: unknown) => err)
+      expect(asyncErr).toBeInstanceOf(Error)
+      expect(asyncErr).not.toBeInstanceOf(IssueNotFoundError)
+    }
+  })
+
+  function asyncClassifyDeps(root: string, fetchIssueStateImpl: (issue: number) => Promise<'OPEN' | 'CLOSED'>) {
+    return {
+      runtimeDir: () => root,
+      isDriverPidAlive: () => false,
+      readDriverLockForScope: () => null,
+      readPauseStateForScope: () => null,
+      fetchIssueState: fetchIssueStateImpl,
+      developerBranchFor: async (issue: number) => `task/issue-${issue}`,
+      fetchPrForBranch: async () => null,
+      fetchPrBody: async () => '',
+      taskFromPrBody: () => null,
+      rm: () => {}
+    } as unknown as Parameters<typeof classifyTaskFolderAsync>[2]
+  }
+
+  it('classifyTaskFolderAsync: a nonexistent Issue is finished; any other read failure stays unknown', async () => {
+    const root = tempDir('vinaya-sweep-async-orphan-')
+    const orphan = await classifyTaskFolderAsync(
+      9001,
+      root,
+      asyncClassifyDeps(root, async (issue) => {
+        throw new IssueNotFoundError(issue)
+      })
+    )
+    expect(orphan.kind).toBe('finished')
+    expect(orphan.reason).toContain('does not exist')
+
+    const unreadable = await classifyTaskFolderAsync(
+      9001,
+      root,
+      asyncClassifyDeps(root, async () => {
+        throw new Error('gh: rate limited')
+      })
+    )
+    expect(unreadable.kind).toBe('unknown')
   })
 })

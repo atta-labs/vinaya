@@ -233,7 +233,9 @@ function resolveIssueForScope(scope: RunScope, deps: TaskSweepDeps): { issue: nu
  * `finished` (Issue closed, or its pull request merged/closed) versus
  * `open`/`paused`; any read failure, or a scope with nothing to check
  * against the forge at all, is `unknown` — kept, and said so, never
- * removed (O1: "removes nothing when the forge cannot be read").
+ * removed (O1: "removes nothing when the forge cannot be read"). The one
+ * exception is the forge's own not-found answer for the Issue
+ * (`IssueNotFoundError`): that folder is an orphan, classified `finished`.
  */
 export function classifyTaskFolder(
   scope: RunScope,

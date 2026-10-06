@@ -44,9 +44,11 @@
  * override, or by mutating and restoring `process.env` inside its own
  * `it(...)`, both of which run AFTER this preload and are untouched by it.
  */
-import { mkdtempSync } from 'node:fs'
+import { afterAll } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { exemptPrefixes, PROCESS_START_MS, realRuntimeDir, touchedSince } from './real-runtime-guard-core'
 
 for (const key of ['GITHUB_ACTIONS', 'VINAYA_HOST', 'VINAYA_ROLE', 'VINAYA_ATTEMPT', 'VINAYA_PARENT_EVENT']) {
   delete process.env[key]
@@ -66,6 +68,23 @@ for (const key of ['GITHUB_ACTIONS', 'VINAYA_HOST', 'VINAYA_ROLE', 'VINAYA_ATTEM
  * still fails a test that reaches the real directory some other way, such as
  * a spawned child with `VINAYA_*` stripped.
  */
+let privateRuntimeDir: string | null = null
 if (!process.env.VINAYA_RUNTIME_DIR) {
-  process.env.VINAYA_RUNTIME_DIR = mkdtempSync(join(tmpdir(), 'vinaya-test-runtime-'))
+  privateRuntimeDir = mkdtempSync(join(tmpdir(), 'vinaya-test-runtime-'))
+  process.env.VINAYA_RUNTIME_DIR = privateRuntimeDir
 }
+
+/**
+ * Once, after every test file this process ran: remove the private runtime
+ * directory above, and fail the run if any test wrote into the REAL runtime
+ * directory (`real-runtime-guard-core.ts`). A preload `afterAll` is the one
+ * hook every test process loads, so each CI shard and each local run is
+ * covered, whichever files it was given.
+ */
+afterAll(() => {
+  if (privateRuntimeDir) rmSync(privateRuntimeDir, { recursive: true, force: true })
+  const leaked = touchedSince(realRuntimeDir(), PROCESS_START_MS, exemptPrefixes(process.env))
+  if (leaked.length > 0) {
+    throw new Error(`tests wrote into the real runtime directory: ${leaked.join(' ')}`)
+  }
+})
