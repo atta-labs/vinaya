@@ -154,6 +154,27 @@ describe('requestEffect', () => {
     ).toThrow(ProtectedPathError)
   })
 
+  it('accepts a protected path the task Surface covers, and still refuses one it does not', () => {
+    const covers = (path: string) => path === 'aeg-root/roles/developer.md'
+    const request = (path: string, key: string) => ({
+      operation: 'branch-push',
+      target: scopeTarget(2, 'task/worker-isolation-v1/2'),
+      inputVersion: 1,
+      key,
+      payload: 'x',
+      touchedPaths: [path],
+      surfaceCoversPath: covers,
+      poster: () => 'https://example.com',
+      reconcile: neverReconcile
+    })
+    expect(requestEffect(deps, worker, request('aeg-root/roles/developer.md', 'push-covered'))).toBe(
+      'https://example.com'
+    )
+    expect(() => requestEffect(deps, worker, request('.github/workflows/ci.yml', 'push-uncovered'))).toThrow(
+      /\.github\/workflows\/ci\.yml.*Planner must add the path to the task's Surface/
+    )
+  })
+
   it.each([
     ['foo/../.github/workflows/ci.yml', 'a `..` segment that resolves back onto a protected prefix'],
     ['./.github/x', 'a leading `./` that defeats a raw `startsWith` compare'],
