@@ -65,6 +65,14 @@
  * unselected. `repo-scanner-tests.ts` classifies these from their own source and
  * the selector gives each a `scan:` edge over the directory it actually walks.
  *
+ * That edge selects on ANY change under the roots, which on this repository is
+ * almost every push, so the depth-one pre-push path withholds it. What that path
+ * keeps instead is each scanner's declared trigger (`SCANNER_DECLARATIONS`):
+ * the kind of change the test judges — a file added, renamed or removed under
+ * its roots, or a process started in the touched lines of a file there — and
+ * the test is selected for that kind of change only. An ordinary edit selects
+ * none of them.
+ *
  * ## Tests that spawn the built CLI as a fresh subprocess
  *
  * The same gap, one class further removed: a test that runs `bun
@@ -119,7 +127,13 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { globToRegex } from '@attalabs/aeg-core'
 import { cliSpawnEdgeOf } from './cli-spawn-tests.js'
-import { scannedRootsOf } from './repo-scanner-tests.js'
+import {
+  SCANNER_DECLARATIONS,
+  type ScannerDeclaration,
+  scannedRootsOf,
+  startsProcessIn,
+  underDeclaredRoot
+} from './repo-scanner-tests.js'
 import {
   ALL_PREFIX,
   buildCompilerGraph,
@@ -921,6 +935,29 @@ export type SelectionOptions = {
    */
   addedOrRenamed?: readonly string[]
   /**
+   * Repo-root-relative or absolute paths of files removed in this diff — a
+   * deletion, or the old path of a rename (`removedFilesSinceRemoteBase`).
+   * Read only by a `tree-shape` scanner declaration, which judges the shape
+   * of a folder and so breaks on a removal as it does on an addition.
+   */
+  removed?: readonly string[]
+  /**
+   * Per changed file (absolute or repo-root-relative), the 1-based, inclusive
+   * line ranges the diff touched on its new side. Read only by a
+   * `process-start` scanner declaration. A changed file absent from this map
+   * counts as touched everywhere — the wider, safe answer.
+   */
+  changedRanges?: ReadonlyMap<string, readonly { start: number; end: number }[]>
+  /**
+   * The folder-scanning tests and the kind of change each judges
+   * (`repo-scanner-tests.ts`'s `SCANNER_DECLARATIONS`, the default). A test
+   * here is selected when the diff is its kind of change, whatever
+   * `repoTreeScanners` says — that option governs the scan edge, which
+   * selects on any change under the roots; this is the narrower rule the
+   * pre-push hook keeps. Overridable so a test can declare a fixture's own.
+   */
+  scannerDeclarations?: readonly ScannerDeclaration[]
+  /**
    * Per changed file (absolute or repo-root-relative), the exported names this
    * diff actually touched — or `'all'` when the diff touched something that
    * cannot be attributed to one declaration, which makes the whole file
@@ -1232,7 +1269,8 @@ export function selectAffectedTestFiles(
   // change, the exact unbounded-by-rule shape O1 exists to close. CI's own
   // full shards (`depth` left at its 'transitive' default there) still run
   // every one of these regardless, so the never-miss guarantee these two
-  // categories exist for stays intact — only pre-push narrows.
+  // categories exist for stays intact — only pre-push narrows. A scanner's
+  // declared trigger (below) still selects it here for its own kind of change.
   const depthOneDefault = options.depth === 'one' ? 'ignore' : 'select'
   const repoTreeScanners = options.repoTreeScanners ?? depthOneDefault
   const cliSpawnDetection = options.cliSpawnDetection ?? depthOneDefault
@@ -1286,6 +1324,33 @@ export function selectAffectedTestFiles(
     }
   }
 
+  // Folder-scanning tests whose declared kind of change this diff is. Read
+  // from the declarations, not from the scan edges above, so the pre-push
+  // hook — which withholds those edges because they fire on any change under
+  // a scanner's roots — still runs a scanner on the one change it judges.
+  const triggeredScanners = new Set<string>()
+  const relative = (f: string): string => (isAbsolute(f) ? f.slice(repoRoot.length + 1) : f)
+  const reshaped = [...addedOrRenamed, ...(options.removed ?? [])].map(relative)
+  const changedRanges = new Map(
+    [...(options.changedRanges ?? new Map())].map(([f, ranges]) => [isAbsolute(f) ? f : join(repoRoot, f), ranges])
+  )
+  for (const declaration of options.scannerDeclarations ?? SCANNER_DECLARATIONS) {
+    const under = (f: string) => declaration.roots.some((root) => underDeclaredRoot(f, root))
+    const triggered =
+      declaration.trigger === 'tree-shape'
+        ? reshaped.some(under)
+        : declaration.trigger === 'process-start'
+          ? [...absChanged].some((abs) => {
+              if (!/\.tsx?$/.test(abs) || !under(relative(abs))) return false
+              // Without the compiler the call cannot be read, so any change there counts.
+              if (!typescript) return true
+              const ranges = addedOrRenamed.has(abs) ? undefined : changedRanges.get(abs)
+              return startsProcessIn(typescript, abs, readSource(abs), ranges)
+            })
+          : false
+    if (triggered) triggeredScanners.add(join(repoRoot, declaration.test))
+  }
+
   const anythingChanged = absChanged.size > 0 || changedPackageNames.size > 0
   const selected: string[] = []
   let totalTestFiles = 0
@@ -1303,6 +1368,7 @@ export function selectAffectedTestFiles(
       const forced =
         alwaysRunRegexes.some((re) => re.test(test.slice(repoRoot.length + 1))) ||
         addedOrRenamed.has(test) ||
+        triggeredScanners.has(test) ||
         (rootConfigChanged && pkg === cliPackage)
       if (forced || (anythingChanged && reaches(`${ALL_PREFIX}${test}`, edges, changeFacts, maxDepth))) {
         selected.push(test)

@@ -67,8 +67,7 @@ export function resolveRemoteBase(repoRoot: string): string {
 }
 
 /** Repo-root-relative paths of every file changed between `resolveRemoteBase()` and `HEAD` — added, copied, modified, renamed; never a deleted file, which has nothing left to lint or test. */
-export function changedFilesSinceRemoteBase(repoRoot: string): string[] {
-  const base = resolveRemoteBase(repoRoot)
+export function changedFilesSinceRemoteBase(repoRoot: string, base = resolveRemoteBase(repoRoot)): string[] {
   const out = git(repoRoot, ['diff', '--name-only', '--diff-filter=ACMR', `${base}...HEAD`])
   return out
     .split('\n')
@@ -77,8 +76,8 @@ export function changedFilesSinceRemoteBase(repoRoot: string): string[] {
 }
 
 /** Absolute paths, for callers (the test selector) that walk the filesystem rather than shelling back out to git. */
-export function changedFilesSinceRemoteBaseAbsolute(repoRoot: string): string[] {
-  return changedFilesSinceRemoteBase(repoRoot).map((f) => join(repoRoot, f))
+export function changedFilesSinceRemoteBaseAbsolute(repoRoot: string, base = resolveRemoteBase(repoRoot)): string[] {
+  return changedFilesSinceRemoteBase(repoRoot, base).map((f) => join(repoRoot, f))
 }
 
 /**
@@ -88,8 +87,7 @@ export function changedFilesSinceRemoteBaseAbsolute(repoRoot: string): string[] 
  * import-graph reachability `selectAffectedTestFiles` otherwise relies on
  * can never select it on its own first push.
  */
-export function addedOrRenamedFilesSinceRemoteBase(repoRoot: string): string[] {
-  const base = resolveRemoteBase(repoRoot)
+export function addedOrRenamedFilesSinceRemoteBase(repoRoot: string, base = resolveRemoteBase(repoRoot)): string[] {
   const out = git(repoRoot, ['diff', '--name-only', '--diff-filter=AR', `${base}...HEAD`])
   return out
     .split('\n')
@@ -98,8 +96,32 @@ export function addedOrRenamedFilesSinceRemoteBase(repoRoot: string): string[] {
 }
 
 /** Absolute paths — the O1 counterpart to `changedFilesSinceRemoteBaseAbsolute`. */
-export function addedOrRenamedFilesSinceRemoteBaseAbsolute(repoRoot: string): string[] {
-  return addedOrRenamedFilesSinceRemoteBase(repoRoot).map((f) => join(repoRoot, f))
+export function addedOrRenamedFilesSinceRemoteBaseAbsolute(
+  repoRoot: string,
+  base = resolveRemoteBase(repoRoot)
+): string[] {
+  return addedOrRenamedFilesSinceRemoteBase(repoRoot, base).map((f) => join(repoRoot, f))
+}
+
+/**
+ * Repo-root-relative paths of every file REMOVED since the remote base: a
+ * deleted file, and the old path a rename left behind. A test that judges the
+ * shape of a folder — every file in it listed somewhere — breaks on a removal
+ * exactly as it does on an addition, so the selector needs both sides.
+ */
+export function removedFilesSinceRemoteBase(repoRoot: string, base = resolveRemoteBase(repoRoot)): string[] {
+  const out = git(repoRoot, ['diff', '--name-status', '--diff-filter=DR', `${base}...HEAD`])
+  return out
+    .split('\n')
+    .map((line) => line.split('\t'))
+    .filter((fields) => fields.length >= 2)
+    .map((fields) => (fields[1] as string).trim())
+    .filter(Boolean)
+}
+
+/** Absolute paths — the removal counterpart to `addedOrRenamedFilesSinceRemoteBaseAbsolute`. */
+export function removedFilesSinceRemoteBaseAbsolute(repoRoot: string, base = resolveRemoteBase(repoRoot)): string[] {
+  return removedFilesSinceRemoteBase(repoRoot, base).map((f) => join(repoRoot, f))
 }
 
 /**
@@ -113,11 +135,10 @@ export function addedOrRenamedFilesSinceRemoteBaseAbsolute(repoRoot: string): st
  * whose old-side blob does not exist (added in this diff) reports `before` as
  * `null`, which the name attribution treats as "no old side", not as an error.
  */
-export function changedFileDiffsSinceRemoteBase(repoRoot: string): FileDiff[] {
-  const base = resolveRemoteBase(repoRoot)
+export function changedFileDiffsSinceRemoteBase(repoRoot: string, base = resolveRemoteBase(repoRoot)): FileDiff[] {
   const mergeBase = git(repoRoot, ['merge-base', base, 'HEAD']) || base
   const out: FileDiff[] = []
-  for (const relative of changedFilesSinceRemoteBase(repoRoot)) {
+  for (const relative of changedFilesSinceRemoteBase(repoRoot, base)) {
     const patch = git(repoRoot, ['diff', '-U0', `${mergeBase}..HEAD`, '--', relative])
     const { beforeRanges, afterRanges } = parseHunkRanges(patch)
     out.push({
