@@ -28,6 +28,7 @@ import {
 } from '../dev-review-loop/developer-publication.js'
 import type { DevPullRequestView, DevToolRefusal, DevToolResult } from './dev-tools-server.js'
 import type { DevToolContext } from './dev-tools-server.js'
+import type { FetchDocumentationInput, FetchDocumentationResult } from './fetch-documentation.js'
 
 /** A validation verdict for a PR body — the driver's own PR-body gate, injected so the loop supplies the real one. */
 export type BodyValidation = { ok: true } | { ok: false; reason: string }
@@ -54,6 +55,8 @@ export type DeveloperDevToolDeps = {
   readPullRequest: () => Promise<DevToolResult<DevPullRequestView>>
   /** Run `vinaya check --all` for the current head. */
   runChecks: () => Promise<DevToolResult<{ passed: boolean; output: string }>>
+  /** Fetch one public https documentation page and record the read (`createFetchDocumentationTool`, bound to this task's receipts file). Absent, the tool refuses as unavailable. */
+  fetchDocumentation?: (input: FetchDocumentationInput) => Promise<DevToolResult<FetchDocumentationResult>>
   /** Told the outcome of every publication attempt (`publish_changes`, `open_pull_request`, `update_pull_request_body`) — a refusal from any gate or injected closure, or a landed attempt — so the loop can tell a turn whose last attempt was refused from one that never tried. */
   onPublicationAttempt?: (result: DevToolResult<unknown>) => void
 }
@@ -134,6 +137,19 @@ export function createDeveloperDevToolContext(deps: DeveloperDevToolDeps): DevTo
       }),
     refreshEvidence: () => guard('refresh_evidence', deps.refreshEvidence),
     readPullRequest: () => guard('read_pull_request', deps.readPullRequest),
-    runChecks: () => guard('run_checks', deps.runChecks)
+    runChecks: () => guard('run_checks', deps.runChecks),
+    fetchDocumentation: (input) => {
+      const fetchDocumentation = deps.fetchDocumentation
+      if (!fetchDocumentation) {
+        return Promise.resolve(
+          refuse<FetchDocumentationResult>(
+            'fetch-documentation-unavailable',
+            'this driver serves no documentation fetch',
+            'Read the source another way and record it in the PR body.'
+          )
+        )
+      }
+      return guard('fetch_documentation', () => fetchDocumentation(input))
+    }
   }
 }

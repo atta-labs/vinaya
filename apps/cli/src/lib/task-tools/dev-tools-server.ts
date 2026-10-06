@@ -14,13 +14,16 @@
  * (`dev-tools-bridge.ts`) as the agent's MCP `command`. The bridge — the only
  * part that runs inside the sandbox — relays bytes and holds nothing.
  *
- * The six tools are the Developer's ENTIRE forge surface in the review loop:
- * `publish_changes` (commit the worktree under a header and push the task
+ * Six of the seven tools are the Developer's ENTIRE forge surface in the
+ * review loop: `publish_changes` (commit the worktree under a header and push the task
  * branch), `open_pull_request`, `update_pull_request_body`, `refresh_evidence`
  * (regenerate the PR body's Evidence block for the current head),
  * `read_pull_request` (state, checks, reviews, body, and each failed check's
  * sanitized job-log tail) and `run_checks` (run
- * `vinaya check --all` for the current head). Each is backed by a driver-side
+ * `vinaya check --all` for the current head). The seventh,
+ * `fetch_documentation`, reads one public https documentation page from the
+ * driver, outside the sandbox, and records the read (`fetch-documentation.ts`,
+ * which owns its contract, handler and receipt). Each is backed by a driver-side
  * callback on `DevToolContext`; the gates (pre-push hook, protected-path guard,
  * publication preconditions, PR-body validation) live in those callbacks, so
  * this module stays a thin validate-and-dispatch layer the harness can drive
@@ -35,6 +38,15 @@
 import { createMcpServerCore, MCP_PROTOCOL_VERSION, type McpServerCore } from './mcp-protocol.js'
 import { DEV_TOOLS_MCP_SERVER_NAME } from './dev-tools-names.js'
 import type { FailedCheckLog } from './pr-facts.js'
+import {
+  FETCH_DOCUMENTATION_DESCRIPTION,
+  FETCH_DOCUMENTATION_INPUT_SCHEMA,
+  FETCH_DOCUMENTATION_OUTPUT_SCHEMA,
+  FETCH_DOCUMENTATION_TOOL,
+  type FetchDocumentationInput,
+  type FetchDocumentationResult,
+  parseFetchDocumentationInput
+} from './fetch-documentation.js'
 
 export { DEV_TOOLS_MCP_SERVER_NAME }
 
@@ -47,6 +59,7 @@ export const UPDATE_PULL_REQUEST_BODY_TOOL = 'update_pull_request_body'
 export const REFRESH_EVIDENCE_TOOL = 'refresh_evidence'
 export const READ_PULL_REQUEST_TOOL = 'read_pull_request'
 export const RUN_CHECKS_TOOL = 'run_checks'
+export { FETCH_DOCUMENTATION_TOOL }
 
 export const DEV_TOOL_NAMES = [
   PUBLISH_CHANGES_TOOL,
@@ -54,7 +67,8 @@ export const DEV_TOOL_NAMES = [
   UPDATE_PULL_REQUEST_BODY_TOOL,
   REFRESH_EVIDENCE_TOOL,
   READ_PULL_REQUEST_TOOL,
-  RUN_CHECKS_TOOL
+  RUN_CHECKS_TOOL,
+  FETCH_DOCUMENTATION_TOOL
 ] as const
 
 export type DevToolName = (typeof DEV_TOOL_NAMES)[number]
@@ -114,6 +128,8 @@ export type DevToolContext = {
   readPullRequest: () => Promise<DevToolResult<DevPullRequestView>>
   /** Run `vinaya check --all` for the current head and return the result. */
   runChecks: () => Promise<DevToolResult<{ passed: boolean; output: string }>>
+  /** Fetch one public https documentation page from the driver and record the read when it counts (`fetch-documentation.ts`). */
+  fetchDocumentation: (input: FetchDocumentationInput) => Promise<DevToolResult<FetchDocumentationResult>>
 }
 
 const EMPTY_OBJECT_SCHEMA = { type: 'object', properties: {}, additionalProperties: false } as const
@@ -122,9 +138,10 @@ type DevToolDef = {
   name: DevToolName
   description: string
   inputSchema: Record<string, unknown>
+  outputSchema?: Record<string, unknown>
 }
 
-/** The six tool definitions — the `tools/list` catalog, one source for the live proof and the registration test. */
+/** The seven tool definitions — the `tools/list` catalog, one source for the live proof and the registration test. */
 export const DEV_TOOL_CATALOG: readonly DevToolDef[] = [
   {
     name: PUBLISH_CHANGES_TOOL,
@@ -175,6 +192,12 @@ export const DEV_TOOL_CATALOG: readonly DevToolDef[] = [
     name: RUN_CHECKS_TOOL,
     description: 'Run `vinaya check --all` for the current head and return the result.',
     inputSchema: EMPTY_OBJECT_SCHEMA
+  },
+  {
+    name: FETCH_DOCUMENTATION_TOOL,
+    description: FETCH_DOCUMENTATION_DESCRIPTION,
+    inputSchema: FETCH_DOCUMENTATION_INPUT_SCHEMA,
+    outputSchema: FETCH_DOCUMENTATION_OUTPUT_SCHEMA
   }
 ]
 
@@ -230,6 +253,11 @@ export async function dispatchDevTool(
       return context.readPullRequest()
     case RUN_CHECKS_TOOL:
       return context.runChecks()
+    case FETCH_DOCUMENTATION_TOOL: {
+      const parsed = parseFetchDocumentationInput(args)
+      if (!parsed.ok) return parsed
+      return context.fetchDocumentation(parsed.input)
+    }
     default:
       return refusal(
         'unknown-tool',

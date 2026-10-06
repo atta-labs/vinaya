@@ -231,6 +231,11 @@ import { createDeveloperDevToolContext, type DeveloperDevToolDeps } from './task
 import type { DevPullRequestView, DevToolContext } from './task-tools/dev-tools-server.js'
 import { type FailedCheckLog, readFailedCheckLogs, readJobLogTail } from './task-tools/pr-facts.js'
 import { startDevToolsHost } from './task-tools/dev-tools-host.js'
+import {
+  createFetchDocumentationTool,
+  documentationReceiptsPath,
+  type FetchDocumentationDeps
+} from './task-tools/fetch-documentation.js'
 import { ownVersion } from './artifacts.js'
 import {
   type BridgeInvocation,
@@ -733,6 +738,8 @@ export type LoopDeps = {
     socketPath: string
     context: DevToolContext
   }) => Promise<{ bridge: BridgeInvocation; close: () => Promise<void> }>
+  /** The `fetch_documentation` tool's name resolution and transport; absent, the real resolver and pinned TLS connection. Injected so a test fakes the network. */
+  fetchDocumentationDeps?: FetchDocumentationDeps
   /** O2/O3: replace the open PR's body — the `update_pull_request_body` tool's forge side effect (`gh pr edit`). Injected so the harness fakes it. */
   updatePrBody: (input: {
     prNumber: number
@@ -3153,10 +3160,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // an unreadable config never fails this role's WHOLE check open.
       const vinayaConfigPath = configPath()
       const entries = protectedPathsForTurn({ runtimeDir: root, task, round: roundNum, role, vinayaConfigPath })
-      // The control store is the one entry the driver's own tools write
-      // during a turn; `driverToolCall` (wrapped around every dev-tools call,
-      // `attributeDriverToolCalls`) re-baselines it after each call returns.
-      turnConfinementByRole.set(role, startTurnWriteAttribution(entries, [taskControlDir(root, task)]))
+      // The control store and the documentation receipts file are the
+      // entries the driver's own tools write during a turn; `driverToolCall`
+      // (wrapped around every dev-tools call that writes,
+      // `attributeDriverToolCalls`) re-baselines them after each call returns.
+      turnConfinementByRole.set(
+        role,
+        startTurnWriteAttribution(entries, [taskControlDir(root, task), documentationReceiptsPathForTask()])
+      )
     }
 
     /**
@@ -3356,7 +3367,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         dispatchAgent
       )
       // O2: start the driver-run dev-tools MCP host for THIS turn, on a stable
-      // per-task socket, serving the gate-backed context the six tools answer.
+      // per-task socket, serving the gate-backed context the seven tools answer.
       // It runs OUTSIDE the agent's sandbox, in this driver process; the agent
       // reaches it only through the bridge passed below, the one part that runs
       // inside the sandbox. Closed in the `finally` after the turn.
@@ -3578,7 +3589,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
     /**
      * O2/O3: the gate-backed `DevToolContext` this turn's driver-run server
-     * answers — the six tools bound to the loop's own publication machinery,
+     * answers — the seven tools bound to the loop's own publication machinery,
      * each behind the gates publishing already has (`createDeveloperDevToolContext`).
      * Built fresh per dispatch so every read is current; the gates
      * (commit-header, publication-preconditions, PR-body, protected-path,
@@ -3592,7 +3603,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * body, refresh evidence) run inside the Developer's
      * `TurnWriteAttribution.driverToolCall`, so those records are attributed
      * to the driver, while a control-store write the worker made between tool
-     * calls is still reported by `checkTurnConfinement`. `readPullRequest` and
+     * calls is still reported by `checkTurnConfinement`. `fetchDocumentation`
+     * is wrapped too: it appends a read receipt, a protected path the driver
+     * writes, so the receipt is the driver's. `readPullRequest` and
      * `runChecks` write no control record and stay unwrapped: wrapping a call
      * widens the window in which a concurrent worker write is attributed to
      * the driver, and `runChecks` can run long.
@@ -3608,8 +3621,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         updatePullRequestBody: (body) => attributed(() => context.updatePullRequestBody(body)),
         refreshEvidence: () => attributed(() => context.refreshEvidence()),
         readPullRequest: () => context.readPullRequest(),
-        runChecks: () => context.runChecks()
+        runChecks: () => context.runChecks(),
+        fetchDocumentation: (input) => attributed(() => context.fetchDocumentation(input))
       }
+    }
+
+    /** This task's documentation receipts file — written only by the driver's `fetch_documentation` tool, read by both agents' Stop hooks. */
+    function documentationReceiptsPathForTask(): string {
+      return documentationReceiptsPath(runPath(root, task, { area: 'hooks' }))
     }
 
     function buildDeveloperDevToolContext(roundNum: number): DevToolContext {
@@ -3874,6 +3893,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         },
         readPullRequest: async () => ({ ok: true, result: await d.readPrView({ branch, repo }) }),
         runChecks: async () => ({ ok: true, result: await d.runWorktreeChecks(worktree) }),
+        fetchDocumentation: createFetchDocumentationTool({
+          receiptsPath: documentationReceiptsPathForTask(),
+          ...(d.fetchDocumentationDeps ? { deps: d.fetchDocumentationDeps } : {})
+        }),
         onPublicationAttempt: (result) => {
           turnPublicationRefusal = result.ok ? null : `${result.error.check}: ${result.error.output}`
         }
