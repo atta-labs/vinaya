@@ -2981,6 +2981,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      */
     let lastPushRefusal: string | null = null
     /**
+     * The refusal a driver publication tool returned on the turn's LAST
+     * publication attempt (`check: output`), or `null` when the turn made no
+     * attempt or its last one landed. Reset at every dispatch; fed by every
+     * refusal source through the one callback — a Surface or header refusal
+     * and a pre-push hook refusal alike — and read by the head-change wait to
+     * skip a wait for a push that cannot come.
+     */
+    let turnPublicationRefusal: string | null = null
+    /**
      * O1/O2: the protected-path hashes taken right before a dispatch
      * (`snapshotTurnConfinement`, below) — compared again once that SAME
      * dispatch returns, before its own publication/trust decision ever runs.
@@ -3207,6 +3216,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // fresh round-1 turn whose worktree the Developer's own Step 0 is still
       // creating records `null`, and the head check is then inactive.
       turnPreHead = devWorktreeDir ? d.readWorktreeHead(devWorktreeDir) : null
+      turnPublicationRefusal = null
       const priorBase = publicationExpectedBase
       await resolvePublicationBase(turnPreHead)
       if (publicationExpectedBase !== priorBase) persistCurrentLoopState(currentPhase ?? 'dispatch_developer')
@@ -3746,7 +3756,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           return { ok: true, result }
         },
         readPullRequest: async () => ({ ok: true, result: await d.readPrView({ branch, repo }) }),
-        runChecks: async () => ({ ok: true, result: await d.runWorktreeChecks(worktree) })
+        runChecks: async () => ({ ok: true, result: await d.runWorktreeChecks(worktree) }),
+        onPublicationAttempt: (result) => {
+          turnPublicationRefusal = result.ok ? null : `${result.error.check}: ${result.error.output}`
+        }
       }
       return createDeveloperDevToolContext(deps)
     }
@@ -5545,6 +5558,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             await dispatchDeveloper(prompt, round, { developerFiles: thisRoundDeveloperFiles })
             resumedDispatch = false
 
+            // A turn whose last publication attempt a driver tool refused
+            // has no push coming: one read of the head (the poll's first
+            // attempt) replaces the full head-change budget, and the stall
+            // below names the refusal.
+            const refusedPublication = turnPublicationRefusal
             const changedHead =
               headBeforeDispatch !== null
                 ? await pollUntil(
@@ -5552,7 +5570,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                       const h = d.resolveHead(branch)
                       return h !== headBeforeDispatch ? h : null
                     },
-                    d.gatePollMaxAttempts,
+                    refusedPublication !== null ? 1 : d.gatePollMaxAttempts,
                     d.gatePollIntervalMs,
                     d.sleep,
                     'devReviewLoop: head-change wait timed out'
@@ -5567,7 +5585,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // resumed ONCE, foreground, with a dedicated commit-and-push
               // instruction (Traps: never resume more than once for this).
               let resolvedByUnpushedResume = false
-              if (!unpushedResumeAttempted) {
+              if (!unpushedResumeAttempted && refusedPublication === null) {
                 const unpushed = d.readUnpushedWorkDetail(worktreePathForBranch())
                 if (unpushed.dirtyFiles.length > 0 || unpushed.aheadCount > 0) {
                   unpushedResumeAttempted = true
@@ -5689,13 +5707,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 // back for; with none of those, this stall has no named cause
                 // at all.
                 const namedFailure =
-                  conflictFiles !== null
-                    ? `conflict never resolved (file(s): ${
-                        conflictFiles.length > 0 ? conflictFiles.join(', ') : '(unknown)'
-                      })`
-                    : lastFailingChecks.length > 0
-                      ? `failing check-run(s): ${lastFailingChecks.join(', ')}`
-                      : null
+                  refusedPublication !== null
+                    ? `publication refused: ${refusedPublication}`
+                    : conflictFiles !== null
+                      ? `conflict never resolved (file(s): ${
+                          conflictFiles.length > 0 ? conflictFiles.join(', ') : '(unknown)'
+                        })`
+                      : lastFailingChecks.length > 0
+                        ? `failing check-run(s): ${lastFailingChecks.join(', ')}`
+                        : null
                 const detail = `head ${headBeforeDispatch} unchanged after dispatch; ${
                   namedFailure ?? 'no named failure for this head — the developer pushed nothing for the gate to judge'
                 }`

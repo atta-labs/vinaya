@@ -54,6 +54,8 @@ export type DeveloperDevToolDeps = {
   readPullRequest: () => Promise<DevToolResult<DevPullRequestView>>
   /** Run `vinaya check --all` for the current head. */
   runChecks: () => Promise<DevToolResult<{ passed: boolean; output: string }>>
+  /** Told the outcome of every publication attempt (`publish_changes`, `open_pull_request`, `update_pull_request_body`) — a refusal from any gate or injected closure, or a landed attempt — so the loop can tell a turn whose last attempt was refused from one that never tried. */
+  onPublicationAttempt?: (result: DevToolResult<unknown>) => void
 }
 
 /** A structured refusal, as a failed `DevToolResult`. */
@@ -83,9 +85,14 @@ async function guard<T>(check: string, run: () => Promise<DevToolResult<T>>): Pr
  * are delegated.
  */
 export function createDeveloperDevToolContext(deps: DeveloperDevToolDeps): DevToolContext {
+  const publication = async <T>(check: string, run: () => Promise<DevToolResult<T>>): Promise<DevToolResult<T>> => {
+    const result = await guard(check, run)
+    deps.onPublicationAttempt?.(result)
+    return result
+  }
   return {
     publishChanges: (header) =>
-      guard('publish_changes', async () => {
+      publication('publish_changes', async () => {
         const validated = validateCommitHeader(header)
         if (!validated.ok) {
           return refuse(
@@ -106,7 +113,7 @@ export function createDeveloperDevToolContext(deps: DeveloperDevToolDeps): DevTo
         return deps.commitAndPush(validated.header)
       }),
     openPullRequest: (title, body) =>
-      guard('open_pull_request', async () => {
+      publication('open_pull_request', async () => {
         const validated = await deps.validatePrBody(body, title)
         if (!validated.ok) {
           return refuse('pr-body-gate', validated.reason, 'Fix the PR body to satisfy the body gate, then reopen.')
@@ -114,7 +121,7 @@ export function createDeveloperDevToolContext(deps: DeveloperDevToolDeps): DevTo
         return deps.openPullRequest(title, body)
       }),
     updatePullRequestBody: (body) =>
-      guard('update_pull_request_body', async () => {
+      publication('update_pull_request_body', async () => {
         const validated = await deps.validatePrBody(body)
         if (!validated.ok) {
           return refuse(
