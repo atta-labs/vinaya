@@ -1,6 +1,0 @@
----
-'@attalabs/vinaya': patch
----
-`vinaya doctrine --role <name>` now resolves role names through the SAME role plan the review loop resolves against (`buildRolePlan` → `resolveRoles`), so a configured override or an additive role is served — not just the bare `aeg-root/roles/*.md` files under the doctrine root.
-
-Before this, `--role`, `--print` and the servable-name listing read only the files physically under the resolved doctrine root's `roles/` directory. An adopter who overrode a core role, or registered an additive one, in `vinaya.config.json` saw `vinaya check --plan` report it but never got that text from the command every role is told to run first — and the role resolver's own comment, which claimed the command shows the overriding text, was false. Now an overridden role serves the override's own body (and its own read-receipt token, or none — a tokenless override still prints, no token is invented), an additive role is served under its render id and listed among the valid names, and a default role serves the core body from the exact `roles/<role_id>.md` path as before. Human-only roles (`principal`) remain excluded — `--role`'s output is agent-facing operating instructions — on the same structured `actor` signal as before. The command is now async internally; its output for every existing case is byte-identical.
