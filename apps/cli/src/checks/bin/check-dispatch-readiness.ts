@@ -72,7 +72,6 @@ import { promisify } from 'node:util'
 import {
   checkDispatchReadiness,
   checkIssueRationale,
-  fetchForgeFacts,
   fetchOpenIssuesByLabel,
   parseTaskBranchIdentity,
   type DispatchBlockerClass,
@@ -82,7 +81,7 @@ import {
   type DispatchPriorTrancheFact,
   type Task
 } from '@attalabs/aeg-core'
-import { parseRationaleDeps } from '@attalabs/aeg-forge-state'
+import { fetchForgeFactsByIssue, parseRationaleDeps, resolveDuplicateTasks } from '@attalabs/aeg-forge-state'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
@@ -380,7 +379,34 @@ async function runTrancheMode(trancheSlug: string, taskId: string): Promise<void
     )
   }
 
-  const task = tranche.tasks.find((t) => t.id === taskId)
+  // Facts are read per Issue: a re-cut task leaves a closed not-planned Issue
+  // beside its open one under one task number, and the two must not collide.
+  const byIssue = await fetchForgeFactsByIssue({
+    owner: repo.owner,
+    repo: repo.repo,
+    tranche: trancheSlug,
+    tasks: tranche.tasks.map((t) => ({ id: t.id, issue: t.issue }))
+  })
+  if (byIssue.unavailable) {
+    fail(
+      `dispatch-gate severity:infra — the forge facts query for tranche "${trancheSlug}" failed: ${byIssue.reason ?? 'no reason given'}`,
+      'Confirm `gh auth status` passes and the forge is reachable, then re-run this check. This is a read failure, not a missing Issue.'
+    )
+  }
+
+  const { tasks: resolvedTasks, conflicts } = resolveDuplicateTasks(
+    tranche.tasks,
+    (n) => byIssue.facts.get(n)?.issueState === 'open'
+  )
+  const duplicate = conflicts.find((c) => c.id === taskId)
+  if (duplicate) {
+    fail(
+      `dispatch-gate row-existence: task number "${taskId}" is claimed by ${duplicate.issues.length} open Issues in tranche "${trancheSlug}": ${duplicate.issues.map((n) => `#${n}`).join(', ')}.`,
+      `Ask the Planner to close the superseded Issue as not planned (or re-number it) so task ${taskId} has exactly one open Issue, then re-run this check.`
+    )
+  }
+
+  const task = resolvedTasks.find((t) => t.id === taskId)
   if (!task) {
     fail(
       `dispatch-gate row-existence: task "${taskId}" is not present in tranche "${trancheSlug}"'s forge-derived task list.`,
@@ -388,19 +414,18 @@ async function runTrancheMode(trancheSlug: string, taskId: string): Promise<void
     )
   }
 
-  const taskRefs = tranche.tasks.map((t) => ({ id: t.id, issue: t.issue }))
-  const snapshot = await fetchForgeFacts({
-    owner: repo.owner,
-    repo: repo.repo,
-    tranche: trancheSlug,
-    tasks: taskRefs
-  })
+  // Facts keyed by task id for the edge resolver, from each id's winning Issue.
+  const factsByTaskId = new Map<string, EdgeFactsSubset>()
+  for (const t of resolvedTasks) {
+    const f = t.issue !== null ? byIssue.facts.get(t.issue) : undefined
+    if (f) factsByTaskId.set(t.id, f)
+  }
 
   const token = (await resolveToken()) ?? ''
   const openIssuesBySlug = await fetchOpenIssuesByLabel([trancheSlug], repo.owner, repo.repo, token)
   const openIssues = openIssuesBySlug.get(trancheSlug) ?? []
 
-  const issueFacts = task.issue !== null ? snapshot.facts.get(task.id) : undefined
+  const issueFacts = task.issue !== null ? byIssue.facts.get(task.issue) : undefined
   const issue =
     task.issue !== null && issueFacts
       ? { number: task.issue, state: (issueFacts.issueState === 'closed' ? 'closed' : 'open') as 'open' | 'closed' }
@@ -413,8 +438,7 @@ async function runTrancheMode(trancheSlug: string, taskId: string): Promise<void
   const openIssueMatch = task.issue !== null ? openIssues.find((i) => i.number === task.issue) : undefined
   const issueRationalePass = openIssueMatch ? checkIssueRationale(openIssueMatch.body).status !== 'fail' : true
 
-  const taskById = new Map(tranche.tasks.map((t) => [t.id, t]))
-  const factsByTaskId = snapshot.facts
+  const taskById = new Map(resolvedTasks.map((t) => [t.id, t]))
 
   const dependsOn: DispatchDependsOnFact[] = await Promise.all(
     task.dependsOn.map(async (dep) => {

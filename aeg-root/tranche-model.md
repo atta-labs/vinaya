@@ -72,6 +72,8 @@ A task **is** a forge Issue. Its status is not a field anyone writes — it is *
 
 **A closed-without-merge Issue never resolves to `todo`**. `todo` implies not-started; a closed Issue is terminal. The derivation reads GitHub's native `stateReason`: `NOT_PLANNED` → `dropped`; anything else (`COMPLETED`, or no reason) → `incoherent`. The one law: a task-Issue reaches *done* only via a merged PR that names it (`Closes #N`); a `COMPLETED` close without that merge is incoherent, not done.
 
+**One task number, several Issues.** A re-cut task leaves its closed `NOT_PLANNED` Issue (a `dropped` task) in the tranche beside the open replacement. Readers that need one Issue per task number — the dispatch-readiness check — resolve an open Issue over a closed one, and refuse when two open Issues claim the same number; forge facts are read and keyed by Issue number, then mapped back to the task.
+
 So: there is **no status column anywhere.** The Developer does not "flip to in-review" — *opening the PR is the in-review signal*. The close-out does not "flip to merged" — *the merge is that signal*. The branch-name convention `task/<tranche>/<n>` is what links a task number to its branch and PR, so any role finds a task's live status with one forge query and writes nothing. `blocked` is the one state with no native forge fact, so it is a label (cheap, native, doesn't race).
 
 **Retry is free:** a Reviewer's REQUEST CHANGES makes the PR's `reviewDecision` = `CHANGES_REQUESTED` → derived status `changes-requested`. The Developer pushes fixes → the PR returns to open review → `in-review`. No status reset, because nothing was stored.

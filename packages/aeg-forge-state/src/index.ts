@@ -29,7 +29,7 @@ export type {
 } from './fetch-milestone'
 export type { GhIssue } from './gh'
 export { fetchProvenance } from './fetch-provenance'
-export { buildBranchName, fetchForgeFacts, fetchForgeTasksByLabel } from './fetch-forge-facts'
+export { buildBranchName, fetchForgeFacts, fetchForgeFactsByIssue, fetchForgeTasksByLabel } from './fetch-forge-facts'
 export { fetchOpenIssuesByLabel } from './fetch-open-issues'
 export { fetchTaskIssueRefs } from './fetch-task-issue-refs'
 export {
@@ -56,12 +56,13 @@ export {
   projectFieldFromBody,
   PROJECT_SLUG,
   projectsFromBody,
+  resolveDuplicateTasks,
   resolveTaskIssueRef,
   tasksFromIssues,
   TITLE_PATTERN,
   unwrapValue
 } from './list-tasks'
-export type { ProjectField } from './list-tasks'
+export type { DuplicateOpenTask, ProjectField } from './list-tasks'
 // `stripCode` is on the barrel because `aeg-core` re-exports it as public API.
 // `maskCode` and `hasUnterminatedFence` are NOT: they are reachable through the
 // `./strip-code` subpath for the two callers that need them, so moving the
