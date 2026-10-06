@@ -142,6 +142,8 @@ export type LoopWorld = {
   worktreeHead: string
   gate: 'green' | 'red' | 'pending'
   failingCheckRuns: { id: number; name: string; conclusion: string }[]
+  /** Each failing run's job-log tail by run id, as `readFailedCheckLogTail` returns it; an absent id reads as an unreadable log (`null`). */
+  failedCheckLogTails: Record<number, string>
   mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'
   conflictingFiles: string[]
   frozenBrief: string
@@ -338,6 +340,7 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     worktreeHead: sha('a'),
     gate: 'green',
     failingCheckRuns: [],
+    failedCheckLogTails: {},
     mergeable: 'MERGEABLE',
     conflictingFiles: [],
     frozenBrief:
@@ -488,6 +491,7 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     },
     fetchCiConclusion: (_head) => world.gate,
     fetchFailingCheckRuns: (_head) => world.failingCheckRuns.map((c) => ({ ...c })) as never,
+    readFailedCheckLogTail: (jobId) => world.failedCheckLogTails[jobId] ?? null,
     fetchRulings: (_pr) => [...world.rulings],
     fetchNewestRulingOrdinal: (_pr) => world.rulingOrdinal,
     fetchNewestRulingAuthor: (_pr) => world.rulingAuthor,
@@ -637,7 +641,8 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       head: world.head,
       checks: null,
       reviews: null,
-      body: world.prBody
+      body: world.prBody,
+      failedChecks: []
     }),
     runWorktreeChecks: async () => {
       world.runChecksCalls += 1

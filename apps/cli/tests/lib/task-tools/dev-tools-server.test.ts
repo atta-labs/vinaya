@@ -31,7 +31,7 @@ function okContext(overrides: Partial<DevToolContext> = {}): DevToolContext {
     refreshEvidence: async () => ({ ok: true, result: { head: 'abc123', checksPassed: true, evidence: 'EV' } }),
     readPullRequest: async () => ({
       ok: true,
-      result: { prNumber: 42, state: 'OPEN', head: 'abc123', checks: [], reviews: [], body: 'body' }
+      result: { prNumber: 42, state: 'OPEN', head: 'abc123', checks: [], reviews: [], body: 'body', failedChecks: [] }
     }),
     runChecks: async () => ({ ok: true, result: { passed: true, output: 'all green' } }),
     ...overrides

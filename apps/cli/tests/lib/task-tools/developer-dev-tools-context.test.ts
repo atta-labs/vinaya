@@ -35,7 +35,15 @@ function deps(overrides: Partial<DeveloperDevToolDeps> = {}): DeveloperDevToolDe
     refreshEvidence: async () => ({ ok: true, result: { head: 'deadbeef', checksPassed: true, evidence: 'ok' } }),
     readPullRequest: async () => ({
       ok: true,
-      result: { prNumber: 1051, state: 'OPEN', head: 'deadbeef', checks: null, reviews: null, body: 'b' }
+      result: {
+        prNumber: 1051,
+        state: 'OPEN',
+        head: 'deadbeef',
+        checks: null,
+        reviews: null,
+        body: 'b',
+        failedChecks: []
+      }
     }),
     runChecks: async () => ({ ok: true, result: { passed: true, output: 'all green' } }),
     ...overrides
