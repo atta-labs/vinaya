@@ -322,15 +322,32 @@ export function stageCodexPolicyHome(input: {
 export function refreshStagedCodexLogin(input: { realHome: string; codexHome: string }): boolean {
   const operatorAuthPath = join(input.realHome, '.codex', CODEX_AUTH_FILE_NAME)
   const stagedAuthPath = join(input.codexHome, CODEX_AUTH_FILE_NAME)
+  const tempPath = `${stagedAuthPath}.refresh-${process.pid}`
   try {
     if (statSync(operatorAuthPath).mtimeMs <= statSync(stagedAuthPath).mtimeMs) return false
-    const tempPath = `${stagedAuthPath}.refresh-${process.pid}`
     writeFileSync(tempPath, readFileSync(operatorAuthPath), { mode: 0o600 })
     renameSync(tempPath, stagedAuthPath)
     return true
   } catch {
+    // The staged copy stays as it was; the next dispatch compares again. The
+    // sibling is removed so no second copy of the login outlives the attempt.
+    try {
+      rmSync(tempPath, { force: true })
+    } catch {}
     return false
   }
+}
+
+/**
+ * The reuse decision for a task's persistent Codex home: when `codexHome`
+ * already carries a staged login, refreshes that copy against the operator's
+ * own login (`refreshStagedCodexLogin`) and returns `codexHome` for reuse;
+ * `null` when nothing is staged there yet and a fresh stage is due.
+ */
+export function reuseStagedCodexHome(input: { realHome: string; codexHome: string }): string | null {
+  if (!existsSync(join(input.codexHome, CODEX_AUTH_FILE_NAME))) return null
+  refreshStagedCodexLogin(input)
+  return input.codexHome
 }
 
 export type CodexAuthPreflightResult = { ok: true } | { ok: false; reason: string }
