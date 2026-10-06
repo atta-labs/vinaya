@@ -676,7 +676,7 @@ export type LoopDeps = {
   /** O7: every path the worktree changed since `base` (committed AND uncommitted — `git diff --name-only <base>`), for the Surface check. Best-effort: `[]` when unreadable. */
   gitWorktreeChangedPaths: (worktreePath: string, base: string) => string[]
   /** The exact default-branch commit this turn merged into the worktree (an in-progress merge's incoming commit, else a merge commit's default-branch parent in `sinceBase..HEAD`), or `null` when the turn merged none. */
-  readMergedDefaultCommit: (worktreePath: string, sinceBase: string | null) => string | null
+  readMergedDefaultCommit: (worktreePath: string, sinceBase: string | null) => MergedDefaultCommit | null
   /** O1/O2: the worktree's own diff text since `base`, for the after-turn credential scan. `null` when unreadable. */
   gitWorktreeDiffText: (worktreePath: string, base: string) => string | null
   /** Builds this repository's vendored CLI before the driver's commit when its ignored bin is absent; ordinary adopters are a no-op. */
@@ -1099,24 +1099,52 @@ function gitOk(worktreePath: string, args: string[]): string | null {
   }
 }
 
+/** A default-branch commit a turn merged in, and the paths the turn rolled back to an older default-branch state. */
+export type MergedDefaultCommit = { commit: string; regressedPaths: string[] }
+
 /**
  * The exact default-branch commit a Developer turn merged into its worktree:
  * the in-progress merge's incoming commit (`MERGE_HEAD`), else the newest
- * merge commit in `sinceBase..HEAD` whose non-first parent is reachable from
- * `origin/main`. Read from the merge itself, never from a ref by name, so a
- * stale default-branch ref neither adds nor hides a path. `null` when none.
+ * merge commit in `sinceBase..HEAD` whose non-first parent is a default-branch
+ * commit. The commit is read from the merge itself; the `origin/main` ref only
+ * vets it, and a ref that is merely behind the merged commit (the commit
+ * descends from it) never hides the merge. A commit unrelated to the ref in
+ * either direction is not a default-branch commit and is ignored.
+ *
+ * Measuring against an older default-branch commit would hide a file the turn
+ * reset to that older state, so when the merged commit is a strict ancestor of
+ * the ref, every path that differs from the ref and that the default branch
+ * changed after the merged commit is reported as `regressedPaths`.
+ * `null` when the turn merged none.
  */
-export function defaultReadMergedDefaultCommit(worktreePath: string, sinceBase: string | null): string | null {
-  const onDefaultBranch = (sha: string): boolean =>
-    gitOk(worktreePath, ['merge-base', '--is-ancestor', sha, 'origin/main']) !== null
+export function defaultReadMergedDefaultCommit(
+  worktreePath: string,
+  sinceBase: string | null
+): MergedDefaultCommit | null {
+  const isAncestor = (older: string, newer: string): boolean =>
+    gitOk(worktreePath, ['merge-base', '--is-ancestor', older, newer]) !== null
+  const vetted = (sha: string): MergedDefaultCommit | null => {
+    if (isAncestor(sha, 'origin/main')) {
+      const lines = (args: string[]): string[] =>
+        (gitOk(worktreePath, args) ?? '').split('\n').filter((l) => l.trim().length > 0)
+      const advanced = new Set(lines(['diff', '--name-only', sha, 'origin/main']))
+      const regressedPaths = lines(['diff', '--name-only', 'origin/main']).filter((path) => advanced.has(path))
+      return { commit: sha, regressedPaths }
+    }
+    return isAncestor('origin/main', sha) ? { commit: sha, regressedPaths: [] } : null
+  }
   const incoming = gitOk(worktreePath, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])
-  if (incoming && onDefaultBranch(incoming)) return incoming
+  const fromMergeHead = incoming ? vetted(incoming) : null
+  if (fromMergeHead) return fromMergeHead
   const range = sinceBase ? [`^${sinceBase}`, 'HEAD'] : ['HEAD']
   const merges = gitOk(worktreePath, ['rev-list', '--merges', '--parents', ...range])
   if (!merges) return null
   for (const line of merges.split('\n')) {
     const [, ...parents] = line.trim().split(/\s+/)
-    for (const parent of parents.slice(1)) if (onDefaultBranch(parent)) return parent
+    for (const parent of parents.slice(1)) {
+      const found = vetted(parent)
+      if (found) return found
+    }
   }
   return null
 }
@@ -3697,18 +3725,20 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
       // One comparison point for every publication check: the default-branch
       // commit the turn merged in, else the conflict-retry's `origin/main`,
-      // else the last pushed head.
-      const publicationRangeBase = (remoteHead: string | null): string | null => {
+      // else the last pushed head. `extraPaths` are paths the turn rolled back
+      // to an older default-branch state, which the merged commit cannot show.
+      const publicationRange = (remoteHead: string | null): { base: string | null; extraPaths: string[] } => {
         const pushedBase = pushedCommitRangeBase(remoteHead, publicationExpectedBase)
-        return (
-          d.readMergedDefaultCommit(worktree, pushedBase) ??
-          (pendingConflictFiles !== null ? 'origin/main' : pushedBase)
-        )
+        const merged = d.readMergedDefaultCommit(worktree, pushedBase)
+        if (merged) return { base: merged.commit, extraPaths: merged.regressedPaths }
+        return { base: pendingConflictFiles !== null ? 'origin/main' : pushedBase, extraPaths: [] }
       }
+      const publicationChangedPaths = (range: { base: string | null; extraPaths: string[] }): string[] => [
+        ...new Set([...(range.base ? d.gitWorktreeChangedPaths(worktree, range.base) : []), ...range.extraPaths])
+      ]
       const worktreeChangedPaths = (): string[] => {
         const unpushed = d.readUnpushedWorkDetail(worktree)
-        const rangeBase = publicationRangeBase(safeRemoteHead())
-        const diffPaths = rangeBase ? d.gitWorktreeChangedPaths(worktree, rangeBase) : []
+        const diffPaths = publicationChangedPaths(publicationRange(safeRemoteHead()))
         return [...new Set([...diffPaths, ...unpushed.dirtyFiles])]
       }
       const prChangedPaths = async (): Promise<string[] | null> => {
@@ -3754,7 +3784,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
           const remoteHeadBefore = safeRemoteHead()
           if (d.readUnpushedWorkDetail(worktree).dirtyFiles.length > 0) d.buildVendoredCliIfMissing(worktree)
-          const scanBase = publicationRangeBase(remoteHeadBefore)
+          const scanBase = publicationRange(remoteHeadBefore).base
           if (scanBase === null) {
             return {
               ok: false,
@@ -3806,8 +3836,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // A commit made by this tool remains valid work if the push hook
             // refuses. Remember it so the next call can retry that same head.
             if (unpushed.dirtyFiles.length > 0) turnPreHead = localHead
-            const rangeBase = publicationRangeBase(remoteHeadBefore)
-            const changedPaths = rangeBase ? d.gitWorktreeChangedPaths(worktree, rangeBase) : []
+            const changedPaths = publicationChangedPaths(publicationRange(remoteHeadBefore))
             const push = d.pushTaskBranch({
               task,
               branch,

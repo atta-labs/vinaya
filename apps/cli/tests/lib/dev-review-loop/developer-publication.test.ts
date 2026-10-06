@@ -185,19 +185,50 @@ describe('publication range after a default-branch merge', () => {
     expect(defaultReadMergedDefaultCommit(dir, base)).toBeNull()
   })
 
+  it('ignores a merged commit unrelated to the default branch', () => {
+    const { dir, base } = fixture()
+    const pushed = git(dir, 'rev-parse', 'HEAD')
+    git(dir, 'update-ref', 'refs/remotes/origin/main', base)
+    git(dir, 'checkout', '-q', '--orphan', 'other')
+    writeFileSync(join(dir, 'x.txt'), 'x\n')
+    git(dir, 'add', 'x.txt')
+    git(dir, 'commit', '-q', '-m', 'other')
+    git(dir, 'checkout', '-q', 'task')
+    git(dir, 'merge', '-q', '--allow-unrelated-histories', '-m', 'merge other', 'other')
+    expect(defaultReadMergedDefaultCommit(dir, pushed)).toBeNull()
+  })
+
   it('reads the committed merge parent, so main-only files are not the task change', () => {
     const { dir, base } = fixture()
     const pushed = git(dir, 'rev-parse', 'HEAD')
     const tip = advanceMain(dir, 'main-only.txt')
     git(dir, 'merge', '-q', '--no-ff', '-m', 'merge main', 'main')
-    // Stale local default-branch ref must not matter: move origin/main back.
+    // A default-branch ref that is behind the merged commit must not hide the merge.
     git(dir, 'update-ref', 'refs/remotes/origin/main', base)
-    expect(defaultReadMergedDefaultCommit(dir, pushed)).toBeNull()
+    expect(defaultReadMergedDefaultCommit(dir, pushed)?.commit).toBe(tip)
     git(dir, 'update-ref', 'refs/remotes/origin/main', tip)
     const merged = defaultReadMergedDefaultCommit(dir, pushed)
-    expect(merged).toBe(tip)
-    expect(defaultGitWorktreeChangedPaths(dir, merged as string)).toEqual(['own.txt'])
+    expect(merged).toEqual({ commit: tip, regressedPaths: [] })
+    expect(defaultGitWorktreeChangedPaths(dir, tip)).toEqual(['own.txt'])
     expect(defaultGitWorktreeChangedPaths(dir, pushed)).toContain('main-only.txt')
+  })
+
+  it('reports a file reset to an older default-branch state after merging an older commit', () => {
+    const { dir } = fixture()
+    const pushed = git(dir, 'rev-parse', 'HEAD')
+    git(dir, 'checkout', '-q', 'main')
+    writeFileSync(join(dir, 'guarded.txt'), 'old\n')
+    git(dir, 'add', '.')
+    git(dir, 'commit', '-q', '-m', 'guarded old')
+    const older = git(dir, 'rev-parse', 'HEAD')
+    writeFileSync(join(dir, 'guarded.txt'), 'new\n')
+    git(dir, 'commit', '-q', '-am', 'guarded new')
+    git(dir, 'update-ref', 'refs/remotes/origin/main', git(dir, 'rev-parse', 'HEAD'))
+    git(dir, 'checkout', '-q', 'task')
+    git(dir, 'merge', '-q', '--no-commit', '--no-ff', older)
+    const merged = defaultReadMergedDefaultCommit(dir, pushed)
+    expect(merged?.commit).toBe(older)
+    expect(merged?.regressedPaths).toEqual(['guarded.txt'])
   })
 
   it('reads the staged in-progress merge incoming commit', () => {
@@ -206,8 +237,8 @@ describe('publication range after a default-branch merge', () => {
     const tip = advanceMain(dir, 'main-only.txt')
     git(dir, 'merge', '-q', '--no-commit', '--no-ff', 'main')
     const merged = defaultReadMergedDefaultCommit(dir, pushed)
-    expect(merged).toBe(tip)
-    expect(defaultGitWorktreeChangedPaths(dir, merged as string)).toEqual(['own.txt'])
+    expect(merged?.commit).toBe(tip)
+    expect(defaultGitWorktreeChangedPaths(dir, tip)).toEqual(['own.txt'])
   })
 
   it('still reports a file the Developer itself changed outside the Surface', () => {
@@ -217,8 +248,8 @@ describe('publication range after a default-branch merge', () => {
     git(dir, 'merge', '-q', '--no-commit', '--no-ff', 'main')
     writeFileSync(join(dir, 'a.txt'), 'edited in the merge\n')
     git(dir, 'add', '.')
-    const merged = defaultReadMergedDefaultCommit(dir, pushed) as string
-    const changed = defaultGitWorktreeChangedPaths(dir, merged)
+    const merged = defaultReadMergedDefaultCommit(dir, pushed)
+    const changed = defaultGitWorktreeChangedPaths(dir, merged?.commit as string)
     expect(changed.sort()).toEqual(['a.txt', 'own.txt'])
     const verdict = checkPublicationPreconditions({
       worktreeBranch: 't',

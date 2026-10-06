@@ -24,7 +24,7 @@ tree contains it: when the Developer merged the default branch during its turn,
 committed or still staged, the comparison point is the exact default-branch
 commit it merged in (the merge commit's default-branch parent reachable from the
 head, or the in-progress merge's incoming commit), read from the merge itself,
-never from a local default-branch ref by name. Files that arrived from the
+never taken from a local default-branch ref by name; the ref only vets that the commit is a default-branch commit, and a ref merely behind it never hides the merge. When the merged commit is older than the ref, a path the default branch changed since and that the turn reset to the older state is still reported. Files that arrived from the
 default branch are therefore never the task's change, while a file the
 Developer itself changed outside the Surface, conflict resolutions included, is
 still refused. The driver's conflict-retry path uses the same rule, falling back
