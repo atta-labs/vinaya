@@ -73,8 +73,5 @@ tests/lib/log-sync.test.ts
 tests/commands/sync.test.ts
 tests/lib/error-class.test.ts
 tests/lib/dispatch/linux-sandbox-probe.test.ts
-<<<<<<< HEAD
 tests/lib/pre-push-scanner-triggers.test.ts
-=======
 tests/lib/enforcement-controls-active.test.ts
->>>>>>> 8a97761d (Feat(cli): refuse dispatch unless enforcement controls are active)
