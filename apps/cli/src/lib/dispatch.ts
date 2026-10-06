@@ -118,6 +118,7 @@ import {
   resolveClaudeConfinement,
   resolveCodexConfinement,
   resolveGitCommonDir,
+  refreshStagedCodexLogin,
   stageCodexPolicyHome,
   type ClaudeSandboxSettings
 } from './worker-boundary.js'
@@ -4188,6 +4189,11 @@ export async function dispatchRole(
     existsSync(join(codexHomeTargetDir, 'auth.json'))
   let codexHomeFailureReason: string | null = null
   let codexHomeDir: string | null = codexHomeAlreadyStaged ? codexHomeTargetDir : null
+  // A reused home keeps its login copy only while the operator's own login is
+  // not newer: a re-login since the home was staged replaces the copy.
+  if (codexHomeAlreadyStaged && codexHomeTargetDir !== null) {
+    refreshStagedCodexLogin({ realHome: homedir(), codexHome: codexHomeTargetDir })
+  }
   if (agent === 'codex' && codexExecpolicyRules !== null && !codexHomeAlreadyStaged) {
     const staged = stageCodexPolicyHome({
       targetDir: codexHomeTargetDir as string,
