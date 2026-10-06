@@ -40,32 +40,21 @@
  */
 
 import {
-  extractCodeReviewVerdict,
-  extractSecurityReviewVerdict,
-  isPrincipal,
-  MAX_RETURNED_TEXT_CHARS,
-  parseDeveloperRoundMarker,
   type TaskPrCheck,
   type TaskPrReadResult,
-  type TaskPrReviewRecord,
-  type TaskPrVerdict,
   TaskPrReadInputSchema,
   type TaskToolError,
   taskToolError,
   type TaskToolRef
 } from '@attalabs/aeg-core'
-import { homedir } from 'node:os'
-import { redact } from '@attalabs/aeg-core'
 import { markerComments, principalAllowlist } from '../dev-review-loop/developer-dispatch.js'
 import { sh } from '../dev-review-loop/gate-reading.js'
-import { PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME } from '../principal-test-plan-wait-check-name.js'
 import { resolveRowForRef, type TaskToolCallResult } from './handlers.js'
 import {
   buildReviewRecord,
-  capText,
   type PrComment,
   type RollupNode,
-  sanitizeForgeLogTail,
+  readJobLogTail,
   sanitizeForgeText,
   toChecks
 } from './pr-facts.js'
@@ -183,7 +172,8 @@ function fetchChecksFromForge(pr: number): { head: string | null; checks: TaskPr
 /**
  * What a failed check that wrote no output of its own can still say for
  * itself: its failure-level annotations, and failing those the TAIL of its
- * own job log — the thing a Principal used to paste by hand. `null` when
+ * own job log (`readJobLogTail`, the one job-log reader, shared with the review
+ * loop's red-CI retry) — the thing a Principal used to paste by hand. `null` when
  * neither read answers; a read tool reports what it could not see rather than
  * inventing a reason.
  */
@@ -210,29 +200,6 @@ function readFailureAnnotations(checkRunId: number): string | null {
     .filter((line) => line !== '' && !GENERIC_EXIT_ANNOTATION.test(line))
   if (lines.length === 0) return null
   const text = sanitizeForgeText(lines.join('\n'))
-  return text === '' ? null : text
-}
-
-/**
- * For a GitHub Actions check run the check-run id IS the job id, and the job
- * log is the only place its failure is actually written. Read with
- * `--allow-escape-sequences` (a runner colours its own output, and `gh`
- * refuses to print escapes without it), retried without the flag on a `gh`
- * old enough not to carry it.
- */
-function readJobLogTail(jobId: number): string | null {
-  const endpoint = `repos/{owner}/{repo}/actions/jobs/${jobId}/logs`
-  let raw: string
-  try {
-    raw = sh('gh', ['api', endpoint, '--allow-escape-sequences'])
-  } catch {
-    try {
-      raw = sh('gh', ['api', endpoint])
-    } catch {
-      return null
-    }
-  }
-  const text = sanitizeForgeLogTail(raw)
   return text === '' ? null : text
 }
 

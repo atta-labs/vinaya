@@ -67,6 +67,7 @@ tests/checks/runner/traces.test.ts
 tests/conformance/codex.test.ts
 tests/process-fixture-coverage.test.ts
 tests/lib/task-tools/operator-state-actions.test.ts
+tests/lib/task-tools/developer-ci-failure-detail.test.ts
 tests/commands/log-send.test.ts
 tests/lib/log-sync.test.ts
 tests/commands/sync.test.ts

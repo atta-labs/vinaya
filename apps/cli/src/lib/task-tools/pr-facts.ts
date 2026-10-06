@@ -11,6 +11,8 @@
  *    an allowlist, so each is stripped of terminal colouring, redacted through
  *    `redact()` (this codebase's single redaction chokepoint), stripped of the two
  *    grammars that carry authority here, and capped.
+ *    The one job-log reader (`readJobLogTail`) sits beside it, so the Operator's
+ *    read and the review loop's red-CI retry tail a failed job's log identically.
  * 2. **The forge's rollup, flattened** (`RollupNode`, `toChecks`) — one shape both
  *    readers judge checks by.
  * 3. **The derivations each reader needs**: the principal-authored review record
@@ -26,8 +28,8 @@
  * with no test to catch it. Nothing here imports a handler or the status reader,
  * so the cycle is gone rather than merely dormant.
  *
- * Nothing here writes: no forge-write function is imported, and the one `gh` call
- * it makes is a bounded read.
+ * Nothing here writes: no forge-write function is imported, and the two `gh`
+ * calls it makes — the status read and the job-log read — are bounded reads.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -44,6 +46,7 @@ import {
   type TaskPrVerdict
 } from '@attalabs/aeg-core'
 import { markerComments } from '../dev-review-loop/developer-dispatch.js'
+import { sh } from '../dev-review-loop/gate-reading.js'
 import { PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME } from '../principal-test-plan-wait-check-name.js'
 import { REVIEW_GATE_CHECK_RUN_NAME, REVIEW_GATE_WORKFLOW_NAME } from '../review-gate-check-name.js'
 
@@ -154,6 +157,65 @@ export function sanitizeForgeLogTail(raw: string, max: number = MAX_RETURNED_TEX
 /** Steps 1–3 of `sanitizeForgeText`, uncapped — the one place the strip/redact/defang order is written, so the head-capped and tail-capped exits can never diverge on it. */
 function scrubForgeText(raw: string): string {
   return redact(stripAnsi(raw), homedir()).replace(HTML_COMMENT_OPENER, '&lt;!--').replace(VERDICT_LABEL, '$1VERDICT :')
+}
+
+// --- the one job-log reader ---------------------------------------------------
+
+/** One `gh` invocation, by argument list — the driver's own retrying read by default, a fake in a test. */
+export type GhRead = (args: string[]) => string
+
+const ghRead: GhRead = (args) => sh('gh', args)
+
+/**
+ * The sanitized TAIL of a GitHub Actions job's own log — the ONE job-log reader
+ * in this codebase. The Operator's `task_pr_read` falls back to it for a failed
+ * check that wrote no output of its own, and the review loop reads it for every
+ * failed check it sends a Developer back on, so the redaction, the authority
+ * stripping and the size cap are the same for both callers.
+ *
+ * For a GitHub Actions check run the check-run id IS the job id, and the job
+ * log is the only place its failure is actually written. Read with
+ * `--allow-escape-sequences` (a runner colours its own output, and `gh`
+ * refuses to print escapes without it), retried without the flag on a `gh`
+ * old enough not to carry it. `null` when neither read answers or the log is
+ * empty — a reader reports what it could not see rather than inventing a
+ * reason.
+ */
+export function readJobLogTail(jobId: number, read: GhRead = ghRead): string | null {
+  const endpoint = `repos/{owner}/{repo}/actions/jobs/${jobId}/logs`
+  let raw: string
+  try {
+    raw = read(['api', endpoint, '--allow-escape-sequences'])
+  } catch {
+    try {
+      raw = read(['api', endpoint])
+    } catch {
+      return null
+    }
+  }
+  const text = sanitizeForgeLogTail(raw)
+  return text === '' ? null : text
+}
+
+/** One failed check run on a head, with its own sanitized job-log tail — `null` when the log could not be read. */
+export type FailedCheckLog = { check: string; runId: number; logTail: string | null }
+
+/**
+ * Each failed check run's log tail, one `readJobLogTail` per run handed in —
+ * never a read for a check that did not fail, so the forge cost is bounded by
+ * the failures on the head the caller read them from. The check name is forge
+ * text with no author, so it leaves through `sanitizeForgeText` like every
+ * other one.
+ */
+export function readFailedCheckLogs(
+  runs: readonly { name: string; id: number }[],
+  readTail: (jobId: number) => string | null = readJobLogTail
+): FailedCheckLog[] {
+  return runs.map((run) => ({
+    check: sanitizeForgeText(run.name, MAX_CHECK_NAME_CHARS),
+    runId: run.id,
+    logTail: readTail(run.id)
+  }))
 }
 // --- the pure half: the review record, from comment bodies alone -------------
 
