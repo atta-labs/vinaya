@@ -1727,10 +1727,13 @@ describe('tests that read the repository tree are selected from what they scan (
     const changedTest = join(REPO_ROOT, 'apps/cli/tests/demo.test.ts')
     expect(selectAffectedTestFiles(REPO_ROOT, [changedTest]).selected).toContain(auditor)
     // And it is reachability through the scan rule that does it, not an import
-    // edge and not the configured always-run list.
-    expect(selectAffectedTestFiles(REPO_ROOT, [changedTest], { repoTreeScanners: 'ignore' }).selected).not.toContain(
-      auditor
-    )
+    // edge and not the configured always-run list. The declared triggers are
+    // emptied too: the auditor's own `process-start` declaration would
+    // otherwise select it here, by a different rule than the one under test.
+    expect(
+      selectAffectedTestFiles(REPO_ROOT, [changedTest], { repoTreeScanners: 'ignore', scannerDeclarations: [] })
+        .selected
+    ).not.toContain(auditor)
   })
 
   it('a narrowly-scoped scanner is not selected by a change outside the tree it reads', () => {
