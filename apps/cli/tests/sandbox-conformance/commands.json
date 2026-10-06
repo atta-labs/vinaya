@@ -73,6 +73,11 @@
       "notRun": "judges the PR body the Developer wrote (PR_BODY); with no body its verdict is about the body, never the sandbox"
     },
     {
+      "id": "changeset-add-empty",
+      "forms": ["bunx changeset add --empty"],
+      "notRun": "writes an empty changeset file into the diff for a no-release change — it changes the worktree, and the sandbox is already proven by the entries that read and write it"
+    },
+    {
       "id": "verify-task",
       "forms": ["bun packages/aeg-core/bin/verify-task.ts"],
       "notRun": "the composite of typecheck, format-and-lint, the pre-push test selection and verify-docs — the driver runs it at PR-open time, and its sandbox-relevant parts are entries of their own here"
