@@ -55,9 +55,9 @@ import {
 import {
   describeInactiveControls,
   type EnforcementControl,
-  enforcementControlsActive,
-  realLocalGateControl
+  enforcementControlsActive
 } from '../enforcement-controls.js'
+import { realLocalGateControl } from '../local-gate-control.js'
 import { sh } from './gate-reading.js'
 
 const RULING_MARKER = /^<!-- aeg:principal:ruling:\d+-\d+ -->$/

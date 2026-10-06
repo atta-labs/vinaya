@@ -5,9 +5,9 @@ import { join } from 'node:path'
 import {
   agentDispatchControls,
   describeInactiveControls,
-  enforcementControlsActive,
-  localGateControl
+  enforcementControlsActive
 } from '../../src/lib/enforcement-controls.js'
+import { localGateControl } from '../../src/lib/local-gate-control.js'
 import { checkTaskDispatchReadiness } from '../../src/lib/dev-review-loop/developer-dispatch.js'
 
 const roots: string[] = []

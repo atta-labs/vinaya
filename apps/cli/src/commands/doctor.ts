@@ -84,7 +84,7 @@ import {
   type RepoInfo,
   resolveHookDir
 } from '../lib/detect.js'
-import { localGateControl } from '../lib/enforcement-controls.js'
+import { localGateControl } from '../lib/local-gate-control.js'
 import { printJson } from '../lib/envelope.js'
 import { planGhPathFix } from '../lib/gh-path.js'
 import { checksMissingEnvDeclaration, envDeclarationWarning } from '../lib/env-lint.js'
