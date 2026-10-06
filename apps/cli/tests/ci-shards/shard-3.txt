@@ -50,6 +50,7 @@ tests/lib/task-status.test.ts
 tests/milestone.test.ts
 tests/new-noop-check.test.ts
 tests/no-brief-author.test.ts
+tests/platform-independence.test.ts
 tests/quickstart.test.ts
 tests/roles/contract.test.ts
 tests/studio.test.ts
