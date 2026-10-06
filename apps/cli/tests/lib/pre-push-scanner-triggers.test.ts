@@ -8,7 +8,6 @@ import { describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { escapeReportLines, failingTestFilesFromJunit } from '../../src/lib/pre-push-selection'
 import {
   SCANNER_DECLARATIONS,
   type ScannerDeclaration,
@@ -182,38 +181,5 @@ describe('every folder-scanning test in this repository declares its roots and i
       .filter((root) => root !== '.')
       .filter((root) => !existsSync(join(REPO_ROOT, root)) && !existsSync(dirname(join(REPO_ROOT, root))))
     expect(missing).toEqual([])
-  })
-})
-
-describe('the CI escape report', () => {
-  const junit = [
-    '<testsuites name="bun test" tests="3" failures="2">',
-    '  <testsuite name="tests/a.test.ts" file="tests/a.test.ts" tests="1" failures="1" skipped="0">',
-    '  </testsuite>',
-    '  <testsuite name="tests/b.test.ts" file="tests/b.test.ts" tests="1" failures="0" skipped="0">',
-    '  </testsuite>',
-    '  <testsuite name="tests/c.test.ts" file="tests/c.test.ts" tests="1" failures="0" errors="1">',
-    '  </testsuite>',
-    '</testsuites>'
-  ].join('\n')
-
-  it('reads every suite with a failure or an error, resolved against the run directory', () => {
-    expect(failingTestFilesFromJunit(junit, '/repo/apps/cli')).toEqual([
-      '/repo/apps/cli/tests/a.test.ts',
-      '/repo/apps/cli/tests/c.test.ts'
-    ])
-  })
-
-  it('tells a selection escape from a platform difference, per failing file', () => {
-    const lines = escapeReportLines(
-      '/repo',
-      ['/repo/apps/cli/tests/a.test.ts', '/repo/apps/cli/tests/c.test.ts'],
-      ['/repo/apps/cli/tests/a.test.ts']
-    )
-    expect(lines).toHaveLength(2)
-    expect(lines[0]).toContain('apps/cli/tests/a.test.ts — pre-push selects it')
-    expect(lines[0]).toContain('platform difference')
-    expect(lines[1]).toContain('apps/cli/tests/c.test.ts — pre-push does NOT select it')
-    expect(lines[1]).toContain('selection escape')
   })
 })
