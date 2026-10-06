@@ -539,7 +539,7 @@ describe('O2: the driver records a receipt only for a counted read', () => {
 
   it.each([
     ['an error status', { status: 404, headers: html, body: PAGE }, 'HTTP 404'],
-    ['a near-empty page', { status: 200, headers: html, body: 'tiny' }, 'only 4 bytes']
+    ['a near-empty page', { status: 200, headers: html, body: 'tiny' }, 'visible text is only 4 characters']
   ])('records no receipt for %s, and says why', async (_name, route, reason) => {
     const receiptsPath = join(tempDir('fetch-doc-'), 'r.jsonl')
     const network = fakeNetwork({
