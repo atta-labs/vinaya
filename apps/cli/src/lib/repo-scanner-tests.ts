@@ -206,8 +206,8 @@ export function scannedRootsOf(ts: TypeScriptApi, file: string, source: string, 
  *   in the lines the diff touched.
  * - `content` — the test asserts something about what every file says, so any
  *   edit under its roots can break it. The hook never selects it by its scan
- *   (it still can by its own imports); CI runs it on every pull request and
- *   names it as a selection escape when it fails there.
+ *   (it still can by its own imports); CI runs every shard, so
+ *   it runs there on every pull request.
  */
 export type ScannerTrigger = 'tree-shape' | 'process-start' | 'content'
 
