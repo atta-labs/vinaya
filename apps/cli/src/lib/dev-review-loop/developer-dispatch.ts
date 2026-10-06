@@ -687,7 +687,8 @@ function gateRunOutput(err: unknown): string {
 export function checkTaskDispatchReadiness(
   branch: string,
   runGate: (script: string, args: readonly string[]) => string = (script, args) => sh('bun', [script, ...args]),
-  localGate: () => EnforcementControl = () => realLocalGateControl(process.cwd())
+  localGate: () => EnforcementControl = () => realLocalGateControl(process.cwd()),
+  resolveStep: (step: GateStep) => string | null = (step) => resolveGateStep(step)
 ): DispatchReadinessCheckResult {
   const identity = parseTaskBranchIdentity(branch)
   if (identity === null) {
@@ -701,7 +702,7 @@ export function checkTaskDispatchReadiness(
   const sections: string[] = []
   let ready = true
   const run = (step: GateStep, extraArgs: readonly string[] = []): void => {
-    const script = resolveGateStep(step)
+    const script = resolveStep(step)
     if (script === null) {
       ready = false
       sections.push(

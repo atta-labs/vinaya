@@ -21,29 +21,45 @@ beforeAll(() => {
 }, 120_000)
 
 describe('readiness gate outside this repository', () => {
-  it('finds both steps in the built distribution and runs them from a foreign directory without a module error', () => {
-    const readiness = resolveGateStep('check-dispatch-readiness', PKG, DIST_INDEX)
-    const existingWork = resolveGateStep('verify-dispatch', PKG, DIST_INDEX)
-    expect(readiness).toBe(join(PKG, 'dist', 'checks', 'bin', 'check-dispatch-readiness.js'))
-    expect(existingWork).toBe(join(PKG, 'dist', 'checks', 'bin', 'verify-dispatch.js'))
+  it('runs the gate itself from a foreign directory against the built distribution and reaches a verdict', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'vinaya-adopter-'))
+    const prev = process.cwd()
     try {
-      for (const script of [readiness, existingWork]) {
-        const ran = spawnSyncBudgeted(
-          'bun',
-          [script as string, '--issue', '1', ...(script === existingWork ? ['--existing-work'] : [])],
-          { cwd, encoding: 'utf8', env: stripVinayaEnv() },
-          60_000
-        )
-        const out = `${ran.stdout}${ran.stderr}`
-        expect(out).not.toContain('Module not found')
-        expect(out).not.toContain('Cannot find module')
-        expect(out.trim().length).toBeGreaterThan(0)
-      }
+      process.chdir(cwd)
+      const result = checkTaskDispatchReadiness(
+        'task/issue-1',
+        undefined,
+        () => ({ control: 'local-gate', active: true, detail: '', remedy: '' }),
+        (step) => resolveGateStep(step, PKG, DIST_INDEX)
+      )
+      expect(typeof result.ready).toBe('boolean')
+      expect(result.output).toContain(
+        `$ bun ${join(PKG, 'dist', 'checks', 'bin', 'check-dispatch-readiness.js')} --issue 1`
+      )
+      expect(result.output).toContain(
+        `$ bun ${join(PKG, 'dist', 'checks', 'bin', 'verify-dispatch.js')} --issue 1 --existing-work`
+      )
+      expect(result.output).not.toContain('Module not found')
+      expect(result.output).not.toContain('Cannot find module')
+      expect(result.output).not.toContain('incomplete')
     } finally {
+      process.chdir(prev)
       rmSync(cwd, { recursive: true, force: true })
     }
   }, 120_000)
+
+  it('is not ready, naming the missing step and the incomplete package, when a step cannot be found', () => {
+    const result = checkTaskDispatchReadiness(
+      'task/issue-1',
+      () => 'ok',
+      () => ({ control: 'local-gate', active: true, detail: '', remedy: '' }),
+      (step) => (step === 'verify-dispatch' ? null : '/resolved/check-dispatch-readiness.js')
+    )
+    expect(result.ready).toBe(false)
+    expect(result.output).toContain("gate step 'verify-dispatch' is missing")
+    expect(result.output).toContain('installed @attalabs/vinaya package is incomplete')
+    expect(result.output).not.toContain('Module not found')
+  })
 
   it('passes the resolved step paths to the gate, never a cwd-relative source path', () => {
     const seen: string[] = []

@@ -30,7 +30,7 @@
  *   `registry.ts`'s `packageRoot()`-relative resolution needs no special
  *   casing between the two.
  */
-import { chmodSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const pkgRoot = join(import.meta.dir, '..')
@@ -88,7 +88,15 @@ for (const f of readdirSync(checkBinDir).filter((f) => f.endsWith('.ts'))) {
 // whose published files carry no scripts: bundle it beside the checks so the
 // readiness gate resolves it through the installed CLI, never a source path.
 const verifyDispatchSource = join(pkgRoot, '..', '..', 'packages', 'aeg-core', 'bin', 'verify-dispatch.ts')
+if (!existsSync(verifyDispatchSource)) {
+  console.error(`cannot bundle the existing-work dispatch verification: ${verifyDispatchSource} is missing`)
+  process.exit(1)
+}
 await build([verifyDispatchSource], checkOutdir)
+if (!existsSync(join(checkOutdir, 'verify-dispatch.js'))) {
+  console.error('the build emitted no dist/checks/bin/verify-dispatch.js')
+  process.exit(1)
+}
 normalizeExecutable(join(checkOutdir, 'verify-dispatch.js'))
 
 // task-run-v1 20, O5/O6 — the pre-push hook's changed-files lister and test
