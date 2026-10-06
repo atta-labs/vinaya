@@ -1,0 +1,1659 @@
+{
+  "schemaVersion": 1,
+  "spec": "apps/cli/specs/dev-review-engine-capability-matrix.md",
+  "invariantRegister": "apps/cli/tests/fixtures/dev-review-architecture-invariants.json",
+  "retrieved": "2026-10-06",
+  "consumptionBoundary": {
+    "id": "packed-public-runtime+injected-executor",
+    "decision": "Vinaya consumes Atta's packed public runtime through its injected-executor seam. This is fixed; the matrix decides fit or a named gap against it and selects no other packaging, runtime, orchestration framework or provider-specific core.",
+    "attaRepository": "https://github.com/atta-labs/attalabs",
+    "attaCommit": "249d8fc11e525bd015daf9b35cfbd9cfac66f44d",
+    "attaCommitOnMain": "249d8fc11e525bd015daf9b35cfbd9cfac66f44d is an ancestor of origin/main of the Atta repository (git merge-base --is-ancestor, 2026-10-06); committed 2026-09-30, 'Fix(engine): Drop sideEffects flag that breaks bun 1.3.14 bundles'.",
+    "packages": ["@atta/agents", "@atta/engine", "@atta/executor-agent-spawn"],
+    "vinayaRevision": "883b14afbe0181e4267a894c128f8734de7e2ace"
+  },
+  "owners": ["atta-engine", "atta-runtime", "vinaya", "provider-adapter"],
+  "ports": ["AgentRuntime", "ToolCatalog", "SourceProvider", "EffectExecutor", "RunControl"],
+  "adapters": ["claude-code", "codex"],
+  "platforms": ["macos", "linux"],
+  "adapterCapabilities": [
+    "invocation",
+    "structured-output",
+    "event-stream",
+    "session-continuation",
+    "tool-registration",
+    "tool-grants",
+    "unattended-permissions",
+    "cancellation",
+    "usage",
+    "normalized-errors",
+    "role-context"
+  ],
+  "sources": {
+    "atta-index": {
+      "kind": "atta-source",
+      "url": "https://github.com/atta-labs/attalabs/blob/249d8fc11e525bd015daf9b35cfbd9cfac66f44d/packages/executor-agent-spawn/src/index.ts",
+      "title": "@atta/executor-agent-spawn public exports"
+    },
+    "atta-external-consumer": {
+      "kind": "atta-source",
+      "url": "https://github.com/atta-labs/attalabs/blob/249d8fc11e525bd015daf9b35cfbd9cfac66f44d/packages/executor-agent-spawn/scripts/verify-external-consumer.ts",
+      "title": "External-consumer proof: build, pack, install, typecheck, run"
+    },
+    "atta-consumer": {
+      "kind": "atta-source",
+      "url": "https://github.com/atta-labs/attalabs/blob/249d8fc11e525bd015daf9b35cfbd9cfac66f44d/packages/executor-agent-spawn/scripts/external-consumer/consumer.ts",
+      "title": "The proof consumer run from installed tarballs"
+    },
+    "atta-graph-builder": {
+      "kind": "atta-source",
+      "url": "https://github.com/atta-labs/attalabs/blob/249d8fc11e525bd015daf9b35cfbd9cfac66f44d/packages/executor-agent-spawn/src/graph-builder.ts",
+      "title": "Graph builder and injected node executor"
+    },
+    "atta-run-control": {
+      "kind": "atta-source",
+      "url": "https://github.com/atta-labs/attalabs/blob/249d8fc11e525bd015daf9b35cfbd9cfac66f44d/packages/executor-agent-spawn/src/run-control.ts",
+      "title": "Controlled start, halt and resume"
+    },
+    "atta-types": {
+      "kind": "atta-source",
+      "url": "https://github.com/atta-labs/attalabs/blob/249d8fc11e525bd015daf9b35cfbd9cfac66f44d/packages/executor-agent-spawn/src/types.ts",
+      "title": "Public types: role binaries, events, run control, outcomes"
+    },
+    "langgraph-thinking": {
+      "kind": "framework-doc",
+      "url": "https://docs.langchain.com/oss/javascript/langgraph/thinking-in-langgraph",
+      "title": "Thinking in LangGraph",
+      "sections": [
+        "Break into discrete steps",
+        "State is shared memory",
+        "Errors are part of the flow",
+        "Human input is first-class"
+      ]
+    },
+    "anthropic-effective-agents": {
+      "kind": "pattern-doc",
+      "url": "https://www.anthropic.com/engineering/building-effective-agents",
+      "title": "Building effective agents",
+      "sections": ["Workflow: Evaluator-optimizer", "When (and when not) to use agents"]
+    },
+    "anthropic-writing-tools": {
+      "kind": "pattern-doc",
+      "url": "https://www.anthropic.com/engineering/writing-tools-for-agents",
+      "title": "Writing effective tools for agents",
+      "sections": ["What is a tool?", "Principles for writing effective tools"]
+    },
+    "openai-agents-multi-agent": {
+      "kind": "pattern-doc",
+      "url": "https://openai.github.io/openai-agents-js/guides/multi-agent/",
+      "title": "OpenAI Agents SDK — Agent orchestration",
+      "sections": ["Orchestrating via code"]
+    },
+    "openai-agents-tracing": {
+      "kind": "pattern-doc",
+      "url": "https://openai.github.io/openai-agents-js/guides/tracing/",
+      "title": "OpenAI Agents SDK — Tracing",
+      "sections": ["Traces and spans", "Sensitive data"]
+    },
+    "claude-headless": {
+      "kind": "adapter-doc",
+      "adapter": "claude-code",
+      "url": "https://code.claude.com/docs/en/headless",
+      "title": "Run Claude Code programmatically",
+      "sections": [
+        "Basic usage",
+        "Stop a run with SIGTERM",
+        "Pipe data through Claude",
+        "Get structured output",
+        "Stream responses",
+        "Handle API retries",
+        "Fail CI when a plugin or MCP server doesn't load",
+        "Auto-approve tools",
+        "Turn off permission prompts in unattended runs",
+        "Continue conversations"
+      ]
+    },
+    "claude-cli-reference": {
+      "kind": "adapter-doc",
+      "adapter": "claude-code",
+      "url": "https://code.claude.com/docs/en/cli-reference",
+      "title": "Claude Code CLI reference",
+      "sections": ["CLI flags", "System prompt flags in resumed conversations"]
+    },
+    "claude-hooks": {
+      "kind": "adapter-doc",
+      "adapter": "claude-code",
+      "url": "https://code.claude.com/docs/en/hooks",
+      "title": "Claude Code hooks reference",
+      "sections": ["Hook events", "Configuration"]
+    },
+    "claude-sub-agents": {
+      "kind": "adapter-doc",
+      "adapter": "claude-code",
+      "url": "https://code.claude.com/docs/en/sub-agents",
+      "title": "Create custom subagents",
+      "sections": ["Configure subagents", "Choose a model"]
+    },
+    "claude-sandboxing": {
+      "kind": "adapter-doc",
+      "adapter": "claude-code",
+      "url": "https://code.claude.com/docs/en/sandboxing",
+      "title": "Configure the sandboxed Bash tool",
+      "sections": [
+        "What the sandbox restricts",
+        "What runs outside the sandbox",
+        "Set up Linux and WSL2",
+        "Protect credentials",
+        "OS-level enforcement"
+      ]
+    },
+    "codex-non-interactive": {
+      "kind": "adapter-doc",
+      "adapter": "codex",
+      "url": "https://learn.chatgpt.com/docs/non-interactive-mode.md",
+      "title": "Codex non-interactive mode",
+      "sections": [
+        "Make output machine-readable",
+        "Create structured outputs with a schema",
+        "Resume a non-interactive session",
+        "Permissions and safety"
+      ]
+    },
+    "codex-mcp": {
+      "kind": "adapter-doc",
+      "adapter": "codex",
+      "url": "https://learn.chatgpt.com/docs/extend/mcp.md",
+      "title": "Codex Model Context Protocol",
+      "sections": ["Supported MCP features", "Configure with config.toml"]
+    },
+    "codex-sandboxing": {
+      "kind": "adapter-doc",
+      "adapter": "codex",
+      "url": "https://learn.chatgpt.com/docs/sandboxing.md",
+      "title": "Codex sandbox",
+      "sections": ["What the sandbox does", "How permissions work"]
+    },
+    "codex-approvals-security": {
+      "kind": "adapter-doc",
+      "adapter": "codex",
+      "url": "https://learn.chatgpt.com/docs/agent-approvals-security.md",
+      "title": "Codex agent approvals and security",
+      "sections": [
+        "Sandbox and approvals",
+        "Network isolation",
+        "Protected paths in writable roots",
+        "OS-level sandbox"
+      ]
+    },
+    "vinaya-isolation": {
+      "kind": "repo-spec",
+      "path": "apps/cli/specs/isolation.md",
+      "url": "https://github.com/atta-labs/vinaya/blob/883b14afbe0181e4267a894c128f8734de7e2ace/apps/cli/specs/isolation.md",
+      "title": "Isolation — the task boundary a dispatched agent runs inside",
+      "sections": [
+        "1. The six boundaries",
+        "2. Existing precedent this contract extends, not invents",
+        "3. Mechanism, host capabilities, authentication path and refusal conditions",
+        "4a. Claude's own mechanism — the six boundaries, per row",
+        "4b. Codex's own mechanism — the six boundaries, per row"
+      ]
+    },
+    "vinaya-state-machine": {
+      "kind": "repo-spec",
+      "path": "apps/cli/specs/dev-review-engine-state-machine.md",
+      "url": "https://github.com/atta-labs/vinaya/blob/883b14afbe0181e4267a894c128f8734de7e2ace/apps/cli/specs/dev-review-engine-state-machine.md",
+      "title": "The target Atta-Engine developer-review workflow — state machine and node contracts",
+      "sections": [
+        "The transitions (O1)",
+        "The terminal outcomes (O1)",
+        "The node contracts (O2)",
+        "Side-effect classification and effect-once boundaries",
+        "Human handoff is durable, not an error string",
+        "Cancellation",
+        "Provider-neutral core (O3)"
+      ]
+    },
+    "vinaya-worker-boundary": {
+      "kind": "repo-source",
+      "path": "apps/cli/src/lib/worker-boundary.ts",
+      "url": "https://github.com/atta-labs/vinaya/blob/883b14afbe0181e4267a894c128f8734de7e2ace/apps/cli/src/lib/worker-boundary.ts",
+      "title": "Worker boundary: per-vendor confinement resolution"
+    }
+  },
+  "rows": [
+    {
+      "id": "RT-01",
+      "kind": "runtime",
+      "capability": "Flow and Plan representation and validation",
+      "owner": "atta-engine",
+      "consumptionBoundary": "packed-public-runtime+injected-executor",
+      "mechanism": "A steps-shaped Flow is compiled and validated by @atta/engine into a Plan; the packed consumer compiles one using nothing but supported exports of the installed tarballs.",
+      "limitation": "The Plan names roles and actions only, and what each resolves to is the consumer's. The checkpoint stores state, never the Plan, so a resume must be handed the same Plan the run started with; the runtime refuses only a Plan that could not have produced the recorded results.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "atta-consumer",
+          "anchor": "L160-L176 — 1. A steps-shaped Flow compiles through the installed engine"
+        },
+        {
+          "source": "atta-run-control",
+          "anchor": "L67-L75 — What a caller still owns"
+        },
+        {
+          "source": "langgraph-thinking",
+          "anchor": "Break into discrete steps"
+        }
+      ],
+      "traces": ["INV-099"]
+    },
+    {
+      "id": "RT-02",
+      "kind": "runtime",
+      "capability": "Packed public runtime consumable outside the Atta workspace",
+      "owner": "atta-engine",
+      "consumptionBoundary": "packed-public-runtime+injected-executor",
+      "mechanism": "The external-consumer proof builds the three packages, packs them, installs only the tarballs into a project verified to sit outside the checkout, typechecks the consumer under strict settings against the installed declarations, and runs the whole run lifecycle there.",
+      "limitation": "Every packed manifest must be marked private and nothing is published to a registry; the consumer pins the two transitive @atta ranges to the tarballs through overrides. Vinaya therefore installs tarballs built from a recorded Atta commit, not a registry version.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "atta-external-consumer",
+          "anchor": "L1-L42 — stages build, pack, install, typecheck, run"
+        },
+        {
+          "source": "atta-external-consumer",
+          "anchor": "L168-L170 — packed manifest must be private"
+        },
+        {
+          "source": "atta-external-consumer",
+          "anchor": "L217-L245 — consumer overrides pin the transitive @atta ranges"
+        }
+      ],
+      "traces": [],
+      "untracedReason": "Packaging is a property of the Atta artifacts; the standalone loop's invariant register has no packaging behavior to trace to."
+    },
+    {
+      "id": "RT-03",
+      "kind": "runtime",
+      "capability": "Injected executor seam",
+      "owner": "atta-runtime",
+      "consumptionBoundary": "packed-public-runtime+injected-executor",
+      "mechanism": "buildAgentSpawnStateGraph compiles the Plan with a caller-supplied AgentLifecycleNodeExecutor; the packed consumer drives the graph with its own executor. createAgentLifecycleNodeExecutor is the package's default executor, which a consumer may wrap.",
+      "limitation": "The executor is one function per node over the package's graph state (runId, results, sessions, revisionCounts). Vinaya's node contracts must be expressed through that state plus Vinaya's own prepared inputs; the halt handle and the resumed-from checkpoint are per-leg options, not run configuration.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "atta-index",
+          "anchor": "L13-L19 — buildAgentSpawnStateGraph, createAgentLifecycleNodeExecutor, AgentLifecycleNodeExecutor"
+        },
+        {
+          "source": "atta-graph-builder",
+          "anchor": "L194-L197 — AgentLifecycleNodeExecutor"
+        },
+        {
+          "source": "atta-consumer",
+          "anchor": "L177-L209 — 2. The consumer injects its own AgentLifecycleNodeExecutor"
+        }
+      ],
+      "traces": ["INV-100", "INV-117"]
+    },
+    {
+      "id": "RT-04",
+      "kind": "runtime",
+      "capability": "Scheduling, fan-out and join",
+      "owner": "atta-runtime",
+      "consumptionBoundary": "packed-public-runtime+injected-executor",
+      "mechanism": "Fan-out and join follow from the Plan's declared edges in the compiled graph: a node with several incoming edges runs once, after all of them; a branch failure rejects the leg's invoke with the join never started.",
+      "limitation": "A failed branch rejects the whole leg. The cited source does not state what becomes of a sibling branch still running at that moment, so sibling clean-up stays with Vinaya's executor and the reviewer clean-up defect is not closed by the runtime.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "atta-graph-builder",
+          "anchor": "L23-L41 — Fan-out and join"
+        },
+        {
+          "source": "langgraph-thinking",
+          "anchor": "Break into discrete steps"
+        }
+      ],
+      "traces": ["INV-054", "DEF-08"]
+    },
+    {
+      "id": "RT-05",
+      "kind": "runtime",
+      "capability": "Checkpoint-backed continuation",
+      "owner": "atta-runtime",
+      "consumptionBoundary": "packed-public-runtime+injected-executor",
+      "mechanism": "A caller-supplied BaseCheckpointSaver turns on one checkpoint write per node boundary carrying the whole graph state; readRunCheckpoint reads a suspended run back through that same saver, with no second store beside it.",
+      "limitation": "The saver, its retention, encryption and access are the caller's choice. Persisted results are narrowed and redacted, which is a floor and not a proof that no secret is stored.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "atta-graph-builder",
+          "anchor": "L199-L259 — AgentSpawnGraphCompileOptions: the only durable-state seam"
+        },
+        {
+          "source": "atta-index",
+          "anchor": "L38-L51 — readRunCheckpoint, startRun, runIdentityOf"
+        },
+        {
+          "source": "langgraph-thinking",
+          "anchor": "State is shared memory"
+        }
+      ],
+      "traces": ["INV-093", "INV-075"]
+    },
+    {
+      "id": "RT-06",
+      "kind": "runtime",
+      "capability": "Halt and resume without replay",
+      "owner": "atta-runtime",
+      "consumptionBoundary": "packed-public-runtime+injected-executor",
+      "mechanism": "createRunControl().halt stops a leg at the next node boundary; resumeControlledRun continues the same run identity from its own last checkpoint, running only the thread's pending nodes and never a completed one.",
+      "limitation": "Two concurrent legs of one run both pass their preconditions; serialising legs is the caller's stated obligation, which Vinaya's one-driver-per-task lock has to keep meeting. A node already running when the halt fires reports failed, the leg reports paused, and that node runs again on resume.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "atta-run-control",
+          "anchor": "L27-L66 — The three operations; One leg at a time is the caller's obligation"
+        },
+        {
+          "source": "atta-consumer",
+          "anchor": "L273-L303 — 5. Resume continues the same run rather than replaying it"
+        },
+        {
+          "source": "atta-index",
+          "anchor": "L35-L37 — readRunOutcome, resumeControlledRun, startControlledRun, createRunControl"
+        }
+      ],
+      "traces": ["INV-092", "INV-094"]
+    },
+    {
+      "id": "RT-07",
+      "kind": "runtime",
+      "capability": "Human input at a pause",
+      "owner": "atta-runtime",
+      "consumptionBoundary": "packed-public-runtime+injected-executor",
+      "mechanism": "A halted leg returns a typed paused outcome with its checkpoint and halt reason; resume invokes the graph with no input value, so the decision a human records reaches the resumed node through Vinaya's prepared inputs, read by the injected executor.",
+      "limitation": "No interrupt-with-value resume is exported at the pinned commit. The decision payload, its authentication and its single consumption stay Vinaya-owned.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "atta-types",
+          "anchor": "L462-L484 — RunPausedOutcome"
+        },
+        {
+          "source": "atta-run-control",
+          "anchor": "L27-L42 — resume invokes the graph with a null input"
+        },
+        {
+          "source": "langgraph-thinking",
+          "anchor": "Human input is first-class"
+        }
+      ],
+      "traces": ["INV-076", "INV-086", "INV-088"]
+    },
+    {
+      "id": "RT-08",
+      "kind": "runtime",
+      "capability": "Live event stream",
+      "owner": "atta-runtime",
+      "consumptionBoundary": "packed-public-runtime+injected-executor",
+      "mechanism": "onEvent receives node:start, node:streaming, node:complete and node:failed, each carrying runId, from one emission point in the executor and in the order they occur.",
+      "limitation": "Event text is a redacted, bounded excerpt. A consumer needing the verbatim stream reads it from executeAgentSpawnNode's own return value, so Log production reads from Vinaya's executor rather than from onEvent.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "atta-types",
+          "anchor": "L82-L87 — AgentLifecycleEvent"
+        },
+        {
+          "source": "atta-types",
+          "anchor": "L89-L122 — onEvent: what arrives here is redacted"
+        },
+        {
+          "source": "atta-consumer",
+          "anchor": "L210-L252 — 3. Durable start, live observation, halt at a node boundary"
+        }
+      ],
+      "traces": ["INV-111"]
+    },
+    {
+      "id": "RT-09",
+      "kind": "runtime",
+      "capability": "Cancellation of a live child",
+      "owner": "atta-runtime",
+      "consumptionBoundary": "packed-public-runtime+injected-executor",
+      "mechanism": "Cancellation reaches a node already running: the spawned process receives the graceful termination signal, then the forced one after a bounded wait, and the node fails with ProcessCancelledError.",
+      "limitation": "It terminates processes the executor spawned during this process's lifetime. A child left behind by a dead driver is not tracked by the runtime, so orphan reaping across a driver death stays with the adapter and Vinaya.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "atta-index",
+          "anchor": "L24-L34 — DEFAULT_GRACEFUL_TERMINATION_MS, termination signals, ProcessCancelledError"
+        },
+        {
+          "source": "atta-consumer",
+          "anchor": "L304-L330 — 6. Cancellation terminates a node already running"
+        }
+      ],
+      "traces": ["INV-026", "INV-089"]
+    },
+    {
+      "id": "RT-10",
+      "kind": "runtime",
+      "capability": "Typed run outcomes",
+      "owner": "atta-runtime",
+      "consumptionBoundary": "packed-public-runtime+injected-executor",
+      "mechanism": "startControlledRun and resumeControlledRun return a RunOutcome discriminated on reason (completed, paused, failed, exhausted); readRunOutcome reads the recorded outcome back from the checkpointer.",
+      "limitation": "These are runtime outcomes, not Vinaya's terminal meanings; there is no cancelled outcome reason, so Vinaya maps its five terminal outcomes onto them explicitly.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "atta-types",
+          "anchor": "L432-L581 — RunOutcomeReason and RunOutcome"
+        },
+        {
+          "source": "atta-index",
+          "anchor": "L35 — readRunOutcome, resumeControlledRun, startControlledRun"
+        },
+        {
+          "source": "langgraph-thinking",
+          "anchor": "Errors are part of the flow"
+        }
+      ],
+      "traces": ["INV-109", "INV-005"]
+    },
+    {
+      "id": "RT-11",
+      "kind": "runtime",
+      "capability": "Undeclared capability refused",
+      "owner": "atta-runtime",
+      "consumptionBoundary": "packed-public-runtime+injected-executor",
+      "mechanism": "A Plan names a role or an action; the executor resolves it only through the consumer's roleBinaries and mechanicalActions, checks the step's permission against the role's non-empty allowedPermissions, and refuses anything undeclared.",
+      "limitation": "Permission values are the consumer's vocabulary; the runtime enforces membership in the list, not what a value means to the spawned CLI.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "atta-types",
+          "anchor": "L30-L59 — RoleBinaryConfig and allowedPermissions"
+        },
+        {
+          "source": "atta-consumer",
+          "anchor": "L331-L350 — 7. Bounds — the executor refuses what the consumer never declared"
+        }
+      ],
+      "traces": ["INV-069"]
+    },
+    {
+      "id": "RT-12",
+      "kind": "runtime",
+      "capability": "Subscription-login invocation with an environment allowlist",
+      "owner": "atta-runtime",
+      "consumptionBoundary": "packed-public-runtime+injected-executor",
+      "mechanism": "RoleBinaryConfig never carries a vendor API key: the spawned CLI authenticates through its own logged-in session, buildArgs is the caller's, and the spawned environment is an allowlist (PATH and HOME by default) plus the role's own named variables; every working directory must resolve inside workingDirectoryRoot.",
+      "limitation": "The runtime bounds the working directory and the environment only; OS confinement of the spawned CLI is the provider adapter's.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "atta-types",
+          "anchor": "L30-L59 — RoleBinaryConfig: never a vendor API key"
+        },
+        {
+          "source": "atta-types",
+          "anchor": "L115-L130 — workingDirectoryRoot and envAllowlist"
+        },
+        {
+          "source": "vinaya-isolation",
+          "anchor": "3. Mechanism, host capabilities, authentication path and refusal conditions"
+        }
+      ],
+      "traces": [],
+      "untracedReason": "Subscription-only authentication is a Principal ruling recorded in the isolation spec, not a standalone-loop behavior in the invariant register."
+    },
+    {
+      "id": "RT-13",
+      "kind": "runtime",
+      "capability": "Redaction of observed and persisted agent output",
+      "owner": "atta-runtime",
+      "consumptionBoundary": "packed-public-runtime+injected-executor",
+      "mechanism": "One redaction pass at the single emission point for observers, and a narrowing pass over every result written into the checkpoint, each marking which fields it narrowed.",
+      "limitation": "Only recognised shapes are replaced, so this is a floor rather than a proof; retained excerpts are still agent-derived.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "atta-graph-builder",
+          "anchor": "L223-L256 — what supplying a checkpointer actually persists"
+        },
+        {
+          "source": "atta-consumer",
+          "anchor": "L351-L374 — 8. Observer text and persisted results are redacted and bounded"
+        }
+      ],
+      "traces": [],
+      "untracedReason": "The standalone loop persists no agent output into a checkpoint, so its invariant register has no redaction behavior to trace to."
+    },
+    {
+      "id": "RT-14",
+      "kind": "runtime",
+      "capability": "Rounds-shaped adapter outside the boundary",
+      "owner": "atta-engine",
+      "consumptionBoundary": "packed-public-runtime+injected-executor",
+      "mechanism": "The external consumer installs only @atta/agents, @atta/engine and @atta/executor-agent-spawn, and asserts that @atta/adapter-langgraph is not installed at all.",
+      "limitation": "A capability only the rounds-shaped adapter offers is outside the consumption boundary by construction and cannot be assumed.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "atta-consumer",
+          "anchor": "L375-L398 — 9. The rounds-shaped adapter is absent, not merely unimported"
+        },
+        {
+          "source": "atta-external-consumer",
+          "anchor": "L55-L60 — PACKAGES"
+        }
+      ],
+      "traces": [],
+      "untracedReason": "Packaging fact about the Atta artifact set; the invariant register has no packaging behavior to trace to."
+    },
+    {
+      "id": "PO-01",
+      "kind": "policy",
+      "capability": "Legal transitions and terminal meaning",
+      "owner": "vinaya",
+      "mechanism": "Vinaya's injected executor and control state decide every next step and every terminal meaning; the graph only executes the edges the Plan declares.",
+      "limitation": "The runtime's outcome reasons are coarser than Vinaya's five terminal outcomes, so the mapping stays explicit and Vinaya-owned.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "vinaya-state-machine",
+          "anchor": "The transitions (O1)"
+        },
+        {
+          "source": "vinaya-state-machine",
+          "anchor": "The terminal outcomes (O1)"
+        },
+        {
+          "source": "atta-types",
+          "anchor": "L432-L581 — RunOutcomeReason and RunOutcome"
+        }
+      ],
+      "traces": ["INV-100", "INV-001", "INV-002"]
+    },
+    {
+      "id": "PO-02",
+      "kind": "policy",
+      "capability": "Review validity and convergence",
+      "owner": "vinaya",
+      "mechanism": "Reviewer verdicts are validated against one review-input manifest, and convergence exits are decided by Vinaya's assessment over held verdicts and objectives.",
+      "limitation": "The runtime's own revision ceiling (its exhausted outcome) is not the convergence rule; Vinaya's round cap and exit order stay authoritative, and the open defect publishing on an empty verdict set is Vinaya's to fix.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "anthropic-effective-agents",
+          "anchor": "Workflow: Evaluator-optimizer"
+        },
+        {
+          "source": "vinaya-state-machine",
+          "anchor": "The transitions (O1)"
+        }
+      ],
+      "traces": ["INV-062", "INV-063", "INV-008", "DEF-01"]
+    },
+    {
+      "id": "PO-03",
+      "kind": "policy",
+      "capability": "Budgets",
+      "owner": "vinaya",
+      "mechanism": "Round cap, time budget and retry bounds are Vinaya configuration checked by Vinaya's nodes; the runtime contributes per-role process timeouts and a recursion limit forwarded to invoke.",
+      "limitation": "A role's process timeout defaults to ten minutes in the runtime; Vinaya must set it from its own budgets rather than inherit the default.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "atta-types",
+          "anchor": "L53-L58 — RoleBinaryConfig.timeoutMs"
+        },
+        {
+          "source": "atta-run-control",
+          "anchor": "L106-L121 — ControlledRunBase.recursionLimit"
+        }
+      ],
+      "traces": ["INV-005", "INV-020", "INV-023"]
+    },
+    {
+      "id": "PO-04",
+      "kind": "policy",
+      "capability": "Governed effects",
+      "owner": "vinaya",
+      "mechanism": "Push, pull-request open and verdict publication go through Vinaya's effect executor, prepared, committed and reconciled by a stable identity, so a node that runs again reconciles instead of repeating.",
+      "limitation": "Resume re-runs a node that was in flight at the halt and the runtime keeps no effect ledger, so every effect inside a node must be keyed and reconcilable.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "vinaya-state-machine",
+          "anchor": "Side-effect classification and effect-once boundaries"
+        },
+        {
+          "source": "atta-run-control",
+          "anchor": "L43-L66 — no transcript replay; legs serialised by the caller"
+        }
+      ],
+      "traces": ["INV-037", "INV-045", "INV-041"]
+    },
+    {
+      "id": "PO-05",
+      "kind": "policy",
+      "capability": "Operator controls",
+      "owner": "vinaya",
+      "mechanism": "Task start, status, escalation read, resume and cancel map onto the run-control port and Vinaya's escalation and resolution records.",
+      "limitation": "Resume authentication by ruling ordinal and the single claim of a resolution are Vinaya-owned; the open defects there are not changed by the runtime.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "vinaya-state-machine",
+          "anchor": "Human handoff is durable, not an error string"
+        },
+        {
+          "source": "vinaya-state-machine",
+          "anchor": "Cancellation"
+        }
+      ],
+      "traces": ["INV-079", "INV-088", "INV-089", "DEF-16", "DEF-17"]
+    },
+    {
+      "id": "PO-06",
+      "kind": "policy",
+      "capability": "Log production",
+      "owner": "vinaya",
+      "mechanism": "Vinaya emits every loop event from its own nodes into its typed Log families under one run identity; the runtime's events are an observation input, never the Log.",
+      "limitation": "Runtime event text is a redacted excerpt, and Log events built from it inherit that redaction.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "openai-agents-tracing",
+          "anchor": "Traces and spans"
+        },
+        {
+          "source": "atta-types",
+          "anchor": "L89-L122 — onEvent: what arrives here is redacted"
+        }
+      ],
+      "traces": ["INV-111", "INV-116", "DEF-23"]
+    },
+    {
+      "id": "PO-07",
+      "kind": "policy",
+      "capability": "Prepared inputs",
+      "owner": "vinaya",
+      "mechanism": "The brief, objectives, rulings, pull-request facts and review-input manifest are prepared once by Vinaya and delivered to a node by the injected executor.",
+      "limitation": "The checkpoint stores graph state only, so prepared inputs carry their own versions for a resumed node to read the same ones or detect the change.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "vinaya-state-machine",
+          "anchor": "The node contracts (O2)"
+        },
+        {
+          "source": "atta-run-control",
+          "anchor": "L67-L75 — What a caller still owns"
+        }
+      ],
+      "traces": ["INV-062", "INV-068"]
+    },
+    {
+      "id": "CP-01",
+      "kind": "core-port",
+      "port": "AgentRuntime",
+      "capability": "AgentRuntime: start, resume, cancel, events",
+      "owner": "vinaya",
+      "mechanism": "One agent invocation is started, resumed, cancelled and observed through this port with no vendor format in its signature; each adapter implements it behind the port, inside the injected executor.",
+      "limitation": "Every adapter supplies every required adapter capability; one an adapter cannot document is a named gap, never assumed present.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "vinaya-state-machine",
+          "anchor": "Provider-neutral core (O3)"
+        },
+        {
+          "source": "atta-index",
+          "anchor": "L22-L23 — executeAgentSpawnNode and the SpawnFn seam"
+        }
+      ],
+      "traces": ["INV-025", "INV-027"]
+    },
+    {
+      "id": "CP-02",
+      "kind": "core-port",
+      "port": "ToolCatalog",
+      "capability": "ToolCatalog: list by role and phase, invoke with authority",
+      "owner": "vinaya",
+      "mechanism": "Tools are listed per role and phase and invoked with the caller's granted authority; the catalog's driver side, not the agent, holds the forge credential and runs the governed operation.",
+      "limitation": "Tool authority currently rests on which process can reach the tool server, which the same-user socket gap names.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "anthropic-writing-tools",
+          "anchor": "What is a tool?"
+        },
+        {
+          "source": "vinaya-state-machine",
+          "anchor": "Provider-neutral core (O3)"
+        }
+      ],
+      "traces": ["INV-031", "INV-032", "INV-120"]
+    },
+    {
+      "id": "CP-03",
+      "kind": "core-port",
+      "port": "SourceProvider",
+      "capability": "SourceProvider: prepare, deliver",
+      "owner": "vinaya",
+      "mechanism": "Sources are prepared once per round under stable identities and delivered to a node; the port says what is delivered, never how a given runtime receives it.",
+      "limitation": "Delivery into a worker is by prompt and staged files, translated by the adapter.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "vinaya-state-machine",
+          "anchor": "Provider-neutral core (O3)"
+        },
+        {
+          "source": "vinaya-state-machine",
+          "anchor": "The node contracts (O2)"
+        }
+      ],
+      "traces": ["INV-062", "INV-065"]
+    },
+    {
+      "id": "CP-04",
+      "kind": "core-port",
+      "port": "EffectExecutor",
+      "capability": "EffectExecutor: prepare, commit, reconcile",
+      "owner": "vinaya",
+      "mechanism": "Every external effect is prepared with a stable identity, committed once, and reconciled against the remote when its outcome is uncertain.",
+      "limitation": "Reconciliation needs the remote to expose the effect's identity; an effect without one cannot be made effect-once.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "vinaya-state-machine",
+          "anchor": "Side-effect classification and effect-once boundaries"
+        }
+      ],
+      "traces": ["INV-037", "INV-045"]
+    },
+    {
+      "id": "CP-05",
+      "kind": "core-port",
+      "port": "RunControl",
+      "capability": "RunControl: start, inspect, halt, resume, cancel, stream",
+      "owner": "vinaya",
+      "mechanism": "Start maps to startControlledRun, inspect to readRunCheckpoint and readRunOutcome, halt to createRunControl().halt, resume to resumeControlledRun, cancel to the halt signal reaching a live child, and stream to onEvent.",
+      "limitation": "In the runtime, cancel is a halt plus live-child termination; fencing in-flight effects to uncertain is Vinaya's.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "atta-index",
+          "anchor": "L35-L51 — run-control, run-halt and run-identity exports"
+        },
+        {
+          "source": "vinaya-state-machine",
+          "anchor": "Cancellation"
+        }
+      ],
+      "traces": ["INV-089", "INV-092"]
+    },
+    {
+      "id": "CP-06",
+      "kind": "core-port",
+      "capability": "One node contract for every adapter",
+      "owner": "vinaya",
+      "mechanism": "Every node carries typed input, typed output, side-effect class, retry, timeout, failure and cancellation behavior and its owned Log events; no field names a vendor, a model, a hook, a tool-block format or a session format.",
+      "limitation": "A vendor-specific capability may appear only in an adapter-owned cell; a need that cannot be expressed through the five ports is escalated, never added as a core field.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "vinaya-state-machine",
+          "anchor": "The node contracts (O2)"
+        },
+        {
+          "source": "vinaya-state-machine",
+          "anchor": "Provider-neutral core (O3)"
+        }
+      ],
+      "traces": ["INV-099"]
+    },
+    {
+      "id": "CP-07",
+      "kind": "core-port",
+      "capability": "Role grants",
+      "owner": "vinaya",
+      "mechanism": "The developer gets repository exploration, edit and test plus brokered branch and pull-request operations; reviewers get reads and one bounded result channel; the Operator gets task start, status, escalation, resume and cancel.",
+      "limitation": "Grants are enforced by the tool catalog and by each adapter's permission translation; worker-side lifecycle hooks are never the guarantee.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "vinaya-isolation",
+          "anchor": "1. The six boundaries"
+        },
+        {
+          "source": "anthropic-writing-tools",
+          "anchor": "Principles for writing effective tools"
+        }
+      ],
+      "traces": ["INV-069", "INV-031"]
+    },
+    {
+      "id": "CP-08",
+      "kind": "core-port",
+      "capability": "Subscription login only",
+      "owner": "vinaya",
+      "mechanism": "Adapters are coding-agent CLIs under subscription login: no paid provider API, no API key and no hosted graph service.",
+      "limitation": "The vendor documents API-key routes for minimal and automation runs; those routes are excluded, and an adapter that cannot run under subscription login refuses.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "vinaya-isolation",
+          "anchor": "3. Mechanism, host capabilities, authentication path and refusal conditions"
+        },
+        {
+          "source": "atta-types",
+          "anchor": "L30-L59 — RoleBinaryConfig: never a vendor API key"
+        }
+      ],
+      "traces": [],
+      "untracedReason": "Subscription-only authentication is a Principal ruling recorded in the isolation spec, not a standalone-loop behavior in the invariant register."
+    },
+    {
+      "id": "PT-01",
+      "kind": "pattern",
+      "capability": "Code-orchestrated outer workflow",
+      "owner": "vinaya",
+      "mechanism": "Vinaya's code, not a model, selects every next step over typed observations; model output is an input to that choice.",
+      "limitation": "Pattern classification only: the agents-SDK guide describes an API-key SDK and grounds no adapter cell.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "openai-agents-multi-agent",
+          "anchor": "Orchestrating via code"
+        },
+        {
+          "source": "anthropic-effective-agents",
+          "anchor": "When (and when not) to use agents"
+        }
+      ],
+      "traces": ["INV-100"]
+    },
+    {
+      "id": "PT-02",
+      "kind": "pattern",
+      "capability": "Evaluator-optimizer develop-review-revise cycle",
+      "owner": "vinaya",
+      "mechanism": "The developer produces a candidate, reviewers evaluate it against frozen objectives, and findings return to the same developer session until the evaluation passes or an exit applies.",
+      "limitation": "The pattern fits only with clear evaluation criteria; without frozen objectives the cycle has nothing to converge on.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "anthropic-effective-agents",
+          "anchor": "Workflow: Evaluator-optimizer"
+        },
+        {
+          "source": "openai-agents-multi-agent",
+          "anchor": "Orchestrating via code"
+        }
+      ],
+      "traces": ["INV-003", "INV-008", "INV-027"]
+    },
+    {
+      "id": "PT-03",
+      "kind": "pattern",
+      "capability": "Trace hierarchy and redaction",
+      "owner": "vinaya",
+      "mechanism": "One run identity spans every node event as a trace spans its spans, and sensitive payloads are excluded or redacted before they are stored.",
+      "limitation": "Pattern classification only: Vinaya's Log families and the runtime's runId are the implementation, not the agents-SDK tracing.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "openai-agents-tracing",
+          "anchor": "Traces and spans"
+        },
+        {
+          "source": "openai-agents-tracing",
+          "anchor": "Sensitive data"
+        }
+      ],
+      "traces": ["INV-111"]
+    },
+    {
+      "id": "PT-04",
+      "kind": "pattern",
+      "capability": "Tool contracts for agents",
+      "owner": "vinaya",
+      "mechanism": "Driver-run tools consolidate one governed multi-step operation into a single call that returns a success or a structured refusal the agent can act on.",
+      "limitation": "Tool descriptions steer an agent; they enforce nothing, so enforcement stays in the driver behind each tool.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "anthropic-writing-tools",
+          "anchor": "What is a tool?"
+        },
+        {
+          "source": "anthropic-writing-tools",
+          "anchor": "Principles for writing effective tools"
+        }
+      ],
+      "traces": ["INV-031", "INV-036"]
+    },
+    {
+      "id": "AD-CC-01",
+      "kind": "adapter",
+      "adapter": "claude-code",
+      "adapterCapability": "invocation",
+      "capability": "Non-interactive invocation",
+      "owner": "provider-adapter",
+      "mechanism": "claude -p runs one prompt non-interactively with the flags the adapter passes, exiting 0 on success and non-zero when the run fails.",
+      "limitation": "Without --bare a -p run loads the working directory's hooks and MCP servers; --bare never reads the subscription login, so it is unusable under subscription-only auth.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "claude-headless",
+          "anchor": "Basic usage"
+        }
+      ]
+    },
+    {
+      "id": "AD-CC-02",
+      "kind": "adapter",
+      "adapter": "claude-code",
+      "adapterCapability": "structured-output",
+      "capability": "Schema-validated final output",
+      "owner": "provider-adapter",
+      "mechanism": "--output-format json with --json-schema returns the schema-conforming result in structured_output alongside session id and usage metadata.",
+      "limitation": "The format keyword is accepted as an annotation and not enforced.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "claude-headless",
+          "anchor": "Get structured output"
+        },
+        {
+          "source": "claude-cli-reference",
+          "anchor": "CLI flags"
+        }
+      ]
+    },
+    {
+      "id": "AD-CC-03",
+      "kind": "adapter",
+      "adapter": "claude-code",
+      "adapterCapability": "event-stream",
+      "capability": "Streamed events",
+      "owner": "provider-adapter",
+      "mechanism": "--output-format stream-json --verbose emits one JSON event per line, ending with a result message carrying the final text, cost and session metadata.",
+      "limitation": "A foreground subagent's text is omitted unless --forward-subagent-text is passed.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "claude-headless",
+          "anchor": "Stream responses"
+        }
+      ]
+    },
+    {
+      "id": "AD-CC-04",
+      "kind": "adapter",
+      "adapter": "claude-code",
+      "adapterCapability": "session-continuation",
+      "capability": "Session continuation",
+      "owner": "provider-adapter",
+      "mechanism": "The session id read from json output is passed back with --resume to continue that conversation; --session-id fixes the id up front.",
+      "limitation": "The system prompt recorded on a conversation's first request is reused on resume until compaction, so changed prompt flags do not apply to a resumed conversation.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "claude-headless",
+          "anchor": "Continue conversations"
+        },
+        {
+          "source": "claude-cli-reference",
+          "anchor": "System prompt flags in resumed conversations"
+        }
+      ],
+      "traces": ["INV-027"]
+    },
+    {
+      "id": "AD-CC-05",
+      "kind": "adapter",
+      "adapter": "claude-code",
+      "adapterCapability": "tool-registration",
+      "capability": "Tool server registration",
+      "owner": "provider-adapter",
+      "mechanism": "--mcp-config with --strict-mcp-config loads only the named servers; the system/init event reports mcp_servers and mcp_server_errors.",
+      "limitation": "An entry failing validation is skipped and the run continues, so the adapter fails the dispatch on a non-empty mcp_server_errors.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "claude-cli-reference",
+          "anchor": "CLI flags"
+        },
+        {
+          "source": "claude-headless",
+          "anchor": "Fail CI when a plugin or MCP server doesn't load"
+        }
+      ]
+    },
+    {
+      "id": "AD-CC-06",
+      "kind": "adapter",
+      "adapter": "claude-code",
+      "adapterCapability": "tool-grants",
+      "capability": "Tool grants per role",
+      "owner": "provider-adapter",
+      "mechanism": "--tools restricts built-in tools, --allowedTools and --disallowedTools carry allow and deny rules, and --settings supplies a per-dispatch settings file.",
+      "limitation": "Allow rules approve calls; they do not confine what a call reaches, which is the sandbox row's job.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "claude-cli-reference",
+          "anchor": "CLI flags"
+        },
+        {
+          "source": "claude-headless",
+          "anchor": "Auto-approve tools"
+        }
+      ]
+    },
+    {
+      "id": "AD-CC-07",
+      "kind": "adapter",
+      "adapter": "claude-code",
+      "adapterCapability": "unattended-permissions",
+      "capability": "No permission prompts unattended",
+      "owner": "provider-adapter",
+      "mechanism": "--permission-prompts none denies anything that would prompt unless a rule or PermissionRequest hook resolves it, and removes tools that need a person.",
+      "limitation": "The flag requires Claude Code v2.1.259 or later; earlier versions reject it.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "claude-headless",
+          "anchor": "Turn off permission prompts in unattended runs"
+        }
+      ]
+    },
+    {
+      "id": "AD-CC-08",
+      "kind": "adapter",
+      "adapter": "claude-code",
+      "adapterCapability": "cancellation",
+      "capability": "Cancellation",
+      "owner": "provider-adapter",
+      "mechanism": "SIGTERM ends the run with exit 143, terminates running Bash process trees and runs SessionEnd hooks; SIGINT ends the turn instead.",
+      "limitation": "The interrupted turn records no result; a resume continues from the next prompt unless CLAUDE_CODE_RESUME_INTERRUPTED_TURN=1 is set.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "claude-headless",
+          "anchor": "Stop a run with SIGTERM"
+        }
+      ],
+      "traces": ["INV-026"]
+    },
+    {
+      "id": "AD-CC-09",
+      "kind": "adapter",
+      "adapter": "claude-code",
+      "adapterCapability": "usage",
+      "capability": "Usage reporting",
+      "owner": "provider-adapter",
+      "mechanism": "json output carries usage, total_cost_usd and a per-model cost breakdown.",
+      "limitation": "Cost figures are client-side estimates and accumulate across resumed runs of one conversation.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "claude-headless",
+          "anchor": "Pipe data through Claude"
+        },
+        {
+          "source": "claude-headless",
+          "anchor": "Get structured output"
+        }
+      ]
+    },
+    {
+      "id": "AD-CC-10",
+      "kind": "adapter",
+      "adapter": "claude-code",
+      "adapterCapability": "normalized-errors",
+      "capability": "Error reporting",
+      "owner": "provider-adapter",
+      "mechanism": "A non-zero exit marks failure, an in-run failure is printed as the result, and system/api_retry events name an error category (authentication_failed, rate_limit, overloaded and others).",
+      "limitation": "Categories are vendor vocabulary; the adapter maps them onto the core's normalized error kinds and treats unknown ones as unknown.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "claude-headless",
+          "anchor": "Handle API retries"
+        },
+        {
+          "source": "claude-headless",
+          "anchor": "Basic usage"
+        }
+      ]
+    },
+    {
+      "id": "AD-CC-11",
+      "kind": "adapter",
+      "adapter": "claude-code",
+      "adapterCapability": "role-context",
+      "capability": "Role instructions and model",
+      "owner": "provider-adapter",
+      "mechanism": "--append-system-prompt-file and --model set role instructions and model; subagents defined with --agents run in their own context window with their own tool list and model.",
+      "limitation": "Subagent definitions are adapter configuration; the core names roles, never subagents.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "claude-cli-reference",
+          "anchor": "CLI flags"
+        },
+        {
+          "source": "claude-sub-agents",
+          "anchor": "Configure subagents"
+        },
+        {
+          "source": "claude-sub-agents",
+          "anchor": "Choose a model"
+        }
+      ]
+    },
+    {
+      "id": "AD-CC-12",
+      "kind": "adapter",
+      "adapter": "claude-code",
+      "adapterCapability": "lifecycle-hooks",
+      "providerSpecific": true,
+      "capability": "Lifecycle hooks",
+      "owner": "provider-adapter",
+      "mechanism": "Hooks configured in a settings file fire on lifecycle events; a PreToolUse hook can deny a call and a Stop hook exiting 2 keeps the session going.",
+      "limitation": "Hooks run outside the sandbox with the session's environment; they are an adapter mechanism and never a product guarantee.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "claude-hooks",
+          "anchor": "Hook events"
+        },
+        {
+          "source": "claude-hooks",
+          "anchor": "Configuration"
+        }
+      ],
+      "traces": ["INV-050"]
+    },
+    {
+      "id": "AD-CX-01",
+      "kind": "adapter",
+      "adapter": "codex",
+      "adapterCapability": "invocation",
+      "capability": "Non-interactive invocation",
+      "owner": "provider-adapter",
+      "mechanism": "codex exec runs one prompt non-interactively; it runs in a read-only sandbox unless a sandbox mode is given.",
+      "limitation": "The cited sections state no exit-status contract, so the adapter reads the final turn event rather than the exit code alone.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "codex-non-interactive",
+          "anchor": "Permissions and safety"
+        }
+      ]
+    },
+    {
+      "id": "AD-CX-02",
+      "kind": "adapter",
+      "adapter": "codex",
+      "adapterCapability": "structured-output",
+      "capability": "Schema-validated final output",
+      "owner": "provider-adapter",
+      "mechanism": "--output-schema takes a JSON Schema file and the final response conforms to it; -o writes it to a file.",
+      "limitation": "The schema is a file path, so the adapter stages it inside the task's scratch.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "codex-non-interactive",
+          "anchor": "Create structured outputs with a schema"
+        }
+      ]
+    },
+    {
+      "id": "AD-CX-03",
+      "kind": "adapter",
+      "adapter": "codex",
+      "adapterCapability": "event-stream",
+      "capability": "Streamed events",
+      "owner": "provider-adapter",
+      "mechanism": "--json turns stdout into JSON Lines: thread.started, turn.started, turn.completed, turn.failed, item.* and error events.",
+      "limitation": "Item shapes are vendor vocabulary translated by the adapter.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "codex-non-interactive",
+          "anchor": "Make output machine-readable"
+        }
+      ]
+    },
+    {
+      "id": "AD-CX-04",
+      "kind": "adapter",
+      "adapter": "codex",
+      "adapterCapability": "session-continuation",
+      "capability": "Session continuation",
+      "owner": "provider-adapter",
+      "mechanism": "codex exec resume <SESSION_ID> continues a recorded session (or --last the most recent).",
+      "limitation": "A resumed run accepts no sandbox flag, so the sandbox and network policy must come from the task-scoped CODEX_HOME config read by both fresh and resumed runs.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "codex-non-interactive",
+          "anchor": "Resume a non-interactive session"
+        },
+        {
+          "source": "vinaya-isolation",
+          "anchor": "4b. Codex's own mechanism — the six boundaries, per row"
+        }
+      ],
+      "traces": ["INV-027"]
+    },
+    {
+      "id": "AD-CX-05",
+      "kind": "adapter",
+      "adapter": "codex",
+      "adapterCapability": "tool-registration",
+      "capability": "Tool server registration",
+      "owner": "provider-adapter",
+      "mechanism": "[mcp_servers.<name>] tables in config.toml register STDIO or streamable HTTP servers, with startup_timeout_sec and tool_timeout_sec.",
+      "limitation": "Registration is per CODEX_HOME, so the adapter stages a task-scoped home rather than reading the operator's.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "codex-mcp",
+          "anchor": "Configure with config.toml"
+        },
+        {
+          "source": "codex-mcp",
+          "anchor": "Supported MCP features"
+        }
+      ]
+    },
+    {
+      "id": "AD-CX-06",
+      "kind": "adapter",
+      "adapter": "codex",
+      "adapterCapability": "tool-grants",
+      "capability": "Tool grants per role",
+      "owner": "provider-adapter",
+      "mechanism": "enabled_tools allowlists and disabled_tools denylists a server's tools; the sandbox mode and approval policy bound what commands may do.",
+      "limitation": "Tool lists are per server; built-in command execution is bounded by the sandbox mode, not by a per-tool list.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "codex-mcp",
+          "anchor": "Configure with config.toml"
+        },
+        {
+          "source": "codex-approvals-security",
+          "anchor": "Sandbox and approvals"
+        }
+      ]
+    },
+    {
+      "id": "AD-CX-07",
+      "kind": "adapter",
+      "adapter": "codex",
+      "adapterCapability": "unattended-permissions",
+      "capability": "No permission prompts unattended",
+      "owner": "provider-adapter",
+      "mechanism": "The sandbox mode decides what runs and the approval policy decides when to pause; unattended runs use workspace-write.",
+      "limitation": "danger-full-access removes the filesystem and network boundary and is never used for an unattended dispatch.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "codex-approvals-security",
+          "anchor": "Sandbox and approvals"
+        },
+        {
+          "source": "codex-non-interactive",
+          "anchor": "Permissions and safety"
+        }
+      ]
+    },
+    {
+      "id": "AD-CX-08",
+      "kind": "adapter",
+      "adapter": "codex",
+      "adapterCapability": "cancellation",
+      "capability": "Cancellation",
+      "owner": "provider-adapter",
+      "mechanism": "The runtime's executor terminates the spawned codex exec process with the graceful, then the forced, signal.",
+      "limitation": "The cited Codex sections document no interrupt or cancellation semantics for codex exec, nor what a resumed session holds for an interrupted turn; this is not assumed present.",
+      "conclusion": "gap",
+      "gap": "GAP-ADP-01",
+      "citations": [
+        {
+          "source": "codex-non-interactive",
+          "anchor": "Resume a non-interactive session"
+        },
+        {
+          "source": "atta-index",
+          "anchor": "L24-L34 — DEFAULT_GRACEFUL_TERMINATION_MS, termination signals, ProcessCancelledError"
+        }
+      ],
+      "traces": ["INV-026"]
+    },
+    {
+      "id": "AD-CX-09",
+      "kind": "adapter",
+      "adapter": "codex",
+      "adapterCapability": "usage",
+      "capability": "Usage reporting",
+      "owner": "provider-adapter",
+      "mechanism": "turn.completed carries usage: input_tokens, cached_input_tokens and output_tokens.",
+      "limitation": "Token counts only; no cost figure is reported.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "codex-non-interactive",
+          "anchor": "Make output machine-readable"
+        }
+      ]
+    },
+    {
+      "id": "AD-CX-10",
+      "kind": "adapter",
+      "adapter": "codex",
+      "adapterCapability": "normalized-errors",
+      "capability": "Error reporting",
+      "owner": "provider-adapter",
+      "mechanism": "turn.failed and error events report a failed turn and a run-level error on the JSON Lines stream.",
+      "limitation": "The cited section enumerates no error vocabulary, so the adapter maps what it recognises and normalizes the rest to an unknown kind.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "codex-non-interactive",
+          "anchor": "Make output machine-readable"
+        }
+      ]
+    },
+    {
+      "id": "AD-CX-11",
+      "kind": "adapter",
+      "adapter": "codex",
+      "adapterCapability": "role-context",
+      "capability": "Role instructions and model",
+      "owner": "provider-adapter",
+      "mechanism": "Role context is the prompt plus the task-scoped configuration; --ignore-user-config and --ignore-rules keep the operator's own configuration out of an automated run.",
+      "limitation": "No subagent-definition mechanism appears in the cited sections; role context is the prompt and the scoped home only.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "codex-non-interactive",
+          "anchor": "Permissions and safety"
+        }
+      ]
+    },
+    {
+      "id": "AD-CX-12",
+      "kind": "adapter",
+      "adapter": "codex",
+      "adapterCapability": "protected-paths",
+      "providerSpecific": true,
+      "capability": "Protected paths in writable roots",
+      "owner": "provider-adapter",
+      "mechanism": "Inside a writable root, .git, .agents and .codex stay read-only.",
+      "limitation": "The driver grants the linked worktree's git common dir writable, widening that protection for the task's own repository (accepted in the isolation spec).",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "codex-approvals-security",
+          "anchor": "Protected paths in writable roots"
+        },
+        {
+          "source": "vinaya-isolation",
+          "anchor": "4b. Codex's own mechanism — the six boundaries, per row"
+        }
+      ]
+    },
+    {
+      "id": "CF-CC-MAC",
+      "kind": "confinement",
+      "adapter": "claude-code",
+      "platform": "macos",
+      "capability": "Claude Code confinement on macOS",
+      "owner": "provider-adapter",
+      "sandbox": "Claude Code's built-in sandbox, enforced with Seatbelt",
+      "mechanism": "The driver writes a sandbox block into the per-dispatch --settings file: writes limited to the worktree, scratch and bun's install cache; named credential files and the driver-tool socket root denied to reads; a strict domain allowlist; no excluded commands.",
+      "refusal": "The sandbox block sets failIfUnavailable and turns the unsandboxed retry off, so a sandbox that cannot start ends the run instead of running unsandboxed; an unattended dispatch whose settings file cannot be written refuses before spawn.",
+      "publication": "publish_changes, open_pull_request, update_pull_request_body, refresh_evidence, read_pull_request and run_checks run in the driver outside the sandbox; gh and git push are denied to the worker.",
+      "limitation": "Only tool calls are confined: the Claude Code main process, its hooks and its local MCP servers run outside the sandbox, and reads stay open except the named credential files and the socket root.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "vinaya-isolation",
+          "anchor": "4a. Claude's own mechanism — the six boundaries, per row"
+        },
+        {
+          "source": "vinaya-isolation",
+          "anchor": "2. Existing precedent this contract extends, not invents"
+        },
+        {
+          "source": "vinaya-worker-boundary",
+          "anchor": "L2219-L2224 — failIfUnavailable: true, allowUnsandboxedCommands: false"
+        },
+        {
+          "source": "claude-sandboxing",
+          "anchor": "What the sandbox restricts"
+        },
+        {
+          "source": "claude-sandboxing",
+          "anchor": "OS-level enforcement"
+        }
+      ],
+      "gaps": ["GAP-CONF-01", "GAP-CONF-02"]
+    },
+    {
+      "id": "CF-CC-LINUX",
+      "kind": "confinement",
+      "adapter": "claude-code",
+      "platform": "linux",
+      "capability": "Claude Code confinement on Linux",
+      "owner": "provider-adapter",
+      "sandbox": "Claude Code's built-in sandbox, enforced with bubblewrap and a socat-bridged egress proxy",
+      "mechanism": "The same sandbox block as on macOS, enforced by bubblewrap with egress bridged through socat.",
+      "refusal": "An unattended dispatch refuses before spawn when bwrap or socat does not resolve on PATH, writing a WARNING lifecycle line and an operation event with result unavailable; failIfUnavailable ends a run whose sandbox fails to start.",
+      "publication": "publish_changes, open_pull_request, update_pull_request_body, refresh_evidence, read_pull_request and run_checks run in the driver outside the sandbox; gh and git push are denied to the worker.",
+      "limitation": "The Unix-socket seccomp filter is optional, so the socket-root read deny is what hides sibling sockets; bubblewrap needs user namespaces, which Ubuntu 24.04 and later restrict by default.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "vinaya-isolation",
+          "anchor": "4a. Claude's own mechanism — the six boundaries, per row"
+        },
+        {
+          "source": "vinaya-worker-boundary",
+          "anchor": "L1966 — LINUX_CLAUDE_SANDBOX_TOOLS"
+        },
+        {
+          "source": "claude-sandboxing",
+          "anchor": "Set up Linux and WSL2"
+        },
+        {
+          "source": "claude-sandboxing",
+          "anchor": "OS-level enforcement"
+        }
+      ],
+      "gaps": ["GAP-CONF-01", "GAP-CONF-02"]
+    },
+    {
+      "id": "CF-CX-MAC",
+      "kind": "confinement",
+      "adapter": "codex",
+      "platform": "macos",
+      "capability": "Codex confinement on macOS",
+      "owner": "provider-adapter",
+      "sandbox": "Codex's workspace-write sandbox, enforced with Seatbelt (sandbox-exec), plus its network proxy",
+      "mechanism": "A config.toml staged into a task-scoped CODEX_HOME sets workspace-write and the network-proxy domain allowlist; the worktree, scratch, bun's install cache and the linked worktree's git common dir are the writable roots.",
+      "refusal": "resolveCodexConfinement returns a refusal, never a degraded unconfined launch, when the sandbox, its network proxy or the staged CODEX_HOME is unavailable; a staging or auth-preflight failure refuses the same way, before spawn.",
+      "publication": "publish_changes, open_pull_request, update_pull_request_body, refresh_evidence, read_pull_request and run_checks run in the driver outside the sandbox; the worker holds no forge credential.",
+      "limitation": "workspace-write has no read restriction, so reads reach anything the user can read; the network proxy does not filter MCP server connections.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "vinaya-isolation",
+          "anchor": "4b. Codex's own mechanism — the six boundaries, per row"
+        },
+        {
+          "source": "codex-approvals-security",
+          "anchor": "OS-level sandbox"
+        },
+        {
+          "source": "codex-approvals-security",
+          "anchor": "Network isolation"
+        },
+        {
+          "source": "codex-sandboxing",
+          "anchor": "What the sandbox does"
+        }
+      ],
+      "gaps": ["GAP-CONF-01", "GAP-CONF-02", "GAP-CONF-03"]
+    },
+    {
+      "id": "CF-CX-LINUX",
+      "kind": "confinement",
+      "adapter": "codex",
+      "platform": "linux",
+      "capability": "Codex confinement on Linux",
+      "owner": "provider-adapter",
+      "sandbox": "Codex's workspace-write sandbox, enforced with bwrap and seccomp, plus its own network proxy",
+      "mechanism": "The same staged config.toml as on macOS; Codex runs its own local proxy, so bwrap is the only host tool required.",
+      "refusal": "An unattended dispatch refuses before spawn when bwrap is not on PATH; the refusal names the missing tool.",
+      "publication": "publish_changes, open_pull_request, update_pull_request_body, refresh_evidence, read_pull_request and run_checks run in the driver outside the sandbox; the worker holds no forge credential.",
+      "limitation": "workspace-write has no read restriction, and the network proxy does not filter MCP server connections.",
+      "conclusion": "fit",
+      "citations": [
+        {
+          "source": "vinaya-isolation",
+          "anchor": "4b. Codex's own mechanism — the six boundaries, per row"
+        },
+        {
+          "source": "vinaya-worker-boundary",
+          "anchor": "L2338 — LINUX_CODEX_SANDBOX_TOOLS"
+        },
+        {
+          "source": "codex-approvals-security",
+          "anchor": "OS-level sandbox"
+        },
+        {
+          "source": "codex-sandboxing",
+          "anchor": "How permissions work"
+        }
+      ],
+      "gaps": ["GAP-CONF-01", "GAP-CONF-02", "GAP-CONF-03"]
+    },
+    {
+      "id": "GAP-CONF-01",
+      "kind": "confinement-gap",
+      "capability": "Driver-run code executes outside the sandbox",
+      "owner": "vinaya",
+      "owningLayer": "Vinaya driver: governed effects and the driver-run tools",
+      "mechanism": "Publication, pull-request reads and checks run with the forge credential in the driver's own unconfined process; the agent CLI's hooks and local MCP servers also run with the user's full access.",
+      "limitation": "Driver-run work that executes repository content the worker wrote, such as the repository's commit and push hooks during publish_changes or the checks run_checks executes, runs with the driver's authority and outside any sandbox.",
+      "conclusion": "gap",
+      "gap": "GAP-CONF-01",
+      "citations": [
+        {
+          "source": "vinaya-isolation",
+          "anchor": "1. The six boundaries"
+        },
+        {
+          "source": "claude-sandboxing",
+          "anchor": "What runs outside the sandbox"
+        },
+        {
+          "source": "codex-approvals-security",
+          "anchor": "Network isolation"
+        }
+      ],
+      "traces": ["INV-035", "INV-052"]
+    },
+    {
+      "id": "GAP-CONF-02",
+      "kind": "confinement-gap",
+      "capability": "Tool-socket reach between processes of the same user",
+      "owner": "vinaya",
+      "owningLayer": "Vinaya tool catalog: the driver-run tools server",
+      "mechanism": "Each task's driver-run tools listen on a socket; confinement hides the socket root from sandboxed tool calls only.",
+      "limitation": "Any unconfined process of the same user, including an agent CLI's own main process, its hooks and MCP servers, can reach another task's socket; the isolation spec closes this only by confining the worker and names no per-caller check on the socket.",
+      "conclusion": "gap",
+      "gap": "GAP-CONF-02",
+      "citations": [
+        {
+          "source": "vinaya-isolation",
+          "anchor": "1. The six boundaries"
+        },
+        {
+          "source": "vinaya-isolation",
+          "anchor": "4a. Claude's own mechanism — the six boundaries, per row"
+        }
+      ],
+      "traces": ["INV-066", "DEF-12"]
+    },
+    {
+      "id": "GAP-CONF-03",
+      "kind": "confinement-gap",
+      "adapter": "codex",
+      "capability": "Copied Codex login",
+      "owner": "provider-adapter",
+      "owningLayer": "Codex provider adapter: session and credential staging",
+      "mechanism": "An unattended Codex dispatch copies the operator's auth.json into the task-scoped CODEX_HOME so the confined session authenticates.",
+      "limitation": "The copy is a durable bearer token readable by any repository command the confined Codex runs, and can leave over allowed egress; workspace-write has no read restriction to stop it.",
+      "conclusion": "gap",
+      "gap": "GAP-CONF-03",
+      "citations": [
+        {
+          "source": "vinaya-isolation",
+          "anchor": "3. Mechanism, host capabilities, authentication path and refusal conditions"
+        },
+        {
+          "source": "vinaya-isolation",
+          "anchor": "4b. Codex's own mechanism — the six boundaries, per row"
+        },
+        {
+          "source": "codex-approvals-security",
+          "anchor": "Sandbox and approvals"
+        }
+      ],
+      "traces": [],
+      "untracedReason": "The standalone loop stages no Codex credential, so the invariant register has no behavior for this copy to trace to."
+    }
+  ],
+  "gaps": [
+    {
+      "id": "GAP-ADP-01",
+      "name": "Codex cancellation semantics undocumented",
+      "owningLayer": "Codex provider adapter",
+      "escalation": "Recorded unaccepted: the cited Codex sections are silent on interrupting codex exec and on what a resumed session holds afterwards. Needs a primary Codex source before the adapter cell can read fit; no fix is designed here."
+    },
+    {
+      "id": "GAP-CONF-01",
+      "name": "Driver-run code executes outside the sandbox",
+      "owningLayer": "Vinaya driver: governed effects and the driver-run tools",
+      "escalation": "Named for the Principal with its owning layer; no fix is designed here."
+    },
+    {
+      "id": "GAP-CONF-02",
+      "name": "Tool-socket reach between processes of the same user",
+      "owningLayer": "Vinaya tool catalog: the driver-run tools server",
+      "escalation": "Named for the Principal with its owning layer; no fix is designed here."
+    },
+    {
+      "id": "GAP-CONF-03",
+      "name": "Copied Codex login",
+      "owningLayer": "Codex provider adapter: session and credential staging",
+      "escalation": "Named for the Principal with its owning layer; no fix is designed here."
+    }
+  ]
+}
