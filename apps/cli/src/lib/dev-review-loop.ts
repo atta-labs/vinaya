@@ -675,6 +675,8 @@ export type LoopDeps = {
   readWorktreeBranch: (worktreePath: string) => string | null
   /** O7: every path the worktree changed since `base` (committed AND uncommitted — `git diff --name-only <base>`), for the Surface check. Best-effort: `[]` when unreadable. */
   gitWorktreeChangedPaths: (worktreePath: string, base: string) => string[]
+  /** The exact default-branch commit this turn merged into the worktree (an in-progress merge's incoming commit, else a merge commit's default-branch parent in `sinceBase..HEAD`), or `null` when the turn merged none. */
+  readMergedDefaultCommit: (worktreePath: string, sinceBase: string | null) => string | null
   /** O1/O2: the worktree's own diff text since `base`, for the after-turn credential scan. `null` when unreadable. */
   gitWorktreeDiffText: (worktreePath: string, base: string) => string | null
   /** Builds this repository's vendored CLI before the driver's commit when its ignored bin is absent; ordinary adopters are a no-op. */
@@ -1071,7 +1073,7 @@ function defaultReadWorktreeBranch(worktreePath: string): string | null {
 }
 
 /** O7: every path the worktree changed since `base`, committed and uncommitted (`git diff --name-only <base>`). Best-effort: `[]` on any failure. */
-function defaultGitWorktreeChangedPaths(worktreePath: string, base: string): string[] {
+export function defaultGitWorktreeChangedPaths(worktreePath: string, base: string): string[] {
   try {
     const raw = execFileSync('git', ['-C', worktreePath, 'diff', '--name-only', base], {
       encoding: 'utf8',
@@ -1084,6 +1086,39 @@ function defaultGitWorktreeChangedPaths(worktreePath: string, base: string): str
   } catch {
     return []
   }
+}
+
+function gitOk(worktreePath: string, args: string[]): string | null {
+  try {
+    return execFileSync('git', ['-C', worktreePath, ...args], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The exact default-branch commit a Developer turn merged into its worktree:
+ * the in-progress merge's incoming commit (`MERGE_HEAD`), else the newest
+ * merge commit in `sinceBase..HEAD` whose non-first parent is reachable from
+ * `origin/main`. Read from the merge itself, never from a ref by name, so a
+ * stale default-branch ref neither adds nor hides a path. `null` when none.
+ */
+export function defaultReadMergedDefaultCommit(worktreePath: string, sinceBase: string | null): string | null {
+  const onDefaultBranch = (sha: string): boolean =>
+    gitOk(worktreePath, ['merge-base', '--is-ancestor', sha, 'origin/main']) !== null
+  const incoming = gitOk(worktreePath, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])
+  if (incoming && onDefaultBranch(incoming)) return incoming
+  const range = sinceBase ? [`^${sinceBase}`, 'HEAD'] : ['HEAD']
+  const merges = gitOk(worktreePath, ['rev-list', '--merges', '--parents', ...range])
+  if (!merges) return null
+  for (const line of merges.split('\n')) {
+    const [, ...parents] = line.trim().split(/\s+/)
+    for (const parent of parents.slice(1)) if (onDefaultBranch(parent)) return parent
+  }
+  return null
 }
 
 /** The exclusive lower bound for paths attributed to one branch push. */
@@ -1959,6 +1994,7 @@ function defaultDeps(): LoopDeps {
     readUnpushedWorkDetail: defaultReadUnpushedWorkDetail,
     readWorktreeBranch: defaultReadWorktreeBranch,
     gitWorktreeChangedPaths: defaultGitWorktreeChangedPaths,
+    readMergedDefaultCommit: defaultReadMergedDefaultCommit,
     gitWorktreeDiffText: defaultGitWorktreeDiffText,
     buildVendoredCliIfMissing: defaultBuildVendoredCliIfMissing,
     commitWorktree: defaultCommitWorktree,
@@ -3659,12 +3695,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           return null
         }
       }
+      // One comparison point for every publication check: the default-branch
+      // commit the turn merged in, else the conflict-retry's `origin/main`,
+      // else the last pushed head.
+      const publicationRangeBase = (remoteHead: string | null): string | null => {
+        const pushedBase = pushedCommitRangeBase(remoteHead, publicationExpectedBase)
+        return (
+          d.readMergedDefaultCommit(worktree, pushedBase) ??
+          (pendingConflictFiles !== null ? 'origin/main' : pushedBase)
+        )
+      }
       const worktreeChangedPaths = (): string[] => {
         const unpushed = d.readUnpushedWorkDetail(worktree)
-        const rangeBase =
-          pendingConflictFiles !== null
-            ? 'origin/main'
-            : pushedCommitRangeBase(safeRemoteHead(), publicationExpectedBase)
+        const rangeBase = publicationRangeBase(safeRemoteHead())
         const diffPaths = rangeBase ? d.gitWorktreeChangedPaths(worktree, rangeBase) : []
         return [...new Set([...diffPaths, ...unpushed.dirtyFiles])]
       }
@@ -3711,10 +3754,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
           const remoteHeadBefore = safeRemoteHead()
           if (d.readUnpushedWorkDetail(worktree).dirtyFiles.length > 0) d.buildVendoredCliIfMissing(worktree)
-          const scanBase =
-            pendingConflictFiles !== null
-              ? 'origin/main'
-              : pushedCommitRangeBase(remoteHeadBefore, publicationExpectedBase)
+          const scanBase = publicationRangeBase(remoteHeadBefore)
           if (scanBase === null) {
             return {
               ok: false,
@@ -3766,10 +3806,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // A commit made by this tool remains valid work if the push hook
             // refuses. Remember it so the next call can retry that same head.
             if (unpushed.dirtyFiles.length > 0) turnPreHead = localHead
-            const rangeBase =
-              pendingConflictFiles !== null
-                ? 'origin/main'
-                : pushedCommitRangeBase(remoteHeadBefore, publicationExpectedBase)
+            const rangeBase = publicationRangeBase(remoteHeadBefore)
             const changedPaths = rangeBase ? d.gitWorktreeChangedPaths(worktree, rangeBase) : []
             const push = d.pushTaskBranch({
               task,

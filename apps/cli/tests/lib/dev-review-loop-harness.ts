@@ -583,6 +583,7 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     // --- developer publication (agent-confinement-v1/1) ---
     readWorktreeBranch: (_worktreePath) => world.worktreeBranchName ?? world.branch,
     gitWorktreeChangedPaths: (_worktreePath, _base) => [...world.worktreeChangedPaths],
+    readMergedDefaultCommit: () => null,
     // This fake world never models diff CONTENT, only changed-path lists —
     // the O1/O2 after-turn credential scan then simply has nothing to read
     // from the worktree side in a harness-driven test, the same fidelity

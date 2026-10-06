@@ -7,6 +7,11 @@
  */
 
 import { describe, expect, it } from 'bun:test'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { defaultGitWorktreeChangedPaths, defaultReadMergedDefaultCommit } from '../../../src/lib/dev-review-loop.js'
 import {
   checkPublicationPreconditions,
   validateCommitHeader
@@ -138,5 +143,93 @@ describe('checkPublicationPreconditions (O7)', () => {
         surface: null
       }).ok
     ).toBe(true)
+  })
+})
+
+describe('publication range after a default-branch merge', () => {
+  const git = (cwd: string, ...args: string[]): string =>
+    execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+
+  /** A repo whose `origin/main` is a real remote-tracking ref, with a task branch cut from the first main commit. */
+  const fixture = (): { dir: string; base: string } => {
+    const dir = mkdtempSync(join(tmpdir(), 'pub-range-'))
+    git(dir, 'init', '-q', '-b', 'main')
+    writeFileSync(join(dir, 'a.txt'), 'a\n')
+    git(dir, 'add', '.')
+    git(dir, 'commit', '-q', '-m', 'base')
+    const base = git(dir, 'rev-parse', 'HEAD')
+    git(dir, 'checkout', '-q', '-b', 'task')
+    writeFileSync(join(dir, 'own.txt'), 'own\n')
+    git(dir, 'add', '.')
+    git(dir, 'commit', '-q', '-m', 'own')
+    return { dir, base }
+  }
+
+  const advanceMain = (dir: string, file: string): string => {
+    git(dir, 'checkout', '-q', 'main')
+    writeFileSync(join(dir, file), 'main\n')
+    git(dir, 'add', '.')
+    git(dir, 'commit', '-q', '-m', `main ${file}`)
+    const tip = git(dir, 'rev-parse', 'HEAD')
+    git(dir, 'update-ref', 'refs/remotes/origin/main', tip)
+    git(dir, 'checkout', '-q', 'task')
+    return tip
+  }
+
+  it('reads nothing when the turn merged no default-branch commit', () => {
+    const { dir, base } = fixture()
+    git(dir, 'update-ref', 'refs/remotes/origin/main', base)
+    expect(defaultReadMergedDefaultCommit(dir, base)).toBeNull()
+  })
+
+  it('reads the committed merge parent, so main-only files are not the task change', () => {
+    const { dir, base } = fixture()
+    const pushed = git(dir, 'rev-parse', 'HEAD')
+    const tip = advanceMain(dir, 'main-only.txt')
+    git(dir, 'merge', '-q', '--no-ff', '-m', 'merge main', 'main')
+    // Stale local default-branch ref must not matter: move origin/main back.
+    git(dir, 'update-ref', 'refs/remotes/origin/main', base)
+    expect(defaultReadMergedDefaultCommit(dir, pushed)).toBeNull()
+    git(dir, 'update-ref', 'refs/remotes/origin/main', tip)
+    const merged = defaultReadMergedDefaultCommit(dir, pushed)
+    expect(merged).toBe(tip)
+    expect(defaultGitWorktreeChangedPaths(dir, merged as string)).toEqual(['own.txt'])
+    expect(defaultGitWorktreeChangedPaths(dir, pushed)).toContain('main-only.txt')
+  })
+
+  it('reads the staged in-progress merge incoming commit', () => {
+    const { dir } = fixture()
+    const pushed = git(dir, 'rev-parse', 'HEAD')
+    const tip = advanceMain(dir, 'main-only.txt')
+    git(dir, 'merge', '-q', '--no-commit', '--no-ff', 'main')
+    const merged = defaultReadMergedDefaultCommit(dir, pushed)
+    expect(merged).toBe(tip)
+    expect(defaultGitWorktreeChangedPaths(dir, merged as string)).toEqual(['own.txt'])
+  })
+
+  it('still reports a file the Developer itself changed outside the Surface', () => {
+    const { dir } = fixture()
+    const pushed = git(dir, 'rev-parse', 'HEAD')
+    advanceMain(dir, 'main-only.txt')
+    git(dir, 'merge', '-q', '--no-commit', '--no-ff', 'main')
+    writeFileSync(join(dir, 'a.txt'), 'edited in the merge\n')
+    git(dir, 'add', '.')
+    const merged = defaultReadMergedDefaultCommit(dir, pushed) as string
+    const changed = defaultGitWorktreeChangedPaths(dir, merged)
+    expect(changed.sort()).toEqual(['a.txt', 'own.txt'])
+    const verdict = checkPublicationPreconditions({
+      worktreeBranch: 't',
+      expectedBranch: 't',
+      worktreeHead: 'a'.repeat(40),
+      recordedHead: 'a'.repeat(40),
+      base: 'b'.repeat(40),
+      expectedBase: 'b'.repeat(40),
+      changedPaths: changed,
+      surface: { in: ['own.txt'], out: [] }
+    })
+    expect(verdict.ok).toBe(false)
   })
 })
