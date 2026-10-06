@@ -812,10 +812,8 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       timeoutMs: 15_000,
       // Local-only: `.changeset/config.json`, every fixed-group member's own
       // `package.json`, and the diff itself all come from the already-local
-      // working tree and `git` — no forge call, no PR content. Report-only
-      // (severity: warning, exit 0 always — see the bin's own module doc),
-      // same rollout precedent as reader-resolvable-prose/retired-vocabulary
-      // above: registering it must not newly redden any existing install.
+      // working tree and `git` — no forge call, no PR content. Blocking on a
+      // finding (see the bin's own module doc).
       env: {}
     },
     0
