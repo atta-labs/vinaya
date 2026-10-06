@@ -42,7 +42,8 @@
  * from a public address, declared its body's length (so a body cut off by a
  * dropped connection is never receipted), carried an allowed text content
  * type and returned at least
- * `DOCUMENTATION_READ_MIN_SIZE` bytes — the same minimum the `WebFetch` read
+ * `DOCUMENTATION_READ_MIN_SIZE` bytes (an HTML page: characters of visible
+ * text, see `visibleTextSize`) — the same minimum the `WebFetch` read
  * check uses. Only then does the driver append a receipt, keyed by the
  * source's identity (its normalized URL), to a receipts file in the task's
  * hooks area, which the after-turn confinement check protects. Both agents'
@@ -812,10 +813,31 @@ export function whyNotCountedAsRead(document: FetchedDocument): string | null {
     return 'the response declared no length, so a cut-off body cannot be told from a complete one'
   }
   if (!DOCUMENTATION_TEXT_CONTENT_TYPES.includes(mediaType(document.contentType))) return 'the page is not text'
+  if (mediaType(document.contentType) === 'text/html') {
+    const visible = visibleTextSize(new TextDecoder().decode(document.body))
+    if (visible < DOCUMENTATION_READ_MIN_SIZE) {
+      return `the page's visible text is only ${visible} characters (minimum ${DOCUMENTATION_READ_MIN_SIZE}); it is likely an application shell, not the document`
+    }
+    return null
+  }
   if (document.body.length < DOCUMENTATION_READ_MIN_SIZE) {
     return `the page returned only ${document.body.length} bytes (minimum ${DOCUMENTATION_READ_MIN_SIZE})`
   }
   return null
+}
+
+/**
+ * The length of an HTML page's visible text: script and style elements removed
+ * with their contents, then every tag, then whitespace collapsed and trimmed.
+ * Any check deciding whether a documentation page is readable measures it here.
+ */
+export function visibleTextSize(html: string): number {
+  return html
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim().length
 }
 
 /** The receipt for a page that counts as a read. */
