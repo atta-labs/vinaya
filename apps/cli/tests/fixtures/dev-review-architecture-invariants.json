@@ -84,10 +84,20 @@
         "path": "apps/cli/tests/lib/dev-review-loop/push-hook-refusal-output.test.ts",
         "kind": "test",
         "reason": "Drives a real git push through a real failing pre-push hook and proves the refusal is classified as a hook refusal carrying the failing test names, while any other push failure carries the git exit and its own bounded output."
+      },
+      {
+        "path": "apps/cli/tests/lib/dev-review-loop/readiness-gate-adopter.test.ts",
+        "kind": "test",
+        "reason": "Runs the dispatch-readiness gate's two steps from the built distribution in a temporary directory outside this checkout, proving an installed package resolves them without any Vinaya sources."
       }
     ]
   },
   "exclusions": [
+    {
+      "path": "apps/cli/tests/lib/dev-review-loop/readiness-gate-adopter.test.ts",
+      "kind": "test",
+      "reason": "Packaging guard, not a loop behaviour: it proves the built distribution carries the readiness gate's steps and finds them outside this checkout, which no loop invariant describes."
+    },
     {
       "path": "packages/aeg-core/src/dev-review-loop/index.ts",
       "kind": "implementation",

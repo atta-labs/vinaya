@@ -1,17 +1,22 @@
 import { beforeAll, describe, expect, it } from 'bun:test'
-import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { resolveGateStep } from '../../../src/checks/registry.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../process-fixture'
 import { checkTaskDispatchReadiness } from '../../../src/lib/dev-review-loop/developer-dispatch.js'
 
 const PKG = join(import.meta.dir, '..', '..', '..')
 const DIST_INDEX = pathToFileURL(join(PKG, 'dist', 'index.js')).href
 
 beforeAll(() => {
-  const built = spawnSync('bun', ['scripts/build.ts'], { cwd: PKG, encoding: 'utf8' })
+  const built = spawnSyncBudgeted(
+    'bun',
+    ['scripts/build.ts'],
+    { cwd: PKG, encoding: 'utf8', env: stripVinayaEnv() },
+    90_000
+  )
   if (built.status !== 0) throw new Error(`build failed: ${built.stderr}`)
 }, 120_000)
 
@@ -24,14 +29,11 @@ describe('readiness gate outside this repository', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'vinaya-adopter-'))
     try {
       for (const script of [readiness, existingWork]) {
-        const ran = spawnSync(
+        const ran = spawnSyncBudgeted(
           'bun',
           [script as string, '--issue', '1', ...(script === existingWork ? ['--existing-work'] : [])],
-          {
-            cwd,
-            encoding: 'utf8',
-            timeout: 60_000
-          }
+          { cwd, encoding: 'utf8', env: stripVinayaEnv() },
+          60_000
         )
         const out = `${ran.stdout}${ran.stderr}`
         expect(out).not.toContain('Module not found')
