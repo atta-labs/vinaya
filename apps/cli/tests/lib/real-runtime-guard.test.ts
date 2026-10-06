@@ -18,16 +18,39 @@
  * files in one process, so a `process.on('exit')` hook sees the whole suite.
  */
 import { describe, expect, it } from 'bun:test'
-import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { execFileSync } from 'node:child_process'
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync, writeSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
-import { defaultRuntimeDir, resolveRepoSync } from '../../src/lib/run-paths.js'
 
 const PROCESS_START_MS = Date.now() - process.uptime() * 1000 - 1000
 
-/** The real runtime directory, resolved from the default home — never from `VINAYA_RUNTIME_DIR`, which a test or a dispatched run may point elsewhere. */
+/**
+ * The real runtime directory, `~/.vinaya/runtime/<owner>-<repo>`, resolved from
+ * the default home — never from `VINAYA_RUNTIME_DIR`, which a test or a
+ * dispatched run may point elsewhere. The repository comes from `AEG_REPO`,
+ * else `origin`, as `run-paths.ts` resolves it; it is derived here rather than
+ * imported so this file adds no dependent to the path resolver's own test
+ * selection.
+ */
 function realRuntimeDir(): string {
-  return defaultRuntimeDir(resolveRepoSync())
+  let owner: string | undefined
+  let repo: string | undefined
+  const fromEnv = /^([^/]+)\/(.+)$/.exec(process.env.AEG_REPO ?? '')
+  if (fromEnv) [, owner, repo] = fromEnv
+  else {
+    try {
+      const url = execFileSync('git', ['remote', 'get-url', 'origin'], {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      }).trim()
+      const m = /github\.com[:/]([^/]+)\/(.+?)(?:\.git)?\/?$/.exec(url)
+      if (m) [, owner, repo] = m
+    } catch {
+      // no origin — the directory below is simply one that does not exist
+    }
+  }
+  return join(homedir(), '.vinaya', 'runtime', owner && repo ? `${owner}-${repo}` : 'unresolved')
 }
 
 function exemptPrefixes(env: NodeJS.ProcessEnv): string[] {
@@ -67,14 +90,16 @@ function touchedSince(root: string, sinceMs: number, exempt: string[]): string[]
 process.on('exit', () => {
   const touched = touchedSince(realRuntimeDir(), PROCESS_START_MS, exemptPrefixes(process.env))
   if (touched.length > 0) {
-    console.error(`real-runtime-guard: tests wrote into the real runtime directory: ${touched.join(', ')}`)
+    writeSync(2, `real-runtime-guard: tests wrote into the real runtime directory: ${touched.join(', ')}\n`)
     process.exitCode = 1
   }
 })
 
 describe('real runtime directory guard', () => {
   it('no test so far has written into the real runtime directory', () => {
-    expect(touchedSince(realRuntimeDir(), PROCESS_START_MS, exemptPrefixes(process.env))).toEqual([])
+    const touched = touchedSince(realRuntimeDir(), PROCESS_START_MS, exemptPrefixes(process.env))
+    if (touched.length > 0) writeSync(2, `real-runtime-guard: written so far: ${touched.join(', ')}\n`)
+    expect(touched).toEqual([])
   })
 
   it('detects a write newer than the cutoff and ignores exempt paths', () => {
