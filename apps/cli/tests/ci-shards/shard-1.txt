@@ -71,3 +71,4 @@ tests/commands/log-send.test.ts
 tests/lib/log-sync.test.ts
 tests/commands/sync.test.ts
 tests/lib/error-class.test.ts
+tests/lib/dispatch/linux-sandbox-probe.test.ts

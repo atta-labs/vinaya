@@ -26,21 +26,16 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import { randomUUID } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { createConnection, createServer } from 'node:net'
-import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { devToolsSocketPath, devToolsSocketRoot } from '../../src/lib/task-tools/dev-tools-registration.js'
-import { buildClaudeSandboxSettings, CLAUDE_SANDBOX_ALLOWED_DOMAINS } from '../../src/lib/worker-boundary.js'
-import { spawnBudgetedAsync } from '../lib/process-fixture.js'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { devToolsSocketRoot } from '../../src/lib/task-tools/dev-tools-registration.js'
+import { listingRevealsSocket, reachDriverSocketUnderOptIn } from '../lib/dispatch/driver-socket-reach.js'
 import { commandsTheTextsName } from './command-sources.js'
 import {
   AGENTS,
   type Agent,
   COMMAND_BUDGET_MS,
   openSandboxSession,
-  SANDBOX_RUNTIME_PACKAGE,
   type SandboxSession,
   sourceBranch
 } from './sandbox-launch.js'
@@ -206,93 +201,17 @@ describe('sandbox conformance — the known-failures list', () => {
 const LIVE = process.env.VINAYA_SANDBOX_CONFORMANCE === '1'
 
 describe.skipIf(!LIVE || process.platform !== 'linux')('driver socket boundary without Unix-socket seccomp', () => {
-  it('hides a sibling socket created after Claude Bash starts, without seccomp', async () => {
-    const socketPath = devToolsSocketPath(`conformance-victim:${randomUUID()}`)
-    const socketDir = dirname(socketPath)
-    const scratchDir = mkdtempSync(join(tmpdir(), 'vinaya-socket-conformance-'))
-    const server = createServer((socket) => socket.end())
-    let connections = 0
-    server.on('connection', () => connections++)
-    try {
-      const settings = buildClaudeSandboxSettings({
-        role: 'code-reviewer',
-        agent: 'claude',
-        worktreeDir: scratchDir,
-        scratchDir,
-        allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS
-      })
-      expect(settings.sandbox.filesystem.denyRead).toContain(devToolsSocketRoot())
-      expect(existsSync(devToolsSocketRoot())).toBe(true)
-      const settingsPath = join(scratchDir, 'settings.json')
-      const scriptPath = join(scratchDir, 'connect.mjs')
-      const readyPath = join(scratchDir, 'ready')
-      const signalPath = join(scratchDir, 'signal')
-      writeFileSync(
-        settingsPath,
-        JSON.stringify({
-          network: {
-            allowedDomains: settings.sandbox.network.allowedDomains,
-            deniedDomains: [],
-            allowAllUnixSockets: true
-          },
-          filesystem: { ...settings.sandbox.filesystem, denyWrite: [] }
-        })
-      )
-      writeFileSync(
-        scriptPath,
-        `import { createConnection } from 'node:net'\n` +
-          `import { existsSync, writeFileSync } from 'node:fs'\n` +
-          `writeFileSync(${JSON.stringify(readyPath)}, 'ready')\n` +
-          `while (!existsSync(${JSON.stringify(signalPath)})) await new Promise((r) => setTimeout(r, 20))\n` +
-          `const socket = createConnection(${JSON.stringify(socketPath)})\n` +
-          `socket.once('connect', () => { console.log('CONNECTED'); process.exit(1) })\n` +
-          `socket.once('error', (e) => { console.log('DENIED:' + e.code); process.exit(0) })\n`
-      )
-      const runPromise = spawnBudgetedAsync(
-        [
-          process.execPath,
-          'x',
-          SANDBOX_RUNTIME_PACKAGE,
-          '--settings',
-          settingsPath,
-          '-c',
-          `${process.execPath} ${scriptPath}`
-        ],
-        { cwd: scratchDir },
-        30_000,
-        'Claude socket-boundary conformance'
-      )
-      const deadline = Date.now() + 15_000
-      while (!existsSync(readyPath) && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 25))
-      }
-      expect(existsSync(readyPath)).toBe(true)
-      mkdirSync(socketDir, { recursive: true, mode: 0o700 })
-      chmodSync(socketDir, 0o700)
-      await new Promise<void>((resolve, reject) => {
-        server.once('error', reject)
-        server.listen(socketPath, resolve)
-      })
-      chmodSync(socketPath, 0o600)
-      await new Promise<void>((resolve, reject) => {
-        const socket = createConnection(socketPath)
-        socket.once('connect', () => {
-          socket.destroy()
-          resolve()
-        })
-        socket.once('error', reject)
-      })
-      expect(connections).toBe(1)
-      writeFileSync(signalPath, 'go')
-      const run = await runPromise
-      expect(run.status, run.stderr).toBe(0)
-      expect(run.stdout).toMatch(/DENIED:(EACCES|EPERM|ENOENT)/)
-      expect(connections).toBe(1)
-    } finally {
-      if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()))
-      rmSync(socketDir, { recursive: true, force: true })
-      rmSync(scratchDir, { recursive: true, force: true })
-    }
+  // The host opt-in (`VINAYA_LINUX_SANDBOX_ALLOW_UNIX_SOCKETS=1`) turns the
+  // Unix-socket filter off; the driver-tool socket directory must still be
+  // unlistable and its sockets unreachable from inside the sandbox.
+  it('hides a sibling socket created after Claude Bash starts, with the Unix-socket opt-in set', async () => {
+    const reach = await reachDriverSocketUnderOptIn()
+    expect(reach.settings.sandbox.network.allowAllUnixSockets).toBe(true)
+    expect(reach.settings.sandbox.filesystem.denyRead).toContain(devToolsSocketRoot())
+    expect(reach.status, reach.stderr).toBe(0)
+    expect(listingRevealsSocket(reach.stdout, reach.socketPath)).toBe(false)
+    expect(reach.stdout).toMatch(/DENIED:(EACCES|EPERM|ENOENT)/)
+    expect(reach.connectionsAfter).toBe(reach.connectionsBefore)
   }, 60_000)
 })
 

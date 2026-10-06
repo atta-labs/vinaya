@@ -44,7 +44,7 @@ import {
   symlinkSync,
   writeFileSync
 } from 'node:fs'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -2058,7 +2058,11 @@ export type ClaudeSandboxSettings = {
     readonly failIfUnavailable: true
     readonly allowUnsandboxedCommands: false
     readonly excludedCommands: readonly string[]
-    readonly network: { readonly allowedDomains: string[] }
+    readonly network: {
+      readonly allowedDomains: string[]
+      /** Set only by `buildClaudeSandboxSettings`'s Linux host opt-in (`linuxUnixSocketFilterOptIn`); absent everywhere else. */
+      readonly allowAllUnixSockets?: true
+    }
     readonly filesystem: {
       readonly denyRead: string[]
       readonly allowRead: string[]
@@ -2200,7 +2204,10 @@ function claudeCredentialDenyFiles(realHome: string): ReadonlyArray<{ path: stri
  * otherwise make the sandbox's own resolved-path check disagree with the
  * literal string this settings file names.
  */
-export function buildClaudeSandboxSettings(request: ConfinementRequest): ClaudeSandboxSettings {
+export function buildClaudeSandboxSettings(
+  request: ConfinementRequest,
+  options: { readonly allowAllUnixSockets?: boolean } = {}
+): ClaudeSandboxSettings {
   // The denied parent must exist before any Claude Bash sandbox starts. A
   // missing denyRead path can be skipped by the runtime at command launch;
   // creating it only when a later Developer starts its host leaves a race.
@@ -2222,7 +2229,12 @@ export function buildClaudeSandboxSettings(request: ConfinementRequest): ClaudeS
       failIfUnavailable: true,
       allowUnsandboxedCommands: false,
       excludedCommands: CLAUDE_SANDBOX_EXCLUDED_COMMANDS,
-      network: { allowedDomains: [...CLAUDE_SANDBOX_ALLOWED_DOMAINS] },
+      network: {
+        allowedDomains: [...CLAUDE_SANDBOX_ALLOWED_DOMAINS],
+        // The host opt-in turns off only the Unix-socket seccomp filter; the
+        // driver-tool socket root stays hidden by `denyRead` below.
+        ...(options.allowAllUnixSockets === true ? { allowAllUnixSockets: true as const } : {})
+      },
       filesystem: {
         denyRead: [devToolsSocketRoot()],
         allowRead: [],
@@ -2242,6 +2254,8 @@ export type ConfinementResolution =
       readonly scratchDir: string
       /** O2: `resolveGitFirstPath`'s own result — the caller overrides the confined child's `PATH` env with this value. `sourceEnv.PATH` unchanged off darwin or with no developer dir resolved. */
       readonly pathOverride: string | undefined
+      /** `true` only on Linux with the host opt-in set: `settings` carries `allowAllUnixSockets`, and the caller says so in the run's output. */
+      readonly unixSocketFilterOff: boolean
     }
   | {
       readonly ok: true
@@ -2256,11 +2270,18 @@ export type ConfinementPlatformDeps = {
   readonly linuxTools: LinuxSandboxToolCheck
   /** O2: the active Apple developer directory (`resolveRealDeveloperDir`) — injectable so a non-Mac test host can assert the PATH-prepend/read-grant behavior without a real `xcode-select`. `null` off darwin or when unresolved, exactly like every other optional grant in this module. */
   readonly developerDir: string | null
+  /** `linuxUnixSocketFilterOptIn`'s answer for this host. Omitted reads as `false`. */
+  readonly unixSocketFilterOptIn?: boolean
 }
 
 /** Real platform/tool/developer-dir facts — `process.platform`, a fresh `checkLinuxSandboxTools()` read, and a fresh `resolveRealDeveloperDir()` read. A caller wanting a stable answer across one dispatch reads it once and threads the result, the same posture `detectRealHost` already documents for the Seatbelt path. */
 export function realConfinementPlatformDeps(): ConfinementPlatformDeps {
-  return { platform: process.platform, linuxTools: checkLinuxSandboxTools(), developerDir: resolveRealDeveloperDir() }
+  return {
+    platform: process.platform,
+    linuxTools: checkLinuxSandboxTools(),
+    developerDir: resolveRealDeveloperDir(),
+    unixSocketFilterOptIn: linuxUnixSocketFilterOptIn()
+  }
 }
 
 /**
@@ -2291,17 +2312,20 @@ export function resolveClaudeConfinement(
       confined: true,
       settings: buildClaudeSandboxSettings(request),
       scratchDir: request.scratchDir,
-      pathOverride
+      pathOverride,
+      unixSocketFilterOff: false
     }
   }
   if (deps.platform === 'linux') {
     if (deps.linuxTools.available) {
+      const unixSocketFilterOff = deps.unixSocketFilterOptIn === true
       return {
         ok: true,
         confined: true,
-        settings: buildClaudeSandboxSettings(request),
+        settings: buildClaudeSandboxSettings(request, { allowAllUnixSockets: unixSocketFilterOff }),
         scratchDir: request.scratchDir,
-        pathOverride
+        pathOverride,
+        unixSocketFilterOff
       }
     }
     return {
@@ -2319,6 +2343,296 @@ export function resolveClaudeConfinement(
     warning: `Claude Code's own sandbox names no mechanism for platform '${deps.platform}'.`,
     missingTools: []
   }
+}
+
+// --- The Linux host opt-in and the pre-spawn sandbox probe ------------------
+
+/**
+ * The host-level switch that lets Claude Code run on a Linux host whose
+ * kernel refuses the sandbox's Unix-socket seccomp step. Read from the
+ * driver's own process environment, never from repository configuration, so
+ * one host's trade-off never reaches another machine through a commit.
+ */
+export const LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV = 'VINAYA_LINUX_SANDBOX_ALLOW_UNIX_SOCKETS'
+
+/** The files Bun loads into `process.env` from the working directory on its own, so a committed one could otherwise set the opt-in. */
+function bunAutoloadedEnvFiles(env: NodeJS.ProcessEnv): string[] {
+  const mode = env.NODE_ENV
+  return ['.env', ...(mode ? [`.env.${mode}`] : []), '.env.local', ...(mode ? [`.env.${mode}.local`] : [])]
+}
+
+export type UnixSocketOptInDeps = {
+  readonly env: NodeJS.ProcessEnv
+  readonly platform: NodeJS.Platform
+  readonly cwd: string
+  /** The file's text, or `null` when it does not exist or cannot be read. */
+  readonly readFile: (path: string) => string | null
+}
+
+function readFileOrNull(path: string): string | null {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * `true` only on Linux, only when the variable is exactly `1`, and only when
+ * no env file Bun would load from the working directory names it — a
+ * repository's own `.env` never turns the filter off. Never `true` on macOS.
+ */
+export function linuxUnixSocketFilterOptIn(
+  deps: UnixSocketOptInDeps = {
+    env: process.env,
+    platform: process.platform,
+    cwd: process.cwd(),
+    readFile: readFileOrNull
+  }
+): boolean {
+  if (deps.platform !== 'linux') return false
+  if (deps.env[LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV] !== '1') return false
+  const assignment = new RegExp(`^\\s*(?:export\\s+)?${LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV}\\s*=`, 'm')
+  return !bunAutoloadedEnvFiles(deps.env).some((file) => assignment.test(deps.readFile(join(deps.cwd, file)) ?? ''))
+}
+
+/** What a sandboxed probe command prints; the probe passes only when the sandbox's own output carries it. */
+export const SANDBOX_PROBE_MARKER = 'vinaya-sandbox-probe-ok'
+
+/** The one Bash command the Claude probe asks for, and the only one its permission rules allow. */
+export const CLAUDE_SANDBOX_PROBE_COMMAND = `echo ${SANDBOX_PROBE_MARKER}`
+
+export const CLAUDE_SANDBOX_PROBE_PROMPT =
+  `Run exactly this Bash command once, with no changes: ${CLAUDE_SANDBOX_PROBE_COMMAND}\n` +
+  'Do not run anything else. Then reply with the single word: done.'
+
+/** Long enough for one model turn on a slow host; the probe refuses the dispatch past it. */
+export const SANDBOX_PROBE_TIMEOUT_MS = 120_000
+
+export type SandboxProbeRun = {
+  readonly exitCode: number | null
+  readonly stdout: string
+  readonly stderr: string
+  readonly timedOut: boolean
+}
+
+export type SandboxProbeRunner = (input: {
+  readonly command: string
+  readonly args: readonly string[]
+  readonly cwd: string
+  readonly env: NodeJS.ProcessEnv
+  readonly stdin: string
+  readonly timeoutMs: number
+}) => Promise<SandboxProbeRun>
+
+export type SandboxProbeResult = { readonly ok: true } | { readonly ok: false; readonly error: string }
+
+/** Keeps a quoted sandbox error to a readable size in a refusal line. */
+function quoteProbeOutput(text: string): string {
+  const trimmed = text.trim()
+  return trimmed.length > 2000 ? `${trimmed.slice(0, 2000)}…` : trimmed
+}
+
+/**
+ * The Claude probe's argv: print mode with the dispatch's own settings file
+ * (so the sandbox block is byte-for-byte the dispatch's), only the Bash tool,
+ * no MCP server, the cheapest model, and a turn cap.
+ */
+export function claudeSandboxProbeArgs(settingsPath: string): string[] {
+  return [
+    '-p',
+    '--verbose',
+    '--output-format',
+    'stream-json',
+    '--model',
+    'haiku',
+    '--max-turns',
+    '3',
+    '--tools',
+    'Bash',
+    '--allowedTools',
+    `Bash(${CLAUDE_SANDBOX_PROBE_COMMAND})`,
+    '--strict-mcp-config',
+    '--settings',
+    settingsPath
+  ]
+}
+
+function toolResultText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .map((part) =>
+      part !== null && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string'
+        ? (part as { text: string }).text
+        : ''
+    )
+    .join('\n')
+}
+
+/**
+ * Judges the Claude probe from the Bash tool's own result in the stream, never
+ * from what the model says: the probe passes only when a tool result that is
+ * not an error carries the marker. A failure quotes the tool result — the
+ * sandbox's own error — or, with no tool result at all, Claude's own output.
+ */
+export function readClaudeSandboxProbe(run: SandboxProbeRun): SandboxProbeResult {
+  const toolResults: Array<{ text: string; isError: boolean }> = []
+  let finalResult = ''
+  for (const line of run.stdout.split('\n')) {
+    if (line.trim() === '') continue
+    let event: unknown
+    try {
+      event = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (event === null || typeof event !== 'object') continue
+    const record = event as { type?: unknown; result?: unknown; message?: { content?: unknown } }
+    if (record.type === 'result' && typeof record.result === 'string') finalResult = record.result
+    if (record.type !== 'user' || !Array.isArray(record.message?.content)) continue
+    for (const part of record.message.content as unknown[]) {
+      if (part === null || typeof part !== 'object') continue
+      const block = part as { type?: unknown; content?: unknown; is_error?: unknown }
+      if (block.type !== 'tool_result') continue
+      toolResults.push({ text: toolResultText(block.content), isError: block.is_error === true })
+    }
+  }
+  if (toolResults.some((r) => !r.isError && r.text.includes(SANDBOX_PROBE_MARKER))) return { ok: true }
+  if (run.timedOut) return { ok: false, error: `the probe did not finish within ${SANDBOX_PROBE_TIMEOUT_MS / 1000}s` }
+  const quoted = toolResults.find((r) => r.text.trim() !== '')?.text ?? (finalResult || run.stderr)
+  return {
+    ok: false,
+    error:
+      quoteProbeOutput(quoted) ||
+      `claude exited ${run.exitCode ?? 'without a status'} without running the probe command`
+  }
+}
+
+/**
+ * The Codex probe's argv up to the command: `codex sandbox` ignores the staged
+ * config's `sandbox_mode` unless it also arrives as an override, so the
+ * staged value is passed that way, as the conformance suite does. `null` when
+ * the config names no mode.
+ */
+export function codexSandboxProbeArgs(configToml: string): string[] | null {
+  const mode = configToml.match(/^sandbox_mode = ("[^"]+")$/m)?.[1]
+  return mode === undefined ? null : ['sandbox', '--config', `sandbox_mode=${mode}`]
+}
+
+/** The Codex probe passes when the sandboxed command exits 0 and prints the marker; otherwise it quotes the sandbox's own stderr. */
+export function readCodexSandboxProbe(run: SandboxProbeRun): SandboxProbeResult {
+  if (run.exitCode === 0 && run.stdout.includes(SANDBOX_PROBE_MARKER)) return { ok: true }
+  if (run.timedOut) return { ok: false, error: `the probe did not finish within ${SANDBOX_PROBE_TIMEOUT_MS / 1000}s` }
+  return {
+    ok: false,
+    error:
+      quoteProbeOutput(run.stderr || run.stdout) ||
+      `codex sandbox exited ${run.exitCode ?? 'without a status'} without printing the probe marker`
+  }
+}
+
+/** Spawns the probe asynchronously, kills it at its budget, and never throws. */
+export const runRealSandboxProbe: SandboxProbeRunner = (input) =>
+  new Promise((resolve) => {
+    let stdout = ''
+    let stderr = ''
+    let timedOut = false
+    let child: ReturnType<typeof spawn>
+    try {
+      child = spawn(input.command, [...input.args], {
+        cwd: input.cwd,
+        env: input.env,
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
+    } catch (err) {
+      resolve({ exitCode: null, stdout: '', stderr: (err as Error).message, timedOut: false })
+      return
+    }
+    const timer = setTimeout(() => {
+      timedOut = true
+      child.kill('SIGKILL')
+    }, input.timeoutMs)
+    child.stdout?.on('data', (chunk) => {
+      stdout += String(chunk)
+    })
+    child.stderr?.on('data', (chunk) => {
+      stderr += String(chunk)
+    })
+    child.on('error', (err) => {
+      stderr += err.message
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      resolve({ exitCode: code, stdout, stderr, timedOut })
+    })
+    child.stdin?.on('error', () => {
+      // a child that exits before reading its prompt is judged by its output.
+    })
+    child.stdin?.end(input.stdin)
+  })
+
+export type SandboxProbePlan =
+  | {
+      readonly agent: 'claude'
+      readonly binaryPath: string
+      readonly cwd: string
+      readonly env: NodeJS.ProcessEnv
+      /** The dispatch's own settings file, carrying its `sandbox` block. */
+      readonly settingsPath: string
+    }
+  | {
+      readonly agent: 'codex'
+      readonly binaryPath: string
+      readonly cwd: string
+      /** Carries the dispatch's staged `CODEX_HOME`. */
+      readonly env: NodeJS.ProcessEnv
+      /** The staged `config.toml` the dispatch's `CODEX_HOME` holds. */
+      readonly configToml: string
+      /** Adds the dispatch's own extra writable roots to the probe's argv, as the dispatch receives them. */
+      readonly withWritableDirs: (args: readonly string[]) => string[]
+    }
+
+/**
+ * Runs one trivial command through the agent's real sandbox, configured as
+ * the dispatch is, and judges it from the sandbox's own output. Linux only:
+ * on any other platform nothing runs and the result is `ok`. Claude Code has
+ * no command that runs one line in its sandbox without a model turn, so the
+ * Claude probe is one short print-mode turn asked to run the marker command;
+ * Codex has `codex sandbox`, so its probe starts no model at all.
+ */
+export async function probeAgentSandbox(
+  plan: SandboxProbePlan,
+  deps: { readonly platform: NodeJS.Platform; readonly run: SandboxProbeRunner } = {
+    platform: process.platform,
+    run: runRealSandboxProbe
+  }
+): Promise<SandboxProbeResult> {
+  if (deps.platform !== 'linux') return { ok: true }
+  if (plan.agent === 'claude') {
+    const run = await deps.run({
+      command: plan.binaryPath,
+      args: claudeSandboxProbeArgs(plan.settingsPath),
+      cwd: plan.cwd,
+      env: plan.env,
+      stdin: CLAUDE_SANDBOX_PROBE_PROMPT,
+      timeoutMs: SANDBOX_PROBE_TIMEOUT_MS
+    })
+    return readClaudeSandboxProbe(run)
+  }
+  const baseArgs = codexSandboxProbeArgs(plan.configToml)
+  if (baseArgs === null) {
+    return { ok: false, error: 'the staged Codex config names no sandbox_mode, so its sandbox cannot be probed' }
+  }
+  const run = await deps.run({
+    command: plan.binaryPath,
+    args: [...plan.withWritableDirs(baseArgs), '--', 'echo', SANDBOX_PROBE_MARKER],
+    cwd: plan.cwd,
+    env: plan.env,
+    stdin: '',
+    timeoutMs: SANDBOX_PROBE_TIMEOUT_MS
+  })
+  return readCodexSandboxProbe(run)
 }
 
 // --- O1/O2/O4/O5 (task 4): Codex's half of the provider-neutral confinement
