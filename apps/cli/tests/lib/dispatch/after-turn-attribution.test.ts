@@ -167,6 +167,41 @@ describe('the loop’s after-turn check, attributed by tool-call boundary', () =
     expect(reask?.prompt).toContain(controlDir(world))
   })
 
+  it('O2: a control write made while run_checks or read_pull_request runs is the worker’s — neither writes control records, so neither is attributed', async () => {
+    for (const tool of ['runChecks', 'readPullRequest'] as const) {
+      const world = makeWorld({ worktreeExists: true })
+      const publishing = pushWritesControlRecords(world, developerPublishesViaToolsDeps(world))
+      let forged = false
+      const forgeOnce = (): void => {
+        if (forged) return
+        forged = true
+        writeControlRecord(controlDir(world), 'effects', 'forged.json')
+      }
+      await runLoopInProcess(
+        world,
+        { task: world.task, agent: 'claude' },
+        {
+          ...publishing,
+          runWorktreeChecks: async (worktreePath) => {
+            if (tool === 'runChecks') forgeOnce()
+            return publishing.runWorktreeChecks!(worktreePath)
+          },
+          readPrView: async (input) => {
+            if (tool === 'readPullRequest') forgeOnce()
+            return publishing.readPrView!(input)
+          },
+          dispatchRole: async (role, agent, prompt, opts) => {
+            const handle = await publishing.dispatchRole!(role, agent, prompt, opts)
+            if (role === 'developer' && !forged) await world.devToolContext![tool]()
+            return handle
+          }
+        }
+      )
+      expect(forged).toBe(true)
+      expect(confinementReasks(world)).toBe(1)
+    }
+  })
+
   for (const reviewer of ['code-reviewer', 'security'] as const) {
     it(`O2: a ${reviewer} turn that writes a control record is refused`, async () => {
       const world = makeWorld()

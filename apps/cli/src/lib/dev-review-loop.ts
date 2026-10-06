@@ -3486,11 +3486,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * effects are the injected `d.*` closures the harness fakes (O5).
      */
     /**
-     * O1: every dev-tools call runs inside the Developer's
-     * `TurnWriteAttribution.driverToolCall`, so the effect and ownership
-     * records a tool writes into the control store are attributed to the
-     * driver, while a control-store write the worker made between tool calls
-     * is still reported by `checkTurnConfinement`.
+     * O1: the four dev-tools calls that write effect and ownership records
+     * into the control store (commit and push, open pull request, replace the
+     * body, refresh evidence) run inside the Developer's
+     * `TurnWriteAttribution.driverToolCall`, so those records are attributed
+     * to the driver, while a control-store write the worker made between tool
+     * calls is still reported by `checkTurnConfinement`. `readPullRequest` and
+     * `runChecks` write no control record and stay unwrapped: wrapping a call
+     * widens the window in which a concurrent worker write is attributed to
+     * the driver, and `runChecks` can run long.
      */
     function attributeDriverToolCalls(context: DevToolContext): DevToolContext {
       const attributed = <T>(call: () => Promise<T>): Promise<T> => {
@@ -3502,8 +3506,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         openPullRequest: (title, body) => attributed(() => context.openPullRequest(title, body)),
         updatePullRequestBody: (body) => attributed(() => context.updatePullRequestBody(body)),
         refreshEvidence: () => attributed(() => context.refreshEvidence()),
-        readPullRequest: () => attributed(() => context.readPullRequest()),
-        runChecks: () => attributed(() => context.runChecks())
+        readPullRequest: () => context.readPullRequest(),
+        runChecks: () => context.runChecks()
       }
     }
 
