@@ -10,7 +10,7 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -32,6 +32,7 @@ import {
   type SandboxProbeRunner
 } from '../../../src/lib/worker-boundary.js'
 import { listingRevealsSocket, reachDriverSocketUnderOptIn } from './driver-socket-reach.js'
+import { FAKE_CLAUDE_PROBE_ANSWER } from './fake-sandbox-probe.js'
 
 const SECCOMP_ERROR =
   'apply-seccomp: write /proc/self/setgroups (nested userns is capability-restricted; caller must provide CAP_SYS_ADMIN): Permission denied'
@@ -364,6 +365,28 @@ describe('runRealSandboxProbe', () => {
       timeoutMs: 1_000
     })
     expect(missing.exitCode).not.toBe(0)
+  })
+})
+
+describe('the fake vendor fixtures answer the probe as a working sandbox would', () => {
+  it('passes the probe through a fake claude without recording a call', async () => {
+    const dir = tempDir('vinaya-probe-fake-')
+    const marker = join(dir, 'recorded')
+    const fake = join(dir, 'claude')
+    writeFileSync(fake, `#!/bin/sh\n${FAKE_CLAUDE_PROBE_ANSWER}touch "${marker}"\ncat > /dev/null\nexit 0\n`)
+    chmodSync(fake, 0o755)
+    const result = await probeAgentSandbox(
+      {
+        agent: 'claude',
+        binaryPath: fake,
+        cwd: dir,
+        env: { PATH: process.env.PATH },
+        settingsPath: join(dir, 's.json')
+      },
+      { platform: 'linux', run: runRealSandboxProbe }
+    )
+    expect(result).toEqual({ ok: true })
+    expect(existsSync(marker)).toBe(false)
   })
 })
 

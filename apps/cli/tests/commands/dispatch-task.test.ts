@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSyncBudgeted } from '../lib/process-fixture'
+import { FAKE_CLAUDE_PROBE_ANSWER } from '../lib/dispatch/fake-sandbox-probe.js'
 
 /**
  * `vinaya task dispatch <tranche> <n> --agent <vendor>` reaching the real
@@ -223,7 +224,10 @@ exec "${realGit}" "$@"
 /** The fake `claude` vendor binary — records the brief it received on stdin so the test can prove it was really invoked, not merely that the command exited 0. */
 function writeFakeVendor(dir: string, callLog: string): void {
   const p = join(dir, 'claude')
-  writeFileSync(p, `#!/bin/sh\ncat > "${callLog}"\necho '{"usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`)
+  writeFileSync(
+    p,
+    `#!/bin/sh\n${FAKE_CLAUDE_PROBE_ANSWER}cat > "${callLog}"\necho '{"usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
+  )
   chmodSync(p, 0o755)
 }
 

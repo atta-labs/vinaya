@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkLinuxSandboxTools } from '../../../src/lib/worker-boundary.js'
 import { spawnSyncBudgeted } from '../process-fixture.js'
+import { FAKE_CLAUDE_PROBE_ANSWER } from './fake-sandbox-probe.js'
 
 /**
  * O3: `--unattended` (`DispatchOpts.unattended`) marks a `vinaya dispatch`
@@ -60,7 +61,7 @@ function buildFixture(): Fixture {
   // the CLI's own exit code/message says so.
   writeFileSync(
     join(binDir, 'claude'),
-    `#!/bin/sh\ntouch "${markerFile}"\ncat > /dev/null\nprintf '%s' '{"session_id":"sess-x","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
+    `#!/bin/sh\n${FAKE_CLAUDE_PROBE_ANSWER}touch "${markerFile}"\ncat > /dev/null\nprintf '%s' '{"session_id":"sess-x","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
   )
   chmodSync(join(binDir, 'claude'), 0o755)
   return { home, cwd, binDir, promptFile, markerFile }

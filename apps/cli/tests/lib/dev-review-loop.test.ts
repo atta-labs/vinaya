@@ -56,6 +56,7 @@ import {
 import { hostname, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { FAKE_CLAUDE_PROBE_ANSWER } from './dispatch/fake-sandbox-probe.js'
 import {
   assertValidLoopEvent,
   buildReexecArgs,
@@ -181,7 +182,8 @@ function tempDir(prefix: string): string {
 
 function writeFakeBinary(dir: string, name: string, script: string): void {
   const p = join(dir, name)
-  writeFileSync(p, script)
+  // A fake `claude` answers the Linux sandbox probe before doing anything else.
+  writeFileSync(p, name === 'claude' ? script.replace(/^(#![^\n]*\n)/, `$1${FAKE_CLAUDE_PROBE_ANSWER}`) : script)
   chmodSync(p, 0o755)
   if (name === 'claude') {
     // The real-process loop fixture substitutes a fake vendor binary. Mark
