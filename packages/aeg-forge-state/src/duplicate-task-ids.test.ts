@@ -1,16 +1,18 @@
-import { describe, expect, mock, test } from 'bun:test'
+import { describe, expect, test, vi } from 'vitest'
 import type { Task } from '@attalabs/aeg-types'
 
-let sent: string[] = []
-let respond: (query: string) => unknown = () => ({ repository: {} })
-
-mock.module('@octokit/graphql', () => ({
-  graphql: { defaults: () => async (query: string) => respond(query) }
+const state = vi.hoisted(() => ({
+  sent: [] as string[],
+  respond: (_query: string): unknown => ({ repository: {} })
 }))
-mock.module('../src/github-token', () => ({ resolveGithubToken: async () => 'token' }))
 
-const { fetchForgeFacts, fetchForgeFactsByIssue } = await import('../src/fetch-forge-facts')
-const { resolveDuplicateTasks } = await import('../src/list-tasks')
+vi.mock('@octokit/graphql', () => ({
+  graphql: { defaults: () => async (query: string) => state.respond(query) }
+}))
+vi.mock('./github-token', () => ({ resolveGithubToken: async () => 'token' }))
+
+import { fetchForgeFacts, fetchForgeFactsByIssue } from './fetch-forge-facts'
+import { resolveDuplicateTasks } from './list-tasks'
 
 const task = (id: string, issue: number): Task => ({
   id,
@@ -62,9 +64,9 @@ describe('resolveDuplicateTasks', () => {
 
 describe('fetchForgeFacts with a duplicated task number', () => {
   test('sub-queries are named by Issue number, never colliding', async () => {
-    sent = []
-    respond = (q) => {
-      sent.push(q)
+    state.sent = []
+    state.respond = (q) => {
+      state.sent.push(q)
       return {
         repository: {
           i_10_issue: issueNode('CLOSED', 'NOT_PLANNED'),
@@ -82,16 +84,16 @@ describe('fetchForgeFacts with a duplicated task number', () => {
     expect(byIssue.unavailable).toBe(false)
     expect(byIssue.facts.get(10)?.issueState).toBe('closed')
     expect(byIssue.facts.get(12)?.issueState).toBe('open')
-    expect(sent[0]).toContain('i_10_issue')
-    expect(sent[0]).toContain('i_12_issue')
-    expect(sent[0]).not.toContain('t_3')
+    expect(state.sent[0]).toContain('i_10_issue')
+    expect(state.sent[0]).toContain('i_12_issue')
+    expect(state.sent[0]).not.toContain('t_3')
 
     const snap = await fetchForgeFacts(input)
     expect(snap.facts.get('3')?.issueState).toBe('open')
   })
 
   test('a failed query reports its own reason', async () => {
-    respond = () => {
+    state.respond = () => {
       throw new Error('Field i_1_issue is defined more than once')
     }
     const snap = await fetchForgeFactsByIssue({ owner: 'o', repo: 'r', tranche: 'x', tasks: [task('3', 1)] })

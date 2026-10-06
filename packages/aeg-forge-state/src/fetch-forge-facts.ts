@@ -218,8 +218,8 @@ export async function fetchForgeFacts(input: FetchForgeFactsInput): Promise<Forg
 }
 
 function outranks(facts: Map<number, ForgeFacts>, candidate: number, current: number): boolean {
-  const candidateOpen = facts.get(candidate)?.issueState !== 'closed'
-  const currentOpen = facts.get(current)?.issueState !== 'closed'
+  const candidateOpen = facts.get(candidate)?.issueState === 'open'
+  const currentOpen = facts.get(current)?.issueState === 'open'
   if (candidateOpen !== currentOpen) return candidateOpen
   return candidate > current
 }
