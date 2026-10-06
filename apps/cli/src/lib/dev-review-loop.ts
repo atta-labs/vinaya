@@ -1292,22 +1292,27 @@ const PUSH_REFUSAL_MAX_LINES = 40
 const FAILING_LINE =
   /\(fail\)|\bfail(?:ed|ing|ure)?\b|\berror\b|✗|✘|\bnot ok\b|\bexpect(?:ed)?\b|\breceived\b|\bselected \d+ of \d+/i
 
+/** A line naming one failing test or check, the lines the Developer must never lose to the detail lines around them. */
+const FAILING_TEST_LINE = /\(fail\)|✗|✘|\bnot ok\b/i
+
 /**
- * A push's output as untrusted text for the Developer: failing lines first
- * (a hook's progress and passing lines are noise), else the output's tail,
- * each line sanitized like any public detail and the whole bounded in lines.
+ * A push's output as untrusted text for the Developer: the failing test and
+ * check names first, then the other failure and selection lines, else the
+ * output's tail, each line sanitized like any public detail and the whole
+ * bounded in lines. Detail lines only fill what the names leave free.
  */
 export function boundedPushOutput(output: string, mode: 'failing' | 'tail'): string {
   const lines = output
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-  const failing = mode === 'failing' ? lines.filter((line) => FAILING_LINE.test(line)) : []
-  const chosen = failing.length > 0 ? failing : lines
+  const names = mode === 'failing' ? lines.filter((line) => FAILING_TEST_LINE.test(line)) : []
+  const details =
+    mode === 'failing' ? lines.filter((line) => !FAILING_TEST_LINE.test(line) && FAILING_LINE.test(line)) : []
   const kept =
-    mode === 'failing' && failing.length > 0
-      ? chosen.slice(0, PUSH_REFUSAL_MAX_LINES)
-      : chosen.slice(-PUSH_REFUSAL_MAX_LINES)
+    names.length + details.length > 0
+      ? [...names.slice(0, PUSH_REFUSAL_MAX_LINES), ...details].slice(0, PUSH_REFUSAL_MAX_LINES)
+      : lines.slice(-PUSH_REFUSAL_MAX_LINES)
   return kept.map((line) => sanitizePublicPauseDetail(line)).join('\n')
 }
 
