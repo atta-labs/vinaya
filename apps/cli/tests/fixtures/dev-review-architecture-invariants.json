@@ -642,7 +642,10 @@
       "authority": "effect",
       "scenarios": ["developer-failure"],
       "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "commitAndPush" }],
-      "tests": ["apps/cli/tests/lib/task-tools/developer-dev-tools-context.test.ts"],
+      "tests": [
+        "apps/cli/tests/lib/task-tools/developer-dev-tools-context.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/push-hook-refusal-output.test.ts"
+      ],
       "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "The driver-run tool catches the hook refusal and returns it through its structured error channel."
     },
