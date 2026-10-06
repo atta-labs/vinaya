@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -41,7 +50,7 @@ afterEach(() => {
 })
 
 function tempDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix))
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)))
   tempDirs.push(dir)
   return dir
 }
