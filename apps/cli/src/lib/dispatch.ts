@@ -955,8 +955,13 @@ function documentationSourcesFromPrompt(role: Role, prompt: string): IssueDocume
 }
 
 /**
+ * The smallest `WebFetch` response, in bytes, the Documentation read-gate counts as a read: a login page, an error page or an empty shell falls below it.
+ */
+export const DOCUMENTATION_READ_MIN_SIZE = 1000
+
+/**
  * The `PostToolUse` hook that records every `WebFetch` URL for this session
- * — O2. Appends one JSON line (`{url}`) per call to a per-run log
+ * — O2. Appends one JSON line (`{url, finalUrl, status, size}`, the response facts the Stop hook grades) per call to a per-run log
  * file keyed by `VINAYA_RUN_ID` (never a fixed global path: two tasks
  * dispatched concurrently, an observed live pattern on this box, would
  * otherwise share one file and each would see the other's fetches). Exit
@@ -966,7 +971,7 @@ function documentationSourcesFromPrompt(role: Role, prompt: string): IssueDocume
  * 0, matching that constraint rather than attempting a block it structurally
  * cannot perform.
  */
-function documentationLogHookScript(dir: string): string {
+export function documentationLogHookScript(dir: string): string {
   return [
     "const fs = require('fs');",
     "let d = '';",
@@ -975,12 +980,18 @@ function documentationLogHookScript(dir: string): string {
     '  try {',
     '    const e = JSON.parse(d);',
     "    const runId = process.env.VINAYA_RUN_ID || '';",
+    '    const input = e.tool_input || e.tool_input_json || e.input || {};',
     '    const urls = [];',
     "    const visit = (v) => { if (typeof v === 'string') { const m = v.match(/https?:\\/\\/[^\\s\\\"'<>]+/g); if (m) urls.push(...m); } else if (Array.isArray(v)) v.forEach(visit); else if (v && typeof v === 'object') Object.values(v).forEach(visit); };",
-    '    visit(e.tool_input || e.tool_input_json || e.input || {});',
+    "    if (typeof input.url === 'string') urls.push(input.url); else visit(input);",
+    "    const r = e.tool_response && typeof e.tool_response === 'object' ? e.tool_response : {};",
+    "    const num = (v) => { const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v; return typeof n === 'number' && Number.isFinite(n) ? n : null; };",
+    '    const status = num(r.status) ?? num(r.code);',
+    "    const size = num(r.bytes) ?? num(r.size) ?? (typeof r.result === 'string' ? r.result.length : null);",
+    "    const finalUrl = typeof r.url === 'string' ? r.url : null;",
     '    if (runId && urls.length > 0) {',
     `      const logPath = ${JSON.stringify(join(dir, 'documentation-log-'))} + runId + '.jsonl';`,
-    "      try { for (const url of urls) fs.appendFileSync(logPath, JSON.stringify({ url }) + '\\n', { mode: 0o600 }); } catch {}",
+    "      try { for (const url of urls) fs.appendFileSync(logPath, JSON.stringify({ url, finalUrl, status, size }) + '\\n', { mode: 0o600 }); } catch {}",
     '    }',
     '  } catch {',
     '    // not a JSON line — never fail a hook whose only job is to record',
@@ -1040,7 +1051,7 @@ function codexDocumentationLogHookScript(dir: string): string {
  * this hook's, never the Developer's own judgement call about whether it
  * read enough.
  */
-function documentationStopHookScript(dir: string): string {
+export function documentationStopHookScript(dir: string): string {
   return [
     "const fs = require('fs');",
     "let d = '';",
@@ -1055,21 +1066,40 @@ function documentationStopHookScript(dir: string): string {
     '    let sources = [];',
     "    try { sources = JSON.parse(fs.readFileSync(sourcesPath, 'utf8')); } catch { sources = []; }",
     '    if (!Array.isArray(sources) || sources.length === 0) { process.exit(0); }',
-    '    let fetchedUrls = [];',
+    '    let entries = [];',
     '    try {',
-    "      fetchedUrls = fs.readFileSync(logPath, 'utf8')",
+    "      entries = fs.readFileSync(logPath, 'utf8')",
     "        .split('\\n')",
     '        .filter(Boolean)',
-    '        .map((line) => { try { return JSON.parse(line).url; } catch { return null; } })',
-    "        .filter((u) => typeof u === 'string');",
-    '    } catch { fetchedUrls = []; }',
+    '        .map((line) => { try { return JSON.parse(line); } catch { return null; } })',
+    "        .filter((x) => x && typeof x.url === 'string');",
+    '    } catch { entries = []; }',
     "    const normalize = (u) => String(u).trim().split('#')[0].replace(/\\/+$/, '');",
-    '    const fetched = new Set(fetchedUrls.map(normalize));',
     '    const isUrl = (s) => /^https?:\\/\\//i.test(String(s).trim());',
-    '    const unread = sources.filter((s) => isUrl(s.source) && !fetched.has(normalize(s.source)));',
-    '    if (unread.length > 0) {',
-    "      const names = unread.map((s) => '- ' + s.source + ' (governs: ' + s.mechanism + ')').join('\\n');",
-    "      process.stderr.write('The brief\\'s `## Documentation` section names a source not yet fetched via WebFetch. Fetch it before ending the turn, and record the mechanism/version it confirms:\\n' + names + '\\n');",
+    '    const hostOf = (u) => { try { return new URL(String(u).trim()).host.toLowerCase(); } catch { return null; } };',
+    `    const minSize = ${DOCUMENTATION_READ_MIN_SIZE};`,
+    '    const whyNotRead = (x, source) => {',
+    "      if (typeof x.status !== 'number') return 'the fetch recorded no HTTP status';",
+    "      if (x.status < 200 || x.status > 299) return 'the fetch returned HTTP ' + x.status;",
+    '      const want = hostOf(source);',
+    "      const got = typeof x.finalUrl === 'string' ? hostOf(x.finalUrl) : null;",
+    "      if (!got) return 'the fetch recorded no final URL';",
+    "      if (got !== want) return 'the fetch ended on another host (' + got + ', not ' + want + ')';",
+    "      if (typeof x.size !== 'number') return 'the fetch recorded no content size';",
+    "      if (x.size < minSize) return 'the fetch returned only ' + x.size + ' bytes (minimum ' + minSize + ')';",
+    '      return null;',
+    '    };',
+    '    const problems = [];',
+    '    for (const s of sources) {',
+    '      if (!isUrl(s.source)) continue;',
+    '      const mine = entries.filter((x) => normalize(x.url) === normalize(s.source));',
+    "      if (mine.length === 0) { problems.push('- ' + s.source + ' (governs: ' + s.mechanism + '): never fetched via WebFetch'); continue; }",
+    '      const reasons = mine.map((x) => whyNotRead(x, s.source));',
+    '      if (reasons.some((r) => r === null)) continue;',
+    "      problems.push('- ' + s.source + ' (governs: ' + s.mechanism + '): fetched but did not count — ' + reasons[reasons.length - 1]);",
+    '    }',
+    '    if (problems.length > 0) {',
+    "      process.stderr.write('The brief\\'s `## Documentation` section names a source with no counted read. Fetch it via WebFetch before ending the turn (a fetch counts only when it succeeded, stayed on the source\\'s host and returned real content), and record the mechanism/version it confirms:\\n' + problems.join('\\n') + '\\n');",
     '      process.exit(2);',
     '    }',
     '  } catch {',
