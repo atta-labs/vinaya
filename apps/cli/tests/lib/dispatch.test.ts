@@ -198,7 +198,9 @@ afterEach(() => {
 })
 
 function tempDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix))
+  // The real path: macOS reaches its temporary directory through a symlink, and
+  // tests that compare paths must see the same spelling the product resolves to.
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)))
   tempDirs.push(dir)
   return dir
 }

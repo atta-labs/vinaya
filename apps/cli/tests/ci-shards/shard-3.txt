@@ -50,6 +50,7 @@ tests/lib/task-status.test.ts
 tests/milestone.test.ts
 tests/new-noop-check.test.ts
 tests/no-brief-author.test.ts
+tests/platform-independence.test.ts
 tests/quickstart.test.ts
 tests/roles/contract.test.ts
 tests/studio.test.ts
@@ -73,3 +74,4 @@ tests/lib/dev-review-loop/refresh-evidence-args.test.ts
 tests/lib/planning-collisions.test.ts
 tests/conformance/dev-review-engine-capability-matrix.test.ts
 tests/lib/dev-review-loop/refused-publication-wait.test.ts
+tests/lib/dev-review-loop/push-hook-refusal-output.test.ts
