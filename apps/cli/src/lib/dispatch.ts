@@ -121,6 +121,7 @@ import {
   stageCodexPolicyHome,
   type ClaudeSandboxSettings
 } from './worker-boundary.js'
+import { agentDispatchControls, describeInactiveControls, enforcementControlsActive } from './enforcement-controls.js'
 import { repoRoot } from './diff-evidence.js'
 import {
   type BridgeInvocation,
@@ -4407,7 +4408,17 @@ export async function dispatchRole(
   // and a failure refuses before the agent starts, quoting the sandbox's own
   // error. Never a fallback to an unconfined run.
   let sandboxProbeError: string | null = null
-  if (!unconfinedClaude && codexUnattendedFailureReason === null) {
+  // The agent adapter's own per-dispatch controls — the settings and hook
+  // scripts it just wrote — must exist and be readable before an unattended
+  // agent starts; an inactive one refuses here, naming the control and its
+  // remedy, exactly like the probe below.
+  const agentControls = enforcementControlsActive(
+    opts.unattended === true
+      ? agentDispatchControls(agent, { claudeSettingsPath: dispatchSettingsPath, codexHooksPath })
+      : []
+  )
+  const agentControlsError = agentControls.active ? null : describeInactiveControls(agentControls)
+  if (agentControlsError === null && !unconfinedClaude && codexUnattendedFailureReason === null) {
     const probeCwd = opts.cwd ?? process.cwd()
     const plan: SandboxProbePlan | null =
       agent === 'claude' && claudeConfinement?.confined === true && dispatchSettingsPath !== null
@@ -4459,9 +4470,14 @@ export async function dispatchRole(
       })
     }
   }
-  if (codexUnattendedFailureReason !== null || unconfinedClaude || sandboxProbeError !== null) {
+  if (
+    codexUnattendedFailureReason !== null ||
+    unconfinedClaude ||
+    sandboxProbeError !== null ||
+    agentControlsError !== null
+  ) {
     const failureReason: DispatchFailureReason =
-      unconfinedClaude || sandboxProbeError !== null
+      unconfinedClaude || sandboxProbeError !== null || agentControlsError !== null
         ? 'refused'
         : codexBoundaryFailureReason(agent, codexUnattendedFailureReason!)
     const durationMs = Date.now() - start
@@ -4481,10 +4497,12 @@ export async function dispatchRole(
     writeLifecycle(
       unconfinedClaude
         ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended Claude requires a confined worker sandbox while driver-run dev-tools are available; ${claudeConfinement?.warning ?? 'confinement unavailable'}`
-        : sandboxProbeError !== null
-          ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — ${agent}'s sandbox could not run a probe command on this host, so the agent was not started: ${sandboxProbeError}`
-          : `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires Codex's own sandbox ` +
-            `and network proxy plus this task's staged CODEX_HOME, which are unavailable: ${codexUnattendedFailureReason}`
+        : agentControlsError !== null
+          ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — a required enforcement control is inactive, so the agent was not started:\n${agentControlsError}`
+          : sandboxProbeError !== null
+            ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — ${agent}'s sandbox could not run a probe command on this host, so the agent was not started: ${sandboxProbeError}`
+            : `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires Codex's own sandbox ` +
+              `and network proxy plus this task's staged CODEX_HOME, which are unavailable: ${codexUnattendedFailureReason}`
     )
     // O1: never leak the scratch directory minted for Codex's own
     // confinement (above) on this early refusal.

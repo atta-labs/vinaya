@@ -84,6 +84,7 @@ import {
   type RepoInfo,
   resolveHookDir
 } from '../lib/detect.js'
+import { localGateControl } from '../lib/enforcement-controls.js'
 import { printJson } from '../lib/envelope.js'
 import { planGhPathFix } from '../lib/gh-path.js'
 import { checksMissingEnvDeclaration, envDeclarationWarning } from '../lib/env-lint.js'
@@ -464,9 +465,13 @@ async function diagnoseHookRouting(
 ): Promise<Finding[]> {
   if (hookDir === TRACKED_HOOK_DIR) {
     const value = await readHooksPath(repoRoot)
-    if (value === TRACKED_HOOK_DIR) {
+    // The same predicate the dispatch readiness reads, so the two cannot
+    // disagree: routing, the directory, and the required hooks being runnable.
+    const gate = localGateControl(repoRoot, hookDir, value)
+    if (gate.active) {
       return [ok('hooks', `core.hooksPath routes git at the tracked ${TRACKED_HOOK_DIR} directory — ring 0 is armed.`)]
     }
+    if (value === TRACKED_HOOK_DIR) return [error('hooks', `${gate.detail} ${gate.remedy}`)]
     // Never hand the user an arming command that would silently disable
     // their own hooks: arming makes git ignore `.git/hooks` entirely, and
     // this machine may hold active raw hooks the migrating machine could not
