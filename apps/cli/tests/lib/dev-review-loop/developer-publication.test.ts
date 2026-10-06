@@ -185,6 +185,19 @@ describe('publication range after a default-branch merge', () => {
     expect(defaultReadMergedDefaultCommit(dir, base)).toBeNull()
   })
 
+  it('reports an out-of-Surface edit hidden in a side commit cut from the default branch', () => {
+    const { dir, base } = fixture()
+    const pushed = git(dir, 'rev-parse', 'HEAD')
+    git(dir, 'update-ref', 'refs/remotes/origin/main', base)
+    git(dir, 'checkout', '-q', '-b', 'side', base)
+    writeFileSync(join(dir, 'guarded.txt'), 'sneaky\n')
+    git(dir, 'add', '.')
+    git(dir, 'commit', '-q', '-m', 'side')
+    git(dir, 'checkout', '-q', 'task')
+    git(dir, 'merge', '-q', '--no-ff', '-m', 'merge side', 'side')
+    expect(defaultReadMergedDefaultCommit(dir, pushed)?.regressedPaths).toEqual(['guarded.txt'])
+  })
+
   it('ignores a merged commit unrelated to the default branch', () => {
     const { dir, base } = fixture()
     const pushed = git(dir, 'rev-parse', 'HEAD')
@@ -205,7 +218,7 @@ describe('publication range after a default-branch merge', () => {
     git(dir, 'merge', '-q', '--no-ff', '-m', 'merge main', 'main')
     // A default-branch ref that is behind the merged commit must not hide the merge.
     git(dir, 'update-ref', 'refs/remotes/origin/main', base)
-    expect(defaultReadMergedDefaultCommit(dir, pushed)?.commit).toBe(tip)
+    expect(defaultReadMergedDefaultCommit(dir, pushed)).toEqual({ commit: tip, regressedPaths: ['main-only.txt'] })
     git(dir, 'update-ref', 'refs/remotes/origin/main', tip)
     const merged = defaultReadMergedDefaultCommit(dir, pushed)
     expect(merged).toEqual({ commit: tip, regressedPaths: [] })

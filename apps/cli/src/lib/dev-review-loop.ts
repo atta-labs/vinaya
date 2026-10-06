@@ -1111,6 +1111,9 @@ export type MergedDefaultCommit = { commit: string; regressedPaths: string[] }
  * descends from it) never hides the merge. A commit unrelated to the ref in
  * either direction is not a default-branch commit and is ignored.
  *
+ * A commit ahead of the ref cannot be told from a Developer-authored commit
+ * cut from it, so every path between the ref and that commit is reported too.
+ *
  * Measuring against an older default-branch commit would hide a file the turn
  * reset to that older state, so when the merged commit is a strict ancestor of
  * the ref, every path that differs from the ref and that the default branch
@@ -1123,15 +1126,20 @@ export function defaultReadMergedDefaultCommit(
 ): MergedDefaultCommit | null {
   const isAncestor = (older: string, newer: string): boolean =>
     gitOk(worktreePath, ['merge-base', '--is-ancestor', older, newer]) !== null
+  const lines = (args: string[]): string[] =>
+    (gitOk(worktreePath, args) ?? '').split('\n').filter((l) => l.trim().length > 0)
   const vetted = (sha: string): MergedDefaultCommit | null => {
     if (isAncestor(sha, 'origin/main')) {
-      const lines = (args: string[]): string[] =>
-        (gitOk(worktreePath, args) ?? '').split('\n').filter((l) => l.trim().length > 0)
       const advanced = new Set(lines(['diff', '--name-only', sha, 'origin/main']))
       const regressedPaths = lines(['diff', '--name-only', 'origin/main']).filter((path) => advanced.has(path))
       return { commit: sha, regressedPaths }
     }
-    return isAncestor('origin/main', sha) ? { commit: sha, regressedPaths: [] } : null
+    // A commit ahead of the ref may be the default branch's newer tip or a
+    // Developer-authored commit cut from it; the two cannot be told apart
+    // offline, so every path between the ref and it stays reported.
+    return isAncestor('origin/main', sha)
+      ? { commit: sha, regressedPaths: lines(['diff', '--name-only', 'origin/main', sha]) }
+      : null
   }
   const incoming = gitOk(worktreePath, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])
   const fromMergeHead = incoming ? vetted(incoming) : null
