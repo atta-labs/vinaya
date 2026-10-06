@@ -12,14 +12,12 @@
  * `tasks-execution/<VINAYA_TASK>` (this run's own folder) and
  * `tasks-execution/unscoped`, and only when that env says a run is live.
  *
- * It checks twice: in its own test (everything written by files that ran
- * before it) and again at process exit, which sets a failing exit code so a
- * leak by a file that runs after it still fails the run. `bun test` runs its
- * files in one process, so a `process.on('exit')` hook sees the whole suite.
+ * `bun test` runs its files one after another in one process, so this sees
+ * everything written by the files that ran before it.
  */
 import { describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync, writeSync } from 'node:fs'
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 
@@ -87,19 +85,18 @@ function touchedSince(root: string, sinceMs: number, exempt: string[]): string[]
   return touched
 }
 
-process.on('exit', () => {
-  const touched = touchedSince(realRuntimeDir(), PROCESS_START_MS, exemptPrefixes(process.env))
-  if (touched.length > 0) {
-    writeSync(2, `real-runtime-guard: tests wrote into the real runtime directory: ${touched.join(', ')}\n`)
-    process.exitCode = 1
-  }
-})
+/**
+ * Taken at module load rather than inside the test, so the test's own TITLE
+ * names the leaked paths: a failing run's summary lists failing titles but not
+ * their assertion output, and a title is what a reader of a long CI log sees.
+ */
+const leakedAtLoad = touchedSince(realRuntimeDir(), PROCESS_START_MS, exemptPrefixes(process.env))
+const TITLE = 'no test so far has written into the real runtime directory'
+const title = leakedAtLoad.length > 0 ? `${TITLE} — LEAKED: ${leakedAtLoad.join(' ').slice(0, 800)}` : TITLE
 
 describe('real runtime directory guard', () => {
-  it('no test so far has written into the real runtime directory', () => {
-    const touched = touchedSince(realRuntimeDir(), PROCESS_START_MS, exemptPrefixes(process.env))
-    if (touched.length > 0) writeSync(2, `real-runtime-guard: written so far: ${touched.join(', ')}\n`)
-    expect(touched).toEqual([])
+  it(title, () => {
+    expect(touchedSince(realRuntimeDir(), PROCESS_START_MS, exemptPrefixes(process.env))).toEqual([])
   })
 
   it('detects a write newer than the cutoff and ignores exempt paths', () => {
