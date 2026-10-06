@@ -8,12 +8,12 @@
  * files, and reports a finding when a shipped path is hit with no
  * `.changeset/*.md` in the same diff.
  *
- * Report-only (`aeg-root/enforcement.md`'s G1/G2 / reader-resolvable-prose
- * precedent): findings print as `warning` severity, exit code always `0` —
- * registering this check must not newly redden any existing install.
- * Graduation to a blocking check, and any waiver-label escape that would
- * come with it, is a later, separate decision once the false-positive rate
- * is observed (brief §2 — deliberately deferred, not designed here).
+ * Blocking: a finding is `error` severity and exits `1`, so the pre-push
+ * hook refuses the push and CI fails the pull request. The one waiver is an
+ * empty changeset (`bunx changeset add --empty`): it is a `.changeset/*.md`
+ * file in the diff, so it satisfies the predicate and cannot be forgotten.
+ * There is no label or pull-request-body escape. The indeterminate-diff case
+ * stays a warning, exit `0` — an ambiguity is not a missing changeset.
  *
  * scope: diff, ring 0 (registry.ts) — offline and diff-only, so the managed
  * local hooks can run it; CI re-runs it like every `--all --diff-only`
@@ -25,21 +25,8 @@
  *
  * Release-branch exemption: reuses `@attalabs/aeg-core`'s own
  * `CHANGESET_RELEASE_BRANCH` constant — the same one `check-body-bare-digits.ts`'s
- * Changesets-release exemption is keyed on (that same precedent) — rather
- * than inventing a second branch-name special-case. That check's exemption
- * ALSO live-fetches the PR author through a GitHub CLI subprocess call and
- * verifies it against a configured release actor; this one deliberately
- * doesn't reuse that half — this bin shells out to nothing at all, no gh
- * invocation anywhere in it.
- * It's a two-factor guard against a `pull_request`-triggered attacker
- * spoofing an approved PR's identity — a real concern for
- * a hard-blocking `error`-severity, `ownWorkflow`/`requiresOpenPr` check
- * reachable only from a `pull_request_target` job. This check is the
- * opposite shape on every axis that made that attack possible: ring 0,
- * offline, `requiresOpenPr: false`, `severity: warning`, exit `0` always —
- * there is no gate to spoof past, only a report that can at most go
- * (wrongly) silent on a branch whose real name happens to collide, which
- * costs nothing a waiver label doesn't already cost intentionally in v1.
+ * Changesets-release exemption is keyed on. That check also live-fetches the
+ * PR author; this one deliberately shells out to nothing but local git.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -217,15 +204,13 @@ function main(): void {
     emitCheckError({
       schema: CHECK_SCHEMA_VERSION,
       check: CHECK_NAME,
-      severity: 'warning',
-      message: `changeset-coverage: this diff changes a published package's shipped file(s) with no \`.changeset/*.md\` in the same diff: ${result.shippedPathsHit.join(', ')}`,
+      severity: 'error',
+      message: `changeset-coverage: this diff changes a published package's shipped file(s) with no \`.changeset/*.md\` in the same diff: ${result.shippedPathsHit.join(', ')}. Add a changeset describing the change, or add an empty one when the change ships nothing users see.`,
       agent_recovery_prompt:
-        "Add a `.changeset/*.md` entry in this PR describing the change (run the repo's changeset CLI, e.g. `bunx changeset`), then commit it in the same PR — a shipped-package change with no changeset means adopters get nothing on the next release."
+        "Either add a `.changeset/*.md` entry describing the change in user terms (run the repo's changeset CLI, e.g. `bunx changeset`), or, when the change ships nothing users see, add an empty changeset (`bunx changeset add --empty`). Commit it in the same PR."
     })
+    process.exit(1)
   }
-
-  // Report-only — see module doc.
-  process.exit(0)
 }
 
 main()
