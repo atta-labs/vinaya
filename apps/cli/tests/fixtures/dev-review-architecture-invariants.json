@@ -58,7 +58,7 @@
       {
         "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts",
         "kind": "implementation",
-        "reason": "Landed after the baseline revision with the driver-commits-and-publishes-each-Developer-turn change; classifiable from the existing loop.md section \"Publishing each Developer turn (the driver commits and publishes; no agent pushes)\"."
+        "reason": "Landed after the baseline revision as the publication precondition gate; the current loop.md section \"Publishing each Developer turn (both agents, only through the driver-run tools)\" describes its use by publish_changes."
       },
       {
         "path": "apps/cli/tests/lib/dev-review-loop/developer-publication.test.ts",
@@ -69,6 +69,11 @@
         "path": "apps/cli/tests/lib/dev-review-loop/dev-review-engine-state-contract.test.ts",
         "kind": "test",
         "reason": "Landed with apps/cli/specs/dev-review-engine-state-machine.md (Task 2 of developer-review-architecture-v1): the target provider-neutral Atta-Engine state model's own contract test, over the fixture data in dev-review-engine-state-contract.fixture.ts."
+      },
+      {
+        "path": "apps/cli/tests/lib/dev-review-loop/refresh-evidence-args.test.ts",
+        "kind": "test",
+        "reason": "Pins the argv the refresh_evidence tool runs (pr report --push <prNumber>, never the body-file-less --write the usage gate rejects) and proves the real pr report parser accepts the shape; landed with the refresh_evidence evidence-regeneration fix."
       }
     ]
   },
@@ -500,9 +505,7 @@
         "apps/cli/tests/lib/dev-review-loop/developer-dispatch.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts"
       ],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "Prompt text: the layout is deterministic, compliance is not enforced outside the worker."
     },
     {
@@ -532,7 +535,7 @@
     },
     {
       "id": "INV-031",
-      "behavior": "The driver validates the developer's commit header (one Type(scope): Description line, at most 72 characters) before committing, and sends the turn back without committing when it fails.",
+      "behavior": "When the developer calls publish_changes, the driver validates the commit header it passes (one Type(scope): Description line, at most 72 characters) before committing, and refuses the tool call without committing when it fails.",
       "classification": "product-guarantee",
       "owner": "governed-operation",
       "authority": "pure-policy",
@@ -544,30 +547,28 @@
         "apps/cli/tests/lib/dev-review-loop/developer-publication.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
       ],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
-      "reason": "Pure driver-side check before the effect."
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
+      "reason": "Pure driver-side gate inside the publish_changes tool, before the commit effect."
     },
     {
       "id": "INV-032",
-      "behavior": "The commit-header and PR-body files live in the round's own Developer folder outside the worktree; a missing or empty PR body is sent back; the PR title is the Issue title.",
+      "behavior": "The developer opens its pull request by calling open_pull_request with a title and body; the driver validates the submitted title and body before using its forge credential. A duplicate open is refused, and a body-only edit uses update_pull_request_body.",
       "classification": "product-guarantee",
       "owner": "governed-operation",
       "authority": "control-state",
       "scenarios": ["happy-path"],
       "sources": [
-        { "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts", "symbol": "commitHeaderPathFor" },
-        { "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "openPullRequestFromBody" }
+        {
+          "path": "apps/cli/src/lib/task-tools/developer-dev-tools-context.ts",
+          "symbol": "createDeveloperDevToolContext"
+        }
       ],
       "tests": [
-        "apps/cli/tests/lib/dev-review-loop/developer-publication.test.ts",
+        "apps/cli/tests/lib/task-tools/developer-dev-tools-context.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
       ],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
-      "reason": "Driver-owned paths and a driver-owned open."
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
+      "reason": "The body is a tool argument validated in the driver; the driver owns the open."
     },
     {
       "id": "INV-033",
@@ -586,62 +587,54 @@
         "apps/cli/tests/lib/dev-review-loop/developer-publication.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
       ],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "Deterministic precondition check outside the worker."
     },
     {
       "id": "INV-034",
-      "behavior": "The expected publication base is held only in memory, never in the durable publication record, and while it is unset the Surface check sees no changed paths.",
+      "behavior": "The expected publication base is resolved and persisted before a Developer turn; later publication checks compare the live base to that recorded value and refuse an unreadable base.",
       "classification": "named-defect",
       "defect": "DEF-05",
       "owner": "governed-operation",
       "authority": "control-state",
       "scenarios": ["restart", "isolation-refusal"],
-      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "publishDeveloperTurn" }],
-      "tests": [],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
-      "reason": "The spec says the base is recorded on the first publication and compared on every later one."
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "resolvePublicationBase" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
+      "reason": "The control-store loop state carries the base across restart, and the pre-dispatch persist closes the crash window before a tool call."
     },
     {
       "id": "INV-035",
-      "behavior": "The driver commits at most once per turn with the repository's hooks enabled and writes the commit to the durable publication record before any push.",
+      "behavior": "The publish_changes tool can commit and push more than once in one Developer turn; each call runs the repository's hooks through injected commit/push closures the driver holds. A refused push can be retried without a second commit.",
       "classification": "product-guarantee",
       "owner": "governed-operation",
       "authority": "effect",
       "scenarios": ["happy-path", "uncertain-effects"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts",
-          "symbol": "writeDeveloperPublicationRecord"
+          "path": "apps/cli/src/lib/task-tools/developer-dev-tools-context.ts",
+          "symbol": "createDeveloperDevToolContext"
         }
       ],
       "tests": [
-        "apps/cli/tests/lib/dev-review-loop/developer-publication.test.ts",
+        "apps/cli/tests/lib/task-tools/developer-dev-tools-context.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
       ],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
-      "reason": "Revision 7 section 16.12: prepare and record before commit."
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
+      "reason": "The commit and push are the tool's injected side effects, run behind its gates."
     },
     {
       "id": "INV-036",
-      "behavior": "A commit hook that refuses the driver's commit throws out of publication into the outer handler, becoming an infrastructure pause rather than a send-back.",
+      "behavior": "A commit hook refusal returns a structured tool refusal to the Developer, which can fix the cause and call publish_changes again.",
       "classification": "principal-ruling-required",
       "ambiguity": "AMB-05",
       "owner": "governed-operation",
       "authority": "effect",
       "scenarios": ["developer-failure"],
-      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "publishDeveloperTurn" }],
-      "tests": [],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
-      "reason": "The spec says hooks run but not what a refusal leads to."
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "commitAndPush" }],
+      "tests": ["apps/cli/tests/lib/task-tools/developer-dev-tools-context.test.ts"],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
+      "reason": "The driver-run tool catches the hook refusal and returns it through its structured error channel."
     },
     {
       "id": "INV-037",
@@ -652,9 +645,7 @@
       "scenarios": ["uncertain-effects"],
       "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "defaultPushTaskBranch" }],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "Revision 7 section 16.12: effects are authorized, keyed and reconciled."
     },
     {
@@ -666,9 +657,7 @@
       "scenarios": ["developer-failure"],
       "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "commitAndPushPrompt" }],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "Driver-side and deterministic."
     },
     {
@@ -680,9 +669,7 @@
       "scenarios": ["happy-path"],
       "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "publishDeveloperTurn" }],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "Promised no-op publication."
     },
     {
@@ -699,17 +686,15 @@
     },
     {
       "id": "INV-041",
-      "behavior": "After a crash the publication record is finished exactly once: a recorded unpushed commit is pushed, a PR is opened only if none is open, and nothing is committed again.",
+      "behavior": "The driver keeps no durable publication record to finish on restart: a restart with the pull request already open attaches at start and makes no second commit, push or open, and an interrupted turn is re-dispatched to republish idempotently through the tools.",
       "classification": "product-guarantee",
       "owner": "governed-operation",
       "authority": "control-state",
       "scenarios": ["restart", "uncertain-effects"],
-      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "finishPublicationFromRecord" }],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "publishDeveloperTurn" }],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
-      "reason": "Revision 7 section 16.12: resume reconciles, never blindly replays."
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
+      "reason": "Publishing is the tool's own idempotent effect; the driver reconciles from the forge, never from a record."
     },
     {
       "id": "INV-042",
@@ -740,7 +725,7 @@
     },
     {
       "id": "INV-044",
-      "behavior": "The conflict prompt tells the developer to merge or rebase origin/main and then git push, which the driver's own publication preconditions (pre-turn head, recorded base) then refuse.",
+      "behavior": "The conflict prompt tells the developer to merge or rebase origin/main and then publish through publish_changes, which the driver's own publication preconditions (pre-turn head, recorded base) then refuse.",
       "classification": "named-defect",
       "defect": "DEF-06",
       "owner": "vinaya-policy",
@@ -749,7 +734,7 @@
       "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "renderConflictPrompt" }],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
       "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)",
+        "Publishing each Developer turn (both agents, only through the driver-run tools)",
         "A conflicting head is sent back to the developer, never to a reviewer"
       ],
       "reason": "Contradicts no-agent-pushes; a real conflict resolution cannot pass the publication path."
@@ -831,19 +816,15 @@
     },
     {
       "id": "INV-051",
-      "behavior": "\"Leave your changes uncommitted; the driver commits\" is prompt text; a developer who commits anyway is caught only by the driver's head check.",
+      "behavior": "Every developer prompt names the driver-run publishing tools (publish_changes, open_pull_request, read_pull_request, run_checks) for both agents and carries none of the retired commit/push/uncommitted wording; a developer that publishes another way is caught only by the driver's own gates.",
       "classification": "advisory",
       "owner": "provider-adapter",
       "authority": "effect",
       "scenarios": ["isolation-refusal"],
-      "sources": [
-        { "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts", "symbol": "commitHeaderPromptLine" }
-      ],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "publishingInstructionLine" }],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
-      "reason": "The instruction is advisory; the sandbox's read-only .git is the enforcement where present."
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
+      "reason": "The instruction is advisory; the driver-run tools are the only path the developer can actually publish through."
     },
     {
       "id": "INV-052",
@@ -858,9 +839,7 @@
         "apps/cli/tests/lib/dev-review-loop/developer-dispatch.test.ts",
         "apps/cli/tests/lib/dev-review-loop.test.ts"
       ],
-      "loopSpec": [
-        "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
-      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
       "reason": "Every other push goes through the Broker with hooks; whether the bootstrap push may bypass both is unruled."
     },
     {
@@ -1803,19 +1782,36 @@
     },
     {
       "id": "INV-120",
-      "behavior": "A Codex publication authorizes exactly the commit range being pushed: later pushes start at the remote task-branch head, while a first push or interrupted first-push recovery starts at the branch base; protected paths in that range, including files first seen after commit, are still refused, and paths already remote are not re-judged.",
+      "behavior": "A publish_changes push authorizes exactly the commit range being pushed: later pushes start at the remote task-branch head, while a first push starts at the branch base; protected paths in that range, including files first seen after commit, are still refused, and paths already remote are not re-judged.",
       "classification": "product-guarantee",
       "owner": "governed-operation",
       "authority": "control-state",
       "scenarios": ["happy-path", "restart", "isolation-refusal"],
       "sources": [
         { "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "pushedCommitRangeBase" },
-        { "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "publishDeveloperTurn" },
-        { "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "finishPublicationFromRecord" }
+        { "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "buildDeveloperDevToolContext" }
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
       "loopSpec": ["The command"],
-      "reason": "The publication boundary is now explicit in the specification and exercised for later pushes, current protected changes, post-commit discovery and restart recovery."
+      "reason": "The publication boundary is now explicit in the specification and exercised for later pushes, current protected changes and post-commit discovery."
+    },
+    {
+      "id": "INV-121",
+      "behavior": "The refresh_evidence tool regenerates the PR body's AEG:EVIDENCE block for the worktree's current head and writes it back to the live pull request by running `vinaya pr report --push <prNumber>` (never the body-file-less `--write`, which pr report's usage gate rejects); it fails only when the body was not updated, and reports a red gate that still pushed as checksPassed: false.",
+      "classification": "product-guarantee",
+      "owner": "governed-operation",
+      "authority": "forge",
+      "scenarios": ["happy-path", "stale-evidence"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "defaultRefreshPrEvidence" },
+        { "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "prReportRefreshArgs" }
+      ],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/refresh-evidence-args.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
+      ],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
+      "reason": "The body-only Evidence refresh is a forge-updating tool call, and its command shape (--push, not bare --write) is the live-gate bug this task fixed and now pins."
     }
   ],
   "defects": [
@@ -1852,23 +1848,23 @@
     },
     {
       "id": "DEF-05",
-      "summary": "The expected publication base is never persisted, and an unset base skips the Surface check.",
+      "summary": "The expected publication base was not persisted before the Developer turn; the control-store record now carries it.",
       "code": { "path": "apps/cli/src/lib/dev-review-loop.ts", "locator": "publicationExpectedBase" },
       "spec": {
         "path": "apps/cli/specs/loop.md",
-        "locator": "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
+        "locator": "Publishing each Developer turn (both agents, only through the driver-run tools)"
       },
-      "status": "open"
+      "status": "fixed"
     },
     {
       "id": "DEF-06",
-      "summary": "The conflict prompt instructs merge/rebase and git push, which the publication preconditions then refuse.",
+      "summary": "The conflict prompt instructed merge/rebase and git push; it now directs an uncommitted merge published through publish_changes.",
       "code": { "path": "apps/cli/src/lib/dev-review-loop.ts", "locator": "renderConflictPrompt" },
       "spec": {
         "path": "apps/cli/specs/loop.md",
-        "locator": "Publishing each Developer turn (Codex: the driver commits and publishes; Claude Code: the Developer publishes itself)"
+        "locator": "Publishing each Developer turn (both agents, only through the driver-run tools)"
       },
-      "status": "open"
+      "status": "fixed"
     },
     {
       "id": "DEF-07",

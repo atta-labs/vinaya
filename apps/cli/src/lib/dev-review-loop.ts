@@ -118,7 +118,6 @@ import {
 import { controlStoreRoot } from './effects.js'
 import { resolveRoleDoctrineText } from '../roles/plan.js'
 import { validatePrBodyForCreate } from '../commands/pr.js'
-import type { CheckError } from '../checks/contract.js'
 import { createLogSink, drainLogSink, resolveLogAppendPath } from './log-sink.js'
 import { ensureRunDir, markProcessUnattended, runPath } from './run-paths.js'
 import { defaultTaskSweepAsyncDeps, sweepModernTasksAsync } from './task-sweep.js'
@@ -153,7 +152,6 @@ import {
   fetchNewestRulingAuthor,
   fetchNewestRulingOrdinal,
   fetchPrBody,
-  bareForgeCommandRule,
   fetchRulings,
   fetchSourceRevision,
   findOpenPrForBranch,
@@ -228,19 +226,16 @@ import { buildReport, gh, resolveMergeBase, runReportForOpenPr } from './pr-repo
 import { reassertPrBodyPremise } from '../checks/bin/check-pr-premise-reassert.js'
 import type { PremiseReassertResult } from '../checks/premise-reassert-logic.js'
 import { postForgeEffectOnce, publishRound, unboundFields } from './dev-review-loop/publication.js'
-import {
-  checkPublicationPreconditions,
-  commitHeaderPathFor,
-  commitHeaderPromptLine,
-  type DeveloperPublicationRecord,
-  PR_BODY_FILE_NAME,
-  prBodyPathFor,
-  prBodyPromptLine,
-  readDeveloperPublicationRecord,
-  validateCommitHeader,
-  writeDeveloperPublicationRecord
-} from './dev-review-loop/developer-publication.js'
 import { patchIdAt } from './patch-id.js'
+import { createDeveloperDevToolContext, type DeveloperDevToolDeps } from './task-tools/developer-dev-tools-context.js'
+import type { DevPullRequestView, DevToolContext } from './task-tools/dev-tools-server.js'
+import { startDevToolsHost } from './task-tools/dev-tools-host.js'
+import { ownVersion } from './artifacts.js'
+import {
+  type BridgeInvocation,
+  devToolsSocketPath,
+  driverDevBridgeInvocation
+} from './task-tools/dev-tools-registration.js'
 import { fetchLoopHistory } from './dev-review-loop/journal-history.js'
 import {
   acquireDriverLockAtomic,
@@ -720,6 +715,38 @@ export type LoopDeps = {
     agent: AgentVendor
     repo: { owner: string; repo: string } | null
   }) => number | null
+  /**
+   * O2: start the driver-run dev-tools MCP host serving `context` on
+   * `socketPath`, OUTSIDE the agent's sandbox, and return the bridge the
+   * agent's own MCP client spawns to reach it plus a `close` for after the
+   * turn. The real implementation listens on a unix socket
+   * (`startDevToolsHost`); the harness fakes it — it returns a fake bridge and
+   * a no-op close and drives the `context`'s tools directly, since no real
+   * agent (hence no bridge) exists in-process. The ONE seam that keeps the
+   * socket transport out of the harness while every gate in `context` stays
+   * real (O5).
+   */
+  startDevTools: (input: {
+    socketPath: string
+    context: DevToolContext
+  }) => Promise<{ bridge: BridgeInvocation; close: () => Promise<void> }>
+  /** O2/O3: replace the open PR's body — the `update_pull_request_body` tool's forge side effect (`gh pr edit`). Injected so the harness fakes it. */
+  updatePrBody: (input: {
+    prNumber: number
+    body: string
+    repo: { owner: string; repo: string } | null
+  }) => Promise<void>
+  /** O2/O3: regenerate the PR body's Evidence block for the worktree's current head and write it back — the `refresh_evidence` tool's side effect. Injected so the harness fakes it. */
+  refreshPrEvidence: (input: {
+    worktreePath: string
+    prNumber: number
+    round: number
+    repo: { owner: string; repo: string } | null
+  }) => Promise<{ head: string; checksPassed: boolean; evidence: string }>
+  /** O2/O3: the loop's view of the PR — state, checks, reviews, body, head — for the `read_pull_request` tool (`gh pr view --json`). Injected so the harness fakes it. */
+  readPrView: (input: { branch: string; repo: { owner: string; repo: string } | null }) => Promise<DevPullRequestView>
+  /** O2/O3: run `vinaya check --all` for the worktree's current head — the `run_checks` tool. Injected so the harness fakes it. */
+  runWorktreeChecks: (worktreePath: string) => Promise<{ passed: boolean; output: string }>
 }
 
 function defaultRepoRoot(): string {
@@ -1065,8 +1092,7 @@ export function pushedCommitRangeBase(remoteHead: string | null, branchBase: str
  * untracked file's own raw content (`git ls-files --others
  * --exclude-standard`, read directly off the worktree) is appended, never
  * diffed, named by its own path so a finding's `location` still points
- * somewhere real. Best-effort per file — an unreadable (binary, removed
- * mid-scan) file is skipped, never a reason to fail the whole scan.
+ * somewhere real. An unreadable file fails the scan closed before publication.
  */
 function defaultGitWorktreeDiffText(worktreePath: string, base: string): string | null {
   let text: string | null
@@ -1089,14 +1115,17 @@ function defaultGitWorktreeDiffText(worktreePath: string, base: string): string 
       .map((line) => line.trim())
       .filter(Boolean)
   } catch {
-    untrackedPaths = []
+    return null
   }
   for (const path of untrackedPaths) {
     try {
       const content = readFileSync(join(worktreePath, path), 'utf8')
-      text += `\n--- untracked: ${path} ---\n${content}`
+      text += `\n--- untracked: ${path} ---\n${content
+        .split(/\r?\n/)
+        .map((line) => `+${line}`)
+        .join('\n')}`
     } catch {
-      // Binary, removed mid-scan, or otherwise unreadable — skipped.
+      return null
     }
   }
   return text
@@ -1172,17 +1201,6 @@ function publicationRefusal(
   signature = `${check}\n${errorLine}`
 ): PublicationRefusal {
   return { kind: 'refused', check, errorLine, reason, signature }
-}
-
-function bodyGateRefusal(errors: CheckError[]): PublicationRefusal {
-  const first = errors[0] as CheckError
-  const reason = errors.map((error) => `[${error.check}] ${error.message}\n${error.agent_recovery_prompt}`).join('\n\n')
-  return publicationRefusal(
-    first.check,
-    first.message,
-    reason,
-    errors.map((error) => `${error.check}\n${error.message}`).join('\n---\n')
-  )
 }
 
 class PublicationRefusalPause extends Error {
@@ -1419,6 +1437,142 @@ function defaultOpenTaskPullRequest(input: {
   }
   const pr = findOpenPrForBranch(input.branch)
   return pr ? pr.number : null
+}
+
+/**
+ * O2: the production dev-tools host — a real unix-socket server the driver runs
+ * OUTSIDE the agent's sandbox (`startDevToolsHost`), serving `context`'s
+ * gate-backed tools. Returns the bridge the agent's own MCP client spawns to
+ * reach it and a `close` the loop calls after the turn.
+ */
+async function defaultStartDevTools(input: {
+  socketPath: string
+  context: DevToolContext
+}): Promise<{ bridge: BridgeInvocation; close: () => Promise<void> }> {
+  const host = await startDevToolsHost({
+    socketPath: input.socketPath,
+    serverVersion: ownVersion(),
+    context: input.context
+  })
+  return { bridge: driverDevBridgeInvocation(host.socketPath), close: () => host.close() }
+}
+
+/** O2/O3: `gh pr edit --body-file` to replace the open PR's body (the `update_pull_request_body` tool's forge write). */
+async function defaultUpdatePrBody(input: {
+  prNumber: number
+  body: string
+  repo: { owner: string; repo: string } | null
+}): Promise<void> {
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-dev-tools-body-'))
+  const bodyFile = join(dir, 'body.md')
+  writeFileSync(bodyFile, input.body, 'utf8')
+  try {
+    execFileSync('gh', ['pr', 'edit', String(input.prNumber), '--body-file', bodyFile], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+/** O2/O3: the loop's view of the PR for the `read_pull_request` tool — `gh pr view --json`, a null-filled view when none is open. */
+async function defaultReadPrView(input: {
+  branch: string
+  repo: { owner: string; repo: string } | null
+}): Promise<DevPullRequestView> {
+  const empty: DevPullRequestView = { prNumber: null, state: null, head: null, checks: null, reviews: null, body: null }
+  let raw: string
+  try {
+    raw = execFileSync(
+      'gh',
+      ['pr', 'view', input.branch, '--json', 'number,state,headRefOid,statusCheckRollup,reviews,body'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+  } catch {
+    return empty
+  }
+  try {
+    const j = JSON.parse(raw) as Record<string, unknown>
+    return {
+      prNumber: typeof j.number === 'number' ? j.number : null,
+      state: typeof j.state === 'string' ? j.state : null,
+      head: typeof j.headRefOid === 'string' ? j.headRefOid : null,
+      checks: j.statusCheckRollup ?? null,
+      reviews: j.reviews ?? null,
+      body: typeof j.body === 'string' ? j.body : null
+    }
+  } catch {
+    return empty
+  }
+}
+
+/** O2/O3: run `vinaya check --all` for the worktree's current head (the `run_checks` tool) — the driver's own CLI with the worktree as cwd, so it judges the branch's code. */
+async function defaultRunWorktreeChecks(worktreePath: string): Promise<{ passed: boolean; output: string }> {
+  const res = spawnSync(process.argv[0] as string, [process.argv[1] as string, 'check', '--all'], {
+    cwd: worktreePath,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024
+  })
+  const output = `${res.stdout ?? ''}${res.stderr ?? ''}`
+  return { passed: res.status === 0, output }
+}
+
+/**
+ * The exact `vinaya pr report` argv `refresh_evidence` runs — `--push <pr>`,
+ * the forge-updating mode, never the bare `--write` the old code passed with
+ * no body-file (which `pr report`'s own usage gate rejected before touching
+ * anything: `Usage: vinaya pr report [--write <body-file> | --push <pr> …]`).
+ * `--push <n>` fetches the live PR body, splices a freshly-regenerated
+ * AEG:EVIDENCE block for the current head into it, and writes it back via
+ * `gh pr edit` — the driver runs this outside the sandbox, where the forge
+ * credential lives. Exported so a test can run this very shape through the
+ * real `prReportCommand` parser and prove it is not the usage refusal.
+ */
+export function prReportRefreshArgs(prNumber: number): string[] {
+  return ['pr', 'report', '--push', String(prNumber)]
+}
+
+/**
+ * The marker `vinaya pr report --push <n>` prints to stdout once the live PR
+ * body has actually been updated (`pr-report.ts`'s `'ok'` case). A run that
+ * reaches it pushed the block even when a red gate then makes the process
+ * exit non-zero; a run that never prints it (a splice refusal, an edit
+ * failure, a missing anchor) left the body untouched.
+ */
+function prReportDidPush(stdout: string, prNumber: number): boolean {
+  return stdout.includes(`Pushed AEG:EVIDENCE block to PR ${prNumber}`)
+}
+
+/** O2/O3: regenerate the PR body's Evidence block for the worktree's current head and write it back to the live PR — `vinaya pr report --push <prNumber>` in the worktree (the `refresh_evidence` tool). Throws only when the body was NOT updated (a genuine refusal) so the context returns a structured refusal; a red gate that still pushed the block returns `checksPassed: false`. */
+async function defaultRefreshPrEvidence(input: {
+  worktreePath: string
+  prNumber: number
+  round: number
+  repo: { owner: string; repo: string } | null
+}): Promise<{ head: string; checksPassed: boolean; evidence: string }> {
+  const res = spawnSync(
+    process.argv[0] as string,
+    [process.argv[1] as string, ...prReportRefreshArgs(input.prNumber)],
+    {
+      cwd: input.worktreePath,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024
+    }
+  )
+  const stdout = res.stdout ?? ''
+  const output = `${stdout}${res.stderr ?? ''}`
+  let head = ''
+  try {
+    head = readWorktreeHead(input.worktreePath) ?? ''
+  } catch {
+    head = ''
+  }
+  // A non-zero exit alone is not failure: `pr report` exits non-zero on a red
+  // gate while still pushing the block. Fail only when the body was never
+  // updated — then nothing reached the forge and the tool genuinely refused.
+  if (!prReportDidPush(stdout, input.prNumber)) throw new Error(`pr report --push ${input.prNumber} failed:\n${output}`)
+  return { head, checksPassed: res.status === 0, evidence: output }
 }
 
 /**
@@ -1704,6 +1858,11 @@ function defaultDeps(): LoopDeps {
     validatePrBodyForCreate,
     pushTaskBranch: defaultPushTaskBranch,
     openTaskPullRequest: defaultOpenTaskPullRequest,
+    startDevTools: defaultStartDevTools,
+    updatePrBody: defaultUpdatePrBody,
+    refreshPrEvidence: defaultRefreshPrEvidence,
+    readPrView: defaultReadPrView,
+    runWorktreeChecks: defaultRunWorktreeChecks,
     fetchDeveloperStop,
     fetchMergeableState,
     fetchConflictingFiles,
@@ -2661,6 +2820,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // fresh `LoopState`, so without this the next round would re-send the
         // developer at a finding or a failure that had already repeated.
         repeatMemory: { blockingFindings: state.lastBlockingFindings, lastFailure: state.lastFailure },
+        publicationExpectedBase,
         // The task's own clock, carried forward unchanged (`taskStartedAt`) and
         // accumulated (`phaseMs`), so the next driver to take this task over
         // measures the same budget from the same instant.
@@ -2804,6 +2964,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * creation attempt (`createTaskWorktree`) could not establish.
      */
     let turnPreHead: string | null = null
+    let turnPreStop: string | null = null
     /**
      * O7: the branch's base, recorded on the first publication and checked
      * against on every later one — a base that changed between turns means the
@@ -2811,7 +2972,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * lazily (not at loop start) so a fresh round-1 run with no head yet never
      * has to resolve one.
      */
-    let publicationExpectedBase: string | null = null
+    let publicationExpectedBase: string | null =
+      recoveredLoopState.status === 'ok' ? recoveredLoopState.value.publicationExpectedBase : null
     /**
      * O4: the pre-push hook's own refusal text from the most recent refused
      * driver push, carried into the existing mechanical-failure path's message
@@ -3024,14 +3186,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       opts: { skipResumeContext?: boolean; developerFiles?: readonly string[] }
     ): Promise<DispatchHandle> {
       const isResume = devResumeId !== null
-      const base = opts.skipResumeContext ? promptText : `${resumeContextBlock()}\n\n${promptText}`
-      // O1: the bare-forge-command rule rides EVERY Claude Code Developer
-      // dispatch prompt (round 1 and every resume), prepended OUTSIDE the
-      // frozen brief so the brief stays the prompt's contiguous suffix — and
-      // no Codex one (`bareForgeCommandRule` returns `null` for Codex, whose
-      // driver publishes for it).
-      const forgeRule = bareForgeCommandRule(dispatchAgent)
-      const fullPrompt = forgeRule ? `${forgeRule}\n\n${base}` : base
+      // O4: no bare-forge-command rule rides the prompt any longer — the
+      // Developer holds no `gh`/`git push` credential and publishes only
+      // through the driver-run tools, so there is no excluded command to run
+      // on its own line. The brief stays the prompt's contiguous suffix.
+      const fullPrompt = opts.skipResumeContext ? promptText : `${resumeContextBlock()}\n\n${promptText}`
       // O1/O3: confine the Developer to
       // its own worktree — this driver's own round-1 `createTaskWorktree`
       // call (above, in the branch-creation branch) already created it before
@@ -3048,6 +3207,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // fresh round-1 turn whose worktree the Developer's own Step 0 is still
       // creating records `null`, and the head check is then inactive.
       turnPreHead = devWorktreeDir ? d.readWorktreeHead(devWorktreeDir) : null
+      const priorBase = publicationExpectedBase
+      await resolvePublicationBase(turnPreHead)
+      if (publicationExpectedBase !== priorBase) persistCurrentLoopState(currentPhase ?? 'dispatch_developer')
+      turnPreStop = d.fetchDeveloperStop(task)?.identity ?? null
       // O1/O2: the protected-path snapshot this turn's after-dispatch check
       // (`dispatchDeveloper`, below) compares against — taken here, right
       // before the dispatch, never from a cached copy (Traps to avoid).
@@ -3091,6 +3254,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         d.resolveTaskSurface ? d.resolveTaskSurface(task) : null,
         dispatchAgent
       )
+      // O2: start the driver-run dev-tools MCP host for THIS turn, on a stable
+      // per-task socket, serving the gate-backed context the six tools answer.
+      // It runs OUTSIDE the agent's sandbox, in this driver process; the agent
+      // reaches it only through the bridge passed below, the one part that runs
+      // inside the sandbox. Closed in the `finally` after the turn.
+      const devToolsSocket = devToolsSocketPath(`${repo ? `${repo.owner}/${repo.repo}` : 'local'}:${task}`)
+      const devToolsHost = await d.startDevTools({
+        socketPath: devToolsSocket,
+        context: buildDeveloperDevToolContext(roundNum)
+      })
       const attemptDispatch = (): Promise<DispatchHandle> =>
         withPromptFile(fullPrompt, (promptFile) =>
           d.dispatchRole('developer', dispatchAgent, fullPrompt, {
@@ -3107,73 +3280,85 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // separate log line is needed on this side.
             ...(dispatchModel ? { model: dispatchModel } : {}),
             agentConfigSurfaceCovered,
+            // O2: the per-dispatch dev-tools registration — Claude via
+            // `--strict-mcp-config --mcp-config`, Codex via its staged
+            // `config.toml` (`dispatch.ts`). The one way the Developer
+            // publishes, reads its PR and runs checks.
+            devToolsBridge: devToolsHost.bridge,
             unattended: true
           })
         )
-      let handle = await attemptDispatch()
-      // O2: the launcher's own
-      // `'connection-failed'` classification means the vendor could not be
-      // reached — never a developer decision. Wait and re-dispatch the SAME
-      // session, bounded by the existing infrastructure-retry budget
-      // (`MAX_INFRASTRUCTURE_RETRIES`, shared with every other
-      // infrastructure-class hiccup this task hits), before this ever
-      // reaches `assertDispatchOrEscalate`'s stop-and-escalate/pause path —
-      // a network drop that recovers on retry must never become a decided
-      // stop the developer itself never made. `reconcileDeveloperResume`
-      // picks the exact session back up from the durable launch record,
-      // which binds one the instant the vendor stream reports it, even on
-      // an attempt this connection failure interrupted mid-turn — the
-      // returned `handle` itself always carries `resumeId: null` on a
-      // failure path (`dispatch.ts`), so this is the only way to recover it.
-      let connectionRetryAttempts = 0
-      while (handle.failureReason === 'connection-failed' && infrastructureRetries < MAX_INFRASTRUCTURE_RETRIES) {
-        infrastructureRetries += 1
-        connectionRetryAttempts += 1
-        await d.sleep(gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_CONNECTION_RETRY_BACKOFF_MS', 5_000))
-        reconcileDeveloperResume(false)
-        handle = await attemptDispatch()
+      try {
+        let handle = await attemptDispatch()
+        // O2: the launcher's own
+        // `'connection-failed'` classification means the vendor could not be
+        // reached — never a developer decision. Wait and re-dispatch the SAME
+        // session, bounded by the existing infrastructure-retry budget
+        // (`MAX_INFRASTRUCTURE_RETRIES`, shared with every other
+        // infrastructure-class hiccup this task hits), before this ever
+        // reaches `assertDispatchOrEscalate`'s stop-and-escalate/pause path —
+        // a network drop that recovers on retry must never become a decided
+        // stop the developer itself never made. `reconcileDeveloperResume`
+        // picks the exact session back up from the durable launch record,
+        // which binds one the instant the vendor stream reports it, even on
+        // an attempt this connection failure interrupted mid-turn — the
+        // returned `handle` itself always carries `resumeId: null` on a
+        // failure path (`dispatch.ts`), so this is the only way to recover it.
+        let connectionRetryAttempts = 0
+        while (handle.failureReason === 'connection-failed' && infrastructureRetries < MAX_INFRASTRUCTURE_RETRIES) {
+          infrastructureRetries += 1
+          connectionRetryAttempts += 1
+          await d.sleep(gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_CONNECTION_RETRY_BACKOFF_MS', 5_000))
+          reconcileDeveloperResume(false)
+          handle = await attemptDispatch()
+        }
+        // O3: one typed event per retry episode, naming the failure kind, the
+        // total attempts made, and whether a later attempt eventually
+        // recovered — never one line per attempt, and never logged at all for
+        // the common case (no connection failure this dispatch).
+        //
+        // round 2 review, MAJOR: `outcome` reads off whether the LAST attempt
+        // still carries ANY `failureReason`, never specifically
+        // `'connection-failed'` — the retry loop's own condition only re-enters
+        // on `'connection-failed'`, so its exit can land on a genuine success
+        // (`handle.failureReason` undefined: `'recovered'`) OR on the bound
+        // being exhausted while still `'connection-failed'` OR on a retried
+        // attempt that failed for a DIFFERENT reason (crash/timeout/refused/
+        // signal/unbound) — every one of those non-success cases is
+        // `'exhausted'`, never silently reported as `'recovered'`.
+        if (connectionRetryAttempts > 0) {
+          await logEvents([
+            {
+              kind: 'dev_review_loop' as const,
+              payload: {},
+              loop_id: config.loopId,
+              event: 'infrastructure_retry' as const,
+              round: roundNum,
+              failure_kind: 'developer_connection' as const,
+              attempts: connectionRetryAttempts + 1,
+              outcome: handle.failureReason ? 'exhausted' : 'recovered'
+            }
+          ])
+        }
+        await assertDispatchOrEscalate(
+          handle,
+          dispatchAgent,
+          isResume,
+          devDispatchHistory.hasSucceeded,
+          'the developer',
+          devDispatchHistory.succeededBeforeRound(roundNum)
+        )
+        if (!handle.failureReason) {
+          devDispatchHistory.recordSuccess(roundNum)
+          if (handle.resumeId) devResumeId = handle.resumeId
+        }
+        return handle
+      } finally {
+        // O2: tear down the driver-run host after the turn — the next dispatch
+        // starts a fresh one on the same stable socket (`startDevToolsHost`
+        // unlinks a stale socket file first).
+        await devToolsHost.close()
       }
-      // O3: one typed event per retry episode, naming the failure kind, the
-      // total attempts made, and whether a later attempt eventually
-      // recovered — never one line per attempt, and never logged at all for
-      // the common case (no connection failure this dispatch).
-      //
-      // round 2 review, MAJOR: `outcome` reads off whether the LAST attempt
-      // still carries ANY `failureReason`, never specifically
-      // `'connection-failed'` — the retry loop's own condition only re-enters
-      // on `'connection-failed'`, so its exit can land on a genuine success
-      // (`handle.failureReason` undefined: `'recovered'`) OR on the bound
-      // being exhausted while still `'connection-failed'` OR on a retried
-      // attempt that failed for a DIFFERENT reason (crash/timeout/refused/
-      // signal/unbound) — every one of those non-success cases is
-      // `'exhausted'`, never silently reported as `'recovered'`.
-      if (connectionRetryAttempts > 0) {
-        await logEvents([
-          {
-            kind: 'dev_review_loop' as const,
-            payload: {},
-            loop_id: config.loopId,
-            event: 'infrastructure_retry' as const,
-            round: roundNum,
-            failure_kind: 'developer_connection' as const,
-            attempts: connectionRetryAttempts + 1,
-            outcome: handle.failureReason ? 'exhausted' : 'recovered'
-          }
-        ])
-      }
-      await assertDispatchOrEscalate(
-        handle,
-        dispatchAgent,
-        isResume,
-        devDispatchHistory.hasSucceeded,
-        'the developer',
-        devDispatchHistory.succeededBeforeRound(roundNum)
-      )
-      if (!handle.failureReason) {
-        devDispatchHistory.recordSuccess(roundNum)
-        if (handle.resumeId) devResumeId = handle.resumeId
-      }
-      return handle
     }
 
     /**
@@ -3260,19 +3445,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     const MAX_PUBLISH_REASKS = 2
 
     /**
-     * O7: the publishing-instruction clause every
-     * reask prompt in this file ends with — Codex still hands its commit/
-     * push/PR-open off to the driver via the `.vinaya-commit-header`/
-     * `.vinaya-pr-body` hand-off files (its own `workspace-write` sandbox
-     * keeps `.git` read-only by design); a Claude Code Developer now holds
-     * its own forge credential and publishes the same commit/push/PR-open
-     * itself.
+     * O4: the publishing-instruction clause every reask prompt in this file
+     * ends with — the SAME for both agents now: the Developer publishes only
+     * through the driver-run tools, holding no forge credential of its own. The
+     * driver hosts the tools and runs every gate; it never commits, pushes or
+     * opens on the Developer's behalf.
      */
     function publishingInstructionLine(): string {
-      if (dispatchAgent === 'codex') {
-        return 'leave your changes UNCOMMITTED and (re)write your commit-header and (round 1) PR-body files; the driver commits and publishes, never you.'
-      }
-      return 'commit, push and open (or update) your pull request yourself, on this same branch — the driver does not publish for you.'
+      return 'publish only through the driver-run tools, which run outside your sandbox and hold the gates: `publish_changes` (pass your one-line `Type(scope): Description` commit header) to commit and push the task branch, `open_pull_request` (pass the full PR-report body) to open the pull request when none is open, `update_pull_request_body`/`refresh_evidence` for a body-only change, `read_pull_request` to read its state and checks, and `run_checks` to run `vinaya check --all`; you hold no `gh`/`git push` credential and the driver does not commit, push or open on your behalf.'
     }
 
     /**
@@ -3289,43 +3469,286 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       } catch {
         base = null
       }
-      if (publicationExpectedBase === null) publicationExpectedBase = base
+      if (base !== null && (publicationExpectedBase === null || d.gitIsAncestor(publicationExpectedBase, base))) {
+        publicationExpectedBase = base
+      }
       return base
     }
 
     /**
-     * O3: opens the pull request from the round's own body file, through the
-     * governed `pr-open` operation, with the task Issue's title. A missing or
-     * empty body file is a reask (O7); an open that cannot be confirmed leaves
-     * the record's `prNumber` null for the existing poll to pick up.
+     * O2/O3: the gate-backed `DevToolContext` this turn's driver-run server
+     * answers — the six tools bound to the loop's own publication machinery,
+     * each behind the gates publishing already has (`createDeveloperDevToolContext`).
+     * Built fresh per dispatch so every read is current; the gates
+     * (commit-header, publication-preconditions, PR-body, protected-path,
+     * pre-push) run in THIS driver process, outside the agent's sandbox, so the
+     * agent holds no forge credential of its own (O4). The forge-touching side
+     * effects are the injected `d.*` closures the harness fakes (O5).
      */
-    async function openPullRequestFromBody(
-      roundNum: number,
-      changedPaths: string[]
-    ): Promise<{ kind: 'opened'; prNumber: number | null } | Extract<PublishTurnResult, { kind: 'refused' }>> {
-      const body = readIfExists(prBodyPathFor(root, task, roundNum))
-      if (!body || body.trim().length === 0) {
-        return publicationRefusal(
-          'pr-body-file',
-          `no pull-request body file was written at this round's \`${PR_BODY_FILE_NAME}\` path`
-        )
+    function buildDeveloperDevToolContext(roundNum: number): DevToolContext {
+      const worktree = worktreePathForBranch()
+      const prNumberNow = (): number | null => d.findOpenPrForBranch(branch)?.number ?? null
+      const issueTitle = (): string => {
+        try {
+          return d.fetchIssueTitle(task)
+        } catch {
+          return `[task ${task}]`
+        }
       }
-      let title: string
-      try {
-        title = d.fetchIssueTitle(task)
-      } catch {
-        title = `[task ${task}]`
+      const safeRemoteHead = (): string | null => {
+        try {
+          return d.resolveHead(branch)
+        } catch {
+          return null
+        }
       }
-      const bodyErrors = await d.validatePrBodyForCreate({
-        body,
-        title,
-        changedFiles: changedPaths,
-        branch,
-        baseBranch: 'main'
-      })
-      if (bodyErrors.length > 0) return bodyGateRefusal(bodyErrors)
-      const prNumber = d.openTaskPullRequest({ task, branch, title, body, round: roundNum, agent: dispatchAgent, repo })
-      return { kind: 'opened', prNumber }
+      const worktreeChangedPaths = (): string[] => {
+        const unpushed = d.readUnpushedWorkDetail(worktree)
+        const rangeBase =
+          pendingConflictFiles !== null
+            ? 'origin/main'
+            : pushedCommitRangeBase(safeRemoteHead(), publicationExpectedBase)
+        const diffPaths = rangeBase ? d.gitWorktreeChangedPaths(worktree, rangeBase) : []
+        return [...new Set([...diffPaths, ...unpushed.dirtyFiles])]
+      }
+      const prChangedPaths = async (): Promise<string[] | null> => {
+        const head = d.readWorktreeHead(worktree)
+        if (head === null) return null
+        let base: string
+        try {
+          base = await d.gitMergeBase(head)
+        } catch {
+          return null
+        }
+        const paths = d.gitWorktreeChangedPaths(worktree, base)
+        const dirty = d.readUnpushedWorkDetail(worktree).dirtyFiles
+        const changed = [...new Set([...paths, ...dirty])]
+        return changed.length > 0 ? changed : null
+      }
+      const deps: DeveloperDevToolDeps = {
+        readPublicationCheckInput: async () => {
+          const worktreeHead = d.readWorktreeHead(worktree)
+          const base = await resolvePublicationBase(worktreeHead)
+          return {
+            worktreeBranch: d.readWorktreeBranch(worktree),
+            expectedBranch: branch,
+            worktreeHead,
+            recordedHead: turnPreHead,
+            base,
+            expectedBase: publicationExpectedBase,
+            changedPaths: worktreeChangedPaths(),
+            surface: d.resolveTaskSurface ? d.resolveTaskSurface(task) : null
+          }
+        },
+        commitAndPush: async (header) => {
+          const headerCredentials = findCredentialPatterns(header, 'the proposed commit header')
+          if (headerCredentials.length > 0) {
+            return {
+              ok: false,
+              error: {
+                check: 'credential-scan',
+                output: `recognized credential pattern(s) in commit header: ${headerCredentials.map((finding) => finding.pattern).join(', ')}`,
+                fix: 'Remove the credential-shaped value from the commit header.'
+              }
+            }
+          }
+          const remoteHeadBefore = safeRemoteHead()
+          if (d.readUnpushedWorkDetail(worktree).dirtyFiles.length > 0) d.buildVendoredCliIfMissing(worktree)
+          const scanBase =
+            pendingConflictFiles !== null
+              ? 'origin/main'
+              : pushedCommitRangeBase(remoteHeadBefore, publicationExpectedBase)
+          if (scanBase === null) {
+            return {
+              ok: false,
+              error: {
+                check: 'credential-scan',
+                output: 'the branch base could not be resolved before publication',
+                fix: 'Restore the branch base and call publish_changes again.'
+              }
+            }
+          }
+          const diff = d.gitWorktreeDiffText(worktree, scanBase)
+          if (diff === null) {
+            return {
+              ok: false,
+              error: {
+                check: 'credential-scan',
+                output: 'the added diff lines could not be read before publication',
+                fix: 'Restore a readable worktree and call publish_changes again.'
+              }
+            }
+          }
+          const credentials = findCredentialPatterns(addedDiffLines(diff), 'the added worktree diff')
+          if (credentials.length > 0) {
+            return {
+              ok: false,
+              error: {
+                check: 'credential-scan',
+                output: `recognized credential pattern(s): ${credentials.map((finding) => finding.pattern).join(', ')}`,
+                fix: 'Remove the credential-shaped addition before publishing.'
+              }
+            }
+          }
+          const unpushed = d.readUnpushedWorkDetail(worktree)
+          if (unpushed.dirtyFiles.length > 0) {
+            const committed = d.commitWorktree(worktree, header)
+            if (!committed.ok) {
+              return {
+                ok: false,
+                error: {
+                  check: committed.check,
+                  output: committed.output,
+                  fix: 'Fix what the commit hook refused, then call publish_changes again.'
+                }
+              }
+            }
+          }
+          const localHead = d.readWorktreeHead(worktree)
+          if (localHead !== null && localHead !== remoteHeadBefore) {
+            // A commit made by this tool remains valid work if the push hook
+            // refuses. Remember it so the next call can retry that same head.
+            if (unpushed.dirtyFiles.length > 0) turnPreHead = localHead
+            const rangeBase =
+              pendingConflictFiles !== null
+                ? 'origin/main'
+                : pushedCommitRangeBase(remoteHeadBefore, publicationExpectedBase)
+            const changedPaths = rangeBase ? d.gitWorktreeChangedPaths(worktree, rangeBase) : []
+            const push = d.pushTaskBranch({
+              task,
+              branch,
+              sha: localHead,
+              touchedPaths: changedPaths,
+              round: roundNum,
+              agent: dispatchAgent,
+              repo,
+              worktreePath: worktree
+            })
+            if (!push.ok) {
+              if (!push.hook) throw new Error(`task branch push failed outside the pre-push hook: ${push.refusal}`)
+              lastPushRefusal = push.refusal
+              return {
+                ok: false,
+                error: {
+                  check: 'pre-push-hook',
+                  output: push.refusal,
+                  fix: 'Fix what the pre-push hook refused, then call publish_changes again.'
+                }
+              }
+            }
+            lastPushRefusal = null
+          }
+          const pushedHead = d.readWorktreeHead(worktree) ?? localHead ?? ''
+          // A successful commit+push advances the worktree head. Move the
+          // recorded pre-turn head forward to it so a SECOND (and third)
+          // `publish_changes` in the same turn sees an unmoved head
+          // (`checkPublicationPreconditions` compares `worktreeHead` against
+          // `recordedHead`) rather than refusing on the very commit this tool
+          // just made — a Developer may publish more than once per turn.
+          if (pushedHead) turnPreHead = pushedHead
+          return { ok: true, result: { pushedHead } }
+        },
+        validatePrBody: async (body, title) => {
+          const bodyCredentials = findCredentialPatterns(body, 'the proposed PR body')
+          if (bodyCredentials.length > 0) {
+            return {
+              ok: false,
+              reason: `credential-scan: recognized credential pattern(s): ${bodyCredentials.map((finding) => finding.pattern).join(', ')}`
+            }
+          }
+          const changedFiles = await prChangedPaths()
+          if (changedFiles === null) {
+            return { ok: false, reason: 'could not resolve the task’s changed files against its PR base' }
+          }
+          const errors = await d.validatePrBodyForCreate({
+            body,
+            title: title ?? issueTitle(),
+            changedFiles,
+            branch,
+            baseBranch: 'main'
+          })
+          return errors.length === 0
+            ? { ok: true }
+            : { ok: false, reason: errors.map((e) => `${e.check}: ${e.message}`).join('; ') }
+        },
+        openPullRequest: async (title, body) => {
+          const titleCredentials = findCredentialPatterns(title, 'the proposed PR title')
+          if (titleCredentials.length > 0) {
+            return {
+              ok: false,
+              error: {
+                check: 'credential-scan',
+                output: `recognized credential pattern(s) in PR title: ${titleCredentials.map((finding) => finding.pattern).join(', ')}`,
+                fix: 'Remove the credential-shaped value from the PR title.'
+              }
+            }
+          }
+          const existingPr = prNumberNow()
+          if (existingPr !== null) {
+            return {
+              ok: false,
+              error: {
+                check: 'pr-exists',
+                output: `pull request ${existingPr} is already open for branch ${branch}`,
+                fix: 'Use update_pull_request_body to replace its body.'
+              }
+            }
+          }
+          const prNumber = d.openTaskPullRequest({
+            task,
+            branch,
+            title,
+            body,
+            round: roundNum,
+            agent: dispatchAgent,
+            repo
+          })
+          if (prNumber === null) {
+            return {
+              ok: false,
+              error: {
+                check: 'pr-open',
+                output: 'the pull-request open could not be confirmed',
+                fix: 'Check the forge and call open_pull_request again.'
+              }
+            }
+          }
+          return { ok: true, result: { prNumber } }
+        },
+        updatePullRequestBody: async (body) => {
+          const prNumber = prNumberNow()
+          if (prNumber === null) {
+            return {
+              ok: false,
+              error: {
+                check: 'no-open-pr',
+                output: `no open pull request for branch ${branch}`,
+                fix: 'Open the pull request with open_pull_request first.'
+              }
+            }
+          }
+          await d.updatePrBody({ prNumber, body, repo })
+          return { ok: true, result: { prNumber } }
+        },
+        refreshEvidence: async () => {
+          const prNumber = prNumberNow()
+          if (prNumber === null) {
+            return {
+              ok: false,
+              error: {
+                check: 'no-open-pr',
+                output: `no open pull request for branch ${branch}`,
+                fix: 'Open the pull request with open_pull_request first.'
+              }
+            }
+          }
+          const result = await d.refreshPrEvidence({ worktreePath: worktree, prNumber, round: roundNum, repo })
+          return { ok: true, result }
+        },
+        readPullRequest: async () => ({ ok: true, result: await d.readPrView({ branch, repo }) }),
+        runChecks: async () => ({ ok: true, result: await d.runWorktreeChecks(worktree) })
+      }
+      return createDeveloperDevToolContext(deps)
     }
 
     /**
@@ -3340,202 +3763,48 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * records the hook's own text in `lastPushRefusal` for the existing
      * mechanical-failure path and returns `push_refused`.
      */
-    async function publishDeveloperTurn(roundNum: number): Promise<PublishTurnResult> {
-      // O7: the driver no longer commits, pushes or
-      // opens the pull request for a Claude Code Developer — it now holds its
-      // own forge credential and publishes its own work, through the
-      // sandbox-excluded `git`/`gh` commands (`worker-boundary.ts`'s
-      // `CLAUDE_SANDBOX_EXCLUDED_COMMANDS`) and the matching permission grant
-      // (`dispatch.ts`'s `buildRolePermissions('developer')`). Still Codex-
-      // only below: Codex's own `workspace-write` sandbox keeps `.git`
-      // read-only by design, so its driver keeps publishing exactly as
-      // before.
-      if (dispatchAgent !== 'codex') return { kind: 'nothing' }
+    async function publishDeveloperTurn(_roundNum: number): Promise<PublishTurnResult> {
+      // O4: the driver no longer commits, pushes or opens a pull request on its
+      // own after a turn. The Developer publishes through the driver-run tools
+      // (`publish_changes`, `open_pull_request`, `update_pull_request_body`,
+      // `refresh_evidence`) DURING its turn — each running IN THIS driver,
+      // behind the very gates this step used to run (commit-header,
+      // publication-preconditions, protected-path, pre-push, PR-body;
+      // `createDeveloperDevToolContext`). This step only DETECTS work the turn
+      // left unpublished and re-asks the SAME session to call the tool; it
+      // writes nothing to the forge itself.
       const worktree = worktreePathForBranch()
       // No worktree here — a driver running on a different host than the
       // Developer's own machine, or this driver's own round-1 `createTaskWorktree`
-      // call has not run/failed. Nothing to publish from here; the existing
+      // call has not run/failed. Nothing to detect from here; the existing
       // poll machinery still covers a branch another host published.
       if (!existsSync(worktree)) return { kind: 'nothing' }
 
       const existingPr = d.findOpenPrForBranch(branch)
       const unpushed = d.readUnpushedWorkDetail(worktree)
-      // O5: nothing new — a clean worktree, nothing ahead of the remote, a
-      // pull request already open. The step does nothing, so a Developer that
-      // published by itself and every existing fixture that fakes a published
-      // turn behave exactly as before.
+      // A stopped round-1 Developer belongs to the existing escalation path,
+      // not the publication re-ask. It may have left a clean worktree and no PR.
+      const currentStop = d.fetchDeveloperStop(task)
+      if (currentStop !== null && currentStop.identity !== turnPreStop) return { kind: 'nothing' }
+      if (unpushed.dirtyFiles.length === 0 && unpushed.aheadCount === 0 && !existingPr) {
+        return { kind: 'nothing' }
+      }
+      // Nothing left unpublished — a clean worktree, nothing ahead of the
+      // remote, a pull request already open: the agent published through the
+      // tools, and there is nothing to re-ask.
       if (unpushed.dirtyFiles.length === 0 && unpushed.aheadCount === 0 && existingPr) {
         return { kind: 'nothing' }
       }
 
-      // O7: branch, base, head and Surface — before any commit or credential use.
-      const worktreeHead = d.readWorktreeHead(worktree)
-      const base = await resolvePublicationBase(worktreeHead)
-      let remoteHeadBeforePush: string | null
-      try {
-        remoteHeadBeforePush = d.resolveHead(branch)
-      } catch {
-        remoteHeadBeforePush = null
-      }
-      // Authorize only the commits in this push. An existing remote head
-      // bounds the range; a first push still names the whole new branch.
-      const pushedRangeBase = pushedCommitRangeBase(remoteHeadBeforePush, publicationExpectedBase)
-      let changedPaths = pushedRangeBase ? d.gitWorktreeChangedPaths(worktree, pushedRangeBase) : []
-      // `git diff <base>` cannot see an untracked file until `commitWorktree`
-      // stages it. Include porcelain's dirty-file list in the pre-commit
-      // Surface check, then recompute the authoritative pushed range below
-      // after the commit has made every path visible to git diff.
-      const preCommitChangedPaths = [...new Set([...changedPaths, ...unpushed.dirtyFiles])]
-      const check = checkPublicationPreconditions({
-        worktreeBranch: d.readWorktreeBranch(worktree),
-        expectedBranch: branch,
-        worktreeHead,
-        recordedHead: turnPreHead,
-        base,
-        expectedBase: publicationExpectedBase,
-        changedPaths: preCommitChangedPaths,
-        surface: d.resolveTaskSurface ? d.resolveTaskSurface(task) : null
-      })
-      if (!check.ok) return publicationRefusal('publication-preconditions', check.reason)
-
-      // O2: commit the uncommitted changes under the Developer's header,
-      // recording the SHA before the push (O8).
-      let record: DeveloperPublicationRecord | null = readDeveloperPublicationRecord(root, task)
-      if (unpushed.dirtyFiles.length > 0) {
-        const header = validateCommitHeader(readIfExists(commitHeaderPathFor(root, task, roundNum)))
-        if (!header.ok) return publicationRefusal('commit-header', header.reason)
-        d.buildVendoredCliIfMissing(worktree)
-        const committed = d.commitWorktree(worktree, header.header)
-        if (!committed.ok) {
-          return publicationRefusal(committed.check, committed.errorLine, committed.output)
-        }
-        const sha = committed.sha
-        record = {
-          round: roundNum,
-          preTurnHead: turnPreHead,
-          commitSha: sha,
-          pushed: false,
-          prNumber: existingPr?.number ?? null
-        }
-        writeDeveloperPublicationRecord(root, task, record)
-      }
-
-      // O3/O4: push the branch when the local head is ahead of the remote.
-      const localHead = d.readWorktreeHead(worktree)
-      const remoteHead = remoteHeadBeforePush
-      if (localHead !== null && localHead !== remoteHead) {
-        // The pushed commit is now the source of truth. In particular, a new
-        // file that was untracked before `commitWorktree` is now included.
-        changedPaths = pushedRangeBase ? d.gitWorktreeChangedPaths(worktree, pushedRangeBase) : []
-        const push = d.pushTaskBranch({
-          task,
-          branch,
-          sha: localHead,
-          touchedPaths: changedPaths,
-          round: roundNum,
-          agent: dispatchAgent,
-          repo,
-          worktreePath: worktree
-        })
-        if (!push.ok) {
-          if (!push.hook) throw new Error(`task branch push failed outside the pre-push hook: ${push.refusal}`)
-          lastPushRefusal = push.refusal
-          return publicationRefusal('pre-push-hook', firstErrorLine(push.refusal, 'push hook refused'), push.refusal)
-        }
-        lastPushRefusal = null
-        record = {
-          round: roundNum,
-          preTurnHead: turnPreHead,
-          commitSha: record?.commitSha ?? localHead,
-          pushed: true,
-          prNumber: existingPr?.number ?? null
-        }
-        writeDeveloperPublicationRecord(root, task, record)
-      }
-
-      // O3: open the pull request when none is open, from the Developer's body file.
-      if (!existingPr) {
-        const opened = await openPullRequestFromBody(roundNum, changedPaths)
-        if (opened.kind === 'refused') return opened
-        if (opened.prNumber !== null) {
-          record = {
-            round: roundNum,
-            preTurnHead: turnPreHead,
-            commitSha: record?.commitSha ?? localHead,
-            pushed: true,
-            prNumber: opened.prNumber
-          }
-          writeDeveloperPublicationRecord(root, task, record)
-        }
-      }
-      return { kind: 'published' }
-    }
-
-    /**
-     * O8: finish a publication a crash interrupted — called at loop start on
-     * the already-pushed re-entry path, BEFORE it looks for a pull request.
-     * Reads the durable publication record: a recorded commit not yet pushed
-     * is pushed from where it was left; a pushed commit with no pull request
-     * yet opens one. No second commit is ever made (the commit is already in
-     * git, recorded by SHA), and a fully-published record is a no-op — so a
-     * restart after the commit, after the push, or after the open each finish
-     * exactly once.
-     */
-    async function finishPublicationFromRecord(): Promise<PublicationRefusal | null> {
-      const record = readDeveloperPublicationRecord(root, task)
-      if (record === null || record.commitSha === null) return null
-      const worktree = worktreePathForBranch()
-      if (!existsSync(worktree)) return null
-
-      if (!record.pushed) {
-        let remoteHead: string | null
-        try {
-          remoteHead = d.resolveHead(branch)
-        } catch {
-          remoteHead = null
-        }
-        if (remoteHead !== record.commitSha) {
-          // A fresh process has no in-memory `publicationExpectedBase`. Resolve
-          // it from the recorded commit before a first-push recovery; an
-          // absent remote and an unresolved base must never authorize an empty
-          // path list for an unknown commit range.
-          const branchBase = await resolvePublicationBase(record.commitSha)
-          const pushedRangeBase = pushedCommitRangeBase(remoteHead, branchBase)
-          if (pushedRangeBase === null) {
-            return publicationRefusal(
-              'publication-preconditions',
-              'could not resolve the branch base required to authorize the interrupted first push'
-            )
-          }
-          const changedPaths = d.gitWorktreeChangedPaths(worktree, pushedRangeBase)
-          const push = d.pushTaskBranch({
-            task,
-            branch,
-            sha: record.commitSha,
-            touchedPaths: changedPaths,
-            round: record.round,
-            agent: dispatchAgent,
-            repo,
-            worktreePath: worktree
-          })
-          if (!push.ok) {
-            if (!push.hook) throw new Error(`task branch push failed outside the pre-push hook: ${push.refusal}`)
-            lastPushRefusal = push.refusal
-            return publicationRefusal('pre-push-hook', firstErrorLine(push.refusal, 'push hook refused'), push.refusal)
-          }
-        }
-        writeDeveloperPublicationRecord(root, task, { ...record, pushed: true })
-      }
-
-      if (d.findOpenPrForBranch(branch) === null && record.prNumber === null) {
-        const changedPaths = publicationExpectedBase ? d.gitWorktreeChangedPaths(worktree, publicationExpectedBase) : []
-        const opened = await openPullRequestFromBody(record.round, changedPaths)
-        if (opened.kind === 'refused') return opened
-        if (opened.kind === 'opened' && opened.prNumber !== null) {
-          writeDeveloperPublicationRecord(root, task, { ...record, pushed: true, prNumber: opened.prNumber })
-        }
-      }
-      return null
+      // Work the turn left unpublished — re-ask the same session to publish it
+      // through the tool. Bounded the same way a refused publication already is
+      // (`dispatchDeveloper`): after the bound, the unmoved head is left to the
+      // existing poll/`no_push` safety net.
+      const missingPr = existingPr ? '' : '; no open pull request'
+      return publicationRefusal(
+        'unpublished-work',
+        `work the turn left unpublished — ${noPushPauseDetail(branch, unpushed)}${missingPr}`
+      )
     }
 
     /**
@@ -3613,57 +3882,33 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       ].join('\n')
     }
 
-    // O6: for Codex, the Developer never pushes or opens the pull request
-    // itself — the driver's publication step does. These resume prompts ask
-    // the Developer to (re)do its work and leave it uncommitted, writing the
-    // commit-header and (where a PR must open) the PR-body file; the driver
-    // commits, pushes and opens from those. O7: a
-    // Claude Code Developer now holds its own forge credential, so it is
-    // asked to (re)do the SAME work and publish it itself instead.
-    function pushAndOpenPrompt(headerPath: string, bodyPath: string): string {
-      if (dispatchAgent !== 'codex') {
-        return [
-          'Your previous turn left no commit on this branch yet, and no open pull request.',
-          'Per your role doctrine (`bun apps/cli/src/index.ts doctrine --role developer --print`): commit your work, push this branch and open (or update) its pull request yourself.'
-        ].join('\n\n')
-      }
+    // O4: the Developer never pushes or opens the pull request through a forge
+    // credential of its own — Claude and Codex alike publish only through the
+    // driver-run tools (`publish_changes`, `open_pull_request`, …), which run
+    // IN THE DRIVER, outside the sandbox. These resume prompts ask the
+    // Developer to (re)do its work and publish it through those same tools.
+    function pushAndOpenPrompt(): string {
       return [
-        'Your previous turn left no commit on the remote for this branch yet.',
-        'Per your role doctrine (`bun apps/cli/src/index.ts doctrine --role developer --print`): leave all your changes UNCOMMITTED. The driver commits them, pushes the branch and opens the pull request for you — you never run `git push` or open the pull request yourself.',
-        commitHeaderPromptLine(headerPath),
-        prBodyPromptLine(bodyPath)
+        'Your previous turn left no commit on this branch yet, and no open pull request.',
+        `Per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`): ${publishingInstructionLine()}`
       ].join('\n\n')
     }
 
-    function openPrPrompt(bodyPath: string): string {
-      if (dispatchAgent !== 'codex') {
-        return [
-          'This branch is pushed but has no open pull request yet.',
-          'Per your role doctrine (`bun apps/cli/src/index.ts doctrine --role developer --print`): open (or update) its pull request yourself.'
-        ].join('\n\n')
-      }
+    function openPrPrompt(): string {
       return [
         'This branch is pushed but has no open pull request yet.',
-        'Per your role doctrine (`bun apps/cli/src/index.ts doctrine --role developer --print`): write the pull-request body file below and end your turn — the driver opens the pull request from it; you never open it yourself.',
-        prBodyPromptLine(bodyPath)
+        `Per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`): ${publishingInstructionLine()}`
       ].join('\n\n')
     }
 
     /** Mid-round unpushed-work resume — distinct from `pushAndOpenPrompt` (round-1 entry, no head at all yet): this branch already has commits on the remote, the developer's LATEST turn just left work the driver could not publish. Names the pre-push hook's own refusal (O4) when one is pending. */
-    function commitAndPushPrompt(headerPath: string): string {
+    function commitAndPushPrompt(): string {
       const refusalBlock = lastPushRefusal
-        ? `\n\nYour last push of this branch was refused by the pre-push hook:\n\n${lastPushRefusal}\n\nFix the cause of that refusal before pushing again.`
+        ? `\n\nYour last \`publish_changes\` for this branch was refused by the pre-push hook:\n\n${lastPushRefusal}\n\nFix the cause of that refusal before calling \`publish_changes\` again.`
         : ''
-      if (dispatchAgent !== 'codex') {
-        return [
-          'Your previous turn left work that is not yet on the remote.',
-          `Per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`): commit and push your changes yourself, on this SAME branch.${refusalBlock}`
-        ].join('\n\n')
-      }
       return [
         'Your previous turn left work that is not yet on the remote.',
-        `Per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`): leave your changes UNCOMMITTED — the driver commits and pushes them on the SAME branch; you never run \`git commit\` or \`git push\` yourself.${refusalBlock}`,
-        commitHeaderPromptLine(headerPath)
+        `Per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`): ${publishingInstructionLine()}${refusalBlock}`
       ].join('\n\n')
     }
 
@@ -3775,7 +4020,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         files.length > 0 ? files.map((f) => `- ${f}`).join('\n') : '(no specific file could be determined)'
       return [
         'This branch is behind the base in a way that conflicts — it cannot merge as-is.',
-        'Merge or rebase the base and resolve before pushing again, per your role doctrine (`bun apps/cli/src/index.ts doctrine --role developer --print`): run `git merge origin/main` (or `git rebase origin/main`) from this worktree, resolve the conflicting file(s) below, then `git push` once resolved. Conflicting file(s):',
+        `Start a merge without committing it: run \`git merge --no-commit origin/main\` from this worktree, resolve the conflicting file(s) below, then ${publishingInstructionLine()} The publish_changes tool makes the merge commit, so do not run git commit or rebase yourself. Conflicting file(s):`,
         fileList
       ].join('\n\n')
     }
@@ -3821,7 +4066,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // O9: no push at all yet. A posted refusal/escalation ends the loop
         // now, never entering the pull-request poll.
         const stop = d.fetchDeveloperStop(task)
-        if (stop !== null) throw new DeveloperStopSignal(stop)
+        if (stop !== null && stop.identity !== turnPreStop) throw new DeveloperStopSignal(stop.body)
 
         // O2/O3: reconcile the prior launch, then resume once, foreground —
         // this single resume's own prompt covers both the missing push and
@@ -3829,13 +4074,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // never opened either. `artifactsPresent: false` — no head reached the
         // remote yet.
         reconcileDeveloperResume(false)
-        await dispatchDeveloper(
-          pushAndOpenPrompt(commitHeaderPathFor(root, task, round), prBodyPathFor(root, task, round)),
-          round,
-          {
-            developerFiles: [commitHeaderPathFor(root, task, round), prBodyPathFor(root, task, round)]
-          }
-        )
+        await dispatchDeveloper(pushAndOpenPrompt(), round, {})
         return await pollUntil(
           () => d.findOpenPrForBranch(branch),
           d.prPollMaxAttempts,
@@ -3856,9 +4095,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // launch, then resume once to open it, then poll. `artifactsPresent:
       // true` — a head is on the remote, the branch itself is real work.
       reconcileDeveloperResume(true)
-      await dispatchDeveloper(openPrPrompt(prBodyPathFor(root, task, round)), round, {
-        developerFiles: [prBodyPathFor(root, task, round)]
-      })
+      await dispatchDeveloper(openPrPrompt(), round, {})
       return await pollUntil(
         () => d.findOpenPrForBranch(branch),
         d.prPollMaxAttempts,
@@ -4707,25 +4944,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           const branchHasTaskCommits = branchHead !== null && !d.gitIsAncestor(branchHead, d.gitRevParseOriginMain())
           if (branchHasTaskCommits) {
             // Crash-recovery re-entry: the branch already exists (pushed by a
-            // prior process), no dispatch here. O8: first finish any
-            // publication a crash interrupted — push a recorded-but-unpushed
-            // commit, open the pull request from a pushed-but-unopened one —
-            // BEFORE the poll below looks for a pull request, so a restart at
-            // any of the three publication boundaries finishes exactly once.
-            // `afterDeveloperTurnBeforePrPoll` then finds the open PR (or
-            // resumes once to open it, the pre-existing safety net).
-            const recoveryRefusal = await finishPublicationFromRecord()
-            if (recoveryRefusal) {
-              const recoveryRecord = readDeveloperPublicationRecord(root, task)
-              const recoveryRound = recoveryRecord?.round ?? round
-              await dispatchDeveloper(publicationRefusalPrompt(recoveryRefusal), recoveryRound, {
-                developerFiles: [
-                  commitHeaderPathFor(root, task, recoveryRound),
-                  prBodyPathFor(root, task, recoveryRound)
-                ],
-                publicationRefusal: recoveryRefusal
-              })
-            }
+            // prior process), no dispatch here. The Developer publishes through
+            // the driver-run tools during its own turn (`publish_changes`,
+            // `open_pull_request`), so the driver keeps no durable publication
+            // record to finish on restart — any turn interrupted mid-publish is
+            // re-dispatched and republishes idempotently through the tools.
+            // `afterDeveloperTurnBeforePrPoll` finds the open PR (or resumes
+            // once to open it, the pre-existing safety net).
             prNumber = await afterDeveloperTurnBeforePrPoll(true)
             announcePr()
           } else {
@@ -4801,36 +5026,26 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 developerDoctrine = null
               }
             }
-            // O6: round 1 writes both the commit-header file (the driver
-            // commits under it) and the PR-body file (the driver opens the PR
-            // from it) — granted to the session as `developerFiles`, named in
-            // the prompt the same way the confidence file is.
-            // O7: Codex only — a Claude Code Developer now
-            // commits, pushes and opens its own pull request itself, so it
-            // needs neither hand-off file nor the instruction to leave its
-            // changes uncommitted; its own doctrine block (just above, O8)
-            // and the brief's own Deliverable section already say how.
-            const round1HeaderPath = commitHeaderPathFor(root, task, round)
-            const round1BodyPath = prBodyPathFor(root, task, round)
-            const round1SelfPublishFiles = dispatchAgent === 'codex' ? [round1HeaderPath, round1BodyPath] : []
-            // O6: the commit-header and PR-body instructions sit in the
+            // O4: round 1 publishes the SAME way for both agents — the
+            // Developer calls the driver-run tools (`publish_changes` to commit
+            // and push, `open_pull_request` to open the pull request from the
+            // body it passes). No hand-off file and no per-agent split: the
+            // publishing instruction is the one shared tool line, in the
             // preamble OUTSIDE the frozen brief — after the doctrine, before the
             // brief — so the brief stays the prompt's contiguous, byte-for-byte
             // suffix: its verdict-binding hash is computed from
             // `fetchFrozenBrief(task)`, never this prompt, and the invariant that
-            // the doctrine (and now these instructions) are prepended OUTSIDE the
+            // the doctrine (and now this instruction) are prepended OUTSIDE the
             // brief holds unchanged.
             const round1Prompt = [
               developerDoctrine ? renderDeveloperDoctrineBlock(developerDoctrine) : null,
-              dispatchAgent === 'codex' ? commitHeaderPromptLine(round1HeaderPath) : null,
-              dispatchAgent === 'codex' ? prBodyPromptLine(round1BodyPath) : null,
+              `When your work is ready, ${publishingInstructionLine()}`,
               brief
             ]
               .filter((part): part is string => part !== null)
               .join('\n\n')
             await dispatchDeveloper(round1Prompt, round, {
-              skipResumeContext: true,
-              developerFiles: round1SelfPublishFiles
+              skipResumeContext: true
             })
 
             try {
@@ -5286,15 +5501,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // dispatch is granted write access to.
             const thisRoundConfidencePath = confidenceFilePathFor(round)
             const thisRoundResponsePath = roundResponseFilePathFor(round)
-            const thisRoundHeaderPath = commitHeaderPathFor(root, task, round)
-            // O7: Codex still leaves its fix
-            // uncommitted for the driver to commit/push on the SAME branch;
-            // a Claude Code Developer now commits and pushes that same fix
-            // itself (never opening a new PR — the existing one stays).
-            const fixPublishClause =
-              dispatchAgent === 'codex'
-                ? 'leave your changes uncommitted; the driver commits and pushes the fix as a new commit on the SAME branch'
-                : 'commit and push the fix yourself, as a new commit on this SAME branch — do not open a new PR'
             const prompt = [
               conflictFiles !== null
                 ? renderConflictPrompt(conflictFiles)
@@ -5303,29 +5509,23 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                   : isGateRedRetry
                     ? `CI is red on the last head. Failing check-run(s): ${
                         lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
-                      }. Fix the failing check(s) and ${fixPublishClause}.`
+                      }. Fix the failing check(s).`
                     : // `isGateRedRetry` is false here only when this dispatch came from
                       // `assessVerdicts`' review-findings fallback, which requires
                       // `dispatch_reviewers` to have already run and set `lastReviewContext`
                       // — so it is never null in this branch (code review, round 1, MINOR:
                       // the prior 'CI was red...' fallback below this was unreachable).
                       `Round ${round} review findings:\n\n${lastReviewContext}\n`,
-              // O6: for Codex, the Developer leaves its fix uncommitted and
-              // writes the commit header; the driver makes the single
-              // commit, pushes it on the SAME branch, and opens no new PR.
-              `Address the findings above per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`). ${
-                dispatchAgent === 'codex'
-                  ? 'Leave your changes UNCOMMITTED — the driver commits and pushes them on the SAME branch; do not open a new PR.'
-                  : 'Commit your changes and run `git push` yourself, on this SAME branch; do not open a new PR.'
-              }`,
-              dispatchAgent === 'codex' ? commitHeaderPromptLine(thisRoundHeaderPath) : '',
+              // O4: the fix publishes the SAME way for both agents — through the
+              // driver-run tools, as a new commit on the SAME branch; no new PR
+              // is opened (the existing one stays).
+              `Address the findings above per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`), then ${publishingInstructionLine()} Publish the fix as a new commit on this SAME branch — do not open a new pull request.`,
               round >= 2 ? confidencePromptLine(thisRoundConfidencePath) : '',
               isReviewFindingsRetry ? roundResponsePromptLine(thisRoundResponsePath) : ''
             ]
               .filter(Boolean)
               .join('\n\n')
             const thisRoundDeveloperFiles = [
-              ...(dispatchAgent === 'codex' ? [thisRoundHeaderPath] : []),
               ...(round >= 2 ? [thisRoundConfidencePath] : []),
               ...(isReviewFindingsRetry ? [thisRoundResponsePath] : [])
             ]
@@ -5404,9 +5604,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                   }
                   await logUnpushedWorkResume(round, unpushedWorkResumeDetail(unpushed))
                   await postUnpushedWorkResumeComment(round, headBeforeDispatch, unpushed)
-                  await dispatchDeveloper(commitAndPushPrompt(commitHeaderPathFor(root, task, round)), round, {
-                    developerFiles: [commitHeaderPathFor(root, task, round)]
-                  })
+                  await dispatchDeveloper(commitAndPushPrompt(), round, {})
                   const resumedHead = await pollUntil(
                     () => {
                       const h = d.resolveHead(branch)

@@ -796,7 +796,13 @@ describe('renderBrief', () => {
       expect(result.brief).toContain(
         '`PR_BODY="$(cat <body-file>)" npx --yes @attalabs/vinaya@9.9.9 check doc-coverage` green'
       )
-      expect(result.brief).toContain('`npx --yes @attalabs/vinaya@9.9.9 pr create --body-file <path>')
+      // §6's Parts heading and §12's PR-open line now name the driver-hosted
+      // dev-tools, not raw `pr create`/`pr report --write` — the agent holds
+      // no `gh`/`git push` credential.
+      expect(result.brief).toContain(
+        '## 6. Numbered parts — call `publish_changes` after EACH part; `open_pull_request` once the first part is published'
+      )
+      expect(result.brief).toContain('Open the PR only via the `open_pull_request` tool')
       expect(result.brief).not.toContain('also ships')
     })
 
@@ -804,11 +810,11 @@ describe('renderBrief', () => {
       const result = renderBrief(baseFacts(ADOPTER), TEMPLATE)
       expect(result.ok).toBe(true)
       if (!result.ok) return
-      // §8's `pr report` line was the one command this sweep did not catch
-      // before: it writes the Evidence block the PR report template requires,
-      // and read `vinaya pr report --write` in every adopter's brief.
+      // §8's Evidence-block line now names the driver-hosted `refresh_evidence`
+      // tool, never a bare `vinaya pr report --write` — so no adopter's brief
+      // leaks a bare `vinaya ` command here either.
       expect(result.brief).not.toContain('`vinaya ')
-      expect(result.brief).toContain('`npx --yes @attalabs/vinaya@9.9.9 pr report --write`')
+      expect(result.brief).toContain('the `refresh_evidence` tool regenerates the PR body')
     })
 
     it('§2 asks for a confirmation §5 can actually produce (round 3, F2)', () => {
@@ -863,8 +869,11 @@ describe('renderBrief', () => {
       expect(result.brief).not.toContain('check dispatch-readiness`')
       expect(result.brief).not.toContain('verify-dispatch.ts')
       expect(result.brief).toContain('`PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr`')
-      expect(result.brief).toContain('`bun apps/cli/src/index.ts pr create --body-file <path>')
-      expect(result.brief).toContain('`bun apps/cli/src/index.ts pr report --write`')
+      // Forge writes go through the driver-hosted dev-tools, so the PR-open and
+      // Evidence-block lines name the tools regardless of the repository's own
+      // CLI invocation.
+      expect(result.brief).toContain('Open the PR only via the `open_pull_request` tool')
+      expect(result.brief).toContain('the `refresh_evidence` tool regenerates the PR body')
     })
 
     it("a backlog task's §5 names the dispatch-readiness gate the same command-free way a tranche task's does — no Issue-specific target leaks into the rendered text any more (O3, round 4 Principal ruling)", () => {

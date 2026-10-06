@@ -264,7 +264,8 @@ describe('devReviewLoop — a red gate the developer never fixes pauses, bounded
     expect(gateRedPrompt).toMatch(/^Worktree: `.*\.worktrees\//m)
     expect(gateRedPrompt).toMatch(/^Remote head: [0-9a-f]{40}$/m)
     expect(gateRedPrompt).toMatch(/CI is red on the last head/)
-    expect(gateRedPrompt).toMatch(/`git push`/)
+    // O4: the gate-red resume names the driver-run `publish_changes`, not a self-push.
+    expect(gateRedPrompt).toMatch(/publish_changes/)
   })
 })
 

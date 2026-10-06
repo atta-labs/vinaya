@@ -647,6 +647,7 @@ export type RecoveredLoopState = {
   deliveredFindings: RoundHeadIdentity | null
   /** The two repeat detectors as last persisted — `null` for a record written before this field existed, which reads back as no memory (both detectors start empty), never as a corrupt record. */
   repeatMemory: { blockingFindings: string[]; lastFailure: { signature: string; message: string } | null } | null
+  publicationExpectedBase: string | null
   /** When the loop first started on this task, as the first driver to persist state for it recorded — `null` for a record written before this field existed, which sends the caller to the earliest ownership epoch instead. */
   taskStartedAt: string | null
   /** Milliseconds recorded against each phase so far — `{}` for a record written before this field existed. Narration only: the budget is decided on elapsed time. */
@@ -679,6 +680,7 @@ export function recoverLoopState(
       heldResult: parsed.value.heldResult,
       deliveredFindings: parsed.value.deliveredFindings,
       repeatMemory: parsed.value.repeatMemory ?? null,
+      publicationExpectedBase: parsed.value.publicationExpectedBase ?? null,
       taskStartedAt: parsed.value.taskStartedAt ?? null,
       phaseMs: parsed.value.phaseMs ?? {}
     }

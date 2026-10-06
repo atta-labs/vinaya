@@ -30,6 +30,7 @@
  */
 
 import {
+  chmodSync,
   accessSync,
   constants as fsConstants,
   existsSync,
@@ -48,6 +49,7 @@ import { createHash } from 'node:crypto'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import type { Role } from '@attalabs/aeg-core'
+import { devToolsSocketRoot } from './task-tools/dev-tools-registration.js'
 
 /** The same allowlist discipline `apps/cli/src/checks/runner.ts`'s `buildCheckEnv` already applies to a custom check's child — named here again, deliberately, rather than imported: `checks/runner.ts` sits outside this task's surface (`apps/cli/src/checks` is explicitly named `out:` in the dispatched brief), and this list is small enough that naming it twice costs less than reaching across that boundary. `apps/cli/specs/isolation.md` §2 documents this precedent as the pattern this module extends to the Worker/Reviewer dispatch path. */
 export const WORKER_ENV_ALLOWLIST_KEYS = [
@@ -1957,12 +1959,9 @@ export function resolveWorkerBoundaryLaunch(
  * proxy into it — confirmed live against the installed binary (2.1.197,
  * `grep -a` over its own strings: `"bubblewrap (bwrap) not installed"`,
  * `sta(){let{seccompConfig:t,bwrapPath:n,socatPath:r}=e??{}...`). Named here,
- * once, so `resolveClaudeConfinement`'s own refusal to set
- * `sandbox.enabled`/`failIfUnavailable` on a host that cannot satisfy them —
- * falling back to an unconfined run with a named warning instead (Principal
- * ruling, 2026-10-02: nobody is ever required to install anything) — and
- * `apps/cli/specs/self-hosting.md`'s own description of that same fallback
- * read the identical list, never a second one that could drift.
+ * once, so `resolveClaudeConfinement` can name missing requirements and
+ * `dispatchRole` can refuse before spawning an unattended worker. Vinaya
+ * never installs either tool on the operator's behalf.
  */
 export const LINUX_CLAUDE_SANDBOX_TOOLS = ['bwrap', 'socat'] as const
 
@@ -2073,17 +2072,20 @@ export type ClaudeSandboxSettings = {
 }
 
 /**
- * O2: the Go-based `gh` CLI fails TLS verification under Seatbelt on macOS,
- * and `git`'s own SSH-backed network commands cannot authenticate through
- * the sandbox's own proxy tunnel on macOS either (both confirmed live
- * against `code.claude.com/docs/en/sandboxing`'s own "Troubleshooting"
- * section, "Go-based CLIs fail TLS verification on macOS" and "`git` over
- * SSH fails with the sandbox on") — the documented fix for both is the same
- * `excludedCommands` escape hatch, naming the PLAIN command form (`git push
- * *`, never `git -C <dir> push *` or a `cd …&&` prefix, which the same page
- * states stay sandboxed regardless of any entry here).
+ * O4: `gh *` and `git push *` are GONE from this list. A Developer no
+ * longer holds any forge WRITE: it publishes, opens its PR and reads it only
+ * through the driver-run dev-tools (`task-tools/dev-tools-host.ts`), which run
+ * the credentialed forge operations in the driver, outside the sandbox. With
+ * `gh` no longer excluded, a bare `gh` read (`gh issue view`, `gh pr view`)
+ * now runs INSIDE the sandbox, where the forge-token file is denied, and fails
+ * — the conformance suite lists those as Claude known failures on each
+ * platform the CI job reports them.
+ *
+ * No Bash command may run outside the sandbox. Even a plain `git fetch` can
+ * execute a worker-controlled upload-pack program, so excluding it would let
+ * a worker reach another task's driver socket with the controller's OS UID.
  */
-export const CLAUDE_SANDBOX_EXCLUDED_COMMANDS: readonly string[] = ['gh *', 'git push *', 'git fetch *', 'git pull *']
+export const CLAUDE_SANDBOX_EXCLUDED_COMMANDS: readonly string[] = []
 
 /**
  * O2: how Claude Code itself decides whether a Bash line runs OUTSIDE the
@@ -2144,8 +2146,8 @@ function claudeCredentialDenyFiles(realHome: string): ReadonlyArray<{ path: stri
  * - **Reads** are left at Claude Code's own default — "read access to the
  *   entire computer, except certain denied directories" (confirmed live
  *   against `code.claude.com/docs/en/sandboxing`, "How sandboxing works") —
- *   so this function sets no `filesystem.denyRead`/`allowRead` at all
- *   (O1's own replacement of the prior whole-home deny, below).
+ *   except the dedicated driver-tool socket root, which `denyRead` hides
+ *   even when Unix-socket seccomp is unavailable. `allowRead` stays empty.
  * - **Writes** are granted on the worktree, this dispatch's own scratch
  *   directory, and — round 4 Principal ruling, below — bun's own resolved
  *   install cache (`resolveBunInstallCacheDir`), never a fourth path and
@@ -2161,20 +2163,18 @@ function claudeCredentialDenyFiles(realHome: string): ReadonlyArray<{ path: stri
  *   mode (`claudeCredentialDenyFiles`) — the one mechanism O1 names, in
  *   place of the blanket real-home `denyRead`/mirrored `permissionsDeny`
  *   this function used to build.
- * - **`gh`/git's network commands** are excluded from the sandbox
- *   (`CLAUDE_SANDBOX_EXCLUDED_COMMANDS`) so they run with full access rather
- *   than failing inside it (O2's own doc comment); `allowUnsandboxedCommands`
- *   stays `false` regardless — excluding a command is never the same
- *   mechanism as letting a failed one retry unsandboxed.
+ * - **No Bash command is excluded.** `git fetch` and `git pull` remain inside
+ *   the sandbox because Git can execute a worker-chosen program while fetching.
+ *   `allowUnsandboxedCommands` stays `false`.
  * - **The domain allowlist is `CLAUDE_SANDBOX_ALLOWED_DOMAINS`, always** —
  *   never `request.allowedHosts` (O3): one fixed list this module owns,
  *   never assembled per task. `network.strictAllowlist` is NOT part of this
  *   function's own return value (see below) even though a real dispatch
  *   still carries it.
  *
- * `filesystem.denyRead`/`allowRead` are present but always empty — this
- * function still sets no additional read restriction of its own (reads stay
- * at Claude Code's documented default described above) — and
+ * `filesystem.denyRead` names only the driver-tool socket root and
+ * `allowRead` is empty; other reads stay at Claude Code's documented
+ * default described above. The
  * `network` carries `allowedDomains` alone, with no `strictAllowlist`. Both
  * are shape constraints, not behavior changes: `dispatch.ts`'s
  * `writeDispatchSettings` is the ONE place a real dispatch's settings file
@@ -2201,6 +2201,11 @@ function claudeCredentialDenyFiles(realHome: string): ReadonlyArray<{ path: stri
  * literal string this settings file names.
  */
 export function buildClaudeSandboxSettings(request: ConfinementRequest): ClaudeSandboxSettings {
+  // The denied parent must exist before any Claude Bash sandbox starts. A
+  // missing denyRead path can be skipped by the runtime at command launch;
+  // creating it only when a later Developer starts its host leaves a race.
+  mkdirSync(devToolsSocketRoot(), { recursive: true, mode: 0o700 })
+  chmodSync(devToolsSocketRoot(), 0o700)
   const real = (p: string): string => {
     try {
       return realpathSync(p)
@@ -2219,7 +2224,7 @@ export function buildClaudeSandboxSettings(request: ConfinementRequest): ClaudeS
       excludedCommands: CLAUDE_SANDBOX_EXCLUDED_COMMANDS,
       network: { allowedDomains: [...CLAUDE_SANDBOX_ALLOWED_DOMAINS] },
       filesystem: {
-        denyRead: [],
+        denyRead: [devToolsSocketRoot()],
         allowRead: [],
         allowWrite: [worktreeDir, scratchDir, resolveBunInstallCacheDir()]
       },
@@ -2270,15 +2275,10 @@ export function realConfinementPlatformDeps(): ConfinementPlatformDeps {
  * Always confined on macOS — Claude Code's own sandbox there "needs nothing
  * installed" (it ships with the OS, Seatbelt-backed). On Linux, confined
  * only when both `LINUX_CLAUDE_SANDBOX_TOOLS` are present; otherwise returns
- * the unconfined fallback carrying a `warning` naming the missing tool(s),
- * rather than setting `failIfUnavailable: true` on a host that cannot
- * satisfy it — which would make `claude` itself exit with "Sandbox required
- * but unavailable" instead of merely running unconfined (see
- * `LINUX_CLAUDE_SANDBOX_TOOLS`'s own doc comment). Never refuses the
- * dispatch, and never installs anything (Principal ruling, 2026-10-02): the
- * one degraded outcome this function reports is `confined: false`, always
- * paired with a `warning` the caller surfaces in the run's own output and
- * the Vinaya Log.
+ * `confined: false` with a warning naming the missing tool(s). The caller
+ * refuses that outcome before spawning an unattended worker, because a
+ * same-UID unconfined worker could reach another task's driver-run dev-tools
+ * socket. The resolver itself never installs anything or starts the vendor.
  */
 export function resolveClaudeConfinement(
   request: ConfinementRequest,
@@ -2309,15 +2309,14 @@ export function resolveClaudeConfinement(
       confined: false,
       warning:
         `Claude Code's own sandbox needs ${LINUX_CLAUDE_SANDBOX_TOOLS.join(' and ')} on Linux; missing: ` +
-        `${deps.linuxTools.missing.join(', ')} — running this dispatch unconfined rather than requiring an ` +
-        'install (Principal ruling, 2026-10-02).',
+        `${deps.linuxTools.missing.join(', ')}.`,
       missingTools: deps.linuxTools.missing
     }
   }
   return {
     ok: true,
     confined: false,
-    warning: `Claude Code's own sandbox names no mechanism for platform '${deps.platform}' — running this dispatch unconfined.`,
+    warning: `Claude Code's own sandbox names no mechanism for platform '${deps.platform}'.`,
     missingTools: []
   }
 }
@@ -2772,9 +2771,11 @@ export function findCredentialPatterns(text: string, location: string): Credenti
  */
 export function addedDiffLines(diff: string): string {
   const added: string[] = []
+  let inHunk = false
   for (const line of diff.split(/\r?\n/)) {
-    if (line.startsWith('+++')) continue
-    if (line.startsWith('+')) added.push(line.slice(1))
+    if (line.startsWith('diff --git ')) inHunk = false
+    else if (line.startsWith('@@ ') || line.startsWith('--- untracked: ')) inHunk = true
+    else if (inHunk && line.startsWith('+')) added.push(line.slice(1))
   }
   return added.join('\n')
 }

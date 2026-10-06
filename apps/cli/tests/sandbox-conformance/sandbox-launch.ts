@@ -170,11 +170,8 @@ function claudeSession(): SandboxSession {
     agent: 'claude',
     worktreeDir,
     runOutside: (command, env) => runOutsideSandbox(worktreeDir, command, env),
-    // O2: Claude Code runs a line matching one of its `excludedCommands` ON
-    // ITS OWN outside the sandbox, with the forge credential; every other
-    // line runs inside it. `claudeRunsCommandUnsandboxed` is the vendor's own
-    // whole-line decision (`worker-boundary.ts`), so a bare `gh`/`git push`
-    // passes while a chained one stays sandboxed and is denied the credential.
+    // Keep the same routing decision the driver uses. Its exclusion list is
+    // empty, so bare and chained Bash commands both stay sandboxed.
     run: (command, env) =>
       claudeRunsCommandUnsandboxed(command)
         ? runOutsideSandbox(worktreeDir, command, env)

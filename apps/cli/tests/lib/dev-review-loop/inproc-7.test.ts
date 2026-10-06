@@ -22,6 +22,7 @@ import { join } from 'node:path'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../../src/lib/dev-review-loop/round-assess.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
 import {
+  developerPublishesViaToolsDeps,
   cleanupWorlds,
   controlDir as ipControlDir,
   makeInProcessDeps,
@@ -221,6 +222,31 @@ describe('devReviewLoop — O5 (#595): an infrastructure pause resumes on the ba
 // --- escalation pauses, --resume continues after a ruling ------------------
 
 describe('devReviewLoop — escalation pauses, --resume continues after a ruling', () => {
+  for (const agent of ['claude', 'codex'] as const) {
+    it(`O5: ${agent} resumes after a Principal ruling and publishes the fix through the tool`, async () => {
+      const world = makeEscalationWorld({ worktreeExists: true })
+      const paused = await runLoopInProcess(world, { task: world.task, agent })
+      expect(paused.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+      const originalHead = world.head
+      seedRuling(world)
+      world.roleOutcomes[1]!.reviewer = undefined
+      const published = await runLoopInProcess(
+        world,
+        { resumePr: world.prNumber, agent },
+        developerPublishesViaToolsDeps(world, { header: 'Fix(cli): follow principal ruling' })
+      )
+      expect(published.finalDecision).toEqual({ type: 'publish' })
+      expect(
+        world.dispatches.some(
+          (dispatch) => dispatch.role === 'developer' && dispatch.prompt?.includes('Principal ruling on this pause')
+        )
+      ).toBe(true)
+      expect(world.commits.map((commit) => commit.header)).toEqual(['Fix(cli): follow principal ruling'])
+      expect(world.pushes).toHaveLength(1)
+      expect(world.head).not.toBe(originalHead)
+    })
+  }
+
   it('pauses with a marked comment and a non-zero exit, then --resume publishes after a ruling', async () => {
     const world = makeEscalationWorld()
 
@@ -270,13 +296,14 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     expect(resumePrompt).toMatch(/Principal ruling on this pause/)
     expect(resumePrompt).toMatch(/Go ahead and fix it\./)
     // O11 (task-run-v1 21, #541, round 2 review MAJOR): the ruling-resume
-    // prompt names the task/branch/worktree/head context AND the exact
-    // command expected — not just "push fixes" in prose.
+    // prompt names the task/branch/worktree/head context AND the exact tool
+    // expected — not just "push fixes" in prose. O4: the tool is the
+    // driver-run `publish_changes`, not a self-push.
     expect(resumePrompt).toMatch(new RegExp(`^Resuming task Issue #${world.task}\\.$`, 'm'))
     expect(resumePrompt).toMatch(new RegExp(`^Branch: \`${world.branch}\`$`, 'm'))
     expect(resumePrompt).toMatch(/^Worktree: `.*\.worktrees\//m)
     expect(resumePrompt).toMatch(/^Remote head: [0-9a-f]{40}$/m)
-    expect(resumePrompt).toMatch(/`git push`/)
+    expect(resumePrompt).toMatch(/publish_changes/)
 
     // Published: the round marker and the original pause comment, then the
     // three publish comments (reviewer verdict, security verdict, summary) —

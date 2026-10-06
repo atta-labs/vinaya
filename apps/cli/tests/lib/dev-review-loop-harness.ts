@@ -36,7 +36,7 @@
  */
 
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
   devReviewLoop,
@@ -49,8 +49,8 @@ import {
 } from '../../src/lib/dev-review-loop.js'
 import { resetDefaultLogSinkContext, resetTrustAnchorConfigMemo } from '../../src/lib/log-sink.js'
 import { resetRuntimeDirCache } from '../../src/lib/run-paths.js'
-import { commitHeaderPathFor, prBodyPathFor } from '../../src/lib/dev-review-loop/developer-publication.js'
 import type { DispatchHandle } from '../../src/lib/dispatch.js'
+import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server.js'
 import {
   pauseMarker,
   renderNoPushStopComment,
@@ -219,6 +219,8 @@ export type LoopWorld = {
   worktreeAhead: number
   /** `gitWorktreeChangedPaths` — the paths the turn changed, for the O7 Surface check; default `[]`. */
   worktreeChangedPaths: string[]
+  /** Added-content diff visible to the pre-publication credential scan; default an empty readable diff. */
+  worktreeDiffText: string | null
   /** The sha `commitWorktree` returns and sets the worktree head to; default `sha('c')`. */
   nextCommitSha: string
   /** When set, `pushTaskBranch` refuses with this text (O4); default `null` (the push lands). */
@@ -233,6 +235,17 @@ export type LoopWorld = {
   pushes: Array<{ sha: string }>
   /** Each pull-request open the driver's publication step made (`openTaskPullRequest`). */
   prOpens: Array<{ title: string; body: string }>
+  // --- dev-tools (O2–O5): the gate-backed context the driver hosts per turn ---
+  /** The `DevToolContext` the loop built this turn — captured by the fake `startDevTools` so a test can drive the agent's tool calls directly (no real bridge exists in-process). `null` until the first dispatch. */
+  devToolContext: DevToolContext | null
+  /** Each body the agent published through `update_pull_request_body`. */
+  prBodyUpdates: string[]
+  /** How many times the agent called `refresh_evidence`. */
+  evidenceRefreshes: number
+  /** How many times the agent called `run_checks`. */
+  runChecksCalls: number
+  /** The result `run_checks`/`refresh_evidence` report — default a clean pass. */
+  runChecksPassed: boolean
   // --- recorded side effects, for assertions ---
   /** O1/O2: each developer branch the loop created on the remote at round-1 start (`createTaskWorktree`) — empty on a start that found the branch already there (an open PR, or a remote branch with none). */
   remoteBranchCreations: string[]
@@ -342,6 +355,7 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     worktreeDirty: [],
     worktreeAhead: 0,
     worktreeChangedPaths: [],
+    worktreeDiffText: '',
     nextCommitSha: sha('c'),
     pushRefusal: null,
     prOpened: false,
@@ -349,6 +363,11 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     commits: [],
     pushes: [],
     prOpens: [],
+    devToolContext: null,
+    prBodyUpdates: [],
+    evidenceRefreshes: 0,
+    runChecksCalls: 0,
+    runChecksPassed: true,
     remoteBranchCreations: [],
     evidenceOutcome: { ok: true, gatesFailed: false },
     blockEvidenceUntilReviewerStarts: false,
@@ -565,7 +584,7 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     // from the worktree side in a harness-driven test, the same fidelity
     // level every other content-shaped (not path-shaped) git read already
     // has here.
-    gitWorktreeDiffText: (_worktreePath, _base) => null,
+    gitWorktreeDiffText: (_worktreePath, _base) => world.worktreeDiffText,
     buildVendoredCliIfMissing: () => {},
     commitWorktree: (_worktreePath, header) => {
       const commitSha = world.nextCommitSha
@@ -596,8 +615,39 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       world.prOpened = true
       return world.prNumber
     },
+    // --- dev-tools (O2–O5): the driver-run server's seams, forge faked, gates
+    // real inside the captured `context` ---
+    startDevTools: async ({ context }) => {
+      // No real agent (hence no bridge) runs in-process — capture the
+      // gate-backed context so a test drives the agent's tool calls directly.
+      world.devToolContext = context
+      return { bridge: { command: 'fake-dev-bridge', args: [] }, close: async () => {} }
+    },
+    updatePrBody: async ({ body }) => {
+      world.prBodyUpdates.push(body)
+      world.prBody = body
+    },
+    refreshPrEvidence: async () => {
+      world.evidenceRefreshes += 1
+      return { head: world.head, checksPassed: world.runChecksPassed, evidence: 'fake-evidence-block' }
+    },
+    readPrView: async () => ({
+      prNumber: world.prOpened ? world.prNumber : null,
+      state: world.prOpened ? 'OPEN' : null,
+      head: world.head,
+      checks: null,
+      reviews: null,
+      body: world.prBody
+    }),
+    runWorktreeChecks: async () => {
+      world.runChecksCalls += 1
+      return { passed: world.runChecksPassed, output: 'fake-check-all-output' }
+    },
     fetchPrBody: (_pr) => world.prBody,
-    fetchDeveloperStop: (_issue) => (world.developerStop === null ? null : (world.developerStop as never)),
+    fetchDeveloperStop: (_issue) =>
+      (world.dispatchCountByRole.developer ?? 0) === 0 || world.developerStop === null
+        ? null
+        : { body: world.developerStop, identity: 'new-stop-1' },
     fetchMergeableState: (_pr) => world.mergeable,
     fetchConflictingFiles: (_head, _base) => [...world.conflictingFiles],
     gitCommitsTouchingDriverPaths: (_a, _b) => [],
@@ -677,25 +727,19 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
 }
 
 /**
- * agent-confinement-v1/1 — deps whose Developer dispatch models the new
- * confined shape: it leaves its changes UNCOMMITTED (sets `worktreeDirty`/
- * `worktreeChangedPaths`) and writes its commit-header (and, round 1, PR-body)
- * file into that round's own Developer folder, then returns — it never pushes
- * or opens the PR itself. The driver's own publication step (commit, push,
- * open) then runs against the world's publication fakes. Pair with
+ * agent-confinement-v1 — deps whose Developer dispatch dirties the worktree
+ * (sets `worktreeDirty`/`worktreeChangedPaths`) but NEVER calls a driver-run
+ * publishing tool, then returns. The driver no longer commits, pushes or opens
+ * on the Developer's behalf, so the work stays unpublished — the driver detects
+ * it and re-asks the session to call `publish_changes` (O4). Pair with
  * `makeWorld({ worktreeExists: true })`.
  */
 export function developerLeavesWorkDeps(
   world: LoopWorld,
   opts: {
     changedPaths?: string[]
-    header?: string
-    headerByRound?: Record<number, string>
-    body?: string
-    /** When true, the Developer "commits" itself (advances the worktree head) — the O7 head-check violation. */
+    /** When true, the Developer "commits" itself (advances the worktree head) — the head-check violation. */
     developerCommits?: boolean
-    /** When true, writes NO header file — the O2 missing-header path. */
-    writeNoHeader?: boolean
   } = {}
 ): Partial<LoopDeps> {
   const base = makeInProcessDeps(world)
@@ -711,16 +755,103 @@ export function developerLeavesWorkDeps(
       world.worktreeDirty = [...changed]
       world.worktreeChangedPaths = [...changed]
       if (opts.developerCommits) world.worktreeHead = sha('z')
-      if (!opts.writeNoHeader) {
-        const header = opts.headerByRound?.[round] ?? opts.header ?? 'Feat(cli): leave the work for the driver'
-        const headerPath = commitHeaderPathFor(world.runtimeDir, world.task, round)
-        mkdirSync(dirname(headerPath), { recursive: true })
-        writeFileSync(headerPath, header)
+      world.dispatches.push({ role, round, resumeId: 'dev-session-1', prompt })
+      return handle('dev-session-1', `eff-dev-${devSeq}`)
+    }
+  }
+}
+
+/**
+ * O4/O5: a Developer that publishes through the driver-run tools, the way a
+ * real agent does — its dispatch calls the gate-backed `DevToolContext` the
+ * driver captured into `world.devToolContext` this turn (every gate real, the
+ * forge faked by `makeInProcessDeps`). `publish_changes` commits+pushes the
+ * dirty work; `open_pull_request` opens the PR when none is open; a body-only
+ * turn (`bodyOnly`) instead calls `update_pull_request_body` + `refresh_evidence`.
+ */
+export function developerPublishesViaToolsDeps(
+  world: LoopWorld,
+  opts: {
+    changedPaths?: string[]
+    header?: string
+    body?: string
+    /** A body-only turn: publish a new body through the tools, touch no code. */
+    bodyOnly?: boolean
+  } = {}
+): Partial<LoopDeps> {
+  const base = makeInProcessDeps(world)
+  let devSeq = 0
+  return {
+    ...base,
+    dispatchRole: async (role, agent, prompt, dOpts) => {
+      if (role !== 'developer') return base.dispatchRole!(role, agent, prompt, dOpts)
+      const round = dOpts.round ?? 1
+      devSeq += 1
+      world.dispatchCountByRole.developer = (world.dispatchCountByRole.developer ?? 0) + 1
+      const ctx = world.devToolContext
+      if (ctx) {
+        if (opts.bodyOnly) {
+          const updated = await ctx.updatePullRequestBody(
+            opts.body ?? '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n'
+          )
+          if (!updated.ok) throw new Error(`update_pull_request_body refused: ${updated.error.output}`)
+          const refreshed = await ctx.refreshEvidence()
+          if (!refreshed.ok) throw new Error(`refresh_evidence refused: ${refreshed.error.output}`)
+        } else {
+          const changed = opts.changedPaths ?? ['apps/cli/src/lib/x.ts']
+          world.worktreeDirty = [...changed]
+          world.worktreeChangedPaths = [...changed]
+          const published = await ctx.publishChanges(opts.header ?? 'Feat(cli): publish via the driver-run tools')
+          // Open the PR only when the publish actually landed — a gate refusal
+          // (e.g. a Surface violation) leaves nothing to open.
+          if (published.ok && !world.prOpened) {
+            await ctx.openPullRequest(
+              world.issueTitle,
+              opts.body ?? '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n'
+            )
+          }
+        }
       }
-      if (round === 1) {
-        const bodyPath = prBodyPathFor(world.runtimeDir, world.task, round)
-        mkdirSync(dirname(bodyPath), { recursive: true })
-        writeFileSync(bodyPath, opts.body ?? '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n')
+      world.dispatches.push({ role, round, resumeId: 'dev-session-1', prompt })
+      return handle('dev-session-1', `eff-dev-${devSeq}`)
+    }
+  }
+}
+
+/**
+ * agent-confinement-v1: a Developer that calls `publish_changes` TWICE in one
+ * turn, each time on a fresh change with its own commit sha. The second publish
+ * only lands if the driver advanced the recorded pre-turn head after the first
+ * push (else `checkPublicationPreconditions` sees the first commit as a moved
+ * head and refuses) — so a test asserting two commits and two pushes proves a
+ * Developer may publish more than once per turn.
+ */
+export function developerPublishesTwiceViaToolsDeps(world: LoopWorld): Partial<LoopDeps> {
+  const base = makeInProcessDeps(world)
+  let devSeq = 0
+  return {
+    ...base,
+    dispatchRole: async (role, agent, prompt, dOpts) => {
+      if (role !== 'developer') return base.dispatchRole!(role, agent, prompt, dOpts)
+      const round = dOpts.round ?? 1
+      devSeq += 1
+      world.dispatchCountByRole.developer = (world.dispatchCountByRole.developer ?? 0) + 1
+      const ctx = world.devToolContext
+      if (ctx) {
+        // First publish: a commit+push of the first change.
+        world.worktreeDirty = ['apps/cli/src/lib/x.ts']
+        world.worktreeChangedPaths = ['apps/cli/src/lib/x.ts']
+        world.nextCommitSha = sha('c')
+        const first = await ctx.publishChanges('Feat(cli): first publish of the turn')
+        // A SECOND publish in the SAME turn: a fresh change on top of the first,
+        // with its own commit sha so the push genuinely advances the head.
+        world.worktreeDirty = ['apps/cli/src/lib/y.ts']
+        world.worktreeChangedPaths = ['apps/cli/src/lib/x.ts', 'apps/cli/src/lib/y.ts']
+        world.nextCommitSha = sha('d')
+        const second = await ctx.publishChanges('Feat(cli): second publish of the turn')
+        if (first.ok && second.ok && !world.prOpened) {
+          await ctx.openPullRequest(world.issueTitle, '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n')
+        }
       }
       world.dispatches.push({ role, round, resumeId: 'dev-session-1', prompt })
       return handle('dev-session-1', `eff-dev-${devSeq}`)

@@ -205,10 +205,20 @@ export function filterDeveloperStops(comments: readonly MarkerComment[], allowli
     .map((c) => contentAfterOneLine(c.body).trim())
 }
 
-/** The newest developer-stop comment's body on Issue `issueNumber`, or `null` when none exists. */
-export function fetchDeveloperStop(issueNumber: number): string | null {
-  const stops = filterDeveloperStops(fetchIssueComments(issueNumber, 'fetchDeveloperStop'), principalAllowlist())
-  return stops.length > 0 ? (stops[stops.length - 1] ?? null) : null
+/** The newest developer-stop comment and its stable identity on the task Issue. */
+export function fetchDeveloperStop(issueNumber: number): { body: string; identity: string } | null {
+  const allowlist = principalAllowlist()
+  const stops = fetchIssueComments(issueNumber, 'fetchDeveloperStop').flatMap((comment, index) => {
+    if (!isPrincipal(comment.author, allowlist as string[])) return []
+    if (!DEVELOPER_STOP_MARKER.test(comment.body.split('\n')[0] ?? '')) return []
+    return [
+      {
+        body: contentAfterOneLine(comment.body).trim(),
+        identity: comment.url && comment.url.length > 0 ? comment.url : `comment-index:${index}`
+      }
+    ]
+  })
+  return stops.at(-1) ?? null
 }
 
 /**
@@ -840,29 +850,6 @@ export function renderDeveloperDoctrineBlock(doctrine: string): string {
     "YOUR ROLE DOCTRINE — the developer role's short version and its checklist (its Stop conditions and its Verification before reporting done), the same doctrine an interactive developer reads. Run `bun apps/cli/src/index.ts doctrine --role developer --print` for its full reference. This is your operating instruction; the frozen brief for this task follows it.",
     doctrine.trim()
   ].join('\n\n')
-}
-
-/**
- * O1: the bare-forge-command rule that rides every CLAUDE Code Developer
- * dispatch prompt, and NO Codex one. A Claude Code Worker publishes its own
- * work through its sandbox's own `excludedCommands` (`worker-boundary.ts`'s
- * `CLAUDE_SANDBOX_EXCLUDED_COMMANDS`): a line that matches one of those
- * patterns ON ITS OWN runs OUTSIDE the sandbox, with the forge credential,
- * while any OTHER line — including one that chains an excluded command onto
- * anything else — runs INSIDE, where the credential is denied. So a chained
- * `gh`/`git push`/`git pull`/`git fetch` silently loses its forge access and
- * fails; a bare one does not. The rule lives in the DRIVER's prompt (not the
- * doctrine or the brief template), stated once, so the Developer knows to
- * keep each forge command on its own Bash line. Returns `null` for Codex,
- * whose driver publishes for it and whose `workspace-write` sandbox keeps
- * `.git` read-only regardless — it never runs a forge command itself.
- */
-export function bareForgeCommandRule(agent: AgentVendor): string | null {
-  if (agent !== 'claude') return null
-  return [
-    'SANDBOX NOTE (Claude Code) — run each `gh`, `git push`, `git pull` and `git fetch` as its OWN Bash command, with nothing chained before or after it: no `&&`, `;` or `|`, no leading `cd …`, no command substitution on the same line.',
-    'Only a line that matches one of these on its own runs outside the sandbox with your forge credential; chain anything onto it and the WHOLE line runs inside the sandbox, where the credential is denied and the command fails. Keep every other command on its own line too, and the forge commands alone.'
-  ].join(' ')
 }
 
 /**

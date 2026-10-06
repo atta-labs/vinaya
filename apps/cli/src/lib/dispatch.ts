@@ -112,6 +112,12 @@ import {
   type ClaudeSandboxSettings
 } from './worker-boundary.js'
 import { repoRoot } from './diff-evidence.js'
+import {
+  type BridgeInvocation,
+  claudeDevToolsArgs,
+  codexDevToolsConfigToml,
+  devToolsMcpConfigFileBody
+} from './task-tools/dev-tools-registration.js'
 
 /**
  * Terminal colour, applied only at the point a line is written to a real
@@ -314,6 +320,20 @@ export type DispatchOpts = {
    * on its own.
    */
   agentConfigSurfaceCovered?: boolean
+  /**
+   * O2: the driver-run dev-tools MCP server's bridge invocation for THIS
+   * dispatch — a `dev-bridge --socket <path>` relay the agent's own MCP client
+   * spawns inside its sandbox, which pipes to the server the driver hosts
+   * outside it (`task-tools/dev-tools-host.ts`). Set only by the review loop,
+   * only for the `developer` role, and only once the driver has started the
+   * host for this turn. When present, this call registers the server through
+   * the vendor's OWN per-dispatch channel — Claude via `--strict-mcp-config
+   * --mcp-config <file>` (so the worktree's committed `.mcp.json` is never
+   * loaded), Codex via a `[mcp_servers.<name>]` table in the staged
+   * `config.toml` — and nothing else. Omitted by every other caller and role,
+   * which registers no dev-tools server and changes no argv.
+   */
+  devToolsBridge?: { command: string; args: readonly string[] }
 }
 
 /**
@@ -1159,9 +1179,9 @@ const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
  * diff`, `gh issue view/comment`) — `gh` runs outside the sandbox
  * (`CLAUDE_SANDBOX_EXCLUDED_COMMANDS`), so this allow-list was the only
  * remaining gate against `gh api`/`gh pr merge`/`gh secret`/`gh repo` (round
- * 2 security review, HIGH) — and adds a matching `Bash(git pull:*)` allow
- * for the `git pull *` entry `CLAUDE_SANDBOX_EXCLUDED_COMMANDS` already
- * listed with no permission grant of its own (round 2 code review, O2 gap)) —
+ * 2 security review, HIGH) — and added a `Bash(git pull:*)` permission.
+ * The exclusion list is now empty; both fetch and pull run sandboxed because
+ * Git can execute a worker-chosen program during a fetch.
  * `writeDispatchSettings`'s own first lifecycle line for a role names it, so
  * a run's own log says which policy shape it started under without needing
  * to diff `dispatch.ts` against the run's own timestamp.
@@ -1314,31 +1334,15 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(git show:*)',
         'Bash(git add:*)',
         'Bash(git commit:*)',
-        // O2/O7: a confined Claude Code Developer now publishes its own work
-        // — it commits, pushes its task branch and opens or updates its own
-        // pull request, through the SAME excluded commands
-        // (`CLAUDE_SANDBOX_EXCLUDED_COMMANDS`, `worker-boundary.ts`) that let
-        // `git push`/`git pull`/`git fetch`/`gh` run with full access despite
-        // the sandbox. The `gh` grant below is enumerated to exactly the
-        // subcommands O7 requires — read PR/Issue state and publish the
-        // Developer's own PR — never a blanket `gh:*`: the Developer holds
-        // the operator's full-privilege forge token, and `gh` runs OUTSIDE
-        // the sandbox (`excludedCommands`), so this allow-list is the only
-        // remaining gate against `gh api`, `gh pr merge`, `gh secret`, `gh
-        // repo` and the rest of the forge surface a prompt-injected turn
-        // could otherwise reach (round 2 security review, HIGH). The driver
-        // still publishes for Codex, whose `workspace-write` sandbox keeps
-        // `.git` read-only by design, so this grant only ever takes effect
-        // on the Claude side (`buildRolePermissions`/`writeDispatchSettings`
-        // are Claude-only).
-        'Bash(git push:*)',
-        'Bash(gh pr create:*)',
-        'Bash(gh pr edit:*)',
-        'Bash(gh pr view:*)',
-        'Bash(gh pr comment:*)',
-        'Bash(gh pr diff:*)',
-        'Bash(gh issue view:*)',
-        'Bash(gh issue comment:*)',
+        // O4: the Developer holds NO forge write. It no longer gets a
+        // `git push` or any `gh` permission allow — it publishes, opens its
+        // PR, updates the body, refreshes evidence, reads its PR and runs
+        // checks ONLY through the driver-run dev-tools (`task-tools/
+        // dev-tools-host.ts`), which run the credentialed forge operations in
+        // the driver, outside the sandbox. A dispatch test asserts the absence
+        // of `git push`/`gh` here (`dispatch.test.ts`). `git commit` stays —
+        // the driver's `publish_changes` tool commits the worktree the agent
+        // prepared, and a local commit touches no forge credential.
         'Bash(git config:*)',
         'Bash(git branch:*)',
         'Bash(git checkout:*)',
@@ -1353,14 +1357,16 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(bun apps/cli/src/index.ts:*)'
       ],
       deny: [
-        // O7: force-pushing and `--no-verify` stay forbidden even though
-        // plain `git push`/`git commit` are now granted above — a narrower
-        // deny wins over a broader allow that also matches (confirmed live,
-        // this function's own doc comment).
-        'Bash(git push --force*)',
-        'Bash(git push -f*)',
-        'Bash(git push --force-with-lease*)',
-        'Bash(git push --no-verify*)',
+        // O4: the whole `git push` and `gh` families are denied — the
+        // Developer holds no forge write and publishes only through the
+        // driver-run dev-tools. Denying them outright (not merely leaving them
+        // ungranted) is the explicit floor a prompt-injected turn hits, and
+        // what the dispatch test asserts.
+        'Bash(git push:*)',
+        'Bash(gh:*)',
+        // `--no-verify`/`-n` stay forbidden for the commit the `publish_changes`
+        // tool makes from the worktree — a narrower deny wins over the broader
+        // `git commit:*` allow above (confirmed live, this function's doc).
         'Bash(git commit --no-verify*)',
         'Bash(git commit -n*)',
         'Bash(git stash*)',
@@ -3568,6 +3574,15 @@ export async function dispatchRole(
     inputVersions: () => opts.inputVersions
   })
 
+  // O2: this dispatch's dev-tools bridge, normalized to the mutable
+  // `BridgeInvocation` the registration helpers take — `null` for every
+  // caller/role that registers no driver-run server (the common case). When
+  // set, Claude gets `--strict-mcp-config --mcp-config <file>` below and Codex
+  // gets a `[mcp_servers.<name>]` table in its staged `config.toml`.
+  const devToolsBridge: BridgeInvocation | null = opts.devToolsBridge
+    ? { command: opts.devToolsBridge.command, args: [...opts.devToolsBridge.args] }
+    : null
+
   // Mirrors `log()`'s own repo resolution so this file knows where to poll
   // for its own lines. Primes `resolveRepo()`'s process-wide cache, so
   // `log()`'s own internal call below resolves the identical value — the
@@ -3853,9 +3868,9 @@ export async function dispatchRole(
   // the provider-neutral interface (`ConfinementRequest`/
   // `resolveClaudeConfinement`) rather than this function branching on
   // platform itself. `null` for every non-Claude agent and every attended
-  // dispatch; otherwise always a resolution (never a refusal — Claude
-  // degrades to an unconfined run with a `warning` rather than ever
-  // requiring an install, Principal ruling 2026-10-02). The scratch
+  // dispatch; otherwise always a resolution. A `confined: false` resolution
+  // is refused before spawning below: an unconfined same-UID worker could
+  // reach another task's driver-run dev-tools socket. The scratch
   // directory is minted fresh per dispatch, the same `mkdtemp`-in-`tmpdir()`
   // discipline `resolveWorkerBoundaryLaunch`'s own `scratchTmpDir` already
   // uses, and is removed in `finish()` below alongside every other
@@ -4046,7 +4061,17 @@ export async function dispatchRole(
       realHome: homedir(),
       execpolicyRules: codexExecpolicyRules,
       ...(codexRequireIsolation && codexConfinement?.ok === true
-        ? { sandboxConfigToml: codexConfinement.configToml }
+        ? {
+            // O2: the dev-tools `[mcp_servers.<name>]` table (with the
+            // per-server approval key) rides the SAME staged `config.toml` as
+            // the sandbox config — the one home a confined Codex reads — so the
+            // worktree's committed `.mcp.json` plays no part. The socket path
+            // the loop passes is stable per task, so a reused `CODEX_HOME`
+            // (`codexHomeAlreadyStaged`) keeps a still-valid registration.
+            sandboxConfigToml: devToolsBridge
+              ? codexDevToolsConfigToml(devToolsBridge, codexConfinement.configToml)
+              : codexConfinement.configToml
+          }
         : {})
     })
     if (staged === null) {
@@ -4227,9 +4252,18 @@ export async function dispatchRole(
   // `codexUnattendedFailureReason`. This replaces the pre-task-4
   // `resolveWorkerBoundaryLaunch`/boundary-unavailable refusal with the same
   // fail-closed shape, classified through the same `codexBoundaryFailureReason`
-  // this repo's own Codex refusals have always used.
-  if (codexUnattendedFailureReason !== null) {
-    const failureReason = codexBoundaryFailureReason(agent, codexUnattendedFailureReason)
+  // this repo's own Codex refusals have always used. The same pre-spawn
+  // refusal path prevents an unconfined Claude worker from reaching another
+  // task's driver-run bridge.
+  // A driver-run dev-tools host carries task-scoped forge authority. An
+  // unconfined, same-UID worker can reach ANOTHER task's Unix socket even when
+  // it was not given a bridge of its own. Refuse every unattended Claude
+  // dispatch without confinement, before spawning any agent process.
+  const unconfinedClaude = agent === 'claude' && claudeConfinement?.confined === false
+  if (codexUnattendedFailureReason !== null || unconfinedClaude) {
+    const failureReason: DispatchFailureReason = unconfinedClaude
+      ? 'refused'
+      : codexBoundaryFailureReason(agent, codexUnattendedFailureReason!)
     const durationMs = Date.now() - start
     const priorSize = sizeOfSafe(outboxPath)
     log({
@@ -4245,8 +4279,10 @@ export async function dispatchRole(
       duration_ms: durationMs
     })
     writeLifecycle(
-      `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires Codex's own sandbox ` +
-        `and network proxy plus this task's staged CODEX_HOME, which are unavailable: ${codexUnattendedFailureReason}`
+      unconfinedClaude
+        ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended Claude requires a confined worker sandbox while driver-run dev-tools are available; ${claudeConfinement?.warning ?? 'confinement unavailable'}`
+        : `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires Codex's own sandbox ` +
+            `and network proxy plus this task's staged CODEX_HOME, which are unavailable: ${codexUnattendedFailureReason}`
     )
     // O1: never leak the scratch directory minted for Codex's own
     // confinement (above) on this early refusal.
@@ -4257,11 +4293,36 @@ export async function dispatchRole(
         // best-effort, same reasoning as `finish()`'s own cleanup.
       }
     }
+    if (claudeScratchDir !== null) {
+      try {
+        rmSync(claudeScratchDir, { recursive: true, force: true })
+      } catch {
+        // best-effort cleanup on this early refusal.
+      }
+    }
     patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
     await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
     return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason, effectId }
   }
-  const spawnArgs = dispatchSettingsPath ? [...baseArgs, '--settings', dispatchSettingsPath] : baseArgs
+  // O2: Claude's per-dispatch dev-tools registration — a driver-written
+  // `--mcp-config` file passed with `--strict-mcp-config`, so that file is the
+  // ONLY MCP source this session loads and the worktree's committed `.mcp.json`
+  // is never read. Written into this dispatch's own Claude scratch (minted for
+  // every unattended Claude start, confined or not), which the sandbox grants
+  // read access to — the SAME place the O1 proof wrote it and proved reachable
+  // from inside the sandbox on macOS. All six tools are exposed (no
+  // `--allowedTools` narrowing: the Developer uses the full set).
+  const devToolsClaudeArgs =
+    agent === 'claude' && devToolsBridge !== null && claudeScratchDir !== null
+      ? (() => {
+          const mcpConfigPath = join(claudeScratchDir, 'dev-tools.mcp.json')
+          writeFileSync(mcpConfigPath, devToolsMcpConfigFileBody(devToolsBridge), { mode: 0o600 })
+          return claudeDevToolsArgs(mcpConfigPath)
+        })()
+      : []
+  const spawnArgs = dispatchSettingsPath
+    ? [...baseArgs, ...devToolsClaudeArgs, '--settings', dispatchSettingsPath]
+    : [...baseArgs, ...devToolsClaudeArgs]
 
   {
     const priorSize = sizeOfSafe(outboxPath)

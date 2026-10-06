@@ -303,6 +303,13 @@ type Fixture = { binDir: string; home: string; callLog: string; preload: string;
 
 function buildFixture(): Fixture {
   const binDir = tempDir('vinaya-dispatch-task-bin-')
+  // This fixture tests dispatch wiring, so make the Linux confinement
+  // prerequisites discoverable before the fake vendor is launched.
+  for (const tool of ['bwrap', 'socat']) {
+    const toolPath = join(binDir, tool)
+    writeFileSync(toolPath, '#!/bin/sh\nexit 0\n')
+    chmodSync(toolPath, 0o755)
+  }
   const home = tempDir('vinaya-dispatch-task-home-')
   const dataDir = tempDir('vinaya-dispatch-task-data-')
   const issueListPath = writeIssueList(dataDir)

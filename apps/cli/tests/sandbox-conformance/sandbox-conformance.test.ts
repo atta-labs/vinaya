@@ -26,14 +26,21 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createConnection, createServer } from 'node:net'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { devToolsSocketPath, devToolsSocketRoot } from '../../src/lib/task-tools/dev-tools-registration.js'
+import { buildClaudeSandboxSettings, CLAUDE_SANDBOX_ALLOWED_DOMAINS } from '../../src/lib/worker-boundary.js'
+import { spawnBudgetedAsync } from '../lib/process-fixture.js'
 import { commandsTheTextsName } from './command-sources.js'
 import {
   AGENTS,
   type Agent,
   COMMAND_BUDGET_MS,
   openSandboxSession,
+  SANDBOX_RUNTIME_PACKAGE,
   type SandboxSession,
   sourceBranch
 } from './sandbox-launch.js'
@@ -74,9 +81,8 @@ type KnownFailure = {
 }
 
 /**
- * O2/O7: a line that is NOT a bare excluded command runs INSIDE Claude's
- * sandbox (`claudeRunsCommandUnsandboxed` in `sandbox-launch.ts` routes a bare
- * `gh`/`git push`/… outside it, as Claude Code does). Inside, the gh token
+ * O2/O7: every Bash line runs INSIDE Claude's sandbox because the exclusion
+ * list is empty (`claudeRunsCommandUnsandboxed` in `sandbox-launch.ts`). Inside, the gh token
  * store `~/.config/gh/hosts.yml` is a denied credential and no
  * `GITHUB_TOKEN`/`GH_TOKEN` sits in the Developer's own macOS environment, so
  * `gh` cannot authenticate and any forge read fails. (Named for darwin: on a
@@ -90,12 +96,15 @@ const GH_HOSTS_DENIED_INSIDE =
  * Today's denials. Remove an entry the moment its command passes — the
  * suite fails until you do.
  *
- * O2: the three bare `gh` lines (`gh-issue-view`/`gh-pr-view`/
- * `gh-pr-view-reviews`) are gone — each is a bare excluded command Claude Code
- * now runs OUTSIDE the sandbox, with the forge credential, so they exit 0.
- * `gh-chained` is added as a Claude/darwin denial (alongside the kept
- * `check-all`/darwin): a chained line is not a bare excluded command, so it
- * runs inside.
+ * O4: the three bare `gh` read lines (`gh-issue-view`/`gh-pr-view`/
+ * `gh-pr-view-reviews`) are BACK as Claude/darwin denials — `gh` is no longer
+ * an excluded command, so every `gh` line (bare or chained) now runs INSIDE
+ * the sandbox, where on macOS gh cannot authenticate. The Developer reads
+ * its PR through the driver-run `read_pull_request` tool instead. On a Linux CI
+ * runner the ambient `GH_TOKEN` flows in and the sandbox network allows
+ * `api.github.com`, so the same bare reads authenticate and PASS there — they
+ * are darwin-only failures, like `check-all`'s own macOS cause. `gh-chained`
+ * stays for the same reason it always did (a chained line runs inside).
  * O4: `typecheck` is NOT listed for either agent. `bun run typecheck` runs
  * `turbo`, whose cache-miss write used to land at the MAIN repository root's
  * `.turbo/` — outside the granted worktree/scratch, so the sandbox denied it
@@ -109,7 +118,7 @@ const GH_HOSTS_DENIED_INSIDE =
  * O3: `check-all` on claude/darwin and claude/linux stays — the CLI's own
  * forge reads are not staged from outside here. Under the publishing-tools
  * design the controller runs the checks that need the forge, so closing these
- * two moves to Issue #1040; each keeps its current-cause denial below.
+ * two moves to the publishing-tools task; each keeps its current-cause denial below.
  */
 const KNOWN_FAILURES: readonly KnownFailure[] = [
   {
@@ -123,6 +132,24 @@ const KNOWN_FAILURES: readonly KnownFailure[] = [
     agent: 'claude',
     platform: 'darwin',
     denial: `a chained gh line is not a bare excluded command, so Claude Code runs it inside the sandbox, where ${GH_HOSTS_DENIED_INSIDE}`
+  },
+  {
+    id: 'gh-issue-view',
+    agent: 'claude',
+    platform: 'darwin',
+    denial: `O4: gh is no longer an excluded command, so this bare read runs inside the sandbox, where ${GH_HOSTS_DENIED_INSIDE}`
+  },
+  {
+    id: 'gh-pr-view',
+    agent: 'claude',
+    platform: 'darwin',
+    denial: `O4: gh is no longer an excluded command, so this bare read runs inside the sandbox, where ${GH_HOSTS_DENIED_INSIDE}`
+  },
+  {
+    id: 'gh-pr-view-reviews',
+    agent: 'claude',
+    platform: 'darwin',
+    denial: `O4: gh is no longer an excluded command, so this bare read runs inside the sandbox, where ${GH_HOSTS_DENIED_INSIDE}`
   },
   {
     id: 'check-all',
@@ -177,6 +204,97 @@ describe('sandbox conformance — the known-failures list', () => {
 })
 
 const LIVE = process.env.VINAYA_SANDBOX_CONFORMANCE === '1'
+
+describe.skipIf(!LIVE || process.platform !== 'linux')('driver socket boundary without Unix-socket seccomp', () => {
+  it('hides a sibling socket created after Claude Bash starts, without seccomp', async () => {
+    const socketPath = devToolsSocketPath(`conformance-victim:${randomUUID()}`)
+    const socketDir = dirname(socketPath)
+    const scratchDir = mkdtempSync(join(tmpdir(), 'vinaya-socket-conformance-'))
+    const server = createServer((socket) => socket.end())
+    let connections = 0
+    server.on('connection', () => connections++)
+    try {
+      const settings = buildClaudeSandboxSettings({
+        role: 'code-reviewer',
+        agent: 'claude',
+        worktreeDir: scratchDir,
+        scratchDir,
+        allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS
+      })
+      expect(settings.sandbox.filesystem.denyRead).toContain(devToolsSocketRoot())
+      expect(existsSync(devToolsSocketRoot())).toBe(true)
+      const settingsPath = join(scratchDir, 'settings.json')
+      const scriptPath = join(scratchDir, 'connect.mjs')
+      const readyPath = join(scratchDir, 'ready')
+      const signalPath = join(scratchDir, 'signal')
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({
+          network: {
+            allowedDomains: settings.sandbox.network.allowedDomains,
+            deniedDomains: [],
+            allowAllUnixSockets: true
+          },
+          filesystem: { ...settings.sandbox.filesystem, denyWrite: [] }
+        })
+      )
+      writeFileSync(
+        scriptPath,
+        `import { createConnection } from 'node:net'\n` +
+          `import { existsSync, writeFileSync } from 'node:fs'\n` +
+          `writeFileSync(${JSON.stringify(readyPath)}, 'ready')\n` +
+          `while (!existsSync(${JSON.stringify(signalPath)})) await new Promise((r) => setTimeout(r, 20))\n` +
+          `const socket = createConnection(${JSON.stringify(socketPath)})\n` +
+          `socket.once('connect', () => { console.log('CONNECTED'); process.exit(1) })\n` +
+          `socket.once('error', (e) => { console.log('DENIED:' + e.code); process.exit(0) })\n`
+      )
+      const runPromise = spawnBudgetedAsync(
+        [
+          process.execPath,
+          'x',
+          SANDBOX_RUNTIME_PACKAGE,
+          '--settings',
+          settingsPath,
+          '-c',
+          `${process.execPath} ${scriptPath}`
+        ],
+        { cwd: scratchDir },
+        30_000,
+        'Claude socket-boundary conformance'
+      )
+      const deadline = Date.now() + 15_000
+      while (!existsSync(readyPath) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+      expect(existsSync(readyPath)).toBe(true)
+      mkdirSync(socketDir, { recursive: true, mode: 0o700 })
+      chmodSync(socketDir, 0o700)
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject)
+        server.listen(socketPath, resolve)
+      })
+      chmodSync(socketPath, 0o600)
+      await new Promise<void>((resolve, reject) => {
+        const socket = createConnection(socketPath)
+        socket.once('connect', () => {
+          socket.destroy()
+          resolve()
+        })
+        socket.once('error', reject)
+      })
+      expect(connections).toBe(1)
+      writeFileSync(signalPath, 'go')
+      const run = await runPromise
+      expect(run.status, run.stderr).toBe(0)
+      expect(run.stdout).toMatch(/DENIED:(EACCES|EPERM|ENOENT)/)
+      expect(connections).toBe(1)
+    } finally {
+      if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()))
+      rmSync(socketDir, { recursive: true, force: true })
+      rmSync(scratchDir, { recursive: true, force: true })
+    }
+  }, 60_000)
+})
 
 for (const agent of AGENTS) {
   describe.skipIf(!LIVE)(`sandbox conformance — ${agent}'s sandbox`, () => {

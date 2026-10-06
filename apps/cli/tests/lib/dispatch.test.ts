@@ -2694,6 +2694,12 @@ describe('developerWrittenTextFromVendorOutput + the after-turn credential scan 
     const diff = ['--- a/x.ts', '+++ b/x.ts', '@@ -0,0 +1 @@', '+real content'].join('\n')
     expect(addedDiffLines(diff)).toBe('real content')
   })
+
+  it('retains added content whose first characters are plus signs', () => {
+    const secret = `ghp_${'A'.repeat(40)}`
+    const diff = ['--- a/x.ts', '+++ b/x.ts', '@@ -0,0 +1 @@', `+++ ${secret}`].join('\n')
+    expect(findCredentialPatterns(addedDiffLines(diff), 'added diff')).toHaveLength(1)
+  })
 })
 
 describe('sawVendorConnectionRetry (pure) — [task-operator-v1]/Issue #662, O2', () => {
@@ -3509,7 +3515,6 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash all
       'Bash(git fetch:*)',
       'Bash(git pull:*)',
       'Bash(git commit:*)',
-      'Bash(gh pr view:*)',
       'Bash(bun install:*)',
       'Bash(bun test:*)',
       'Bash(bun run:*)',
@@ -3520,48 +3525,26 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash all
     expect(perms.allow.some((r) => r.startsWith('Write(') || r.startsWith('Edit('))).toBe(false)
   })
 
-  it('developer: now granted push and PR-open — a Claude Code Developer publishes its own work (agent-confinement-v1/7, O2/O7)', () => {
+  it('developer: holds NO forge write — no `git push` and no `gh` allow (O4, the publishing-tools task), published only through the driver-run tools', () => {
     const perms = buildRolePermissions('developer')
-    // Granted outright — the driver no longer publishes for a Claude Code
-    // Developer, so it needs its own `git push`/`git pull`/`gh` to commit,
-    // push, keep its branch current and open its own pull request, through
-    // the SAME commands the sandbox excludes (`CLAUDE_SANDBOX_EXCLUDED_COMMANDS`).
-    // This permissions file is Claude-only (`writeDispatchSettings`), so a
-    // Codex dispatch — whose driver still publishes for it — never reads
-    // this grant at all.
-    expect(perms.allow).toContain('Bash(git push:*)')
-    expect(perms.allow).toContain('Bash(git pull:*)')
-    expect(perms.allow).toContain('Bash(bun apps/cli/src/index.ts:*)')
-    // `gh` is enumerated to exactly what O7 needs, never a blanket `gh:*`
-    // (round 2 security review, HIGH: `gh` runs outside the sandbox, so this
-    // allow-list is the only remaining gate against `gh api`/`gh pr merge`/
-    // `gh secret`/`gh repo`).
-    for (const rule of [
-      'Bash(gh pr create:*)',
-      'Bash(gh pr edit:*)',
-      'Bash(gh pr view:*)',
-      'Bash(gh pr comment:*)',
-      'Bash(gh pr diff:*)',
-      'Bash(gh issue view:*)',
-      'Bash(gh issue comment:*)'
-    ]) {
-      expect(perms.allow).toContain(rule)
-    }
-    expect(perms.allow).not.toContain('Bash(gh:*)')
-    // Only the destructive/verify-skipping shapes stay revoked — see the next test.
-    expect(perms.deny).not.toContain('Bash(git push:*)')
-    expect(perms.deny).not.toContain('Bash(gh pr create:*)')
-    expect(perms.deny).not.toContain('Bash(bun apps/cli/src/index.ts pr create:*)')
+    // O4: the Developer publishes, opens its PR, updates the body, refreshes
+    // evidence, reads its PR and runs checks ONLY through the driver-run
+    // dev-tools — it holds no forge credential, so no `git push` or `gh`
+    // permission is granted, and both families are denied outright.
+    expect(perms.allow).not.toContain('Bash(git push:*)')
+    expect(perms.allow.some((r) => r.startsWith('Bash(gh'))).toBe(false)
+    expect(perms.deny).toContain('Bash(git push:*)')
+    expect(perms.deny).toContain('Bash(gh:*)')
+    // The local commit the `publish_changes` tool makes from the worktree is
+    // still prepared with `git commit` (no forge credential involved).
+    expect(perms.allow).toContain('Bash(git commit:*)')
   })
 
-  it('developer: forbidden shapes doctrine names are denied, narrower than the broader allow rule that would otherwise cover them', () => {
+  it('developer: destructive/verify-skipping commit shapes stay denied, narrower than the broader `git commit` allow', () => {
     const perms = buildRolePermissions('developer')
     for (const rule of [
-      'Bash(git push --force*)',
-      'Bash(git push -f*)',
-      'Bash(git push --force-with-lease*)',
-      'Bash(git push --no-verify*)',
       'Bash(git commit --no-verify*)',
+      'Bash(git commit -n*)',
       'Bash(git stash*)',
       'Bash(git reset --hard*)',
       'Bash(rm -rf*)',
@@ -3569,11 +3552,9 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash all
     ]) {
       expect(perms.deny).toContain(rule)
     }
-    // `git push:*`/`git commit:*` stay as the broader allow whose narrower
-    // force-push/`--no-verify` shapes the deny list overrides — proving
-    // these are real overrides, not merely commands that were never allowed
-    // at all.
-    expect(perms.allow).toContain('Bash(git push:*)')
+    // `git commit:*` stays as the broader allow whose narrower `--no-verify`
+    // shape the deny list overrides — a real override, not a command never
+    // allowed at all.
     expect(perms.allow).toContain('Bash(git commit:*)')
     expect(perms.deny).toContain('Bash(git commit --no-verify*)')
   })
@@ -3678,25 +3659,18 @@ describe('buildRolePermissions — Issue #865, O1/O2/O3: machine-state commands 
 
   it('nothing else in either role’s policy regressed — every rule the previous policy carried is still there', () => {
     const developer = buildRolePermissions('developer')
-    // `git push`/`git pull`/`gh` are granted (O2/O7, agent-confinement-v1/7)
-    // — a Claude Code Developer now publishes its own work; every other
-    // capability the Developer carries stays. `gh` is the enumerated
-    // subcommand list, never the blanket `Bash(gh:*)` (round 2 security
-    // review, HIGH).
-    for (const rule of [
-      'Bash(git commit:*)',
-      'Bash(git push:*)',
-      'Bash(git pull:*)',
-      'Bash(gh pr view:*)',
-      'Bash(bun apps/cli/src/index.ts:*)'
-    ]) {
+    // O4: the Developer holds no forge write — `git push`/`gh` are
+    // denied, not granted; it publishes only through the driver-run tools.
+    // Its local-only version-control/package/test capabilities stay.
+    for (const rule of ['Bash(git commit:*)', 'Bash(git pull:*)', 'Bash(bun apps/cli/src/index.ts:*)']) {
       expect(developer.allow).toContain(rule)
     }
+    expect(developer.allow).not.toContain('Bash(git push:*)')
+    expect(developer.allow.some((r) => r.startsWith('Bash(gh'))).toBe(false)
     for (const rule of [
-      'Bash(git push --force*)',
-      'Bash(git push -f*)',
+      'Bash(git push:*)',
+      'Bash(gh:*)',
       'Bash(git commit --no-verify*)',
-      'Bash(git push --no-verify*)',
       'Bash(git stash*)',
       'Bash(git reset --hard*)',
       'Bash(rm -rf*)',

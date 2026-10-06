@@ -1,31 +1,16 @@
 /**
- * agent-confinement-v1/1 — unit tests for the pure logic the driver's
- * publication step runs: commit-header validation (O2), the pre-publication
- * checks (O7), and the durable publication record (O8). The orchestration
- * itself (commit → push → open, the reask loop, crash recovery) is covered
- * through the in-process loop harness in `inproc-5.test.ts`.
+ * agent-confinement-v1 — unit tests for the pure gate logic the driver's
+ * publishing tools run: commit-header validation (O2) and the pre-publication
+ * checks (O7). The orchestration itself (the tool context's commit → push →
+ * open, the reask loop) is covered through the in-process loop harness in
+ * `inproc-5.test.ts`.
  */
 
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'bun:test'
+import { describe, expect, it } from 'bun:test'
 import {
   checkPublicationPreconditions,
-  readDeveloperPublicationRecord,
-  validateCommitHeader,
-  writeDeveloperPublicationRecord
+  validateCommitHeader
 } from '../../../src/lib/dev-review-loop/developer-publication.js'
-
-const tempDirs: string[] = []
-afterEach(() => {
-  for (const d of tempDirs.splice(0)) rmSync(d, { recursive: true, force: true })
-})
-function tmp(): string {
-  const d = mkdtempSync(join(tmpdir(), 'vinaya-devpub-'))
-  tempDirs.push(d)
-  return d
-}
 
 describe('validateCommitHeader (O2)', () => {
   it('accepts a conforming Type(scope): Description header', () => {
@@ -44,10 +29,10 @@ describe('validateCommitHeader (O2)', () => {
     if (r.ok) expect(r.header).toBe('Docs: update the loop spec')
   })
 
-  it('rejects a missing header file (null)', () => {
+  it('rejects a missing header (null)', () => {
     const r = validateCommitHeader(null)
     expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.reason).toMatch(/no commit header file/)
+    if (!r.ok) expect(r.reason).toMatch(/no commit header/)
   })
 
   it('rejects an empty header file', () => {
@@ -116,10 +101,16 @@ describe('checkPublicationPreconditions (O7)', () => {
     if (!r.ok) expect(r.reason).toMatch(/not the expected base/)
   })
 
+  it('fails closed when the branch base cannot be read', () => {
+    const r = checkPublicationPreconditions({ ...ok, base: null })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.reason).toMatch(/could not read the worktree branch base/)
+  })
+
   it('fails when the head moved during the turn (the Developer committed)', () => {
     const r = checkPublicationPreconditions({ ...ok, worktreeHead: 'z'.repeat(40) })
     expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.reason).toMatch(/UNCOMMITTED/)
+    if (!r.ok) expect(r.reason).toMatch(/do not commit yourself/)
   })
 
   it('fails when a changed path crosses an out: glob', () => {
@@ -134,7 +125,7 @@ describe('checkPublicationPreconditions (O7)', () => {
     if (!r.ok) expect(r.reason).toMatch(/no `in:` glob/)
   })
 
-  it('is inactive for base/head/Surface when their inputs are null', () => {
+  it('allows an initial unrecorded expected base and inactive head/Surface checks', () => {
     expect(
       checkPublicationPreconditions({
         worktreeBranch: 'task/t/1',
@@ -147,18 +138,5 @@ describe('checkPublicationPreconditions (O7)', () => {
         surface: null
       }).ok
     ).toBe(true)
-  })
-})
-
-describe('the durable publication record (O8)', () => {
-  it('round-trips through write then read', () => {
-    const root = tmp()
-    const record = { round: 2, preTurnHead: 'a'.repeat(40), commitSha: 'c'.repeat(40), pushed: true, prNumber: 55 }
-    writeDeveloperPublicationRecord(root, 42, record)
-    expect(readDeveloperPublicationRecord(root, 42)).toEqual(record)
-  })
-
-  it('reads null when no record was ever written', () => {
-    expect(readDeveloperPublicationRecord(tmp(), 42)).toBeNull()
   })
 })

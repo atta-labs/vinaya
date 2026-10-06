@@ -13,6 +13,8 @@ import {
   controlDir,
   developerDir,
   developerLeavesWorkDeps,
+  developerPublishesViaToolsDeps,
+  developerPublishesTwiceViaToolsDeps,
   makeInProcessDeps,
   makeWorld,
   outboxLines,
@@ -22,11 +24,6 @@ import {
 } from '../dev-review-loop-harness.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
 import { CONFIDENCE_FILE_NAME } from '../../../src/lib/dev-review-loop.js'
-import {
-  prBodyPathFor,
-  readDeveloperPublicationRecord,
-  writeDeveloperPublicationRecord
-} from '../../../src/lib/dev-review-loop/developer-publication.js'
 import type { DispatchHandle } from '../../../src/lib/dispatch.js'
 
 afterEach(cleanupWorlds)
@@ -129,7 +126,10 @@ describe('devReviewLoop — O1 (#595): one failing CI check never ends the drive
     // failing check is prompts[1] — never a third.
     expect(prompts).toHaveLength(2)
     expect(prompts[1]).toMatch(/evidence-fresh/)
-    expect(prompts[1]).toMatch(/`git push`/)
+    // O4: the gate-red retry names the driver-run publishing tools, not a
+    // self-push.
+    expect(prompts[1]).toMatch(/publish_changes/)
+    expect(prompts[1]).not.toMatch(/commit and push the fix yourself/)
 
     // Never a pause of any kind — this run reaches a clean publish.
     expect(existsSync(join(controlDir(world), 'pause-state.json'))).toBe(false)
@@ -169,7 +169,8 @@ describe('devReviewLoop — a stale Premise pin pauses like a red gate, never a 
     expect(premisePrompt).toMatch(/dispatch-gate premise:/)
     expect(premisePrompt).toMatch(/pinned\.ts/)
     expect(premisePrompt).toMatch(/OLD_SYMBOL/)
-    expect(premisePrompt).toMatch(/`git push`/)
+    // O4: the resume names the driver-run `publish_changes`, not a self-push.
+    expect(premisePrompt).toMatch(/publish_changes/)
 
     const pauseState = JSON.parse(readFileSync(join(controlDir(world), 'pause-state.json'), 'utf8')) as Record<
       string,
@@ -203,10 +204,11 @@ describe('devReviewLoop — O2 (#543): unpushed real work is resumed once, then 
     // `.dev-prompt-3.txt` existing and `.dev-prompt-4.txt` not). The resume
     // prompt itself names the uncommitted changes and how to push them.
     expect(prompts).toHaveLength(3)
-    // O7: a Claude Code Developer now holds its own forge credential, so the
-    // resume prompt tells it to commit and push the work itself.
+    // O4: the resume prompt names the driver-run tool for both agents — it
+    // tells the Developer to publish the work through `publish_changes`.
     expect(prompts[2]).toMatch(/left work that is not yet on the remote/)
-    expect(prompts[2]).toMatch(/commit and push your changes yourself, on this SAME branch/)
+    expect(prompts[2]).toMatch(/publish_changes/)
+    expect(prompts[2]).not.toMatch(/commit and push your changes yourself/)
 
     const pauseState = JSON.parse(readFileSync(join(controlDir(world), 'pause-state.json'), 'utf8')) as Record<
       string,
@@ -752,10 +754,12 @@ describe("devReviewLoop — the developer's first turn ends with no push at all,
     expect(prompts).toHaveLength(2)
 
     const resumedPrompt = prompts[1] as string
-    // O7: a Claude Code Developer now holds its own forge credential, so the
-    // resume asks it to commit, push and open the pull request itself.
+    // O4: the resume names the driver-run tools for both agents — publish the
+    // work through `publish_changes` and open the pull request through
+    // `open_pull_request`.
     expect(resumedPrompt).toMatch(/left no commit on this branch yet, and no open pull request/)
-    expect(resumedPrompt).toMatch(/commit your work, push this branch and open \(or update\) its pull request yourself/)
+    expect(resumedPrompt).toMatch(/publish_changes/)
+    expect(resumedPrompt).toMatch(/open_pull_request/)
   })
 })
 
@@ -796,6 +800,38 @@ describe('devReviewLoop — the pull-request poll gives up naming what it waited
 // --- task-run-v1 13 (#508), O9: a refusal/escalation before any push ends the loop at once ---
 
 describe('devReviewLoop — a refusal/escalation posted before any push ends the loop at once (O9, task-run-v1 13, #508)', () => {
+  it('does not replay an old stop as a new Developer turn’s escalation', async () => {
+    const world = makeWorld({ worktreeExists: true, developerStop: 'prior stopped run' as never })
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex' },
+      {
+        ...developerLeavesWorkDeps(world),
+        fetchDeveloperStop: () => ({ body: 'prior stopped run', identity: 'old-stop' })
+      }
+    )
+    expect(result.finalDecision.type).toBe('pause')
+    if (result.finalDecision.type === 'pause') expect(result.finalDecision.reason).not.toBe('escalation')
+    expect(world.dispatchCountByRole.developer ?? 0).toBeGreaterThan(1)
+  })
+
+  it('recognizes a newly posted stop even when its text repeats an older stop', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    let stopReads = 0
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex' },
+      {
+        ...developerLeavesWorkDeps(world),
+        fetchDeveloperStop: () => ({
+          body: 'same stop text',
+          identity: ++stopReads === 1 ? 'old-stop' : 'new-stop'
+        })
+      }
+    )
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+  })
+
   it('never enters the pull-request poll, posts on the Issue (no PR exists yet), and exits non-zero', async () => {
     const world = makeWorld({
       developerStop: 'Entry gate refused: brief is missing tier/scope/stop-conditions.' as never
@@ -1014,6 +1050,8 @@ describe('devReviewLoop — a conflicting head is sent back to the developer, ne
     const conflictPrompt = prompts[1] as string
     expect(conflictPrompt).toMatch(/behind the base in a way that conflicts/)
     expect(conflictPrompt).toMatch(/apps\/cli\/src\/lib\/dev-review-loop\.ts/)
+    expect(conflictPrompt).toContain('git merge --no-commit origin/main')
+    expect(conflictPrompt).toContain('publish_changes tool makes the merge commit')
 
     const pauseComment = world.postedComments.find((c) => c.marker === '<!-- aeg:loop:paused:repeat_failure -->')
     expect(pauseComment).toBeDefined()
@@ -1034,345 +1072,411 @@ function runLoopInProcessSafe(world: LoopWorld, deps: Partial<LoopDeps>, extra: 
 // agent-confinement-v1/1 — the driver publishes each Developer turn
 // ---------------------------------------------------------------------------
 
-describe('devReviewLoop — the driver commits and publishes each Developer turn (agent-confinement-v1/1)', () => {
-  it('O1: builds a missing vendored CLI immediately before the publication commit', async () => {
-    const world = makeWorld({ worktreeExists: true })
-    const calls: string[] = []
-    const deps = developerLeavesWorkDeps(world)
-    const commitWorktree = deps.commitWorktree!
-    deps.buildVendoredCliIfMissing = () => calls.push('build')
-    deps.commitWorktree = (worktree, header) => {
-      calls.push('commit')
-      return commitWorktree(worktree, header)
-    }
+describe('devReviewLoop — the Developer publishes through the driver-run tools, not the driver (O4/O5)', () => {
+  for (const agent of ['claude', 'codex'] as const) {
+    it(`O5: ${agent} corrects a blocking review in round 2 and republishes through the tool`, async () => {
+      const world = makeWorld({
+        worktreeExists: true,
+        roleOutcomes: {
+          1: {
+            reviewer: {
+              findings: 'BLOCKER|apps/cli/src/lib/x.ts:1|fix the behavior',
+              report: 'BRIEF_CONFORMANCE: yes\nSPEC_CONFORMANCE: yes\nSCOPE: small\nTESTS: pass\nDOCS: n/a\n',
+              objectives: 'O1|MET|done.\n',
+              sessionId: 'rev-session-1'
+            }
+          }
+        }
+      })
+      const publishing = developerPublishesViaToolsDeps(world, { header: 'Fix(cli): address blocking review' })
+      const dispatch = publishing.dispatchRole!
+      const result = await runLoopInProcess(
+        world,
+        { task: world.task, agent },
+        {
+          ...publishing,
+          dispatchRole: async (role, selectedAgent, prompt, opts) => {
+            const handle = await dispatch(role, selectedAgent, prompt, opts)
+            if (role === 'developer' && (opts.round ?? 1) === 1) world.nextCommitSha = 'd'.repeat(40)
+            if (role === 'developer' && (opts.round ?? 1) === 2) {
+              mkdirSync(developerDir(world, 2), { recursive: true })
+              writeFileSync(join(developerDir(world, 2), CONFIDENCE_FILE_NAME), 'CONFIDENCE: 90 — fixed blocker\n')
+            }
+            return handle
+          }
+        }
+      )
+      expect(result.finalDecision).toEqual({ type: 'publish' })
+      expect(world.dispatches.some((dispatch) => dispatch.role === 'developer' && dispatch.round === 2)).toBe(true)
+      expect(world.commits.map((commit) => commit.header)).toEqual([
+        'Fix(cli): address blocking review',
+        'Fix(cli): address blocking review'
+      ])
+      expect(world.pushes).toHaveLength(2)
+      expect(world.pushes[1]!.sha).not.toBe(world.pushes[0]!.sha)
+      expect(world.head).toBe(world.pushes[1]!.sha)
+    })
 
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
+    it(`O5: ${agent} corrects only the PR body in the round-2 Developer dispatch`, async () => {
+      const world = makeWorld({
+        worktreeExists: true,
+        developerPushed: true,
+        prOpened: true,
+        worktreeChangedPaths: ['apps/cli/src/lib/x.ts'],
+        roleOutcomes: {
+          1: {
+            reviewer: {
+              findings: 'BLOCKER|apps/cli/src/lib/x.ts:1|clarify the PR body',
+              report: 'BRIEF_CONFORMANCE: yes\nSPEC_CONFORMANCE: yes\nSCOPE: small\nTESTS: pass\nDOCS: n/a\n',
+              objectives: 'O1|MET|done.\n',
+              sessionId: 'rev-session-1'
+            }
+          }
+        }
+      })
+      const publishing = developerPublishesViaToolsDeps(world, { bodyOnly: true })
+      const dispatch = publishing.dispatchRole!
+      const originalHead = world.head
+      const result = await runLoopInProcess(
+        world,
+        { task: world.task, agent },
+        {
+          ...publishing,
+          dispatchRole: async (role, selectedAgent, prompt, opts) => {
+            if (role === 'developer') expect(world.devToolContext).not.toBeNull()
+            const handle = await dispatch(role, selectedAgent, prompt, opts)
+            if (role === 'developer' && (opts.round ?? 1) === 2) {
+              mkdirSync(developerDir(world, 2), { recursive: true })
+              writeFileSync(join(developerDir(world, 2), CONFIDENCE_FILE_NAME), 'CONFIDENCE: 90 — corrected PR body\n')
+            }
+            return handle
+          }
+        }
+      )
+      expect(result.finalDecision).toEqual({ type: 'publish' })
+      expect(world.dispatches.some((dispatch) => dispatch.role === 'developer' && dispatch.round === 2)).toBe(true)
+      expect(world.prBodyUpdates).toHaveLength(1)
+      expect(world.evidenceRefreshes).toBe(1)
+      expect(world.commits).toHaveLength(0)
+      expect(world.pushes).toHaveLength(0)
+      expect(world.head).toBe(originalHead)
+    })
+  }
 
-    expect(result.finalDecision.type).toBe('publish')
-    expect(calls.slice(0, 2)).toEqual(['build', 'commit'])
-  })
-
-  it('O1/O2/O3: commits the turn under its header, pushes and opens the PR before any poll', async () => {
+  it('O4/O5: a turn that publishes through the tools lands the commit, push and PR, and the driver proceeds', async () => {
     const world = makeWorld({ worktreeExists: true })
     const result = await runLoopInProcess(
       world,
       { task: world.task, agent: 'codex' },
-      developerLeavesWorkDeps(world, {
-        header: 'Feat(cli): leave the work for the driver',
+      developerPublishesViaToolsDeps(world, {
+        header: 'Feat(cli): publish via the driver-run tools',
         changedPaths: ['apps/cli/src/lib/x.ts']
       })
     )
     expect(result.finalDecision.type).toBe('publish')
-    // The driver — not the Developer — made the single commit, the push and the open.
+    // The commit, push and open all happened — but through the gate-backed
+    // tools the agent called, not a driver-after-turn publish.
     expect(world.commits).toHaveLength(1)
-    expect(world.commits[0]!.header).toBe('Feat(cli): leave the work for the driver')
+    expect(world.commits[0]!.header).toBe('Feat(cli): publish via the driver-run tools')
     expect(world.pushes).toHaveLength(1)
     expect(world.prOpens).toHaveLength(1)
-    expect(world.prOpens[0]!.title).toBe(world.issueTitle)
-    // The durable record reflects the completed publication (O8's own trace).
-    const rec = readDeveloperPublicationRecord(world.runtimeDir, world.task)
-    expect(rec?.pushed).toBe(true)
-    expect(rec?.prNumber).toBe(world.prNumber)
+    const persisted = JSON.parse(readFileSync(join(controlDir(world), 'loop-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(persisted.publicationExpectedBase).toBe(world.mergeBase)
   })
 
-  it('O1: a later push authorizes only paths since the remote head, not protected paths already remote', async () => {
-    const remoteHead = 'r'.repeat(40)
-    const world = makeWorld({
-      worktreeExists: true,
-      developerPushed: false,
-      prOpened: false,
-      remoteBranchExists: true,
-      head: remoteHead,
-      worktreeHead: remoteHead
-    })
-    const deps = developerLeavesWorkDeps(world, { changedPaths: ['apps/cli/src/lib/current.ts'] })
-    const bases: string[] = []
-    deps.gitWorktreeChangedPaths = (_worktree, base) => {
-      bases.push(base)
-      return base === remoteHead ? ['apps/cli/src/lib/current.ts'] : ['.github/workflows/already-remote.yml']
-    }
-    const pushedPaths: string[][] = []
-    const push = deps.pushTaskBranch!
-    deps.pushTaskBranch = (input) => {
-      pushedPaths.push([...input.touchedPaths])
-      return push(input)
-    }
-
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
-
-    expect(result.finalDecision.type).toBe('publish')
-    expect(bases[0]).toBe(remoteHead)
-    expect(pushedPaths[0]).toEqual(['apps/cli/src/lib/current.ts'])
-  })
-
-  it('O1: a protected path changed by the commits being pushed is still refused', async () => {
-    const remoteHead = 'r'.repeat(40)
-    const world = makeWorld({
-      worktreeExists: true,
-      developerPushed: false,
-      prOpened: false,
-      remoteBranchExists: true,
-      head: remoteHead,
-      worktreeHead: remoteHead
-    })
-    const protectedPath = '.github/workflows/current.yml'
-    const deps = developerLeavesWorkDeps(world, { changedPaths: [protectedPath] })
-    deps.gitWorktreeChangedPaths = () => [protectedPath]
-    deps.pushTaskBranch = (input) => ({
-      ok: false,
-      hook: true,
-      refusal: `protected path refused: ${input.touchedPaths.join(', ')}`
-    })
-
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
-
-    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
-    expect((result.finalDecision as { detail: string }).detail).toContain(protectedPath)
-  })
-
-  it('O1: an untracked protected file is named only after the driver commits it, then refused before push', async () => {
-    const remoteHead = 'r'.repeat(40)
-    const protectedPath = '.github/workflows/new.yml'
-    const world = makeWorld({
-      worktreeExists: true,
-      developerPushed: false,
-      prOpened: false,
-      remoteBranchExists: true,
-      head: remoteHead,
-      worktreeHead: remoteHead
-    })
-    const deps = developerLeavesWorkDeps(world, { changedPaths: [protectedPath] })
-    const diffHeads: string[] = []
-    deps.gitWorktreeChangedPaths = () => {
-      diffHeads.push(world.worktreeHead)
-      return world.worktreeHead === world.nextCommitSha ? [protectedPath] : []
-    }
-    const pushedPaths: string[][] = []
-    deps.pushTaskBranch = (input) => {
-      pushedPaths.push([...input.touchedPaths])
-      return { ok: false, hook: true, refusal: `protected path refused: ${input.touchedPaths.join(', ')}` }
-    }
-
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
-
-    expect(diffHeads.slice(0, 2)).toEqual([remoteHead, world.nextCommitSha])
-    expect(world.commits.length).toBeGreaterThanOrEqual(1)
-    expect(pushedPaths[0]).toEqual([protectedPath])
-    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
-  })
-
-  it('O5: does nothing on a turn with nothing new — a clean worktree and an open PR', async () => {
-    // The default dispatch fake is the pre-task "fakes a published turn" shape:
-    // it leaves the worktree clean and the PR open. With the worktree present,
-    // the publication step still reaches its no-op check and commits/pushes/opens
-    // nothing — exactly as before this task.
+  it('persists the publication base before the Developer tool can commit', async () => {
     const world = makeWorld({ worktreeExists: true })
-    const result = await runLoopInProcess(world)
-    expect(result.finalDecision.type).toBe('publish')
-    expect(world.commits).toHaveLength(0)
-    expect(world.pushes).toHaveLength(0)
-    expect(world.prOpens).toHaveLength(0)
-  })
-
-  it('O7: sends the turn back and commits nothing when a changed path is outside the Surface', async () => {
-    const world = makeWorld({ worktreeExists: true, surface: { in: ['apps/cli'], out: ['packages'] } })
+    const deps = developerPublishesViaToolsDeps(world)
+    const dispatch = deps.dispatchRole!
+    let checked = false
     await runLoopInProcess(
       world,
       { task: world.task, agent: 'codex' },
-      developerLeavesWorkDeps(world, { changedPaths: ['packages/aeg-core/src/x.ts'] })
-    )
-    // The pre-publication check refuses — nothing is committed or pushed.
-    expect(world.commits).toHaveLength(0)
-    expect(world.pushes).toHaveLength(0)
-    // The same Developer session was sent back naming the Surface problem.
-    expect(world.dispatchCountByRole.developer ?? 0).toBeGreaterThanOrEqual(2)
-    const reask = world.dispatches.find(
-      (dd) => dd.role === 'developer' && (dd.prompt ?? '').includes("outside the task's Surface")
-    )
-    expect(reask).toBeDefined()
-  })
-
-  it('O2: sends the turn back and commits nothing when the commit header is missing', async () => {
-    const world = makeWorld({ worktreeExists: true })
-    await runLoopInProcess(
-      world,
-      { task: world.task, agent: 'codex' },
-      developerLeavesWorkDeps(world, { writeNoHeader: true })
-    )
-    expect(world.commits).toHaveLength(0)
-    expect(world.dispatchCountByRole.developer ?? 0).toBeGreaterThanOrEqual(2)
-    const reask = world.dispatches.find(
-      (dd) => dd.role === 'developer' && (dd.prompt ?? '').includes('commit header file')
-    )
-    expect(reask).toBeDefined()
-  })
-
-  it('O3/O5: a repeated pre-push-hook refusal re-asks immediately, then pauses naming the hook', async () => {
-    const world = makeWorld({ worktreeExists: true, pushRefusal: 'pre-push hook refused: 2 tests failed' })
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, developerLeavesWorkDeps(world))
-    expect(world.commits.length).toBeGreaterThanOrEqual(1)
-    // The push never landed, so the PR never opened and the round never published.
-    expect(world.pushes).toHaveLength(0)
-    expect(world.prOpens).toHaveLength(0)
-    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
-    expect((result.finalDecision as { detail: string }).detail).toContain('pre-push-hook')
-    expect((result.finalDecision as { detail: string }).detail).toContain('2 tests failed')
-    expect(world.dispatchCountByRole.developer ?? 0).toBe(2)
-  })
-
-  it('O2/O5: a repeated commit-hook refusal re-asks once, then pauses naming the hook', async () => {
-    const world = makeWorld({ worktreeExists: true })
-    const deps = developerLeavesWorkDeps(world)
-    deps.commitWorktree = () => ({
-      ok: false,
-      check: 'commit-hook',
-      errorLine: 'ci-shard-coverage: missing shard entry',
-      output: 'ci-shard-coverage: missing shard entry'
-    })
-
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
-
-    expect(world.pushes).toHaveLength(0)
-    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
-    expect((result.finalDecision as { detail: string }).detail).toContain('commit-hook')
-    expect((result.finalDecision as { detail: string }).detail).toContain('ci-shard-coverage')
-    expect(world.dispatchCountByRole.developer ?? 0).toBe(2)
-  })
-
-  it('O4/O5: PR-body gates re-ask with every message and repeat-stop before opening', async () => {
-    const world = makeWorld({ worktreeExists: true })
-    const deps = developerLeavesWorkDeps(world)
-    deps.validatePrBodyForCreate = async () => [
       {
-        schema: 1,
-        check: 'pr-premise-own-additions',
-        severity: 'error',
-        message: 'Premise names this PR own addition',
-        agent_recovery_prompt: 'Drop the self-referential pin.'
-      },
-      {
-        schema: 1,
-        check: 'body-bare-digits',
-        severity: 'error',
-        message: 'body-bare-digits: bare digit on line 7',
-        agent_recovery_prompt: 'Backtick the digit.'
+        ...deps,
+        dispatchRole: async (role, agent, prompt, opts) => {
+          if (role === 'developer' && !checked) {
+            const persisted = JSON.parse(readFileSync(join(controlDir(world), 'loop-state.json'), 'utf8')) as Record<
+              string,
+              unknown
+            >
+            expect(persisted.publicationExpectedBase).toBe(world.mergeBase)
+            checked = true
+          }
+          return dispatch(role, agent, prompt, opts)
+        }
       }
-    ]
-
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
-
-    expect(world.prOpens).toHaveLength(0)
-    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
-    expect((result.finalDecision as { detail: string }).detail).toContain('pr-premise-own-additions')
-    const reask = world.dispatches.find(
-      (dispatch) => dispatch.role === 'developer' && (dispatch.prompt ?? '').includes('body-bare-digits')
     )
-    expect(reask?.prompt).toContain('Premise names this PR own addition')
-    expect(reask?.prompt).toContain('bare digit on line 7')
+    expect(checked).toBe(true)
+  })
+
+  it('O4: publish_changes works more than once in a turn — a second publish lands its own commit and push', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex' },
+      developerPublishesTwiceViaToolsDeps(world)
+    )
+    expect(result.finalDecision.type).toBe('publish')
+    // Both publishes in the one turn landed: the driver advanced the recorded
+    // pre-turn head after the first push, so the second publish's precondition
+    // saw an unmoved head rather than refusing on the first commit.
+    expect(world.commits).toHaveLength(2)
+    expect(world.commits[0]!.header).toBe('Feat(cli): first publish of the turn')
+    expect(world.commits[1]!.header).toBe('Feat(cli): second publish of the turn')
+    expect(world.pushes).toHaveLength(2)
+  })
+
+  it('O4/O5: the same publish works for a Claude Developer (both agents publish only through the tools)', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      developerPublishesViaToolsDeps(world)
+    )
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.pushes).toHaveLength(1)
+    expect(world.prOpens).toHaveLength(1)
+  })
+
+  it('O4: a turn that leaves work unpublished is re-asked naming publish_changes, then left to the no_push net — the driver commits nothing', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    // `developerLeavesWorkDeps` dirties the worktree but never calls a tool —
+    // the driver no longer publishes it, so it stays unpublished.
+    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, developerLeavesWorkDeps(world))
+    expect(world.commits).toHaveLength(0)
+    expect(world.pushes).toHaveLength(0)
+    expect(world.prOpens).toHaveLength(0)
+    expect(world.dispatchCountByRole.developer ?? 0).toBeGreaterThanOrEqual(2)
+    const reask = world.dispatches.find(
+      (dd) => dd.role === 'developer' && (dd.prompt ?? '').includes('publish_changes')
+    )
+    expect(reask).toBeDefined()
+    expect(result.finalDecision.type).toBe('pause')
+  })
+
+  it('O5: a body-only fix publishes through update_pull_request_body and refresh_evidence, touching no commit', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    // First, a normal turn publishes through the tools and opens the PR.
+    await runLoopInProcess(world, { task: world.task, agent: 'codex' }, developerPublishesViaToolsDeps(world))
+    expect(world.prOpened).toBe(true)
+    const commitsAfterOpen = world.commits.length
+    // Now drive the captured gate-backed context the way a body-only turn does:
+    // update the body and refresh the Evidence block — no new commit or push.
+    const ctx = world.devToolContext!
+    const updated = await ctx.updatePullRequestBody('## Decisions\n\nRevised.\n\n## Scope\n\n**Tier:** 1\n')
+    expect(updated.ok).toBe(true)
+    const refreshed = await ctx.refreshEvidence()
+    expect(refreshed.ok).toBe(true)
+    expect(world.prBodyUpdates).toHaveLength(1)
+    expect(world.evidenceRefreshes).toBe(1)
+    expect(world.commits.length).toBe(commitsAfterOpen)
+  })
+
+  it('validates a body against the full PR diff after the push and refuses a second open', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    const validatedPaths: string[][] = []
+    const validatedTitles: string[] = []
+    await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex' },
+      {
+        ...developerPublishesViaToolsDeps(world),
+        validatePrBodyForCreate: async (input) => {
+          validatedPaths.push([...input.changedFiles])
+          validatedTitles.push(input.title)
+          return []
+        }
+      }
+    )
+    expect(validatedPaths).toEqual([['apps/cli/src/lib/x.ts']])
+    const ctx = world.devToolContext!
+    const reopened = await ctx.openPullRequest('Another title', '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n')
+    expect(reopened.ok).toBe(false)
+    if (!reopened.ok) expect(reopened.error.check).toBe('pr-exists')
+    expect(world.prOpens).toHaveLength(1)
+    expect(validatedTitles).toEqual([world.issueTitle, 'Another title'])
+  })
+
+  it('refuses credential-shaped additions and PR bodies before any new push or body write', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    await runLoopInProcess(world, { task: world.task, agent: 'codex' }, developerPublishesViaToolsDeps(world))
+    const ctx = world.devToolContext!
+    const secret = `ghp_${'a'.repeat(36)}`
+    const commitsBefore = world.commits.length
+    const pushesBefore = world.pushes.length
+    world.worktreeDirty = ['apps/cli/src/lib/new.ts']
+    world.worktreeChangedPaths = ['apps/cli/src/lib/new.ts']
+    world.worktreeDiffText = `diff --git a/new.ts b/new.ts\n--- a/new.ts\n+++ b/new.ts\n@@ -0,0 +1 @@\n+const token = '${secret}'\n`
+    const refused = await ctx.publishChanges('Fix(cli): remove leaked credential')
+    expect(refused.ok).toBe(false)
+    if (!refused.ok) {
+      expect(refused.error.check).toBe('credential-scan')
+      expect(refused.error.output).not.toContain(secret)
+    }
+    expect(world.commits).toHaveLength(commitsBefore)
+    expect(world.pushes).toHaveLength(pushesBefore)
+    const body = await ctx.updatePullRequestBody(`## Decisions\n\n${secret}\n\n## Scope\n\n**Tier:** 1\n`)
+    expect(body.ok).toBe(false)
+    expect(world.prBodyUpdates).toHaveLength(0)
+  })
+
+  it('refuses credential-shaped commit headers and PR titles before publishing', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    await runLoopInProcess(world, { task: world.task, agent: 'codex' }, developerPublishesViaToolsDeps(world))
+    const ctx = world.devToolContext!
+    const secret = `ghp_${'a'.repeat(36)}`
+    world.worktreeDirty = ['apps/cli/src/lib/new.ts']
+    world.worktreeChangedPaths = ['apps/cli/src/lib/new.ts']
+    const commitsBefore = world.commits.length
+    const header = await ctx.publishChanges(`Fix(cli): ${secret}`)
+    expect(header.ok).toBe(false)
+    if (!header.ok) expect(header.error.check).toBe('credential-scan')
+    expect(world.commits).toHaveLength(commitsBefore)
+    const title = await ctx.openPullRequest(secret, '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n')
+    expect(title.ok).toBe(false)
+    if (!title.ok) expect(title.error.check).toBe('credential-scan')
+    expect(world.prOpens).toHaveLength(1)
+  })
+
+  it('retries a hook-refused push of the same commit without making another commit', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    await runLoopInProcess(world, { task: world.task, agent: 'codex' }, developerPublishesViaToolsDeps(world))
+    const ctx = world.devToolContext!
+    world.nextCommitSha = 'd'.repeat(40)
+    world.worktreeDirty = ['apps/cli/src/lib/new.ts']
+    world.worktreeChangedPaths = ['apps/cli/src/lib/new.ts']
+    world.pushRefusal = 'hook refused this push'
+    const first = await ctx.publishChanges('Fix(cli): retry after hook refusal')
+    expect(first.ok).toBe(false)
+    expect(world.commits).toHaveLength(2)
+    const pushesBefore = world.pushes.length
+    world.pushRefusal = null
+    const retried = await ctx.publishChanges('Fix(cli): retry after hook refusal')
+    expect(retried.ok).toBe(true)
+    expect(world.commits).toHaveLength(2)
+    expect(world.pushes).toHaveLength(pushesBefore + 1)
+    expect(world.pushes.at(-1)?.sha).toBe('d'.repeat(40))
+  })
+
+  it('O3/O5: run_checks runs vinaya check --all through the driver-run tool, forge faked and gate real', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    await runLoopInProcess(world, { task: world.task, agent: 'codex' }, developerPublishesViaToolsDeps(world))
+    const ctx = world.devToolContext!
+    const checked = await ctx.runChecks()
+    expect(checked.ok).toBe(true)
+    if (checked.ok) expect(checked.result.passed).toBe(true)
+    expect(world.runChecksCalls).toBeGreaterThanOrEqual(1)
+  })
+
+  it('O3/O5: a Surface-violating publish_changes is refused by the gate in the driver, committing nothing', async () => {
+    const world = makeWorld({ worktreeExists: true, surface: { in: ['apps/cli'], out: ['packages'] } })
+    // The agent calls publish_changes with a path outside the task's Surface —
+    // the publication-precondition gate runs IN THE DRIVER and refuses before
+    // any commit, so nothing lands and no PR opens.
+    await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex' },
+      developerPublishesViaToolsDeps(world, { changedPaths: ['packages/aeg-core/src/x.ts'] })
+    )
+    expect(world.commits).toHaveLength(0)
+    expect(world.pushes).toHaveLength(0)
+    expect(world.prOpens).toHaveLength(0)
   })
 })
 
-describe('devReviewLoop — a restart finishes an interrupted publication exactly once (agent-confinement-v1/1, O8)', () => {
-  // Each restart seeds the branch as present on the remote with no open PR and a
-  // durable publication record left at one of the three boundaries, then enters
-  // the loop-start already-pushed path.
-  function seedBody(world: LoopWorld): void {
-    const bodyPath = prBodyPathFor(world.runtimeDir, world.task, 1)
-    mkdirSync(join(bodyPath, '..'), { recursive: true })
-    writeFileSync(bodyPath, '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n')
-  }
-
-  it('restart after the commit (not yet pushed) finishes by pushing and opening — no second commit', async () => {
-    const world = makeWorld({ worktreeExists: true, remoteBranchExists: true, head: 'a'.repeat(40) })
-    seedBody(world)
-    writeDeveloperPublicationRecord(world.runtimeDir, world.task, {
-      round: 1,
-      preTurnHead: 'a'.repeat(40),
-      commitSha: 'c'.repeat(40),
-      pushed: false,
-      prNumber: null
-    })
-    const result = await runLoopInProcess(world)
-    expect(result.finalDecision.type).toBe('publish')
-    expect(world.commits).toHaveLength(0) // the commit was already made before the crash
-    expect(world.pushes).toHaveLength(1) // recovery pushes the recorded commit
-    expect(world.prOpens).toHaveLength(1) // then opens the PR
-    expect(readDeveloperPublicationRecord(world.runtimeDir, world.task)?.prNumber).toBe(world.prNumber)
-  })
-
-  it('a first-push restart resolves the recorded commit base and authorizes its protected paths', async () => {
-    const commitSha = 'c'.repeat(40)
-    const protectedPath = '.github/workflows/recovered.yml'
-    const world = makeWorld({
-      worktreeExists: true,
-      remoteBranchExists: false,
-      worktreeHead: commitSha
-    })
-    seedBody(world)
-    writeDeveloperPublicationRecord(world.runtimeDir, world.task, {
-      round: 1,
-      preTurnHead: world.mergeBase,
-      commitSha,
-      pushed: false,
-      prNumber: null
-    })
-    const deps = makeInProcessDeps(world)
-    let resolveCalls = 0
-    deps.resolveHead = () => {
-      resolveCalls += 1
-      if (resolveCalls === 1) return commitSha
-      throw new Error('the remote branch disappeared before recovery push authorization')
-    }
-    const bases: string[] = []
-    const pushedPaths: string[][] = []
-    deps.gitWorktreeChangedPaths = (_worktree, base) => {
-      bases.push(base)
-      return [protectedPath]
-    }
-    deps.pushTaskBranch = (input) => {
-      pushedPaths.push([...input.touchedPaths])
-      return { ok: false, hook: true, refusal: `protected path refused: ${input.touchedPaths.join(', ')}` }
-    }
-
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
-
-    expect(bases[0]).toBe(world.mergeBase)
-    expect(pushedPaths[0]).toEqual([protectedPath])
-    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
-  })
-
-  it('restart after the push (not yet opened) finishes by opening only — no second commit or push', async () => {
-    const world = makeWorld({ worktreeExists: true, remoteBranchExists: true, head: 'c'.repeat(40) })
-    seedBody(world)
-    writeDeveloperPublicationRecord(world.runtimeDir, world.task, {
-      round: 1,
-      preTurnHead: 'a'.repeat(40),
-      commitSha: 'c'.repeat(40),
-      pushed: true,
-      prNumber: null
-    })
-    const result = await runLoopInProcess(world)
-    expect(result.finalDecision.type).toBe('publish')
-    expect(world.commits).toHaveLength(0)
-    expect(world.pushes).toHaveLength(0)
-    expect(world.prOpens).toHaveLength(1)
-  })
-
-  it('restart after the PR opened finishes by doing nothing — no second commit, push or open', async () => {
-    // The PR is already open, so the loop attaches at start and never reaches
-    // the recovery path at all.
+describe('devReviewLoop — a restart keeps no durable publication record; the Developer republishes through the tools (agent-confinement-v1, O4)', () => {
+  it('restart on an already-pushed branch with the PR already open publishes nothing new — the loop attaches at start', async () => {
+    // The driver no longer keeps a durable publication record to finish on
+    // restart. With the branch pushed and the PR open, the loop attaches at
+    // start and makes no second commit, push or open.
     const world = makeWorld({ worktreeExists: true, developerPushed: true, prOpened: true, head: 'c'.repeat(40) })
-    writeDeveloperPublicationRecord(world.runtimeDir, world.task, {
-      round: 1,
-      preTurnHead: 'a'.repeat(40),
-      commitSha: 'c'.repeat(40),
-      pushed: true,
-      prNumber: world.prNumber
-    })
     const result = await runLoopInProcess(world)
     expect(result.finalDecision.type).toBe('publish')
     expect(world.commits).toHaveLength(0)
     expect(world.pushes).toHaveLength(0)
     expect(world.prOpens).toHaveLength(0)
   })
+})
+
+describe('devReviewLoop — every Developer prompt names the driver-run tools and carries no retired commit/push wording (agent-confinement-v1, O4)', () => {
+  // The driver no longer commits, pushes or opens on the Developer's behalf,
+  // and the Developer holds no forge credential of its own — Claude and Codex
+  // alike publish only through the driver-run tools. No prompt the driver gives
+  // a Developer may still describe the retired model (leave-uncommitted /
+  // driver-commits / commit-push-open-yourself / write the header or body to a
+  // file), and every publishing prompt must name those tools.
+  const RETIRED_WORDING: RegExp[] = [
+    /leave (all )?your changes uncommitted/i,
+    /the driver commits/i,
+    /commit,? and push (and open )?.*yourself/i,
+    /commit and push your changes yourself/i,
+    /commit your work, push this branch/i,
+    /open \(or update\) its pull request yourself/i,
+    /commit your changes and run `git push` yourself/i,
+    /you never run `git commit`/i,
+    /write the (one-line )?commit header .* to a file/i,
+    /write the (full )?pull-request body .* to a file/i,
+    /the driver opens the pull request from (it|this)/i
+  ]
+  const TOOL_NAMES = ['publish_changes', 'open_pull_request', 'read_pull_request', 'run_checks']
+
+  /**
+   * Collect every Developer prompt the driver emits across the representative
+   * prompt paths — round 1, a red-gate retry, the mid-round unpushed-work
+   * resume (`commitAndPushPrompt`), and the first-turn push-and-open resume
+   * (`pushAndOpenPrompt`) — for one agent.
+   */
+  async function developerPromptsFor(agent: 'claude' | 'codex'): Promise<string[]> {
+    const collected: string[] = []
+
+    const redWorld = makeWorld({ gate: 'red' })
+    const redCapture = withCapturedDeveloperDispatch(redWorld, {
+      readUnpushedWorkDetail: () => ({ dirtyFiles: ['smoke.ts'], aheadCount: 0 })
+    })
+    await runLoopInProcess(
+      redWorld,
+      { task: redWorld.task, agent },
+      { ...redCapture.deps, gatePollMaxAttempts: 2, gatePollIntervalMs: 5 }
+    ).catch(() => undefined)
+    collected.push(...redCapture.prompts)
+
+    const noPushWorld = makeWorld()
+    const noPushCapture = controlledDeveloperDeps(noPushWorld, {})
+    await runLoopInProcess(
+      noPushWorld,
+      { task: noPushWorld.task, agent },
+      { ...noPushCapture.deps, prPollMaxAttempts: 2, prPollIntervalMs: 5 }
+    ).catch(() => undefined)
+    collected.push(...noPushCapture.prompts)
+
+    return collected
+  }
+
+  for (const agent of ['claude', 'codex'] as const) {
+    it(`no ${agent} Developer prompt contains the retired commit/push wording`, async () => {
+      const prompts = await developerPromptsFor(agent)
+      expect(prompts.length).toBeGreaterThanOrEqual(4)
+      for (const prompt of prompts) {
+        for (const pattern of RETIRED_WORDING) {
+          expect(prompt).not.toMatch(pattern)
+        }
+      }
+    })
+
+    it(`every ${agent} publishing prompt names the driver-run tools`, async () => {
+      const prompts = await developerPromptsFor(agent)
+      // Every prompt that gives a publishing instruction names the tools; the
+      // shared `publishingInstructionLine` lists them all, so each such prompt
+      // carries every tool name.
+      const publishingPrompts = prompts.filter((p) => /publish_changes/.test(p))
+      expect(publishingPrompts.length).toBeGreaterThanOrEqual(4)
+      for (const prompt of publishingPrompts) {
+        for (const tool of TOOL_NAMES) expect(prompt).toContain(tool)
+      }
+    })
+  }
 })

@@ -98,20 +98,19 @@
     },
     {
       "id": "commit-and-push",
-      "forms": ["git commit", "git push", "git commit -m \"Chore: WIP checkpoint\""],
-      "notRun": "under the review loop the driver commits and pushes, outside the sandbox; the Developer leaves changes uncommitted"
+      "forms": ["git push", "git commit -m \"Chore: WIP checkpoint\""],
+      "notRun": "under the review loop the Developer publishes through the driver-run dev-tools (publish_changes), outside the sandbox, and holds no git push of its own; the manual-path forms are named for a human at a terminal"
     },
     {
       "id": "pr-open-and-report",
       "forms": [
-        "vinaya pr create --body-file <path> --title \"<title above>\"",
         "vinaya pr report",
         "vinaya pr report --write",
         "vinaya pr report --write <body-file>",
         "vinaya pr report --push",
         "vinaya pr report --push <n>"
       ],
-      "notRun": "under the review loop the driver opens the pull request from the Developer's body file, outside the sandbox"
+      "notRun": "under the review loop the Developer opens and updates the pull request through the driver-run dev-tools (open_pull_request/update_pull_request_body/refresh_evidence), outside the sandbox; the manual-path report forms are named for a human at a terminal"
     },
     {
       "id": "dispatch-and-loop",
