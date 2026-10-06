@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import {
+  agentControlsRefusal,
   agentDispatchControls,
   describeInactiveControls,
   enforcementControlsActive
 } from '../../src/lib/enforcement-controls.js'
-import { localGateControl } from '../../src/lib/local-gate-control.js'
+import { installedHookDir, localGateControl, realLocalGateControl } from '../../src/lib/local-gate-control.js'
 import { checkTaskDispatchReadiness } from '../../src/lib/dev-review-loop/developer-dispatch.js'
 
 const roots: string[] = []
@@ -127,5 +129,71 @@ describe('the shared predicate', () => {
     )
     expect(result.ready).toBe(false)
     expect(result.output).toContain("enforcement control 'local-gate' is inactive")
+  })
+})
+
+describe('pre-spawn agent control refusal', () => {
+  it('an unattended dispatch whose settings failed to write refuses, naming the control and remedy', () => {
+    const refusal = agentControlsRefusal('claude', true, { claudeSettingsPath: null, codexHooksPath: null })
+    expect(refusal).toContain('claude-settings-and-hooks')
+    expect(refusal).toContain('could not be written')
+  })
+
+  it('an attended dispatch never refuses on the adapter control', () => {
+    expect(agentControlsRefusal('claude', false, { claudeSettingsPath: null, codexHooksPath: null })).toBeNull()
+  })
+
+  it('an unattended codex dispatch with a missing hooks file refuses', () => {
+    const root = tempRepo()
+    const refusal = agentControlsRefusal('codex', true, {
+      claudeSettingsPath: null,
+      codexHooksPath: join(root, 'absent.json')
+    })
+    expect(refusal).toContain('codex-hooks')
+  })
+})
+
+describe('local gate control from the real repository', () => {
+  function gitRepo(legacy = true): string {
+    const root = tempRepo()
+    execFileSync('git', ['init', '-q', root])
+    if (legacy) {
+      writeFileSync(
+        join(root, 'vinaya.config.json'),
+        JSON.stringify({ managed: { blocks: [{ path: '.git/hooks/pre-commit' }] } })
+      )
+    }
+    return root
+  }
+
+  it('the legacy shape reads git routing and refuses while the git hooks are absent', () => {
+    const root = gitRepo()
+    expect(installedHookDir(root)).toBe('.git/hooks')
+    const control = realLocalGateControl(root)
+    expect(control.active).toBe(false)
+    expect(control.detail).toContain('.git/hooks/pre-commit')
+  })
+
+  it('the legacy shape is active once the git hooks are executable', () => {
+    const root = gitRepo()
+    for (const h of ['pre-commit', 'pre-push']) {
+      const p = join(root, '.git', 'hooks', h)
+      writeFileSync(p, '#!/bin/sh\nexit 0\n')
+      chmodSync(p, 0o755)
+    }
+    expect(realLocalGateControl(root).active).toBe(true)
+  })
+
+  it('a tracked install is inactive until core.hooksPath routes at the tracked directory, then active', () => {
+    const root = gitRepo(false)
+    writeHooks(root)
+    writeFileSync(
+      join(root, 'vinaya.config.json'),
+      JSON.stringify({ managed: { blocks: [{ path: '.vinaya/hooks/pre-commit' }] } })
+    )
+    expect(installedHookDir(root)).toBe('.vinaya/hooks')
+    expect(realLocalGateControl(root).active).toBe(false)
+    execFileSync('git', ['-C', root, 'config', 'core.hooksPath', '.vinaya/hooks'])
+    expect(realLocalGateControl(root).active).toBe(true)
   })
 })

@@ -122,7 +122,7 @@ import {
   stageCodexPolicyHome,
   type ClaudeSandboxSettings
 } from './worker-boundary.js'
-import { agentDispatchControls, describeInactiveControls, enforcementControlsActive } from './enforcement-controls.js'
+import { agentControlsRefusal } from './enforcement-controls.js'
 import { repoRoot } from './diff-evidence.js'
 import {
   type BridgeInvocation,
@@ -4416,12 +4416,10 @@ export async function dispatchRole(
   // scripts it just wrote — must exist and be readable before an unattended
   // agent starts; an inactive one refuses here, naming the control and its
   // remedy, exactly like the probe below.
-  const agentControls = enforcementControlsActive(
-    opts.unattended === true
-      ? agentDispatchControls(agent, { claudeSettingsPath: dispatchSettingsPath, codexHooksPath })
-      : []
-  )
-  const agentControlsError = agentControls.active ? null : describeInactiveControls(agentControls)
+  const agentControlsError = agentControlsRefusal(agent, opts.unattended === true, {
+    claudeSettingsPath: dispatchSettingsPath,
+    codexHooksPath
+  })
   if (agentControlsError === null && !unconfinedClaude && codexUnattendedFailureReason === null) {
     const probeCwd = opts.cwd ?? process.cwd()
     const plan: SandboxProbePlan | null =

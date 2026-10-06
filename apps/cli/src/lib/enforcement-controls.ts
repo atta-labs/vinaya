@@ -6,7 +6,7 @@
  * a control's name, whether it is active, why not, and the remedy. Each
  * control is proven by its own adapter below or in `dispatch.ts`; the doctor's
  * ring-0 verdict and the dispatch readiness both read the local-gate adapter
- * from here, so the two can never disagree.
+ * from `local-gate-control.ts`, so the two can never disagree.
  *
  * Every adapter is local and cheap: it reads routing, existence, readability
  * and the executable bit, never runs what it proves, never calls the forge.
@@ -122,4 +122,18 @@ export function agentDispatchControls(
   }
   if (agent === 'codex') return [agentHookControl(CODEX_HOOKS_CONTROL, paths.codexHooksPath, 'Codex hooks file')]
   return []
+}
+
+/**
+ * The pre-spawn refusal text for an unattended dispatch whose agent adapter
+ * control is inactive, `null` when every control is active. An attended
+ * dispatch carries no adapter control, so it never refuses here.
+ */
+export function agentControlsRefusal(
+  agent: string,
+  unattended: boolean,
+  paths: { claudeSettingsPath: string | null; codexHooksPath: string | null }
+): string | null {
+  const result = enforcementControlsActive(unattended ? agentDispatchControls(agent, paths) : [])
+  return result.active ? null : describeInactiveControls(result)
 }

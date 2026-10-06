@@ -501,6 +501,10 @@ async function diagnoseHookRouting(
     ]
   }
   if (hookDir === '.git/hooks') {
+    // Same predicate dispatch refuses on: a legacy install whose hooks are
+    // missing or not executable is inert here, not merely untracked.
+    const gate = localGateControl(repoRoot, hookDir, await readHooksPath(repoRoot))
+    if (!gate.active) return [error('hooks', `${gate.detail} ${gate.remedy}`)]
     return [
       warn(
         'hooks',

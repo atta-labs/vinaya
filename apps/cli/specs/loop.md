@@ -313,10 +313,14 @@ Dormant, never blocking, in three cases: a prompt with no `## Documentation` sec
 An unattended dispatch starts no agent unless every required enforcement control is active and executable. The predicate (`enforcementControlsActive`, `apps/cli/src/lib/enforcement-controls.ts`) is provider-neutral: it knows a control's name, whether it is active, why not, and the remedy — never a provider's mechanism. Each control is proven by its own adapter, locally and cheaply (routing, existence, readability and the executable bit; nothing is run, no forge call):
 <!-- AEG:CLAIM: apps/cli/src/lib/enforcement-controls.ts contains:export function enforcementControlsActive -->
 
-- **The repository's local gate** (`localGateControl`, `apps/cli/src/lib/local-gate-control.ts`): git's hook routing points at the tracked hook directory, that directory exists, and the required `pre-commit` and `pre-push` hooks exist there and are executable. A routing that is unset or points at a missing directory, and a missing or non-executable required hook, each report the control inactive. The driver proves it in the dispatch readiness it runs before every Developer turn, and the doctor's ring-0 verdict reads the same function, so the two cannot disagree.
+- **The repository's local gate** (`localGateControl`, `apps/cli/src/lib/local-gate-control.ts`): git's hook routing points at the tracked hook directory, that directory exists, and the required `pre-commit` and `pre-push` hooks exist there and are executable. A routing that is unset or points at a missing directory, and a missing or non-executable required hook, each report the control inactive. The driver proves it in the dispatch readiness it runs before every Developer turn, and the doctor's ring-0 verdict reads the same function for the tracked and the legacy per-clone hook shapes, so the two cannot disagree.
+<!-- AEG:CLAIM: apps/cli/src/lib/local-gate-control.ts contains:export function localGateControl -->
+<!-- AEG:CLAIM: apps/cli/src/commands/doctor.ts contains:localGateControl(repoRoot, hookDir -->
 - **The Claude Code adapter** (`agentHookControl`): the settings file `writeDispatchSettings` wrote for this dispatch exists, parses, and every hook script it names exists and is readable.
+<!-- AEG:CLAIM: apps/cli/src/lib/enforcement-controls.ts contains:export function agentHookControl -->
 - **The Codex adapter** (`agentHookControl`): the hooks file `writeCodexDispatchHooks` wrote, and every script it names, exist and are readable.
 
+<!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:agentControlsRefusal(agent -->
 While any control is inactive the dispatch refuses before the agent starts: the readiness refusal and the adapter refusal each name every inactive control, its detail and its remedy. Attended runs and the forge-side dispatch gate are unaffected.
 
 ## The confidence rule
