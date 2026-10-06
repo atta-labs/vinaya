@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'bun:test'
 import { attachedRunNotice } from '../../src/commands/task-run.js'
 import { launchDetached, waitForLiveDriver } from '../../src/lib/detached-launch.js'
+import { stripVinayaEnv } from './process-fixture.js'
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'src')
 
@@ -26,7 +27,12 @@ describe('detached launch', () => {
       child.unref()
       process.stdout.write(String(child.pid))
     `
-    const out = execFileSync(process.argv[0] as string, ['-e', script], { encoding: 'utf8' })
+    const out = execFileSync(process.argv[0] as string, ['-e', script], {
+      encoding: 'utf8',
+      env: stripVinayaEnv(),
+      timeout: 15_000,
+      killSignal: 'SIGKILL'
+    })
     const pid = Number(out.trim())
     try {
       expect(Number.isInteger(pid) && pid > 0).toBe(true)

@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'bun:test'
 import { guardedSpawnSync } from '../../src/lib/driver-tool-guard.js'
+import { stripVinayaEnv } from './process-fixture.js'
 
 const GUARD = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'lib', 'driver-tool-guard.ts')
 
@@ -32,7 +33,12 @@ function startFakeDriver(dir: string, command: string): ReturnType<typeof spawn>
     import { guardedSpawnSync } from ${JSON.stringify(GUARD)}
     guardedSpawnSync('sh', ['-c', ${JSON.stringify(command)}], { stdio: 'inherit', guardPollMs: 50, guardGraceMs: 1500 })
   `
-  return spawn(process.argv[0] as string, ['-e', script], { cwd: dir, stdio: 'ignore' })
+  return spawn(process.argv[0] as string, ['-e', script], {
+    cwd: dir,
+    env: stripVinayaEnv(),
+    stdio: 'ignore',
+    killSignal: 'SIGKILL'
+  })
 }
 
 describe('a stopped driver ends the processes its own tools started', () => {
