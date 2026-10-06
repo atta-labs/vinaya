@@ -74,3 +74,5 @@ tests/gh-path.test.ts
 tests/commands/log-selftest.test.ts
 tests/conformance/dev-review-invariant-coverage.test.ts
 tests/sandbox-conformance/sandbox-conformance.test.ts
+tests/lib/detached-launch.test.ts
+tests/lib/driver-shutdown-children.test.ts

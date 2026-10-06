@@ -97,7 +97,7 @@
  * `apps/cli/specs/loop.md`).
  */
 
-import { spawn } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   closeSync,
@@ -125,6 +125,7 @@ import {
   taskToolError
 } from '@attalabs/aeg-core'
 import { loadConfig } from '../config.js'
+import { type LaunchResult, launchDetached, waitForLiveDriver } from '../detached-launch.js'
 import {
   type AgentVendor,
   captureSettledChildSnapshot,
@@ -193,30 +194,7 @@ export type RequestStore = {
   release: (requestId: string) => void
 }
 
-/**
- * What launching a run and waiting for its own confirmation produced — three
- * outcomes, never two:
- *
- *   - `confirmed` — the run's driver lock appeared and named a live pid
- *     inside the bounded wait.
- *   - `starting` — the wait ended first and the launched process is STILL
- *     ALIVE. `task run` renders and posts the frozen brief and runs its
- *     start-of-run sweep before the loop writes that lock, so on a real
- *     repository a launch routinely outlasts any fixed wait. A live process
- *     is a run coming up, so this is a started run, not a failed one, and
- *     raising the wait would only move the same cliff.
- *   - `exited` — the process exited, or never spawned, before either. The
- *     ONLY outcome that is a failed start, and the only one whose claim is
- *     released.
- *
- * `pid` is the launched child's own pid, recorded on the claim so a later
- * call can re-check liveness against the process itself and not only against
- * a driver lock that a still-preparing run has not written yet.
- */
-export type LaunchResult =
-  | { status: 'confirmed'; pid: number | null }
-  | { status: 'starting'; pid: number | null }
-  | { status: 'exited'; error: Error }
+export type { LaunchResult }
 
 export type TaskStartDeps = {
   /** The local checkout's stable identity for the request-identity computation — never network-resolved, see this file's own header. */
@@ -1187,71 +1165,6 @@ function taskRunArgsFor(ref: TaskToolRef): string[] {
   return 'issue' in ref ? ['task', 'run', '--issue', String(ref.issue)] : ['task', 'run', ref.tranche, ref.id]
 }
 
-function readCapturedStderr(path: string): string {
-  try {
-    const raw = readFileSync(path, 'utf8').trim()
-    return raw ? ` — captured stderr:\n${raw}` : ''
-  } catch {
-    return ''
-  }
-}
-
-/**
- * Races the spawned child's own `error`/`exit` against its Issue's driver
- * lock appearing and naming a live pid — never a sleep-then-assume. Whichever
- * happens first decides the outcome; the loser's listeners/timers are torn
- * down so this never resolves twice.
- *
- * The wait itself running out decides NOTHING about the run: the child is
- * still alive (its own `exit` would have won the race otherwise), so the
- * outcome is `starting`, not a failure. That is the whole point of three
- * outcomes — the previous two forced a live process to be reported as a
- * failed start, and raising `timeoutMs` would only move the cliff, since a
- * slow forge or a large start-of-run sweep can outlast any fixed wait.
- */
-function waitForLiveDriver(
-  child: ReturnType<typeof spawn>,
-  root: string,
-  issue: number,
-  stderrPath: string,
-  timeoutMs: number,
-  pollMs: number
-): Promise<LaunchResult> {
-  return new Promise((resolve) => {
-    let settled = false
-    const finishAlive = (status: 'confirmed' | 'starting') => {
-      if (settled) return
-      settled = true
-      clearInterval(poll)
-      clearTimeout(timer)
-      child.removeAllListeners('error')
-      child.removeAllListeners('exit')
-      // The run is alive and must outlive this server — unref only now, never
-      // before the race is decided, so a premature exit is still observed.
-      child.unref()
-      resolve({ status, pid: child.pid ?? null })
-    }
-    const finishDead = (reason: string) => {
-      if (settled) return
-      settled = true
-      clearInterval(poll)
-      clearTimeout(timer)
-      resolve({ status: 'exited', error: new Error(`${reason}${readCapturedStderr(stderrPath)}`) })
-    }
-    child.on('error', (err) => finishDead(`spawn failed: ${err instanceof Error ? err.message : String(err)}`))
-    child.on('exit', (code, signal) =>
-      finishDead(
-        `process exited before its driver confirmed alive (code ${code ?? 'null'}, signal ${signal ?? 'null'})`
-      )
-    )
-    const poll = setInterval(() => {
-      const lock = readDriverLock(root, issue)
-      if (lock && isDriverPidAlive(lock.pid)) finishAlive('confirmed')
-    }, pollMs)
-    const timer = setTimeout(() => finishAlive('starting'), timeoutMs)
-  })
-}
-
 /**
  * `root` defaults to this repo's own resolution but is overridable so a test
  * can point the confirm-wait at a temporary tree without touching the real
@@ -1269,12 +1182,13 @@ export function defaultLaunch(
   const stderrPath = runPath(root, target.issue, { area: 'output', file: `task-start-${meta.requestId}.stderr.log` })
   ensureRunDir(dirname(stderrPath), root)
   const stderrFd = openSync(stderrPath, 'a')
-  let child: ReturnType<typeof spawn>
+  let child: ChildProcess
   try {
-    child = spawn(program, [...taskRunArgsFor(target.ref), '--agent', target.agent], {
-      detached: true,
-      stdio: ['ignore', 'ignore', stderrFd]
-    })
+    child = launchDetached(
+      program,
+      [...taskRunArgsFor(target.ref), '--agent', target.agent],
+      ['ignore', 'ignore', stderrFd]
+    )
   } finally {
     // Spawn dup's the fd into the child; our own copy is safe to close
     // immediately, whether spawn succeeded or threw synchronously.
