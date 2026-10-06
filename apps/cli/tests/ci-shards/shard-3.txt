@@ -73,3 +73,4 @@ tests/lib/dev-review-loop/refresh-evidence-args.test.ts
 tests/lib/planning-collisions.test.ts
 tests/conformance/dev-review-engine-capability-matrix.test.ts
 tests/lib/dev-review-loop/refused-publication-wait.test.ts
+tests/lib/dev-review-loop/push-hook-refusal-output.test.ts

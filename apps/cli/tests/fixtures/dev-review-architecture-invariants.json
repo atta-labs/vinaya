@@ -79,6 +79,11 @@
         "path": "apps/cli/tests/lib/dev-review-loop/refused-publication-wait.test.ts",
         "kind": "test",
         "reason": "Proves a Developer turn whose last publication attempt a driver tool refused skips the head-change wait and names the refusal, while a turn with no refusal keeps the full wait."
+      },
+      {
+        "path": "apps/cli/tests/lib/dev-review-loop/push-hook-refusal-output.test.ts",
+        "kind": "test",
+        "reason": "Drives a real git push through a real failing pre-push hook and proves the refusal is classified as a hook refusal carrying the failing test names, while any other push failure carries the git exit and its own bounded output."
       }
     ]
   },
