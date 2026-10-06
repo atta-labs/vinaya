@@ -702,6 +702,8 @@ export type LoopDeps = {
     branch: string
     sha: string
     touchedPaths: readonly string[]
+    /** The task Issue's Surface — a protected administrative path in `touchedPaths` is accepted only when its `in:` globs cover it. */
+    surface: IssueSurface | null
     round: number
     agent: AgentVendor
     repo: { owner: string; repo: string } | null
@@ -1372,6 +1374,7 @@ function defaultPushTaskBranch(input: {
   branch: string
   sha: string
   touchedPaths: readonly string[]
+  surface: IssueSurface | null
   round: number
   agent: AgentVendor
   repo: { owner: string; repo: string } | null
@@ -1400,6 +1403,7 @@ function defaultPushTaskBranch(input: {
       target: scopeTarget(input.task, `refs/heads/${input.branch}`),
       inputVersion: input.round,
       touchedPaths: input.touchedPaths,
+      surfaceCoversPath: (path) => input.surface?.in.some((glob) => globCoversPath(glob, path)) ?? false,
       key: `branch-push-${input.sha}`,
       payload: input.sha,
       poster: () => {
@@ -3765,6 +3769,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               branch,
               sha: localHead,
               touchedPaths: changedPaths,
+              surface: d.resolveTaskSurface ? d.resolveTaskSurface(task) : null,
               round: roundNum,
               agent: dispatchAgent,
               repo,

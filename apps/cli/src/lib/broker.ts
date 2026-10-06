@@ -348,7 +348,9 @@ const PROTECTED_ADMIN_PATHS = ['vinaya.config.json', '.vinaya/doc-owners', '.git
 
 export class ProtectedPathError extends Error {
   constructor(readonly path: string) {
-    super(`broker: refusing an operation that touches a protected administrative policy path: ${path}`)
+    super(
+      `broker: refusing an operation that touches a protected administrative policy path: ${path} — the task's Surface does not cover it; the Planner must add the path to the task's Surface`
+    )
     this.name = 'ProtectedPathError'
   }
 }
@@ -375,9 +377,13 @@ function isProtectedAdminPath(path: string): boolean {
   return PROTECTED_ADMIN_PATHS.some((prefix) => normalized === prefix || normalized.startsWith(prefix))
 }
 
-function assertNoProtectedPaths(paths: readonly string[] | undefined): void {
+function assertNoProtectedPaths(
+  paths: readonly string[] | undefined,
+  surfaceCoversPath: ((path: string) => boolean) | undefined
+): void {
   for (const path of paths ?? []) {
-    if (isProtectedAdminPath(path)) throw new ProtectedPathError(path)
+    if (isProtectedAdminPath(path) && !surfaceCoversPath?.(normalizeTouchedPath(path)))
+      throw new ProtectedPathError(path)
   }
 }
 
@@ -428,8 +434,10 @@ export type BrokerEffectRequest = {
   target: string
   /** `EffectIdentity.inputVersion` — see `assertNoReplayedInputVersion`. */
   inputVersion: number
-  /** Repo-relative paths this operation would touch, when applicable (a `branch-push`'s changed files) — checked against `PROTECTED_ADMIN_PATHS` regardless of role or grant. */
+  /** Repo-relative paths this operation would touch, when applicable (a `branch-push`'s changed files) — checked against `PROTECTED_ADMIN_PATHS` regardless of role or grant, unless `surfaceCoversPath` accepts the path. */
   touchedPaths?: readonly string[]
+  /** Given a normalized protected path, `true` only when the task's frozen Surface names it. Absent (or no resolvable Surface) keeps every protected path refused; supplied by the driver from the task Issue, never from anything the agent writes. */
+  surfaceCoversPath?: (path: string) => boolean
   /** `EffectExecuteInput.key` — one control-store file per key. */
   key: string
   /** Hashed into `EffectIdentity.payloadDigest` via `sha256Hex` — never stored or logged raw by this module. */
@@ -468,7 +476,7 @@ export function requestEffect(
     assertAuthenticatedContext(context)
     assertGranted(context.role, request.operation)
     assertTargetScopedToTask(context.task, request.target)
-    assertNoProtectedPaths(request.touchedPaths)
+    assertNoProtectedPaths(request.touchedPaths, request.surfaceCoversPath)
     assertNoReplayedInputVersion(deps, context.task, request.key, request.inputVersion)
   } catch (err) {
     logEvent(
