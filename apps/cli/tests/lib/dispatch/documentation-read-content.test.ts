@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../process-fixture'
 import {
   DOCUMENTATION_READ_MIN_SIZE,
   documentationLogHookScript,
@@ -32,7 +32,11 @@ describe('documentation read counts only a fetch that returned real content', ()
   afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
   const run = (script: string, input: string) =>
-    spawnSync('bun', [join(dir, script)], { input, env: { ...process.env, VINAYA_RUN_ID: RUN_ID }, encoding: 'utf8' })
+    spawnSyncBudgeted('bun', [join(dir, script)], {
+      input,
+      env: { ...stripVinayaEnv(), VINAYA_RUN_ID: RUN_ID },
+      encoding: 'utf8'
+    })
   const stop = () => run('stop.mjs', JSON.stringify({ hook_event_name: 'Stop' }))
 
   it('records status, final URL and size', () => {
