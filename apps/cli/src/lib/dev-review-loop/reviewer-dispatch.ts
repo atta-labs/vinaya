@@ -751,6 +751,17 @@ function parseReport(content: string): ReviewerReport {
   return report
 }
 
+/**
+ * The description fingerprint the repeat-finding stop compares: lower-cased,
+ * every run of whitespace and punctuation collapsed to one space, trimmed.
+ */
+export function findingFingerprint(description: string): string {
+  return description
+    .toLowerCase()
+    .replace(/[\s\p{P}\p{S}]+/gu, ' ')
+    .trim()
+}
+
 export function readIfExists(path: string): string | null {
   try {
     return readFileSync(path, 'utf8')
@@ -1055,6 +1066,7 @@ export function buildVerdictFromReport(
     id: c.id,
     severity: c.finding.severity,
     location: c.finding.location,
+    fingerprint: findingFingerprint(c.finding.description),
     state: null,
     severityScale: role === 'reviewer' ? ('code-review' as const) : ('security' as const),
     policyTreatment: c.treatment,
