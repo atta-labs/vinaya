@@ -43,6 +43,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
+import { guardedSpawnSync } from './driver-tool-guard.js'
 import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -1333,12 +1334,20 @@ export function pushBranchClassified(worktreePath: string, branch: string): void
   const traceDir = mkdtempSync(join(tmpdir(), 'vinaya-push-trace-'))
   const tracePath = join(traceDir, 'trace.jsonl')
   try {
-    execFileSync('git', ['-C', worktreePath, 'push', 'origin', `HEAD:refs/heads/${branch}`], {
-      encoding: 'utf8',
+    // Through the driver-tool guard: the push runs the pre-push hook and its
+    // tests, and a stopped driver must not leave that run behind.
+    const pushed = guardedSpawnSync('git', ['-C', worktreePath, 'push', 'origin', `HEAD:refs/heads/${branch}`], {
       env: { ...process.env, GIT_TRACE2_EVENT: tracePath },
       maxBuffer: PUSH_OUTPUT_MAX_BUFFER,
       stdio: ['ignore', 'pipe', 'pipe']
     })
+    if (pushed.error || pushed.status !== 0) {
+      throw Object.assign(pushed.error ?? new Error(`git push exited ${pushed.status}`), {
+        stdout: pushed.stdout,
+        stderr: pushed.stderr,
+        status: pushed.status
+      })
+    }
   } catch (err) {
     const raw =
       err && typeof err === 'object'
@@ -1604,9 +1613,8 @@ async function defaultReadPrView(input: {
 
 /** O2/O3: run `vinaya check --all` for the worktree's current head (the `run_checks` tool) — the driver's own CLI with the worktree as cwd, so it judges the branch's code. */
 async function defaultRunWorktreeChecks(worktreePath: string): Promise<{ passed: boolean; output: string }> {
-  const res = spawnSync(process.argv[0] as string, [process.argv[1] as string, 'check', '--all'], {
+  const res = guardedSpawnSync(process.argv[0] as string, [process.argv[1] as string, 'check', '--all'], {
     cwd: worktreePath,
-    encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024
   })
   const output = `${res.stdout ?? ''}${res.stderr ?? ''}`
@@ -1646,12 +1654,11 @@ async function defaultRefreshPrEvidence(input: {
   round: number
   repo: { owner: string; repo: string } | null
 }): Promise<{ head: string; checksPassed: boolean; evidence: string }> {
-  const res = spawnSync(
+  const res = guardedSpawnSync(
     process.argv[0] as string,
     [process.argv[1] as string, ...prReportRefreshArgs(input.prNumber)],
     {
       cwd: input.worktreePath,
-      encoding: 'utf8',
       maxBuffer: 64 * 1024 * 1024
     }
   )
