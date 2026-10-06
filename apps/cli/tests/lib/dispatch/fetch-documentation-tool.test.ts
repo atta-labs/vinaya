@@ -30,7 +30,9 @@ import {
   DOCUMENTATION_READ_MIN_SIZE,
   documentationReceiptsPath,
   documentationSourceId,
+  FETCH_DOCUMENTATION_CALL_BUDGET,
   FETCH_DOCUMENTATION_MAX_BYTES,
+  FETCH_DOCUMENTATION_MAX_URL_LENGTH,
   FETCH_DOCUMENTATION_PAGE_CHARS,
   FETCH_DOCUMENTATION_TOOL,
   type FetchDocumentationDeps,
@@ -40,6 +42,7 @@ import {
   parseHttpResponse,
   type RawResponse,
   type ResolvedAddress,
+  whyNotCountedAsRead,
   UNTRUSTED_PAGE_NOTICE
 } from '../../../src/lib/task-tools/fetch-documentation.js'
 import {
@@ -73,7 +76,7 @@ function tempDir(prefix: string): string {
 const PUBLIC_V4: ResolvedAddress = { address: '93.184.215.14', family: 4 }
 const PAGE = `# Hooks\n\n${'Documentation text. '.repeat(200)}`
 
-type Route = { status: number; headers?: Record<string, string>; body?: string }
+type Route = { status: number; headers?: Record<string, string>; body?: string; framed?: boolean }
 
 /** A fake network: DNS answers per host (a list consumed one answer per lookup), and responses per `https://host/path`. */
 function fakeNetwork(opts: {
@@ -98,7 +101,12 @@ function fakeNetwork(opts: {
       if (!route) throw new FetchTransportError('connection-failed', 'no route')
       if (route instanceof FetchTransportError) throw route
       const body = new TextEncoder().encode(route.body ?? '')
-      const response: RawResponse = { status: route.status, headers: route.headers ?? {}, body }
+      const response: RawResponse = {
+        status: route.status,
+        headers: route.headers ?? {},
+        body,
+        framed: route.framed ?? true
+      }
       return response
     },
     now: () => new Date('2026-10-06T00:00:00.000Z')
@@ -405,7 +413,92 @@ describe('O4: refusals, each naming its reason', () => {
   })
 })
 
+describe('bounds on what one dispatch can send through the driver', () => {
+  it('refuses a URL over the length cap, before any lookup', async () => {
+    const network = fakeNetwork({ dns: { 'docs.example.com': [[PUBLIC_V4]] }, routes: {} })
+    const url = `https://docs.example.com/?q=${'a'.repeat(FETCH_DOCUMENTATION_MAX_URL_LENGTH)}`
+    const result = await tool(network, join(tempDir('fetch-doc-'), 'r.jsonl'))({ url })
+    expect(result).toMatchObject({ ok: false, error: { check: 'url-too-long' } })
+    expect(network.lookups).toEqual([])
+  })
+
+  it('refuses a redirect whose target is over the length cap', async () => {
+    const long = `https://docs.example.com/?q=${'a'.repeat(FETCH_DOCUMENTATION_MAX_URL_LENGTH)}`
+    const network = fakeNetwork({
+      dns: { 'docs.example.com': [[PUBLIC_V4]] },
+      routes: { 'https://docs.example.com/a': { status: 302, headers: { location: long } } }
+    })
+    const result = await tool(network, join(tempDir('fetch-doc-'), 'r.jsonl'))({ url: 'https://docs.example.com/a' })
+    expect(result).toMatchObject({ ok: false, error: { check: 'url-too-long' } })
+  })
+
+  it('refuses every fetch past the per-dispatch call budget', async () => {
+    const network = fakeNetwork({
+      dns: { 'docs.example.com': [[PUBLIC_V4]] },
+      routes: { 'https://docs.example.com/a': { status: 200, headers: html, body: PAGE } }
+    })
+    const fetch = tool(network, join(tempDir('fetch-doc-'), 'r.jsonl'))
+    for (let i = 0; i < FETCH_DOCUMENTATION_CALL_BUDGET; i++) {
+      expect((await fetch({ url: 'https://docs.example.com/a' })).ok).toBe(true)
+    }
+    const over = await fetch({ url: 'https://docs.example.com/a' })
+    expect(over).toMatchObject({ ok: false, error: { check: 'call-budget' } })
+    expect(network.requests).toHaveLength(FETCH_DOCUMENTATION_CALL_BUDGET)
+  })
+
+  it('refuses a name lookup that never answers, within the fetch deadline', async () => {
+    let now = 0
+    const network = fakeNetwork({ dns: {}, routes: {} })
+    const deps = {
+      ...network.deps,
+      resolve: () => new Promise<ResolvedAddress[]>(() => {}),
+      now: () => {
+        now += 29_990
+        return new Date(now)
+      }
+    }
+    const result = await createFetchDocumentationTool({ receiptsPath: join(tempDir('fetch-doc-'), 'r.jsonl'), deps })({
+      url: 'https://slow.example.com/a'
+    })
+    expect(result).toMatchObject({ ok: false, error: { check: 'timeout' } })
+  })
+})
+
 describe('O2: the driver records a receipt only for a counted read', () => {
+  it('counts only a page from a public address with a declared length', () => {
+    const document = {
+      requestedUrl: 'https://docs.example.com/a',
+      finalUrl: 'https://docs.example.com/a',
+      finalAddress: PUBLIC_V4.address,
+      framed: true,
+      status: 200,
+      contentType: 'text/html',
+      body: new TextEncoder().encode(PAGE)
+    }
+    expect(whyNotCountedAsRead(document)).toBeNull()
+    expect(whyNotCountedAsRead({ ...document, finalAddress: '10.0.0.1' })).toContain('non-public')
+    expect(whyNotCountedAsRead({ ...document, framed: false })).toContain('declared no length')
+  })
+
+  it('records no receipt for a body whose end was only the connection closing', async () => {
+    const receiptsPath = join(tempDir('fetch-doc-'), 'r.jsonl')
+    const network = fakeNetwork({
+      dns: { 'docs.example.com': [[PUBLIC_V4]] },
+      routes: { 'https://docs.example.com/a': { status: 200, headers: html, body: PAGE, framed: false } }
+    })
+    const result = await tool(network, receiptsPath)({ url: 'https://docs.example.com/a' })
+    if (!result.ok) throw new Error(result.error.output)
+    expect(result.result.text).toContain('# Hooks')
+    expect(result.result.receipt).toMatchObject({ recorded: false })
+    expect(receipts(receiptsPath)).toEqual([])
+  })
+
+  it('parses framing: a length-delimited body is framed, a close-delimited one is not', () => {
+    const encode = (t: string) => new TextEncoder().encode(t)
+    expect(parseHttpResponse(encode('HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi'), 100).framed).toBe(true)
+    expect(parseHttpResponse(encode('HTTP/1.1 200 OK\r\n\r\nhi'), 100).framed).toBe(false)
+  })
+
   it('uses the same minimum size the WebFetch read check uses', () => {
     expect(DOCUMENTATION_READ_MIN_SIZE).toBe(DISPATCH_MIN_SIZE)
   })

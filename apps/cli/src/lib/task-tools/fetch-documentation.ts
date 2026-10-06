@@ -29,12 +29,19 @@
  *    refused, a content type outside `DOCUMENTATION_TEXT_CONTENT_TYPES` is
  *    refused, redirects stop at `FETCH_DOCUMENTATION_MAX_REDIRECTS`, and the
  *    text handed back is one page of `FETCH_DOCUMENTATION_PAGE_CHARS`
- *    characters at a time.
+ *    characters at a time. The whole fetch, name resolution included, ends
+ *    at `FETCH_DOCUMENTATION_TIMEOUT_MS`. A URL longer than
+ *    `FETCH_DOCUMENTATION_MAX_URL_LENGTH` is refused, and one dispatch gets
+ *    `FETCH_DOCUMENTATION_CALL_BUDGET` fetches: the tool lets a sandboxed
+ *    Developer make the driver send a request to any public host, so both
+ *    bound how much it can carry out that way.
  *  - **Untrusted.** The returned page text is marked untrusted: it is
  *    documentation to read, never instruction to follow.
  *
- * What counts as a read: a fetch whose final response succeeded (2xx), ended
- * on a public host, carried an allowed text content type and returned at least
+ * What counts as a read: a fetch whose final response succeeded (2xx), came
+ * from a public address, declared its body's length (so a body cut off by a
+ * dropped connection is never receipted), carried an allowed text content
+ * type and returned at least
  * `DOCUMENTATION_READ_MIN_SIZE` bytes — the same minimum the `WebFetch` read
  * check uses. Only then does the driver append a receipt, keyed by the
  * source's identity (its normalized URL), to a receipts file in the task's
@@ -69,8 +76,14 @@ export const FETCH_DOCUMENTATION_PAGE_CHARS = 100_000
 /** How many redirects one fetch follows before refusing. */
 export const FETCH_DOCUMENTATION_MAX_REDIRECTS = 5
 
-/** The whole fetch, every redirect included, must finish within this. */
+/** The whole fetch, every redirect included, must finish within this — name resolution included. */
 export const FETCH_DOCUMENTATION_TIMEOUT_MS = 30_000
+
+/** The longest URL the tool accepts; a documentation page needs no more, and a long query is how data would leave through it. */
+export const FETCH_DOCUMENTATION_MAX_URL_LENGTH = 2048
+
+/** How many fetches one handler — one Developer dispatch — serves before refusing the rest. */
+export const FETCH_DOCUMENTATION_CALL_BUDGET = 100
 
 /** The response content types the tool returns; anything else is refused. */
 export const DOCUMENTATION_TEXT_CONTENT_TYPES: readonly string[] = [
@@ -95,6 +108,8 @@ export function documentationReceiptsPath(hooksDir: string): string {
 /** Why a fetch was refused — the `check` a refusal names. */
 export type FetchDocumentationRefusalReason =
   | 'tool-input'
+  | 'url-too-long'
+  | 'call-budget'
   | 'invalid-url'
   | 'not-https'
   | 'credentials-in-url'
@@ -374,8 +389,12 @@ export type ResolvedAddress = { address: string; family: 4 | 6 }
 /** The connection target: the validated address, plus the hostname for TLS verification and the `Host` header. */
 export type FetchTarget = { address: string; family: 4 | 6; hostname: string; port: number; path: string }
 
-/** A raw response — the status, lower-cased headers, and the decoded body bytes. */
-export type RawResponse = { status: number; headers: Record<string, string>; body: Uint8Array }
+/**
+ * A raw response — the status, lower-cased headers, the decoded body bytes,
+ * and whether the body's end was declared (`Content-Length` or chunked) rather
+ * than inferred from the connection closing, which a cut-off body also does.
+ */
+export type RawResponse = { status: number; headers: Record<string, string>; body: Uint8Array; framed: boolean }
 
 /** A transport failure the handler turns into a refusal. */
 export class FetchTransportError extends Error {
@@ -456,6 +475,7 @@ export function parseHttpResponse(raw: Uint8Array, maxBytes: number): RawRespons
   }
   const rest = raw.subarray(headerEnd + 4)
   let body: Uint8Array
+  let framed = true
   if ((headers['transfer-encoding'] ?? '').toLowerCase().includes('chunked')) {
     body = decodeChunked(rest, maxBytes)
   } else if (headers['content-length'] !== undefined) {
@@ -467,9 +487,10 @@ export function parseHttpResponse(raw: Uint8Array, maxBytes: number): RawRespons
     body = rest.subarray(0, length)
   } else {
     body = rest
+    framed = false
   }
   if (body.length > maxBytes) throw new FetchTransportError('too-large', `response body exceeds ${maxBytes} bytes`)
-  return { status: Number(statusMatch[1]), headers, body }
+  return { status: Number(statusMatch[1]), headers, body, framed }
 }
 
 /** The request bytes: a fixed header set, never a cookie or credential. Exported so a test pins exactly what is sent. */
@@ -583,6 +604,13 @@ function validateUrl(
   raw: string,
   hop: 'requested' | 'redirect'
 ): { ok: true; value: ValidatedUrl } | { ok: false; error: DevToolRefusal } {
+  if (raw.length > FETCH_DOCUMENTATION_MAX_URL_LENGTH) {
+    return refuse(
+      'url-too-long',
+      `the URL is ${raw.length} characters (maximum ${FETCH_DOCUMENTATION_MAX_URL_LENGTH})`,
+      'Pass the documentation page’s own URL, without a long query.'
+    )
+  }
   let url: URL
   try {
     url = new URL(raw)
@@ -619,21 +647,32 @@ function validateUrl(
 async function validateHost(
   deps: FetchDocumentationDeps,
   hostname: string,
-  hop: 'requested' | 'redirect'
+  hop: 'requested' | 'redirect',
+  timeoutMs: number
 ): Promise<{ ok: true; address: ResolvedAddress } | { ok: false; error: DevToolRefusal }> {
   const literal = isIP(hostname)
   let addresses: ResolvedAddress[]
   if (literal !== 0) {
     addresses = [{ address: hostname, family: literal === 6 ? 6 : 4 }]
   } else {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timedOut = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), Math.max(0, timeoutMs))
+    })
     try {
-      addresses = await deps.resolve(hostname)
+      const answer = await Promise.race([deps.resolve(hostname), timedOut])
+      if (answer === 'timeout') {
+        return refuse('timeout', `${hostname} did not resolve within ${timeoutMs}ms`, 'Retry later.')
+      }
+      addresses = answer
     } catch (err) {
       return refuse(
         'dns-failure',
         `${hostname} did not resolve: ${err instanceof Error ? err.message : String(err)}`,
         'Check the URL’s host name.'
       )
+    } finally {
+      clearTimeout(timer)
     }
     if (addresses.length === 0)
       return refuse('dns-failure', `${hostname} resolved to no address`, 'Check the URL’s host name.')
@@ -658,7 +697,10 @@ function mediaType(contentType: string): string {
 export type FetchedDocument = {
   requestedUrl: string
   finalUrl: string
-  finalHostIsPublic: boolean
+  /** The address the final response came from — the one `validateHost` checked for that hop. */
+  finalAddress: string
+  /** Whether the body's end was declared rather than inferred from the connection closing. */
+  framed: boolean
   status: number
   contentType: string
   body: Uint8Array
@@ -680,7 +722,7 @@ export async function fetchDocumentationPage(
     const kind = hop === 0 ? 'requested' : 'redirect'
     const url = validateUrl(current, kind)
     if (!url.ok) return url
-    const host = await validateHost(deps, url.value.hostname, kind)
+    const host = await validateHost(deps, url.value.hostname, kind, deadline - deps.now().getTime())
     if (!host.ok) return host
     const remaining = deadline - deps.now().getTime()
     if (remaining <= 0)
@@ -747,7 +789,8 @@ export async function fetchDocumentationPage(
       document: {
         requestedUrl: rawUrl,
         finalUrl: url.value.url.href,
-        finalHostIsPublic: true,
+        finalAddress: host.address.address,
+        framed: response.framed,
         status: response.status,
         contentType,
         body: response.body
@@ -761,10 +804,13 @@ export async function fetchDocumentationPage(
   )
 }
 
-/** Why a fetched page does not count as a read, or `null` when it does — success, a public final host, a text content type, and at least `DOCUMENTATION_READ_MIN_SIZE` bytes. */
+/** Why a fetched page does not count as a read, or `null` when it does — success, a public final address, a declared body length, a text content type, and at least `DOCUMENTATION_READ_MIN_SIZE` bytes. */
 export function whyNotCountedAsRead(document: FetchedDocument): string | null {
   if (document.status < 200 || document.status > 299) return `the page returned HTTP ${document.status}`
-  if (!document.finalHostIsPublic) return 'the page ended on a non-public host'
+  if (!isPublicAddress(document.finalAddress)) return 'the page ended on a non-public host'
+  if (!document.framed) {
+    return 'the response declared no length, so a cut-off body cannot be told from a complete one'
+  }
   if (!DOCUMENTATION_TEXT_CONTENT_TYPES.includes(mediaType(document.contentType))) return 'the page is not text'
   if (document.body.length < DOCUMENTATION_READ_MIN_SIZE) {
     return `the page returned only ${document.body.length} bytes (minimum ${DOCUMENTATION_READ_MIN_SIZE})`
@@ -808,7 +854,16 @@ export function createFetchDocumentationTool(
   options: FetchDocumentationToolOptions
 ): (input: FetchDocumentationInput) => Promise<DevToolResult<FetchDocumentationResult>> {
   const deps = options.deps ?? realFetchDocumentationDeps
+  let calls = 0
   return async (input) => {
+    calls += 1
+    if (calls > FETCH_DOCUMENTATION_CALL_BUDGET) {
+      return refuse(
+        'call-budget',
+        `this dispatch already made ${FETCH_DOCUMENTATION_CALL_BUDGET} documentation fetches`,
+        'Work from the pages already read; the budget resets with the next dispatch.'
+      )
+    }
     try {
       const fetched = await fetchDocumentationPage(input.url, deps)
       if (!fetched.ok) return fetched
