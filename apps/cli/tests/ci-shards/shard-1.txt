@@ -75,3 +75,4 @@ tests/lib/error-class.test.ts
 tests/lib/dispatch/linux-sandbox-probe.test.ts
 tests/lib/pre-push-scanner-triggers.test.ts
 tests/lib/enforcement-controls-active.test.ts
+tests/lib/dispatch/codex-login-refresh.test.ts

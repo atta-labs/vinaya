@@ -118,6 +118,7 @@ import {
   resolveClaudeConfinement,
   resolveCodexConfinement,
   resolveGitCommonDir,
+  reuseStagedCodexHome,
   stageCodexPolicyHome,
   type ClaudeSandboxSettings
 } from './worker-boundary.js'
@@ -4183,10 +4184,13 @@ export async function dispatchRole(
   // plugin, so reuse is also the only safe path. Only ever true for the
   // task-scoped (unattended) home; an attended dispatch's per-run-id
   // directory is always fresh.
-  const codexHomeAlreadyStaged =
-    codexHomeTargetDir !== null &&
-    codexStagedConfigDir !== undefined &&
-    existsSync(join(codexHomeTargetDir, 'auth.json'))
+  // A reused home keeps its login copy only while the operator's own login is
+  // not newer: a re-login since the home was staged replaces the copy.
+  const reusedCodexHome =
+    codexHomeTargetDir !== null && codexStagedConfigDir !== undefined
+      ? reuseStagedCodexHome({ realHome: homedir(), codexHome: codexHomeTargetDir })
+      : null
+  const codexHomeAlreadyStaged = reusedCodexHome !== null
   let codexHomeFailureReason: string | null = null
   let codexHomeDir: string | null = codexHomeAlreadyStaged ? codexHomeTargetDir : null
   if (agent === 'codex' && codexExecpolicyRules !== null && !codexHomeAlreadyStaged) {
