@@ -103,7 +103,12 @@ import {
   buildCodexHooksMarketplace,
   buildWorkerEnv,
   hasSubscriptionLogin,
+  LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV,
+  probeAgentSandbox,
   REAL_WORKER_BOUNDARY_DEPS,
+  runRealSandboxProbe,
+  type SandboxProbePlan,
+  type SandboxProbeRunner,
   resolveBunInstallCacheDir,
   resolveClaudeConfinement,
   resolveCodexConfinement,
@@ -3504,6 +3509,42 @@ export function missingSubscriptionLoginReason(
 }
 
 /**
+ * The pre-spawn Linux sandbox probe's platform and runner. A test swaps both
+ * to prove the refusal and the pass without a Linux host or a real agent.
+ */
+export const LINUX_SANDBOX_PROBE_DEPS: { platform: NodeJS.Platform; run: SandboxProbeRunner } = {
+  platform: process.platform,
+  run: runRealSandboxProbe
+}
+
+/**
+ * The environment overrides a confined Claude child carries on top of the
+ * named allowlist — shared by the real spawn and the pre-spawn probe, so the
+ * probe's sandboxed command sees what the dispatch's commands will.
+ */
+function confinedClaudeEnvExtras(scratchDir: string, pathOverride: string | undefined): Record<string, string> {
+  return {
+    TMPDIR: scratchDir,
+    TMP: scratchDir,
+    TEMP: scratchDir,
+    // Claude Code keeps its own working files under `/tmp/claude-<uid>` and
+    // ignores `TMPDIR` for them, so its own override must name the same
+    // granted scratch directory.
+    CLAUDE_CODE_TMPDIR: scratchDir,
+    // O4: turbo's cache-miss write goes inside the granted scratch, never the
+    // repo-root `.turbo/` the sandbox denies. O5: and its telemetry ping
+    // (`telemetry.vercel.com`) is disabled, so `bun run typecheck`'s own
+    // `turbo` run is not blocked by the confined egress allowlist. Both keys
+    // ride `confinedTurboEnv`, the SAME object Codex spreads via
+    // `codexSpawnEnvExtras` — the two agents' turbo env can never drift apart.
+    ...confinedTurboEnv(scratchDir),
+    // O2: `resolveGitFirstPath`'s result puts the real `git` ahead of the
+    // `/usr/bin/git` xcrun shim on macOS.
+    ...(pathOverride !== undefined ? { PATH: pathOverride } : {})
+  }
+}
+
+/**
  * Round 5 Principal ruling: a live Mac run found `bun install
  * --frozen-lockfile` failing under Codex's own sandbox with "bun is unable
  * to write files to tempdir: EPERM" in the sandbox-conformance suite's own
@@ -4290,10 +4331,77 @@ export async function dispatchRole(
   // it was not given a bridge of its own. Refuse every unattended Claude
   // dispatch without confinement, before spawning any agent process.
   const unconfinedClaude = agent === 'claude' && claudeConfinement?.confined === false
-  if (codexUnattendedFailureReason !== null || unconfinedClaude) {
-    const failureReason: DispatchFailureReason = unconfinedClaude
-      ? 'refused'
-      : codexBoundaryFailureReason(agent, codexUnattendedFailureReason!)
+  if (claudeConfinement?.confined === true && claudeConfinement.unixSocketFilterOff) {
+    writeLifecycle(
+      `[vinaya dispatch ${effectId}] ${role} via ${agent}: the sandbox's Unix-socket filter is off on this host ` +
+        `(${LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV}=1) — sandboxed commands may connect to Unix sockets they can reach; ` +
+        'every other sandbox setting is unchanged and the driver-tool socket directory stays unreadable'
+    )
+  }
+  // On Linux the sandbox's tools can be installed and still fail to start a
+  // command — a kernel that refuses its Unix-socket seccomp step fails every
+  // sandboxed Bash call while file tools keep working. So one trivial command
+  // runs through the agent's real sandbox, with this dispatch's own settings,
+  // and a failure refuses before the agent starts, quoting the sandbox's own
+  // error. Never a fallback to an unconfined run.
+  let sandboxProbeError: string | null = null
+  if (!unconfinedClaude && codexUnattendedFailureReason === null) {
+    const probeCwd = opts.cwd ?? process.cwd()
+    const plan: SandboxProbePlan | null =
+      agent === 'claude' && claudeConfinement?.confined === true && dispatchSettingsPath !== null
+        ? {
+            agent: 'claude',
+            binaryPath,
+            cwd: probeCwd,
+            env: buildWorkerEnv(process.env, {
+              GH_TELEMETRY: '0',
+              ...confinedClaudeEnvExtras(claudeConfinement.scratchDir, claudeConfinement.pathOverride)
+            }),
+            settingsPath: dispatchSettingsPath
+          }
+        : agent === 'codex' && codexRequireIsolation && codexConfinement?.ok === true && codexHomeDir !== null
+          ? {
+              agent: 'codex',
+              binaryPath,
+              cwd: probeCwd,
+              env: buildWorkerEnv(process.env, {
+                GH_TELEMETRY: '0',
+                ...codexSpawnEnvExtras(agent, codexHomeDir, codexScratchDir).attribution
+              }),
+              configToml: codexConfinement.configToml,
+              withWritableDirs: (args) =>
+                addCodexWritableDirs(
+                  args,
+                  [
+                    ...(codexScratchDir !== null ? [codexScratchDir] : []),
+                    ...(codexGitCommonDir !== null ? [codexGitCommonDir] : []),
+                    ...(codexBunCacheDir !== null ? [codexBunCacheDir] : [])
+                  ],
+                  true
+                )
+            }
+          : null
+    if (plan !== null) {
+      const probe = await probeAgentSandbox(plan, LINUX_SANDBOX_PROBE_DEPS)
+      if (!probe.ok) sandboxProbeError = probe.error
+    }
+    if (sandboxProbeError !== null) {
+      log({
+        kind: 'operation',
+        event: 'completed',
+        payload: {},
+        operation: 'linux-sandbox-probe',
+        target: agent,
+        result: 'unavailable',
+        error_class: null
+      })
+    }
+  }
+  if (codexUnattendedFailureReason !== null || unconfinedClaude || sandboxProbeError !== null) {
+    const failureReason: DispatchFailureReason =
+      unconfinedClaude || sandboxProbeError !== null
+        ? 'refused'
+        : codexBoundaryFailureReason(agent, codexUnattendedFailureReason!)
     const durationMs = Date.now() - start
     const priorSize = sizeOfSafe(outboxPath)
     log({
@@ -4311,7 +4419,9 @@ export async function dispatchRole(
     writeLifecycle(
       unconfinedClaude
         ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended Claude requires a confined worker sandbox while driver-run dev-tools are available; ${claudeConfinement?.warning ?? 'confinement unavailable'}`
-        : `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires Codex's own sandbox ` +
+        : sandboxProbeError !== null
+          ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — ${agent}'s sandbox could not run a probe command on this host, so the agent was not started: ${sandboxProbeError}`
+          : `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires Codex's own sandbox ` +
             `and network proxy plus this task's staged CODEX_HOME, which are unavailable: ${codexUnattendedFailureReason}`
     )
     // O1: never leak the scratch directory minted for Codex's own
@@ -4458,25 +4568,7 @@ export async function dispatchRole(
             // dispatch already carries.
             buildWorkerEnv(process.env, {
               ...attribution,
-              TMPDIR: claudeConfinement.scratchDir,
-              TMP: claudeConfinement.scratchDir,
-              TEMP: claudeConfinement.scratchDir,
-              // Claude Code keeps its own working files under
-              // `/tmp/claude-<uid>` and ignores `TMPDIR` for them, so its
-              // own override must name the same granted scratch directory.
-              CLAUDE_CODE_TMPDIR: claudeConfinement.scratchDir,
-              // O4: turbo's cache-miss write goes inside the granted scratch,
-              // never the repo-root `.turbo/` the sandbox denies. O5: and its
-              // telemetry ping (`telemetry.vercel.com`) is disabled, so
-              // `bun run typecheck`'s own `turbo` run is not blocked by the
-              // confined egress allowlist. Both keys ride `confinedTurboEnv`,
-              // the SAME object Codex spreads via `codexSpawnEnvExtras` above —
-              // the two agents' turbo env can never drift apart.
-              ...confinedTurboEnv(claudeConfinement.scratchDir),
-              // O2: see the Codex branch's own comment on this same guard,
-              // above — `resolveGitFirstPath`'s result, puts the real `git`
-              // ahead of the `/usr/bin/git` xcrun shim on macOS.
-              ...(claudeConfinement.pathOverride !== undefined ? { PATH: claudeConfinement.pathOverride } : {}),
+              ...confinedClaudeEnvExtras(claudeConfinement.scratchDir, claudeConfinement.pathOverride),
               // O6: spool this confined dispatch's log events into its granted
               // scratch; the driver delivers them after the turn (`finish()`).
               ...(logSpoolDir !== null ? { VINAYA_LOG_SPOOL_DIR: logSpoolDir } : {})

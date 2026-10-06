@@ -606,13 +606,14 @@ describe('resolveWorkerBoundaryLaunch — O2 git-config read grant and PATH over
     const fakeBinary = fakeBinaryIn(binDir)
     const result = resolveWorkerBoundaryLaunch(
       { binaryPath: fakeBinary, args: [], allowedDir, extraWritableDirs: [] },
-      AVAILABLE_DEPS
+      { ...AVAILABLE_DEPS, resolveDeveloperDir: () => null }
     )
     expect(result.ok).toBe(true)
     if (!result.ok) return
     try {
-      // On this (non-darwin) authoring host `resolveDeveloperDir` resolves
-      // `null`, so this is the allowlisted PATH unchanged — the same value
+      // With no developer dir resolved — pinned here, so a Mac whose
+      // `xcode-select` answers judges the same thing a Linux host does — this
+      // is the allowlisted PATH unchanged, the same value
       // `resolveGitFirstPath(process.env, null)` returns.
       expect(result.launch.pathOverride).toBe(process.env.PATH)
     } finally {
