@@ -10,8 +10,8 @@
  * after a failure (O2) and to re-read the look-back span every run (O3) — the
  * two are the same read. Overlap is deduplicated by identity in the cache
  * (O1), a changed identity is recorded as an edit beside the first row (O3), an
- * identity the cache held in the re-read window that the source no longer
- * returns is a deletion (O3), and a span the source itself reports lost is a
+ * identity the cache held at a source position inside the span the run
+ * re-read that the source no longer returns is a deletion (O3), and a span the source itself reports lost is a
  * gap, never a deletion (O4).
  */
 
@@ -98,11 +98,12 @@ export async function syncSource(source: LogSource, cache: LogCache, options: Sy
   const editsBefore = cache.edits().length
   const gapsBefore = cache.dataset().gaps().length
 
-  // What the cache held for this source before the run — its view of the
-  // look-back window, used to tell a deletion from an untouched row.
-  const priorRows = new Map<string, { time: string; origin: RowOrigin | null }>()
+  // What the cache held for this source before the run, each row with the
+  // source position it was last read from — used to tell a deletion from an
+  // untouched row.
+  const priorRows = new Map<string, RowOrigin>()
   for (const row of cache.dataset().rows()) {
-    if (row.origin?.source === id) priorRows.set(row.identity, { time: row.time, origin: row.origin })
+    if (row.origin?.source === id) priorRows.set(row.identity, row.origin)
   }
 
   let pagesRead = 0
@@ -113,11 +114,13 @@ export async function syncSource(source: LogSource, cache: LogCache, options: Sy
   let completed = false
   let sawGap = false
 
-  // Identities the source returned this run, and the time span they cover —
-  // the window within which an absent held identity is a deletion.
+  // Identities the source returned this run, and the span of source
+  // positions the run re-read — the window within which an absent held
+  // identity is a deletion. Never a span of event times: lines written by
+  // many machines arrive out of event-time order, so a time window would take
+  // in rows the run never re-read.
   const seen = new Set<string>()
-  let minSeenTime: string | null = null
-  let maxSeenTime: string | null = null
+  const span = new Map<string, SpanBounds>()
 
   const boundaries: Boundary[] = []
   let totalLines = 0
@@ -141,12 +144,9 @@ export async function syncSource(source: LogSource, cache: LogCache, options: Sy
     for (const sourceLine of page.lines) {
       const normalized = normalizeStoredLine(sourceLine.raw, { source: id, position: sourceLine.position })
       const outcome = cache.put(normalized)
-      if (normalized.type === 'row') {
-        seen.add(normalized.row.identity)
-        const time = normalized.row.time
-        if (minSeenTime === null || time < minSeenTime) minSeenTime = time
-        if (maxSeenTime === null || time > maxSeenTime) maxSeenTime = time
-      }
+      const reread = normalized.type === 'row' && priorRows.has(normalized.row.identity)
+      if (normalized.type === 'row') seen.add(normalized.row.identity)
+      widenSpan(span, sourceLine.position, reread)
       if (outcome.type === 'row') {
         if (outcome.result === 'inserted') rowsStored++
         else if (outcome.result === 'duplicate') duplicates++
@@ -185,7 +185,7 @@ export async function syncSource(source: LogSource, cache: LogCache, options: Sy
     sawGap = true
   }
 
-  const deleted = deriveDeletions({ priorRows, seen, minSeenTime, maxSeenTime, sawGap })
+  const deleted = deriveDeletions({ priorRows, seen, span, sawGap })
 
   // Advance the stored cursor to the new look-back anchor only on a clean run:
   // a failure leaves it where it was, so the next run re-reads from the last
@@ -215,26 +215,75 @@ export async function syncSource(source: LogSource, cache: LogCache, options: Sy
 }
 
 /**
- * The cached identities the source no longer returns inside the time span the
- * run re-read — its deletions. A run that saw any gap derives none: the source
- * reported what it lost, and a reported loss is a gap, never a deletion (O4).
- * Rows older or newer than the re-read span are out of the look-back window
- * and left untouched.
+ * A source position split into its stream and its ordinal within that stream:
+ * the text before its trailing run of digits, and those digits as a number —
+ * a server's sequence number (`"1042"`), a folder stream's byte offset
+ * (`"<stream>:live:8192"`). Positions are ordered only within one stream; a
+ * position with no trailing ordinal is ordered against nothing, so it never
+ * lies inside a re-read span.
+ */
+function splitPosition(position: string): { stream: string; ordinal: number } | null {
+  const match = /^(.*?)(\d+)$/.exec(position)
+  if (match === null) return null
+  const ordinal = Number(match[2])
+  if (!Number.isSafeInteger(ordinal)) return null
+  return { stream: match[1] as string, ordinal }
+}
+
+/**
+ * One stream's re-read span: from the earliest position at which the run
+ * re-read a row the cache already held (`null` until it has), to the furthest
+ * position the run read at all.
+ */
+type SpanBounds = { from: number | null; to: number }
+
+/**
+ * Widens the run's re-read span, per stream, to take in one position the
+ * source returned. Only a re-read of a row the cache already held can open
+ * the span: lines past the stored cursor are new, so a run that re-read
+ * nothing before its cursor has an empty span — and a stream whose positions
+ * restarted (a rotated folder stream's fresh live file) opens none on its new
+ * lines alone.
+ */
+function widenSpan(span: Map<string, SpanBounds>, position: string, reread: boolean): void {
+  const split = splitPosition(position)
+  if (split === null) return
+  const from = reread ? split.ordinal : null
+  const bounds = span.get(split.stream)
+  if (bounds === undefined) {
+    span.set(split.stream, { from, to: split.ordinal })
+    return
+  }
+  if (from !== null && (bounds.from === null || from < bounds.from)) bounds.from = from
+  if (split.ordinal > bounds.to) bounds.to = split.ordinal
+}
+
+/**
+ * The cached identities the source no longer returns whose own source
+ * position lies inside the span of positions the run re-read — its
+ * deletions. A run that saw any gap derives none: the source reported what it
+ * lost, and a reported loss is a gap, never a deletion (O4). A row whose
+ * position lies before or after the span, or in a stream the run re-read
+ * nothing of, was not re-read and is left untouched; a run that re-read
+ * nothing has an empty span and derives none.
  */
 function deriveDeletions(input: {
-  priorRows: Map<string, { time: string; origin: RowOrigin | null }>
+  priorRows: Map<string, RowOrigin>
   seen: Set<string>
-  minSeenTime: string | null
-  maxSeenTime: string | null
+  span: Map<string, SpanBounds>
   sawGap: boolean
 }): RowDeletion[] {
-  const { priorRows, seen, minSeenTime, maxSeenTime, sawGap } = input
-  if (sawGap || minSeenTime === null || maxSeenTime === null) return []
+  const { priorRows, seen, span, sawGap } = input
+  if (sawGap) return []
   const deleted: RowDeletion[] = []
-  for (const [identity, held] of priorRows) {
+  for (const [identity, origin] of priorRows) {
     if (seen.has(identity)) continue
-    if (held.time < minSeenTime || held.time > maxSeenTime) continue
-    deleted.push({ identity, origin: held.origin })
+    const split = splitPosition(origin.position)
+    if (split === null) continue
+    const bounds = span.get(split.stream)
+    if (bounds === undefined || bounds.from === null) continue
+    if (split.ordinal < bounds.from || split.ordinal > bounds.to) continue
+    deleted.push({ identity, origin })
   }
   return deleted
 }

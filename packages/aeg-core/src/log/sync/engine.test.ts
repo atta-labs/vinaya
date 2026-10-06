@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { buildExecutions } from '../fixtures'
 import type { LogSource, SourceGap, SourceLine, SourcePage } from './contracts'
 import { syncSource } from './engine'
 import { createMemoryCache } from './memory-cache'
+import { normalizeStoredLine } from './normalize'
 
 /**
  * The sync engine (`apps/cli/specs/log-sync.md`, "The sync run"), driven over a
@@ -406,5 +408,105 @@ describe('O7 — a run returns a summary of everything it did', () => {
       failure: null,
       deleted: []
     })
+  })
+})
+
+/**
+ * A server-like source's lines, built from the fixture executions: every
+ * valid schema-3 line, positioned by its numeric sequence (`"0"`, `"1"`, …),
+ * with its event time rewritten so arrival order is not event-time order —
+ * as when several machines send into one stream. Position `i` carries minute
+ * `(i * 7) % count` past a fixed instant, a permutation that interleaves the
+ * event times of early and late positions.
+ */
+function outOfOrderLines(count: number): SourceLine[] {
+  const valid = buildExecutions()
+    .flatMap((execution) => execution.lines)
+    .filter((line) => line.validity === 'valid')
+    .map((line) => JSON.parse(line.raw) as { meta: { schema: number; ts: string } })
+    .filter((event) => event.meta.schema === 3)
+  expect(valid.length).toBeGreaterThanOrEqual(count)
+  const base = Date.parse('2026-09-20T00:00:00.000Z')
+  return valid.slice(0, count).map((event, index) => {
+    const ts = new Date(base + ((index * 7) % count) * 60_000).toISOString()
+    return { raw: JSON.stringify({ ...event, meta: { ...event.meta, ts } }), position: String(index) }
+  })
+}
+
+function identityOf(line: SourceLine): string {
+  const normalized = normalizeStoredLine(line.raw)
+  if (normalized.type !== 'row') throw new Error('expected a row line')
+  return normalized.row.identity
+}
+
+describe('a deletion is judged by source position, never by event time', () => {
+  it('rows arriving out of event-time order give no deletion while the source still holds every row', async () => {
+    const all = outOfOrderLines(31)
+    const cache = createMemoryCache()
+    const bounds = { now: NOW, pageLimit: 5, lookback: 5 }
+    await syncSource(fakeSource('server:/x', { lines: all.slice(0, 20) }), cache, bounds)
+    // The anchor trails the head: positions before it are not re-read next run.
+    expect(cache.cursor('server:/x')).toBe('15')
+
+    const summary = await syncSource(fakeSource('server:/x', { lines: all }), cache, bounds)
+
+    // The new lines' event times interleave with rows before the anchor; none of those is a deletion.
+    expect(summary.deletions).toBe(0)
+    expect(summary.deleted).toEqual([])
+    expect(identities(cache)).toHaveLength(31)
+  })
+
+  it('a run whose stored cursor sits at the head re-reads nothing earlier and gives no deletion', async () => {
+    const all = outOfOrderLines(31)
+    const cache = createMemoryCache()
+    await syncSource(fakeSource('server:/x', { lines: all.slice(0, 20) }), cache, { now: NOW })
+    cache.setCursor('server:/x', '20')
+
+    const summary = await syncSource(fakeSource('server:/x', { lines: all }), cache, { now: NOW })
+
+    expect(summary.rowsStored).toBe(11)
+    expect(summary.deletions).toBe(0)
+    expect(identities(cache)).toHaveLength(31)
+  })
+
+  it('a stream whose positions restart re-reads no held row on its new lines and gives no deletion', async () => {
+    const cache = createMemoryCache()
+    const line = (stream: string, index: number, minute: number): SourceLine => ({
+      raw: rawLine(`e-${minute}`, `2026-09-20T10:0${minute}:00.000Z`),
+      position: `s:${stream}:${index * 100}`
+    })
+    const live = [0, 1, 2, 3, 4].map((i) => line('live', i, i))
+    const bounds = { now: NOW, pageLimit: 1, lookback: 2 }
+    await syncSource(fakeSource('folder:/r', { lines: live }), cache, bounds)
+    expect(cache.cursor('folder:/r')).toBe('3')
+
+    // The live file rotated: its old lines now sit in the rotated slot, and a
+    // fresh live file starts again at byte 0 with new lines.
+    const rotated = [0, 1, 2, 3, 4].map((i) => line('rotated', i, i))
+    const fresh = [0, 1, 2].map((i) => line('live', i, i + 5))
+    const summary = await syncSource(fakeSource('folder:/r', { lines: [...rotated, ...fresh] }), cache, bounds)
+
+    expect(summary.rowsStored).toBe(3)
+    expect(summary.deletions).toBe(0)
+  })
+
+  it('a row the source removed from inside the re-read span is a deletion with its identity and origin', async () => {
+    const all = outOfOrderLines(20)
+    const cache = createMemoryCache()
+    const bounds = { now: NOW, pageLimit: 5, lookback: 10 }
+    await syncSource(fakeSource('server:/x', { lines: all }), cache, bounds)
+    expect(cache.cursor('server:/x')).toBe('10')
+
+    const removed = all[13] as SourceLine
+    const summary = await syncSource(
+      fakeSource('server:/x', { lines: all.filter((line) => line !== removed) }),
+      cache,
+      bounds
+    )
+
+    expect(summary.deletions).toBe(1)
+    expect(summary.deleted).toEqual([
+      { identity: identityOf(removed), origin: { source: 'server:/x', position: '13' } }
+    ])
   })
 })
