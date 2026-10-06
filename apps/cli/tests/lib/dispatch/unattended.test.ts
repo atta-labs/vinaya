@@ -293,6 +293,7 @@ function buildGitFixture(opts: { homeCredential?: string } = {}): Fixture & { en
     join(binDir, 'claude'),
     [
       '#!/bin/bash',
+      FAKE_CLAUDE_PROBE_ANSWER.trimEnd(),
       `touch "${markerFile}"`,
       `printf '{"claudeConfigDir":"%s","ghTelemetry":"%s"}' "$CLAUDE_CONFIG_DIR" "$GH_TELEMETRY" > "${envCaptureFile}"`,
       'cat > /dev/null',
