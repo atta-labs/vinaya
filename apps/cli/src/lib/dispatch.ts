@@ -1674,12 +1674,17 @@ export function buildWriteAccessScope(
       return real(p)
     }
   }
+  // A protected path that does not exist yet (no `.claude/` in the worktree)
+  // cannot be realpath'd itself; resolve it through its parent, or a
+  // worktree reached through a symlink leaves it unresolved and the hook's
+  // resolved target never matches it.
+  const realExistingOrParent = (p: string): string => (existsSync(p) ? real(p) : realFile(p))
   if (role === 'developer') {
     return {
       kind: 'directory',
       allowedDir: real(allowedDir),
       extraFiles: developerFiles.map(realFile),
-      protectedSubpaths: protectedSubpaths.map(real)
+      protectedSubpaths: protectedSubpaths.map(realExistingOrParent)
     }
   }
   if (role === 'code-reviewer' || role === 'security') {
