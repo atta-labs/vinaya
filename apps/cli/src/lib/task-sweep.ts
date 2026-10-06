@@ -92,9 +92,29 @@ function prLookupFrom(out: string, branch: string): PrLookup | null {
     : { number: found.number, state: found.state }
 }
 
-/** Throws on any read failure — the caller reads that as "forge unreadable," never as a fabricated state. */
+/** The forge's own not-found answer for an Issue — distinct from every other read failure (network, auth, timeout), which stays "unreadable" and keeps the folder. */
+export class IssueNotFoundError extends Error {
+  constructor(issue: number) {
+    super(`Issue #${issue} does not exist on the forge`)
+    this.name = 'IssueNotFoundError'
+  }
+}
+
+/** `gh issue view` on a number with no Issue fails with GraphQL's "Could not resolve to an Issue with the number of N". */
+function isIssueNotFound(err: unknown): boolean {
+  const stderr = (err as { stderr?: unknown } | null)?.stderr
+  return /could not resolve to an issue/i.test(typeof stderr === 'string' ? stderr : String(stderr ?? ''))
+}
+
+/** Throws on any read failure — the caller reads that as "forge unreadable," never as a fabricated state. Throws `IssueNotFoundError` only for the forge's not-found answer. */
 export function fetchIssueState(issue: number): IssueState {
-  const out = sh('gh', ['issue', 'view', String(issue), '--json', 'state'])
+  let out: string
+  try {
+    out = sh('gh', ['issue', 'view', String(issue), '--json', 'state'])
+  } catch (err) {
+    if (isIssueNotFound(err)) throw new IssueNotFoundError(issue)
+    throw err
+  }
   return (JSON.parse(out) as { state: IssueState }).state
 }
 
@@ -234,6 +254,7 @@ export function classifyTaskFolder(
   try {
     issueState = deps.fetchIssueState(issue)
   } catch (err) {
+    if (err instanceof IssueNotFoundError) return { kind: 'finished', reason: `${err.message} (orphaned folder)` }
     return { kind: 'unknown', reason: `could not read Issue #${issue}'s state from the forge: ${message(err)}` }
   }
   if (issueState === 'CLOSED') return { kind: 'finished', reason: `Issue #${issue} is closed` }
@@ -360,7 +381,13 @@ async function shAsync(cmd: string, args: string[]): Promise<string> {
 
 /** Async twin of `fetchIssueState` — same `gh` call and result shape, non-blocking. */
 export async function fetchIssueStateAsync(issue: number): Promise<IssueState> {
-  const out = await shAsync('gh', ['issue', 'view', String(issue), '--json', 'state'])
+  let out: string
+  try {
+    out = await shAsync('gh', ['issue', 'view', String(issue), '--json', 'state'])
+  } catch (err) {
+    if (isIssueNotFound(err)) throw new IssueNotFoundError(issue)
+    throw err
+  }
   return (JSON.parse(out) as { state: IssueState }).state
 }
 
@@ -537,6 +564,7 @@ export async function classifyTaskFolderAsync(
   try {
     issueState = await deps.fetchIssueState(issue)
   } catch (err) {
+    if (err instanceof IssueNotFoundError) return { kind: 'finished', reason: `${err.message} (orphaned folder)` }
     return { kind: 'unknown', reason: `could not read Issue #${issue}'s state from the forge: ${message(err)}` }
   }
   if (issueState === 'CLOSED') return { kind: 'finished', reason: `Issue #${issue} is closed` }

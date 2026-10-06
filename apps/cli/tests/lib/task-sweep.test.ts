@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   classifyTaskFolder,
+  IssueNotFoundError,
   parseWorktreeList,
   removeWorktreeAsync,
   runTaskSweep,
@@ -143,6 +144,18 @@ describe('classifyTaskFolder', () => {
     const cls = classifyTaskFolder(108, root, deps)
     expect(cls.kind).toBe('unknown')
     expect(cls.reason).toContain('gh: rate limited')
+  })
+
+  it('finished: the forge reports the Issue as nonexistent — an orphan, removed', () => {
+    const root = tempDir('vinaya-sweep-orphan-')
+    const deps = baseDeps(root, {
+      fetchIssueState: (issue) => {
+        throw new IssueNotFoundError(issue)
+      }
+    })
+    const cls = classifyTaskFolder(9001, root, deps)
+    expect(cls.kind).toBe('finished')
+    expect(cls.reason).toContain('does not exist')
   })
 
   it('unknown: an unscoped dispatch folder has nothing to check against the forge', () => {
