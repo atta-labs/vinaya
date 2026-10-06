@@ -84,6 +84,13 @@ for (const f of readdirSync(checkBinDir).filter((f) => f.endsWith('.ts'))) {
   normalizeExecutable(join(checkOutdir, f.replace(/\.ts$/, '.js')))
 }
 
+// The loop's existing-work dispatch verification lives in the core package,
+// whose published files carry no scripts: bundle it beside the checks so the
+// readiness gate resolves it through the installed CLI, never a source path.
+const verifyDispatchSource = join(pkgRoot, '..', '..', 'packages', 'aeg-core', 'bin', 'verify-dispatch.ts')
+await build([verifyDispatchSource], checkOutdir)
+normalizeExecutable(join(checkOutdir, 'verify-dispatch.js'))
+
 // task-run-v1 20, O5/O6 — the pre-push hook's changed-files lister and test
 // selector, two more `bin` entries (`package.json`'s `vinaya-changed-files`,
 // `vinaya-select-tests`) alongside the main `vinaya` entrypoint, bundled
@@ -100,5 +107,5 @@ await build(
 for (const f of libBinNames) normalizeExecutable(join(libOutdir, f.replace(/\.ts$/, '.js')))
 
 console.log(
-  `built dist/index.js + ${checkEntrypoints.length} check bin(s) in dist/checks/bin/ + ${libBinNames.length} lib bin(s) in dist/lib/ (external: ${external.join(', ') || 'none'})`
+  `built dist/index.js + ${checkEntrypoints.length} check bin(s) + verify-dispatch in dist/checks/bin/ + ${libBinNames.length} lib bin(s) in dist/lib/ (external: ${external.join(', ') || 'none'})`
 )

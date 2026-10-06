@@ -31,6 +31,7 @@ import {
 } from '@attalabs/aeg-core'
 import { extractShortVersion } from '@attalabs/aeg-core/docs'
 import { hasLabel } from '@attalabs/aeg-forge-state'
+import { type GateStep, resolveGateStep } from '../../checks/registry.js'
 import { resolveDoctrineRoot } from '../../commands/doctrine.js'
 import { buildRolePlan } from '../../roles/plan.js'
 import {
@@ -699,7 +700,15 @@ export function checkTaskDispatchReadiness(
     identity.kind === 'tranche' ? [identity.tranche, identity.taskId] : ['--issue', String(identity.issueNumber)]
   const sections: string[] = []
   let ready = true
-  const run = (script: string, extraArgs: readonly string[] = []): void => {
+  const run = (step: GateStep, extraArgs: readonly string[] = []): void => {
+    const script = resolveGateStep(step)
+    if (script === null) {
+      ready = false
+      sections.push(
+        `gate step '${step}' is missing — the installed @attalabs/vinaya package is incomplete; reinstall it before dispatching.`
+      )
+      return
+    }
     const args = [...gateArgs, ...extraArgs]
     const label = `$ bun ${script} ${args.join(' ')}`
     try {
@@ -709,11 +718,11 @@ export function checkTaskDispatchReadiness(
       sections.push(`${label}\n${gateRunOutput(err)}`.trim())
     }
   }
-  run('apps/cli/src/checks/bin/check-dispatch-readiness.ts')
+  run('check-dispatch-readiness')
   // `--existing-work`: the driver created this worktree itself and runs this
   // gate before every Developer turn, so from the second turn on the branch
   // always carries commits ahead of main — expected work, never a leftover.
-  run('packages/aeg-core/bin/verify-dispatch.ts', ['--existing-work'])
+  run('verify-dispatch', ['--existing-work'])
   // The repository's local gate: local and cheap, no forge call. The same
   // predicate the doctor's ring-0 verdict reads, so the two cannot disagree.
   const controls = enforcementControlsActive([localGate()])
