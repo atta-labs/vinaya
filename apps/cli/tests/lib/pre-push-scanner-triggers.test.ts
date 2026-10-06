@@ -69,7 +69,11 @@ function select(
       depth: 'one'
     }
   )
-  return selected.map((f) => f.slice(root.length + 1)).filter((f) => [SHAPE, PROCESSES, CONTENT].includes(f))
+  // Sorted: selection follows directory-listing order, which only some filesystems sort.
+  return selected
+    .map((f) => f.slice(root.length + 1))
+    .filter((f) => [SHAPE, PROCESSES, CONTENT].includes(f))
+    .sort()
 }
 
 describe('pre-push selects a folder-scanning test only for the kind of change it judges', () => {

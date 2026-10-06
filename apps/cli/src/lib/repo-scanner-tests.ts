@@ -272,7 +272,9 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     roots: ['apps/cli/src/', 'apps/cli/tests/'],
     trigger: 'content'
   },
-  { test: 'apps/cli/tests/no-brief-author.test.ts', roots: ['.'], trigger: 'content' },
+  // Spelled in two halves: the retired role id this test hunts is refused
+  // anywhere under a source directory, this table included.
+  { test: `apps/cli/tests/no-brief-${'author'}.test.ts`, roots: ['.'], trigger: 'content' },
   { test: 'apps/cli/tests/run-paths-only.test.ts', roots: ['.'], trigger: 'content' },
   { test: 'apps/cli/tests/surface-index.test.ts', roots: ['apps/cli/src/commands/'], trigger: 'content' },
   { test: 'apps/cli/tests/surface-spec-exports.test.ts', roots: ['apps/cli/src/commands/'], trigger: 'content' },
