@@ -2355,10 +2355,18 @@ export function resolveClaudeConfinement(
  */
 export const LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV = 'VINAYA_LINUX_SANDBOX_ALLOW_UNIX_SOCKETS'
 
-/** The files Bun loads into `process.env` from the working directory on its own, so a committed one could otherwise set the opt-in. */
-function bunAutoloadedEnvFiles(env: NodeJS.ProcessEnv): string[] {
-  const mode = env.NODE_ENV
-  return ['.env', ...(mode ? [`.env.${mode}`] : []), '.env.local', ...(mode ? [`.env.${mode}.local`] : [])]
+/**
+ * Every env file Bun could load into `process.env` from the working directory
+ * on its own, so a committed one could otherwise set the opt-in: `.env`,
+ * `.env.local`, and the per-mode pair for each mode Bun picks from `NODE_ENV`
+ * (including `development`, its choice when `NODE_ENV` is unset, and `test`
+ * under its test runner), plus any other `.env*` file the directory holds.
+ * Wider than what one run loads, never narrower.
+ */
+function bunAutoloadedEnvFiles(env: NodeJS.ProcessEnv, listed: readonly string[]): string[] {
+  const modes = new Set(['development', 'production', 'test', ...(env.NODE_ENV ? [env.NODE_ENV] : [])])
+  const named = ['.env', '.env.local', ...[...modes].flatMap((mode) => [`.env.${mode}`, `.env.${mode}.local`])]
+  return [...new Set([...named, ...listed.filter((name) => /^\.env(\..+)?$/.test(name))])]
 }
 
 export type UnixSocketOptInDeps = {
@@ -2367,6 +2375,16 @@ export type UnixSocketOptInDeps = {
   readonly cwd: string
   /** The file's text, or `null` when it does not exist or cannot be read. */
   readonly readFile: (path: string) => string | null
+  /** The directory's entry names, `[]` when it cannot be listed. Omitted lists the real directory. */
+  readonly listDir?: (dir: string) => string[]
+}
+
+function listDirOrEmpty(dir: string): string[] {
+  try {
+    return readdirSync(dir)
+  } catch {
+    return []
+  }
 }
 
 function readFileOrNull(path: string): string | null {
@@ -2393,7 +2411,8 @@ export function linuxUnixSocketFilterOptIn(
   if (deps.platform !== 'linux') return false
   if (deps.env[LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV] !== '1') return false
   const assignment = new RegExp(`^\\s*(?:export\\s+)?${LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV}\\s*=`, 'm')
-  return !bunAutoloadedEnvFiles(deps.env).some((file) => assignment.test(deps.readFile(join(deps.cwd, file)) ?? ''))
+  const files = bunAutoloadedEnvFiles(deps.env, (deps.listDir ?? listDirOrEmpty)(deps.cwd))
+  return !files.some((file) => assignment.test(deps.readFile(join(deps.cwd, file)) ?? ''))
 }
 
 /** What a sandboxed probe command prints; the probe passes only when the sandbox's own output carries it. */
@@ -2425,7 +2444,14 @@ export type SandboxProbeRunner = (input: {
   readonly timeoutMs: number
 }) => Promise<SandboxProbeRun>
 
-export type SandboxProbeResult = { readonly ok: true } | { readonly ok: false; readonly error: string }
+export type SandboxProbeResult =
+  | { readonly ok: true }
+  | {
+      readonly ok: false
+      readonly error: string
+      /** Set when the Claude probe's turn ran no command, so the failure is not the sandbox's own. */
+      readonly noCommandRan?: true
+    }
 
 /** Keeps a quoted sandbox error to a readable size in a refusal line. */
 function quoteProbeOutput(text: string): string {
@@ -2500,12 +2526,17 @@ export function readClaudeSandboxProbe(run: SandboxProbeRun): SandboxProbeResult
   }
   if (toolResults.some((r) => !r.isError && r.text.includes(SANDBOX_PROBE_MARKER))) return { ok: true }
   if (run.timedOut) return { ok: false, error: `the probe did not finish within ${SANDBOX_PROBE_TIMEOUT_MS / 1000}s` }
-  const quoted = toolResults.find((r) => r.text.trim() !== '')?.text ?? (finalResult || run.stderr)
+  const sandboxOutput = toolResults.find((r) => r.text.trim() !== '')?.text
+  if (sandboxOutput !== undefined) return { ok: false, error: quoteProbeOutput(sandboxOutput) }
+  // No Bash tool result at all: the model declined, or Claude Code itself
+  // failed (login, outage, unknown model) before any command reached the
+  // sandbox. That is not the sandbox's error, so the refusal says the sandbox
+  // could not be confirmed, and the caller may try once more.
+  const said = quoteProbeOutput(finalResult || run.stderr) || `claude exited ${run.exitCode ?? 'without a status'}`
   return {
     ok: false,
-    error:
-      quoteProbeOutput(quoted) ||
-      `claude exited ${run.exitCode ?? 'without a status'} without running the probe command`
+    noCommandRan: true,
+    error: `Claude ran no Bash command, so the sandbox could not be confirmed to run one: ${said}`
   }
 }
 
@@ -2610,15 +2641,21 @@ export async function probeAgentSandbox(
 ): Promise<SandboxProbeResult> {
   if (deps.platform !== 'linux') return { ok: true }
   if (plan.agent === 'claude') {
-    const run = await deps.run({
-      command: plan.binaryPath,
-      args: claudeSandboxProbeArgs(plan.settingsPath),
-      cwd: plan.cwd,
-      env: plan.env,
-      stdin: CLAUDE_SANDBOX_PROBE_PROMPT,
-      timeoutMs: SANDBOX_PROBE_TIMEOUT_MS
-    })
-    return readClaudeSandboxProbe(run)
+    const runOnce = async (): Promise<SandboxProbeResult> =>
+      readClaudeSandboxProbe(
+        await deps.run({
+          command: plan.binaryPath,
+          args: claudeSandboxProbeArgs(plan.settingsPath),
+          cwd: plan.cwd,
+          env: plan.env,
+          stdin: CLAUDE_SANDBOX_PROBE_PROMPT,
+          timeoutMs: SANDBOX_PROBE_TIMEOUT_MS
+        })
+      )
+    const first = await runOnce()
+    // A turn that ran no command says nothing about the sandbox; one more
+    // turn rules out a passing model or service hiccup before refusing.
+    return !first.ok && first.noCommandRan === true ? runOnce() : first
   }
   const baseArgs = codexSandboxProbeArgs(plan.configToml)
   if (baseArgs === null) {

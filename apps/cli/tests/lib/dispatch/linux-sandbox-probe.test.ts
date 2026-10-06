@@ -32,6 +32,7 @@ import {
   type SandboxProbeRunner
 } from '../../../src/lib/worker-boundary.js'
 import { listingRevealsSocket, reachDriverSocketUnderOptIn } from './driver-socket-reach.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../process-fixture.js'
 import { FAKE_CLAUDE_PROBE_ANSWER } from './fake-sandbox-probe.js'
 
 const SECCOMP_ERROR =
@@ -149,6 +150,31 @@ describe('linuxUnixSocketFilterOptIn — host-level only', () => {
       })
     ).toBe(true)
   })
+
+  it('ignores it for every env file Bun could load, whatever NODE_ENV is, and any other .env* file', () => {
+    const readFile = (path: string): string | null => {
+      try {
+        return readFileSync(path, 'utf8')
+      } catch {
+        return null
+      }
+    }
+    for (const file of ['.env.development', '.env.development.local', '.env.production', '.env.test', '.env.staging']) {
+      const cwd = tempDir('vinaya-probe-envmode-')
+      writeFileSync(join(cwd, file), `${LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV}=1\n`)
+      for (const env of [{}, { NODE_ENV: 'production' }]) {
+        expect(
+          linuxUnixSocketFilterOptIn({
+            cwd,
+            readFile,
+            platform: 'linux',
+            env: { ...env, [LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV]: '1' }
+          }),
+          `${file} with NODE_ENV=${(env as { NODE_ENV?: string }).NODE_ENV ?? 'unset'}`
+        ).toBe(false)
+      }
+    }
+  })
 })
 
 describe('the opt-in sets allowAllUnixSockets and nothing else', () => {
@@ -220,12 +246,15 @@ describe('readClaudeSandboxProbe — judged from the Bash tool result, never the
     expect(readClaudeSandboxProbe(run({ stdout })).ok).toBe(false)
   })
 
-  it("falls back to Claude's own output when no tool ran, and names a timeout", () => {
-    expect(readClaudeSandboxProbe(run({ exitCode: 1, stderr: 'sandbox failed to start\n' }))).toEqual({
+  it("says the sandbox could not be confirmed when no tool ran, quoting Claude's own output, and names a timeout", () => {
+    expect(readClaudeSandboxProbe(run({ exitCode: 1, stderr: 'Invalid API key\n' }))).toEqual({
       ok: false,
-      error: 'sandbox failed to start'
+      noCommandRan: true,
+      error: 'Claude ran no Bash command, so the sandbox could not be confirmed to run one: Invalid API key'
     })
-    expect(readClaudeSandboxProbe(run({ exitCode: null, timedOut: true })).ok).toBe(false)
+    const timedOut = readClaudeSandboxProbe(run({ exitCode: null, timedOut: true }))
+    expect(timedOut.ok).toBe(false)
+    if (!timedOut.ok) expect(timedOut.noCommandRan).toBeUndefined()
   })
 })
 
@@ -269,6 +298,38 @@ describe('probeAgentSandbox — one command through the real sandbox, Linux only
       { platform: 'linux', run: fake.runner }
     )
     expect(result).toEqual({ ok: false, error: SECCOMP_ERROR })
+    expect(fake.calls).toHaveLength(1)
+  })
+
+  it('tries once more when the turn ran no command, and passes if the second turn does', async () => {
+    const outputs = [
+      run({ exitCode: 1, stderr: 'overloaded' }),
+      run({ stdout: claudeStream(SANDBOX_PROBE_MARKER, false) })
+    ]
+    const calls: unknown[] = []
+    const result = await probeAgentSandbox(
+      { agent: 'claude', binaryPath: 'claude', cwd: '/wt', env: {}, settingsPath: '/s.json' },
+      {
+        platform: 'linux',
+        run: async (input) => {
+          calls.push(input)
+          return outputs.shift()!
+        }
+      }
+    )
+    expect(result).toEqual({ ok: true })
+    expect(calls).toHaveLength(2)
+  })
+
+  it('refuses after two turns that ran no command, saying the sandbox could not be confirmed', async () => {
+    const fake = fakeRunner(run({ exitCode: 1, stderr: 'model not found' }))
+    const result = await probeAgentSandbox(
+      { agent: 'claude', binaryPath: 'claude', cwd: '/wt', env: {}, settingsPath: '/s.json' },
+      { platform: 'linux', run: fake.runner }
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toContain('could not be confirmed')
+    expect(fake.calls).toHaveLength(2)
   })
 
   it("runs Codex through `codex sandbox` with the staged sandbox mode and the dispatch's writable roots", async () => {
@@ -397,6 +458,135 @@ describe('listingRevealsSocket', () => {
     expect(listingRevealsSocket('LISTED:/tmp/vinaya-dev-tools|\n', socketPath)).toBe(false)
     expect(listingRevealsSocket('LIST-DENIED:/tmp/vinaya-dev-tools|EACCES\n', socketPath)).toBe(false)
   })
+})
+
+/**
+ * `dispatchRole` end to end, through the probe. A child process presents
+ * itself as Linux before it imports `dispatch.ts`, with stub `bwrap`/`socat`
+ * and a fake `claude` on `PATH`, so the real confinement, settings file,
+ * probe, refusal and log run on any host. The fake answers the probe call
+ * (its argv names the marker command) as the test asks, and records every
+ * call in order.
+ */
+describe('dispatchRole runs the probe before spawn on Linux', () => {
+  const DISPATCH_LIB = join(import.meta.dir, '..', '..', '..', 'src', 'lib', 'dispatch.ts')
+
+  function pathWithoutRealVendors(): string {
+    return (process.env.PATH ?? '')
+      .split(':')
+      .filter((d) => d && !['claude', 'codex', 'gemini', 'bwrap', 'socat'].some((v) => existsSync(join(d, v))))
+      .join(':')
+  }
+
+  type ProbeOutcome = 'sandbox-error' | 'pass'
+
+  function runDispatch(outcome: ProbeOutcome, extraEnv: Record<string, string> = {}) {
+    const home = tempDir('vinaya-probe-e2e-home-')
+    const cwd = tempDir('vinaya-probe-e2e-cwd-')
+    const binDir = tempDir('vinaya-probe-e2e-bin-')
+    const calls = join(cwd, 'calls.log')
+    const promptFile = join(cwd, 'prompt.txt')
+    const resultFile = join(cwd, 'result.json')
+    writeFileSync(promptFile, 'do the thing')
+    for (const tool of ['bwrap', 'socat']) {
+      writeFileSync(join(binDir, tool), '#!/bin/sh\nexit 0\n')
+      chmodSync(join(binDir, tool), 0o755)
+    }
+    const probeAnswer =
+      outcome === 'pass'
+        ? FAKE_CLAUDE_PROBE_ANSWER.replace('cat > /dev/null;', `echo "probe $*" >> "${calls}"; cat > /dev/null;`)
+        : `case "$*" in *${SANDBOX_PROBE_MARKER}*) echo "probe $*" >> "${calls}"; cat > /dev/null; printf '%s\\n' '${JSON.stringify(
+            { type: 'user', message: { content: [{ type: 'tool_result', is_error: true, content: SECCOMP_ERROR }] } }
+          )}'; exit 0;; esac\n`
+    writeFileSync(
+      join(binDir, 'claude'),
+      `#!/bin/sh\n${probeAnswer}echo spawn >> "${calls}"\ncat > /dev/null\nprintf '%s' '{"session_id":"s","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
+    )
+    chmodSync(join(binDir, 'claude'), 0o755)
+    const script = join(cwd, 'dispatch.ts')
+    writeFileSync(
+      script,
+      [
+        "import { writeFileSync } from 'node:fs'",
+        "Object.defineProperty(process, 'platform', { value: 'linux' })",
+        `const { dispatchRole } = await import(${JSON.stringify(DISPATCH_LIB)})`,
+        "const result = await dispatchRole('developer', 'claude', 'probe', {",
+        `  promptFile: ${JSON.stringify(promptFile)},`,
+        `  cwd: ${JSON.stringify(cwd)},`,
+        '  unattended: true',
+        '})',
+        `writeFileSync(${JSON.stringify(resultFile)}, JSON.stringify(result))`
+      ].join('\n')
+    )
+    const child = spawnSyncBudgeted(
+      'bun',
+      [script],
+      {
+        cwd,
+        encoding: 'utf8',
+        env: {
+          ...stripVinayaEnv(process.env),
+          HOME: home,
+          PATH: `${binDir}:${pathWithoutRealVendors()}`,
+          ...extraEnv
+        }
+      },
+      30_000,
+      'dispatchRole probe fixture'
+    )
+    expect(child.status, child.stderr).toBe(0)
+    const logPath = join(home, '.vinaya', 'runtime', 'unresolved', 'logs', 'unresolved', 'none.ndjson')
+    return {
+      stderr: child.stderr,
+      result: JSON.parse(readFileSync(resultFile, 'utf8')) as { failureReason?: string; exitCode: number | null },
+      calls: existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n') : [],
+      log: (existsSync(logPath) ? readFileSync(logPath, 'utf8').trim().split('\n') : [])
+        .filter(Boolean)
+        .map(
+          (l) =>
+            JSON.parse(l) as { kind?: string; event?: string; operation?: string; result?: string; target?: string }
+        )
+    }
+  }
+
+  function settingsOf(probeCall: string): { sandbox: { network: { allowAllUnixSockets?: boolean } } } {
+    const settingsPath = probeCall.split(' ')[probeCall.split(' ').indexOf('--settings') + 1] as string
+    return JSON.parse(readFileSync(settingsPath, 'utf8'))
+  }
+
+  it("refuses before the agent starts, quoting the sandbox's error, and logs the probe failure", () => {
+    const run = runDispatch('sandbox-error')
+    expect(run.calls).toHaveLength(1)
+    expect(run.calls[0]).toStartWith('probe ')
+    expect(run.calls[0]).toContain('--settings')
+    expect(run.result.failureReason).toBe('refused')
+    expect(run.result.exitCode).toBeNull()
+    expect(run.stderr).toContain("refused — claude's sandbox could not run a probe command on this host")
+    expect(run.stderr).toContain(SECCOMP_ERROR)
+    const probeLine = run.log.find((l) => l.kind === 'operation' && l.operation === 'linux-sandbox-probe')
+    expect(probeLine).toMatchObject({ event: 'completed', result: 'unavailable', target: 'claude' })
+    expect(run.log.find((l) => l.event === 'dispatch_failed')).toBeDefined()
+    expect(run.log.find((l) => l.event === 'dispatched')).toBeUndefined()
+  }, 40_000)
+
+  it('spawns the agent only after the probe passes, with the filter on when the variable is unset', () => {
+    const run = runDispatch('pass')
+    expect(run.calls.map((c) => c.split(' ')[0])).toEqual(['probe', 'spawn'])
+    expect(settingsOf(run.calls[0] as string).sandbox.network.allowAllUnixSockets).toBeUndefined()
+    expect(run.stderr).not.toContain('Unix-socket filter is off')
+    expect(run.result.failureReason).toBeUndefined()
+    expect(run.log.find((l) => l.event === 'dispatched')).toBeDefined()
+    expect(run.log.find((l) => l.operation === 'linux-sandbox-probe')).toBeUndefined()
+  }, 40_000)
+
+  it('with the host variable set, says the filter is off, probes with allowAllUnixSockets, then spawns', () => {
+    const run = runDispatch('pass', { [LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV]: '1' })
+    expect(run.stderr).toContain(
+      `the sandbox's Unix-socket filter is off on this host (${LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV}=1)`
+    )
+    expect(run.calls.map((c) => c.split(' ')[0])).toEqual(['probe', 'spawn'])
+    expect(settingsOf(run.calls[0] as string).sandbox.network.allowAllUnixSockets).toBe(true)
+  }, 40_000)
 })
 
 const LIVE = process.env.VINAYA_SANDBOX_CONFORMANCE === '1' && process.platform === 'linux'
