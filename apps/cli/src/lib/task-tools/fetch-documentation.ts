@@ -45,8 +45,8 @@
  * `DOCUMENTATION_READ_MIN_SIZE` bytes — the same minimum the `WebFetch` read
  * check uses. Only then does the driver append a receipt, keyed by the
  * source's identity (its normalized URL), to a receipts file in the task's
- * hooks area, which neither agent's sandbox can write. Both agents' Stop hooks
- * read that file.
+ * hooks area, which the after-turn confinement check protects. Both agents'
+ * Stop hooks read that file.
  */
 
 import { createHash } from 'node:crypto'
@@ -840,7 +840,7 @@ export function appendDocumentationReceipt(receiptsPath: string, receipt: Docume
 }
 
 export type FetchDocumentationToolOptions = {
-  /** Where receipts are appended — `documentationReceiptsPath(<task hooks area>)`, a path no agent sandbox can write. */
+  /** Where receipts are appended — `documentationReceiptsPath(<task hooks area>)`, a path the after-turn confinement check protects. */
   receiptsPath: string
   deps?: FetchDocumentationDeps
 }
