@@ -2592,6 +2592,65 @@ export function changedProtectedPaths(
   return changed
 }
 
+/**
+ * One turn's after-turn protected-path check, with writes attributed by
+ * driver tool-call boundary. `driverToolCall` wraps each call the driver's own
+ * tools serve during the turn (commit and push, open pull request, refresh
+ * evidence, …): right before the call runs, any change to a
+ * `driverWrittenPaths` entry since its last baseline is recorded as the
+ * worker's — it happened between tool calls — and right after the call
+ * returns, those entries are re-hashed as the new baseline, so the records
+ * the tool itself wrote are the driver's. `changedPaths` reports every path
+ * the worker changed: the ones recorded at a tool-call start plus whatever
+ * still differs from the latest baseline now.
+ *
+ * Only `driverWrittenPaths` are ever re-baselined, and only at a tool-call
+ * return — never on a timer, never at turn end. A turn with no tool calls (a
+ * reviewer's) compares against the one snapshot taken before it started,
+ * exactly as `snapshotProtectedPaths`/`changedProtectedPaths` do. While one
+ * tool call is still in flight another may start; a write made in that
+ * overlap cannot be told apart from the in-flight call's own, so it is
+ * attributed to the driver, and the baseline is re-taken only once no call
+ * is in flight.
+ */
+export type TurnWriteAttribution = {
+  driverToolCall: <T>(call: () => Promise<T>) => Promise<T>
+  changedPaths: () => string[]
+}
+
+export function startTurnWriteAttribution(
+  entries: readonly ProtectedPathEntry[],
+  driverWrittenPaths: readonly string[]
+): TurnWriteAttribution {
+  const baseline = snapshotProtectedPaths(entries)
+  const driverEntries = entries.filter((entry) => driverWrittenPaths.includes(entry.path))
+  const workerChanged = new Set<string>()
+  let inFlight = 0
+  return {
+    driverToolCall: async (call) => {
+      if (inFlight === 0) {
+        for (const path of changedProtectedPaths(driverEntries, baseline)) workerChanged.add(path)
+      }
+      inFlight += 1
+      try {
+        return await call()
+      } finally {
+        inFlight -= 1
+        if (inFlight === 0) Object.assign(baseline, snapshotProtectedPaths(driverEntries))
+      }
+    },
+    changedPaths: () => {
+      const changedNow = new Set(changedProtectedPaths(entries, baseline))
+      return entries.map((entry) => entry.path).filter((path) => workerChanged.has(path) || changedNow.has(path))
+    }
+  }
+}
+
+/** The task's control store — the one protected entry the driver's own tools write during a turn (effect and ownership records), so the one `startTurnWriteAttribution` re-baselines after each tool call. */
+export function taskControlDir(runtimeDir: string, task: number): string {
+  return join(runtimeDir, 'tasks-execution', String(task), 'control')
+}
+
 /** `statSync`-based, not name-based — a sessions-area entry is a `.json` file for one role+agent or a `-config` directory for the same; asking the filesystem is simpler than parsing the name and cannot drift from it. `'file'` on any stat failure (an entry that vanished between listing and stat is reported as a file that is now simply absent, never a crash). */
 function entryKind(path: string): 'file' | 'dir' {
   try {
@@ -2715,7 +2774,7 @@ export function protectedPathsForTurn(input: {
 }): ProtectedPathEntry[] {
   const taskDir = join(input.runtimeDir, 'tasks-execution', String(input.task))
   const entries: ProtectedPathEntry[] = [
-    { path: join(taskDir, 'control'), kind: 'dir' },
+    { path: taskControlDir(input.runtimeDir, input.task), kind: 'dir' },
     ...sourceReceiptPaths(join(taskDir, 'hooks')),
     ...otherRolesProtectedPaths(input)
   ]
