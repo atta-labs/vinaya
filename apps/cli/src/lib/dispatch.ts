@@ -82,6 +82,11 @@ import { execFileSync, spawn } from 'node:child_process'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { homedir, hostname as osHostname, tmpdir } from 'node:os'
 import { parseIssueDocumentation, redact, summarizeTranscript } from '@attalabs/aeg-core'
+import {
+  DOCUMENTATION_READ_MIN_SIZE,
+  documentationReceiptsPath,
+  FETCH_DOCUMENTATION_TOOL
+} from './task-tools/fetch-documentation.js'
 import type { IssueDocumentationSource, Role, RoleAttemptOutcome, TranscriptSummary } from '@attalabs/aeg-core'
 import { createLogSink, drainLogSpool, resolveLogAppendPath } from './log-sink.js'
 import { appendRoleLine } from './loop-log.js'
@@ -960,9 +965,31 @@ function documentationSourcesFromPrompt(role: Role, prompt: string): IssueDocume
 }
 
 /**
- * The smallest `WebFetch` response, in bytes, the Documentation read-gate counts as a read: a login page, an error page or an empty shell falls below it.
+ * The smallest response, in bytes, the Documentation read-gate counts as a read: a login page, an error page or an empty shell falls below it. Owned by `fetch-documentation.ts`, so the `WebFetch` check and the driver's read receipt apply one value.
  */
-export const DOCUMENTATION_READ_MIN_SIZE = 1000
+export { DOCUMENTATION_READ_MIN_SIZE }
+
+/** How the driver's `fetch_documentation` tool appears to each agent: Claude prefixes MCP tools with `mcp__<server>__`. */
+const FETCH_DOCUMENTATION_TOOL_FOR_CLAUDE = `mcp__vinaya-dev-tools__${FETCH_DOCUMENTATION_TOOL}`
+
+/**
+ * The stand-alone hook-script source that reads the driver's documentation
+ * read receipts (`fetch-documentation.ts`) and returns the set of source
+ * identities they record. Only the driver's `fetch_documentation` tool writes
+ * that file, from outside every sandbox, so a receipt there is a read the
+ * driver itself observed. Same normalization as the hooks' own `normalize`.
+ */
+function receiptSourcesSnippet(receiptsPath: string): string {
+  return [
+    '    const receiptSources = new Set();',
+    '    try {',
+    `      for (const line of fs.readFileSync(${JSON.stringify(receiptsPath)}, 'utf8').split('\\n')) {`,
+    '        if (!line) continue;',
+    "        try { const r = JSON.parse(line); if (r && typeof r.source === 'string') receiptSources.add(normalize(r.source)); } catch {}",
+    '      }',
+    '    } catch {}'
+  ].join('\n')
+}
 
 /**
  * The `PostToolUse` hook that records every `WebFetch` URL for this session
@@ -1056,7 +1083,10 @@ function codexDocumentationLogHookScript(dir: string): string {
  * this hook's, never the Developer's own judgement call about whether it
  * read enough.
  */
-export function documentationStopHookScript(dir: string): string {
+export function documentationStopHookScript(
+  dir: string,
+  receiptsPath: string = documentationReceiptsPath(dirname(dir))
+): string {
   return [
     "const fs = require('fs');",
     "let d = '';",
@@ -1080,6 +1110,7 @@ export function documentationStopHookScript(dir: string): string {
     "        .filter((x) => x && typeof x.url === 'string');",
     '    } catch { entries = []; }',
     "    const normalize = (u) => String(u).trim().split('#')[0].replace(/\\/+$/, '');",
+    receiptSourcesSnippet(receiptsPath),
     '    const isUrl = (s) => /^https?:\\/\\//i.test(String(s).trim());',
     '    const hostOf = (u) => { try { return new URL(String(u).trim()).host.toLowerCase(); } catch { return null; } };',
     `    const minSize = ${DOCUMENTATION_READ_MIN_SIZE};`,
@@ -1097,14 +1128,15 @@ export function documentationStopHookScript(dir: string): string {
     '    const problems = [];',
     '    for (const s of sources) {',
     '      if (!isUrl(s.source)) continue;',
+    '      if (receiptSources.has(normalize(s.source))) continue;',
     '      const mine = entries.filter((x) => normalize(x.url) === normalize(s.source));',
-    "      if (mine.length === 0) { problems.push('- ' + s.source + ' (governs: ' + s.mechanism + '): never fetched via WebFetch'); continue; }",
+    `      if (mine.length === 0) { problems.push('- ' + s.source + ' (governs: ' + s.mechanism + '): never fetched via WebFetch or ${FETCH_DOCUMENTATION_TOOL_FOR_CLAUDE}'); continue; }`,
     '      const reasons = mine.map((x) => whyNotRead(x, s.source));',
     '      if (reasons.some((r) => r === null)) continue;',
     "      problems.push('- ' + s.source + ' (governs: ' + s.mechanism + '): fetched but did not count — ' + reasons[reasons.length - 1]);",
     '    }',
     '    if (problems.length > 0) {',
-    "      process.stderr.write('The brief\\'s `## Documentation` section names a source with no counted read. Fetch it via WebFetch before ending the turn (a fetch counts only when it succeeded, stayed on the source\\'s host and returned real content), and record the mechanism/version it confirms:\\n' + problems.join('\\n') + '\\n');",
+    "      process.stderr.write('The brief\\'s `## Documentation` section names a source with no counted read. Fetch it via WebFetch (a fetch counts only when it succeeded, stayed on the source\\'s host and returned real content) or via the driver\\'s fetch_documentation tool (counts when it succeeded and returned real text, wherever the page redirected) before ending the turn, and record the mechanism/version it confirms:\\n' + problems.join('\\n') + '\\n');",
     '      process.exit(2);',
     '    }',
     '  } catch {',
@@ -1116,7 +1148,10 @@ export function documentationStopHookScript(dir: string): string {
   ].join('\n')
 }
 
-function codexDocumentationStopHookScript(dir: string): string {
+export function codexDocumentationStopHookScript(
+  dir: string,
+  receiptsPath: string = documentationReceiptsPath(dirname(dirname(dir)))
+): string {
   return [
     "const fs = require('fs');",
     "let d = '';",
@@ -1132,10 +1167,12 @@ function codexDocumentationStopHookScript(dir: string): string {
     "    let fetchedUrls = []; try { fetchedUrls = fs.readFileSync(logPath, 'utf8').split('\\n').filter(Boolean).map((line) => { try { return JSON.parse(line).url; } catch { return null; } }).filter((u) => typeof u === 'string'); } catch {}",
     "    const normalize = (u) => String(u).trim().split('#')[0].replace(/\\/+$/, '');",
     '    const fetched = new Set(fetchedUrls.map(normalize));',
+    receiptSourcesSnippet(receiptsPath),
+    '    for (const source of receiptSources) fetched.add(source);',
     "    const unread = Array.isArray(sources) ? sources.filter((s) => /^https?:\\/\\//i.test(String(s.source || '').trim()) && !fetched.has(normalize(s.source))) : [];",
     '    if (unread.length > 0) {',
     "      const names = unread.map((s) => '- ' + s.source + ' (governs: ' + s.mechanism + ')').join('\\n');",
-    "      process.stdout.write(JSON.stringify({ decision: 'block', reason: 'Fetch every required Documentation URL before completing:\\n' + names }) + '\\n');",
+    "      process.stdout.write(JSON.stringify({ decision: 'block', reason: 'Read every required Documentation URL before completing, with the fetch_documentation tool (or curl -L <URL> in Bash when the host is reachable):\\n' + names }) + '\\n');",
     '      process.exit(0);',
     '    }',
     '  } catch {}',
@@ -1152,38 +1189,58 @@ function writeCodexDispatchHooks(
   role: Role
 ): string | null {
   try {
-    const dir = join(runPath(runtimeDirForThisRepo(), scope, { area: 'hooks' }), role, 'codex')
-    mkdirSync(dir, { recursive: true, mode: 0o700 })
-    chmodSync(dir, 0o700)
-    const logScript = join(dir, 'documentation-log.mjs')
-    const stopScript = join(dir, 'documentation-stop.mjs')
-    writeFileSync(logScript, codexDocumentationLogHookScript(dir), { mode: 0o600 })
-    writeFileSync(stopScript, codexDocumentationStopHookScript(dir), { mode: 0o600 })
-    writeFileSync(join(dir, `documentation-sources-${runId}.json`), JSON.stringify(documentation), { mode: 0o600 })
-    const hooksPath = join(dir, 'hooks.json')
-    writeFileSync(
-      hooksPath,
-      JSON.stringify(
-        {
-          hooks: {
-            PostToolUse: [
-              {
-                matcher: '^Bash$',
-                hooks: [{ type: 'command', command: `bun "${logScript}"` }]
-              }
-            ],
-            Stop: [{ hooks: [{ type: 'command', command: `bun "${stopScript}"` }] }]
-          }
-        },
-        null,
-        2
-      ),
-      { mode: 0o600 }
+    return writeCodexHookFiles(
+      join(runPath(runtimeDirForThisRepo(), scope, { area: 'hooks' }), role, 'codex'),
+      runId,
+      documentation
     )
-    return hooksPath
   } catch {
     return null
   }
+}
+
+/**
+ * Writes the Codex Documentation read-gate's files into `dir`
+ * (`<task hooks area>/<role>/codex`) and returns the `hooks.json` path. The
+ * Stop hook reads the driver's read receipts from the task hooks area, two
+ * levels up.
+ */
+export function writeCodexHookFiles(dir: string, runId: string, documentation: IssueDocumentationSource[]): string {
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  chmodSync(dir, 0o700)
+  const logScript = join(dir, 'documentation-log.mjs')
+  const stopScript = join(dir, 'documentation-stop.mjs')
+  writeFileSync(logScript, codexDocumentationLogHookScript(dir), { mode: 0o600 })
+  writeFileSync(stopScript, codexDocumentationStopHookScript(dir), { mode: 0o600 })
+  // Written only when this prompt names sources, as the Claude settings
+  // do. A loop's dispatches share one run id, so rewriting the manifest as
+  // `[]` on a later prompt with no Documentation section changed a file the
+  // after-turn check protects, and blamed the Developer for the driver's
+  // own write.
+  if (documentation.length > 0) {
+    writeFileSync(join(dir, `documentation-sources-${runId}.json`), JSON.stringify(documentation), { mode: 0o600 })
+  }
+  const hooksPath = join(dir, 'hooks.json')
+  writeFileSync(
+    hooksPath,
+    JSON.stringify(
+      {
+        hooks: {
+          PostToolUse: [
+            {
+              matcher: '^Bash$',
+              hooks: [{ type: 'command', command: `bun "${logScript}"` }]
+            }
+          ],
+          Stop: [{ hooks: [{ type: 'command', command: `bun "${stopScript}"` }] }]
+        }
+      },
+      null,
+      2
+    ),
+    { mode: 0o600 }
+  )
+  return hooksPath
 }
 
 /**
@@ -4034,7 +4091,7 @@ export async function dispatchRole(
   const documentationSources = documentationSourcesFromPrompt(role, prompt)
   const codexDocumentationGuidance =
     agent === 'codex' && documentationSources.some((source) => isDocumentationUrl(source.source))
-      ? '\n\nCodex documentation receipt: fetch every URL in `## Documentation` with `curl -L <URL>` in a Bash tool call before ending this turn. Built-in web search is not a receipt route for this dispatch.\n'
+      ? `\n\nCodex documentation receipt: read every URL in \`## Documentation\` with the dev-tools \`${FETCH_DOCUMENTATION_TOOL}\` tool before ending this turn — the driver fetches the page outside your sandbox and records the read. \`curl -L <URL>\` in a Bash tool call also counts when the host is reachable from the sandbox. Built-in web search is not a receipt route for this dispatch.\n`
       : ''
   if (agent === 'gemini' && documentationSources.some((s) => isDocumentationUrl(s.source))) {
     // round 2 security review, LOW — the PostToolUse/Stop hook

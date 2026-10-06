@@ -50,6 +50,7 @@ import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import type { Role } from '@attalabs/aeg-core'
 import { devToolsSocketRoot } from './task-tools/dev-tools-registration.js'
+import { documentationReceiptsPath } from './task-tools/fetch-documentation.js'
 
 /** The same allowlist discipline `apps/cli/src/checks/runner.ts`'s `buildCheckEnv` already applies to a custom check's child — named here again, deliberately, rather than imported: `checks/runner.ts` sits outside this task's surface (`apps/cli/src/checks` is explicitly named `out:` in the dispatched brief), and this list is small enough that naming it twice costs less than reaching across that boundary. `apps/cli/specs/isolation.md` §2 documents this precedent as the pattern this module extends to the Worker/Reviewer dispatch path. */
 export const WORKER_ENV_ALLOWLIST_KEYS = [
@@ -3104,7 +3105,8 @@ function sourceReceiptPaths(hooksDir: string): ProtectedPathEntry[] {
  * The concrete, per-turn protected-path list O1 names: the control store
  * (effect records live inside it — `effectDir`/`effectPath`,
  * `packages/aeg-core/src/control-store/local.ts` — so one entry covers
- * both), the source receipts, every other role's folder (scoped per
+ * both), the source receipts and the driver's documentation read receipts,
+ * every other role's folder (scoped per
  * `otherRolesProtectedPaths`'s own doc comment), and the policy
  * configuration file. The dispatched role's own worktree and scratch
  * directory are never named here — they are what this turn is expected to
@@ -3127,6 +3129,10 @@ export function protectedPathsForTurn(input: {
   const entries: ProtectedPathEntry[] = [
     { path: taskControlDir(input.runtimeDir, input.task), kind: 'dir' },
     ...sourceReceiptPaths(join(taskDir, 'hooks')),
+    // Listed whether or not it exists yet: the driver's `fetch_documentation`
+    // tool creates it mid-turn, and that write is attributed to the driver by
+    // tool-call boundary (`startTurnWriteAttribution`), never to the worker.
+    { path: documentationReceiptsPath(join(taskDir, 'hooks')), kind: 'file' },
     ...otherRolesProtectedPaths(input)
   ]
   if (input.vinayaConfigPath !== null) entries.push({ path: input.vinayaConfigPath, kind: 'file' })
