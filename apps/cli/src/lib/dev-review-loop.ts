@@ -675,6 +675,12 @@ export type LoopDeps = {
   readWorktreeBranch: (worktreePath: string) => string | null
   /** O7: every path the worktree changed since `base` (committed AND uncommitted — `git diff --name-only <base>`), for the Surface check. Best-effort: `[]` when unreadable. */
   gitWorktreeChangedPaths: (worktreePath: string, base: string) => string[]
+  /** The exact default-branch commit this turn merged into the worktree (an in-progress merge's incoming commit, else a merge commit's default-branch parent in `sinceBase..HEAD`), or `null` when the turn merged none. */
+  readMergedDefaultCommit: (
+    worktreePath: string,
+    sinceBase: string | null,
+    remoteUrl: string | null
+  ) => MergedDefaultCommit | null
   /** O1/O2: the worktree's own diff text since `base`, for the after-turn credential scan. `null` when unreadable. */
   gitWorktreeDiffText: (worktreePath: string, base: string) => string | null
   /** Builds this repository's vendored CLI before the driver's commit when its ignored bin is absent; ordinary adopters are a no-op. */
@@ -1071,7 +1077,7 @@ function defaultReadWorktreeBranch(worktreePath: string): string | null {
 }
 
 /** O7: every path the worktree changed since `base`, committed and uncommitted (`git diff --name-only <base>`). Best-effort: `[]` on any failure. */
-function defaultGitWorktreeChangedPaths(worktreePath: string, base: string): string[] {
+export function defaultGitWorktreeChangedPaths(worktreePath: string, base: string): string[] {
   try {
     const raw = execFileSync('git', ['-C', worktreePath, 'diff', '--name-only', base], {
       encoding: 'utf8',
@@ -1084,6 +1090,89 @@ function defaultGitWorktreeChangedPaths(worktreePath: string, base: string): str
   } catch {
     return []
   }
+}
+
+function gitOk(worktreePath: string, args: string[]): string | null {
+  try {
+    return execFileSync('git', ['-C', worktreePath, ...args], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+  } catch {
+    return null
+  }
+}
+
+/** A default-branch commit a turn merged in, and the paths the turn rolled back to an older default-branch state. */
+export type MergedDefaultCommit = { commit: string; regressedPaths: string[] }
+
+/**
+ * The exact default-branch commit a Developer turn merged into its worktree:
+ * the in-progress merge's incoming commit (`MERGE_HEAD`), else the newest
+ * merge parent in `sinceBase..HEAD` (nearest the head) that is a default-branch
+ * commit. The commit is read from the merge itself, never from a local
+ * default-branch ref by name.
+ *
+ * The one source of truth for "is a default-branch commit" is the remote: the
+ * default branch's head S is read with `git ls-remote <remoteUrl> refs/heads/main`
+ * (fetching that one ref when S's object is missing locally), and a parent P
+ * qualifies only when `git merge-base --is-ancestor P S` holds. A commit that
+ * merely descends from the default branch (a side branch cut from it) fails
+ * that test, so its paths stay task changes, and a merge whose parent fails it
+ * never moves the base. `null` when the turn merged none or S is unreadable.
+ *
+ * `remoteUrl` is built by the driver from the repository it resolved, never read
+ * from the worktree's `origin`, which the Developer can repoint; the head is
+ * read from outside any checkout so no worktree config can rewrite the URL, and
+ * the fetched object is only used under the hash the remote reported.
+ *
+ * Measuring against an older default-branch commit would hide a file the turn
+ * reset to that older state, so every path that differs from S and that the
+ * default branch changed after the merged commit is reported as `regressedPaths`.
+ */
+export function defaultReadMergedDefaultCommit(
+  worktreePath: string,
+  sinceBase: string | null,
+  remoteUrl: string | null
+): MergedDefaultCommit | null {
+  if (!remoteUrl) return null
+  let remote: string | null = null
+  try {
+    remote = execFileSync('git', ['ls-remote', remoteUrl, 'refs/heads/main'], {
+      cwd: tmpdir(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+  } catch {
+    return null
+  }
+  const head = remote.split(/\s+/)[0]
+  if (!head || !/^[0-9a-f]{40,64}$/.test(head)) return null
+  if (gitOk(worktreePath, ['cat-file', '-e', `${head}^{commit}`]) === null) {
+    gitOk(worktreePath, ['fetch', '-q', remoteUrl, 'refs/heads/main'])
+    if (gitOk(worktreePath, ['cat-file', '-e', `${head}^{commit}`]) === null) return null
+  }
+  const lines = (args: string[]): string[] =>
+    (gitOk(worktreePath, args) ?? '').split('\n').filter((l) => l.trim().length > 0)
+  const vetted = (sha: string): MergedDefaultCommit | null => {
+    if (gitOk(worktreePath, ['merge-base', '--is-ancestor', sha, head]) === null) return null
+    const advanced = new Set(lines(['diff', '--name-only', sha, head]))
+    return { commit: sha, regressedPaths: lines(['diff', '--name-only', head]).filter((path) => advanced.has(path)) }
+  }
+  const incoming = gitOk(worktreePath, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])
+  const fromMergeHead = incoming ? vetted(incoming) : null
+  if (fromMergeHead) return fromMergeHead
+  const range = sinceBase ? [`^${sinceBase}`, 'HEAD'] : ['HEAD']
+  const merges = gitOk(worktreePath, ['rev-list', '--topo-order', '--merges', '--parents', ...range])
+  if (!merges) return null
+  for (const line of merges.split('\n')) {
+    const [, ...parents] = line.trim().split(/\s+/)
+    for (const parent of parents.slice(1)) {
+      const found = vetted(parent)
+      if (found) return found
+    }
+  }
+  return null
 }
 
 /** The exclusive lower bound for paths attributed to one branch push. */
@@ -1959,6 +2048,7 @@ function defaultDeps(): LoopDeps {
     readUnpushedWorkDetail: defaultReadUnpushedWorkDetail,
     readWorktreeBranch: defaultReadWorktreeBranch,
     gitWorktreeChangedPaths: defaultGitWorktreeChangedPaths,
+    readMergedDefaultCommit: defaultReadMergedDefaultCommit,
     gitWorktreeDiffText: defaultGitWorktreeDiffText,
     buildVendoredCliIfMissing: defaultBuildVendoredCliIfMissing,
     commitWorktree: defaultCommitWorktree,
@@ -3659,13 +3749,23 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           return null
         }
       }
+      // One comparison point for every publication check: the default-branch
+      // commit the turn merged in, else the conflict-retry's `origin/main`,
+      // else the last pushed head. `extraPaths` are paths the turn rolled back
+      // to an older default-branch state, which the merged commit cannot show.
+      const defaultRemoteUrl = repo ? `https://github.com/${repo.owner}/${repo.repo}.git` : null
+      const publicationRange = (remoteHead: string | null): { base: string | null; extraPaths: string[] } => {
+        const pushedBase = pushedCommitRangeBase(remoteHead, publicationExpectedBase)
+        const merged = d.readMergedDefaultCommit(worktree, pushedBase, defaultRemoteUrl)
+        if (merged) return { base: merged.commit, extraPaths: merged.regressedPaths }
+        return { base: pendingConflictFiles !== null ? 'origin/main' : pushedBase, extraPaths: [] }
+      }
+      const publicationChangedPaths = (range: { base: string | null; extraPaths: string[] }): string[] => [
+        ...new Set([...(range.base ? d.gitWorktreeChangedPaths(worktree, range.base) : []), ...range.extraPaths])
+      ]
       const worktreeChangedPaths = (): string[] => {
         const unpushed = d.readUnpushedWorkDetail(worktree)
-        const rangeBase =
-          pendingConflictFiles !== null
-            ? 'origin/main'
-            : pushedCommitRangeBase(safeRemoteHead(), publicationExpectedBase)
-        const diffPaths = rangeBase ? d.gitWorktreeChangedPaths(worktree, rangeBase) : []
+        const diffPaths = publicationChangedPaths(publicationRange(safeRemoteHead()))
         return [...new Set([...diffPaths, ...unpushed.dirtyFiles])]
       }
       const prChangedPaths = async (): Promise<string[] | null> => {
@@ -3711,10 +3811,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
           const remoteHeadBefore = safeRemoteHead()
           if (d.readUnpushedWorkDetail(worktree).dirtyFiles.length > 0) d.buildVendoredCliIfMissing(worktree)
-          const scanBase =
-            pendingConflictFiles !== null
-              ? 'origin/main'
-              : pushedCommitRangeBase(remoteHeadBefore, publicationExpectedBase)
+          const scanBase = publicationRange(remoteHeadBefore).base
           if (scanBase === null) {
             return {
               ok: false,
@@ -3766,11 +3863,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // A commit made by this tool remains valid work if the push hook
             // refuses. Remember it so the next call can retry that same head.
             if (unpushed.dirtyFiles.length > 0) turnPreHead = localHead
-            const rangeBase =
-              pendingConflictFiles !== null
-                ? 'origin/main'
-                : pushedCommitRangeBase(remoteHeadBefore, publicationExpectedBase)
-            const changedPaths = rangeBase ? d.gitWorktreeChangedPaths(worktree, rangeBase) : []
+            const changedPaths = publicationChangedPaths(publicationRange(remoteHeadBefore))
             const push = d.pushTaskBranch({
               task,
               branch,
