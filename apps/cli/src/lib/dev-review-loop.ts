@@ -51,13 +51,13 @@ import { configPath, loadTrustAnchorConfig, resolveSecurityScanCommand } from '.
 import {
   addedDiffLines,
   agentOwnConfigSubpaths,
-  changedProtectedPaths,
   findCredentialPatterns,
   protectedPathsForTurn,
-  snapshotProtectedPaths,
+  startTurnWriteAttribution,
+  taskControlDir,
   WORKER_ENV_ALLOWLIST_KEYS,
   type CredentialFinding,
-  type ProtectedPathEntry
+  type TurnWriteAttribution
 } from './worker-boundary.js'
 import {
   activeBudgetMs,
@@ -2983,8 +2983,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     /**
      * O1/O2: the protected-path hashes taken right before a dispatch
      * (`snapshotTurnConfinement`, below) — compared again once that SAME
-     * dispatch returns, before its own publication/trust decision ever runs.
-     * Keyed by role, never a single shared slot: `code-reviewer` and
+     * dispatch returns, before its own publication/trust decision ever runs;
+     * the control-store entry is re-baselined after each driver tool call
+     * the turn makes (`startTurnWriteAttribution`). Keyed by role, never a single shared slot: `code-reviewer` and
      * `security` dispatch CONCURRENTLY in one `Promise.all`, and a shared
      * scalar here let the second snapshot silently overwrite the first, so
      * both roles' checks ran against whichever role's entries/baseline
@@ -2994,10 +2995,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * as "unchanged" by omission; the comparison below is simply a no-op in
      * that case).
      */
-    const turnConfinementByRole = new Map<
-      Role,
-      { entries: ProtectedPathEntry[]; before: Record<string, string | null> }
-    >()
+    const turnConfinementByRole = new Map<Role, TurnWriteAttribution>()
 
     /**
      * O11: the task Issue, branch, worktree path,
@@ -3055,7 +3053,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // an unreadable config never fails this role's WHOLE check open.
       const vinayaConfigPath = configPath()
       const entries = protectedPathsForTurn({ runtimeDir: root, task, round: roundNum, role, vinayaConfigPath })
-      turnConfinementByRole.set(role, { entries, before: snapshotProtectedPaths(entries) })
+      // The control store is the one entry the driver's own tools write
+      // during a turn; `driverToolCall` (wrapped around every dev-tools call,
+      // `attributeDriverToolCalls`) re-baselines it after each call returns.
+      turnConfinementByRole.set(role, startTurnWriteAttribution(entries, [taskControlDir(root, task)]))
     }
 
     /**
@@ -3077,8 +3078,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       changedPaths: string[]
       credentialFindings: CredentialFinding[]
     } {
-      const snapshot = turnConfinementByRole.get(role)
-      const changedPaths = snapshot ? changedProtectedPaths(snapshot.entries, snapshot.before) : []
+      const changedPaths = turnConfinementByRole.get(role)?.changedPaths() ?? []
       const credentialFindings = scanTexts.flatMap(({ text, location }) => findCredentialPatterns(text, location))
       return { changedPaths, credentialFindings }
     }
@@ -3262,7 +3262,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const devToolsSocket = devToolsSocketPath(`${repo ? `${repo.owner}/${repo.repo}` : 'local'}:${task}`)
       const devToolsHost = await d.startDevTools({
         socketPath: devToolsSocket,
-        context: buildDeveloperDevToolContext(roundNum)
+        context: attributeDriverToolCalls(buildDeveloperDevToolContext(roundNum))
       })
       const attemptDispatch = (): Promise<DispatchHandle> =>
         withPromptFile(fullPrompt, (promptFile) =>
@@ -3485,6 +3485,28 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * agent holds no forge credential of its own (O4). The forge-touching side
      * effects are the injected `d.*` closures the harness fakes (O5).
      */
+    /**
+     * O1: every dev-tools call runs inside the Developer's
+     * `TurnWriteAttribution.driverToolCall`, so the effect and ownership
+     * records a tool writes into the control store are attributed to the
+     * driver, while a control-store write the worker made between tool calls
+     * is still reported by `checkTurnConfinement`.
+     */
+    function attributeDriverToolCalls(context: DevToolContext): DevToolContext {
+      const attributed = <T>(call: () => Promise<T>): Promise<T> => {
+        const attribution = turnConfinementByRole.get('developer')
+        return attribution ? attribution.driverToolCall(call) : call()
+      }
+      return {
+        publishChanges: (header) => attributed(() => context.publishChanges(header)),
+        openPullRequest: (title, body) => attributed(() => context.openPullRequest(title, body)),
+        updatePullRequestBody: (body) => attributed(() => context.updatePullRequestBody(body)),
+        refreshEvidence: () => attributed(() => context.refreshEvidence()),
+        readPullRequest: () => attributed(() => context.readPullRequest()),
+        runChecks: () => attributed(() => context.runChecks())
+      }
+    }
+
     function buildDeveloperDevToolContext(roundNum: number): DevToolContext {
       const worktree = worktreePathForBranch()
       const prNumberNow = (): number | null => d.findOpenPrForBranch(branch)?.number ?? null
