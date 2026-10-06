@@ -153,6 +153,11 @@ describe('publication range after a default-branch merge', () => {
       stdio: ['ignore', 'pipe', 'pipe']
     }).trim()
 
+  const remotes = new Map<string, string>()
+  /** The reader as the driver calls it: with the repository URL, never the worktree's `origin`. */
+  const readMerged = (dir: string, since: string | null) =>
+    defaultReadMergedDefaultCommit(dir, since, remotes.get(dir) ?? null)
+
   /** A repo with a real bare `origin` whose main is the first commit, and a task branch cut from it. */
   const fixture = (): { dir: string; base: string } => {
     const dir = mkdtempSync(join(tmpdir(), 'pub-range-'))
@@ -160,6 +165,7 @@ describe('publication range after a default-branch merge', () => {
     git(remote, 'init', '-q', '--bare', '-b', 'main')
     git(dir, 'init', '-q', '-b', 'main')
     git(dir, 'remote', 'add', 'origin', remote)
+    remotes.set(dir, remote)
     writeFileSync(join(dir, 'a.txt'), 'a\n')
     git(dir, 'add', '.')
     git(dir, 'commit', '-q', '-m', 'base')
@@ -185,7 +191,7 @@ describe('publication range after a default-branch merge', () => {
 
   it('reads nothing when the turn merged no default-branch commit', () => {
     const { dir, base } = fixture()
-    expect(defaultReadMergedDefaultCommit(dir, base)).toBeNull()
+    expect(readMerged(dir, base)).toBeNull()
   })
 
   it('refuses a merged side branch cut from the default branch: its paths stay task changes', () => {
@@ -197,7 +203,7 @@ describe('publication range after a default-branch merge', () => {
     git(dir, 'commit', '-q', '-m', 'side')
     git(dir, 'checkout', '-q', 'task')
     git(dir, 'merge', '-q', '--no-ff', '-m', 'merge side', 'side')
-    expect(defaultReadMergedDefaultCommit(dir, pushed)).toBeNull()
+    expect(readMerged(dir, pushed)).toBeNull()
     expect(defaultGitWorktreeChangedPaths(dir, pushed)).toContain('guarded.txt')
   })
 
@@ -212,8 +218,18 @@ describe('publication range after a default-branch merge', () => {
     git(dir, 'commit', '-q', '-m', 'side')
     git(dir, 'checkout', '-q', 'task')
     git(dir, 'merge', '-q', '--no-ff', '-m', 'merge side', 'side')
-    expect(defaultReadMergedDefaultCommit(dir, pushed)?.commit).toBe(tip)
+    expect(readMerged(dir, pushed)?.commit).toBe(tip)
     expect(defaultGitWorktreeChangedPaths(dir, tip)).toContain('guarded.txt')
+  })
+
+  it('reads the repository URL, not a worktree origin the Developer repointed', () => {
+    const { dir } = fixture()
+    const pushed = git(dir, 'rev-parse', 'HEAD')
+    const tip = advanceMain(dir, 'main-only.txt')
+    git(dir, 'merge', '-q', '--no-ff', '-m', 'merge main', 'main')
+    git(dir, 'remote', 'set-url', 'origin', join(tmpdir(), 'pub-nowhere-does-not-exist'))
+    expect(readMerged(dir, pushed)?.commit).toBe(tip)
+    expect(defaultReadMergedDefaultCommit(dir, pushed, null)).toBeNull()
   })
 
   it('ignores a merged commit unrelated to the default branch', () => {
@@ -225,7 +241,7 @@ describe('publication range after a default-branch merge', () => {
     git(dir, 'commit', '-q', '-m', 'other')
     git(dir, 'checkout', '-q', 'task')
     git(dir, 'merge', '-q', '--allow-unrelated-histories', '-m', 'merge other', 'other')
-    expect(defaultReadMergedDefaultCommit(dir, pushed)).toBeNull()
+    expect(readMerged(dir, pushed)).toBeNull()
   })
 
   it('reads the committed merge parent of a genuine default-branch merge, fetching the remote head itself', () => {
@@ -233,7 +249,7 @@ describe('publication range after a default-branch merge', () => {
     const pushed = git(dir, 'rev-parse', 'HEAD')
     const tip = advanceMain(dir, 'main-only.txt')
     git(dir, 'merge', '-q', '--no-ff', '-m', 'merge main', 'main')
-    expect(defaultReadMergedDefaultCommit(dir, pushed)).toEqual({ commit: tip, regressedPaths: [] })
+    expect(readMerged(dir, pushed)).toEqual({ commit: tip, regressedPaths: [] })
     expect(defaultGitWorktreeChangedPaths(dir, tip)).toEqual(['own.txt'])
     expect(defaultGitWorktreeChangedPaths(dir, pushed)).toContain('main-only.txt')
     // The remote moves on; its new head is missing locally until the reader fetches it.
@@ -243,7 +259,7 @@ describe('publication range after a default-branch merge', () => {
     git(clone, 'add', '.')
     git(clone, 'commit', '-q', '-m', 'later')
     git(clone, 'push', '-q', 'origin', 'main')
-    expect(defaultReadMergedDefaultCommit(dir, pushed)).toEqual({ commit: tip, regressedPaths: ['later.txt'] })
+    expect(readMerged(dir, pushed)).toEqual({ commit: tip, regressedPaths: ['later.txt'] })
   })
 
   it('reports a file reset to an older default-branch state after merging an older commit', () => {
@@ -259,7 +275,7 @@ describe('publication range after a default-branch merge', () => {
     git(dir, 'push', '-q', 'origin', 'main')
     git(dir, 'checkout', '-q', 'task')
     git(dir, 'merge', '-q', '--no-commit', '--no-ff', older)
-    const merged = defaultReadMergedDefaultCommit(dir, pushed)
+    const merged = readMerged(dir, pushed)
     expect(merged?.commit).toBe(older)
     expect(merged?.regressedPaths).toEqual(['guarded.txt'])
   })
@@ -269,7 +285,7 @@ describe('publication range after a default-branch merge', () => {
     const pushed = git(dir, 'rev-parse', 'HEAD')
     const tip = advanceMain(dir, 'main-only.txt')
     git(dir, 'merge', '-q', '--no-commit', '--no-ff', 'main')
-    const merged = defaultReadMergedDefaultCommit(dir, pushed)
+    const merged = readMerged(dir, pushed)
     expect(merged?.commit).toBe(tip)
     expect(defaultGitWorktreeChangedPaths(dir, tip)).toEqual(['own.txt'])
   })
@@ -281,7 +297,7 @@ describe('publication range after a default-branch merge', () => {
     git(dir, 'merge', '-q', '--no-commit', '--no-ff', 'main')
     writeFileSync(join(dir, 'a.txt'), 'edited in the merge\n')
     git(dir, 'add', '.')
-    const merged = defaultReadMergedDefaultCommit(dir, pushed)
+    const merged = readMerged(dir, pushed)
     const changed = defaultGitWorktreeChangedPaths(dir, merged?.commit as string)
     expect(changed.sort()).toEqual(['a.txt', 'own.txt'])
     const verdict = checkPublicationPreconditions({

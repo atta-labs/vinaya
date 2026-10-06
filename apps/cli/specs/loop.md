@@ -26,9 +26,11 @@ commit it merged in (the in-progress merge's incoming commit, else the newest
 merge parent nearest the head that qualifies), read from the merge itself and
 never taken from a local default-branch ref by name. What qualifies is decided
 by the remote, which the Developer cannot forge: at publication the driver reads
-the default branch's head with `git ls-remote origin refs/heads/main`, fetching
-that one ref itself when the object is missing locally (the Developer never
-fetches), and a merge parent qualifies only when `git merge-base --is-ancestor`
+the default branch's head with `git ls-remote <repository URL> refs/heads/main`,
+the URL built from the repository the driver resolved
+(`https://github.com/<owner>/<repo>.git`) and never taken from the worktree's
+`origin`, which the Developer can repoint, fetching that one ref from the same
+URL itself when the object is missing locally (the Developer never fetches), and a merge parent qualifies only when `git merge-base --is-ancestor`
 holds from it to that head. A commit that merely descends from the default
 branch, such as a side branch cut from it, fails the test, so its paths stay
 task changes judged by the Surface and protected-path checks, and a merge whose
@@ -39,6 +41,8 @@ When the merged commit is older than the remote head, a path the default branch
 changed since and that the turn left different from that head is reported. The
 driver's conflict-retry path uses the same rule, and measures against
 `origin/main` whenever no qualifying merge is found.
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:export function defaultReadMergedDefaultCommit( -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:['ls-remote', remoteUrl, 'refs/heads/main'] -->
 
 `vinaya task run <tranche> <n> --agent <claude|codex|gemini>` (`apps/cli/src/commands/task-run.ts`, `taskRunCommand`) is the normal entry: it composes `task brief`'s own preparation (renders and freezes the brief, starts no agent) with this loop, so one command runs the whole way from a planned Issue — `n` a tranche task ordinal there, resolved to its real forge Issue by preparation — to a reviewed pull request, exactly one developer started. `dev-review-loop` below is `task run`'s own debug/direct entry, kept for resuming a paused run and for driving the loop straight off an Issue number without going through preparation:
 

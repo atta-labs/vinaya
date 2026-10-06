@@ -676,7 +676,11 @@ export type LoopDeps = {
   /** O7: every path the worktree changed since `base` (committed AND uncommitted — `git diff --name-only <base>`), for the Surface check. Best-effort: `[]` when unreadable. */
   gitWorktreeChangedPaths: (worktreePath: string, base: string) => string[]
   /** The exact default-branch commit this turn merged into the worktree (an in-progress merge's incoming commit, else a merge commit's default-branch parent in `sinceBase..HEAD`), or `null` when the turn merged none. */
-  readMergedDefaultCommit: (worktreePath: string, sinceBase: string | null) => MergedDefaultCommit | null
+  readMergedDefaultCommit: (
+    worktreePath: string,
+    sinceBase: string | null,
+    remoteUrl: string | null
+  ) => MergedDefaultCommit | null
   /** O1/O2: the worktree's own diff text since `base`, for the after-turn credential scan. `null` when unreadable. */
   gitWorktreeDiffText: (worktreePath: string, base: string) => string | null
   /** Builds this repository's vendored CLI before the driver's commit when its ignored bin is absent; ordinary adopters are a no-op. */
@@ -1110,12 +1114,17 @@ export type MergedDefaultCommit = { commit: string; regressedPaths: string[] }
  * default-branch ref by name.
  *
  * The one source of truth for "is a default-branch commit" is the remote: the
- * default branch's head S is read with `git ls-remote origin refs/heads/main`
+ * default branch's head S is read with `git ls-remote <remoteUrl> refs/heads/main`
  * (fetching that one ref when S's object is missing locally), and a parent P
  * qualifies only when `git merge-base --is-ancestor P S` holds. A commit that
  * merely descends from the default branch (a side branch cut from it) fails
  * that test, so its paths stay task changes, and a merge whose parent fails it
  * never moves the base. `null` when the turn merged none or S is unreadable.
+ *
+ * `remoteUrl` is built by the driver from the repository it resolved, never read
+ * from the worktree's `origin`, which the Developer can repoint; the head is
+ * read from outside any checkout so no worktree config can rewrite the URL, and
+ * the fetched object is only used under the hash the remote reported.
  *
  * Measuring against an older default-branch commit would hide a file the turn
  * reset to that older state, so every path that differs from S and that the
@@ -1123,13 +1132,24 @@ export type MergedDefaultCommit = { commit: string; regressedPaths: string[] }
  */
 export function defaultReadMergedDefaultCommit(
   worktreePath: string,
-  sinceBase: string | null
+  sinceBase: string | null,
+  remoteUrl: string | null
 ): MergedDefaultCommit | null {
-  const remote = gitOk(worktreePath, ['ls-remote', 'origin', 'refs/heads/main'])
-  const head = remote?.split(/\s+/)[0]
+  if (!remoteUrl) return null
+  let remote: string | null = null
+  try {
+    remote = execFileSync('git', ['ls-remote', remoteUrl, 'refs/heads/main'], {
+      cwd: tmpdir(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+  } catch {
+    return null
+  }
+  const head = remote.split(/\s+/)[0]
   if (!head || !/^[0-9a-f]{40,64}$/.test(head)) return null
   if (gitOk(worktreePath, ['cat-file', '-e', `${head}^{commit}`]) === null) {
-    gitOk(worktreePath, ['fetch', '-q', 'origin', 'refs/heads/main'])
+    gitOk(worktreePath, ['fetch', '-q', remoteUrl, 'refs/heads/main'])
     if (gitOk(worktreePath, ['cat-file', '-e', `${head}^{commit}`]) === null) return null
   }
   const lines = (args: string[]): string[] =>
@@ -3733,9 +3753,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // commit the turn merged in, else the conflict-retry's `origin/main`,
       // else the last pushed head. `extraPaths` are paths the turn rolled back
       // to an older default-branch state, which the merged commit cannot show.
+      const defaultRemoteUrl = repo ? `https://github.com/${repo.owner}/${repo.repo}.git` : null
       const publicationRange = (remoteHead: string | null): { base: string | null; extraPaths: string[] } => {
         const pushedBase = pushedCommitRangeBase(remoteHead, publicationExpectedBase)
-        const merged = d.readMergedDefaultCommit(worktree, pushedBase)
+        const merged = d.readMergedDefaultCommit(worktree, pushedBase, defaultRemoteUrl)
         if (merged) return { base: merged.commit, extraPaths: merged.regressedPaths }
         return { base: pendingConflictFiles !== null ? 'origin/main' : pushedBase, extraPaths: [] }
       }
