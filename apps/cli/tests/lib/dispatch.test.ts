@@ -5015,7 +5015,11 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
     const logged = spawnBudgeted(
       [logScript],
       {
-        input: JSON.stringify({ tool_name: 'WebFetch', tool_input: { url: hyphenatedUrl } }),
+        input: JSON.stringify({
+          tool_name: 'WebFetch',
+          tool_input: { url: hyphenatedUrl },
+          tool_response: { status: 200, url: hyphenatedUrl, bytes: 4096 }
+        }),
         encoding: 'utf8',
         env: { ...process.env, VINAYA_RUN_ID: runId }
       },
