@@ -22,6 +22,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -289,6 +290,47 @@ export function stageCodexPolicyHome(input: {
   } catch {
     return null
   }
+}
+
+/**
+ * Refreshes the login copy in an already-staged Codex home when the operator's
+ * own `~/.codex/auth.json` is newer than the copy, so a re-login by the
+ * operator reaches the next dispatch of a task whose home was staged earlier.
+ * Only modification times are compared; the file is copied as bytes and never
+ * parsed. The copy is written to a sibling file and renamed over the staged
+ * one, so the staged home never shares an inode with the operator's file or
+ * with another home, and nothing is ever written back to the operator's home.
+ * Returns `true` when the copy was replaced.
+ */
+export function refreshStagedCodexLogin(input: { realHome: string; codexHome: string }): boolean {
+  const operatorAuthPath = join(input.realHome, '.codex', CODEX_AUTH_FILE_NAME)
+  const stagedAuthPath = join(input.codexHome, CODEX_AUTH_FILE_NAME)
+  const tempPath = `${stagedAuthPath}.refresh-${process.pid}`
+  try {
+    if (statSync(operatorAuthPath).mtimeMs <= statSync(stagedAuthPath).mtimeMs) return false
+    writeFileSync(tempPath, readFileSync(operatorAuthPath), { mode: 0o600 })
+    renameSync(tempPath, stagedAuthPath)
+    return true
+  } catch {
+    // The staged copy stays as it was; the next dispatch compares again. The
+    // sibling is removed so no second copy of the login outlives the attempt.
+    try {
+      rmSync(tempPath, { force: true })
+    } catch {}
+    return false
+  }
+}
+
+/**
+ * The reuse decision for a task's persistent Codex home: when `codexHome`
+ * already carries a staged login, refreshes that copy against the operator's
+ * own login (`refreshStagedCodexLogin`) and returns `codexHome` for reuse;
+ * `null` when nothing is staged there yet and a fresh stage is due.
+ */
+export function reuseStagedCodexHome(input: { realHome: string; codexHome: string }): string | null {
+  if (!existsSync(join(input.codexHome, CODEX_AUTH_FILE_NAME))) return null
+  refreshStagedCodexLogin(input)
+  return input.codexHome
 }
 
 export type CodexAuthPreflightResult = { ok: true } | { ok: false; reason: string }
