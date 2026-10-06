@@ -308,6 +308,21 @@ Dormant, never blocking, in three cases: a prompt with no `## Documentation` sec
 
 **What this does not do.** The sources/log files this gate reads and writes (`documentation-sources-<runId>.json`, `documentation-log-<runId>.jsonl`) live in the task's own `hooks/` directory (`<runtimeDir>/tasks-execution/<task>/hooks/`), which the dispatched Developer session's own Bash tool can reach, with `VINAYA_RUN_ID` readable from that session's own environment. Nothing here is process-isolated from the Developer the way `apps/cli/specs/isolation.md`'s Worker boundary is (that boundary, and wiring `dispatchRole` to a real OS-level sandbox, is the surface of the Operator's task tools, not this gate's) — a session that deliberately edits or truncates either file defeats the check. What this gate actually buys: an honest miss is always caught, because the Developer never has to remember to self-report a fetch; it buys nothing against a session already willing to fabricate evidence, which is the same trust model every other self-reported artifact in this loop already carries (`.vinaya-confidence`, the Token report, a Test Plan's own pasted output) — caught, if at all, by the independent Reviewer/Security passes reading the session's own transcript, never by this hook.
 
+## Required enforcement controls are active before dispatch
+
+An unattended dispatch starts no agent unless every required enforcement control is active and executable. The predicate (`enforcementControlsActive`, `apps/cli/src/lib/enforcement-controls.ts`) is provider-neutral: it knows a control's name, whether it is active, why not, and the remedy — never a provider's mechanism. Each control is proven by its own adapter, locally and cheaply (routing, existence, readability and the executable bit; nothing is run, no forge call):
+<!-- AEG:CLAIM: apps/cli/src/lib/enforcement-controls.ts contains:export function enforcementControlsActive -->
+
+- **The repository's local gate** (`localGateControl`, `apps/cli/src/lib/local-gate-control.ts`): git's hook routing points at the tracked hook directory, that directory exists, and the required `pre-commit` and `pre-push` hooks exist there and are executable. A routing that is unset or points at a missing directory, and a missing or non-executable required hook, each report the control inactive. The driver proves it in the dispatch readiness it runs before every Developer turn, and the doctor's ring-0 verdict reads the same function for the tracked and the legacy per-clone hook shapes, so the two cannot disagree.
+<!-- AEG:CLAIM: apps/cli/src/lib/local-gate-control.ts contains:export function localGateControl -->
+<!-- AEG:CLAIM: apps/cli/src/commands/doctor.ts contains:localGateControl(repoRoot, hookDir -->
+- **The Claude Code adapter** (`agentHookControl`): the settings file `writeDispatchSettings` wrote for this dispatch exists, parses, and every hook script it names exists and is readable.
+<!-- AEG:CLAIM: apps/cli/src/lib/enforcement-controls.ts contains:export function agentHookControl -->
+- **The Codex adapter** (`agentHookControl`): the hooks file `writeCodexDispatchHooks` wrote, and every script it names, exist and are readable.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:agentControlsRefusal(agent -->
+While any control is inactive the dispatch refuses before the agent starts: the readiness refusal and the adapter refusal each name every inactive control, its detail and its remedy. Attended runs and the forge-side dispatch gate are unaffected.
+
 ## The confidence rule
 
 Round 1 never asks for confidence. From round 2 on, a green gate reads `.vinaya-confidence` — written by the developer per `confidencePromptLine`'s instruction, to the exact absolute path that function's own argument names for THIS round, under that round's own Developer folder inside the task's folder — before reviewers are ever dispatched:

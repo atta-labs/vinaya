@@ -52,6 +52,12 @@ import {
   readLaunchRecord,
   terminateChildWithGrace
 } from '../dispatch.js'
+import {
+  describeInactiveControls,
+  type EnforcementControl,
+  enforcementControlsActive
+} from '../enforcement-controls.js'
+import { realLocalGateControl } from '../local-gate-control.js'
 import { sh } from './gate-reading.js'
 
 const RULING_MARKER = /^<!-- aeg:principal:ruling:\d+-\d+ -->$/
@@ -679,7 +685,8 @@ function gateRunOutput(err: unknown): string {
  */
 export function checkTaskDispatchReadiness(
   branch: string,
-  runGate: (script: string, args: readonly string[]) => string = (script, args) => sh('bun', [script, ...args])
+  runGate: (script: string, args: readonly string[]) => string = (script, args) => sh('bun', [script, ...args]),
+  localGate: () => EnforcementControl = () => realLocalGateControl(process.cwd())
 ): DispatchReadinessCheckResult {
   const identity = parseTaskBranchIdentity(branch)
   if (identity === null) {
@@ -707,6 +714,13 @@ export function checkTaskDispatchReadiness(
   // gate before every Developer turn, so from the second turn on the branch
   // always carries commits ahead of main — expected work, never a leftover.
   run('packages/aeg-core/bin/verify-dispatch.ts', ['--existing-work'])
+  // The repository's local gate: local and cheap, no forge call. The same
+  // predicate the doctor's ring-0 verdict reads, so the two cannot disagree.
+  const controls = enforcementControlsActive([localGate()])
+  if (!controls.active) ready = false
+  sections.push(
+    `enforcement controls\n${controls.active ? 'all required controls are active' : describeInactiveControls(controls)}`
+  )
   return { ready, output: sections.join('\n\n') }
 }
 
