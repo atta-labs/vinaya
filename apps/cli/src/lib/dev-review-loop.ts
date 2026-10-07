@@ -3557,7 +3557,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         d.fetchFrozenBrief(task),
         d.fetchDocumentationDeps
       )
-      appendFileSync(dispatchReadinessPath, `\n\n${documentationReadable.output}\n`)
+      if (documentationReadable.output !== '') {
+        appendFileSync(dispatchReadinessPath, `\n\n${documentationReadable.output}\n`)
+      }
       if (!documentationReadable.ready) {
         throw new Error(
           `documentation sources gate failed for branch '${branch}' (${documentationReadable.retryable ? 'retryable' : 'needs the Planner to correct the task'}) — source ${documentationReadable.source}: ${documentationReadable.failure}`

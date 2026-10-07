@@ -742,7 +742,7 @@ export function checkTaskDispatchReadiness(
 }
 
 /**
- * The verdict on a task's required documentation sources: `ready` when every
+ * The verdict on a task's required documentation sources: `ready` (with an empty `output` when there was nothing to fetch) when every
  * URL source in the brief's `## Documentation` can be read, otherwise a
  * `refusal` naming the first source that cannot and the failure. `retryable`
  * is true only for a timeout — a later turn may read it; any other failure
@@ -777,7 +777,7 @@ export async function checkDocumentationSourcesReadable(
 ): Promise<DocumentationReadability> {
   const parsed = parseIssueDocumentation(brief)
   if (!parsed.ok || parsed.value.kind !== 'sources') {
-    return { ready: true, output: 'documentation sources: none to fetch' }
+    return { ready: true, output: '' }
   }
   const urls = parsed.value.sources.map((s) => s.source.trim()).filter((s) => /^https?:\/\//i.test(s))
   const lines: string[] = []
@@ -811,7 +811,7 @@ export async function checkDocumentationSourcesReadable(
     }
     lines.push(`documentation source ${url} read`)
   }
-  return { ready: true, output: lines.length > 0 ? lines.join('\n') : 'documentation sources: none to fetch' }
+  return { ready: true, output: lines.join('\n') }
 }
 
 type PrRef = { number: number; branch: string }
