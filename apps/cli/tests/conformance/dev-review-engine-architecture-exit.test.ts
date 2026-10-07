@@ -1,8 +1,9 @@
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { cleanupWorlds } from '../lib/dev-review-loop-harness.js'
 import { NODE_CONTRACTS } from '../lib/dev-review-loop/dev-review-engine-state-contract.fixture.js'
 import { type Observation, SCENARIO_DRIVERS } from './dev-review-current-loop-adapter.js'
@@ -447,41 +448,101 @@ function baselineDrift(recorded: Corpus['baseline']['loopSurface'], current: str
   return out
 }
 
-function git(args: string[]): { ok: boolean; out: Buffer } {
-  const r = spawnSync('git', args, { cwd: REPO_ROOT, maxBuffer: 64 * 1024 * 1024 })
+function git(args: string[], cwd: string = REPO_ROOT): { ok: boolean; out: Buffer } {
+  const r = spawnSync('git', args, { cwd, maxBuffer: 64 * 1024 * 1024 })
   return { ok: r.status === 0, out: r.stdout ?? Buffer.alloc(0) }
 }
 
 const CORPUS_REL = 'apps/cli/tests/fixtures/dev-review-engine-scenarios.json'
 
-/**
- * Every way the checked-out history fails to tie the corpus run to `commit`.
- * The commit must be in this checkout's history and an ancestor of the head
- * under test. A later commit that changes a loop module must update this
- * corpus in that same commit; that is the only way a change can re-pin the
- * baseline, because no change can name the default-branch commit it will
- * itself become. While no later commit has changed the loop, the loop bytes
- * at `commit` must equal the pinned digests exactly.
- */
-function commitDrift(commit: string, recorded: Corpus['baseline']['loopSurface']): string[] {
-  if (!git(['cat-file', '-e', `${commit}^{commit}`]).ok) return [`${commit}: not in this checkout's history`]
-  if (!git(['merge-base', '--is-ancestor', commit, 'HEAD']).ok) return [`${commit}: not an ancestor of HEAD`]
-  const later = git(['log', '--format=%H', `${commit}..HEAD`, '--', ...recorded.map((f) => f.path)])
+function commitsTouching(cwd: string, range: string, paths: string[]): string[] {
+  return git(['log', '--no-merges', '--full-history', '--format=%H', range, '--', ...paths], cwd)
     .out.toString()
     .split('\n')
     .filter(Boolean)
+}
+
+/**
+ * Every way the history in `cwd` fails to tie the corpus run to `commit`.
+ * The commit must be in that history and an ancestor of its head. Loop modules
+ * may change over several commits, so commits are not judged one by one: every
+ * newest loop-module change (a change no later loop change follows) must be
+ * the commit that updates this corpus or have a corpus update after it; that is
+ * the only way a change can re-pin the baseline, because no change can name
+ * the default-branch commit it will itself become. While no later commit has
+ * changed the loop, the loop bytes at `commit` must equal the pinned digests
+ * exactly.
+ */
+function commitDrift(commit: string, recorded: Corpus['baseline']['loopSurface'], cwd: string = REPO_ROOT): string[] {
+  if (!git(['cat-file', '-e', `${commit}^{commit}`], cwd).ok) return [`${commit}: not in this checkout's history`]
+  if (!git(['merge-base', '--is-ancestor', commit, 'HEAD'], cwd).ok) return [`${commit}: not an ancestor of HEAD`]
+  const range = `${commit}..HEAD`
+  const later = commitsTouching(
+    cwd,
+    range,
+    recorded.map((f) => f.path)
+  )
+  const corpusCommits = commitsTouching(cwd, range, [CORPUS_REL])
   const out: string[] = []
   for (const sha of later) {
-    const touched = git(['show', '--name-only', '--format=', sha]).out.toString().split('\n')
-    if (!touched.includes(CORPUS_REL)) out.push(`${sha}: changed the loop without updating the baseline`)
+    const newest = !later.some((o) => o !== sha && git(['merge-base', '--is-ancestor', sha, o], cwd).ok)
+    if (!newest) continue
+    const recordedAfter = corpusCommits.some((c) => c === sha || git(['merge-base', '--is-ancestor', sha, c], cwd).ok)
+    if (!recordedAfter) out.push(`${sha}: changed the loop without updating the baseline`)
   }
   if (later.length > 0) return out
   for (const f of recorded) {
-    const blob = git(['show', `${commit}:${f.path}`])
+    const blob = git(['show', `${commit}:${f.path}`], cwd)
     const digest = blob.ok ? createHash('sha256').update(blob.out).digest('hex') : null
     if (digest !== f.sha256) out.push(`${f.path}: differs at ${commit.slice(0, 8)}`)
   }
   return out
+}
+
+/** A small repository the self-tests build themselves, so every case is the same on any branch. */
+function buildRepo(dir: string) {
+  const run = (...args: string[]) => {
+    const r = spawnSync(
+      'git',
+      [
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@t',
+        '-c',
+        'commit.gpgsign=false',
+        '-c',
+        'core.hooksPath=/dev/null',
+        ...args
+      ],
+      { cwd: dir, encoding: 'utf8' }
+    )
+    if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`)
+    return r.stdout.trim()
+  }
+  const LOOP = 'loop.ts'
+  const loopDigest = (content: string) => createHash('sha256').update(content).digest('hex')
+  const commitFiles = (message: string, files: Record<string, string>) => {
+    for (const [path, content] of Object.entries(files)) {
+      mkdirSync(dirname(join(dir, path)), { recursive: true })
+      writeFileSync(join(dir, path), content)
+    }
+    run('add', '-A')
+    run('commit', '-m', message)
+    return run('rev-parse', 'HEAD')
+  }
+  run('init', '-q', '-b', 'main')
+  const base = commitFiles('base', { [LOOP]: 'v0', [CORPUS_REL]: 'c0' })
+  return {
+    run,
+    base,
+    LOOP,
+    loopDigest,
+    loop: (n: string) => commitFiles(`loop ${n}`, { [LOOP]: n }),
+    corpus: (n: string) => commitFiles(`corpus ${n}`, { [CORPUS_REL]: n }),
+    both: (n: string) => commitFiles(`both ${n}`, { [LOOP]: n, [CORPUS_REL]: n }),
+    commitFiles
+  }
 }
 
 describe('architecture exit gate (O4: the corpus pins its standalone baseline)', () => {
@@ -494,23 +555,95 @@ describe('architecture exit gate (O4: the corpus pins its standalone baseline)',
     )
   })
 
-  it('a commit outside the history, a pinned byte the commit does not hold, or an unrecorded loop change is drift', () => {
-    const recorded = corpus.baseline.loopSurface
-    expect(commitDrift('0'.repeat(40), recorded)).toEqual([`${'0'.repeat(40)}: not in this checkout's history`])
-    const [first, ...rest] = recorded as [Corpus['baseline']['loopSurface'][number]]
-    expect(commitDrift(corpus.baseline.commit, [{ ...first, sha256: '0'.repeat(64) }, ...rest])).toEqual([
-      `${first.path}: differs at ${corpus.baseline.commit.slice(0, 8)}`
-    ])
-    // The newest commit that changed a loop module did not update this corpus, so
-    // a baseline recorded at its parent sees an unrecorded change on the way to HEAD.
-    const paths = recorded.map((f) => f.path)
-    const lastTouch = git(['log', '-1', '--format=%H', corpus.baseline.commit, '--', ...paths])
-      .out.toString()
-      .trim()
-    const before = git(['rev-parse', `${lastTouch}^`])
-      .out.toString()
-      .trim()
-    expect(commitDrift(before, recorded)).toContain(`${lastTouch}: changed the loop without updating the baseline`)
+  describe('the history rule, on a repository the test builds', () => {
+    let dir: string
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'arch-exit-'))
+    })
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true })
+    })
+    const recordedAt = (r: ReturnType<typeof buildRepo>) => [{ path: r.LOOP, sha256: r.loopDigest('v0') }]
+
+    it('a commit outside the history, a pinned byte the commit does not hold, or no ancestry is drift', () => {
+      const r = buildRepo(dir)
+      const recorded = recordedAt(r)
+      expect(commitDrift(r.base, recorded, dir)).toEqual([])
+      expect(commitDrift('0'.repeat(40), recorded, dir)).toEqual([`${'0'.repeat(40)}: not in this checkout's history`])
+      expect(commitDrift(r.base, [{ path: r.LOOP, sha256: '0'.repeat(64) }], dir)).toEqual([
+        `${r.LOOP}: differs at ${r.base.slice(0, 8)}`
+      ])
+      r.run('checkout', '-q', '--orphan', 'other')
+      const other = r.commitFiles('other', { x: '1' })
+      r.run('checkout', '-q', 'main')
+      r.run('checkout', '-q', other)
+      expect(commitDrift(r.base, recorded, dir)).toEqual([`${r.base}: not an ancestor of HEAD`])
+    })
+
+    it('several loop commits followed by a corpus update pass; earlier commits are not judged', () => {
+      const r = buildRepo(dir)
+      r.loop('v1')
+      r.loop('v2')
+      r.corpus('c1')
+      expect(commitDrift(r.base, recordedAt(r), dir)).toEqual([])
+    })
+
+    it('a corpus update inside the newest loop commit passes', () => {
+      const r = buildRepo(dir)
+      r.loop('v1')
+      r.both('v2')
+      expect(commitDrift(r.base, recordedAt(r), dir)).toEqual([])
+    })
+
+    it('a single squashed commit changing the loop and the corpus passes', () => {
+      const r = buildRepo(dir)
+      r.both('v1')
+      expect(commitDrift(r.base, recordedAt(r), dir)).toEqual([])
+    })
+
+    it('a loop change after the last corpus update fails and names that commit', () => {
+      const r = buildRepo(dir)
+      r.both('v1')
+      const newest = r.loop('v2')
+      expect(commitDrift(r.base, recordedAt(r), dir)).toEqual([
+        `${newest}: changed the loop without updating the baseline`
+      ])
+    })
+
+    it('a loop change with no corpus update at all fails and names the newest loop commit', () => {
+      const r = buildRepo(dir)
+      r.loop('v1')
+      const newest = r.loop('v2')
+      expect(commitDrift(r.base, recordedAt(r), dir)).toEqual([
+        `${newest}: changed the loop without updating the baseline`
+      ])
+    })
+
+    it('a branch that merged the default branch passes when a corpus update follows its last loop change', () => {
+      const r = buildRepo(dir)
+      r.run('checkout', '-q', '-b', 'task')
+      r.commitFiles('branch loop', { [r.LOOP]: 'branch' })
+      r.run('checkout', '-q', 'main')
+      r.commitFiles('main squash', { 'other.ts': 'm', [CORPUS_REL]: 'cm' })
+      r.run('checkout', '-q', 'task')
+      r.run('merge', '-q', '--no-edit', 'main')
+      expect(commitDrift(r.base, recordedAt(r), dir)).toHaveLength(1)
+      r.corpus('c-final')
+      expect(commitDrift(r.base, recordedAt(r), dir)).toEqual([])
+    })
+
+    it('a merge of the default branch whose corpus update predates the branch loop change still fails', () => {
+      const r = buildRepo(dir)
+      r.run('checkout', '-q', '-b', 'task')
+      const branchLoop = r.commitFiles('branch loop', { [r.LOOP]: 'branch' })
+      r.run('checkout', '-q', 'main')
+      r.commitFiles('main change', { [r.LOOP]: 'main', [CORPUS_REL]: 'cm' })
+      r.run('checkout', '-q', 'task')
+      r.run('merge', '-q', '-X', 'theirs', '--no-edit', 'main')
+      expect(commitDrift(r.base, recordedAt(r), dir)).toEqual([
+        `${branchLoop}: changed the loop without updating the baseline`
+      ])
+    })
   })
 
   it('the standalone loop under test is byte-identical to that baseline', () => {
