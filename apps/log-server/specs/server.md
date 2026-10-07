@@ -149,9 +149,9 @@ GET /v1/repos/<owner>/<repo>/rejected
 authorization: Bearer <READ_TOKEN>
 ```
 
-Why lines were refused, so lost events can be diagnosed. `{"repo":"<owner>/<repo>","window":1000,"reasons":[{"reason":"…","count":n}],"recent":[{"id":n,"received_at":n,"reason":"…","line":"…"}]}`.
+Why lines were refused, so lost events can be diagnosed. `{"repo":"<owner>/<repo>","window":1000,"reasons":[{"reason":"…","count":n,"sample":{"received_at":n,"line":"…"}}],"recent":[{"id":n,"received_at":n,"reason":"…","line":"…"}]}`.
 
-`reasons` counts the newest `window` (`1000`) rejected rows by reason, most frequent first; a repository with fewer rows counts them all. `recent` is the newest twenty rejected rows, newest first, each with the reason and the line as stored — already truncated to the first 64 KiB (§ 4), and possibly `null`. Both come from a read of the table's tail, never a scan of all of it, for the read-budget reason § 4 gives. Nothing beyond what the `rejected` table holds is returned, and the stats route's `rejected` count is unchanged.
+`reasons` counts the newest `window` (`1000`) rejected rows by reason, most frequent first; a repository with fewer rows counts them all. `sample` is the newest line in that window for the reason, with the time the server received it: the line is redacted with the same `redact` the sink applies, then cut to its first 512 bytes (redaction first, so a cut never splits a secret into something the patterns miss), so the sender of a refused line can be identified without reading the full record. `sample.line` is `null` when the stored line is. `recent` is the newest twenty rejected rows, newest first, each with the reason and the line as stored — already truncated to the first 64 KiB (§ 4), and possibly `null`. Both come from a read of the table's tail, never a scan of all of it, for the read-budget reason § 4 gives. Nothing beyond what the `rejected` table holds is returned, and the stats route's `rejected` count is unchanged.
 
 The reason values are `invalid:<why>` (the line failed the schema's validation; `<why>` is the validator's own reason), `too_large:<bytes>` (the line was over 1 MiB) and `no_identity` (the line carried no `event_id`). `reasons` groups every `too_large:<bytes>` as `too_large`, because the size would otherwise make each oversized line its own group; `recent` shows the full stored value.
 
