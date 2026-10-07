@@ -52,9 +52,12 @@ describe('registry-gates — task vinaya-adopter-portability-v1 2 (Issue #232)',
     const root = initFixture('registry-gates-dormant-all')
     try {
       const indexTs = join(import.meta.dir, '..', '..', 'src', 'index.ts')
+      // The pull-request variables a report run exports describe another
+      // repository's branch, never this fixture's.
+      const { PR_BODY: _body, PR_NUMBER: _number, BRANCH: _branch, ...ambient } = process.env
       const result = Bun.spawnSync(['bun', indexTs, 'check', '--all', '--diff-only'], {
         cwd: root,
-        env: { ...process.env, PR_BODY: undefined }
+        env: ambient
       })
       expect(result.exitCode).toBe(0)
       const stdout = result.stdout.toString()
@@ -183,7 +186,9 @@ describe('registry-gates G7 — anything that can block or write to the forge re
     try {
       const result = Bun.spawnSync(['bun', BIN_PATH], { cwd: root, env: { ...process.env } })
       expect(result.exitCode).toBe(0)
-      expect(result.stderr.toString()).not.toContain('registry-gates.G7')
+      const stderr = result.stderr.toString()
+      expect(stderr).toContain('"check":"registry-gates.dormant"')
+      expect(stderr).not.toContain('registry-gates.G7')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
