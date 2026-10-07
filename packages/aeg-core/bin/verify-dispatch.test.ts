@@ -45,7 +45,14 @@ vi.mock('node:child_process', async (importOriginal) => {
   }
 })
 
-const { checkBareEdgeQualification, currentFindingCounts, resolvePremiseBriefText } = await import('./verify-dispatch')
+const {
+  checkBareEdgeQualification,
+  currentFindingCounts,
+  fetchBacklogIssuePrsBatch,
+  resolveDependsOn,
+  resolvePremiseBriefText
+} = await import('./verify-dispatch')
+const { checkDispatchReadiness } = await import('../src/dispatch-gate')
 
 beforeEach(() => {
   spawnSyncMock.mockReset()
@@ -338,7 +345,7 @@ describe('(d) sh()/shJson() other call sites are untouched', () => {
 describe('(e) every gh invocation carries an explicit repo target (Part 1, task 23, #360)', () => {
   const src = readFileSync(join(import.meta.dirname, 'verify-dispatch.ts'), 'utf8')
 
-  it("every 'gh' call passed to sh()/shJson() carries '-R', a repo template segment", () => {
+  it("every 'gh' call passed to sh()/shJson() carries an explicit repo target (-R, or owner/repo variables for gh api graphql)", () => {
     const callPattern = /\('gh',\s*\[([\s\S]*?)\]\)/g
     const ghCommands: string[] = []
     let match: RegExpExecArray | null
@@ -351,12 +358,19 @@ describe('(e) every gh invocation carries an explicit repo target (Part 1, task 
     // 4, not 3: `runPremiseModeFromIssue`'s `gh issue view --json comments`
     // call (plan-brief-v1 task 2, #427) is the fourth. 5, not 4:
     // `fetchIssueStatesBatch` — one `gh api graphql` call, still carrying an
-    // explicit `-R` target even though the query's own `$owner`/`$repo`
+    // explicit repo target even though the query's own `$owner`/`$repo`
     // variables make it redundant — is the fifth. 6, not 5:
     // `fetchBacklogIssuePrsBatch`'s own `gh pr list` call (issue-586, O2) is
     // the sixth.
     expect(ghCommands.length).toBe(6)
     for (const argsText of ghCommands) {
+      if (argsText.includes("'graphql'")) {
+        // `gh api` accepts no `-R`; the repo target is the `owner`/`repo` GraphQL variables.
+        expect(argsText).not.toContain("'-R'")
+        expect(argsText).toMatch(/`owner=\$\{repo\.owner\}`/)
+        expect(argsText).toMatch(/`repo=\$\{repo\.repo\}`/)
+        continue
+      }
       expect(argsText).toContain("'-R'")
       expect(argsText).toMatch(/`\$\{repo\.owner\}\/\$\{repo\.repo\}`/)
     }
@@ -725,5 +739,88 @@ describe('O3 wiring reaches both gate modes, not just checkBareEdgeQualification
   it('both gate modes print the ambiguousEdge message as a blocker line when present', () => {
     const occurrences = src.split('if (ambiguousEdge) console.log(').length - 1
     expect(occurrences).toBe(2)
+  })
+})
+
+describe('backlog dependency reads (issue-1147)', () => {
+  const REPO = { owner: 'atta-labs', repo: 'vinaya' }
+  const TRANCHE = { slug: 'x', tasks: [] } as never
+  const pr = (number: number, state: 'OPEN' | 'CLOSED' | 'MERGED') => ({
+    number,
+    headRefName: `task/issue-${number}`,
+    state,
+    mergedAt: state === 'MERGED' ? '2026-01-01T00:00:00Z' : null
+  })
+
+  it('reads each Issue directly, with no list window', async () => {
+    execFileAsyncMock.mockResolvedValue({
+      stdout: JSON.stringify({
+        data: {
+          repository: {
+            b_5: { nodes: [pr(5, 'MERGED')] },
+            c_5: { closedByPullRequestsReferences: { nodes: [] } },
+            b_6: { nodes: [] },
+            c_6: { closedByPullRequestsReferences: { nodes: [pr(60, 'OPEN')] } },
+            b_7: { nodes: [] },
+            c_7: { closedByPullRequestsReferences: { nodes: [] } }
+          }
+        }
+      }),
+      stderr: ''
+    })
+    const result = await fetchBacklogIssuePrsBatch([5, 6, 7], REPO)
+    expect(result.get(5)?.state).toBe('MERGED')
+    expect(result.get(6)?.number).toBe(60)
+    expect(result.has(7)).toBe(false)
+    const args = execFileAsyncMock.mock.calls[0]?.[1] as string[]
+    expect(args.join(' ')).not.toContain('--limit')
+  })
+
+  it('throws, never returns an empty map, when the forge cannot be read', async () => {
+    execFileAsyncMock.mockRejectedValue(new Error('network down'))
+    await expect(fetchBacklogIssuePrsBatch([5], REPO)).rejects.toThrow('#5')
+  })
+
+  it('a failed read is a retryable refusal, not "not merged"', async () => {
+    const facts = await resolveDependsOn(
+      ['#5'],
+      TRANCHE,
+      new Map(),
+      REPO,
+      undefined,
+      () => new Map(),
+      async () => {
+        throw new Error('down')
+      }
+    )
+    expect(facts[0]).toMatchObject({ merged: false, readFailed: true })
+    const result = checkDispatchReadiness({
+      trancheSlug: 'x',
+      task: { id: '1', issue: 9 } as never,
+      issue: { number: 9 } as never,
+      issueRationalePass: true,
+      dependsOn: facts,
+      conflictsWith: [],
+      priorTrancheArchival: []
+    } as never)
+    expect(result.blockerDetails.map((b) => b.class)).toEqual(['depends-on-read-failed'])
+    expect(result.blockers[0]).toContain('Retry')
+    expect(result.blockers[0]).not.toContain('not merged')
+  })
+
+  it('a genuinely open or unmerged dependency still blocks as not merged; a merged one passes', async () => {
+    const run = (state: 'OPEN' | 'MERGED') =>
+      resolveDependsOn(
+        ['#5'],
+        TRANCHE,
+        new Map(),
+        REPO,
+        undefined,
+        () => new Map(),
+        async () => new Map([[5, pr(5, state)]])
+      )
+    expect((await run('OPEN'))[0]).toMatchObject({ merged: false })
+    expect((await run('OPEN'))[0]?.readFailed).toBeUndefined()
+    expect((await run('MERGED'))[0]).toMatchObject({ merged: true })
   })
 })
