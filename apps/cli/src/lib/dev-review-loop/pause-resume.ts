@@ -39,7 +39,7 @@ import {
 } from '../effects.js'
 import { markedCommentBody, postMarkedCommentOrThrow, reconcileGhComment } from '../forge-write.js'
 import { log } from '../log-sink.js'
-import { isRateLimitPauseDetail, loadLoopState } from './round-assess.js'
+import { isRateLimitPauseDetail, loadLoopState, MAX_INFRASTRUCTURE_RETRIES } from './round-assess.js'
 import { readIfExists } from './reviewer-dispatch.js'
 import { DRIVER_LOCK_FILENAME, ensureRunDir, runPath } from '../run-paths.js'
 
@@ -654,14 +654,25 @@ export function isAutomaticRecoveryPause(reason: PauseReason): boolean {
 }
 
 /**
+ * Does this pause's own record still grant `--resume`'s bare, no-ruling
+ * allowance — an `'infrastructure'` pause under `MAX_INFRASTRUCTURE_RETRIES`?
+ * Read off the pause record's own count, the floor `--resume` itself applies
+ * beside the control store's; a caller holding the control store's count too
+ * (`--resume`) decides with both and passes its own answer instead.
+ */
+export function pauseGrantsBareResume(held: PauseState): boolean {
+  return held.reason === 'infrastructure' && (held.infrastructureRetries ?? 0) < MAX_INFRASTRUCTURE_RETRIES
+}
+
+/**
  * What continues a pause whose escalation has no durable record, so a refusal
  * never ends on "cannot authenticate": an infrastructure pause within its
- * bare-resume allowance needs no ruling, and `task run` continues it; any
- * other pause has nothing a ruling can be bound to, so it names the one
- * Principal decision left. `bareResumable` defaults to the reason alone; a
- * caller that already knows the allowance is spent passes `false`.
+ * bare-resume allowance needs no ruling, and `task run` continues it (its
+ * `--resume` attaches without the record); any other pause — a spent
+ * allowance included — has nothing a ruling can be bound to, so it names the
+ * one Principal decision left.
  */
-export function missingEscalationNextStep(held: PauseState, bareResumable = held.reason === 'infrastructure'): string {
+export function missingEscalationNextStep(held: PauseState, bareResumable = pauseGrantsBareResume(held)): string {
   return bareResumable
     ? `This is an automatic-recovery pause (${held.reason}) — no ruling is needed. Continue it with \`${noPushResumeCommandFor(held.task, held.branch, held.agent, held.model)}\`.`
     : `No ruling can be bound to a ${held.reason} pause with no escalation record, so whether task ${held.task} continues or stops is a Principal decision.`

@@ -15,13 +15,16 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import {
+  cancelDevReviewLoop,
   type DriverWatchDeps,
   type LoopDeps,
   type LoopInput,
   type LoopResult,
   readResolutionRecord,
-  runDriverLoop
+  runDriverLoop,
+  taskFromPrBody
 } from '../../../src/lib/dev-review-loop.js'
+import { ownRepoPrForBranch } from '../../../src/lib/dev-review-loop/developer-dispatch.js'
 import {
   type PauseState,
   readDriverLock,
@@ -355,5 +358,103 @@ describe('runDriverLoop — which pauses recorded before a pull request it watch
     const result = await runDriverLoop({ task: 1165, agent: 'claude' }, {}, h.watch)
     expect(result.finalDecision).toEqual({ type: 'ended', reason: 'cancelled' })
     expect(h.continuations).toEqual([])
+  })
+})
+
+describe('ownRepoPrForBranch — the bind and the attach only ever take this repository’s own pull request', () => {
+  it('refuses a fork’s pull request from a head ref of the same name, and takes the one from this repository', () => {
+    const branch = 'task/issue-1165'
+    expect(ownRepoPrForBranch([{ number: 9, headRefName: branch, isCrossRepository: true }], branch)).toBeNull()
+    expect(
+      ownRepoPrForBranch(
+        [
+          { number: 9, headRefName: branch, isCrossRepository: true },
+          { number: 10, headRefName: branch, isCrossRepository: false }
+        ],
+        branch
+      )
+    ).toEqual({ number: 10, branch })
+    expect(
+      ownRepoPrForBranch([{ number: 11, headRefName: 'task/issue-1', isCrossRepository: false }], branch)
+    ).toBeNull()
+  })
+})
+
+describe('a pause whose escalation has no durable record — every refusal names what works', () => {
+  function pauseOnPr(world: LoopWorld, extra: Partial<PauseState>): void {
+    writePauseState(world.runtimeDir, {
+      task: world.task,
+      round: 1,
+      head: world.head,
+      branch: world.branch,
+      prNumber: world.prNumber,
+      reason: 'escalation',
+      pausedAt: new Date(0).toISOString(),
+      agent: 'claude',
+      ...extra
+    })
+  }
+
+  function cancelInProcess(world: LoopWorld, cancelPr: number) {
+    return withWorldEnv(world, () =>
+      cancelDevReviewLoop(
+        { cancelPr, agent: 'claude' },
+        {
+          fetchPrBody: () => world.prBody,
+          taskFromPrBody,
+          readPauseState,
+          fetchRulings: () => ['Go ahead.'],
+          fetchNewestRulingOrdinal: () => 1,
+          fetchNewestRulingAuthor: () => 'principal-1',
+          findOpenPrForBranch: (branch) => (world.prOpened ? { number: world.prNumber, branch } : null),
+          runtimeDir: () => world.runtimeDir,
+          resolveRepo: async () => null,
+          terminateInFlightLaunchesOnShutdown: () => {},
+          sleep: (ms) => new Promise((r) => setTimeout(r, ms > 0 ? 1 : 0))
+        }
+      )
+    )
+  }
+
+  it('`--resume` refuses a pause that needs a ruling before asking for one, naming the Principal decision — never a `--resume` that refuses again', async () => {
+    const world = makeWorld({ developerPushed: true, prOpened: true })
+    pauseOnPr(world, {})
+    const refusal = runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude' } as LoopInput)
+    await expect(refusal).rejects.toThrow('no escalation record was ever written')
+    await expect(refusal).rejects.toThrow('is a Principal decision')
+    await expect(refusal).rejects.not.toThrow('then run `vinaya dev-review-loop --resume')
+  })
+
+  it('names the Principal decision for an infrastructure pause whose bare-resume budget is spent', async () => {
+    const world = makeWorld({ developerPushed: true, prOpened: true })
+    pauseOnPr(world, { reason: 'infrastructure', infrastructureRetries: 5 })
+    await expect(runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude' } as LoopInput)).rejects.toThrow(
+      'is a Principal decision'
+    )
+  })
+
+  it('`--resume` attaches past a missing record for a bare infrastructure pause, and the run publishes', async () => {
+    const world = makeWorld({ developerPushed: true, prOpened: true })
+    pauseOnPr(world, { reason: 'infrastructure', detail: 'an uncaught error ended round 1’s own processing: boom' })
+    const result = await runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude' } as LoopInput)
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    expect(world.publishedRounds).toEqual([1])
+  })
+
+  it('`--cancel` appends the continuation that works to its stale-escalation refusal', async () => {
+    const world = makeWorld({ developerPushed: true, prOpened: true })
+    pauseOnPr(world, { reason: 'infrastructure' })
+    const refusal = cancelInProcess(world, world.prNumber)
+    await expect(refusal).rejects.toThrow('is stale')
+    await expect(refusal).rejects.toThrow('no ruling is needed. Continue it with `vinaya task run')
+  })
+
+  it('`--cancel <pr>` against a pause from before the pull request, naming the wrong one, names the open one', async () => {
+    const world = makeWorld({ developerPushed: true, prOpened: true })
+    pauseOnPr(world, { prNumber: null, head: 'unknown' })
+    await expect(cancelInProcess(world, world.prNumber + 1)).rejects.toThrow(
+      `cancel it with \`vinaya dev-review-loop --cancel ${world.prNumber}\``
+    )
+    expect(readPauseState(world.runtimeDir, world.task)?.prNumber).toBeNull()
   })
 })

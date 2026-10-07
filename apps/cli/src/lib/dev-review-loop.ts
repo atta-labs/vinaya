@@ -2427,6 +2427,25 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     const infrastructureRetriesSoFar = Math.max(controlStoreInfrastructureRetries, held.infrastructureRetries ?? 0)
     const bareInfrastructureResume =
       held.reason === 'infrastructure' && infrastructureRetriesSoFar < MAX_INFRASTRUCTURE_RETRIES
+    // `held.escalationId` is the escalation's OWN real id — a disambiguating
+    // suffix when `writeEscalation` had to claim one (code review, round 2,
+    // MEDIUM); the natural key is still correct whenever no collision ever
+    // happened, and for a `PauseState` written before this field existed.
+    const resumeEscalationId = held.escalationId ?? escalationIdFor(closesTask, held.round, held.head)
+    // A pause that needs a ruling, whose escalation has no durable record, is
+    // refused HERE, before any ruling is asked for: no ruling can be bound to
+    // a missing record, so a refusal naming "post a ruling, then `--resume`"
+    // would name a `--resume` that refuses again. It names the Principal
+    // decision instead. A bare infrastructure resume needs no record and goes
+    // on (`StaleEscalationError`, below).
+    if (!bareInfrastructureResume && readEscalationRecord(closesTask, resumeEscalationId) === null) {
+      const stale = new StaleEscalationError(
+        closesTask,
+        resumeEscalationId,
+        'no escalation record was ever written for it, or it could not be read'
+      )
+      throw new Error(`devReviewLoop --resume: ${stale.message}. ${missingEscalationNextStep(held, false)}`)
+    }
     // A bound pause's ruling is read where its own comment was posted — the
     // task Issue — by the same parser under the same principal allowlist.
     const rulingSource = escalationPr === null ? `Issue #${closesTask}` : `PR #${resumePr}`
@@ -2450,11 +2469,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // so it authenticates as the driver's own recoverable-hiccup recovery
     // rather than a principal decision — still consumed at most once, so a
     // duplicate bare `--resume` against the SAME held hiccup is refused too.
-    // `held.escalationId` is the escalation's OWN real id — a disambiguating
-    // suffix when `writeEscalation` had to claim one (code review, round 2,
-    // MEDIUM); the natural key is still correct whenever no collision ever
-    // happened, and for a `PauseState` written before this field existed.
-    const resumeEscalationId = held.escalationId ?? escalationIdFor(closesTask, held.round, held.head)
     const resumeAuthenticatedBy =
       held.reason === 'infrastructure'
         ? 'driver-self'
@@ -7210,7 +7224,8 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   // pull request opened since — the same binding `--resume` makes, under the
   // same proof: the open pull request on the pause's own branch, whose body
   // closes this task.
-  if (cancelPr !== null && held.prNumber === null && d.findOpenPrForBranch(held.branch)?.number === cancelPr) {
+  const openPrOnBranch = cancelPr !== null && held.prNumber === null ? d.findOpenPrForBranch(held.branch) : null
+  if (cancelPr !== null && openPrOnBranch?.number === cancelPr) {
     held = bindPauseToPullRequest(root, held, cancelPr)
   }
   // A bound pause still answers to its task directly, as it did before it was
@@ -7221,7 +7236,9 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
       `devReviewLoop --cancel: task ${task}'s held pause state names PR #${held.prNumber ?? '(none)'}, not ${targetLabel}. ${
         held.prNumber !== null
           ? `Cancel it with \`vinaya dev-review-loop --cancel ${held.prNumber}\`.`
-          : `It paused before any pull request existed and none is open on its branch \`${held.branch}\` now — cancel it with the Operator's \`task_cancel\` for task ${task}.`
+          : openPrOnBranch
+            ? `It paused before any pull request existed, and the open pull request on its branch \`${held.branch}\` is PR #${openPrOnBranch.number} — cancel it with \`vinaya dev-review-loop --cancel ${openPrOnBranch.number}\`.`
+            : `It paused before any pull request existed and none is open on its branch \`${held.branch}\` now — cancel it with the Operator's \`task_cancel\` for task ${task}.`
       }`
     )
   }

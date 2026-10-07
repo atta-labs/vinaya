@@ -325,6 +325,17 @@ describe('task_resume handler', () => {
     expect(launches).toHaveLength(0)
   })
 
+  it('names the Principal decision, not `task run`, for an infrastructure pause whose bare-resume budget is spent and whose record is missing', async () => {
+    writePause({ reason: 'infrastructure', infrastructureRetries: 5 })
+    const { handler } = harness()
+    const result = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toContain('is a Principal decision')
+      expect(result.error.message).not.toContain('vinaya task run')
+    }
+  })
+
   it('rejects a wrong-target decision — the escalation names a different PR', async () => {
     writePause()
     writeEscalationFixture({ pr: PR + 1 })
