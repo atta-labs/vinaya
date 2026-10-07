@@ -41,7 +41,7 @@
  * carries it into the next developer dispatch (O2).
  */
 
-import { afterEach, describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import {
   chmodSync,
@@ -1450,7 +1450,17 @@ describe('devReviewLoop — the driver heartbeat (#949, O1)', () => {
 })
 
 describe('devReviewLoop — the driver_exited lifecycle event (#949, O2/O3)', () => {
-  afterEach(cleanupWorlds)
+  // A pre-push hook run for a task whose pull request is open carries `VINAYA_PR`; the "nothing left in the environment" assertion below must start from none.
+  let priorPr: string | undefined
+  beforeEach(() => {
+    priorPr = process.env.VINAYA_PR
+    delete process.env.VINAYA_PR
+  })
+  afterEach(() => {
+    cleanupWorlds()
+    if (priorPr === undefined) delete process.env.VINAYA_PR
+    else process.env.VINAYA_PR = priorPr
+  })
 
   it('a clean publish emits exactly one driver_exited reason=finished, stops the heartbeat, and writes no routine role-log line', async () => {
     const world = makeWorld()
@@ -4891,6 +4901,7 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
       mkdirSync(sweepRunDir(home, 8001), { recursive: true })
 
       const r = runLoopWithRepo(home, cwd, path)
+      if (r.status !== 0) throw new Error(`the loop exited ${r.status}: ${r.stderr.slice(-1500)}`)
       expect(r.status).toBe(0)
       expect(r.stdout).toMatch(/publish/)
 
@@ -4946,6 +4957,7 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
       // with real headroom rather than another razor-thin margin, while
       // retaining the tight default for every ordinary fixture in this file.
       const r = runLoopWithRepo(home, cwd, path, 75_000)
+      if (r.status !== 0) throw new Error(`the loop exited ${r.status}: ${r.stderr.slice(-1500)}`)
       expect(r.status).toBe(0)
       expect(r.stdout).toMatch(/publish/)
 
