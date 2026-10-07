@@ -27,6 +27,7 @@ import {
   extractSourceRevision,
   parseTaskBranchIdentity,
   resolveNewestFrozenBrief,
+  parseIssueDocumentation,
   type ReviewPolicy
 } from '@attalabs/aeg-core'
 import { extractShortVersion } from '@attalabs/aeg-core/docs'
@@ -53,6 +54,12 @@ import {
   readLaunchRecord,
   terminateChildWithGrace
 } from '../dispatch.js'
+import {
+  type FetchDocumentationDeps,
+  fetchDocumentationPage,
+  realFetchDocumentationDeps,
+  whyNotCountedAsRead
+} from '../task-tools/fetch-documentation.js'
 import {
   describeInactiveControls,
   type EnforcementControl,
@@ -732,6 +739,79 @@ export function checkTaskDispatchReadiness(
     `enforcement controls\n${controls.active ? 'all required controls are active' : describeInactiveControls(controls)}`
   )
   return { ready, output: sections.join('\n\n') }
+}
+
+/**
+ * The verdict on a task's required documentation sources: `ready` when every
+ * URL source in the brief's `## Documentation` can be read, otherwise a
+ * `refusal` naming the first source that cannot and the failure. `retryable`
+ * is true only for a timeout — a later turn may read it; any other failure
+ * (a login page, an error status, another host) needs the Planner to correct
+ * the task's sources.
+ */
+export type DocumentationReadability =
+  | { ready: true; output: string }
+  | { ready: false; retryable: boolean; source: string; failure: string; output: string }
+
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).hostname.toLowerCase()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Fetches every URL source the frozen brief's `## Documentation` lists, with
+ * the same unauthenticated fetch the driver-run documentation tool performs
+ * (`fetchDocumentationPage` and its read rule `whyNotCountedAsRead` — never a
+ * second fetcher), so a task whose required source cannot be read stops
+ * before the Developer builds without it. In-repo paths are not fetched. A
+ * source that redirects to another host is refused: the Developer would be
+ * reading a different page than the one the task names. `deps` is injected so
+ * a test needs no network.
+ */
+export async function checkDocumentationSourcesReadable(
+  brief: string,
+  deps: FetchDocumentationDeps = realFetchDocumentationDeps
+): Promise<DocumentationReadability> {
+  const parsed = parseIssueDocumentation(brief)
+  if (!parsed.ok || parsed.value.kind !== 'sources') {
+    return { ready: true, output: 'documentation sources: none to fetch' }
+  }
+  const urls = parsed.value.sources.map((s) => s.source.trim()).filter((s) => /^https?:\/\//i.test(s))
+  const lines: string[] = []
+  for (const url of urls) {
+    const fetched = await fetchDocumentationPage(url, deps)
+    let failure: string | null = null
+    let retryable = false
+    if (!fetched.ok) {
+      failure = `${fetched.error.check}: ${fetched.error.output}`
+      retryable = fetched.error.check === 'timeout'
+    } else {
+      const doc = fetched.document
+      const requestedHost = hostOf(doc.requestedUrl)
+      const finalHost = hostOf(doc.finalUrl)
+      const notRead = whyNotCountedAsRead(doc)
+      if (requestedHost !== finalHost) {
+        failure = `the page answered from another host (${finalHost ?? doc.finalUrl}, not ${requestedHost ?? doc.requestedUrl})`
+      } else if (notRead !== null) {
+        failure = notRead
+      }
+    }
+    if (failure !== null) {
+      const output = [
+        ...lines,
+        `documentation source ${url} cannot be read: ${failure}`,
+        retryable
+          ? 'retryable: the source timed out — the turn is refused and a later attempt may read it.'
+          : 'needs the Planner to correct the task: its required source must be a public page that answers with the document itself.'
+      ].join('\n')
+      return { ready: false, retryable, source: url, failure, output }
+    }
+    lines.push(`documentation source ${url} read`)
+  }
+  return { ready: true, output: lines.length > 0 ? lines.join('\n') : 'documentation sources: none to fetch' }
 }
 
 type PrRef = { number: number; branch: string }
