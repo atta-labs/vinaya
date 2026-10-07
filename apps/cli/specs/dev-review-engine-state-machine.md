@@ -5,7 +5,7 @@ Status: draft
 Scope: the final, provider-neutral state model, transitions, terminal
 outcomes, node contracts, human-handoff contract, cancellation behavior, and
 effect-once boundaries for the Atta-backed developer-review workflow (Linear
-"Tech spec — Developer-review on Atta Engine", revision 7, section 16). This
+"Tech spec — Developer-review on Atta Engine", revision 9, section 16). This
 is the TARGET contract production execution must satisfy. It does not
 implement that execution, does not assess provider or runtime capabilities,
 and does not alter the standalone loop — `apps/cli/specs/loop.md` remains the

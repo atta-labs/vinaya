@@ -23,9 +23,33 @@ const CLASSIFICATIONS = [
   'implementation-accident',
   'named-defect',
   'advisory',
-  'principal-ruling-required'
+  'principal-ruling-required',
+  // The register's classification-of-guarantee vocabulary, added beside the five above
+  // (never replacing them, so an entry's recorded classification and its count stay put).
+  'guarantee',
+  'defect',
+  'accident',
+  'hygiene'
 ] as const
 type Classification = (typeof CLASSIFICATIONS)[number]
+
+/** Classes that promise behavior the Engine path must keep: each names a test oracle. */
+const GUARANTEE_CLASSES: readonly Classification[] = ['product-guarantee', 'guarantee']
+/** Classes that record a demonstrated weakness: each cites the defect register. */
+const DEFECT_CLASSES: readonly Classification[] = ['named-defect', 'defect']
+/** Classes that must map to at least one corpus scenario; the rest may map to none. */
+const SCENARIO_CLASSES: readonly Classification[] = [
+  'product-guarantee',
+  'named-defect',
+  'implementation-accident',
+  'advisory',
+  'principal-ruling-required',
+  'guarantee',
+  'defect'
+]
+/** Whose a finding is: the product, the reference process around it, or this implementation. */
+const SCOPES = ['product', 'reference-process', 'implementation'] as const
+type Scope = (typeof SCOPES)[number]
 
 const OWNERS = [
   'vinaya-policy',
@@ -65,6 +89,7 @@ interface Invariant {
   id: string
   behavior: string
   classification: Classification
+  scope: Scope
   defect?: string
   ambiguity?: string
   owner: string
@@ -92,7 +117,15 @@ interface Inventory {
   exclusions: ReasonedPath[]
   supportFiles: ReasonedPath[]
   invariants: Invariant[]
-  defects: { id: string; summary: string; code: PathRef; spec: PathRef; status: string }[]
+  defects: {
+    id: string
+    summary: string
+    code: PathRef
+    spec: PathRef
+    status: string
+    classification: Classification
+    scope: Scope
+  }[]
   ambiguities: { id: string; question: string; citations: string[]; rulingStatus: string }[]
 }
 
@@ -183,6 +216,16 @@ function headingsOf(markdown: string): Set<string> {
   return out
 }
 
+/** Every entry of either register missing its classification or its scope. */
+function missingFields(inv: Inventory): string[] {
+  const out: string[] = []
+  for (const e of [...inv.invariants, ...inv.defects] as { id: string; classification?: string; scope?: string }[]) {
+    if (!e.classification) out.push(`${e.id}: classification`)
+    if (!e.scope) out.push(`${e.id}: scope`)
+  }
+  return out
+}
+
 function countBy<T extends string>(values: readonly T[], keys: readonly T[]): Record<T, number> {
   const counts = Object.fromEntries(keys.map((k) => [k, 0])) as Record<T, number>
   for (const v of values) counts[v] += 1
@@ -259,6 +302,7 @@ describe('standalone dev-review loop invariant map (O2: every named path resolve
       id: 'INV-PROBE',
       behavior: 'probe',
       classification: 'implementation-accident',
+      scope: 'implementation',
       owner: 'standalone-only',
       authority: 'effect',
       scenarios: ['happy-path'],
@@ -286,14 +330,15 @@ describe('standalone dev-review loop invariant map (O2: every named path resolve
 })
 
 describe('standalone dev-review loop invariant map (O3: every behavior classified)', () => {
-  it('every invariant is well-formed and carries one of the five classifications', () => {
+  it('every invariant is well-formed and carries a known classification and scope', () => {
     const ids = inventory.invariants.map((i) => i.id)
     expect(new Set(ids).size).toBe(ids.length)
     for (const i of inventory.invariants) {
       expect(CLASSIFICATIONS).toContain(i.classification)
+      expect(SCOPES).toContain(i.scope)
       expect(OWNERS).toContain(i.owner as (typeof OWNERS)[number])
       expect(AUTHORITIES).toContain(i.authority as (typeof AUTHORITIES)[number])
-      expect(i.scenarios.length).toBeGreaterThan(0)
+      if (SCENARIO_CLASSES.includes(i.classification)) expect(i.scenarios.length).toBeGreaterThan(0)
       for (const s of i.scenarios) expect(SCENARIOS).toContain(s as (typeof SCENARIOS)[number])
       expect(i.sources.length).toBeGreaterThan(0)
       expect(i.behavior.trim().length).toBeGreaterThan(0)
@@ -303,9 +348,45 @@ describe('standalone dev-review loop invariant map (O3: every behavior classifie
 
   it('every product guarantee names at least one test as its oracle', () => {
     const untested = inventory.invariants.filter(
-      (i) => i.classification === 'product-guarantee' && i.tests.length === 0
+      (i) => GUARANTEE_CLASSES.includes(i.classification) && i.tests.length === 0
     )
     expect(untested.map((i) => i.id)).toEqual([])
+  })
+
+  it('an entry missing its classification or its scope is reported', () => {
+    expect(missingFields(inventory)).toEqual([])
+    const [first, second] = inventory.invariants as [Invariant, Invariant]
+    const [firstDefect] = inventory.defects as [Inventory['defects'][number]]
+    const { scope: _scope, ...noScope } = first
+    const { classification: _classification, ...noClass } = second
+    const { scope: _defectScope, ...noDefectScope } = firstDefect
+    const probe = {
+      ...inventory,
+      invariants: [noScope as Invariant, noClass as Invariant],
+      defects: [noDefectScope as Inventory['defects'][number]]
+    }
+    expect(missingFields(probe)).toEqual([
+      `${first.id}: scope`,
+      `${second.id}: classification`,
+      `${firstDefect.id}: scope`
+    ])
+  })
+
+  it('every defect-register entry carries the classification and scope of the invariant citing it', () => {
+    for (const d of inventory.defects) {
+      const citing = inventory.invariants.filter((i) => i.defect === d.id)
+      expect(citing.length).toBe(1)
+      const [owner] = citing as [Invariant]
+      expect(d.classification).toBe(owner.classification)
+      expect(d.scope).toBe(owner.scope)
+    }
+  })
+
+  it('every guarantee or defect maps to a corpus scenario', () => {
+    const unmapped = inventory.invariants.filter(
+      (i) => [...GUARANTEE_CLASSES, ...DEFECT_CLASSES].includes(i.classification) && i.scenarios.length === 0
+    )
+    expect(unmapped.map((i) => i.id)).toEqual([])
   })
 
   it('every named defect is in the defect register, and every register entry is cited', () => {
@@ -313,7 +394,7 @@ describe('standalone dev-review loop invariant map (O3: every behavior classifie
     expect(defectIds.size).toBe(inventory.defects.length)
     const cited = new Set<string>()
     for (const i of inventory.invariants) {
-      if (i.classification === 'named-defect') {
+      if (DEFECT_CLASSES.includes(i.classification)) {
         expect(i.defect).toBeDefined()
         expect(defectIds.has(i.defect as string)).toBe(true)
         cited.add(i.defect as string)
@@ -353,6 +434,10 @@ describe('standalone dev-review loop invariant map (O3: every behavior classifie
       inventory.invariants.map((i) => i.classification),
       CLASSIFICATIONS
     )
+    const byScope = countBy(
+      inventory.invariants.map((i) => i.scope),
+      SCOPES
+    )
     const byAuthority = countBy(
       inventory.invariants.map((i) => i.authority as (typeof AUTHORITIES)[number]),
       AUTHORITIES
@@ -371,11 +456,14 @@ describe('standalone dev-review loop invariant map (O3: every behavior classifie
       `unresolved paths: ${unresolved.length}`,
       `invariants: ${inventory.invariants.length}`,
       ...CLASSIFICATIONS.map((c) => `  ${c}: ${byClass[c]}`),
+      `by scope: ${SCOPES.map((s) => `${s} ${byScope[s]}`).join(', ')}`,
       `by authority: ${AUTHORITIES.map((a) => `${a} ${byAuthority[a]}`).join(', ')}`,
       `by scenario: ${SCENARIOS.map((s) => `${s} ${byScenario[s]}`).join(', ')}`,
       `defects: ${inventory.defects.length}; ambiguities awaiting a ruling: ${inventory.ambiguities.filter((a) => a.rulingStatus === 'awaiting-principal').length}`
     ]
     process.stdout.write(`${lines.join('\n')}\n`)
+    expect(missingFields(inventory)).toEqual([])
+    expect(Object.values(byScope).reduce((a, b) => a + b, 0)).toBe(inventory.invariants.length)
     expect(Object.values(byClass).reduce((a, b) => a + b, 0)).toBe(inventory.invariants.length)
   })
 })

@@ -8,7 +8,7 @@ provider adapter must supply. It judges fit and names gaps. It does not
 choose another packaging, runtime, orchestration framework or
 provider-specific core, changes no production behavior, and designs no fix
 for a gap it names. The governing contract is the Linear "Tech spec —
-Developer-review on Atta Engine", revision 8. The workflow it judges is
+Developer-review on Atta Engine", revision 9. The workflow it judges is
 `apps/cli/specs/dev-review-engine-state-machine.md`; the behaviors it traces
 to are `apps/cli/specs/dev-review-invariants.md`'s register; the
 confinement facts come from `apps/cli/specs/isolation.md`.
