@@ -106,9 +106,9 @@ Each invariant records:
 
 | Classification | Meaning |
 | -- | -- |
-| `product-guarantee` | loop.md promises it, deterministic code outside the worker enforces it, and at least one test is its oracle. The Engine path must preserve it. |
+| `product-guarantee` | loop.md promises it, deterministic code outside the worker enforces it, and at least one test is its oracle. When its scope is `product`, the Engine path must preserve it; at any other scope it is recorded and kept where it lives (see the scope rule below). |
 | `implementation-accident` | Incidental structure or ordering that nothing promises. The Engine path need not reproduce it. |
-| `named-defect` | The code contradicts loop.md, or a weakness has been demonstrated. Each entry cites both sides in the defect register. The Engine path must correct it, not copy it. |
+| `named-defect` | The code contradicts loop.md, or a weakness has been demonstrated. Each entry cites both sides in the defect register. When its scope is `product`, the Engine path must correct it, not copy it; at any other scope it is fixed where it lives. |
 | `advisory` | Enforced only inside the worker, through hooks, permission rules or prompt text, so a worker can bypass it. It never counts as a product guarantee (revision 9, sections 16.3 and 16.7). |
 | `principal-ruling-required` | Spec and code are silent or in conflict on a policy choice. The entry is recorded with its ruling status and is never decided here. |
 
@@ -124,10 +124,14 @@ scope.
 The classification vocabulary was extended, not replaced. The five values
 above keep their meaning and their counts, and an entry's recorded
 classification is never changed silently. Findings recorded since the register
-froze use the five values below, which name the same ideas more plainly:
+froze use the five values below, which name nearly the same ideas more plainly:
 `guarantee` is the new name for `product-guarantee`, `defect` for
-`named-defect`, `accident` for `implementation-accident`, and `advisory` is
-shared.
+`named-defect`, and `advisory` is shared. `accident` widens
+`implementation-accident` to cover an emergent property of how the loop is
+run, and a scenario mapping is required of `guarantee` and `defect` but is
+optional for `accident` and `hygiene`. The section citations in the existing
+entries' reasons were written against revision 7 of the design and are kept as
+recorded; they were not re-checked against revision 9.
 
 | Classification | Meaning |
 | -- | -- |
@@ -216,4 +220,4 @@ to `fixed`, so the register remains a record of what the Engine path must
 not regress to. Run the architecture test by naming it: it prints the
 module and test totals, the unmapped and unresolved path counts (both
 must be zero), and the count of invariants under each classification,
-authority and scenario.
+scope, authority and scenario.
