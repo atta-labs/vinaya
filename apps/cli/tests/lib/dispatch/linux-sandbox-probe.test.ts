@@ -10,7 +10,7 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -46,6 +46,25 @@ afterEach(() => {
 function tempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
   tempDirs.push(dir)
+  return dir
+}
+
+/**
+ * A PATH made only of a fresh temporary directory holding links to the host
+ * tools these tests themselves run — never the host's own PATH minus some
+ * directories, which on a host with `bwrap`/`socat` beside `git` and the
+ * shell would drop those too. A tool a test needs absent or present is
+ * added or left out of the directory it hands the child, never hidden.
+ */
+const HOST_TOOLS_THE_TESTS_RUN = ['bun', 'git', 'sh', 'which', 'cat', 'touch', 'env', 'node']
+
+function hostToolsPath(): string {
+  const dir = tempDir('vinaya-host-tools-')
+  const realDirs = (process.env.PATH ?? '').split(':').filter(Boolean)
+  for (const tool of HOST_TOOLS_THE_TESTS_RUN) {
+    const found = realDirs.map((d) => join(d, tool)).find((p) => existsSync(p))
+    if (found) symlinkSync(found, join(dir, tool))
+  }
   return dir
 }
 
@@ -471,13 +490,6 @@ describe('listingRevealsSocket', () => {
 describe('dispatchRole runs the probe before spawn on Linux', () => {
   const DISPATCH_LIB = join(import.meta.dir, '..', '..', '..', 'src', 'lib', 'dispatch.ts')
 
-  function pathWithoutRealVendors(): string {
-    return (process.env.PATH ?? '')
-      .split(':')
-      .filter((d) => d && !['claude', 'codex', 'gemini', 'bwrap', 'socat'].some((v) => existsSync(join(d, v))))
-      .join(':')
-  }
-
   type ProbeOutcome = 'sandbox-error' | 'pass'
 
   function runDispatch(outcome: ProbeOutcome, extraEnv: Record<string, string> = {}) {
@@ -527,14 +539,15 @@ describe('dispatchRole runs the probe before spawn on Linux', () => {
         env: {
           ...stripVinayaEnv(process.env),
           HOME: home,
-          PATH: `${binDir}:${pathWithoutRealVendors()}`,
+          PATH: `${binDir}:${hostToolsPath()}`,
           ...extraEnv
         }
       },
       30_000,
       'dispatchRole probe fixture'
     )
-    expect(child.status, child.stderr).toBe(0)
+    // Simulated host fact: Linux with stand-in bwrap/socat/claude only in binDir, and no other vendor tool on PATH.
+    expect(child.status, `host fact simulated: linux with stand-in bwrap/socat/claude only; ${child.stderr}`).toBe(0)
     const logPath = join(home, '.vinaya', 'runtime', 'unresolved', 'logs', 'unresolved', 'none.ndjson')
     return {
       stderr: child.stderr,

@@ -1,8 +1,11 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
+import { checkG7, parseEnforcementRegistry, reachesProducer } from '@attalabs/aeg-core'
+import { findCrossingFiles, globCandidateFiles } from '../../src/lib/github-crossing-files.js'
+import { blockingGateFiles, G7_EXEMPTIONS, gatherLogProducerGraph } from '../../src/lib/log-producer-graph.js'
 import { buildInitOps } from '../../src/lib/artifacts.js'
 import { HOOK_DIRS, initHookPaths } from '../../src/lib/init-hook-paths.js'
 
@@ -49,9 +52,12 @@ describe('registry-gates — task vinaya-adopter-portability-v1 2 (Issue #232)',
     const root = initFixture('registry-gates-dormant-all')
     try {
       const indexTs = join(import.meta.dir, '..', '..', 'src', 'index.ts')
+      // The pull-request variables a report run exports describe another
+      // repository's branch, never this fixture's.
+      const { PR_BODY: _body, PR_NUMBER: _number, BRANCH: _branch, ...ambient } = process.env
       const result = Bun.spawnSync(['bun', indexTs, 'check', '--all', '--diff-only'], {
         cwd: root,
-        env: { ...process.env, PR_BODY: undefined }
+        env: ambient
       })
       expect(result.exitCode).toBe(0)
       const stdout = result.stdout.toString()
@@ -132,4 +138,64 @@ describe('initHookPaths — parity with buildInitOps', () => {
     expect(emitted.has('.git/hooks/pre-push')).toBe(true)
     expect(emitted.has('.vinaya/hooks/pre-commit')).toBe(true)
   })
+})
+
+describe('registry-gates G7 — anything that can block or write to the forge reaches a log producer', () => {
+  const repoRoot = join(import.meta.dir, '..', '..', '..', '..')
+  const ring0Rows = () =>
+    parseEnforcementRegistry(readFileSync(join(repoRoot, 'aeg-root', 'enforcement.md'), 'utf8')).filter(
+      (r) => r.ring === 'ring0'
+    )
+
+  it("today's tree passes: the counts are stated and every file reaches a producer or carries a reason", () => {
+    const previous = process.cwd()
+    process.chdir(repoRoot)
+    try {
+      const crossingFiles = findCrossingFiles(globCandidateFiles())
+      const blockingFiles = blockingGateFiles(ring0Rows(), existsSync)
+      const { producers, imports } = gatherLogProducerGraph(repoRoot)
+      const reached = blockingFiles.filter((f) => reachesProducer(f, producers, imports))
+      expect(crossingFiles).toHaveLength(0)
+      expect(blockingFiles).toHaveLength(16)
+      expect(reached).toHaveLength(3)
+      expect(Object.keys(G7_EXEMPTIONS)).toHaveLength(13)
+      const result = checkG7({
+        enforcementMapPresent: true,
+        crossingFiles,
+        blockingFiles,
+        producers,
+        imports,
+        exemptions: G7_EXEMPTIONS,
+        existsFn: existsSync
+      })
+      expect(result.findings).toEqual([])
+      expect(result.status).toBe('pass')
+    } finally {
+      process.chdir(previous)
+    }
+  })
+
+  it('gives every exemption a stated reason', () => {
+    for (const [path, reason] of Object.entries(G7_EXEMPTIONS)) {
+      expect(reason.trim().length, path).toBeGreaterThan(20)
+    }
+  })
+
+  it('reports the rule as dormant in a repository with no enforcement map, with no G7 finding', () => {
+    const root = initFixture('registry-gates-g7-dormant')
+    try {
+      const result = Bun.spawnSync(['bun', BIN_PATH], { cwd: root, env: { ...process.env } })
+      expect(result.exitCode).toBe(0)
+      const stderr = result.stderr.toString()
+      expect(stderr).toContain('"check":"registry-gates.dormant"')
+      expect(stderr).not.toContain('registry-gates.G7')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it("the check emits no G7 finding on this repository's own tree", () => {
+    const result = Bun.spawnSync(['bun', BIN_PATH], { cwd: repoRoot, env: { ...process.env } })
+    expect(result.stderr.toString()).not.toContain('registry-gates.G7')
+  }, 20_000)
 })

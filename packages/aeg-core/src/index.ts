@@ -349,7 +349,18 @@ export type {
 } from './diagram-model'
 export { parseEnforcementRegistry } from './registry-parse'
 export type { GateRing, GateRow } from './registry-parse'
-export { checkG1, checkG2, checkG3, checkG4, checkG5, checkG6, findUnshippedHookRefs } from './registry-checks'
+export {
+  type CheckG7Input,
+  checkG1,
+  checkG2,
+  checkG3,
+  checkG4,
+  checkG5,
+  checkG6,
+  checkG7,
+  findUnshippedHookRefs,
+  reachesProducer
+} from './registry-checks'
 export type {
   HookReferenceInput,
   HookScanFile,

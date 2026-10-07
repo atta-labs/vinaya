@@ -250,7 +250,13 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
   { test: 'apps/cli/tests/checks/bin-permissions.test.ts', roots: ['.'], trigger: 'content' },
   {
     test: 'apps/cli/tests/checks/registry-gates.test.ts',
-    roots: ['apps/cli/src/checks/bin/check-registry-gates.ts'],
+    roots: [
+      'apps/cli/src/',
+      'packages/aeg-core/bin/',
+      'packages/aeg-core/src/brief-validation.ts',
+      'aeg-root/enforcement.md',
+      '.claude/hooks/'
+    ],
     trigger: 'content'
   },
   {

@@ -56,6 +56,8 @@ import {
 import { hostname, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { rateLimitPauseDetail } from '../../src/lib/dev-review-loop/round-assess.js'
+import { renderNoPushStopComment, renderPauseComment } from '../../src/lib/dev-review-loop/pause-resume.js'
 import { FAKE_CLAUDE_PROBE_ANSWER } from './dispatch/fake-sandbox-probe.js'
 import {
   assertValidLoopEvent,
@@ -1464,6 +1466,8 @@ describe('devReviewLoop — the driver_exited lifecycle event (#949, O2/O3)', ()
 
   it('a clean publish emits exactly one driver_exited reason=finished, stops the heartbeat, and writes no routine role-log line', async () => {
     const world = makeWorld()
+    // Whatever the host process already carried (a pre-push hook run for an open pull request sets it).
+    const priorPr = process.env.VINAYA_PR
     let stopped = 0
     const result = await runLoopInProcess(
       world,
@@ -1498,8 +1502,8 @@ describe('devReviewLoop — the driver_exited lifecycle event (#949, O2/O3)', ()
       { role: 'code-reviewer', outcome: 'approve', blockers: 0 },
       { role: 'security', outcome: 'approve', blockers: 0 }
     ])
-    // Restored on return: nothing left in this process's environment.
-    expect(process.env.VINAYA_PR).toBeUndefined()
+    // Restored on return: the environment is as the loop found it.
+    expect(process.env.VINAYA_PR).toBe(priorPr)
 
     // The role log stays diagnostic: a clean return writes no `driver_exited`
     // line there (Boundary — "diagnostic rather than routine").
@@ -5108,6 +5112,197 @@ describe('devReviewLoop — a failed policy read pauses infrastructure and casts
     expect(result.finalDecision.type).toBe('publish')
     expect(world.dispatchCountByRole['code-reviewer'] ?? 0).toBeGreaterThanOrEqual(1)
     expect(world.dispatchCountByRole.security ?? 0).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('devReviewLoop — a GitHub rate limit waits and retries, never pausing for a ruling (issue #1111)', () => {
+  const RATE_LIMIT = 'gh: API rate limit already exceeded for user ID 1. (HTTP 403)'
+
+  /** Overrides recording every wait and every reset read; the sleep never really waits. */
+  function waitProbes() {
+    const slept: number[] = []
+    let resetReads = 0
+    return {
+      slept,
+      resetReads: () => resetReads,
+      deps: {
+        // A real one-millisecond yield, like the harness's own sleep — the log
+        // sink flushes on a macrotask, so an instant no-op would starve it.
+        // Only the rate-limit waits (a minute or more) are recorded.
+        sleep: (ms: number) => {
+          if (ms >= 30_000) slept.push(ms)
+          return new Promise<void>((resolve) => setTimeout(resolve, 1))
+        },
+        readRateLimitReset: async () => {
+          resetReads += 1
+          return Math.floor(Date.now() / 1000) + 60
+        }
+      }
+    }
+  }
+
+  it('a rate limit before any role is dispatched waits once, re-enters, and publishes with no pause comment (O1)', async () => {
+    const world = makeWorld()
+    const probes = waitProbes()
+    let thrown = false
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        ...probes.deps,
+        fetchRulings: (_pr) => {
+          if (!thrown) {
+            thrown = true
+            throw new Error(RATE_LIMIT)
+          }
+          return [...world.rulings]
+        }
+      }
+    )
+    expect(result.finalDecision.type).toBe('publish')
+    expect(thrown).toBe(true)
+    expect(probes.slept).toHaveLength(1)
+    expect(probes.slept[0]).toBeGreaterThan(60_000)
+    expect(probes.slept[0]).toBeLessThanOrEqual(65_000)
+    expect(probes.resetReads()).toBe(1)
+    expect(world.postedComments.some((c) => /aeg:loop:paused/.test(c.body))).toBe(false)
+  })
+
+  it('a rate limit on the post-dispatch self-check reads waits in place — no reviewer is dispatched a second time (O1)', async () => {
+    const world = makeWorld()
+    const probes = waitProbes()
+    let thrown = false
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        ...probes.deps,
+        fetchNewestRulingOrdinal: (_pr) => {
+          if (world.reviewerDispatchStarted && !thrown) {
+            thrown = true
+            throw new Error(RATE_LIMIT)
+          }
+          return world.rulingOrdinal
+        }
+      }
+    )
+    expect(result.finalDecision.type).toBe('publish')
+    expect(thrown).toBe(true)
+    expect(probes.slept).toHaveLength(1)
+    expect(world.dispatchCountByRole['code-reviewer']).toBe(1)
+    expect(world.dispatchCountByRole.security).toBe(1)
+    expect(world.postedComments.some((c) => /aeg:loop:paused/.test(c.body))).toBe(false)
+  })
+
+  it('a rate limit that never clears pauses after two waits, names the rate limit, asks for no ruling and spends no retry (O2/O3)', async () => {
+    const world = makeWorld()
+    const probes = waitProbes()
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        ...probes.deps,
+        fetchRulings: () => {
+          throw new Error(RATE_LIMIT)
+        }
+      }
+    )
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+    expect(probes.slept).toHaveLength(2)
+    const pauseState = JSON.parse(readFileSync(join(ipControlDir(world), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(String(pauseState.detail)).toMatch(/^GitHub rate limit:/)
+    expect(pauseState.infrastructureRetries).toBe(0)
+    const comment = world.postedComments.find((c) => /aeg:loop:paused:infrastructure/.test(c.body))
+    expect(comment).toBeDefined()
+    expect(comment!.body).toMatch(/No Principal ruling is needed/)
+    expect(comment!.body).not.toMatch(/A Principal ruling is needed/)
+  })
+
+  it('a rate limit on the comment posted after the developer returns waits in place — the developer is not dispatched again (O1)', async () => {
+    const world = makeWorld()
+    const probes = waitProbes()
+    let thrown = false
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        ...probes.deps,
+        postMarkedComment: (kind, ref, marker, body) => {
+          if (/aeg:developer:round-/.test(marker) && !thrown) {
+            thrown = true
+            throw new Error(RATE_LIMIT)
+          }
+          world.postedComments.push({ kind, ref, marker, body })
+          return `https://github.com/example/repo/${kind}/${ref}#issuecomment-${world.postedComments.length}`
+        }
+      }
+    )
+    expect(thrown).toBe(true)
+    expect(probes.slept).toHaveLength(1)
+    expect(world.dispatchCountByRole.developer).toBe(1)
+    expect(world.postedComments.some((c) => /aeg:loop:paused/.test(c.body))).toBe(false)
+    expect(result.finalDecision.type).toBe('publish')
+  })
+
+  it('a rate limit after a dispatch, outside the wrapped reads, pauses at once and says no wait ran (O2)', async () => {
+    const world = makeWorld()
+    const probes = waitProbes()
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        ...probes.deps,
+        publishRound: () => {
+          throw new Error(RATE_LIMIT)
+        }
+      }
+    )
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+    expect(probes.slept).toHaveLength(0)
+    expect(world.dispatchCountByRole['code-reviewer']).toBe(1)
+    const pauseState = JSON.parse(readFileSync(join(ipControlDir(world), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(String(pauseState.detail)).toMatch(/^GitHub rate limit: .*did not wait/)
+    expect(String(pauseState.detail)).not.toMatch(/waited/)
+    expect(pauseState.infrastructureRetries).toBe(0)
+    const comment = world.postedComments.find((c) => /aeg:loop:paused:infrastructure/.test(c.body))
+    expect(comment!.body).toMatch(/No Principal ruling is needed/)
+  })
+
+  it('an error that merely mentions GitHub keeps today’s pause, spends a retry and waits for nothing (O3)', async () => {
+    const world = makeWorld()
+    const probes = waitProbes()
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        ...probes.deps,
+        fetchRulings: () => {
+          throw new Error('gh: Bad gateway (HTTP 502)')
+        }
+      }
+    )
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+    expect(probes.slept).toHaveLength(0)
+    const comment = world.postedComments.find((c) => /aeg:loop:paused:infrastructure/.test(c.body))
+    expect(comment!.body).toMatch(/A Principal ruling is needed/)
+  })
+})
+
+describe('pause comments for a GitHub rate limit', () => {
+  it('both renderers say no ruling is needed and still give the resume command', () => {
+    const pr = renderPauseComment(7, 'infrastructure', rateLimitPauseDetail(2), { agent: 'claude' })
+    expect(pr).toContain('No Principal ruling is needed')
+    expect(pr).toContain('--resume 7')
+    expect(pr).not.toContain('A Principal ruling is needed')
+    const issue = renderNoPushStopComment(9, 'task/issue-9', 'infrastructure', rateLimitPauseDetail(2))
+    expect(issue).toContain('No Principal ruling is needed')
+    expect(issue).not.toContain('Your ruling text here')
   })
 })
 

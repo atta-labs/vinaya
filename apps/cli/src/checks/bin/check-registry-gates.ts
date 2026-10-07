@@ -2,7 +2,7 @@
 
 /**
  * Core check: registry-gates. Thin adapter over `@attalabs/aeg-core`'s
- * `checkG1`–`checkG5` — mirrors `packages/aeg-core/bin/verify-registry.ts`'s
+ * `checkG1`–`checkG7` — mirrors `packages/aeg-core/bin/verify-registry.ts`'s
  * input assembly (`aeg-root/enforcement.md` parse, `.husky`/`.claude/hooks`
  * candidate-file glob, role/contract frontmatter, G4's `gh`-reachability
  * probe), collapsed into ONE registered check rather than five, emitting
@@ -69,6 +69,14 @@
  * (`commands/check.ts`), so the dormancy notice is visible in the same
  * transcript a silent `pass` used to hide it from.
  *
+ * G7 (anything that can block a change or write to the forge reaches a log
+ * producer) is gathered here, by the import resolution the test selector
+ * already has — no second source search: the crossing files are G3's own list,
+ * the blocking-gate files are the Ring-0 rows' `.ts` implementations, and a
+ * producer is a CLI source file that imports the sink's `log` or `logSync`.
+ * Reaching is confined to the CLI package's own sources; a file outside it is
+ * named in `G7_EXEMPTIONS` with its reason.
+ *
  * scope: full — reads the whole doctrine tree, not the local diff.
  */
 
@@ -83,11 +91,14 @@ import {
   checkG4,
   checkG5,
   checkG6,
+  checkG7,
   type HookScanFile,
   parseEnforcementRegistry,
   type RegistryCheckResult
 } from '@attalabs/aeg-core'
 import { initHookPaths } from '../../lib/init-hook-paths.js'
+import { findCrossingFiles, globCandidateFiles } from '../../lib/github-crossing-files.js'
+import { blockingGateFiles, G7_EXEMPTIONS, gatherLogProducerGraph } from '../../lib/log-producer-graph.js'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { coreCheckRegistry } from '../registry.js'
 
@@ -96,54 +107,6 @@ const ENFORCEMENT_PATH = 'aeg-root/enforcement.md'
 const ROLES_DIR = 'aeg-root/roles'
 const CONTRACTS_DIR = 'aeg-root/contracts'
 const DOCTRINE_DIR = 'aeg-root'
-
-function isGithubCrossingLine(line: string): boolean {
-  const createMatch = /\bgh\s+(pr|issue)\s+create\b/.test(line)
-  const editWithBodyOrTitle =
-    /\bgh\s+(pr|issue)\s+edit\b/.test(line) &&
-    /--body\b|--body-file\b|--title\b|(?:^|\s)-b(?:\s|$)|(?:^|\s)-F(?:\s|$)|(?:^|\s)-t(?:\s|$)/.test(line)
-  const apiPost =
-    /\bgh\s+api\b/.test(line) &&
-    /-X\s*POST\b|--method\s*POST\b|(?:^|\s)-f(?:\s|$)|(?:^|\s)-F(?:\s|$)/.test(line) &&
-    /(\/pulls|\/issues)(["'\s]|$)/.test(line)
-  const apiPatch =
-    /\bgh\s+api\b/.test(line) &&
-    /-X\s*PATCH\b|--method\s*PATCH\b/.test(line) &&
-    /(\/pulls|\/issues)\/[0-9]+(["'\s]|$)/.test(line)
-  const curlWrite =
-    /\b(curl|wget)\b/.test(line) &&
-    /api\.github\.com/.test(line) &&
-    /(\/pulls|\/issues)/.test(line) &&
-    /-X\s*(POST|PATCH|PUT)\b|--method\s*(POST|PATCH|PUT)\b|--data\b|(?:^|\s)-d(?:\s|$)|--json\b|--post-data\b/.test(
-      line
-    )
-  return createMatch || editWithBodyOrTitle || apiPost || apiPatch || curlWrite
-}
-
-function globCandidateFiles(): string[] {
-  const out: string[] = []
-  if (existsSync('.husky')) {
-    for (const name of readdirSync('.husky')) {
-      if (name === '_') continue
-      const rel = `.husky/${name}`
-      if (statSync(rel).isFile()) out.push(rel)
-    }
-  }
-  if (existsSync('.claude/hooks')) {
-    for (const name of readdirSync('.claude/hooks')) {
-      if (name.endsWith('.sh')) out.push(`.claude/hooks/${name}`)
-    }
-  }
-  return out
-}
-
-function findCrossingFiles(candidateFiles: string[]): string[] {
-  return candidateFiles.filter((path) =>
-    readFileSync(path, 'utf8')
-      .split('\n')
-      .some((line) => isGithubCrossingLine(line))
-  )
-}
 
 function readHookScanFiles(dir: string): HookScanFile[] {
   const out: HookScanFile[] = []
@@ -311,6 +274,16 @@ async function main(): Promise<void> {
   const g3 = checkG3(ring0Rows, crossingFiles)
   const g5 = checkG5(roles, contracts)
   const g6 = checkG6(rows, new Set(coreCheckRegistry().map((s) => s.name)))
+  const { producers, imports } = gatherLogProducerGraph(process.cwd())
+  const g7 = checkG7({
+    enforcementMapPresent: true,
+    crossingFiles,
+    blockingFiles: blockingGateFiles(ring0Rows, existsSync),
+    producers,
+    imports,
+    exemptions: G7_EXEMPTIONS,
+    existsFn: existsSync
+  })
 
   // G1 and G2 (both re-graded blocking in this same wave) and
   // G3/G4/G5/G6: blocking.
@@ -320,8 +293,9 @@ async function main(): Promise<void> {
   emitResult(g4Result, true)
   emitResult(g5, true)
   emitResult(g6, true)
+  emitResult(g7, true)
 
-  const blockingFailed = [g1, g2, g3, g4Result, g5, g6].some((r) => r.status === 'fail')
+  const blockingFailed = [g1, g2, g3, g4Result, g5, g6, g7].some((r) => r.status === 'fail')
   process.exit(blockingFailed ? 1 : 0)
 }
 
