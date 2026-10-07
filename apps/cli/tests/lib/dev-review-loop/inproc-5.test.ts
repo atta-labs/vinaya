@@ -22,7 +22,9 @@ import {
   runLoopInProcess,
   type LoopWorld,
   seedAcceptedTurnResult,
-  defaultDeveloperTurnOutput
+  defaultDeveloperTurnOutput,
+  completedTurnOutput,
+  handoffIdsInPrompt
 } from '../dev-review-loop-harness.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
 import type { DispatchHandle } from '../../../src/lib/dispatch.js'
@@ -389,7 +391,19 @@ describe("devReviewLoop — O2 (task-files-v1 2, #649): the loop's two OLD workt
 
 describe('devReviewLoop — O3 (#543): a reviewer report missing finding ids is resent once, then report_uncitable — never no_progress', () => {
   it("resends once into a fresh work directory, records report_uncitable, and still dispatches the developer on this round's real BLOCKER — never stalls", async () => {
-    const world = makeWorld()
+    // Round 2's Developer reports a low confidence each time, so the run ends
+    // on the confidence rule's own pause rather than re-reviewing the same
+    // static head.
+    const world = makeWorld({
+      developerTurnOutput: (round, prompt) =>
+        round >= 2
+          ? completedTurnOutput({
+              confidence: 30,
+              explanation: 'unsure',
+              addressedFindingIds: handoffIdsInPrompt(prompt)
+            })
+          : undefined
+    })
     const base = makeInProcessDeps(world)
     let reviewerCalls = 0
     const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
