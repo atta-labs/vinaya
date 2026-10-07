@@ -52,7 +52,7 @@ import {
   SECRET_SCAN_CHECK
 } from '../../commands/review-post.js'
 import type { AgentVendor, DispatchHandle } from '../dispatch.js'
-import type { ReviewerCandidateInputPaths } from './reviewer-isolation.js'
+import { isStagedPrBodyFile, type ReviewerCandidateInputPaths } from './reviewer-isolation.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
 
 // --- reviewer prompt (facts only) -----------------------------------------
@@ -820,6 +820,24 @@ function policyTreatmentFor(
   return { treatment: c.outcome === 'blocking' ? 'blocking' : 'non_blocking', deferred: c.deferralReason }
 }
 
+/**
+ * A finding the reviewer located on the staged pull request body file
+ * (`isStagedPrBodyFile`) is re-located at `PR body` (`PR body:<line>` when it
+ * names a line) — the Developer's own output, which it edits through
+ * `update_pull_request_body`, not a repository file. The shared prose rule
+ * then reads it exactly as any finding a reviewer already wrote at "PR body":
+ * capped at `MINOR`, never deferred as outside the Surface, and kept in the
+ * verdict comment's FINDINGS block the Developer receives — and the merge
+ * gate, re-reading that comment with no knowledge of the staged path, reaches
+ * the same treatment. Severity and description are untouched; any other
+ * location is returned as it is.
+ */
+export function relocateStagedPrBodyFinding(finding: Finding): Finding {
+  const { file, line } = parseFindingLocation(finding.location)
+  if (!isStagedPrBodyFile(file)) return finding
+  return { ...finding, location: line === null ? 'PR body' : `PR body:${line}` }
+}
+
 // --- the round's deferral context (O2/O3), built from driver facts ----------
 
 /**
@@ -983,7 +1001,9 @@ export function buildVerdictFromReport(
   // infrastructure pause, never an uncaught throw that crashes the driver.
   let findings: Finding[]
   try {
-    findings = findingsRaw.trim() ? parseFindingsFile(findingsRaw, allowedSeverities) : []
+    findings = findingsRaw.trim()
+      ? parseFindingsFile(findingsRaw, allowedSeverities).map(relocateStagedPrBodyFinding)
+      : []
   } catch (err) {
     if (err instanceof FindingsParseError) {
       throw new ReviewerReportParseFailure(
@@ -1239,7 +1259,8 @@ export function renderReviewerDispatchPrompt(
     ...(hasObjectivesFacts(facts)
       ? [
           `Write one line per objective listed above to ${join(workDir, 'objectives.txt')}: O<n>|MET|<evidence> or O<n>|NOT MET|<evidence> — the status is read by its bare leading word (MET or NOT MET); write nothing else before it on that field.`,
-          "NOT MET means you verified the objective is not met — never a decline. An objective outside your own lens is MET, citing the other reviewer's evidence or verifying it yourself directly — never NOT MET with an out-of-scope note."
+          "NOT MET means you verified the objective is not met — never a decline. An objective outside your own lens is MET, citing the other reviewer's evidence or verifying it yourself directly — never NOT MET with an out-of-scope note.",
+          'An objective you find unmet is reported as NOT MET in objectives.txt with code or test evidence — never only as a finding on the pull request body, which is capped to MINOR and never decides an objective.'
         ]
       : []),
     `Write a short report to ${join(workDir, 'report.txt')} as one \`KEY: value\` line per field:`,

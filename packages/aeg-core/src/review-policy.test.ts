@@ -356,6 +356,28 @@ describe('classifyFinding — the one blocking decision (O1, O2, O3, O5)', () =>
   test('throws on a severity off the scale, never silently ignores', () => {
     expect(() => classifyFinding({ severity: 'SEVERE', location: 'a.ts:1' }, CODE, 'MAJOR')).toThrow(/not one of/)
   })
+
+  test('a PR-body or comment finding is never deferred, even when its capped severity reaches the threshold', () => {
+    // a MINOR threshold is the one case the capped severity still blocks, so
+    // the deferral rules would otherwise be reached for a location no Surface
+    // glob and no diff ever covers
+    const ctx: FindingDeferralContext = { changedLine: () => false, inSurface: () => false }
+    for (const location of ['PR body:1', 'PR body', 'a review comment']) {
+      expect(classifyFinding({ severity: 'BLOCKER', location }, CODE, 'MINOR', ctx)).toEqual({
+        outcome: 'blocking',
+        deferralReason: null
+      })
+    }
+    // a role file is prose yet still a real file: both rules still apply to it
+    expect(
+      classifyFinding({ severity: 'BLOCKER', location: 'aeg-root/roles/developer.md:3' }, CODE, 'MINOR', ctx)
+    ).toEqual({ outcome: 'deferred', deferralReason: 'outside-surface' })
+    // and a real file whose name contains "pr-body" is still deferred outside the Surface
+    expect(classifyFinding({ severity: 'MAJOR', location: 'fixtures/pr-body-473.md:1' }, CODE, 'MAJOR', ctx)).toEqual({
+      outcome: 'deferred',
+      deferralReason: 'outside-surface'
+    })
+  })
 })
 
 describe('evaluateReviewFindings — deferred findings carried out (O4)', () => {

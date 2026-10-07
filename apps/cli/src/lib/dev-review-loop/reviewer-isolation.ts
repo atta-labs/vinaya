@@ -351,6 +351,19 @@ const DIFF_INPUT_FILE_NAME = 'diff.patch'
 const PRIOR_FINDINGS_INPUT_FILE_NAME = 'prior-findings.md'
 
 /**
+ * `true` when `file` (a finding location's file part, its `:line` already
+ * removed) names the pull request body this module stages for reviewers —
+ * by its staged path under `REVIEWER_INPUTS_DIR_NAME`, absolute or relative
+ * to the reviewer's own checkout, or by its bare file name. A repository file
+ * that merely shares the name in another directory, or a `pr-body-*.md`
+ * fixture, is never this file.
+ */
+export function isStagedPrBodyFile(file: string): boolean {
+  const staged = `${REVIEWER_INPUTS_DIR_NAME}/${PR_BODY_INPUT_FILE_NAME}`
+  return file === PR_BODY_INPUT_FILE_NAME || file === staged || file.endsWith(`/${staged}`)
+}
+
+/**
  * O1: the four staged input files' absolute paths inside `dir` — `dir`
  * being either the shared candidate (never read directly by a reviewer
  * attempt) or a role's own scratch copy of it (what a reviewer attempt's

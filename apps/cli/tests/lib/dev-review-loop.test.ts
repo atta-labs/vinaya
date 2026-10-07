@@ -54,9 +54,11 @@ import {
   writeFileSync
 } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { rateLimitPauseDetail } from '../../src/lib/dev-review-loop/round-assess.js'
+import { heldVerdictPath } from '../../src/lib/dev-review-loop/reviewer-dispatch.js'
+import { reviewerCandidateInputPaths } from '../../src/lib/dev-review-loop/reviewer-isolation.js'
 import { renderNoPushStopComment, renderPauseComment } from '../../src/lib/dev-review-loop/pause-resume.js'
 import { FAKE_CLAUDE_PROBE_ANSWER } from './dispatch/fake-sandbox-probe.js'
 import {
@@ -1661,6 +1663,53 @@ describe('devReviewLoop — deferred findings tracked in one Issue per pull requ
     // O3: nothing deferred, so no Issue is written and the summary links none.
     expect(world.deferredIssueWrites).toEqual([])
     expect(world.publishedDeferredIssues).toEqual([])
+  })
+
+  it('a BLOCKER and a MAJOR on the staged pull request body reach the Developer capped, never deferred', async () => {
+    // The reviewer cites the body file the driver staged in its own checkout —
+    // once relative to that checkout, once by its absolute path — derived from
+    // the staging module itself, never a second copy of its name.
+    const scratch = '/scratch/reviewer'
+    const stagedBody = reviewerCandidateInputPaths(scratch).prBody
+    const findings = [
+      `BLOCKER|${relative(scratch, stagedBody)}:1|the body claims an objective is met that the diff does not meet`,
+      `MAJOR|${stagedBody}:1|the body names a file the diff never touches`,
+      'BLOCKER|packages/aeg-core/src/foo.ts:10|a latent bug the loop cannot act on this round'
+    ].join('\n')
+    const world = makeWorld({
+      surface: { in: ['apps/cli/**'], out: [] },
+      roleOutcomes: { 1: { reviewer: { ...CLEAN_REVIEWER, findings: `${findings}\n` } } }
+    })
+    const base = makeInProcessDeps(world)
+    let heldReviewerVerdict = ''
+    const result = await runLoopInProcess(world, undefined, {
+      publishRound: (root, input) => {
+        heldReviewerVerdict = readFileSync(heldVerdictPath(root, input.task, input.round, 'reviewer'), 'utf8')
+        base.publishRound!(root, input)
+      }
+    })
+    expect(result.finalDecision.type).toBe('publish')
+
+    // Both body findings are in the verdict the Developer receives, at the
+    // body's own line, each keeping the severity the reviewer reported — and
+    // capped at MINOR: this world's threshold is BLOCKER, so a BLOCKER kept in
+    // the verdict yet not counted is what the cap alone produces.
+    expect(heldReviewerVerdict).toMatch(/^VERDICT: APPROVE/)
+    expect(heldReviewerVerdict).toContain('[BLOCKER] PR body:1 — the body claims an objective is met')
+    expect(heldReviewerVerdict).toContain('[MAJOR] PR body:1 — the body names a file')
+    expect(heldReviewerVerdict).not.toContain('pr-body.md')
+
+    // Only the real file outside the Surface is deferred, exactly as before.
+    expect(world.deferredIssueWrites).toHaveLength(1)
+    expect(world.deferredIssueWrites[0]!.entries).toEqual([
+      {
+        round: 1,
+        reviewer: 'reviewer',
+        severity: 'BLOCKER',
+        location: 'packages/aeg-core/src/foo.ts:10',
+        reason: 'outside-surface'
+      }
+    ])
   })
 })
 
