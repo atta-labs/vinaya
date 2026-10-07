@@ -659,12 +659,24 @@ export async function resultProofCommand(args: string[]): Promise<void> {
         if (!stops.includes('"rejected"')) {
           judged.pass = false
           judged.why.push('FAIL: the forced Stop hook never rejected a stop')
-        } else judged.why.push('the first stop was rejected and the session continued')
+        } else judged.why.push('the forced Stop hook rejected the first stop')
       }
       for (const line of judged.why) out(`  ${line}`)
       out(`verdict: ${judged.pass ? 'PASS' : 'FAIL'}`)
       if (!judged.pass) allPass = false
-      summaries.push(`${judged.pass ? 'PASS' : 'FAIL'}  ${proofCase.name}`)
+      // The summary repeats each case's deciding facts on one line, so a reader
+      // that keeps only the tail of this output still sees why a case failed.
+      const failures = judged.why.filter((line) => line.startsWith('FAIL: '))
+      const emitted = read.emissions.map((e) => emissionSummary(e)).join(',')
+      summaries.push(
+        `${judged.pass ? 'PASS' : 'FAIL'}  ${proofCase.name} — terminal ${read.terminal ?? '(none)'}; emissions [${emitted}]; ` +
+          `accepted ${verdict.crossed && verdict.accepted ? JSON.stringify(verdict.result.summary) : 'none'}` +
+          (failures.length > 0 ? `; ${clip(failures.join(' / '), 300)}` : '') +
+          (!verdict.crossed && read.event === null && read.errors.length > 0
+            ? `; errors: ${clip(read.errors.join(' | '), 200)}`
+            : '') +
+          (read.event === null && stderrTail.length > 0 ? `; stderr: ${clip(stderrTail, 200)}` : '')
+      )
     }
     out(`\n=== summary — ${agent} ===`)
     for (const line of summaries) out(line)
@@ -674,6 +686,21 @@ export async function resultProofCommand(args: string[]): Promise<void> {
     rmSync(scratchDir, { recursive: true, force: true })
   }
   if (!allPass) process.exitCode = 1
+}
+
+/** An emission's `summary` when it carries one (the field each case pins), else a clipped rendering. */
+function emissionSummary(emission: unknown): string {
+  const value = typeof emission === 'string' ? safeJson(emission) : emission
+  const summary = (value as { turnResult?: { summary?: unknown } } | null)?.turnResult?.summary
+  return typeof summary === 'string' ? JSON.stringify(summary) : clip(JSON.stringify(emission), 60)
+}
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return text
+  }
 }
 
 function safeRead(path: string): string {
