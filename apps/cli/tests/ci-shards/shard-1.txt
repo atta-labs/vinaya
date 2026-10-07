@@ -1,4 +1,5 @@
 src/commands/doctor-metering-io.test.ts
+tests/lib/log-entry-paths.test.ts
 src/commands/pr-verify-evidence-logic.test.ts
 src/commands/tokens-metering-io.test.ts
 tests/audit.test.ts
