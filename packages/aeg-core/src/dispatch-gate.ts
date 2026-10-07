@@ -46,6 +46,13 @@ export type DispatchDependsOnFact = DispatchEdgeFact & {
    */
   resolved?: boolean
   /**
+   * `true` when the forge could not be read for this edge's dependency — a
+   * fact distinct from `merged: false`: nothing is known about the
+   * dependency, so the gate refuses with a retryable reason rather than
+   * claiming it is unmerged.
+   */
+  readFailed?: boolean
+  /**
    * Hand-close recognition facts — a
    * second, narrower path alongside `merged` for a dependency Issue closed
    * directly by a recognized Principal, with a stated `COMPLETED` reason,
@@ -266,6 +273,14 @@ export function checkDispatchReadiness(input: DispatchGateInput): DispatchResult
       push(
         'depends-on-unresolvable',
         `dispatch-gate depends-on: ${taskLabel} depends on "${dep.id}", which is UNRESOLVABLE — the resolver could not find a matching tranche/task/Issue for this edge (not a claim about merge status). Not dispatchable until the edge is corrected.`
+      )
+      continue
+    }
+    if (dep.readFailed === true) {
+      const issueStr = dep.issue !== null ? ` (#${dep.issue})` : ''
+      push(
+        'depends-on-not-merged',
+        `dispatch-gate depends-on: ${taskLabel} depends on ${dep.id}${issueStr}, but the forge could not be read for that dependency — not a claim about its merge status. Retry the check.`
       )
       continue
     }

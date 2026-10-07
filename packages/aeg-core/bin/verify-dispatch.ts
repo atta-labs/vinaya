@@ -104,7 +104,6 @@ import {
   deriveSection7,
   classifyDocOwnersManifest,
   DOC_OWNERS_PATH,
-  extractClosesReferences,
   issueBranchName,
   parsePremiseBlock,
   PRINCIPAL_ALLOWLIST,
@@ -270,52 +269,67 @@ function fetchTrancheBranchPrs(trancheSlug: string, repo: RepoRef): Map<string, 
  */
 export type BacklogPrFetcher = (numbers: number[], repo: RepoRef) => Promise<Map<number, PrListEntry>>
 
+type BacklogPrRead = { nodes?: PrListEntry[]; closedByPullRequestsReferences?: { nodes?: PrListEntry[] } }
+
 /**
- * One batched fetch resolving each bare backlog Issue number (issue-586, O2)
- * to its OWN pull request, by the `task/issue-<n>` branch convention
- * (`issueBranchName`, `@attalabs/aeg-core`) and, when no branch matches, by a
- * `Closes #<n>` reference in a PR body (`extractClosesReferences`, same
- * package — one grammar, not a second copy). A number with neither match
- * returns no entry at all: `resolveDependsOn` falls back to the Issue's own
- * closed/open state for it, exactly as before this task.
+ * One batched GraphQL read resolving each bare backlog Issue number
+ * (issue-586, O2) to its OWN pull request — read for THAT Issue directly,
+ * never out of a window of the newest pull requests, so a dependency merged
+ * at any time is found: the pull request(s) on the `task/issue-<n>` branch
+ * (`issueBranchName`, `@attalabs/aeg-core`), else the pull request(s) the
+ * Issue itself names as closing it (`closedByPullRequestsReferences`). A
+ * number with neither returns no entry at all: `resolveDependsOn` falls back
+ * to the Issue's own closed/open state for it.
  *
- * Never treats a closed-without-merge Issue as satisfied: when a PR IS found
- * this way, `merged` is read off ITS OWN `state === 'MERGED'`, not off the
- * Issue's `CLOSED` state — an Issue closed as "not planned" with a real,
- * unmerged `task/issue-<n>` PR (or a PR that references it via `Closes #<n>`
- * without merging) correctly reports unmerged.
+ * Never treats a closed-without-merge Issue as satisfied: `merged` is read
+ * off the found pull request's own `state === 'MERGED'`, never off the
+ * Issue's `CLOSED` state. When several pull requests match, a merged one
+ * wins, else the first.
+ *
+ * THROWS when the forge cannot be read — never an empty map, which would
+ * make every dependency read as unmerged. The caller reports that as its
+ * own retryable refusal.
  */
 export async function fetchBacklogIssuePrsBatch(numbers: number[], repo: RepoRef): Promise<Map<number, PrListEntry>> {
   const result = new Map<number, PrListEntry>()
   const unique = [...new Set(numbers)]
   if (unique.length === 0) return result
 
-  const all =
-    (await shJsonAsync<PrListEntry[]>('gh', [
-      'pr',
-      'list',
-      '-R',
-      `${repo.owner}/${repo.repo}`,
-      '--state',
-      'all',
-      '--json',
-      'number,headRefName,state,mergedAt,body',
-      '--limit',
-      '300'
-    ])) ?? []
-  const byBranch = new Map<string, PrListEntry>()
-  for (const pr of all) byBranch.set(pr.headRefName, pr)
+  const parsed = await shJsonAsync<{ data?: { repository?: Record<string, BacklogPrRead | null> } }>('gh', [
+    'api',
+    'graphql',
+    '-R',
+    `${repo.owner}/${repo.repo}`,
+    '-f',
+    `query=${buildBacklogPrQuery(unique)}`,
+    '-F',
+    `owner=${repo.owner}`,
+    '-F',
+    `repo=${repo.repo}`
+  ])
+  const repository = parsed?.data?.repository
+  if (!repository)
+    throw new Error(`could not read pull requests for ${unique.map((n) => `#${n}`).join(', ')} from the forge`)
 
+  const pick = (prs: PrListEntry[]): PrListEntry | undefined => prs.find((pr) => pr.state === 'MERGED') ?? prs[0]
   for (const n of unique) {
-    const branchMatch = byBranch.get(issueBranchName(n))
-    if (branchMatch) {
-      result.set(n, branchMatch)
-      continue
-    }
-    const bodyMatch = all.find((pr) => extractClosesReferences(pr.body ?? '').has(n))
-    if (bodyMatch) result.set(n, bodyMatch)
+    const found =
+      pick(repository[`b_${n}`]?.nodes ?? []) ?? pick(repository[`c_${n}`]?.closedByPullRequestsReferences?.nodes ?? [])
+    if (found) result.set(n, found)
   }
   return result
+}
+
+function buildBacklogPrQuery(numbers: number[]): string {
+  const fields = 'number headRefName state mergedAt'
+  const perIssue = numbers
+    .map(
+      (n) =>
+        `b_${n}: pullRequests(headRefName: "${issueBranchName(n)}", first: 5, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { ${fields} } }\n    ` +
+        `c_${n}: issue(number: ${n}) { closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes { ${fields} } } }`
+    )
+    .join('\n    ')
+  return `query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) {\n    ${perIssue}\n  } }`
 }
 
 // ---- tranche / task resolution ---------------------------------------------
@@ -473,7 +487,15 @@ export async function resolveDependsOn(
     }
   }
   const issueStates = fetchIssueStates([...needed], repo)
-  const backlogPrs = await fetchBacklogPrs([...neededBacklog], repo)
+  // A failed forge read is its own fact, never an empty answer: an empty map
+  // would read every backlog dependency as unmerged.
+  let backlogPrs = new Map<number, PrListEntry>()
+  let backlogReadFailed = false
+  try {
+    backlogPrs = await fetchBacklogPrs([...neededBacklog], repo)
+  } catch {
+    backlogReadFailed = true
+  }
 
   const facts: DispatchDependsOnFact[] = []
   for (const edge of edges) {
@@ -497,6 +519,10 @@ export async function resolveDependsOn(
       // Issue's own closed/open state is only the fallback for a number
       // with no known PR at all, unchanged from before this task.
       const backlogPr = backlogPrs.get(directIssue)
+      if (backlogReadFailed || (!backlogPr && !issueStates.has(directIssue))) {
+        facts.push({ id: edge, issue: directIssue, merged: false, readFailed: true })
+        continue
+      }
       const merged = backlogPr ? backlogPr.state === 'MERGED' : issueStates.get(directIssue) === 'CLOSED'
       facts.push({ id: edge, issue: directIssue, merged })
       continue
