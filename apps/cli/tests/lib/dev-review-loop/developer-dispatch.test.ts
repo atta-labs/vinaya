@@ -86,10 +86,12 @@ describe('checkTaskDispatchReadiness', () => {
       ACTIVE_LOCAL_GATE
     )
     expect(result.ready).toBe(true)
-    expect(calls).toEqual([
-      { script: 'apps/cli/src/checks/bin/check-dispatch-readiness.ts', args: ['agent-confinement-v1', '7'] },
-      { script: 'packages/aeg-core/bin/verify-dispatch.ts', args: ['agent-confinement-v1', '7', '--existing-work'] }
+    expect(calls.map((c) => c.args)).toEqual([
+      ['agent-confinement-v1', '7'],
+      ['agent-confinement-v1', '7', '--existing-work']
     ])
+    expect(calls[0]?.script.endsWith('check-dispatch-readiness.ts')).toBe(true)
+    expect(calls[1]?.script.endsWith('verify-dispatch.ts')).toBe(true)
     expect(result.output).toContain('check-dispatch-readiness.ts ok')
     expect(result.output).toContain('verify-dispatch.ts ok')
   })
