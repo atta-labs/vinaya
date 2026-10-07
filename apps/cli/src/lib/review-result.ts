@@ -66,8 +66,11 @@ const FindingSchema = (severity: z.ZodType<string>) =>
   z
     .object({
       severity,
-      /** The file the finding is about — required: a finding that names no file cannot be acted on. */
-      file: z.string().min(1),
+      /**
+       * The file the finding is about — required: a finding that names no file cannot be acted on. Strict structured
+       * outputs make every field present, so a model with no file sends `""`: the semantic check refuses it as `rejected`.
+       */
+      file: z.string(),
       /** `null` when the finding is about the file as a whole. */
       line: z.number().int().min(1).nullable(),
       description: z.string().min(1).nullable()

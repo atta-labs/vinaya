@@ -115,10 +115,6 @@ describe('ReviewResult schema (O7)', () => {
       wrap(completed('code-reviewer', { findings: [{ severity: 'MAJOR', line: 1, description: null }] }))
     ],
     [
-      'a finding with an empty file',
-      wrap(completed('code-reviewer', { findings: [{ severity: 'MAJOR', file: '', line: 1, description: null }] }))
-    ],
-    [
       'a finding with a non-integer line',
       wrap(
         completed('code-reviewer', { findings: [{ severity: 'MAJOR', file: 'a.ts', line: 1.5, description: null }] })
@@ -221,6 +217,13 @@ describe('semantic validation (O3, O5)', () => {
       )
     })
   }
+  it('rejects a finding whose file is the empty string', () => {
+    reject(
+      completed('code-reviewer', { findings: [{ severity: 'MINOR', file: '', line: 1, description: null }] }),
+      'code-reviewer',
+      'must name a file'
+    )
+  })
   it('rejects a finding whose file is only whitespace', () => {
     reject(
       completed('code-reviewer', { findings: [{ severity: 'MINOR', file: '  ', line: 1, description: null }] }),
@@ -264,6 +267,15 @@ describe('outcomes: only a bound, valid review is a review (O4)', () => {
       'provider_error'
     ],
     ['role mismatch', facts({ raw: wrap(completed('security-reviewer')) }), 'role_mismatch'],
+    [
+      'rejected empty file',
+      facts({
+        raw: wrap(
+          completed('code-reviewer', { findings: [{ severity: 'MINOR', file: '', line: 1, description: null }] })
+        )
+      }),
+      'rejected'
+    ],
     [
       'rejected objective',
       facts({
