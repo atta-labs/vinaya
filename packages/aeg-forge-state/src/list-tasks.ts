@@ -277,6 +277,50 @@ export function tasksFromIssues(issues: GhIssue[]): Task[] {
   return tasks.sort((a, b) => compareTaskIds(a.id, b.id))
 }
 
+/** Two or more open Issues claiming one task number. */
+export type DuplicateOpenTask = { id: string; issues: number[] }
+
+/**
+ * Resolves a task list that may hold several Issues under one task number (a
+ * re-cut task keeps its closed not-planned Issue beside the open one) to one
+ * Task per id. An open Issue beats a closed one; among closed ones the highest
+ * Issue number (the latest re-cut) stands. Two open Issues under one id are
+ * not resolvable — they are reported in `conflicts`, the lowest Issue number
+ * standing in `tasks` so callers still see the id.
+ *
+ * Read-side only: the tranche model itself still counts a closed not-planned
+ * Issue as a dropped task, so `tasksFromIssues` keeps every Issue.
+ */
+export function resolveDuplicateTasks(
+  tasks: Task[],
+  isOpen: (issue: number) => boolean
+): { tasks: Task[]; conflicts: DuplicateOpenTask[] } {
+  const byId = new Map<string, Task[]>()
+  for (const t of tasks) byId.set(t.id, [...(byId.get(t.id) ?? []), t])
+
+  const resolved: Task[] = []
+  const conflicts: DuplicateOpenTask[] = []
+  for (const [id, group] of byId) {
+    const first = group[0]
+    if (!first) continue
+    if (group.length === 1) {
+      resolved.push(first)
+      continue
+    }
+    const number = (t: Task) => t.issue ?? 0
+    const open = group.filter((t) => t.issue !== null && isOpen(t.issue)).sort((a, b) => number(a) - number(b))
+    if (open.length > 1) {
+      conflicts.push({ id, issues: open.map(number) })
+      resolved.push(open[0] as Task)
+    } else if (open.length === 1) {
+      resolved.push(open[0] as Task)
+    } else {
+      resolved.push([...group].sort((a, b) => number(b) - number(a))[0] as Task)
+    }
+  }
+  return { tasks: resolved.sort((a, b) => compareTaskIds(a.id, b.id)), conflicts }
+}
+
 /** Lists `vinaya/tranche:<slug>`-labeled Issues and builds the `Task[]` for
  * that tranche. Issue title's bracketed slug is not re-validated against
  * `slug` — the `vinaya/tranche:<slug>` label is the authoritative membership

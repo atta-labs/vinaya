@@ -115,7 +115,21 @@ function parseTaskIdFromTitle(title: string, trancheSlug: string): string | null
   return match?.[1] ?? null
 }
 
-export async function fetchForgeFacts(input: FetchForgeFactsInput): Promise<ForgeFactsSnapshot> {
+/** Facts keyed by Issue number — the one key two tasks can never share. */
+export type ForgeFactsByIssue = {
+  facts: Map<number, ForgeFacts>
+  prRefs: Map<number, PrRef>
+  unavailable: boolean
+  reason?: string
+}
+
+/**
+ * Same batched read as `fetchForgeFacts`, but every result is keyed by Issue
+ * number, so two Issues carrying one task number (a re-cut task: a closed
+ * not-planned Issue beside its open replacement) stay distinct. A failed query
+ * reports `unavailable: true` with its own `reason`.
+ */
+export async function fetchForgeFactsByIssue(input: FetchForgeFactsInput): Promise<ForgeFactsByIssue> {
   const token = await resolveGithubToken(input.token)
   if (!token) {
     return {
@@ -126,7 +140,13 @@ export async function fetchForgeFacts(input: FetchForgeFactsInput): Promise<Forg
     }
   }
 
-  const queriedTasks = input.tasks.filter((t): t is TaskRef & { issue: number } => t.issue !== null)
+  // One sub-query per Issue: a repeated Issue number would repeat an alias.
+  const seen = new Set<number>()
+  const queriedTasks = input.tasks.filter((t): t is TaskRef & { issue: number } => {
+    if (t.issue === null || seen.has(t.issue)) return false
+    seen.add(t.issue)
+    return true
+  })
   if (queriedTasks.length === 0) {
     return { facts: new Map(), prRefs: new Map(), unavailable: false }
   }
@@ -146,8 +166,8 @@ export async function fetchForgeFacts(input: FetchForgeFactsInput): Promise<Forg
     }
   }
 
-  const facts = new Map<string, ForgeFacts>()
-  const prRefs = new Map<string, PrRef>()
+  const facts = new Map<number, ForgeFacts>()
+  const prRefs = new Map<number, PrRef>()
   if (!response.repository) {
     return {
       facts,
@@ -158,25 +178,56 @@ export async function fetchForgeFacts(input: FetchForgeFactsInput): Promise<Forg
   }
 
   for (const task of queriedTasks) {
-    const alias = aliasFor(task.id)
-    const raw = extractRawFromResponse(response.repository, alias)
+    const raw = extractRawFromResponse(response.repository, aliasFor(task.issue))
     const mapped = mapForgeFacts(raw)
-    if (mapped) facts.set(task.id, mapped)
+    if (mapped) facts.set(task.issue, mapped)
     // A ClosedEvent closer can be a Commit, in which case the `... on
     // PullRequest` fragment yields an empty object — guard on `number`.
     const pr = raw.pullRequest
     if (pr && typeof pr.number === 'number' && typeof pr.url === 'string') {
-      prRefs.set(task.id, { number: pr.number, url: pr.url, state: pr.state })
+      prRefs.set(task.issue, { number: pr.number, url: pr.url, state: pr.state })
     }
   }
 
   return { facts, prRefs, unavailable: false }
 }
 
+export async function fetchForgeFacts(input: FetchForgeFactsInput): Promise<ForgeFactsSnapshot> {
+  const byIssue = await fetchForgeFactsByIssue(input)
+  if (byIssue.unavailable) {
+    return { facts: new Map(), prRefs: new Map(), unavailable: true, reason: byIssue.reason }
+  }
+
+  // Map back to task ids. Where several Issues share a task id, the open one
+  // wins, then the highest Issue number (the latest re-cut).
+  const facts = new Map<string, ForgeFacts>()
+  const prRefs = new Map<string, PrRef>()
+  const winner = new Map<string, number>()
+  for (const task of input.tasks) {
+    if (task.issue === null) continue
+    const current = winner.get(task.id)
+    if (current === undefined || outranks(byIssue.facts, task.issue, current)) winner.set(task.id, task.issue)
+  }
+  for (const [taskId, issue] of winner) {
+    const f = byIssue.facts.get(issue)
+    if (f) facts.set(taskId, f)
+    const pr = byIssue.prRefs.get(issue)
+    if (pr) prRefs.set(taskId, pr)
+  }
+  return { facts, prRefs, unavailable: false }
+}
+
+function outranks(facts: Map<number, ForgeFacts>, candidate: number, current: number): boolean {
+  const candidateOpen = facts.get(candidate)?.issueState === 'open'
+  const currentOpen = facts.get(current)?.issueState === 'open'
+  if (candidateOpen !== currentOpen) return candidateOpen
+  return candidate > current
+}
+
 // ---------- internal: GraphQL query construction ----------------------------
 
 /**
- * Build one batched GraphQL query with three aliased sub-queries per task:
+ * Build one batched GraphQL query with three aliased sub-queries per Issue:
  *   <alias>_issue   — issue.state, assignees count, labels, closing PR via timelineItems
  *   <alias>_ref     — ref existence for refs/heads/task/<tranche>/<id>
  *   <alias>_prs     — latest PR with that head branch (fallback when no closing PR)
@@ -203,7 +254,7 @@ export async function fetchForgeFacts(input: FetchForgeFactsInput): Promise<Forg
 function buildBatchQuery(tranche: string, tasks: Array<TaskRef & { issue: number }>): string {
   const perTask = tasks
     .map((task) => {
-      const a = aliasFor(task.id)
+      const a = aliasFor(task.issue)
       const branch = buildBranchName(tranche, task.id)
       // String interpolation here is safe because aliases pass `aliasFor`
       // (alphanum + underscore only) and the branch is escaped via JSON.stringify.
@@ -250,12 +301,10 @@ function buildBatchQuery(tranche: string, tasks: Array<TaskRef & { issue: number
 }`
 }
 
-/** Stable alias suffix: task ids like `3`, `7a` → `t_3`, `t_7a`. */
-function aliasFor(taskId: string): string {
-  // Defensive sanitisation; the parser only produces alnum task ids today, but
-  // we'd rather drop unexpected chars than emit an invalid GraphQL alias.
-  const sanitized = taskId.replace(/[^a-zA-Z0-9_]/g, '_')
-  return `t_${sanitized}`
+/** Stable alias suffix by Issue number: `1065` → `i_1065`. An Issue number is
+ * unique where a task number is not, so two tasks can never share an alias. */
+function aliasFor(issue: number): string {
+  return `i_${issue}`
 }
 
 type PrCloserNode = {
