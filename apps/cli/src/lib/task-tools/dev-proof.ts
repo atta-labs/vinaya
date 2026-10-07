@@ -30,6 +30,7 @@
  * comes back as a ruling.
  */
 
+import type { Role } from '@attalabs/aeg-core'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -276,7 +277,7 @@ export type ConfinementDisclosure = {
 /** Resolves + materializes the agent's own sandbox for this host, disclosing when it degrades to unconfined. */
 export function resolveProofConfinement(
   agent: ProofAgent,
-  role: 'developer',
+  role: Role,
   worktreeDir: string,
   scratchDir: string
 ): ConfinementDisclosure {

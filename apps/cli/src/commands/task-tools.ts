@@ -17,6 +17,7 @@ import { ownVersion } from '../lib/artifacts.js'
 import { devToolsBridgeCommand } from '../lib/task-tools/dev-tools-bridge.js'
 import { devToolsProofCommand } from '../lib/task-tools/dev-proof.js'
 import { resultProofCommand } from '../lib/task-tools/result-proof.js'
+import { reviewResultProofCommand } from '../lib/task-tools/review-result-proof.js'
 import { serveTaskToolsStdio } from '../lib/task-tools/server.js'
 
 export async function taskToolsServeCommand(_args: string[]): Promise<void> {
@@ -52,6 +53,17 @@ export async function taskToolsDevProofCommand(args: string[]): Promise<void> {
  */
 export async function taskToolsResultProofCommand(args: string[]): Promise<void> {
   await resultProofCommand(args)
+}
+
+/**
+ * `vinaya task-tools review-result-proof --agent <claude|codex>` — the live
+ * proof that each CLI delivers a reviewer's result as its native structured
+ * final output, for both reviewer roles, concurrent and fresh, and that the
+ * controller refuses everything that is not a bound, valid review. See
+ * `review-result-proof.ts`.
+ */
+export async function taskToolsReviewResultProofCommand(args: string[]): Promise<void> {
+  await reviewResultProofCommand(args)
 }
 
 import type { SurfaceExemption } from '../lib/surface-exemption'
