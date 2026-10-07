@@ -45,7 +45,12 @@ import { taskBriefCommand, taskDispatchCommand } from './commands/task.js'
 import { taskRunCommand } from './commands/task-run.js'
 import { taskStatusCommand } from './commands/task-status.js'
 import { taskSweepCommand } from './commands/task-sweep.js'
-import { taskToolsDevBridgeCommand, taskToolsDevProofCommand, taskToolsServeCommand } from './commands/task-tools.js'
+import {
+  taskToolsDevBridgeCommand,
+  taskToolsDevProofCommand,
+  taskToolsResultProofCommand,
+  taskToolsServeCommand
+} from './commands/task-tools.js'
 import { tokensCommand } from './commands/tokens.js'
 import { upgradeCommand } from './commands/upgrade.js'
 import { waiverCommand } from './commands/waiver.js'
@@ -287,9 +292,11 @@ try {
         await taskToolsDevBridgeCommand(rest)
       } else if (subcommand === 'dev-proof') {
         await taskToolsDevProofCommand(rest)
+      } else if (subcommand === 'result-proof') {
+        await taskToolsResultProofCommand(rest)
       } else {
         console.error(
-          `Unknown 'task-tools' subcommand: ${subcommand ?? '(none)'} (expected 'serve', 'dev-bridge' or 'dev-proof')`
+          `Unknown 'task-tools' subcommand: ${subcommand ?? '(none)'} (expected 'serve', 'dev-bridge', 'dev-proof' or 'result-proof')`
         )
         process.exit(2)
       }

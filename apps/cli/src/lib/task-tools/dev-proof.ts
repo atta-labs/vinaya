@@ -264,7 +264,7 @@ export function codexProofToolCallOk(codex: CodexDiagnostics): { ok: boolean; de
   return { ok: true, detail: `mcp_tool_call for ${PROOF_TOOL} reached the driver with no error` }
 }
 
-type ConfinementDisclosure = {
+export type ConfinementDisclosure = {
   confined: boolean
   detail: string
   settingsPath: string | null
@@ -274,7 +274,7 @@ type ConfinementDisclosure = {
 }
 
 /** Resolves + materializes the agent's own sandbox for this host, disclosing when it degrades to unconfined. */
-function resolveProofConfinement(
+export function resolveProofConfinement(
   agent: ProofAgent,
   role: 'developer',
   worktreeDir: string,
@@ -317,7 +317,7 @@ function resolveProofConfinement(
  * confined dispatch uses), keeping the agent's own working files inside the
  * granted scratch. Empty for an unconfined run.
  */
-function confinedTmpEnv(confined: boolean, scratchDir: string): Record<string, string> {
+export function confinedTmpEnv(confined: boolean, scratchDir: string): Record<string, string> {
   if (!confined) return {}
   return { TMPDIR: scratchDir, TMP: scratchDir, TEMP: scratchDir, CLAUDE_CODE_TMPDIR: scratchDir }
 }
@@ -357,32 +357,7 @@ function buildAgentLaunch(
       env: buildWorkerEnv(process.env, confinedTmpEnv(confinement.confined, scratchDir))
     }
   }
-  // Codex: a CODEX_HOME carrying a real `auth.json` copy, the sandbox config and
-  // the `[mcp_servers.<name>]` table — staged through the SAME
-  // `stageCodexPolicyHome` the confined dispatch uses (ruling bug 2: a
-  // hand-made home with no `auth.json` cannot authenticate). The mcp table
-  // rides the staged `config.toml` so the one generated file carries both.
-  const codexHome = confinement.codexHome ?? join(scratchDir, 'codex-home')
-  // The SAME registration the real dispatch stages (`dev-tools-registration.ts`):
-  // the sandbox config followed by the `[mcp_servers.<name>]` table, in the one
-  // staged `config.toml` that a confined Codex reads from its `CODEX_HOME`.
-  const combinedToml = codexDevToolsConfigToml(bridge, confinement.codexSandboxToml)
-  const staged =
-    confinement.codexSandboxToml !== null
-      ? stageCodexPolicyHome({
-          targetDir: codexHome,
-          realHome: homedir(),
-          execpolicyRules: buildCodexExecpolicyRules('developer') ?? '',
-          sandboxConfigToml: combinedToml
-        })
-      : null
-  if (staged === null) {
-    // No operator `~/.codex/auth.json` to copy (this VPS; or no Codex login) —
-    // write the registration alone so the command still runs and discloses.
-    // Codex itself ENOENTs here anyway; the staged path is exercised on macOS.
-    mkdirSync(codexHome, { recursive: true })
-    writeFileSync(join(codexHome, 'config.toml'), combinedToml)
-  }
+  const codexHome = stageProofCodexHome(bridge, scratchDir, confinement)
   // The SAME argv a real Developer dispatch uses (`dispatch.ts` VENDOR_TABLE):
   // `--json` so the proof can read Codex's own events (ruling round-2), the
   // prompt read from stdin (`-`), and `--strict-config`/`--skip-git-repo-check`/
@@ -404,6 +379,43 @@ function buildAgentLaunch(
     ],
     env: buildWorkerEnv(process.env, { CODEX_HOME: codexHome, ...confinedTmpEnv(confinement.confined, scratchDir) })
   }
+}
+
+/**
+ * Codex: a CODEX_HOME carrying a real `auth.json` copy, the sandbox config and
+ * the `[mcp_servers.<name>]` table — staged through the SAME
+ * `stageCodexPolicyHome` the confined dispatch uses (ruling bug 2: a
+ * hand-made home with no `auth.json` cannot authenticate). The mcp table
+ * rides the staged `config.toml` so the one generated file carries both.
+ * Returns the home's path.
+ */
+export function stageProofCodexHome(
+  bridge: BridgeInvocation,
+  scratchDir: string,
+  confinement: ConfinementDisclosure
+): string {
+  const codexHome = confinement.codexHome ?? join(scratchDir, 'codex-home')
+  // The SAME registration the real dispatch stages (`dev-tools-registration.ts`):
+  // the sandbox config followed by the `[mcp_servers.<name>]` table, in the one
+  // staged `config.toml` that a confined Codex reads from its `CODEX_HOME`.
+  const combinedToml = codexDevToolsConfigToml(bridge, confinement.codexSandboxToml)
+  const staged =
+    confinement.codexSandboxToml !== null
+      ? stageCodexPolicyHome({
+          targetDir: codexHome,
+          realHome: homedir(),
+          execpolicyRules: buildCodexExecpolicyRules('developer') ?? '',
+          sandboxConfigToml: combinedToml
+        })
+      : null
+  if (staged === null) {
+    // No operator `~/.codex/auth.json` to copy (this VPS; or no Codex login) —
+    // write the registration alone so the command still runs and discloses.
+    // Codex itself ENOENTs here anyway; the staged path is exercised on macOS.
+    mkdirSync(codexHome, { recursive: true })
+    writeFileSync(join(codexHome, 'config.toml'), combinedToml)
+  }
+  return codexHome
 }
 
 /** Runs the agent child, returning its outcome + raw stderr (or an ENOENT-style spawn failure the caller discloses). */
