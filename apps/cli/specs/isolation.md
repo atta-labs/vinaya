@@ -203,7 +203,7 @@ A Vinaya CLI command run inside either agent's sandbox records its `log()` event
 <!-- AEG:CLAIM: apps/cli/src/lib/worker-boundary.ts contains:export async function probeAgentSandbox( -->
 <!-- AEG:CLAIM: apps/cli/src/lib/worker-boundary.ts contains:export const LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV = 'VINAYA_LINUX_SANDBOX_ALLOW_UNIX_SOCKETS' -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:const probe = await probeAgentSandbox(plan, LINUX_SANDBOX_PROBE_DEPS) -->
-<!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:if (codexUnattendedFailureReason !== null || unconfinedClaude || sandboxProbeError !== null) { -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:unconfinedClaude || sandboxProbeError !== null || agentControlsError !== null -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:operation: 'linux-sandbox-probe', -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:every other sandbox setting is unchanged and the driver-tool socket directory stays unreadable -->
 <!-- AEG:CLAIM: apps/cli/src/lib/worker-boundary.ts contains:if (deps.platform !== 'linux') return { ok: true } -->
