@@ -10,6 +10,7 @@ import {
   validateDeveloperTurnResult
 } from '../../../src/lib/developer-turn-result.js'
 import {
+  accountEnv,
   driverVerdict,
   forcedStopHookScript,
   judgeCase,
@@ -429,5 +430,13 @@ describe('forcedStopHookScript', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('accountEnv', () => {
+  it('keeps the parent USER/LOGNAME, and fills only what is missing from the OS account', () => {
+    expect(accountEnv({ USER: 'a', LOGNAME: 'b' }, () => 'os')).toEqual({ USER: 'a', LOGNAME: 'b' })
+    expect(accountEnv({ USER: 'a' }, () => 'os')).toEqual({ USER: 'a', LOGNAME: 'a' })
+    expect(accountEnv({}, () => 'os')).toEqual({ USER: 'os', LOGNAME: 'os' })
   })
 })

@@ -32,7 +32,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { ownVersion } from '../artifacts.js'
 import {
@@ -452,6 +452,19 @@ function beforeStdinMarker(args: string[], extra: string[]): string[] {
 
 type Launch = { args: string[]; env: NodeJS.ProcessEnv }
 
+/**
+ * `USER`/`LOGNAME` for the child, from the parent when it has them and from
+ * the OS account when it does not. A dispatch inherits both from the driver,
+ * and Claude Code's Keychain lookup needs both (`WORKER_ENV_ALLOWLIST_KEYS`),
+ * but a parent that narrowed its own environment — the PR-report runner that
+ * executes a Test Plan line passes neither — would otherwise turn every Claude
+ * case into "Not logged in". Account names, not secrets.
+ */
+export function accountEnv(source: NodeJS.ProcessEnv, username: () => string): Record<string, string> {
+  const fallback = source.USER ?? source.LOGNAME ?? username()
+  return { USER: source.USER ?? fallback, LOGNAME: source.LOGNAME ?? fallback }
+}
+
 type LaunchPlan = {
   sandbox: string
   stopLogPath: string | null
@@ -483,7 +496,11 @@ function planLaunches(
           '--json-schema',
           schema
         ],
-        env: buildWorkerEnv(process.env, { VINAYA_RUN_ID: runId, ...confinedTmpEnv(confined, scratchDir) })
+        env: buildWorkerEnv(process.env, {
+          ...accountEnv(process.env, () => userInfo().username),
+          VINAYA_RUN_ID: runId,
+          ...confinedTmpEnv(confined, scratchDir)
+        })
       })
     }
   }
@@ -500,6 +517,7 @@ function planLaunches(
         ['--output-schema', schemaPath]
       ),
       env: buildWorkerEnv(process.env, {
+        ...accountEnv(process.env, () => userInfo().username),
         CODEX_HOME: codexHome,
         VINAYA_RUN_ID: runId,
         ...confinedTmpEnv(confinement.confined, scratchDir)
