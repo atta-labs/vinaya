@@ -1109,7 +1109,7 @@ export class ReplayedResolutionError extends Error {
     readonly existing: ResolutionRecord | null
   ) {
     super(
-      `resolution refused — task ${task}'s escalation '${escalationId}' already has a consumed resolution (decision: ${existing?.decision ?? 'unknown'}, by ${existing?.authenticatedBy ?? 'unknown'}) — replay refused`
+      `resolution refused — task ${task}'s escalation '${escalationId}' already has a consumed resolution (decision: ${existing?.decision ?? 'unknown'}, by ${existing?.authenticatedBy ?? 'unknown'}, at ${existing?.consumedAt ?? 'an unknown time'}) — the resume already happened; replay refused`
     )
     this.name = 'ReplayedResolutionError'
   }
