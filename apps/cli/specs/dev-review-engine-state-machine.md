@@ -21,6 +21,9 @@ persistence and resumption behavior, every node contract every required
 field, and zero provider name anywhere outside the one declared adapter
 extension-point list.
 
+The tool, grant, staged-input and agent-result contracts that these nodes rely
+on live in `apps/cli/specs/dev-review-capabilities-contracts.md`.
+
 ## Why this file exists, and what it consumes
 
 <!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"rulingStatus": "ruled", -->
