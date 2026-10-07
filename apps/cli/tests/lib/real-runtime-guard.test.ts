@@ -41,4 +41,31 @@ describe('real runtime directory guard', () => {
       rmSync(root, { recursive: true, force: true })
     }
   })
+
+  it('exempts a task whose lock names a running process, not one whose pid is dead', () => {
+    const root = mkdtempSync(join(tmpdir(), 'real-runtime-guard-'))
+    try {
+      // an unused pid: spawn-and-reap a child, whose pid is then free
+      const dead = Bun.spawnSync(['true']).pid
+      const lock = (pid: number) => JSON.stringify({ pid, startedAt: new Date().toISOString(), token: 't' })
+      for (const [task, pid] of [
+        ['live', process.pid],
+        ['stale', dead]
+      ] as const) {
+        mkdirSync(join(root, 'tasks-execution', task), { recursive: true })
+        mkdirSync(join(root, 'logs'), { recursive: true })
+        writeFileSync(join(root, 'tasks-execution', task, 'driver.pid.json'), lock(pid))
+        writeFileSync(join(root, 'tasks-execution', task, 'state'), 'x')
+        writeFileSync(join(root, 'logs', `${task}.ndjson`), 'x')
+      }
+      writeFileSync(join(root, 'logs', 'other.ndjson'), 'x')
+      const found = touchedSince(root, Date.now() - 60_000, [])
+      expect(found.some((p) => p.includes('live'))).toBe(false)
+      expect(found).toContain(join('tasks-execution', 'stale', 'state'))
+      expect(found).toContain(join('logs', 'stale.ndjson'))
+      expect(found).toContain(join('logs', 'other.ndjson'))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
 })

@@ -10,9 +10,12 @@
  * written during this run. Two paths are exempt, only when `VINAYA_TASK` says a
  * dispatched run is live, because that run legitimately writes them while its
  * own suite runs: `tasks-execution/<VINAYA_TASK>` and `tasks-execution/unscoped`.
+ * A task whose `tasks-execution/<task>/driver.pid.json` names a running process
+ * is live too: its folder and its `logs/<task>.ndjson` are exempt, since another
+ * loop on this host writes them. A dead pid is not live and stays flagged.
  */
 import { execFileSync } from 'node:child_process'
-import { lstatSync, readdirSync } from 'node:fs'
+import { lstatSync, readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, relative } from 'node:path'
 
@@ -51,9 +54,40 @@ export function exemptPrefixes(env: NodeJS.ProcessEnv): string[] {
   return [join('tasks-execution', task), join('tasks-execution', 'unscoped')]
 }
 
+function pidRunning(pid: unknown): boolean {
+  if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+/** Exempt prefixes for every task under `root` whose lock names a running process. */
+export function liveTaskPrefixes(root: string): string[] {
+  let tasks: string[]
+  try {
+    tasks = readdirSync(join(root, 'tasks-execution'))
+  } catch {
+    return []
+  }
+  const out: string[] = []
+  for (const task of tasks) {
+    try {
+      const lock = JSON.parse(readFileSync(join(root, 'tasks-execution', task, 'driver.pid.json'), 'utf-8'))
+      if (pidRunning(lock?.pid)) out.push(join('tasks-execution', task), join('logs', `${task}.ndjson`))
+    } catch {
+      // no readable lock — not live
+    }
+  }
+  return out
+}
+
 /** Paths (relative to `root`) touched since `sinceMs`; `[]` when the directory does not exist. */
 export function touchedSince(root: string, sinceMs: number, exempt: string[]): string[] {
   const touched: string[] = []
+  const exemptAll = [...exempt, ...liveTaskPrefixes(root)]
   const walk = (dir: string): void => {
     let names: string[]
     try {
@@ -64,7 +98,7 @@ export function touchedSince(root: string, sinceMs: number, exempt: string[]): s
     for (const name of names) {
       const full = join(dir, name)
       const rel = relative(root, full)
-      if (exempt.some((p) => rel === p || rel.startsWith(`${p}/`))) continue
+      if (exemptAll.some((p) => rel === p || rel.startsWith(`${p}/`))) continue
       let st: ReturnType<typeof lstatSync>
       try {
         st = lstatSync(full)
