@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   assembleDeveloperDoctrine,
+  checkDocumentationSourcesReadable,
   checkTaskDispatchReadiness,
   createTaskWorktree,
   DEVELOPER_CHECKLIST_HEADINGS,
@@ -15,6 +16,11 @@ import {
   type ReconcileLaunchDeps,
   renderDeveloperDoctrineBlock
 } from '../../../src/lib/dev-review-loop/developer-dispatch'
+import {
+  FetchTransportError,
+  type FetchDocumentationDeps,
+  type RawResponse
+} from '../../../src/lib/task-tools/fetch-documentation'
 import type { LaunchRecord, ParsedLaunch } from '../../../src/lib/dispatch'
 
 // task-run-v1 task 15, O1: `developerBranchFor` derives `task/issue-<n>` for
@@ -457,5 +463,99 @@ describe('createTaskWorktree (O1)', () => {
     withCwd(repoDir, () => createTaskWorktree(branch))
     const headAfterSecond = execFileSync('git', ['-C', worktreeDir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
     expect(headAfterSecond).toBe(headAfterFirst)
+  })
+})
+
+// A task whose required source cannot be read never starts a Developer turn:
+// the readiness gate fetches each `## Documentation` URL with the documentation
+// tool's own fetch, faked here at its two seams so no test needs a network.
+describe('checkDocumentationSourcesReadable', () => {
+  const page = (text: string): RawResponse => ({
+    status: 200,
+    headers: { 'content-type': 'text/plain' },
+    body: new TextEncoder().encode(text),
+    framed: true
+  })
+  const depsFor = (respond: (path: string, hostname: string) => RawResponse | Error): FetchDocumentationDeps => ({
+    resolve: async () => [{ address: '93.184.216.34', family: 4 }],
+    request: async (target) => {
+      const out = respond(target.path, target.hostname)
+      if (out instanceof Error) throw out
+      return out
+    },
+    now: () => new Date('2026-01-01T00:00:00Z')
+  })
+  const briefWith = (...sources: string[]) =>
+    `## Documentation\n\n${sources.map((s) => `- ${s} — the mechanism it governs`).join('\n')}\n\n## Premises\n`
+
+  it('is ready when the brief names no source or only an in-repo path, fetching nothing', async () => {
+    const deps = depsFor(() => new Error('must not fetch'))
+    expect((await checkDocumentationSourcesReadable('## Documentation\n\nNone — nothing governs.\n', deps)).ready).toBe(
+      true
+    )
+    expect((await checkDocumentationSourcesReadable(briefWith('docs/spec.md'), deps)).ready).toBe(true)
+  })
+
+  it('is ready when every source answers with a readable page', async () => {
+    const result = await checkDocumentationSourcesReadable(
+      briefWith('https://example.com/a', 'https://example.com/b'),
+      depsFor(() => page('x'.repeat(1500)))
+    )
+    expect(result.ready).toBe(true)
+    expect(result.output).toContain('https://example.com/a read')
+    expect(result.output).toContain('https://example.com/b read')
+  })
+
+  it('refuses a source that times out as retryable, naming the source', async () => {
+    const result = await checkDocumentationSourcesReadable(
+      briefWith('https://example.com/slow'),
+      depsFor(() => new FetchTransportError('timeout', 'no complete response within 30000ms'))
+    )
+    expect(result).toMatchObject({ ready: false, retryable: true, source: 'https://example.com/slow' })
+    expect(result.output).toContain('timeout')
+    expect(result.output).toContain('retryable')
+  })
+
+  it('refuses a dropped connection as retryable', async () => {
+    const result = await checkDocumentationSourcesReadable(
+      briefWith('https://example.com/flaky'),
+      depsFor(() => new FetchTransportError('connection-failed', 'ECONNRESET'))
+    )
+    expect(result).toMatchObject({ ready: false, retryable: true, source: 'https://example.com/flaky' })
+  })
+
+  it('refuses an error status as a Planner correction', async () => {
+    const result = await checkDocumentationSourcesReadable(
+      briefWith('https://example.com/gone'),
+      depsFor(() => ({ ...page('x'.repeat(1500)), status: 404 }))
+    )
+    expect(result).toMatchObject({ ready: false, retryable: false, source: 'https://example.com/gone' })
+    expect(result.output).toContain('HTTP 404')
+    expect(result.output).toContain('Planner')
+  })
+
+  it('refuses a login-page shell as a Planner correction', async () => {
+    const result = await checkDocumentationSourcesReadable(
+      briefWith('https://example.com/private'),
+      depsFor(() => ({
+        ...page('<html><body>Sign in</body></html>'),
+        headers: { 'content-type': 'text/html' }
+      }))
+    )
+    expect(result).toMatchObject({ ready: false, retryable: false })
+    expect(result.output).toContain('Planner')
+  })
+
+  it('refuses a source that redirects to another host as a Planner correction', async () => {
+    const result = await checkDocumentationSourcesReadable(
+      briefWith('https://example.com/moved'),
+      depsFor((_path, hostname) =>
+        hostname === 'example.com'
+          ? { status: 302, headers: { location: 'https://login.other.test/in' }, body: new Uint8Array(), framed: true }
+          : page('x'.repeat(1500))
+      )
+    )
+    expect(result).toMatchObject({ ready: false, retryable: false, source: 'https://example.com/moved' })
+    expect(result.output).toContain('another host')
   })
 })

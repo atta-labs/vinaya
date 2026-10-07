@@ -238,6 +238,18 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'task-tools review-result-proof',
+    description:
+      "Prove, live on this host, that a CLI delivers a reviewer's result as its own structured final output, concurrent and fresh",
+    flags: [{ flag: '--agent <claude|codex>', description: 'The CLI to prove' }],
+    details: [
+      // AEG:CLAIM: apps/cli/src/lib/task-tools/review-result-proof.ts contains:export async function reviewResultProofCommand(
+      "Runs real reviewer-shaped dispatches on this host — fresh, non-resumed sessions, the agent's own sandbox where the host supports it, the subscription login, read-only grants, and the staged diff and review-input manifest — and asks for the versioned `ReviewResult` (`completed` or `blocked`, bound to the controller's role, head and manifest digest) through the CLI's native structured output: Claude Code `--json-schema` under `--output-format stream-json`; Codex `--output-schema` under `exec --json`. Both the code-reviewer and the security-reviewer role run, concurrently against one manifest, each accepted result attributed to its own role.",
+      "Cases: a role mismatch, a wrong head and a wrong manifest digest; an objective id outside the brief, a severity outside the role's scale and a finding without a file (all refused) and a finding without a line (accepted); and a blocked, malformed, missing, cancelled, provider-error and context-exhausted outcome, each recorded as no review, never approval. Each case prints whether a schema-valid result reached the driver and what the controller made of it; exits 1 when any case fails. Never writes the forge and leaves the loop's reviewer dispatch and result files untouched."
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'pr create',
     description: 'Open a pull request after full brief-schema validation',
     flags: [

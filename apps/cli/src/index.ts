@@ -49,6 +49,7 @@ import {
   taskToolsDevBridgeCommand,
   taskToolsDevProofCommand,
   taskToolsResultProofCommand,
+  taskToolsReviewResultProofCommand,
   taskToolsServeCommand
 } from './commands/task-tools.js'
 import { tokensCommand } from './commands/tokens.js'
@@ -294,9 +295,11 @@ try {
         await taskToolsDevProofCommand(rest)
       } else if (subcommand === 'result-proof') {
         await taskToolsResultProofCommand(rest)
+      } else if (subcommand === 'review-result-proof') {
+        await taskToolsReviewResultProofCommand(rest)
       } else {
         console.error(
-          `Unknown 'task-tools' subcommand: ${subcommand ?? '(none)'} (expected 'serve', 'dev-bridge', 'dev-proof' or 'result-proof')`
+          `Unknown 'task-tools' subcommand: ${subcommand ?? '(none)'} (expected 'serve', 'dev-bridge', 'dev-proof', 'result-proof' or 'review-result-proof')`
         )
         process.exit(2)
       }

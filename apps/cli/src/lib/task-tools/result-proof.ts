@@ -356,12 +356,12 @@ function writeClaudeProofSettings(
 }
 
 /** Inserts flags before the trailing `-` (read the prompt from stdin) Codex's argv ends with. */
-function beforeStdinMarker(args: string[], extra: string[]): string[] {
+export function beforeStdinMarker(args: string[], extra: string[]): string[] {
   const last = args[args.length - 1]
   return last === '-' ? [...args.slice(0, -1), ...extra, '-'] : [...args, ...extra]
 }
 
-type Launch = { args: string[]; env: NodeJS.ProcessEnv }
+export type Launch = { args: string[]; env: NodeJS.ProcessEnv }
 
 /**
  * `USER`/`LOGNAME` for the child, from the parent when it has them and from
@@ -428,15 +428,17 @@ function planLaunches(agent: ResultProofAgent, bridge: BridgeInvocation, scratch
   }
 }
 
-type RunOutcome = {
+export type RunOutcome = {
   exitCode: number | null
   signal: string | null
   stdout: string
   stderr: string
   spawnError?: string
+  /** The caller's own `cancelAfterMs` kill was sent while the child was still running — whatever exit code or signal followed. */
+  cancelled?: boolean
 }
 
-function runChild(
+export function runChild(
   command: string,
   launch: Launch,
   prompt: string,
@@ -448,18 +450,21 @@ function runChild(
     let stdout = ''
     let stderr = ''
     let cancelArmed = false
+    let cancelled = false
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => {
       stdout += chunk
       if (cancelAfterMs !== undefined && !cancelArmed) {
         cancelArmed = true
-        setTimeout(() => child.kill('SIGTERM'), cancelAfterMs)
+        setTimeout(() => {
+          if (child.exitCode === null && child.signalCode === null) cancelled = child.kill('SIGTERM')
+        }, cancelAfterMs)
       }
     })
     child.stderr.on('data', (chunk: string) => (stderr += chunk))
     child.on('error', (err) => resolve({ exitCode: null, signal: null, stdout, stderr, spawnError: err.message }))
-    child.on('close', (exitCode, signal) => resolve({ exitCode, signal, stdout, stderr }))
+    child.on('close', (exitCode, signal) => resolve({ exitCode, signal, stdout, stderr, cancelled }))
     child.stdin.on('error', () => {
       // a child that exits before reading its whole prompt closes the pipe — the outcome still reports it
     })
@@ -467,13 +472,13 @@ function runChild(
   })
 }
 
-function cliVersion(command: string): string {
+export function cliVersion(command: string): string {
   const out = spawnSync(command, ['--version'], { encoding: 'utf8' })
   const text = `${out.stdout ?? ''}`.trim()
   return text.length > 0 ? text : `unavailable (${out.error?.message ?? (out.stderr ?? '').trim()})`
 }
 
-function clip(text: string, max = 600): string {
+export function clip(text: string, max = 600): string {
   return text.length > max ? `${text.slice(0, max)}… [+${text.length - max} chars]` : text
 }
 
@@ -493,7 +498,7 @@ export function redactProviderText(text: string, home: string = homedir()): stri
 }
 
 /** `clip` after `redactProviderText` — the one form provider text is printed in. */
-function providerText(text: string, max?: number): string {
+export function providerText(text: string, max?: number): string {
   return clip(redactProviderText(text), max)
 }
 

@@ -66,6 +66,7 @@ tests/lib/task-tools/developer-dev-tools-context.test.ts
 tests/lib/task-tools/dev-proof.test.ts
 tests/lib/task-tools/result-proof.test.ts
 tests/lib/task-tools/resume.test.ts
+tests/lib/task-tools/review-result-proof.test.ts
 tests/lib/broker/operator-grants.test.ts
 tests/lib/dispatch/unattended-publication.test.ts
 tests/lib/task-run/background.test.ts
