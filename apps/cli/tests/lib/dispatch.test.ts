@@ -2422,7 +2422,7 @@ describe('terminal colour — role prefix and TTY/NO_COLOR gating (#491)', () =>
 
     process.env.NO_COLOR = '1'
     const noColour = colourAgentLine('code-reviewer', 'reading the brief', { isTTY: true })
-    expect(noColour).toMatch(/^\d\d:\d\d:\d\d {2}▸ Code review {3}reading the brief$/)
+    expect(noColour).toMatch(/^\d\d:\d\d:\d\d {2}> Code review {3}reading the brief$/)
     expect(noColour).not.toMatch(ANSI_ANY_RE)
   })
 
