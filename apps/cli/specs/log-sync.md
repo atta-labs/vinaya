@@ -194,10 +194,13 @@ An answer is descriptive. It reports what the log recorded and never that one ch
 
 ### Question 2 — are reviewers strict?
 
-`reviewerStrictness`. For each reviewer role and model named by a `dispatch`'s `outcome_received` line whose outcome is a `'verdict'`:
+`reviewerStrictness`. Reads the loop's `verdicts_read` event of each round, never a dispatch's outcome — a dispatch records only that it completed. For each reviewer role the round names:
 
-- **verdictsRead**, **approved**, **changesRequested** — every such verdict, and how it read. `'APPROVE'` and `'PASS'` read as approved; `'REQUEST CHANGES'` and `'FAIL'` read as changes requested — the same split `dev-review-loop/assess-round.ts` already draws between the two review scales this doctrine carries;
-- **findings** — the findings and blockers those verdicts carried, by severity, split by what the verdict decided (`'approved'`, `'changes_requested'`). A finding's `policy_treatment: 'blocking'` makes it a blocker; anything else does not.
+- **role** — read from the round's own per-reviewer entries (`reviewers`, one per role the loop held or expected a verdict from) where the event has them, and they win over everything else; otherwise from each finding's severity scale: `code-review` is `code-reviewer`, `security` is `security`. A finding with no scale, or a scale that names no role, names no role — it is never given one. The entries exist only on events recorded since they shipped, so the scale carries the history;
+- **verdictsRead**, **approved**, **changesRequested** — with entries, a role's `approve` reads as approved and `changes_requested` as changes requested; `not_reviewed` is no verdict. Without entries, a role with a blocking finding asked for changes, and a role with findings but none blocking approved when the round's `all_approve` is true; any other role is given no verdict that round;
+- **findings** — the findings and blockers of the rounds in which the role gave a verdict, by severity, split by that verdict (`'approved'`, `'changes_requested'`). A finding's `policy_treatment: 'blocking'` makes it a blocker; anything else does not. A finding is counted under the role its scale names, or, when the round has entries, only if that role has a verdict in it.
+
+The coverage adds how far the rounds could be attributed: **roundsAttributed** (rounds in which at least one role was given a verdict), **roundsUnattributed** (rounds in which none was — for example an approved round with no findings and no entries), and **findingsUnattributed** (findings no role's verdict could carry). A role cannot be attributed a verdict the event does not support, so these counts are stated rather than guessed around.
 
 The answer never scores whether a reviewer was *right* to approve or request changes — only what was decided and what was reported alongside it.
 

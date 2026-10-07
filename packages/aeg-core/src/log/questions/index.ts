@@ -60,7 +60,13 @@ export type {
 export { determinism } from './determinism'
 export type { DeterminismAnswer, FailureRecord } from './determinism'
 export { reviewerStrictness } from './judgment'
-export type { JudgmentAnswer, ReviewerStrictness, SeverityFindings, VerdictFindings } from './judgment'
+export type {
+  JudgmentAnswer,
+  JudgmentCoverage,
+  ReviewerStrictness,
+  SeverityFindings,
+  VerdictFindings
+} from './judgment'
 export { NO_LABELS_REASON } from './labels'
 export type { HumanLabel, HumanLabelKind } from './labels'
 export { timeByUnit } from './time'

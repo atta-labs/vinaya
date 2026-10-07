@@ -180,6 +180,7 @@ export type {
   HumanLabel,
   HumanLabelKind,
   JudgmentAnswer,
+  JudgmentCoverage,
   ModelCompletion,
   OutcomesByVersionAnswer,
   Question,
