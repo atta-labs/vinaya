@@ -674,16 +674,10 @@ const SINK_CALL_NAMES = new Set([
   'emit'
 ])
 
-type Emission = { file: string; family: string }
+/** `emit` is a sink function only as a bare parameter name; as a method it is some recorder's. */
+const BARE_ONLY_SINK_CALL_NAMES = new Set(['emit'])
 
-function importsSink(sf: ts.SourceFile): boolean {
-  return sf.statements.some(
-    (s) =>
-      ts.isImportDeclaration(s) &&
-      ts.isStringLiteral(s.moduleSpecifier) &&
-      /\/log-sink(?:\.js)?$/.test(s.moduleSpecifier.text)
-  )
-}
+type Emission = { file: string; family: string }
 
 function calleeName(call: ts.CallExpression): string | null {
   const callee = call.expression
@@ -708,7 +702,7 @@ function kindFamilyOf(obj: ts.ObjectLiteralExpression, families: ReadonlySet<str
 const MAX_FOLLOWED_DECLARATIONS = 2
 
 /**
- * Every declared family an argument expression carries: object literals in it with a `kind`, and — when it is a name or a call to a function this file declares — the same in what that declaration builds. Only the argument itself is followed, never names inside what it was built from, so an input that happens to carry a family's name is not an event.
+ * Every declared family an argument expression carries: the outermost object literals in it with a `kind` (what is nested inside an event is its payload, not another event), and — when it is a name or a call to a function this file declares — the same in what that declaration builds. Only the argument itself is followed, never names inside what it was built from, so an input that happens to carry a family's name is not an event.
  */
 function familiesOfExpression(
   node: ts.Node,
@@ -720,7 +714,10 @@ function familiesOfExpression(
   const collect = (n: ts.Node): void => {
     if (ts.isObjectLiteralExpression(n)) {
       const family = kindFamilyOf(n, families)
-      if (family !== null) out.add(family)
+      if (family !== null) {
+        out.add(family)
+        return
+      }
     }
     ts.forEachChild(n, collect)
   }
@@ -752,15 +749,18 @@ function declarationsOf(sf: ts.SourceFile): Map<string, ts.Node> {
 /** The families a source text emits through the sink, read from its syntax tree. */
 function emissionsOf(rel: string, source: string, families: ReadonlySet<string>): Emission[] {
   const sf = ts.createSourceFile(rel, source, ts.ScriptTarget.Latest, true)
-  const sinkFile = importsSink(sf)
   const declarations = declarationsOf(sf)
   const found = new Set<string>()
   const visit = (n: ts.Node): void => {
     if (ts.isCallExpression(n)) {
       const name = calleeName(n)
       const emitterFamily = name === null ? undefined : FAMILY_EMITTERS.get(name)
-      if (emitterFamily !== undefined && sinkFile) found.add(emitterFamily)
-      if (name !== null && SINK_CALL_NAMES.has(name) && sinkFile) {
+      if (emitterFamily !== undefined) found.add(emitterFamily)
+      if (
+        name !== null &&
+        SINK_CALL_NAMES.has(name) &&
+        !(BARE_ONLY_SINK_CALL_NAMES.has(name) && ts.isPropertyAccessExpression(n.expression))
+      ) {
         for (const arg of n.arguments) familiesOfExpression(arg, declarations, families, found)
       }
     }
@@ -792,15 +792,27 @@ function ownershipViolations(
   return violations
 }
 
+/** Every family the schema declares: the `kind` literal just above each `<Family>EventSchema` union, read from the schema's own text. */
+function familiesDeclaredBySchema(schemaSource: string): string[] {
+  const families: string[] = []
+  for (const union of schemaSource.matchAll(/export const \w+EventSchema = z\.discriminatedUnion\('event', \[/g)) {
+    const above = schemaSource.slice(0, union.index)
+    const kinds = [...above.matchAll(/kind: z\.literal\('([a-z_]+)'\)/g)]
+    const family = kinds[kinds.length - 1]?.[1]
+    if (family === undefined) throw new Error(`log coverage: no kind literal above the union at offset ${union.index}`)
+    families.push(family)
+  }
+  return families
+}
+
 describe('log-callers — each family is emitted only from its owning files', () => {
-  const schemaSource = readFileSync(join(REPO_ROOT, SCHEMA_PATH), 'utf8')
-  const declaredFamilies = new Set(FAMILY_EXPORTS.map((f) => f.kind))
+  const declaredFamilies = new Set(familiesDeclaredBySchema(readFileSync(join(REPO_ROOT, SCHEMA_PATH), 'utf8')))
   const files = allSourceFiles()
   const existing = new Set(files.map(([rel]) => rel))
   const emissions = files.flatMap(([rel, abs]) => emissionsOf(rel, readFileSync(abs, 'utf8'), declaredFamilies))
 
   it('the table has one row for every family the schema declares, and no other', () => {
-    expect(schemaSource.length).toBeGreaterThan(0)
+    expect(declaredFamilies.size).toBeGreaterThan(0)
     expect(Object.keys(FAMILY_OWNERS).sort()).toEqual([...declaredFamilies].sort())
   })
 
@@ -853,5 +865,15 @@ describe('log-callers — each family is emitted only from its owning files', ()
       'gate',
       'operation'
     ])
+  })
+
+  it('finds a call in a file that never imports the sink, so an injected function is not a way around the table', () => {
+    const source = "export function f(logSync: (e: unknown) => void) { logSync({ kind: 'gate', event: 'summary' }) }"
+    expect(emissionsOf('apps/cli/src/lib/x.ts', source, declaredFamilies).map((e) => e.family)).toEqual(['gate'])
+  })
+
+  it('reads only the outermost family of an event: a family named inside its payload is not a second emission', () => {
+    const source = "export function f(log: (e: unknown) => void) { log({ kind: 'gate', payload: { kind: 'effect' } }) }"
+    expect(emissionsOf('apps/cli/src/lib/x.ts', source, declaredFamilies).map((e) => e.family)).toEqual(['gate'])
   })
 })
