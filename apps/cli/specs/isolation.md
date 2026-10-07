@@ -4,6 +4,8 @@ Status: draft
 
 This file is the durable contract for worker isolation: it names every actor that touches a dispatched task, what each one is trusted to do, and the mechanism that makes the untrusted actors' limits real rather than a convention. It was written, and the chosen mechanism proved by a standalone probe, before `dispatchRole` was wired to it; §4, "What the dispatch wiring does," below, describes the wiring and what remains open. The Broker row's own AUTHORIZATION half (role/operation/target/input-version/ownership grant-checking, distinct from OS confinement) is built — see §1's Broker row.
 
+The tool, grant, staged-input and agent-result contracts between the controller and its agents live in `apps/cli/specs/dev-review-capabilities-contracts.md`.
+
 ## 1. The six boundaries
 
 <!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:const child = spawn(spawnCommand, spawnCommandArgs, { -->
