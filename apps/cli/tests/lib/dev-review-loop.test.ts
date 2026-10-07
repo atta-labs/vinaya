@@ -4902,7 +4902,18 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
 
       const r = runLoopWithRepo(home, cwd, path)
       if (r.status !== 0)
-        writeFileSync('/home/dev/atta-labs/vinaya/.git/sweep-debug.txt', `${r.status}\n${r.stderr}\n---\n${r.stdout}`)
+        writeFileSync(
+          '/home/dev/atta-labs/vinaya/.git/sweep-debug.txt',
+          `${r.status}\n${r.stderr}\n---\n${r.stdout}\n---\n${(() => {
+            try {
+              return readFileSync(join(sweepRunDir(home), 'output', 'driver.log'), 'utf8')
+            } catch (e) {
+              return String(e)
+            }
+          })()}\n---\n${require('node:child_process')
+            .execSync(`cat ${sweepRunDir(home)}/output/*.log | tail -c 6000`, { shell: '/bin/sh' })
+            .toString()}`
+        )
       if (r.status !== 0) throw new Error(`the loop exited ${r.status}: ${r.stderr.slice(-1500)}`)
       expect(r.status).toBe(0)
       expect(r.stdout).toMatch(/publish/)
@@ -4960,7 +4971,18 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
       // retaining the tight default for every ordinary fixture in this file.
       const r = runLoopWithRepo(home, cwd, path, 75_000)
       if (r.status !== 0)
-        writeFileSync('/home/dev/atta-labs/vinaya/.git/sweep-debug.txt', `${r.status}\n${r.stderr}\n---\n${r.stdout}`)
+        writeFileSync(
+          '/home/dev/atta-labs/vinaya/.git/sweep-debug.txt',
+          `${r.status}\n${r.stderr}\n---\n${r.stdout}\n---\n${(() => {
+            try {
+              return readFileSync(join(sweepRunDir(home), 'output', 'driver.log'), 'utf8')
+            } catch (e) {
+              return String(e)
+            }
+          })()}\n---\n${require('node:child_process')
+            .execSync(`cat ${sweepRunDir(home)}/output/*.log | tail -c 6000`, { shell: '/bin/sh' })
+            .toString()}`
+        )
       if (r.status !== 0) throw new Error(`the loop exited ${r.status}: ${r.stderr.slice(-1500)}`)
       expect(r.status).toBe(0)
       expect(r.stdout).toMatch(/publish/)
