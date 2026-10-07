@@ -238,7 +238,8 @@ describe('log entry-path producer inventory', () => {
   const entries = new Map([...gitHookEntries(), ...workflowEntries(), ...agentHookEntries(), ...checkEntries()])
 
   it('has one row for every real entry path and no stale rows', () => {
-    expect(validateInventory(inventory, entries)).toEqual([])
+    const errors = validateInventory(inventory, entries)
+    if (errors.length > 0) throw new Error(`log entry-path inventory drift:\n${errors.join('\n')}`)
   })
 
   it('detects each inventory drift class', () => {
