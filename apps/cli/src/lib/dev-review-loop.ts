@@ -7280,21 +7280,21 @@ async function watchPauseThenResume(
 ): Promise<{ kind: 'ended'; reason: DriverEndReason } | { kind: 'result'; result: LoopResult }> {
   const { prNumber, task } = pauseResult
   const reason = pauseResult.finalDecision.type === 'pause' ? pauseResult.finalDecision.reason : undefined
-  const isBoundedRetry = reason === 'infrastructure' || reason === 'stale_driver'
+  let isBoundedRetry = reason === 'infrastructure' || reason === 'stale_driver'
   // Read once, right as this pause begins being watched — this IS the
   // pause `devReviewLoop` just wrote `pause-state.json` for, so it is never
   // null here (unlike a `--resume` invoked well after the fact, which must
   // tolerate a pause that has since been superseded).
   const held = w.readPauseState(w.runtimeDir(), task)
-  const agent = held?.agent
-  const model = held?.model
-  const escalationId = held?.escalationId ?? null
+  let agent = held?.agent
+  let model = held?.model
+  let escalationId = held?.escalationId ?? null
   // "Newer than the pause" (O4's own wording) — captured now, the moment
   // this pause starts being watched, never re-derived from the pause's own
   // recorded time: a ruling that already existed when this pause posted
   // must not immediately re-trigger a resume this pause's own round
   // already accounted for.
-  const baselineOrdinal = watchReadOrFallback('newest ruling ordinal', () => w.fetchNewestRulingOrdinal(prNumber), 0)
+  let baselineOrdinal = watchReadOrFallback('newest ruling ordinal', () => w.fetchNewestRulingOrdinal(prNumber), 0)
   let backoffDone = !isBoundedRetry
   // Set once a bare (no-ruling) retry itself fails — the driver's own
   // bare-resume budget is almost certainly exhausted at that point
@@ -7309,8 +7309,13 @@ async function watchPauseThenResume(
     if (prState === 'MERGED') return { kind: 'ended', reason: 'merged' }
     if (prState === 'CLOSED') return { kind: 'ended', reason: 'closed' }
 
-    if (escalationId) {
-      const resolution = watchReadOrFallback('resolution', () => w.readResolutionRecord(task, escalationId), null)
+    const watchedEscalationId = escalationId
+    if (watchedEscalationId) {
+      const resolution = watchReadOrFallback(
+        'resolution',
+        () => w.readResolutionRecord(task, watchedEscalationId),
+        null
+      )
       if (resolution?.decision === 'cancel') return { kind: 'ended', reason: 'cancelled' }
     }
 
@@ -7349,6 +7354,32 @@ async function watchPauseThenResume(
         return { kind: 'result', result }
       } catch (err) {
         if (readyForBareRetry && !readyForRuling) bareRetryExhausted = true
+        if (err instanceof ReplayedResolutionError) {
+          // This pause's resolution was already consumed — by an operator's
+          // own `--resume`, or by an earlier attempt of this very watcher.
+          // Retrying it can never succeed, so it is never retried: re-read
+          // the CURRENT pause, advance the baseline to the newest ruling
+          // observed, and act only on a strictly newer one (or on a newer
+          // pause the run has since moved on to).
+          bareRetryExhausted = true
+          const observed = watchReadOrFallback(
+            'newest ruling ordinal',
+            () => w.fetchNewestRulingOrdinal(prNumber),
+            baselineOrdinal
+          )
+          baselineOrdinal = Math.max(baselineOrdinal, observed)
+          const current = watchReadOrFallback('pause state', () => w.readPauseState(w.runtimeDir(), task), null)
+          if (current?.escalationId && current.escalationId !== escalationId) {
+            // The run progressed past this pause: follow the pause it is
+            // actually in now.
+            escalationId = current.escalationId
+            agent = current.agent
+            model = current.model
+            bareRetryExhausted = false
+            isBoundedRetry = current.reason === 'infrastructure' || current.reason === 'stale_driver'
+            backoffDone = !isBoundedRetry
+          }
+        }
         // A benign race (an operator's own concurrent `--resume`, a
         // replayed resolution, a transient forge read) — never this
         // watcher's own final decision. Reported, then the SAME pause is

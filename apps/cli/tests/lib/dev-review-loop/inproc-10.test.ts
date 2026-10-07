@@ -116,6 +116,62 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
     expect(readDriverLock(world.runtimeDir, world.task)).toBeNull()
   })
 
+  it('never retries a resolution that was already consumed: it resumes again only on a strictly newer ruling', async () => {
+    const world = makeEscalationWorld()
+    const { ReplayedResolutionError } = await import('../../../src/lib/dev-review-loop/pause-resume.js')
+    const real = (await import('../../../src/lib/dev-review-loop.js')).devReviewLoop
+    let attempts = 0
+    let sleepCalls = 0
+    let consumedNote = ''
+
+    const result = await runDriverLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {},
+      {
+        devReviewLoop: async (input, deps) => {
+          if (!('resumePr' in input)) return real(input, deps)
+          attempts += 1
+          if (attempts === 1) {
+            const err = new ReplayedResolutionError(world.task, 'esc', {
+              kind: 'resolution',
+              task: world.task,
+              version: 1,
+              escalationId: 'esc',
+              decision: 'resume',
+              authenticatedBy: 'daniboomerang',
+              authenticatedFrom: 'test',
+              consumedAt: '2026-10-07T00:00:00.000Z'
+            })
+            consumedNote = err.message
+            throw err
+          }
+          return real(input, deps)
+        },
+        sleep: async (ms) => {
+          sleepCalls += 1
+          if (sleepCalls === 1) {
+            world.rulingOrdinal = 1
+            world.roleOutcomes[1]!.reviewer = undefined
+          }
+          // The consumed ruling's ordinal stays the newest for several polls: no retry may happen.
+          if (sleepCalls === 6) {
+            expect(attempts).toBe(1)
+            world.rulingOrdinal = 2
+            world.rulings = ['Go ahead and fix it.']
+            world.rulingAuthor = 'daniboomerang'
+          }
+          await new Promise((r) => setTimeout(r, ms > 0 ? 1 : 0))
+        }
+      }
+    )
+
+    expect(consumedNote).toContain('decision: resume')
+    expect(consumedNote).toContain('at 2026-10-07T00:00:00.000Z')
+    expect(attempts).toBe(2)
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+  })
+
   it('ends the driver once the pull request is merged while it watches — never a pause, never a resume attempt', async () => {
     const world = makeEscalationWorld()
 
