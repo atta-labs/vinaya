@@ -272,12 +272,18 @@ describe('log-readers integration — fixtures, a folder cache, a server cache a
       writeFileSync(stray, 'keep')
       for (const suffix of ['-wal', '-shm']) writeFileSync(join(cacheDir, `${CACHE_FILE_NAME}${suffix}`), 'stale')
 
-      deleteCacheFiles(cacheDir)
-      for (const suffix of ['', '-wal', '-shm'])
-        expect(existsSync(join(cacheDir, `${CACHE_FILE_NAME}${suffix}`))).toBe(false)
-      expect(existsSync(stray)).toBe(true)
-
-      expect(await runLogSync({ rebuild: true, json: false }, deps)).toBe(0)
+      // Observe the directory right after the rebuild's own delete, before the
+      // new cache opens: nothing of the old cache may remain.
+      const seen: boolean[] = []
+      const observed: LogSyncDeps = {
+        ...deps,
+        deleteCacheFile: (dir) => {
+          deps.deleteCacheFile(dir)
+          for (const suffix of ['', '-wal', '-shm']) seen.push(existsSync(join(dir, `${CACHE_FILE_NAME}${suffix}`)))
+        }
+      }
+      expect(await runLogSync({ rebuild: true, json: false }, observed)).toBe(0)
+      expect(seen).toEqual([false, false, false])
       expect(existsSync(stray)).toBe(true)
       expect(readCacheDataset(cacheDir).rows().length).toBeGreaterThan(0)
     })

@@ -192,6 +192,7 @@ export async function runLogSync(opts: SyncRunOptions, deps: LogSyncDeps = realL
   }
 
   const dir = await deps.cacheDir(repo)
+  // No handle is open here: the cache is opened only below and closed in the `finally` after the sync.
   if (opts.rebuild) deps.deleteCacheFile(dir)
 
   const cache = deps.openCache(dir)
