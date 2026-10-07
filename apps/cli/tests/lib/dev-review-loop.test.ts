@@ -1456,6 +1456,8 @@ describe('devReviewLoop — the driver_exited lifecycle event (#949, O2/O3)', ()
 
   it('a clean publish emits exactly one driver_exited reason=finished, stops the heartbeat, and writes no routine role-log line', async () => {
     const world = makeWorld()
+    // Whatever the host process already carried (a pre-push hook run for an open pull request sets it).
+    const priorPr = process.env.VINAYA_PR
     let stopped = 0
     const result = await runLoopInProcess(
       world,
@@ -1490,8 +1492,8 @@ describe('devReviewLoop — the driver_exited lifecycle event (#949, O2/O3)', ()
       { role: 'code-reviewer', outcome: 'approve', blockers: 0 },
       { role: 'security', outcome: 'approve', blockers: 0 }
     ])
-    // Restored on return: nothing left in this process's environment.
-    expect(process.env.VINAYA_PR).toBeUndefined()
+    // Restored on return: the environment is as the loop found it.
+    expect(process.env.VINAYA_PR).toBe(priorPr)
 
     // The role log stays diagnostic: a clean return writes no `driver_exited`
     // line there (Boundary — "diagnostic rather than routine").
