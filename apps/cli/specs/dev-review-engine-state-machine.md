@@ -11,6 +11,9 @@ implement that execution, does not assess provider or runtime capabilities,
 and does not alter the standalone loop — `apps/cli/specs/loop.md` remains the
 standalone behavioral oracle, unchanged by this file.
 
+The callable tools, role grants, staged inputs and typed agent-result contracts
+are specified in `apps/cli/specs/dev-review-capabilities-contracts.md`.
+
 The data lives in
 `apps/cli/tests/lib/dev-review-loop/dev-review-engine-state-contract.fixture.ts`.
 Its contract test,
