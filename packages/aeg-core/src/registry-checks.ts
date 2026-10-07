@@ -1,5 +1,5 @@
 /**
- * registry-checks.ts — G1–G6, the deterministic coherence checks that make
+ * registry-checks.ts — G1–G7, the deterministic coherence checks that make
  * `aeg-root/enforcement.md`'s three ring tables (parsed by
  * `registry-parse.ts`) load-bearing instead of decorative.
  *
@@ -19,7 +19,8 @@
  * already `NON_GATE_BINS`-listed non-gate tooling — and flipped it to
  * blocking in the same task, on the same reasoning: a permanent `'info'`
  * finding on every run trains its readers to ignore it. G3–G6 are blocking
- * (`'fail'` on any violation).
+ * (`'fail'` on any violation). G7 is blocking too, and dormant (`'info'`, no
+ * findings) when the caller has no enforcement map to hand it.
  */
 
 import { extractCitedPaths } from './doctrine-portability'
@@ -35,7 +36,7 @@ export type RegistryFinding = {
 }
 
 export type RegistryCheckResult = {
-  check: 'G1' | 'G2' | 'G3' | 'G4' | 'G5' | 'G6'
+  check: 'G1' | 'G2' | 'G3' | 'G4' | 'G5' | 'G6' | 'G7'
   status: RegistryCheckStatus
   findings: RegistryFinding[]
 }
@@ -383,4 +384,84 @@ export function checkG6(rows: GateRow[], registeredCheckNames: Set<string>): Reg
     }
   }
   return { check: 'G6', status: findings.length > 0 ? 'fail' : 'pass', findings }
+}
+
+/** What G7 needs from its caller, all gathered by the adapter — this module reads no files. */
+export type CheckG7Input = {
+  /** False when the repository carries no enforcement map: the rule is dormant, never an error. */
+  enforcementMapPresent: boolean
+  /** Files that make a GitHub-writing call (the same list G3 takes). */
+  crossingFiles: readonly string[]
+  /** Implementation files of the blocking gates the enforcement map names. */
+  blockingFiles: readonly string[]
+  /** Files that call the log sink's logging function. */
+  producers: ReadonlySet<string>
+  /** File → the files it imports, as the import resolution found them. */
+  imports: ReadonlyMap<string, readonly string[]>
+  /** File → why it is allowed to reach no producer. */
+  exemptions: Readonly<Record<string, string>>
+  existsFn: (path: string) => boolean
+}
+
+/** Whether `file` is a producer or imports one, directly or through other files. */
+export function reachesProducer(
+  file: string,
+  producers: ReadonlySet<string>,
+  imports: ReadonlyMap<string, readonly string[]>
+): boolean {
+  const seen = new Set<string>([file])
+  const queue = [file]
+  for (let next = queue.pop(); next !== undefined; next = queue.pop()) {
+    if (producers.has(next)) return true
+    for (const dep of imports.get(next) ?? []) {
+      if (!seen.has(dep)) {
+        seen.add(dep)
+        queue.push(dep)
+      }
+    }
+  }
+  return false
+}
+
+/**
+ * G7 — anything able to block a change or write to the forge reaches a log
+ * producer. Every GitHub-writing file and every blocking gate's implementation
+ * file either is a producer, imports one (directly or through other files), or
+ * is named in `exemptions` with a reason. An exemption with no reason, one
+ * naming a file that no longer exists, one naming a file that is no longer
+ * GitHub-writing or blocking, and one naming a file that now reaches a producer
+ * are each a finding too, so the list cannot rot. Dormant without the
+ * enforcement map. Blocking.
+ */
+export function checkG7(input: CheckG7Input): RegistryCheckResult {
+  if (!input.enforcementMapPresent) return { check: 'G7', status: 'info', findings: [] }
+  const subjects = new Set([...input.crossingFiles, ...input.blockingFiles])
+  const findings: RegistryFinding[] = []
+  for (const path of subjects) {
+    if (path in input.exemptions) continue
+    if (!reachesProducer(path, input.producers, input.imports)) {
+      findings.push({
+        path,
+        reason: `"${path}" ${input.crossingFiles.includes(path) ? 'makes a GitHub-writing call' : 'implements a blocking gate'} but neither is a log producer nor imports one, and it is not exempted with a reason`
+      })
+    }
+  }
+  for (const [path, reason] of Object.entries(input.exemptions)) {
+    if (reason.trim() === '') {
+      findings.push({ path, reason: `exemption for "${path}" states no reason` })
+    } else if (!input.existsFn(path)) {
+      findings.push({ path, reason: `exemption names "${path}", which no longer exists` })
+    } else if (!subjects.has(path)) {
+      findings.push({
+        path,
+        reason: `exemption names "${path}", which is neither a GitHub-writing file nor a blocking gate's implementation`
+      })
+    } else if (reachesProducer(path, input.producers, input.imports)) {
+      findings.push({
+        path,
+        reason: `exemption names "${path}", which does reach a log producer — remove the exemption`
+      })
+    }
+  }
+  return { check: 'G7', status: findings.length > 0 ? 'fail' : 'pass', findings }
 }

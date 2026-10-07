@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { checkG1, checkG2, checkG3, checkG4, checkG5, checkG6, findUnshippedHookRefs } from './registry-checks'
+import { checkG1, checkG2, checkG3, checkG4, checkG5, checkG6, checkG7, findUnshippedHookRefs } from './registry-checks'
 import type { GateRow } from './registry-parse'
 
 function makeRow(overrides: Partial<GateRow> = {}): GateRow {
@@ -381,5 +381,72 @@ describe('findUnshippedHookRefs / checkG1 hook references', () => {
 
   it('checkG1 without hook input behaves as before', () => {
     expect(checkG1([makeRow({ implementation: 'real/file.ts' })], () => true).status).toBe('pass')
+  })
+})
+
+describe('checkG7', () => {
+  const base = {
+    enforcementMapPresent: true,
+    crossingFiles: [] as string[],
+    blockingFiles: ['gate.ts'],
+    producers: new Set(['sink.ts']),
+    imports: new Map<string, string[]>([
+      ['gate.ts', ['mid.ts']],
+      ['mid.ts', ['sink.ts']],
+      ['loop-a.ts', ['loop-b.ts']],
+      ['loop-b.ts', ['loop-a.ts']]
+    ]),
+    exemptions: {} as Record<string, string>,
+    existsFn: () => true
+  }
+
+  it('passes a file that reaches a producer through other files', () => {
+    expect(checkG7(base)).toEqual({ check: 'G7', status: 'pass', findings: [] })
+  })
+
+  it('passes a file that is itself a producer', () => {
+    expect(checkG7({ ...base, blockingFiles: ['sink.ts'] }).status).toBe('pass')
+  })
+
+  it('is dormant, never failing, without the enforcement map', () => {
+    const result = checkG7({ ...base, enforcementMapPresent: false, blockingFiles: ['orphan.ts'] })
+    expect(result).toEqual({ check: 'G7', status: 'info', findings: [] })
+  })
+
+  it('names a GitHub-writing file that reaches no producer', () => {
+    const result = checkG7({ ...base, crossingFiles: ['hook.sh'] })
+    expect(result.status).toBe('fail')
+    expect(result.findings.map((f) => f.path)).toEqual(['hook.sh'])
+    expect(result.findings[0]?.reason).toContain('GitHub-writing')
+  })
+
+  it('names a blocking-gate file that reaches no producer, and terminates on an import cycle', () => {
+    const result = checkG7({ ...base, blockingFiles: ['gate.ts', 'loop-a.ts'] })
+    expect(result.findings.map((f) => f.path)).toEqual(['loop-a.ts'])
+  })
+
+  it('accepts a reasoned exemption', () => {
+    const result = checkG7({ ...base, blockingFiles: ['gate.ts', 'orphan.ts'], exemptions: { 'orphan.ts': 'because' } })
+    expect(result.status).toBe('pass')
+  })
+
+  it('fails an exemption with no reason', () => {
+    const result = checkG7({ ...base, blockingFiles: ['orphan.ts'], exemptions: { 'orphan.ts': '  ' } })
+    expect(result.findings.map((f) => f.reason)).toEqual(['exemption for "orphan.ts" states no reason'])
+  })
+
+  it('fails an exemption naming a file that no longer exists', () => {
+    const result = checkG7({ ...base, exemptions: { 'gone.ts': 'why' }, existsFn: (p) => p !== 'gone.ts' })
+    expect(result.findings[0]?.reason).toContain('no longer exists')
+  })
+
+  it('fails an exemption naming a file that is not a subject', () => {
+    const result = checkG7({ ...base, exemptions: { 'other.ts': 'why' } })
+    expect(result.findings[0]?.reason).toContain('neither a GitHub-writing file nor a blocking gate')
+  })
+
+  it('fails an exemption naming a file that reaches a producer', () => {
+    const result = checkG7({ ...base, exemptions: { 'gate.ts': 'why' } })
+    expect(result.findings[0]?.reason).toContain('does reach a log producer')
   })
 })
