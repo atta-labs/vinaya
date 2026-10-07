@@ -10,18 +10,17 @@ import { dirname, join } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import type { DispatchHandle } from '../../../src/lib/dispatch.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
-import { CONFIDENCE_FILE_NAME } from '../../../src/lib/dev-review-loop.js'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../../src/lib/dev-review-loop/round-assess.js'
 import {
   cleanupWorlds,
   controlDir,
-  developerDir,
   makeInProcessDeps,
   makeWorld,
   outboxLines,
   roundDir,
   runLoopInProcess,
-  type LoopWorld
+  type LoopWorld,
+  seedAcceptedTurnResult
 } from '../dev-review-loop-harness.js'
 
 afterEach(cleanupWorlds)
@@ -459,8 +458,7 @@ describe('devReviewLoop — control-store-v1 task 4 (#554, O1/O3): round numberi
     })
 
     mkdirSync(join(world.repoRoot, '.worktrees', world.branch), { recursive: true })
-    mkdirSync(developerDir(world, 2), { recursive: true })
-    writeFileSync(join(developerDir(world, 2), CONFIDENCE_FILE_NAME), 'CONFIDENCE: 90 — recovered from control state\n')
+    seedAcceptedTurnResult(world, 2, { explanation: 'recovered from control state' })
 
     const result = await runLoopInProcess(world)
     expect(result.finalDecision.type).toBe('publish')

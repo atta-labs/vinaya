@@ -20,10 +20,13 @@ import {
   outboxLines,
   roundDir,
   runLoopInProcess,
-  type LoopWorld
+  type LoopWorld,
+  seedAcceptedTurnResult,
+  defaultDeveloperTurnOutput,
+  completedTurnOutput,
+  handoffIdsInPrompt
 } from '../dev-review-loop-harness.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
-import { CONFIDENCE_FILE_NAME } from '../../../src/lib/dev-review-loop.js'
 import type { DispatchHandle } from '../../../src/lib/dispatch.js'
 
 afterEach(cleanupWorlds)
@@ -88,7 +91,7 @@ function controlledDeveloperDeps(
     world.dispatchCountByRole.developer = devCalls
     const sessionId = 'dev-session-fresh'
     world.dispatches.push({ role, round: dOpts.round ?? 1, resumeId: sessionId })
-    return fakeHandle(sessionId, `eff-dev-${devCalls}`)
+    return { ...fakeHandle(sessionId, `eff-dev-${devCalls}`), turnOutput: defaultDeveloperTurnOutput(prompt) }
   }
   const findOpenPrForBranch: LoopDeps['findOpenPrForBranch'] = (branch) => {
     const eligible = opts.openPrAfterCall !== undefined ? devCalls >= opts.openPrAfterCall : world.developerPushed
@@ -388,7 +391,19 @@ describe("devReviewLoop — O2 (task-files-v1 2, #649): the loop's two OLD workt
 
 describe('devReviewLoop — O3 (#543): a reviewer report missing finding ids is resent once, then report_uncitable — never no_progress', () => {
   it("resends once into a fresh work directory, records report_uncitable, and still dispatches the developer on this round's real BLOCKER — never stalls", async () => {
-    const world = makeWorld()
+    // Round 2's Developer reports a low confidence each time, so the run ends
+    // on the confidence rule's own pause rather than re-reviewing the same
+    // static head.
+    const world = makeWorld({
+      developerTurnOutput: (round, prompt) =>
+        round >= 2
+          ? completedTurnOutput({
+              confidence: 30,
+              explanation: 'unsure',
+              addressedFindingIds: handoffIdsInPrompt(prompt)
+            })
+          : undefined
+    })
     const base = makeInProcessDeps(world)
     let reviewerCalls = 0
     const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
@@ -465,22 +480,9 @@ describe('devReviewLoop — round 1 entry attaches to an open PR, resuming the r
         capturedAt: new Date().toISOString()
       })
     })
-    // The resumed round-2 turn is what would realistically leave a
-    // confidence answer behind for round 2's own gate — the fixture's fake
-    // developer wrote it as part of that same turn; here the dispatch
-    // itself writes it, the same real file the driver reads back.
-    const innerDispatchRole = deps.dispatchRole!
-    deps.dispatchRole = async (role, agent, prompt, opts) => {
-      const handle = await innerDispatchRole(role, agent, prompt, opts)
-      if (role === 'developer' && (opts.round ?? 1) >= 2) {
-        mkdirSync(developerDir(world, opts.round ?? 1), { recursive: true })
-        writeFileSync(
-          join(developerDir(world, opts.round ?? 1), CONFIDENCE_FILE_NAME),
-          'CONFIDENCE: 90 — addressed the round 1 blocker\n'
-        )
-      }
-      return handle
-    }
+    // The resumed round-2 turn ends with its own native turn result (the
+    // harness's default `completed`, confidence 90) — the value round 2's
+    // own gate reads back.
     const result = await runLoopInProcessSafe(world, deps)
 
     expect(result.finalDecision.type).toBe('publish')
@@ -604,10 +606,9 @@ describe('devReviewLoop — attach recovers a held REQUEST-CHANGES round from di
     writeFileSync(join(roundDir(world, 1), 'reviewer.md'), heldVerdictText('VERDICT: REQUEST CHANGES'))
     writeFileSync(join(roundDir(world, 1), 'security.md'), heldVerdictText('VERDICT: FAIL'))
 
-    // The confidence answer for round 2's gate — pre-seeded so this attach
-    // never needs to dispatch a developer for it.
-    mkdirSync(developerDir(world, 2), { recursive: true })
-    writeFileSync(join(developerDir(world, 2), CONFIDENCE_FILE_NAME), 'CONFIDENCE: 90 — fixed round 1s blocker\n')
+    // Round 2's accepted turn result, for its gate — pre-seeded so this
+    // attach never needs to dispatch a developer for it.
+    seedAcceptedTurnResult(world, 2, { explanation: 'fixed round 1s blocker' })
 
     const result = await runLoopInProcessSafe(world, deps)
     expect(result.finalDecision.type).toBe('publish')
@@ -660,8 +661,8 @@ describe('devReviewLoop — a second attach on the same unchanged head reads as 
   })
 })
 
-describe('devReviewLoop — the driver composes the round comment from a citation the developer left in its outbox, never posted itself', () => {
-  it('reads FINDING_IDS from the round-2 Developer folder, cites them in the round-2 marker comment, and clears the file', async () => {
+describe("devReviewLoop — the driver composes the round comment from the Developer's accepted turn result, never posted itself", () => {
+  it("cites the round's accepted addressedFindingIds in the round-2 marker comment, and leaves the immutable record in place", async () => {
     const world = setUpAttachRecoversHeldRound()
     const { deps, prompts } = withCapturedDeveloperDispatch(world)
 
@@ -669,26 +670,26 @@ describe('devReviewLoop — the driver composes the round comment from a citatio
     writeFileSync(join(roundDir(world, 1), 'reviewer.md'), heldVerdictText('VERDICT: REQUEST CHANGES'))
     writeFileSync(join(roundDir(world, 1), 'security.md'), heldVerdictText('VERDICT: FAIL'))
 
-    mkdirSync(developerDir(world, 2), { recursive: true })
-    writeFileSync(join(developerDir(world, 2), CONFIDENCE_FILE_NAME), 'CONFIDENCE: 90 — fixed round 1s blocker\n')
-    writeFileSync(join(developerDir(world, 2), '.vinaya-round-response'), 'FINDING_IDS: F1,F2\n')
+    seedAcceptedTurnResult(world, 2, {
+      explanation: 'fixed round 1s blocker',
+      addressedFindingIds: ['R1-CR-1', 'R1-SEC-1']
+    })
 
     const result = await runLoopInProcessSafe(world, deps)
     expect(result.finalDecision.type).toBe('publish')
 
-    // No developer dispatch at all — the citation came from the outbox
-    // file, never from a comment the Developer itself posted.
+    // No developer dispatch at all — the citation came from the accepted
+    // turn result, never from a comment the Developer itself posted.
     expect(prompts).toHaveLength(0)
 
     // The FIRST posted comment is the driver's own round-2 marker, carrying
-    // the citation it read from the outbox file.
+    // the citation from the accepted result.
     const roundComment = world.postedComments[0] as { marker: string; body: string }
     expect(roundComment.marker).toBe('<!-- aeg:developer:round-2 -->')
-    expect(roundComment.body).toMatch(/^FINDING_IDS: F1,F2$/m)
+    expect(roundComment.body).toMatch(/^FINDING_IDS: R1-CR-1,R1-SEC-1$/m)
 
-    // Read once, then cleared — a second attach on the same round must
-    // never redeliver a stale citation from a prior round.
-    expect(existsSync(join(developerDir(world, 2), '.vinaya-round-response'))).toBe(false)
+    // The record is the driver's own, written once — never cleared.
+    expect(existsSync(join(developerDir(world, 2), 'turn-result-001.json'))).toBe(true)
   })
 })
 
@@ -721,8 +722,7 @@ describe("devReviewLoop — O9 (task-run-v1 21, #541) / [task-files-v1] 4 (#651)
       return base.publishRound!(root, input)
     }
 
-    mkdirSync(developerDir(world, 2), { recursive: true })
-    writeFileSync(join(developerDir(world, 2), CONFIDENCE_FILE_NAME), 'CONFIDENCE: 90 — fixed round 1s blocker\n')
+    seedAcceptedTurnResult(world, 2, { explanation: 'fixed round 1s blocker' })
 
     const result = await runLoopInProcessSafe(world, { ...deps, publishRound })
     expect(result.finalDecision.type).toBe('publish')
@@ -1098,10 +1098,6 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
           dispatchRole: async (role, selectedAgent, prompt, opts) => {
             const handle = await dispatch(role, selectedAgent, prompt, opts)
             if (role === 'developer' && (opts.round ?? 1) === 1) world.nextCommitSha = 'd'.repeat(40)
-            if (role === 'developer' && (opts.round ?? 1) === 2) {
-              mkdirSync(developerDir(world, 2), { recursive: true })
-              writeFileSync(join(developerDir(world, 2), CONFIDENCE_FILE_NAME), 'CONFIDENCE: 90 — fixed blocker\n')
-            }
             return handle
           }
         }
@@ -1144,12 +1140,7 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
           ...publishing,
           dispatchRole: async (role, selectedAgent, prompt, opts) => {
             if (role === 'developer') expect(world.devToolContext).not.toBeNull()
-            const handle = await dispatch(role, selectedAgent, prompt, opts)
-            if (role === 'developer' && (opts.round ?? 1) === 2) {
-              mkdirSync(developerDir(world, 2), { recursive: true })
-              writeFileSync(join(developerDir(world, 2), CONFIDENCE_FILE_NAME), 'CONFIDENCE: 90 — corrected PR body\n')
-            }
-            return handle
+            return dispatch(role, selectedAgent, prompt, opts)
           }
         }
       )

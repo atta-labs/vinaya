@@ -21,22 +21,21 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { CONFIDENCE_FILE_NAME } from '../../../src/lib/dev-review-loop.js'
 import { escalationIdFor } from '../../../src/lib/dev-review-loop/pause-resume.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
 import type { ReconstructedJournal } from '@attalabs/aeg-core'
 import {
   cleanupWorlds,
   controlDir as ipControlDir,
-  developerDir,
   makeInProcessDeps,
   makeWorld,
   runLoopInProcess,
   taskRunDir as ipTaskRunDir,
   type LoopWorld,
-  type RoleOutcome
+  type RoleOutcome,
+  seedAcceptedTurnResult
 } from '../dev-review-loop-harness.js'
 
 afterEach(cleanupWorlds)
@@ -263,11 +262,9 @@ describe('devReviewLoop — a pull request counts as concluded only while the re
     // The escalation's resolution is still consumed, so before this fix every
     // `--resume` exited with a replay refusal and the task could not be
     // continued at all.
-    // Round 2's own confidence answer — an attach at round 2 gates on
-    // developer confidence before dispatching reviewers, and this world's fake
-    // developer writes no file of its own.
-    mkdirSync(developerDir(world, 2), { recursive: true })
-    writeFileSync(join(developerDir(world, 2), CONFIDENCE_FILE_NAME), 'CONFIDENCE: 90 — the ruling is addressed\n')
+    // Round 2's own accepted turn result — an attach at round 2 gates on
+    // developer confidence before dispatching reviewers.
+    seedAcceptedTurnResult(world, 2, { explanation: 'the ruling is addressed' })
 
     const publishedJournalRounds: number[][] = []
     const reopened = await runLoopInProcess(

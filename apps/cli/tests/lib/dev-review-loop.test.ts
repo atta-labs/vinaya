@@ -62,8 +62,6 @@ import { FAKE_CLAUDE_PROBE_ANSWER } from './dispatch/fake-sandbox-probe.js'
 import {
   assertValidLoopEvent,
   buildReexecArgs,
-  CONFIDENCE_FILE_NAME,
-  confidencePromptLine,
   describeConfidencePauseDetail,
   describeObjectivesEdit,
   deriveVerdictPauseDetail,
@@ -77,12 +75,12 @@ import {
   type ObjectivesEditSource,
   parseObjectivesEditComment,
   sanitizeUncaughtErrorForPublicPause,
-  parseRoundResponseFindingIds,
   renderDeveloperRoundComment,
   renderReviewerPrompt,
   type ReviewerPromptFacts,
   reviewPolicyForLoop,
   routeCompletionEvents,
+  turnResultInstruction,
   surfaceCoversAgentConfig
 } from '../../src/lib/dev-review-loop.js'
 import {
@@ -182,6 +180,15 @@ function tempDir(prefix: string): string {
   return dir
 }
 
+/**
+ * A fake Developer's last stream line: Claude's terminal `result` event
+ * carrying the turn result as `structured_output` (what `--json-schema`
+ * yields), `completed` at confidence 90 and citing every handoff id the
+ * prompt (`$PROMPT`) lists for it to cite.
+ */
+const FAKE_DEVELOPER_TURN_RESULT = `IDS=$(printf '%s\\n' "$PROMPT" | grep -oE '^- R[0-9]+-(CR|SEC)-[0-9]+(:|$)' | sed -e 's/^- //' -e 's/:$//' | sort -u | sed -e 's/.*/"&"/' | paste -sd, -)
+    echo '{"type":"result","subtype":"success","is_error":false,"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5},"structured_output":{"turnResult":{"schemaVersion":1,"status":"completed","summary":"fixture turn","confidence":90,"confidenceExplanation":"the fixture work is done","addressedFindingIds":['"$IDS"'],"sourceUses":null,"reportedChecks":null}}}'`
+
 function writeFakeBinary(dir: string, name: string, script: string): void {
   const p = join(dir, name)
   // A fake `claude` answers the Linux sandbox probe before doing anything else.
@@ -206,7 +213,7 @@ function writeFakeClaude(dir: string): void {
     'claude',
     `#!/bin/sh
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
-cat > /dev/null
+PROMPT="$(cat)"
 WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
@@ -226,7 +233,7 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   *)
-    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ${FAKE_DEVELOPER_TURN_RESULT}
     ;;
 esac
 exit 0
@@ -764,17 +771,37 @@ describe('devReviewLoop — O9 (task-run-v1 21, #541, round 2 review BLOCKER): a
       // Swap to a `gh` with no crash logic — round 2's own posts must succeed
       // — then reattach with a plain `--task`, exactly as an operator
       // re-running the same command after the crash would. Round ≥ 2's
-      // confidence gate reads a file the developer would normally write; an
-      // ATTACH never dispatches the developer at all (the code is already on
-      // the remote), so it's pre-seeded here exactly as
-      // `setUpAttachRecoversHeldRound`'s own round-2 fixtures do.
+      // confidence gate reads the round's accepted turn result, which a
+      // Developer dispatch would normally leave; an ATTACH never dispatches
+      // the developer at all (the code is already on the remote), so it's
+      // pre-seeded here exactly as `setUpAttachRecoversHeldRound`'s own
+      // round-2 fixtures do.
       writeFakeGhReattachSucceeds(binDir)
       const worktreeDir = join(cwd, '.worktrees', BRANCH)
       mkdirSync(worktreeDir, { recursive: true })
       mkdirSync(developerDir(home, 2), { recursive: true })
       writeFileSync(
-        join(developerDir(home, 2), CONFIDENCE_FILE_NAME),
-        'CONFIDENCE: 90 — same code, already reviewed clean once\n'
+        join(developerDir(home, 2), 'turn-result-001.json'),
+        JSON.stringify({
+          version: 1,
+          runId: 'seeded',
+          round: 2,
+          attempt: 1,
+          head: null,
+          outcome: 'accepted',
+          result: {
+            schemaVersion: 1,
+            status: 'completed',
+            summary: 'same code',
+            confidence: 90,
+            confidenceExplanation: 'same code, already reviewed clean once',
+            addressedFindingIds: [],
+            sourceUses: null,
+            reportedChecks: null
+          },
+          failures: [],
+          recordedAt: new Date(0).toISOString()
+        })
       )
       const r2 = runLoop(home, cwd, path)
       expect(r2.status).toBe(0)
@@ -1855,7 +1882,7 @@ case "$VINAYA_ROLE" in
   *)
     mkdir -p "$WORKROOT"
     printf '%s\\n---\\n' "$PROMPT" >> "$WORKROOT/dev-prompts.txt"
-    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ${FAKE_DEVELOPER_TURN_RESULT}
     ;;
 esac
 exit 0
@@ -2379,7 +2406,7 @@ function writeFakeClaudeReviewerWritesNothingScenario(dir: string): void {
     'claude',
     `#!/bin/sh
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
-cat > /dev/null
+PROMPT="$(cat)"
 WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
@@ -2395,7 +2422,7 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   *)
-    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ${FAKE_DEVELOPER_TURN_RESULT}
     ;;
 esac
 exit 0
@@ -2629,7 +2656,7 @@ function writeFakeClaudeReviewerWritesGarbageFindingsScenario(dir: string): void
     'claude',
     `#!/bin/sh
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
-cat > /dev/null
+PROMPT="$(cat)"
 WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
@@ -2654,7 +2681,7 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"sec-session-garbage","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   *)
-    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ${FAKE_DEVELOPER_TURN_RESULT}
     ;;
 esac
 exit 0
@@ -2767,7 +2794,7 @@ PROMPT="$(cat)"
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
 N=$(ls "$HOME"/.dev-prompt-*.txt 2>/dev/null | wc -l | tr -d ' ')
 printf '%s' "$PROMPT" > "$HOME/.dev-prompt-$((N + 1)).txt"
-echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+${FAKE_DEVELOPER_TURN_RESULT}
 exit 0
 `
   )
@@ -3011,10 +3038,10 @@ function writeFakeClaudeBaseMovesAfterFirstTurn(dir: string): void {
     dir,
     'claude',
     `#!/bin/sh
-cat > /dev/null
+PROMPT="$(cat)"
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
 touch "$HOME/.base-moved" 2>/dev/null
-echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+${FAKE_DEVELOPER_TURN_RESULT}
 exit 0
 `
   )
@@ -3158,7 +3185,7 @@ function writeFakeClaudeBaseMovesThenCleanReview(dir: string): void {
     'claude',
     `#!/bin/sh
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
-cat > /dev/null
+PROMPT="$(cat)"
 WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
@@ -3179,7 +3206,7 @@ case "$VINAYA_ROLE" in
     ;;
   *)
     touch "$HOME/.base-moved" 2>/dev/null
-    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ${FAKE_DEVELOPER_TURN_RESULT}
     ;;
 esac
 exit 0
@@ -3246,7 +3273,7 @@ function writeFakeClaudeResumeThenStaleDriverScenario(dir: string): void {
     'claude',
     `#!/bin/sh
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
-cat > /dev/null
+PROMPT="$(cat)"
 WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
@@ -3278,11 +3305,7 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"sec-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   *)
-    if [ "$VINAYA_ROUND" = "2" ]; then
-      mkdir -p "$WORKROOT/rounds/$VINAYA_ROUND/developer"
-      echo "CONFIDENCE: 90 — addressed the round 1 blocker" > "$WORKROOT/rounds/$VINAYA_ROUND/developer/.vinaya-confidence"
-    fi
-    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ${FAKE_DEVELOPER_TURN_RESULT}
     ;;
 esac
 exit 0
@@ -3511,22 +3534,23 @@ describe('extractObjectivesSection (pure)', () => {
   })
 })
 
-describe('confidencePromptLine (pure) — O11 (task-run-v1 21, #541, round 2 review MAJOR); path interpolation (task-files-v1 2, #649)', () => {
-  const EXAMPLE_PATH = '/home/dev/.vinaya/runtime/unresolved/tasks-execution/9001/rounds/2/developer/.vinaya-confidence'
-
-  it('names the exact command expected, not just the required file format, interpolating the absolute path this round names', () => {
-    expect(confidencePromptLine(EXAMPLE_PATH)).toContain(`> ${EXAMPLE_PATH}\`.`)
+describe('turnResultInstruction (pure) — every Developer dispatch asks for its native turn result (O1/O2)', () => {
+  it('asks for the structured result under turnResult, writes no file, and names every status', () => {
+    const line = turnResultInstruction(2)
+    expect(line).toContain('structured output')
+    expect(line).toContain('`turnResult`')
+    expect(line).toContain('write no result file')
+    for (const status of ['completed', 'blocked', 'needs_ruling']) expect(line).toContain(`"${status}"`)
   })
 
-  it('the confidence re-ask prompt (dispatched via dispatchDeveloper, which always prepends the resume-context block on a resume) still carries this same command, since it is appended verbatim', () => {
-    const reaskPrompt = `Your last reply did not include a valid confidence line.\n\n${confidencePromptLine(EXAMPLE_PATH)}`
-    expect(reaskPrompt).toContain(`> ${EXAMPLE_PATH}\`.`)
+  it('says addressedFindingIds is empty in round 1, and names the handoff from round 2', () => {
+    expect(turnResultInstruction(1)).toContain('empty in round 1')
+    expect(turnResultInstruction(2)).toContain("this round's handoff")
   })
 
-  it('never a fixed worktree-relative path — a different round gets a different absolute path', () => {
-    const roundTwo = confidencePromptLine('/runtime/tasks-execution/9001/rounds/2/developer/.vinaya-confidence')
-    const roundThree = confidencePromptLine('/runtime/tasks-execution/9001/rounds/3/developer/.vinaya-confidence')
-    expect(roundTwo).not.toBe(roundThree)
+  it('asks for a short explanation of the confidence, never for reasoning', () => {
+    expect(turnResultInstruction(2).toLowerCase()).not.toContain('reasoning')
+    expect(turnResultInstruction(2)).toContain('one short sentence explaining that figure')
   })
 })
 
@@ -3703,35 +3727,30 @@ describe('sanitizeUncaughtErrorForPublicPause (pure) — security review, MEDIUM
 
 // --- the developer's round-response outbox file ---------------------------
 
-describe('parseRoundResponseFindingIds / renderDeveloperRoundComment / developerRoundMarker (pure)', () => {
-  it('parses a FINDING_IDS: line into its comma-separated ids', () => {
-    expect(parseRoundResponseFindingIds('FINDING_IDS: F1,F2,F3\n')).toEqual(['F1', 'F2', 'F3'])
-  })
-
-  it('is case-insensitive and tolerates surrounding whitespace, matching the reviewer-side grammar', () => {
-    expect(parseRoundResponseFindingIds('finding_ids:  F1 , F2 \n')).toEqual(['F1', 'F2'])
-  })
-
-  it('is [] for null content — a Developer that never wrote the file at all', () => {
-    expect(parseRoundResponseFindingIds(null)).toEqual([])
-  })
-
-  it('is [] for content with no FINDING_IDS: line — never a throw, never a stall (O2: no round is judged no_progress for this)', () => {
-    expect(parseRoundResponseFindingIds('some unrelated note\n')).toEqual([])
-  })
-
-  it('is [] for an empty FINDING_IDS: value', () => {
-    expect(parseRoundResponseFindingIds('FINDING_IDS: \n')).toEqual([])
-  })
-
+describe('renderDeveloperRoundComment / developerRoundMarker (pure)', () => {
   it('renderDeveloperRoundComment carries Head: first, no FINDING_IDS: line when there is nothing to cite', () => {
     const body = renderDeveloperRoundComment('a'.repeat(40), [])
     expect(body).toBe(`Head: ${'a'.repeat(40)}`)
   })
 
-  it('renderDeveloperRoundComment appends FINDING_IDS: only when ids were cited — the outbox-only citation path (O2)', () => {
-    const body = renderDeveloperRoundComment('a'.repeat(40), ['F1', 'F2'])
-    expect(body).toBe(`Head: ${'a'.repeat(40)}\nFINDING_IDS: F1,F2`)
+  it("renderDeveloperRoundComment appends FINDING_IDS: only when the round's accepted results addressed ids (O4)", () => {
+    const body = renderDeveloperRoundComment('a'.repeat(40), ['R1-CR-1', 'R1-SEC-2'])
+    expect(body).toBe(`Head: ${'a'.repeat(40)}\nFINDING_IDS: R1-CR-1,R1-SEC-2`)
+  })
+
+  it('renderDeveloperRoundComment shows reportedChecks as agent-reported context, never evidence (O4)', () => {
+    const body = renderDeveloperRoundComment(
+      'a'.repeat(40),
+      ['R1-CR-1'],
+      [
+        { command: 'bun run typecheck', outcome: 'pass' },
+        { command: 'bun run `lint`', outcome: 'fail' }
+      ]
+    )
+    expect(body).toContain('FINDING_IDS: R1-CR-1')
+    expect(body).toContain('agent-reported context, not evidence')
+    expect(body).toContain('- `bun run typecheck` — pass')
+    expect(body).toContain("- `bun run 'lint'` — fail")
   })
 
   it("developerRoundMarker matches the SAME regex @attalabs/aeg-core's parseDeveloperRoundMarker reads", () => {
@@ -3782,8 +3801,10 @@ describe('routeCompletionEvents (pure) — regression, PR #459 MAJOR', () => {
 })
 
 describe('describeConfidencePauseDetail (pure) — [task-log-v1] 9, Issue #631, O1/O3', () => {
-  it('names the absent case — no confidence line on the re-asked turn', () => {
-    expect(describeConfidencePauseDetail('absent')).toContain('no confidence line was found on the re-asked turn')
+  it('names the absent case — no accepted turn result stated a confidence on the re-asked turn', () => {
+    expect(describeConfidencePauseDetail('absent')).toContain(
+      'no accepted turn result stated a confidence on the re-asked turn'
+    )
   })
 
   it('names the reported-but-low case, including the developer-supplied reason when present', () => {

@@ -1,6 +1,6 @@
 /**
- * Unit tests for `round-assess.ts`'s `parseConfidenceReply` — the developer's
- * `.vinaya-confidence` reply, parsed once, destructively, at the gate read.
+ * Unit tests for `round-assess.ts`'s round-assessment glue — dispatch/resume
+ * escalation, rate-limit waits and the infrastructure-retry budget.
  *
  * This file is also this directory's own precedent for where a dev-review-loop
  * contract test lives: `dev-review-engine-state-contract.test.ts`, beside it,
@@ -9,7 +9,6 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { CONFIDENCE_REASON_MAX_LENGTH } from '@attalabs/aeg-core'
 import {
   assertDispatchOrEscalate,
   DeveloperDispatchHistory,
@@ -17,47 +16,12 @@ import {
   DispatchSignInRefused,
   isGitHubRateLimitError,
   isRateLimitPauseDetail,
-  parseConfidenceReply,
   RATE_LIMIT_FALLBACK_WAIT_MS,
   rateLimitPauseDetail,
   rateLimitWaitMs,
   spendsInfrastructureRetry
 } from '../../../src/lib/dev-review-loop/round-assess'
 import type { DispatchHandle } from '../../../src/lib/dispatch'
-
-describe('parseConfidenceReply', () => {
-  it('parses a well-formed line into a value and reason', () => {
-    expect(parseConfidenceReply('CONFIDENCE: 90 — fixed the reported issue\n')).toEqual({
-      value: 90,
-      reason: 'fixed the reported issue'
-    })
-  })
-
-  it('a missing line reads absent, never a guessed number', () => {
-    expect(parseConfidenceReply('')).toBe('absent')
-  })
-
-  it('an out-of-range value reads absent', () => {
-    expect(parseConfidenceReply('CONFIDENCE: 101 — too high\n')).toBe('absent')
-  })
-
-  it('a reason longer than the schema bound is truncated to it, never dropped or left to fail validation downstream', () => {
-    const longReason = 'x'.repeat(CONFIDENCE_REASON_MAX_LENGTH + 50)
-    const result = parseConfidenceReply(`CONFIDENCE: 80 — ${longReason}\n`)
-    expect(result).not.toBe('absent')
-    if (result === 'absent') throw new Error('unreachable')
-    expect(result.reason).toHaveLength(CONFIDENCE_REASON_MAX_LENGTH)
-    expect(result.reason).toBe(longReason.slice(0, CONFIDENCE_REASON_MAX_LENGTH))
-  })
-
-  it('a reason exactly at the bound is kept whole', () => {
-    const exactReason = 'y'.repeat(CONFIDENCE_REASON_MAX_LENGTH)
-    const result = parseConfidenceReply(`CONFIDENCE: 80 — ${exactReason}\n`)
-    expect(result).not.toBe('absent')
-    if (result === 'absent') throw new Error('unreachable')
-    expect(result.reason).toBe(exactReason)
-  })
-})
 
 function failedHandle(failureReason: DispatchHandle['failureReason']): DispatchHandle {
   return { exitCode: 1, durationMs: 1, usage: null, resumeId: null, timedOut: false, failureReason }

@@ -534,7 +534,7 @@ describe('dispatchRole — a successful dispatch', () => {
     )
 
     expect(r.status).toBe(0)
-    expect(readArgv(argvOut)).toEqual([
+    expect(withoutTurnResultFlag(readArgv(argvOut), '--output-schema')).toEqual([
       'exec',
       '--sandbox',
       'workspace-write',
@@ -581,8 +581,8 @@ describe('addCodexWritableDirs — reviewer hand-off directories', () => {
 
   it('grants only the real parent of a resumed developer artifact and de-duplicates it', () => {
     const dir = tempDir('vinaya-codex-developer-file-')
-    const confidence = join(dir, '.vinaya-confidence')
-    const response = join(dir, '.vinaya-round-response')
+    const confidence = join(dir, 'granted-one.txt')
+    const response = join(dir, 'granted-two.txt')
     const argv = ['exec', 'resume', 'thread-id', '--json', '-']
     expect(addCodexWritableDirs(argv, [], true, [confidence, response])).toEqual([
       'exec',
@@ -1699,6 +1699,19 @@ function readArgv(path: string): string[] {
   return readFileSync(path, 'utf8').replace(/\n$/, '').split('\n')
 }
 
+/**
+ * A Developer dispatch's argv with its turn-result flag pair removed —
+ * Claude's `--json-schema <schema>`, Codex's `--output-schema <file>` —
+ * asserting the pair was there: every Developer dispatch asks for its turn
+ * result as the CLI's native structured output (#1125).
+ */
+function withoutTurnResultFlag(argv: string[], flag: '--json-schema' | '--output-schema'): string[] {
+  const i = argv.indexOf(flag)
+  expect(i).toBeGreaterThanOrEqual(0)
+  expect(argv[i + 1]?.length ?? 0).toBeGreaterThan(0)
+  return [...argv.slice(0, i), ...argv.slice(i + 2)]
+}
+
 type ResumeVendorFixture = {
   agent: 'claude' | 'codex' | 'gemini'
   /** stdout a real first dispatch prints, carrying `synthId` as that vendor's own resume identifier. */
@@ -1789,7 +1802,9 @@ describe('dispatchRole — resume identifier (round-trip, per vendor)', () => {
       const actualArgv = readArgv(argvOut)
       if (fixture.agent === 'claude') {
         expect(actualArgv.slice(-2, -1)).toEqual(['--settings'])
-        expect(actualArgv.slice(0, -2)).toEqual(fixture.resumeArgv(synthId))
+        expect(withoutTurnResultFlag(actualArgv.slice(0, -2), '--json-schema')).toEqual(fixture.resumeArgv(synthId))
+      } else if (fixture.agent === 'codex') {
+        expect(withoutTurnResultFlag(actualArgv, '--output-schema')).toEqual(fixture.resumeArgv(synthId))
       } else {
         expect(actualArgv).toEqual(fixture.resumeArgv(synthId))
       }
@@ -2802,7 +2817,9 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
       const actualArgv = readArgv(argvOut)
       if (fixture.agent === 'claude') {
         expect(actualArgv.slice(-2, -1)).toEqual(['--settings'])
-        expect(actualArgv.slice(0, -2)).toEqual(fixture.argv)
+        expect(withoutTurnResultFlag(actualArgv.slice(0, -2), '--json-schema')).toEqual(fixture.argv)
+      } else if (fixture.agent === 'codex') {
+        expect(withoutTurnResultFlag(actualArgv, '--output-schema')).toEqual(fixture.argv)
       } else {
         expect(actualArgv).toEqual(fixture.argv)
       }
@@ -2832,7 +2849,12 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
     // O1 (#543): claude alone gets a trailing `--settings <path>` pair.
     const actualArgv = readArgv(argvOut)
     expect(actualArgv.slice(-2, -1)).toEqual(['--settings'])
-    expect(actualArgv.slice(0, -2)).toEqual(['-p', '--verbose', '--output-format', 'stream-json'])
+    expect(withoutTurnResultFlag(actualArgv.slice(0, -2), '--json-schema')).toEqual([
+      '-p',
+      '--verbose',
+      '--output-format',
+      'stream-json'
+    ])
   })
 
   it('O2: dispatched records the requested model as a marked request label, never bare (no receipt possible yet)', () => {
@@ -3775,11 +3797,11 @@ describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/E
     expect(scope).toEqual({ kind: 'directory', allowedDir: realpathSync(dir), extraFiles: [], protectedSubpaths: [] })
   })
 
-  it('developer: extraFiles (O3, task-files-v1 2, #649) carries this round’s confidence/round-response paths, realpath-resolved, alongside the worktree directory grant', () => {
+  it('developer: extraFiles (O3, task-files-v1 2, #649) carries the exact files the driver names, realpath-resolved, alongside the worktree directory grant', () => {
     const dir = tempDir('vinaya-write-scope-')
     const devDir = tempDir('vinaya-write-scope-dev-')
-    const confidence = join(devDir, '.vinaya-confidence')
-    const roundResponse = join(devDir, '.vinaya-round-response')
+    const confidence = join(devDir, 'granted-one.txt')
+    const roundResponse = join(devDir, 'granted-two.txt')
     const scope = buildWriteAccessScope('developer', dir, [], [confidence, roundResponse])
     // Resolved through the parent, exactly as `writeAccessHookScript` resolves
     // the path it compares against: on a host whose temp root is a symlink
@@ -3790,7 +3812,7 @@ describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/E
     expect(scope).toEqual({
       kind: 'directory',
       allowedDir: realpathSync(dir),
-      extraFiles: [join(realDevDir, '.vinaya-confidence'), join(realDevDir, '.vinaya-round-response')],
+      extraFiles: [join(realDevDir, 'granted-one.txt'), join(realDevDir, 'granted-two.txt')],
       protectedSubpaths: []
     })
   })
@@ -3805,7 +3827,7 @@ describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/E
     mkdirSync(devDir, { recursive: true })
     // Never created — every developerFiles entry is genuinely absent at
     // scope-build time (the Developer has not written it yet this round).
-    const confidence = join(devDir, '.vinaya-confidence')
+    const confidence = join(devDir, 'granted-one.txt')
 
     const scope = buildWriteAccessScope('developer', dir, [], [confidence])
     expect(scope).not.toBeNull()
@@ -3821,7 +3843,7 @@ describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/E
     // computes for an identical Write call — `realpathSync(dirname(filePath))`
     // joined with the basename — so a real dispatch's grant and its own
     // hook's check agree.
-    expect(resolved).toBe(join(realpathSync(devDir), '.vinaya-confidence'))
+    expect(resolved).toBe(join(realpathSync(devDir), 'granted-one.txt'))
   })
 
   it('a role other than developer never gets developerFiles applied', () => {
@@ -4283,8 +4305,8 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
     const cwd = tempDir('vinaya-dispatch-cwd-')
     const binDir = tempDir('vinaya-dispatch-bin-')
     const devFilesDir = tempDir('vinaya-dispatch-devfiles-')
-    const confidencePath = join(devFilesDir, '.vinaya-confidence')
-    const roundResponsePath = join(devFilesDir, '.vinaya-round-response')
+    const confidencePath = join(devFilesDir, 'granted-one.txt')
+    const roundResponsePath = join(devFilesDir, 'granted-two.txt')
     const argvOut = join(cwd, 'argv.out')
     writeFakeBinary(
       binDir,
@@ -4371,10 +4393,10 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
     const linkedDevFilesDir = join(linkContainer, 'developer')
     symlinkSync(realDevFilesDir, linkedDevFilesDir)
     // Named through the SYMLINK, exactly as `dev-review-loop.ts`'s
-    // `confidenceFilePathFor` would if `runtimeDir` itself traversed one
+    // `runPath` would name a granted file if `runtimeDir` itself traversed one
     // (`/var` → `/private/var`, this reference's own documented example) —
     // never created, matching the real "not written yet this round" case.
-    const confidencePath = join(linkedDevFilesDir, '.vinaya-confidence')
+    const confidencePath = join(linkedDevFilesDir, 'granted-one.txt')
     const argvOut = join(cwd, 'argv.out')
     writeFakeBinary(
       binDir,

@@ -90,6 +90,15 @@ import {
 import type { IssueDocumentationSource, Role, RoleAttemptOutcome, TranscriptSummary } from '@attalabs/aeg-core'
 import { createLogSink, drainLogSpool, resolveLogAppendPath } from './log-sink.js'
 import { appendRoleLine } from './loop-log.js'
+import { developerTurnResultJsonSchema } from './developer-turn-result.js'
+import {
+  type DeliveredDocumentation,
+  type DeveloperTurnOutput,
+  normalizeSourceIdentity,
+  type TurnResultAdapter,
+  readClaudeTurnOutput,
+  readCodexTurnOutput
+} from './dev-review-loop/turn-result.js'
 import { loadConfig } from './config.js'
 import {
   runPath,
@@ -288,19 +297,18 @@ export type DispatchOpts = {
    */
   extraWritableDirs?: readonly string[]
   /**
-   * O3: the absolute paths of THIS round's
-   * own confidence and round-response files — the Developer's side channel
-   * to the driver, written under that round's own Developer folder inside
-   * the task's folder (`run-paths.ts`'s `{ area: 'developer', round, file:
-   * ... }`), outside the Developer's own worktree. `role === 'developer'`
+   * O3: absolute paths of files outside the Developer's own worktree the
+   * driver grants THIS dispatch, by exact path, under that round's own
+   * Developer folder inside the task's folder (`run-paths.ts`'s `{ area:
+   * 'developer', round, file: ... }`). No loop dispatch names any now: the
+   * turn result that once travelled as the confidence and round-response
+   * files arrives as the CLI's native structured output. `role === 'developer'`
    * is the only caller this ever applies to: granted alongside the
    * Developer's own worktree `directory` scope, by exact path, in every
    * write-scope mechanism a confining dispatch has (`buildWriteAccessScope`,
    * below, and `worker-boundary.ts`'s Seatbelt profile) — never a directory
    * grant, since nothing else in that folder is this dispatch's to write.
-   * Omitted on round 1 (no confidence is ever asked for, and a fresh
-   * dispatch carries no findings to cite) and on every dispatch for a role
-   * other than `developer`.
+   * Omitted on every dispatch for a role other than `developer`.
    */
   developerFiles?: readonly string[]
   /**
@@ -414,6 +422,15 @@ export type DispatchHandle = {
    * fresh, unjoinable id.
    */
   effectId?: string
+  /**
+   * A Developer dispatch's turn result as its adapter read it off the stream
+   * (Claude `--json-schema`, Codex `--output-schema`) — set on every
+   * completed Developer dispatch, `adapter: null` for a vendor with no native
+   * structured output. Unvalidated: only the loop's controller accepts it.
+   */
+  turnOutput?: DeveloperTurnOutput
+  /** A Developer dispatch's delivered Documentation manifest and the reads its gate counted (`deliveredDocumentation`). */
+  documentation?: DeliveredDocumentation
 }
 
 /**
@@ -1184,6 +1201,90 @@ export function codexDocumentationStopHookScript(
   ].join('\n')
 }
 
+/**
+ * The Documentation a Developer dispatch delivered, and the reads its gate
+ * counts, read back after the turn by the driver from the same files the
+ * read gate grades and by the same rules — the per-run manifest
+ * (`documentation-sources-<runId>.json`) in `dir`, the driver's own
+ * `fetch_documentation` receipts, and the hook-recorded fetches: on Claude a
+ * `WebFetch` counts only when it succeeded, stayed on the source's host and
+ * returned at least `DOCUMENTATION_READ_MIN_SIZE` bytes; on Codex the logger
+ * records only a successful `curl -L <URL>`. The controller requires a counted
+ * read behind every required URL source a `completed` result reports.
+ */
+export function deliveredDocumentation(
+  agent: AgentVendor,
+  dir: string,
+  runId: string,
+  receiptsPath: string
+): DeliveredDocumentation {
+  let manifest: unknown = []
+  try {
+    manifest = JSON.parse(readFileSync(join(dir, `documentation-sources-${runId}.json`), 'utf8'))
+  } catch {
+    manifest = []
+  }
+  const sources = Array.isArray(manifest)
+    ? manifest
+        .map((m) => (m && typeof m === 'object' ? (m as { source?: unknown }).source : null))
+        .filter((m): m is string => typeof m === 'string')
+    : []
+  const counted = new Set<string>()
+  try {
+    for (const line of readFileSync(receiptsPath, 'utf8').split('\n')) {
+      if (!line) continue
+      try {
+        const r = JSON.parse(line) as { source?: unknown }
+        if (typeof r.source === 'string') counted.add(normalizeSourceIdentity(r.source))
+      } catch {
+        // not a receipt line
+      }
+    }
+  } catch {
+    // no receipts yet
+  }
+  const hostOf = (u: string): string | null => {
+    try {
+      return new URL(u.trim()).host.toLowerCase()
+    } catch {
+      return null
+    }
+  }
+  let entries: Record<string, unknown>[] = []
+  try {
+    entries = readFileSync(join(dir, `documentation-log-${runId}.jsonl`), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          return JSON.parse(line) as Record<string, unknown>
+        } catch {
+          return null
+        }
+      })
+      .filter((x): x is Record<string, unknown> => x !== null && typeof x.url === 'string')
+  } catch {
+    entries = []
+  }
+  for (const source of sources) {
+    if (!isDocumentationUrl(source)) continue
+    const identity = normalizeSourceIdentity(source)
+    const mine = entries.filter((x) => normalizeSourceIdentity(String(x.url)) === identity)
+    const countsAsRead = (x: Record<string, unknown>): boolean =>
+      agent === 'codex' ||
+      (typeof x.status === 'number' &&
+        x.status >= 200 &&
+        x.status <= 299 &&
+        typeof x.finalUrl === 'string' &&
+        hostOf(x.finalUrl) !== null &&
+        hostOf(x.finalUrl) === hostOf(source) &&
+        typeof x.size === 'number' &&
+        x.size >= DOCUMENTATION_READ_MIN_SIZE)
+    if (mine.some(countsAsRead)) counted.add(identity)
+  }
+  return { sources, countedReads: [...counted] }
+}
+
 function writeCodexDispatchHooks(
   runId: string,
   documentation: IssueDocumentationSource[],
@@ -1623,8 +1724,8 @@ export type WriteAccessScope =
  * fatal to the dispatch this scope is only ever a defense-in-depth layer for.
  *
  * `developerFiles` (O3): the Developer's own
- * `directory` scope additionally carries `extraFiles` — this round's exact
- * confidence and round-response paths, outside the worktree — never widened
+ * `directory` scope additionally carries `extraFiles` — the exact paths the
+ * driver named for this round, outside the worktree — never widened
  * to a directory grant, since nothing else under that round's Developer
  * folder is this dispatch's to write. Ignored for every other role: a
  * reviewer/security dispatch's own `exact-files` scope is unaffected.
@@ -1641,7 +1742,7 @@ export type WriteAccessScope =
  * `/private/var`, this reference's own documented example) would make the two
  * sides disagree — this function's own raw, unresolved grant never matching
  * the hook's resolved comparison — and deny the Developer's own legitimate
- * confidence/round-response write. `realFile` mirrors the hook's exact
+ * write. `realFile` mirrors the hook's exact
  * resolution so both sides compute the identical string.
  *
  * `protectedSubpaths` (O3): absolute, inside
@@ -1755,8 +1856,8 @@ export const WRITE_PROTECTED_AGENT_CONFIG_DENY_REASON =
  * unattended role this hook is wired for.
  *
  * **`directory` scope's own `extraFiles` (O3).** A `directory`-scoped write additionally allows an exact match on
- * one of `scope.extraFiles` — this round's confidence and round-response
- * paths, outside the worktree — before falling through to the deny above.
+ * one of `scope.extraFiles` — the exact paths the driver named for this
+ * round, outside the worktree — before falling through to the deny above.
  * Never a directory grant: only these exact, driver-named files.
  *
  * **`directory` scope's own `protectedSubpaths` (O3).** A path inside the worktree that is ALSO inside one of
@@ -1764,9 +1865,8 @@ export const WRITE_PROTECTED_AGENT_CONFIG_DENY_REASON =
  * with its own reason (`WRITE_PROTECTED_AGENT_CONFIG_DENY_REASON`), checked
  * BEFORE the general in-worktree allow — so a `.claude/**`/`.mcp.json` path
  * this task's Surface does not name stays denied even though the rest of
- * the worktree is granted. Never affects `extraFiles` — the driver's own
- * confidence/round-response files are named by the driver, never by this
- * protection.
+ * the worktree is granted. Never affects `extraFiles` — those files are named
+ * by the driver, never by this protection.
  */
 export function writeAccessHookScript(dir: string): string {
   return [
@@ -4586,9 +4686,43 @@ export async function dispatchRole(
           return claudeDevToolsArgs(mcpConfigPath)
         })()
       : []
+  // O1: every Developer dispatch, first and resumed alike, asks for its turn
+  // result as the CLI's own native structured final output — Claude Code
+  // `--json-schema <schema>`, Codex `--output-schema <file>` — with the one
+  // schema `developer-turn-result.ts` generates, so the shape the provider is
+  // given and the shape the driver accepts are the same zod value. One
+  // authority per adapter: no result file, no report tool, no Stop hook in
+  // the path. Gemini has no native structured output; its Developer turn
+  // delivers none (`turnOutput.adapter: null`) and the loop pauses on it.
+  const turnResultAdapter: TurnResultAdapter | null =
+    role !== 'developer'
+      ? null
+      : agent === 'claude'
+        ? 'claude --json-schema'
+        : agent === 'codex'
+          ? 'codex --output-schema'
+          : null
+  const turnSchemaDir =
+    turnResultAdapter === 'codex --output-schema'
+      ? realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-turn-result-')))
+      : null
+  const turnResultArgs = (args: string[]): string[] => {
+    if (turnResultAdapter === 'claude --json-schema') {
+      return [...args, '--json-schema', JSON.stringify(developerTurnResultJsonSchema())]
+    }
+    if (turnSchemaDir !== null) {
+      const schemaPath = join(turnSchemaDir, 'developer-turn-result.schema.json')
+      writeFileSync(schemaPath, `${JSON.stringify(developerTurnResultJsonSchema(), null, 2)}\n`, { mode: 0o600 })
+      // Codex's argv ends with `-` (read the prompt from stdin): the flag goes before it.
+      return args[args.length - 1] === '-'
+        ? [...args.slice(0, -1), '--output-schema', schemaPath, '-']
+        : [...args, '--output-schema', schemaPath]
+    }
+    return args
+  }
   const spawnArgs = dispatchSettingsPath
-    ? [...baseArgs, ...devToolsClaudeArgs, '--settings', dispatchSettingsPath]
-    : [...baseArgs, ...devToolsClaudeArgs]
+    ? [...turnResultArgs([...baseArgs, ...devToolsClaudeArgs]), '--settings', dispatchSettingsPath]
+    : turnResultArgs([...baseArgs, ...devToolsClaudeArgs])
 
   {
     const priorSize = sizeOfSafe(outboxPath)
@@ -4749,6 +4883,10 @@ export async function dispatchRole(
     let killTimer: ReturnType<typeof setTimeout> | undefined
     let stdoutBuf = ''
     const MAX_STDOUT_BYTES = 1_000_000
+    // The turn result rides the stream's LAST events, which a long session
+    // pushes past `stdoutBuf`'s head-only cap — so a Developer dispatch also
+    // keeps the stream's tail, the same size, for the adapter to read.
+    let stdoutTail = ''
 
     // `'exit'` (below) can fire before the LAST already-in-flight `'data'`
     // chunk from the DIRECT child is delivered — the OS process-exit
@@ -4791,6 +4929,7 @@ export async function dispatchRole(
       // it: `stdoutBuf` still sees every byte, capped exactly as before.
       outputTee.write(chunk)
       if (stdoutBuf.length < MAX_STDOUT_BYTES) stdoutBuf += chunk.toString('utf8')
+      if (turnResultAdapter !== null) stdoutTail = `${stdoutTail}${chunk.toString('utf8')}`.slice(-MAX_STDOUT_BYTES)
 
       // Show the work as it happens. Rendering must never be able to end the
       // run it is only observing, so every failure here is swallowed: a
@@ -4891,6 +5030,38 @@ export async function dispatchRole(
       }, killGraceMs)
     }, timeoutMs)
 
+    /**
+     * O1/O3: a completed Developer dispatch's turn result exactly as its
+     * adapter read it off the stream's tail, plus the Documentation the
+     * dispatch delivered and the reads its gate counted — handed to the loop's
+     * controller unjudged. Nothing for any other role.
+     */
+    function developerTurnFacts(): Pick<DispatchHandle, 'turnOutput' | 'documentation'> {
+      if (role !== 'developer') return {}
+      const documentation =
+        agent === 'claude' && dispatchSettingsPath !== null
+          ? deliveredDocumentation(
+              agent,
+              dirname(dispatchSettingsPath),
+              runId,
+              documentationReceiptsPath(dirname(dirname(dispatchSettingsPath)))
+            )
+          : agent === 'codex' && codexHooksPath !== null
+            ? deliveredDocumentation(
+                agent,
+                dirname(codexHooksPath),
+                runId,
+                documentationReceiptsPath(dirname(dirname(dirname(codexHooksPath))))
+              )
+            : { sources: [], countedReads: [] }
+      if (turnResultAdapter === null) return { turnOutput: { adapter: null, raw: null, event: null }, documentation }
+      const read =
+        turnResultAdapter === 'claude --json-schema'
+          ? readClaudeTurnOutput(stdoutTail)
+          : readCodexTurnOutput(stdoutTail)
+      return { turnOutput: { adapter: turnResultAdapter, raw: read.raw, event: read.event }, documentation }
+    }
+
     async function finish(handle: DispatchHandle, event: string, priorSize: number): Promise<void> {
       if (settled) return
       settled = true
@@ -4921,7 +5092,7 @@ export async function dispatchRole(
       // other filesystem-bookkeeping concern in this file (`removeIfPresent`,
       // `reviewer-isolation.ts`'s own posture), never blocking `finish()` on
       // a filesystem fault.
-      for (const scratchDir of [claudeScratchDir, codexScratchDir]) {
+      for (const scratchDir of [claudeScratchDir, codexScratchDir, turnSchemaDir]) {
         if (scratchDir === null) continue
         try {
           rmSync(scratchDir, { recursive: true, force: true })
@@ -5246,7 +5417,7 @@ export async function dispatchRole(
         duration_ms: durationMs
       })
       void finish(
-        { exitCode: code, durationMs, usage, resumeId, timedOut: false, effectId },
+        { exitCode: code, durationMs, usage, resumeId, timedOut: false, effectId, ...developerTurnFacts() },
         'outcome_received',
         priorSize
       )

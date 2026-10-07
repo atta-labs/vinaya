@@ -8,15 +8,13 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { cancelDevReviewLoop, taskFromPrBody, type LoopDeps } from '../../../src/lib/dev-review-loop.js'
-import { CONFIDENCE_FILE_NAME } from '../../../src/lib/dev-review-loop/round-assess.js'
 import { readPauseState } from '../../../src/lib/dev-review-loop/pause-resume.js'
 import {
   cleanupWorlds,
   controlDir as ipControlDir,
-  developerDir as ipDeveloperDir,
   makeInProcessDeps,
   makeWorld,
   outboxLines as ipOutboxLines,
@@ -205,18 +203,6 @@ describe('devReviewLoop — round 1 blocked, round 2 genuinely resumes', () => {
         if (role === 'developer') {
           developerPrompts.push(prompt)
           developerResumeIds.push(opts.resumeId)
-          const round = opts.round ?? 1
-          if (round >= 2) {
-            // The fake `claude` binary's own round>=2 branch wrote a
-            // confidence line — the round-response/re-ask cycle
-            // `assessRound` requires past round 1 to ever reach `publish`
-            // rather than a `confidence` pause.
-            mkdirSync(ipDeveloperDir(world, round), { recursive: true })
-            writeFileSync(
-              join(ipDeveloperDir(world, round), CONFIDENCE_FILE_NAME),
-              'CONFIDENCE: 90 — addressed the round 1 blocker\n'
-            )
-          }
         }
         return (base.dispatchRole as NonNullable<LoopDeps['dispatchRole']>)(role, agent, prompt, opts)
       }

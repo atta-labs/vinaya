@@ -10,7 +10,14 @@ import {
   loopLogPathFor
 } from '../../src/lib/loop-log'
 import { devReviewLoop, type LoopDeps } from '../../src/lib/dev-review-loop.js'
-import { cleanupWorlds, makeInProcessDeps, makeWorld, outboxLines, withWorldEnv } from './dev-review-loop-harness.js'
+import {
+  cleanupWorlds,
+  makeInProcessDeps,
+  makeWorld,
+  outboxLines,
+  withWorldEnv,
+  defaultDeveloperTurnOutput
+} from './dev-review-loop-harness.js'
 
 const tempDirs: string[] = []
 afterEach(() => {
@@ -216,7 +223,15 @@ describe('devReviewLoop — the host attribution set at loop start', () => {
       if (role === 'developer') {
         hostSeenAtDeveloperDispatch = process.env.VINAYA_HOST
         ciSeenAtDeveloperDispatch = process.env.GITHUB_ACTIONS
-        return { exitCode: 0, durationMs: 1, usage: null, resumeId: null, timedOut: false, effectId: 'eff-dev-1' }
+        return {
+          exitCode: 0,
+          durationMs: 1,
+          usage: null,
+          resumeId: null,
+          timedOut: false,
+          effectId: 'eff-dev-1',
+          turnOutput: defaultDeveloperTurnOutput(prompt)
+        }
       }
       return base.dispatchRole!(role, agent, prompt, opts)
     }
@@ -251,7 +266,15 @@ describe('devReviewLoop — the host attribution set at loop start', () => {
     // fixtures elsewhere in this suite use to reach it.
     const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
       if (role === 'developer') {
-        return { exitCode: 0, durationMs: 1, usage: null, resumeId: null, timedOut: false, effectId: 'eff-dev-1' }
+        return {
+          exitCode: 0,
+          durationMs: 1,
+          usage: null,
+          resumeId: null,
+          timedOut: false,
+          effectId: 'eff-dev-1',
+          turnOutput: defaultDeveloperTurnOutput(prompt)
+        }
       }
       return base.dispatchRole!(role, agent, prompt, opts)
     }

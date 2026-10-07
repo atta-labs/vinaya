@@ -12,16 +12,22 @@
  * structured-output flag under test:
  *
  *  - Claude Code: `--json-schema <schema>` under `--output-format stream-json`,
- *    with the dispatch's own settings file (its Stop hook included) and one
- *    more Stop hook that rejects the session's first stop;
+ *    with the dispatch's own settings file;
  *  - Codex: `--output-schema <file>` under `exec --json` and `exec resume --json`.
  *
+ * The result is read by the production adapter readers and judged by the
+ * production controller (`dev-review-loop/turn-result.ts`) — no Stop hook
+ * takes part in accepting, rejecting or selecting it.
+ *
  * The cases: a first session and a resumed one (same provider session, a fresh
- * result, exactly one accepted); a schema-valid but semantically invalid result
- * of each kind (an unknown finding id, a ruling request naming no permissible
- * decision), which the driver must reject; malformed model output, which must
- * never reach the driver; and a cancelled run, a provider error and context
- * exhaustion, each of which must end with no accepted result.
+ * result, exactly one accepted); a first result that misses a required source,
+ * which the controller rejects before resuming the same session once with the
+ * typed failures, accepting only the second, valid result; a schema-valid but
+ * semantically invalid result of each kind (an unknown finding id, a ruling
+ * request naming no permissible decision), which the driver must reject;
+ * malformed model output, which must never reach the driver; and a cancelled
+ * run, a provider error and context exhaustion, each of which must end with no
+ * accepted result.
  *
  * For every case it prints whether a schema-valid result reached the driver,
  * the result, and the event it was read from. It never publishes, opens a pull
@@ -31,7 +37,7 @@
 
 import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { ownVersion } from '../artifacts.js'
@@ -40,9 +46,16 @@ import {
   type DeveloperTurnContext,
   type DeveloperTurnResult,
   developerTurnResultJsonSchema,
-  parseDeveloperTurnResult,
-  semanticErrors
+  parseDeveloperTurnResult
 } from '../developer-turn-result.js'
+import {
+  judgeTurnOutput,
+  PERMISSIBLE_RULING_DECISIONS,
+  readClaudeTurnOutput,
+  readCodexTurnOutput,
+  type TurnRead,
+  turnResultCorrectionPrompt
+} from '../dev-review-loop/turn-result.js'
 import { vendorResumeArgs, vendorSessionArgs, writeDispatchSettingsAt } from '../dispatch.js'
 import { buildWorkerEnv, realConfinementPlatformDeps, resolveClaudeConfinement } from '../worker-boundary.js'
 import {
@@ -87,131 +100,11 @@ const PROOF_TOOL = 'run_checks'
 export const PROOF_TURN_CONTEXT: DeveloperTurnContext = {
   knownFindingIds: ['R1-CR-1', 'R1-SEC-1'],
   requiredSources: ['https://code.claude.com/docs/en/cli-reference'],
-  permissibleDecisions: ['supersede-surface', 'stop-task']
+  permissibleDecisions: PERMISSIBLE_RULING_DECISIONS
 }
 
-/** What one invocation's stream yielded at the adapter boundary. */
-export type TurnRead = {
-  /** The provider session id the stream reported (Claude `session_id`, Codex `thread_id`). */
-  sessionId: string | null
-  /** Every structured result the model emitted along the way, accepted or not. */
-  emissions: unknown[]
-  /** How many terminal events carried a structured result — "exactly one accepted" is this equal to one. */
-  terminalResults: number
-  /** The terminal event's own outcome (`success`, `error_during_execution`, `turn.completed`, `turn.failed`, …). */
-  terminal: string | null
-  /** The event the result was read from, or `null` when none was. */
-  event: string | null
-  /** The value read, before any validation — `null` when the stream carried none. */
-  raw: unknown
-  /** Error text the stream itself reported, for display. */
-  errors: string[]
-}
-
-export function jsonLines(stdout: string): Record<string, unknown>[] {
-  const out: Record<string, unknown>[] = []
-  for (const line of stdout.split('\n')) {
-    const trimmed = line.trim()
-    if (trimmed.length === 0) continue
-    try {
-      const value = JSON.parse(trimmed)
-      if (value !== null && typeof value === 'object' && !Array.isArray(value)) out.push(value)
-    } catch {
-      // not a JSON line
-    }
-  }
-  return out
-}
-
-/**
- * Claude's `stream-json`: the model hands its structured output over through
- * the `StructuredOutput` tool (each call is an emission), and the terminal
- * `result` event carries the one the CLI settled on as `structured_output` —
- * only on a `success` result that is not an error. That field is the only
- * thing read as the turn's result.
- */
-export function readClaudeTurnOutput(stdout: string): TurnRead {
-  const read: TurnRead = {
-    sessionId: null,
-    emissions: [],
-    terminalResults: 0,
-    terminal: null,
-    event: null,
-    raw: null,
-    errors: []
-  }
-  for (const event of jsonLines(stdout)) {
-    if (typeof event.session_id === 'string') read.sessionId = event.session_id
-    if (event.type === 'assistant') {
-      const message = event.message as { content?: unknown } | undefined
-      const content = Array.isArray(message?.content) ? message.content : []
-      for (const block of content as Record<string, unknown>[]) {
-        if (block?.type === 'tool_use' && block.name === 'StructuredOutput') read.emissions.push(block.input)
-      }
-    }
-    if (event.type === 'result') {
-      const subtype = typeof event.subtype === 'string' ? event.subtype : 'unknown'
-      read.terminal = `${subtype}${event.is_error === true ? ' (is_error)' : ''}`
-      if (Array.isArray(event.errors)) read.errors.push(...event.errors.map((e) => String(e)))
-      if (event.is_error === true && typeof event.result === 'string') read.errors.push(event.result)
-      if (subtype === 'success' && event.is_error !== true && event.structured_output !== undefined) {
-        read.terminalResults += 1
-        read.raw = event.structured_output
-        read.event = 'result (subtype success) .structured_output'
-      }
-    }
-  }
-  return read
-}
-
-/**
- * Codex's `exec --json`: under `--output-schema` the final `agent_message`
- * item IS the structured output, as JSON text. It is read only when the turn
- * ended in `turn.completed`; a `turn.failed`, an `error` event with no
- * completion, or a stream that simply stops yields no result.
- */
-export function readCodexTurnOutput(stdout: string): TurnRead {
-  const read: TurnRead = {
-    sessionId: null,
-    emissions: [],
-    terminalResults: 0,
-    terminal: null,
-    event: null,
-    raw: null,
-    errors: []
-  }
-  let lastMessage: string | null = null
-  for (const event of jsonLines(stdout)) {
-    const type = typeof event.type === 'string' ? event.type : ''
-    if (type === 'thread.started' && typeof event.thread_id === 'string') read.sessionId = event.thread_id
-    if (type === 'error' && typeof event.message === 'string') read.errors.push(event.message)
-    if (type === 'turn.failed') {
-      read.terminal = 'turn.failed'
-      const error = event.error as { message?: unknown } | undefined
-      if (typeof error?.message === 'string') read.errors.push(error.message)
-      lastMessage = null
-    }
-    if (type === 'turn.started') lastMessage = null
-    const item = (event.item ?? null) as Record<string, unknown> | null
-    if (type === 'item.completed' && item?.type === 'agent_message' && typeof item.text === 'string') {
-      read.emissions.push(item.text)
-      lastMessage = item.text
-    }
-    if (type === 'turn.completed') {
-      read.terminal = 'turn.completed'
-      if (lastMessage !== null) {
-        read.terminalResults += 1
-        read.event = 'item.completed (agent_message) before turn.completed'
-        try {
-          read.raw = JSON.parse(lastMessage)
-        } catch {
-          read.raw = lastMessage
-        }
-      }
-    }
-  }
-  return read
-}
+/** The adapter readers are the production ones, shared with every Developer dispatch. */
+export { readClaudeTurnOutput, readCodexTurnOutput, type TurnRead }
 
 /**
  * The adapter boundary: a value reaches the driver only when it matches the
@@ -227,10 +120,21 @@ export function driverVerdict(read: TurnRead, context: DeveloperTurnContext): Dr
   if (read.event === null) return { crossed: false, reason: 'the stream carried no structured result' }
   const shaped = parseDeveloperTurnResult(read.raw)
   if (!shaped.ok) return { crossed: false, reason: `refused at the adapter (schema): ${shaped.errors.join('; ')}` }
-  const errors = semanticErrors(shaped.result, context)
-  return errors.length > 0
-    ? { crossed: true, result: shaped.result, accepted: false, errors }
-    : { crossed: true, result: shaped.result, accepted: true }
+  // The production controller judges it: a round past the first (the proof's
+  // findings come from a review), and the proof's required source declared
+  // read — the proof sessions fetch nothing, so it supplies the receipt.
+  const judged = judgeTurnOutput(
+    { adapter: 'claude --json-schema', raw: read.raw, event: read.event },
+    {
+      round: 2,
+      knownFindingIds: context.knownFindingIds,
+      requireAddressedFindings: false,
+      documentation: { sources: context.requiredSources, countedReads: context.requiredSources }
+    }
+  )
+  return judged.ok
+    ? { crossed: true, result: shaped.result, accepted: true }
+    : { crossed: true, result: shaped.result, accepted: false, errors: judged.failures }
 }
 
 /** What a case requires of its outcome. */
@@ -239,6 +143,12 @@ export type CaseExpectation =
   | { kind: 'accepted'; summary: string; resumes?: 'first' }
   /** A schema-valid result reached the driver and its semantic check refused it. */
   | { kind: 'rejected'; error: string }
+  /**
+   * The controller rejects the first result for `error`, the proof resumes the
+   * SAME session once with the typed failures, and only that second result is
+   * accepted.
+   */
+  | { kind: 'rejected-then-accepted'; error: string }
   /** Nothing malformed crossed: either the provider repaired it into a valid result, or no result arrived. */
   | { kind: 'never-malformed' }
   /** The invocation ended with no accepted result. */
@@ -249,7 +159,7 @@ export function judgeCase(
   expectation: CaseExpectation,
   read: TurnRead,
   verdict: DriverVerdict,
-  extra: { firstSessionId?: string | null; firstSummary?: string | null } = {}
+  extra: { firstSessionId?: string | null; firstSummary?: string | null; firstVerdict?: DriverVerdict } = {}
 ): { pass: boolean; why: string[] } {
   const why: string[] = []
   let pass = true
@@ -280,6 +190,26 @@ export function judgeCase(
       fail(`rejected, but not for ${JSON.stringify(expectation.error)}: ${verdict.errors.join('; ')}`)
     } else why.push(`driver rejected it: ${verdict.errors.join('; ')}`)
   }
+  if (expectation.kind === 'rejected-then-accepted') {
+    const first = extra.firstVerdict
+    if (!first?.crossed) fail('the first result never reached the controller')
+    else if (first.accepted) fail('the controller accepted the first result, which misses a required source')
+    else if (!first.errors.some((e) => e.includes(expectation.error))) {
+      fail(
+        `the first result was rejected, but not for ${JSON.stringify(expectation.error)}: ${first.errors.join('; ')}`
+      )
+    } else why.push(`the controller rejected the first result: ${first.errors.join('; ')}`)
+    if (!read.sessionId || read.sessionId !== extra.firstSessionId) {
+      fail(`the correction ran in session ${read.sessionId}, not the first result's session ${extra.firstSessionId}`)
+    } else why.push(`same provider session resumed (${read.sessionId})`)
+    if (!verdict.crossed || !verdict.accepted) {
+      fail(
+        `the second result was not accepted${verdict.crossed && !verdict.accepted ? `: ${verdict.errors.join('; ')}` : ''}`
+      )
+    } else why.push('only the second, valid result was accepted')
+    if (read.terminalResults !== 1)
+      fail(`${read.terminalResults} terminal results on the correction — exactly one must be accepted`)
+  }
   if (expectation.kind === 'never-malformed') {
     if (verdict.crossed) why.push('the provider repaired the output into a schema-valid result before it ended')
     else why.push(`no result crossed the adapter (${verdict.reason})`)
@@ -302,6 +232,8 @@ type ProofCase = {
   model?: string
   /** Kill the child this long after its first stdout line. */
   cancelAfterMs?: number
+  /** Resume this case's own session once with the controller's typed failures, and judge that second result. */
+  correctOnce?: boolean
 }
 
 function toolInstruction(agent: ResultProofAgent): string {
@@ -328,16 +260,16 @@ function completedInstruction(summary: string, findingIds: readonly string[]): s
   )
 }
 
-/** The cases, in run order — the first must come first: its stop is the one the forced hook rejects, and the resume resumes it. */
+/** The cases, in run order — the first must come first: the resume resumes it. */
 export function proofCases(agent: ResultProofAgent, nonce: string): ProofCase[] {
   const preamble = turnPreamble()
   const filler = 'context '.repeat(800_000)
   return [
     {
       name: 'first session',
-      objectives: agent === 'claude' ? 'O1 O2 O6' : 'O1 O2',
+      objectives: 'O1 O2',
       prompt: `${preamble}\nFirst: ${toolInstruction(agent)}\nThen: ${completedInstruction(`first-${nonce}`, ['R1-CR-1'])}`,
-      expectation: { kind: 'accepted', summary: agent === 'claude' ? `after-stop-${nonce}` : `first-${nonce}` }
+      expectation: { kind: 'accepted', summary: `first-${nonce}` }
     },
     {
       name: 'resumed session',
@@ -347,6 +279,16 @@ export function proofCases(agent: ResultProofAgent, nonce: string): ProofCase[] 
         `This is a new turn in the same dispatch. The earlier turn result is spent; report a new one.\nFirst: ${toolInstruction(agent)}\n` +
         `Then: ${completedInstruction(`resumed-${nonce}`, ['R1-CR-1', 'R1-SEC-1'])}`,
       expectation: { kind: 'accepted', summary: `resumed-${nonce}`, resumes: 'first' }
+    },
+    {
+      name: 'missing required source — rejected, then corrected in the same session',
+      objectives: 'O3 O6',
+      correctOnce: true,
+      prompt:
+        `${preamble}\nThis is a test of the driver's validation, so follow these values literally.\n` +
+        `Report status "completed" with summary exactly "missing-source-${nonce}", confidence 90, a one-sentence confidenceExplanation, ` +
+        'addressedFindingIds ["R1-CR-1"], sourceUses null, and reportedChecks null.',
+      expectation: { kind: 'rejected-then-accepted', error: 'sourceUses' }
     },
     {
       name: 'unknown finding id',
@@ -394,37 +336,12 @@ export function proofCases(agent: ResultProofAgent, nonce: string): ProofCase[] 
   ]
 }
 
-/**
- * The Stop hook the proof adds beside the dispatch's own: it rejects the
- * session's first stop (exit 2, "prevents Claude from stopping, continues the
- * conversation"), telling the model to report again under a new summary, and
- * allows every later one. Each call is logged so the output shows the order.
- */
-export function forcedStopHookScript(counterPath: string, logPath: string, nonce: string): string {
-  const message =
-    'The driver rejected this stop. Report your turn result again as your structured output, unchanged except ' +
-    `that summary is exactly "after-stop-${nonce}".`
-  return [
-    "import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'",
-    `const counter = ${JSON.stringify(counterPath)}`,
-    'let input = {}',
-    'try { input = JSON.parse(readFileSync(0, "utf8") || "{}") } catch {}',
-    'const n = (existsSync(counter) ? Number(readFileSync(counter, "utf8")) || 0 : 0) + 1',
-    'writeFileSync(counter, String(n))',
-    `appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ stop: n, stop_hook_active: input.stop_hook_active === true, decision: n === 1 ? "rejected" : "allowed" }) + "\\n")`,
-    `if (n === 1) { process.stderr.write(${JSON.stringify(message)}); process.exit(2) }`,
-    'process.exit(0)',
-    ''
-  ].join('\n')
-}
-
-/** Claude's settings: the dispatch's own file (written by the dispatch's own writer), plus the forced-rejection Stop hook. */
+/** Claude's settings: the dispatch's own file, written by the dispatch's own writer — nothing added to it. */
 function writeClaudeProofSettings(
   scratchDir: string,
   runId: string,
-  cwd: string,
-  nonce: string
-): { settingsPath: string; stopLogPath: string; sandbox: string; confined: boolean } {
+  cwd: string
+): { settingsPath: string; sandbox: string; confined: boolean } {
   const confinement = resolveClaudeConfinement(
     { role: 'developer', agent: 'claude', worktreeDir: cwd, scratchDir, allowedHosts: [] },
     realConfinementPlatformDeps()
@@ -432,16 +349,10 @@ function writeClaudeProofSettings(
   const confined = confinement.ok && confinement.confined ? confinement.settings : null
   const settingsPath = writeDispatchSettingsAt(join(scratchDir, 'hooks'), runId, [], 'developer', cwd, [], [], confined)
   if (settingsPath === null) throw new Error('the dispatch settings file could not be written')
-  const stopLogPath = join(scratchDir, 'forced-stop.log')
-  const stopScriptPath = join(scratchDir, 'forced-stop.mjs')
-  writeFileSync(stopScriptPath, forcedStopHookScript(join(scratchDir, 'forced-stop.count'), stopLogPath, nonce))
-  const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as { hooks: { Stop: unknown[] } }
-  settings.hooks.Stop.push({ hooks: [{ type: 'command', command: `bun ${shellQuote(stopScriptPath)}` }] })
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { mode: 0o600 })
   const sandbox = confined
     ? "ON — Claude Code's own sandbox, in the dispatch settings file"
     : `OFF (disclosed) — ${confinement.ok && !confinement.confined ? confinement.warning : 'unavailable'}`
-  return { settingsPath, stopLogPath, sandbox, confined: confined !== null }
+  return { settingsPath, sandbox, confined: confined !== null }
 }
 
 /** Inserts flags before the trailing `-` (read the prompt from stdin) Codex's argv ends with. */
@@ -467,26 +378,18 @@ export function accountEnv(source: NodeJS.ProcessEnv, username: () => string): R
 
 type LaunchPlan = {
   sandbox: string
-  stopLogPath: string | null
   launch: (resumeId: string | null, model: string | undefined) => Launch
 }
 
-function planLaunches(
-  agent: ResultProofAgent,
-  bridge: BridgeInvocation,
-  scratchDir: string,
-  cwd: string,
-  nonce: string
-): LaunchPlan {
+function planLaunches(agent: ResultProofAgent, bridge: BridgeInvocation, scratchDir: string, cwd: string): LaunchPlan {
   const runId = randomUUID()
   if (agent === 'claude') {
     const mcpConfigPath = join(scratchDir, 'dev-tools.mcp.json')
     writeFileSync(mcpConfigPath, devToolsMcpConfigFileBody(bridge), { mode: 0o600 })
-    const { settingsPath, stopLogPath, sandbox, confined } = writeClaudeProofSettings(scratchDir, runId, cwd, nonce)
+    const { settingsPath, sandbox, confined } = writeClaudeProofSettings(scratchDir, runId, cwd)
     const schema = JSON.stringify(developerTurnResultJsonSchema())
     return {
       sandbox,
-      stopLogPath,
       launch: (resumeId, model) => ({
         args: [
           ...(resumeId ? vendorResumeArgs('claude', resumeId, model) : vendorSessionArgs('claude', model)),
@@ -510,7 +413,6 @@ function planLaunches(
   writeFileSync(schemaPath, `${JSON.stringify(developerTurnResultJsonSchema(), null, 2)}\n`)
   return {
     sandbox: confinement.confined ? `ON — ${confinement.detail}` : `OFF (disclosed) — ${confinement.detail}`,
-    stopLogPath: null,
     launch: (resumeId, model) => ({
       args: beforeStdinMarker(
         resumeId ? vendorResumeArgs('codex', resumeId, model) : vendorSessionArgs('codex', model),
@@ -619,7 +521,7 @@ export async function resultProofCommand(args: string[]): Promise<void> {
   let allPass = true
   try {
     const bridge = devBridgeInvocation(host.socketPath)
-    const plan = planLaunches(agent, bridge, scratchDir, cwd, nonce)
+    const plan = planLaunches(agent, bridge, scratchDir, cwd)
     out(`\n=== Developer turn result — native structured output proof — agent: ${agent} ===`)
     out(`host: ${process.platform} ${process.arch}`)
     out(`CLI version: ${cliVersion(agent)}`)
@@ -644,42 +546,83 @@ export async function resultProofCommand(args: string[]): Promise<void> {
         continue
       }
       const callsBefore = recorded.length
-      const stopLinesBefore = plan.stopLogPath ? safeRead(plan.stopLogPath).split('\n').filter(Boolean).length : 0
-      const launch = plan.launch(proofCase.resume ? firstSessionId : null, proofCase.model)
-      const shownArgs = launch.args.map((a) => (a.startsWith('{') ? '<schema>' : a))
-      out(`invocation: ${agent} ${shownArgs.join(' ')}`)
-      const ran = await runChild(agent, launch, proofCase.prompt, cwd, proofCase.cancelAfterMs)
-      if (ran.spawnError) {
-        out(`FAIL: could not spawn ${agent}: ${ran.spawnError}`)
+      const invoke = async (
+        resumeId: string | null,
+        prompt: string
+      ): Promise<{ ran: RunOutcome; read: TurnRead; verdict: DriverVerdict; stderrTail: string } | null> => {
+        const launch = plan.launch(resumeId, proofCase.model)
+        const shownArgs = launch.args.map((a) => (a.startsWith('{') ? '<schema>' : a))
+        out(`invocation: ${agent} ${shownArgs.join(' ')}`)
+        const ran = await runChild(agent, launch, prompt, cwd, proofCase.cancelAfterMs)
+        if (ran.spawnError) {
+          out(`FAIL: could not spawn ${agent}: ${ran.spawnError}`)
+          return null
+        }
+        const read = agent === 'claude' ? readClaudeTurnOutput(ran.stdout) : readCodexTurnOutput(ran.stdout)
+        const verdict = driverVerdict(read, PROOF_TURN_CONTEXT)
+        out(
+          `exit: code ${ran.exitCode}${ran.signal ? `, signal ${ran.signal}` : ''}; terminal event: ${read.terminal ?? '(none)'}`
+        )
+        out(`provider session: ${read.sessionId ?? '(none reported)'}`)
+        out(`structured emissions seen: ${read.emissions.length}`)
+        for (const emission of read.emissions) out(`  ${clip(JSON.stringify(emission))}`)
+        if (read.errors.length > 0) out(`stream errors: ${providerText(read.errors.join(' | '))}`)
+        const stderrTail = ran.stderr.trim().split('\n').slice(-3).join(' | ')
+        if (stderrTail.length > 0) out(`stderr tail: ${providerText(stderrTail)}`)
+        out(`event read: ${read.event ?? '(none)'}`)
+        out(`schema-valid result reached the driver: ${verdict.crossed ? 'yes' : 'no'}`)
+        if (verdict.crossed) {
+          out(`controller validation: ${verdict.accepted ? 'accepted' : `rejected — ${verdict.errors.join('; ')}`}`)
+          out(`result: ${JSON.stringify(verdict.result)}`)
+        } else {
+          out(`controller validation: nothing to validate — ${verdict.reason}`)
+        }
+        return { ran, read, verdict, stderrTail }
+      }
+      let outcome = await invoke(proofCase.resume ? firstSessionId : null, proofCase.prompt)
+      if (outcome === null) {
         allPass = false
         summaries.push(`FAIL  ${proofCase.name}`)
         continue
       }
-      const read = agent === 'claude' ? readClaudeTurnOutput(ran.stdout) : readCodexTurnOutput(ran.stdout)
-      const verdict = driverVerdict(read, PROOF_TURN_CONTEXT)
-      out(
-        `exit: code ${ran.exitCode}${ran.signal ? `, signal ${ran.signal}` : ''}; terminal event: ${read.terminal ?? '(none)'}`
-      )
-      out(`provider session: ${read.sessionId ?? '(none reported)'}`)
+      // O6: the controller-rejection case — a first result the controller
+      // refused is answered by resuming the SAME session once with only the
+      // typed failures (the production correction prompt), and only that
+      // second result may be accepted.
+      let firstOfCase: { sessionId: string | null; verdict: DriverVerdict } | null = null
+      if (proofCase.correctOnce) {
+        const firstVerdict = outcome.verdict
+        firstOfCase = { sessionId: outcome.read.sessionId, verdict: firstVerdict }
+        const failures = firstVerdict.crossed && !firstVerdict.accepted ? firstVerdict.errors : []
+        if (outcome.read.sessionId !== null && failures.length > 0) {
+          out('correction: resuming the same session once with the typed failures')
+          const corrected = await invoke(
+            outcome.read.sessionId,
+            turnResultCorrectionPrompt(failures, {
+              round: 2,
+              attempt: 1,
+              head: null,
+              knownFindingIds: PROOF_TURN_CONTEXT.knownFindingIds
+            })
+          )
+          if (corrected === null) {
+            allPass = false
+            summaries.push(`FAIL  ${proofCase.name}`)
+            continue
+          }
+          outcome = corrected
+        } else out('correction: not run — the first result was not rejected')
+      }
+      const { read, verdict, stderrTail } = outcome
       out(`dev-tools calls received by the driver: ${recorded.length - callsBefore}`)
-      if (plan.stopLogPath) {
-        const stops = safeRead(plan.stopLogPath).split('\n').filter(Boolean).slice(stopLinesBefore)
-        out(`forced Stop hook: ${stops.length === 0 ? '(not called)' : stops.join(' ')}`)
-      }
-      out(`structured emissions seen: ${read.emissions.length}`)
-      for (const emission of read.emissions) out(`  ${clip(JSON.stringify(emission))}`)
-      if (read.errors.length > 0) out(`stream errors: ${providerText(read.errors.join(' | '))}`)
-      const stderrTail = ran.stderr.trim().split('\n').slice(-3).join(' | ')
-      if (stderrTail.length > 0) out(`stderr tail: ${providerText(stderrTail)}`)
-      out(`event read: ${read.event ?? '(none)'}`)
-      out(`schema-valid result reached the driver: ${verdict.crossed ? 'yes' : 'no'}`)
-      if (verdict.crossed) {
-        out(`driver validation: ${verdict.accepted ? 'accepted' : `rejected — ${verdict.errors.join('; ')}`}`)
-        out(`result: ${JSON.stringify(verdict.result)}`)
-      } else {
-        out(`driver validation: nothing to validate — ${verdict.reason}`)
-      }
-      const judged = judgeCase(proofCase.expectation, read, verdict, { firstSessionId, firstSummary })
+      const judged = judgeCase(
+        proofCase.expectation,
+        read,
+        verdict,
+        firstOfCase
+          ? { firstSessionId: firstOfCase.sessionId, firstVerdict: firstOfCase.verdict }
+          : { firstSessionId, firstSummary }
+      )
       if (proofCase.name === 'first session') {
         firstSessionId = read.sessionId
         firstSummary = verdict.crossed ? verdict.result.summary : null
@@ -691,13 +634,6 @@ export async function resultProofCommand(args: string[]): Promise<void> {
       if (proofCase.resume && recorded.length - callsBefore < 1) {
         judged.pass = false
         judged.why.push('FAIL: the resumed session made no dev-tools call')
-      }
-      if (proofCase.name === 'first session' && agent === 'claude') {
-        const stops = plan.stopLogPath ? safeRead(plan.stopLogPath) : ''
-        if (!stops.includes('"rejected"')) {
-          judged.pass = false
-          judged.why.push('FAIL: the forced Stop hook never rejected a stop')
-        } else judged.why.push('the forced Stop hook rejected the first stop')
       }
       for (const line of judged.why) out(`  ${line}`)
       out(`verdict: ${judged.pass ? 'PASS' : 'FAIL'}`)
@@ -738,13 +674,5 @@ function safeJson(text: string): unknown {
     return JSON.parse(text)
   } catch {
     return text
-  }
-}
-
-export function safeRead(path: string): string {
-  try {
-    return readFileSync(path, 'utf8')
-  } catch {
-    return ''
   }
 }
