@@ -77,3 +77,4 @@ tests/lib/dev-review-loop/refused-publication-wait.test.ts
 tests/lib/dispatch/fetch-documentation-tool.test.ts
 tests/lib/dispatch/fetch-documentation-visible-text.test.ts
 tests/lib/dev-review-loop/push-hook-refusal-output.test.ts
+tests/lib/loop-narration-claude.test.ts
