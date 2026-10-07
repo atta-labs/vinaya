@@ -92,19 +92,33 @@ The five registered tools and their handlers:
 is the source of truth for field shapes. This table names, for every
 family the schema declares, the file(s) that actually call `log()` with
 that kind today — "ownership" in the literal sense: which file is on the
-hook when a family's shape needs to change.
+hook when a family's shape needs to change. Each producer file named in the table is bound to a literal it still holds.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:kind: 'role_attempt' -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:kind: 'dev_review_loop' -->
+<!-- AEG:CLAIM: apps/cli/src/checks/runner.ts contains:kind: 'gate' -->
+<!-- AEG:CLAIM: apps/cli/src/lib/task-tools/resume.ts contains:kind: 'operation' -->
+<!-- AEG:CLAIM: apps/cli/src/lib/task-tools/cancel.ts contains:kind: 'operation' -->
+<!-- AEG:CLAIM: apps/cli/src/lib/broker.ts contains:operationEvent -->
+<!-- AEG:CLAIM: apps/cli/src/lib/effects.ts contains:kind: 'effect' -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop/pause-resume.ts contains:kind: 'handoff' -->
+<!-- AEG:CLAIM: apps/cli/src/lib/log-custom.ts contains:kind: 'custom' -->
+<!-- AEG:CLAIM: apps/cli/src/lib/log-custom.ts contains:kind: 'operation' -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:kind: 'operation' -->
+<!-- AEG:CLAIM: apps/cli/src/lib/cli-operation-log.ts contains:kind: 'operation' -->
 
 | Kind | Producer(s) | Records |
 | ---- | ----------- | ------- |
 | `dispatch` | `apps/cli/src/lib/dispatch.ts` (`dispatchRole`) | A vendor CLI launch, its outcome, and the usage it reported. |
 | `dev_review_loop` | `apps/cli/src/lib/dev-review-loop.ts` | The round-by-round loop lifecycle — start, gate, verdicts, pause/resume/cancel, journal. |
-| `forge_write` | `apps/cli/src/lib/log-flush.ts` | A GitHub comment/PR/Issue mutation the flush path performs, validated/refused/written. |
+| `forge_write` | none today | Declared in the schema so an already-posted comment line still parses; no file emits it — the comment-posting flush and the artifact commands are removed, and logs never reach a tracker or a code host. |
 | `gate` | `apps/cli/src/checks/runner.ts` | One check's terminal outcome (pass/fail/wait/skip/invalid/unavailable/timeout/cancelled). |
-| `operation` | `apps/cli/src/lib/task-tools/resume.ts`, `cancel.ts`, `apps/cli/src/lib/broker.ts` | A normalized tool-call or broker-authorized operation's outcome (ok/error/refused/timeout/cancelled/unavailable) — this is the family a registered task tool's own call emits; `conformance.md` Section D captures one real instance. |
+| `operation` | `apps/cli/src/lib/task-tools/resume.ts`, `cancel.ts`, `apps/cli/src/lib/broker.ts`, `apps/cli/src/lib/dispatch.ts`, `apps/cli/src/lib/log-custom.ts`, `apps/cli/src/lib/cli-operation-log.ts` | A normalized tool-call or broker-authorized operation's outcome (ok/error/refused/timeout/cancelled/unavailable) — this is the family a registered task tool's own call emits; `conformance.md` Section D captures one real instance. |
 | `usage` | `apps/cli/src/lib/dispatch.ts` | Vendor token usage, every unit nullable rather than defaulted to zero when a vendor doesn't report one. |
 | `role_attempt` | `apps/cli/src/lib/dispatch.ts`, `dev-review-loop.ts` | A dispatched role's own normalized attempt outcome, distinct from the Controller-side `dispatch` view of the same attempt. |
-| `handoff` | none today | Declared in the schema (`raised`/`resolved`) for a human escalation; no file emits it yet — an honest gap, not an oversight this task closes. |
+| `handoff` | `apps/cli/src/lib/dev-review-loop/pause-resume.ts` | A human escalation, raised and resolved. |
 | `effect` | `apps/cli/src/lib/effects.ts` | A generic external effect's attempted/observed/verified outcome, additive to `forge_write`, never replacing it. |
+| `custom` | `apps/cli/src/lib/log-custom.ts` (`emitCustomEvent`) | An operator-declared event, named and shaped by the loaded configuration. |
 
 Every event's own attribution is carried in its `meta` envelope
 (`log/schema.ts` schema v2: `event_id`, `process_id`, `actor_id`,
