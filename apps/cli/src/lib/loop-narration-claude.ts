@@ -29,6 +29,10 @@ export type ActionKind =
   | 'delegating'
   | 'reporting'
   | 'running'
+  | 'message'
+  | 'checking'
+  | 'publishing'
+  | 'working'
 
 /** One tool call. `id` is `null` when the stream carried none, so no result can ever match it. */
 export interface NarratedAction {
@@ -103,22 +107,22 @@ export function openActions(state: NarrationState, now: number): OpenAction[] {
 const SUBJECT_MAX = 80
 const ERROR_MAX = 160
 
-function shorten(text: string, max: number): string {
+export function shorten(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 3)}...` : text
 }
 
-function scrub(text: string, ctx: NarrationContext): string {
+export function scrub(text: string, ctx: NarrationContext): string {
   let out = text
   if (ctx.worktree.length > 0) out = out.split(`${ctx.worktree}/`).join('').split(ctx.worktree).join('.')
   if (ctx.home.length > 0) out = out.split(ctx.home).join('~')
   return redact(out, ctx.home)
 }
 
-function relativePath(path: string, ctx: NarrationContext): string {
+export function relativePath(path: string, ctx: NarrationContext): string {
   return shorten(scrub(path, ctx), SUBJECT_MAX)
 }
 
-function str(value: unknown): string {
+export function str(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
@@ -167,7 +171,7 @@ function unquote(word: string): string {
   return word.replace(/^['"]|['"]$/g, '')
 }
 
-function classifyCommand(command: string, ctx: NarrationContext): { kind: ActionKind; subject: string } {
+export function classifyCommand(command: string, ctx: NarrationContext): { kind: ActionKind; subject: string } {
   // First segment only: a pipe or `&&` chain is classified by its first command.
   const segment = command.split(/&&|\|\||;|\|/)[0] ?? ''
   const words = segment
@@ -204,13 +208,65 @@ function classifyCommand(command: string, ctx: NarrationContext): { kind: Action
   return { kind, subject: shorten(scrub(subject, ctx), SUBJECT_MAX) }
 }
 
-function urlSubject(raw: string, ctx: NarrationContext): string {
+export function urlSubject(raw: string, ctx: NarrationContext): string {
   try {
     const url = new URL(raw)
     return shorten(scrub(`${url.host}${url.pathname}`, ctx), SUBJECT_MAX)
   } catch {
     return shorten(scrub(raw.split('?')[0] ?? '', ctx), SUBJECT_MAX)
   }
+}
+
+/** The prefix Claude puts on the driver-run dev tools' names: `mcp__<server>__<tool>`. */
+const DRIVER_TOOL_PREFIX = 'mcp__vinaya-dev-tools__'
+
+/**
+ * The seven tools the driver runs for a developer, in plain words. Only the
+ * documentation URL is kept of any argument; a body, a commit header or a
+ * result is never read. Returns `null` for a tool outside the seven.
+ */
+export function classifyDriverTool(
+  tool: string,
+  args: Record<string, unknown>,
+  ctx: NarrationContext
+): Omit<NarratedAction, 'type' | 'id' | 'at'> | null {
+  switch (tool) {
+    case 'fetch_documentation':
+      return { kind: 'fetching', subject: urlSubject(str(args.url), ctx) }
+    case 'run_checks':
+      return { kind: 'checking', subject: 'all checks' }
+    case 'publish_changes':
+      return { kind: 'publishing', subject: 'changes' }
+    case 'open_pull_request':
+      return { kind: 'github', subject: 'open pull request' }
+    case 'update_pull_request_body':
+      return { kind: 'github', subject: 'update pull request text' }
+    case 'refresh_evidence':
+      return { kind: 'github', subject: 'refresh evidence' }
+    case 'read_pull_request':
+      return { kind: 'github', subject: 'read pull request' }
+    default:
+      return null
+  }
+}
+
+/** The turn result as one reporting action: its status word and confidence, never its prose. */
+export function reportingAction(body: Record<string, unknown>): Omit<NarratedAction, 'type' | 'id' | 'at'> {
+  const status = typeof body.status === 'string' && /^[a-z_]{1,30}$/.test(body.status) ? body.status : undefined
+  const confidence =
+    typeof body.confidence === 'number' && Number.isFinite(body.confidence) ? body.confidence : undefined
+  return {
+    kind: 'reporting',
+    subject: status ?? 'turn result',
+    ...(status !== undefined ? { status } : {}),
+    ...(confidence !== undefined ? { confidence } : {})
+  }
+}
+
+/** The first non-empty line of a failed result's text, shortened and redacted. */
+export function firstLine(text: string, ctx: NarrationContext): string {
+  const line = text.split('\n').find((l) => l.trim().length > 0) ?? ''
+  return shorten(scrub(line.trim(), ctx), ERROR_MAX)
 }
 
 function classifyCall(
@@ -270,23 +326,19 @@ function classifyCall(
         kind: 'delegating',
         subject: shorten(scrub(str(input.description) || str(input.subagent_type), ctx), SUBJECT_MAX)
       }
-    case 'StructuredOutput': {
-      // The turn result: only its status word and confidence, never the
-      // summary, findings or any other prose the agent wrote into it.
-      const body = (input.turnResult ?? input) as Record<string, unknown>
-      const status = typeof body.status === 'string' && /^[a-z_]{1,30}$/.test(body.status) ? body.status : undefined
-      const confidence =
-        typeof body.confidence === 'number' && Number.isFinite(body.confidence) ? body.confidence : undefined
-      return {
-        kind: 'reporting',
-        subject: status ?? 'turn result',
-        ...(status !== undefined ? { status } : {}),
-        ...(confidence !== undefined ? { confidence } : {})
-      }
-    }
-    default:
-      // An MCP tool or any tool outside the table: named, never described.
+    case 'StructuredOutput':
+      return reportingAction((input.turnResult ?? input) as Record<string, unknown>)
+    default: {
+      // The driver-run tools are plain actions; any other MCP tool or tool
+      // outside the table is named, never described.
+      const driver = classifyDriverTool(
+        name.startsWith(DRIVER_TOOL_PREFIX) ? name.slice(DRIVER_TOOL_PREFIX.length) : '',
+        input,
+        ctx
+      )
+      if (driver !== null) return driver
       return { kind: 'tool_request', subject: shorten(scrub(name, ctx), SUBJECT_MAX) }
+    }
   }
 }
 
@@ -300,8 +352,7 @@ function firstErrorLine(content: unknown, ctx: NarrationContext): string {
       .filter((t) => t.length > 0)
       .join('\n')
   }
-  const line = text.split('\n').find((l) => l.trim().length > 0) ?? ''
-  return shorten(scrub(line.trim(), ctx), ERROR_MAX)
+  return firstLine(text, ctx)
 }
 
 /**
