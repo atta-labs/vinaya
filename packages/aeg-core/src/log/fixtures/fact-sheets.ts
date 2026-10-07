@@ -51,7 +51,7 @@ export const FACT_SHEETS: Record<ExecutionName, FactSheet> = {
     schemas: { '3': 24 },
     rounds: 2,
     eventsByKind: { dev_review_loop: 14, dispatch: 8, gate: 2 },
-    findingIdentities: ['fnd-q-1'],
+    findingIdentities: ['fnd-q-1', 'fnd-sec-3'],
     models: ['opus', 'sonnet']
   },
   // loop_started, round_started, stop condition, round_ended and journal; the developer dispatch pair; one handoff. No reviewer is ever dispatched.

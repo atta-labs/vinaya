@@ -49,11 +49,16 @@ type Finding = {
   policy_treatment: 'blocking' | 'non_blocking'
 }
 
-function finding(id: string, severity: string, blocking: boolean): Finding {
+function finding(
+  id: string,
+  severity: string,
+  blocking: boolean,
+  scale: 'code-review' | 'security' = 'code-review'
+): Finding {
   return {
     id,
     severity,
-    severity_scale: 'code-review',
+    severity_scale: scale,
     policy_treatment: blocking ? 'blocking' : 'non_blocking'
   }
 }
@@ -102,6 +107,8 @@ type RoundSpec = {
   head: string
   /** What this round's reviewer reports. */
   findings: Finding[]
+  /** One entry per reviewer role the round held a verdict from, as a newer `verdicts_read` records them; absent on a round recorded before they existed. */
+  reviewers?: Array<{ role: Role; outcome: 'approve' | 'changes_requested' | 'not_reviewed'; blockers: number }>
   /** The loop's own comparison with the round before — absent in round 1. */
   compared?: { open: string[]; resolved: string[]; new: string[]; recurring: string[] }
   /** The developer's stated confidence, as `gate_result_read` records it. */
@@ -142,7 +149,14 @@ function runRound(rec: Recorder, loop: LoopEmit, spec: RoundSpec): number {
     objectives: [{ id: 'O1', met: approved }],
     findings
   })
-  loop('verdicts_read', { round: n, head, all_approve: approved, blockers, findings })
+  loop('verdicts_read', {
+    round: n,
+    head,
+    all_approve: approved,
+    blockers,
+    findings,
+    ...(spec.reviewers ? { reviewers: spec.reviewers } : {})
+  })
   if (spec.compared) loop('findings_compared', { round: n, ...spec.compared })
   const filesChanged = rec.int(2, 9)
   loop('round_ended', {
@@ -268,6 +282,10 @@ const SCENARIOS: Record<ExecutionName, Scenario> = {
         base: h2,
         head: h3,
         findings: [],
+        reviewers: [
+          { role: 'code-reviewer', outcome: 'approve', blockers: 0 },
+          { role: 'security', outcome: 'approve', blockers: 0 }
+        ],
         compared: { open: [], resolved: ['fnd-auth-1', 'fnd-docs-2'], new: [], recurring: [] },
         confidence: {
           confidence_value: 92,
@@ -286,7 +304,8 @@ const SCENARIOS: Record<ExecutionName, Scenario> = {
       const loop = openLoop(rec)
       const [h0, h1, h2] = [rec.sha(), rec.sha(), rec.sha()] as [string, string, string]
       const queue = finding('fnd-q-1', 'MAJOR', true)
-      let files = runRound(rec, loop, { n: 1, base: h0, head: h1, findings: [queue] })
+      const secret = finding('fnd-sec-3', 'LOW', false, 'security')
+      let files = runRound(rec, loop, { n: 1, base: h0, head: h1, findings: [queue, secret] })
       loop('paused', { round: 1, reason: 'principal_item' })
       loop('resumed', { round: 1, by: 'principal' })
       files += runRound(rec, loop, {
