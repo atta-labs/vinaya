@@ -2592,6 +2592,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   // those clear the lock exactly as before, unchanged.
   let keepLockAlive = false
 
+  // GitHub rate-limit waiting (see `absorbRateLimit`, below, where `round` is
+  // in scope). `roleDispatchesInPass` counts role dispatches since the round
+  // loop's current iteration began: re-entering the round loop after a
+  // dispatch already ran would dispatch that role a second time, so a rate
+  // limit that lands after one is never re-entered — the reads that follow a
+  // dispatch wait in place instead (`withRateLimitWait`).
+  let roleDispatchesInPass = 0
+  let rateLimitWaits = 0
+  let roundAtLastWait = -1
+  const realDispatchRoleForCount = d.dispatchRole
+  d.dispatchRole = ((...args: Parameters<typeof realDispatchRoleForCount>) => {
+    roleDispatchesInPass += 1
+    return realDispatchRoleForCount(...args)
+  }) as typeof realDispatchRoleForCount
+
   // O1/O3: captured BEFORE `runDevReviewLoopBody` ever sets
   // `process.env.VINAYA_HOST` (below, alongside its own `VINAYA_RUN`
   // assignment) — `undefined` when nothing upstream named a host, a real
@@ -5606,20 +5621,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // closure's own); only `MAX_CONSECUTIVE_RATE_LIMIT_WAITS` waits in a row
       // with no round progress between them fall through to the outer
       // handler's pause. Every other error goes there at once.
-      let rateLimitWaits = 0
-      let roundAtLastWait = -1
       let loopResult: LoopResult
       while (true) {
         try {
           loopResult = await runRoundLoop()
           break
         } catch (loopErr) {
-          if (!isGitHubRateLimitError(loopErr)) throw loopErr
-          rateLimitWaits = round === roundAtLastWait ? rateLimitWaits + 1 : 1
-          if (rateLimitWaits > MAX_CONSECUTIVE_RATE_LIMIT_WAITS) throw loopErr
-          roundAtLastWait = round
-          const reset = d.readRateLimitReset ? await d.readRateLimitReset() : null
-          await d.sleep(rateLimitWaitMs(reset, d.now()))
+          // Re-enter only when no role was dispatched in the iteration that
+          // failed — re-entry re-runs the step `decision` names, and must
+          // never dispatch a role twice. The reads that follow a dispatch
+          // wait in place instead (`withRateLimitWait`); anything else that
+          // lands after a dispatch pauses as it did before this wait existed.
+          if (roleDispatchesInPass > 0) throw loopErr
+          await absorbRateLimit(loopErr)
         }
       }
       recordDriverExited(loopResult.finalDecision.type === 'publish' ? 'finished' : 'paused')
@@ -5763,9 +5777,36 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       return { finalDecision: decision, prNumber, task }
     }
 
+    /**
+     * Waits out one GitHub rate limit, or rethrows `err` when it is no rate
+     * limit or the wait is spent: `MAX_CONSECUTIVE_RATE_LIMIT_WAITS`
+     * consecutive waits with no round progress between them. The reset is
+     * read once, never polled.
+     */
+    async function absorbRateLimit(err: unknown): Promise<void> {
+      if (!isGitHubRateLimitError(err)) throw err
+      rateLimitWaits = round === roundAtLastWait ? rateLimitWaits + 1 : 1
+      if (rateLimitWaits > MAX_CONSECUTIVE_RATE_LIMIT_WAITS) throw err
+      roundAtLastWait = round
+      const reset = d.readRateLimitReset ? await d.readRateLimitReset() : null
+      await d.sleep(rateLimitWaitMs(reset, d.now()))
+    }
+
+    /** One read, retried in place across a rate-limit wait — for the reads that follow a role dispatch, where re-entering the round would dispatch it again. */
+    async function withRateLimitWait<T>(read: () => T): Promise<T> {
+      while (true) {
+        try {
+          return read()
+        } catch (err) {
+          await absorbRateLimit(err)
+        }
+      }
+    }
+
     // eslint-disable-next-line no-constant-condition
     async function runRoundLoop(): Promise<LoopResult> {
       while (true) {
+        roleDispatchesInPass = 0
         // Checking more often than the minimum ("every round entry") is
         // strictly safer, never wrong — this runs before every iteration's
         // own dispatch/gate/publish logic.
@@ -6484,9 +6525,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // round-trip through the rendered text (Traps to avoid — nothing
             // to trust or distrust when the value is this driver's own, still
             // in memory).
-            const reassessedObjectives = d.resolveIssueObjectives(task)
-            const reassessedRulingOrdinal = d.fetchNewestRulingOrdinal(prNumber)
-            const reassessedBriefContent = d.fetchFrozenBrief(task)
+            const reassessedObjectives = await withRateLimitWait(() => d.resolveIssueObjectives(task))
+            const reassessedRulingOrdinal = await withRateLimitWait(() => d.fetchNewestRulingOrdinal(prNumber))
+            const reassessedBriefContent = await withRateLimitWait(() => d.fetchFrozenBrief(task))
             const currentManifest: ReviewInputManifest = buildReviewInputManifest({
               headSha: head,
               baseSha,
