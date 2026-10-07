@@ -4901,6 +4901,8 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
       mkdirSync(sweepRunDir(home, 8001), { recursive: true })
 
       const r = runLoopWithRepo(home, cwd, path)
+      if (r.status !== 0)
+        writeFileSync('/home/dev/atta-labs/vinaya/.git/sweep-debug.txt', `${r.status}\n${r.stderr}\n---\n${r.stdout}`)
       if (r.status !== 0) throw new Error(`the loop exited ${r.status}: ${r.stderr.slice(-1500)}`)
       expect(r.status).toBe(0)
       expect(r.stdout).toMatch(/publish/)
@@ -4957,6 +4959,8 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
       // with real headroom rather than another razor-thin margin, while
       // retaining the tight default for every ordinary fixture in this file.
       const r = runLoopWithRepo(home, cwd, path, 75_000)
+      if (r.status !== 0)
+        writeFileSync('/home/dev/atta-labs/vinaya/.git/sweep-debug.txt', `${r.status}\n${r.stderr}\n---\n${r.stdout}`)
       if (r.status !== 0) throw new Error(`the loop exited ${r.status}: ${r.stderr.slice(-1500)}`)
       expect(r.status).toBe(0)
       expect(r.stdout).toMatch(/publish/)
