@@ -37,6 +37,19 @@ import { isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from './run
 /** The cache directory's own name under this repository's runtime directory (O3, Decisions). */
 export const LOGS_CACHE_DIR_NAME = 'logs-cache'
 
+/**
+ * Deletes the cache database and its write-ahead-log and shared-memory side
+ * files from `dir` — exactly these three names, never a glob. The caller has
+ * already closed any handle: a side file left behind makes the next open fail
+ * with "disk I/O error" on macOS.
+ */
+export function deleteCacheFiles(dir: string): void {
+  for (const suffix of ['', '-wal', '-shm']) {
+    const file = join(dir, `${CACHE_FILE_NAME}${suffix}`)
+    if (existsSync(file)) unlinkSync(file)
+  }
+}
+
 export type SyncRunOptions = {
   rebuild: boolean
   json: boolean
@@ -52,7 +65,7 @@ export type LogSyncDeps = {
   resolveHeaders: (headers: Record<string, string> | undefined) => Record<string, string> | undefined
   /** This repository's cache directory (O3) — created if missing. Never the whole runtime directory. */
   cacheDir: (repo: RepoRef | null) => Promise<string>
-  /** Deletes ONLY the cache file inside `dir`, if present — never anything else in it (O3 `--rebuild`). */
+  /** Deletes ONLY the cache database and its `-wal`/`-shm` side files inside `dir`, if present — never anything else in it (O3 `--rebuild`). */
   deleteCacheFile: (dir: string) => void
   /** Opens the durable cache at `dir`. */
   openCache: (dir: string) => LogCache & { close?: () => void }
@@ -179,6 +192,7 @@ export async function runLogSync(opts: SyncRunOptions, deps: LogSyncDeps = realL
   }
 
   const dir = await deps.cacheDir(repo)
+  // No handle is open here: the cache is opened only below and closed in the `finally` after the sync.
   if (opts.rebuild) deps.deleteCacheFile(dir)
 
   const cache = deps.openCache(dir)
@@ -243,10 +257,7 @@ export function realLogSyncDeps(): LogSyncDeps {
       mkdirSync(dir, { recursive: true })
       return dir
     },
-    deleteCacheFile: (dir) => {
-      const file = join(dir, CACHE_FILE_NAME)
-      if (existsSync(file)) unlinkSync(file)
-    },
+    deleteCacheFile: deleteCacheFiles,
     openCache: (dir) => createSqliteCache(dir),
     folderSource: (folder, repo) => createFolderLogSource({ folderRoot: folder, repo }),
     serverSource: (url, headers, env) =>

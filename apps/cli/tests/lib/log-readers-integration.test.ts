@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'bun:test'
-import { existsSync, mkdtempSync, unlinkSync } from 'node:fs'
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -19,7 +19,7 @@ import { resolveLogsHeaderValues } from '../../src/lib/config.js'
 import { CACHE_FILE_NAME, createSqliteCache } from '../../src/lib/log-cache-sqlite.js'
 import { appendHardenedLine, outboxPathFor } from '../../src/lib/log-sink.js'
 import { createFolderLogSource } from '../../src/lib/log-sync-folder-source.js'
-import { type LogSyncDeps, runLogSync } from '../../src/lib/log-sync.js'
+import { deleteCacheFiles, type LogSyncDeps, runLogSync } from '../../src/lib/log-sync.js'
 import { createServerLogSource, type ServerSourceFetch } from '../../src/lib/log-sync-server-source.js'
 
 // The one place the parts the rest of this tranche proved separately — the
@@ -111,11 +111,6 @@ function fakeServer(lines: readonly string[], token: string): ServerSourceFetch 
   }
 }
 
-function deleteCacheFile(dir: string): void {
-  const file = join(dir, CACHE_FILE_NAME)
-  if (existsSync(file)) unlinkSync(file)
-}
-
 /** A `LogSyncDeps` reading a real folder — `folderRootRef.current` so a test can swap what the destination retains between two runs (O3). */
 function folderDeps(folderRootRef: { current: string }, cacheDir: string): LogSyncDeps {
   return {
@@ -124,7 +119,7 @@ function folderDeps(folderRootRef: { current: string }, cacheDir: string): LogSy
     readHeadersRaw: () => undefined,
     resolveHeaders: (headers) => headers,
     cacheDir: async () => cacheDir,
-    deleteCacheFile,
+    deleteCacheFile: deleteCacheFiles,
     openCache: (dir) => createSqliteCache(dir),
     folderSource: (folder, repo) => createFolderLogSource({ folderRoot: folder, repo }),
     serverSource: (): never => {
@@ -146,7 +141,7 @@ function serverDeps(linesRef: { current: readonly string[] }, cacheDir: string):
     readHeadersRaw: () => ({ authorization: 'Bearer ${FIXTURE_LOG_READ_TOKEN}' }),
     resolveHeaders: (headers) => resolveLogsHeaderValues(headers, SERVER_ENV),
     cacheDir: async () => cacheDir,
-    deleteCacheFile,
+    deleteCacheFile: deleteCacheFiles,
     openCache: (dir) => createSqliteCache(dir),
     folderSource: (): never => {
       throw new Error('not used by the server destination')
@@ -266,6 +261,31 @@ describe('log-readers integration — fixtures, a folder cache, a server cache a
       expect(code).toBe(0)
       const after = allAnswers(readCacheDataset(folder.cacheDir))
       expect(after).toEqual(before)
+    })
+
+    it('no side file of the old cache survives a rebuild', async () => {
+      const cacheDir = tmpDir('rebuild-sidefiles')
+      const folderRootRef = { current: folder.folderRoot }
+      const deps = folderDeps(folderRootRef, cacheDir)
+      expect(await runLogSync({ rebuild: false, json: false }, deps)).toBe(0)
+      const stray = join(cacheDir, 'unrelated.txt')
+      writeFileSync(stray, 'keep')
+      for (const suffix of ['-wal', '-shm']) writeFileSync(join(cacheDir, `${CACHE_FILE_NAME}${suffix}`), 'stale')
+
+      // Observe the directory right after the rebuild's own delete, before the
+      // new cache opens: nothing of the old cache may remain.
+      const seen: boolean[] = []
+      const observed: LogSyncDeps = {
+        ...deps,
+        deleteCacheFile: (dir) => {
+          deps.deleteCacheFile(dir)
+          for (const suffix of ['', '-wal', '-shm']) seen.push(existsSync(join(dir, `${CACHE_FILE_NAME}${suffix}`)))
+        }
+      }
+      expect(await runLogSync({ rebuild: true, json: false }, observed)).toBe(0)
+      expect(seen).toEqual([false, false, false])
+      expect(existsSync(stray)).toBe(true)
+      expect(readCacheDataset(cacheDir).rows().length).toBeGreaterThan(0)
     })
 
     it('a source line removed before the rebuild is absent from the rebuilt answers', async () => {
