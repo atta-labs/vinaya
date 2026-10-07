@@ -18,7 +18,9 @@ import {
   parseResultProofArgs,
   proofCases,
   readClaudeTurnOutput,
-  readCodexTurnOutput
+  readCodexTurnOutput,
+  redactProviderText,
+  shellQuote
 } from '../../../src/lib/task-tools/result-proof.js'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../process-fixture.js'
 
@@ -438,5 +440,27 @@ describe('accountEnv', () => {
     expect(accountEnv({ USER: 'a', LOGNAME: 'b' }, () => 'os')).toEqual({ USER: 'a', LOGNAME: 'b' })
     expect(accountEnv({ USER: 'a' }, () => 'os')).toEqual({ USER: 'a', LOGNAME: 'a' })
     expect(accountEnv({}, () => 'os')).toEqual({ USER: 'os', LOGNAME: 'os' })
+  })
+})
+
+describe('shellQuote', () => {
+  it('passes a path holding quotes, dollars and spaces to the shell as one literal word', () => {
+    const tricky = `/tmp/a b/"q"/$HOME/it's/\`x\``
+    const r = spawnSyncBudgeted('/bin/sh', ['-c', `printf %s ${shellQuote(tricky)}`], {
+      encoding: 'utf8',
+      env: stripVinayaEnv()
+    })
+    expect(r.stdout).toBe(tricky)
+  })
+})
+
+describe('redactProviderText', () => {
+  it('replaces the home directory and email-shaped text before provider output is printed', () => {
+    expect(redactProviderText('open /Users/me/.claude/x for me@example.com failed', '/Users/me')).toBe(
+      'open ~/.claude/x for <email> failed'
+    )
+  })
+  it('leaves text without either unchanged', () => {
+    expect(redactProviderText('Prompt is too long', '/Users/me')).toBe('Prompt is too long')
   })
 })

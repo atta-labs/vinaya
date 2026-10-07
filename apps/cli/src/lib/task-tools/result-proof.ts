@@ -32,7 +32,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir, userInfo } from 'node:os'
+import { homedir, tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { ownVersion } from '../artifacts.js'
 import {
@@ -436,7 +436,7 @@ function writeClaudeProofSettings(
   const stopScriptPath = join(scratchDir, 'forced-stop.mjs')
   writeFileSync(stopScriptPath, forcedStopHookScript(join(scratchDir, 'forced-stop.count'), stopLogPath, nonce))
   const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as { hooks: { Stop: unknown[] } }
-  settings.hooks.Stop.push({ hooks: [{ type: 'command', command: `bun "${stopScriptPath}"` }] })
+  settings.hooks.Stop.push({ hooks: [{ type: 'command', command: `bun ${shellQuote(stopScriptPath)}` }] })
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { mode: 0o600 })
   const sandbox = confined
     ? "ON — Claude Code's own sandbox, in the dispatch settings file"
@@ -575,6 +575,26 @@ function clip(text: string, max = 600): string {
   return text.length > max ? `${text.slice(0, max)}… [+${text.length - max} chars]` : text
 }
 
+/** One POSIX shell word: single-quoted, with any single quote closed, escaped and reopened, so no character in `value` is interpreted. */
+export function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`
+}
+
+/**
+ * Provider-written text (stream errors, stderr) is printed for pasting into a
+ * public pull request, so the home directory becomes `~` and anything shaped
+ * like an email address becomes `<email>` before it is shown.
+ */
+export function redactProviderText(text: string, home: string = homedir()): string {
+  const withoutHome = home.length > 1 ? text.replaceAll(home, '~') : text
+  return withoutHome.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '<email>')
+}
+
+/** `clip` after `redactProviderText` — the one form provider text is printed in. */
+function providerText(text: string, max?: number): string {
+  return clip(redactProviderText(text), max)
+}
+
 /** The command entry point: run every case for one agent and print the report. */
 export async function resultProofCommand(args: string[]): Promise<void> {
   const parsed = parseResultProofArgs(args)
@@ -648,9 +668,9 @@ export async function resultProofCommand(args: string[]): Promise<void> {
       }
       out(`structured emissions seen: ${read.emissions.length}`)
       for (const emission of read.emissions) out(`  ${clip(JSON.stringify(emission))}`)
-      if (read.errors.length > 0) out(`stream errors: ${clip(read.errors.join(' | '))}`)
+      if (read.errors.length > 0) out(`stream errors: ${providerText(read.errors.join(' | '))}`)
       const stderrTail = ran.stderr.trim().split('\n').slice(-3).join(' | ')
-      if (stderrTail.length > 0) out(`stderr tail: ${clip(stderrTail)}`)
+      if (stderrTail.length > 0) out(`stderr tail: ${providerText(stderrTail)}`)
       out(`event read: ${read.event ?? '(none)'}`)
       out(`schema-valid result reached the driver: ${verdict.crossed ? 'yes' : 'no'}`)
       if (verdict.crossed) {
@@ -691,9 +711,9 @@ export async function resultProofCommand(args: string[]): Promise<void> {
           `accepted ${verdict.crossed && verdict.accepted ? JSON.stringify(verdict.result.summary) : 'none'}` +
           (failures.length > 0 ? `; ${clip(failures.join(' / '), 300)}` : '') +
           (!verdict.crossed && read.event === null && read.errors.length > 0
-            ? `; errors: ${clip(read.errors.join(' | '), 200)}`
+            ? `; errors: ${providerText(read.errors.join(' | '), 200)}`
             : '') +
-          (read.event === null && stderrTail.length > 0 ? `; stderr: ${clip(stderrTail, 200)}` : '')
+          (read.event === null && stderrTail.length > 0 ? `; stderr: ${providerText(stderrTail, 200)}` : '')
       )
     }
     out(`\n=== summary — ${agent} ===`)
