@@ -5698,10 +5698,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // is — a genuinely uncaught error is exactly the case this record
       // exists for, so the next attach/resume recovers this round's
       // budgets rather than starting a fresh in-memory count at zero.
-      // A sign-in refusal is the one failure that spends no budget
+      // A sign-in refusal and a GitHub rate limit spend no budget
       // (`spendsInfrastructureRetry`): a host with no credentials never
       // produced a round for that bound to bound, so no number of sign-in
-      // pauses should ever demand a Principal ruling to resume past.
+      // pauses should ever demand a Principal ruling to resume past; a
+      // rate limit is a wait for the reset, not a recoverable-hiccup retry.
       if (spendsInfrastructureRetry(err)) infrastructureRetries += 1
       persistCurrentLoopState('pause', decision.reason)
       // This bookkeeping is best-effort, never a second chance for the

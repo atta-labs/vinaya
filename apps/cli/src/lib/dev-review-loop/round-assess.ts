@@ -171,8 +171,9 @@ export class DispatchSignInRefused extends Error {
 
 /**
  * Does this round-ending error spend a unit of the loop's
- * infrastructure-retry budget? Everything does, except a sign-in refusal:
- * that budget bounds how often a task may be resumed past a recoverable
+ * infrastructure-retry budget? Everything does, except a sign-in refusal
+ * and a GitHub rate limit (the loop already waited it out in place, or
+ * pauses for the reset): that budget bounds how often a task may be resumed past a recoverable
  * hiccup with no genuine round in between, and a host with no credentials
  * never produced a round to bound — counting it would exhaust the budget
  * and demand a Principal ruling for a failure a `claude`/`codex`/`gemini`
