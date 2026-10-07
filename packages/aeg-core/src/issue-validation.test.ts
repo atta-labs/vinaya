@@ -3280,6 +3280,63 @@ describe('checkDocumentationReadable', () => {
   })
 })
 
+describe('checkDocumentationReadable — every link in the body', () => {
+  const readable = () => ({ kind: 'readable' }) as const
+  const withRationale = (link: string) =>
+    [
+      '## Rationale',
+      '',
+      `See ${link} for the background.`,
+      '',
+      '## Documentation',
+      '',
+      '- https://example.test/listed — the mechanism (O1)',
+      '',
+      '## Objectives',
+      '',
+      'O1. The gate refuses.'
+    ].join('\n')
+
+  it('refuses a link outside Documentation that the section does not list, naming it', () => {
+    const result = checkDocumentationReadable(withRationale('https://example.test/other'), readable)
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`https://example.test/other`')
+    expect(result.errors[0]).toContain('required reading')
+  })
+
+  it('accepts a body link that Documentation also lists', () => {
+    expect(checkDocumentationReadable(withRationale('https://example.test/listed'), readable).status).toBe('pass')
+  })
+
+  it('probes a body link outside Documentation and refuses an unreadable one', () => {
+    const own = 'https://github.com/o/r'
+    const result = checkDocumentationReadable(
+      withRationale(`${own}/issues/5`),
+      (url) => (url.endsWith('/issues/5') ? { kind: 'unreadable', detail: 'status 404' } : { kind: 'readable' }),
+      own
+    )
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain('/issues/5')
+    expect(result.errors[0]).toContain('not publicly readable')
+  })
+
+  it("exempts this repository's own Issue and pull-request links from the listing rule only", () => {
+    const own = 'https://github.com/o/r'
+    expect(checkDocumentationReadable(withRationale(`${own}/pull/7`), readable, own).status).toBe('pass')
+    expect(checkDocumentationReadable(withRationale('https://github.com/o/other/issues/7'), readable, own).status).toBe(
+      'fail'
+    )
+    expect(checkDocumentationReadable(withRationale(`${own}/blob/main/x.md`), readable, own).status).toBe('fail')
+  })
+
+  it('warns, and never refuses, for an undecidable body link', () => {
+    const own = 'https://github.com/o/r'
+    const result = checkDocumentationReadable(withRationale(`${own}/issues/5`), () => ({ kind: 'unknown' }), own)
+    expect(result.status).toBe('pass')
+    expect(result.warnings.length).toBeGreaterThan(0)
+  })
+})
+
 describe('isNonPublicHost', () => {
   it('flags loopback, link-local, private-range and internal names', () => {
     for (const h of [
