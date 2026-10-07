@@ -21,8 +21,21 @@
 
 import { spawnSync } from 'node:child_process'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { escalationIdFor, type LoopDeps, resolveEscalation } from '../../../src/lib/dev-review-loop.js'
-import { readDriverLock, readPauseState, writeDriverLock } from '../../../src/lib/dev-review-loop/pause-resume.js'
+import {
+  type DriverWatchDeps,
+  escalationIdFor,
+  type LoopDeps,
+  type LoopResult,
+  resolveEscalation,
+  runDriverLoop
+} from '../../../src/lib/dev-review-loop.js'
+import {
+  type PauseState,
+  readDriverLock,
+  readPauseState,
+  writeDriverLock
+} from '../../../src/lib/dev-review-loop/pause-resume.js'
+import { rateLimitPauseDetail } from '../../../src/lib/dev-review-loop/round-assess.js'
 import {
   cleanupWorlds,
   makeInProcessDeps,
@@ -470,5 +483,96 @@ describe('devReviewLoop — issue-711 F3 (code review round 2, MAJOR/security LO
     })
 
     expect(result.finalDecision).toEqual({ type: 'publish' })
+  })
+})
+
+const RATE_LIMIT_NOW_MS = 1_000_000_000_000
+
+function rateLimitPauseResult(detail: string): LoopResult {
+  return { finalDecision: { type: 'pause', reason: 'infrastructure', detail }, prNumber: 7, task: 1129 }
+}
+
+function heldRateLimitPause(detail: string, round = 1): PauseState {
+  return {
+    task: 1129,
+    round,
+    head: 'abc',
+    branch: 'task/issue-1129',
+    prNumber: 7,
+    reason: 'infrastructure',
+    detail,
+    pausedAt: new Date(RATE_LIMIT_NOW_MS).toISOString(),
+    escalationId: `esc-${round}`
+  }
+}
+
+/** A watcher whose clock, sleep and reset read are fakes; `resumes` queues what each resume attempt returns. */
+function rateLimitHarness(detail: string, resumes: LoopResult[]) {
+  const sleeps: number[] = []
+  let resetReads = 0
+  const resumeInputs: unknown[] = []
+  const closed = { value: false }
+  const done: LoopResult = { finalDecision: { type: 'publish' }, prNumber: 7, task: 1129 }
+  const watch: Partial<DriverWatchDeps> = {
+    devReviewLoop: async (input) => {
+      if (!('resumePr' in input)) return rateLimitPauseResult(detail)
+      resumeInputs.push(input.resumePr)
+      return resumes.shift() ?? done
+    },
+    fetchPrState: () => (closed.value ? 'CLOSED' : 'OPEN'),
+    fetchNewestRulingOrdinal: () => 0,
+    readPauseState: () => heldRateLimitPause(detail),
+    readResolutionRecord: () => null,
+    clearDriverLock: () => {},
+    runtimeDir: () => '/nonexistent',
+    sleep: async (ms) => {
+      sleeps.push(ms)
+    },
+    watchPollIntervalMs: 1,
+    infrastructureBackoffMs: 60_000,
+    readRateLimitReset: async () => {
+      resetReads += 1
+      return RATE_LIMIT_NOW_MS / 1000 + 120
+    },
+    now: () => RATE_LIMIT_NOW_MS
+  }
+  return { watch, closed, sleeps, resumeInputs, resetReads: () => resetReads }
+}
+
+describe('watchPauseThenResume — a rate-limit pause resumes by itself after the reset', () => {
+  it('reads the reset once, sleeps until it plus the margin, then resumes through the resume path', async () => {
+    const h = rateLimitHarness(rateLimitPauseDetail(0), [])
+    const result = await runDriverLoop({ task: 1129, agent: 'claude' }, {}, h.watch)
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    expect(h.resetReads()).toBe(1)
+    expect(h.sleeps).toEqual([125_000])
+    expect(h.resumeInputs).toEqual([7])
+  })
+
+  it('stops resuming by itself after two automatic resumes of one round that each pause on the limit again', async () => {
+    const detail = rateLimitPauseDetail(2)
+    const h = rateLimitHarness(detail, [
+      rateLimitPauseResult(detail),
+      rateLimitPauseResult(detail),
+      rateLimitPauseResult(detail)
+    ])
+    let polls = 0
+    const sleep = h.watch.sleep!
+    h.watch.sleep = async (ms) => {
+      await sleep(ms)
+      // Once the watcher is only polling for a ruling, end the test run by cancelling the PR.
+      if (ms === 1 && ++polls > 3) h.closed.value = true
+    }
+    const result = await runDriverLoop({ task: 1129, agent: 'claude' }, {}, h.watch)
+    expect(result.finalDecision).toEqual({ type: 'ended', reason: 'closed' })
+    expect(h.resumeInputs).toEqual([7, 7])
+    expect(h.resetReads()).toBe(2)
+  })
+
+  it('keeps the fixed backoff for a pause that is not a rate limit', async () => {
+    const h = rateLimitHarness('an uncaught error ended round 1’s own processing: boom', [])
+    await runDriverLoop({ task: 1129, agent: 'claude' }, {}, h.watch)
+    expect(h.resetReads()).toBe(0)
+    expect(h.sleeps).toEqual([60_000])
   })
 })

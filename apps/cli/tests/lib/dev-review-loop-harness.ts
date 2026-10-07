@@ -959,6 +959,8 @@ export async function runDriverLoopInProcess(
         fetchNewestRulingOrdinal: (_pr) => world.rulingOrdinal,
         watchPollIntervalMs: 1,
         infrastructureBackoffMs: 1,
+        // Never the real `gh api rate_limit` — no reset reported, so the wait is the fixed fallback.
+        readRateLimitReset: async () => null,
         ...watchOverrides
       }
     )
