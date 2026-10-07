@@ -77,7 +77,9 @@ import {
 } from '../dev-review-loop/developer-dispatch.js'
 import {
   escalationIdFor,
+  escalationPrOf,
   isDriverPidAlive,
+  missingEscalationNextStep,
   readDriverLock,
   readEscalationRecord,
   noPushResumeArgv,
@@ -422,13 +424,18 @@ export function createTaskResumeHandler(
     // pull request" at all it did worse: the `-1` sentinel read as a real
     // number and reached `gh pr view -1`.
     const pr = packet.inputs.prNumber
-    /** Where this pause's own comment was posted, and so where its ruling is read from. */
-    const rulingSource = pr === null ? `Issue ${issue}` : `PR ${pr}`
     const held = readPauseState(root, issue)
     if (held === null) {
       emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
       return fail(taskToolError('precondition', `task ${issue} has no paused run recorded — nothing to resume`))
     }
+    // A pause recorded before any pull request existed and bound to the one
+    // opened since still answers as a no-pull-request pause: its escalation
+    // names none, its ruling is on the task Issue, and `task run` — which
+    // routes to the bound pull request — is its continuation.
+    const escalationPr = escalationPrOf(held)
+    /** Where this pause's own comment was posted, and so where its ruling is read from. */
+    const rulingSource = escalationPr === null ? `Issue ${issue}` : `PR ${escalationPr}`
     const escalationId = held.escalationId ?? escalationIdFor(issue, held.round, held.head)
 
     const resolutionRead = readResolution(controlStoreDeps, issue, escalationId)
@@ -443,7 +450,7 @@ export function createTaskResumeHandler(
           )
         )
       }
-      if (pr === null) {
+      if (escalationPr === null) {
         // O4: on this path THIS handler is what consumed the ruling (there is
         // no `dev-review-loop --resume` continuation to do it), so an existing
         // `'resume'` resolution means this exact escalation's decision is
@@ -487,16 +494,16 @@ export function createTaskResumeHandler(
       return fail(
         taskToolError(
           'precondition',
-          `task ${issue}'s escalation '${escalationId}' has no durable record — cannot authenticate a resume`
+          `task ${issue}'s escalation '${escalationId}' has no durable record — cannot authenticate a resume through this tool. ${missingEscalationNextStep(held)}`
         )
       )
     }
-    if (escalation.pr !== pr) {
+    if (escalation.pr !== escalationPr) {
       emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
       return fail(
         taskToolError(
           'precondition',
-          `task ${issue}'s escalation '${escalationId}' names PR ${escalation.pr ?? '(none)'}, not PR ${pr}`
+          `task ${issue}'s escalation '${escalationId}' names PR ${escalation.pr ?? '(none)'}, not PR ${escalationPr ?? '(none)'}`
         )
       )
     }
@@ -531,9 +538,9 @@ export function createTaskResumeHandler(
     // a ruling that authorizes resuming THIS pause must postdate that — its
     // ordinal must have moved, exactly the inequality `compareManifest`'s own
     // `binding.rulingOrdinal` already checks for "a new ruling landed."
-    const rulings = pr === null ? deps.fetchIssueRulings(issue) : deps.fetchRulings(pr)
+    const rulings = escalationPr === null ? deps.fetchIssueRulings(issue) : deps.fetchRulings(escalationPr)
     const newestRulingOrdinal =
-      pr === null ? deps.fetchNewestIssueRulingOrdinal(issue) : deps.fetchNewestRulingOrdinal(pr)
+      escalationPr === null ? deps.fetchNewestIssueRulingOrdinal(issue) : deps.fetchNewestRulingOrdinal(escalationPr)
     if (!rulingAuthenticatesResume(rulings.length, newestRulingOrdinal, escalation.rulingOrdinal)) {
       emitOperationEvent(deps.log, issue, target, 'refused', 'authority')
       return fail(
@@ -546,11 +553,13 @@ export function createTaskResumeHandler(
       )
     }
     const authenticatedBy =
-      (pr === null ? deps.fetchNewestIssueRulingAuthor(issue) : deps.fetchNewestRulingAuthor(pr)) ?? 'unknown-principal'
+      (escalationPr === null ? deps.fetchNewestIssueRulingAuthor(issue) : deps.fetchNewestRulingAuthor(escalationPr)) ??
+      'unknown-principal'
     // `issue-<n>-<ordinal>` names WHERE an Issue-read decision came from, the
     // same form `cancelDevReviewLoop` records for its own no-pull-request
     // cancel — never a pull-request number the run does not have.
-    const authenticatedFrom = pr === null ? `issue-${issue}-${newestRulingOrdinal}` : `${pr}-${newestRulingOrdinal}`
+    const authenticatedFrom =
+      escalationPr === null ? `issue-${issue}-${newestRulingOrdinal}` : `${escalationPr}-${newestRulingOrdinal}`
 
     const agent: AgentVendor = escalation.agent && isAgentVendor(escalation.agent) ? escalation.agent : 'claude'
 
@@ -591,7 +600,7 @@ export function createTaskResumeHandler(
     // failure message below — a launch that then fails needs a NEW ruling to
     // retry, because this one is already consumed. Written through the SAME
     // fixture-testable control store every other read in this handler uses.
-    if (pr === null) {
+    if (escalationPr === null) {
       try {
         deps.resolveEscalation(
           issue,
@@ -631,7 +640,7 @@ export function createTaskResumeHandler(
       // flag — the comment and `permittedNextActions` both rendered `--model`
       // while the spawned argv dropped it.
       outcome = await deps.launch(
-        { pr, agent, issue, branch: held.branch, ...(held.model ? { model: held.model } : {}) },
+        { pr: escalationPr, agent, issue, branch: held.branch, ...(held.model ? { model: held.model } : {}) },
         { escalationId, caller: caller.id }
       )
     } catch (err) {
@@ -649,7 +658,7 @@ export function createTaskResumeHandler(
       return fail(
         taskToolError(
           'infrastructure',
-          pr === null
+          escalationPr === null
             ? `task_resume: task ${issue} did not confirm alive: ${outcome.error.message}. Its ruling was already consumed as this escalation's resolution and no later ruling reopens that escalation, so this tool cannot retry it — run \`${noPushResumeCommandFor(issue, held.branch, held.agent, held.model)}\` directly once the cause is fixed.`
             : `task_resume: task ${issue} (PR ${pr}) did not confirm alive: ${outcome.error.message}`,
           outcome.error.message

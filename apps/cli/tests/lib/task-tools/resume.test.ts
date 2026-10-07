@@ -306,7 +306,23 @@ describe('task_resume handler', () => {
     if (!result.ok) {
       expect(result.error.kind).toBe('precondition')
       expect(result.error.message).toContain('no durable record')
+      // A pause that asks for a ruling names the decision it needs, never a command.
+      expect(result.error.message).toContain('is a Principal decision')
     }
+  })
+
+  it('names `task run` as the continuation of an automatic-recovery pause whose escalation has no durable record (O4)', async () => {
+    writePause({ reason: 'infrastructure', detail: 'GitHub rate limit: it did not wait' })
+    const { handler, launches } = harness()
+    const result = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.kind).toBe('precondition')
+      expect(result.error.message).toContain('no durable record')
+      expect(result.error.message).toContain('no ruling is needed')
+      expect(result.error.message).toContain('Continue it with `vinaya task run x 1`')
+    }
+    expect(launches).toHaveLength(0)
   })
 
   it('rejects a wrong-target decision — the escalation names a different PR', async () => {
@@ -715,6 +731,25 @@ describe('task_resume handler — a pause recorded before its pull request exist
     if (!result.ok) expect(result.error.kind).toBe('precondition')
     expect(launches).toHaveLength(0)
     expect(readResolutionRecord().status).not.toBe('ok')
+  })
+
+  it('resumes one bound since to the pull request opened afterwards as the no-pull-request pause it was raised as', async () => {
+    writePause({ prNumber: PR, boundAt: '2026-01-01T01:00:00.000Z' })
+    writeEscalationFixture({ pr: null })
+    const { handler, launches, prRulingReads } = harness({
+      issueRulings: ['Ruling: proceed as briefed.'],
+      newestIssueRulingOrdinal: 1
+    })
+    const result = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.result.outcome).toBe('started')
+    // The ruling is read off the Issue its pause comment went to, and the
+    // continuation is `task run`, which routes to the bound pull request.
+    expect(result.result.authenticatedFrom).toBe(`issue-${ISSUE}-1`)
+    expect(prRulingReads).toEqual([])
+    expect(launches).toEqual([{ pr: null, agent: 'claude', issue: ISSUE, branch: 'task/x/1' }])
+    expect(readResolutionRecord().status).toBe('ok')
   })
 
   it('rejects a stale Issue ruling whose ordinal has not advanced past the one this escalation was raised under', async () => {

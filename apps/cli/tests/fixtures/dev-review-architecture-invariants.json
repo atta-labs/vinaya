@@ -99,6 +99,11 @@
         "path": "apps/cli/tests/lib/dev-review-loop/developer-turn-result.test.ts",
         "kind": "test",
         "reason": "The controller's acceptance rules, the records every consumer reads, and the loop's correction, typed-pause and confidence paths, landed in the same change."
+      },
+      {
+        "path": "apps/cli/tests/lib/dev-review-loop/pre-pr-pause-continuation.test.ts",
+        "kind": "test",
+        "reason": "Landed with Issue #1165: a pause recorded before the task's pull request existed is bound to the one opened since and continued by `task run` or by the watching driver itself, driven in-process through a real round 2."
       }
     ]
   },
@@ -2961,6 +2966,31 @@
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-10.test.ts"],
       "loopSpec": [],
       "reason": "Shipped fix. Evidence: the same spent resolution was re-read forever, so a later ruling was never reached."
+    },
+    {
+      "id": "INV-144",
+      "behavior": "A pause recorded before the task's pull request existed is bound to the open pull request on its own branch whose body closes the task, then continued by `task run`/`--resume`; an infrastructure (rate-limit included) pause recorded then is watched and resumed by the paused driver under the same bounded rule, under its one lock.",
+      "classification": "product-guarantee",
+      "scope": "product",
+      "owner": "operator-control",
+      "authority": "control-state",
+      "scenarios": ["restart", "operator-intervention"],
+      "sources": [
+        {
+          "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts",
+          "symbol": "bindPauseToPullRequest"
+        },
+        {
+          "path": "apps/cli/src/lib/dev-review-loop.ts",
+          "symbol": "watchPrePrPauseThenResume"
+        }
+      ],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/pre-pr-pause-continuation.test.ts",
+        "apps/cli/tests/lib/task-tools/resume.test.ts"
+      ],
+      "loopSpec": ["Pause and `--resume`", "The driver never ends on a pause"],
+      "reason": "Before it, every exit from such a pause refused and named another exit that refused, and the driver ended unwatched, so the automatic rate-limit resume never fired."
     }
   ],
   "defects": [

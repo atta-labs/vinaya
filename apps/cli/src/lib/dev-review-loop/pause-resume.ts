@@ -610,6 +610,61 @@ export type PauseState = {
    * `0` by the reader, same as a genuinely fresh task.
    */
   infrastructureRetries?: number
+  /**
+   * When a pause recorded before any pull request existed was bound to the
+   * task's own pull request opened since (`bindPauseToPullRequest`). Absent on
+   * every other pause. Its escalation record still names no pull request and
+   * its ruling is still read from the task Issue — `escalationPrOf` is how a
+   * reader tells the two apart.
+   */
+  boundAt?: string
+}
+
+/**
+ * The pull request a pause's escalation record and its ruling belong to:
+ * `prNumber`, except for a pause bound to a pull request after it was raised,
+ * whose escalation was recorded with none and whose ruling lives on the task
+ * Issue where its comment was posted. Every resolution of a pause addresses
+ * the escalation through this, never through `prNumber` directly.
+ */
+export function escalationPrOf(held: PauseState): number | null {
+  return held.boundAt !== undefined ? null : held.prNumber
+}
+
+/**
+ * Binds a pause recorded before any pull request existed to the task's pull
+ * request opened since, so every later reader sees the pull request the run
+ * now continues on. The caller has already proven `pr` is the open pull
+ * request on the pause's own branch and that its body closes the task; this
+ * never rebinds a pause that already names one. The escalation record and any
+ * resolution are left exactly as they were.
+ */
+export function bindPauseToPullRequest(root: string, held: PauseState, pr: number): PauseState {
+  if (held.prNumber !== null) {
+    throw new Error(`bindPauseToPullRequest: task ${held.task}'s pause already names PR #${held.prNumber}`)
+  }
+  const bound: PauseState = { ...held, prNumber: pr, boundAt: new Date().toISOString() }
+  writePauseState(root, bound)
+  return bound
+}
+
+/** A pause the driver recovers from by itself: an infrastructure hiccup (a GitHub rate limit among them) or a stale driver — no Principal decision is asked for. */
+export function isAutomaticRecoveryPause(reason: PauseReason): boolean {
+  return reason === 'infrastructure' || reason === 'stale_driver'
+}
+
+/**
+ * What continues a pause whose escalation has no durable record, so a refusal
+ * never ends on "cannot authenticate": an infrastructure pause within its
+ * bare-resume allowance needs no ruling, and `task run` continues it; any
+ * other pause has nothing a ruling can be bound to, so it names the one
+ * Principal decision left. `bareResumable` defaults to the reason alone; a
+ * caller that already knows the allowance is spent passes `false`.
+ */
+export function missingEscalationNextStep(held: PauseState, bareResumable = held.reason === 'infrastructure'): string {
+  return bareResumable
+    ? `This is an automatic-recovery pause (${held.reason}) — no ruling is needed. Continue it with \`${noPushResumeCommandFor(held.task, held.branch, held.agent, held.model)}\`.`
+    : `No ruling can be bound to a ${held.reason} pause with no escalation record, so whether task ${held.task} continues or stops is a Principal decision.`
 }
 
 /**
