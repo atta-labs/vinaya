@@ -1,0 +1,943 @@
+{
+  "schemaVersion": 1,
+  "description": "The normalized behavioral corpus the developer-review architecture exit test executes against the standalone loop. Each scenario states its portable expectation; the adapter drives the loop and the exit test classifies every difference.",
+  "stateContract": "apps/cli/tests/lib/dev-review-loop/dev-review-engine-state-contract.fixture.ts",
+  "invariantRegister": "apps/cli/tests/fixtures/dev-review-architecture-invariants.json",
+  "capabilityMatrix": "apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json",
+  "baseline": {
+    "commit": "8fb270e9a28a76ceaffd7f795f52d4df3155a284",
+    "branch": "main",
+    "loopSurface": [
+      {
+        "path": "apps/cli/src/commands/dev-review-loop.ts",
+        "sha256": "20d722bddc2234091db26fe96ae87e0e66a844a29b513aff6ff4de8e44e9fefe"
+      },
+      {
+        "path": "apps/cli/src/lib/dev-review-loop.ts",
+        "sha256": "01d4f2c7766193187efa40ef78974d776f9772f9984f3660f100187ce6791533"
+      },
+      {
+        "path": "apps/cli/src/lib/dev-review-loop/developer-dispatch.ts",
+        "sha256": "cd2581aec0d1b4c28a731f0509b7fdc1c7506cc24e58ebe8821980e082dc938b"
+      },
+      {
+        "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts",
+        "sha256": "3cad6dd08dc488dab6865b576838a984f0ad4fff8c892b71d1fe28b3b74f8bb5"
+      },
+      {
+        "path": "apps/cli/src/lib/dev-review-loop/gate-reading.ts",
+        "sha256": "27a9adaa05bf4d39c6ee58760da7665f67f04259fa3f041a392b8b7b2c38306f"
+      },
+      {
+        "path": "apps/cli/src/lib/dev-review-loop/journal-history.ts",
+        "sha256": "470d410283697c990b6f52a7a82396f76b18b5bb8c361a8ed0a4ee593d522b46"
+      },
+      {
+        "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts",
+        "sha256": "dc8369c29ec6d8fdeac75549544c529758cb56a57a9c1dea40af1258369a7a52"
+      },
+      {
+        "path": "apps/cli/src/lib/dev-review-loop/publication.ts",
+        "sha256": "8c9992b5ec046e22fecde2629a1d1f6ee0fdfa1e244b3a584b0c89bf973b2914"
+      },
+      {
+        "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts",
+        "sha256": "ea8966f790eea7a86f116e6b8aabb1f166d4ee35ddce89d687f65b4372ff2e0c"
+      },
+      {
+        "path": "apps/cli/src/lib/dev-review-loop/reviewer-isolation.ts",
+        "sha256": "b046a1991ea80121607321678b6edba6b85f96054a304eb0070e1a1ba64327ab"
+      },
+      {
+        "path": "apps/cli/src/lib/dev-review-loop/round-assess.ts",
+        "sha256": "7c3692a4b1c190bf337ca14633be707ee4df5abb285efc570b26fc2299511731"
+      },
+      {
+        "path": "apps/cli/src/lib/dev-review-loop/turn-result.ts",
+        "sha256": "6a2671e8e9c83f8aee60bcde7e83a8eb4bbde58857983f65113ce8423e5ebed7"
+      },
+      {
+        "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+        "sha256": "ae4c0953cd927392fec67fdc11d3740ec7138ef944362e52dccdd5b59a8e8508"
+      },
+      {
+        "path": "packages/aeg-core/src/dev-review-loop/fakes.ts",
+        "sha256": "c239d974146b1eb9cf0c93596ac7d6324394c694370050af9714bcbffa8a82fc"
+      },
+      {
+        "path": "packages/aeg-core/src/dev-review-loop/index.ts",
+        "sha256": "2507c80bffed334e70b89d117ddc3b7e8e5fb03a20bb169d54ee485588e4d260"
+      },
+      {
+        "path": "packages/aeg-core/src/dev-review-loop/journal-reconstruction.ts",
+        "sha256": "d016a7bdca59dab562f671d18aa31525b089c6370c2256b953694bc60e209a3f"
+      },
+      {
+        "path": "packages/aeg-core/src/dev-review-loop/render-summary.ts",
+        "sha256": "6affa48c042e3322aaf9d8d9ee1f292d9bf9aeecdeef971def4a6dff7b87e9fe"
+      },
+      {
+        "path": "packages/aeg-core/src/dev-review-loop/types.ts",
+        "sha256": "8e7a7e35f7cc6b0d92a41b04db2a4b69a1087e11d363d0157bf88be2dc58bc06"
+      }
+    ]
+  },
+  "behaviors": {
+    "clean completion": ["clean-completion"],
+    "requested changes": ["requested-changes"],
+    "mechanical failure": ["mechanical-failure-repeats", "mechanical-failure-recovers"],
+    "reviewer invalidity": ["reviewer-invalidity"],
+    "developer failure": ["developer-failure"],
+    "context pressure": ["context-pressure"],
+    "restart": ["restart"],
+    "resume": ["resume"],
+    "cancellation": ["cancellation"],
+    "stale state": ["stale-objectives", "stale-conflict"],
+    "bounded exhaustion": ["bounded-exhaustion"],
+    "human pause": ["human-pause"],
+    "Operator intervention": ["operator-intervention-unauthenticated", "resume", "cancellation"],
+    "publication replay": ["publication-replay"],
+    "uncertain effects": ["uncertain-effect-crash", "publication-replay"],
+    "isolation refusal": ["isolation-refusal"],
+    "required-source failure": ["required-source-failure"],
+    "provider failure": ["provider-failure", "review-policy-unreadable", "reviewer-failure"],
+    "lifecycle telemetry": ["lifecycle-telemetry"]
+  },
+  "scenarios": [
+    {
+      "id": "clean-completion",
+      "title": "A green gate and two clean reviews publish in round 1.",
+      "categories": ["happy-path"],
+      "guarantees": ["INV-001", "INV-099", "INV-100", "INV-045", "INV-021"],
+      "expect": {
+        "decision": "publish",
+        "durable": {
+          "pauseReason": null,
+          "controlPhase": "publish",
+          "driverLockHeld": false,
+          "escalations": 0
+        },
+        "effects": {
+          "publishedRounds": [1],
+          "markersInclude": ["reviewer-verdict", "security-verdict", "summary"],
+          "developerDispatches": 1,
+          "codeReviewerDispatches": 1,
+          "securityDispatches": 1
+        },
+        "events": {
+          "journalResults": ["merged_ready"]
+        }
+      }
+    },
+    {
+      "id": "lifecycle-telemetry",
+      "title": "A clean round emits the documented lifecycle events in order, journal_finalized after publication.",
+      "categories": ["happy-path"],
+      "guarantees": ["INV-019", "INV-021", "INV-111", "INV-116"],
+      "expect": {
+        "decision": "publish",
+        "events": {
+          "sequence": [
+            "loop_started",
+            "round_started",
+            "gate_result_read",
+            "verdicts_read",
+            "findings_compared",
+            "stop_condition_met",
+            "round_ended",
+            "journal_finalized",
+            "driver_exited"
+          ],
+          "uniqueRoundStarts": true
+        }
+      }
+    },
+    {
+      "id": "requested-changes",
+      "title": "A blocking finding returns the round to the developer; a clean round 2 publishes.",
+      "categories": ["revisions"],
+      "guarantees": ["INV-008", "INV-027", "INV-029", "INV-099"],
+      "expect": {
+        "decision": "publish",
+        "durable": {
+          "controlPhase": "publish"
+        },
+        "effects": {
+          "publishedRounds": [2],
+          "markersInclude": ["<!-- aeg:developer:round-2 -->"],
+          "developerDispatches": 2,
+          "codeReviewerDispatches": 2
+        },
+        "events": {
+          "uniqueRoundStarts": true,
+          "journalResults": ["merged_ready"]
+        }
+      }
+    },
+    {
+      "id": "mechanical-failure-repeats",
+      "title": "The same red gate on an unchanged head twice pauses repeat_failure and never reaches a reviewer.",
+      "categories": ["developer-failure"],
+      "guarantees": ["INV-010", "INV-071", "INV-076", "INV-086"],
+      "expect": {
+        "decision": "pause:repeat_failure",
+        "durable": {
+          "pauseReason": "repeat_failure",
+          "controlPhase": "pause",
+          "escalations": 1
+        },
+        "effects": {
+          "commits": 0,
+          "pushes": 0,
+          "prOpens": 0,
+          "codeReviewerDispatches": 0,
+          "securityDispatches": 0,
+          "publishedRounds": [],
+          "markersInclude": ["<!-- aeg:loop:paused:repeat_failure -->"]
+        },
+        "events": {
+          "include": ["stop_condition_met", "paused", "handoff:raised"],
+          "journalResults": ["stopped"]
+        }
+      }
+    },
+    {
+      "id": "mechanical-failure-recovers",
+      "title": "A red gate the developer fixes reaches review and publishes; each round number starts once.",
+      "categories": ["developer-failure", "revisions"],
+      "guarantees": ["INV-010", "INV-071", "INV-099"],
+      "expect": {
+        "decision": "publish",
+        "effects": {
+          "publishedRounds": [1],
+          "developerDispatches": 2
+        },
+        "events": {
+          "uniqueRoundStarts": true,
+          "journalResults": ["merged_ready"]
+        }
+      },
+      "expectedDefect": "DEF-03"
+    },
+    {
+      "id": "reviewer-invalidity",
+      "title": "A reviewer that under-reports the objectives gets one fresh retry; a second miss pauses infrastructure with no verdict held.",
+      "categories": ["invalid-reviews", "reviewer-failure"],
+      "guarantees": ["INV-057", "INV-056"],
+      "expect": {
+        "decision": "pause:infrastructure",
+        "durable": {
+          "pauseReason": "infrastructure",
+          "pauseRound": 1,
+          "escalations": 1
+        },
+        "effects": {
+          "codeReviewerDispatches": 2,
+          "publishedRounds": [],
+          "markersExclude": ["reviewer-verdict", "security-verdict"]
+        },
+        "events": {
+          "include": ["role_attempt:attempted", "paused"],
+          "exclude": ["verdicts_read"],
+          "journalResults": ["stopped"]
+        }
+      }
+    },
+    {
+      "id": "reviewer-failure",
+      "title": "A reviewer that writes nothing twice pauses infrastructure; the round number is unchanged.",
+      "categories": ["reviewer-failure"],
+      "guarantees": ["INV-057", "INV-056", "INV-023"],
+      "expect": {
+        "decision": "pause:infrastructure",
+        "durable": {
+          "pauseReason": "infrastructure",
+          "pauseRound": 1,
+          "infrastructureRetries": 1,
+          "driverLockHeld": true
+        },
+        "effects": {
+          "securityDispatches": 2,
+          "publishedRounds": []
+        },
+        "events": {
+          "exclude": ["verdicts_read"],
+          "journalResults": ["stopped"]
+        }
+      }
+    },
+    {
+      "id": "review-policy-unreadable",
+      "title": "An unreadable review policy pauses instead of falling back to defaults, before any dispatch.",
+      "categories": ["reviewer-failure"],
+      "guarantees": ["INV-103", "INV-109"],
+      "expect": {
+        "decision": "pause:infrastructure",
+        "durable": {
+          "pauseReason": "infrastructure",
+          "escalations": 1
+        },
+        "effects": {
+          "commits": 0,
+          "pushes": 0,
+          "prOpens": 0,
+          "developerDispatches": 0,
+          "codeReviewerDispatches": 0,
+          "securityDispatches": 0,
+          "publishedRounds": []
+        },
+        "events": {
+          "include": ["paused", "driver_exited"]
+        }
+      }
+    },
+    {
+      "id": "developer-failure",
+      "title": "A developer turn result citing unknown finding ids is rejected twice and pauses.",
+      "categories": ["developer-failure", "invalid-reviews"],
+      "guarantees": ["INV-013", "INV-031"],
+      "expect": {
+        "decision": "pause:infrastructure",
+        "durable": {
+          "pauseReason": "infrastructure",
+          "pauseRound": 2,
+          "escalations": 1
+        },
+        "effects": {
+          "developerDispatches": 3,
+          "codeReviewerDispatches": 1,
+          "publishedRounds": []
+        },
+        "events": {
+          "include": ["paused"],
+          "journalResults": ["stopped"]
+        }
+      }
+    },
+    {
+      "id": "provider-failure",
+      "title": "A provider CLI that exits non-zero with no session pauses infrastructure and spends one retry.",
+      "categories": ["developer-failure"],
+      "guarantees": ["INV-023", "INV-109"],
+      "expect": {
+        "decision": "pause:infrastructure",
+        "durable": {
+          "pauseReason": "infrastructure",
+          "infrastructureRetries": 1,
+          "driverLockHeld": true
+        },
+        "effects": {
+          "commits": 0,
+          "pushes": 0,
+          "prOpens": 0,
+          "codeReviewerDispatches": 0,
+          "publishedRounds": []
+        },
+        "events": {
+          "include": ["paused"]
+        }
+      }
+    },
+    {
+      "id": "required-source-failure",
+      "title": "A required Documentation source claimed without a counted read rejects the turn; the run never reaches review.",
+      "categories": ["developer-failure"],
+      "guarantees": ["INV-125", "INV-013"],
+      "expect": {
+        "decision": "pause:infrastructure",
+        "durable": {
+          "pauseReason": "infrastructure",
+          "escalations": 1
+        },
+        "effects": {
+          "commits": 0,
+          "pushes": 0,
+          "prOpens": 0,
+          "developerDispatches": 2,
+          "codeReviewerDispatches": 0,
+          "publishedRounds": []
+        },
+        "events": {
+          "include": ["paused"],
+          "exclude": ["verdicts_read"]
+        }
+      }
+    },
+    {
+      "id": "context-pressure",
+      "title": "An exhausted task budget pauses time_budget with a not-reviewed round instead of reviewing.",
+      "categories": ["context-pressure"],
+      "guarantees": ["INV-020", "INV-016"],
+      "expect": {
+        "decision": "pause:time_budget",
+        "durable": {
+          "pauseReason": "time_budget",
+          "escalations": 1
+        },
+        "effects": {
+          "codeReviewerDispatches": 0,
+          "publishedRounds": [],
+          "markersInclude": ["<!-- aeg:loop:paused:time_budget -->"]
+        },
+        "events": {
+          "include": ["stop_condition_met", "paused", "round_ended"],
+          "exclude": ["verdicts_read"],
+          "journalResults": ["stopped"]
+        }
+      }
+    },
+    {
+      "id": "bounded-exhaustion",
+      "title": "A non-green round at the configured round cap pauses max_rounds.",
+      "categories": ["revisions"],
+      "guarantees": ["INV-005"],
+      "expect": {
+        "decision": "pause:max_rounds",
+        "durable": {
+          "pauseReason": "max_rounds",
+          "controlPhase": "pause"
+        },
+        "effects": {
+          "developerDispatches": 1,
+          "publishedRounds": [],
+          "markersInclude": ["<!-- aeg:loop:paused:max_rounds -->"]
+        },
+        "events": {
+          "journalResults": ["stopped"]
+        }
+      }
+    },
+    {
+      "id": "human-pause",
+      "title": "An ESCALATE verdict wins over every other outcome and pauses for the Principal with a durable escalation record.",
+      "categories": ["operator-intervention"],
+      "guarantees": ["INV-002", "INV-076", "INV-078", "INV-086"],
+      "expect": {
+        "decision": "pause:escalation",
+        "durable": {
+          "pauseReason": "escalation",
+          "escalations": 1,
+          "driverLockHeld": false
+        },
+        "effects": {
+          "publishedRounds": [],
+          "markersInclude": ["<!-- aeg:loop:paused:escalation -->"]
+        },
+        "events": {
+          "include": ["handoff:raised"],
+          "journalResults": ["stopped"]
+        }
+      }
+    },
+    {
+      "id": "restart",
+      "title": "A start that finds the pull request already open attaches without dispatching the developer or creating a branch.",
+      "categories": ["restart"],
+      "guarantees": ["INV-101", "INV-041", "INV-092"],
+      "expect": {
+        "decision": "publish",
+        "durable": {
+          "controlPhase": "publish"
+        },
+        "effects": {
+          "commits": 0,
+          "pushes": 0,
+          "prOpens": 0,
+          "developerDispatches": 0,
+          "publishedRounds": [1]
+        },
+        "events": {
+          "journalResults": ["merged_ready"]
+        }
+      }
+    },
+    {
+      "id": "resume",
+      "title": "An authenticated Principal ruling resumes an escalation pause, consumed once, and the run publishes.",
+      "categories": ["operator-intervention", "restart"],
+      "guarantees": ["INV-079", "INV-088", "INV-090"],
+      "expect": {
+        "decision": "publish",
+        "durable": {
+          "controlPhase": "publish",
+          "resolutions": ["resume"]
+        },
+        "effects": {
+          "publishedRounds": [1]
+        },
+        "events": {
+          "include": ["handoff:resolved", "resumed"],
+          "journalResults": ["stopped", "merged_ready"]
+        }
+      }
+    },
+    {
+      "id": "cancellation",
+      "title": "An authenticated cancel consumes its resolution and logs one cancelled event.",
+      "categories": ["cancellation", "operator-intervention"],
+      "guarantees": ["INV-089"],
+      "expect": {
+        "decision": "cancelled",
+        "durable": {
+          "resolutions": ["cancel"],
+          "driverLockHeld": false
+        },
+        "effects": {
+          "publishedRounds": []
+        },
+        "events": {
+          "include": ["cancelled"]
+        }
+      }
+    },
+    {
+      "id": "operator-intervention-unauthenticated",
+      "title": "A cancel with no Principal ruling is refused and consumes nothing.",
+      "categories": ["operator-intervention"],
+      "guarantees": ["INV-088", "INV-089"],
+      "expect": {
+        "decision": "refused",
+        "refusalMatches": "no Principal ruling comment",
+        "durable": {
+          "resolutions": [],
+          "pauseReason": "escalation"
+        },
+        "events": {
+          "exclude": ["cancelled"]
+        }
+      }
+    },
+    {
+      "id": "stale-objectives",
+      "title": "Objectives that move while reviewers run discard both verdicts and pause objectives_changed.",
+      "categories": ["stale-evidence"],
+      "guarantees": ["INV-062", "INV-063"],
+      "expect": {
+        "decision": "pause:objectives_changed",
+        "durable": {
+          "pauseReason": "objectives_changed"
+        },
+        "effects": {
+          "publishedRounds": [],
+          "markersInclude": ["<!-- aeg:loop:paused:objectives_changed -->"],
+          "markersExclude": ["reviewer-verdict", "security-verdict"]
+        },
+        "events": {
+          "exclude": ["verdicts_read"],
+          "journalResults": ["stopped"]
+        }
+      }
+    },
+    {
+      "id": "stale-conflict",
+      "title": "A conflicting head is sent back to the developer and never reaches a reviewer.",
+      "categories": ["stale-evidence"],
+      "guarantees": ["INV-043"],
+      "expect": {
+        "decision": "pause:repeat_failure",
+        "durable": {
+          "pauseReason": "repeat_failure"
+        },
+        "effects": {
+          "commits": 0,
+          "pushes": 0,
+          "prOpens": 0,
+          "codeReviewerDispatches": 0,
+          "securityDispatches": 0,
+          "publishedRounds": []
+        },
+        "events": {
+          "exclude": ["gate_result_read", "verdicts_read"]
+        }
+      }
+    },
+    {
+      "id": "uncertain-effect-crash",
+      "title": "A crash after publication began pauses with the lock kept and never logs merged_ready.",
+      "categories": ["uncertain-effects"],
+      "guarantees": ["INV-021", "INV-109", "INV-106"],
+      "expect": {
+        "decision": "pause:infrastructure",
+        "durable": {
+          "pauseReason": "infrastructure",
+          "driverLockHeld": true,
+          "escalations": 1
+        },
+        "effects": {
+          "publishedRounds": []
+        },
+        "events": {
+          "exclude": ["handoff:resolved"],
+          "journalResults": ["stopped"]
+        }
+      }
+    },
+    {
+      "id": "publication-replay",
+      "title": "A driver restarted after a crash mid-publish attaches, publishes once, and makes no second commit, push or open.",
+      "categories": ["uncertain-effects", "restart"],
+      "guarantees": ["INV-041", "INV-045", "INV-021", "INV-092"],
+      "expect": {
+        "decision": "publish",
+        "durable": {
+          "controlPhase": "publish",
+          "driverLockHeld": false
+        },
+        "effects": {
+          "commits": 0,
+          "pushes": 0,
+          "prOpens": 0,
+          "developerDispatches": 1,
+          "publishedRounds": [1]
+        },
+        "events": {
+          "journalResults": ["stopped", "merged_ready"]
+        }
+      }
+    },
+    {
+      "id": "isolation-refusal",
+      "title": "A turn that changes a path outside the Surface is never committed, pushed or opened and never reaches a reviewer.",
+      "categories": ["isolation-refusal"],
+      "guarantees": ["INV-033", "INV-120", "INV-123"],
+      "expect": {
+        "decision": "pause:infrastructure",
+        "durable": {
+          "pauseReason": "infrastructure"
+        },
+        "effects": {
+          "commits": 0,
+          "pushes": 0,
+          "prOpens": 0,
+          "codeReviewerDispatches": 0,
+          "publishedRounds": []
+        },
+        "events": {
+          "exclude": ["verdicts_read"]
+        }
+      }
+    }
+  ],
+  "guarantees": [
+    {
+      "id": "INV-001",
+      "node": "assess_round"
+    },
+    {
+      "id": "INV-002",
+      "node": "assess_round"
+    },
+    {
+      "id": "INV-003",
+      "node": "assess_round"
+    },
+    {
+      "id": "INV-005",
+      "node": "assess_round"
+    },
+    {
+      "id": "INV-008",
+      "node": "assess_round"
+    },
+    {
+      "id": "INV-009",
+      "node": "assess_round"
+    },
+    {
+      "id": "INV-010",
+      "node": "classify_gate_failure"
+    },
+    {
+      "id": "INV-011",
+      "node": "validate_developer_output"
+    },
+    {
+      "id": "INV-013",
+      "node": "validate_developer_output"
+    },
+    {
+      "id": "INV-016",
+      "node": "assess_round"
+    },
+    {
+      "id": "INV-018",
+      "node": "assess_round"
+    },
+    {
+      "id": "INV-019",
+      "node": "validate_reviewer_outputs"
+    },
+    {
+      "id": "INV-020",
+      "node": "assess_round"
+    },
+    {
+      "id": "INV-021",
+      "node": "publish_ready_for_merge"
+    },
+    {
+      "id": "INV-022",
+      "node": "publish_ready_for_merge"
+    },
+    {
+      "id": "INV-023",
+      "node": "classify_gate_failure"
+    },
+    {
+      "id": "INV-025",
+      "node": "reconcile_external_state"
+    },
+    {
+      "id": "INV-026",
+      "node": "cancel_run"
+    },
+    {
+      "id": "INV-027",
+      "node": "dispatch_developer"
+    },
+    {
+      "id": "INV-029",
+      "node": "build_revision_handoff"
+    },
+    {
+      "id": "INV-031",
+      "node": "validate_developer_output"
+    },
+    {
+      "id": "INV-032",
+      "node": "dispatch_developer"
+    },
+    {
+      "id": "INV-033",
+      "node": "validate_developer_output"
+    },
+    {
+      "id": "INV-035",
+      "node": "dispatch_developer"
+    },
+    {
+      "id": "INV-037",
+      "node": "dispatch_developer"
+    },
+    {
+      "id": "INV-038",
+      "node": "dispatch_developer"
+    },
+    {
+      "id": "INV-039",
+      "node": "validate_developer_output"
+    },
+    {
+      "id": "INV-041",
+      "node": "reconcile_external_state"
+    },
+    {
+      "id": "INV-042",
+      "node": "classify_gate_failure"
+    },
+    {
+      "id": "INV-043",
+      "node": "classify_gate_failure"
+    },
+    {
+      "id": "INV-045",
+      "node": "publish_ready_for_merge"
+    },
+    {
+      "id": "INV-048",
+      "node": "publish_ready_for_merge"
+    },
+    {
+      "id": "INV-053",
+      "node": "prepare_run"
+    },
+    {
+      "id": "INV-054",
+      "node": "dispatch_reviewers"
+    },
+    {
+      "id": "INV-056",
+      "node": "dispatch_reviewers"
+    },
+    {
+      "id": "INV-057",
+      "node": "validate_reviewer_outputs"
+    },
+    {
+      "id": "INV-059",
+      "node": "validate_reviewer_outputs"
+    },
+    {
+      "id": "INV-062",
+      "node": "dispatch_reviewers"
+    },
+    {
+      "id": "INV-063",
+      "node": "validate_reviewer_outputs"
+    },
+    {
+      "id": "INV-065",
+      "node": "dispatch_reviewers"
+    },
+    {
+      "id": "INV-068",
+      "node": "dispatch_reviewers"
+    },
+    {
+      "id": "INV-070",
+      "node": "dispatch_reviewers"
+    },
+    {
+      "id": "INV-071",
+      "node": "run_mechanical_gates"
+    },
+    {
+      "id": "INV-075",
+      "node": "reconcile_external_state"
+    },
+    {
+      "id": "INV-076",
+      "node": "raise_human_handoff"
+    },
+    {
+      "id": "INV-078",
+      "node": "raise_human_handoff"
+    },
+    {
+      "id": "INV-079",
+      "node": "raise_human_handoff"
+    },
+    {
+      "id": "INV-082",
+      "node": "reconcile_external_state"
+    },
+    {
+      "id": "INV-084",
+      "node": "raise_human_handoff"
+    },
+    {
+      "id": "INV-086",
+      "node": "raise_human_handoff"
+    },
+    {
+      "id": "INV-088",
+      "node": "raise_human_handoff"
+    },
+    {
+      "id": "INV-089",
+      "node": "cancel_run"
+    },
+    {
+      "id": "INV-090",
+      "node": "raise_human_handoff"
+    },
+    {
+      "id": "INV-092",
+      "node": "prepare_run"
+    },
+    {
+      "id": "INV-093",
+      "node": "reconcile_external_state"
+    },
+    {
+      "id": "INV-094",
+      "node": "reconcile_external_state"
+    },
+    {
+      "id": "INV-096",
+      "node": "reconcile_external_state"
+    },
+    {
+      "id": "INV-098",
+      "node": "prepare_run"
+    },
+    {
+      "id": "INV-099",
+      "node": "assess_round"
+    },
+    {
+      "id": "INV-100",
+      "node": "assess_round"
+    },
+    {
+      "id": "INV-101",
+      "node": "reconcile_external_state"
+    },
+    {
+      "id": "INV-102",
+      "node": "run_mechanical_gates"
+    },
+    {
+      "id": "INV-103",
+      "node": "prepare_run"
+    },
+    {
+      "id": "INV-104",
+      "node": "prepare_run"
+    },
+    {
+      "id": "INV-106",
+      "node": "raise_human_handoff"
+    },
+    {
+      "id": "INV-107",
+      "node": "reconcile_external_state"
+    },
+    {
+      "id": "INV-109",
+      "node": "raise_human_handoff"
+    },
+    {
+      "id": "INV-111",
+      "node": "assess_round"
+    },
+    {
+      "id": "INV-113",
+      "node": "prepare_run"
+    },
+    {
+      "id": "INV-116",
+      "node": "cancel_run"
+    },
+    {
+      "id": "INV-118",
+      "node": "prepare_run"
+    },
+    {
+      "id": "INV-120",
+      "node": "dispatch_developer"
+    },
+    {
+      "id": "INV-121",
+      "node": "run_mechanical_gates"
+    },
+    {
+      "id": "INV-122",
+      "node": "validate_developer_output"
+    },
+    {
+      "id": "INV-123",
+      "node": "dispatch_developer"
+    },
+    {
+      "id": "INV-124",
+      "node": "dispatch_developer"
+    },
+    {
+      "id": "INV-125",
+      "node": "prepare_sources"
+    },
+    {
+      "id": "INV-126",
+      "node": "classify_gate_failure"
+    },
+    {
+      "id": "INV-127",
+      "node": "prepare_run"
+    },
+    {
+      "id": "INV-137",
+      "node": "validate_developer_output"
+    }
+  ]
+}
