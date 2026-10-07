@@ -398,4 +398,8 @@ describe('judgeReviewCase', () => {
     expect(judgeReviewCase({ kind: 'no_review', reasons: ['blocked'] }, none, read(1)).pass).toBe(true)
     expect(judgeReviewCase({ kind: 'no_review', reasons: ['stale'] }, none, read(1)).pass).toBe(false)
   })
+  it('passes a never-malformed case whether the provider repaired the output or no review resulted', () => {
+    expect(judgeReviewCase({ kind: 'never-malformed' }, review, read(1)).pass).toBe(true)
+    expect(judgeReviewCase({ kind: 'never-malformed' }, none, read(1)).pass).toBe(true)
+  })
 })

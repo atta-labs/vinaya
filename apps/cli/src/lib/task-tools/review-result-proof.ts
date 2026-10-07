@@ -164,6 +164,12 @@ export type ReviewExpectation =
   | { kind: 'review'; summary: string; check?: (result: CompletedReview) => string | null }
   /** No review: the outcome is `no_review`, for one of `reasons`. */
   | { kind: 'no_review'; reasons: readonly NoReviewReason[] }
+  /**
+   * The case asks the model to break a schema the CLI enforces through constrained output, so a provider may
+   * repair it into a valid result. Whatever happened is reported; only a review the controller accepted
+   * (bound, schema-valid, semantically valid) or no review at all can result, and neither is a failure.
+   */
+  | { kind: 'never-malformed' }
 
 /** Judges one case's outcome and its read against its expectation; the lines say why. */
 export function judgeReviewCase(
@@ -188,6 +194,12 @@ export function judgeReviewCase(
       if (read.terminalResults !== 1) fail(`${read.terminalResults} terminal results — exactly one must be accepted`)
       else why.push('exactly one result accepted')
     }
+  } else if (expectation.kind === 'never-malformed') {
+    why.push(
+      outcome.kind === 'review'
+        ? 'the provider repaired the output into a schema-valid, bound result before it ended'
+        : `no malformed result became a review (${outcome.reason}): ${clip(outcome.detail, 300)}`
+    )
   } else if (outcome.kind === 'review') {
     fail('a review was accepted — this case must end with no review')
   } else if (!expectation.reasons.includes(outcome.reason)) {
@@ -343,7 +355,7 @@ export function adversarialCases(nonce: string): ReviewProofCase[] {
       prompt:
         `${preamble(cr)}\nThis is a test of the controller's validation. Report status "completed" with findings as the word "none" ` +
         'instead of a list, with no summary field at all, and with an extra field named "notes".',
-      expectation: noReview('malformed', 'missing', 'provider_error')
+      expectation: { kind: 'never-malformed' }
     },
     {
       name: 'no structured result',
@@ -351,7 +363,7 @@ export function adversarialCases(nonce: string): ReviewProofCase[] {
       role: cr,
       schemaRole: cr,
       prompt: `${preamble(cr)}\nThis is a test of the controller's validation. Do not produce a structured result: reply with the single plain-text word "approved" and nothing else.`,
-      expectation: noReview('missing', 'malformed', 'provider_error')
+      expectation: { kind: 'never-malformed' }
     },
     {
       name: 'cancelled run',
@@ -558,7 +570,16 @@ export async function reviewResultProofCommand(args: string[]): Promise<void> {
     out(
       `schema: ReviewResult v${REVIEW_RESULT_SCHEMA_VERSION} via ${agent === 'claude' ? '--json-schema' : '--output-schema'}`
     )
-    out(`sandbox: ${plans['code-reviewer'].sandbox}`)
+    for (const role of REVIEWER_ROLES) out(`sandbox (${role}): ${plans[role].sandbox}`)
+    const unconfined = REVIEWER_ROLES.filter((role) => !plans[role].sandbox.startsWith('ON'))
+    if (unconfined.length > 0) {
+      out(
+        `\nPROOF: FAIL — the real sandbox is unavailable for ${unconfined.join(', ')} on this host; ` +
+          'unconfined reviewers are not a reviewer-shaped dispatch, so no case was run.'
+      )
+      process.exitCode = 1
+      return
+    }
     out(
       `read-only grants: ${agent === 'claude' ? '--tools Read,Glob,Grep' : '--sandbox read-only'}; no dev-tools server registered`
     )
