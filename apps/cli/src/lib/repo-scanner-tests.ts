@@ -261,6 +261,11 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
   { test: 'apps/cli/tests/commands/sync.test.ts', roots: ['apps/cli/src/commands/sync.ts'], trigger: 'content' },
   { test: 'apps/cli/tests/doctrine.test.ts', roots: ['apps/cli/src/index.ts'], trigger: 'content' },
   { test: 'apps/cli/tests/import-boundary.test.ts', roots: ['apps/cli/'], trigger: 'content' },
+  {
+    test: 'apps/cli/tests/lib/log-entry-paths.test.ts',
+    roots: ['.github/workflows/', '.vinaya/hooks/', '.claude/settings.json', 'vinaya.config.json'],
+    trigger: 'content'
+  },
   { test: 'apps/cli/tests/lib/log-callers.test.ts', roots: ['.'], trigger: 'content' },
   {
     test: 'apps/cli/tests/lib/log-sink-no-sync-spawn.test.ts',
