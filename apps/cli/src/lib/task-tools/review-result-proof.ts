@@ -138,7 +138,7 @@ export function stageReviewInputs(root: string): StagedReview {
     headSha,
     baseSha,
     briefContent: 'proof brief',
-    objectivesVersion: 'proof-v1',
+    objectivesVersion: 'staged-objectives',
     rulingOrdinal: 0,
     policy: DEFAULT_REVIEW_POLICY
   })
