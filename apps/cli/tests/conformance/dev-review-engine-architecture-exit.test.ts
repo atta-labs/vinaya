@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -446,13 +447,70 @@ function baselineDrift(recorded: Corpus['baseline']['loopSurface'], current: str
   return out
 }
 
+function git(args: string[]): { ok: boolean; out: Buffer } {
+  const r = spawnSync('git', args, { cwd: REPO_ROOT, maxBuffer: 64 * 1024 * 1024 })
+  return { ok: r.status === 0, out: r.stdout ?? Buffer.alloc(0) }
+}
+
+const CORPUS_REL = 'apps/cli/tests/fixtures/dev-review-engine-scenarios.json'
+
+/**
+ * Every way the checked-out history fails to tie the corpus run to `commit`.
+ * The commit must be in this checkout's history and an ancestor of the head
+ * under test. A later commit that changes a loop module must update this
+ * corpus in that same commit; that is the only way a change can re-pin the
+ * baseline, because no change can name the default-branch commit it will
+ * itself become. While no later commit has changed the loop, the loop bytes
+ * at `commit` must equal the pinned digests exactly.
+ */
+function commitDrift(commit: string, recorded: Corpus['baseline']['loopSurface']): string[] {
+  if (!git(['cat-file', '-e', `${commit}^{commit}`]).ok) return [`${commit}: not in this checkout's history`]
+  if (!git(['merge-base', '--is-ancestor', commit, 'HEAD']).ok) return [`${commit}: not an ancestor of HEAD`]
+  const later = git(['log', '--format=%H', `${commit}..HEAD`, '--', ...recorded.map((f) => f.path)])
+    .out.toString()
+    .split('\n')
+    .filter(Boolean)
+  const out: string[] = []
+  for (const sha of later) {
+    const touched = git(['show', '--name-only', '--format=', sha]).out.toString().split('\n')
+    if (!touched.includes(CORPUS_REL)) out.push(`${sha}: changed the loop without updating the baseline`)
+  }
+  if (later.length > 0) return out
+  for (const f of recorded) {
+    const blob = git(['show', `${commit}:${f.path}`])
+    const digest = blob.ok ? createHash('sha256').update(blob.out).digest('hex') : null
+    if (digest !== f.sha256) out.push(`${f.path}: differs at ${commit.slice(0, 8)}`)
+  }
+  return out
+}
+
 describe('architecture exit gate (O4: the corpus pins its standalone baseline)', () => {
-  it('records the default-branch commit the corpus ran against', () => {
+  it('records the default-branch commit the corpus ran against, verified against the checked-out history', () => {
     expect(corpus.baseline.commit).toMatch(/^[0-9a-f]{40}$/)
     expect(corpus.baseline.branch).toBe('main')
+    expect(commitDrift(corpus.baseline.commit, corpus.baseline.loopSurface)).toEqual([])
     process.stdout.write(
       `standalone baseline: ${corpus.baseline.branch}@${corpus.baseline.commit} (${corpus.baseline.loopSurface.length} loop modules pinned)\n`
     )
+  })
+
+  it('a commit outside the history, a pinned byte the commit does not hold, or an unrecorded loop change is drift', () => {
+    const recorded = corpus.baseline.loopSurface
+    expect(commitDrift('0'.repeat(40), recorded)).toEqual([`${'0'.repeat(40)}: not in this checkout's history`])
+    const [first, ...rest] = recorded as [Corpus['baseline']['loopSurface'][number]]
+    expect(commitDrift(corpus.baseline.commit, [{ ...first, sha256: '0'.repeat(64) }, ...rest])).toEqual([
+      `${first.path}: differs at ${corpus.baseline.commit.slice(0, 8)}`
+    ])
+    // The newest commit that changed a loop module did not update this corpus, so
+    // a baseline recorded at its parent sees an unrecorded change on the way to HEAD.
+    const paths = recorded.map((f) => f.path)
+    const lastTouch = git(['log', '-1', '--format=%H', corpus.baseline.commit, '--', ...paths])
+      .out.toString()
+      .trim()
+    const before = git(['rev-parse', `${lastTouch}^`])
+      .out.toString()
+      .trim()
+    expect(commitDrift(before, recorded)).toContain(`${lastTouch}: changed the loop without updating the baseline`)
   })
 
   it('the standalone loop under test is byte-identical to that baseline', () => {

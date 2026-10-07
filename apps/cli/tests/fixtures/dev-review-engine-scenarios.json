@@ -5,7 +5,7 @@
   "invariantRegister": "apps/cli/tests/fixtures/dev-review-architecture-invariants.json",
   "capabilityMatrix": "apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json",
   "baseline": {
-    "commit": "9cef2051f55843e35aac2b2634475950bd874222",
+    "commit": "2f2a7d40bd425219375c89b2df572ebc8f1dc7bb",
     "branch": "main",
     "loopSurface": [
       {
