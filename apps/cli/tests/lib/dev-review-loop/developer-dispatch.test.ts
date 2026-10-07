@@ -516,6 +516,14 @@ describe('checkDocumentationSourcesReadable', () => {
     expect(result.output).toContain('retryable')
   })
 
+  it('refuses a dropped connection as retryable', async () => {
+    const result = await checkDocumentationSourcesReadable(
+      briefWith('https://example.com/flaky'),
+      depsFor(() => new FetchTransportError('connection-failed', 'ECONNRESET'))
+    )
+    expect(result).toMatchObject({ ready: false, retryable: true, source: 'https://example.com/flaky' })
+  })
+
   it('refuses an error status as a Planner correction', async () => {
     const result = await checkDocumentationSourcesReadable(
       briefWith('https://example.com/gone'),

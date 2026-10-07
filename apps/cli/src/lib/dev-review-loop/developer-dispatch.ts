@@ -745,13 +745,16 @@ export function checkTaskDispatchReadiness(
  * The verdict on a task's required documentation sources: `ready` (with an empty `output` when there was nothing to fetch) when every
  * URL source in the brief's `## Documentation` can be read, otherwise a
  * `refusal` naming the first source that cannot and the failure. `retryable`
- * is true only for a timeout — a later turn may read it; any other failure
+ * is true for a timeout or a dropped connection or name lookup — a later turn may read it; any other failure
  * (a login page, an error status, another host) needs the Planner to correct
  * the task's sources.
  */
 export type DocumentationReadability =
   | { ready: true; output: string }
   | { ready: false; retryable: boolean; source: string; failure: string; output: string }
+
+/** The refusals a later attempt may clear: the source did not answer in time, or the network dropped. */
+const RETRYABLE_SOURCE_FAILURES: ReadonlySet<string> = new Set(['timeout', 'connection-failed', 'dns-failure'])
 
 function hostOf(url: string): string | null {
   try {
@@ -787,7 +790,7 @@ export async function checkDocumentationSourcesReadable(
     let retryable = false
     if (!fetched.ok) {
       failure = `${fetched.error.check}: ${fetched.error.output}`
-      retryable = fetched.error.check === 'timeout'
+      retryable = RETRYABLE_SOURCE_FAILURES.has(fetched.error.check)
     } else {
       const doc = fetched.document
       const requestedHost = hostOf(doc.requestedUrl)
@@ -804,7 +807,7 @@ export async function checkDocumentationSourcesReadable(
         ...lines,
         `documentation source ${url} cannot be read: ${failure}`,
         retryable
-          ? 'retryable: the source timed out — the turn is refused and a later attempt may read it.'
+          ? 'retryable: the source could not be reached — the turn is refused and a later attempt may read it.'
           : 'needs the Planner to correct the task: its required source must be a public page that answers with the document itself.'
       ].join('\n')
       return { ready: false, retryable, source: url, failure, output }
