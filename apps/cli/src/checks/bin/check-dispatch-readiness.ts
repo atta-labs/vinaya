@@ -580,6 +580,8 @@ export function recoveryPromptFor(blockerClass: DispatchBlockerClass): string {
       return 'A declared dependency edge could not be resolved to any tranche/task/Issue — check the tranche slug and task id in the edge text, then re-run `vinaya check dispatch-readiness`.'
     case 'depends-on-not-merged':
       return 'A declared dependency is not merged yet. Do not start this task — wait for the named dependency PR to merge, then re-run `vinaya check dispatch-readiness`.'
+    case 'depends-on-read-failed':
+      return 'The forge could not be read for a declared dependency, so its merge status is unknown — this is a transient read failure, not a claim that the dependency is unmerged. Retry `vinaya check dispatch-readiness`; if it keeps failing, check forge access (network, rate limit, credentials) rather than waiting on the dependency.'
     case 'conflicts-with':
       return 'A declared conflicting task has an open or in-flight PR. Wait for it to merge before continuing, then re-run `vinaya check dispatch-readiness`.'
     case 'prior-tranche-archival':

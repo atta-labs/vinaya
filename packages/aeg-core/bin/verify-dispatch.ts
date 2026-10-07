@@ -104,7 +104,6 @@ import {
   deriveSection7,
   classifyDocOwnersManifest,
   DOC_OWNERS_PATH,
-  extractClosesReferences,
   issueBranchName,
   parsePremiseBlock,
   PRINCIPAL_ALLOWLIST,
@@ -144,19 +143,11 @@ function shJson<T>(cmd: string, args: string[]): T | null {
 const execFileAsync = promisify(execFile)
 
 /**
- * Async, larger-buffer sibling of `sh()` —
- * for a request whose payload is genuinely bounded (a `--limit`-capped `gh
- * pr list`, never an unbounded Milestone enumeration; that case is
- * `tranchesAttachedToMilestone`'s own field-selection-plus-pagination fix,
- * not this one) but can still exceed `execFileSync`'s 1 MB default once
- * `body` is requested across many PRs — found live against this repo's own
- * `gh pr list --json …,body --limit 300` (5.8 MB), the exact ENOBUFS shape
- * `fetchBacklogIssuePrsBatch` first shipped with, silently returning zero
- * PRs rather than throwing. 16 MB matches `@attalabs/aeg-forge-state`'s own
- * `gh.ts` precedent for the identical shape (a bounded list whose full
- * bodies must reach this process, because `Closes #<n>` matching happens in
- * TS via the shared `extractClosesReferences`, not a duplicate filter
- * server-side).
+ * Async, larger-buffer sibling of `sh()` — for a bounded request whose
+ * payload can still exceed `execFileSync`'s 1 MB default (an ENOBUFS there
+ * silently returned nothing). 16 MB matches `@attalabs/aeg-forge-state`'s own
+ * `gh.ts` precedent. Returns `null` on any failure; callers that must tell a
+ * failed read from an empty answer treat `null` as the former.
  */
 async function shJsonAsync<T>(cmd: string, args: string[]): Promise<T | null> {
   try {
@@ -264,58 +255,97 @@ function fetchTrancheBranchPrs(trancheSlug: string, repo: RepoRef): Map<string, 
 }
 
 /**
- * Injectable so tests can fake the forge without a real `gh pr list` call —
+ * Injectable so tests can fake the forge without a real `gh api graphql` call —
  * the same seam `IssueStateFetcher`/`SiblingTrancheResolver` already give
  * this file.
  */
 export type BacklogPrFetcher = (numbers: number[], repo: RepoRef) => Promise<Map<number, PrListEntry>>
 
+type BacklogPrRead = { nodes?: PrListEntry[]; closedByPullRequestsReferences?: { nodes?: PrListEntry[] } }
+
 /**
- * One batched fetch resolving each bare backlog Issue number (issue-586, O2)
- * to its OWN pull request, by the `task/issue-<n>` branch convention
- * (`issueBranchName`, `@attalabs/aeg-core`) and, when no branch matches, by a
- * `Closes #<n>` reference in a PR body (`extractClosesReferences`, same
- * package — one grammar, not a second copy). A number with neither match
- * returns no entry at all: `resolveDependsOn` falls back to the Issue's own
- * closed/open state for it, exactly as before this task.
+ * One batched GraphQL read resolving each bare backlog Issue number
+ * (issue-586, O2) to its OWN pull request — read for THAT Issue directly,
+ * never out of a window of the newest pull requests, so a dependency merged
+ * at any time is found: the pull request(s) on the `task/issue-<n>` branch
+ * (`issueBranchName`, `@attalabs/aeg-core`), else the pull request(s) the
+ * Issue itself names as closing it (`closedByPullRequestsReferences`). A
+ * number with neither returns no entry at all: `resolveDependsOn` falls back
+ * to the Issue's own closed/open state for it.
  *
- * Never treats a closed-without-merge Issue as satisfied: when a PR IS found
- * this way, `merged` is read off ITS OWN `state === 'MERGED'`, not off the
- * Issue's `CLOSED` state — an Issue closed as "not planned" with a real,
- * unmerged `task/issue-<n>` PR (or a PR that references it via `Closes #<n>`
- * without merging) correctly reports unmerged.
+ * Never treats a closed-without-merge Issue as satisfied: `merged` is read
+ * off the found pull request's own `state === 'MERGED'`, never off the
+ * Issue's `CLOSED` state. When several pull requests match, a merged one
+ * wins, else the first.
+ *
+ * THROWS `BacklogReadError` naming the numbers whose read failed — never an
+ * empty map, which would make every dependency read as unmerged. The caller
+ * reports those as their own retryable refusal.
  */
 export async function fetchBacklogIssuePrsBatch(numbers: number[], repo: RepoRef): Promise<Map<number, PrListEntry>> {
-  const result = new Map<number, PrListEntry>()
   const unique = [...new Set(numbers)]
+  const result = new Map<number, PrListEntry>()
   if (unique.length === 0) return result
 
-  const all =
-    (await shJsonAsync<PrListEntry[]>('gh', [
-      'pr',
-      'list',
-      '-R',
-      `${repo.owner}/${repo.repo}`,
-      '--state',
-      'all',
-      '--json',
-      'number,headRefName,state,mergedAt,body',
-      '--limit',
-      '300'
-    ])) ?? []
-  const byBranch = new Map<string, PrListEntry>()
-  for (const pr of all) byBranch.set(pr.headRefName, pr)
-
-  for (const n of unique) {
-    const branchMatch = byBranch.get(issueBranchName(n))
-    if (branchMatch) {
-      result.set(n, branchMatch)
-      continue
+  const batch = await readBacklogPrs(unique, repo)
+  if (batch) return batch
+  // One alias erroring (a number that is not an Issue, say) fails the whole
+  // GraphQL document — so read each number alone to find which ones fail,
+  // and let the readable ones keep their real state.
+  const failed: number[] = []
+  if (unique.length > 1) {
+    for (const n of unique) {
+      const one = await readBacklogPrs([n], repo)
+      if (one) for (const [k, v] of one) result.set(k, v)
+      else failed.push(n)
     }
-    const bodyMatch = all.find((pr) => extractClosesReferences(pr.body ?? '').has(n))
-    if (bodyMatch) result.set(n, bodyMatch)
+  } else failed.push(...unique)
+  throw new BacklogReadError(failed, result)
+}
+
+/** A failed forge read for `failed`; `found` carries what the readable numbers resolved to. */
+export class BacklogReadError extends Error {
+  constructor(
+    readonly failed: number[],
+    readonly found: Map<number, PrListEntry>
+  ) {
+    super(`could not read pull requests for ${failed.map((n) => `#${n}`).join(', ')} from the forge`)
+  }
+}
+
+async function readBacklogPrs(numbers: number[], repo: RepoRef): Promise<Map<number, PrListEntry> | null> {
+  const parsed = await shJsonAsync<{ data?: { repository?: Record<string, BacklogPrRead | null> } }>('gh', [
+    'api',
+    'graphql',
+    '-f',
+    `query=${buildBacklogPrQuery(numbers)}`,
+    '-F',
+    `owner=${repo.owner}`,
+    '-F',
+    `repo=${repo.repo}`
+  ])
+  const repository = parsed?.data?.repository
+  if (!repository) return null
+  const result = new Map<number, PrListEntry>()
+  const pick = (prs: PrListEntry[]): PrListEntry | undefined => prs.find((pr) => pr.state === 'MERGED') ?? prs[0]
+  for (const n of numbers) {
+    const found =
+      pick(repository[`b_${n}`]?.nodes ?? []) ?? pick(repository[`c_${n}`]?.closedByPullRequestsReferences?.nodes ?? [])
+    if (found) result.set(n, found)
   }
   return result
+}
+
+function buildBacklogPrQuery(numbers: number[]): string {
+  const fields = 'number headRefName state mergedAt'
+  const perIssue = numbers
+    .map(
+      (n) =>
+        `b_${n}: pullRequests(headRefName: "${issueBranchName(n)}", first: 5, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { ${fields} } }\n    ` +
+        `c_${n}: issue(number: ${n}) { closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes { ${fields} } } }`
+    )
+    .join('\n    ')
+  return `query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) {\n    ${perIssue}\n  } }`
 }
 
 // ---- tranche / task resolution ---------------------------------------------
@@ -390,8 +420,6 @@ export function fetchIssueStatesBatch(numbers: number[], repo: RepoRef): Map<num
   const raw = sh('gh', [
     'api',
     'graphql',
-    '-R',
-    `${repo.owner}/${repo.repo}`,
     '-f',
     `query=${buildBatchIssueStateQuery(unique)}`,
     '-F',
@@ -473,7 +501,20 @@ export async function resolveDependsOn(
     }
   }
   const issueStates = fetchIssueStates([...needed], repo)
-  const backlogPrs = await fetchBacklogPrs([...neededBacklog], repo)
+  // A failed forge read is its own fact, never an empty answer: an empty map
+  // would read every backlog dependency as unmerged.
+  let backlogPrs = new Map<number, PrListEntry>()
+  const backlogFailed = new Set<number>()
+  try {
+    backlogPrs = await fetchBacklogPrs([...neededBacklog], repo)
+  } catch (e) {
+    if (e instanceof BacklogReadError) {
+      backlogPrs = e.found
+      for (const n of e.failed) backlogFailed.add(n)
+    } else {
+      for (const n of neededBacklog) backlogFailed.add(n)
+    }
+  }
 
   const facts: DispatchDependsOnFact[] = []
   for (const edge of edges) {
@@ -491,12 +532,16 @@ export async function resolveDependsOn(
     }
     const directIssue = directIssueNumFromEdge(edge)
     if (directIssue !== null) {
-      // A bare Issue number's own pull request (branch or `Closes #<n>`
-      // body) is the authority when one exists (issue-586, O2, trap: never
+      // A bare Issue number's own pull request (its branch or closing
+      // pull request) is the authority when one exists (issue-586, O2, trap: never
       // treat a closed-without-merge Issue as a merged dependency) — the
       // Issue's own closed/open state is only the fallback for a number
       // with no known PR at all, unchanged from before this task.
       const backlogPr = backlogPrs.get(directIssue)
+      if (backlogFailed.has(directIssue) || (!backlogPr && !issueStates.has(directIssue))) {
+        facts.push({ id: edge, issue: directIssue, merged: false, readFailed: true })
+        continue
+      }
       const merged = backlogPr ? backlogPr.state === 'MERGED' : issueStates.get(directIssue) === 'CLOSED'
       facts.push({ id: edge, issue: directIssue, merged })
       continue
