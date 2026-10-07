@@ -210,6 +210,8 @@ import {
   driverDecidedPauseEvents,
   errorClassOf,
   isGitHubRateLimitError,
+  isRateLimitPauseDetail,
+  MAX_AUTOMATIC_RATE_LIMIT_RESUMES,
   MAX_CONSECUTIVE_RATE_LIMIT_WAITS,
   MAX_GATE_STALLED_TURNS,
   MAX_INFRASTRUCTURE_RETRIES,
@@ -7228,7 +7230,13 @@ export type DriverWatchDeps = {
   watchPollIntervalMs: number
   /** The single bounded wait an `'infrastructure'`/`'stale_driver'` pause takes before its own bare-resume retry — env-overridable (`VINAYA_DEV_REVIEW_LOOP_WATCH_INFRA_BACKOFF_MS`). */
   infrastructureBackoffMs: number
+  /** Reads the GitHub rate-limit reset (epoch seconds) once, without spending the limit — the same read the in-round wait makes. */
+  readRateLimitReset: () => Promise<number | null>
+  now: () => number
 }
+
+/** One driver run's count of automatic rate-limit resumes, kept across pauses so the bound survives each re-watch; keyed by the round the pauses belong to. */
+type RateLimitResumeBudget = { round: number; count: number }
 
 function defaultDriverWatchDeps(): DriverWatchDeps {
   return {
@@ -7241,7 +7249,9 @@ function defaultDriverWatchDeps(): DriverWatchDeps {
     runtimeDir,
     sleep: defaultSleep,
     watchPollIntervalMs: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_WATCH_POLL_MS', 30_000),
-    infrastructureBackoffMs: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_WATCH_INFRA_BACKOFF_MS', 60_000)
+    infrastructureBackoffMs: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_WATCH_INFRA_BACKOFF_MS', 60_000),
+    readRateLimitReset: defaultReadRateLimitReset,
+    now: () => Date.now()
   }
 }
 
@@ -7276,11 +7286,28 @@ async function watchPauseThenResume(
   pauseResult: LoopResult,
   loopDeps: Partial<LoopDeps>,
   w: DriverWatchDeps,
-  driverLockToken: string
+  driverLockToken: string,
+  rateLimitBudget: RateLimitResumeBudget
 ): Promise<{ kind: 'ended'; reason: DriverEndReason } | { kind: 'result'; result: LoopResult }> {
   const { prNumber, task } = pauseResult
   const reason = pauseResult.finalDecision.type === 'pause' ? pauseResult.finalDecision.reason : undefined
   let isBoundedRetry = reason === 'infrastructure' || reason === 'stale_driver'
+  // A GitHub rate-limit pause is told from the recorded pause detail
+  // (`rateLimitPauseDetail`'s own prefix), never from comment text. Its
+  // resume waits for the reset instead of the fixed backoff, and is
+  // automatic at most `MAX_AUTOMATIC_RATE_LIMIT_RESUMES` times for one
+  // round: past that the pause stays and a plain resume (or a ruling) clears it.
+  let isRateLimitPause = false
+  const classifyRateLimitPause = (pause: { round?: number; detail?: string } | null | undefined): void => {
+    isRateLimitPause = isRateLimitPauseDetail(pause?.detail)
+    if (!isRateLimitPause) return
+    const round = pause?.round ?? -1
+    if (rateLimitBudget.round !== round) {
+      rateLimitBudget.round = round
+      rateLimitBudget.count = 0
+    }
+    isBoundedRetry = rateLimitBudget.count < MAX_AUTOMATIC_RATE_LIMIT_RESUMES
+  }
   // Read once, right as this pause begins being watched — this IS the
   // pause `devReviewLoop` just wrote `pause-state.json` for, so it is never
   // null here (unlike a `--resume` invoked well after the fact, which must
@@ -7288,6 +7315,9 @@ async function watchPauseThenResume(
   const held = w.readPauseState(w.runtimeDir(), task)
   let agent = held?.agent
   let model = held?.model
+  classifyRateLimitPause(
+    held ?? { detail: pauseResult.finalDecision.type === 'pause' ? pauseResult.finalDecision.detail : undefined }
+  )
   let escalationId = held?.escalationId ?? null
   // "Newer than the pause" (O4's own wording) — captured now, the moment
   // this pause starts being watched, never re-derived from the pause's own
@@ -7316,6 +7346,7 @@ async function watchPauseThenResume(
     model = current.model
     bareRetryExhausted = false
     isBoundedRetry = current.reason === 'infrastructure' || current.reason === 'stale_driver'
+    classifyRateLimitPause(current)
     backoffDone = !isBoundedRetry
     baselineOrdinal = Math.max(
       baselineOrdinal,
@@ -7340,7 +7371,14 @@ async function watchPauseThenResume(
     }
 
     if (isBoundedRetry && !backoffDone) {
-      await w.sleep(w.infrastructureBackoffMs)
+      if (isRateLimitPause) {
+        // The reset is read once and slept to — never polled.
+        rateLimitBudget.count += 1
+        const reset = await w.readRateLimitReset()
+        await w.sleep(rateLimitWaitMs(reset, w.now()))
+      } else {
+        await w.sleep(w.infrastructureBackoffMs)
+      }
       backoffDone = true
       // Re-check the three exits above once more, right after the wait,
       // before ever attempting the bare resume below — never fire a resume
@@ -7430,9 +7468,10 @@ export async function runDriverLoop(
   // no real ownership behind it (a crashed run's pid reissued by the OS to
   // a fresh, unrelated invocation).
   const driverLockToken = randomUUID()
+  const rateLimitBudget: RateLimitResumeBudget = { round: -1, count: 0 }
   let result = await w.devReviewLoop({ ...input, retainDriverLock: driverLockToken }, loopDeps)
   while (result.finalDecision.type === 'pause' && result.prNumber > 0) {
-    const outcome = await watchPauseThenResume(result, loopDeps, w, driverLockToken)
+    const outcome = await watchPauseThenResume(result, loopDeps, w, driverLockToken, rateLimitBudget)
     if (outcome.kind === 'ended') {
       // The task is genuinely over — the ONE place this driver's own lock
       // is released outside `devReviewLoop`'s own finally (which never ran

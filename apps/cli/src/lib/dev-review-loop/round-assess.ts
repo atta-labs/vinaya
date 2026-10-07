@@ -203,6 +203,9 @@ export function isGitHubRateLimitError(err: unknown): boolean {
 /** How many rate-limit waits in a row, with no round progress between them, the loop makes before it pauses. */
 export const MAX_CONSECUTIVE_RATE_LIMIT_WAITS = 2
 
+/** How many times the watching driver resumes one round by itself after a rate-limit pause; past this the pause stays and a plain resume clears it. */
+export const MAX_AUTOMATIC_RATE_LIMIT_RESUMES = 2
+
 /** The wait when GitHub reports no reset time (a secondary limit does not): a few minutes. */
 export const RATE_LIMIT_FALLBACK_WAIT_MS = 5 * 60 * 1000
 
