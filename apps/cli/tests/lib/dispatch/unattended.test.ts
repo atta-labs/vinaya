@@ -8,12 +8,12 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { checkLinuxSandboxTools } from '../../../src/lib/worker-boundary.js'
 import { spawnSyncBudgeted } from '../process-fixture.js'
 import { FAKE_CLAUDE_PROBE_ANSWER } from './fake-sandbox-probe.js'
 
@@ -39,11 +39,6 @@ import { FAKE_CLAUDE_PROBE_ANSWER } from './fake-sandbox-probe.js'
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
 
-function pathWithoutRealVendors(): string {
-  const dirs = (process.env.PATH ?? '').split(':').filter(Boolean)
-  return dirs.filter((d) => !['claude', 'codex', 'gemini'].some((v) => existsSync(join(d, v)))).join(':')
-}
-
 const tempDirs: string[] = []
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
@@ -52,6 +47,26 @@ afterEach(() => {
 function tempDir(prefix: string): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)))
   tempDirs.push(dir)
+  return dir
+}
+
+/**
+ * A PATH made only of a fresh temporary directory holding links to the host
+ * tools these tests themselves run — never the host's own PATH minus some
+ * directories, which on a host with `bwrap`/`socat` beside `git` and the
+ * shell would drop those too. A stand-in `bwrap`/`socat` lives in the
+ * fixture's own `binDir`, ahead of this directory; leaving it out is what
+ * "this host lacks them" means.
+ */
+const HOST_TOOLS_THE_TESTS_RUN = ['bun', 'git', 'sh', 'which', 'cat', 'touch', 'env', 'node']
+
+function hostToolsPath(): string {
+  const dir = tempDir('vinaya-unattended-host-tools-')
+  const realDirs = (process.env.PATH ?? '').split(':').filter(Boolean)
+  for (const tool of HOST_TOOLS_THE_TESTS_RUN) {
+    const found = realDirs.map((d) => join(d, tool)).find((p) => existsSync(p))
+    if (found) symlinkSync(found, join(dir, tool))
+  }
   return dir
 }
 
@@ -130,7 +145,7 @@ function runDispatch(fixture: Fixture, extraArgs: string[]): { status: number; s
   return runVinayaDispatch(
     fixture.cwd,
     ['developer', '--agent', 'claude', '--prompt-file', fixture.promptFile, ...extraArgs],
-    { ...stripVinayaEnv(process.env), HOME: fixture.home, PATH: `${fixture.binDir}:${pathWithoutRealVendors()}` }
+    { ...stripVinayaEnv(process.env), HOME: fixture.home, PATH: `${fixture.binDir}:${hostToolsPath()}` }
   )
 }
 
@@ -169,7 +184,7 @@ describe('vinaya dispatch --unattended — Claude confinement', () => {
     }
   )
 
-  it.skipIf(process.platform !== 'linux' || checkLinuxSandboxTools().available)(
+  it.skipIf(process.platform !== 'linux')(
     'on a linux host without bubblewrap/socat, refuses before spawn and records the missing confinement in the Vinaya Log',
     () => {
       // `runVinayaDispatch` only captures `stderr` on a NON-zero exit (its
@@ -188,7 +203,7 @@ describe('vinaya dispatch --unattended — Claude confinement', () => {
       const fixture = buildFixture()
       const result = runDispatch(fixture, ['--unattended'])
 
-      expect(result.status).not.toBe(0)
+      expect(result.status, 'host fact simulated: linux with no bwrap or socat on PATH').not.toBe(0)
       expect(existsSync(fixture.markerFile)).toBe(false)
 
       const lines = outboxLines(fixture.home) as Array<{
@@ -202,7 +217,8 @@ describe('vinaya dispatch --unattended — Claude confinement', () => {
       expect(confinementLine).toBeDefined()
       expect(confinementLine?.event).toBe('completed')
       expect(confinementLine?.result).toBe('unavailable')
-      expect(confinementLine?.target).toContain('bwrap')
+      // Host fact simulated: Linux with neither bwrap nor socat on PATH.
+      expect(confinementLine?.target, 'host fact simulated: linux with no bwrap or socat on PATH').toContain('bwrap')
       expect(lines.find((l) => l.event === 'dispatch_failed')).toBeDefined()
     }
   )
@@ -239,7 +255,7 @@ describe('vinaya dispatch --unattended — Claude confinement', () => {
           env: {
             ...stripVinayaEnv(process.env),
             HOME: fixture.home,
-            PATH: `${fixture.binDir}:${pathWithoutRealVendors()}`
+            PATH: `${fixture.binDir}:${hostToolsPath()}`
           }
         },
         SUBPROCESS_BUDGET_MS,
@@ -347,7 +363,7 @@ function runDispatchNoAmbientLogin(
     {
       ...stripVinayaEnv(envWithoutConfigDir),
       HOME: fixture.home,
-      PATH: `${fixture.binDir}:${pathWithoutRealVendors()}`,
+      PATH: `${fixture.binDir}:${hostToolsPath()}`,
       ...extraEnv
     }
   )
@@ -520,7 +536,7 @@ describe('vinaya dispatch --unattended — O4 a Codex start never runs outside t
       expect(existsSync(fixture.markerFile)).toBe(false)
       // O4: this CI host is Linux without `bwrap` — the missing capability
       // `resolveCodexConfinement` names, not a bare "unavailable on this host".
-      expect(result.stderr).toContain('bwrap')
+      expect(result.stderr, 'host fact simulated: linux with no bwrap on PATH').toContain('bwrap')
     }
   )
 })
