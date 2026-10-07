@@ -19,6 +19,7 @@ import {
   adversarialCases,
   bindingFor,
   concurrentPrompt,
+  isCapacityFailure,
   judgeReviewCase,
   PROOF_OBJECTIVE_IDS,
   parseReviewProofArgs,
@@ -365,8 +366,51 @@ describe('the proof command', () => {
     }
     expect(cases.find((c) => c.name === 'cancelled run')?.cancelAfterMs).toBeGreaterThan(0)
     expect(cases.find((c) => c.name === 'provider error')?.model).toBeTruthy()
+    const byName = (n: string) => cases.find((c) => c.name === n)
+    // A schema-enforced refusal of the empty file is a correct no review, whichever way it surfaces.
+    const noFile = byName('finding without a file')?.expectation
+    expect(noFile).toEqual({ kind: 'no_review', reasons: ['blocked', 'malformed', 'rejected'] })
+    // Malformed and missing can only end as no review: never an accepted one, and neither may be repaired by the CLI.
+    expect(byName('malformed model output')?.schemaMode).toBe('malformable')
+    expect(byName('malformed model output')?.expectation).toEqual({ kind: 'no_review', reasons: ['malformed'] })
+    expect(byName('no structured result')?.schemaMode).toBe('unenforced')
+    expect(byName('no structured result')?.expectation.kind).toBe('no_review')
+    // Reviewers read through the shell on Codex, so no prompt forbids it.
+    for (const c of cases) expect(c.prompt).not.toContain('shell')
     // The only cases that may end in an accepted review are the no-line one.
     expect(cases.filter((c) => c.expectation.kind === 'review').map((c) => c.name)).toEqual(['finding without a line'])
+  })
+})
+
+describe('provider capacity', () => {
+  const readWith = (errors: string[]): TurnRead => ({
+    sessionId: null,
+    emissions: [],
+    terminalResults: 0,
+    terminal: 'turn.failed',
+    event: null,
+    raw: null,
+    errors
+  })
+  it('recognises a capacity failure only on a run with no review', () => {
+    const outcome = classifyReviewOutcome(
+      {
+        cancelled: false,
+        terminal: 'turn.failed',
+        errors: ['Selected model is at capacity.'],
+        hasResult: false,
+        raw: null
+      },
+      binding('code-reviewer')
+    )
+    const run = { read: readWith(['Selected model is at capacity.']), outcome, stderrTail: '' }
+    expect(isCapacityFailure(run)).toBe(true)
+    expect(isCapacityFailure({ ...run, outcome: classifyReviewOutcome(facts(), binding('code-reviewer')) })).toBe(false)
+    const boom = classifyReviewOutcome(
+      { cancelled: false, terminal: 'turn.failed', errors: ['boom'], hasResult: false, raw: null },
+      binding('code-reviewer')
+    )
+    expect(isCapacityFailure({ ...run, read: readWith(['boom']), outcome: boom })).toBe(false)
   })
 })
 

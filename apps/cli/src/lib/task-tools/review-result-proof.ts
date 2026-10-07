@@ -8,7 +8,7 @@
  * every case here is a reviewer-shaped dispatch on this host: a fresh,
  * non-resumed session; the agent's own sandbox where the host supports it and
  * the subscription login; read-only grants (Claude Code `--tools
- * Read,Glob,Grep`, Codex `--sandbox read-only`); and the staged inputs a real
+ * Read,Glob,Grep`; Codex the dispatch's own argv under the worker-boundary policy home, whose read-only shell reads work); and the staged inputs a real
  * reviewer reads — a diff and the one review-input manifest (built by the same
  * `buildReviewInputManifest`) — in a throwaway two-commit repository, so the
  * real worktree is never an input. No dev-tools server is registered: a
@@ -205,6 +205,12 @@ export type ReviewProofCase = {
   role: ReviewerRole
   /** The role whose schema the provider is handed; `undefined` hands it the schema that admits either role. */
   schemaRole: ReviewerRole | undefined
+  /**
+   * `enforced` (default): the provider is handed the role's schema. `unenforced`: no structured-output flag, so
+   * the provider can only answer in plain text — a run with no structured result. `malformable`: a schema the
+   * provider can satisfy with a value the controller's own schema refuses, so the malformed value reaches it.
+   */
+  schemaMode?: 'enforced' | 'unenforced' | 'malformable'
   prompt: string
   expectation: ReviewExpectation
   model?: string
@@ -214,7 +220,7 @@ export type ReviewProofCase = {
 
 function preamble(role: ReviewerRole): string {
   return [
-    `You are the ${role} in a short, scripted proof dispatch. You are read-only: do not create, edit or delete any file, and do not run shell commands.`,
+    `You are the ${role} in a short, scripted proof dispatch. You are read-only: do not create, edit or delete any file.`,
     'Read review-input/manifest.json, review-input/diff.patch and review-input/objectives.txt in the current directory.',
     `End your turn with your review result as your structured output, using schemaVersion ${REVIEW_RESULT_SCHEMA_VERSION}.`
   ].join('\n')
@@ -311,7 +317,7 @@ export function adversarialCases(nonce: string): ReviewProofCase[] {
       role: cr,
       schemaRole: cr,
       prompt: `${base(cr)}${completedInstruction(cr, { summary: `no-file-${nonce}`, severity: OWN_SEVERITY[cr], file: '' })}`,
-      expectation: noReview('malformed', 'rejected')
+      expectation: noReview('blocked', 'malformed', 'rejected')
     },
     {
       name: 'finding without a line',
@@ -340,18 +346,20 @@ export function adversarialCases(nonce: string): ReviewProofCase[] {
       objectives: 'O4',
       role: cr,
       schemaRole: cr,
+      schemaMode: 'malformable',
       prompt:
-        `${preamble(cr)}\nThis is a test of the controller's validation. Report status "completed" with findings as the word "none" ` +
-        'instead of a list, with no summary field at all, and with an extra field named "notes".',
-      expectation: noReview('malformed', 'missing', 'provider_error')
+        `${preamble(cr)}\nThis is a test of the controller's validation. Your structured output is {"reviewResult": <string>}: ` +
+        'set reviewResult to the plain string "none" — not a review object.',
+      expectation: noReview('malformed')
     },
     {
       name: 'no structured result',
       objectives: 'O4',
       role: cr,
       schemaRole: cr,
-      prompt: `${preamble(cr)}\nThis is a test of the controller's validation. Do not produce a structured result: reply with the single plain-text word "approved" and nothing else.`,
-      expectation: noReview('missing', 'malformed', 'provider_error')
+      schemaMode: 'unenforced',
+      prompt: `${preamble(cr)}\nThis is a test of the controller's validation. Reply with the single plain-text word "approved" and nothing else.`,
+      expectation: noReview('missing', 'malformed')
     },
     {
       name: 'cancelled run',
@@ -389,7 +397,7 @@ export function concurrentPrompt(role: ReviewerRole, nonce: string): string {
 
 type ReviewerLaunchPlan = {
   sandbox: string
-  launch: (schemaRole: ReviewerRole | undefined, model: string | undefined) => Launch
+  launch: (schema: Record<string, unknown> | null, model: string | undefined) => Launch
 }
 
 /** One reviewer launch plan: its own scratch, settings/CODEX_HOME and sandbox, read-only grants, and the one structured-output flag. */
@@ -424,15 +432,14 @@ function planReviewerLaunch(
       sandbox: confined
         ? "ON — Claude Code's own sandbox, in the dispatch settings file"
         : `OFF (disclosed) — ${confinement.ok && !confinement.confined ? confinement.warning : 'unavailable'}`,
-      launch: (schemaRole, model) => ({
+      launch: (schema, model) => ({
         args: [
           ...vendorSessionArgs('claude', model),
           '--tools',
           'Read,Glob,Grep',
           '--settings',
           settingsPath,
-          '--json-schema',
-          JSON.stringify(reviewResultJsonSchema(schemaRole))
+          ...(schema === null ? [] : ['--json-schema', JSON.stringify(schema)])
         ],
         env: buildWorkerEnv(process.env, {
           ...accountEnv(process.env, () => userInfo().username),
@@ -457,12 +464,16 @@ function planReviewerLaunch(
   let schemaCount = 0
   return {
     sandbox: confinement.confined ? `ON — ${confinement.detail}` : `OFF (disclosed) — ${confinement.detail}`,
-    launch: (schemaRole, model) => {
-      const schemaPath = join(scratchDir, `review-result-${schemaCount++}.schema.json`)
-      writeFileSync(schemaPath, `${JSON.stringify(reviewResultJsonSchema(schemaRole), null, 2)}\n`)
-      const args = vendorSessionArgs('codex', model).map((a) => (a === 'workspace-write' ? 'read-only' : a))
+    launch: (schema, model) => {
+      // The dispatch's own argv, unchanged: the staged policy home confines the run, and its read-only shell reads work.
+      const args = vendorSessionArgs('codex', model)
+      let schemaPath: string | null = null
+      if (schema !== null) {
+        schemaPath = join(scratchDir, `review-result-${schemaCount++}.schema.json`)
+        writeFileSync(schemaPath, `${JSON.stringify(schema, null, 2)}\n`)
+      }
       return {
-        args: beforeStdinMarker(args, ['--output-schema', schemaPath]),
+        args: schemaPath === null ? args : beforeStdinMarker(args, ['--output-schema', schemaPath]),
         env: buildWorkerEnv(process.env, {
           ...accountEnv(process.env, () => userInfo().username),
           CODEX_HOME: codexHome,
@@ -474,21 +485,35 @@ function planReviewerLaunch(
   }
 }
 
+/** The schema a case hands the provider, or `null` for none. */
+function schemaFor(proofCase: Pick<ReviewProofCase, 'schemaRole' | 'schemaMode'>): Record<string, unknown> | null {
+  if (proofCase.schemaMode === 'unenforced') return null
+  if (proofCase.schemaMode === 'malformable') {
+    return {
+      type: 'object',
+      properties: { reviewResult: { type: 'string' } },
+      required: ['reviewResult'],
+      additionalProperties: false
+    }
+  }
+  return reviewResultJsonSchema(proofCase.schemaRole)
+}
+
 type CaseRun = { read: TurnRead; outcome: ReviewOutcome; exit: string; stderrTail: string; spawnError?: string }
 
 async function runReviewer(
   agent: ReviewProofAgent,
   plan: ReviewerLaunchPlan,
-  proofCase: Pick<ReviewProofCase, 'schemaRole' | 'prompt' | 'model' | 'cancelAfterMs'>,
+  proofCase: Pick<ReviewProofCase, 'schemaRole' | 'schemaMode' | 'prompt' | 'model' | 'cancelAfterMs'>,
   candidateDir: string,
   binding: ReviewBinding,
   shownArgs: (args: string[]) => void
 ): Promise<CaseRun> {
-  const launch = plan.launch(proofCase.schemaRole, proofCase.model)
+  const launch = plan.launch(schemaFor(proofCase), proofCase.model)
   shownArgs(launch.args.map((a) => (a.startsWith('{') ? '<schema>' : a)))
   const ran = await runChild(agent, launch, proofCase.prompt, candidateDir, proofCase.cancelAfterMs)
   const read = agent === 'claude' ? readClaudeTurnOutput(ran.stdout) : readCodexTurnOutput(ran.stdout)
-  const cancelled = proofCase.cancelAfterMs !== undefined && ran.signal !== null
+  const cancelled = proofCase.cancelAfterMs !== undefined && ran.cancelled === true
   const errors = [...read.errors, ...(ran.spawnError ? [ran.spawnError] : [])]
   const stderrTail = ran.stderr.trim().split('\n').slice(-3).join(' | ')
   if (read.event === null && errors.length === 0 && stderrTail.length > 0 && ran.exitCode !== 0) errors.push(stderrTail)
@@ -503,6 +528,27 @@ async function runReviewer(
     stderrTail,
     spawnError: ran.spawnError
   }
+}
+
+const CAPACITY_FAILURE = /at capacity/i
+
+/** Whether a run ended with no review because the provider had no capacity — transient, and no verdict on the result path. */
+export function isCapacityFailure(run: Pick<CaseRun, 'read' | 'outcome' | 'stderrTail'>): boolean {
+  if (run.outcome.kind === 'review') return false
+  return CAPACITY_FAILURE.test([...run.read.errors, run.stderrTail, run.outcome.detail].join(' | '))
+}
+
+/** One run, retried once when the provider reports no capacity; the second capacity failure is returned flagged. */
+async function runWithCapacityRetry(
+  out: (line?: string) => void,
+  run: () => Promise<CaseRun>
+): Promise<CaseRun & { inconclusive: boolean }> {
+  let ran = await run()
+  if (isCapacityFailure(ran)) {
+    out('provider capacity failure — retrying this case once before judging it')
+    ran = await run()
+  }
+  return { ...ran, inconclusive: isCapacityFailure(ran) }
 }
 
 function describeOutcome(out: (line?: string) => void, run: CaseRun): void {
@@ -544,7 +590,8 @@ export async function reviewResultProofCommand(args: string[]): Promise<void> {
   const out = (line = ''): void => {
     process.stdout.write(`${line}\n`)
   }
-  let allPass = true
+  let anyFail = false
+  let anyInconclusive = false
   const summaries: string[] = []
   const sessions = new Map<string, string>()
   try {
@@ -569,16 +616,17 @@ export async function reviewResultProofCommand(args: string[]): Promise<void> {
       return
     }
     out(
-      `read-only grants: ${agent === 'claude' ? '--tools Read,Glob,Grep' : '--sandbox read-only'}; no dev-tools server registered`
+      `grants: ${agent === 'claude' ? '--tools Read,Glob,Grep' : "the dispatch's own Codex argv, confined by the staged policy home (read-only shell reads allowed)"}; no dev-tools server registered`
     )
     out(
       `staged review inputs: head ${staged.headSha}, base ${staged.baseSha}, manifest digest ${staged.manifestDigest}`
     )
     out(`brief objectives: ${PROOF_OBJECTIVE_IDS.join(', ')}`)
 
-    const record = (name: string, pass: boolean, line: string): void => {
-      if (!pass) allPass = false
-      summaries.push(`${pass ? 'PASS' : 'FAIL'}  ${name} — ${line}`)
+    const record = (name: string, pass: boolean, line: string, inconclusive = false): void => {
+      if (inconclusive) anyInconclusive = true
+      else if (!pass) anyFail = true
+      summaries.push(`${inconclusive ? 'INCONCLUSIVE' : pass ? 'PASS' : 'FAIL'}  ${name} — ${line}`)
     }
     const noteSession = (name: string, run: CaseRun): string | null => {
       const id = run.read.sessionId
@@ -593,22 +641,25 @@ export async function reviewResultProofCommand(args: string[]): Promise<void> {
     const shown: Record<string, string[]> = {}
     const pair = await Promise.all(
       REVIEWER_ROLES.map((role) =>
-        runReviewer(
-          agent,
-          plans[role],
-          { schemaRole: role, prompt: concurrentPrompt(role, nonce) },
-          staged.dir,
-          bindingFor(role, staged),
-          (a) => {
-            shown[role] = a
-          }
+        runWithCapacityRetry(out, () =>
+          runReviewer(
+            agent,
+            plans[role],
+            { schemaRole: role, prompt: concurrentPrompt(role, nonce) },
+            staged.dir,
+            bindingFor(role, staged),
+            (a) => {
+              shown[role] = a
+            }
+          )
         )
       )
     )
     const round = new RoundReviews()
     let pairPass = true
+    const pairInconclusive = pair.some((run) => run.inconclusive)
     for (const [i, role] of REVIEWER_ROLES.entries()) {
-      const run = pair[i] as CaseRun
+      const run = pair[i] as CaseRun & { inconclusive: boolean }
       out(`\n  [${role}] invocation: ${agent} ${(shown[role] ?? []).join(' ')}`)
       describeOutcome(out, run)
       const judged = judgeReviewCase(
@@ -642,19 +693,21 @@ export async function reviewResultProofCommand(args: string[]): Promise<void> {
     }
     if (round.size !== REVIEWER_ROLES.length) pairPass = false
     out(`  reviews accepted this round: ${round.size} of ${REVIEWER_ROLES.length}, one per role`)
-    out(`verdict: ${pairPass ? 'PASS' : 'FAIL'}`)
-    record('concurrent reviewers, one manifest', pairPass, `accepted ${round.size} of ${REVIEWER_ROLES.length}`)
+    out(`verdict: ${pairInconclusive ? 'INCONCLUSIVE (provider capacity)' : pairPass ? 'PASS' : 'FAIL'}`)
+    record(
+      'concurrent reviewers, one manifest',
+      pairPass,
+      `accepted ${round.size} of ${REVIEWER_ROLES.length}${pairInconclusive ? '; a reviewer hit provider capacity twice' : ''}`,
+      pairInconclusive
+    )
 
     // --- adversarial and failure cases, each a fresh session ---
     for (const proofCase of adversarialCases(nonce)) {
       out(`\n--- case: ${proofCase.name} (${proofCase.objectives}; role ${proofCase.role}) ---`)
-      const run = await runReviewer(
-        agent,
-        plans[proofCase.role],
-        proofCase,
-        staged.dir,
-        bindingFor(proofCase.role, staged),
-        (a) => out(`invocation: ${agent} ${a.join(' ')}`)
+      const run = await runWithCapacityRetry(out, () =>
+        runReviewer(agent, plans[proofCase.role], proofCase, staged.dir, bindingFor(proofCase.role, staged), (a) =>
+          out(`invocation: ${agent} ${a.join(' ')}`)
+        )
       )
       if (run.spawnError) {
         out(`FAIL: could not spawn ${agent}: ${run.spawnError}`)
@@ -662,6 +715,11 @@ export async function reviewResultProofCommand(args: string[]): Promise<void> {
         continue
       }
       describeOutcome(out, run)
+      if (run.inconclusive) {
+        out('verdict: INCONCLUSIVE — the provider reported no capacity on the retry too; this is not a pass')
+        record(proofCase.name, false, 'provider capacity failure twice — not judged', true)
+        continue
+      }
       const judged = judgeReviewCase(proofCase.expectation, run.outcome, run.read)
       const reused = noteSession(proofCase.name, run)
       if (reused) {
@@ -681,9 +739,9 @@ export async function reviewResultProofCommand(args: string[]): Promise<void> {
     }
     out(`\n=== summary — ${agent} ===`)
     for (const line of summaries) out(line)
-    out(`PROOF: ${allPass ? 'PASS' : 'FAIL'}`)
+    out(`PROOF: ${anyFail ? 'FAIL' : anyInconclusive ? 'INCONCLUSIVE' : 'PASS'}`)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
-  if (!allPass) process.exitCode = 1
+  if (anyFail || anyInconclusive) process.exitCode = 1
 }

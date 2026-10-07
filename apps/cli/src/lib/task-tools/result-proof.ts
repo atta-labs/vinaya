@@ -434,6 +434,8 @@ export type RunOutcome = {
   stdout: string
   stderr: string
   spawnError?: string
+  /** The caller's own `cancelAfterMs` kill was sent while the child was still running — whatever exit code or signal followed. */
+  cancelled?: boolean
 }
 
 export function runChild(
@@ -448,18 +450,21 @@ export function runChild(
     let stdout = ''
     let stderr = ''
     let cancelArmed = false
+    let cancelled = false
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => {
       stdout += chunk
       if (cancelAfterMs !== undefined && !cancelArmed) {
         cancelArmed = true
-        setTimeout(() => child.kill('SIGTERM'), cancelAfterMs)
+        setTimeout(() => {
+          if (child.exitCode === null && child.signalCode === null) cancelled = child.kill('SIGTERM')
+        }, cancelAfterMs)
       }
     })
     child.stderr.on('data', (chunk: string) => (stderr += chunk))
     child.on('error', (err) => resolve({ exitCode: null, signal: null, stdout, stderr, spawnError: err.message }))
-    child.on('close', (exitCode, signal) => resolve({ exitCode, signal, stdout, stderr }))
+    child.on('close', (exitCode, signal) => resolve({ exitCode, signal, stdout, stderr, cancelled }))
     child.stdin.on('error', () => {
       // a child that exits before reading its whole prompt closes the pipe — the outcome still reports it
     })
