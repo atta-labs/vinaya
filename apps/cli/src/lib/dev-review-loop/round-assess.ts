@@ -181,7 +181,54 @@ export class DispatchSignInRefused extends Error {
  * its bound.
  */
 export function spendsInfrastructureRetry(err: unknown): boolean {
-  return !(err instanceof DispatchSignInRefused)
+  return !(err instanceof DispatchSignInRefused) && !isGitHubRateLimitError(err)
+}
+
+/** The rate-limit wording GitHub's REST and GraphQL APIs use, primary and secondary — nothing that merely mentions GitHub matches. */
+const GITHUB_RATE_LIMIT_WORDING = /api rate limit (?:already )?exceeded|secondary rate limit|rate limit exceeded/i
+
+/**
+ * Is this error GitHub refusing a read or write because a rate limit — the
+ * primary hourly one or a secondary one — is spent? Matches on the
+ * rate-limit wording alone, in the error's message or its captured stderr;
+ * every other uncaught error keeps the ordinary infrastructure path.
+ */
+export function isGitHubRateLimitError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  const stderr = (err as { stderr?: unknown }).stderr
+  return GITHUB_RATE_LIMIT_WORDING.test(`${err.message}\n${stderr === undefined ? '' : String(stderr)}`)
+}
+
+/** How many rate-limit waits in a row, with no round progress between them, the loop makes before it pauses. */
+export const MAX_CONSECUTIVE_RATE_LIMIT_WAITS = 2
+
+/** The wait when GitHub reports no reset time (a secondary limit does not): a few minutes. */
+export const RATE_LIMIT_FALLBACK_WAIT_MS = 5 * 60 * 1000
+
+/** Slack added past the reported reset, so the first re-read lands after the window has actually rolled over. */
+const RATE_LIMIT_RESET_SLACK_MS = 5_000
+
+/** The pause detail for a loop that waited out the rate limit and met it again; it names the cause and what clears it. */
+export const RATE_LIMIT_PAUSE_DETAIL =
+  'GitHub rate limit: the loop waited for the limit to reset twice and was still refused. ' +
+  'No ruling is needed — a plain resume continues once the limit has reset'
+
+/** Does this pause detail say the pause is a GitHub rate limit, so its comment must not ask for a ruling? */
+export function isRateLimitPauseDetail(detail: string | undefined): boolean {
+  return detail?.startsWith('GitHub rate limit:') === true
+}
+
+/**
+ * How long to wait for a rate limit to reset: until the reported reset
+ * (epoch seconds, from `gh api rate_limit`, which does not count against the
+ * limit) plus a little slack, or the fixed fallback when none is reported or
+ * the reported time has already passed (the limit that fired is a different
+ * one, a secondary limit).
+ */
+export function rateLimitWaitMs(resetEpochSeconds: number | null, nowMs: number): number {
+  if (resetEpochSeconds === null) return RATE_LIMIT_FALLBACK_WAIT_MS
+  const untilReset = resetEpochSeconds * 1000 - nowMs
+  return untilReset > 0 ? untilReset + RATE_LIMIT_RESET_SLACK_MS : RATE_LIMIT_FALLBACK_WAIT_MS
 }
 
 /**

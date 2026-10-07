@@ -209,6 +209,8 @@ import {
   driverCrashEvents,
   driverDecidedPauseEvents,
   errorClassOf,
+  isGitHubRateLimitError,
+  MAX_CONSECUTIVE_RATE_LIMIT_WAITS,
   MAX_GATE_STALLED_TURNS,
   MAX_INFRASTRUCTURE_RETRIES,
   parseConfidenceReply,
@@ -216,6 +218,8 @@ import {
   parseShortstat,
   persistLoopState,
   pollUntil,
+  RATE_LIMIT_PAUSE_DETAIL,
+  rateLimitWaitMs,
   renderDeveloperRoundComment,
   roundResponsePromptLine,
   routeCompletionEvents,
@@ -537,6 +541,13 @@ export type LoopDeps = {
   fetchLoopHistory: (prNumber: number | null) => ReconstructedJournal
   sleep: (ms: number) => Promise<void>
   now: () => number
+  /**
+   * The epoch-second a spent GitHub rate limit resets, read from `gh api
+   * rate_limit` (which does not count against the limit); `null` when none is
+   * reported (a secondary limit reports none) or the read fails. Optional: a
+   * fixture that does not stub it waits the fixed fallback.
+   */
+  readRateLimitReset?: () => Promise<number | null>
   /**
    * O1 (driver liveness): starts the driver's liveness heartbeat — a repeating timer
    * that fires `cb` every `intervalMs` while the process is alive, returning
@@ -1840,6 +1851,21 @@ export function deriveVerdictPauseDetail(
   return undefined
 }
 
+async function defaultReadRateLimitReset(): Promise<number | null> {
+  try {
+    const out = await gh([
+      'api',
+      'rate_limit',
+      '--jq',
+      '[.resources.core, .resources.graphql] | map(select(.remaining == 0) | .reset) | max'
+    ])
+    const reset = Number(out.trim())
+    return Number.isFinite(reset) && reset > 0 ? reset : null
+  } catch {
+    return null
+  }
+}
+
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -2034,6 +2060,7 @@ function defaultDeps(): LoopDeps {
     fetchLoopHistory,
     sleep: defaultSleep,
     now: () => Date.now(),
+    readRateLimitReset: defaultReadRateLimitReset,
     setHeartbeat: defaultSetHeartbeat,
     // O3: env-overridable the same way the gate poll
     // budget already is (`gatePollEnvOverride`'s own doc comment) — a real
@@ -5574,7 +5601,27 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // final decision (`publish` → finished, any pause → paused), guarded so
       // it never double-writes with the escalation/publish early returns
       // above or the crash `catch` below.
-      const loopResult = await runRoundLoop()
+      // A GitHub rate limit that ends a round waits for the reset and
+      // re-enters the loop on the SAME state (`decision`, `round` are this
+      // closure's own); only `MAX_CONSECUTIVE_RATE_LIMIT_WAITS` waits in a row
+      // with no round progress between them fall through to the outer
+      // handler's pause. Every other error goes there at once.
+      let rateLimitWaits = 0
+      let roundAtLastWait = -1
+      let loopResult: LoopResult
+      while (true) {
+        try {
+          loopResult = await runRoundLoop()
+          break
+        } catch (loopErr) {
+          if (!isGitHubRateLimitError(loopErr)) throw loopErr
+          rateLimitWaits = round === roundAtLastWait ? rateLimitWaits + 1 : 1
+          if (rateLimitWaits > MAX_CONSECUTIVE_RATE_LIMIT_WAITS) throw loopErr
+          roundAtLastWait = round
+          const reset = d.readRateLimitReset ? await d.readRateLimitReset() : null
+          await d.sleep(rateLimitWaitMs(reset, d.now()))
+        }
+      }
       recordDriverExited(loopResult.finalDecision.type === 'publish' ? 'finished' : 'paused')
       // O2: a published decision is the loop's genuine end — the task will
       // not resume — so this task's staged per-dispatch agent-config homes
@@ -5619,7 +5666,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         detail:
           err instanceof DispatchSignInRefused
             ? err.message
-            : `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
+            : isGitHubRateLimitError(err)
+              ? RATE_LIMIT_PAUSE_DETAIL
+              : `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
       }
       keepLockAlive = true
       // The SAME durable snapshot every

@@ -14,7 +14,14 @@ import {
   assertDispatchOrEscalate,
   DeveloperDispatchHistory,
   DevReviewLoopResumeError,
-  parseConfidenceReply
+  DispatchSignInRefused,
+  isGitHubRateLimitError,
+  isRateLimitPauseDetail,
+  parseConfidenceReply,
+  RATE_LIMIT_FALLBACK_WAIT_MS,
+  RATE_LIMIT_PAUSE_DETAIL,
+  rateLimitWaitMs,
+  spendsInfrastructureRetry
 } from '../../../src/lib/dev-review-loop/round-assess'
 import type { DispatchHandle } from '../../../src/lib/dispatch'
 
@@ -126,5 +133,40 @@ describe('DeveloperDispatchHistory — latches the FIRST success round (round-3 
     const h = new DeveloperDispatchHistory()
     h.recordSuccess(1)
     expect(h.succeededBeforeRound(2)).toBe(true)
+  })
+})
+
+describe('GitHub rate-limit classification', () => {
+  it('matches the primary and secondary rate-limit wording, in the message or the stderr', () => {
+    expect(isGitHubRateLimitError(new Error('gh: API rate limit already exceeded for user ID 1. (HTTP 403)'))).toBe(
+      true
+    )
+    expect(isGitHubRateLimitError(new Error('You have exceeded a secondary rate limit'))).toBe(true)
+    const withStderr = Object.assign(new Error('Command failed: gh api'), { stderr: 'API rate limit exceeded' })
+    expect(isGitHubRateLimitError(withStderr)).toBe(true)
+  })
+
+  it('never matches an error that merely mentions GitHub, or a non-error', () => {
+    expect(isGitHubRateLimitError(new Error('GitHub returned 500'))).toBe(false)
+    expect(isGitHubRateLimitError(new Error('gh: Not Found (HTTP 404)'))).toBe(false)
+    expect(isGitHubRateLimitError('API rate limit exceeded')).toBe(false)
+  })
+
+  it('spends no infrastructure retry, like a sign-in refusal; every other error does', () => {
+    expect(spendsInfrastructureRetry(new Error('API rate limit exceeded'))).toBe(false)
+    expect(spendsInfrastructureRetry(new DispatchSignInRefused('claude', 'the developer'))).toBe(false)
+    expect(spendsInfrastructureRetry(new Error('boom'))).toBe(true)
+  })
+
+  it('waits until the reported reset plus slack, else the fixed fallback', () => {
+    expect(rateLimitWaitMs(1_000 + 60, 1_000_000)).toBe(60_000 + 5_000)
+    expect(rateLimitWaitMs(null, 1_000_000)).toBe(RATE_LIMIT_FALLBACK_WAIT_MS)
+    expect(rateLimitWaitMs(900, 1_000_000)).toBe(RATE_LIMIT_FALLBACK_WAIT_MS)
+  })
+
+  it('the pause detail names the rate limit and is recognised by the comment renderers', () => {
+    expect(isRateLimitPauseDetail(RATE_LIMIT_PAUSE_DETAIL)).toBe(true)
+    expect(RATE_LIMIT_PAUSE_DETAIL).toContain('No ruling is needed')
+    expect(isRateLimitPauseDetail('an uncaught error ended round 1')).toBe(false)
   })
 })
