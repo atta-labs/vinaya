@@ -65,7 +65,9 @@ beforeEach(() => {
   // that never opts into a fixture below falls back to the Issue-state
   // check exactly as before this task.
   execFileAsyncMock.mockImplementation((_bin: string, args: string[]) => {
-    if (args[0] === 'pr' && args[1] === 'list') return Promise.resolve({ stdout: '[]', stderr: '' })
+    if (args[0] === 'api' && args[1] === 'graphql') {
+      return Promise.resolve({ stdout: JSON.stringify({ data: { repository: {} } }), stderr: '' })
+    }
     throw new Error(`unmocked execFile: ${args?.join(' ')}`)
   })
 })
@@ -214,68 +216,49 @@ describe('resolveDependsOn — O2: a backlog Issue resolves through its own pull
 })
 
 describe('fetchBacklogIssuePrsBatch', () => {
+  const graphql = (repository: Record<string, unknown>) => (_bin: string, args: string[]) => {
+    if (args[0] === 'api' && args[1] === 'graphql') {
+      return Promise.resolve({ stdout: JSON.stringify({ data: { repository } }), stderr: '' })
+    }
+    throw new Error(`unmocked execFile: ${args?.join(' ')}`)
+  }
+  const merged = (number: number, headRefName: string) => ({
+    number,
+    headRefName,
+    state: 'MERGED',
+    mergedAt: '2026-09-14'
+  })
+
   it('matches by the task/issue-<n> branch first', async () => {
-    execFileAsyncMock.mockImplementation((_bin: string, args: string[]) => {
-      if (args[0] === 'pr' && args[1] === 'list') {
-        return Promise.resolve({
-          stdout: JSON.stringify([
-            { number: 900, headRefName: 'task/issue-586', state: 'MERGED', mergedAt: '2026-09-14', body: '' }
-          ]),
-          stderr: ''
-        })
-      }
-      throw new Error(`unmocked execFile: ${args?.join(' ')}`)
-    })
-    const result = await fetchBacklogIssuePrsBatch([586], REPO)
-    expect(result.get(586)?.number).toBe(900)
+    execFileAsyncMock.mockImplementation(
+      graphql({
+        b_586: { nodes: [merged(900, 'task/issue-586')] },
+        c_586: { closedByPullRequestsReferences: { nodes: [merged(901, 'other')] } }
+      })
+    )
+    expect((await fetchBacklogIssuePrsBatch([586], REPO)).get(586)?.number).toBe(900)
   })
 
-  it('falls back to a `Closes #<n>` body match when no branch matches', async () => {
-    execFileAsyncMock.mockImplementation((_bin: string, args: string[]) => {
-      if (args[0] === 'pr' && args[1] === 'list') {
-        return Promise.resolve({
-          stdout: JSON.stringify([
-            {
-              number: 901,
-              headRefName: 'fix/control-store-fast-path',
-              state: 'MERGED',
-              mergedAt: '2026-09-14',
-              body: 'Summary\n\nCloses #586\n'
-            }
-          ]),
-          stderr: ''
-        })
-      }
-      throw new Error(`unmocked execFile: ${args?.join(' ')}`)
-    })
-    const result = await fetchBacklogIssuePrsBatch([586], REPO)
-    expect(result.get(586)?.number).toBe(901)
+  it("falls back to the Issue's closing pull request when no branch matches", async () => {
+    execFileAsyncMock.mockImplementation(
+      graphql({
+        b_586: { nodes: [] },
+        c_586: { closedByPullRequestsReferences: { nodes: [merged(901, 'fix/control-store-fast-path')] } }
+      })
+    )
+    expect((await fetchBacklogIssuePrsBatch([586], REPO)).get(586)?.number).toBe(901)
   })
 
-  it('returns no entry for a number matching neither a branch nor a Closes body', async () => {
-    execFileAsyncMock.mockImplementation((_bin: string, args: string[]) => {
-      if (args[0] === 'pr' && args[1] === 'list') return Promise.resolve({ stdout: '[]', stderr: '' })
-      throw new Error(`unmocked execFile: ${args?.join(' ')}`)
-    })
+  it('returns no entry for a number with neither a branch nor a closing pull request', async () => {
+    execFileAsyncMock.mockImplementation(
+      graphql({ b_586: { nodes: [] }, c_586: { closedByPullRequestsReferences: { nodes: [] } } })
+    )
     expect((await fetchBacklogIssuePrsBatch([586], REPO)).has(586)).toBe(false)
   })
 
-  it("tolerates a `gh pr list --json …,body` payload past execFileSync's 1 MB default — the ENOBUFS shape this fetcher first shipped with", async () => {
-    const bigBody = 'x'.repeat(2 * 1024 * 1024)
-    execFileAsyncMock.mockImplementation((_bin: string, args: string[], opts: { maxBuffer?: number }) => {
-      if (args[0] === 'pr' && args[1] === 'list') {
-        expect(opts?.maxBuffer).toBeGreaterThan(2 * 1024 * 1024)
-        return Promise.resolve({
-          stdout: JSON.stringify([
-            { number: 900, headRefName: 'task/issue-586', state: 'MERGED', mergedAt: '2026-09-14', body: bigBody }
-          ]),
-          stderr: ''
-        })
-      }
-      throw new Error(`unmocked execFile: ${args?.join(' ')}`)
-    })
-    const result = await fetchBacklogIssuePrsBatch([586], REPO)
-    expect(result.get(586)?.number).toBe(900)
+  it('throws when the forge read fails, never an empty map', async () => {
+    execFileAsyncMock.mockRejectedValue(new Error('network down'))
+    await expect(fetchBacklogIssuePrsBatch([586], REPO)).rejects.toThrow('#586')
   })
 })
 
@@ -293,7 +276,15 @@ describe('resolveDependsOn — one batched forge read for the whole edge list', 
       return m
     })
 
-    const facts = await resolveDependsOn(edges, homeTranche, new Map(), REPO, async () => null, fetchIssueStates)
+    const facts = await resolveDependsOn(
+      edges,
+      homeTranche,
+      new Map(),
+      REPO,
+      async () => null,
+      fetchIssueStates,
+      async () => new Map()
+    )
 
     expect(fetchIssueStates).toHaveBeenCalledTimes(1)
     expect(fetchIssueStates.mock.calls[0]?.[0]).toHaveLength(edgeCount)
