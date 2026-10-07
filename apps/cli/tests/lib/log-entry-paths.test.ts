@@ -215,7 +215,7 @@ const inventory: InventoryRow[] = [
   },
   ...checkNames.map((name) => ({
     id: `check:${name}`,
-    route: { producer: 'gate' as const, commandToken: name }
+    route: { producer: 'gate' as const, commandToken: name === 'atta-labs/secret-scan' ? 'secret-scan' : name }
   }))
 ]
 
@@ -234,8 +234,12 @@ function validateInventory(rows: InventoryRow[], entries: Map<string, string>): 
   return errors
 }
 
+function realEntryPaths(): Map<string, string> {
+  return new Map([...gitHookEntries(), ...workflowEntries(), ...agentHookEntries(), ...checkEntries()])
+}
+
 describe('log entry-path producer inventory', () => {
-  const entries = new Map([...gitHookEntries(), ...workflowEntries(), ...agentHookEntries(), ...checkEntries()])
+  const entries = realEntryPaths()
 
   it('has one row for every real entry path and no stale rows', () => {
     const errors = validateInventory(inventory, entries)
