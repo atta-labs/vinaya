@@ -345,7 +345,7 @@ describe('(d) sh()/shJson() other call sites are untouched', () => {
 describe('(e) every gh invocation carries an explicit repo target (Part 1, task 23, #360)', () => {
   const src = readFileSync(join(import.meta.dirname, 'verify-dispatch.ts'), 'utf8')
 
-  it("every 'gh' call passed to sh()/shJson() carries '-R', a repo template segment", () => {
+  it("every 'gh' call passed to sh()/shJson() carries an explicit repo target (-R, or owner/repo variables for gh api graphql)", () => {
     const callPattern = /\('gh',\s*\[([\s\S]*?)\]\)/g
     const ghCommands: string[] = []
     let match: RegExpExecArray | null
@@ -358,12 +358,19 @@ describe('(e) every gh invocation carries an explicit repo target (Part 1, task 
     // 4, not 3: `runPremiseModeFromIssue`'s `gh issue view --json comments`
     // call (plan-brief-v1 task 2, #427) is the fourth. 5, not 4:
     // `fetchIssueStatesBatch` — one `gh api graphql` call, still carrying an
-    // explicit `-R` target even though the query's own `$owner`/`$repo`
+    // explicit repo target even though the query's own `$owner`/`$repo`
     // variables make it redundant — is the fifth. 6, not 5:
     // `fetchBacklogIssuePrsBatch`'s own `gh pr list` call (issue-586, O2) is
     // the sixth.
     expect(ghCommands.length).toBe(6)
     for (const argsText of ghCommands) {
+      if (argsText.includes("'graphql'")) {
+        // `gh api` accepts no `-R`; the repo target is the `owner`/`repo` GraphQL variables.
+        expect(argsText).not.toContain("'-R'")
+        expect(argsText).toMatch(/`owner=\$\{repo\.owner\}`/)
+        expect(argsText).toMatch(/`repo=\$\{repo\.repo\}`/)
+        continue
+      }
       expect(argsText).toContain("'-R'")
       expect(argsText).toMatch(/`\$\{repo\.owner\}\/\$\{repo\.repo\}`/)
     }

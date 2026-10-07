@@ -317,8 +317,6 @@ async function readBacklogPrs(numbers: number[], repo: RepoRef): Promise<Map<num
   const parsed = await shJsonAsync<{ data?: { repository?: Record<string, BacklogPrRead | null> } }>('gh', [
     'api',
     'graphql',
-    '-R',
-    `${repo.owner}/${repo.repo}`,
     '-f',
     `query=${buildBacklogPrQuery(numbers)}`,
     '-F',
@@ -422,8 +420,6 @@ export function fetchIssueStatesBatch(numbers: number[], repo: RepoRef): Map<num
   const raw = sh('gh', [
     'api',
     'graphql',
-    '-R',
-    `${repo.owner}/${repo.repo}`,
     '-f',
     `query=${buildBatchIssueStateQuery(unique)}`,
     '-F',
