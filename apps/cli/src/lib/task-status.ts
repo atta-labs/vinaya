@@ -312,7 +312,8 @@ export type LoopLogLookup = { repo: LoopLogRepo; loopsRoot: string }
 export type DriverExitReason = 'reexec' | 'error' | 'signal'
 export type DriverExitTrace = { reason: DriverExitReason; lastDecision: string }
 
-const DRIVER_EXITED_LINE = /^\[dev-review-loop\] driver_exited: reason=(reexec|error|signal) last_decision=(.*)$/
+const DRIVER_EXITED_LINE =
+  /^(?:\[dev-review-loop\]\s+|.*\bLoop\s+)driver_exited: reason=(reexec|error|signal) last_decision=(.*)$/
 
 /**
  * The LAST `driver_exited` line in the task's role log — `dev-review-

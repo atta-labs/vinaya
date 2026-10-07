@@ -2349,7 +2349,7 @@ describe('dispatch role log — redaction (round 2 review, SECURITY HIGH)', () =
     expect(r.status).toBe(0)
 
     const contents = readFileSync(roleLogPath, 'utf8')
-    expect(contents).toContain('[developer]')
+    expect(contents).toContain('Developer')
     expect(contents).toContain('GITHUB_TOKEN=')
     expect(contents).not.toContain('ghp_0123456789abcdefghijklmnopqrstuvwxyz')
   })
@@ -2417,12 +2417,12 @@ describe('terminal colour — role prefix and TTY/NO_COLOR gating (#491)', () =>
   it('colourAgentLine carries the prefix with NO escape codes off a TTY or under NO_COLOR', () => {
     delete process.env.NO_COLOR
     const plain = colourAgentLine('code-reviewer', 'reading the brief', { isTTY: false })
-    expect(plain).toMatch(/^\d\d:\d\d:\d\d {2}> Code review {3}reading the brief$/)
+    expect(plain).toMatch(/^\d\d:\d\d:\d\d {2}▸ Code review {3}reading the brief$/)
     expect(plain).not.toMatch(ANSI_ANY_RE)
 
     process.env.NO_COLOR = '1'
     const noColour = colourAgentLine('code-reviewer', 'reading the brief', { isTTY: true })
-    expect(noColour).toMatch(/^\d\d:\d\d:\d\d {2}> Code review {3}reading the brief$/)
+    expect(noColour).toMatch(/^\d\d:\d\d:\d\d {2}▸ Code review {3}reading the brief$/)
     expect(noColour).not.toMatch(ANSI_ANY_RE)
   })
 
