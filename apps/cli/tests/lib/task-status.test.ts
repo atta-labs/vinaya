@@ -66,7 +66,6 @@ import {
   PHASE_HISTORY_FAILURE_BACKOFF_MS,
   SUMMARY_CONFIDENCE_READS_PER_STATUS_READ
 } from '../../src/lib/task-status-history.js'
-import { CONFIDENCE_FILE_NAME } from '../../src/lib/dev-review-loop/round-assess.js'
 import { appendRoleLine, loopLogPathFor } from '../../src/lib/loop-log.js'
 
 const TASK = 515
@@ -147,11 +146,46 @@ function writeLoopStateRound(
   )
 }
 
-/** The developer's own confidence statement for a round, at the exact path `confidencePromptLine` names for it — that round's own Developer folder inside the task's folder. */
-function writeStatedConfidence(root: string, task: number, round: number, body: string): void {
+/** One driver-written turn-result record for a round, as the loop's controller writes it under that round's own Developer folder. */
+function writeTurnResultRecord(
+  root: string,
+  task: number,
+  round: number,
+  attempt: number,
+  outcome: 'accepted' | 'rejected',
+  result: Record<string, unknown> | null
+): void {
   const dir = join(taskDir(root, task), 'rounds', String(round), 'developer')
   mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, CONFIDENCE_FILE_NAME), body, 'utf8')
+  writeFileSync(
+    join(dir, `turn-result-${String(attempt).padStart(3, '0')}.json`),
+    JSON.stringify({
+      version: 1,
+      runId: 'run',
+      round,
+      attempt,
+      head: null,
+      outcome,
+      result,
+      failures: outcome === 'rejected' ? ['addressedFindingIds: required'] : [],
+      recordedAt: '2026-09-10T00:00:00.000Z'
+    }),
+    'utf8'
+  )
+}
+
+/** The developer's stated confidence for a round: an accepted `completed` turn result. */
+function writeStatedConfidence(root: string, task: number, round: number, percent: number, explanation: string): void {
+  writeTurnResultRecord(root, task, round, 1, 'accepted', {
+    schemaVersion: 1,
+    status: 'completed',
+    summary: 'done',
+    confidence: percent,
+    confidenceExplanation: explanation,
+    addressedFindingIds: [],
+    sourceUses: null,
+    reportedChecks: null
+  })
 }
 
 /** A principal-authored comment as a history read sees it. */
@@ -1284,8 +1318,8 @@ describe('readLastConfidence (O1)', () => {
 
   it("reads the newest round's own stated confidence, naming the round it belongs to", () => {
     const root = tempDir()
-    writeStatedConfidence(root, TASK, 2, 'CONFIDENCE: 90 — fixed the reported issue\n')
-    writeStatedConfidence(root, TASK, 3, 'CONFIDENCE: 75 — one finding needed a wider fix\n')
+    writeStatedConfidence(root, TASK, 2, 90, 'fixed the reported issue')
+    writeStatedConfidence(root, TASK, 3, 75, 'one finding needed a wider fix')
     expect(readLastConfidence(root, TASK, null)).toEqual({
       kind: 'confidence',
       confidence: { round: 3, percent: 75, source: 'stated' }
@@ -1302,12 +1336,25 @@ describe('readLastConfidence (O1)', () => {
     expect(summaryConfidenceFor(askedLater)).toEqual({ round: 2, percent: 80, source: 'published-summary' })
   })
 
-  it('reports a malformed statement as a recorded absence, never as a zero', () => {
+  it('never reads a rejected result as a confidence — a round with none accepted states nothing, never a zero', () => {
     const root = tempDir()
-    writeStatedConfidence(root, TASK, 2, 'pretty confident, I think\n')
+    writeTurnResultRecord(root, TASK, 2, 1, 'rejected', null)
+    expect(readLastConfidence(root, TASK, null)).toEqual({ kind: 'none' })
+  })
+
+  it('skips a round whose newest accepted result states no confidence (blocked), reading the round before it', () => {
+    const root = tempDir()
+    writeStatedConfidence(root, TASK, 2, 80, 'fixed it')
+    writeTurnResultRecord(root, TASK, 3, 1, 'accepted', {
+      schemaVersion: 1,
+      status: 'blocked',
+      summary: 'stopped',
+      blocker: { kind: 'test_failure', detail: 'a test still fails' },
+      sourceUses: null
+    })
     expect(readLastConfidence(root, TASK, null)).toEqual({
       kind: 'confidence',
-      confidence: { round: 2, percent: null, source: 'stated' }
+      confidence: { round: 2, percent: 80, source: 'stated' }
     })
   })
 })

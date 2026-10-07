@@ -24,15 +24,14 @@ import {
 import { renderCodeReviewComment, renderSecurityComment } from '../../../src/commands/review-post.js'
 import { writeHeldVerdict } from '../../../src/lib/dev-review-loop/reviewer-dispatch.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
-import { CONFIDENCE_FILE_NAME } from '../../../src/lib/dev-review-loop.js'
 import {
   cleanupWorlds,
   controlDir,
-  developerDir,
   makeWorld,
   runLoopInProcess,
   sha,
-  type LoopWorld
+  type LoopWorld,
+  seedAcceptedTurnResult
 } from '../dev-review-loop-harness.js'
 
 afterEach(cleanupWorlds)
@@ -278,16 +277,12 @@ describe('devReviewLoop — issue-711 O1: an older held round never carries past
       }),
       'utf8'
     )
-    // Round ≥ 2's own gate check reads a confidence file the developer
-    // would normally write; an attach never dispatches the developer at
-    // all, so it's pre-seeded here — the identical setup the O9
-    // crash-recovery fixture (`dev-review-loop.test.ts`) uses for its own
-    // round-2 reattach.
-    mkdirSync(developerDir(world, 2), { recursive: true })
-    writeFileSync(
-      join(developerDir(world, 2), CONFIDENCE_FILE_NAME),
-      'CONFIDENCE: 90 — same code, already reviewed clean once\n'
-    )
+    // Round ≥ 2's own gate check reads the round's accepted turn result,
+    // which a Developer dispatch would normally leave; an attach never
+    // dispatches the developer at all, so it's pre-seeded here — the
+    // identical setup the O9 crash-recovery fixture
+    // (`dev-review-loop.test.ts`) uses for its own round-2 reattach.
+    seedAcceptedTurnResult(world, 2, { explanation: 'same code, already reviewed clean once' })
 
     const result = await runLoopInProcess(
       world,

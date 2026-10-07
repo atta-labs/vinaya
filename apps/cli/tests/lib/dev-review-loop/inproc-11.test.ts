@@ -27,17 +27,16 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { briefHash, DEFAULT_REVIEW_POLICY, objectivesOf, objectivesVersion, policyDigest } from '@attalabs/aeg-core'
 import { renderCodeReviewComment, renderSecurityComment } from '../../../src/commands/review-post.js'
 import { writeHeldVerdict } from '../../../src/lib/dev-review-loop/reviewer-dispatch.js'
-import { CONFIDENCE_FILE_NAME } from '../../../src/lib/dev-review-loop.js'
 import {
   cleanupWorlds,
   controlDir,
-  developerDir,
   makeWorld,
   runLoopInProcess,
   sha,
   taskRunDir,
   type LoopWorld,
-  type RoleOutcome
+  type RoleOutcome,
+  seedAcceptedTurnResult
 } from '../dev-review-loop-harness.js'
 
 afterEach(cleanupWorlds)
@@ -247,11 +246,7 @@ describe('devReviewLoop — issue-711 F1: a max_rounds pause right after a genui
       }),
       'utf8'
     )
-    mkdirSync(developerDir(world, ROUND), { recursive: true })
-    writeFileSync(
-      join(developerDir(world, ROUND), CONFIDENCE_FILE_NAME),
-      'CONFIDENCE: 90 — same code, already reviewed clean once\n'
-    )
+    seedAcceptedTurnResult(world, ROUND, { explanation: 'same code, already reviewed clean once' })
 
     const result = await runLoopInProcess(
       world,

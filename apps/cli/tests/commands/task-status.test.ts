@@ -419,11 +419,33 @@ function writeLoopState(
   )
 }
 
-/** The developer's own confidence statement for a round, at the path the loop's confidence prompt names for it. */
-function writeStatedConfidence(home: string, task: number, round: number, body: string): void {
+/** The developer's stated confidence for a round: an accepted `completed` turn result, as the loop's controller records it. */
+function writeStatedConfidence(home: string, task: number, round: number, percent: number): void {
   const dir = join(taskRunDir(home, task), 'rounds', String(round), 'developer')
   mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, '.vinaya-confidence'), body)
+  writeFileSync(
+    join(dir, 'turn-result-001.json'),
+    JSON.stringify({
+      version: 1,
+      runId: 'run',
+      round,
+      attempt: 1,
+      head: null,
+      outcome: 'accepted',
+      result: {
+        schemaVersion: 1,
+        status: 'completed',
+        summary: 'done',
+        confidence: percent,
+        confidenceExplanation: 'fixed the reported issue',
+        addressedFindingIds: [],
+        sourceUses: null,
+        reportedChecks: null
+      },
+      failures: [],
+      recordedAt: '2026-09-10T00:00:00.000Z'
+    })
+  )
 }
 
 describe('vinaya task status — router wiring', () => {
@@ -450,12 +472,8 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
     })
     writePublishedRound(home, 603, 1)
 
-    // The driver clears the statement file at gate-green, before it persists a
-    // `dispatch_reviewers` decision, so a `stated` figure only ever coexists
-    // with `developing` — pairing it with `reviewing` would assert a state the
-    // loop cannot produce.
     writeLoopState(home, 601, { round: 2, phase: 'dispatch_developer', minutesInPhase: 7 })
-    writeStatedConfidence(home, 601, 2, 'CONFIDENCE: 90 — fixed the reported issue\n')
+    writeStatedConfidence(home, 601, 2, 90)
     writeLoopState(home, 602, { round: 1, phase: 'pause', minutesInPhase: 40 })
     // A live run actually IN the reviewing phase — the one shape a typical time
     // from history applies to, since history is only ever compared against a

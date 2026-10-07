@@ -1,7 +1,4 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import {
   DEVELOPER_TURN_RESULT_SCHEMA_VERSION,
   type DeveloperTurnContext,
@@ -12,7 +9,6 @@ import {
 import {
   accountEnv,
   driverVerdict,
-  forcedStopHookScript,
   judgeCase,
   PROOF_TURN_CONTEXT,
   parseResultProofArgs,
@@ -315,18 +311,14 @@ describe('driverVerdict — the adapter boundary', () => {
 
 describe('judgeCase', () => {
   it('passes an accepted first result only when it is the expected emission and the only one', () => {
-    const read = readOf(proofCompleted('after-stop-n'))
+    const read = readOf(proofCompleted('first-n'))
     expect(
-      judgeCase({ kind: 'accepted', summary: 'after-stop-n' }, read, driverVerdict(read, PROOF_TURN_CONTEXT)).pass
+      judgeCase({ kind: 'accepted', summary: 'first-n' }, read, driverVerdict(read, PROOF_TURN_CONTEXT)).pass
     ).toBe(true)
-    const early = readOf(proofCompleted('first-n'))
-    const judged = judgeCase(
-      { kind: 'accepted', summary: 'after-stop-n' },
-      early,
-      driverVerdict(early, PROOF_TURN_CONTEXT)
-    )
+    const other = readOf(proofCompleted('other-n'))
+    const judged = judgeCase({ kind: 'accepted', summary: 'first-n' }, other, driverVerdict(other, PROOF_TURN_CONTEXT))
     expect(judged.pass).toBe(false)
-    expect(judged.why.join('\n')).toContain('"first-n"')
+    expect(judged.why.join('\n')).toContain('"other-n"')
   })
   it('fails a resume on another session, or one that returned the earlier result', () => {
     const read = readOf(proofCompleted('resumed-n'), { sessionId: 's-other' })
@@ -365,6 +357,33 @@ describe('judgeCase', () => {
       judgeCase({ kind: 'rejected', error: 'unknown finding id' }, valid, driverVerdict(valid, PROOF_TURN_CONTEXT)).pass
     ).toBe(false)
   })
+  it('passes the controller-rejection case only when the first result was refused for the missing source and the same session then delivered the one accepted result', () => {
+    const missing = readOf(wrap({ ...completed, summary: 'missing-source-n', sourceUses: null }))
+    const firstVerdict = driverVerdict(missing, PROOF_TURN_CONTEXT)
+    expect(firstVerdict).toMatchObject({ crossed: true, accepted: false })
+    const corrected = readOf(proofCompleted('missing-source-n'))
+    const expectation = { kind: 'rejected-then-accepted', error: 'sourceUses' } as const
+    expect(
+      judgeCase(expectation, corrected, driverVerdict(corrected, PROOF_TURN_CONTEXT), {
+        firstSessionId: 's-1',
+        firstVerdict
+      }).pass
+    ).toBe(true)
+    // Another session, or a first result the controller accepted, fails it.
+    const elsewhere = readOf(proofCompleted('missing-source-n'), { sessionId: 's-other' })
+    expect(
+      judgeCase(expectation, elsewhere, driverVerdict(elsewhere, PROOF_TURN_CONTEXT), {
+        firstSessionId: 's-1',
+        firstVerdict
+      }).pass
+    ).toBe(false)
+    expect(
+      judgeCase(expectation, corrected, driverVerdict(corrected, PROOF_TURN_CONTEXT), {
+        firstSessionId: 's-1',
+        firstVerdict: driverVerdict(corrected, PROOF_TURN_CONTEXT)
+      }).pass
+    ).toBe(false)
+  })
   it('passes the malformed case either way nothing malformed crossed, and the no-result cases only with no acceptance', () => {
     const none = readOf(null)
     expect(judgeCase({ kind: 'never-malformed' }, none, driverVerdict(none, PROOF_TURN_CONTEXT)).pass).toBe(true)
@@ -383,6 +402,7 @@ describe('proofCases', () => {
       expect(cases.map((c) => c.name)).toEqual([
         'first session',
         'resumed session',
+        'missing required source — rejected, then corrected in the same session',
         'unknown finding id',
         'ruling request naming no permissible decision',
         'malformed model output',
@@ -392,46 +412,17 @@ describe('proofCases', () => {
       ])
     }
   })
-  it('expects the post-rejection result on Claude, whose first stop is forced to be rejected', () => {
-    expect(proofCases('claude', 'n')[0]?.expectation).toEqual({ kind: 'accepted', summary: 'after-stop-n' })
+  it('expects the first result itself on both CLIs — no Stop hook takes part in selecting it (O6)', () => {
+    expect(proofCases('claude', 'n')[0]?.expectation).toEqual({ kind: 'accepted', summary: 'first-n' })
     expect(proofCases('codex', 'n')[0]?.expectation).toEqual({ kind: 'accepted', summary: 'first-n' })
+  })
+  it('replaces the forced Stop-hook case with the controller-rejection case, resumed once', () => {
+    const c = proofCases('claude', 'n').find((x) => x.correctOnce === true)
+    expect(c?.expectation).toEqual({ kind: 'rejected-then-accepted', error: 'sourceUses' })
+    expect(c?.prompt).toContain('sourceUses null')
   })
   it('never asks the model for its reasoning', () => {
     for (const c of proofCases('claude', 'n')) expect(c.prompt.toLowerCase()).not.toContain('reasoning')
-  })
-})
-
-describe('forcedStopHookScript', () => {
-  it('rejects the first stop with exit 2 and allows every later one, logging each', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'result-proof-stop-'))
-    try {
-      const script = join(dir, 'stop.mjs')
-      const log = join(dir, 'stop.log')
-      writeFileSync(script, forcedStopHookScript(join(dir, 'count'), log, 'n'))
-      const first = spawnSyncBudgeted(process.execPath, [script], {
-        input: '{"stop_hook_active":false}',
-        encoding: 'utf8',
-        env: stripVinayaEnv()
-      })
-      const second = spawnSyncBudgeted(process.execPath, [script], {
-        input: '{"stop_hook_active":true}',
-        encoding: 'utf8',
-        env: stripVinayaEnv()
-      })
-      expect(first.status).toBe(2)
-      expect(first.stderr).toContain('after-stop-n')
-      expect(second.status).toBe(0)
-      const logged = readFileSync(log, 'utf8')
-        .trim()
-        .split('\n')
-        .map((l) => JSON.parse(l))
-      expect(logged).toEqual([
-        { stop: 1, stop_hook_active: false, decision: 'rejected' },
-        { stop: 2, stop_hook_active: true, decision: 'allowed' }
-      ])
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
   })
 })
 

@@ -43,7 +43,8 @@ import {
   runDriverLoopInProcess,
   runLoopInProcess,
   type LoopWorld,
-  type RoleOutcome
+  type RoleOutcome,
+  defaultDeveloperTurnOutput
 } from '../dev-review-loop-harness.js'
 
 afterEach(cleanupWorlds)
@@ -398,7 +399,15 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
     let stopReads = 0
     const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
       if (role === 'developer') {
-        return { exitCode: 0, durationMs: 1, usage: null, resumeId: null, timedOut: false, effectId: 'eff-dev-1' }
+        return {
+          exitCode: 0,
+          durationMs: 1,
+          usage: null,
+          resumeId: null,
+          timedOut: false,
+          effectId: 'eff-dev-1',
+          turnOutput: defaultDeveloperTurnOutput(prompt)
+        }
       }
       return base.dispatchRole!(role, agent, prompt, opts)
     }

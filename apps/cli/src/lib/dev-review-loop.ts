@@ -44,7 +44,7 @@
 import { randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { guardedSpawnSync } from './driver-tool-guard.js'
-import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
@@ -200,12 +200,9 @@ import {
 } from './dev-review-loop/reviewer-isolation.js'
 import {
   assertDispatchOrEscalate,
-  CONFIDENCE_FILE_NAME,
   DeveloperDispatchHistory,
   DispatchSignInRefused,
-  confidencePromptLine,
   developerRoundMarker,
-  DEVELOPER_ROUND_RESPONSE_FILE_NAME,
   driverCrashEvents,
   driverDecidedPauseEvents,
   errorClassOf,
@@ -215,20 +212,33 @@ import {
   MAX_CONSECUTIVE_RATE_LIMIT_WAITS,
   MAX_GATE_STALLED_TURNS,
   MAX_INFRASTRUCTURE_RETRIES,
-  parseConfidenceReply,
-  parseRoundResponseFindingIds,
   parseShortstat,
   persistLoopState,
   pollUntil,
   rateLimitPauseDetail,
   rateLimitWaitMs,
   renderDeveloperRoundComment,
-  roundResponsePromptLine,
   routeCompletionEvents,
   sizeOfSafe,
   spendsInfrastructureRetry,
   waitForOwnLoopLine
 } from './dev-review-loop/round-assess.js'
+import {
+  addressedFindingIdsFromRecords,
+  confidenceFromRecords,
+  DeveloperTurnResultPause,
+  judgeTurnOutput,
+  nextTurnResultAttempt,
+  pauseForAcceptedResult,
+  readTurnResultRecords,
+  reportedChecksFromRecords,
+  schemaValidTurnResult,
+  turnResultCorrectionPrompt,
+  turnResultInstruction,
+  type TurnResultControllerContext,
+  writeTurnResultRecord
+} from './dev-review-loop/turn-result.js'
+import type { DeveloperTurnResult } from './developer-turn-result.js'
 import { buildReport, gh, resolveMergeBase, runReportForOpenPr } from './pr-report-engine.js'
 import { reassertPrBodyPremise } from '../checks/bin/check-pr-premise-reassert.js'
 import type { PremiseReassertResult } from '../checks/premise-reassert-logic.js'
@@ -356,19 +366,20 @@ export {
 } from './dev-review-loop/pause-resume.js'
 export type { EscalationFacts, ResolveEscalationResult } from './dev-review-loop/pause-resume.js'
 export {
-  CONFIDENCE_FILE_NAME,
-  confidencePromptLine,
-  DEVELOPER_ROUND_RESPONSE_FILE_NAME,
   developerRoundMarker,
   DevReviewLoopResumeError,
   DispatchSignInRefused,
-  parseConfidenceReply,
-  parseRoundResponseFindingIds,
   renderDeveloperRoundComment,
-  roundResponsePromptLine,
   routeCompletionEvents,
   spendsInfrastructureRetry
 } from './dev-review-loop/round-assess.js'
+export {
+  DeveloperTurnResultPause,
+  judgeTurnOutput,
+  PERMISSIBLE_RULING_DECISIONS,
+  readTurnResultRecords,
+  turnResultInstruction
+} from './dev-review-loop/turn-result.js'
 
 // --- deps (injectable; every field defaults to the real implementation) -----
 
@@ -1040,14 +1051,11 @@ export function assertValidLoopEvent(e: DevReviewLoopEventInput): void {
 }
 
 /**
- * O2: the loop's own two control files
- * (`CONFIDENCE_FILE_NAME`, `DEVELOPER_ROUND_RESPONSE_FILE_NAME`) are now
- * written under that round's own Developer folder inside the task's folder
- * (`runPath`'s `{ area: 'developer', ... }`), never at the worktree root —
- * so this reads the worktree's own `git status --porcelain` with no
- * exemption at all: a file bearing either old name that still shows up here
- * is ordinary untracked work, exactly like any other stray file, never
- * specially ignored.
+ * O2: the loop keeps no control file in the worktree — the Developer's turn
+ * result arrives as structured output, and the driver's own records live under
+ * the round's Developer folder inside the task's folder — so this reads the
+ * worktree's own `git status --porcelain` with no exemption at all: a stray
+ * file of any name is ordinary untracked work, never specially ignored.
  */
 function defaultReadUnpushedWorkDetail(worktreePath: string): { dirtyFiles: string[]; aheadCount: number } {
   let dirtyFiles: string[] = []
@@ -1331,6 +1339,31 @@ function publicationRefusal(
   signature = `${check}\n${errorLine}`
 ): PublicationRefusal {
   return { kind: 'refused', check, errorLine, reason, signature }
+}
+
+/**
+ * O2/O3: the finding ids a review round hands the Developer — one per finding
+ * the round's verdicts still count (a deferred one blocks nothing and is not
+ * handed over), qualified by review round and role so a reviewer's `F1` and
+ * the security reviewer's `F1` stay distinct: `R<round>-CR-<n>`,
+ * `R<round>-SEC-<n>`.
+ */
+export function handoffFindings(
+  reviewRound: number,
+  ...observations: readonly VerdictObservation[]
+): { id: string; line: string }[] {
+  const out: { id: string; line: string }[] = []
+  for (const observation of observations) {
+    const tag = observation.role === 'reviewer' ? 'CR' : 'SEC'
+    for (const finding of observation.findings) {
+      if (finding.deferred !== undefined) continue
+      out.push({
+        id: `R${reviewRound}-${tag}-${finding.id.replace(/^F/, '')}`,
+        line: `[${finding.severity}] ${finding.location}`
+      })
+    }
+  }
+  return out
 }
 
 class PublicationRefusalPause extends Error {
@@ -1821,7 +1854,7 @@ function noPushPauseDetail(branch: string, unpushed: { dirtyFiles: string[]; ahe
  */
 export function describeConfidencePauseDetail(confidence: Confidence): string {
   if (confidence === 'absent') {
-    return 'no confidence line was found on the re-asked turn — the developer never reported one a second time'
+    return 'no accepted turn result stated a confidence on the re-asked turn — the developer never reported one a second time'
   }
   const reasonSuffix = confidence.reason ? ` (${confidence.reason})` : ''
   return `confidence reported at ${confidence.value}${reasonSuffix}, below the required 50 threshold, after the loop's one extra turn was already used`
@@ -2705,20 +2738,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     /** O8: recorded once, at loop start — never re-derived. Re-read at every round entry (top of the `while(true)` below) and compared against this fixed watermark for commits touching `DRIVER_OWNED_PATHS`. */
     let baseHeadAtStart!: string
     /**
-     * O1: THIS round's own absolute path for
-     * the Developer's confidence/round-response files, under
-     * `<task folder>/rounds/<round>/developer/` — never a fixed path
-     * computed once at loop start, since a resumed Developer session gets a
-     * fresh prompt every round and reusing an earlier round's path would let
-     * a stale round's answer be read as the current one.
+     * O3: every finding id each round's handoff carried, keyed by the round
+     * the Developer answers it in — `addressedFindingIds` may name only these,
+     * on any dispatch of that round (a later commit-and-push resume may cite
+     * the same ids again).
      */
-    function confidenceFilePathFor(roundNum: number): string {
-      return runPath(root, task, { area: 'developer', round: roundNum, file: CONFIDENCE_FILE_NAME })
-    }
-    /** O1: the round-response counterpart to `confidenceFilePathFor`, above. */
-    function roundResponseFilePathFor(roundNum: number): string {
-      return runPath(root, task, { area: 'developer', round: roundNum, file: DEVELOPER_ROUND_RESPONSE_FILE_NAME })
-    }
+    const handoffFindingIdsByRound = new Map<number, string[]>()
+    /** The findings the newest review handed over, with the ids the Developer cites — set when a round's verdicts request changes, cleared by a ruling or a recovered verdict that carries no ids. */
+    let lastHandoffFindings: { id: string; line: string }[] | null = null
     const loopOutboxPath = await d.resolveLogAppendPath(repo, task)
     /**
      * Awaits EACH event's own landing before firing the next `log()` call —
@@ -3461,7 +3488,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // Developer holds no `gh`/`git push` credential and publishes only
       // through the driver-run tools, so there is no excluded command to run
       // on its own line. The brief stays the prompt's contiguous suffix.
-      const fullPrompt = opts.skipResumeContext ? promptText : `${resumeContextBlock()}\n\n${promptText}`
+      // O1: every prompt but round 1's (whose preamble carries it ahead of the
+      // brief, which stays the prompt's contiguous suffix) ends with what the
+      // turn ends with — its structured turn result.
+      const fullPrompt = opts.skipResumeContext
+        ? promptText
+        : `${resumeContextBlock()}\n\n${promptText}\n\n${turnResultInstruction(roundNum)}`
       // O1/O3: confine the Developer to
       // its own worktree — this driver's own round-1 `createTaskWorktree`
       // call (above, in the branch-creation branch) already created it before
@@ -3487,9 +3519,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // (`dispatchDeveloper`, below) compares against — taken here, right
       // before the dispatch, never from a cached copy (Traps to avoid).
       snapshotTurnConfinement('developer', roundNum)
-      // O1/O3: this round's own confidence
-      // and/or round-response files, when this prompt named any, plus the
-      // dispatch-readiness result staged below — the parent directory must
+      // O1/O3: this round's Developer folder — the dispatch-readiness result
+      // staged below and the driver's own turn-result records — the parent directory must
       // exist before dispatch, both so a confined Write's own
       // `fs.realpathSync(path.dirname(filePath))` resolves and so a
       // Seatbelt-confined child's `mkdirSync(dirname(path), { recursive:
@@ -3655,6 +3686,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         developerFiles?: readonly string[]
         skipPublish?: boolean
         publicationRefusal?: PublicationRefusal
+        /** This dispatch hands the Developer review findings to answer (O2: `addressedFindingIds` is then required). */
+        answersFindings?: boolean
       } = {}
     ): Promise<DispatchHandle> {
       let currentPrompt = prompt
@@ -3667,8 +3700,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // trusted output to check or commit.
         if (handle.failureReason) return handle
         // O1/O2: every Developer turn is checked, including a
-        // `skipPublish` confidence-only reask — its confidence file is still
-        // trusted by `assessRound` to decide pause-or-proceed, so it is
+        // `skipPublish` re-ask for the turn result — that result is still
+        // trusted by `assessRound` to decide pause-or-proceed, so its turn is
         // checked the same as a publishing turn; it is simply never
         // published. Refused BEFORE any commit or credential use — the same
         // "before any commit or credential use" discipline
@@ -3688,18 +3721,134 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           ].join('\n\n')
           continue
         }
-        // A dispatch that only answers a confidence question (O1) is now
+        // A dispatch that only re-asks for the turn result (O1) is now
         // confirmed clean and publishes nothing.
-        if (opts.skipPublish) return handle
-        const published = await publishDeveloperTurn(roundNum)
-        if (published.kind === 'published' || published.kind === 'nothing') return handle
-        publicationRefusals += 1
-        if (published.signature === previousPublicationRefusal || publicationRefusals >= MAX_PUBLISH_REASKS) {
-          throw new PublicationRefusalPause(published.check, published.errorLine)
+        if (!opts.skipPublish) {
+          const published = await publishDeveloperTurn(roundNum)
+          if (published.kind !== 'published' && published.kind !== 'nothing') {
+            publicationRefusals += 1
+            if (published.signature === previousPublicationRefusal || publicationRefusals >= MAX_PUBLISH_REASKS) {
+              throw new PublicationRefusalPause(published.check, published.errorLine)
+            }
+            previousPublicationRefusal = published.signature
+            currentPrompt = publicationRefusalPrompt(published)
+            continue
+          }
         }
-        previousPublicationRefusal = published.signature
-        currentPrompt = publicationRefusalPrompt(published)
+        // O3: the turn has ended for good — its result is settled now, after
+        // every publication it earned, so a rejected result never repeats one.
+        await settleTurnResult(handle, roundNum, opts.answersFindings === true)
+        return handle
       }
+    }
+
+    /**
+     * O3: the controller — the one place a Developer turn result is
+     * accepted. Bound to this run, round, the worktree head the turn left and
+     * an attempt ordinal only the driver assigns; judged against this turn's
+     * own context (`judgeTurnOutput`); recorded once, accepted or rejected,
+     * and never rewritten. A rejected first result is never read by the
+     * confidence, review or transition logic: the SAME session is resumed once
+     * with only the typed failures and the current context, publishing
+     * nothing, and its result is rebound to the head then current — a head
+     * that moved since makes it stale — and judged again. A second failure
+     * pauses the round with a typed reason. An accepted `blocked` or
+     * `needs_ruling` result pauses it for the Principal.
+     */
+    async function settleTurnResult(handle: DispatchHandle, roundNum: number, answersFindings: boolean): Promise<void> {
+      const knownFindingIds = handoffFindingIdsByRound.get(roundNum) ?? []
+      const context = (documentation: DispatchHandle['documentation']): TurnResultControllerContext => ({
+        round: roundNum,
+        knownFindingIds,
+        requireAddressedFindings: answersFindings && knownFindingIds.length > 0,
+        documentation: documentation ?? { sources: [], countedReads: [] }
+      })
+      const worktreeHead = (): string | null => {
+        const dir = worktreePathForBranch()
+        return existsSync(dir) ? d.readWorktreeHead(dir) : null
+      }
+      const record = (
+        attempt: number,
+        head: string | null,
+        verdict: ReturnType<typeof judgeTurnOutput>,
+        raw: unknown
+      ): void => {
+        writeTurnResultRecord(root, task, {
+          version: 1,
+          runId,
+          round: roundNum,
+          attempt,
+          head,
+          outcome: verdict.ok ? 'accepted' : 'rejected',
+          result: verdict.ok ? verdict.result : schemaValidTurnResult(raw),
+          failures: verdict.ok ? [] : verdict.failures,
+          recordedAt: new Date(d.now()).toISOString()
+        })
+      }
+      const accept = (result: DeveloperTurnResult): void => {
+        const pause = pauseForAcceptedResult(result)
+        if (pause !== null) throw pause
+      }
+
+      const firstAttempt = nextTurnResultAttempt(root, task, roundNum)
+      const firstHead = worktreeHead()
+      const first = judgeTurnOutput(handle.turnOutput, context(handle.documentation))
+      record(firstAttempt, firstHead, first, handle.turnOutput?.raw)
+      if (first.ok) return accept(first.result)
+      if (handle.turnOutput === undefined || handle.turnOutput.adapter === null) {
+        throw new DeveloperTurnResultPause(
+          'no_adapter',
+          `the Developer turn delivered no structured turn result — ${dispatchAgent} offers no native structured output this loop can read (round ${roundNum}, attempt ${firstAttempt})`
+        )
+      }
+
+      const correction = await dispatchDeveloperOnce(
+        turnResultCorrectionPrompt(first.failures, {
+          round: roundNum,
+          attempt: firstAttempt,
+          head: firstHead,
+          knownFindingIds
+        }),
+        roundNum,
+        {}
+      )
+      const secondAttempt = firstAttempt + 1
+      const secondHead = worktreeHead()
+      if (correction.failureReason) {
+        record(
+          secondAttempt,
+          secondHead,
+          { ok: false, failures: [`turnResult: the correction turn failed (${correction.failureReason})`] },
+          null
+        )
+        throw new DeveloperTurnResultPause(
+          'rejected',
+          `the Developer's turn result was rejected (${first.failures.join('; ')}) and the one correction turn failed (${correction.failureReason})`
+        )
+      }
+      const correctionConfinement = checkTurnConfinement('developer', developerScanTexts(correction))
+      const second: ReturnType<typeof judgeTurnOutput> =
+        correctionConfinement.changedPaths.length > 0 || correctionConfinement.credentialFindings.length > 0
+          ? {
+              ok: false,
+              failures: [
+                `turnResult: the correction turn changed the worktree — ${describeTurnConfinementViolation(correctionConfinement)}`
+              ]
+            }
+          : secondHead !== firstHead
+            ? {
+                ok: false,
+                failures: [
+                  `turnResult: stale — the head moved from ${firstHead} to ${secondHead} during the correction turn`
+                ]
+              }
+            : judgeTurnOutput(correction.turnOutput, context(correction.documentation))
+      record(secondAttempt, secondHead, second, correction.turnOutput?.raw)
+      if (second.ok) return accept(second.result)
+      throw new DeveloperTurnResultPause(
+        secondHead !== firstHead ? 'stale' : 'rejected',
+        `the Developer's turn result was rejected twice in round ${roundNum} (attempt ${firstAttempt}: ${first.failures.join('; ')}; attempt ${secondAttempt}: ${second.failures.join('; ')})`
+      )
     }
 
     function publicationRefusalPrompt(refusal: PublicationRefusal): string {
@@ -4794,43 +4943,30 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       ).catch(() => 'CONFLICTING' as const)
     }
 
-    /** O1: reads and clears THIS round's own confidence file, at the absolute path this round's own dispatch named in its prompt. */
-    function readAndClearConfidence(roundNum: number): Confidence {
-      const path = confidenceFilePathFor(roundNum)
-      const content = readIfExists(path)
-      try {
-        unlinkSync(path)
-      } catch {
-        // Never written, or already gone — nothing to clean up.
-      }
-      return content ? parseConfidenceReply(content) : 'absent'
-    }
-
-    /** O2: best-effort, mirroring `readAndClearConfidence` — a missing or malformed file yields no citation, never a stall (`DEVELOPER_ROUND_RESPONSE_FILE_NAME`'s own doc comment). */
-    function readAndClearRoundResponse(roundNum: number): string[] {
-      const path = roundResponseFilePathFor(roundNum)
-      const content = readIfExists(path)
-      try {
-        unlinkSync(path)
-      } catch {
-        // Never written, or already gone — nothing to clean up.
-      }
-      return parseRoundResponseFindingIds(content)
+    /**
+     * O2/O4: this round's confidence, from its newest ACCEPTED turn result —
+     * `completed` carries one; anything else, or no accepted result at all, is
+     * `'absent'`, never made up. Read, never cleared: attempt records are
+     * immutable, and each dispatch of the round settles a newer one.
+     */
+    function roundConfidence(roundNum: number): Confidence {
+      return confidenceFromRecords(readTurnResultRecords(root, task, roundNum))
     }
 
     /** O2: the round marker comment the driver now posts in the Developer's place (`renderDeveloperRoundComment`) — idempotent per round+head, the same `postForgeEffectOnce` discipline every other driver-posted comment in this file already uses. */
-    async function postDeveloperRoundComment(
-      roundNum: number,
-      head: string,
-      findingIds: readonly string[]
-    ): Promise<void> {
+    async function postDeveloperRoundComment(roundNum: number, head: string): Promise<void> {
+      const records = readTurnResultRecords(root, task, roundNum)
       await withRateLimitWait(() =>
         postForgeEffectOnce(root, task, `developer-round-comment-${roundNum}-${head}`, () =>
           d.postMarkedComment(
             'pr',
             String(prNumber),
             developerRoundMarker(roundNum),
-            renderDeveloperRoundComment(head, findingIds)
+            renderDeveloperRoundComment(
+              head,
+              addressedFindingIdsFromRecords(records),
+              reportedChecksFromRecords(records)
+            )
           )
         )
       )
@@ -5148,6 +5284,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // `resumedDispatch` (below) labels the prompt accordingly, once.
         const rulings = d.fetchRulings(prNumber)
         lastReviewContext = rulings.map((r, i) => `${i + 1}. ${r}`).join('\n')
+        lastHandoffFindings = null
         // O1: the pause comment this run
         // is resuming from may never have reached the forge (a network
         // drop mid-post, or the pause path's own exhausted retry) — the
@@ -5261,6 +5398,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 writeFileSync(marker, new Date().toISOString(), 'utf8')
                 round = held.round + 1
                 lastReviewContext = held.rendered
+                // A recovered verdict carries only its rendered text — no ids to hand over.
+                lastHandoffFindings = null
                 firstPass = false
                 deliveredFindingsIdentity = { round: held.round, head: currentHead }
                 persistCurrentLoopState('dispatch_developer')
@@ -5377,6 +5516,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             const round1Prompt = [
               developerDoctrine ? renderDeveloperDoctrineBlock(developerDoctrine) : null,
               `When your work is ready, ${publishingInstructionLine()}`,
+              turnResultInstruction(round),
               brief
             ]
               .filter((part): part is string => part !== null)
@@ -5689,14 +5829,32 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // enclosing `devReviewLoop`) is set here too — the same lock-stays-alive
       // treatment as the shared pause-return branch's own
       // 'infrastructure'/'stale_driver' cases below.
-      recordDriverExited('error', { error: err })
+      // O3: a round that pauses on its turn result (`DeveloperTurnResultPause`)
+      // is a decided pause, never a crash — logged as one, with its own typed
+      // reason code.
+      const turnResultPause = err instanceof DeveloperTurnResultPause ? err : null
+      if (turnResultPause === null) recordDriverExited('error', { error: err })
       let head = 'unknown'
       try {
         head = d.resolveHead(branch)
       } catch {
         // Left as 'unknown' — the schema only requires a string.
       }
-      await logEvents(driverCrashEvents(config.loopId, state, round, head))
+      let decidedPauseEvents: DevReviewLoopEventInput[] | null = null
+      if (turnResultPause !== null) {
+        try {
+          decidedPauseEvents = driverDecidedPauseEvents(
+            config.loopId,
+            state,
+            round,
+            computeStats(head, roundStartMs),
+            turnResultPause.reasonCode
+          )
+        } catch {
+          decidedPauseEvents = null
+        }
+      }
+      await logEvents(decidedPauseEvents ?? driverCrashEvents(config.loopId, state, round, head))
       // `decision.detail` (below) carries the RAW error message — it lands only in this
       // MACHINE-local outbox (`writePauseState`, never posted anywhere) and
       // in `finalDecision`, which the CLI never prints past the bare reason.
@@ -5710,13 +5868,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // that an unnamed error ended the round.
       decision = {
         type: 'pause',
-        reason: 'infrastructure',
+        reason: turnResultPause?.pauseReason ?? 'infrastructure',
         detail:
-          err instanceof DispatchSignInRefused
-            ? err.message
-            : isGitHubRateLimitError(err)
-              ? `${rateLimitPauseDetail(round === roundAtLastWait ? rateLimitWaits : 0)} (round ${round}: ${err instanceof Error ? err.message : String(err)})`
-              : `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
+          turnResultPause !== null
+            ? turnResultPause.message
+            : err instanceof DispatchSignInRefused
+              ? err.message
+              : isGitHubRateLimitError(err)
+                ? `${rateLimitPauseDetail(round === roundAtLastWait ? rateLimitWaits : 0)} (round ${round}: ${err instanceof Error ? err.message : String(err)})`
+                : `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
       }
       keepLockAlive = true
       // The SAME durable snapshot every
@@ -5729,7 +5889,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // produced a round for that bound to bound, so no number of sign-in
       // pauses should ever demand a Principal ruling to resume past; a
       // rate limit is a wait for the reset, not a recoverable-hiccup retry.
-      if (spendsInfrastructureRetry(err)) infrastructureRetries += 1
+      if (turnResultPause !== null) recordDriverExited('paused')
+      else if (spendsInfrastructureRetry(err)) infrastructureRetries += 1
       persistCurrentLoopState('pause', decision.reason)
       // This bookkeeping is best-effort, never a second chance for the
       // process to crash on its way out — the ORIGINAL error is already
@@ -5881,13 +6042,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // or a CI-red retry, none of which ever sent the developer a
             // findings list to cite ids against.
             const isReviewFindingsRetry = conflictFiles === null && !resumedDispatch && !isGateRedRetry
-            // O1: built fresh for THIS
-            // round, never reused from an earlier round — a resumed
-            // developer session gets a fresh prompt every round, and the
-            // driver names the exact absolute path this round's own
-            // dispatch is granted write access to.
-            const thisRoundConfidencePath = confidenceFilePathFor(round)
-            const thisRoundResponsePath = roundResponseFilePathFor(round)
+            // O2/O3: the ids this round's handoff carries — the only ids a
+            // turn result of this round may cite, listed beside the findings
+            // so the Developer cites exactly these.
+            const handoff = isReviewFindingsRetry ? (lastHandoffFindings ?? []) : []
+            if (isReviewFindingsRetry)
+              handoffFindingIdsByRound.set(
+                round,
+                handoff.map((f) => f.id)
+              )
             const prompt = [
               conflictFiles !== null
                 ? renderConflictPrompt(conflictFiles)
@@ -5906,19 +6069,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                       // — so it is never null in this branch (code review, round 1, MINOR:
                       // the prior 'CI was red...' fallback below this was unreachable).
                       `Round ${round} review findings:\n\n${lastReviewContext}\n`,
+              handoff.length > 0
+                ? `Finding ids in this handoff — cite the ones you address in your turn result's \`addressedFindingIds\`:\n${handoff.map((f) => `- ${f.id}: ${f.line}`).join('\n')}`
+                : '',
               // O4: the fix publishes the SAME way for both agents — through the
               // driver-run tools, as a new commit on the SAME branch; no new PR
               // is opened (the existing one stays).
-              `Address the findings above per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`), then ${publishingInstructionLine()} Publish the fix as a new commit on this SAME branch — do not open a new pull request.`,
-              round >= 2 ? confidencePromptLine(thisRoundConfidencePath) : '',
-              isReviewFindingsRetry ? roundResponsePromptLine(thisRoundResponsePath) : ''
+              `Address the findings above per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`), then ${publishingInstructionLine()} Publish the fix as a new commit on this SAME branch — do not open a new pull request.`
             ]
               .filter(Boolean)
               .join('\n\n')
-            const thisRoundDeveloperFiles = [
-              ...(round >= 2 ? [thisRoundConfidencePath] : []),
-              ...(isReviewFindingsRetry ? [thisRoundResponsePath] : [])
-            ]
             // Unchanged from before this task: a head-change wait runs ONLY
             // for a CI-red retry or a conflict retry — never for the plain
             // review-findings retry, whose own next `dispatch_reviewers`
@@ -5932,7 +6092,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // simulating one, well beyond this fix's own boundary.
             const headBeforeDispatch = isGateRedRetry || conflictFiles !== null ? d.resolveHead(branch) : null
             roundStartMs = d.now()
-            await dispatchDeveloper(prompt, round, { developerFiles: thisRoundDeveloperFiles })
+            await dispatchDeveloper(prompt, round, { answersFindings: isReviewFindingsRetry })
             resumedDispatch = false
 
             // A turn whose last publication attempt a driver tool refused
@@ -6182,7 +6342,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             gateStalledStreak = 0
           }
           unpushedResumeAttempted = false
-          const confidence = round >= 2 && gateGreen ? readAndClearConfidence(round) : undefined
+          const confidence = round >= 2 && gateGreen ? roundConfidence(round) : undefined
           // The mechanical failure this attempt ended on, handed to the
           // assessment verbatim — the same failing check-run names and
           // premise re-assert messages this driver already prints in the
@@ -6222,13 +6382,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           await logEvents(result.events)
           persistCurrentLoopState(decision.type, decision.type === 'pause' ? decision.reason : undefined)
         } else if (decision.type === 'ask_confidence') {
-          const reaskConfidencePath = confidenceFilePathFor(round)
-          const reaskPrompt = `Your last reply did not include a valid confidence line.\n\n${confidencePromptLine(reaskConfidencePath)}`
-          // O1: a dispatch that only answers a confidence question publishes nothing.
-          await dispatchDeveloper(reaskPrompt, round, { developerFiles: [reaskConfidencePath], skipPublish: true })
+          const reaskPrompt =
+            'The driver holds no accepted `completed` turn result for this round, so it has no confidence to read. Change and publish nothing; report your turn result for the work already on this branch.'
+          // O1: a dispatch that only re-asks for the turn result publishes nothing.
+          await dispatchDeveloper(reaskPrompt, round, { skipPublish: true })
           const head = d.resolveHead(branch)
           const stats = computeStats(head, roundStartMs)
-          const confidence = readAndClearConfidence(round)
+          const confidence = roundConfidence(round)
           const obs: Observations = { kind: 'gate', round, green: true, confidence, stats }
           const result = assessRound(state, obs, taskClock())
           state = result.state
@@ -6342,14 +6502,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // only ever entered off a `gate` observation reading `green: true`
           // — `assessRound`'s own policy) and mergeability is already
           // confirmed above — this is the earliest point the round's own
-          // Developer-turn artifacts (the outbox response file) are safe to
-          // read and clear, and the earliest point the evidence report can
+          // accepted turn results are final (their addressed finding ids and
+          // reported checks), and the earliest point the evidence report can
           // run against a head that will not move again this round. Posted
           // BEFORE the reviewer dispatch below, never after: a reviewer
           // reading the PR mid-round sees the round marker comment already
           // there, exactly as it would have if the Developer had posted it.
-          const findingIdsAddressed = readAndClearRoundResponse(round)
-          await postDeveloperRoundComment(round, head, findingIdsAddressed)
+          await postDeveloperRoundComment(round, head)
 
           // O5: an infrastructure outcome from either role (after its own
           // one-retry inside `dispatchReviewer`) is a driver-decided pause —
@@ -6612,6 +6771,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // outcome is even decided, is never silently forgotten.
               heldResultIdentity = { round, head }
               lastReviewContext = `${reviewer.verdict.rendered}\n\n---\n\n${security.verdict.rendered}`
+              lastHandoffFindings = handoffFindings(round, reviewer.verdict.observation, security.verdict.observation)
 
               // Recorded once per round, so a Principal reading
               // the PR sees WHICH role's ids the driver could not trust —

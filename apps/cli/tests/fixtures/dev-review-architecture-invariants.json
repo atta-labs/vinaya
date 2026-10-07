@@ -89,6 +89,16 @@
         "path": "apps/cli/tests/lib/dev-review-loop/readiness-gate-adopter.test.ts",
         "kind": "test",
         "reason": "Runs the dispatch-readiness gate's two steps from the built distribution in a temporary directory outside this checkout, proving an installed package resolves them without any Vinaya sources."
+      },
+      {
+        "path": "apps/cli/src/lib/dev-review-loop/turn-result.ts",
+        "kind": "implementation",
+        "reason": "Landed with the Developer turn result's migration onto each CLI's native structured output (Issue #1125): the adapter readers, the controller that alone accepts a result, the immutable attempt records and the typed pause; loop.md's \"The Developer's turn result\" section describes it."
+      },
+      {
+        "path": "apps/cli/tests/lib/dev-review-loop/developer-turn-result.test.ts",
+        "kind": "test",
+        "reason": "The controller's acceptance rules, the records every consumer reads, and the loop's correction, typed-pause and confidence paths, landed in the same change."
       }
     ]
   },
@@ -298,18 +308,21 @@
     },
     {
       "id": "INV-013",
-      "behavior": "The confidence reply is parsed by the driver from the developer's file; out-of-range values, a missing line or a missing reason read absent, never a fabricated number.",
+      "behavior": "The confidence is read by the driver from the Developer's native structured turn result (DeveloperTurnResult, Claude --json-schema / Codex --output-schema), and only from the newest result the controller accepted with status completed; a schema-invalid or semantically rejected result, a blocked or needs_ruling result, or no accepted result at all reads absent, never a fabricated number.",
       "classification": "product-guarantee",
       "owner": "vinaya-policy",
       "authority": "pure-policy",
       "scenarios": ["invalid-reviews"],
-      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/round-assess.ts", "symbol": "parseConfidenceReply" }],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop/turn-result.ts", "symbol": "judgeTurnOutput" },
+        { "path": "apps/cli/src/lib/dev-review-loop/turn-result.ts", "symbol": "confidenceFromRecords" }
+      ],
       "tests": [
-        "apps/cli/tests/lib/dev-review-loop/round-assess.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/developer-turn-result.test.ts",
         "apps/cli/tests/lib/dev-review-loop.test.ts"
       ],
       "loopSpec": ["The confidence rule"],
-      "reason": "Deterministic driver-side parse; the worker only writes the file."
+      "reason": "Deterministic driver-side validation of the CLI's own structured output; the worker only reports it, and writes no file."
     },
     {
       "id": "INV-014",
@@ -530,7 +543,7 @@
     },
     {
       "id": "INV-029",
-      "behavior": "Later-round prompts carry only the delta (CI-red, findings or conflict text, commit-header and confidence lines), never the brief or its Documentation section.",
+      "behavior": "Later-round prompts carry only the delta (CI-red, findings or conflict text with the handoff's finding ids, and the turn-result instruction), never the brief or its Documentation section.",
       "classification": "product-guarantee",
       "owner": "vinaya-policy",
       "authority": "pure-policy",

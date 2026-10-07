@@ -368,6 +368,18 @@ describe('vinaya dispatch --resume', () => {
     // (dedicated coverage in `apps/cli/tests/lib/dispatch.test.ts`) —
     // stripped here so this test keeps asserting only the resume shape.
     expect(argv.slice(-2, -1)).toEqual(['--settings'])
-    expect(argv.slice(0, -2)).toEqual(['-p', '-r', 'resume-id-123', '--verbose', '--output-format', 'stream-json'])
+    // #1125: a Developer dispatch also asks for its turn result as Claude's
+    // native structured output, the `--json-schema <schema>` pair before it.
+    const head = argv.slice(0, -2)
+    const schemaAt = head.indexOf('--json-schema')
+    expect(schemaAt).toBe(head.length - 2)
+    expect(head.slice(0, schemaAt)).toEqual([
+      '-p',
+      '-r',
+      'resume-id-123',
+      '--verbose',
+      '--output-format',
+      'stream-json'
+    ])
   })
 })

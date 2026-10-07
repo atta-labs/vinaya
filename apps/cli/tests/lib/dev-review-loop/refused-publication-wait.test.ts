@@ -10,7 +10,8 @@ import {
   developerPublishesViaToolsDeps,
   makeWorld,
   runLoopInProcess,
-  type LoopWorld
+  type LoopWorld,
+  defaultDeveloperTurnOutput
 } from '../dev-review-loop-harness.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
 
@@ -57,7 +58,8 @@ function redGateDeps(
         usage: { input: 1, output: 1 },
         resumeId: 'dev-session-1',
         timedOut: false,
-        effectId: `eff-${developerTurns}`
+        effectId: `eff-${developerTurns}`,
+        turnOutput: defaultDeveloperTurnOutput(prompt)
       }
     }
   }

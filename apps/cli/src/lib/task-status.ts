@@ -45,7 +45,7 @@ import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 import { findOpenPrForBranch, runtimeDir } from './dev-review-loop.js'
 import { DRIVER_LOCK_FILENAME, runPath, tasksExecutionRoot } from './run-paths.js'
 import { loopLogPathFor, loopsRoot, type LoopLogRepo } from './loop-log.js'
-import { CONFIDENCE_FILE_NAME, parseConfidenceReply } from './dev-review-loop/round-assess.js'
+import { confidenceFromRecords, readTurnResultRecords } from './dev-review-loop/turn-result.js'
 import {
   phaseHistoryLookup,
   prCommentReaderForOneStatusRead,
@@ -799,17 +799,19 @@ export function readLoopPhase(root: string, task: number, now: () => Date = () =
 // --- the newest confidence on record ---------------------------------------
 
 /**
- * The newest round whose confidence is still readable, from the two records
- * that carry one:
+ * The newest round whose confidence is on record, from the two records that
+ * carry one:
  *
- *   - the developer's own statement for a round the driver has not consumed
- *     yet (`.vinaya-confidence`, under that round's own Developer folder), and
+ *   - the round's accepted Developer turn results (`turn-result-<attempt>.json`,
+ *     under that round's own Developer folder, written once by the driver):
+ *     the newest accepted one's confidence, when it is `completed`, and
  *   - the run's published marker, which records every round's
  *     confidence at publish.
  *
- * A round the driver has already read and cleared, and never published, leaves
- * NO confidence record behind — this reports nothing for it rather than
- * carrying an older round's figure forward under a newer round's number.
+ * A round whose newest accepted result states no confidence (`blocked`,
+ * `needs_ruling`), or that holds no accepted result at all, is skipped — this
+ * never carries an older round's figure forward under a newer round's number,
+ * and never makes one up.
  */
 function readStatedConfidence(root: string, task: number): TaskConfidence | null {
   let entries: string[]
@@ -823,10 +825,9 @@ function readStatedConfidence(root: string, task: number): TaskConfidence | null
     .map(Number)
     .sort((a, b) => b - a)
   for (const round of rounds) {
-    const raw = readIfExists(runPath(root, task, { area: 'developer', round, file: CONFIDENCE_FILE_NAME }))
-    if (raw === null) continue
-    const parsed = parseConfidenceReply(raw)
-    return { round, percent: parsed === 'absent' ? null : parsed.value, source: 'stated' }
+    const confidence = confidenceFromRecords(readTurnResultRecords(root, task, round))
+    if (confidence === 'absent') continue
+    return { round, percent: confidence.value, source: 'stated' }
   }
   return null
 }
@@ -908,9 +909,9 @@ export type SummaryCommentReader = (
   | { kind: 'unread' }
 
 /**
- * The stated file wins over the summary when both exist: it is the newer of
- * the two by construction (the summary is written at publish; a statement
- * still on disk has not been consumed since). The summary is read only for a
+ * The stated figure wins over the summary when both exist: the round's
+ * accepted turn results are written as each turn ends, so they are never older
+ * than the summary written at publish. The summary is read only for a
  * run that has PUBLISHED — the one state in which a summary exists at all —
  * so an in-flight row costs no extra forge call for this field.
  */
@@ -1182,16 +1183,15 @@ const NO_VALUE = '—'
 const NOT_READ = 'not read'
 
 /**
- * A `stated` figure is the developer's OWN statement for a round whose review
- * has not completed — the driver clears the statement the moment it assesses
- * the round — so the cell says so: read as a completed round's outcome it would
- * overstate what happened. A `published-summary` figure is a completed round's
- * own recorded confidence and needs no qualifier.
+ * A `stated` figure is the developer's OWN statement, from the round's newest
+ * accepted turn result, whether or not that round's review has completed — so
+ * the cell says so: read as a completed round's outcome it would overstate what
+ * happened. A `published-summary` figure is a completed round's own recorded
+ * confidence and needs no qualifier.
  *
- * A round the loop asked and whose statement was missing or unreadable reads
- * `absent`; a round it never asked never reaches this cell at all (it carries no
- * confidence record), so `absent` never blames a developer for a statement
- * nothing requested.
+ * A round with no accepted result stating a confidence never reaches this cell
+ * as `stated` at all, so `absent` never blames a developer for a statement
+ * nothing recorded.
  */
 function confidenceCell(confidence: TaskConfidence | null, unread: boolean): string {
   // A read this status read never made is not an absence: saying `—` here would
