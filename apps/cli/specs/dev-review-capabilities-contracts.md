@@ -1,6 +1,6 @@
 # Developer-review capabilities and contracts — tools, grants, staged inputs and agent results
 
-Status: accepted
+Status: ratified
 
 Scope: the contract between the developer-review controller and its agents: the callable tools, the capability grants per role, the inputs the controller stages before an agent starts, and the typed result every agent returns. Graph topology, states, transitions and node ordering live in `apps/cli/specs/dev-review-engine-state-machine.md`; provider capability evidence lives in `apps/cli/specs/dev-review-engine-capability-matrix.md`; confinement and provider security boundaries live in `apps/cli/specs/isolation.md`; the standalone loop's behaviour lives in `apps/cli/specs/loop.md`. This file is the reference agents and briefs cite for the contract; it holds no plan, task list or order.
 
