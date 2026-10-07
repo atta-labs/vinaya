@@ -1092,6 +1092,22 @@ export function defaultGitWorktreeChangedPaths(worktreePath: string, base: strin
   }
 }
 
+/** Every untracked, non-ignored path in the worktree. Best-effort: `[]` on any failure. */
+export function defaultGitWorktreeUntrackedPaths(worktreePath: string): string[] {
+  try {
+    const raw = execFileSync('git', ['-C', worktreePath, 'ls-files', '--others', '--exclude-standard'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    return raw
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+  } catch {
+    return []
+  }
+}
+
 function gitOk(worktreePath: string, args: string[]): string | null {
   try {
     return execFileSync('git', ['-C', worktreePath, ...args], {
@@ -3765,8 +3781,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       ]
       const worktreeChangedPaths = (): string[] => {
         const unpushed = d.readUnpushedWorkDetail(worktree)
-        const diffPaths = publicationChangedPaths(publicationRange(safeRemoteHead()))
-        return [...new Set([...diffPaths, ...unpushed.dirtyFiles])]
+        const range = publicationRange(safeRemoteHead())
+        const diffPaths = publicationChangedPaths(range)
+        const extraDirtyPaths = range.base ? defaultGitWorktreeUntrackedPaths(worktree) : unpushed.dirtyFiles
+        return [...new Set([...diffPaths, ...extraDirtyPaths])]
       }
       const prChangedPaths = async (): Promise<string[] | null> => {
         const head = d.readWorktreeHead(worktree)

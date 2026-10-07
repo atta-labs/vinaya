@@ -11,7 +11,11 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { defaultGitWorktreeChangedPaths, defaultReadMergedDefaultCommit } from '../../../src/lib/dev-review-loop.js'
+import {
+  defaultGitWorktreeChangedPaths,
+  defaultGitWorktreeUntrackedPaths,
+  defaultReadMergedDefaultCommit
+} from '../../../src/lib/dev-review-loop.js'
 import {
   checkPublicationPreconditions,
   validateCommitHeader
@@ -280,14 +284,31 @@ describe('publication range after a default-branch merge', () => {
     expect(merged?.regressedPaths).toEqual(['guarded.txt'])
   })
 
-  it('reads the staged in-progress merge incoming commit', () => {
+  it('allows publication during an uncommitted merge without treating the default branch files as task changes', () => {
     const { dir } = fixture()
     const pushed = git(dir, 'rev-parse', 'HEAD')
     const tip = advanceMain(dir, 'main-only.txt')
     git(dir, 'merge', '-q', '--no-commit', '--no-ff', 'main')
+    writeFileSync(join(dir, 'untracked.txt'), 'untracked\n')
     const merged = readMerged(dir, pushed)
     expect(merged?.commit).toBe(tip)
-    expect(defaultGitWorktreeChangedPaths(dir, tip)).toEqual(['own.txt'])
+    const changed = [
+      ...defaultGitWorktreeChangedPaths(dir, merged?.commit as string),
+      ...defaultGitWorktreeUntrackedPaths(dir)
+    ]
+    expect(changed.sort()).toEqual(['own.txt', 'untracked.txt'])
+    expect(
+      checkPublicationPreconditions({
+        worktreeBranch: 't',
+        expectedBranch: 't',
+        worktreeHead: 'a'.repeat(40),
+        recordedHead: 'a'.repeat(40),
+        base: 'b'.repeat(40),
+        expectedBase: 'b'.repeat(40),
+        changedPaths: changed,
+        surface: { in: ['own.txt', 'untracked.txt'], out: ['main-only.txt'] }
+      }).ok
+    ).toBe(true)
   })
 
   it('still reports a file the Developer itself changed outside the Surface', () => {
@@ -298,7 +319,10 @@ describe('publication range after a default-branch merge', () => {
     writeFileSync(join(dir, 'a.txt'), 'edited in the merge\n')
     git(dir, 'add', '.')
     const merged = readMerged(dir, pushed)
-    const changed = defaultGitWorktreeChangedPaths(dir, merged?.commit as string)
+    const changed = [
+      ...defaultGitWorktreeChangedPaths(dir, merged?.commit as string),
+      ...defaultGitWorktreeUntrackedPaths(dir)
+    ]
     expect(changed.sort()).toEqual(['a.txt', 'own.txt'])
     const verdict = checkPublicationPreconditions({
       worktreeBranch: 't',
