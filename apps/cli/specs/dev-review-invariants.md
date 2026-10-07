@@ -5,7 +5,7 @@ Status: draft
 Scope: the standalone developer-review loop as it ships today
 (`apps/cli/specs/loop.md`), frozen as the behavioral oracle for the
 Atta Engine productionization described in the Linear "Tech spec —
-Developer-review on Atta Engine", revision 7. That design keeps the
+Developer-review on Atta Engine", revision 9. That design keeps the
 standalone path as oracle, fallback and regression source, but does not
 treat it as the ideal design: every valid guarantee must be preserved,
 and every demonstrated weakness must be replaced on purpose. This file
@@ -77,9 +77,10 @@ Each invariant records:
 
 - **behavior**: what the loop does, derived from the implementation and
   its tests, never from a name alone;
-- **classification**: one of five values (below);
+- **classification**: what the finding is (below);
+- **scope**: whose the finding is (below);
 - **owner**: the layer that owns the behavior in the target design
-  (revision 7, section 16.2). `vinaya-policy` covers the controller and
+  (revision 9, section 16.2). `vinaya-policy` covers the controller and
   policy libraries; `engine-runtime` covers scheduling, joins,
   checkpoints, interrupts and locks; `provider-adapter` covers vendor
   invocation, sessions and sandboxing; `governed-operation` covers
@@ -108,8 +109,45 @@ Each invariant records:
 | `product-guarantee` | loop.md promises it, deterministic code outside the worker enforces it, and at least one test is its oracle. The Engine path must preserve it. |
 | `implementation-accident` | Incidental structure or ordering that nothing promises. The Engine path need not reproduce it. |
 | `named-defect` | The code contradicts loop.md, or a weakness has been demonstrated. Each entry cites both sides in the defect register. The Engine path must correct it, not copy it. |
-| `advisory` | Enforced only inside the worker, through hooks, permission rules or prompt text, so a worker can bypass it. It never counts as a product guarantee (revision 7, sections 16.3 and 16.7). |
+| `advisory` | Enforced only inside the worker, through hooks, permission rules or prompt text, so a worker can bypass it. It never counts as a product guarantee (revision 9, sections 16.3 and 16.7). |
 | `principal-ruling-required` | Spec and code are silent or in conflict on a policy choice. The entry is recorded with its ruling status and is never decided here. |
+
+### The classification and scope fields
+
+Every entry of the invariant register and of the defect register carries two
+separate fields, and the architecture test fails on an entry missing either.
+The classification says what the finding is; the scope says whose it is, so a
+process-specific defect and product-level hygiene stay distinguishable. The
+test prints the count of entries under each classification and under each
+scope.
+
+The classification vocabulary was extended, not replaced. The five values
+above keep their meaning and their counts, and an entry's recorded
+classification is never changed silently. Findings recorded since the register
+froze use the five values below, which name the same ideas more plainly:
+`guarantee` is the new name for `product-guarantee`, `defect` for
+`named-defect`, `accident` for `implementation-accident`, and `advisory` is
+shared.
+
+| Classification | Meaning |
+| -- | -- |
+| `guarantee` | A promise the loop keeps through deterministic code outside the worker, with at least one test as its oracle, and a mapping to the corpus scenario that will exercise it. |
+| `defect` | A demonstrated weakness: the code contradicted its own promise, or a failure was observed. It cites the defect register, records whether its fix shipped, and maps to a corpus scenario. |
+| `accident` | Incidental structure, or an emergent property of how the loop is run, that nothing promises and that need not be reproduced. |
+| `hygiene` | Care for the repository, its tests or its tooling that protects no product behavior. It is kept so it is not lost, and it is never an Engine contract. |
+| `advisory` | A residual risk or a control enforceable only inside the worker, stated and never claimed closed. |
+
+| Scope | Meaning |
+| -- | -- |
+| `product` | The behavior belongs to the product the Engine path delivers, whichever process runs it. |
+| `reference-process` | The behavior belongs to the process around the product (how tasks are numbered, how many loops an operator starts), not to a loop module. |
+| `implementation` | The behavior belongs to this standalone implementation (its launcher, its test selection, its test hygiene) and does not carry into the Engine path. |
+
+Only a `product`-scope guarantee becomes an Engine contract. A guarantee or a
+defect of any other scope is recorded and fixed where it lives, and the Engine
+path does not inherit it. Existing entries were given a scope from their owner:
+those owned by `standalone-only` are `implementation` scope, every other
+entry is `product` scope.
 
 ## Control state versus telemetry
 
@@ -133,7 +171,7 @@ it adds, and the map records no transition that depends on it.
 
 ## Registers
 
-The **defect register** (`defects`) holds 24 entries. Each one names the
+The **defect register** (`defects`) holds 34 entries. Each one names the
 code locator and the spec section it contradicts, or the weakness it
 demonstrates. The most consequential are:
 
