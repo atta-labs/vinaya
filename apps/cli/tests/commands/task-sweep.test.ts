@@ -85,7 +85,7 @@ function stubGh(home: string): string {
     )
     .join('\n')
   const script = `#!/bin/sh
-if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "state" ]; then
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--repo" ] && [ "$5" = "acme/widget" ] && [ "$6" = "--json" ] && [ "$7" = "state" ]; then
   case "$3" in
 ${stateCases}
     *) echo "gh stub: unhandled issue view state for $3" >&2; exit 1 ;;

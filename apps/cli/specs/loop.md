@@ -187,7 +187,10 @@ driver's own start-of-run call, since a synchronous, sequential `gh`
 call per folder would otherwise starve the event loop that carries a
 concurrently dispatched agent's own output.
 
-Every OTHER task folder whose Issue is closed or whose pull request is
+Every OTHER task folder whose Issue is closed, whose Issue the forge
+reports as nonexistent (`gh`'s "Could not resolve to an Issue" — an
+orphan, e.g. a folder a test once wrote under a fixture number; any other
+read failure still keeps the folder as unknown), or whose pull request is
 merged or closed is removed, exactly as the synchronous sweep decides
 it — the keep-policy itself is unchanged, only how it runs:
 `classifyTaskFolderAsync` mirrors `classifyTaskFolder`'s decision and

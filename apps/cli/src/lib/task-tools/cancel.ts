@@ -200,7 +200,7 @@ export function createTaskCancelHandler(
     const agent: AgentVendor =
       peekedEscalation?.agent && isAgentVendor(peekedEscalation.agent) ? peekedEscalation.agent : 'claude'
 
-    appendRoleLine(loopLogPathFor(null, issue), 'operator', `task_cancel requested: ${parsed.data.reason}`)
+    appendRoleLine(loopLogPathFor(null, issue, root), 'operator', `task_cancel requested: ${parsed.data.reason}`)
 
     try {
       const result = await deps.cancelDevReviewLoop(

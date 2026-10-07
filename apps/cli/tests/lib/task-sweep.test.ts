@@ -7,11 +7,24 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   classifyTaskFolder,
+  classifyTaskFolderAsync,
+  fetchIssueState,
+  fetchIssueStateAsync,
+  IssueNotFoundError,
   parseWorktreeList,
   removeWorktreeAsync,
   runTaskSweep,
@@ -62,7 +75,10 @@ describe('classifyTaskFolder', () => {
   it('live: a driver lock naming a live pid wins outright, before any forge read', () => {
     const root = tempDir('vinaya-sweep-live-')
     const deps = baseDeps(root, {
-      readDriverLockForScope: () => ({ pid: 4242, startedAt: '2026-09-21T00:00:00.000Z' }),
+      readDriverLockForScope: () => ({
+        pid: 4242,
+        startedAt: '2026-09-21T00:00:00.000Z'
+      }),
       isDriverPidAlive: (pid) => pid === 4242,
       fetchIssueState: () => {
         throw new Error('must never be called — a live driver wins before any forge read')
@@ -115,7 +131,10 @@ describe('classifyTaskFolder', () => {
 
   it('open: Issue open, no pull request yet', () => {
     const root = tempDir('vinaya-sweep-open-no-pr-')
-    const deps = baseDeps(root, { fetchIssueState: () => 'OPEN', fetchPrForBranch: () => null })
+    const deps = baseDeps(root, {
+      fetchIssueState: () => 'OPEN',
+      fetchPrForBranch: () => null
+    })
     const cls = classifyTaskFolder(106, root, deps)
     expect(cls.kind).toBe('open')
     expect(cls.reason).toContain('no pull request yet')
@@ -143,6 +162,18 @@ describe('classifyTaskFolder', () => {
     const cls = classifyTaskFolder(108, root, deps)
     expect(cls.kind).toBe('unknown')
     expect(cls.reason).toContain('gh: rate limited')
+  })
+
+  it('finished: the forge reports the Issue as nonexistent — an orphan, removed', () => {
+    const root = tempDir('vinaya-sweep-orphan-')
+    const deps = baseDeps(root, {
+      fetchIssueState: (issue) => {
+        throw new IssueNotFoundError(issue)
+      }
+    })
+    const cls = classifyTaskFolder(9001, root, deps)
+    expect(cls.kind).toBe('finished')
+    expect(cls.reason).toContain('does not exist')
   })
 
   it('unknown: an unscoped dispatch folder has nothing to check against the forge', () => {
@@ -245,7 +276,12 @@ describe('sweepLegacyLayout', () => {
     mkdirSync(manifestDir, { recursive: true })
     writeFileSync(
       join(manifestDir, 'round-000001.json'),
-      JSON.stringify({ repository: 'atta-labs/vinaya', pr: 1, branch: 'task/issue-401', round: 1 })
+      JSON.stringify({
+        repository: 'atta-labs/vinaya',
+        pr: 1,
+        branch: 'task/issue-401',
+        round: 1
+      })
     )
     const deps = baseDeps(root, { fetchIssueState: () => 'CLOSED' })
 
@@ -296,7 +332,9 @@ describe('sweepLegacyLayout', () => {
     const root = tempDir('vinaya-sweep-legacy-root4-')
     mkdirSync(join(home, 'loops', 'atta-labs-vinaya'), { recursive: true })
     writeFileSync(join(home, 'loops', 'atta-labs-vinaya', '404.log'), 'narration')
-    mkdirSync(join(home, 'loops', 'other-owner-other-repo'), { recursive: true })
+    mkdirSync(join(home, 'loops', 'other-owner-other-repo'), {
+      recursive: true
+    })
     writeFileSync(join(home, 'loops', 'other-owner-other-repo', '999.log'), 'narration')
     const deps = baseDeps(root, { fetchIssueState: () => 'CLOSED' })
 
@@ -375,7 +413,10 @@ describe('sweepLegacyLayout', () => {
     const root = tempDir('vinaya-sweep-legacy-root8-')
     mkdirSync(join(home, 'loops', 'atta-labs-vinaya'), { recursive: true })
     writeFileSync(join(home, 'loops', 'atta-labs-vinaya', '407.log'), 'narration')
-    const deps = baseDeps(root, { fetchIssueState: () => 'OPEN', fetchPrForBranch: () => null })
+    const deps = baseDeps(root, {
+      fetchIssueState: () => 'OPEN',
+      fetchPrForBranch: () => null
+    })
 
     const report = sweepLegacyLayout(true, deps, home)
     const entry = report.entries.find((e) => e.path.includes('407.log'))
@@ -410,7 +451,11 @@ describe('sweepLegacyLayout', () => {
     mkdirSync(escalationDir, { recursive: true })
     writeFileSync(
       join(escalationDir, '625-1-unknown.json'),
-      JSON.stringify({ task: 625, branch: 'task/driver-lifecycle-v1/7', pr: 630 })
+      JSON.stringify({
+        task: 625,
+        branch: 'task/driver-lifecycle-v1/7',
+        pr: 630
+      })
     )
     const deps = baseDeps(root, {
       fetchIssueState: () => 'CLOSED',
@@ -436,7 +481,12 @@ describe('sweepLegacyLayout', () => {
       mkdirSync(taskDir, { recursive: true })
       writeFileSync(
         join(taskDir, 'pause-state.json'),
-        JSON.stringify({ task: 560, branch: 'task/worker-isolation-v1/3', prNumber: 623, reason: 'infrastructure' })
+        JSON.stringify({
+          task: 560,
+          branch: 'task/worker-isolation-v1/3',
+          prNumber: 623,
+          reason: 'infrastructure'
+        })
       )
       const deps = baseDeps(root, {
         fetchIssueState: () => 'CLOSED',
@@ -537,6 +587,7 @@ describe('sweepModernTasksAsync — task worktrees under .worktrees/', () => {
       readDriverLockForScope: () => null,
       readPauseStateForScope: () => null,
       fetchIssueState: async () => 'OPEN',
+      resolveRepo: () => ({ owner: 'atta-labs', repo: 'vinaya' }),
       developerBranchFor: async (issue) => `task/issue-${issue}`,
       fetchPrForBranch: async () => null,
       fetchPrBody: async () => '',
@@ -558,7 +609,10 @@ describe('sweepModernTasksAsync — task worktrees under .worktrees/', () => {
   it('removes a worktree whose pull request is merged or closed, fully pushed and clean, and lists it', async () => {
     const root = tempDir('vinaya-sweep-wt-')
     const { deps, removedPaths } = asyncDeps(root, {
-      listWorktrees: async () => ({ main: MAIN, entries: [wt('task/issue-1'), wt('task/issue-2')] }),
+      listWorktrees: async () => ({
+        main: MAIN,
+        entries: [wt('task/issue-1'), wt('task/issue-2')]
+      }),
       fetchPrForBranch: async (b) =>
         b.endsWith('1') ? { number: 9, state: 'MERGED' } : { number: 10, state: 'CLOSED' }
     })
@@ -575,7 +629,10 @@ describe('sweepModernTasksAsync — task worktrees under .worktrees/', () => {
     const root = tempDir('vinaya-sweep-wt-name-')
     const asked: string[] = []
     const { deps, removedPaths } = asyncDeps(root, {
-      listWorktrees: async () => ({ main: MAIN, entries: [wt('task/issue-3', { name: 'something-else' })] }),
+      listWorktrees: async () => ({
+        main: MAIN,
+        entries: [wt('task/issue-3', { name: 'something-else' })]
+      }),
       fetchPrForBranch: async (b) => {
         asked.push(b)
         return merged()
@@ -596,7 +653,10 @@ describe('sweepModernTasksAsync — task worktrees under .worktrees/', () => {
     ['no pull request', { fetchPrForBranch: async () => null }, wt('task/issue-5'), 'no pull request'],
     [
       'unpushed commits',
-      { fetchPrForBranch: merged, worktreeHasUnpushedCommits: async () => true },
+      {
+        fetchPrForBranch: merged,
+        worktreeHasUnpushedCommits: async () => true
+      },
       wt('task/issue-6'),
       'commits the remote lacks'
     ],
@@ -639,7 +699,10 @@ describe('sweepModernTasksAsync — task worktrees under .worktrees/', () => {
     const root = tempDir('vinaya-sweep-wt-live-')
     mkdirSync(runPath(root, 11, { area: 'task' }), { recursive: true })
     const { deps, removedPaths } = asyncDeps(root, {
-      listWorktrees: async () => ({ main: MAIN, entries: [wt('task/issue-11'), wt('task/issue-12')] }),
+      listWorktrees: async () => ({
+        main: MAIN,
+        entries: [wt('task/issue-11'), wt('task/issue-12')]
+      }),
       fetchPrForBranch: merged,
       readDriverLockForScope: (_r, scope) => (scope === 11 ? { pid: 4242, startedAt: 'now' } : null),
       isDriverPidAlive: (pid) => pid === 4242
@@ -655,7 +718,10 @@ describe('sweepModernTasksAsync — task worktrees under .worktrees/', () => {
     const root = tempDir('vinaya-sweep-wt-unresolved-')
     mkdirSync(runPath(root, { pr: 30 }, { area: 'task' }), { recursive: true })
     const { deps, removedPaths } = asyncDeps(root, {
-      listWorktrees: async () => ({ main: MAIN, entries: [wt('task/issue-13')] }),
+      listWorktrees: async () => ({
+        main: MAIN,
+        entries: [wt('task/issue-13')]
+      }),
       fetchPrForBranch: merged,
       readDriverLockForScope: () => ({ pid: 4242, startedAt: 'now' }),
       isDriverPidAlive: () => true
@@ -669,7 +735,13 @@ describe('sweepModernTasksAsync — task worktrees under .worktrees/', () => {
     const { deps, removedPaths } = asyncDeps(root, {
       listWorktrees: async () => ({
         main: MAIN,
-        entries: [{ path: '/elsewhere/task-14', branch: 'task/issue-14', locked: false }]
+        entries: [
+          {
+            path: '/elsewhere/task-14',
+            branch: 'task/issue-14',
+            locked: false
+          }
+        ]
       }),
       fetchPrForBranch: merged
     })
@@ -682,8 +754,14 @@ describe('sweepModernTasksAsync — task worktrees under .worktrees/', () => {
     const root = tempDir('vinaya-sweep-wt-recheck-')
     let reads = 0
     const { deps, removedPaths } = asyncDeps(root, {
-      listWorktrees: async () => ({ main: MAIN, entries: [wt('task/issue-15')] }),
-      fetchPrForBranch: async () => ({ number: 9, state: ++reads === 1 ? 'MERGED' : 'OPEN' })
+      listWorktrees: async () => ({
+        main: MAIN,
+        entries: [wt('task/issue-15')]
+      }),
+      fetchPrForBranch: async () => ({
+        number: 9,
+        state: ++reads === 1 ? 'MERGED' : 'OPEN'
+      })
     })
     const report = await sweepModernTasksAsync(undefined, () => {}, deps)
     expect(removedPaths).toEqual([])
@@ -701,7 +779,11 @@ describe('sweepModernTasksAsync — task worktrees under .worktrees/', () => {
     )
     expect(listing.main).toBe('/repo')
     expect(listing.entries).toEqual([
-      { path: '/repo/.worktrees/task/issue-1', branch: 'task/issue-1', locked: true },
+      {
+        path: '/repo/.worktrees/task/issue-1',
+        branch: 'task/issue-1',
+        locked: true
+      },
       { path: '/repo/.worktrees/x', branch: null, locked: false }
     ])
   })
@@ -753,5 +835,134 @@ describe('worktree removal against a real temporary repository', () => {
     expect(await worktreeHasUncommittedAsync(wtPath)).toBe(true)
     await expect(removeWorktreeAsync(main, wtPath)).rejects.toThrow()
     expect(existsSync(wtPath)).toBe(true)
+  })
+})
+
+describe("the forge's not-found answer for an Issue — the one read failure that makes a folder an orphan", () => {
+  const savedPath = process.env.PATH
+
+  afterEach(() => {
+    process.env.PATH = savedPath
+  })
+
+  /** Puts a `gh` first on PATH that prints `stderr` and exits 1, so the real `fetchIssueState*` run unmodified. */
+  function fakeGhFailingWith(stderr: string): void {
+    const bin = tempDir('vinaya-sweep-fake-gh-')
+    const gh = join(bin, 'gh')
+    writeFileSync(gh, `#!/bin/sh\necho '${stderr}' >&2\nexit 1\n`)
+    chmodSync(gh, 0o755)
+    process.env.PATH = `${bin}:${savedPath}`
+  }
+
+  const NOT_FOUND = 'GraphQL: Could not resolve to an issue or pull request with the number of 999999.'
+  const REPO = 'atta-labs/vinaya'
+
+  it('fetchIssueState throws IssueNotFoundError for the not-found stderr', () => {
+    fakeGhFailingWith(NOT_FOUND)
+    expect(() => fetchIssueState(999999, REPO)).toThrow(IssueNotFoundError)
+  })
+
+  it('fetchIssueStateAsync throws IssueNotFoundError for the not-found stderr', async () => {
+    fakeGhFailingWith(NOT_FOUND)
+    await expect(fetchIssueStateAsync(999999, REPO)).rejects.toBeInstanceOf(IssueNotFoundError)
+  })
+
+  it('any other failure (network, auth) is not a not-found — it stays a plain error', async () => {
+    for (const stderr of ['error connecting to api.github.com', 'HTTP 401: Bad credentials', 'HTTP 502: Bad Gateway']) {
+      fakeGhFailingWith(stderr)
+      let syncErr: unknown
+      try {
+        fetchIssueState(1, REPO)
+      } catch (err) {
+        syncErr = err
+      }
+      expect(syncErr).toBeInstanceOf(Error)
+      expect(syncErr).not.toBeInstanceOf(IssueNotFoundError)
+      const asyncErr = await fetchIssueStateAsync(1, REPO).catch((err: unknown) => err)
+      expect(asyncErr).toBeInstanceOf(Error)
+      expect(asyncErr).not.toBeInstanceOf(IssueNotFoundError)
+    }
+  })
+
+  it('both lookups pass --repo <owner>/<repo> to gh issue view', async () => {
+    const bin = tempDir('vinaya-sweep-fake-gh-args-')
+    const log = join(bin, 'args.log')
+    const gh = join(bin, 'gh')
+    writeFileSync(gh, `#!/bin/sh\necho "$@" >> '${log}'\necho '{"state":"OPEN"}'\n`)
+    chmodSync(gh, 0o755)
+    process.env.PATH = `${bin}:${savedPath}`
+    expect(fetchIssueState(1067, REPO)).toBe('OPEN')
+    expect(await fetchIssueStateAsync(1067, REPO)).toBe('OPEN')
+    const calls = readFileSync(log, 'utf8').trim().split('\n')
+    expect(calls).toEqual([
+      'issue view 1067 --repo atta-labs/vinaya --json state',
+      'issue view 1067 --repo atta-labs/vinaya --json state'
+    ])
+  })
+
+  it('classifyTaskFolder passes the resolved repository to the Issue lookup', () => {
+    const root = tempDir('vinaya-sweep-repo-arg-')
+    const seen: string[] = []
+    const deps = baseDeps(root, {
+      fetchIssueState: (_issue, repo) => {
+        seen.push(repo)
+        return 'CLOSED'
+      }
+    })
+    classifyTaskFolder(101, root, deps)
+    expect(seen).toEqual(['atta-labs/vinaya'])
+  })
+
+  it('a null repository keeps the folder as unknown and never reads the Issue (sync and async)', async () => {
+    const root = tempDir('vinaya-sweep-no-repo-')
+    const never = () => {
+      throw new IssueNotFoundError(101)
+    }
+    const sync = classifyTaskFolder(101, root, baseDeps(root, { resolveRepo: () => null, fetchIssueState: never }))
+    expect(sync.kind).toBe('unknown')
+    const asyncDeps = {
+      ...asyncClassifyDeps(root, async () => never()),
+      resolveRepo: () => null
+    } as unknown as Parameters<typeof classifyTaskFolderAsync>[2]
+    const asyncCls = await classifyTaskFolderAsync(101, root, asyncDeps)
+    expect(asyncCls.kind).toBe('unknown')
+  })
+
+  function asyncClassifyDeps(root: string, fetchIssueStateImpl: (issue: number) => Promise<'OPEN' | 'CLOSED'>) {
+    return {
+      runtimeDir: () => root,
+      isDriverPidAlive: () => false,
+      readDriverLockForScope: () => null,
+      readPauseStateForScope: () => null,
+      fetchIssueState: fetchIssueStateImpl,
+      developerBranchFor: async (issue: number) => `task/issue-${issue}`,
+      fetchPrForBranch: async () => null,
+      fetchPrBody: async () => '',
+      taskFromPrBody: () => null,
+      resolveRepo: () => ({ owner: 'atta-labs', repo: 'vinaya' }),
+      rm: () => {}
+    } as unknown as Parameters<typeof classifyTaskFolderAsync>[2]
+  }
+
+  it('classifyTaskFolderAsync: a nonexistent Issue is finished; any other read failure stays unknown', async () => {
+    const root = tempDir('vinaya-sweep-async-orphan-')
+    const orphan = await classifyTaskFolderAsync(
+      9001,
+      root,
+      asyncClassifyDeps(root, async (issue) => {
+        throw new IssueNotFoundError(issue)
+      })
+    )
+    expect(orphan.kind).toBe('finished')
+    expect(orphan.reason).toContain('does not exist')
+
+    const unreadable = await classifyTaskFolderAsync(
+      9001,
+      root,
+      asyncClassifyDeps(root, async () => {
+        throw new Error('gh: rate limited')
+      })
+    )
+    expect(unreadable.kind).toBe('unknown')
   })
 })
