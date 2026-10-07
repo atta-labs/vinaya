@@ -5082,13 +5082,16 @@ describe('devReviewLoop — a GitHub rate limit waits and retries, never pausing
       slept,
       resetReads: () => resetReads,
       deps: {
-        sleep: async (ms: number) => {
-          if (ms > 0) slept.push(ms)
+        // A real one-millisecond yield, like the harness's own sleep — the log
+        // sink flushes on a macrotask, so an instant no-op would starve it.
+        // Only the rate-limit waits (a minute or more) are recorded.
+        sleep: (ms: number) => {
+          if (ms >= 30_000) slept.push(ms)
+          return new Promise<void>((resolve) => setTimeout(resolve, 1))
         },
-        now: () => 1_000_000,
         readRateLimitReset: async () => {
           resetReads += 1
-          return 1_000 + 60
+          return Math.floor(Date.now() / 1000) + 60
         }
       }
     }
@@ -5114,7 +5117,9 @@ describe('devReviewLoop — a GitHub rate limit waits and retries, never pausing
     )
     expect(result.finalDecision.type).toBe('publish')
     expect(thrown).toBe(true)
-    expect(probes.slept).toEqual([65_000])
+    expect(probes.slept).toHaveLength(1)
+    expect(probes.slept[0]).toBeGreaterThan(60_000)
+    expect(probes.slept[0]).toBeLessThanOrEqual(65_000)
     expect(probes.resetReads()).toBe(1)
     expect(world.postedComments.some((c) => /aeg:loop:paused/.test(c.body))).toBe(false)
   })
