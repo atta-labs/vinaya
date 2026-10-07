@@ -209,6 +209,8 @@ import {
   driverCrashEvents,
   driverDecidedPauseEvents,
   errorClassOf,
+  isGitHubRateLimitError,
+  MAX_CONSECUTIVE_RATE_LIMIT_WAITS,
   MAX_GATE_STALLED_TURNS,
   MAX_INFRASTRUCTURE_RETRIES,
   parseConfidenceReply,
@@ -216,6 +218,8 @@ import {
   parseShortstat,
   persistLoopState,
   pollUntil,
+  rateLimitPauseDetail,
+  rateLimitWaitMs,
   renderDeveloperRoundComment,
   roundResponsePromptLine,
   routeCompletionEvents,
@@ -537,6 +541,13 @@ export type LoopDeps = {
   fetchLoopHistory: (prNumber: number | null) => ReconstructedJournal
   sleep: (ms: number) => Promise<void>
   now: () => number
+  /**
+   * The epoch-second a spent GitHub rate limit resets, read from `gh api
+   * rate_limit` (which does not count against the limit); `null` when none is
+   * reported (a secondary limit reports none) or the read fails. Optional: a
+   * fixture that does not stub it waits the fixed fallback.
+   */
+  readRateLimitReset?: () => Promise<number | null>
   /**
    * O1 (driver liveness): starts the driver's liveness heartbeat — a repeating timer
    * that fires `cb` every `intervalMs` while the process is alive, returning
@@ -1855,6 +1866,21 @@ export function deriveVerdictPauseDetail(
   return undefined
 }
 
+async function defaultReadRateLimitReset(): Promise<number | null> {
+  try {
+    const out = await gh([
+      'api',
+      'rate_limit',
+      '--jq',
+      '[.resources.core, .resources.graphql] | map(select(.remaining == 0) | .reset) | max'
+    ])
+    const reset = Number(out.trim())
+    return Number.isFinite(reset) && reset > 0 ? reset : null
+  } catch {
+    return null
+  }
+}
+
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -2049,6 +2075,7 @@ function defaultDeps(): LoopDeps {
     fetchLoopHistory,
     sleep: defaultSleep,
     now: () => Date.now(),
+    readRateLimitReset: defaultReadRateLimitReset,
     setHeartbeat: defaultSetHeartbeat,
     // O3: env-overridable the same way the gate poll
     // budget already is (`gatePollEnvOverride`'s own doc comment) — a real
@@ -2579,6 +2606,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   // policy_changed) is a genuine decision point a Principal must act on —
   // those clear the lock exactly as before, unchanged.
   let keepLockAlive = false
+
+  // GitHub rate-limit waiting (see `absorbRateLimit`, below, where `round` is
+  // in scope). `roleDispatchesInPass` counts role dispatches since the round
+  // loop's current iteration began: re-entering the round loop after a
+  // dispatch already ran would dispatch that role a second time, so a rate
+  // limit that lands after one is never re-entered — the reads that follow a
+  // dispatch wait in place instead (`withRateLimitWait`).
+  let roleDispatchesInPass = 0
+  let rateLimitWaits = 0
+  let roundAtLastWait = -1
+  const realDispatchRoleForCount = d.dispatchRole
+  d.dispatchRole = ((...args: Parameters<typeof realDispatchRoleForCount>) => {
+    roleDispatchesInPass += 1
+    return realDispatchRoleForCount(...args)
+  }) as typeof realDispatchRoleForCount
 
   // O1/O3: captured BEFORE `runDevReviewLoopBody` ever sets
   // `process.env.VINAYA_HOST` (below, alongside its own `VINAYA_RUN`
@@ -4291,8 +4333,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         '',
         'Resumed once, in the foreground, with a commit-and-push instruction.'
       ].join('\n')
-      postForgeEffectOnce(root, task, `unpushed-work-resume-${roundNum}-${head}`, () =>
-        d.postMarkedComment('pr', String(prNumber), '<!-- aeg:loop:unpushed-work-resume -->', body)
+      await withRateLimitWait(() =>
+        postForgeEffectOnce(root, task, `unpushed-work-resume-${roundNum}-${head}`, () =>
+          d.postMarkedComment('pr', String(prNumber), '<!-- aeg:loop:unpushed-work-resume -->', body)
+        )
       )
     }
 
@@ -4773,13 +4817,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     /** O2: the round marker comment the driver now posts in the Developer's place (`renderDeveloperRoundComment`) — idempotent per round+head, the same `postForgeEffectOnce` discipline every other driver-posted comment in this file already uses. */
-    function postDeveloperRoundComment(roundNum: number, head: string, findingIds: readonly string[]): void {
-      postForgeEffectOnce(root, task, `developer-round-comment-${roundNum}-${head}`, () =>
-        d.postMarkedComment(
-          'pr',
-          String(prNumber),
-          developerRoundMarker(roundNum),
-          renderDeveloperRoundComment(head, findingIds)
+    async function postDeveloperRoundComment(
+      roundNum: number,
+      head: string,
+      findingIds: readonly string[]
+    ): Promise<void> {
+      await withRateLimitWait(() =>
+        postForgeEffectOnce(root, task, `developer-round-comment-${roundNum}-${head}`, () =>
+          d.postMarkedComment(
+            'pr',
+            String(prNumber),
+            developerRoundMarker(roundNum),
+            renderDeveloperRoundComment(head, findingIds)
+          )
         )
       )
     }
@@ -5598,7 +5648,26 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // final decision (`publish` → finished, any pause → paused), guarded so
       // it never double-writes with the escalation/publish early returns
       // above or the crash `catch` below.
-      const loopResult = await runRoundLoop()
+      // A GitHub rate limit that ends a round waits for the reset and
+      // re-enters the loop on the SAME state (`decision`, `round` are this
+      // closure's own); only `MAX_CONSECUTIVE_RATE_LIMIT_WAITS` waits in a row
+      // with no round progress between them fall through to the outer
+      // handler's pause. Every other error goes there at once.
+      let loopResult: LoopResult
+      while (true) {
+        try {
+          loopResult = await runRoundLoop()
+          break
+        } catch (loopErr) {
+          // Re-enter only when no role was dispatched in the iteration that
+          // failed — re-entry re-runs the step `decision` names, and must
+          // never dispatch a role twice. The reads that follow a dispatch
+          // wait in place instead (`withRateLimitWait`); anything else that
+          // lands after a dispatch pauses as it did before this wait existed.
+          if (roleDispatchesInPass > 0) throw loopErr
+          await absorbRateLimit(loopErr)
+        }
+      }
       recordDriverExited(loopResult.finalDecision.type === 'publish' ? 'finished' : 'paused')
       // O2: a published decision is the loop's genuine end — the task will
       // not resume — so this task's staged per-dispatch agent-config homes
@@ -5643,7 +5712,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         detail:
           err instanceof DispatchSignInRefused
             ? err.message
-            : `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
+            : isGitHubRateLimitError(err)
+              ? `${rateLimitPauseDetail(round === roundAtLastWait ? rateLimitWaits : 0)} (round ${round}: ${err instanceof Error ? err.message : String(err)})`
+              : `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
       }
       keepLockAlive = true
       // The SAME durable snapshot every
@@ -5651,10 +5722,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // is — a genuinely uncaught error is exactly the case this record
       // exists for, so the next attach/resume recovers this round's
       // budgets rather than starting a fresh in-memory count at zero.
-      // A sign-in refusal is the one failure that spends no budget
+      // A sign-in refusal and a GitHub rate limit spend no budget
       // (`spendsInfrastructureRetry`): a host with no credentials never
       // produced a round for that bound to bound, so no number of sign-in
-      // pauses should ever demand a Principal ruling to resume past.
+      // pauses should ever demand a Principal ruling to resume past; a
+      // rate limit is a wait for the reset, not a recoverable-hiccup retry.
       if (spendsInfrastructureRetry(err)) infrastructureRetries += 1
       persistCurrentLoopState('pause', decision.reason)
       // This bookkeeping is best-effort, never a second chance for the
@@ -5738,9 +5810,37 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       return { finalDecision: decision, prNumber, task }
     }
 
+    /**
+     * Waits out one GitHub rate limit, or rethrows `err` when it is no rate
+     * limit or the wait is spent: `MAX_CONSECUTIVE_RATE_LIMIT_WAITS`
+     * consecutive waits with no round progress between them. The reset is
+     * read once, never polled.
+     */
+    async function absorbRateLimit(err: unknown): Promise<void> {
+      if (!isGitHubRateLimitError(err)) throw err
+      if (round !== roundAtLastWait) rateLimitWaits = 0
+      if (rateLimitWaits >= MAX_CONSECUTIVE_RATE_LIMIT_WAITS) throw err
+      roundAtLastWait = round
+      const reset = d.readRateLimitReset ? await d.readRateLimitReset() : null
+      await d.sleep(rateLimitWaitMs(reset, d.now()))
+      rateLimitWaits += 1
+    }
+
+    /** One read, retried in place across a rate-limit wait — for the reads that follow a role dispatch, where re-entering the round would dispatch it again. */
+    async function withRateLimitWait<T>(read: () => T): Promise<T> {
+      while (true) {
+        try {
+          return read()
+        } catch (err) {
+          await absorbRateLimit(err)
+        }
+      }
+    }
+
     // eslint-disable-next-line no-constant-condition
     async function runRoundLoop(): Promise<LoopResult> {
       while (true) {
+        roleDispatchesInPass = 0
         // Checking more often than the minimum ("every round entry") is
         // strictly safer, never wrong — this runs before every iteration's
         // own dispatch/gate/publish logic.
@@ -6047,7 +6147,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // CI wait, never after one.
           const mergeableBeforeGate = await pollMergeableState(prNumber)
           if (mergeableBeforeGate === 'CONFLICTING') {
-            pendingConflictFiles = d.fetchConflictingFiles('main', branch)
+            pendingConflictFiles = await withRateLimitWait(() => d.fetchConflictingFiles('main', branch))
             continue
           }
           pendingConflictFiles = null
@@ -6152,7 +6252,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // pause below — this round's reviewers never ran).
           const mergeableForReview = await pollMergeableState(prNumber)
           if (mergeableForReview === 'CONFLICTING') {
-            pendingConflictFiles = d.fetchConflictingFiles('main', branch)
+            pendingConflictFiles = await withRateLimitWait(() => d.fetchConflictingFiles('main', branch))
             decision = { type: 'dispatch_developer' }
             continue
           }
@@ -6247,7 +6347,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // reading the PR mid-round sees the round marker comment already
           // there, exactly as it would have if the Developer had posted it.
           const findingIdsAddressed = readAndClearRoundResponse(round)
-          postDeveloperRoundComment(round, head, findingIdsAddressed)
+          await postDeveloperRoundComment(round, head, findingIdsAddressed)
 
           // O5: an infrastructure outcome from either role (after its own
           // one-retry inside `dispatchReviewer`) is a driver-decided pause —
@@ -6459,9 +6559,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // round-trip through the rendered text (Traps to avoid — nothing
             // to trust or distrust when the value is this driver's own, still
             // in memory).
-            const reassessedObjectives = d.resolveIssueObjectives(task)
-            const reassessedRulingOrdinal = d.fetchNewestRulingOrdinal(prNumber)
-            const reassessedBriefContent = d.fetchFrozenBrief(task)
+            const reassessedObjectives = await withRateLimitWait(() => d.resolveIssueObjectives(task))
+            const reassessedRulingOrdinal = await withRateLimitWait(() => d.fetchNewestRulingOrdinal(prNumber))
+            const reassessedBriefContent = await withRateLimitWait(() => d.fetchFrozenBrief(task))
             const currentManifest: ReviewInputManifest = buildReviewInputManifest({
               headSha: head,
               baseSha,
@@ -6519,12 +6619,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 security.findingsUncitable ? 'security' : null
               ].filter((r): r is string => r !== null)
               if (uncitableRoles.length > 0) {
-                postForgeEffectOnce(root, task, `report-uncitable-${round}`, () =>
-                  d.postMarkedComment(
-                    'pr',
-                    String(prNumber),
-                    '<!-- aeg:loop:report-uncitable -->',
-                    `report_uncitable: ${uncitableRoles.join(', ')} still carried findings with no citable \`FINDING_IDS:\` after one resend this round. Proceeding on this round's severities — never counted toward \`no_progress\`.`
+                await withRateLimitWait(() =>
+                  postForgeEffectOnce(root, task, `report-uncitable-${round}`, () =>
+                    d.postMarkedComment(
+                      'pr',
+                      String(prNumber),
+                      '<!-- aeg:loop:report-uncitable -->',
+                      `report_uncitable: ${uncitableRoles.join(', ')} still carried findings with no citable \`FINDING_IDS:\` after one resend this round. Proceeding on this round's severities — never counted toward \`no_progress\`.`
+                    )
                   )
                 )
               }
@@ -6590,7 +6692,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // (`publish`) that is no longer real — dropped rather than logged
             // against whichever LATER round genuinely publishes next.
             pendingCompletionEvents = []
-            pendingConflictFiles = d.fetchConflictingFiles('main', branch)
+            pendingConflictFiles = await withRateLimitWait(() => d.fetchConflictingFiles('main', branch))
             decision = { type: 'dispatch_developer' }
             // The held-verdict files this round's `heldResultIdentity` named
             // were just discarded above — nothing is held any more.
