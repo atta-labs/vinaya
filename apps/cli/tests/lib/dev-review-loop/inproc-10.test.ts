@@ -172,6 +172,81 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
     expect(result.finalDecision).toEqual({ type: 'publish' })
   })
 
+  it("follows the pause the run moved on to after a consumed resolution, and ends on that pause's own cancel", async () => {
+    const world = makeEscalationWorld()
+    const { ReplayedResolutionError, readPauseState: readPause } = await import(
+      '../../../src/lib/dev-review-loop/pause-resume.js'
+    )
+    const real = (await import('../../../src/lib/dev-review-loop.js')).devReviewLoop
+    let replayed = false
+    let attempts = 0
+    let sleepCalls = 0
+
+    const result = await runDriverLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {},
+      {
+        devReviewLoop: async (input, deps) => {
+          if (!('resumePr' in input)) return real(input, deps)
+          attempts += 1
+          replayed = true
+          throw new ReplayedResolutionError(world.task, 'esc', null)
+        },
+        readPauseState: (root, task) => {
+          const base = readPause(root, task)
+          return base && replayed ? { ...base, escalationId: 'newer-esc', round: base.round + 1 } : base
+        },
+        readResolutionRecord: ((_task: number, id: string) =>
+          id === 'newer-esc'
+            ? {
+                kind: 'resolution',
+                task: world.task,
+                version: 1,
+                escalationId: id,
+                decision: 'cancel',
+                authenticatedBy: 'p',
+                authenticatedFrom: 't',
+                consumedAt: '2026-10-07T00:00:00.000Z'
+              }
+            : null) as never,
+        sleep: async (ms) => {
+          sleepCalls += 1
+          if (sleepCalls === 1) world.rulingOrdinal = 1
+          await new Promise((r) => setTimeout(r, ms > 0 ? 1 : 0))
+        }
+      }
+    )
+
+    expect(attempts).toBe(1)
+    expect(result.finalDecision).toEqual({ type: 'ended', reason: 'cancelled' })
+  })
+
+  it('ends when the pull request merged while a consumed resolution was being skipped', async () => {
+    const world = makeEscalationWorld()
+    const { ReplayedResolutionError } = await import('../../../src/lib/dev-review-loop/pause-resume.js')
+    const real = (await import('../../../src/lib/dev-review-loop.js')).devReviewLoop
+    let sleepCalls = 0
+    const result = await runDriverLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {},
+      {
+        devReviewLoop: async (input, deps) => {
+          if (!('resumePr' in input)) return real(input, deps)
+          world.prState = 'MERGED'
+          throw new ReplayedResolutionError(world.task, 'esc', null)
+        },
+        sleep: async (ms) => {
+          sleepCalls += 1
+          if (sleepCalls === 1) world.rulingOrdinal = 1
+          await new Promise((r) => setTimeout(r, ms > 0 ? 1 : 0))
+        }
+      }
+    )
+    expect(result.finalDecision).toEqual({ type: 'ended', reason: 'merged' })
+  })
+
   it('ends the driver once the pull request is merged while it watches — never a pause, never a resume attempt', async () => {
     const world = makeEscalationWorld()
 

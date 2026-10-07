@@ -7303,8 +7303,28 @@ async function watchPauseThenResume(
   // rather than re-attempting the same failing bare call every poll tick
   // forever.
   let bareRetryExhausted = false
+  // Set once a resume attempt was refused as already consumed: from then on
+  // the run may be anywhere (a later round, a newer pause an operator's own
+  // `--resume` led to), so every poll re-reads the current pause and
+  // follows it rather than the one captured when watching began.
+  let replayedOnce = false
+  const followCurrentPause = (): void => {
+    const current = watchReadOrFallback('pause state', () => w.readPauseState(w.runtimeDir(), task), null)
+    if (!current?.escalationId || current.escalationId === escalationId) return
+    escalationId = current.escalationId
+    agent = current.agent
+    model = current.model
+    bareRetryExhausted = false
+    isBoundedRetry = current.reason === 'infrastructure' || current.reason === 'stale_driver'
+    backoffDone = !isBoundedRetry
+    baselineOrdinal = Math.max(
+      baselineOrdinal,
+      watchReadOrFallback('newest ruling ordinal', () => w.fetchNewestRulingOrdinal(prNumber), baselineOrdinal)
+    )
+  }
 
   while (true) {
+    if (replayedOnce) followCurrentPause()
     const prState = watchReadOrFallback('pull-request state', () => w.fetchPrState(prNumber), 'OPEN' as const)
     if (prState === 'MERGED') return { kind: 'ended', reason: 'merged' }
     if (prState === 'CLOSED') return { kind: 'ended', reason: 'closed' }
@@ -7368,17 +7388,8 @@ async function watchPauseThenResume(
             baselineOrdinal
           )
           baselineOrdinal = Math.max(baselineOrdinal, observed)
-          const current = watchReadOrFallback('pause state', () => w.readPauseState(w.runtimeDir(), task), null)
-          if (current?.escalationId && current.escalationId !== escalationId) {
-            // The run progressed past this pause: follow the pause it is
-            // actually in now.
-            escalationId = current.escalationId
-            agent = current.agent
-            model = current.model
-            bareRetryExhausted = false
-            isBoundedRetry = current.reason === 'infrastructure' || current.reason === 'stale_driver'
-            backoffDone = !isBoundedRetry
-          }
+          replayedOnce = true
+          followCurrentPause()
         }
         // A benign race (an operator's own concurrent `--resume`, a
         // replayed resolution, a transient forge read) — never this
