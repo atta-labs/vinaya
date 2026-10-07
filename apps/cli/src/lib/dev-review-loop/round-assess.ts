@@ -208,15 +208,18 @@ export const RATE_LIMIT_FALLBACK_WAIT_MS = 5 * 60 * 1000
 /** Slack added past the reported reset, so the first re-read lands after the window has actually rolled over. */
 const RATE_LIMIT_RESET_SLACK_MS = 5_000
 
-/** The pause detail for a rate limit that landed where the loop cannot safely repeat the step (after a role was dispatched, or during setup): no wait ran, and it names the cause and what clears it. */
-export const RATE_LIMIT_NO_WAIT_PAUSE_DETAIL =
-  'GitHub rate limit: GitHub refused a request at a step the loop cannot safely repeat, so it did not wait. ' +
-  'No ruling is needed — a plain resume continues once the limit has reset'
-
-/** The pause detail for a loop that waited out the rate limit and met it again; it names the cause and what clears it. */
-export const RATE_LIMIT_PAUSE_DETAIL =
-  'GitHub rate limit: the loop waited for the limit to reset twice and was still refused. ' +
-  'No ruling is needed — a plain resume continues once the limit has reset'
+/**
+ * The pause detail for a rate limit the loop will not wait out again, saying
+ * what actually happened: how many waits really ran before the pause. It names
+ * the cause and what clears it.
+ */
+export function rateLimitPauseDetail(waitsRun: number): string {
+  const what =
+    waitsRun === 0
+      ? 'GitHub refused a request at a step the loop cannot safely repeat, so it did not wait'
+      : `the loop waited for the limit to reset ${waitsRun === 1 ? 'once' : `${waitsRun} times`} and was still refused`
+  return `GitHub rate limit: ${what}. No ruling is needed — a plain resume continues once the limit has reset`
+}
 
 /** Does this pause detail say the pause is a GitHub rate limit, so its comment must not ask for a ruling? */
 export function isRateLimitPauseDetail(detail: string | undefined): boolean {

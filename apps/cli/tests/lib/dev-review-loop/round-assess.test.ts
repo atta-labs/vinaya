@@ -19,7 +19,7 @@ import {
   isRateLimitPauseDetail,
   parseConfidenceReply,
   RATE_LIMIT_FALLBACK_WAIT_MS,
-  RATE_LIMIT_PAUSE_DETAIL,
+  rateLimitPauseDetail,
   rateLimitWaitMs,
   spendsInfrastructureRetry
 } from '../../../src/lib/dev-review-loop/round-assess'
@@ -164,9 +164,13 @@ describe('GitHub rate-limit classification', () => {
     expect(rateLimitWaitMs(900, 1_000_000)).toBe(RATE_LIMIT_FALLBACK_WAIT_MS)
   })
 
-  it('the pause detail names the rate limit and is recognised by the comment renderers', () => {
-    expect(isRateLimitPauseDetail(RATE_LIMIT_PAUSE_DETAIL)).toBe(true)
-    expect(RATE_LIMIT_PAUSE_DETAIL).toContain('No ruling is needed')
+  it('the pause detail says how many waits really ran and is recognised by the comment renderers', () => {
+    expect(rateLimitPauseDetail(0)).toContain('did not wait')
+    expect(rateLimitPauseDetail(0)).not.toContain('waited')
+    expect(rateLimitPauseDetail(1)).toContain('waited for the limit to reset once')
+    expect(rateLimitPauseDetail(2)).toContain('reset 2 times')
+    expect(isRateLimitPauseDetail(rateLimitPauseDetail(2))).toBe(true)
+    expect(rateLimitPauseDetail(2)).toContain('No ruling is needed')
     expect(isRateLimitPauseDetail('an uncaught error ended round 1')).toBe(false)
   })
 })

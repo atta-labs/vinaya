@@ -56,7 +56,7 @@ import {
 import { hostname, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { RATE_LIMIT_PAUSE_DETAIL } from '../../src/lib/dev-review-loop/round-assess.js'
+import { rateLimitPauseDetail } from '../../src/lib/dev-review-loop/round-assess.js'
 import { renderNoPushStopComment, renderPauseComment } from '../../src/lib/dev-review-loop/pause-resume.js'
 import { FAKE_CLAUDE_PROBE_ANSWER } from './dispatch/fake-sandbox-probe.js'
 import {
@@ -5179,6 +5179,32 @@ describe('devReviewLoop — a GitHub rate limit waits and retries, never pausing
     expect(comment!.body).not.toMatch(/A Principal ruling is needed/)
   })
 
+  it('a rate limit on the comment posted after the developer returns waits in place — the developer is not dispatched again (O1)', async () => {
+    const world = makeWorld()
+    const probes = waitProbes()
+    let thrown = false
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        ...probes.deps,
+        postMarkedComment: (kind, ref, marker, body) => {
+          if (/aeg:developer:round-/.test(marker) && !thrown) {
+            thrown = true
+            throw new Error(RATE_LIMIT)
+          }
+          world.postedComments.push({ kind, ref, marker, body })
+          return `https://github.com/example/repo/${kind}/${ref}#issuecomment-${world.postedComments.length}`
+        }
+      }
+    )
+    expect(thrown).toBe(true)
+    expect(probes.slept).toHaveLength(1)
+    expect(world.dispatchCountByRole.developer).toBe(1)
+    expect(world.postedComments.some((c) => /aeg:loop:paused/.test(c.body))).toBe(false)
+    expect(result.finalDecision.type).toBe('publish')
+  })
+
   it('a rate limit after a dispatch, outside the wrapped reads, pauses at once and says no wait ran (O2)', async () => {
     const world = makeWorld()
     const probes = waitProbes()
@@ -5228,11 +5254,11 @@ describe('devReviewLoop — a GitHub rate limit waits and retries, never pausing
 
 describe('pause comments for a GitHub rate limit', () => {
   it('both renderers say no ruling is needed and still give the resume command', () => {
-    const pr = renderPauseComment(7, 'infrastructure', RATE_LIMIT_PAUSE_DETAIL, { agent: 'claude' })
+    const pr = renderPauseComment(7, 'infrastructure', rateLimitPauseDetail(2), { agent: 'claude' })
     expect(pr).toContain('No Principal ruling is needed')
     expect(pr).toContain('--resume 7')
     expect(pr).not.toContain('A Principal ruling is needed')
-    const issue = renderNoPushStopComment(9, 'task/issue-9', 'infrastructure', RATE_LIMIT_PAUSE_DETAIL)
+    const issue = renderNoPushStopComment(9, 'task/issue-9', 'infrastructure', rateLimitPauseDetail(2))
     expect(issue).toContain('No Principal ruling is needed')
     expect(issue).not.toContain('Your ruling text here')
   })

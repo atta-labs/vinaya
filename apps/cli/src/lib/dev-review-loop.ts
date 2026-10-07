@@ -218,8 +218,7 @@ import {
   parseShortstat,
   persistLoopState,
   pollUntil,
-  RATE_LIMIT_NO_WAIT_PAUSE_DETAIL,
-  RATE_LIMIT_PAUSE_DETAIL,
+  rateLimitPauseDetail,
   rateLimitWaitMs,
   renderDeveloperRoundComment,
   roundResponsePromptLine,
@@ -4310,8 +4309,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         '',
         'Resumed once, in the foreground, with a commit-and-push instruction.'
       ].join('\n')
-      postForgeEffectOnce(root, task, `unpushed-work-resume-${roundNum}-${head}`, () =>
-        d.postMarkedComment('pr', String(prNumber), '<!-- aeg:loop:unpushed-work-resume -->', body)
+      await withRateLimitWait(() =>
+        postForgeEffectOnce(root, task, `unpushed-work-resume-${roundNum}-${head}`, () =>
+          d.postMarkedComment('pr', String(prNumber), '<!-- aeg:loop:unpushed-work-resume -->', body)
+        )
       )
     }
 
@@ -4792,13 +4793,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     /** O2: the round marker comment the driver now posts in the Developer's place (`renderDeveloperRoundComment`) — idempotent per round+head, the same `postForgeEffectOnce` discipline every other driver-posted comment in this file already uses. */
-    function postDeveloperRoundComment(roundNum: number, head: string, findingIds: readonly string[]): void {
-      postForgeEffectOnce(root, task, `developer-round-comment-${roundNum}-${head}`, () =>
-        d.postMarkedComment(
-          'pr',
-          String(prNumber),
-          developerRoundMarker(roundNum),
-          renderDeveloperRoundComment(head, findingIds)
+    async function postDeveloperRoundComment(
+      roundNum: number,
+      head: string,
+      findingIds: readonly string[]
+    ): Promise<void> {
+      await withRateLimitWait(() =>
+        postForgeEffectOnce(root, task, `developer-round-comment-${roundNum}-${head}`, () =>
+          d.postMarkedComment(
+            'pr',
+            String(prNumber),
+            developerRoundMarker(roundNum),
+            renderDeveloperRoundComment(head, findingIds)
+          )
         )
       )
     }
@@ -5682,7 +5689,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           err instanceof DispatchSignInRefused
             ? err.message
             : isGitHubRateLimitError(err)
-              ? `${rateLimitWaits > MAX_CONSECUTIVE_RATE_LIMIT_WAITS ? RATE_LIMIT_PAUSE_DETAIL : RATE_LIMIT_NO_WAIT_PAUSE_DETAIL} (round ${round}: ${err instanceof Error ? err.message : String(err)})`
+              ? `${rateLimitPauseDetail(round === roundAtLastWait ? rateLimitWaits : 0)} (round ${round}: ${err instanceof Error ? err.message : String(err)})`
               : `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
       }
       keepLockAlive = true
@@ -5786,11 +5793,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      */
     async function absorbRateLimit(err: unknown): Promise<void> {
       if (!isGitHubRateLimitError(err)) throw err
-      rateLimitWaits = round === roundAtLastWait ? rateLimitWaits + 1 : 1
-      if (rateLimitWaits > MAX_CONSECUTIVE_RATE_LIMIT_WAITS) throw err
+      if (round !== roundAtLastWait) rateLimitWaits = 0
+      if (rateLimitWaits >= MAX_CONSECUTIVE_RATE_LIMIT_WAITS) throw err
       roundAtLastWait = round
       const reset = d.readRateLimitReset ? await d.readRateLimitReset() : null
       await d.sleep(rateLimitWaitMs(reset, d.now()))
+      rateLimitWaits += 1
     }
 
     /** One read, retried in place across a rate-limit wait — for the reads that follow a role dispatch, where re-entering the round would dispatch it again. */
@@ -6114,7 +6122,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // CI wait, never after one.
           const mergeableBeforeGate = await pollMergeableState(prNumber)
           if (mergeableBeforeGate === 'CONFLICTING') {
-            pendingConflictFiles = d.fetchConflictingFiles('main', branch)
+            pendingConflictFiles = await withRateLimitWait(() => d.fetchConflictingFiles('main', branch))
             continue
           }
           pendingConflictFiles = null
@@ -6219,7 +6227,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // pause below — this round's reviewers never ran).
           const mergeableForReview = await pollMergeableState(prNumber)
           if (mergeableForReview === 'CONFLICTING') {
-            pendingConflictFiles = d.fetchConflictingFiles('main', branch)
+            pendingConflictFiles = await withRateLimitWait(() => d.fetchConflictingFiles('main', branch))
             decision = { type: 'dispatch_developer' }
             continue
           }
@@ -6314,7 +6322,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // reading the PR mid-round sees the round marker comment already
           // there, exactly as it would have if the Developer had posted it.
           const findingIdsAddressed = readAndClearRoundResponse(round)
-          postDeveloperRoundComment(round, head, findingIdsAddressed)
+          await postDeveloperRoundComment(round, head, findingIdsAddressed)
 
           // O5: an infrastructure outcome from either role (after its own
           // one-retry inside `dispatchReviewer`) is a driver-decided pause —
@@ -6586,12 +6594,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 security.findingsUncitable ? 'security' : null
               ].filter((r): r is string => r !== null)
               if (uncitableRoles.length > 0) {
-                postForgeEffectOnce(root, task, `report-uncitable-${round}`, () =>
-                  d.postMarkedComment(
-                    'pr',
-                    String(prNumber),
-                    '<!-- aeg:loop:report-uncitable -->',
-                    `report_uncitable: ${uncitableRoles.join(', ')} still carried findings with no citable \`FINDING_IDS:\` after one resend this round. Proceeding on this round's severities — never counted toward \`no_progress\`.`
+                await withRateLimitWait(() =>
+                  postForgeEffectOnce(root, task, `report-uncitable-${round}`, () =>
+                    d.postMarkedComment(
+                      'pr',
+                      String(prNumber),
+                      '<!-- aeg:loop:report-uncitable -->',
+                      `report_uncitable: ${uncitableRoles.join(', ')} still carried findings with no citable \`FINDING_IDS:\` after one resend this round. Proceeding on this round's severities — never counted toward \`no_progress\`.`
+                    )
                   )
                 )
               }
@@ -6657,7 +6667,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // (`publish`) that is no longer real — dropped rather than logged
             // against whichever LATER round genuinely publishes next.
             pendingCompletionEvents = []
-            pendingConflictFiles = d.fetchConflictingFiles('main', branch)
+            pendingConflictFiles = await withRateLimitWait(() => d.fetchConflictingFiles('main', branch))
             decision = { type: 'dispatch_developer' }
             // The held-verdict files this round's `heldResultIdentity` named
             // were just discarded above — nothing is held any more.
