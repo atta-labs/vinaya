@@ -55,9 +55,9 @@ describe('kinds and subjects (O1)', () => {
       kind: 'delegating',
       subject: 'find callers'
     })
-    expect(actionOf('mcp__vinaya-dev-tools__publish_changes', { message: 'secret words' })).toMatchObject({
+    expect(actionOf('mcp__other__lookup', { message: 'secret words' })).toMatchObject({
       kind: 'tool_request',
-      subject: 'mcp__vinaya-dev-tools__publish_changes'
+      subject: 'mcp__other__lookup'
     })
   })
 
