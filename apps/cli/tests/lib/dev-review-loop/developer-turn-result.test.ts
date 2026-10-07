@@ -496,7 +496,9 @@ describe('devReviewLoop — the Developer turn result in a real round (O1–O4)'
   })
 
   it('rejects the corrected result as stale when the head moved during the correction turn, and pauses with its own reason', async () => {
+    // The task worktree must exist for the driver to read its head at all.
     const world = blockerWorld({
+      worktreeExists: true,
       developerTurnOutput: (round, prompt, n) => {
         if (round !== 2) return undefined
         if (n === 1) return completedTurnOutput({ addressedFindingIds: [] })
