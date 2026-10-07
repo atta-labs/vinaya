@@ -42,7 +42,7 @@ describe('narrate — fixture executions, expected lines written by hand', () =>
       { kind: 'done', text: 'Round 3: the checks passed.' },
       { kind: 'working', text: 'The code reviewer is reviewing round 3.' },
       { kind: 'done', text: 'The code reviewer finished its turn.' },
-      { kind: 'done', text: 'Round 3 verdicts: The code reviewer approved; The security approved.' },
+      { kind: 'done', text: 'Round 3 verdicts: The code reviewer approved; the security reviewer approved.' },
       { kind: 'done', text: 'Round 3 ended after 7m 43s: approved. Confidence: 92 (after the extra turn).' },
       { kind: 'done', text: 'The loop stopped: every check and review passed.' }
     ])
@@ -141,6 +141,13 @@ describe('narrate — who acts on a pause or stop', () => {
     })
   })
 
+  it('a free-text reason that is not a code never reaches the line', () => {
+    expect(narrate({ ...loop, event: 'paused', round: 2, reason: '\u001b[31mred and /a/path' })).toEqual({
+      kind: 'paused',
+      text: 'Paused.'
+    })
+  })
+
   it('stop conditions read as who acts', () => {
     const stop = (condition: unknown) => narrate({ ...loop, event: 'stop_condition_met', round: 3, condition })
     expect(stop('time_budget')).toEqual({
@@ -148,7 +155,7 @@ describe('narrate — who acts on a pause or stop', () => {
       text: 'The loop stopped itself: the time budget was passed. A person has to act.'
     })
     expect(stop('green')?.kind).toBe('done')
-    expect(stop('from-the-future')).toEqual({ kind: 'paused', text: 'Paused: from-the-future.' })
+    expect(stop('from-the-future')).toEqual({ kind: 'information', text: 'Stopped: from-the-future.' })
     expect(stop(7)).toBeNull()
   })
 })
@@ -169,7 +176,7 @@ describe('narrate — other records', () => {
       })
     ).toEqual({
       kind: 'information',
-      text: 'Round 2 verdicts: The code reviewer asked for changes (1 blocking); The security did not review.'
+      text: 'Round 2 verdicts: The code reviewer asked for changes (1 blocking); the security reviewer did not review.'
     })
   })
 

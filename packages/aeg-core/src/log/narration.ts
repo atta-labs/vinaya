@@ -1,13 +1,7 @@
 /**
  * One plain line for one loop or dispatch record, so the terminal log and a
- * live screen say the same thing in the same words. Pure: no clock, no colour,
- * no time and no symbol in the text — the kind carries the meaning, and each
- * consumer adds its own time and styling.
- *
- * The function reads only fields a record already carries, never finding
- * text, a path or a command (the Log holds none). It switches on the event
- * name without an exhaustive check: a record kind added later returns nothing
- * and breaks no build. It never throws; a malformed record returns nothing.
+ * live screen use the same words. The kind carries the meaning; each consumer
+ * adds its own time and styling.
  */
 
 import { CODE_TOKEN_PATTERN, ROLE_VALUES } from './schema'
@@ -68,10 +62,12 @@ function code(value: unknown): string | null {
 }
 
 /** The role as the record carries it, spaced for reading and ready to start a sentence; a role the Log does not know reads as "A role". */
-function roleSubject(value: unknown): string {
-  return typeof value === 'string' && (ROLE_VALUES as readonly string[]).includes(value)
-    ? `The ${value.replace(/-/g, ' ')}`
-    : 'A role'
+function roleSubject(value: unknown, sentenceStart = true): string {
+  const name =
+    typeof value === 'string' && (ROLE_VALUES as readonly string[]).includes(value)
+      ? `the ${value === 'security' ? 'security reviewer' : value.replace(/-/g, ' ')}`
+      : 'a role'
+  return sentenceStart ? `${name[0]?.toUpperCase()}${name.slice(1)}` : name
 }
 
 function roundLabel(record: Fields): string {
@@ -94,7 +90,7 @@ function paused(reasonCode: string | null, fallbackReason: string | null): Narra
       ? { kind: 'blocked', text: `The loop paused for a person: ${known.words}.` }
       : { kind: 'paused', text: `The loop paused itself: ${known.words}.` }
   }
-  const named = reasonCode ?? fallbackReason
+  const named = reasonCode ?? code(fallbackReason)
   return { kind: 'paused', text: named ? `Paused: ${named}.` : 'Paused.' }
 }
 
@@ -103,7 +99,7 @@ function stopped(condition: unknown): NarrationLine | null {
   if (!name) return null
   if (name === 'green') return { kind: 'done', text: 'The loop stopped: every check and review passed.' }
   const known = REASONS[name]
-  if (!known) return { kind: 'paused', text: `Paused: ${name}.` }
+  if (!known) return { kind: 'information', text: `Stopped: ${name}.` }
   return known.person
     ? { kind: 'blocked', text: `The loop stopped itself: ${known.words}. A person has to act.` }
     : { kind: 'paused', text: `The loop stopped itself: ${known.words}.` }
@@ -139,7 +135,7 @@ function verdicts(record: Fields): NarrationLine {
   for (const entry of reviewers) {
     if (typeof entry !== 'object' || entry === null) continue
     const { role, outcome, blockers: count } = entry as Fields
-    const who = roleSubject(role)
+    const who = roleSubject(role, parts.length === 0)
     if (outcome === 'approve') parts.push(`${who} approved`)
     else if (outcome === 'changes_requested') parts.push(`${who} asked for changes (${whole(count) ?? 0} blocking)`)
     else if (outcome === 'not_reviewed') parts.push(`${who} did not review`)
@@ -218,8 +214,8 @@ function outcomeReceived(record: Fields): NarrationLine {
  *
  * `earlier` is the loop's records already read, in order. It is used for one
  * thing only: a round end states the confidence recorded at the same round's
- * gate read. Without it the round end says nothing about confidence — it
- * claims neither a number nor that none was asked.
+ * gate read, because a round end record carries no confidence of its own.
+ * Without it the round end says nothing about confidence.
  */
 export function narrate(record: unknown, earlier: readonly unknown[] = []): NarrationLine | null {
   try {
