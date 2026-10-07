@@ -922,6 +922,13 @@ describe('checkSurfaceOverlap (task-run-v1 11, O5)', () => {
     expect(r.status).toBe('fail')
   })
 
+  it('a nested exact `.changeset` segment is NOT exempt', () => {
+    const subject = mk('42', ['packages/example/.changeset/**'])
+    const sibling = mk('43', ['packages/example/.changeset/change.md'])
+    const r = checkSurfaceOverlap(subject, [sibling])
+    expect(r.status).toBe('fail')
+  })
+
   it('a directory merely named "testsuite" is NOT exempt — segment equality, never a substring test', () => {
     const subject = mk('42', ['apps/testsuite/**'])
     const sibling = mk('43', ['apps/testsuite/foo.ts'])

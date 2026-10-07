@@ -2084,8 +2084,8 @@ export type TaskSurfaceFacts = {
  * cohort-wide convention to exempt.
  */
 function isSharedByConstruction(glob: string, subject: TaskSurfaceFacts, siblings: TaskSurfaceFacts[]): boolean {
-  if (glob.split('/').some((segment) => segment === 'tests' || segment === 'specs' || segment === '.changeset'))
-    return true
+  const changesetAtRoot = glob === '.changeset' || glob.split('/')[0] === '.changeset'
+  if (changesetAtRoot || glob.split('/').some((segment) => segment === 'tests' || segment === 'specs')) return true
   if (siblings.length < 2) return false
   const cohort = [subject, ...siblings]
   return cohort.every((entry) => entry.surfaceIn.includes(glob))
