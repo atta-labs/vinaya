@@ -909,6 +909,26 @@ describe('checkSurfaceOverlap (task-run-v1 11, O5)', () => {
     expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
   })
 
+  it('passes an overlap under `.changeset`, whose files are unique per task', () => {
+    const subject = mk('42', ['.changeset/**'])
+    const sibling = mk('43', ['.changeset/change-description.md'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('a directory merely containing ".changeset" is NOT exempt — segment equality, never a substring test', () => {
+    const subject = mk('42', ['docs/.changeset-notes/**'])
+    const sibling = mk('43', ['docs/.changeset-notes/change.md'])
+    const r = checkSurfaceOverlap(subject, [sibling])
+    expect(r.status).toBe('fail')
+  })
+
+  it('a nested exact `.changeset` segment is NOT exempt', () => {
+    const subject = mk('42', ['packages/example/.changeset/**'])
+    const sibling = mk('43', ['packages/example/.changeset/change.md'])
+    const r = checkSurfaceOverlap(subject, [sibling])
+    expect(r.status).toBe('fail')
+  })
+
   it('a directory merely named "testsuite" is NOT exempt — segment equality, never a substring test', () => {
     const subject = mk('42', ['apps/testsuite/**'])
     const sibling = mk('43', ['apps/testsuite/foo.ts'])
@@ -916,9 +936,9 @@ describe('checkSurfaceOverlap (task-run-v1 11, O5)', () => {
     expect(r.status).toBe('fail')
   })
 
-  it('a glob outside tests/specs on the SAME task still overlaps a real one — the exemption is per-glob, not per-task', () => {
-    const subject = mk('42', ['apps/cli/tests/**', 'apps/cli/src/lib/**'])
-    const sibling = mk('43', ['apps/cli/tests/**', 'apps/cli/src/lib/thing.ts'])
+  it('a glob outside shared-by-construction directories on the SAME task still overlaps a real one — the exemption is per-glob, not per-task', () => {
+    const subject = mk('42', ['.changeset/**', 'apps/cli/src/lib/**'])
+    const sibling = mk('43', ['.changeset/change.md', 'apps/cli/src/lib/thing.ts'])
     const r = checkSurfaceOverlap(subject, [sibling])
     expect(r.status).toBe('fail')
     expect(r.errors.length).toBe(1)
