@@ -796,7 +796,7 @@ describe('backlog dependency reads (issue-1147)', () => {
       conflictsWith: [],
       priorTrancheArchival: []
     } as never)
-    expect(result.blockerDetails.map((b) => b.class)).toEqual(['depends-on-not-merged'])
+    expect(result.blockerDetails.map((b) => b.class)).toEqual(['depends-on-read-failed'])
     expect(result.blockers[0]).toContain('Retry')
     expect(result.blockers[0]).not.toContain('not merged')
   })

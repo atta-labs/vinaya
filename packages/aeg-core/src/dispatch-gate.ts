@@ -168,6 +168,7 @@ export type DispatchBlockerClass =
   | 'rationale'
   | 'depends-on-unresolvable'
   | 'depends-on-not-merged'
+  | 'depends-on-read-failed'
   | 'conflicts-with'
   | 'prior-tranche-archival'
 
@@ -279,7 +280,7 @@ export function checkDispatchReadiness(input: DispatchGateInput): DispatchResult
     if (dep.readFailed === true) {
       const issueStr = dep.issue !== null ? ` (#${dep.issue})` : ''
       push(
-        'depends-on-not-merged',
+        'depends-on-read-failed',
         `dispatch-gate depends-on: ${taskLabel} depends on ${dep.id}${issueStr}, but the forge could not be read for that dependency — not a claim about its merge status. Retry the check.`
       )
       continue
