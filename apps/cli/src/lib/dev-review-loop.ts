@@ -3799,6 +3799,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         const changed = [...new Set([...paths, ...dirty])]
         return changed.length > 0 ? changed : null
       }
+      let driverUnpushedCommit: { sha: string; parent: string | null } | null = null
       const deps: DeveloperDevToolDeps = {
         readPublicationCheckInput: async () => {
           const worktreeHead = d.readWorktreeHead(worktree)
@@ -3808,6 +3809,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             expectedBranch: branch,
             worktreeHead,
             recordedHead: turnPreHead,
+            remoteHead: safeRemoteHead(),
+            driverUnpushedCommit,
             base,
             expectedBase: publicationExpectedBase,
             changedPaths: worktreeChangedPaths(),
@@ -3879,7 +3882,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           if (localHead !== null && localHead !== remoteHeadBefore) {
             // A commit made by this tool remains valid work if the push hook
             // refuses. Remember it so the next call can retry that same head.
-            if (unpushed.dirtyFiles.length > 0) turnPreHead = localHead
+            if (unpushed.dirtyFiles.length > 0) {
+              turnPreHead = localHead
+              driverUnpushedCommit = { sha: localHead, parent: remoteHeadBefore }
+            }
             const changedPaths = publicationChangedPaths(publicationRange(remoteHeadBefore))
             const push = d.pushTaskBranch({
               task,
@@ -3906,6 +3912,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             }
             lastPushRefusal = null
           }
+          driverUnpushedCommit = null
           const pushedHead = d.readWorktreeHead(worktree) ?? localHead ?? ''
           // A successful commit+push advances the worktree head. Move the
           // recorded pre-turn head forward to it so a SECOND (and third)

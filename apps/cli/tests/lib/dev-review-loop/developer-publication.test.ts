@@ -125,6 +125,40 @@ describe('checkPublicationPreconditions (O7)', () => {
     if (!r.ok) expect(r.reason).toMatch(/do not commit yourself/)
   })
 
+  it("accepts undoing only the driver's own unpushed commit", () => {
+    const remote = 'r'.repeat(40)
+    const r = checkPublicationPreconditions({
+      ...ok,
+      worktreeHead: remote,
+      recordedHead: 'd'.repeat(40),
+      remoteHead: remote,
+      driverUnpushedCommit: { sha: 'd'.repeat(40), parent: remote }
+    })
+    expect(r.ok).toBe(true)
+  })
+
+  it('refuses a moved head that is a Developer commit, not the driver unpushed commit', () => {
+    const remote = 'r'.repeat(40)
+    const moved = {
+      ...ok,
+      recordedHead: 'd'.repeat(40),
+      remoteHead: remote,
+      driverUnpushedCommit: { sha: 'd'.repeat(40), parent: remote }
+    }
+    // Developer commit on top of the remote head
+    expect(checkPublicationPreconditions({ ...moved, worktreeHead: 'e'.repeat(40) }).ok).toBe(false)
+    // head equals the remote head but the recorded head is not a driver commit
+    expect(checkPublicationPreconditions({ ...moved, worktreeHead: remote, driverUnpushedCommit: null }).ok).toBe(false)
+    // driver commit whose parent is not the remote head
+    expect(
+      checkPublicationPreconditions({
+        ...moved,
+        worktreeHead: remote,
+        driverUnpushedCommit: { sha: 'd'.repeat(40), parent: 'p'.repeat(40) }
+      }).ok
+    ).toBe(false)
+  })
+
   it('fails when a changed path crosses an out: glob', () => {
     const r = checkPublicationPreconditions({ ...ok, changedPaths: ['packages/aeg-core/src/x.ts'] })
     expect(r.ok).toBe(false)
