@@ -79,6 +79,10 @@ export type PublicationCheckInput = {
   worktreeHead: string | null
   /** The head recorded before this turn was dispatched — what `worktreeHead` must still equal (the Developer committed nothing itself). `null` on a fresh round-1 turn where no head was recorded yet; the head check is then inactive. */
   recordedHead: string | null
+  /** The task branch's head on the remote, or `null` when it has none or it is unreadable. Only consulted to recognize the Developer undoing the driver's own unpushed commit. */
+  remoteHead?: string | null
+  /** The commit the driver's own publication made whose push did not complete, with its parent, or `null` when there is none. */
+  driverUnpushedCommit?: { sha: string; parent: string | null } | null
   /** The worktree branch's base (merge base with the default branch), or `null` when unreadable. */
   base: string | null
   /** The base this task was cut from — what `base` must equal. `null` only before a known base has been recorded. */
@@ -87,6 +91,24 @@ export type PublicationCheckInput = {
   changedPaths: readonly string[]
   /** The task Issue's own `## Surface` globs, or `null` when none could be resolved; the Surface check is then inactive. */
   surface: IssueSurface | null
+}
+
+/**
+ * True when the head moved back to the task branch's remote head and the
+ * recorded head is the driver's own unpushed commit sitting directly on that
+ * remote head — the Developer undid the driver's commit (changes kept
+ * uncommitted), which loses no work. Any other moved head is not this case.
+ */
+function undidDriverUnpushedCommit(input: PublicationCheckInput): boolean {
+  const commit = input.driverUnpushedCommit
+  const remoteHead = input.remoteHead ?? null
+  return (
+    commit != null &&
+    remoteHead !== null &&
+    input.worktreeHead === remoteHead &&
+    input.recordedHead === commit.sha &&
+    commit.parent === remoteHead
+  )
 }
 
 /**
@@ -119,7 +141,12 @@ export function checkPublicationPreconditions(
       reason: `the worktree branch's base is \`${input.base}\`, not the expected base \`${input.expectedBase}\` — rebase onto the base this task was cut from before leaving changes to publish`
     }
   }
-  if (input.recordedHead !== null && input.worktreeHead !== null && input.worktreeHead !== input.recordedHead) {
+  if (
+    input.recordedHead !== null &&
+    input.worktreeHead !== null &&
+    input.worktreeHead !== input.recordedHead &&
+    !undidDriverUnpushedCommit(input)
+  ) {
     return {
       ok: false,
       reason: `the worktree head moved to \`${input.worktreeHead}\` during your turn (expected the recorded \`${input.recordedHead}\`) — do not commit yourself; call \`publish_changes\` to make this turn's single commit`

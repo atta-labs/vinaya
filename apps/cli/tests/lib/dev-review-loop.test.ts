@@ -4672,7 +4672,7 @@ if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
-if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$3" = "${blockedIssue}" ] && [ "$4" = "--json" ] && [ "$5" = "state" ]; then
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$3" = "${blockedIssue}" ] && [ "$4" = "--repo" ] && [ "$6" = "--json" ] && [ "$7" = "state" ]; then
   i=0
   while [ ! -f "$HOME/.fake-dev-invoked" ] && [ "$i" -lt 100 ]; do
     sleep 0.05
@@ -4766,7 +4766,7 @@ if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
-if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$3" = "${revivedIssue}" ] && [ "$4" = "--json" ] && [ "$5" = "state" ]; then
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$3" = "${revivedIssue}" ] && [ "$4" = "--repo" ] && [ "$6" = "--json" ] && [ "$7" = "state" ]; then
   COUNT_FILE="$HOME/.sweep-${revivedIssue}-state-calls"
   N=0
   if [ -f "$COUNT_FILE" ]; then N=$(cat "$COUNT_FILE"); fi
@@ -4850,6 +4850,28 @@ exit 1
 // as it goes, and never awaited before dispatch; a folder it finds
 // `finished` is re-classified immediately before removal so a revival in
 // the interval is never deleted on a stale answer.
+/**
+ * The sweep reads each Issue in the repository its folder belongs to and keeps the folder when none resolves, so the
+ * two sweep fixtures below give the loop a resolvable repository (`AEG_REPO`) — and so a run directory under that
+ * repository's own segment, not the `unresolved` one every other fixture here hardcodes.
+ */
+const SWEEP_FIXTURE_REPO = 'sweep-owner/sweep-repo'
+
+function sweepRunDir(home: string, task: number = TASK): string {
+  return taskRunDir(home, task).replace(`${join('runtime', 'unresolved')}`, join('runtime', 'sweep-owner-sweep-repo'))
+}
+
+function runLoopWithRepo(home: string, cwd: string, path: string, budgetMs: number = SUBPROCESS_BUDGET_MS): CliResult {
+  return runDevReviewLoopArgs(
+    home,
+    cwd,
+    path,
+    ['--task', String(TASK), '--agent', 'claude'],
+    { AEG_REPO: SWEEP_FIXTURE_REPO },
+    budgetMs
+  )
+}
+
 describe('the start-of-run sweep never delays the loop, and re-checks before removing (Issue #697)', () => {
   // REAL PROCESS: the harness's sweepTasksAtStart fake is a no-op that only records the call; the real sweep's own concurrent forge-lookup/classification/removal logic and driver.log content are not
   it.skipIf(process.platform === 'darwin')(
@@ -4866,9 +4888,9 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
       // A finished, unrelated task folder for the sweep to classify — its
       // own `gh issue view --json state` call blocks (bounded) until the
       // developer has already been dispatched.
-      mkdirSync(taskRunDir(home, 8001), { recursive: true })
+      mkdirSync(sweepRunDir(home, 8001), { recursive: true })
 
-      const r = runLoop(home, cwd, path)
+      const r = runLoopWithRepo(home, cwd, path)
       expect(r.status).toBe(0)
       expect(r.stdout).toMatch(/publish/)
 
@@ -4882,14 +4904,14 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
       // O1: the run-start marker and the sweep-running line are both in the
       // loop log (the same file `vinaya task status --follow` tails) and on
       // this process's own stderr.
-      const driverLog = readFileSync(join(taskRunDir(home), 'output', 'driver.log'), 'utf8')
+      const driverLog = readFileSync(join(sweepRunDir(home), 'output', 'driver.log'), 'utf8')
       expect(driverLog).toMatch(/=== run started .*role=dev-review-loop/)
       expect(driverLog).toContain('[dev-review-loop] sweep — running')
       expect(r.stderr).toContain('vinaya dev-review-loop: sweep — running')
 
       // The sweep genuinely ran to completion (not merely skipped) — the
       // other, unrelated finished folder it found is gone.
-      expect(existsSync(taskRunDir(home, 8001))).toBe(false)
+      expect(existsSync(sweepRunDir(home, 8001))).toBe(false)
 
       // O3: each decision is printed with a running count as it is made —
       // two folders total (this run's own excluded task, plus the seeded
@@ -4914,7 +4936,7 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
       writeFakeGit(binDir)
       const path = `${binDir}:${pathWithoutRealVendors()}`
 
-      mkdirSync(taskRunDir(home, 8002), { recursive: true })
+      mkdirSync(sweepRunDir(home, 8002), { recursive: true })
 
       // This fixture deliberately overlaps the asynchronous sweep with a full
       // developer + two-reviewer round. On a loaded CI shard it completed just
@@ -4923,13 +4945,13 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
       // correct each time. Give this integration-heavy case a wider ceiling,
       // with real headroom rather than another razor-thin margin, while
       // retaining the tight default for every ordinary fixture in this file.
-      const r = runLoop(home, cwd, path, 75_000)
+      const r = runLoopWithRepo(home, cwd, path, 75_000)
       expect(r.status).toBe(0)
       expect(r.stdout).toMatch(/publish/)
 
       // The FIRST read (classification) said CLOSED — finished; the SECOND,
       // immediately before removal, said OPEN — revived. The folder survives.
-      expect(existsSync(taskRunDir(home, 8002))).toBe(true)
+      expect(existsSync(sweepRunDir(home, 8002))).toBe(true)
       expect(readFileSync(join(home, '.sweep-8002-state-calls'), 'utf8').trim()).toBe('2')
       expect(r.stderr).toContain('kept Issue #8002')
       expect(r.stderr).toContain('open — Issue #8002 open, no pull request yet')
