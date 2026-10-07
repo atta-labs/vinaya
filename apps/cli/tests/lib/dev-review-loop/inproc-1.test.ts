@@ -310,4 +310,33 @@ describe('the driver-run dispatch-readiness gate', () => {
     const staged = readFileSync(join(developerDir(world, 1), 'dispatch-readiness.txt'), 'utf8')
     expect(staged).toBe(gateOutput)
   })
+
+  it('an unreadable required source refuses the Developer turn: no developer dispatch, a decided pause(infrastructure) naming the source, the failure staged', async () => {
+    const world = makeWorld()
+    world.frozenBrief = `${world.frozenBrief}\n## Documentation\n\n- https://example.com/spec — the mechanism it governs\n`
+    const gateOutput = '$ bun verify-dispatch.ts --issue 1\nREADY'
+    const result = await runLoopInProcess(world, undefined, {
+      checkTaskDispatchReadiness: (_branch) => ({ ready: true, output: gateOutput }),
+      fetchDocumentationDeps: {
+        resolve: async () => [{ address: '93.184.216.34', family: 4 }],
+        request: async () => ({
+          status: 404,
+          headers: { 'content-type': 'text/plain' },
+          body: new Uint8Array(),
+          framed: true
+        }),
+        now: () => new Date()
+      }
+    })
+
+    expect(world.dispatches.filter((d) => d.role === 'developer')).toHaveLength(0)
+    expect(result.finalDecision.type).toBe('pause')
+    expect((result.finalDecision as { reason?: string }).reason).toBe('infrastructure')
+    const detail = readPauseState(world.runtimeDir, world.task)?.detail ?? ''
+    expect(detail).toContain('documentation sources gate failed')
+    expect(detail).toContain('https://example.com/spec')
+    const staged = readFileSync(join(developerDir(world, 1), 'dispatch-readiness.txt'), 'utf8')
+    expect(staged).toContain(gateOutput)
+    expect(staged).toContain('cannot be read')
+  })
 })
