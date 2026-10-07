@@ -20,7 +20,13 @@ import {
   checkPublicationPreconditions,
   validateCommitHeader
 } from '../../../src/lib/dev-review-loop/developer-publication.js'
-import { cleanupWorlds, makeInProcessDeps, makeWorld, runLoopInProcess } from '../dev-review-loop-harness.js'
+import {
+  cleanupWorlds,
+  makeInProcessDeps,
+  makeWorld,
+  runLoopInProcess,
+  defaultDeveloperTurnOutput
+} from '../dev-review-loop-harness.js'
 
 afterEach(cleanupWorlds)
 
@@ -359,7 +365,15 @@ describe('publication range after a default-branch merge', () => {
           if (publicationResult.ok) {
             await world.devToolContext!.openPullRequest(world.issueTitle, '## Scope\n\n**Tier:** 3\n')
           }
-          return { exitCode: 0, durationMs: 1, usage: null, resumeId: 'dev', timedOut: false, effectId: 'dev' }
+          return {
+            exitCode: 0,
+            durationMs: 1,
+            usage: null,
+            resumeId: 'dev',
+            timedOut: false,
+            effectId: 'dev',
+            turnOutput: defaultDeveloperTurnOutput(prompt)
+          }
         }
       }
     )

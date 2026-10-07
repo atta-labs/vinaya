@@ -17,7 +17,8 @@ import {
   makeWorld,
   roundDir as ipRoundDir,
   runLoopInProcess,
-  sha
+  sha,
+  defaultDeveloperTurnOutput
 } from '../dev-review-loop-harness.js'
 
 afterEach(cleanupWorlds)
@@ -81,7 +82,7 @@ function dispatchRoleCapturingReviewerCwd(world: ReturnType<typeof makeWorld>) {
   return async (
     role: string,
     _agent: string,
-    _prompt: string,
+    prompt: string,
     opts: { round?: number; extraWritableDirs?: string[]; cwd?: string }
   ): Promise<DispatchHandle> => {
     const round = opts.round ?? 1
@@ -89,7 +90,7 @@ function dispatchRoleCapturingReviewerCwd(world: ReturnType<typeof makeWorld>) {
     if (role === 'developer') {
       world.developerPushed = true
       world.dispatches.push({ role, round, resumeId: 'dev-session-1' })
-      return handle('dev-session-1', `eff-dev-${++seq}`)
+      return { ...handle('dev-session-1', `eff-dev-${++seq}`), turnOutput: defaultDeveloperTurnOutput(prompt) }
     }
     const workDir = opts.extraWritableDirs?.[0]
     const reviewRole = role === 'code-reviewer' ? 'reviewer' : 'security'

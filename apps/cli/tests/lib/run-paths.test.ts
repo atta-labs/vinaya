@@ -141,12 +141,12 @@ describe('runPath — every run file resolves through this one function', () => 
 
   it('gives a round its own Developer folder, nested under that round rather than the task root (task-files-v1 2, #649)', () => {
     expect(runPath(RUNTIME, 648, { area: 'developer', round: 2 })).toBe(join(taskDir, 'rounds', '2', 'developer'))
-    expect(runPath(RUNTIME, 648, { area: 'developer', round: 2, file: '.vinaya-confidence' })).toBe(
-      join(taskDir, 'rounds', '2', 'developer', '.vinaya-confidence')
+    expect(runPath(RUNTIME, 648, { area: 'developer', round: 2, file: 'turn-result-001.json' })).toBe(
+      join(taskDir, 'rounds', '2', 'developer', 'turn-result-001.json')
     )
     // A different round gets a different folder — never one shared across rounds.
-    expect(runPath(RUNTIME, 648, { area: 'developer', round: 3, file: '.vinaya-confidence' })).toBe(
-      join(taskDir, 'rounds', '3', 'developer', '.vinaya-confidence')
+    expect(runPath(RUNTIME, 648, { area: 'developer', round: 3, file: 'turn-result-001.json' })).toBe(
+      join(taskDir, 'rounds', '3', 'developer', 'turn-result-001.json')
     )
   })
 

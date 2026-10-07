@@ -2,7 +2,7 @@
  * `dev-review-loop`'s round-assessment-glue concern — the generic wait/detect/route helpers a round uses
  * around `@attalabs/aeg-core`'s `assessRound` (the ENTIRE policy; this
  * module never re-implements a stop condition or a round-outcome decision):
- * confidence-reply parsing, diff-stat parsing, dispatch/resume escalation,
+ * the round marker comment, diff-stat parsing, dispatch/resume escalation,
  * polling, durable-log-line waiting, and completion-event routing. Moved
  * out of `apps/cli/src/lib/dev-review-loop.ts` verbatim; `dev-review-loop.ts`
  * stays the composition root, re-exporting every name below under the same
@@ -12,11 +12,9 @@
 import { readFileSync } from 'node:fs'
 import { CODE_TOKEN_PATTERN } from '@attalabs/aeg-core/log'
 import {
-  CONFIDENCE_REASON_MAX_LENGTH,
   defaultControlStoreDeps,
   readLoopState,
   writeLoopState,
-  type Confidence,
   type Decision,
   type DevReviewLoopEventInput,
   type LoopBudgets,
@@ -29,91 +27,7 @@ import {
 import type { AgentVendor, DispatchHandle } from '../dispatch.js'
 import { controlStoreRoot } from '../effects.js'
 
-// --- confidence -------------------------------------------------------------
-
-/**
- * Appended to the developer's resume prompt on every round ≥ 2 (Part 3).
- * `filePath` is the absolute path the driver built for THIS round, under
- * that round's own Developer folder inside the task's folder
- * (`runPath(..., { area: 'developer', round, file: CONFIDENCE_FILE_NAME })`)
- * — never a fixed, worktree-relative convention: a resumed developer
- * session receives a fresh prompt every round, and reusing an earlier
- * round's path would let a stale round's confidence answer be read as this
- * round's own.
- */
-export function confidencePromptLine(filePath: string): string {
-  return `Before ending this turn, write your confidence in this round's changes to a file at the absolute path \`${filePath}\`, containing exactly one line: \`CONFIDENCE: <0-100> — <one-sentence reason>\` (a whole number from 0 to 100, an em dash, then your reason in one sentence) — for example: \`echo 'CONFIDENCE: 90 — fixed the reported issue' > ${filePath}\`. This is read by the review loop before it decides the next step — do not skip it.`
-}
-
-const CONFIDENCE_LINE = /^CONFIDENCE:\s*(\d{1,3})\s*(?:—|-)\s*(.+)$/m
-
-/**
- * `'absent'` for a missing or malformed reply — never guessed into a number.
- * A reason longer than `CONFIDENCE_REASON_MAX_LENGTH` is truncated here, to
- * the exact bound `gate_result_read.confidence_reason` enforces
- * (`log/schema.ts`) — an over-length reason reaching that schema unbounded
- * would fail validation and silently drop the whole event, not just the
- * reason.
- */
-export function parseConfidenceReply(replyText: string): Confidence {
-  const m = CONFIDENCE_LINE.exec(replyText)
-  if (!m) return 'absent'
-  const value = Number(m[1])
-  if (!Number.isFinite(value) || value < 0 || value > 100) return 'absent'
-  const reason = (m[2] ?? '').trim().slice(0, CONFIDENCE_REASON_MAX_LENGTH)
-  return reason ? { value, reason } : { value }
-}
-
-export const CONFIDENCE_FILE_NAME = '.vinaya-confidence'
-
-// --- round response -----------------------------------------------------
-
-/**
- * The Developer's own side channel for citing which finding ids it addressed
- * this round — written under that round's Developer folder inside the
- * task's folder (`runPath(..., { area: 'developer', round, file:
- * DEVELOPER_ROUND_RESPONSE_FILE_NAME })`), never at the worktree root, and
- * read and cleared by the driver instead of the Developer posting a PR
- * comment. The driver now ends the Developer's turn at the push — it
- * composes and posts the round marker comment itself, from this file's
- * content (`renderDeveloperRoundComment`), so a Developer session that
- * crashes, skips, or forgets to write this file never blocks the round: it
- * is read best-effort, and an absent or empty file yields no citation, never
- * a resume or a pause. "No round is judged no_progress because a comment was
- * not posted" — the round's own no-progress derivation
- * (`assessRound`'s id-comparison across rounds, `@attalabs/aeg-core`) never
- * reads this file at all; it exists purely so the driver's own posted
- * comment can carry the same finding-id citation a Developer used to type by
- * hand.
- */
-export const DEVELOPER_ROUND_RESPONSE_FILE_NAME = '.vinaya-round-response'
-
-/**
- * Appended to the developer's resume prompt whenever this round carries
- * findings to address — the response-file counterpart to
- * `confidencePromptLine`. `filePath` is this round's own absolute path,
- * built the same way and for the same reason (a resumed developer session
- * gets a fresh prompt every round, so the path is never reused across
- * rounds). Best-effort by design (see
- * `DEVELOPER_ROUND_RESPONSE_FILE_NAME`'s own doc comment): omitted, the
- * round comment the driver posts simply carries no `FINDING_IDS:` citation.
- */
-export function roundResponsePromptLine(filePath: string): string {
-  return `Before ending this turn, write a \`FINDING_IDS:\` line to a file at the absolute path \`${filePath}\`, citing the ids (comma-separated, e.g. \`F1,F2\`) of the findings above you addressed this round — the driver reads this to compose the round's own comment; you do not post one yourself.`
-}
-
-const ROUND_RESPONSE_FINDING_IDS_LINE = /^FINDING_IDS:\s*(.*)$/im
-
-/** The comma-separated ids off a `FINDING_IDS:` line in the Developer's round-response file content — `[]` for missing/malformed/empty content, never a throw: see `DEVELOPER_ROUND_RESPONSE_FILE_NAME`'s own doc comment on why this stays best-effort. */
-export function parseRoundResponseFindingIds(raw: string | null): string[] {
-  if (!raw) return []
-  const m = ROUND_RESPONSE_FINDING_IDS_LINE.exec(raw)
-  if (!m) return []
-  return (m[1] ?? '')
-    .split(',')
-    .map((id) => id.trim())
-    .filter((id) => id.length > 0)
-}
+// --- round marker comment ---------------------------------------------------
 
 /** The round marker itself, `<!-- aeg:developer:round-<n> -->` — `@attalabs/aeg-core`'s `parseDeveloperRoundMarker` matches it anywhere in a comment body; posted first by `postMarkedComment` (`dev-review-loop.ts`'s `postDeveloperRoundComment`), the same convention every other driver-posted marked comment in this file already uses. */
 export function developerRoundMarker(roundNum: number): string {
@@ -121,18 +35,28 @@ export function developerRoundMarker(roundNum: number): string {
 }
 
 /**
- * The BODY half of the round marker comment the driver now posts in the
+ * The BODY half of the round marker comment the driver posts in the
  * Developer's place — `postMarkedComment` prepends
  * `developerRoundMarker(roundNum)` ahead of this, so the full posted comment
  * reads marker, then `Head: <sha>`, then (only when there is something to
- * cite) a `FINDING_IDS:` line. An empty `findingIds` list — round 1's first
- * review, or a Developer that wrote no response file — omits the
+ * cite) a `FINDING_IDS:` line carrying the round's accepted turn results'
+ * `addressedFindingIds`, then (only when the Developer reported any) its
+ * `reportedChecks` — labelled as the agent's own account, context and never
+ * evidence. An empty `findingIds` list — round 1's first review — omits the
  * `FINDING_IDS:` line entirely, the same "nothing to cite" convention the
  * reviewer's own `FINDING_IDS:` grammar uses for an empty findings list.
  */
-export function renderDeveloperRoundComment(head: string, findingIds: readonly string[]): string {
+export function renderDeveloperRoundComment(
+  head: string,
+  findingIds: readonly string[],
+  reportedChecks: readonly { command: string; outcome: 'pass' | 'fail' }[] = []
+): string {
   const lines = [`Head: ${head}`]
   if (findingIds.length > 0) lines.push(`FINDING_IDS: ${findingIds.join(',')}`)
+  if (reportedChecks.length > 0) {
+    lines.push('', 'Checks the Developer reports running (agent-reported context, not evidence):')
+    for (const check of reportedChecks) lines.push(`- \`${check.command.replaceAll('`', "'")}\` — ${check.outcome}`)
+  }
   return lines.join('\n')
 }
 

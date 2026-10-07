@@ -50,6 +50,7 @@ import {
 import { resetDefaultLogSinkContext, resetTrustAnchorConfigMemo } from '../../src/lib/log-sink.js'
 import { resetRuntimeDirCache } from '../../src/lib/run-paths.js'
 import type { DispatchHandle } from '../../src/lib/dispatch.js'
+import type { DeveloperTurnOutput } from '../../src/lib/dev-review-loop/turn-result.js'
 import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server.js'
 import {
   pauseMarker,
@@ -255,6 +256,14 @@ export type LoopWorld = {
   dispatches: DispatchRecord[]
   /** How many times each role was dispatched, cumulative across rounds. */
   dispatchCountByRole: Record<string, number>
+  /**
+   * The turn result each fake Developer dispatch returns as its native
+   * structured output — `undefined` (the default) means a valid `completed`
+   * result citing the handoff ids its prompt lists (`defaultDeveloperTurnOutput`).
+   * A fixture that tests the controller returns its own, per round and per
+   * Developer dispatch of that round (1-based).
+   */
+  developerTurnOutput?: (round: number, prompt: string, dispatchOfRound: number) => DeveloperTurnOutput | undefined
   publishedRounds: number[]
   /** Each `writeDeferredFindingsIssue` call this run recorded — O1/O3: a publish with deferred findings appends one, a clean publish appends none. */
   deferredIssueWrites: Array<{ prNumber: number; entries: DeferredFindingEntry[] }>
@@ -418,15 +427,54 @@ function writeRoleArtifacts(workDir: string, outcome: RoleOutcome): void {
   if (outcome.objectives !== null) writeFileSync(join(workDir, 'objectives.txt'), outcome.objectives)
 }
 
-function handle(resumeId: string | null, effectId: string): DispatchHandle {
+function handle(resumeId: string | null, effectId: string, turnOutput?: DeveloperTurnOutput): DispatchHandle {
   return {
     exitCode: 0,
     durationMs: 1,
     usage: { input: 10, output: 5 },
     resumeId,
     timedOut: false,
-    effectId
+    effectId,
+    ...(turnOutput !== undefined ? { turnOutput } : {})
   }
+}
+
+/** A `completed` turn result as Claude's adapter would hand it over. */
+export function completedTurnOutput(
+  fields: { summary?: string; confidence?: number; explanation?: string; addressedFindingIds?: string[] } = {}
+): DeveloperTurnOutput {
+  return {
+    adapter: 'claude --json-schema',
+    event: 'result (subtype success) .structured_output',
+    raw: {
+      turnResult: {
+        schemaVersion: 1,
+        status: 'completed',
+        summary: fields.summary ?? 'fixture turn',
+        confidence: fields.confidence ?? 90,
+        confidenceExplanation: fields.explanation ?? 'the fixture work is done',
+        addressedFindingIds: fields.addressedFindingIds ?? [],
+        sourceUses: null,
+        reportedChecks: null
+      }
+    }
+  }
+}
+
+/** The finding ids a prompt lists for the Developer to cite (`- R1-CR-1: …` in a findings prompt, `- R1-CR-1` in a correction). */
+export function handoffIdsInPrompt(prompt: string): string[] {
+  return [...new Set([...prompt.matchAll(/^- (R\d+-(?:CR|SEC)-\d+)(?::|$)/gm)].map((m) => m[1]!))]
+}
+
+/** The default fake Developer's turn result: `completed`, confidence 90, citing every handoff id its prompt lists. */
+export function defaultDeveloperTurnOutput(prompt: string): DeveloperTurnOutput {
+  return completedTurnOutput({ addressedFindingIds: handoffIdsInPrompt(prompt) })
+}
+
+/** The fake Developer's turn result for this dispatch — the world's own when it names one, else the default. */
+export function fakeDeveloperTurnOutput(world: LoopWorld, round: number, prompt: string): DeveloperTurnOutput {
+  const n = world.dispatches.filter((d) => d.role === 'developer' && d.round === round).length
+  return world.developerTurnOutput?.(round, prompt, n) ?? defaultDeveloperTurnOutput(prompt)
 }
 
 /**
@@ -444,7 +492,7 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
         world.developerPushed = true
         const sessionId = world.roleOutcomes[round]?.developer?.sessionId ?? 'dev-session-1'
         world.dispatches.push({ role, round, resumeId: sessionId, prompt, cwd: opts.cwd })
-        return handle(sessionId, `eff-dev-${++dispatchSeq}`)
+        return handle(sessionId, `eff-dev-${++dispatchSeq}`, fakeDeveloperTurnOutput(world, round, prompt))
       }
       // code-reviewer | security: write the role's artifacts into the work
       // dir the loop granted it (`extraWritableDirs[0]` — see
@@ -762,7 +810,7 @@ export function developerLeavesWorkDeps(
       world.worktreeChangedPaths = [...changed]
       if (opts.developerCommits) world.worktreeHead = sha('z')
       world.dispatches.push({ role, round, resumeId: 'dev-session-1', prompt })
-      return handle('dev-session-1', `eff-dev-${devSeq}`)
+      return handle('dev-session-1', `eff-dev-${devSeq}`, fakeDeveloperTurnOutput(world, round, prompt))
     }
   }
 }
@@ -819,7 +867,7 @@ export function developerPublishesViaToolsDeps(
         }
       }
       world.dispatches.push({ role, round, resumeId: 'dev-session-1', prompt })
-      return handle('dev-session-1', `eff-dev-${devSeq}`)
+      return handle('dev-session-1', `eff-dev-${devSeq}`, fakeDeveloperTurnOutput(world, round, prompt))
     }
   }
 }
@@ -860,7 +908,7 @@ export function developerPublishesTwiceViaToolsDeps(world: LoopWorld): Partial<L
         }
       }
       world.dispatches.push({ role, round, resumeId: 'dev-session-1', prompt })
-      return handle('dev-session-1', `eff-dev-${devSeq}`)
+      return handle('dev-session-1', `eff-dev-${devSeq}`, fakeDeveloperTurnOutput(world, round, prompt))
     }
   }
 }
@@ -1102,6 +1150,36 @@ export function developerDir(world: LoopWorld, round: number): string {
 }
 
 /** The comment bodies posted this run, in post order — the in-process analogue of the spawned fixture's `postedCommentFiles`. */
+/**
+ * Seeds an accepted `completed` turn result for `round`, as the driver's own
+ * controller records one — for an attach that gates on a round's confidence
+ * without dispatching the Developer in this process.
+ */
+export function seedAcceptedTurnResult(
+  world: LoopWorld,
+  round: number,
+  fields: { confidence?: number; explanation?: string; addressedFindingIds?: string[] } = {}
+): void {
+  const dir = developerDir(world, round)
+  mkdirSync(dir, { recursive: true })
+  const attempt = readdirSync(dir).filter((n) => /^turn-result-\d+\.json$/.test(n)).length + 1
+  const raw = completedTurnOutput(fields).raw as { turnResult: unknown }
+  writeFileSync(
+    join(dir, `turn-result-${String(attempt).padStart(3, '0')}.json`),
+    JSON.stringify({
+      version: 1,
+      runId: 'seeded',
+      round,
+      attempt,
+      head: null,
+      outcome: 'accepted',
+      result: raw.turnResult,
+      failures: [],
+      recordedAt: new Date(0).toISOString()
+    })
+  )
+}
+
 export function postedCommentBodies(world: LoopWorld): string[] {
   return world.postedComments.map((c) => c.body)
 }

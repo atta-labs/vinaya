@@ -48,6 +48,18 @@ holds 16 modules and 27 test files. The test fails when a file appears or
 disappears without a matching entry, so the baseline can never drift
 silently.
 
+<!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"path": "apps/cli/src/lib/dev-review-loop/turn-result.ts", -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop/turn-result.ts contains:export function confidenceFromRecords( -->
+The Developer's turn result moved onto each CLI's native structured
+output (`turn-result.ts`, with its test), also recorded under
+`addedSinceBaseline`. The confidence entry, `INV-013`, now names that
+result as the confidence's only source: the driver reads the newest result
+its controller accepted with status `completed`, and anything else — a
+rejected result, a `blocked` or `needs_ruling` one, or none at all — reads
+absent, never a made-up number. The guarantee is unchanged; only its
+source moved from the file the Developer wrote to the structured output
+the CLI returns.
+
 <!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:const excluded = new Set(inv.exclusions.filter((e) => e.reason.trim().length > 0).map((e) => e.path)) -->
 <!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"path": "packages/aeg-core/src/dev-review-loop/index.ts", -->
 Every surface file is either cited by at least one invariant (as a
