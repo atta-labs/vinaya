@@ -1,5 +1,7 @@
 export { buildHeader } from './envelope'
 export { CODE_TOKEN_PATTERN } from './schema'
+export { NARRATION_KINDS, narrate } from './narration'
+export type { NarrationKind, NarrationLine } from './narration'
 export {
   CUSTOM_EVENT_MAX_FIELDS,
   CUSTOM_EVENT_NAME_MAX_LENGTH,
