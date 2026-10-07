@@ -4911,7 +4911,7 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
               return String(e)
             }
           })()}\n---\n${require('node:child_process')
-            .execSync(`cat ${sweepRunDir(home)}/output/*.log | tail -c 6000`, { shell: '/bin/sh' })
+            .execSync(`cat ${home}/.fake-gh-posted-comments/* | tail -c 5000`, { shell: '/bin/sh' })
             .toString()}`
         )
       if (r.status !== 0) throw new Error(`the loop exited ${r.status}: ${r.stderr.slice(-1500)}`)
@@ -4980,7 +4980,7 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
               return String(e)
             }
           })()}\n---\n${require('node:child_process')
-            .execSync(`cat ${sweepRunDir(home)}/output/*.log | tail -c 6000`, { shell: '/bin/sh' })
+            .execSync(`cat ${home}/.fake-gh-posted-comments/* | tail -c 5000`, { shell: '/bin/sh' })
             .toString()}`
         )
       if (r.status !== 0) throw new Error(`the loop exited ${r.status}: ${r.stderr.slice(-1500)}`)
