@@ -1803,7 +1803,7 @@
     },
     {
       "id": "INV-085",
-      "behavior": "The watcher treats stale_driver as a bounded bare retry, but devReviewLoop grants the bare allowance to infrastructure only, so the unattended stale_driver retry always fails back to waiting for a ruling.",
+      "behavior": "stale_driver and infrastructure share the bounded bare-retry allowance, so either automatic-recovery pause resumes unattended until the shared retry budget is spent.",
       "classification": "principal-ruling-required",
       "ambiguity": "AMB-11",
       "owner": "operator-control",

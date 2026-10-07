@@ -837,6 +837,10 @@ describe("the Operator's doctrine and the Operator's tools agree, state for stat
       writePause(selfResuming, TASK, 2, 'infrastructure')
       expect(defaultPauseDisposition(TASK, selfResuming)).toBe('self_resuming')
 
+      const staleDriver = tempDir()
+      writePause(staleDriver, TASK, 2, 'stale_driver')
+      expect(defaultPauseDisposition(TASK, staleDriver)).toBe('self_resuming')
+
       const ruled = tempDir()
       writePause(ruled, TASK, 2, 'escalation')
       writeResolution(ruled, TASK, 2, 'resume')

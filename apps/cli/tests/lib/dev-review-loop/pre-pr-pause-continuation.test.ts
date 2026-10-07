@@ -345,11 +345,14 @@ describe('runDriverLoop — which pauses recorded before a pull request it watch
     expect(h.continuations).toEqual([])
   })
 
-  it('never re-enters a stale-driver pause bare: with no pull request to `--resume` through, it stops watching', async () => {
+  it('re-enters a stale-driver pause bare when no pull request exists yet', async () => {
     const h = harness(prePrPause('stale_driver', 'base moved'), null)
     const result = await runDriverLoop({ task: 1165, agent: 'claude' }, {}, h.watch)
-    expect(result.finalDecision.type).toBe('pause')
-    expect(h.continuations).toEqual([])
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    expect(h.sleeps).toEqual([60_000])
+    expect(h.continuations).toHaveLength(1)
+    expect(h.continuations[0]).toMatchObject({ task: 1165, agent: 'claude' })
+    expect(h.continuations[0]?.retainDriverLock).toBeDefined()
   })
 
   it('ends on a cancel recorded while it waited', async () => {

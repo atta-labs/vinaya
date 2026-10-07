@@ -2397,9 +2397,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
     dispatchAgent = input.agent ?? (held.agent as AgentVendor)
     dispatchModel = input.model ?? held.model
-    // O5: an `'infrastructure'` pause is the driver's own
-    // recoverable hiccup, never a human decision point (same wording the
-    // pause-return branch below already uses for it and `stale_driver`) —
+    // O5: an `'infrastructure'` or `'stale_driver'` pause is the driver's
+    // own recoverable hiccup, never a human decision point —
     // `--resume` continues it on the bare command, no Principal ruling
     // required. Every OTHER pause reason is unchanged: a genuine decision
     // point still refuses to resume without one.
@@ -2426,8 +2425,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           ? Number.POSITIVE_INFINITY
           : 0
     const infrastructureRetriesSoFar = Math.max(controlStoreInfrastructureRetries, held.infrastructureRetries ?? 0)
-    const bareInfrastructureResume =
-      held.reason === 'infrastructure' && infrastructureRetriesSoFar < MAX_INFRASTRUCTURE_RETRIES
+    const bareAutomaticResume =
+      (held.reason === 'infrastructure' || held.reason === 'stale_driver') &&
+      infrastructureRetriesSoFar < MAX_INFRASTRUCTURE_RETRIES
     // `held.escalationId` is the escalation's OWN real id — a disambiguating
     // suffix when `writeEscalation` had to claim one (code review, round 2,
     // MEDIUM); the natural key is still correct whenever no collision ever
@@ -2437,9 +2437,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // refused HERE, before any ruling is asked for: no ruling can be bound to
     // a missing record, so a refusal naming "post a ruling, then `--resume`"
     // would name a `--resume` that refuses again. It names the Principal
-    // decision instead. A bare infrastructure resume needs no record and goes
+    // decision instead. A bare automatic resume needs no record and goes
     // on (`StaleEscalationError`, below).
-    if (!bareInfrastructureResume && readEscalationRecord(closesTask, resumeEscalationId) === null) {
+    if (!bareAutomaticResume && readEscalationRecord(closesTask, resumeEscalationId) === null) {
       const stale = new StaleEscalationError(
         closesTask,
         resumeEscalationId,
@@ -2450,15 +2450,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // A bound pause's ruling is read where its own comment was posted — the
     // task Issue — by the same parser under the same principal allowlist.
     const rulingSource = escalationPr === null ? `Issue #${closesTask}` : `PR #${resumePr}`
-    const rulings = bareInfrastructureResume
+    const rulings = bareAutomaticResume
       ? []
       : escalationPr === null
         ? d.fetchIssueRulings(closesTask)
         : d.fetchRulings(resumePr)
-    if (!bareInfrastructureResume && rulings.length === 0) {
+    if (!bareAutomaticResume && rulings.length === 0) {
       throw new Error(
         `devReviewLoop --resume: ${rulingSource} carries no Principal ruling comment yet — nothing to resume from. Continuing task ${closesTask} needs a Principal ruling posted on ${rulingSource}; then run \`vinaya dev-review-loop --resume ${resumePr}\`.` +
-          (held.reason === 'infrastructure'
+          (held.reason === 'infrastructure' || held.reason === 'stale_driver'
             ? ` (task ${closesTask} has hit ${infrastructureRetriesSoFar} infrastructure/stale_driver pause(s) — at or past the bound of ${MAX_INFRASTRUCTURE_RETRIES}, a ruling is required even for this reason.)`
             : '')
       )
@@ -2471,12 +2471,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // rather than a principal decision — still consumed at most once, so a
     // duplicate bare `--resume` against the SAME held hiccup is refused too.
     const resumeAuthenticatedBy =
-      held.reason === 'infrastructure'
+      held.reason === 'infrastructure' || held.reason === 'stale_driver'
         ? 'driver-self'
         : ((escalationPr === null ? d.fetchNewestIssueRulingAuthor(closesTask) : d.fetchNewestRulingAuthor(resumePr)) ??
           'unknown-principal')
     const resumeAuthenticatedFrom =
-      held.reason === 'infrastructure'
+      held.reason === 'infrastructure' || held.reason === 'stale_driver'
         ? `${resumePr}-infrastructure-retry`
         : escalationPr === null
           ? `issue-${closesTask}-${d.fetchNewestIssueRulingOrdinal(closesTask)}`
@@ -2503,7 +2503,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // request's current state, the same attach a fresh `--task <n>` takes.
         // Every pause that needs a ruling still refuses: without the record,
         // no ruling can be bound to it.
-        if (!bareInfrastructureResume) {
+        if (!bareAutomaticResume) {
           throw new Error(`devReviewLoop --resume: ${err.message}. ${missingEscalationNextStep(held, false)}`)
         }
         attachAfterReplayedResolution = true
@@ -7771,10 +7771,9 @@ async function watchPrePrPauseThenResume(
     if (resolution?.decision === 'cancel') return { kind: 'ended', reason: 'cancelled' }
   }
   const openPr = watchReadOrFallback('open pull request', () => w.findOpenPrForBranch(held.branch), null)
-  // Only an infrastructure pause re-enters the task bare. A stale-driver one
-  // continues only through `--resume`, under the same rule it has on a pull
-  // request — whether it may resume unattended is not this watcher's call.
-  if (!openPr && held.reason !== 'infrastructure') return { kind: 'unwatched' }
+  // Both automatic-recovery reasons can re-enter the task bare when no pull
+  // request exists yet. This is the same bounded allowance `--resume` grants
+  // them after a PR is available; the watcher owns only the wait and lock.
   const model = held.model ?? input.model
   const continuation: LoopInput = openPr
     ? { resumePr: openPr.number, agent, ...(model ? { model } : {}) }
