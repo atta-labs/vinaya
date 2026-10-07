@@ -4867,6 +4867,16 @@ exit 1
  */
 const SWEEP_FIXTURE_REPO = 'sweep-owner/sweep-repo'
 
+/** The fake `claude` writes a reviewer's report under the run directory, so it must name the same repo segment the loop now resolves. */
+function writeFakeClaudeForSweepRepo(binDir: string): void {
+  writeFakeClaude(binDir)
+  const claude = join(binDir, 'claude')
+  writeFileSync(
+    claude,
+    readFileSync(claude, 'utf8').replaceAll('runtime/unresolved/', 'runtime/sweep-owner-sweep-repo/')
+  )
+}
+
 function sweepRunDir(home: string, task: number = TASK): string {
   return taskRunDir(home, task).replace(`${join('runtime', 'unresolved')}`, join('runtime', 'sweep-owner-sweep-repo'))
 }
@@ -4890,7 +4900,7 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
       const home = tempDir('vinaya-drl-home-')
       const cwd = tempDir('vinaya-drl-cwd-')
       const binDir = tempDir('vinaya-drl-bin-')
-      writeFakeClaude(binDir)
+      writeFakeClaudeForSweepRepo(binDir)
       writeFakeGhSweepBlocksUntilDevInvoked(binDir, 8001)
       writeFakeGit(binDir)
       const path = `${binDir}:${pathWithoutRealVendors()}`
@@ -4901,20 +4911,6 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
       mkdirSync(sweepRunDir(home, 8001), { recursive: true })
 
       const r = runLoopWithRepo(home, cwd, path)
-      if (r.status !== 0)
-        writeFileSync(
-          '/home/dev/atta-labs/vinaya/.git/sweep-debug.txt',
-          `${r.status}\n${r.stderr}\n---\n${r.stdout}\n---\n${(() => {
-            try {
-              return readFileSync(join(sweepRunDir(home), 'output', 'driver.log'), 'utf8')
-            } catch (e) {
-              return String(e)
-            }
-          })()}\n---\n${require('node:child_process')
-            .execSync(`cat ${home}/.fake-gh-posted-comments/* | tail -c 5000`, { shell: '/bin/sh' })
-            .toString()}`
-        )
-      if (r.status !== 0) throw new Error(`the loop exited ${r.status}: ${r.stderr.slice(-1500)}`)
       expect(r.status).toBe(0)
       expect(r.stdout).toMatch(/publish/)
 
@@ -4955,7 +4951,7 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
       const home = tempDir('vinaya-drl-home-')
       const cwd = tempDir('vinaya-drl-cwd-')
       const binDir = tempDir('vinaya-drl-bin-')
-      writeFakeClaude(binDir)
+      writeFakeClaudeForSweepRepo(binDir)
       writeFakeGhSweepRevivedBetweenChecks(binDir, 8002)
       writeFakeGit(binDir)
       const path = `${binDir}:${pathWithoutRealVendors()}`
@@ -4970,20 +4966,6 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
       // with real headroom rather than another razor-thin margin, while
       // retaining the tight default for every ordinary fixture in this file.
       const r = runLoopWithRepo(home, cwd, path, 75_000)
-      if (r.status !== 0)
-        writeFileSync(
-          '/home/dev/atta-labs/vinaya/.git/sweep-debug.txt',
-          `${r.status}\n${r.stderr}\n---\n${r.stdout}\n---\n${(() => {
-            try {
-              return readFileSync(join(sweepRunDir(home), 'output', 'driver.log'), 'utf8')
-            } catch (e) {
-              return String(e)
-            }
-          })()}\n---\n${require('node:child_process')
-            .execSync(`cat ${home}/.fake-gh-posted-comments/* | tail -c 5000`, { shell: '/bin/sh' })
-            .toString()}`
-        )
-      if (r.status !== 0) throw new Error(`the loop exited ${r.status}: ${r.stderr.slice(-1500)}`)
       expect(r.status).toBe(0)
       expect(r.stdout).toMatch(/publish/)
 
