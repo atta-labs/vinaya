@@ -232,6 +232,7 @@ Every brief includes stop conditions. Honor them unconditionally. Common reasons
 - You are about to touch files outside the brief's stated scope — stop and ask first
 - Any destructive action (force push, file deletion, database mutation) not explicitly authorized by the brief
 - You discover a decision that should be Type 1 (irreversible) but the brief doesn't mention it
+- A link or file the task references cannot be opened — stop at once and return a `blocked` turn result with kind `missing_access`, naming the reference. Never develop around it: the task named it because the work needs what it holds.
 
 ---
 

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 /**
  * Planner→Brief Issue-rationale grammar. Pure — no `fs`, no `fetch`,
  * no `process.env`. The local gate (`bin/open-issue.ts`, the sanctioned way to
@@ -3017,21 +3018,66 @@ export function documentationUrls(body: string): string[] {
   return [...urls]
 }
 
+/** Every URL anywhere in the body, trailing punctuation dropped, deduplicated. */
+export function bodyUrls(body: string): string[] {
+  const urls = new Set<string>()
+  for (const m of body.matchAll(DOCUMENTATION_URL_RE)) urls.add(m[0].replace(/[.,;:!?]+$/, ''))
+  return [...urls]
+}
+
+/** This repository's web address from its `origin` remote, or `undefined` when it cannot be read. */
+export function readOwnRepoUrl(): string | undefined {
+  try {
+    const remote = execFileSync('git', ['remote', 'get-url', 'origin'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim()
+    const m = /^(?:https?:\/\/(?:[^@/]+@)?|git@|ssh:\/\/git@)([^/:]+)[/:](.+?)(?:\.git)?\/?$/.exec(remote)
+    return m ? `https://${m[1]}/${m[2]}` : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /**
- * **A Documentation URL is publicly readable on its own host.** A sandboxed
- * Developer fetches the source unauthenticated; a page behind a login — or one
- * that answers from another host — reads as read to the read check and is
- * empty to the Developer. `probe` is injected (this module makes no request);
+ * Is this URL one of this repository's own Issues or pull requests? Those are
+ * references to planning records, not sources, so they need not be listed in
+ * `## Documentation`. `ownRepoUrl` is the repository's web address
+ * (`https://<host>/<owner>/<repo>`), read from the `origin` remote by default;
+ * when it cannot be read, nothing is exempt.
+ */
+function isOwnPlanningRecord(url: string, ownRepoUrl: string | undefined): boolean {
+  if (ownRepoUrl === undefined) return false
+  const prefix = ownRepoUrl.replace(/\/+$/, '').toLowerCase()
+  return new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/(issues|pull)/\\d+(?:[/?#]|$)`, 'i').test(url)
+}
+
+/**
+ * **Every link a task gives is required reading, and is publicly readable on
+ * its own host.** A link outside `## Documentation` that the section does not
+ * also list is refused: the Developer is told to read every link, so each one
+ * belongs there. Every link in the body is probed, not only the Documentation
+ * ones: a sandboxed Developer fetches it unauthenticated, and a page behind a
+ * login — or one that answers from another host — is empty to it. This
+ * repository's own Issue and pull-request links are exempt from the listing
+ * rule but still probed. `probe` is injected (this module makes no request);
  * it answers `unknown` for a timeout or an offline machine, which is a warning
  * and never a refusal so planning offline still works. No host is special-cased.
  */
 export function checkDocumentationReadable(
   body: string,
-  probe: (url: string) => DocumentationProbe
+  probe: (url: string) => DocumentationProbe,
+  ownRepoUrl: string | undefined = readOwnRepoUrl()
 ): IssueSectionResult & { warnings: string[] } {
   const errors: string[] = []
   const warnings: string[] = []
-  for (const url of documentationUrls(body)) {
+  const listed = new Set(documentationUrls(body))
+  for (const url of bodyUrls(body)) {
+    if (!listed.has(url) && !isOwnPlanningRecord(url, ownRepoUrl)) {
+      errors.push(
+        `issue-validation Documentation/listed: \`${url}\` is a link outside \`## Documentation\` — every link a task gives the Developer is required reading and belongs in that section. List it there with the mechanism it governs, or remove it.`
+      )
+    }
     const result = probe(url)
     if (result.kind === 'unreadable') {
       errors.push(
