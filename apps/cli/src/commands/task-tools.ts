@@ -16,6 +16,7 @@
 import { ownVersion } from '../lib/artifacts.js'
 import { devToolsBridgeCommand } from '../lib/task-tools/dev-tools-bridge.js'
 import { devToolsProofCommand } from '../lib/task-tools/dev-proof.js'
+import { resultProofCommand } from '../lib/task-tools/result-proof.js'
 import { serveTaskToolsStdio } from '../lib/task-tools/server.js'
 
 export async function taskToolsServeCommand(_args: string[]): Promise<void> {
@@ -41,6 +42,16 @@ export async function taskToolsDevBridgeCommand(args: string[]): Promise<void> {
  */
 export async function taskToolsDevProofCommand(args: string[]): Promise<void> {
   await devToolsProofCommand(args)
+}
+
+/**
+ * `vinaya task-tools result-proof --agent <claude|codex>` — the live proof that
+ * each CLI delivers the Developer's turn result as its native structured final
+ * output, on a first and a resumed session, and that the driver accepts only a
+ * valid one. See `result-proof.ts`.
+ */
+export async function taskToolsResultProofCommand(args: string[]): Promise<void> {
+  await resultProofCommand(args)
 }
 
 import type { SurfaceExemption } from '../lib/surface-exemption'

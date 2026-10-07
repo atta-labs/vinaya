@@ -1919,6 +1919,40 @@ export function writeDispatchSettings(
 ): string | null {
   try {
     const dir = join(runPath(runtimeDirForThisRepo(), scope, { area: 'hooks' }), role)
+    return writeDispatchSettingsAt(
+      dir,
+      runId,
+      documentation,
+      role,
+      allowedDir,
+      extraWritableDirs,
+      developerFiles,
+      confinement,
+      agentConfigProtectedSubpaths
+    )
+  } catch {
+    return null
+  }
+}
+
+/**
+ * `writeDispatchSettings`, writing into a directory the caller names instead of
+ * this task's runtime hooks area — the same settings file, hooks and per-run
+ * files, for a caller (the structured-result live proof) that must reproduce a
+ * Developer dispatch's settings without touching a real task's runtime folder.
+ */
+export function writeDispatchSettingsAt(
+  dir: string,
+  runId: string,
+  documentation: IssueDocumentationSource[] = [],
+  role: Role = 'developer',
+  allowedDir = '.',
+  extraWritableDirs: readonly string[] = [],
+  developerFiles: readonly string[] = [],
+  confinement: ClaudeSandboxSettings | null = null,
+  agentConfigProtectedSubpaths: readonly string[] = []
+): string | null {
+  try {
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     chmodSync(dir, 0o700)
     const scriptPath = join(dir, 'deny-background-bash.mjs')
@@ -2377,7 +2411,7 @@ export function parseClaudeResumeId(stdout: string): string | null {
   return null
 }
 
-function parseCodexResumeId(stdout: string): string | null {
+export function parseCodexResumeId(stdout: string): string | null {
   for (const raw of stdout.split('\n')) {
     const line = raw.trim()
     if (!line) continue
@@ -3364,6 +3398,16 @@ export function identifyVendorFromModelShape(model: string): AgentVendor | null 
  */
 export function resolveClassModel(agent: AgentVendor, agentClass: AgentClass): string | null {
   return VENDOR_TABLE[agent].classModels[agentClass] ?? null
+}
+
+/** A fresh session's argv exactly as a dispatch builds it — for a live proof that must not hand-build different flags. */
+export function vendorSessionArgs(agent: AgentVendor, model?: string): string[] {
+  return VENDOR_TABLE[agent].args(model)
+}
+
+/** A resumed session's argv exactly as a dispatch builds it, for the same reason as `vendorSessionArgs`. */
+export function vendorResumeArgs(agent: AgentVendor, resumeId: string, model?: string): string[] {
+  return VENDOR_TABLE[agent].resumeArgs(resumeId, model)
 }
 
 /**

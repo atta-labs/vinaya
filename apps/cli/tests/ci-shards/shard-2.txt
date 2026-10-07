@@ -63,6 +63,7 @@ tests/lib/task-tools/dev-tools-server.test.ts
 tests/lib/task-tools/dev-tools-registration.test.ts
 tests/lib/task-tools/developer-dev-tools-context.test.ts
 tests/lib/task-tools/dev-proof.test.ts
+tests/lib/task-tools/result-proof.test.ts
 tests/lib/task-tools/resume.test.ts
 tests/lib/broker/operator-grants.test.ts
 tests/lib/dispatch/unattended-publication.test.ts

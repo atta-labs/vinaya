@@ -226,6 +226,18 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'task-tools result-proof',
+    description:
+      "Prove, live on this host, that a CLI delivers the Developer's turn result as its own structured final output",
+    flags: [{ flag: '--agent <claude|codex>', description: 'The CLI to prove' }],
+    details: [
+      // AEG:CLAIM: apps/cli/src/lib/task-tools/result-proof.ts contains:export async function resultProofCommand(
+      "Runs real Developer-shaped dispatches on this host — the driver-run dev-tools registered and called, the agent's own sandbox where the host supports it, the subscription login, and the dispatch's own argv — and asks for the versioned `DeveloperTurnResult` (`completed`, `blocked` or `needs_ruling`) through the CLI's native structured output: Claude Code `--json-schema` under `--output-format stream-json`, with the dispatch's Stop hook plus one that rejects the first stop; Codex `--output-schema` under `exec --json` and `exec resume --json`.",
+      'Cases: a first and a resumed session (the same provider session, a fresh result, exactly one accepted); a schema-valid but semantically invalid result (an unknown finding id, a ruling request naming no permissible decision), which the driver rejects; malformed output, which never reaches the driver; and a cancelled run, a provider error and context exhaustion, each ending with no accepted result. Each case prints whether a schema-valid result reached the driver, the result, and the event it was read from; exits 1 when any case fails. Never publishes, opens a pull request or writes the forge.'
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'pr create',
     description: 'Open a pull request after full brief-schema validation',
     flags: [
