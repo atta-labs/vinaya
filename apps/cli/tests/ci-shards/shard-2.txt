@@ -76,3 +76,4 @@ tests/conformance/dev-review-invariant-coverage.test.ts
 tests/sandbox-conformance/sandbox-conformance.test.ts
 tests/lib/detached-launch.test.ts
 tests/lib/driver-shutdown-children.test.ts
+tests/lib/test-env-log-tokens.test.ts

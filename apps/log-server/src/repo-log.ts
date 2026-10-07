@@ -17,7 +17,7 @@
  */
 
 import { DurableObject } from 'cloudflare:workers'
-import { classifyStoredLine, recordIdentity } from '@attalabs/aeg-core/log'
+import { classifyStoredLine, recordIdentity, redact } from '@attalabs/aeg-core/log'
 import { LIVE_SUBPROTOCOL, parseRoute, repoName, type Route } from './route'
 
 export interface Env {
@@ -45,6 +45,8 @@ const REJECTED_LINE_BYTES = 64 * 1024
  */
 export const REJECTED_GROUP_WINDOW = 1000
 export const REJECTED_RECENT_MAX = 20
+/** The most bytes of a rejected line a reason's `sample` carries (spec § 5, "Rejected"). */
+export const REJECTED_SAMPLE_BYTES = 512
 
 /** The read route's default and maximum page size (spec § 5). */
 export const READ_LIMIT_MAX = 1000
@@ -76,6 +78,19 @@ const NO_HOME = ''
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
+
+/**
+ * A rejected line as one reason's sample: redacted with the sink's own
+ * `redact` first, then cut to `REJECTED_SAMPLE_BYTES` — in that order, so a
+ * secret the cut would split is already gone.
+ */
+function sampleLine(line: string | null): string | null {
+  if (line === null) return null
+  const bytes = encoder.encode(redact(line, NO_HOME))
+  return bytes.byteLength <= REJECTED_SAMPLE_BYTES
+    ? decoder.decode(bytes)
+    : decoder.decode(bytes.subarray(0, REJECTED_SAMPLE_BYTES))
+}
 
 function byteLength(value: string): number {
   return encoder.encode(value).byteLength
@@ -383,6 +398,20 @@ export class RepoLog extends DurableObject<Env> {
    * reads are budgeted (spec § 2).
    */
   private rejectedReport(route: Route): Response {
+    const samples = new Map<string, { received_at: number; line: string | null }>()
+    for (const row of this.sql
+      .exec<{ reason: string; received_at: number; line: string | null }>(
+        `SELECT g.reason AS reason, r.received_at AS received_at, r.line AS line
+           FROM (SELECT CASE WHEN reason LIKE 'too_large:%' THEN 'too_large' ELSE reason END AS reason, MAX(id) AS id
+                   FROM (SELECT id, reason FROM rejected ORDER BY id DESC LIMIT ?)
+                  GROUP BY 1) AS g
+           JOIN rejected AS r ON r.id = g.id`,
+        REJECTED_GROUP_WINDOW
+      )
+      .toArray()) {
+      samples.set(row.reason, { received_at: Number(row.received_at), line: sampleLine(row.line) })
+    }
+
     const reasons = this.sql
       .exec<{ reason: string; count: number }>(
         `SELECT CASE WHEN reason LIKE 'too_large:%' THEN 'too_large' ELSE reason END AS reason, COUNT(*) AS count
@@ -392,7 +421,7 @@ export class RepoLog extends DurableObject<Env> {
         REJECTED_GROUP_WINDOW
       )
       .toArray()
-      .map((row) => ({ reason: row.reason, count: Number(row.count) }))
+      .map((row) => ({ reason: row.reason, count: Number(row.count), sample: samples.get(row.reason) ?? null }))
 
     const recent = this.sql
       .exec<{ id: number; received_at: number; reason: string; line: string | null }>(

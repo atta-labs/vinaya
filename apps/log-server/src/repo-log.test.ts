@@ -311,7 +311,7 @@ async function rejected(repo: string): Promise<Response> {
 type RejectedReport = {
   repo: string
   window: number
-  reasons: { reason: string; count: number }[]
+  reasons: { reason: string; count: number; sample: { received_at: number; line: string | null } | null }[]
   recent: { id: number; received_at: number; reason: string; line: string | null }[]
 }
 
@@ -345,9 +345,27 @@ describe('the rejected route shows why lines were refused', () => {
     await post(repo, ['x'.repeat(1024 * 1024 + 1), 'y'.repeat(1024 * 1024 + 2)].join('\n'))
 
     const body = (await (await rejected(repo)).json()) as RejectedReport
-    expect(body.reasons).toEqual([{ reason: 'too_large', count: 2 }])
+    expect(body.reasons.map((r) => [r.reason, r.count])).toEqual([['too_large', 2]])
     expect(body.recent[0]?.reason).toBe(`too_large:${1024 * 1024 + 2}`)
     expect((body.recent[0]?.line ?? '').length).toBeLessThanOrEqual(64 * 1024)
+  })
+
+  it('gives each reason one redacted sample, capped in bytes, with its receive time', async () => {
+    const repo = freshRepo()
+    const secret = `Authorization: Bearer ${'a'.repeat(30)}`
+    await post(repo, ['first bad', 'second bad'].join('\n'))
+
+    const body = (await (await rejected(repo)).json()) as RejectedReport
+    expect(body.reasons[0]?.count).toBe(2)
+    expect(body.reasons[0]?.sample?.line).toBe('second bad')
+    expect(body.reasons[0]?.sample?.received_at).toBeGreaterThan(0)
+
+    const repo2 = freshRepo()
+    await post(repo2, `${secret} ${'z'.repeat(2000)}`)
+    const sample = ((await (await rejected(repo2)).json()) as RejectedReport).reasons[0]?.sample?.line ?? ''
+    expect(sample).not.toContain('a'.repeat(30))
+    expect(sample).toContain('<redacted>')
+    expect(new TextEncoder().encode(sample).byteLength).toBeLessThanOrEqual(512)
   })
 
   it('reports an empty table as empty', async () => {

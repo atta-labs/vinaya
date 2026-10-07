@@ -50,7 +50,24 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { exemptPrefixes, PROCESS_START_MS, realRuntimeDir, touchedSince } from './real-runtime-guard-core'
 
-for (const key of ['GITHUB_ACTIONS', 'VINAYA_HOST', 'VINAYA_ROLE', 'VINAYA_ATTEMPT', 'VINAYA_PARENT_EVENT']) {
+/**
+ * `VINAYA_LOG_TOKEN`/`VINAYA_LOG_READ_TOKEN` — the log server's write and read
+ * credentials. The repository config points `logs` at the real server with
+ * these as its `${VAR}` headers, and dozens of tests spawn children with the
+ * parent's environment, so a token left here lets a test send an event to, or
+ * read from, the real server. Removed so no process the suite starts carries
+ * either one; a test that exercises the credential passes its own fake as an
+ * explicit `env` override.
+ */
+for (const key of [
+  'GITHUB_ACTIONS',
+  'VINAYA_HOST',
+  'VINAYA_ROLE',
+  'VINAYA_ATTEMPT',
+  'VINAYA_PARENT_EVENT',
+  'VINAYA_LOG_TOKEN',
+  'VINAYA_LOG_READ_TOKEN'
+]) {
   delete process.env[key]
 }
 
