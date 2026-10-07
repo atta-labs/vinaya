@@ -256,6 +256,20 @@ describe('fetchBacklogIssuePrsBatch', () => {
     expect((await fetchBacklogIssuePrsBatch([586], REPO)).has(586)).toBe(false)
   })
 
+  it('one unreadable number does not hide the others: only it is reported failed', async () => {
+    execFileAsyncMock.mockImplementation((_bin: string, args: string[]) => {
+      const query = args.find((a) => a.startsWith('query=')) ?? ''
+      if (query.includes('_999')) return Promise.reject(new Error('not an Issue'))
+      return Promise.resolve({
+        stdout: JSON.stringify({ data: { repository: { b_586: { nodes: [merged(900, 'task/issue-586')] } } } }),
+        stderr: ''
+      })
+    })
+    const error = await fetchBacklogIssuePrsBatch([586, 999], REPO).catch((e) => e)
+    expect(error.failed).toEqual([999])
+    expect(error.found.get(586)?.number).toBe(900)
+  })
+
   it('throws when the forge read fails, never an empty map', async () => {
     execFileAsyncMock.mockRejectedValue(new Error('network down'))
     await expect(fetchBacklogIssuePrsBatch([586], REPO)).rejects.toThrow('#586')

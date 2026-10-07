@@ -143,19 +143,11 @@ function shJson<T>(cmd: string, args: string[]): T | null {
 const execFileAsync = promisify(execFile)
 
 /**
- * Async, larger-buffer sibling of `sh()` —
- * for a request whose payload is genuinely bounded (a `--limit`-capped `gh
- * pr list`, never an unbounded Milestone enumeration; that case is
- * `tranchesAttachedToMilestone`'s own field-selection-plus-pagination fix,
- * not this one) but can still exceed `execFileSync`'s 1 MB default once
- * `body` is requested across many PRs — found live against this repo's own
- * `gh pr list --json …,body --limit 300` (5.8 MB), the exact ENOBUFS shape
- * `fetchBacklogIssuePrsBatch` first shipped with, silently returning zero
- * PRs rather than throwing. 16 MB matches `@attalabs/aeg-forge-state`'s own
- * `gh.ts` precedent for the identical shape (a bounded list whose full
- * bodies must reach this process, because `Closes #<n>` matching happens in
- * TS via the shared `extractClosesReferences`, not a duplicate filter
- * server-side).
+ * Async, larger-buffer sibling of `sh()` — for a bounded request whose
+ * payload can still exceed `execFileSync`'s 1 MB default (an ENOBUFS there
+ * silently returned nothing). 16 MB matches `@attalabs/aeg-forge-state`'s own
+ * `gh.ts` precedent. Returns `null` on any failure; callers that must tell a
+ * failed read from an empty answer treat `null` as the former.
  */
 async function shJsonAsync<T>(cmd: string, args: string[]): Promise<T | null> {
   try {
@@ -263,7 +255,7 @@ function fetchTrancheBranchPrs(trancheSlug: string, repo: RepoRef): Map<string, 
 }
 
 /**
- * Injectable so tests can fake the forge without a real `gh pr list` call —
+ * Injectable so tests can fake the forge without a real `gh api graphql` call —
  * the same seam `IssueStateFetcher`/`SiblingTrancheResolver` already give
  * this file.
  */
@@ -286,33 +278,59 @@ type BacklogPrRead = { nodes?: PrListEntry[]; closedByPullRequestsReferences?: {
  * Issue's `CLOSED` state. When several pull requests match, a merged one
  * wins, else the first.
  *
- * THROWS when the forge cannot be read — never an empty map, which would
- * make every dependency read as unmerged. The caller reports that as its
- * own retryable refusal.
+ * THROWS `BacklogReadError` naming the numbers whose read failed — never an
+ * empty map, which would make every dependency read as unmerged. The caller
+ * reports those as their own retryable refusal.
  */
 export async function fetchBacklogIssuePrsBatch(numbers: number[], repo: RepoRef): Promise<Map<number, PrListEntry>> {
-  const result = new Map<number, PrListEntry>()
   const unique = [...new Set(numbers)]
+  const result = new Map<number, PrListEntry>()
   if (unique.length === 0) return result
 
+  const batch = await readBacklogPrs(unique, repo)
+  if (batch) return batch
+  // One alias erroring (a number that is not an Issue, say) fails the whole
+  // GraphQL document — so read each number alone to find which ones fail,
+  // and let the readable ones keep their real state.
+  const failed: number[] = []
+  if (unique.length > 1) {
+    for (const n of unique) {
+      const one = await readBacklogPrs([n], repo)
+      if (one) for (const [k, v] of one) result.set(k, v)
+      else failed.push(n)
+    }
+  } else failed.push(...unique)
+  throw new BacklogReadError(failed, result)
+}
+
+/** A failed forge read for `failed`; `found` carries what the readable numbers resolved to. */
+export class BacklogReadError extends Error {
+  constructor(
+    readonly failed: number[],
+    readonly found: Map<number, PrListEntry>
+  ) {
+    super(`could not read pull requests for ${failed.map((n) => `#${n}`).join(', ')} from the forge`)
+  }
+}
+
+async function readBacklogPrs(numbers: number[], repo: RepoRef): Promise<Map<number, PrListEntry> | null> {
   const parsed = await shJsonAsync<{ data?: { repository?: Record<string, BacklogPrRead | null> } }>('gh', [
     'api',
     'graphql',
     '-R',
     `${repo.owner}/${repo.repo}`,
     '-f',
-    `query=${buildBacklogPrQuery(unique)}`,
+    `query=${buildBacklogPrQuery(numbers)}`,
     '-F',
     `owner=${repo.owner}`,
     '-F',
     `repo=${repo.repo}`
   ])
   const repository = parsed?.data?.repository
-  if (!repository)
-    throw new Error(`could not read pull requests for ${unique.map((n) => `#${n}`).join(', ')} from the forge`)
-
+  if (!repository) return null
+  const result = new Map<number, PrListEntry>()
   const pick = (prs: PrListEntry[]): PrListEntry | undefined => prs.find((pr) => pr.state === 'MERGED') ?? prs[0]
-  for (const n of unique) {
+  for (const n of numbers) {
     const found =
       pick(repository[`b_${n}`]?.nodes ?? []) ?? pick(repository[`c_${n}`]?.closedByPullRequestsReferences?.nodes ?? [])
     if (found) result.set(n, found)
@@ -490,11 +508,16 @@ export async function resolveDependsOn(
   // A failed forge read is its own fact, never an empty answer: an empty map
   // would read every backlog dependency as unmerged.
   let backlogPrs = new Map<number, PrListEntry>()
-  let backlogReadFailed = false
+  const backlogFailed = new Set<number>()
   try {
     backlogPrs = await fetchBacklogPrs([...neededBacklog], repo)
-  } catch {
-    backlogReadFailed = true
+  } catch (e) {
+    if (e instanceof BacklogReadError) {
+      backlogPrs = e.found
+      for (const n of e.failed) backlogFailed.add(n)
+    } else {
+      for (const n of neededBacklog) backlogFailed.add(n)
+    }
   }
 
   const facts: DispatchDependsOnFact[] = []
@@ -513,13 +536,13 @@ export async function resolveDependsOn(
     }
     const directIssue = directIssueNumFromEdge(edge)
     if (directIssue !== null) {
-      // A bare Issue number's own pull request (branch or `Closes #<n>`
-      // body) is the authority when one exists (issue-586, O2, trap: never
+      // A bare Issue number's own pull request (its branch or closing
+      // pull request) is the authority when one exists (issue-586, O2, trap: never
       // treat a closed-without-merge Issue as a merged dependency) — the
       // Issue's own closed/open state is only the fallback for a number
       // with no known PR at all, unchanged from before this task.
       const backlogPr = backlogPrs.get(directIssue)
-      if (backlogReadFailed || (!backlogPr && !issueStates.has(directIssue))) {
+      if (backlogFailed.has(directIssue) || (!backlogPr && !issueStates.has(directIssue))) {
         facts.push({ id: edge, issue: directIssue, merged: false, readFailed: true })
         continue
       }
