@@ -108,7 +108,7 @@ export type TurnRead = {
   errors: string[]
 }
 
-function jsonLines(stdout: string): Record<string, unknown>[] {
+export function jsonLines(stdout: string): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = []
   for (const line of stdout.split('\n')) {
     const trimmed = line.trim()
@@ -445,12 +445,12 @@ function writeClaudeProofSettings(
 }
 
 /** Inserts flags before the trailing `-` (read the prompt from stdin) Codex's argv ends with. */
-function beforeStdinMarker(args: string[], extra: string[]): string[] {
+export function beforeStdinMarker(args: string[], extra: string[]): string[] {
   const last = args[args.length - 1]
   return last === '-' ? [...args.slice(0, -1), ...extra, '-'] : [...args, ...extra]
 }
 
-type Launch = { args: string[]; env: NodeJS.ProcessEnv }
+export type Launch = { args: string[]; env: NodeJS.ProcessEnv }
 
 /**
  * `USER`/`LOGNAME` for the child, from the parent when it has them and from
@@ -526,7 +526,7 @@ function planLaunches(
   }
 }
 
-type RunOutcome = {
+export type RunOutcome = {
   exitCode: number | null
   signal: string | null
   stdout: string
@@ -534,7 +534,7 @@ type RunOutcome = {
   spawnError?: string
 }
 
-function runChild(
+export function runChild(
   command: string,
   launch: Launch,
   prompt: string,
@@ -565,13 +565,13 @@ function runChild(
   })
 }
 
-function cliVersion(command: string): string {
+export function cliVersion(command: string): string {
   const out = spawnSync(command, ['--version'], { encoding: 'utf8' })
   const text = `${out.stdout ?? ''}`.trim()
   return text.length > 0 ? text : `unavailable (${out.error?.message ?? (out.stderr ?? '').trim()})`
 }
 
-function clip(text: string, max = 600): string {
+export function clip(text: string, max = 600): string {
   return text.length > max ? `${text.slice(0, max)}… [+${text.length - max} chars]` : text
 }
 
@@ -591,7 +591,7 @@ export function redactProviderText(text: string, home: string = homedir()): stri
 }
 
 /** `clip` after `redactProviderText` — the one form provider text is printed in. */
-function providerText(text: string, max?: number): string {
+export function providerText(text: string, max?: number): string {
   return clip(redactProviderText(text), max)
 }
 
@@ -741,7 +741,7 @@ function safeJson(text: string): unknown {
   }
 }
 
-function safeRead(path: string): string {
+export function safeRead(path: string): string {
   try {
     return readFileSync(path, 'utf8')
   } catch {
