@@ -218,6 +218,7 @@ import {
   parseShortstat,
   persistLoopState,
   pollUntil,
+  RATE_LIMIT_NO_WAIT_PAUSE_DETAIL,
   RATE_LIMIT_PAUSE_DETAIL,
   rateLimitWaitMs,
   renderDeveloperRoundComment,
@@ -5681,7 +5682,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           err instanceof DispatchSignInRefused
             ? err.message
             : isGitHubRateLimitError(err)
-              ? `${RATE_LIMIT_PAUSE_DETAIL} (round ${round}: ${err instanceof Error ? err.message : String(err)})`
+              ? `${rateLimitWaits > MAX_CONSECUTIVE_RATE_LIMIT_WAITS ? RATE_LIMIT_PAUSE_DETAIL : RATE_LIMIT_NO_WAIT_PAUSE_DETAIL} (round ${round}: ${err instanceof Error ? err.message : String(err)})`
               : `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
       }
       keepLockAlive = true

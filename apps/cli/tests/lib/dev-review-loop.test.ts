@@ -5179,6 +5179,33 @@ describe('devReviewLoop — a GitHub rate limit waits and retries, never pausing
     expect(comment!.body).not.toMatch(/A Principal ruling is needed/)
   })
 
+  it('a rate limit after a dispatch, outside the wrapped reads, pauses at once and says no wait ran (O2)', async () => {
+    const world = makeWorld()
+    const probes = waitProbes()
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        ...probes.deps,
+        publishRound: () => {
+          throw new Error(RATE_LIMIT)
+        }
+      }
+    )
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+    expect(probes.slept).toHaveLength(0)
+    expect(world.dispatchCountByRole['code-reviewer']).toBe(1)
+    const pauseState = JSON.parse(readFileSync(join(ipControlDir(world), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(String(pauseState.detail)).toMatch(/^GitHub rate limit: .*did not wait/)
+    expect(String(pauseState.detail)).not.toMatch(/waited/)
+    expect(pauseState.infrastructureRetries).toBe(0)
+    const comment = world.postedComments.find((c) => /aeg:loop:paused:infrastructure/.test(c.body))
+    expect(comment!.body).toMatch(/No Principal ruling is needed/)
+  })
+
   it('an error that merely mentions GitHub keeps today’s pause, spends a retry and waits for nothing (O3)', async () => {
     const world = makeWorld()
     const probes = waitProbes()
