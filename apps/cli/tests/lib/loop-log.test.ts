@@ -101,11 +101,13 @@ describe('appendLoopLogLine', () => {
 })
 
 describe('appendRoleLine', () => {
-  it('prefixes every physical line with [<role>]', () => {
+  it('writes an ISO-timed, role-labelled line and marks detail lines', () => {
     const dir = tempDir('loop-log-role-')
     const path = join(dir, '521.log')
-    appendRoleLine(path, 'developer', 'line one\nline two')
-    expect(readFileSync(path, 'utf8')).toBe('[developer] line one\n[developer] line two\n')
+    appendRoleLine(path, 'developer', 'line one', ['line two'])
+    const lines = readFileSync(path, 'utf8').trim().split('\n')
+    expect(lines[0]).toMatch(/^\d{4}-\d{2}-\d{2}T.* {2}▸ Developer {3}line one$/)
+    expect(lines[1]).toBe('  · line two')
   })
 })
 
@@ -130,8 +132,8 @@ describe('appendRunStartMarker', () => {
     appendRoleLine(path, 'developer', 'round 2 narration (after relaunch)')
     const lines = readFileSync(path, 'utf8').trim().split('\n')
     expect(lines.filter((l) => l.startsWith('=== run started')).length).toBe(2)
-    expect(lines).toContain('[developer] round 1 narration')
-    expect(lines).toContain('[developer] round 2 narration (after relaunch)')
+    expect(lines.some((line) => line.endsWith('Developer   round 1 narration'))).toBe(true)
+    expect(lines.some((line) => line.endsWith('Developer   round 2 narration (after relaunch)'))).toBe(true)
   })
 })
 

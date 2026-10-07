@@ -90,6 +90,7 @@ import {
 import type { IssueDocumentationSource, Role, RoleAttemptOutcome, TranscriptSummary } from '@attalabs/aeg-core'
 import { createLogSink, drainLogSpool, resolveLogAppendPath } from './log-sink.js'
 import { appendRoleLine } from './loop-log.js'
+import { formatAgentLine } from './agent-line.js'
 import { developerTurnResultJsonSchema } from './developer-turn-result.js'
 import {
   type DeliveredDocumentation,
@@ -176,7 +177,7 @@ export function colourEnabled(stream: { isTTY?: boolean }): boolean {
  * codes, which is what a piped consumer or a non-interactive run sees.
  */
 export function colourAgentLine(role: Role, line: string, stream: { isTTY?: boolean }): string {
-  const prefixed = `[${role}] ${line}`
+  const prefixed = formatAgentLine(role, line, { unicode: Boolean(stream.isTTY) })
   return colourEnabled(stream) ? `${ROLE_ANSI[role]}${prefixed}${ANSI_RESET}` : prefixed
 }
 
@@ -491,8 +492,12 @@ export const DEFAULT_TIMEOUT_MS = 14_400_000
  */
 const SIGKILL_GRACE_MS = 5_000
 
-/** How often a still-running dispatch announces that it is alive. */
-export const HEARTBEAT_INTERVAL_MS = 60_000
+/** First visible wait follows a call that has produced no result for ten seconds. */
+export const FIRST_WAIT_LINE_MS = 10_000
+/** Further wait lines are deliberately sparse, even for an hour-long command. */
+export const WAIT_LINE_INTERVAL_MS = 30_000
+/** @deprecated Kept as the public cadence name for callers that imported it. */
+export const HEARTBEAT_INTERVAL_MS = WAIT_LINE_INTERVAL_MS
 
 /**
  * How long before the deadline the approaching-timeout warning fires.
@@ -3876,9 +3881,9 @@ export async function dispatchRole(
   const effectId = randomUUID()
   const vendor = VENDOR_TABLE[agent]
   const start = Date.now()
-  /** Every lifecycle line this call writes goes through this one point — restyled, never re-prefixed. O6: also mirrored, plainly, to `opts.roleLogPath` when the caller named one. */
+  /** Every lifecycle line shares the short, role-labelled renderer with streamed agent output. */
   const writeLifecycle = (msg: string): void => {
-    process.stderr.write(`${colourLoopLine(msg, process.stderr)}\n`)
+    process.stderr.write(`${colourAgentLine(role, msg, process.stderr)}\n`)
     if (opts.roleLogPath) appendRoleLine(opts.roleLogPath, role, msg)
   }
   const roundField = opts.round !== undefined ? { round: opts.round } : {}
@@ -4997,16 +5002,19 @@ export async function dispatchRole(
     // guard is therefore self-clearing on the very next tick even in the
     // (already-closed) race window before `finish()` itself clears the
     // timer.
-    const heartbeatTimer: ReturnType<typeof setInterval> = setInterval(() => {
+    let heartbeatTimer: ReturnType<typeof setInterval> | undefined
+    const waitLine = (): void => {
       if (childExited) {
-        clearInterval(heartbeatTimer)
+        if (heartbeatTimer) clearInterval(heartbeatTimer)
         return
       }
       const elapsedS = Math.round((Date.now() - start) / 1000)
-      writeLifecycle(
-        `[vinaya dispatch ${effectId}] ${role} via ${agent}: still running — ${elapsedS}s elapsed (ceiling ${Math.round(timeoutMs / 1000)}s)`
-      )
-    }, HEARTBEAT_INTERVAL_MS)
+      writeLifecycle(`waiting ${elapsedS}s…`)
+    }
+    const firstWaitTimer: ReturnType<typeof setTimeout> = setTimeout(() => {
+      waitLine()
+      heartbeatTimer = setInterval(waitLine, WAIT_LINE_INTERVAL_MS)
+    }, FIRST_WAIT_LINE_MS)
 
     const warnLeadMs = timeoutWarningLeadMs(timeoutMs)
     const warnTimer: ReturnType<typeof setTimeout> = setTimeout(
@@ -5067,7 +5075,8 @@ export async function dispatchRole(
       settled = true
       clearTimeout(timeoutTimer)
       if (killTimer) clearTimeout(killTimer)
-      clearInterval(heartbeatTimer)
+      clearTimeout(firstWaitTimer)
+      if (heartbeatTimer) clearInterval(heartbeatTimer)
       clearTimeout(warnTimer)
       outputTee.end()
       // O6: deliver the confined dispatch's spooled log events to the real log
@@ -5113,7 +5122,8 @@ export async function dispatchRole(
       // pre-check and the spawn) — reported as a crash, never as `refused`,
       // since `refused` is reserved for the pre-spawn check above.
       childExited = true
-      clearInterval(heartbeatTimer)
+      clearTimeout(firstWaitTimer)
+      if (heartbeatTimer) clearInterval(heartbeatTimer)
       const durationMs = Date.now() - start
       const priorSize = sizeOfSafe(outboxPath)
       log({
