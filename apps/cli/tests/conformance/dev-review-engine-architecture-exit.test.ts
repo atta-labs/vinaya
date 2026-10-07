@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { cleanupWorlds } from '../lib/dev-review-loop-harness.js'
 import { NODE_CONTRACTS } from '../lib/dev-review-loop/dev-review-engine-state-contract.fixture.js'
@@ -71,6 +71,11 @@ interface Invariant {
 }
 
 interface Register {
+  baseline: {
+    implementationModules: string[]
+    addedSinceBaseline: { path: string; kind?: string }[]
+  }
+  supportFiles: { path: string }[]
   invariants: Invariant[]
   defects: { id: string; status: string }[]
 }
@@ -412,21 +417,20 @@ function sha256(rel: string): string {
     .digest('hex')
 }
 
-function tsFiles(relDir: string): string[] {
-  const abs = join(REPO_ROOT, relDir)
-  if (!existsSync(abs)) return []
-  return readdirSync(abs)
-    .filter((n) => n.endsWith('.ts') && !n.endsWith('.test.ts'))
-    .map((n) => `${relDir}/${n}`)
-}
-
-/** The standalone loop's implementation modules, discovered by location. */
+/**
+ * The standalone loop's implementation modules, as the invariant register
+ * lists them: its baseline modules, the modules recorded as added since, and
+ * its non-test support files. The register's own coverage test discovers the
+ * loop's source tree and fails on any module it does not list, so a new module
+ * reaches this list through the register rather than through a second walk of
+ * the tree here.
+ */
 function loopSurface(): string[] {
+  const { baseline, supportFiles } = register
   return [
-    'apps/cli/src/commands/dev-review-loop.ts',
-    'apps/cli/src/lib/dev-review-loop.ts',
-    ...tsFiles('apps/cli/src/lib/dev-review-loop'),
-    ...tsFiles('packages/aeg-core/src/dev-review-loop')
+    ...baseline.implementationModules,
+    ...baseline.addedSinceBaseline.filter((a) => a.kind === 'implementation').map((a) => a.path),
+    ...supportFiles.map((s) => s.path).filter((p) => !p.startsWith('apps/cli/tests/'))
   ]
     .filter((p) => existsSync(join(REPO_ROOT, p)))
     .sort()
