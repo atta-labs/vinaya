@@ -5,7 +5,7 @@
   "invariantRegister": "apps/cli/tests/fixtures/dev-review-architecture-invariants.json",
   "capabilityMatrix": "apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json",
   "baseline": {
-    "commit": "2f2a7d40bd425219375c89b2df572ebc8f1dc7bb",
+    "commit": "8fb270e9a28a76ceaffd7f795f52d4df3155a284",
     "branch": "main",
     "loopSurface": [
       {
@@ -14,11 +14,11 @@
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop.ts",
-        "sha256": "32f68040247a4cab8aa14229db057e89c6ebea2dfd2e2abbd0c0d1a8c2e71150"
+        "sha256": "01d4f2c7766193187efa40ef78974d776f9772f9984f3660f100187ce6791533"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/developer-dispatch.ts",
-        "sha256": "20e356c26cd4278ba63272ae21bb77c2bd6078676eeaa64015768fed1f1d1acb"
+        "sha256": "cd2581aec0d1b4c28a731f0509b7fdc1c7506cc24e58ebe8821980e082dc938b"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts",

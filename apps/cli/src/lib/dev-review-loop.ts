@@ -44,7 +44,7 @@
 import { randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { guardedSpawnSync } from './driver-tool-guard.js'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
@@ -139,6 +139,7 @@ import {
   sh
 } from './dev-review-loop/gate-reading.js'
 import {
+  checkDocumentationSourcesReadable,
   checkTaskDispatchReadiness,
   createTaskWorktree,
   describeObjectivesEdit,
@@ -3547,6 +3548,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       if (!dispatchReadiness.ready) {
         throw new Error(
           `dispatch-readiness gate failed for branch '${branch}' — staged at ${dispatchReadinessPath}:\n${dispatchReadiness.output}`
+        )
+      }
+      // A required source the driver cannot read never starts a turn: the
+      // Developer would build without it and the miss would surface only at
+      // the end. Same fetch the documentation tool performs, outside the sandbox.
+      const documentationReadable = await checkDocumentationSourcesReadable(
+        d.fetchFrozenBrief(task),
+        d.fetchDocumentationDeps
+      )
+      if (documentationReadable.output !== '') {
+        appendFileSync(dispatchReadinessPath, `\n\n${documentationReadable.output}\n`)
+      }
+      if (!documentationReadable.ready) {
+        throw new Error(
+          `documentation sources gate failed for branch '${branch}' (${documentationReadable.retryable ? 'retryable' : 'needs the Planner to correct the task'}) — source ${documentationReadable.source}: ${documentationReadable.failure}`
         )
       }
       // O3: resolved fresh per dispatch, the same "never cached across a
