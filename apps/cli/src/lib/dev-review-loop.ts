@@ -1092,7 +1092,6 @@ export function defaultGitWorktreeChangedPaths(worktreePath: string, base: strin
   }
 }
 
-/** Every untracked, non-ignored path in the worktree. Best-effort: `[]` on any failure. */
 export function defaultGitWorktreeUntrackedPaths(worktreePath: string): string[] {
   try {
     const raw = execFileSync('git', ['-C', worktreePath, 'ls-files', '--others', '--exclude-standard'], {
