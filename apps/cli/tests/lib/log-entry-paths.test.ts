@@ -1,4 +1,5 @@
-import { readdirSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { parse } from 'yaml'
@@ -148,18 +149,19 @@ const checkNames = [
   'atta-labs/secret-scan'
 ] as const
 
-function workflowEntries(): Map<string, string> {
+function workflowEntries(directory = join(ROOT, '.github', 'workflows')): Map<string, string> {
   const entries = new Map<string, string>()
-  const directory = join(ROOT, '.github', 'workflows')
   for (const file of readdirSync(directory)
-    .filter((name) => name.endsWith('.yml'))
+    .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
     .sort()) {
     const workflow = parse(readFileSync(join(directory, file), 'utf8')) as Workflow
     for (const [job, value] of Object.entries(workflow.jobs ?? {})) {
       for (const [index, step] of (value.steps ?? []).entries()) {
         if (typeof step.run !== 'string') continue
         expect(step.name, `${file}:${job}: command-running step ${index} needs a stable name`).toBeTruthy()
-        entries.set(`workflow:${file}:${job}:${step.name}`, step.run)
+        const id = `workflow:${file}:${job}:${step.name}`
+        if (entries.has(id)) throw new Error(`duplicate workflow entry path: ${id}`)
+        entries.set(id, step.run)
       }
     }
   }
@@ -260,6 +262,36 @@ describe('log entry-path producer inventory', () => {
     expect(validateInventory(badRoute, entries)).toContain(
       `route token not present in command: ${first.id} -> not-a-real-command`
     )
+  })
+
+  it('enumerates command-running steps from .yaml workflows', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'vinaya-log-entry-paths-'))
+    try {
+      writeFileSync(
+        join(directory, 'supported.yaml'),
+        'jobs:\n  verify:\n    steps:\n      - name: Run supported workflow\n        run: bun test\n'
+      )
+      expect(workflowEntries(directory)).toEqual(
+        new Map([['workflow:supported.yaml:verify:Run supported workflow', 'bun test']])
+      )
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses duplicate workflow step identities instead of collapsing them', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'vinaya-log-entry-paths-'))
+    try {
+      writeFileSync(
+        join(directory, 'duplicate.yml'),
+        'jobs:\n  verify:\n    steps:\n      - name: Repeated\n        run: first\n      - name: Repeated\n        run: second\n'
+      )
+      expect(() => workflowEntries(directory)).toThrow(
+        'duplicate workflow entry path: workflow:duplicate.yml:verify:Repeated'
+      )
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   it("keeps today's no-producer list explicit and shrinking", () => {
