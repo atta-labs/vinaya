@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'bun:test'
-import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -20,6 +19,7 @@ import {
   readClaudeTurnOutput,
   readCodexTurnOutput
 } from '../../../src/lib/task-tools/result-proof.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../process-fixture.js'
 
 /**
  * The structured-result proof's pure parts: the shared DeveloperTurnResult
@@ -405,8 +405,16 @@ describe('forcedStopHookScript', () => {
       const script = join(dir, 'stop.mjs')
       const log = join(dir, 'stop.log')
       writeFileSync(script, forcedStopHookScript(join(dir, 'count'), log, 'n'))
-      const first = spawnSync(process.execPath, [script], { input: '{"stop_hook_active":false}', encoding: 'utf8' })
-      const second = spawnSync(process.execPath, [script], { input: '{"stop_hook_active":true}', encoding: 'utf8' })
+      const first = spawnSyncBudgeted(process.execPath, [script], {
+        input: '{"stop_hook_active":false}',
+        encoding: 'utf8',
+        env: stripVinayaEnv()
+      })
+      const second = spawnSyncBudgeted(process.execPath, [script], {
+        input: '{"stop_hook_active":true}',
+        encoding: 'utf8',
+        env: stripVinayaEnv()
+      })
       expect(first.status).toBe(2)
       expect(first.stderr).toContain('after-stop-n')
       expect(second.status).toBe(0)
