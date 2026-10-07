@@ -37,6 +37,9 @@ task changes judged by the Surface and protected-path checks, and a merge whose
 parent fails it never moves the base. Files that arrived from the default branch
 are therefore never the task's change, while a file the Developer itself
 changed outside the Surface, conflict resolutions included, is still refused.
+For an uncommitted merge, the publication check filters the worktree's dirty
+paths through that same comparison point: tracked files count only when they
+differ from the merged commit, while untracked, non-ignored files always count.
 When the merged commit is older than the remote head, a path the default branch
 changed since and that the turn left different from that head is reported. The
 driver's conflict-retry path uses the same rule, and measures against
