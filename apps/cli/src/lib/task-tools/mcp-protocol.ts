@@ -31,11 +31,12 @@ import type { Readable, Writable } from 'node:stream'
  */
 export const MCP_PROTOCOL_VERSION = '2025-06-18'
 
-/** The `tools/list` entry one server exposes for one tool — name, description, JSON-Schema input. */
+/** The `tools/list` entry one server exposes for one tool — name, description, JSON-Schema input, and an optional JSON-Schema output. */
 export type McpToolListEntry = {
   name: string
   description: string
   inputSchema: Record<string, unknown>
+  outputSchema?: Record<string, unknown>
 }
 
 /**

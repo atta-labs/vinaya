@@ -195,7 +195,25 @@ function reportRunTaskResult(result: RunTaskResult, invocation: { agent: Dispatc
   process.exit(1)
 }
 
+/**
+ * The notice printed before an attached run starts, or `null` when none is
+ * owed. A foreground run is a child of the terminal that started it, so closing
+ * that terminal stops it; only a run started with `--background` outlives it.
+ * Owed only when standard input is a terminal — a script, a scheduler or an
+ * agent has no terminal to close, and stays quiet. The background command is
+ * the same invocation with `--background` added, built from the parsed input
+ * so the exact task, agent and model carry over.
+ */
+export function attachedRunNotice(input: Parameters<typeof runTask>[0], stdinIsTty: boolean): string | null {
+  if (!stdinIsTty) return null
+  const address = 'tranche' in input ? `${input.tranche} ${input.n}` : `--issue ${input.issue}`
+  const model = input.model ? ` --model ${input.model}` : ''
+  return `vinaya task run: this run is attached to this terminal and stops when the terminal closes. To keep it running after the terminal closes, use: vinaya task run ${address} --agent ${input.agent}${model} --background`
+}
+
 async function runAndReport(input: Parameters<typeof runTask>[0]): Promise<void> {
+  const notice = attachedRunNotice(input, process.stdin.isTTY === true)
+  if (notice !== null) process.stderr.write(`${notice}\n`)
   let result: RunTaskResult
   try {
     result = await runTask(input)

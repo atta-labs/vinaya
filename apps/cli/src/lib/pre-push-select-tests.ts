@@ -11,37 +11,12 @@
  * human-facing "selected N of M" line to STDERR, so the hook's own
  * `$(...)` capture of STDOUT is never polluted by it.
  */
-import { affectedNames } from './changed-names.js'
-import { loadConfig } from './config.js'
-import {
-  addedOrRenamedFilesSinceRemoteBaseAbsolute,
-  changedFileDiffsSinceRemoteBase,
-  changedFilesSinceRemoteBaseAbsolute
-} from './remote-base.js'
-import { selectAffectedTestFiles } from './test-selector.js'
-import { loadTypeScript } from './ts-module-graph.js'
+import { prePushSelection } from './pre-push-selection.js'
 
 function main(): void {
   const repoRoot = process.cwd()
   const started = performance.now()
-  const changed = changedFilesSinceRemoteBaseAbsolute(repoRoot)
-  const addedOrRenamed = addedOrRenamedFilesSinceRemoteBaseAbsolute(repoRoot)
-  const alwaysRun = loadConfig()?.prePush?.alwaysRun ?? []
-  // The changed NAMES, when the compiler is there to parse them; without it the
-  // selector falls back to the file-level answer on its own.
-  const typescript = loadTypeScript(repoRoot)
-  const names = typescript ? affectedNames(typescript, changedFileDiffsSinceRemoteBase(repoRoot)) : undefined
-  // Never the full transitive closure a push away from
-  // main can grow to — that stays CI's job (every shard still runs every
-  // test). Depth-one keeps a push to a widely-imported module small: the
-  // test files this diff changed, the test files that import a changed
-  // name directly, and `prePush.alwaysRun`.
-  const { selected, totalTestFiles, resolver, programMs } = selectAffectedTestFiles(repoRoot, changed, {
-    alwaysRun,
-    addedOrRenamed,
-    affectedNames: names,
-    depth: 'one'
-  })
+  const { selected, totalTestFiles, resolver, programMs } = prePushSelection(repoRoot)
   const elapsed = performance.now() - started
 
   for (const file of selected) process.stdout.write(`${file}\n`)

@@ -21,7 +21,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  *    query regresses to `first: 1` — mirroring the established pattern in
  *    `packages/aeg-core/bin/verify-coherence.test.ts`.
  *
- * Mocks `@octokit/graphql` per-task by alias (`t_<id>_issue` / `_ref` /
+ * Mocks `@octokit/graphql` per-task by alias (`i_<issue>_issue` / `_ref` /
  * `_prs`), mirroring the shape `buildBatchQuery` emits.
  */
 
@@ -105,7 +105,7 @@ beforeEach(() => {
 
 describe('fetchForgeFacts — squash-merge closer fact loss', () => {
   it('resolves prState/mergedAt from the branch PR when the closer is a Commit, not a PullRequest', async () => {
-    fixtures.t_1 = {
+    fixtures.i_100 = {
       issueState: 'CLOSED',
       stateReason: 'COMPLETED',
       closedAt: '2026-07-01T00:00:00Z',
@@ -135,7 +135,7 @@ describe('fetchForgeFacts — squash-merge closer fact loss', () => {
   })
 
   it('resolves prState/mergedAt from a native PullRequest closer (regression guard)', async () => {
-    fixtures.t_1 = {
+    fixtures.i_100 = {
       issueState: 'CLOSED',
       stateReason: 'COMPLETED',
       closedAt: '2026-07-01T00:00:00Z',
@@ -172,7 +172,7 @@ describe('fetchForgeFacts — stale ClosedEvent after reopen (#524)', () => {
     // timelineItems used to return the stale first event (closer: null),
     // resolving prState to 'none' even though a PR really merged and closed
     // it. `last: 1` must return the second (real) event instead.
-    fixtures.t_1 = {
+    fixtures.i_524 = {
       issueState: 'CLOSED',
       stateReason: 'COMPLETED',
       closedAt: '2026-07-11T21:51:30Z',
@@ -213,7 +213,7 @@ describe('fetchForgeFacts — closedByActor (task vinaya-engine-v1 21, #99)', ()
     // Reproduces a real incident exactly: a real Issue was closed
     // directly (`gh issue close` / the web UI), no PR — `closer` is null but
     // `actor` records who performed the close.
-    fixtures.t_1 = {
+    fixtures.i_890 = {
       issueState: 'CLOSED',
       stateReason: 'COMPLETED',
       closedAt: '2026-08-16T00:00:00Z',
@@ -239,7 +239,7 @@ describe('fetchForgeFacts — closedByActor (task vinaya-engine-v1 21, #99)', ()
   })
 
   it('is null when the issue has never been closed', async () => {
-    fixtures.t_1 = {
+    fixtures.i_100 = {
       issueState: 'OPEN',
       stateReason: null,
       closedAt: null,
@@ -262,7 +262,7 @@ describe('fetchForgeFacts — closedByActor (task vinaya-engine-v1 21, #99)', ()
   })
 
   it('follows `last: 1` for actor too — a stale first close does not leak its actor after reopen+reclose', async () => {
-    fixtures.t_1 = {
+    fixtures.i_524 = {
       issueState: 'CLOSED',
       stateReason: 'COMPLETED',
       closedAt: '2026-08-16T00:00:00Z',

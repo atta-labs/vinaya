@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import type { DoctorDeps, Finding } from '../src/commands/doctor.js'
@@ -806,6 +806,17 @@ describe('vinaya doctor — raw git hooks inside a linked worktree', () => {
       expect(nonOk.length).toBe(1)
       expect(nonOk[0]?.severity).toBe('warn')
       expect(nonOk[0]?.message).toContain('which git does not track')
+
+      // The same predicate dispatch refuses on: a legacy install whose
+      // pre-push is not executable is an error here too, never just the warn.
+      chmodSync(join(root, '.git', 'hooks', 'pre-push'), 0o644)
+      const inert = await runDoctorJson({
+        detectRepo: async () => ({ repoRoot: wtRoot, owner: 'acme', repo: 'widget' }),
+        hookDirFor: () => '.git/hooks'
+      })
+      const inertFinding = inert.findings.find((f) => f.check === 'hooks' && f.severity === 'error')
+      expect(inertFinding?.message).toContain('not executable')
+      expect(inertFinding?.message).toContain('pre-push')
     } finally {
       git(root, ['worktree', 'remove', '--force', wtRoot])
     }

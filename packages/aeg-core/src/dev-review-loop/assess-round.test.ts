@@ -631,11 +631,60 @@ describe('assessRound — the same blocking finding twice pauses the loop', () =
     expect(decisions.at(-1)).toEqual({
       type: 'pause',
       reason: 'repeat_finding',
-      detail: 'open after two consecutive rounds: reviewer:F1'
+      detail: 'open after two consecutive rounds: reviewer::F1'
     })
     const stop = events.find((e) => e.event === 'stop_condition_met' && 'round' in e && e.round === 2)
     expect(stop).toMatchObject({ condition: 'repeat_finding' })
     expect(events.some((e) => e.event === 'journal_finalized' && 'result' in e && e.result === 'stopped')).toBe(true)
+  })
+
+  const located = (id: string, location: string, fingerprint: string) => ({
+    ...blocking(id),
+    location,
+    fingerprint
+  })
+
+  it('a new blocking finding reusing an earlier id with another file or description continues', () => {
+    const { decisions } = runScenario(freshState(), [
+      fakeGate(1, true),
+      fakeVerdicts(1, [
+        blockingVerdict('reviewer', [located('F1', 'a.ts:10', 'missing null check')]),
+        cleanVerdict('security')
+      ]),
+      fakeGate(2, true, { confidence: { value: 80 } }),
+      fakeVerdicts(2, [
+        blockingVerdict('reviewer', [located('F1', 'b.ts:3', 'missing null check')]),
+        cleanVerdict('security')
+      ]),
+      fakeGate(3, true, { confidence: { value: 80 } }),
+      fakeVerdicts(3, [
+        blockingVerdict('reviewer', [located('F1', 'b.ts:3', 'wrong exit code')]),
+        cleanVerdict('security')
+      ])
+    ])
+
+    expect(decisions.filter((d) => d.type === 'pause' && d.reason === 'repeat_finding')).toEqual([])
+  })
+
+  it('a finding that recurs under another id and a shifted line still pauses as a repeat', () => {
+    const { decisions } = runScenario(freshState(), [
+      fakeGate(1, true),
+      fakeVerdicts(1, [
+        blockingVerdict('reviewer', [located('F1', 'a.ts:10', 'missing null check')]),
+        cleanVerdict('security')
+      ]),
+      fakeGate(2, true, { confidence: { value: 80 } }),
+      fakeVerdicts(2, [
+        blockingVerdict('reviewer', [located('F2', 'a.ts:14', 'missing null check')]),
+        cleanVerdict('security')
+      ])
+    ])
+
+    expect(decisions.at(-1)).toEqual({
+      type: 'pause',
+      reason: 'repeat_finding',
+      detail: 'open after two consecutive rounds: reviewer:a.ts:missing null check'
+    })
   })
 
   it('the same id from the other role is a different finding: reviewer:F1 then security:F1 continues', () => {

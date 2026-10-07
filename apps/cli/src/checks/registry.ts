@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { packageRoot } from '../lib/package-root.js'
@@ -39,6 +40,28 @@ const BIN_EXT = CHECK_BIN.ext
 /** `bin('check-brief-shape')` → the real, resolvable path to that check's executable — bundled `.js` when shipped, raw `.ts` in local dev. */
 function bin(name: string): string {
   return join(BIN_DIR, `${name}${BIN_EXT}`)
+}
+
+/** The loop's readiness-gate steps: the shipped check bin, and the core package's existing-work verification, which the build bundles beside the checks. */
+export type GateStep = 'check-dispatch-readiness' | 'verify-dispatch'
+
+/**
+ * The real path of one readiness-gate step, resolved from the package this
+ * module lives in — never the current directory, which an adopter's
+ * repository does not fill with Vinaya sources. `null` when the step is not
+ * on disk (an incomplete install).
+ */
+export function resolveGateStep(
+  step: GateStep,
+  packageDir = packageRoot(import.meta.url),
+  moduleUrl = import.meta.url
+): string | null {
+  const { dir, ext } = resolveCheckBin(packageDir, moduleUrl)
+  const path =
+    step === 'verify-dispatch' && ext === '.ts'
+      ? join(packageDir, '..', '..', 'packages', 'aeg-core', 'bin', 'verify-dispatch.ts')
+      : join(dir, `${step}${ext}`)
+  return existsSync(path) ? path : null
 }
 
 /**
@@ -812,10 +835,8 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       timeoutMs: 15_000,
       // Local-only: `.changeset/config.json`, every fixed-group member's own
       // `package.json`, and the diff itself all come from the already-local
-      // working tree and `git` — no forge call, no PR content. Report-only
-      // (severity: warning, exit 0 always — see the bin's own module doc),
-      // same rollout precedent as reader-resolvable-prose/retired-vocabulary
-      // above: registering it must not newly redden any existing install.
+      // working tree and `git` — no forge call, no PR content. Blocking on a
+      // finding (see the bin's own module doc).
       env: {}
     },
     0

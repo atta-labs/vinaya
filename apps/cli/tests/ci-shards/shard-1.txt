@@ -74,3 +74,7 @@ tests/commands/sync.test.ts
 tests/lib/error-class.test.ts
 tests/lib/dispatch/linux-sandbox-probe.test.ts
 tests/lib/real-runtime-guard.test.ts
+tests/lib/pre-push-scanner-triggers.test.ts
+tests/lib/enforcement-controls-active.test.ts
+tests/lib/dispatch/codex-login-refresh.test.ts
+tests/lib/dev-review-loop/readiness-gate-adopter.test.ts

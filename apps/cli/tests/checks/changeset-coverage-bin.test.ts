@@ -152,11 +152,13 @@ describe('check-changeset-coverage (bin) — release-branch exemption is git-onl
     git(root, ['commit', '-q', '-m', 'Feat(pkg-a): add a'])
 
     const { exitCode, stderr } = await runBin(root)
-    expect(exitCode).toBe(0) // report-only — still 0, but a real finding
+    expect(exitCode).toBe(1) // blocking
     const findings = parseFindings(stderr)
     expect(findings).toHaveLength(1)
-    expect(findings[0]?.severity).toBe('warning')
+    expect(findings[0]?.severity).toBe('error')
     expect(findings[0]?.message).toContain('packages/pkg-a/src/index.ts')
+    expect(findings[0]?.message).toContain('add an empty one')
+    expect(findings[0]?.agent_recovery_prompt).toContain('changeset add --empty')
   })
 
   it('a BRANCH env var claiming the release branch is NOT trusted — the real (non-release) git branch still fires the finding', async () => {
@@ -171,8 +173,27 @@ describe('check-changeset-coverage (bin) — release-branch exemption is git-onl
     git(root, ['commit', '-q', '-m', 'Feat(pkg-a): add a'])
 
     const { exitCode, stderr } = await runBin(root, { BRANCH: 'changeset-release/main' })
-    expect(exitCode).toBe(0)
+    expect(exitCode).toBe(1)
     expect(parseFindings(stderr)).toHaveLength(1) // env spoof ignored — finding still fires
+  })
+})
+
+describe('check-changeset-coverage (bin) — empty changeset waiver', () => {
+  it('a shipped diff carrying an empty changeset passes', async () => {
+    const root = newRoot('empty-changeset')
+    initRepo(root)
+    scaffoldFixedGroup(root)
+    git(root, ['add', '.'])
+    git(root, ['commit', '-q', '-m', 'Chore: initial scaffold'])
+    git(root, ['checkout', '-q', '-b', 'fix/some-change'])
+    writeFileSync(join(root, 'packages', 'pkg-a', 'src', 'index.ts'), 'export const a = 1\n')
+    writeFileSync(join(root, '.changeset', 'quiet-owls-sleep.md'), '---\n---\n')
+    git(root, ['add', '.'])
+    git(root, ['commit', '-q', '-m', 'Feat(pkg-a): add a'])
+
+    const { exitCode, stderr } = await runBin(root)
+    expect(exitCode).toBe(0)
+    expect(parseFindings(stderr)).toHaveLength(0)
   })
 })
 

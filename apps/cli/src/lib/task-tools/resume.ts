@@ -52,7 +52,7 @@
  * `'already_resumed'` forever.
  */
 
-import { spawn } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
 import { closeSync, ftruncateSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
@@ -65,6 +65,7 @@ import {
   type TaskResumeResult,
   type TaskToolRef
 } from '@attalabs/aeg-core'
+import { type LaunchResult, launchDetached, waitForLiveDriver } from '../detached-launch.js'
 import { type AgentVendor, isAgentVendor } from '../dispatch.js'
 import {
   fetchIssueRulings,
@@ -214,76 +215,7 @@ function claimIsStale(record: ResumeRecord, now: () => string): boolean {
 /** Reuses `task_start`'s own resolvable-launcher override — this task's launch is a DIFFERENT existing command (`dev-review-loop --resume`, not `task run`), not a second launcher mechanism. */
 export const RESUME_COMMAND_ENV = 'VINAYA_TASK_RUN_COMMAND'
 
-function readCapturedStderr(path: string): string {
-  try {
-    const raw = readFileSync(path, 'utf8').trim()
-    return raw ? ` — captured stderr:\n${raw}` : ''
-  } catch {
-    return ''
-  }
-}
-
-/** What launching a continuation and waiting for its own confirmation produced — the same three outcomes `start.ts`'s own `LaunchResult` carries: the driver lock appeared (`confirmed`), the bounded wait ended with the process still alive (`starting` — a started run, never a failure), or the process exited or never spawned (`exited` — the only failed start). `pid` is the launched child's own, recorded on the claim. */
-export type LaunchResult =
-  | { status: 'confirmed'; pid: number | null }
-  | { status: 'starting'; pid: number | null }
-  | { status: 'exited'; error: Error }
-
-/**
- * Races the spawned child's own `error`/`exit` against the task's driver
- * lock appearing and naming a live pid — never a sleep-then-assume. Whichever
- * happens first decides the outcome; the loser's listeners/timers are torn
- * down so this never resolves twice, and the wait merely running out is the
- * third outcome (`starting`), not a failure. Identical in shape to `start.ts`'s own
- * `waitForLiveDriver` — kept as a sibling copy rather than a shared import
- * across two files this task's Surface keeps independently modifiable
- * (`Conflicts-with: 8` on this exact file).
- */
-function waitForLiveDriver(
-  child: ReturnType<typeof spawn>,
-  root: string,
-  task: number,
-  stderrPath: string,
-  timeoutMs: number,
-  pollMs: number
-): Promise<LaunchResult> {
-  return new Promise((resolve) => {
-    let settled = false
-    const finishAlive = (status: 'confirmed' | 'starting') => {
-      if (settled) return
-      settled = true
-      clearInterval(poll)
-      clearTimeout(timer)
-      child.removeAllListeners('error')
-      child.removeAllListeners('exit')
-      // Alive and must outlive this server — unref only now, never before
-      // the race is decided, so a premature exit is still observed.
-      child.unref()
-      resolve({ status, pid: child.pid ?? null })
-    }
-    const finishDead = (reason: string) => {
-      if (settled) return
-      settled = true
-      clearInterval(poll)
-      clearTimeout(timer)
-      resolve({ status: 'exited', error: new Error(`${reason}${readCapturedStderr(stderrPath)}`) })
-    }
-    child.on('error', (err) => finishDead(`spawn failed: ${err instanceof Error ? err.message : String(err)}`))
-    child.on('exit', (code, signal) =>
-      finishDead(
-        `process exited before its driver confirmed alive (code ${code ?? 'null'}, signal ${signal ?? 'null'})`
-      )
-    )
-    const poll = setInterval(() => {
-      const lock = readDriverLock(root, task)
-      if (lock && isDriverPidAlive(lock.pid)) finishAlive('confirmed')
-    }, pollMs)
-    // The wait running out decides nothing about the run: the child is still
-    // alive (its own `exit` would have won this race otherwise), so this is a
-    // continuation still coming up, not a failed start.
-    const timer = setTimeout(() => finishAlive('starting'), timeoutMs)
-  })
-}
+export type { LaunchResult }
 
 /**
  * `root` defaults to the SAME resolution `devReviewLoop` itself uses but is
@@ -320,12 +252,9 @@ export function defaultResumeLaunch(
     target.pr === null
       ? noPushResumeArgv(target.issue, target.branch, target.agent, target.model)
       : ['dev-review-loop', '--resume', String(target.pr), '--agent', target.agent]
-  let child: ReturnType<typeof spawn>
+  let child: ChildProcess
   try {
-    child = spawn(program, argv, {
-      detached: true,
-      stdio: ['ignore', 'ignore', stderrFd]
-    })
+    child = launchDetached(program, argv, ['ignore', 'ignore', stderrFd])
   } finally {
     // Spawn dup's the fd into the child; our own copy is safe to close
     // immediately, whether spawn succeeded or threw synchronously.

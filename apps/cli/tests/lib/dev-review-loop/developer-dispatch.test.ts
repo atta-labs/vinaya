@@ -72,28 +72,40 @@ describe('developerBranchFor', () => {
 // file. `checkTaskDispatchReadiness` is the pure composition this gets
 // built from — `runGate` injected so these tests never shell out to a real
 // `bun`/forge.
+const ACTIVE_LOCAL_GATE = () => ({ control: 'local-gate', active: true, detail: '', remedy: '' })
+
 describe('checkTaskDispatchReadiness', () => {
   it('runs both scripts with <tranche> <n> derived from a task/<tranche>/<n> branch, and is ready when both exit clean', () => {
     const calls: { script: string; args: readonly string[] }[] = []
-    const result = checkTaskDispatchReadiness('task/agent-confinement-v1/7', (script, args) => {
-      calls.push({ script, args })
-      return `${script} ok`
-    })
+    const result = checkTaskDispatchReadiness(
+      'task/agent-confinement-v1/7',
+      (script, args) => {
+        calls.push({ script, args })
+        return `${script} ok`
+      },
+      ACTIVE_LOCAL_GATE
+    )
     expect(result.ready).toBe(true)
-    expect(calls).toEqual([
-      { script: 'apps/cli/src/checks/bin/check-dispatch-readiness.ts', args: ['agent-confinement-v1', '7'] },
-      { script: 'packages/aeg-core/bin/verify-dispatch.ts', args: ['agent-confinement-v1', '7', '--existing-work'] }
+    expect(calls.map((c) => c.args)).toEqual([
+      ['agent-confinement-v1', '7'],
+      ['agent-confinement-v1', '7', '--existing-work']
     ])
+    expect(calls[0]?.script.endsWith('check-dispatch-readiness.ts')).toBe(true)
+    expect(calls[1]?.script.endsWith('verify-dispatch.ts')).toBe(true)
     expect(result.output).toContain('check-dispatch-readiness.ts ok')
     expect(result.output).toContain('verify-dispatch.ts ok')
   })
 
   it('runs both scripts with --issue <n> derived from a task/issue-<n> branch', () => {
     const calls: { script: string; args: readonly string[] }[] = []
-    checkTaskDispatchReadiness('task/issue-600', (script, args) => {
-      calls.push({ script, args })
-      return 'ok'
-    })
+    checkTaskDispatchReadiness(
+      'task/issue-600',
+      (script, args) => {
+        calls.push({ script, args })
+        return 'ok'
+      },
+      ACTIVE_LOCAL_GATE
+    )
     expect(calls.map((c) => c.args)).toEqual([
       ['--issue', '600'],
       ['--issue', '600', '--existing-work']
@@ -101,13 +113,17 @@ describe('checkTaskDispatchReadiness', () => {
   })
 
   it('is NOT ready, and stages the thrown stdout/stderr, when either script exits non-zero', () => {
-    const result = checkTaskDispatchReadiness('task/agent-confinement-v1/7', (script) => {
-      if (script.includes('check-dispatch-readiness')) return 'READY TO DISPATCH'
-      const err = new Error('Command failed') as Error & { stdout: string; stderr: string }
-      err.stdout = ''
-      err.stderr = 'dispatch-gate depends-on-not-merged: task 6 is not merged yet.'
-      throw err
-    })
+    const result = checkTaskDispatchReadiness(
+      'task/agent-confinement-v1/7',
+      (script) => {
+        if (script.includes('check-dispatch-readiness')) return 'READY TO DISPATCH'
+        const err = new Error('Command failed') as Error & { stdout: string; stderr: string }
+        err.stdout = ''
+        err.stderr = 'dispatch-gate depends-on-not-merged: task 6 is not merged yet.'
+        throw err
+      },
+      ACTIVE_LOCAL_GATE
+    )
     expect(result.ready).toBe(false)
     expect(result.output).toContain('READY TO DISPATCH')
     expect(result.output).toContain('dispatch-gate depends-on-not-merged')
@@ -115,10 +131,14 @@ describe('checkTaskDispatchReadiness', () => {
 
   it('is NOT ready, with no script ever run, when the branch matches neither task shape', () => {
     const calls: unknown[] = []
-    const result = checkTaskDispatchReadiness('main', (script, args) => {
-      calls.push({ script, args })
-      return 'unreachable'
-    })
+    const result = checkTaskDispatchReadiness(
+      'main',
+      (script, args) => {
+        calls.push({ script, args })
+        return 'unreachable'
+      },
+      ACTIVE_LOCAL_GATE
+    )
     expect(result.ready).toBe(false)
     expect(calls).toEqual([])
     expect(result.output).toContain("branch 'main' matches neither")

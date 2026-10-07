@@ -35,7 +35,7 @@
  *   already-written journals, never as an assessment exit here.
  * - Two further exits, each with its own `condition` value and pause reason,
  *   stop a loop that is repeating itself rather than converging: the same
- *   BLOCKING finding — same reviewer role, same finding id — still open in
+ *   BLOCKING finding — same reviewer role, same file, same description — still open in
  *   two consecutive reviewed rounds (`condition: 'repeat_finding'`), and two
  *   consecutive attempts ending on the same mechanical failure
  *   (`condition: 'repeat_failure'`). Neither revives `no_progress`: a round
@@ -393,12 +393,18 @@ function computeFindingsCompared(
   return { round, open, resolved, new: newIds, recurring }
 }
 
+/** A finding location's file: the `:line` (and `:col`) suffix dropped, since lines shift between rounds. */
+function locationFile(location: string | undefined): string {
+  return (location ?? '').trim().replace(/:\d+(?::\d+)?$/, '')
+}
+
 /**
- * A round's BLOCKING, still-open findings as `<role>:<id>` keys, sorted and
+ * A round's BLOCKING, still-open findings as `<role>:<file>:<fingerprint>` keys, sorted and
  * de-duplicated — the identity the `'repeat_finding'` stop compares across
  * rounds. Two deliberate narrowings: a finding counts as the same one only by
- * reviewer role AND id (the same id from the two roles is two findings, since
- * each role numbers its own report), and only a finding the effective policy
+ * reviewer role, file AND description fingerprint, never the positional id
+ * (every reviewer numbers from F1 again each round, so a shared id says
+ * nothing), and only a finding the effective policy
  * treated as `blocking` counts at all — a `non_blocking` finding never sent
  * the developer back, so its repeat is not a loop failing to converge. A
  * finding whose treatment the observation does not state is not counted
@@ -414,7 +420,7 @@ function blockingOpenKeys(verdicts: VerdictObservation[]): string[] {
     for (const f of v.findings) {
       if (f.policyTreatment !== 'blocking') continue
       if (f.state === 'resolved') continue
-      keys.add(`${v.role}:${f.id}`)
+      keys.add(`${v.role}:${locationFile(f.location)}:${f.fingerprint ?? f.id}`)
     }
   }
   return [...keys].sort()

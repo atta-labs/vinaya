@@ -15,7 +15,7 @@ import {
 } from '../../../src/lib/task-tools/dev-tools-server.js'
 
 /**
- * The driver-run dev-tools server (O1–O3): the six tools over the shared wire
+ * The driver-run dev-tools server (O1–O3): the seven tools over the shared wire
  * protocol, every gate behind a `DevToolContext` callback so a fixture fakes the
  * callbacks and the protocol/refusal channel is exercised for real. The last
  * block drives the server over a REAL unix socket — the same transport the
@@ -34,6 +34,23 @@ function okContext(overrides: Partial<DevToolContext> = {}): DevToolContext {
       result: { prNumber: 42, state: 'OPEN', head: 'abc123', checks: [], reviews: [], body: 'body', failedChecks: [] }
     }),
     runChecks: async () => ({ ok: true, result: { passed: true, output: 'all green' } }),
+    fetchDocumentation: async (input) => ({
+      ok: true,
+      result: {
+        notice: 'untrusted',
+        untrusted: true,
+        requestedUrl: input.url,
+        finalUrl: input.url,
+        status: 200,
+        contentType: 'text/html',
+        size: 2000,
+        sha256: 'ab',
+        receipt: { recorded: true },
+        offset: 0,
+        nextOffset: null,
+        text: 'page'
+      }
+    }),
     ...overrides
   }
 }
@@ -50,7 +67,7 @@ async function call(srv: ReturnType<typeof server>, name: string, args: unknown 
 }
 
 describe('dev-tools server — catalog and protocol', () => {
-  it('tools/list returns exactly the six tools, each with an input schema', async () => {
+  it('tools/list returns exactly the seven tools, each with an input schema', async () => {
     const srv = server(okContext())
     const resp = await srv.handleLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }))
     const parsed = JSON.parse(resp as string)
@@ -130,7 +147,9 @@ describe('dispatchDevTool — direct dispatch of each tool', () => {
             ? { title: 't', body: 'b' }
             : name === 'update_pull_request_body'
               ? { body: 'b' }
-              : {}
+              : name === 'fetch_documentation'
+                ? { url: 'https://example.com/docs' }
+                : {}
       const result = await dispatchDevTool(context, name, args)
       expect(result.ok).toBe(true)
     }

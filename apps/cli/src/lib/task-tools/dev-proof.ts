@@ -108,6 +108,7 @@ export function proofContext(recorded: RecordedCall[]): DevToolContext {
     updatePullRequestBody: async () => deny('update_pull_request_body'),
     refreshEvidence: async () => deny('refresh_evidence'),
     readPullRequest: async () => deny('read_pull_request'),
+    fetchDocumentation: async () => deny('fetch_documentation'),
     runChecks: async () => {
       const result = { passed: true, output: stamp }
       recorded.push({ tool: PROOF_TOOL, args: {}, result })

@@ -29,7 +29,6 @@
  * another") instead of racing a second one.
  */
 
-import { spawn } from 'node:child_process'
 import { closeSync, constants as fsConstants, mkdirSync, openSync } from 'node:fs'
 import { hostname as osHostname } from 'node:os'
 import { dirname } from 'node:path'
@@ -46,6 +45,7 @@ import {
   writeInput,
   writeRun
 } from '@attalabs/aeg-core'
+import { launchSelfDetached } from './detached-launch.js'
 import { controlStoreRoot } from './effects.js'
 import { markProcessUnattended } from './run-paths.js'
 import {
@@ -213,7 +213,7 @@ function handleFromRun(run: RunRecord, epoch: number, logPath: string): Backgrou
 /**
  * O3: refused before anything is launched, on a host this driver cannot
  * supervise. Detachment here relies on POSIX process-group semantics
- * (`detached: true` making the child its own process-group leader — the
+ * (the detached launch making the child its own process-group leader — the
  * same mechanism `apps/cli/src/checks/runner.ts`'s own group-kill launcher
  * already uses) and the system `ps` (`dispatch.ts`'s `getProcessSnapshot`,
  * "every supported platform ships one" — true for macOS/Linux, not for
@@ -265,12 +265,9 @@ export type SpawnedController = {
   on: (event: 'error', cb: (err: Error) => void) => void
 }
 
-/** `process.argv[0]`/`[1]` re-invoke the exact interpreter and entry script this process itself was started with (the same self-reinvocation `dev-review-loop.ts`'s `defaultReexecSelf` already relies on) — so a background start behaves identically whether the caller ran `bun apps/cli/src/index.ts` from source or a published `vinaya` binary. `detached: true` makes the child the leader of its own process group, surviving this process's own exit; `stdio` routes both the child's stdout and stderr into the SAME per-task loop log `--follow` already tails, so nothing the controller prints is lost once the terminal that started it is gone. */
+/** `process.argv[0]`/`[1]` re-invoke the exact interpreter and entry script this process itself was started with (the same self-reinvocation `dev-review-loop.ts`'s `defaultReexecSelf` already relies on) — so a background start behaves identically whether the caller ran `bun apps/cli/src/index.ts` from source or a published `vinaya` binary. The shared detached launch (`detached-launch.ts`) makes the child the leader of its own process group, surviving this process's own exit; `stdio` routes both the child's stdout and stderr into the SAME per-task loop log `--follow` already tails, so nothing the controller prints is lost once the terminal that started it is gone. */
 function defaultSpawnDetached(argv: string[], opts: { stdioFd: number }): SpawnedController {
-  return spawn(process.argv[0] as string, [process.argv[1] as string, ...argv], {
-    detached: true,
-    stdio: ['ignore', opts.stdioFd, opts.stdioFd]
-  })
+  return launchSelfDetached(argv, ['ignore', opts.stdioFd, opts.stdioFd])
 }
 
 export type StartBackgroundRunDeps = {
