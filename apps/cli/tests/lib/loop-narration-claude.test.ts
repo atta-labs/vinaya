@@ -135,6 +135,34 @@ describe('counts without content (O2)', () => {
   })
 })
 
+describe('the turn result is one reporting action', () => {
+  test('it carries its status and confidence, never the summary or findings', () => {
+    const a = actionOf('StructuredOutput', {
+      turnResult: {
+        schemaVersion: 1,
+        status: 'completed',
+        summary: 'SECRET SUMMARY',
+        confidence: 88,
+        addressedFindingIds: ['R1-CR-1'],
+        reportedChecks: [{ command: 'SECRET CMD', outcome: 'pass' }]
+      }
+    })
+    expect(a).toMatchObject({ kind: 'reporting', subject: 'completed', status: 'completed', confidence: 88 })
+    expect(JSON.stringify(a)).not.toContain('SECRET')
+    expect(JSON.stringify(a)).not.toContain('R1-CR-1')
+  })
+
+  test('a blocked result has a status and no confidence; prose in the status is dropped', () => {
+    const blocked = actionOf('StructuredOutput', { turnResult: { status: 'blocked', summary: 'x' } })
+    expect(blocked.confidence).toBeUndefined()
+    expect(blocked.status).toBe('blocked')
+    const odd = actionOf('StructuredOutput', { status: 'free text with SECRET', confidence: 'high' })
+    expect(odd).toMatchObject({ kind: 'reporting', subject: 'turn result' })
+    expect(odd.status).toBeUndefined()
+    expect(odd.confidence).toBeUndefined()
+  })
+})
+
 describe('results, durations and open calls (O3, O4)', () => {
   test('a result is matched by identifier, out of order, with its own duration', () => {
     const state = createNarrationState()
@@ -205,12 +233,14 @@ describe('hand-written streams (O6)', () => {
       call('Write', { file_path: `${WORKTREE}/apps/cli/tests/a.test.ts`, content: 'x\ny\n' }, 'd3'),
       result('d3', 'created'),
       call('Bash', { command: 'bun test apps/cli/tests/a.test.ts' }, 'd4'),
-      result('d4', '1 fail\nSECRET OUTPUT', true)
+      result('d4', '1 fail\nSECRET OUTPUT', true),
+      call('StructuredOutput', { turnResult: { status: 'completed', summary: 'SECRET', confidence: 90 } }, 'd5'),
+      result('d5', 'Structured output provided successfully')
     ])
     expect(
       updates.map((u) =>
         u.type === 'action'
-          ? `${u.kind} ${u.subject}${u.added !== undefined ? ` +${u.added}/-${u.removed}` : ''}${u.lines !== undefined ? ` ${u.lines} lines` : ''}`
+          ? `${u.kind} ${u.subject}${u.confidence !== undefined ? ` confidence ${u.confidence}` : ''}${u.added !== undefined ? ` +${u.added}/-${u.removed}` : ''}${u.lines !== undefined ? ` ${u.lines} lines` : ''}`
           : `${u.ok ? 'ok' : `failed: ${u.error}`} ${u.durationMs}`
       )
     ).toEqual([
@@ -221,7 +251,9 @@ describe('hand-written streams (O6)', () => {
       'creating apps/cli/tests/a.test.ts 2 lines',
       'ok 1000',
       'running_tests bun test apps/cli/tests/a.test.ts',
-      'failed: 1 fail 1000'
+      'failed: 1 fail 1000',
+      'reporting completed confidence 90',
+      'ok 1000'
     ])
     expect(JSON.stringify(updates)).not.toContain('SECRET')
   })

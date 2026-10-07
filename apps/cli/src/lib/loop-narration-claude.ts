@@ -27,6 +27,7 @@ export type ActionKind =
   | 'skill'
   | 'fetching'
   | 'delegating'
+  | 'reporting'
   | 'running'
 
 /** One tool call. `id` is `null` when the stream carried none, so no result can ever match it. */
@@ -42,6 +43,9 @@ export interface NarratedAction {
   removed?: number
   /** Line count of a created file; never its content. */
   lines?: number
+  /** A reporting action's status and confidence, and nothing else of the turn result. */
+  status?: string
+  confidence?: number
 }
 
 /** The outcome of one call, matched to it by the call's identifier. */
@@ -266,6 +270,20 @@ function classifyCall(
         kind: 'delegating',
         subject: shorten(scrub(str(input.description) || str(input.subagent_type), ctx), SUBJECT_MAX)
       }
+    case 'StructuredOutput': {
+      // The turn result: only its status word and confidence, never the
+      // summary, findings or any other prose the agent wrote into it.
+      const body = (input.turnResult ?? input) as Record<string, unknown>
+      const status = typeof body.status === 'string' && /^[a-z_]{1,30}$/.test(body.status) ? body.status : undefined
+      const confidence =
+        typeof body.confidence === 'number' && Number.isFinite(body.confidence) ? body.confidence : undefined
+      return {
+        kind: 'reporting',
+        subject: status ?? 'turn result',
+        ...(status !== undefined ? { status } : {}),
+        ...(confidence !== undefined ? { confidence } : {})
+      }
+    }
     default:
       // An MCP tool or any tool outside the table: named, never described.
       return { kind: 'tool_request', subject: shorten(scrub(name, ctx), SUBJECT_MAX) }
