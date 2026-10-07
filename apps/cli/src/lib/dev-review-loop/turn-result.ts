@@ -210,6 +210,15 @@ function isUrlSource(source: string): boolean {
   return /^https?:\/\//i.test(source.trim())
 }
 
+/** Is this a C0 control character (newlines included) or DEL? */
+export function isControlCharacter(char: string): boolean {
+  const code = char.charCodeAt(0)
+  return code <= 0x1f || code === 0x7f
+}
+
+/** The longest `reportedChecks[].command` the controller accepts — a command line, not a log. */
+export const REPORTED_CHECK_COMMAND_MAX_LENGTH = 300
+
 /** What the controller judges one result against — every field the driver's own, none the agent's. */
 export type TurnResultControllerContext = {
   round: number
@@ -257,6 +266,16 @@ export function judgeTurnOutput(
     if (context.requireAddressedFindings && result.addressedFindingIds.length === 0) {
       failures.push('addressedFindingIds: required — name the finding ids from this handoff that this turn addressed')
     }
+    // The driver posts these commands in a comment under its own identity, so
+    // one must stay a single plain line: a newline or control character could
+    // break out of its code span and forge gate grammar in a trusted comment.
+    for (const check of result.reportedChecks ?? []) {
+      if ([...check.command].some(isControlCharacter)) {
+        failures.push('reportedChecks: a command must be one line, with no newline or control character')
+      } else if (check.command.length > REPORTED_CHECK_COMMAND_MAX_LENGTH) {
+        failures.push(`reportedChecks: a command must be at most ${REPORTED_CHECK_COMMAND_MAX_LENGTH} characters`)
+      }
+    }
   }
   const delivered = new Set(required.map(normalizeSourceIdentity))
   const counted = new Set(context.documentation.countedReads.map(normalizeSourceIdentity))
@@ -282,7 +301,7 @@ export function turnResultInstruction(round: number, documentation: readonly str
   return [
     `End this turn with your turn result as your structured output, schemaVersion ${DEVELOPER_TURN_RESULT_SCHEMA_VERSION}, under the root key \`turnResult\`. The driver reads nothing else as your result, so write no result file.`,
     '- `status: "completed"` when this turn\'s work is done: `summary` (one sentence), `confidence` (a whole number from 0 to 100 for how sure you are the work is right), `confidenceExplanation` (one short sentence explaining that figure), ' +
-      `\`addressedFindingIds\` (${round === 1 ? 'empty in round 1' : "the finding ids from this round's handoff you addressed"}), \`sourceUses\` (one entry per required Documentation source of the brief: its \`source\` exactly as the brief names it and the decision it informed — \`null\` when the brief names none), and \`reportedChecks\` (the checks you ran and their outcome, or \`null\`).`,
+      `\`addressedFindingIds\` (${round === 1 ? 'empty in round 1' : "the finding ids from this round's handoff you addressed"}), \`sourceUses\` (one entry per required Documentation source of the brief: its \`source\` exactly as the brief names it and the decision it informed — \`null\` when the brief names none), and \`reportedChecks\` (the checks you ran, each as one command line with its outcome, or \`null\`).`,
     `- \`status: "blocked"\` when a stop condition halts the work: \`summary\` and a \`blocker\` whose \`kind\` is one of ${BLOCKER_KINDS.join(', ')}, with a one-sentence \`detail\`.`,
     `- \`status: "needs_ruling"\` when only the Principal can decide: \`summary\` and a \`rulingRequest\` with your \`question\` and the \`decisions\` to choose between, each one of ${PERMISSIBLE_RULING_DECISIONS.join(', ')}.`,
     ...(documentation.length > 0 ? [`Required Documentation sources: ${documentation.join(', ')}.`] : [])

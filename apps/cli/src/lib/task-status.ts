@@ -909,9 +909,9 @@ export type SummaryCommentReader = (
   | { kind: 'unread' }
 
 /**
- * The stated file wins over the summary when both exist: it is the newer of
- * the two by construction (the summary is written at publish; a statement
- * still on disk has not been consumed since). The summary is read only for a
+ * The stated figure wins over the summary when both exist: the round's
+ * accepted turn results are written as each turn ends, so they are never older
+ * than the summary written at publish. The summary is read only for a
  * run that has PUBLISHED — the one state in which a summary exists at all —
  * so an in-flight row costs no extra forge call for this field.
  */
@@ -1183,16 +1183,15 @@ const NO_VALUE = '—'
 const NOT_READ = 'not read'
 
 /**
- * A `stated` figure is the developer's OWN statement for a round whose review
- * has not completed — the driver clears the statement the moment it assesses
- * the round — so the cell says so: read as a completed round's outcome it would
- * overstate what happened. A `published-summary` figure is a completed round's
- * own recorded confidence and needs no qualifier.
+ * A `stated` figure is the developer's OWN statement, from the round's newest
+ * accepted turn result, whether or not that round's review has completed — so
+ * the cell says so: read as a completed round's outcome it would overstate what
+ * happened. A `published-summary` figure is a completed round's own recorded
+ * confidence and needs no qualifier.
  *
- * A round the loop asked and whose statement was missing or unreadable reads
- * `absent`; a round it never asked never reaches this cell at all (it carries no
- * confidence record), so `absent` never blames a developer for a statement
- * nothing requested.
+ * A round with no accepted result stating a confidence never reaches this cell
+ * as `stated` at all, so `absent` never blames a developer for a statement
+ * nothing recorded.
  */
 function confidenceCell(confidence: TaskConfidence | null, unread: boolean): string {
   // A read this status read never made is not an absence: saying `—` here would

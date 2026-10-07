@@ -26,6 +26,7 @@ import {
 } from '@attalabs/aeg-core'
 import type { AgentVendor, DispatchHandle } from '../dispatch.js'
 import { controlStoreRoot } from '../effects.js'
+import { isControlCharacter } from './turn-result.js'
 
 // --- round marker comment ---------------------------------------------------
 
@@ -55,9 +56,28 @@ export function renderDeveloperRoundComment(
   if (findingIds.length > 0) lines.push(`FINDING_IDS: ${findingIds.join(',')}`)
   if (reportedChecks.length > 0) {
     lines.push('', 'Checks the Developer reports running (agent-reported context, not evidence):')
-    for (const check of reportedChecks) lines.push(`- \`${check.command.replaceAll('`', "'")}\` — ${check.outcome}`)
+    for (const check of reportedChecks) lines.push(`- \`${defangReportedCommand(check.command)}\` — ${check.outcome}`)
   }
   return lines.join('\n')
+}
+
+/**
+ * A reported command as the driver's comment may carry it. The controller
+ * already refuses a command with a newline or control character; this is the
+ * second layer, applied to whatever reaches the renderer: every control
+ * character becomes a space, so the command stays one line inside its code
+ * span; a backtick becomes a quote, so it cannot close that span; an HTML
+ * comment opener is escaped, so no `<!-- aeg:… -->` marker parser can match
+ * it; and a `VERDICT:` label is split from its colon, the same defanging
+ * forge text gets (`task-tools/pr-facts.ts`), so no verdict extractor reads it.
+ */
+export function defangReportedCommand(command: string): string {
+  return [...command]
+    .map((char) => (isControlCharacter(char) ? ' ' : char))
+    .join('')
+    .replaceAll('`', "'")
+    .replaceAll('<!--', '&lt;!--')
+    .replace(/VERDICT:/gi, (m) => `${m.slice(0, -1)} :`)
 }
 
 export function parseShortstat(stat: string): { filesChanged: number; insertions: number; deletions: number } {
