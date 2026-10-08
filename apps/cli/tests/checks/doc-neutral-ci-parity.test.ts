@@ -61,6 +61,22 @@ function repoWithFiredBinding(codeEdit: string): { dir: string; base: string } {
   return { dir, base }
 }
 
+/** Run the blocking check through its public runner, as the commit hook does. */
+async function runBlockingCheckThroughRunner(
+  dir: string,
+  base: string,
+  gitIndexFile: string
+): Promise<{ code: number; stderr: string }> {
+  const proc = Bun.spawn(['bun', join(REPO_ROOT, 'apps/cli/src/index.ts'), 'check', 'doc-coverage'], {
+    cwd: dir,
+    env: { ...process.env, BASE_SHA: base, GIT_INDEX_FILE: gitIndexFile, PR_NUMBER: '' },
+    stdout: 'pipe',
+    stderr: 'pipe'
+  })
+  const stderr = await new Response(proc.stderr).text()
+  return { code: await proc.exited, stderr }
+}
+
 async function runCheck(
   bin: string,
   dir: string,
@@ -128,4 +144,27 @@ describe('C5 Doc-neutral parity between the blocking check and verify-docs (#122
       expect(r.stderr).toContain('C5 doc-coverage')
     })
   }
+})
+
+describe('C5 commit-time staged documentation coverage', () => {
+  it('counts a staged owning document after a prior local code commit', async () => {
+    const { dir, base } = repoWithFiredBinding('export const x = 2\n')
+    const indexPath = git(dir, ['rev-parse', '--git-path', 'index'])
+    const gitIndexFile = join(dir, indexPath)
+
+    // The branch has the governed code commit but no staged document, so the
+    // commit-hook form still names the missing owner.
+    const unstaged = await runBlockingCheckThroughRunner(dir, base, gitIndexFile)
+    expect(unstaged.code).not.toBe(0)
+    expect(unstaged.stderr).toContain('docs/x.md')
+
+    writeFileSync(join(dir, 'docs/x.md'), '# x\n\nUpdated for x = 2.\n')
+    git(dir, ['add', 'docs/x.md'])
+
+    // GIT_INDEX_FILE is the hook-only signal. Its staged diff supplements,
+    // rather than replaces, the base...HEAD diff that found src/x.ts.
+    const staged = await runBlockingCheckThroughRunner(dir, base, gitIndexFile)
+    expect(staged.code).toBe(0)
+    expect(staged.stderr).not.toContain('C5 doc-coverage')
+  })
 })

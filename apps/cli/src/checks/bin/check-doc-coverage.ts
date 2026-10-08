@@ -51,10 +51,24 @@ function git(args: string[]): string {
 }
 
 function changedFiles(base: string): string[] {
-  return git(['diff', '--name-only', `${base}...HEAD`])
+  const committed = git(['diff', '--name-only', `${base}...HEAD`])
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean)
+
+  // Git sets GIT_INDEX_FILE while it invokes the commit hook. In that one
+  // context, include the index delta as well as the branch delta: a previous
+  // local commit may have changed governed code and this commit may stage the
+  // owning documentation that completes the pair. Keep the committed
+  // `<base>...HEAD` comparison intact for push and CI, where this variable is
+  // absent.
+  if (!process.env.GIT_INDEX_FILE) return committed
+
+  const staged = git(['diff', '--cached', '--name-only'])
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return [...new Set([...committed, ...staged])]
 }
 
 function resolvePrBody(): string {

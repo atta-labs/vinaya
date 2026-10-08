@@ -206,6 +206,9 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // `resolvePrBody()` falls through to `''` when neither PR_BODY nor
       // PR_BODY_FILE is set — the legitimate ring-0 "no PR exists yet" case.
       // BASE_SHA already defaults via `|| 'origin/main'` in the bin itself.
+      // Git sets GIT_INDEX_FILE only for its commit hook. Forward it so that
+      // run can add staged files to the branch diff; it is absent at push and
+      // in CI, preserving their committed-branch comparison.
       // PR_NUMBER absence takes the bin's own "no PR to evaluate the waiver
       // against yet" bypass (`waiverActive()` returns false) — same shape as
       // `review-gate`'s identical PR_NUMBER declaration below. The bin shells
@@ -220,6 +223,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // `PRINCIPAL_ALLOWLIST`, the safe direction.
       env: {
         BASE_SHA: { optional: true },
+        GIT_INDEX_FILE: { optional: true },
         PR_BODY: { optional: true },
         PR_BODY_FILE: { optional: true },
         PR_NUMBER: { optional: true },
