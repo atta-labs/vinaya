@@ -305,7 +305,7 @@ A code comment, a pull-request body, and a doctrine page each describe the thing
 
 ## Verification before reporting done
 
-Under the review loop, static gates are controller work. Do not hand-run typecheck, lint/format, the build, `verify-docs`, or the affected-test selection; do not paste their output. The commit hook applies safe format/lint fixes to staged files, typechecks affected packages, and runs Vinaya checks. The pre-push hook runs affected tests on the one push; `run_checks` and CI are the authoritative reports. A check you ran by hand is never a reason to return a `blocked` turn result. Treat only a failure returned by `run_checks`, a hook, or CI as a gate failure, and fix it before continuing.
+Under the review loop, static gates are controller work. Do not hand-run typecheck, lint/format, the build, `verify-docs`, or the affected-test selection; do not paste their output. The commit hook applies safe format/lint fixes to staged files, typechecks affected packages, and runs Vinaya checks. The pre-push hook runs `bun apps/cli/src/lib/pre-push-select-tests.ts | xargs -r bun test --timeout=30000 --` on the one push; `run_checks` and CI are the authoritative reports. CI runs `bun run test`, and the controller runs `bun packages/aeg-core/bin/verify-task.ts` when opening a task PR. A check you ran by hand is never a reason to return a `blocked` turn result. Treat only a failure returned by `run_checks`, a hook, or CI as a gate failure, and fix it before continuing.
 
 Before you say you are done or open a PR under the review loop:
 
