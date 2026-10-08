@@ -28,7 +28,7 @@ summary: Ever shipped a change nobody checked for leaked secrets?
 ---
 # Security Reviewer — Role Reference
 
-**Read receipt — do this first.** `vinaya doctrine --role security --print`'s output begins with a fixed acknowledgement token, one line, before anything else. Your first message in this session must repeat that exact token verbatim — e.g. `ACK: <token>` — so a transcript proves this doctrine was read, checked with one grep. The token lives only in this file's frontmatter, never in this paragraph, so editing this paragraph never invalidates a past session's proof.
+**Read receipt — do this first.** `vinaya doctrine --role security --print`'s output begins with a fixed acknowledgement token, one line, before anything else. Your first message in this session must repeat that exact token verbatim — e.g. `ACK: <token>` — so a transcript proves this doctrine was read, checked with one grep. The token lives only in this file's frontmatter, never in this paragraph, so editing this paragraph never invalidates a past session's proof. A session the review loop dispatched gives no receipt: the driver puts this role's short version and checklist in your prompt itself and reads only your turn's result or output files.
 
 ## The short version
 

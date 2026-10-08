@@ -791,6 +791,10 @@ describe('renderBrief', () => {
       expect(result.brief).toContain(
         'driver has already run the dispatch-readiness gate from its own unsandboxed process before dispatching you'
       )
+      // Being dispatched is the verdict: the brief never sends a dispatched
+      // Developer looking for a readiness file it is given no path to.
+      expect(result.brief).toContain('so being dispatched is the verdict: look for no file')
+      expect(result.brief).not.toContain('Developer folder')
       expect(result.brief).not.toContain('check dispatch-readiness`')
       expect(result.brief).not.toContain('verify-dispatch.ts')
       expect(result.brief).toContain(

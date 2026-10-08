@@ -232,7 +232,7 @@ Every brief includes stop conditions. Honor them unconditionally. Common reasons
 - You are about to touch files outside the brief's stated scope — stop and ask first
 - Any destructive action (force push, file deletion, database mutation) not explicitly authorized by the brief
 - You discover a decision that should be Type 1 (irreversible) but the brief doesn't mention it
-- A link or file the task references cannot be opened — stop at once and return a `blocked` turn result with kind `missing_access`, naming the reference. Never develop around it: the task named it because the work needs what it holds.
+- A link or file the task references cannot be opened — stop at once and return a `blocked` turn result with kind `preflight_failed`, naming the reference. For a URL under the review loop, "cannot be opened" means the driver's `fetch_documentation` tool failed to read it; a `curl` or other network call your sandbox blocks never counts, so read the URL with `fetch_documentation` before deciding. Working without the driver's tools, it means your own fetch failed. Never develop around it: the task named it because the work needs what it holds.
 
 ---
 

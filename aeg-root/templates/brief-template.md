@@ -70,7 +70,7 @@ git worktree add .worktrees/task/[tranche-slug]/[n] -b task/[tranche-slug]/[n] -
 ```
 
 1. Clean status; parent `origin/main`; branch suffix literal-matches topology `#` column (`[n]`).
-2. Under `vinaya dispatch`/the review loop, the driver has already run the dispatch-readiness gate (the shipped check, plus this repository's own fuller derivation where it ships one) from its own unsandboxed process before dispatching you, and staged the combined verdict in this round's own Developer folder — read it there; either script's own `gh` call fails inside your sandbox. Working manually, with no driver behind you, fall back to `roles/developer.md`'s own items 3/5/7 prose — each a complete, hand-run forge check in its own right.
+2. Under the review loop (`vinaya task run`), the driver has already run the dispatch-readiness gate (the shipped check, plus this repository's own fuller derivation where it ships one) from its own unsandboxed process before dispatching you, and dispatches you only when that verdict is READY — a NOT READY verdict refuses the turn before it starts, so being dispatched is the verdict: look for no file and run neither script, whose own `gh` call fails inside your sandbox. Working manually, with no driver behind you, fall back to `roles/developer.md`'s own items 3/5/7 prose — each a complete, hand-run forge check in its own right.
 3. [any task-specific pre-flight checks — required tools present, reference files readable, re-digs to confirm the §2 citations]
 
 On any failure: STOP and report.

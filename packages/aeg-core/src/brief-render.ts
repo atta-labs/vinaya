@@ -685,7 +685,7 @@ function renderSection5(facts: BriefFacts): string {
       ? ' plus, on this repository toolchain, its own fuller derivation'
       : ''
   const verifyLine =
-    `2. Under \`${facts.cliInvocation} dispatch\`/the review loop, the driver has already run the dispatch-readiness gate${unabridged} from its own unsandboxed process before dispatching you (re-derived at render time: it was ready), and staged the combined verdict in this round's own Developer folder — read it there; either script's own \`gh\` call fails inside your sandbox. Working manually, with no driver behind you, fall back to ` +
+    `2. Under the review loop (\`${facts.cliInvocation} task run\`), the driver has already run the dispatch-readiness gate${unabridged} from its own unsandboxed process before dispatching you (re-derived at render time: it was ready), and dispatches you only when that verdict is READY — a NOT READY verdict refuses the turn before it starts, so being dispatched is the verdict: look for no file and run neither script, whose own \`gh\` call fails inside your sandbox. Working manually, with no driver behind you, fall back to ` +
     "`roles/developer.md`'s own items 3/5/7 prose — each a complete, hand-run forge check in its own right."
   const lines = [
     '## 5. Pre-flight checks',
