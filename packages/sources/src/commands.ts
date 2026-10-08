@@ -171,6 +171,11 @@ export const COMMANDS: readonly Command[] = [
       {
         flag: '--agent <claude|codex|gemini>',
         description: 'Vendor for the developer and both reviewers this run dispatches'
+      },
+      {
+        flag: '--quiet',
+        description:
+          "Hide the detail lines (an agent's prose, full commands, failed-result tails) on the live terminal; the driver log file keeps them"
       }
     ],
     details: [
@@ -186,7 +191,15 @@ export const COMMANDS: readonly Command[] = [
     name: 'task status',
     description:
       'Every open task with a frozen brief, its pull request, and whether its loop is running, paused, or published',
-    flags: [{ flag: '--json', description: 'Enveloped JSON output (schema: 1)' }],
+    flags: [
+      { flag: '--json', description: 'Enveloped JSON output (schema: 1)' },
+      {
+        flag: '--follow',
+        description:
+          "Tail the task's driver log live, with its detail lines, on either the `<tranche> <n>` form or `--issue <n>`"
+      },
+      { flag: '--quiet', description: 'With `--follow`, hide the detail lines; the log file is unchanged' }
+    ],
     details: [
       'Read-only: one `gh issue list` for every open task Issue across every tranche (title/label resolved through the same `resolveTaskIssueRef` `list-tasks.ts` already uses), the open pull request per branch, and the driver pid record / pause record / publish effect markers under `<outboxRoot>/dev-review-loop/<task>/` — never a `ps` scan, never a re-parse of posted verdict comments to decide `published`.',
       "`running` names the driver's pid (`review-validity-v1` task 7's pid record); `paused` names the reason from the pause record; `published` means the newest round's reviewer and security verdict effect markers both read `posted`; `no driver` is the fallback when none of the above holds.",

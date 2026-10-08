@@ -1,10 +1,12 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'bun:test'
-import { pauseResumeCommand } from '../../src/commands/task-run.js'
+import { logQuiet } from '../../src/lib/agent-line.js'
+import { appendRoleLine } from '../../src/lib/loop-log.js'
+import { applyQuiet, pauseResumeCommand } from '../../src/commands/task-run.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -271,5 +273,24 @@ describe('vinaya task run — pauseResumeCommand (#785, O1)', () => {
     expect(pauseResumeCommand({ prNumber: 0, task: 512, branch: 'task/issue-512' }, { agent: 'claude' })).toBe(
       'vinaya task run --issue 512 --agent claude'
     )
+  })
+})
+
+describe('vinaya task run --quiet', () => {
+  it('sets the quiet view for the live terminal, and the log file still receives detail records', () => {
+    const saved = process.env.VINAYA_LOG_QUIET
+    try {
+      delete process.env.VINAYA_LOG_QUIET
+      applyQuiet({ quiet: false })
+      expect(logQuiet()).toBe(false)
+      applyQuiet({ quiet: true })
+      expect(logQuiet()).toBe(true)
+      const path = join(mkdtempSync(join(tmpdir(), 'quiet-run-')), 'driver.log')
+      appendRoleLine(path, 'developer', 'Editing a.ts', ['kept detail'])
+      expect(readFileSync(path, 'utf8')).toContain('kept detail')
+    } finally {
+      if (saved === undefined) delete process.env.VINAYA_LOG_QUIET
+      else process.env.VINAYA_LOG_QUIET = saved
+    }
   })
 })

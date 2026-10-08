@@ -170,6 +170,8 @@ export type FollowLoopLogDeps = {
   /** `true` ends the follow loop — production never sets this (it runs until the process is killed, `Ctrl-C`); a test supplies one that flips true after a bounded number of ticks. */
   shouldStop: () => boolean
   pollIntervalMs: number
+  /** `true` hides the detail records (`<ISO time>  · <text>`) from what is written; the file itself is never changed. */
+  quiet: boolean
 }
 
 const defaultFollowLoopLogDeps: FollowLoopLogDeps = {
@@ -178,7 +180,21 @@ const defaultFollowLoopLogDeps: FollowLoopLogDeps = {
     process.stdout.write(chunk)
   },
   shouldStop: () => false,
-  pollIntervalMs: 500
+  pollIntervalMs: 500,
+  quiet: false
+}
+
+const DETAIL_RECORD = /^\S+ {2}· /
+
+/** A writer that drops whole detail records and passes every other line through, holding a trailing partial line until its newline arrives. */
+function withoutDetailRecords(write: (chunk: Buffer) => void): (chunk: Buffer) => void {
+  let pending = ''
+  return (chunk) => {
+    const lines = (pending + chunk.toString('utf8')).split('\n')
+    pending = lines.pop() ?? ''
+    const kept = lines.filter((line) => !DETAIL_RECORD.test(line))
+    if (kept.length > 0) write(Buffer.from(`${kept.join('\n')}\n`))
+  }
 }
 
 /**
@@ -192,7 +208,8 @@ const defaultFollowLoopLogDeps: FollowLoopLogDeps = {
  * "nothing to show yet" state.
  */
 export async function followLoopLog(path: string, overrides: Partial<FollowLoopLogDeps> = {}): Promise<void> {
-  const deps: FollowLoopLogDeps = { ...defaultFollowLoopLogDeps, ...overrides }
+  const merged: FollowLoopLogDeps = { ...defaultFollowLoopLogDeps, ...overrides }
+  const deps: FollowLoopLogDeps = merged.quiet ? { ...merged, write: withoutDetailRecords(merged.write) } : merged
   let lastSize = 0
   if (existsSync(path)) {
     const buf = readFileSync(path)

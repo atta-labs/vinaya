@@ -6,6 +6,7 @@ import {
   appendLoopLogLine,
   appendRoleLine,
   appendRunStartMarker,
+  followLoopLog,
   LOOP_LOG_MAX_BYTES,
   loopLogPathFor,
   narrateDriverEvent
@@ -446,5 +447,40 @@ describe('devReviewLoop — the driver lines of a whole run', () => {
       'journal_finalized',
       'driver_exited'
     ])
+  })
+})
+
+describe('followLoopLog detail records', () => {
+  function logWithDetail(): string {
+    const path = join(tempDir('follow-detail-'), '1.log')
+    appendRoleLine(path, 'developer', 'Editing a.ts', ['first detail line'])
+    appendRoleLine(path, 'developer', 'Test run failed', ['tail of the failure'], 'failed')
+    return path
+  }
+  async function follow(path: string, quiet: boolean): Promise<string> {
+    const chunks: string[] = []
+    await followLoopLog(path, {
+      quiet,
+      write: (chunk) => void chunks.push(chunk.toString('utf8')),
+      shouldStop: () => true
+    })
+    return chunks.join('')
+  }
+
+  it('prints actions and detail lines by default', async () => {
+    const out = await follow(logWithDetail(), false)
+    expect(out).toContain('Editing a.ts')
+    expect(out).toContain('first detail line')
+    expect(out).toContain('tail of the failure')
+  })
+
+  it('hides detail lines with quiet, keeps actions and failures, and leaves the file whole', async () => {
+    const path = logWithDetail()
+    const out = await follow(path, true)
+    expect(out).toContain('Editing a.ts')
+    expect(out).toContain('Test run failed')
+    expect(out).not.toContain('first detail line')
+    expect(out).not.toContain('tail of the failure')
+    expect(readFileSync(path, 'utf8')).toContain('first detail line')
   })
 })
