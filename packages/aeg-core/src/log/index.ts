@@ -55,6 +55,7 @@ export type {
 } from './store'
 export {
   CONFIDENCE_REASON_MAX_LENGTH,
+  REVIEW_FINDING_DESCRIPTION_MAX_LENGTH,
   CustomEventSchema,
   DispatchEventSchema,
   DevReviewLoopEventSchema,

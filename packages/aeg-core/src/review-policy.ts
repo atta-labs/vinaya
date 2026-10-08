@@ -114,6 +114,11 @@ const ROLE_FILE_LOCATION = /(^|\/)aeg-root\/roles\//i
 
 export function isProseLocation(location: string): boolean {
   if (ROLE_FILE_LOCATION.test(location)) return true
+  return isBodyOrCommentLocation(location)
+}
+
+/** The PR body or a PR/review comment — the prose locations that are not repository files, unlike a role file. */
+function isBodyOrCommentLocation(location: string): boolean {
   if (FILE_SHAPED_LOCATION.test(location)) return false
   return PROSE_LOCATION_PATTERNS.some((pattern) => pattern.test(location))
 }
@@ -245,7 +250,9 @@ const SECURITY_HIGH_AND_ABOVE: readonly string[] = blockingSeverities(SECURITY_S
  *   2. the threshold — below it, `'non_blocking'` (never deferred: a finding
  *      that was never going to block is not "set aside", it simply passes);
  *   3. the out-of-Surface rule (O3) — a would-block finding whose file the
- *      Surface `in:` does not cover is `'deferred'`, ANY round, no exception;
+ *      Surface `in:` does not cover is `'deferred'`, ANY round, no exception
+ *      among files; a PR-body or comment location is no file, so neither this
+ *      rule nor the next ever defers it;
  *   4. the unchanged-line rule (O2) — from round 2 on (`context.changedLine`
  *      present), a would-block finding on an unchanged line is `'deferred'`,
  *      EXCEPT a security finding at or above HIGH, which blocks anyway.
@@ -272,7 +279,10 @@ export function classifyFinding(
   // location to test. A finding carrying none (an older extraction shape with
   // no `file:line`) can be tested by neither rule, so it blocks, the
   // fail-closed default this task's own trap names for an unrecoverable case.
-  const hasLocation = location !== undefined && location.length > 0
+  // The PR body or a comment is no repository file either: no Surface glob
+  // and no diff ever covers it, yet the Developer edits it directly, so
+  // neither deferral rule applies to it — it is capped above, never set aside.
+  const hasLocation = location !== undefined && location.length > 0 && !isBodyOrCommentLocation(location)
 
   // O3 first: findings outside the Surface never block, in ANY round, with no
   // security exception — so it is decided before the unchanged-line rule.

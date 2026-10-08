@@ -47,6 +47,8 @@ export type FindingObservation = {
    * a finding with none, simply has none to report.
    */
   location?: string
+  /** Reviewer-written text, redacted and visibly capped at capture. */
+  description?: string
   /**
    * The finding's normalized description (lower-cased, whitespace and
    * punctuation collapsed), built where reviewer output is parsed. The
@@ -308,6 +310,7 @@ export type DeferredFindingRow = {
   /** The finding's own `file:line`, or `''` when it carried none. */
   location: string
   reason: DeferralReason
+  description?: string
 }
 
 /** One round of the journal (O4) — counts only, no finding prose. */

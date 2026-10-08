@@ -19,6 +19,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { withDeveloperModelsLine } from '../../../src/lib/dev-review-loop/developer-dispatch.js'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../../src/lib/dev-review-loop/round-assess.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
 import {
@@ -403,5 +404,165 @@ describe('devReviewLoop — O8 (task-run-v1 task 15): --resume accepts a moved h
     // gate/reviewer path instead of resuming the developer.
     expect(devPrompts).toHaveLength(0)
     expect(world.dispatchCountByRole.developer).toBe(1)
+  })
+})
+
+// --- a task with a pull request continues on another agent -----------------
+
+describe('devReviewLoop — --resume with a different --agent continues the task on that agent', () => {
+  const PR_BODY = (task: number): string =>
+    [
+      `Closes #${task}`,
+      '',
+      '**For:** gpt-5.6-terra (Codex CLI)',
+      '**Tier:** 3',
+      '',
+      '## Brief',
+      '',
+      '<details>',
+      '**For:** [model] (coding-agent CLI on a dev machine)',
+      '</details>'
+    ].join('\n')
+
+  type SeenDispatch = {
+    role: string
+    agent: string
+    model: string | undefined
+    resumeId: string | undefined
+    prompt: string
+  }
+
+  /** Pauses a Codex round on an escalation, seeds a ruling, and returns the world with a recorder wrapped round `dispatchRole`. */
+  async function pausedOnCodex(): Promise<{ world: LoopWorld; seen: SeenDispatch[]; deps: Partial<LoopDeps> }> {
+    const world = makeEscalationWorld({ worktreeExists: true })
+    world.prBody = PR_BODY(world.task)
+    const first = await runLoopInProcess(world, { task: world.task, agent: 'codex', model: 'gpt-5.6-terra' })
+    expect(first.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+    seedRuling(world)
+    world.roleOutcomes[1]!.reviewer = undefined
+    markDriverLockDead(world)
+    const seen: SeenDispatch[] = []
+    const published = developerPublishesViaToolsDeps(world, { header: 'Fix(cli): follow principal ruling' })
+    const inner = published.dispatchRole!
+    const deps: Partial<LoopDeps> = {
+      ...published,
+      dispatchRole: async (role, agent, prompt, opts) => {
+        seen.push({ role, agent, model: opts.model, resumeId: opts.resumeId, prompt })
+        return inner(role, agent, prompt, opts)
+      }
+    }
+    return { world, seen, deps }
+  }
+
+  it('starts a fresh session of the named agent on the same worktree, with the brief, the ruling and a body naming both models', async () => {
+    const { world, seen, deps } = await pausedOnCodex()
+    expect(readPauseStateFile(world)).toMatchObject({ agent: 'codex', model: 'gpt-5.6-terra' })
+    const commitsBefore = world.commits.length
+
+    const resumed = await runLoopInProcess(
+      world,
+      { resumePr: world.prNumber, agent: 'claude', model: 'claude-opus-5-5' },
+      deps
+    )
+    expect(resumed.finalDecision).toEqual({ type: 'publish' })
+
+    const dev = seen.filter((d) => d.role === 'developer')
+    expect(dev).toHaveLength(1)
+    expect(dev[0]).toMatchObject({ agent: 'claude', model: 'claude-opus-5-5', resumeId: undefined })
+    expect(dev[0]!.prompt).toContain(world.frozenBrief)
+    expect(dev[0]!.prompt).toMatch(/Principal ruling on this pause/)
+    expect(dev[0]!.prompt).toMatch(/Go ahead and fix it\./)
+    expect(dev[0]!.prompt).toMatch(/from another agent's earlier turns, in a fresh session/)
+    expect(dev[0]!.prompt).toMatch(new RegExp(`pull request #${world.prNumber}`))
+    expect(world.commits.length).toBe(commitsBefore + 1)
+
+    // The pull request's own For line names both models with their rounds; the
+    // brief's copy further down is left alone.
+    expect(world.prBody).toContain('**For:** `gpt-5.6-terra` (round `1`), `claude-opus-5-5` (round `1` on)')
+    expect(world.prBody).toContain('**For:** [model] (coding-agent CLI on a dev machine)')
+  })
+
+  it('does not carry the old vendor’s model over when no model is named', async () => {
+    const { world, seen, deps } = await pausedOnCodex()
+    await runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude' }, deps)
+    const dev = seen.find((d) => d.role === 'developer')!
+    expect(dev.agent).toBe('claude')
+    expect(dev.model).toBeUndefined()
+    expect(world.prBody).toContain('`gpt-5.6-terra` (round `1`), claude (round `1` on)')
+  })
+
+  it('records the agent and model that ran last in the held pause record and the printed resume command', async () => {
+    const { world, deps } = await pausedOnCodex()
+    // The resumed Claude turn pauses again on the same escalation.
+    world.roleOutcomes[1]!.reviewer = ESCALATE_REVIEWER
+    const resumed = await runLoopInProcess(
+      world,
+      { resumePr: world.prNumber, agent: 'claude', model: 'claude-opus-5-5' },
+      deps
+    )
+    expect(resumed.finalDecision).toMatchObject({ type: 'pause' })
+    expect(readPauseStateFile(world)).toMatchObject({ agent: 'claude', model: 'claude-opus-5-5' })
+    const pauseComment = world.postedComments[world.postedComments.length - 1]!
+    expect(pauseComment.body).toContain(
+      `vinaya dev-review-loop --resume ${world.prNumber} --agent claude --model claude-opus-5-5`
+    )
+    expect(pauseComment.body).not.toContain('--agent codex')
+  })
+
+  it('resuming without --agent, or with the same agent, keeps the recorded agent and model and leaves the body alone', async () => {
+    for (const input of [{}, { agent: 'codex' as const }]) {
+      const { world, seen, deps } = await pausedOnCodex()
+      const bodyBefore = world.prBody
+      const resumed = await runLoopInProcess(world, { resumePr: world.prNumber, ...input }, deps)
+      expect(resumed.finalDecision).toEqual({ type: 'publish' })
+      const dev = seen.find((d) => d.role === 'developer')!
+      expect(dev).toMatchObject({ agent: 'codex', model: 'gpt-5.6-terra' })
+      expect(dev.prompt).not.toMatch(/from another agent's earlier turns/)
+      expect(world.prBody).toBe(bodyBefore)
+      expect(world.prBodyUpdates).toHaveLength(0)
+    }
+  })
+
+  it('records the model run list the For line is rendered from', async () => {
+    const { world, deps } = await pausedOnCodex()
+    await runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude', model: 'claude-opus-5-5' }, deps)
+    const runs = JSON.parse(readFileSync(join(ipTaskRunDir(world), 'developer-models.json'), 'utf8')) as {
+      model: string
+    }[]
+    expect(runs.map((r) => r.model)).toEqual(['gpt-5.6-terra', 'claude-opus-5-5'])
+  })
+  it('re-applies the For line over a body the Developer writes through update_pull_request_body after the switch', async () => {
+    const { world } = await pausedOnCodex()
+    const devWrittenBody = [
+      'Closes #1',
+      '',
+      '**For:** claude-opus-5-5 (Claude Code)',
+      '',
+      '## Decisions',
+      '',
+      'None.'
+    ].join('\n')
+    world.worktreeChangedPaths = ['apps/cli/src/lib/x.ts']
+    await runLoopInProcess(
+      world,
+      { resumePr: world.prNumber, agent: 'claude', model: 'claude-opus-5-5' },
+      developerPublishesViaToolsDeps(world, { bodyOnly: true, body: devWrittenBody })
+    )
+    expect(world.prBodyUpdates.length).toBeGreaterThan(0)
+    expect(world.prBody).toContain('**For:** `gpt-5.6-terra` (round `1`), `claude-opus-5-5` (round `1` on)')
+    expect(world.prBody).toContain('## Decisions')
+  })
+
+  it('withDeveloperModelsLine edits only the header line and treats model names literally', () => {
+    const body = ['**For:** old', '', '## Brief', '', '**For:** [model] copy'].join('\n')
+    const runs = [
+      { model: 'a$&b', firstRound: 1, lastRound: 2 },
+      { model: 'codex', firstRound: 3, lastRound: 3 }
+    ]
+    const out = withDeveloperModelsLine(body, runs)
+    expect(out).toBe(
+      ['**For:** a$&b (rounds `1`–`2`), codex (round `3` on)', '', '## Brief', '', '**For:** [model] copy'].join('\n')
+    )
+    expect(withDeveloperModelsLine(body, [])).toBe(body)
   })
 })

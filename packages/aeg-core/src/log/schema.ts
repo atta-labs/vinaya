@@ -63,6 +63,9 @@ import {
  */
 export const CONFIDENCE_REASON_MAX_LENGTH = 280
 
+/** Maximum retained reviewer wording for one finding; capture adds `…` when it trims. */
+export const REVIEW_FINDING_DESCRIPTION_MAX_LENGTH = 1_000
+
 /** Every dispatchable doctrine role, spelled exactly as the spec's Role union (§5.1) — the doctrine-facing name (`code-reviewer`), not the `reviewer.md` filename `resolveDoctrineRootInfo` resolves it to. */
 export const ROLE_VALUES = [
   'planner',
@@ -264,6 +267,9 @@ const ReviewFindingSchema = z
   .object({
     id: z.string(),
     severity: z.string(),
+    location: z.string().optional(),
+    deferral_reason: z.enum(['outside-surface', 'unchanged-line']).optional(),
+    description: z.string().max(REVIEW_FINDING_DESCRIPTION_MAX_LENGTH).optional(),
     state: z.string().optional(),
     severity_scale: z.string().optional(),
     policy_treatment: z.enum(['blocking', 'non_blocking', 'unavailable']).optional(),

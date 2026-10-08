@@ -246,7 +246,14 @@ describe('devReviewLoop — round 1 blocked, round 2 genuinely resumes', () => {
       (l) => l.kind === 'dev_review_loop' && l.event === 'verdicts_read' && (l as { round: number }).round === 1
     ) as { findings: Array<Record<string, unknown>> } | undefined
     expect(round1VerdictsRead?.findings).toEqual([
-      { id: 'F1', severity: 'BLOCKER', severity_scale: 'code-review', policy_treatment: 'blocking' }
+      {
+        id: 'F1',
+        severity: 'BLOCKER',
+        location: 'smoke.ts:1',
+        description: 'deliberate round-1 blocker to force a real round 2',
+        severity_scale: 'code-review',
+        policy_treatment: 'blocking'
+      }
     ])
 
     const lines = ipOutboxLines(world)

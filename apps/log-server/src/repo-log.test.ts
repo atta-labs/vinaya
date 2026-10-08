@@ -69,6 +69,30 @@ function line(repo: string, n: number, reason = 'ok', ts?: string): string {
   return JSON.stringify(forgeWrite(metaV2(repo, n, `e-${n}`, ts), reason))
 }
 
+function deferredFindingLine(repo: string): string {
+  return JSON.stringify({
+    meta: metaV2(repo, 1, 'deferred-finding'),
+    subject: { issue: 725, role: 'developer' },
+    kind: 'dev_review_loop',
+    event: 'verdicts_read',
+    payload: {},
+    loop_id: 'loop-1',
+    round: 2,
+    head: 'sha1',
+    all_approve: true,
+    blockers: 0,
+    findings: [
+      {
+        id: 'F1',
+        severity: 'BLOCKER',
+        location: 'apps/cli/src/fix.ts:10',
+        deferral_reason: 'unchanged-line',
+        description: 'redacted finding text'
+      }
+    ]
+  })
+}
+
 function url(repo: string, path: string): string {
   return `${BASE}/v1/repos/${repo}/${path}`
 }
@@ -110,6 +134,17 @@ async function pageLines(response: Response): Promise<PageRow[]> {
 }
 
 describe('ingest stores each new event exactly once, in arrival order', () => {
+  it('accepts a review event carrying optional deferred-finding fields', async () => {
+    const repo = freshRepo()
+    expect(await (await post(repo, deferredFindingLine(repo))).json()).toEqual({
+      accepted: 1,
+      duplicates: 0,
+      rejected: 0,
+      last_seq: 1
+    })
+    expect((await pageLines(await read(repo)))[0]?.status).toBe('ok')
+  })
+
   it('stores a batch, and stores nothing new when the same batch is resent', async () => {
     const repo = freshRepo()
     const batch = [line(repo, 1), line(repo, 2)].join('\n')

@@ -158,13 +158,18 @@ import {
   fetchSourceRevision,
   findOpenPrForBranch,
   LaunchContinuityLost,
+  type DeveloperModelRun,
+  readDeveloperModelRuns,
   recoverDeveloperLaunch,
+  recordDeveloperModelRun,
   renderDeveloperDoctrineBlock,
   resolveDeveloperDoctrineText,
   resolveIssueObjectives,
   reviewPolicyForLoop,
   taskFromPrBody,
-  withPromptFile
+  withDeveloperModelsLine,
+  withPromptFile,
+  writeDeveloperModelRuns
 } from './dev-review-loop/developer-dispatch.js'
 import {
   buildPriorRoundFindingsText,
@@ -1708,10 +1713,14 @@ async function defaultUpdatePrBody(input: {
  */
 export function failedCheckLogsOnHead(
   head: string,
-  fetchRuns: (head: string) => { name: string; id: number }[] = fetchFailingCheckRuns,
+  fetchRuns: (head: string) => { name: string; id: number; detail?: string }[] = fetchFailingCheckRuns,
   readTail: (jobId: number) => string | null = readJobLogTail
 ): FailedCheckLog[] {
-  return readFailedCheckLogs(fetchRuns(head), readTail)
+  // A failed workflow run is no job (`detail` is set): it has no job log to tail.
+  return readFailedCheckLogs(
+    fetchRuns(head).filter((run) => run.detail === undefined),
+    readTail
+  )
 }
 
 /**
@@ -2185,7 +2194,14 @@ function deferredEntriesForRound(round: number, verdicts: VerdictObservation[]):
   for (const v of verdicts) {
     for (const f of v.findings) {
       if (f.deferred !== undefined) {
-        entries.push({ round, reviewer: v.role, severity: f.severity, location: f.location ?? '', reason: f.deferred })
+        entries.push({
+          round,
+          reviewer: v.role,
+          severity: f.severity,
+          location: f.location ?? '',
+          reason: f.deferred,
+          description: f.description ?? ''
+        })
       }
     }
   }
@@ -2340,6 +2356,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   let resumeFrom: PauseState | null = null
   let dispatchAgent: AgentVendor = input.agent ?? 'claude'
   let dispatchModel = input.model
+  /** True when `--resume` named a different agent than the one the task ran on: the first Developer turn then opens a fresh session, so it is handed the brief and the task's state. */
+  let agentSwitched = false
   /** O8: true when `--resume` found the head already moved past the pause-time head — a ruling followed by a fix push, the normal case. Widens `firstPass` below so the loop skips redispatching the developer (it already acted) and goes straight to the gate/reviewer path on the new head. */
   let resumeHeadAlreadyMoved = false
 
@@ -2390,15 +2408,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         'devReviewLoop --resume: this legacy pause state does not record an agent; retry once with --agent <claude|codex|gemini>.'
       )
     }
-    if (input.agent && held.agent && input.agent !== held.agent) {
-      throw new Error(
-        `devReviewLoop --resume: task ${closesTask} was dispatched with agent '${held.agent}', not '${input.agent}'. Retry without --agent or with --agent ${held.agent}.`
-      )
-    }
+    // An explicit `--agent` that differs from the recorded one continues the
+    // task on that agent: its sessions are its own, so it starts fresh on the
+    // same branch and worktree. The recorded model belongs to the old vendor
+    // and is never carried over.
+    agentSwitched = input.agent !== undefined && held.agent !== undefined && input.agent !== held.agent
     dispatchAgent = input.agent ?? (held.agent as AgentVendor)
-    dispatchModel = input.model ?? held.model
-    // O5: an `'infrastructure'` or `'stale_driver'` pause is the driver's
-    // own recoverable hiccup, never a human decision point —
+    dispatchModel = agentSwitched ? input.model : (input.model ?? held.model)
+    if (readDeveloperModelRuns(root, closesTask).length === 0 && held.agent !== undefined) {
+      writeDeveloperModelRuns(root, closesTask, [
+        { model: held.model ?? held.agent, firstRound: 1, lastRound: held.round }
+      ])
+    }
+    // O5: an automatic-recovery (`'infrastructure'` or `'stale_driver'`)
+    // pause is the driver's own recoverable hiccup, never a human decision
+    // point —
     // `--resume` continues it on the bare command, no Principal ruling
     // required. Every OTHER pause reason is unchanged: a genuine decision
     // point still refuses to resume without one.
@@ -2550,6 +2574,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         }
         attachAfterReplayedResolution = true
       }
+    }
+    if (agentSwitched) {
+      // The resume is accepted: the held record names the agent that runs
+      // from here on, so the Operator's read and the next printed resume
+      // command follow it.
+      const { model: _heldModel, ...heldWithoutModel } = held
+      writePauseState(root, {
+        ...heldWithoutModel,
+        agent: dispatchAgent,
+        ...(dispatchModel ? { model: dispatchModel } : {})
+      })
     }
     // A bound pause attaches too: it was raised before the pull request
     // existed, so it holds no pull-request round or head to resume AT — the
@@ -3542,12 +3577,77 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * in `dispatchDeveloper`'s own loop below, after this returns, so no poll
      * ever starts against an unpublished branch (`publishDeveloperTurn`).
      */
+    /**
+     * What a Developer session that continues another agent's task is told
+     * first: the doctrine, the frozen brief, the pull request, and the review
+     * findings still open on the current head — everything a fresh Developer
+     * turn is given, since this agent has no session of its own to resume. The
+     * turn's own prompt (the rulings, or the findings it answers) follows.
+     */
+    async function switchedAgentContextBlock(promptText: string): Promise<string> {
+      let doctrine: string | null = null
+      try {
+        doctrine = d.resolveDeveloperDoctrine ? await d.resolveDeveloperDoctrine() : null
+      } catch {
+        doctrine = null
+      }
+      let remoteHead: string | null
+      try {
+        remoteHead = d.resolveHead(branch)
+      } catch {
+        remoteHead = null
+      }
+      const heldFindings = latestHeldRequestChanges(root, task)
+      const unaddressed =
+        heldFindings !== null && heldFindings.head === remoteHead && !promptText.includes(heldFindings.rendered)
+          ? heldFindings.rendered
+          : null
+      return [
+        doctrine ? renderDeveloperDoctrineBlock(doctrine) : null,
+        `You are continuing task Issue #${task}${prNumber > 0 ? ` on pull request #${prNumber}` : ''} from another agent's earlier turns, in a fresh session. Their commits are on the branch and any uncommitted work is still in the worktree — keep both. ${publishingInstructionLine()}`,
+        `Frozen brief:\n\n${d.fetchFrozenBrief(task)}`,
+        unaddressed ? `Review findings still open on the current head:\n\n${unaddressed}` : null
+      ]
+        .filter((part): part is string => part !== null)
+        .join('\n\n')
+    }
+
+    /**
+     * Folds this dispatch's model into the task's run list and, once more than
+     * one model has run, keeps the open pull request's `**For:**` line naming
+     * all of them. Idempotent, so a body write that failed once is retried by
+     * the next dispatch; a failure never stops the turn.
+     */
+    async function recordDeveloperModel(roundNum: number): Promise<void> {
+      const recorded = recordDeveloperModelRun(
+        readDeveloperModelRuns(root, task),
+        dispatchModel ?? dispatchAgent,
+        roundNum
+      )
+      writeDeveloperModelRuns(root, task, recorded)
+      if (recorded.length < 2) return
+      try {
+        const pr = prNumber > 0 ? prNumber : (d.findOpenPrForBranch(branch)?.number ?? null)
+        if (pr === null) return
+        const body = d.fetchPrBody(pr)
+        const next = withDeveloperModelsLine(body, recorded)
+        if (next !== body) await d.updatePrBody({ prNumber: pr, body: next, repo })
+      } catch (err) {
+        appendRoleLine(
+          loopLogPath,
+          'dev-review-loop',
+          `for_line_update_failed: ${err instanceof Error ? err.message : String(err)}`
+        )
+      }
+    }
+
     async function dispatchDeveloperOnce(
       promptText: string,
       roundNum: number,
       opts: { skipResumeContext?: boolean; developerFiles?: readonly string[] }
     ): Promise<DispatchHandle> {
       const isResume = devResumeId !== null
+      await recordDeveloperModel(roundNum)
       // O4: no bare-forge-command rule rides the prompt any longer — the
       // Developer holds no `gh`/`git push` credential and publishes only
       // through the driver-run tools, so there is no excluded command to run
@@ -3557,7 +3657,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // turn ends with — its structured turn result.
       const fullPrompt = opts.skipResumeContext
         ? promptText
-        : `${resumeContextBlock()}\n\n${promptText}\n\n${turnResultInstruction(roundNum)}`
+        : [
+            resumeContextBlock(),
+            agentSwitched ? await switchedAgentContextBlock(promptText) : null,
+            promptText,
+            turnResultInstruction(roundNum)
+          ]
+            .filter((part): part is string => part !== null)
+            .join('\n\n')
       // O1/O3: confine the Developer to
       // its own worktree — this driver's own round-1 `createTaskWorktree`
       // call (above, in the branch-creation branch) already created it before
@@ -3733,6 +3840,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         if (!handle.failureReason) {
           devDispatchHistory.recordSuccess(roundNum)
           if (handle.resumeId) devResumeId = handle.resumeId
+          agentSwitched = false
         }
         return handle
       } finally {
@@ -4022,6 +4130,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     function buildDeveloperDevToolContext(roundNum: number): DevToolContext {
       const worktree = worktreePathForBranch()
       const prNumberNow = (): number | null => d.findOpenPrForBranch(branch)?.number ?? null
+      /** The run list once more than one model has run — a single model's `**For:**` line stays the Developer's own. */
+      const modelRuns = (): DeveloperModelRun[] => {
+        const runs = readDeveloperModelRuns(root, task)
+        return runs.length > 1 ? runs : []
+      }
       const issueTitle = (): string => {
         try {
           return d.fetchIssueTitle(task)
@@ -4245,7 +4358,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             task,
             branch,
             title,
-            body,
+            body: withDeveloperModelsLine(body, modelRuns()),
             round: roundNum,
             agent: dispatchAgent,
             repo
@@ -4274,7 +4387,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               }
             }
           }
-          await d.updatePrBody({ prNumber, body, repo })
+          await d.updatePrBody({ prNumber, body: withDeveloperModelsLine(body, modelRuns()), repo })
           return { ok: true, result: { prNumber } }
         },
         refreshEvidence: async () => {
@@ -5004,7 +5117,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         stats: computeStats(head, roundStartMs),
         ciConclusion: conclusion,
         failingChecks: failingRuns.map(describeFailingCheckRun),
-        failureLogs: readFailedCheckLogs(failingRuns, d.readFailedCheckLogTail)
+        failureLogs: readFailedCheckLogs(
+          failingRuns.filter((run) => run.detail === undefined),
+          d.readFailedCheckLogTail
+        )
       }
     }
 

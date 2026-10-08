@@ -54,9 +54,12 @@ import {
   writeFileSync
 } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { rateLimitPauseDetail } from '../../src/lib/dev-review-loop/round-assess.js'
+import { heldVerdictPath } from '../../src/lib/dev-review-loop/reviewer-dispatch.js'
+import { reviewerCandidateInputPaths } from '../../src/lib/dev-review-loop/reviewer-isolation.js'
+import { renderDeferredFindingsIssueBody } from '../../src/lib/forge-write.js'
 import { renderNoPushStopComment, renderPauseComment } from '../../src/lib/dev-review-loop/pause-resume.js'
 import { FAKE_CLAUDE_PROBE_ANSWER } from './dispatch/fake-sandbox-probe.js'
 import {
@@ -96,6 +99,7 @@ import {
   objectivesVersion,
   policyDigest,
   renderObjectives,
+  REVIEW_FINDING_DESCRIPTION_MAX_LENGTH,
   type Objective,
   type DevReviewLoopEventInput
 } from '@attalabs/aeg-core'
@@ -104,6 +108,7 @@ import {
   CLEAN_SECURITY,
   cleanupWorlds,
   controlDir as ipControlDir,
+  defaultDeveloperTurnOutput,
   makeInProcessDeps,
   makeWorld,
   outboxLines as ipOutboxLines,
@@ -315,6 +320,9 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
   '
   exit 0
 fi
+if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
+  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
+fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
   exit 0
@@ -403,6 +411,9 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
     console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
   '
   exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
+  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
 fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   printf '%s\\n%s\\n' \\
@@ -633,6 +644,9 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
   '
   exit 0
 fi
+if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
+  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
+fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
   exit 0
@@ -722,6 +736,9 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
     console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
   '
   exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
+  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
 fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
@@ -1646,11 +1663,61 @@ describe('devReviewLoop — deferred findings tracked in one Issue per pull requ
         reviewer: 'reviewer',
         severity: 'BLOCKER',
         location: 'packages/aeg-core/src/foo.ts:10',
-        reason: 'outside-surface'
+        reason: 'outside-surface',
+        description: 'F1 correctness: a latent bug the loop cannot act on this round'
       }
     ])
     // O1: publication received the tracking Issue's ref, to link from the summary.
     expect(world.publishedDeferredIssues).toEqual([{ issue: world.deferredIssueNumber }])
+  })
+
+  it('keeps both deferral reasons’ descriptions, redacted and capped, in the Issue body and the Log', async () => {
+    const secret = 'ghp_ABCDEFGHIJKLMNOP'
+    const long = 'x'.repeat(REVIEW_FINDING_DESCRIPTION_MAX_LENGTH + 200)
+    const blocking = 'BLOCKER|apps/cli/src/a.ts:5|an in-Surface defect the Developer must fix\n'
+    const outside = `BLOCKER|packages/aeg-core/src/foo.ts:10|outside leak ${secret} ${long}\n`
+    const unchanged = `BLOCKER|apps/cli/src/a.ts:99|unchanged-line leak ${secret} ${long}\n`
+    const world = makeWorld({
+      surface: { in: ['apps/cli/**'], out: [] },
+      // Round 2's diff changes line 5 only, so the round-2 finding at line 99 sits on an unchanged line.
+      roundDiff:
+        'diff --git a/apps/cli/src/a.ts b/apps/cli/src/a.ts\n--- a/apps/cli/src/a.ts\n+++ b/apps/cli/src/a.ts\n@@ -5,0 +5,1 @@\n+x\n',
+      roleOutcomes: {
+        1: { reviewer: { ...CLEAN_REVIEWER, findings: blocking + outside } },
+        2: { reviewer: { ...CLEAN_REVIEWER, findings: unchanged } }
+      },
+      developerTurnOutput: (round, prompt) => {
+        if (round === 2) world.head = 'b'.repeat(40)
+        return defaultDeveloperTurnOutput(prompt)
+      }
+    })
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision.type).toBe('publish')
+
+    const entries = world.deferredIssueWrites.flatMap((w) => w.entries)
+    const outsideEntry = entries.find((e) => e.reason === 'outside-surface')
+    const unchangedEntry = entries.find((e) => e.reason === 'unchanged-line')
+    expect(outsideEntry).toBeDefined()
+    expect(unchangedEntry).toBeDefined()
+
+    const body = renderDeferredFindingsIssueBody(world.prNumber, entries)
+    const logged = ipOutboxLines(world)
+      .filter((l) => l.event === 'verdicts_read')
+      .flatMap(
+        (l) => (l.findings ?? []) as Array<{ deferral_reason?: string; description?: string; location?: string }>
+      )
+    for (const [entry, reason] of [
+      [outsideEntry!, 'outside-surface'],
+      [unchangedEntry!, 'unchanged-line']
+    ] as const) {
+      expect(entry.description).not.toContain(secret)
+      expect(entry.description.length).toBeLessThanOrEqual(REVIEW_FINDING_DESCRIPTION_MAX_LENGTH)
+      expect(entry.description.endsWith('…')).toBe(true)
+      expect(body).toContain(entry.description)
+      const event = logged.find((f) => f.deferral_reason === reason)
+      expect(event?.description).toBe(entry.description)
+      expect(event?.location).toBe(entry.location)
+    }
   })
 
   it('opens nothing for a clean publish with no deferred findings (O3)', async () => {
@@ -1661,6 +1728,54 @@ describe('devReviewLoop — deferred findings tracked in one Issue per pull requ
     // O3: nothing deferred, so no Issue is written and the summary links none.
     expect(world.deferredIssueWrites).toEqual([])
     expect(world.publishedDeferredIssues).toEqual([])
+  })
+
+  it('a BLOCKER and a MAJOR on the staged pull request body reach the Developer capped, never deferred', async () => {
+    // The reviewer cites the body file the driver staged in its own checkout —
+    // once relative to that checkout, once by its absolute path — derived from
+    // the staging module itself, never a second copy of its name.
+    const scratch = '/scratch/reviewer'
+    const stagedBody = reviewerCandidateInputPaths(scratch).prBody
+    const findings = [
+      `BLOCKER|${relative(scratch, stagedBody)}:1|the body claims an objective is met that the diff does not meet`,
+      `MAJOR|${stagedBody}:1|the body names a file the diff never touches`,
+      'BLOCKER|packages/aeg-core/src/foo.ts:10|a latent bug the loop cannot act on this round'
+    ].join('\n')
+    const world = makeWorld({
+      surface: { in: ['apps/cli/**'], out: [] },
+      roleOutcomes: { 1: { reviewer: { ...CLEAN_REVIEWER, findings: `${findings}\n` } } }
+    })
+    const base = makeInProcessDeps(world)
+    let heldReviewerVerdict = ''
+    const result = await runLoopInProcess(world, undefined, {
+      publishRound: (root, input) => {
+        heldReviewerVerdict = readFileSync(heldVerdictPath(root, input.task, input.round, 'reviewer'), 'utf8')
+        base.publishRound!(root, input)
+      }
+    })
+    expect(result.finalDecision.type).toBe('publish')
+
+    // Both body findings are in the verdict the Developer receives, at the
+    // body's own line, each keeping the severity the reviewer reported — and
+    // capped at MINOR: this world's threshold is BLOCKER, so a BLOCKER kept in
+    // the verdict yet not counted is what the cap alone produces.
+    expect(heldReviewerVerdict).toMatch(/^VERDICT: APPROVE/)
+    expect(heldReviewerVerdict).toContain('[BLOCKER] PR body:1 — the body claims an objective is met')
+    expect(heldReviewerVerdict).toContain('[MAJOR] PR body:1 — the body names a file')
+    expect(heldReviewerVerdict).not.toContain('pr-body.md')
+
+    // Only the real file outside the Surface is deferred, exactly as before.
+    expect(world.deferredIssueWrites).toHaveLength(1)
+    expect(world.deferredIssueWrites[0]!.entries).toEqual([
+      {
+        round: 1,
+        reviewer: 'reviewer',
+        severity: 'BLOCKER',
+        location: 'packages/aeg-core/src/foo.ts:10',
+        reason: 'outside-surface',
+        description: 'a latent bug the loop cannot act on this round'
+      }
+    ])
   })
 })
 
@@ -2058,6 +2173,9 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
   '
   exit 0
 fi
+if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
+  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
+fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
   exit 0
@@ -2139,6 +2257,9 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
     console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
   '
   exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
+  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
 fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
@@ -2581,6 +2702,9 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
   '
   exit 0
 fi
+if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
+  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
+fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   printf '%s\\n' '{"id":1,"name":"ci","status":"completed","conclusion":"failure","started_at":"2026-09-14T10:00:00Z"}'
   printf '%s\\n' '{"id":2,"name":"ci","status":"completed","conclusion":"success","started_at":"2026-09-14T10:05:00Z"}'
@@ -2849,6 +2973,9 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "merg
   echo '{"mergeable":"MERGEABLE"}'
   exit 0
 fi
+if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
+  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
+fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"Vinaya CI","status":"completed","conclusion":"failure"}'
   exit 0
@@ -2918,6 +3045,9 @@ fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
   echo '{"mergeable":"MERGEABLE"}'
   exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
+  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
 fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   printf '%s\\n' '{"id":1,"name":"Vinaya CI","status":"completed","conclusion":"success","started_at":"2026-09-14T10:00:00Z"}'
@@ -4561,6 +4691,9 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
   '
   exit 0
 fi
+if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
+  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
+fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   printf '%s\\n' '{"id":1,"name":"vinaya check --all --diff-only","status":"completed","conclusion":"success"}'
   printf '%s\\n' '{"id":2,"name":"vinaya review gate","status":"completed","conclusion":"failure"}'
@@ -4767,6 +4900,9 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
   '
   exit 0
 fi
+if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
+  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
+fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
   exit 0
@@ -4865,6 +5001,9 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
     console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
   '
   exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
+  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
 fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
