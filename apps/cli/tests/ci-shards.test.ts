@@ -25,6 +25,8 @@ import { spawnSyncBudgeted, stripVinayaEnv } from './lib/process-fixture'
 const CLI_ROOT = join(import.meta.dir, '..')
 const SHARD_DIR = join(import.meta.dir, 'ci-shards')
 const SHARD_COUNT = CI_SHARD_COUNT
+const CI_WORKFLOW = readFileSync(join(CLI_ROOT, '..', '..', '.github', 'workflows', 'ci.yml'), 'utf8')
+const GITHUB_EXPRESSION = '$' + '{{'
 
 function allTestFiles(dir: string): string[] {
   const out: string[] = []
@@ -73,6 +75,21 @@ describe('CI shard file lists (task-run-v1 20, O3)', () => {
         expect(statSync(join(CLI_ROOT, f)).isFile()).toBe(true)
       }
     }
+  })
+})
+
+describe('the repository CI workflow', () => {
+  it('runs every default-branch commit in full without cancelling an earlier merge', () => {
+    expect(CI_WORKFLOW).toContain('push:\n    branches: [main]')
+    expect(CI_WORKFLOW).toContain(`group: ci-${GITHUB_EXPRESSION} github.event.pull_request.number || github.sha }}`)
+    expect(CI_WORKFLOW).toContain(`cancel-in-progress: ${GITHUB_EXPRESSION} github.event_name == 'pull_request' }}`)
+    expect(CI_WORKFLOW).toContain(`if [ "${GITHUB_EXPRESSION} github.event_name }}" = "push" ]; then`)
+    expect(CI_WORKFLOW).toContain('echo "docs_only=false" >> "$GITHUB_OUTPUT"')
+  })
+
+  it('preserves pull-request triggers and their superseded-run cancellation', () => {
+    expect(CI_WORKFLOW).toContain('pull_request:\n    types: [opened, synchronize, reopened]')
+    expect(CI_WORKFLOW).toContain(`cancel-in-progress: ${GITHUB_EXPRESSION} github.event_name == 'pull_request' }}`)
   })
 })
 

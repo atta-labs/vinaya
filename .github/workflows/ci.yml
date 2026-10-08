@@ -32,8 +32,13 @@ name: CI
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  # The default branch is the one place every merged tree must be evaluated
+  # together. Keep this unfiltered: even a docs-only merge runs the complete
+  # suite on the commit that actually landed.
+  push:
+    branches: [main]
 
-# Keyed on the PR alone — deliberately NOT the head SHA, unlike the
+# Pull-request runs are keyed on the PR alone — deliberately NOT the head SHA, unlike the
 # vinaya-managed `pull_request`/`pull_request_target` workflows in this
 # directory (`vinaya-checks.yml`, `vinaya-review.yml`,
 # `vinaya-body-checks.yml`; see `apps/cli/specs/self-hosting.md`'s "One run
@@ -43,10 +48,12 @@ on:
 # on purpose: it is the expensive suite (build + typecheck + test, now
 # sharded — O3), and a superseded push's copy of it is pure waste nobody will
 # ever read once a newer push exists. Cancelling it costs nothing: the newer
-# push's own run re-covers the same ground from a fresher head.
+# push's own run re-covers the same ground from a fresher head. Default-branch
+# runs instead use their commit SHA: each merge keeps its own result, and a
+# later merge cannot cancel that result while it is in progress.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -84,6 +91,14 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -o pipefail
+          # A push has no pull-request base SHA. More importantly, the default
+          # branch is intentionally never narrowed: every merged commit runs
+          # lint, typecheck, every test shard, and sandbox conformance.
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "config_changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           CHANGED=$(git diff --name-only "$BASE_SHA"...HEAD)
           NON_DOCS=$(echo "$CHANGED" | grep -vE '\.md$|^\.changeset/|^aeg-root/' || true)
           if [ -n "$CHANGED" ] && [ -z "$NON_DOCS" ]; then
