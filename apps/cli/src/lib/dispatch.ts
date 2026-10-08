@@ -90,6 +90,7 @@ import {
 import type { IssueDocumentationSource, Role, RoleAttemptOutcome, TranscriptSummary } from '@attalabs/aeg-core'
 import { createLogSink, drainLogSpool, resolveLogAppendPath } from './log-sink.js'
 import { appendRoleLine } from './loop-log.js'
+import { createAgentStreamRenderer } from './agent-stream.js'
 import { formatAgentDetails, formatAgentLine, type AgentLineMark } from './agent-line.js'
 import { developerTurnResultJsonSchema } from './developer-turn-result.js'
 import {
@@ -4021,7 +4022,7 @@ export async function dispatchRole(
       mark === 'working' && /\b(refused|failed|ceiling|sigkill|unbound|exited)\b/i.test(plainWords) ? 'failed' : mark
     process.stderr.write(`${colourAgentLine(role, plainWords, process.stderr, resolvedMark)}\n`)
     for (const detail of formatAgentDetails(details)) process.stderr.write(`${detail}\n`)
-    if (opts.roleLogPath) appendRoleLine(opts.roleLogPath, role, plainWords, details)
+    if (opts.roleLogPath) appendRoleLine(opts.roleLogPath, role, plainWords, details, resolvedMark)
   }
   const roundField = opts.round !== undefined ? { round: opts.round } : {}
   // O2: never the vendor name (`agent`) — that is the defect this task
@@ -5073,6 +5074,11 @@ export async function dispatchRole(
     // is line-delimited but a chunk can split one, so a partial tail is held
     // back rather than parsed and discarded.
     let renderCarry = ''
+    const streamRenderer = createAgentStreamRenderer(
+      agent,
+      { worktree: opts.cwd ?? process.cwd(), home: homedir() },
+      vendor.renderEvent
+    )
     child.stdout.on('data', (chunk: Buffer) => {
       // Teed off the SAME chunk the parser below consumes, never taken from
       // it: `stdoutBuf` still sees every byte, capped exactly as before.
@@ -5104,21 +5110,13 @@ export async function dispatchRole(
           }
         }
         try {
-          const rendered = vendor.renderEvent(JSON.parse(line) as Record<string, unknown>)
-          if (rendered) {
-            const [words, ...details] = rendered.split('\n').filter(Boolean)
-            if (!words) continue
-            const mark: AgentLineMark = /^⏹/.test(words)
-              ? /\b(error|fail(?:ed|ure)?)\b/i.test(words)
-                ? 'failed'
-                : 'done'
-              : 'working'
-            process.stderr.write(`${colourAgentLine(role, words.replace(/^[⏵⏹]\s*/, ''), process.stderr, mark)}\n`)
+          for (const { words, mark, details } of streamRenderer.render(JSON.parse(line) as Record<string, unknown>)) {
+            process.stderr.write(`${colourAgentLine(role, words, process.stderr, mark)}\n`)
             for (const detail of formatAgentDetails(details)) process.stderr.write(`${detail}\n`)
-            // Security (round 2 review, HIGH): `rendered` is agent output, the
-            // same untrusted-bytes hazard `openOutputTee`'s `redact` pass
-            // exists for — route this sink through it too before it reaches disk.
-            if (opts.roleLogPath) appendRoleLine(opts.roleLogPath, role, words.replace(/^[⏵⏹]\s*/, ''), details)
+            // Security (round 2 review, HIGH): the words and details are agent
+            // output, the same untrusted-bytes hazard `openOutputTee`'s `redact`
+            // pass exists for — `appendRoleLine` redacts before it reaches disk.
+            if (opts.roleLogPath) appendRoleLine(opts.roleLogPath, role, words, details, mark)
           }
         } catch {
           // not a JSON line, or a renderer that refused it — never fatal

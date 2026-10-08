@@ -76,13 +76,16 @@ export type DeveloperTurnSchemaContext = Pick<DeveloperTurnContext, 'knownFindin
  * while the controller retains the coverage check for a duplicate source.
  */
 function developerTurnResultSchema(context: DeveloperTurnSchemaContext) {
-  const sourceUses = z
-    .array(
-      context.requiredSources.length === 0
-        ? SourceUseSchema
-        : SourceUseSchema.extend({ source: z.enum(context.requiredSources as [string, ...string[]]) })
-    )
-    .length(context.requiredSources.length)
+  // A brief with no Documentation section has no source uses to report: the
+  // wire contract represents that absence as `null`, rather than an empty
+  // array. Requiring `[]` here rejected otherwise-valid zero-source turns,
+  // which made the loop retry them until its integration fixtures timed out.
+  const sourceUses =
+    context.requiredSources.length === 0
+      ? z.null()
+      : z
+          .array(SourceUseSchema.extend({ source: z.enum(context.requiredSources as [string, ...string[]]) }))
+          .length(context.requiredSources.length)
   const addressedFindingIds = z
     .array(
       context.knownFindingIds.length === 0
@@ -140,7 +143,38 @@ function developerTurnResultSchema(context: DeveloperTurnSchemaContext) {
 }
 
 /** The unconstrained type schema, used only for TypeScript inference. */
-export const DeveloperTurnResultSchema = developerTurnResultSchema({ knownFindingIds: [], requiredSources: [] })
+export const DeveloperTurnResultSchema = z.discriminatedUnion('status', [
+  z
+    .object({
+      schemaVersion,
+      status: z.literal('completed'),
+      summary,
+      confidence: z.number().int().min(0).max(100),
+      confidenceExplanation: z.string().min(1).max(CONFIDENCE_REASON_MAX_LENGTH),
+      addressedFindingIds: z.array(z.string().min(1)),
+      sourceUses: z.array(SourceUseSchema).nullable(),
+      reportedChecks: z.array(ReportedCheckSchema).nullable()
+    })
+    .strict(),
+  z
+    .object({
+      schemaVersion,
+      status: z.literal('blocked'),
+      summary,
+      blocker: z.object({ kind: z.enum(BLOCKER_KINDS), detail: z.string().min(1) }).strict(),
+      sourceUses: z.array(SourceUseSchema).nullable()
+    })
+    .strict(),
+  z
+    .object({
+      schemaVersion,
+      status: z.literal('needs_ruling'),
+      summary,
+      rulingRequest: z.object({ question: z.string().min(1), decisions: z.array(z.string().min(1)) }).strict(),
+      sourceUses: z.array(SourceUseSchema).nullable()
+    })
+    .strict()
+])
 
 /** The structured output the provider is asked for: the union under one root key (see the module comment). */
 export const DeveloperTurnOutputSchema = z.object({ turnResult: DeveloperTurnResultSchema }).strict()
@@ -204,7 +238,7 @@ export function semanticErrors(result: DeveloperTurnResult, context: DeveloperTu
       errors.push(`confidenceExplanation: longer than ${CONFIDENCE_REASON_MAX_LENGTH} characters`)
     }
     if (context.requiredSources.length > 0) {
-      const reported = new Set(result.sourceUses.map((u) => u.source))
+      const reported = new Set((result.sourceUses ?? []).map((u) => u.source))
       for (const source of context.requiredSources) {
         if (!reported.has(source))
           errors.push(

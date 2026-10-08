@@ -231,7 +231,7 @@ function completedResult(
     confidence: 80,
     confidenceExplanation: 'fine',
     addressedFindingIds: [],
-    sourceUses: [],
+    sourceUses: null,
     reportedChecks: null,
     ...fields
   }

@@ -482,6 +482,19 @@ describe('devReviewLoop — --resume with a different --agent continues the task
     expect(world.prBody).toContain('**For:** [model] (coding-agent CLI on a dev machine)')
   })
 
+  it('writes a sole Developer model to a new pull request header', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    const body = PR_BODY(world.task)
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex', model: 'gpt-5.6-terra' },
+      developerPublishesViaToolsDeps(world, { body })
+    )
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    expect(world.prOpens[0]?.body).toContain('**For:** `gpt-5.6-terra` (round `1` on)')
+    expect(world.prOpens[0]?.body).toContain('**For:** [model] (coding-agent CLI on a dev machine)')
+  })
+
   it('does not carry the old vendor’s model over when no model is named', async () => {
     const { world, seen, deps } = await pausedOnCodex()
     await runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude' }, deps)
@@ -509,9 +522,10 @@ describe('devReviewLoop — --resume with a different --agent continues the task
     expect(pauseComment.body).not.toContain('--agent codex')
   })
 
-  it('resuming without --agent, or with the same agent, keeps the recorded agent and model and leaves the body alone', async () => {
+  it('resuming without --agent, or with the same agent, does not rewrite an already matching model line', async () => {
     for (const input of [{}, { agent: 'codex' as const }]) {
       const { world, seen, deps } = await pausedOnCodex()
+      world.prBody = withDeveloperModelsLine(world.prBody, [{ model: 'gpt-5.6-terra', firstRound: 1, lastRound: 1 }])
       const bodyBefore = world.prBody
       const resumed = await runLoopInProcess(world, { resumePr: world.prNumber, ...input }, deps)
       expect(resumed.finalDecision).toEqual({ type: 'publish' })

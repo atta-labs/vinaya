@@ -70,8 +70,11 @@ describe('DeveloperTurnResult — valid examples of every variant', () => {
     const minimal = { ...completed, reportedChecks: null }
     expect(validateDeveloperTurnResult(wrap(minimal), context).ok).toBe(true)
     expect(
-      validateDeveloperTurnResult(wrap({ ...completed, sourceUses: [] }), { ...context, requiredSources: [] }).ok
+      validateDeveloperTurnResult(wrap({ ...completed, sourceUses: null }), { ...context, requiredSources: [] }).ok
     ).toBe(true)
+    expect(
+      validateDeveloperTurnResult(wrap({ ...completed, sourceUses: [] }), { ...context, requiredSources: [] }).ok
+    ).toBe(false)
   })
 })
 
