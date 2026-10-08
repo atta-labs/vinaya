@@ -10,6 +10,11 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME } from '../principal-test-plan-wait-check-name.js'
+import {
+  BODY_CHECKS_WORKFLOW_PATH,
+  REVIEW_VERDICT_WORKFLOW_PATH,
+  REVIEW_WORKFLOW_PATH
+} from '../managed-workflow-paths.js'
 import { REVIEW_GATE_CHECK_RUN_NAME, REVIEW_GATE_WORKFLOW_NAME } from '../review-gate-check-name.js'
 
 /** Env-overridable, same idiom `dev-review-loop.ts`'s own `gatePollEnvOverride` uses — a fixture needs sub-millisecond backoff, real usage needs real spacing between retries. */
@@ -152,6 +157,8 @@ function fetchMechanicalCheckRuns(headSha: string): RestCheckRun[] | null {
 export type RestWorkflowRun = {
   id: number
   name: string | null
+  /** The workflow file, e.g. `.github/workflows/vinaya-review.yml` — stable, unlike `name`, which GitHub reports as the run's own run name when the workflow sets one. */
+  path?: string | null
   workflow_id: number | null
   status: string
   conclusion: string | null
@@ -166,8 +173,17 @@ export type RestWorkflowRun = {
  * twin, and the body-checks workflow that hosts the principal-test-plan wait
  * (its red is the Principal's own wait; its other jobs still count, as
  * check-runs). Names are the `name:` of the managed workflows `artifacts.ts`
- * generates.
+ * generates. A run is matched by its workflow file first
+ * (`NON_CI_WORKFLOW_PATHS`): the managed review and body-check workflows set a
+ * per-pull-request run name, and GitHub reports that run name as the run's
+ * `name`, so a name alone never matches them.
  */
+export const NON_CI_WORKFLOW_PATHS: readonly string[] = [
+  REVIEW_WORKFLOW_PATH,
+  REVIEW_VERDICT_WORKFLOW_PATH,
+  BODY_CHECKS_WORKFLOW_PATH
+]
+
 export const NON_CI_WORKFLOW_NAMES: readonly string[] = [
   REVIEW_GATE_WORKFLOW_NAME,
   'Vinaya Review Gate (on verdict)',
@@ -187,6 +203,7 @@ export function latestMechanicalWorkflowRuns(runs: readonly RestWorkflowRun[]): 
   const startedAt = (r: RestWorkflowRun): number => Date.parse(r.run_started_at ?? r.created_at ?? '')
   const latest = new Map<string, RestWorkflowRun>()
   for (const run of runs) {
+    if (run.path != null && NON_CI_WORKFLOW_PATHS.includes(run.path)) continue
     if (run.name !== null && NON_CI_WORKFLOW_NAMES.includes(run.name)) continue
     const key = run.workflow_id !== null ? `id:${run.workflow_id}` : `name:${run.name ?? run.id}`
     const seen = latest.get(key)
@@ -228,7 +245,7 @@ export function fetchWorkflowRuns(headSha: string): RestWorkflowRun[] | null {
       `repos/{owner}/{repo}/actions/runs?head_sha=${headSha}&per_page=100`,
       '--paginate',
       '--jq',
-      '.workflow_runs[] | {id, name, workflow_id, status, conclusion, created_at, run_started_at}'
+      '.workflow_runs[] | {id, name, path, workflow_id, status, conclusion, created_at, run_started_at}'
     ])
     return out
       .split('\n')
