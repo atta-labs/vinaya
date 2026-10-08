@@ -284,6 +284,18 @@ and path; neither appears in the normal lifecycle line.
 
 Every driver — `task run` and `dev-review-loop` alike, since `task run` is a thin composition that calls `devReviewLoop` internally for the entire developer/reviewer dispatch — writes its own role-labelled stream to the task's `<runtimeDir>/tasks-execution/<issue>/output/driver.log` (`apps/cli/src/lib/loop-log.ts`). It sits in `output/`, beside the raw agent output, because it is human-readable narration — never a structured event a check reads, and deliberately nowhere near the telemetry outbox. The repo no longer appears in the path: the runtime directory is already per-repository, so two repositories sharing an Issue number still get two files. A new process starts with a timed round record, so relaunches remain visible without a separate line shape. Nothing here ever truncates the file.
 
+An agent's live stream reaches those records through its own translator — `translateClaudeEvent` for Claude Code, `translateCodexEvent` for Codex, `translateGeminiEvent` for Gemini — in `createAgentStreamRenderer` (`apps/cli/src/lib/agent-stream.ts`), which `dispatchRole` calls for each stream line. A shell command's text is a detail record beneath its action, at most twenty lines of four hundred characters each, and every detail is redacted before it reaches the terminal or the file. An event no translator handles falls back to the vendor's old text as a `Working` line with that text beneath it, and is dropped when that text is only an event name such as `item.completed`.
+<!-- AEG:CLAIM: apps/cli/src/lib/agent-stream.ts contains:export function createAgentStreamRenderer( -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:createAgentStreamRenderer( -->
+<!-- AEG:CLAIM: apps/cli/src/lib/loop-log.ts contains:mark: AgentLineMark = 'working' -->
+<!-- AEG:CLAIM: apps/cli/src/lib/agent-line.ts contains:export function renderNarratedUpdate( -->
+<!-- AEG:CLAIM: apps/cli/src/lib/agent-stream.ts contains:const TRANSLATORS = { claude: translateClaudeEvent, codex: translateCodexEvent, gemini: translateGeminiEvent } as const -->
+<!-- AEG:CLAIM: apps/cli/src/lib/agent-stream.ts contains:const DETAIL_LINES_MAX = 20 -->
+<!-- AEG:CLAIM: apps/cli/src/lib/agent-stream.ts contains:const DETAIL_LINE_MAX = 400 -->
+<!-- AEG:CLAIM: apps/cli/src/lib/agent-stream.ts contains:isEventName(rendered[0] ?? '') -->
+<!-- AEG:CLAIM: apps/cli/src/lib/agent-stream.ts contains:return [{ words: 'Working', mark: 'working', details: textLines(rendered.join('\n'), ctx) }] -->
+<!-- AEG:CLAIM: apps/cli/src/lib/loop-log.ts contains:redact(detail, homedir()) -->
+
 `dispatchRole` (`apps/cli/src/lib/dispatch.ts`) writes agent and lifecycle records to it: when the loop names a `roleLogPath` in its `DispatchOpts`, the shared renderer mirrors each primary and detail line in its plain, redacted file form alongside the per-dispatch raw-byte tee. The raw tee retains its dispatch-specific filename; the readable lifecycle line does not expose that identifier or path.
 
 `vinaya task status <tranche> <n> --follow` (and `--issue <n> --follow`) tails this file live, `tail -f` style (`followLoopLog`, `loop-log.ts`): it prints whatever the file already holds, then polls for growth and prints only the new bytes, indefinitely — a file that does not exist yet (no driver has ever run) is simply polled until it appears, never refused. `--issue <n>` names the Issue directly; the `<tranche> <n>` form resolves it through the same read the ordinary single-task status view already uses. Either way, the state of any run is one command away, regardless of where it was launched.
