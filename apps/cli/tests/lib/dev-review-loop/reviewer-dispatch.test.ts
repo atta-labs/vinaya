@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   DEFAULT_REVIEW_POLICY,
@@ -28,6 +28,7 @@ import {
   makeInSurfacePredicate,
   parseChangedLines,
   parseFindingLocation,
+  relocateStagedPrBodyFinding,
   persistManifestRecord,
   renderReviewerDispatchPrompt,
   renderReviewerPrompt,
@@ -38,6 +39,7 @@ import {
   touchesAgentConfig,
   writeHeldVerdict
 } from '../../../src/lib/dev-review-loop/reviewer-dispatch'
+import { reviewerCandidateInputPaths } from '../../../src/lib/dev-review-loop/reviewer-isolation'
 import type {
   ReviewerPromptFacts,
   ReviewerPromptPiece,
@@ -443,6 +445,15 @@ describe('renderReviewerDispatchPrompt — carries the role doctrine as a fact',
     expect(prompt.indexOf('YOUR ROLE DOCTRINE')).toBeLessThan(prompt.indexOf('Write your findings to'))
   })
 
+  it('tells both roles an unmet objective goes to objectives.txt with code or test evidence, never only a body finding', () => {
+    for (const role of ['reviewer', 'security'] as const) {
+      const prompt = renderReviewerDispatchPrompt(role, FACTS, '/tmp/work', null)
+      expect(prompt).toContain(
+        'An objective you find unmet is reported as NOT MET in objectives.txt with code or test evidence — never only as a finding on the pull request body'
+      )
+    }
+  })
+
   it('labels the block for the security reviewer when the role is security (O1)', () => {
     const prompt = renderReviewerDispatchPrompt(
       'security',
@@ -658,6 +669,34 @@ describe('deferral helpers (O2/O3)', () => {
     expect(pred('x.ts:99')).toBe(false)
     expect(pred('x.ts')).toBe(true) // file-level on a changed file
     expect(pred('other.ts:1')).toBe(false) // file never changed
+  })
+
+  it('relocateStagedPrBodyFinding moves only the staged body file to PR body, keeping severity and description', () => {
+    const stagedBody = reviewerCandidateInputPaths('/scratch/reviewer').prBody
+    const staged = relative('/scratch/reviewer', stagedBody)
+    expect(relocateStagedPrBodyFinding({ severity: 'BLOCKER', location: `${stagedBody}:3`, description: 'd' })).toEqual(
+      {
+        severity: 'BLOCKER',
+        location: 'PR body:3',
+        description: 'd'
+      }
+    )
+    expect(relocateStagedPrBodyFinding({ severity: 'MAJOR', location: staged, description: 'd' }).location).toBe(
+      'PR body'
+    )
+    expect(
+      relocateStagedPrBodyFinding({ severity: 'MAJOR', location: `${basename(stagedBody)}:1`, description: 'd' })
+        .location
+    ).toBe('PR body:1')
+    // a real file stays a real file — a pr-body-*.md fixture, a comment-named
+    // test, or a same-named file in some other directory
+    for (const location of [
+      'apps/cli/tests/fixtures/pr-body-473.md:1',
+      'apps/cli/tests/commands/pr-create-brief-comment.test.ts:4',
+      `docs/${basename(stagedBody)}:2`
+    ]) {
+      expect(relocateStagedPrBodyFinding({ severity: 'MAJOR', location, description: 'd' }).location).toBe(location)
+    }
   })
 
   it('makeInSurfacePredicate uses globCoversPath over the finding file', () => {
