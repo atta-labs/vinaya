@@ -321,6 +321,28 @@ export function fetchIssueRulings(issueNumber: number): string[] {
   return filterPrincipalRulings(fetchIssueComments(issueNumber, 'fetchIssueRulings'), principalAllowlist())
 }
 
+/**
+ * The Principal rulings on Issue `issueNumber` posted AFTER its newest frozen
+ * brief — what a Developer dispatch made before any pull request exists is
+ * handed. A ruling answers the brief it was posted under, so one posted before
+ * a superseding brief is left out. Which rulings count is decided by comment
+ * order against the newest frozen brief comment, never by time stamps: the
+ * Issue's comments are read once, and `resolveNewestFrozenBrief` and
+ * `filterPrincipalRulings` (same allowlist, same parser as every other reader)
+ * are composed over that one read. An Issue with no frozen brief yields every
+ * ruling it carries.
+ */
+export function fetchIssueRulingsAfterBrief(issueNumber: number): string[] {
+  return rulingsAfterNewestBrief(fetchIssueComments(issueNumber, 'fetchIssueRulingsAfterBrief'), principalAllowlist())
+}
+
+/** Pure: the principal rulings among `comments` that follow the newest frozen brief comment, in comment order — every ruling when there is no brief. */
+export function rulingsAfterNewestBrief(comments: readonly MarkerComment[], allowlist: readonly string[]): string[] {
+  const brief = resolveNewestFrozenBrief(comments, allowlist)
+  const briefIndex = brief === null ? -1 : comments.findIndex((c) => c.body === brief.body && c.author === brief.author)
+  return filterPrincipalRulings(comments.slice(briefIndex + 1), allowlist)
+}
+
 /** The newest principal ruling ordinal on Issue `issueNumber` — `0` when none. `fetchNewestRulingOrdinal`'s Issue-target counterpart; see `fetchIssueRulings`. */
 export function fetchNewestIssueRulingOrdinal(issueNumber: number): number {
   return newestPrincipalRulingOrdinal(

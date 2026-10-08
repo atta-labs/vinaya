@@ -148,6 +148,7 @@ import {
   fetchDeveloperStop,
   fetchFrozenBrief,
   fetchIssueRulings,
+  fetchIssueRulingsAfterBrief,
   fetchIssueTitle,
   fetchNewestIssueRulingAuthor,
   fetchNewestIssueRulingOrdinal,
@@ -419,6 +420,8 @@ export type LoopDeps = {
   fetchNewestIssueRulingOrdinal: typeof fetchNewestIssueRulingOrdinal
   /** The principal rulings on the TASK ISSUE, and the newest one's author — what `--resume` reads for a pause recorded before any pull request existed and bound to one since (`escalationPrOf`), whose ruling was posted where its own comment went. */
   fetchIssueRulings: typeof fetchIssueRulings
+  /** The TASK ISSUE's principal rulings posted after its newest frozen brief — what a Developer dispatch made before any pull request exists (and a resume of a pause bound to one since) carries. */
+  fetchIssueRulingsAfterBrief: typeof fetchIssueRulingsAfterBrief
   fetchNewestIssueRulingAuthor: typeof fetchNewestIssueRulingAuthor
   fetchFrozenBrief: typeof fetchFrozenBrief
   resolveIssueObjectives: typeof resolveIssueObjectives
@@ -2112,6 +2115,7 @@ function defaultDeps(): LoopDeps {
     fetchNewestRulingAuthor,
     fetchNewestIssueRulingOrdinal,
     fetchIssueRulings,
+    fetchIssueRulingsAfterBrief,
     fetchNewestIssueRulingAuthor,
     fetchFrozenBrief,
     resolveIssueObjectives,
@@ -2386,6 +2390,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   let agentSwitched = false
   /** O8: true when `--resume` found the head already moved past the pause-time head — a ruling followed by a fix push, the normal case. Widens `firstPass` below so the loop skips redispatching the developer (it already acted) and goes straight to the gate/reviewer path on the new head. */
   let resumeHeadAlreadyMoved = false
+  /** True when `--resume` continues a pause raised before the pull request existed and bound to it since: its ruling is on the task Issue (`escalationPrOf`), so the next Developer dispatch on the pull request is handed the Issue's rulings after the frozen brief. */
+  let issueRulingsOwed = false
 
   if ('resumePr' in input) {
     const resumePr = input.resumePr
@@ -2426,6 +2432,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
     /** The pull request this pause's escalation and ruling belong to — `null` for a pause bound after it was raised, whose ruling is on the task Issue. */
     const escalationPr = escalationPrOf(held)
+    issueRulingsOwed = escalationPr === null
     if (held.agent !== undefined && !isAgentVendor(held.agent)) {
       throw new Error(`devReviewLoop --resume: held pause state carries invalid agent '${held.agent}'.`)
     }
@@ -4584,18 +4591,38 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // driver-run tools (`publish_changes`, `open_pull_request`, …), which run
     // IN THE DRIVER, outside the sandbox. These resume prompts ask the
     // Developer to (re)do its work and publish it through those same tools.
+    /**
+     * The Principal rulings posted on the task Issue after its newest frozen
+     * brief, as the one rulings block a pull-request resume also prompts with
+     * — or `null` when there are none. A dispatch made before any pull request
+     * exists is continued by a ruling posted on the Issue, so every such
+     * prompt carries it.
+     */
+    function issueRulingsBlock(): string | null {
+      const rulings = d.fetchIssueRulingsAfterBrief(task)
+      return rulings.length === 0
+        ? null
+        : `Principal ruling on this pause:\n\n${rulings.map((r, i) => `${i + 1}. ${r}`).join('\n')}\n`
+    }
+
     function pushAndOpenPrompt(): string {
       return [
         'Your previous turn left no commit on this branch yet, and no open pull request.',
+        issueRulingsBlock(),
         `Per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`): ${publishingInstructionLine()}`
-      ].join('\n\n')
+      ]
+        .filter((part): part is string => part !== null)
+        .join('\n\n')
     }
 
     function openPrPrompt(): string {
       return [
         'This branch is pushed but has no open pull request yet.',
+        issueRulingsBlock(),
         `Per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`): ${publishingInstructionLine()}`
-      ].join('\n\n')
+      ]
+        .filter((part): part is string => part !== null)
+        .join('\n\n')
     }
 
     /** Mid-round unpushed-work resume — distinct from `pushAndOpenPrompt` (round-1 entry, no head at all yet): this branch already has commits on the remote, the developer's LATEST turn just left work the driver could not publish. Names the pre-push hook's own refusal (O4) when one is pending. */
@@ -5741,6 +5768,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             const round1Prompt = [
               developerDoctrine ? renderDeveloperDoctrineBlock(developerDoctrine) : null,
               `When your work is ready, ${publishingInstructionLine()}`,
+              issueRulingsBlock(),
               turnResultInstruction(round),
               brief
             ]
@@ -6277,6 +6305,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 handoff.map((f) => f.id)
               )
             const prompt = [
+              // A resumed pause that was raised before the pull request existed
+              // keeps its ruling on the task Issue: the first Developer dispatch
+              // after it carries that ruling ahead of whatever the round asks.
+              issueRulingsOwed ? issueRulingsBlock() : null,
               conflictFiles !== null
                 ? renderConflictPrompt(conflictFiles)
                 : resumedDispatch
@@ -6319,6 +6351,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             roundStartMs = d.now()
             await dispatchDeveloper(prompt, round, { answersFindings: isReviewFindingsRetry })
             resumedDispatch = false
+            issueRulingsOwed = false
 
             // A turn whose last publication attempt a driver tool refused
             // has no push coming: one read of the head (the poll's first
