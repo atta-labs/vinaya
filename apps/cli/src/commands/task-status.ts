@@ -21,6 +21,7 @@
  * `loopLogPathFor`/`followLoopLog` for `--follow`, are the entire reader.
  */
 
+import { StringDecoder } from 'node:string_decoder'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { printJson } from '../lib/envelope.js'
 import { followLoopLog, loopLogPathFor } from '../lib/loop-log.js'
@@ -114,11 +115,25 @@ function resolveFollowIssue(parsed: ParsedArgs): number {
   return result.row.issue
 }
 
+const DETAIL_RECORD = /^\S+ {2}· /
+
+/** Writes only the file's primary lines: a detail record (`<ISO time>  · <text>`) is dropped, a trailing partial line waits for its newline (the log appends whole lines), and multibyte characters split across chunks stay whole. */
+export function quietLogWriter(write: (text: string) => void): (chunk: Buffer) => void {
+  const decoder = new StringDecoder('utf8')
+  let pending = ''
+  return (chunk) => {
+    const lines = (pending + decoder.write(chunk)).split('\n')
+    pending = lines.pop() ?? ''
+    const kept = lines.filter((line) => !DETAIL_RECORD.test(line))
+    if (kept.length > 0) write(`${kept.join('\n')}\n`)
+  }
+}
+
 async function runFollow(parsed: ParsedArgs): Promise<void> {
   const issue = resolveFollowIssue(parsed)
   const repo = await resolveRepo().catch(() => null)
   const path = loopLogPathFor(repo, issue)
-  await followLoopLog(path, { quiet: parsed.quiet })
+  await followLoopLog(path, parsed.quiet ? { write: quietLogWriter((text) => void process.stdout.write(text)) } : {})
 }
 
 export async function taskStatusCommand(args: string[]): Promise<void> {

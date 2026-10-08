@@ -329,7 +329,7 @@ An agent's live stream reaches those records through its own translator — `tra
 `--follow --quiet` prints the same file without its detail records, so a reader sees the primary lines — actions, failures, rounds — only. `vinaya task run --quiet` sets `VINAYA_LOG_QUIET` to `1` for the run, which hides the detail lines on the live terminal; the driver log file receives the same detail records either way, because the flags choose only what a reader sees. Both are plain switches with no value.
 <!-- AEG:CLAIM: apps/cli/src/commands/task-status.ts contains:else if (a === '--quiet') quiet = true -->
 <!-- AEG:CLAIM: apps/cli/src/commands/task-run.ts contains:process.env.VINAYA_LOG_QUIET = '1' -->
-<!-- AEG:CLAIM: apps/cli/src/lib/loop-log.ts contains:const DETAIL_RECORD -->
+<!-- AEG:CLAIM: apps/cli/src/commands/task-status.ts contains:const DETAIL_RECORD -->
 
 ### The action vocabulary a Claude stream is translated into
 
