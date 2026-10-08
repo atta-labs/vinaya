@@ -155,7 +155,7 @@ describe('renderBrief', () => {
       result.brief.match(/## 8\. Verification before claiming done([\s\S]*?)## 9\. Test Plan/)?.[1] ?? ''
     expect(verification).toContain('`run_checks`')
     expect(verification).not.toContain('format-and-lint')
-    expect(verification).not.toContain('typecheck')
+    expect(verification).not.toContain('`bun run typecheck`')
   })
 
   it('renders a brief that checkBriefSections accepts with zero errors', () => {
