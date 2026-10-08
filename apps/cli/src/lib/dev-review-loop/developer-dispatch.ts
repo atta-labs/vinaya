@@ -66,6 +66,7 @@ import {
   enforcementControlsActive
 } from '../enforcement-controls.js'
 import { realLocalGateControl } from '../local-gate-control.js'
+import { ensureRunDir, runPath } from '../run-paths.js'
 import { sh } from './gate-reading.js'
 
 const RULING_MARKER = /^<!-- aeg:principal:ruling:\d+-\d+ -->$/
@@ -1248,4 +1249,96 @@ export function recoverDeveloperLaunch(
     }
   }
   return reconcileLaunch(parsed, { requireContinuity: true, artifactsPresent: opts.artifactsPresent }, deps)
+}
+
+/**
+ * One stretch of a task's Developer turns on one model: the label it ran as
+ * (the requested model, else the agent's name) and the first and last round it
+ * dispatched in. The ordered list is the durable record the pull request's
+ * `**For:**` line is rendered from.
+ */
+export type DeveloperModelRun = { model: string; firstRound: number; lastRound: number }
+
+const DEVELOPER_MODELS_FILE = 'developer-models.json'
+
+export function readDeveloperModelRuns(root: string, task: number): DeveloperModelRun[] {
+  try {
+    const parsed = JSON.parse(
+      readFileSync(runPath(root, task, { area: 'task', file: DEVELOPER_MODELS_FILE }), 'utf8')
+    ) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(
+      (run): run is DeveloperModelRun =>
+        typeof run === 'object' &&
+        run !== null &&
+        typeof (run as DeveloperModelRun).model === 'string' &&
+        Number.isInteger((run as DeveloperModelRun).firstRound) &&
+        Number.isInteger((run as DeveloperModelRun).lastRound)
+    )
+  } catch {
+    return []
+  }
+}
+
+export function writeDeveloperModelRuns(root: string, task: number, runs: readonly DeveloperModelRun[]): void {
+  const path = runPath(root, task, { area: 'task', file: DEVELOPER_MODELS_FILE })
+  ensureRunDir(dirname(path), root)
+  writeFileSync(path, JSON.stringify(runs), 'utf8')
+}
+
+/**
+ * Fold one Developer dispatch into the run list. The same model as the last run
+ * extends it; a different one starts a new run at this round. The first run of
+ * a task always begins at round 1, whatever round the record was first written
+ * in — the turns before it ran on that same model.
+ */
+export function recordDeveloperModelRun(
+  runs: readonly DeveloperModelRun[],
+  model: string,
+  round: number
+): { runs: DeveloperModelRun[]; changed: boolean } {
+  const last = runs[runs.length - 1]
+  if (last === undefined) return { runs: [{ model, firstRound: 1, lastRound: round }], changed: false }
+  if (last.model === model) {
+    return { runs: [...runs.slice(0, -1), { ...last, lastRound: Math.max(last.lastRound, round) }], changed: false }
+  }
+  return { runs: [...runs, { model, firstRound: round, lastRound: round }], changed: true }
+}
+
+/**
+ * The value of the pull request body's `**For:**` line naming every model that
+ * ran the Developer turns with its rounds, e.g. ``claude-opus (rounds 1–2),
+ * codex (round 3 on)``. Every digit sits in a backtick span, the way the body's
+ * bare-digit check requires of a `For:` line.
+ */
+export function renderDeveloperModelsLine(runs: readonly DeveloperModelRun[]): string {
+  const tick = (value: string | number): string => `\`${value}\``
+  return runs
+    .map((run, index) => {
+      const isLast = index === runs.length - 1
+      const rounds = isLast
+        ? `round ${tick(run.firstRound)} on`
+        : run.firstRound === run.lastRound
+          ? `round ${tick(run.firstRound)}`
+          : `rounds ${tick(run.firstRound)}–${tick(run.lastRound)}`
+      return `${/\d/.test(run.model) ? tick(run.model) : run.model} (${rounds})`
+    })
+    .join(', ')
+}
+
+/**
+ * `body` with the header block's own `**For:**` line replaced by the models
+ * line — only a line before the first `##` heading, never the copy of the
+ * brief further down. A body with no such line is returned unchanged.
+ */
+export function withDeveloperModelsLine(body: string, runs: readonly DeveloperModelRun[]): string {
+  if (runs.length === 0) return body
+  const headingAt = body.search(/^##\s/m)
+  const header = headingAt === -1 ? body : body.slice(0, headingAt)
+  const forLine = /^\*\*For:\*\*.*$/m
+  if (!forLine.test(header)) return body
+  return (
+    header.replace(forLine, `**For:** ${renderDeveloperModelsLine(runs)}`) +
+    (headingAt === -1 ? '' : body.slice(headingAt))
+  )
 }
