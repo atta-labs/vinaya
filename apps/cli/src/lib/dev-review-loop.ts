@@ -7844,7 +7844,8 @@ async function watchPauseThenResume(
  * bare-resume budget lasts — then one continuation, the same one `task run`
  * makes: the open pull request on the pause's own branch, if one was opened
  * since, through `--resume` (which binds the pause to it first); the task
- * itself otherwise, for an infrastructure pause only. A pause asking a
+ * itself otherwise, for every automatic-recovery pause (`infrastructure` or
+ * `stale_driver`) still within its retry bound. A pause asking a
  * Principal for a decision, a spent budget, a cancel, or a continuation that
  * throws all end the driver as before (`'unwatched'`) — its Issue comment, or the thrown refusal, names
  * what continues it. Every attempt re-enters under this driver's own lock
