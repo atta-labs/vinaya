@@ -317,4 +317,23 @@ describe('vinaya task status --follow --quiet — quietLogWriter', () => {
     write(bytes.subarray(45))
     expect(out.join('')).toBe('2026-10-08T00:00:00.000Z  > Developer   ▸ go\n')
   })
+
+  it('hides detail lines of both the log form and the terminal copy and keeps every action line', () => {
+    const out: string[] = []
+    const write = quietLogWriter((t) => void out.push(t))
+    const ts = '2026-10-08T00:00:00.000Z'
+    const actions = [`${ts}  > Developer   ▸ go`, '> Developer   ▸ go', `${ts}  ✓ round 1 done`, '✓ round 1 done']
+    const lines = [
+      actions[0],
+      `${ts}  · detail one`,
+      '  · detail one',
+      actions[1],
+      `${ts}  · detail two`,
+      '  · detail two',
+      actions[2],
+      actions[3]
+    ]
+    write(Buffer.from(`${lines.join('\n')}\n`))
+    expect(out.join('').split('\n').filter(Boolean)).toEqual(actions)
+  })
 })

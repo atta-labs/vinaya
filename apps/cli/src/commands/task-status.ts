@@ -115,9 +115,9 @@ function resolveFollowIssue(parsed: ParsedArgs): number {
   return result.row.issue
 }
 
-const DETAIL_RECORD = /^\S+ {2}· /
+const DETAIL_RECORD = /^(?:\S+ {2}| {2})· /
 
-/** Writes only the file's primary lines: a detail record (`<ISO time>  · <text>`) is dropped, a trailing partial line waits for its newline (the log appends whole lines), and multibyte characters split across chunks stay whole. */
+/** Writes only the file's primary lines: a detail record, in the log form (`<ISO time>  · <text>`) or the terminal copy (`  · <text>`), is dropped, a trailing partial line waits for its newline (the log appends whole lines), and multibyte characters split across chunks stay whole. */
 export function quietLogWriter(write: (text: string) => void): (chunk: Buffer) => void {
   const decoder = new StringDecoder('utf8')
   let pending = ''
