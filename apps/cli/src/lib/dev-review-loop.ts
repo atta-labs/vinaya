@@ -7642,6 +7642,16 @@ export type DriverWatchDeps = {
    * `finally` never ran for that exit.
    */
   clearDriverLock: typeof clearDriverLock
+  /** The default branch watermark captured once when this watching driver starts. */
+  gitRevParseOriginMain: typeof defaultGitRevParseOriginMain
+  /** Driver-owned commits between the watcher's start watermark and the current default-branch head. */
+  gitCommitsTouchingDriverPaths: typeof gitCommitsTouchingDriverPaths
+  /** Updates this checkout before a stale watching driver hands the task to a fresh process. */
+  pullDefaultBranch: () => { ok: true } | { ok: false; reason: string }
+  /** Starts the fresh driver after a stale-watcher hand-off; `null` means the spawn did not start. */
+  reexecSelf: (args: string[]) => number | null
+  /** Exits with the fresh driver's code after a successful hand-off. */
+  exitProcess: (code: number) => never
   runtimeDir: () => string
   sleep: (ms: number) => Promise<void>
   /** How often this watcher polls the PR/resolution/ruling while nothing is yet ready — env-overridable (`VINAYA_DEV_REVIEW_LOOP_WATCH_POLL_MS`) for a fast fixture; real usage never needs sub-second spacing. */
@@ -7666,6 +7676,11 @@ function defaultDriverWatchDeps(): DriverWatchDeps {
     readPauseState,
     readResolutionRecord,
     clearDriverLock,
+    gitRevParseOriginMain: defaultGitRevParseOriginMain,
+    gitCommitsTouchingDriverPaths,
+    pullDefaultBranch: defaultPullDefaultBranch,
+    reexecSelf: defaultReexecSelf,
+    exitProcess: (code) => process.exit(code),
     runtimeDir,
     sleep: defaultSleep,
     watchPollIntervalMs: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_WATCH_POLL_MS', 30_000),
@@ -7674,6 +7689,67 @@ function defaultDriverWatchDeps(): DriverWatchDeps {
     now: () => Date.now(),
     findOpenPrForBranch
   }
+}
+
+/**
+ * Before a watcher re-enters this process, hand it to a fresh driver when a
+ * merged driver fix made this process stale. This deliberately runs at the
+ * watcher seam, before `--resume` can consume a newly posted ruling.
+ *
+ * `true` means this watcher must stop: a real hand-off exits this process,
+ * while a failed pull or spawn leaves the existing pause intact rather than
+ * allowing old code to continue it in-process.
+ */
+function handOffStaleWatchingDriver(
+  baseHeadAtStart: string,
+  continuation: LoopInput,
+  task: number,
+  driverLockToken: string,
+  w: DriverWatchDeps
+): boolean {
+  const currentBaseHead = w.gitRevParseOriginMain()
+  if (currentBaseHead === baseHeadAtStart) return false
+  const touching = w.gitCommitsTouchingDriverPaths(baseHeadAtStart, currentBaseHead)
+  if (touching.length === 0) return false
+
+  const args = continuation.agent
+    ? [
+        'dev-review-loop',
+        ...('resumePr' in continuation ? ['--resume', String(continuation.resumePr)] : ['--task', String(task)]),
+        '--agent',
+        continuation.agent,
+        ...(continuation.model ? ['--model', continuation.model] : [])
+      ]
+    : null
+  if (!args) throw new Error('stale watcher hand-off requires a resolved agent')
+
+  const pulled = w.pullDefaultBranch()
+  if (!pulled.ok) {
+    process.stderr.write(
+      `vinaya dev-review-loop: watcher's stale-driver hand-off for task ${task} failed to pull the default branch: ${pulled.reason}; the task remains paused.\n`
+    )
+    return true
+  }
+
+  // Match the in-loop restart: the child needs to acquire the lock before
+  // this process exits. Restore it if spawning did not begin.
+  w.clearDriverLock(w.runtimeDir(), task)
+  const exitCode = w.reexecSelf(args)
+  if (exitCode === null) {
+    writeDriverLock(w.runtimeDir(), task, {
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      token: driverLockToken
+    })
+    process.stderr.write(
+      `vinaya dev-review-loop: watcher's stale-driver hand-off for task ${task} could not start \`vinaya ${args.join(' ')}\`; the task remains paused.\n`
+    )
+    return true
+  }
+  // The production implementation never returns from this call. The return
+  // keeps injected test exits from falling through to an old-code resume.
+  w.exitProcess(exitCode)
+  return true
 }
 
 /**
@@ -7708,8 +7784,11 @@ async function watchPauseThenResume(
   loopDeps: Partial<LoopDeps>,
   w: DriverWatchDeps,
   driverLockToken: string,
-  rateLimitBudget: RateLimitResumeBudget
-): Promise<{ kind: 'ended'; reason: DriverEndReason } | { kind: 'result'; result: LoopResult }> {
+  rateLimitBudget: RateLimitResumeBudget,
+  baseHeadAtStart: string
+): Promise<
+  { kind: 'ended'; reason: DriverEndReason } | { kind: 'result'; result: LoopResult } | { kind: 'unwatched' }
+> {
   const { prNumber, task } = pauseResult
   const reason = pauseResult.finalDecision.type === 'pause' ? pauseResult.finalDecision.reason : undefined
   let isBoundedRetry = reason === 'infrastructure' || reason === 'stale_driver'
@@ -7812,12 +7891,17 @@ async function watchPauseThenResume(
       watchReadOrFallback('newest ruling ordinal', () => w.fetchNewestRulingOrdinal(prNumber), baselineOrdinal) >
       baselineOrdinal
     if (readyForBareRetry || readyForRuling) {
+      const continuation: LoopInput = {
+        resumePr: prNumber,
+        ...(agent !== undefined && isAgentVendor(agent) ? { agent } : {}),
+        ...(model ? { model } : {})
+      }
+      if (handOffStaleWatchingDriver(baseHeadAtStart, continuation, task, driverLockToken, w))
+        return { kind: 'unwatched' }
       try {
         const result = await w.devReviewLoop(
           {
-            resumePr: prNumber,
-            ...(agent !== undefined && isAgentVendor(agent) ? { agent } : {}),
-            ...(model ? { model } : {}),
+            ...continuation,
             // issue-711 O4 (code review round 1, BLOCKER/MEDIUM; round 2,
             // MAJOR/security LOW): this call is the SAME process
             // re-entering the SAME task's driver lock it has held, unbroken
@@ -7888,7 +7972,8 @@ async function watchPrePrPauseThenResume(
   loopDeps: Partial<LoopDeps>,
   w: DriverWatchDeps,
   driverLockToken: string,
-  rateLimitBudget: RateLimitResumeBudget
+  rateLimitBudget: RateLimitResumeBudget,
+  baseHeadAtStart: string
 ): Promise<
   { kind: 'ended'; reason: DriverEndReason } | { kind: 'result'; result: LoopResult } | { kind: 'unwatched' }
 > {
@@ -7926,6 +8011,7 @@ async function watchPrePrPauseThenResume(
   const continuation: LoopInput = openPr
     ? { resumePr: openPr.number, agent, ...(model ? { model } : {}) }
     : { task, agent, ...(model ? { model } : {}) }
+  if (handOffStaleWatchingDriver(baseHeadAtStart, continuation, task, driverLockToken, w)) return { kind: 'unwatched' }
   try {
     return {
       kind: 'result',
@@ -7955,6 +8041,11 @@ export async function runDriverLoop(
   watchDeps: Partial<DriverWatchDeps> = {}
 ): Promise<DriverResult> {
   const w: DriverWatchDeps = { ...defaultDriverWatchDeps(), ...watchDeps }
+  // Existing in-process loop fixtures already inject this git read through
+  // LoopDeps. Prefer that seam unless a watcher-specific fake was supplied.
+  if (!watchDeps.gitRevParseOriginMain && loopDeps.gitRevParseOriginMain) {
+    w.gitRevParseOriginMain = loopDeps.gitRevParseOriginMain
+  }
   // issue-711 O4 (code review round 1, BLOCKER; round 2, MAJOR/security
   // LOW): ONE token for this whole driver run, generated once, here, and
   // threaded into EVERY call this run makes (this first one and every
@@ -7964,13 +8055,16 @@ export async function runDriverLoop(
   // no real ownership behind it (a crashed run's pid reissued by the OS to
   // a fresh, unrelated invocation).
   const driverLockToken = randomUUID()
+  // A watcher can pause for a long time. Its watermark belongs to this
+  // process, not module state or each resumed loop entry.
+  const baseHeadAtStart = w.gitRevParseOriginMain()
   const rateLimitBudget: RateLimitResumeBudget = { round: -1, count: 0 }
   let result = await w.devReviewLoop({ ...input, retainDriverLock: driverLockToken }, loopDeps)
   while (result.finalDecision.type === 'pause') {
     const outcome =
       result.prNumber > 0
-        ? await watchPauseThenResume(result, loopDeps, w, driverLockToken, rateLimitBudget)
-        : await watchPrePrPauseThenResume(result, input, loopDeps, w, driverLockToken, rateLimitBudget)
+        ? await watchPauseThenResume(result, loopDeps, w, driverLockToken, rateLimitBudget, baseHeadAtStart)
+        : await watchPrePrPauseThenResume(result, input, loopDeps, w, driverLockToken, rateLimitBudget, baseHeadAtStart)
     // A pause before any pull request that this driver does not (or no
     // longer may) resume by itself ends it here, its Issue comment naming the
     // continuation — the lock is left for the next start to take over, as it

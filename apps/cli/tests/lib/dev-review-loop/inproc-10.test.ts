@@ -25,6 +25,7 @@ import {
   type DriverWatchDeps,
   escalationIdFor,
   type LoopDeps,
+  type LoopInput,
   type LoopResult,
   resolveEscalation,
   runDriverLoop
@@ -82,10 +83,9 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
           lockNamedThisProcessOnEveryTick.push(lock !== null && lock.pid === process.pid)
 
           if (sleepCalls === 1) {
-            // Code review round 1 (BLOCKER): a genuinely SEPARATE driver
-            // process for the SAME task, arriving while this one still
-            // watches, is refused — simulated by naming a provably alive,
-            // genuinely different pid (`process.ppid`) on the lock file,
+            // Code review round 1 (BLOCKER): another owner for the SAME task
+            // arriving while this one still watches is refused — simulated
+            // with this live pid but without this run's ownership token,
             // then calling `devReviewLoop` fresh exactly as a second
             // `task run`/`dev-review-loop --task` would. This driver's own
             // real lock (pid + token) is captured first so it can be
@@ -93,9 +93,9 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
             // is precisely about that token mattering, so this test must
             // never lose it either.
             const ownLock = readDriverLock(world.runtimeDir, world.task)
-            writeDriverLock(world.runtimeDir, world.task, { pid: process.ppid, startedAt: new Date(0).toISOString() })
+            writeDriverLock(world.runtimeDir, world.task, { pid: process.pid, startedAt: new Date(0).toISOString() })
             await expect(runLoopInProcess(world, { task: world.task, agent: 'claude' })).rejects.toThrow(
-              new RegExp(`a driver is already running \\(pid ${process.ppid}`)
+              new RegExp(`a driver is already running \\(pid ${process.pid}`)
             )
             // Restores this driver's own lock — the state it actually
             // still owns, token included — before letting the watch
@@ -427,6 +427,87 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
     // Never entered the watch loop — no additional poll/backoff wait beyond
     // whatever this pre-PR path itself needed (none).
     expect(world.dispatchCountByRole['code-reviewer']).toBeUndefined()
+  })
+})
+
+describe('runDriverLoop — issue-1194 stale watching-driver hand-off', () => {
+  function pausedWatchHarness(driverChanged: boolean, reexecResult: number | null = 0) {
+    const calls: LoopInput[] = []
+    const reexecArgs: string[][] = []
+    let ordinal = 0
+    const pause: LoopResult = {
+      finalDecision: { type: 'pause', reason: 'escalation', detail: 'awaiting a ruling' },
+      prNumber: 42,
+      task: 1165
+    }
+    const watch: Partial<DriverWatchDeps> = {
+      devReviewLoop: async (input) => {
+        calls.push(input)
+        return calls.length === 1 ? pause : { finalDecision: { type: 'publish' }, prNumber: 42, task: 1165 }
+      },
+      fetchPrState: () => 'OPEN',
+      fetchNewestRulingOrdinal: () => ordinal,
+      readPauseState: () => ({
+        task: 1165,
+        round: 1,
+        head: 'head',
+        branch: 'task/issue-1165',
+        prNumber: 42,
+        reason: 'escalation',
+        detail: 'awaiting a ruling',
+        pausedAt: new Date(0).toISOString(),
+        agent: 'claude',
+        model: 'gpt-5.6'
+      }),
+      readResolutionRecord: () => null,
+      sleep: async () => {
+        ordinal = 1
+      },
+      gitRevParseOriginMain: (() => {
+        let reads = 0
+        return () => (++reads === 1 ? 'start' : driverChanged ? 'new-driver-code' : 'start')
+      })(),
+      gitCommitsTouchingDriverPaths: () => (driverChanged ? ['apps/cli/src/lib/dev-review-loop.ts'] : []),
+      pullDefaultBranch: () => ({ ok: true }),
+      reexecSelf: (args) => {
+        reexecArgs.push(args)
+        return reexecResult
+      },
+      exitProcess: (() => undefined) as never,
+      clearDriverLock: () => {},
+      runtimeDir: () => '/nonexistent',
+      watchPollIntervalMs: 0,
+      infrastructureBackoffMs: 0,
+      readRateLimitReset: async () => null,
+      now: () => 0,
+      findOpenPrForBranch: () => null
+    }
+    return { calls, reexecArgs, watch }
+  }
+
+  it('hands a new ruling to a fresh --resume driver before it is consumed', async () => {
+    const h = pausedWatchHarness(true)
+    const result = await runDriverLoop({ task: 1165, agent: 'claude' }, {}, h.watch)
+    expect(result.finalDecision.type).toBe('pause')
+    expect(h.calls).toHaveLength(1)
+    expect(h.reexecArgs).toEqual([['dev-review-loop', '--resume', '42', '--agent', 'claude', '--model', 'gpt-5.6']])
+  })
+
+  it('continues in process when no driver-owned commit landed', async () => {
+    const h = pausedWatchHarness(false)
+    const result = await runDriverLoop({ task: 1165, agent: 'claude' }, {}, h.watch)
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    expect(h.calls).toHaveLength(2)
+    expect(h.reexecArgs).toEqual([])
+  })
+
+  it('keeps the task paused when the fresh-driver pull fails', async () => {
+    const h = pausedWatchHarness(true)
+    h.watch.pullDefaultBranch = () => ({ ok: false, reason: 'network unavailable' })
+    const result = await runDriverLoop({ task: 1165, agent: 'claude' }, {}, h.watch)
+    expect(result.finalDecision.type).toBe('pause')
+    expect(h.calls).toHaveLength(1)
+    expect(h.reexecArgs).toEqual([])
   })
 })
 
