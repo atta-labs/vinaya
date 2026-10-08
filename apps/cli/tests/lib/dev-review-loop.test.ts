@@ -5090,8 +5090,7 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
       // this process's own stderr.
       const driverLog = readFileSync(join(sweepRunDir(home), 'output', 'driver.log'), 'utf8')
       expect(driverLog).toMatch(/# Loop\s+run started/)
-      expect(driverLog).toMatch(/\bLoop\s+sweep — running/)
-      expect(r.stderr).toContain('vinaya dev-review-loop: sweep — running')
+      expect(driverLog).not.toContain('sweep — running')
 
       // The sweep genuinely ran to completion (not merely skipped) — the
       // other, unrelated finished folder it found is gone.
@@ -5102,8 +5101,10 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
       // one), so the excluded task's own decision lands first as `[1/2]`
       // (no forge lookup needed) and the removal lands last as `[2/2]`,
       // after the developer's own dispatch line already appears above it.
-      expect(r.stderr).toContain('sweep — [1/2] kept Issue #9001')
-      expect(r.stderr).toContain('sweep — [2/2] removed Issue #8001')
+      // O4: one summary line, never one line per swept item.
+      expect(r.stderr).toContain('Sweep finished: removed 1 finished task folder, kept 1.')
+      expect(r.stderr).not.toContain('Issue #8001')
+      expect(driverLog).toMatch(/\bLoop\s+Sweep finished: removed 1 finished task folder, kept 1\./)
     },
     45000
   )
@@ -5137,8 +5138,7 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
       // immediately before removal, said OPEN — revived. The folder survives.
       expect(existsSync(sweepRunDir(home, 8002))).toBe(true)
       expect(readFileSync(join(home, '.sweep-8002-state-calls'), 'utf8').trim()).toBe('2')
-      expect(r.stderr).toContain('kept Issue #8002')
-      expect(r.stderr).toContain('open — Issue #8002 open, no pull request yet')
+      expect(r.stderr).toContain('Sweep finished: removed 0 finished task folders, kept 2.')
     },
     80_000
   )

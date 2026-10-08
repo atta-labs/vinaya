@@ -625,6 +625,21 @@ describe('sweepModernTasksAsync — task worktrees under .worktrees/', () => {
     expect(report.removed[0]?.reason).toContain('PR #9 is merged')
   })
 
+  it('marks a finished worktree whose removal threw as failed, and no other decision', async () => {
+    const root = tempDir('vinaya-sweep-wt-failed-')
+    const { deps } = asyncDeps(root, {
+      listWorktrees: async () => ({ main: MAIN, entries: [wt('task/issue-1'), wt('task/issue-2')] }),
+      fetchPrForBranch: async () => merged(),
+      removeWorktree: async (_main, path) => {
+        if (path.endsWith('issue-1')) throw new Error('disk busy')
+      }
+    })
+    const decisions: { folder: string; removed: boolean; failed?: boolean }[] = []
+    await sweepModernTasksAsync(undefined, (d) => decisions.push(d), deps)
+    expect(decisions.find((d) => d.folder.endsWith('issue-1'))).toMatchObject({ removed: false, failed: true })
+    expect(decisions.find((d) => d.folder.endsWith('issue-2'))?.failed).toBeUndefined()
+  })
+
   it('reads the branch from the worktree list, never from the folder name', async () => {
     const root = tempDir('vinaya-sweep-wt-name-')
     const asked: string[] = []
