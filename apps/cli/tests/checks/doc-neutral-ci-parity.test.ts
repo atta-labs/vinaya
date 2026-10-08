@@ -61,18 +61,27 @@ function repoWithFiredBinding(codeEdit: string): { dir: string; base: string } {
   return { dir, base }
 }
 
-/** Run the blocking check through its public runner, as the commit hook does. */
+/** Run the blocking check through its public runner in a hook's command mode. */
 async function runBlockingCheckThroughRunner(
   dir: string,
   base: string,
-  gitIndexFile: string
+  gitIndexFile: string,
+  commitHook = true
 ): Promise<{ code: number; stderr: string }> {
-  const proc = Bun.spawn(['bun', join(REPO_ROOT, 'apps/cli/src/index.ts'), 'check', 'doc-coverage'], {
-    cwd: dir,
-    env: { ...process.env, BASE_SHA: base, GIT_INDEX_FILE: gitIndexFile, PR_NUMBER: '' },
-    stdout: 'pipe',
-    stderr: 'pipe'
-  })
+  const proc = Bun.spawn(
+    ['bun', join(REPO_ROOT, 'apps/cli/src/index.ts'), 'check', 'doc-coverage', ...(commitHook ? ['--skip-full'] : [])],
+    {
+      cwd: dir,
+      env: {
+        ...process.env,
+        BASE_SHA: base,
+        GIT_INDEX_FILE: gitIndexFile,
+        PR_NUMBER: ''
+      },
+      stdout: 'pipe',
+      stderr: 'pipe'
+    }
+  )
   const stderr = await new Response(proc.stderr).text()
   return { code: await proc.exited, stderr }
 }
@@ -161,10 +170,24 @@ describe('C5 commit-time staged documentation coverage', () => {
     writeFileSync(join(dir, 'docs/x.md'), '# x\n\nUpdated for x = 2.\n')
     git(dir, ['add', 'docs/x.md'])
 
-    // GIT_INDEX_FILE is the hook-only signal. Its staged diff supplements,
+    // The pre-commit-only --skip-full mode plus GIT_INDEX_FILE supplements,
     // rather than replaces, the base...HEAD diff that found src/x.ts.
     const staged = await runBlockingCheckThroughRunner(dir, base, gitIndexFile)
     expect(staged.code).toBe(0)
     expect(staged.stderr).not.toContain('C5 doc-coverage')
+  })
+
+  it('keeps the committed diff at pre-push even when Git supplies an index file', async () => {
+    const { dir, base } = repoWithFiredBinding('export const x = 2\n')
+    const indexPath = git(dir, ['rev-parse', '--git-path', 'index'])
+    const gitIndexFile = join(dir, indexPath)
+    writeFileSync(join(dir, 'docs/x.md'), '# x\n\nStaged but not committed.\n')
+    git(dir, ['add', 'docs/x.md'])
+
+    // Git exports GIT_INDEX_FILE to pre-push too. Without the explicit
+    // pre-commit marker, staged documentation must not satisfy C5.
+    const prePush = await runBlockingCheckThroughRunner(dir, base, gitIndexFile, false)
+    expect(prePush.code).not.toBe(0)
+    expect(prePush.stderr).toContain('docs/x.md')
   })
 })

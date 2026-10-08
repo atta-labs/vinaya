@@ -56,13 +56,11 @@ function changedFiles(base: string): string[] {
     .map((s) => s.trim())
     .filter(Boolean)
 
-  // Git sets GIT_INDEX_FILE while it invokes the commit hook. In that one
-  // context, include the index delta as well as the branch delta: a previous
-  // local commit may have changed governed code and this commit may stage the
-  // owning documentation that completes the pair. Keep the committed
-  // `<base>...HEAD` comparison intact for push and CI, where this variable is
-  // absent.
-  if (!process.env.GIT_INDEX_FILE) return committed
+  // Git sets GIT_INDEX_FILE for both pre-commit and pre-push. Only the
+  // generated pre-commit hook sets VINAYA_COMMIT_HOOK, so use its explicit
+  // marker as well before allowing staged paths to supplement the branch
+  // diff. Push and CI therefore retain the committed `<base>...HEAD` view.
+  if (process.env.VINAYA_COMMIT_HOOK !== '1' || !process.env.GIT_INDEX_FILE) return committed
 
   const staged = git(['diff', '--cached', '--name-only'])
     .split('\n')
