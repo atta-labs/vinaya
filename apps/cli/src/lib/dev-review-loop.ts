@@ -3650,12 +3650,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         .join('\n\n')
     }
 
-    /**
-     * Folds this dispatch's model into the task's run list and keeps the open
-     * pull request's `**For:**` line naming every model that has run.
-     * Idempotent, so a body write that failed once is retried by the next
-     * dispatch; a failure never stops the turn.
-     */
     async function recordDeveloperModel(roundNum: number): Promise<void> {
       const recorded = recordDeveloperModelRun(
         readDeveloperModelRuns(root, task),
@@ -4167,7 +4161,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     function buildDeveloperDevToolContext(roundNum: number): DevToolContext {
       const worktree = worktreePathForBranch()
       const prNumberNow = (): number | null => d.findOpenPrForBranch(branch)?.number ?? null
-      /** Every Developer model run, including a single model for the `**For:**` line. */
       const modelRuns = (): DeveloperModelRun[] => readDeveloperModelRuns(root, task)
       const issueTitle = (): string => {
         try {
