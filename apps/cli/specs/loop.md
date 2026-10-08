@@ -264,9 +264,27 @@ Every event the loop is about to emit is still checked against its own schema (`
 
 ## The per-task driver log
 
-Every driver — `task run` and `dev-review-loop` alike, since `task run` is a thin composition that calls `devReviewLoop` internally for the entire developer/reviewer dispatch — tees its own role-prefixed stream to one file: the task's own `<runtimeDir>/tasks-execution/<issue>/output/driver.log` (`apps/cli/src/lib/loop-log.ts`). It sits in `output/`, beside the raw agent output, because it is human-readable narration — never a structured event a check reads, and deliberately nowhere near the telemetry outbox. The repo no longer appears in the path: the runtime directory is already per-repository, so two repositories sharing an Issue number still get two files. `devReviewLoop` resolves this path once per run, from the same `repo`/`task` every other per-run path already uses, and writes a `=== run started <ISO time> role=… pid=… run_id=… ===` marker before anything else — the delineation a file spanning several relaunches (a pause, a `--resume`, a stale-driver restart) needs to read as one continuous narration rather than an overwritten one. Nothing here ever truncates the file.
+### Agent-line rendering
 
-`dispatchRole` (`apps/cli/src/lib/dispatch.ts`) is the one place that actually writes to it: when the loop names a `roleLogPath` in its `DispatchOpts`, every lifecycle line it already writes to the terminal (`writeLifecycle` — heartbeats, timeout warnings, the tee-path announcement) and every rendered agent-event line are ALSO mirrored, plainly (no ANSI escape codes — a log file is read later, never through a TTY), into that file — alongside, never instead of, the existing per-dispatch `<runtimeDir>/tasks-execution/<task>/output/<effectId>.log` raw-byte tee.
+Every agent-facing terminal and driver-log record has one primary line: local
+`HH:MM:SS` time in a terminal, ISO time in the file, then a mark, a role label
+and plain words. The fixed marks are `▸`/`>` for working, `✓`/`+` for done,
+`✕`/`x` for failed, `◌`/`~` for waiting, and `◆`/`#` for a round; the first
+form is terminal-only and the ASCII fallback is used for non-terminal output
+and the file. A primary record never embeds a newline.
+
+Agent prose, full commands, and failed-result tails are detail records. They
+are shown beneath their primary record by default and are hidden from the
+terminal when `VINAYA_LOG_QUIET` is `1` or `true`. The driver log always keeps
+them, one ISO-timed `·` record per detail, after redaction. Lifecycle output
+uses the same primary renderer: dispatch emits a short `started` record and,
+when no result has arrived, `waiting <seconds>s…` after ten seconds and then
+at most once per thirty seconds. The raw output file retains the dispatch id
+and path; neither appears in the normal lifecycle line.
+
+Every driver — `task run` and `dev-review-loop` alike, since `task run` is a thin composition that calls `devReviewLoop` internally for the entire developer/reviewer dispatch — writes its own role-labelled stream to the task's `<runtimeDir>/tasks-execution/<issue>/output/driver.log` (`apps/cli/src/lib/loop-log.ts`). It sits in `output/`, beside the raw agent output, because it is human-readable narration — never a structured event a check reads, and deliberately nowhere near the telemetry outbox. The repo no longer appears in the path: the runtime directory is already per-repository, so two repositories sharing an Issue number still get two files. A new process starts with a timed round record, so relaunches remain visible without a separate line shape. Nothing here ever truncates the file.
+
+`dispatchRole` (`apps/cli/src/lib/dispatch.ts`) writes agent and lifecycle records to it: when the loop names a `roleLogPath` in its `DispatchOpts`, the shared renderer mirrors each primary and detail line in its plain, redacted file form alongside the per-dispatch raw-byte tee. The raw tee retains its dispatch-specific filename; the readable lifecycle line does not expose that identifier or path.
 
 `vinaya task status <tranche> <n> --follow` (and `--issue <n> --follow`) tails this file live, `tail -f` style (`followLoopLog`, `loop-log.ts`): it prints whatever the file already holds, then polls for growth and prints only the new bytes, indefinitely — a file that does not exist yet (no driver has ever run) is simply polled until it appears, never refused. `--issue <n>` names the Issue directly; the `<tranche> <n>` form resolves it through the same read the ordinary single-task status view already uses. Either way, the state of any run is one command away, regardless of where it was launched.
 

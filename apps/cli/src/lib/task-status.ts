@@ -312,7 +312,9 @@ export type LoopLogLookup = { repo: LoopLogRepo; loopsRoot: string }
 export type DriverExitReason = 'reexec' | 'error' | 'signal'
 export type DriverExitTrace = { reason: DriverExitReason; lastDecision: string }
 
-const DRIVER_EXITED_LINE = /^\[dev-review-loop\] driver_exited: reason=(reexec|error|signal) last_decision=(.*)$/
+// A rendered role line is `<time>  <mark> Loop   <words>`; anchoring on that shape keeps agent prose that merely contains "Loop driver_exited" from reading as a driver exit.
+const DRIVER_EXITED_LINE =
+  /^(?:\[dev-review-loop\]\s+|\S+\s+[>+x~#▸✓✕◌◆] Loop\s+)driver_exited: reason=(reexec|error|signal) last_decision=(.*)$/
 
 /**
  * The LAST `driver_exited` line in the task's role log — `dev-review-

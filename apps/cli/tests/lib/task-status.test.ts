@@ -815,6 +815,22 @@ describe('deriveLoopState', () => {
     })
   })
 
+  it('ignores agent prose that merely contains a Loop driver_exited phrase', () => {
+    const root = tempDir()
+    writeRunFile(
+      root,
+      TASK,
+      'driver.pid.json',
+      JSON.stringify({ pid: deadPid(), startedAt: '2026-09-10T00:00:00.000Z' })
+    )
+    appendRoleLine(
+      loopLogPathFor(null, TASK, root),
+      'developer',
+      'noted: Loop driver_exited: reason=error last_decision=dispatch_developer'
+    )
+    expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).not.toMatchObject({ kind: 'exited' })
+  })
+
   it('prefers a real published round over a stale driver_exited trace from an earlier, already-superseded crash', () => {
     const root = tempDir()
     // The dead lock and the trace are both from a run superseded by a LATER
