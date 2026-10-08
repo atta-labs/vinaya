@@ -76,13 +76,9 @@ export type DeveloperTurnSchemaContext = Pick<DeveloperTurnContext, 'knownFindin
  * while the controller retains the coverage check for a duplicate source.
  */
 function developerTurnResultSchema(context: DeveloperTurnSchemaContext) {
-  // A brief with no Documentation section has no source uses to report: the
-  // wire contract represents that absence as `null`, rather than an empty
-  // array. Requiring `[]` here rejected otherwise-valid zero-source turns,
-  // which made the loop retry them until its integration fixtures timed out.
   const sourceUses =
     context.requiredSources.length === 0
-      ? z.null()
+      ? z.array(SourceUseSchema).length(0)
       : z
           .array(SourceUseSchema.extend({ source: z.enum(context.requiredSources as [string, ...string[]]) }))
           .length(context.requiredSources.length)
@@ -207,12 +203,13 @@ export type TurnResultValidation =
   | { ok: true; result: DeveloperTurnResult }
   | { ok: false; stage: 'schema' | 'semantic'; errors: string[] }
 
-/** The shape check alone: does `value` match the schema the provider was given? Returns the unwrapped turn result. */
-export function parseDeveloperTurnResult(value: unknown, context: DeveloperTurnSchemaContext): TurnResultValidation {
-  const parsed = z
-    .object({ turnResult: developerTurnResultSchema(context) })
-    .strict()
-    .safeParse(value)
+/**
+ * Providers receive the narrower per-turn schema, while this shape check
+ * accepts the shared representation so semantic diagnostics can name the
+ * missing sources or unexpected findings rather than a generic array bound.
+ */
+export function parseDeveloperTurnResult(value: unknown, _context: DeveloperTurnSchemaContext): TurnResultValidation {
+  const parsed = DeveloperTurnOutputSchema.safeParse(value)
   if (!parsed.success) {
     return {
       ok: false,
@@ -237,8 +234,19 @@ export function semanticErrors(result: DeveloperTurnResult, context: DeveloperTu
     if (result.confidenceExplanation.length > CONFIDENCE_REASON_MAX_LENGTH) {
       errors.push(`confidenceExplanation: longer than ${CONFIDENCE_REASON_MAX_LENGTH} characters`)
     }
-    if (context.requiredSources.length > 0) {
-      const reported = new Set((result.sourceUses ?? []).map((u) => u.source))
+    const reportedUses = result.sourceUses ?? []
+    if (context.requiredSources.length === 0) {
+      if (result.sourceUses === null || reportedUses.length > 0)
+        errors.push('sourceUses: expected an empty list because this turn has no required sources')
+    } else {
+      const required = new Set(context.requiredSources)
+      for (const use of reportedUses) {
+        if (!required.has(use.source))
+          errors.push(
+            `sourceUses: unexpected source ${JSON.stringify(use.source)}; expected sources: ${context.requiredSources.map((value) => JSON.stringify(value)).join(', ')}`
+          )
+      }
+      const reported = new Set(reportedUses.map((u) => u.source))
       for (const source of context.requiredSources) {
         if (!reported.has(source))
           errors.push(

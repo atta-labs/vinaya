@@ -70,11 +70,17 @@ describe('DeveloperTurnResult — valid examples of every variant', () => {
     const minimal = { ...completed, reportedChecks: null }
     expect(validateDeveloperTurnResult(wrap(minimal), context).ok).toBe(true)
     expect(
-      validateDeveloperTurnResult(wrap({ ...completed, sourceUses: null }), { ...context, requiredSources: [] }).ok
-    ).toBe(true)
-    expect(
       validateDeveloperTurnResult(wrap({ ...completed, sourceUses: [] }), { ...context, requiredSources: [] }).ok
-    ).toBe(false)
+    ).toBe(true)
+    const nullSources = validateDeveloperTurnResult(wrap({ ...completed, sourceUses: null }), {
+      ...context,
+      requiredSources: []
+    })
+    expect(nullSources.ok).toBe(false)
+    if (!nullSources.ok)
+      expect(nullSources.errors).toContain(
+        'sourceUses: expected an empty list because this turn has no required sources'
+      )
   })
 })
 
@@ -178,6 +184,20 @@ describe('developerTurnResultJsonSchema', () => {
       for (const value of Object.values(obj)) visit(value)
     }
     visit(schema)
+  })
+
+  it('gives fresh and resumed turns their own source and finding constraints', () => {
+    const fresh = JSON.stringify(
+      developerTurnResultJsonSchema({
+        knownFindingIds: ['R1-CR-1'],
+        requiredSources: ['https://example.com/fresh-source']
+      })
+    )
+    const resumed = JSON.stringify(developerTurnResultJsonSchema({ knownFindingIds: [], requiredSources: [] }))
+    expect(fresh).toContain('https://example.com/fresh-source')
+    expect(fresh).toContain('R1-CR-1')
+    expect(resumed).not.toContain('https://example.com/fresh-source')
+    expect(resumed).toContain('"maxItems":0')
   })
 })
 
@@ -302,10 +322,11 @@ describe('driverVerdict — the adapter boundary', () => {
     const verdict = driverVerdict(readOf(wrap({ ...completed, confidence: 'high' })), PROOF_TURN_CONTEXT)
     expect(verdict.crossed).toBe(false)
   })
-  it('keeps handoff violations from crossing the adapter boundary', () => {
+  it('passes handoff violations to the controller with their specific diagnostics', () => {
     const value = wrap({ ...completed, addressedFindingIds: ['R9-XX-404'], sourceUses: null })
     const verdict = driverVerdict(readOf(value), PROOF_TURN_CONTEXT)
-    expect(verdict).toMatchObject({ crossed: false })
+    expect(verdict).toMatchObject({ crossed: true, accepted: false })
+    if ('errors' in verdict) expect(verdict.errors.join('\n')).toContain('valid finding ids: "R1-CR-1", "R1-SEC-1"')
   })
 })
 
@@ -347,20 +368,24 @@ describe('judgeCase', () => {
       false
     )
   })
-  it('keeps a schema rejection outside controller-rejection cases', () => {
+  it('keeps a controller rejection within controller-rejection cases', () => {
     const value = wrap({ ...completed, addressedFindingIds: ['R9-XX-404'], sourceUses: null })
     const read = readOf(value)
     const verdict = driverVerdict(read, PROOF_TURN_CONTEXT)
-    expect(judgeCase({ kind: 'rejected', error: 'R1-CR-1' }, read, verdict).pass).toBe(false)
+    expect(judgeCase({ kind: 'rejected', error: 'R1-CR-1' }, read, verdict).pass).toBe(true)
     const valid = readOf(proofCompleted('a'))
     expect(
       judgeCase({ kind: 'rejected', error: 'unknown finding id' }, valid, driverVerdict(valid, PROOF_TURN_CONTEXT)).pass
     ).toBe(false)
   })
-  it('refuses a missing source at the schema boundary', () => {
+  it('reports a missing source from the controller with its expected value', () => {
     const missing = readOf(wrap({ ...completed, summary: 'missing-source-n', sourceUses: null }))
     const firstVerdict = driverVerdict(missing, PROOF_TURN_CONTEXT)
-    expect(firstVerdict).toMatchObject({ crossed: false })
+    expect(firstVerdict).toMatchObject({ crossed: true, accepted: false })
+    if ('errors' in firstVerdict)
+      expect(firstVerdict.errors.join('\n')).toContain(
+        'required source "https://code.claude.com/docs/en/cli-reference"'
+      )
   })
   it('passes the malformed case either way nothing malformed crossed, and the no-result cases only with no acceptance', () => {
     const none = readOf(null)

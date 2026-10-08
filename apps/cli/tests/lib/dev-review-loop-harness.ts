@@ -460,7 +460,7 @@ export function completedTurnOutput(
         confidence: fields.confidence ?? 90,
         confidenceExplanation: fields.explanation ?? 'the fixture work is done',
         addressedFindingIds: fields.addressedFindingIds ?? [],
-        sourceUses: null,
+        sourceUses: [],
         reportedChecks: null
       }
     }

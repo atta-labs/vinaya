@@ -118,7 +118,7 @@ describe('judgeTurnOutput — the controller accepts a result (O3)', () => {
   it('requires addressedFindingIds empty in round 1, and non-empty on a turn answering findings (O2)', () => {
     const roundOne = context({ round: 1, knownFindingIds: [], requireAddressedFindings: false })
     expect(failuresOf(output({ ...completed, addressedFindingIds: [] }), roundOne)).toEqual([])
-    expect(failuresOf(output(completed), roundOne).join()).toContain('<=0')
+    expect(failuresOf(output(completed), roundOne).join()).toContain('valid finding ids: (none)')
     expect(failuresOf(output({ ...completed, addressedFindingIds: [] })).join()).toContain(
       'addressedFindingIds: required'
     )
@@ -129,7 +129,9 @@ describe('judgeTurnOutput — the controller accepts a result (O3)', () => {
   })
 
   it('requires a sourceUses entry for every required source on completed, backed by a counted read (O2/O3/O6)', () => {
-    expect(failuresOf(output({ ...completed, sourceUses: [] })).join()).toContain('>=1')
+    expect(failuresOf(output({ ...completed, sourceUses: [] })).join()).toContain(
+      `required source ${JSON.stringify(SOURCE)}`
+    )
     expect(
       failuresOf(output(completed), context({ documentation: { sources: [SOURCE], countedReads: [] } })).join()
     ).toContain('has no counted read')
@@ -536,7 +538,7 @@ describe('devReviewLoop — the Developer turn result in a real round (O1–O4)'
     expect(result.finalDecision.type).toBe('publish')
     const records = recordsOnDisk(world, 1)
     expect(records.map((r) => r.outcome)).toEqual(['rejected', 'accepted'])
-    expect(records[0]!.failures.join()).toContain('<=0')
+    expect(records[0]!.failures.join()).toContain('valid finding ids: (none)')
   })
 
   it('pauses at once, with no correction turn, for a vendor with no native structured output', async () => {
