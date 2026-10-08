@@ -2530,7 +2530,7 @@ describe('terminal colour — role prefix and TTY/NO_COLOR gating (#491)', () =>
     // O1: the rendered line carries the role prefix even off a TTY (only
     // colour is TTY-gated, never the prefix) — and no escape sequence, since
     // `execFileSync`/`spawnSync` pipes are never a live terminal.
-    expect(r.stderr).toMatch(/\d\d:\d\d:\d\d {2}> Developer {3}hello world/)
+    expect(r.stderr).toMatch(/\d\d:\d\d:\d\d {2}> Developer {3}Working\n {2}· hello world/)
     expect(r.stderr).not.toMatch(ANSI_ANY_RE)
 
     // O2: lifecycle output shares the renderer and does not expose the
