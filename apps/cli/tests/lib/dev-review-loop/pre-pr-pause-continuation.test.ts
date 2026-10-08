@@ -362,6 +362,31 @@ describe('runDriverLoop — which pauses recorded before a pull request it watch
     expect(result.finalDecision).toEqual({ type: 'ended', reason: 'cancelled' })
     expect(h.continuations).toEqual([])
   })
+
+  for (const [openPr, expected] of [
+    [null, ['dev-review-loop', '--task', '1165', '--agent', 'claude']] as const,
+    [42, ['dev-review-loop', '--resume', '42', '--agent', 'claude']] as const
+  ]) {
+    it(`hands a stale automatic-recovery pause to a fresh ${openPr === null ? '--task' : '--resume'} driver`, async () => {
+      const h = harness(prePrPause('infrastructure', 'temporary failure'), openPr)
+      const reexecArgs: string[][] = []
+      let reads = 0
+      h.watch.gitRevParseOriginMain = () => (++reads === 1 ? 'start' : 'new-driver-code')
+      h.watch.gitCommitsTouchingDriverPaths = () => ['apps/cli/src/lib/dev-review-loop.ts']
+      h.watch.pullDefaultBranch = () => ({ ok: true })
+      h.watch.reexecSelf = (args) => {
+        reexecArgs.push(args)
+        return 0
+      }
+      h.watch.exitProcess = (() => undefined) as never
+
+      const result = await runDriverLoop({ task: 1165, agent: 'claude' }, {}, h.watch)
+
+      expect(result.finalDecision.type).toBe('pause')
+      expect(h.continuations).toEqual([])
+      expect(reexecArgs).toEqual([[...expected]])
+    })
+  }
 })
 
 describe('ownRepoPrForBranch — the bind and the attach only ever take this repository’s own pull request', () => {
