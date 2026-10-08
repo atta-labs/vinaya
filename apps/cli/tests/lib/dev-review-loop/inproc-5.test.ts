@@ -27,6 +27,7 @@ import {
   handoffIdsInPrompt
 } from '../dev-review-loop-harness.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
+import { rulingsAfterNewestBrief, type MarkerComment } from '../../../src/lib/dev-review-loop/developer-dispatch.js'
 import type { DispatchHandle } from '../../../src/lib/dispatch.js'
 
 afterEach(cleanupWorlds)
@@ -760,6 +761,84 @@ describe("devReviewLoop — the developer's first turn ends with no push at all,
     expect(resumedPrompt).toMatch(/left no commit on this branch yet, and no open pull request/)
     expect(resumedPrompt).toMatch(/publish_changes/)
     expect(resumedPrompt).toMatch(/open_pull_request/)
+  })
+})
+
+// --- a ruling on the task's Issue reaches the Developer before the pull request exists ---
+
+describe("devReviewLoop — a ruling on the task's Issue reaches a pre-pull-request Developer dispatch", () => {
+  const RULING = 'Use the fallback path; do not add a flag.'
+  const RULINGS_BLOCK = `Principal ruling on this pause:\n\n1. ${RULING}`
+
+  it('carries the Issue ruling in a fresh turn, beside the brief it follows', async () => {
+    const world = makeWorld()
+    world.issueRulings = [RULING]
+    const { deps, prompts } = controlledDeveloperDeps(world, { pushAfterCall: 1 })
+    await runLoopInProcessSafe(world, deps, { prPollMaxAttempts: 2, prPollIntervalMs: 5 })
+
+    expect(prompts[0]).toContain(RULINGS_BLOCK)
+    expect(prompts[0]).toContain(world.frozenBrief)
+    // The brief stays the contiguous, final part of the prompt.
+    expect(prompts[0]!.endsWith(world.frozenBrief)).toBe(true)
+  })
+
+  it('carries the Issue ruling in the push-and-open prompt', async () => {
+    const world = makeWorld()
+    world.issueRulings = [RULING]
+    const { deps, prompts } = controlledDeveloperDeps(world, { pushAfterCall: 2 })
+    await runLoopInProcessSafe(world, deps, { prPollMaxAttempts: 2, prPollIntervalMs: 5 })
+
+    expect(prompts[1]).toMatch(/left no commit on this branch yet, and no open pull request/)
+    expect(prompts[1]).toContain(RULINGS_BLOCK)
+  })
+
+  it('carries the Issue ruling in the open-pull-request prompt', async () => {
+    const world = makeWorld({ developerPushed: true })
+    world.issueRulings = [RULING]
+    const { deps, prompts } = controlledDeveloperDeps(world, { openPrAfterCall: 1 })
+    await runLoopInProcessSafe(world, deps)
+
+    expect(prompts[0]).toMatch(/pushed but has no open pull request/)
+    expect(prompts[0]).toContain(RULINGS_BLOCK)
+  })
+
+  it('numbers several rulings and adds no block when there is none', async () => {
+    const world = makeWorld()
+    world.issueRulings = ['first', 'second']
+    const { deps, prompts } = controlledDeveloperDeps(world, { pushAfterCall: 1 })
+    await runLoopInProcessSafe(world, deps, { prPollMaxAttempts: 2, prPollIntervalMs: 5 })
+    expect(prompts[0]).toContain('Principal ruling on this pause:\n\n1. first\n2. second')
+
+    const bare = makeWorld()
+    const bareRun = controlledDeveloperDeps(bare, { pushAfterCall: 2 })
+    await runLoopInProcessSafe(bare, bareRun.deps, { prPollMaxAttempts: 2, prPollIntervalMs: 5 })
+    for (const prompt of bareRun.prompts) expect(prompt).not.toContain('Principal ruling on this pause')
+  })
+})
+
+describe('rulingsAfterNewestBrief — which Issue rulings count', () => {
+  const principal = 'principal-1'
+  const comment = (body: string, author: string | null = principal): MarkerComment => ({ body, author })
+  const ruling = (n: number, text: string, author: string | null = principal) =>
+    comment(`<!-- aeg:principal:ruling:7-${n} -->\n${text}`, author)
+  const brief = (v: number) => comment(`<!-- aeg:brief:v${v} -->\nBrief hash: ab\nBody ${v}`)
+
+  it('delivers the rulings posted after the brief, in comment order', () => {
+    expect(rulingsAfterNewestBrief([brief(1), ruling(1, 'one'), ruling(2, 'two')], [principal])).toEqual(['one', 'two'])
+  })
+
+  it('leaves out a ruling posted before a superseding brief', () => {
+    const comments = [brief(1), ruling(1, 'old'), brief(2), ruling(2, 'new')]
+    expect(rulingsAfterNewestBrief(comments, [principal])).toEqual(['new'])
+    expect(rulingsAfterNewestBrief([brief(1), ruling(1, 'old'), brief(2)], [principal])).toEqual([])
+  })
+
+  it('leaves out a ruling from a non-principal', () => {
+    expect(rulingsAfterNewestBrief([brief(1), ruling(1, 'forged', 'someone-else')], [principal])).toEqual([])
+  })
+
+  it('gives no ruling when the Issue carries none', () => {
+    expect(rulingsAfterNewestBrief([brief(1), comment('just a note')], [principal])).toEqual([])
   })
 })
 

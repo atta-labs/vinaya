@@ -178,6 +178,30 @@ describe('a rate-limit pause recorded before the pull request existed', () => {
     await expectContinuedToRoundTwo(world, held)
   })
 
+  it("hands the Developer the task Issue's ruling when the bound pause resumes on its pull request", async () => {
+    const { world, limit, deps } = strandingWorld()
+    const paused = await runLoopInProcess(world, { task: world.task, agent: 'claude' }, deps)
+    const held = expectPrePrRateLimitPause(world, paused)
+    writeDriverLock(world.runtimeDir, world.task, { pid: EXITED_PID, startedAt: new Date(0).toISOString() })
+    world.prOpened = true
+    limit.active = false
+    // Posted on the Issue after the brief; the pull request carries none.
+    world.issueRulings = ['Prefer the fallback path.']
+    world.rulings = []
+
+    const prompts: string[] = []
+    const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
+      if (role === 'developer') prompts.push(prompt)
+      return deps.dispatchRole!(role, agent, prompt, opts)
+    }
+    await runTask({ issue: world.task, agent: 'claude' }, runTaskDeps(world, { ...deps, dispatchRole }))
+
+    await expectContinuedToRoundTwo(world, held)
+    expect(prompts.some((p) => p.includes('Principal ruling on this pause:\n\n1. Prefer the fallback path.'))).toBe(
+      true
+    )
+  })
+
   it('is watched by the paused driver, which binds it and resumes by itself after the reset; `task run` meanwhile names no dead end', async () => {
     const { world, limit, deps } = strandingWorld()
     const watchSleeps: number[] = []

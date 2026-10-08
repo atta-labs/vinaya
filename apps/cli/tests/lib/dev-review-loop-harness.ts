@@ -151,6 +151,8 @@ export type LoopWorld = {
   objectivesText: string
   sourceRevision: string
   rulings: string[]
+  /** The Principal rulings on the TASK ISSUE posted after its newest frozen brief — what a pre-pull-request dispatch is handed. */
+  issueRulings: string[]
   rulingOrdinal: number
   /** The newest principal ruling ordinal on the TASK ISSUE — the baseline a no-pull-request escalation records, read separately from the pull-request one so a fixture can hold a ruling on one and not the other. */
   issueRulingOrdinal: number
@@ -359,6 +361,7 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     objectivesText: 'O1. Do the thing.',
     sourceRevision: '(none — pre-task-4 frozen brief)',
     rulings: [],
+    issueRulings: [],
     rulingOrdinal: 0,
     issueRulingOrdinal: 0,
     rulingAuthor: null,
@@ -544,6 +547,7 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     fetchFailingCheckRuns: (_head) => world.failingCheckRuns.map((c) => ({ ...c })) as never,
     readFailedCheckLogTail: (jobId) => world.failedCheckLogTails[jobId] ?? null,
     fetchRulings: (_pr) => [...world.rulings],
+    fetchIssueRulingsAfterBrief: (_issue) => [...world.issueRulings],
     fetchNewestRulingOrdinal: (_pr) => world.rulingOrdinal,
     fetchNewestRulingAuthor: (_pr) => world.rulingAuthor,
     fetchNewestIssueRulingOrdinal: (_issue) => world.issueRulingOrdinal,
