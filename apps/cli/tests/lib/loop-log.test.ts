@@ -7,7 +7,8 @@ import {
   appendRoleLine,
   appendRunStartMarker,
   LOOP_LOG_MAX_BYTES,
-  loopLogPathFor
+  loopLogPathFor,
+  narrateDriverEvent
 } from '../../src/lib/loop-log'
 import { devReviewLoop, type LoopDeps } from '../../src/lib/dev-review-loop.js'
 import {
@@ -314,5 +315,120 @@ describe('devReviewLoop — the host attribution set at loop start', () => {
 
     expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
     expect(hostAfterReturn).toBeUndefined()
+  })
+})
+
+describe('appendRunStartMarker — a relaunch', () => {
+  it('reads "Resumed" for a relaunch and "run started" for a first start, with no process or run id', () => {
+    const path = join(tempDir('loop-log-resumed-'), '521.log')
+    appendRunStartMarker(path, { role: 'dev-review-loop', pid: 4242, runId: 'run-abc-123' })
+    appendRunStartMarker(path, { role: 'dev-review-loop', pid: 4243, runId: 'run-abc-124', resumed: true })
+    const lines = readFileSync(path, 'utf8').trim().split('\n')
+    expect(lines[0]).toMatch(/ {2}# Loop {3}run started$/)
+    expect(lines[1]).toMatch(/ {2}# Loop {3}Resumed$/)
+    expect(readFileSync(path, 'utf8')).not.toMatch(/4242|4243|run-abc/)
+  })
+})
+
+describe('narrateDriverEvent', () => {
+  const loopId = 'loop-1'
+  const gate = {
+    kind: 'dev_review_loop',
+    loop_id: loopId,
+    event: 'gate_result_read',
+    round: 2,
+    green: true,
+    confidence_value: 80,
+    extra_turn_spent: true
+  }
+  const ended = {
+    kind: 'dev_review_loop',
+    loop_id: loopId,
+    event: 'round_ended',
+    round: 2,
+    wall_ms: 61000,
+    outcome: 'green'
+  }
+
+  it('ends a round with its duration, the stated confidence and the outcome, through the agent-line renderer', () => {
+    const path = join(tempDir('loop-log-narrate-'), '521.log')
+    const spy = console.error
+    console.error = () => {}
+    try {
+      narrateDriverEvent(path, ended, [gate], 521)
+    } finally {
+      console.error = spy
+    }
+    expect(readFileSync(path, 'utf8')).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\S+ {2}\+ Loop {3}Round 2 ended after 1m 1s: approved\. Confidence: 80 \(after the extra turn\)\.\n$/
+    )
+  })
+
+  it('says a dash when no confidence was asked and "not given" when unavailable', () => {
+    const path = join(tempDir('loop-log-narrate-'), '521.log')
+    const spy = console.error
+    console.error = () => {}
+    try {
+      narrateDriverEvent(path, ended, [{ ...gate, confidence_value: undefined, extra_turn_spent: undefined }], 521)
+      narrateDriverEvent(path, ended, [{ ...gate, confidence_value: undefined, confidence_unavailable: true }], 521)
+    } finally {
+      console.error = spy
+    }
+    const text = readFileSync(path, 'utf8')
+    expect(text).toContain('Confidence: —.')
+    expect(text).toContain('Confidence: not given.')
+  })
+
+  it('a pause that needs a person names who acts and the Operator task_resume, and never a command', () => {
+    const path = join(tempDir('loop-log-narrate-'), '521.log')
+    const spy = console.error
+    console.error = () => {}
+    try {
+      narrateDriverEvent(
+        path,
+        { kind: 'dev_review_loop', loop_id: loopId, event: 'paused', round: 3, reason_code: 'max_rounds' },
+        [],
+        521
+      )
+    } finally {
+      console.error = spy
+    }
+    const text = readFileSync(path, 'utf8')
+    expect(text).toContain('The loop paused for a person: the round limit was reached.')
+    expect(text).toContain("The Operator's task_resume continues this run (task 521, round 3)")
+    expect(text).not.toMatch(/vinaya |bun /)
+  })
+
+  it('writes nothing for a record with no wording', () => {
+    const path = join(tempDir('loop-log-narrate-'), '521.log')
+    narrateDriverEvent(path, { kind: 'dev_review_loop', event: 'driver_heartbeat' }, [], 521)
+    expect(existsSync(path)).toBe(false)
+  })
+})
+
+describe('devReviewLoop — the driver lines of a whole run', () => {
+  it('marks the round and phases in the log, with the decision unchanged', async () => {
+    const world = makeWorld()
+    const base = makeInProcessDeps(world)
+    const spy = console.error
+    console.error = () => {}
+    let driverLog = ''
+    let result: Awaited<ReturnType<typeof devReviewLoop>>
+    try {
+      result = await withWorldEnv(world, async () => {
+        const r = await devReviewLoop({ task: world.task, agent: 'claude' }, base)
+        driverLog = readFileSync(loopLogPathFor(null, world.task), 'utf8')
+        return r
+      })
+    } finally {
+      console.error = spy
+    }
+    expect(result.finalDecision.type).toBe('publish')
+    expect(driverLog).toMatch(/Developer starting round 1 with /)
+    expect(driverLog).toMatch(/Round 1 started\./)
+    expect(driverLog).toMatch(/Reviewers starting round 1/)
+    expect(driverLog).toMatch(/Round 1 verdicts: /)
+    expect(driverLog).toMatch(/Round 1 ended after \d+m \d+s: approved\./)
+    expect(driverLog).not.toMatch(/sweep — /)
   })
 })

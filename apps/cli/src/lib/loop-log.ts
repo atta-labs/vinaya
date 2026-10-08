@@ -31,6 +31,7 @@ import {
   writeSync
 } from 'node:fs'
 import { redact } from '@attalabs/aeg-core'
+import { type NarrationKind, narrate } from '@attalabs/aeg-core/log'
 import { homedir } from 'node:os'
 import { dirname } from 'node:path'
 import { runPath, runtimeDirForThisRepo } from './run-paths.js'
@@ -104,9 +105,62 @@ export function appendRoleLine(
   }
 }
 
-/** Marks a fresh process's start in the log — the delineation `--follow`/a human reader needs to tell one relaunch's narration apart from the last. */
-export function appendRunStartMarker(path: string, detail: { role: string; pid: number; runId?: string }): void {
-  appendLoopLogLine(path, formatAgentLine(detail.role, 'run started', { log: true, unicode: false, mark: 'round' }))
+/** Marks a process's start in the log — the delineation `--follow`/a human reader needs to tell one relaunch's narration apart from the last. A first start reads "run started"; a relaunch of a task that already ran reads "Resumed". */
+export function appendRunStartMarker(
+  path: string,
+  detail: { role: string; pid: number; runId?: string; resumed?: boolean }
+): void {
+  appendLoopLogLine(
+    path,
+    formatAgentLine(detail.role, detail.resumed ? 'Resumed' : 'run started', {
+      log: true,
+      unicode: false,
+      mark: 'round'
+    })
+  )
+}
+
+const marksByKind: Record<NarrationKind, AgentLineMark> = {
+  starting: 'round',
+  working: 'working',
+  done: 'done',
+  failed: 'failed',
+  waiting: 'waiting',
+  paused: 'waiting',
+  blocked: 'waiting',
+  information: 'working'
+}
+
+/**
+ * One driver line, through the same renderer the agents' lines use: into the
+ * loop log with a full timestamp, and onto stderr with a clock time. The line
+ * carries no process id and no run id; those stay in the file name and in the
+ * verbose detail.
+ */
+export function appendDriverLine(path: string, words: string, mark: AgentLineMark = 'working'): void {
+  const text = redact(words, homedir())
+  appendLoopLogLine(path, formatAgentLine('dev-review-loop', text, { log: true, unicode: false, mark }))
+  console.error(formatAgentLine('dev-review-loop', text, { mark, unicode: Boolean(process.stderr.isTTY) }))
+}
+
+/**
+ * The plain line for one Log event this driver just wrote — the shared
+ * phrase function's words, so a live screen reads the same sentences. A
+ * pause or stop that needs a person also says who acts and that the run
+ * continues through the Operator's `task_resume`, for this task and the round
+ * it paused in; it never prints a command. A record with no wording writes
+ * nothing.
+ */
+export function narrateDriverEvent(path: string, event: unknown, earlier: readonly unknown[], task: number): void {
+  const line = narrate(event, earlier)
+  if (!line) return
+  const fields = event as { event?: unknown; round?: unknown }
+  const needsPerson = line.kind === 'blocked' && (fields.event === 'paused' || fields.event === 'stop_condition_met')
+  const round = typeof fields.round === 'number' ? `, round ${fields.round}` : ''
+  const words = needsPerson
+    ? `${line.text} The Operator's task_resume continues this run (task ${task}${round}) once the person has decided or repaired it.`
+    : line.text
+  appendDriverLine(path, words, marksByKind[line.kind])
 }
 
 export type FollowLoopLogDeps = {
