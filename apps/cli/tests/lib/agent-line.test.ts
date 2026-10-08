@@ -173,6 +173,76 @@ describe('the dispatcher renders each agent’s stream through its translator (O
     expect(file).toMatch(/· nope$/m)
   })
 
+  it('replays the Claude translator tests’ developer run as plain lines, never tool output', () => {
+    const worktree = '/work/repo'
+    const call = (name: string, input: Record<string, unknown>, id: string) => ({
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', id, name, input }] }
+    })
+    const result = (id: string, content: string, isError = false) => ({
+      type: 'user',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: id, content, ...(isError ? { is_error: true } : {}) }]
+      }
+    })
+    let clock = 0
+    const renderer = createAgentStreamRenderer(
+      'claude',
+      { worktree, home: '/Users/someone' },
+      renderClaudeEvent,
+      () => {
+        const at = clock
+        clock += 1000
+        return at
+      }
+    )
+    const lines = [
+      { type: 'system', subtype: 'init' },
+      call('Read', { file_path: `${worktree}/apps/cli/src/a.ts` }, 'd1'),
+      result('d1', 'SECRET FILE BODY'),
+      call('Edit', { file_path: `${worktree}/apps/cli/src/a.ts`, old_string: 'a', new_string: 'a\nb' }, 'd2'),
+      result('d2', 'edited SECRET'),
+      call('Write', { file_path: `${worktree}/apps/cli/tests/a.test.ts`, content: 'x\ny\n' }, 'd3'),
+      result('d3', 'created'),
+      call('Bash', { command: 'bun test apps/cli/tests/a.test.ts' }, 'd4'),
+      result('d4', '1 fail\nSECRET OUTPUT', true),
+      call('StructuredOutput', { turnResult: { status: 'completed', summary: 'SECRET', confidence: 90 } }, 'd5'),
+      result('d5', 'Structured output provided successfully')
+    ].flatMap((e) => renderer.render(e))
+    expect(lines.map((l) => l.words)).toEqual([
+      'Working',
+      'Reading apps/cli/src/a.ts',
+      'Finished reading apps/cli/src/a.ts in 1.0s',
+      'Editing apps/cli/src/a.ts +2 −1',
+      'Finished editing apps/cli/src/a.ts in 1.0s',
+      'Creating apps/cli/tests/a.test.ts +2',
+      'Finished creating apps/cli/tests/a.test.ts in 1.0s',
+      'Running tests bun test apps/cli/tests/a.test.ts',
+      'Failed running tests bun test apps/cli/tests/a.test.ts after 1.0s',
+      'Reporting completed (confidence 90)',
+      'Finished reporting completed in 1.0s'
+    ])
+    expect(lines[8]).toMatchObject({ mark: 'failed', details: ['1 fail'] })
+    expect(JSON.stringify(lines)).not.toContain('SECRET')
+  })
+
+  it('redacts a token in an agent message or a command before any line carries it', () => {
+    const token = `ghp_${'0123456789abcdefghijklmnopqrstuvwxyz'}`
+    const lines = replay('claude', [
+      { type: 'assistant', message: { content: [{ type: 'text', text: `GITHUB_TOKEN=${token}` }] } },
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'tool_use', id: 't', name: 'Bash', input: { command: `curl -H "Authorization: ${token}" x` } }
+          ]
+        }
+      }
+    ])
+    expect(lines.length).toBe(2)
+    expect(JSON.stringify(lines)).not.toContain(token)
+  })
+
   it('drops an unhandled event whose old text is only an event name', () => {
     expect(replay('codex', [{ type: 'turn.completed' }])).toEqual([])
   })
