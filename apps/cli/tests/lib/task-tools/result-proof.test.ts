@@ -59,6 +59,48 @@ const needsRuling = {
 }
 const wrap = (turnResult: unknown) => ({ turnResult })
 
+/** A compact Draft-7 validator for the subset emitted by z.toJSONSchema. */
+function validatesJsonSchema(schema: unknown, value: unknown): boolean {
+  if (schema === null || typeof schema !== 'object') return true
+  const node = schema as Record<string, unknown>
+  if (Array.isArray(node.anyOf)) return node.anyOf.some((variant) => validatesJsonSchema(variant, value))
+  if ('const' in node && value !== node.const) return false
+  if (Array.isArray(node.enum) && !node.enum.includes(value)) return false
+  if (node.type === 'object') {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+    const object = value as Record<string, unknown>
+    const properties = (node.properties ?? {}) as Record<string, unknown>
+    if (Array.isArray(node.required) && node.required.some((key) => typeof key !== 'string' || !(key in object)))
+      return false
+    if (node.additionalProperties === false && Object.keys(object).some((key) => !(key in properties))) return false
+    return Object.entries(properties).every(
+      ([key, property]) => !(key in object) || validatesJsonSchema(property, object[key])
+    )
+  }
+  if (node.type === 'array') {
+    if (!Array.isArray(value)) return false
+    if (typeof node.minItems === 'number' && value.length < node.minItems) return false
+    if (typeof node.maxItems === 'number' && value.length > node.maxItems) return false
+    return value.every((item) => validatesJsonSchema(node.items, item))
+  }
+  if (node.type === 'string') {
+    if (typeof value !== 'string') return false
+    return !(
+      (typeof node.minLength === 'number' && value.length < node.minLength) ||
+      (typeof node.maxLength === 'number' && value.length > node.maxLength)
+    )
+  }
+  if (node.type === 'number' || node.type === 'integer') {
+    if (typeof value !== 'number' || !Number.isFinite(value) || (node.type === 'integer' && !Number.isInteger(value)))
+      return false
+    return !(
+      (typeof node.minimum === 'number' && value < node.minimum) ||
+      (typeof node.maximum === 'number' && value > node.maximum)
+    )
+  }
+  return true
+}
+
 describe('DeveloperTurnResult — valid examples of every variant', () => {
   it('accepts completed, blocked and needs_ruling', () => {
     for (const example of [completed, blocked, needsRuling]) {
@@ -156,6 +198,30 @@ describe('DeveloperTurnResult — semantic rejections', () => {
     expect(validateDeveloperTurnResult(wrap(blocked), context).ok).toBe(true)
     expect(validateDeveloperTurnResult(wrap(needsRuling), context).ok).toBe(true)
   })
+  it("rejects duplicate valid values that exceed this turn's array bounds", () => {
+    const singleValueContext = { ...context, knownFindingIds: ['R1-CR-1'] }
+    const duplicateCases: [unknown, string][] = [
+      [{ ...completed, addressedFindingIds: ['R1-CR-1', 'R1-CR-1'] }, 'valid finding ids: "R1-CR-1"'],
+      [
+        {
+          ...completed,
+          sourceUses: [
+            { source: 'https://example.com/doc', use: 'one' },
+            { source: 'https://example.com/doc', use: 'two' }
+          ]
+        },
+        'sources: "https://example.com/doc"'
+      ]
+    ]
+    for (const [result, expected] of duplicateCases) {
+      const out = validateDeveloperTurnResult(wrap(result), singleValueContext)
+      expect(out.ok).toBe(false)
+      if (!out.ok) {
+        expect(out.stage).toBe('semantic')
+        expect(out.errors.join('\n')).toContain(expected)
+      }
+    }
+  })
 })
 
 describe('developerTurnResultJsonSchema', () => {
@@ -198,6 +264,64 @@ describe('developerTurnResultJsonSchema', () => {
     expect(fresh).toContain('R1-CR-1')
     expect(resumed).not.toContain('https://example.com/fresh-source')
     expect(resumed).toContain('"maxItems":0')
+  })
+
+  it('rejects every completed-result constraint with the generated JSON Schema', () => {
+    const validate = (value: unknown) => validatesJsonSchema(schema, value)
+    const cases: [string, unknown][] = [
+      ['a missing required source', { ...completed, sourceUses: [] }],
+      ['an unexpected source', { ...completed, sourceUses: [{ source: 'https://other.example', use: 'x' }] }],
+      [
+        'a duplicate use of the sole required source',
+        {
+          ...completed,
+          sourceUses: [
+            { source: 'https://example.com/doc', use: 'one' },
+            { source: 'https://example.com/doc', use: 'two' }
+          ]
+        }
+      ],
+      ['an invalid finding id', { ...completed, addressedFindingIds: ['R9-CR-1'] }],
+      [
+        'a duplicate valid finding id over the maximum',
+        { ...completed, addressedFindingIds: ['R1-CR-1', 'R1-CR-1', 'R1-CR-1'] }
+      ],
+      ['an overlong confidence explanation', { ...completed, confidenceExplanation: 'x'.repeat(281) }]
+    ]
+    for (const [name, result] of cases) {
+      expect(validate(wrap(result)), name).toBe(false)
+    }
+  })
+
+  it('rejects non-empty source and finding lists for a zero-value turn with the generated JSON Schema', () => {
+    const schema = developerTurnResultJsonSchema({ knownFindingIds: [], requiredSources: [] })
+    const validate = (value: unknown) => validatesJsonSchema(schema, value)
+    expect(validate(wrap({ ...completed, sourceUses: [], addressedFindingIds: ['R1-CR-1'] }))).toBe(false)
+    expect(
+      validate(
+        wrap({ ...completed, sourceUses: [{ source: 'https://example.com/doc', use: 'x' }], addressedFindingIds: [] })
+      )
+    ).toBe(false)
+  })
+
+  it('rejects duplicate valid values against a single-value generated schema', () => {
+    const schema = developerTurnResultJsonSchema({
+      knownFindingIds: ['R1-CR-1'],
+      requiredSources: ['https://example.com/doc']
+    })
+    const validate = (value: unknown) => validatesJsonSchema(schema, value)
+    expect(validate(wrap({ ...completed, addressedFindingIds: ['R1-CR-1', 'R1-CR-1'] }))).toBe(false)
+    expect(
+      validate(
+        wrap({
+          ...completed,
+          sourceUses: [
+            { source: 'https://example.com/doc', use: 'one' },
+            { source: 'https://example.com/doc', use: 'two' }
+          ]
+        })
+      )
+    ).toBe(false)
   })
 })
 

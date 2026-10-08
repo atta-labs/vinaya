@@ -225,6 +225,11 @@ export function semanticErrors(result: DeveloperTurnResult, context: DeveloperTu
   const errors: string[] = []
   if (result.status === 'completed') {
     const known = new Set(context.knownFindingIds)
+    if (result.addressedFindingIds.length > context.knownFindingIds.length) {
+      errors.push(
+        `addressedFindingIds: expected at most ${context.knownFindingIds.length} finding ids; valid finding ids: ${context.knownFindingIds.map((value) => JSON.stringify(value)).join(', ') || '(none)'}`
+      )
+    }
     for (const id of result.addressedFindingIds) {
       if (!known.has(id))
         errors.push(
@@ -239,6 +244,11 @@ export function semanticErrors(result: DeveloperTurnResult, context: DeveloperTu
       if (result.sourceUses === null || reportedUses.length > 0)
         errors.push('sourceUses: expected an empty list because this turn has no required sources')
     } else {
+      if (reportedUses.length !== context.requiredSources.length) {
+        errors.push(
+          `sourceUses: expected exactly ${context.requiredSources.length} uses for sources: ${context.requiredSources.map((value) => JSON.stringify(value)).join(', ')}`
+        )
+      }
       const required = new Set(context.requiredSources)
       for (const use of reportedUses) {
         if (!required.has(use.source))
