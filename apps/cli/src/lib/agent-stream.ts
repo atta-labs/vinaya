@@ -103,7 +103,7 @@ export function createAgentStreamRenderer(
       const ctx: NarrationContext = { ...context, now: now() }
       const lines: AgentLineParts[] = []
       const words = wordsOf(agent, event)
-      if (words.trim() !== '') lines.push({ words: 'Working', mark: 'working', details: textLines(words, ctx) })
+      if (words.trim() !== '') lines.push({ words: 'Writing', mark: 'working', details: textLines(words, ctx) })
       const updates = translate(event, state, ctx)
       const commands = commandsById(agent, event)
       for (const update of updates) {

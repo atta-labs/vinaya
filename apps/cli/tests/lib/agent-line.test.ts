@@ -110,6 +110,10 @@ describe('the dispatcher renders each agent’s stream through its translator (O
     const all = lines.flatMap((l) => [l.words, ...l.details]).join('\n')
     expect(all).not.toMatch(/item\.(started|completed)|turn\.(started|completed)|thread\.started/)
     expect(lines.some((l) => l.words.startsWith('Reporting'))).toBe(true)
+    const failed = lines.filter((l) => l.mark === 'failed')
+    expect(failed.every((l) => l.words.startsWith('Failed ') && l.details.length === 1)).toBe(true)
+    expect(failed.some((l) => l.details[0] === 'exit 1')).toBe(true)
+    expect(lines.some((l) => l.mark === 'done' && l.words.startsWith('Finished '))).toBe(true)
   })
 
   it('narrates the same work with the same verbs on both agents', () => {
@@ -162,7 +166,7 @@ describe('the dispatcher renders each agent’s stream through its translator (O
     ])
     for (const l of lines) appendRoleLine(path, 'developer', l.words, l.details, l.mark)
     const file = readFileSync(path, 'utf8')
-    expect(file).toMatch(/> Developer {3}Working$/m)
+    expect(file).toMatch(/> Developer {3}Writing$/m)
     expect(file).toMatch(/· thinking out loud$/m)
     expect(file).toMatch(/> Developer {3}Reading a\.ts$/m)
     expect(file).toMatch(/x Developer {3}Failed reading a\.ts after 0ms$/m)

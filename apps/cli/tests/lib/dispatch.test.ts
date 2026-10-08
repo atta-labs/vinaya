@@ -2417,6 +2417,46 @@ describe('dispatch role log — redaction (round 2 review, SECURITY HIGH)', () =
   })
 })
 
+describe('dispatch role log — each agent’s stream through its translator', () => {
+  function dispatchLog(agent: 'codex' | 'gemini', stream: string): string {
+    const home = tempDir('vinaya-narr-home-')
+    const cwd = tempDir('vinaya-narr-cwd-')
+    const binDir = tempDir('vinaya-narr-bin-')
+    const roleLogPath = join(cwd, 'role.log')
+    const streamFile = join(binDir, 'stream.jsonl')
+    writeFileSync(streamFile, stream)
+    writeFakeBinary(binDir, agent, `#!/bin/sh\ncat > /dev/null\ncat '${streamFile}'\nexit 0\n`)
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const r = runDispatch(
+      ['developer', '--agent', agent, '--prompt-file', promptFile, '--role-log-path', roleLogPath],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+    return readFileSync(roleLogPath, 'utf8')
+  }
+
+  it('a recorded Codex stream reaches the file as plain actions with real marks and detail lines', () => {
+    const fixture = readFileSync(
+      join(import.meta.dir, '../fixtures/loop-narration/codex-developer-stream.jsonl'),
+      'utf8'
+    )
+    const contents = dispatchLog('codex', fixture)
+    expect(contents).not.toMatch(/item\.(started|completed)|turn\.(started|completed)/)
+    expect(contents).toMatch(/ {2}x Developer {3}Failed /m)
+    expect(contents).toMatch(/ {2}· exit 1$/m)
+    expect(contents).toMatch(/ {2}\+ Developer {3}Finished /m)
+    expect(contents).toMatch(/ {2}> Developer {3}Reporting /m)
+  })
+
+  it('a Gemini session start reaches the file as a working line', () => {
+    const contents = dispatchLog('gemini', '{"type":"init","session_id":"s1"}\n')
+    expect(contents).toMatch(/ {2}> Developer {3}Working: session started$/m)
+  })
+})
+
 /**
  * Role-prefixed, per-role-coloured terminal output (Issue #491, O1/O2/O3).
  * `colourEnabled`/`colourAgentLine`/`colourLoopLine` are exported for
@@ -2530,7 +2570,7 @@ describe('terminal colour — role prefix and TTY/NO_COLOR gating (#491)', () =>
     // O1: the rendered line carries the role prefix even off a TTY (only
     // colour is TTY-gated, never the prefix) — and no escape sequence, since
     // `execFileSync`/`spawnSync` pipes are never a live terminal.
-    expect(r.stderr).toMatch(/\d\d:\d\d:\d\d {2}> Developer {3}Working\n {2}· hello world/)
+    expect(r.stderr).toMatch(/\d\d:\d\d:\d\d {2}> Developer {3}Writing\n {2}· hello world/)
     expect(r.stderr).not.toMatch(ANSI_ANY_RE)
 
     // O2: lifecycle output shares the renderer and does not expose the
