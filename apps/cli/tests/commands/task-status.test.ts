@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { quietLogWriter } from '../../src/commands/task-status.js'
 
 /**
  * `vinaya task status` end-to-end, against a `gh` stub on `PATH` and a
@@ -1025,14 +1024,5 @@ describe('vinaya task status --follow (task-run-v1 task 15, O6)', () => {
     expect(out).toContain('Editing a.ts')
     expect(out).toContain('Test run failed')
     expect(out).not.toContain('detail text')
-  })
-
-  it('quietLogWriter holds a partial line and keeps split multibyte characters whole', () => {
-    const out: string[] = []
-    const write = quietLogWriter((t) => void out.push(t))
-    const bytes = Buffer.from('2026-10-08T00:00:00.000Z  > Developer   ▸ go\n2026-10-08T00:00:00.000Z  · hidden\n')
-    write(bytes.subarray(0, 45))
-    write(bytes.subarray(45))
-    expect(out.join('')).toBe('2026-10-08T00:00:00.000Z  > Developer   ▸ go\n')
   })
 })

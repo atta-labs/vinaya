@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'bun:test'
 import { logQuiet } from '../../src/lib/agent-line.js'
 import { appendRoleLine } from '../../src/lib/loop-log.js'
+import { quietLogWriter } from '../../src/commands/task-status.js'
 import { applyQuiet, pauseResumeCommand } from '../../src/commands/task-run.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -292,5 +293,16 @@ describe('vinaya task run --quiet', () => {
       if (saved === undefined) delete process.env.VINAYA_LOG_QUIET
       else process.env.VINAYA_LOG_QUIET = saved
     }
+  })
+})
+
+describe('vinaya task status --follow --quiet — quietLogWriter', () => {
+  it('quietLogWriter holds a partial line and keeps split multibyte characters whole', () => {
+    const out: string[] = []
+    const write = quietLogWriter((t) => void out.push(t))
+    const bytes = Buffer.from('2026-10-08T00:00:00.000Z  > Developer   ▸ go\n2026-10-08T00:00:00.000Z  · hidden\n')
+    write(bytes.subarray(0, 45))
+    write(bytes.subarray(45))
+    expect(out.join('')).toBe('2026-10-08T00:00:00.000Z  > Developer   ▸ go\n')
   })
 })
