@@ -9,7 +9,7 @@
  * exact resume command when paused. `--follow`,
  * on either the `<tranche> <n>` form or `--issue <n>`, tails that task's
  * driver log — `~/.vinaya/loops/<owner>-<repo>/<issue>.log` — live,
- * `tail -f` style, so the state of any run is one command away regardless
+ * `tail -f` style, with its detail lines unless `--quiet` hides them, so the state of any run is one command away regardless
  * of where it was launched.
  *
  * Origin: the Principal, running seven loops in seven terminals,
@@ -21,26 +21,29 @@
  * `loopLogPathFor`/`followLoopLog` for `--follow`, are the entire reader.
  */
 
+import { StringDecoder } from 'node:string_decoder'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { printJson } from '../lib/envelope.js'
 import { followLoopLog, loopLogPathFor } from '../lib/loop-log.js'
 import { gatherSingleTaskStatus, gatherTaskStatusList } from '../lib/task-status.js'
 
-type ParsedArgs = { json: boolean; follow: boolean; issue: string | undefined; positional: string[] }
+type ParsedArgs = { json: boolean; follow: boolean; quiet: boolean; issue: string | undefined; positional: string[] }
 
 function parseArgs(args: string[]): ParsedArgs {
   const positional: string[] = []
   let json = false
   let follow = false
+  let quiet = false
   let issue: string | undefined
   for (let i = 0; i < args.length; i++) {
     const a = args[i] as string
     if (a === '--json') json = true
     else if (a === '--follow') follow = true
+    else if (a === '--quiet') quiet = true
     else if (a === '--issue') issue = args[++i]
     else positional.push(a)
   }
-  return { json, follow, issue, positional }
+  return { json, follow, quiet, issue, positional }
 }
 
 function runList(json: boolean): void {
@@ -96,7 +99,7 @@ function resolveFollowIssue(parsed: ParsedArgs): number {
     return n
   }
   if (parsed.positional.length !== 2) {
-    console.error('Usage: vinaya task status [<tranche> <n> | --issue <n>] --follow')
+    console.error('Usage: vinaya task status [<tranche> <n> | --issue <n>] --follow [--quiet]')
     process.exit(2)
   }
   const [tranche, id] = parsed.positional as [string, string]
@@ -112,11 +115,25 @@ function resolveFollowIssue(parsed: ParsedArgs): number {
   return result.row.issue
 }
 
+const DETAIL_RECORD = /^(?:\S+ {2}| {2})· /
+
+/** Writes only the file's primary lines: a detail record, in the log form (`<ISO time>  · <text>`) or the terminal copy (`  · <text>`), is dropped, a trailing partial line waits for its newline (the log appends whole lines), and multibyte characters split across chunks stay whole. */
+export function quietLogWriter(write: (text: string) => void): (chunk: Buffer) => void {
+  const decoder = new StringDecoder('utf8')
+  let pending = ''
+  return (chunk) => {
+    const lines = (pending + decoder.write(chunk)).split('\n')
+    pending = lines.pop() ?? ''
+    const kept = lines.filter((line) => !DETAIL_RECORD.test(line))
+    if (kept.length > 0) write(`${kept.join('\n')}\n`)
+  }
+}
+
 async function runFollow(parsed: ParsedArgs): Promise<void> {
   const issue = resolveFollowIssue(parsed)
   const repo = await resolveRepo().catch(() => null)
   const path = loopLogPathFor(repo, issue)
-  await followLoopLog(path)
+  await followLoopLog(path, parsed.quiet ? { write: quietLogWriter((text) => void process.stdout.write(text)) } : {})
 }
 
 export async function taskStatusCommand(args: string[]): Promise<void> {

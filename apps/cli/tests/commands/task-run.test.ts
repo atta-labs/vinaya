@@ -1,10 +1,13 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'bun:test'
-import { pauseResumeCommand } from '../../src/commands/task-run.js'
+import { logQuiet } from '../../src/lib/agent-line.js'
+import { appendRoleLine } from '../../src/lib/loop-log.js'
+import { quietLogWriter } from '../../src/commands/task-status.js'
+import { applyQuiet, parseFlags, pauseResumeCommand } from '../../src/commands/task-run.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -271,5 +274,66 @@ describe('vinaya task run — pauseResumeCommand (#785, O1)', () => {
     expect(pauseResumeCommand({ prNumber: 0, task: 512, branch: 'task/issue-512' }, { agent: 'claude' })).toBe(
       'vinaya task run --issue 512 --agent claude'
     )
+  })
+})
+
+describe('vinaya task run --quiet', () => {
+  it('parseFlags maps --quiet to a plain switch, absent by default', () => {
+    expect(parseFlags(['--agent', 'claude', '--quiet']).quiet).toBe(true)
+    expect(parseFlags(['--agent', 'claude']).quiet).toBe(false)
+    expect(parseFlags(['--quiet']).unknown).toEqual([])
+  })
+
+  it('the command accepts --quiet as a known flag', () => {
+    const r = runCli(['task', 'run', 'task-run-v1', '2', '--agent', 'skills', '--quiet'])
+    expect(r.stderr).not.toContain('unrecognized flag')
+    expect(r.stderr).toContain('claude')
+  })
+
+  it('sets the quiet view for the live terminal, and the log file still receives detail records', () => {
+    const saved = process.env.VINAYA_LOG_QUIET
+    try {
+      delete process.env.VINAYA_LOG_QUIET
+      applyQuiet({ quiet: false })
+      expect(logQuiet()).toBe(false)
+      applyQuiet({ quiet: true })
+      expect(logQuiet()).toBe(true)
+      const path = join(mkdtempSync(join(tmpdir(), 'quiet-run-')), 'driver.log')
+      appendRoleLine(path, 'developer', 'Editing a.ts', ['kept detail'])
+      expect(readFileSync(path, 'utf8')).toContain('kept detail')
+    } finally {
+      if (saved === undefined) delete process.env.VINAYA_LOG_QUIET
+      else process.env.VINAYA_LOG_QUIET = saved
+    }
+  })
+})
+
+describe('vinaya task status --follow --quiet — quietLogWriter', () => {
+  it('quietLogWriter holds a partial line and keeps split multibyte characters whole', () => {
+    const out: string[] = []
+    const write = quietLogWriter((t) => void out.push(t))
+    const bytes = Buffer.from('2026-10-08T00:00:00.000Z  > Developer   ▸ go\n2026-10-08T00:00:00.000Z  · hidden\n')
+    write(bytes.subarray(0, 45))
+    write(bytes.subarray(45))
+    expect(out.join('')).toBe('2026-10-08T00:00:00.000Z  > Developer   ▸ go\n')
+  })
+
+  it('hides detail lines of both the log form and the terminal copy and keeps every action line', () => {
+    const out: string[] = []
+    const write = quietLogWriter((t) => void out.push(t))
+    const ts = '2026-10-08T00:00:00.000Z'
+    const actions = [`${ts}  > Developer   ▸ go`, '> Developer   ▸ go', `${ts}  ✓ round 1 done`, '✓ round 1 done']
+    const lines = [
+      actions[0],
+      `${ts}  · detail one`,
+      '  · detail one',
+      actions[1],
+      `${ts}  · detail two`,
+      '  · detail two',
+      actions[2],
+      actions[3]
+    ]
+    write(Buffer.from(`${lines.join('\n')}\n`))
+    expect(out.join('').split('\n').filter(Boolean)).toEqual(actions)
   })
 })

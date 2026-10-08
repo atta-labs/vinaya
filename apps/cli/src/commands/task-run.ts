@@ -49,13 +49,14 @@ import { noPushResumeCommandFor } from '../lib/dev-review-loop/pause-resume.js'
 /** Any failure other than a usage/argv error or a policy `pause` — see the module doc comment's exit-code table. */
 const TASK_RUN_FAILURE_EXIT_CODE = 3
 
-const KNOWN_FLAGS = ['--agent', '--issue', '--background', '--model']
+const KNOWN_FLAGS = ['--agent', '--issue', '--background', '--model', '--quiet']
 
 type ParsedFlags = {
   agent: string | undefined
   agentFlagPresent: boolean
   issue: string | undefined
   background: boolean
+  quiet: boolean
   model: string | undefined
   unknown: string[]
 }
@@ -75,11 +76,12 @@ type ParsedFlags = {
  * them would let a typo'd `--agent` at the end of argv quietly succeed off
  * the config default instead of failing loud.
  */
-function parseFlags(rest: string[]): ParsedFlags {
+export function parseFlags(rest: string[]): ParsedFlags {
   let agent: string | undefined
   let agentFlagPresent = false
   let issue: string | undefined
   let background = false
+  let quiet = false
   let model: string | undefined
   const unknown: string[] = []
   for (let i = 0; i < rest.length; i++) {
@@ -91,16 +93,23 @@ function parseFlags(rest: string[]): ParsedFlags {
       issue = rest[++i]
     } else if (a === '--background') {
       background = true
+    } else if (a === '--quiet') {
+      quiet = true
     } else if (a === '--model') {
       model = rest[++i]
     } else if (a !== undefined) unknown.push(a)
   }
-  return { agent, agentFlagPresent, issue, background, model, unknown }
+  return { agent, agentFlagPresent, issue, background, quiet, model, unknown }
+}
+
+/** `--quiet` sets the value the renderer reads for its terminal view; the driver log file still receives every detail record. */
+export function applyQuiet(parsed: Pick<ParsedFlags, 'quiet'>): void {
+  if (parsed.quiet) process.env.VINAYA_LOG_QUIET = '1'
 }
 
 const USAGE = [
-  `Usage: vinaya task run <tranche> <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--model <model>]`,
-  `   or: vinaya task run --issue <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--model <model>]`
+  `Usage: vinaya task run <tranche> <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>]`,
+  `   or: vinaya task run --issue <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>]`
 ].join('\n')
 
 /** `--agent` falls back to `dispatch.agent` in `vinaya.config.json` when omitted entirely — see `parseFlags`'s own doc comment on `agentFlagPresent`. `null` when no valid agent could be resolved (message already printed). */
@@ -283,6 +292,7 @@ export async function taskRunCommand(args: string[]): Promise<void> {
     }
     const agent = resolveAgentOrReport(parsed)
     if (!agent) process.exit(2)
+    applyQuiet(parsed)
     if (parsed.background) {
       await runBackgroundAndReport({ issue: issueN, agent, model: parsed.model })
       return
@@ -313,6 +323,7 @@ export async function taskRunCommand(args: string[]): Promise<void> {
   }
   const agent = resolveAgentOrReport(parsed)
   if (!agent) process.exit(2)
+  applyQuiet(parsed)
   if (parsed.background) {
     await runBackgroundAndReport({ tranche: trancheSlug, n, agent, model: parsed.model })
     return

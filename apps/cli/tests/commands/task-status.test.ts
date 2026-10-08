@@ -988,4 +988,41 @@ describe('vinaya task status --follow (task-run-v1 task 15, O6)', () => {
     expect(caught).not.toBeNull()
     expect(String(caught?.stdout ?? '')).toContain('[developer] hello')
   })
+
+  function followOutput(quiet: boolean): string {
+    const { home, env } = setUp()
+    const logPath = join(taskRunDir(home, 522), 'output', 'driver.log')
+    mkdirSync(dirname(logPath), { recursive: true })
+    writeFileSync(
+      logPath,
+      '2026-10-08T00:00:00.000Z  > Developer   Editing a.ts\n2026-10-08T00:00:00.000Z  · detail text\n2026-10-08T00:00:01.000Z  x Developer   Test run failed\n'
+    )
+    const args = ['task', 'status', '--issue', '522', '--follow', ...(quiet ? ['--quiet'] : [])]
+    try {
+      execFileSync('bun', [INDEX, ...args], {
+        cwd: CLI_ROOT,
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...stripVinayaEnv(process.env), ...env },
+        timeout: 1500,
+        killSignal: 'SIGKILL'
+      })
+    } catch (e) {
+      return String((e as { stdout?: string }).stdout ?? '')
+    }
+    return ''
+  }
+
+  it('--follow prints actions and detail lines by default', () => {
+    const out = followOutput(false)
+    expect(out).toContain('Editing a.ts')
+    expect(out).toContain('detail text')
+  })
+
+  it('--follow --quiet prints actions and failures without the detail lines', () => {
+    const out = followOutput(true)
+    expect(out).toContain('Editing a.ts')
+    expect(out).toContain('Test run failed')
+    expect(out).not.toContain('detail text')
+  })
 })
