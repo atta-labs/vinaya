@@ -30,7 +30,7 @@ import {
   writeTurnResultRecord,
   REPORTED_CHECK_COMMAND_MAX_LENGTH
 } from '../../../src/lib/dev-review-loop/turn-result.js'
-import type { DeveloperTurnResult } from '../../../src/lib/developer-turn-result.js'
+import { BLOCKER_KINDS, type DeveloperTurnResult } from '../../../src/lib/developer-turn-result.js'
 import { deliveredDocumentation } from '../../../src/lib/dispatch.js'
 import {
   cleanupWorlds,
@@ -575,5 +575,17 @@ describe('devReviewLoop — the Developer turn result in a real round (O1–O4)'
     await runLoopInProcess(world)
     const gateRead = outboxLines(world).find((l) => l.event === 'gate_result_read' && l.round === 2)
     expect(gateRead).toMatchObject({ confidence_value: 30, confidence_reason: 'unsure', extra_turn_spent: false })
+  })
+})
+
+describe('the developer doctrine names only blocker kinds a turn result can carry', () => {
+  it('every `blocked` kind the developer reference tells the agent to return is in BLOCKER_KINDS', () => {
+    const reference = readFileSync(
+      join(import.meta.dir, '../../../../../aeg-root/roles/developer/reference.md'),
+      'utf8'
+    )
+    const named = [...reference.matchAll(/`blocked` turn result with kind `([a-z_]+)`/g)].map((m) => m[1] ?? '')
+    expect(named.length).toBeGreaterThan(0)
+    for (const kind of named) expect([...BLOCKER_KINDS] as string[]).toContain(kind)
   })
 })
