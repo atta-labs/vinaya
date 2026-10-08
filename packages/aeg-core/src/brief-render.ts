@@ -819,10 +819,10 @@ function renderSection8(facts: BriefFacts): string {
     // never a command a check or `pr report` executes — `evidence-fresh`
     // re-running it under the twenty-six sibling checks CI had just built
     // deleted their own `dist` out from under them.
-    "- The pre-push hook already ran the affected suite on your one push and refused it on failure — do not additionally run it yourself; the `refresh_evidence` tool regenerates the PR body's Evidence block for the current head, re-running the checks it attests to record their command and output there.",
-    "- The full `bun run test` suite is CI's to run, on the one push — never run it locally.",
+    "- Under the review loop, the controller runs the static gates: the commit hook applies safe format and lint fixes to staged files, typechecks affected packages, and runs the Vinaya checks; the pre-push hook runs the affected suite; `run_checks` and CI provide the authoritative results. Do not hand-run or paste static-gate commands. Working manually, run this repository's declared typecheck, lint/format, build, and documentation-gate commands yourself.",
+    '- The pre-push hook runs the affected suite once, on your one push, and refuses it on failure; CI runs the full suite.',
     '- Every blast-radius consumer named in §4, re-verified by name.',
-    `- The tier checklist in \`${facts.cliInvocation} doctrine --role developer --print\` genuinely satisfied, and ${docGateCommand(facts)}.`
+    `- The tier checklist in \`${facts.cliInvocation} doctrine --role developer --print\` genuinely satisfied; use the controller's \`run_checks\` result, hooks, and CI as gate evidence.`
   ].join('\n')
 }
 

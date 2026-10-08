@@ -192,7 +192,7 @@ function tempDir(prefix: string): string {
  * prompt (`$PROMPT`) lists for it to cite.
  */
 const FAKE_DEVELOPER_TURN_RESULT = `IDS=$(printf '%s\\n' "$PROMPT" | grep -oE '^- R[0-9]+-(CR|SEC)-[0-9]+(:|$)' | sed -e 's/^- //' -e 's/:$//' | sort -u | sed -e 's/.*/"&"/' | paste -sd, -)
-    echo '{"type":"result","subtype":"success","is_error":false,"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5},"structured_output":{"turnResult":{"schemaVersion":1,"status":"completed","summary":"fixture turn","confidence":90,"confidenceExplanation":"the fixture work is done","addressedFindingIds":['"$IDS"'],"sourceUses":null,"reportedChecks":null}}}'`
+    echo '{"type":"result","subtype":"success","is_error":false,"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5},"structured_output":{"turnResult":{"schemaVersion":1,"status":"completed","summary":"fixture turn","confidence":90,"confidenceExplanation":"the fixture work is done","addressedFindingIds":['"$IDS"'],"sourceUses":[],"reportedChecks":null}}}'`
 
 function writeFakeBinary(dir: string, name: string, script: string): void {
   const p = join(dir, name)
