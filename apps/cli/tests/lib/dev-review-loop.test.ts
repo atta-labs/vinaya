@@ -4950,7 +4950,7 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
       // loop log (the same file `vinaya task status --follow` tails) and on
       // this process's own stderr.
       const driverLog = readFileSync(join(sweepRunDir(home), 'output', 'driver.log'), 'utf8')
-      expect(driverLog).toMatch(/=== run started .*role=dev-review-loop/)
+      expect(driverLog).toMatch(/# Loop\s+run started/)
       expect(driverLog).toMatch(/\bLoop\s+sweep — running/)
       expect(r.stderr).toContain('vinaya dev-review-loop: sweep — running')
 
