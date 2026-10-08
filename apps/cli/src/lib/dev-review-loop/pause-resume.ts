@@ -655,18 +655,18 @@ export function isAutomaticRecoveryPause(reason: PauseReason): boolean {
 
 /**
  * Does this pause's own record still grant `--resume`'s bare, no-ruling
- * allowance — an `'infrastructure'` pause under `MAX_INFRASTRUCTURE_RETRIES`?
+ * allowance — an automatic-recovery pause under `MAX_INFRASTRUCTURE_RETRIES`?
  * Read off the pause record's own count, the floor `--resume` itself applies
  * beside the control store's; a caller holding the control store's count too
  * (`--resume`) decides with both and passes its own answer instead.
  */
 export function pauseGrantsBareResume(held: PauseState): boolean {
-  return held.reason === 'infrastructure' && (held.infrastructureRetries ?? 0) < MAX_INFRASTRUCTURE_RETRIES
+  return isAutomaticRecoveryPause(held.reason) && (held.infrastructureRetries ?? 0) < MAX_INFRASTRUCTURE_RETRIES
 }
 
 /**
  * What continues a pause whose escalation has no durable record, so a refusal
- * never ends on "cannot authenticate": an infrastructure pause within its
+ * never ends on "cannot authenticate": an automatic-recovery pause within its
  * bare-resume allowance needs no ruling, and `task run` continues it (its
  * `--resume` attaches without the record); any other pause — a spent
  * allowance included — has nothing a ruling can be bound to, so it names the

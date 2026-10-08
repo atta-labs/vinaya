@@ -311,8 +311,8 @@ describe('task_resume handler', () => {
     }
   })
 
-  it('names `task run` as the continuation of an automatic-recovery pause whose escalation has no durable record (O4)', async () => {
-    writePause({ reason: 'infrastructure', detail: 'GitHub rate limit: it did not wait' })
+  it('names `task run` as the continuation of a stale-driver pause whose escalation has no durable record (O4)', async () => {
+    writePause({ reason: 'stale_driver', detail: 'base moved while the driver was running' })
     const { handler, launches } = harness()
     const result = await handler({ task: { issue: ISSUE } }, CALLER)
     expect(result.ok).toBe(false)
@@ -325,8 +325,8 @@ describe('task_resume handler', () => {
     expect(launches).toHaveLength(0)
   })
 
-  it('names the Principal decision, not `task run`, for an infrastructure pause whose bare-resume budget is spent and whose record is missing', async () => {
-    writePause({ reason: 'infrastructure', infrastructureRetries: 5 })
+  it('names the Principal decision, not `task run`, for a stale-driver pause whose bare-resume budget is spent and whose record is missing', async () => {
+    writePause({ reason: 'stale_driver', infrastructureRetries: 5 })
     const { handler } = harness()
     const result = await handler({ task: { issue: ISSUE } }, CALLER)
     expect(result.ok).toBe(false)

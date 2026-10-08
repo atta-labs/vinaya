@@ -111,16 +111,17 @@ afterEach(() => {
   rmSync(sandbox, { recursive: true, force: true })
 })
 
-function writePause(overrides: { prNumber?: number | null } = {}) {
+function writePause(overrides: Partial<Parameters<typeof writePauseState>[1]> = {}) {
   writePauseState(outbox, {
     task: ISSUE,
     round: 1,
     head: 'headsha1',
     branch: 'task/x/1',
-    prNumber: overrides.prNumber === undefined ? PR : overrides.prNumber,
     reason: 'escalation',
     pausedAt: '2026-01-01T00:00:00.000Z',
-    escalationId: ESCALATION_ID
+    escalationId: ESCALATION_ID,
+    ...overrides,
+    prNumber: overrides.prNumber === undefined ? PR : overrides.prNumber
   })
 }
 
@@ -381,15 +382,19 @@ describe('task_cancel handler', () => {
     ).toThrow(StaleEpochWriteError)
   })
 
-  it('surfaces a stale/wrong-target refusal as a precondition error', async () => {
-    writePause()
+  it('names `task run` when a stale-driver pause has no durable escalation record', async () => {
+    writePause({ reason: 'stale_driver' })
     writeEscalationFixture({ host: 'test-host' })
     const { StaleEscalationError } = await import('../../../src/lib/dev-review-loop/pause-resume.js')
     const err = new StaleEscalationError(ISSUE, ESCALATION_ID, 'no escalation record was ever written for it')
     const { handler } = harness({ hostname: 'test-host', cancelError: err })
     const result = await handler({ task: { issue: ISSUE }, reason: 'superseded' }, CALLER)
     expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.error.kind).toBe('precondition')
+    if (!result.ok) {
+      expect(result.error.kind).toBe('precondition')
+      expect(result.error.message).toContain('no ruling is needed')
+      expect(result.error.message).toContain('Continue it with `vinaya task run x 1`')
+    }
   })
 })
 

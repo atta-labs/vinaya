@@ -43,6 +43,7 @@ import { appendRoleLine, loopLogPathFor } from '../loop-log.js'
 import {
   escalationIdFor,
   escalationPrOf,
+  missingEscalationNextStep,
   readEscalationRecord,
   readPauseState,
   ReplayedResolutionError,
@@ -254,7 +255,11 @@ export function createTaskCancelHandler(
       }
       if (err instanceof StaleEscalationError || err instanceof WrongTargetResolutionError) {
         emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
-        return fail(taskToolError('precondition', err.message))
+        const nextStep =
+          err instanceof StaleEscalationError && !/no ruling is needed|is a Principal decision/.test(err.message)
+            ? ` ${missingEscalationNextStep(held!)}`
+            : ''
+        return fail(taskToolError('precondition', `${err.message}${nextStep}`))
       }
       emitOperationEvent(deps.log, issue, target, 'error', 'infrastructure')
       return fail(taskToolError('infrastructure', err instanceof Error ? err.message : String(err)))
