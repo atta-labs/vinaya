@@ -820,13 +820,38 @@ export async function checkDocumentationSourcesReadable(
 
 type PrRef = { number: number; branch: string }
 
-/** `null` when no open PR carries `branch` as its head yet — polled, never treated as a final answer on one read. */
+/** One open pull request as `gh pr list --json number,headRefName,isCrossRepository` reports it. */
+export type OpenPrListing = { number: number; headRefName: string; isCrossRepository?: boolean }
+
+/**
+ * The task's own open pull request among `list`: its head is `branch` AND
+ * lives in this repository. A fork can open a pull request from a head ref of
+ * the same name — task branch names are predictable (`task/issue-<n>`) — and
+ * matching on the name alone would let the loop attach to it, or bind a
+ * paused task to it and resume unattended on someone else's diff. Real `gh`
+ * always reports `isCrossRepository` once it is asked for; only an explicit
+ * `true` is refused, so a listing that predates the field still reads as it
+ * did.
+ */
+export function ownRepoPrForBranch(list: readonly OpenPrListing[], branch: string): PrRef | null {
+  const found = list.find((p) => p.headRefName === branch && p.isCrossRepository !== true)
+  return found ? { number: found.number, branch } : null
+}
+
+/** `null` when no open PR from this repository carries `branch` as its head yet — polled, never treated as a final answer on one read. */
 export function findOpenPrForBranch(branch: string): PrRef | null {
   try {
-    const out = sh('gh', ['pr', 'list', '--head', branch, '--state', 'open', '--json', 'number,headRefName'])
-    const list = JSON.parse(out) as { number: number; headRefName: string }[]
-    const found = list.find((p) => p.headRefName === branch)
-    return found ? { number: found.number, branch } : null
+    const out = sh('gh', [
+      'pr',
+      'list',
+      '--head',
+      branch,
+      '--state',
+      'open',
+      '--json',
+      'number,headRefName,isCrossRepository'
+    ])
+    return ownRepoPrForBranch(JSON.parse(out) as OpenPrListing[], branch)
   } catch {
     return null
   }

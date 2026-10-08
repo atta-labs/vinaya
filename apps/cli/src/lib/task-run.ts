@@ -308,18 +308,20 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
   // genuinely concurrent second developer.
   if (existingPr && deps.isDriverAlive(issue)) {
     throw new RunTaskError(
-      `runTask: ${taskLabel}'s developer branch \`${branch}\` already has an open pull request (#${existingPr.number}), and a driver is already running for it — refusing to start a second developer. Resume the review loop instead: \`vinaya dev-review-loop --resume ${existingPr.number}\`.`
+      `runTask: ${taskLabel}'s developer branch \`${branch}\` already has an open pull request (#${existingPr.number}), and a driver is already running for it — refusing to start a second developer. Nothing needs running: that driver continues the task by itself, and \`vinaya task status\` shows where it is.`
     )
   }
 
   // issue-711 O5: a paused task's pull request continues from the newest
   // Principal ruling, exactly as `dev-review-loop --resume <pr>` does — it
   // never resumes the Developer's previous session by attaching fresh
-  // (`{task: issue}`) instead. Gated on an open PR existing at all (a
-  // pause with no PR yet is unreachable — a pause is always posted against
-  // an already-open pull request) so a task that has never been paused
-  // (`deps.hasPauseState` false) takes the exact same fresh-dispatch /
-  // dead-lock-takeover path as before this task.
+  // (`{task: issue}`) instead. Gated on an open PR existing at all, so a task
+  // that has never been paused (`deps.hasPauseState` false) takes the exact
+  // same fresh-dispatch / dead-lock-takeover path as before this task. A
+  // pause recorded before any pull request existed takes this route too once
+  // one is open: `--resume` binds it to that pull request first
+  // (`bindPauseToPullRequest`) and continues from it. With no pull request
+  // open yet, such a pause continues through the fresh-attach route below.
   const shouldResumeFromPause = existingPr !== null && deps.hasPauseState(issue)
   const loopResult = await deps.devReviewLoop(
     shouldResumeFromPause

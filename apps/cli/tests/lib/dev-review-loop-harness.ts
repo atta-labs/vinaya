@@ -998,24 +998,24 @@ export async function runDriverLoopInProcess(
   overrides: Partial<LoopDeps> = {},
   watchOverrides: Partial<DriverWatchDeps> = {}
 ): Promise<DriverResult> {
+  const loopDeps: Partial<LoopDeps> = { ...makeInProcessDeps(world), ...overrides }
   return withWorldEnv(world, () =>
-    runDriverLoop(
-      input,
-      { ...makeInProcessDeps(world), ...overrides },
-      {
-        fetchPrState: (_pr) => world.prState,
-        // Same world-backed fake `makeInProcessDeps` gives `LoopDeps` — a
-        // fixture that mutates `world.rulingOrdinal` mid-watch (simulating
-        // a Principal ruling posted while this driver waits) needs the
-        // WATCHER's own ruling read to see it too, never the real `gh`.
-        fetchNewestRulingOrdinal: (_pr) => world.rulingOrdinal,
-        watchPollIntervalMs: 1,
-        infrastructureBackoffMs: 1,
-        // Never the real `gh api rate_limit` — no reset reported, so the wait is the fixed fallback.
-        readRateLimitReset: async () => null,
-        ...watchOverrides
-      }
-    )
+    runDriverLoop(input, loopDeps, {
+      fetchPrState: (_pr) => world.prState,
+      // The same open-pull-request read the loop itself is given — how a
+      // pause recorded before any pull request finds the one opened since.
+      findOpenPrForBranch: (branch) => loopDeps.findOpenPrForBranch!(branch),
+      // Same world-backed fake `makeInProcessDeps` gives `LoopDeps` — a
+      // fixture that mutates `world.rulingOrdinal` mid-watch (simulating
+      // a Principal ruling posted while this driver waits) needs the
+      // WATCHER's own ruling read to see it too, never the real `gh`.
+      fetchNewestRulingOrdinal: (_pr) => world.rulingOrdinal,
+      watchPollIntervalMs: 1,
+      infrastructureBackoffMs: 1,
+      // Never the real `gh api rate_limit` — no reset reported, so the wait is the fixed fallback.
+      readRateLimitReset: async () => null,
+      ...watchOverrides
+    })
   )
 }
 

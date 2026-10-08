@@ -699,7 +699,7 @@ export type PauseDisposition =
  * can drive every disposition off real records in a temporary tree, exactly
  * as `defaultLaunch` below takes its own root.
  *
- * The `infrastructure` reason self-resumes only INSIDE the loop's own retry
+ * The `infrastructure` and `stale_driver` reasons self-resume only INSIDE the loop's own retry
  * bound, computed the same way the loop computes it — the control store's
  * recorded count floored against the one the pause record carries, and a
  * control-store record that will not parse counted as past the bound. An
@@ -746,14 +746,10 @@ export function defaultPauseDisposition(issue: number, root: string = runtimeDir
     if (resolution.status === 'ok') {
       return resolution.value.decision === 'cancel' ? 'resolved_cancel' : 'resolved_resume'
     }
-    // `infrastructure` alone, deliberately: it is the one reason the loop's
-    // own gate continues without a ruling. `stale_driver` reads as a
-    // bounded automatic retry in the loop's watcher, but its bare-resume
-    // gate still demands a ruling for it, so classing it self-resuming here
-    // would launch a run the loop then refuses. Awaiting a ruling is the
-    // truthful answer for it, and `task_resume` does move it once one is
-    // posted.
-    if (held.reason !== 'infrastructure') return 'awaiting_ruling'
+    // These two reasons share the loop's bounded, ruling-free automatic
+    // recovery gate. Classifying either as awaiting a ruling would strand a
+    // dead driver behind a decision nobody needs to provide.
+    if (held.reason !== 'infrastructure' && held.reason !== 'stale_driver') return 'awaiting_ruling'
     // …and only inside the loop's own bound, computed its way: the control
     // store's recorded count floored against the one this pause carries, a
     // record that will not parse counted as past the bound.

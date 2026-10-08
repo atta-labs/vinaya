@@ -14,11 +14,11 @@
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop.ts",
-        "sha256": "5537934c2d0d4804224a12ac56a20f368145d7a6f47c4bf70500d016d79a9187"
+        "sha256": "bc7a3341c30b11e2c0d2c1320b0b2321a33d4d9425ce3baaaeba04aeabf48d36"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/developer-dispatch.ts",
-        "sha256": "d7fd1a5835c4041545dba50c96a0d065fef9345b07ccf634c11d21bda89223fe"
+        "sha256": "4fa32db3820c989b3f366ea9df7c4ef927c8d9ec75a05b245a532776c0a9e158"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts",
@@ -34,7 +34,7 @@
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts",
-        "sha256": "dc8369c29ec6d8fdeac75549544c529758cb56a57a9c1dea40af1258369a7a52"
+        "sha256": "0e05ef2c1f474b101e56d09a3a2581eece980f5926e030ef9baa10db2543847e"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/publication.ts",
@@ -938,6 +938,10 @@
     {
       "id": "INV-137",
       "node": "validate_developer_output"
+    },
+    {
+      "id": "INV-144",
+      "node": "raise_human_handoff"
     }
   ]
 }

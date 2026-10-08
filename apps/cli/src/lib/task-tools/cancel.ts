@@ -42,6 +42,8 @@ import {
 import { appendRoleLine, loopLogPathFor } from '../loop-log.js'
 import {
   escalationIdFor,
+  escalationPrOf,
+  missingEscalationNextStep,
   readEscalationRecord,
   readPauseState,
   ReplayedResolutionError,
@@ -164,10 +166,13 @@ export function createTaskCancelHandler(
     // pause record could say "no pull request" at all, it did not even refuse:
     // it read the `-1` sentinel as a real number and shelled `gh pr view -1`.
     const pr = packet.inputs.prNumber
-    /** Where this pause's ruling was posted, and so where it is read from — the pull request when one exists, the task Issue when the pause predates one. */
-    const rulingSource = pr === null ? `Issue ${issue}` : `PR ${pr}`
-
     const held = readPauseState(root, issue)
+    // A pause bound to a pull request after it was raised keeps its ruling on
+    // the task Issue and its escalation naming no pull request — so it is
+    // read, and cancelled, as the no-pull-request pause it was raised as.
+    const escalationPr = held ? escalationPrOf(held) : pr
+    /** Where this pause's ruling was posted, and so where it is read from — the pull request when one exists, the task Issue when the pause predates one. */
+    const rulingSource = escalationPr === null ? `Issue ${issue}` : `PR ${escalationPr}`
     const escalationId = held?.escalationId ?? escalationIdFor(issue, packet.inputs.round, packet.inputs.head)
     const peekedEscalation = readEscalationRecord(issue, escalationId, controlStoreDeps)
 
@@ -182,9 +187,9 @@ export function createTaskCancelHandler(
     // the plain any-ruling check — `cancelDevReviewLoop`'s own
     // `resolveEscalation` call below refuses that case on its own terms
     // (`StaleEscalationError`) regardless of what this gate decides.
-    const rulings = pr === null ? deps.fetchIssueRulings(issue) : deps.fetchRulings(pr)
+    const rulings = escalationPr === null ? deps.fetchIssueRulings(issue) : deps.fetchRulings(escalationPr)
     const newestRulingOrdinal =
-      pr === null ? deps.fetchNewestIssueRulingOrdinal(issue) : deps.fetchNewestRulingOrdinal(pr)
+      escalationPr === null ? deps.fetchNewestIssueRulingOrdinal(issue) : deps.fetchNewestRulingOrdinal(escalationPr)
     if (rulings.length === 0 || (peekedEscalation !== null && newestRulingOrdinal <= peekedEscalation.rulingOrdinal)) {
       emitOperationEvent(deps.log, issue, target, 'refused', 'authority')
       return fail(
@@ -204,7 +209,7 @@ export function createTaskCancelHandler(
 
     try {
       const result = await deps.cancelDevReviewLoop(
-        pr === null ? { cancelTask: issue, agent } : { cancelPr: pr, agent }
+        escalationPr === null ? { cancelTask: issue, agent } : { cancelPr: escalationPr, agent }
       )
       const resolutionRead = readResolution(controlStoreDeps, issue, result.escalationId)
       const resolution = resolutionRead.status === 'ok' ? resolutionRead.value : null
@@ -221,7 +226,9 @@ export function createTaskCancelHandler(
         escalationId: result.escalationId,
         outcome,
         authenticatedBy: resolution?.authenticatedBy ?? 'unknown-principal',
-        authenticatedFrom: resolution?.authenticatedFrom ?? (pr === null ? `issue-${issue}-unknown` : `${pr}-unknown`),
+        authenticatedFrom:
+          resolution?.authenticatedFrom ??
+          (escalationPr === null ? `issue-${issue}-unknown` : `${escalationPr}-unknown`),
         fencedEffectKeys: result.fencedEffectKeys
       })
     } catch (err) {
@@ -242,13 +249,17 @@ export function createTaskCancelHandler(
         return fail(
           taskToolError(
             'precondition',
-            `task ${issue}'s escalation '${escalationId}' was already resolved as 'resume', not 'cancel'`
+            `task ${issue}'s escalation '${escalationId}' was already resolved as 'resume', not 'cancel' — the run that resume started holds the task now, and cancelling it waits for that run's next pause.`
           )
         )
       }
       if (err instanceof StaleEscalationError || err instanceof WrongTargetResolutionError) {
         emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
-        return fail(taskToolError('precondition', err.message))
+        const nextStep =
+          err instanceof StaleEscalationError && !/no ruling is needed|is a Principal decision/.test(err.message)
+            ? ` ${missingEscalationNextStep(held!)}`
+            : ''
+        return fail(taskToolError('precondition', `${err.message}${nextStep}`))
       }
       emitOperationEvent(deps.log, issue, target, 'error', 'infrastructure')
       return fail(taskToolError('infrastructure', err instanceof Error ? err.message : String(err)))

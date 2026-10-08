@@ -496,7 +496,7 @@ describe('runTask — O3: an open developer pull request refuses a second start'
     expect(loopCalled).toBe(false)
   })
 
-  it('the refusal names the branch, the open PR number, and the exact dev-review-loop resume command', async () => {
+  it('the refusal names the branch and the open PR number, and points at the running driver rather than a `--resume` its lock would refuse', async () => {
     await expect(
       runTask(
         { tranche: 'task-run-v1', n: 2, agent: 'claude' },
@@ -506,7 +506,7 @@ describe('runTask — O3: an open developer pull request refuses a second start'
           findOpenPrForBranch: () => ({ number: 501, branch: 'task/task-run-v1/2' })
         })
       )
-    ).rejects.toThrow(/task\/task-run-v1\/2.*#501.*vinaya dev-review-loop --resume 501/s)
+    ).rejects.toThrow(/task\/task-run-v1\/2.*#501.*that driver continues the task by itself.*vinaya task status/s)
   })
 
   it('also applies on the already-frozen path — reusing the brief still refuses a second start when a PR is already open', async () => {

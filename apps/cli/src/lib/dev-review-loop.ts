@@ -268,10 +268,14 @@ import {
 import { fetchLoopHistory } from './dev-review-loop/journal-history.js'
 import {
   acquireDriverLockAtomic,
+  bindPauseToPullRequest,
   clearDriverLock,
   escalationIdFor,
+  escalationPrOf,
   fenceStartedEffectsAsUncertain,
+  isAutomaticRecoveryPause,
   isDriverPidAlive,
+  missingEscalationNextStep,
   noPushResumeCommandFor,
   type PauseCommentPostResult,
   type PauseState,
@@ -413,6 +417,9 @@ export type LoopDeps = {
   fetchNewestRulingAuthor: typeof fetchNewestRulingAuthor
   /** The newest principal ruling ordinal on the TASK ISSUE — the freshness baseline an escalation with no pull request records, since a ruling answering it can only be posted there. Its pull-request sibling above covers every other pause. */
   fetchNewestIssueRulingOrdinal: typeof fetchNewestIssueRulingOrdinal
+  /** The principal rulings on the TASK ISSUE, and the newest one's author — what `--resume` reads for a pause recorded before any pull request existed and bound to one since (`escalationPrOf`), whose ruling was posted where its own comment went. */
+  fetchIssueRulings: typeof fetchIssueRulings
+  fetchNewestIssueRulingAuthor: typeof fetchNewestIssueRulingAuthor
   fetchFrozenBrief: typeof fetchFrozenBrief
   resolveIssueObjectives: typeof resolveIssueObjectives
   /** O2: the frozen brief's own source revision, named to the reviewer as a fact. */
@@ -2104,6 +2111,8 @@ function defaultDeps(): LoopDeps {
     fetchNewestRulingOrdinal,
     fetchNewestRulingAuthor,
     fetchNewestIssueRulingOrdinal,
+    fetchIssueRulings,
+    fetchNewestIssueRulingAuthor,
     fetchFrozenBrief,
     resolveIssueObjectives,
     fetchSourceRevision,
@@ -2386,26 +2395,37 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         `devReviewLoop --resume: PR #${resumePr}'s body carries no \`Closes #N\` reference — cannot derive its task.`
       )
     }
-    const held = readPauseState(root, closesTask)
+    let held = readPauseState(root, closesTask)
     if (!held) {
       throw new Error(
         `devReviewLoop --resume: no held pause state found for task ${closesTask} (PR #${resumePr}) — nothing to resume.`
       )
     }
     if (held.prNumber === null) {
-      // `--resume <pr>` derives its task from a pull request's own body, so it
-      // has no entry at all for a pause recorded before one existed: that
-      // pause is continued by `vinaya task run --issue <n>` (the command its
-      // own Issue comment names), or through the Operator's `task_resume`.
-      throw new Error(
-        `devReviewLoop --resume: task ${closesTask}'s held pause state records no pull request — it paused before one existed. Continue it with \`${noPushResumeCommandFor(closesTask, held.branch, held.agent, held.model)}\`.`
+      // A pause recorded before any pull request existed, with one open now:
+      // bound to it first, so this run — and every later reader — continues on
+      // that pull request. Only to the open pull request on the pause's OWN
+      // branch, whose body closes this task (`closesTask`, above); never to
+      // another one. The escalation record keeps naming no pull request, and
+      // `escalationPrOf` keeps its ruling on the task Issue.
+      const openPr = d.findOpenPrForBranch(held.branch)
+      if (openPr?.number !== resumePr) {
+        throw new Error(
+          `devReviewLoop --resume: task ${closesTask}'s held pause state records no pull request — it paused before one existed — and PR #${resumePr} is not the open pull request on its branch \`${held.branch}\`. Continue it with \`${openPr ? `vinaya dev-review-loop --resume ${openPr.number}` : noPushResumeCommandFor(closesTask, held.branch, held.agent, held.model)}\`.`
+        )
+      }
+      held = bindPauseToPullRequest(root, held, resumePr)
+      console.error(
+        `vinaya dev-review-loop: task ${closesTask}'s pause, recorded before any pull request existed, is now bound to PR #${resumePr}.`
       )
     }
     if (held.prNumber !== resumePr) {
       throw new Error(
-        `devReviewLoop --resume: task ${closesTask}'s held pause state names PR #${held.prNumber}, not PR #${resumePr}.`
+        `devReviewLoop --resume: task ${closesTask}'s held pause state names PR #${held.prNumber}, not PR #${resumePr}. Resume it with \`vinaya dev-review-loop --resume ${held.prNumber}\`.`
       )
     }
+    /** The pull request this pause's escalation and ruling belong to — `null` for a pause bound after it was raised, whose ruling is on the task Issue. */
+    const escalationPr = escalationPrOf(held)
     if (held.agent !== undefined && !isAgentVendor(held.agent)) {
       throw new Error(`devReviewLoop --resume: held pause state carries invalid agent '${held.agent}'.`)
     }
@@ -2426,9 +2446,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         { model: held.model ?? held.agent, firstRound: 1, lastRound: held.round }
       ])
     }
-    // O5: an `'infrastructure'` pause is the driver's own
-    // recoverable hiccup, never a human decision point (same wording the
-    // pause-return branch below already uses for it and `stale_driver`) —
+    // O5: an automatic-recovery (`'infrastructure'` or `'stale_driver'`)
+    // pause is the driver's own recoverable hiccup, never a human decision
+    // point —
     // `--resume` continues it on the bare command, no Principal ruling
     // required. Every OTHER pause reason is unchanged: a genuine decision
     // point still refuses to resume without one.
@@ -2455,13 +2475,40 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           ? Number.POSITIVE_INFINITY
           : 0
     const infrastructureRetriesSoFar = Math.max(controlStoreInfrastructureRetries, held.infrastructureRetries ?? 0)
-    const bareInfrastructureResume =
-      held.reason === 'infrastructure' && infrastructureRetriesSoFar < MAX_INFRASTRUCTURE_RETRIES
-    const rulings = bareInfrastructureResume ? [] : d.fetchRulings(resumePr)
-    if (!bareInfrastructureResume && rulings.length === 0) {
+    const bareAutomaticResume =
+      (held.reason === 'infrastructure' || held.reason === 'stale_driver') &&
+      infrastructureRetriesSoFar < MAX_INFRASTRUCTURE_RETRIES
+    // `held.escalationId` is the escalation's OWN real id — a disambiguating
+    // suffix when `writeEscalation` had to claim one (code review, round 2,
+    // MEDIUM); the natural key is still correct whenever no collision ever
+    // happened, and for a `PauseState` written before this field existed.
+    const resumeEscalationId = held.escalationId ?? escalationIdFor(closesTask, held.round, held.head)
+    // A pause that needs a ruling, whose escalation has no durable record, is
+    // refused HERE, before any ruling is asked for: no ruling can be bound to
+    // a missing record, so a refusal naming "post a ruling, then `--resume`"
+    // would name a `--resume` that refuses again. It names the Principal
+    // decision instead. A bare automatic resume needs no record and goes
+    // on (`StaleEscalationError`, below).
+    if (!bareAutomaticResume && readEscalationRecord(closesTask, resumeEscalationId) === null) {
+      const stale = new StaleEscalationError(
+        closesTask,
+        resumeEscalationId,
+        'no escalation record was ever written for it, or it could not be read'
+      )
+      throw new Error(`devReviewLoop --resume: ${stale.message}. ${missingEscalationNextStep(held, false)}`)
+    }
+    // A bound pause's ruling is read where its own comment was posted — the
+    // task Issue — by the same parser under the same principal allowlist.
+    const rulingSource = escalationPr === null ? `Issue #${closesTask}` : `PR #${resumePr}`
+    const rulings = bareAutomaticResume
+      ? []
+      : escalationPr === null
+        ? d.fetchIssueRulings(closesTask)
+        : d.fetchRulings(resumePr)
+    if (!bareAutomaticResume && rulings.length === 0) {
       throw new Error(
-        `devReviewLoop --resume: PR #${resumePr} carries no Principal ruling comment yet — nothing to resume from.` +
-          (held.reason === 'infrastructure'
+        `devReviewLoop --resume: ${rulingSource} carries no Principal ruling comment yet — nothing to resume from. Continuing task ${closesTask} needs a Principal ruling posted on ${rulingSource}; then run \`vinaya dev-review-loop --resume ${resumePr}\`.` +
+          (held.reason === 'infrastructure' || held.reason === 'stale_driver'
             ? ` (task ${closesTask} has hit ${infrastructureRetriesSoFar} infrastructure/stale_driver pause(s) — at or past the bound of ${MAX_INFRASTRUCTURE_RETRIES}, a ruling is required even for this reason.)`
             : '')
       )
@@ -2473,72 +2520,86 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // so it authenticates as the driver's own recoverable-hiccup recovery
     // rather than a principal decision — still consumed at most once, so a
     // duplicate bare `--resume` against the SAME held hiccup is refused too.
-    // `held.escalationId` is the escalation's OWN real id — a disambiguating
-    // suffix when `writeEscalation` had to claim one (code review, round 2,
-    // MEDIUM); the natural key is still correct whenever no collision ever
-    // happened, and for a `PauseState` written before this field existed.
-    const resumeEscalationId = held.escalationId ?? escalationIdFor(closesTask, held.round, held.head)
     const resumeAuthenticatedBy =
-      held.reason === 'infrastructure' ? 'driver-self' : (d.fetchNewestRulingAuthor(resumePr) ?? 'unknown-principal')
+      held.reason === 'infrastructure' || held.reason === 'stale_driver'
+        ? 'driver-self'
+        : ((escalationPr === null ? d.fetchNewestIssueRulingAuthor(closesTask) : d.fetchNewestRulingAuthor(resumePr)) ??
+          'unknown-principal')
     const resumeAuthenticatedFrom =
-      held.reason === 'infrastructure'
+      held.reason === 'infrastructure' || held.reason === 'stale_driver'
         ? `${resumePr}-infrastructure-retry`
-        : `${resumePr}-${d.fetchNewestRulingOrdinal(resumePr)}`
+        : escalationPr === null
+          ? `issue-${closesTask}-${d.fetchNewestIssueRulingOrdinal(closesTask)}`
+          : `${resumePr}-${d.fetchNewestRulingOrdinal(resumePr)}`
     let attachAfterReplayedResolution = false
     try {
       resolveEscalation(
         closesTask,
         resumeEscalationId,
-        resumePr,
+        escalationPr,
         'resume',
         resumeAuthenticatedBy,
         resumeAuthenticatedFrom
       )
     } catch (err) {
-      if (err instanceof WrongTargetResolutionError || err instanceof StaleEscalationError) {
+      if (err instanceof WrongTargetResolutionError) {
         throw new Error(`devReviewLoop --resume: ${err.message}`)
       }
-      if (!(err instanceof ReplayedResolutionError)) throw err
-      // An escalation that already carries a consumed resolution
-      // is not necessarily a replay attempt to refuse — the run that
-      // consumed it may itself have ended (a crash, or a later pause that
-      // collided back onto the SAME natural key — `sameEscalationInstance`,
-      // `control-store/local.ts`, treats a same-round/head/branch/pr/reason/
-      // detail repeat as a rerun of the identical instance, so its own
-      // `pause-state.json` write never advances past the already-consumed
-      // id) before the task's review actually concluded. The storage
-      // guarantee still binds exactly as before whenever a driver still
-      // holds the task (Traps to avoid: never weakened for that case) — that
-      // branch refuses first, in the storage layer's own words, and is
-      // untouched by everything below.
-      //
-      // A review that is GENUINELY concluded — its summary on the forge AND
-      // the review gate passing against the pull request's current head,
-      // objectives version, newest ruling, frozen brief and policy
-      // (`isConcludedJournal`) — is refused too, but named for what it is:
-      // there is nothing left for a `--resume` to attach to, and the
-      // consumed-resolution text describes a storage mechanism the reader
-      // never asked about. `concludedLoopRefusal` renders that reason.
-      //
-      // What no longer refuses: a summary posted for an older head, with a
-      // Principal ruling posted after it, a superseded brief, or a red gate.
-      // Each of those is a review the forge says is NOT finished, and each
-      // one used to exit here on the summary alone — observed on an adopter
-      // pull request that could not be resumed at all. Those continue from
-      // the pull request's CURRENT state instead, the same attach a fresh
-      // `--task <n>` takes onto an already-open PR — never fabricating a
-      // second resolution (Traps to avoid), and never re-deriving a
-      // round/head from this stale record.
-      const existingLock = readDriverLock(root, closesTask)
-      const driverIsLive = existingLock !== null && isDriverPidAlive(existingLock.pid)
-      if (driverIsLive || err.existing?.decision !== 'resume') {
-        throw new Error(`devReviewLoop --resume: ${err.message}`)
+      if (err instanceof StaleEscalationError) {
+        // A bare infrastructure resume asks no Principal for anything, so an
+        // escalation record that was never written leaves nothing to
+        // authenticate — only the one-driver-per-task lock to respect, which
+        // the entry gate below still enforces. It continues from the pull
+        // request's current state, the same attach a fresh `--task <n>` takes.
+        // Every pause that needs a ruling still refuses: without the record,
+        // no ruling can be bound to it.
+        if (!bareAutomaticResume) {
+          throw new Error(`devReviewLoop --resume: ${err.message}. ${missingEscalationNextStep(held, false)}`)
+        }
+        attachAfterReplayedResolution = true
+      } else {
+        if (!(err instanceof ReplayedResolutionError)) throw err
+        // An escalation that already carries a consumed resolution
+        // is not necessarily a replay attempt to refuse — the run that
+        // consumed it may itself have ended (a crash, or a later pause that
+        // collided back onto the SAME natural key — `sameEscalationInstance`,
+        // `control-store/local.ts`, treats a same-round/head/branch/pr/reason/
+        // detail repeat as a rerun of the identical instance, so its own
+        // `pause-state.json` write never advances past the already-consumed
+        // id) before the task's review actually concluded. The storage
+        // guarantee still binds exactly as before whenever a driver still
+        // holds the task (Traps to avoid: never weakened for that case) — that
+        // branch refuses first, in the storage layer's own words, and is
+        // untouched by everything below.
+        //
+        // A review that is GENUINELY concluded — its summary on the forge AND
+        // the review gate passing against the pull request's current head,
+        // objectives version, newest ruling, frozen brief and policy
+        // (`isConcludedJournal`) — is refused too, but named for what it is:
+        // there is nothing left for a `--resume` to attach to, and the
+        // consumed-resolution text describes a storage mechanism the reader
+        // never asked about. `concludedLoopRefusal` renders that reason.
+        //
+        // What no longer refuses: a summary posted for an older head, with a
+        // Principal ruling posted after it, a superseded brief, or a red gate.
+        // Each of those is a review the forge says is NOT finished, and each
+        // one used to exit here on the summary alone — observed on an adopter
+        // pull request that could not be resumed at all. Those continue from
+        // the pull request's CURRENT state instead, the same attach a fresh
+        // `--task <n>` takes onto an already-open PR — never fabricating a
+        // second resolution (Traps to avoid), and never re-deriving a
+        // round/head from this stale record.
+        const existingLock = readDriverLock(root, closesTask)
+        const driverIsLive = existingLock !== null && isDriverPidAlive(existingLock.pid)
+        if (driverIsLive || err.existing?.decision !== 'resume') {
+          throw new Error(`devReviewLoop --resume: ${err.message}`)
+        }
+        const concludedRefusal = concludedLoopRefusal(d.fetchLoopHistory(resumePr))
+        if (concludedRefusal !== null) {
+          throw new Error(`devReviewLoop --resume: ${concludedRefusal}`)
+        }
+        attachAfterReplayedResolution = true
       }
-      const concludedRefusal = concludedLoopRefusal(d.fetchLoopHistory(resumePr))
-      if (concludedRefusal !== null) {
-        throw new Error(`devReviewLoop --resume: ${concludedRefusal}`)
-      }
-      attachAfterReplayedResolution = true
     }
     if (agentSwitched) {
       // The resume is accepted: the held record names the agent that runs
@@ -2551,7 +2612,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         ...(dispatchModel ? { model: dispatchModel } : {})
       })
     }
-    if (attachAfterReplayedResolution) {
+    // A bound pause attaches too: it was raised before the pull request
+    // existed, so it holds no pull-request round or head to resume AT — the
+    // open pull request's own state is where this run picks up.
+    if (attachAfterReplayedResolution || held.boundAt !== undefined) {
       task = held.task
       branch = held.branch
     } else {
@@ -7234,6 +7298,8 @@ export type CancelDeps = {
   fetchIssueRulings: typeof fetchIssueRulings
   fetchNewestIssueRulingOrdinal: typeof fetchNewestIssueRulingOrdinal
   fetchNewestIssueRulingAuthor: typeof fetchNewestIssueRulingAuthor
+  /** The open pull request on a branch — what a `--cancel <pr>` against a pause recorded before any pull request existed checks before binding the pause to it. */
+  findOpenPrForBranch: typeof findOpenPrForBranch
   runtimeDir: () => string
   resolveLogAppendPath: (repo: { owner: string; repo: string } | null, issue: number) => string | Promise<string>
   resolveRepo: () => Promise<{ owner: string; repo: string } | null>
@@ -7256,6 +7322,7 @@ function defaultCancelDeps(): CancelDeps {
     fetchIssueRulings,
     fetchNewestIssueRulingOrdinal,
     fetchNewestIssueRulingAuthor,
+    findOpenPrForBranch,
     runtimeDir,
     resolveLogAppendPath,
     resolveRepo: () => resolveRepo().catch(() => null),
@@ -7309,25 +7376,46 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   /** `PR #<n>`, or the task's own Issue for a pause that never had one — the one phrase every refusal below names its target by. */
   const targetLabel = cancelPr === null ? `Issue #${task}` : `PR #${cancelPr}`
   const root = d.runtimeDir()
-  const held = d.readPauseState(root, task)
+  let held = d.readPauseState(root, task)
   if (!held) {
     throw new Error(
       `devReviewLoop --cancel: no held pause state found for task ${task} (${targetLabel}) — nothing to cancel.`
     )
   }
-  if (held.prNumber !== cancelPr) {
+  // A pause recorded before any pull request existed is bound to the task's
+  // pull request opened since — the same binding `--resume` makes, under the
+  // same proof: the open pull request on the pause's own branch, whose body
+  // closes this task.
+  const openPrOnBranch = cancelPr !== null && held.prNumber === null ? d.findOpenPrForBranch(held.branch) : null
+  if (cancelPr !== null && openPrOnBranch?.number === cancelPr) {
+    held = bindPauseToPullRequest(root, held, cancelPr)
+  }
+  // A bound pause still answers to its task directly, as it did before it was
+  // bound — its escalation names no pull request.
+  const targetsHeld = held.prNumber === cancelPr || (cancelPr === null && escalationPrOf(held) === null)
+  if (!targetsHeld) {
     throw new Error(
-      `devReviewLoop --cancel: task ${task}'s held pause state names PR #${held.prNumber ?? '(none)'}, not ${targetLabel}.`
+      `devReviewLoop --cancel: task ${task}'s held pause state names PR #${held.prNumber ?? '(none)'}, not ${targetLabel}. ${
+        held.prNumber !== null
+          ? `Cancel it with \`vinaya dev-review-loop --cancel ${held.prNumber}\`.`
+          : openPrOnBranch
+            ? `It paused before any pull request existed, and the open pull request on its branch \`${held.branch}\` is PR #${openPrOnBranch.number} — cancel it with \`vinaya dev-review-loop --cancel ${openPrOnBranch.number}\`.`
+            : `It paused before any pull request existed and none is open on its branch \`${held.branch}\` now — cancel it with the Operator's \`task_cancel\` for task ${task}.`
+      }`
     )
   }
+  /** The pull request this pause's escalation and ruling belong to — `null` for one raised before any pull request existed, bound since or not. */
+  const escalationPr = escalationPrOf(held)
+  /** Where this pause's own comment, and so its ruling, was posted. */
+  const rulingLabel = escalationPr === null ? `Issue #${task}` : `PR #${escalationPr}`
   // The ruling is read from wherever this pause's own comment was posted — the
   // pull request when one exists, the task Issue when the pause predates one.
   // Same parser, same principal allowlist, either way
   // (`developer-dispatch.ts`'s own `fetchIssueRulings`).
-  const rulings = cancelPr === null ? d.fetchIssueRulings(task) : d.fetchRulings(cancelPr)
+  const rulings = escalationPr === null ? d.fetchIssueRulings(task) : d.fetchRulings(escalationPr)
   if (rulings.length === 0) {
     throw new Error(
-      `devReviewLoop --cancel: ${targetLabel} carries no Principal ruling comment yet — nothing authenticates this cancel.`
+      `devReviewLoop --cancel: ${rulingLabel} carries no Principal ruling comment yet — nothing authenticates this cancel. Cancelling task ${task} needs a Principal ruling posted on ${rulingLabel} first.`
     )
   }
   // See the identical comment on the `--resume` path above.
@@ -7353,18 +7441,18 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   const terminateAgent: AgentVendor =
     dispatchedAgent !== undefined && isAgentVendor(dispatchedAgent) ? dispatchedAgent : input.agent
   const authenticatedBy =
-    (cancelPr === null ? d.fetchNewestIssueRulingAuthor(task) : d.fetchNewestRulingAuthor(cancelPr)) ??
+    (escalationPr === null ? d.fetchNewestIssueRulingAuthor(task) : d.fetchNewestRulingAuthor(escalationPr)) ??
     'unknown-principal'
   // `<pr>-<ordinal>` for a pull-request ruling; `issue-<n>-<ordinal>` for one
   // read off the task Issue, so a resolution record names WHERE its decision
   // was read from and never reads as a pull request number that does not exist.
   const authenticatedFrom =
-    cancelPr === null
+    escalationPr === null
       ? `issue-${task}-${d.fetchNewestIssueRulingOrdinal(task)}`
-      : `${cancelPr}-${d.fetchNewestRulingOrdinal(cancelPr)}`
+      : `${escalationPr}-${d.fetchNewestRulingOrdinal(escalationPr)}`
   let resolved: ResolveEscalationResult
   try {
-    resolved = resolveEscalation(task, escalationId, cancelPr, 'cancel', authenticatedBy, authenticatedFrom)
+    resolved = resolveEscalation(task, escalationId, escalationPr, 'cancel', authenticatedBy, authenticatedFrom)
   } catch (err) {
     if (
       err instanceof WrongTargetResolutionError ||
@@ -7378,7 +7466,9 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
       // MAJOR: this used to throw a plain `Error`, so `instanceof
       // ReplayedResolutionError` downstream could never match a real
       // duplicate cancel request going through this function).
-      err.message = `devReviewLoop --cancel: ${err.message}`
+      err.message = `devReviewLoop --cancel: ${err.message}${
+        err instanceof StaleEscalationError ? `. ${missingEscalationNextStep(held)}` : ''
+      }`
       throw err
     }
     throw err
@@ -7472,12 +7562,19 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
  * watching for a real ruling from that point on, rather than hammering the
  * same failing bare attempt every poll tick forever.
  *
- * The one pause this never watches: the pre-first-push escalation
- * (`prNumber <= 0` — no pull request exists yet to poll or comment on)
- * ends the driver unwatched — there is nothing yet to watch. Its own Issue
- * comment names the command that continues it, in whichever address form
- * this task's branch says `task run` takes for it (`noPushResumeArgv`,
- * `pause-resume.ts`; "Pause and `--resume`", `apps/cli/specs/loop.md`).
+ * A pause recorded before any pull request existed (`prNumber <= 0`) has
+ * no pull request to poll or read a ruling off. One that asks a Principal
+ * for a decision ends the driver unwatched, as before: its own Issue comment
+ * names the command that continues it, in whichever address form this
+ * task's branch says `task run` takes for it (`noPushResumeArgv`,
+ * `pause-resume.ts`; "Pause and `--resume`", `apps/cli/specs/loop.md`). An
+ * automatic-recovery one (`isAutomaticRecoveryPause` — an infrastructure
+ * hiccup, a GitHub rate limit, a stale driver) is watched by
+ * `watchPrePrPauseThenResume` instead: the same one bounded wait, then the
+ * same continuation `task run` would make — the pull request opened since, if
+ * there is one, bound and resumed; for every automatic-recovery pause
+ * (`infrastructure` or `stale_driver`) within its retry bound, the task
+ * re-entered otherwise.
  *
  * This watcher holds the task's one-driver-per-task lock for its ENTIRE
  * life — across every pause and every resume attempt it makes, never
@@ -7554,6 +7651,8 @@ export type DriverWatchDeps = {
   /** Reads the GitHub rate-limit reset (epoch seconds) once, without spending the limit — the same read the in-round wait makes. */
   readRateLimitReset: () => Promise<number | null>
   now: () => number
+  /** The open pull request on a branch — how a pause recorded before any pull request existed finds the one opened since, to bind and resume it. */
+  findOpenPrForBranch: typeof findOpenPrForBranch
 }
 
 /** One driver run's count of automatic rate-limit resumes, kept across pauses so the bound survives each re-watch; keyed by the round the pauses belong to. */
@@ -7572,7 +7671,8 @@ function defaultDriverWatchDeps(): DriverWatchDeps {
     watchPollIntervalMs: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_WATCH_POLL_MS', 30_000),
     infrastructureBackoffMs: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_WATCH_INFRA_BACKOFF_MS', 60_000),
     readRateLimitReset: defaultReadRateLimitReset,
-    now: () => Date.now()
+    now: () => Date.now(),
+    findOpenPrForBranch
   }
 }
 
@@ -7767,6 +7867,81 @@ async function watchPauseThenResume(
 }
 
 /**
+ * One automatic-recovery pause recorded before any pull request existed,
+ * watched the way `watchPauseThenResume` watches one on a pull request: the
+ * same one bounded wait — until the GitHub rate-limit reset for a rate limit,
+ * at most `MAX_AUTOMATIC_RATE_LIMIT_RESUMES` times for one round; the fixed
+ * backoff otherwise, while the task's own `MAX_INFRASTRUCTURE_RETRIES`
+ * bare-resume budget lasts — then one continuation, the same one `task run`
+ * makes: the open pull request on the pause's own branch, if one was opened
+ * since, through `--resume` (which binds the pause to it first); the task
+ * itself otherwise, for every automatic-recovery pause (`infrastructure` or
+ * `stale_driver`) still within its retry bound. A pause asking a
+ * Principal for a decision, a spent budget, a cancel, or a continuation that
+ * throws all end the driver as before (`'unwatched'`) — its Issue comment, or the thrown refusal, names
+ * what continues it. Every attempt re-enters under this driver's own lock
+ * token, so no second driver ever starts.
+ */
+async function watchPrePrPauseThenResume(
+  pauseResult: LoopResult,
+  input: LoopInput,
+  loopDeps: Partial<LoopDeps>,
+  w: DriverWatchDeps,
+  driverLockToken: string,
+  rateLimitBudget: RateLimitResumeBudget
+): Promise<
+  { kind: 'ended'; reason: DriverEndReason } | { kind: 'result'; result: LoopResult } | { kind: 'unwatched' }
+> {
+  const { task } = pauseResult
+  if (pauseResult.finalDecision.type !== 'pause') return { kind: 'unwatched' }
+  const held = watchReadOrFallback('pause state', () => w.readPauseState(w.runtimeDir(), task), null)
+  if (!held || held.prNumber !== null || !isAutomaticRecoveryPause(held.reason)) return { kind: 'unwatched' }
+  const agent = held.agent !== undefined && isAgentVendor(held.agent) ? held.agent : input.agent
+  if (!agent) return { kind: 'unwatched' }
+
+  if (isRateLimitPauseDetail(held.detail)) {
+    if (rateLimitBudget.round !== held.round) {
+      rateLimitBudget.round = held.round
+      rateLimitBudget.count = 0
+    }
+    if (rateLimitBudget.count >= MAX_AUTOMATIC_RATE_LIMIT_RESUMES) return { kind: 'unwatched' }
+    rateLimitBudget.count += 1
+    const reset = await w.readRateLimitReset()
+    await w.sleep(rateLimitWaitMs(reset, w.now()))
+  } else {
+    if ((held.infrastructureRetries ?? 0) >= MAX_INFRASTRUCTURE_RETRIES) return { kind: 'unwatched' }
+    await w.sleep(w.infrastructureBackoffMs)
+  }
+
+  const escalationId = held.escalationId
+  if (escalationId) {
+    const resolution = watchReadOrFallback('resolution', () => w.readResolutionRecord(task, escalationId), null)
+    if (resolution?.decision === 'cancel') return { kind: 'ended', reason: 'cancelled' }
+  }
+  const openPr = watchReadOrFallback('open pull request', () => w.findOpenPrForBranch(held.branch), null)
+  // Both automatic-recovery reasons can re-enter the task bare when no pull
+  // request exists yet. This is the same bounded allowance `--resume` grants
+  // them after a PR is available; the watcher owns only the wait and lock.
+  const model = held.model ?? input.model
+  const continuation: LoopInput = openPr
+    ? { resumePr: openPr.number, agent, ...(model ? { model } : {}) }
+    : { task, agent, ...(model ? { model } : {}) }
+  try {
+    return {
+      kind: 'result',
+      result: await w.devReviewLoop({ ...continuation, retainDriverLock: driverLockToken }, loopDeps)
+    }
+  } catch (err) {
+    process.stderr.write(
+      `vinaya dev-review-loop: watcher's resume attempt for task ${task} failed — ${
+        err instanceof Error ? err.message : String(err)
+      }; the driver stops watching.\n`
+    )
+    return { kind: 'unwatched' }
+  }
+}
+
+/**
  * issue-711 O4's own entry point — `apps/cli/src/commands/dev-review-loop.ts`'s
  * `--task` start and `task-run.ts`'s `runTask` both call this instead of
  * `devReviewLoop` directly (a human's own explicit `--resume <pr>`/
@@ -7791,8 +7966,16 @@ export async function runDriverLoop(
   const driverLockToken = randomUUID()
   const rateLimitBudget: RateLimitResumeBudget = { round: -1, count: 0 }
   let result = await w.devReviewLoop({ ...input, retainDriverLock: driverLockToken }, loopDeps)
-  while (result.finalDecision.type === 'pause' && result.prNumber > 0) {
-    const outcome = await watchPauseThenResume(result, loopDeps, w, driverLockToken, rateLimitBudget)
+  while (result.finalDecision.type === 'pause') {
+    const outcome =
+      result.prNumber > 0
+        ? await watchPauseThenResume(result, loopDeps, w, driverLockToken, rateLimitBudget)
+        : await watchPrePrPauseThenResume(result, input, loopDeps, w, driverLockToken, rateLimitBudget)
+    // A pause before any pull request that this driver does not (or no
+    // longer may) resume by itself ends it here, its Issue comment naming the
+    // continuation — the lock is left for the next start to take over, as it
+    // always was for this pause.
+    if (outcome.kind === 'unwatched') return result
     if (outcome.kind === 'ended') {
       // The task is genuinely over — the ONE place this driver's own lock
       // is released outside `devReviewLoop`'s own finally (which never ran

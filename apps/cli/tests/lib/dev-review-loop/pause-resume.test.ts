@@ -44,7 +44,9 @@ import {
   fenceStartedEffectsAsUncertain,
   noPushResumeArgv,
   noPushResumeCommandFor,
+  missingEscalationNextStep,
   PAUSE_REASON_PROFILE,
+  pauseGrantsBareResume,
   postWithRetry,
   readPauseState,
   renderNoPushStopComment,
@@ -67,6 +69,30 @@ afterEach(() => {
 })
 
 const TASK = 556
+
+describe('automatic-recovery missing-escalation guidance', () => {
+  const staleDriverPause = {
+    task: TASK,
+    round: 1,
+    head: 'headsha1',
+    branch: 'task/x/1',
+    prNumber: 900,
+    reason: 'stale_driver' as const,
+    pausedAt: '2026-10-08T00:00:00.000Z',
+    escalationId: `${TASK}-1-headsha1`
+  }
+
+  it('offers task run for a stale driver within its retry budget', () => {
+    expect(pauseGrantsBareResume(staleDriverPause)).toBe(true)
+    expect(missingEscalationNextStep(staleDriverPause)).toContain('Continue it with `vinaya task run x 1`')
+  })
+
+  it('requires a Principal decision for a stale driver past its retry budget', () => {
+    const exhausted = { ...staleDriverPause, infrastructureRetries: MAX_INFRASTRUCTURE_RETRIES }
+    expect(pauseGrantsBareResume(exhausted)).toBe(false)
+    expect(missingEscalationNextStep(exhausted)).toContain('is a Principal decision')
+  })
+})
 
 function startedEffect(deps: ControlStoreDeps, task: number, epoch: number, key: string): void {
   writeEffect(deps, task, epoch, key, {
