@@ -7,7 +7,7 @@ import { describe, expect, it } from 'bun:test'
 import { logQuiet } from '../../src/lib/agent-line.js'
 import { appendRoleLine } from '../../src/lib/loop-log.js'
 import { quietLogWriter } from '../../src/commands/task-status.js'
-import { applyQuiet, pauseResumeCommand } from '../../src/commands/task-run.js'
+import { applyQuiet, parseFlags, pauseResumeCommand } from '../../src/commands/task-run.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -278,6 +278,18 @@ describe('vinaya task run — pauseResumeCommand (#785, O1)', () => {
 })
 
 describe('vinaya task run --quiet', () => {
+  it('parseFlags maps --quiet to a plain switch, absent by default', () => {
+    expect(parseFlags(['--agent', 'claude', '--quiet']).quiet).toBe(true)
+    expect(parseFlags(['--agent', 'claude']).quiet).toBe(false)
+    expect(parseFlags(['--quiet']).unknown).toEqual([])
+  })
+
+  it('the command accepts --quiet as a known flag', () => {
+    const r = runCli(['task', 'run', 'task-run-v1', '2', '--agent', 'skills', '--quiet'])
+    expect(r.stderr).not.toContain('unrecognized flag')
+    expect(r.stderr).toContain('claude')
+  })
+
   it('sets the quiet view for the live terminal, and the log file still receives detail records', () => {
     const saved = process.env.VINAYA_LOG_QUIET
     try {

@@ -76,7 +76,7 @@ type ParsedFlags = {
  * them would let a typo'd `--agent` at the end of argv quietly succeed off
  * the config default instead of failing loud.
  */
-function parseFlags(rest: string[]): ParsedFlags {
+export function parseFlags(rest: string[]): ParsedFlags {
   let agent: string | undefined
   let agentFlagPresent = false
   let issue: string | undefined

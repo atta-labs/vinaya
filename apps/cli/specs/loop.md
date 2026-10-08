@@ -330,6 +330,7 @@ An agent's live stream reaches those records through its own translator — `tra
 <!-- AEG:CLAIM: apps/cli/src/commands/task-status.ts contains:else if (a === '--quiet') quiet = true -->
 <!-- AEG:CLAIM: apps/cli/src/commands/task-run.ts contains:process.env.VINAYA_LOG_QUIET = '1' -->
 <!-- AEG:CLAIM: apps/cli/src/commands/task-status.ts contains:const DETAIL_RECORD -->
+<!-- AEG:CLAIM: apps/cli/src/lib/loop-log.ts contains:for (const detail of details.filter(Boolean)) { -->
 
 ### The action vocabulary a Claude stream is translated into
 
