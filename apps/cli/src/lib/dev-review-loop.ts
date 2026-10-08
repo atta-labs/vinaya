@@ -7572,7 +7572,8 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
  * hiccup, a GitHub rate limit, a stale driver) is watched by
  * `watchPrePrPauseThenResume` instead: the same one bounded wait, then the
  * same continuation `task run` would make — the pull request opened since, if
- * there is one, bound and resumed; for an infrastructure pause, the task
+ * there is one, bound and resumed; for every automatic-recovery pause
+ * (`infrastructure` or `stale_driver`) within its retry bound, the task
  * re-entered otherwise.
  *
  * This watcher holds the task's one-driver-per-task lock for its ENTIRE
