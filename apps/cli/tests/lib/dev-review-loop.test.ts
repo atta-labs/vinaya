@@ -59,6 +59,7 @@ import { fileURLToPath } from 'node:url'
 import { rateLimitPauseDetail } from '../../src/lib/dev-review-loop/round-assess.js'
 import { heldVerdictPath } from '../../src/lib/dev-review-loop/reviewer-dispatch.js'
 import { reviewerCandidateInputPaths } from '../../src/lib/dev-review-loop/reviewer-isolation.js'
+import { renderDeferredFindingsIssueBody } from '../../src/lib/forge-write.js'
 import { renderNoPushStopComment, renderPauseComment } from '../../src/lib/dev-review-loop/pause-resume.js'
 import { FAKE_CLAUDE_PROBE_ANSWER } from './dispatch/fake-sandbox-probe.js'
 import {
@@ -98,6 +99,7 @@ import {
   objectivesVersion,
   policyDigest,
   renderObjectives,
+  REVIEW_FINDING_DESCRIPTION_MAX_LENGTH,
   type Objective,
   type DevReviewLoopEventInput
 } from '@attalabs/aeg-core'
@@ -106,6 +108,7 @@ import {
   CLEAN_SECURITY,
   cleanupWorlds,
   controlDir as ipControlDir,
+  defaultDeveloperTurnOutput,
   makeInProcessDeps,
   makeWorld,
   outboxLines as ipOutboxLines,
@@ -1660,11 +1663,61 @@ describe('devReviewLoop — deferred findings tracked in one Issue per pull requ
         reviewer: 'reviewer',
         severity: 'BLOCKER',
         location: 'packages/aeg-core/src/foo.ts:10',
-        reason: 'outside-surface'
+        reason: 'outside-surface',
+        description: 'F1 correctness: a latent bug the loop cannot act on this round'
       }
     ])
     // O1: publication received the tracking Issue's ref, to link from the summary.
     expect(world.publishedDeferredIssues).toEqual([{ issue: world.deferredIssueNumber }])
+  })
+
+  it('keeps both deferral reasons’ descriptions, redacted and capped, in the Issue body and the Log', async () => {
+    const secret = 'ghp_ABCDEFGHIJKLMNOP'
+    const long = 'x'.repeat(REVIEW_FINDING_DESCRIPTION_MAX_LENGTH + 200)
+    const blocking = 'BLOCKER|apps/cli/src/a.ts:5|an in-Surface defect the Developer must fix\n'
+    const outside = `BLOCKER|packages/aeg-core/src/foo.ts:10|outside leak ${secret} ${long}\n`
+    const unchanged = `BLOCKER|apps/cli/src/a.ts:99|unchanged-line leak ${secret} ${long}\n`
+    const world = makeWorld({
+      surface: { in: ['apps/cli/**'], out: [] },
+      // Round 2's diff changes line 5 only, so the round-2 finding at line 99 sits on an unchanged line.
+      roundDiff:
+        'diff --git a/apps/cli/src/a.ts b/apps/cli/src/a.ts\n--- a/apps/cli/src/a.ts\n+++ b/apps/cli/src/a.ts\n@@ -5,0 +5,1 @@\n+x\n',
+      roleOutcomes: {
+        1: { reviewer: { ...CLEAN_REVIEWER, findings: blocking + outside } },
+        2: { reviewer: { ...CLEAN_REVIEWER, findings: unchanged } }
+      },
+      developerTurnOutput: (round, prompt) => {
+        if (round === 2) world.head = 'b'.repeat(40)
+        return defaultDeveloperTurnOutput(prompt)
+      }
+    })
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision.type).toBe('publish')
+
+    const entries = world.deferredIssueWrites.flatMap((w) => w.entries)
+    const outsideEntry = entries.find((e) => e.reason === 'outside-surface')
+    const unchangedEntry = entries.find((e) => e.reason === 'unchanged-line')
+    expect(outsideEntry).toBeDefined()
+    expect(unchangedEntry).toBeDefined()
+
+    const body = renderDeferredFindingsIssueBody(world.prNumber, entries)
+    const logged = ipOutboxLines(world)
+      .filter((l) => l.event === 'verdicts_read')
+      .flatMap(
+        (l) => (l.findings ?? []) as Array<{ deferral_reason?: string; description?: string; location?: string }>
+      )
+    for (const [entry, reason] of [
+      [outsideEntry!, 'outside-surface'],
+      [unchangedEntry!, 'unchanged-line']
+    ] as const) {
+      expect(entry.description).not.toContain(secret)
+      expect(entry.description.length).toBeLessThanOrEqual(REVIEW_FINDING_DESCRIPTION_MAX_LENGTH)
+      expect(entry.description.endsWith('…')).toBe(true)
+      expect(body).toContain(entry.description)
+      const event = logged.find((f) => f.deferral_reason === reason)
+      expect(event?.description).toBe(entry.description)
+      expect(event?.location).toBe(entry.location)
+    }
   })
 
   it('opens nothing for a clean publish with no deferred findings (O3)', async () => {
@@ -1719,7 +1772,8 @@ describe('devReviewLoop — deferred findings tracked in one Issue per pull requ
         reviewer: 'reviewer',
         severity: 'BLOCKER',
         location: 'packages/aeg-core/src/foo.ts:10',
-        reason: 'outside-surface'
+        reason: 'outside-surface',
+        description: 'a latent bug the loop cannot act on this round'
       }
     ])
   })

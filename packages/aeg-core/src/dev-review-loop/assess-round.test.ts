@@ -927,6 +927,7 @@ describe('assessRound — buildRoundRecord collects deferred findings (O4)', () 
           id: 'F1',
           severity: 'MAJOR',
           location: 'packages/aeg-core/src/x.ts:42',
+          description: 'the unchanged finding',
           state: null,
           policyTreatment: 'non_blocking',
           deferred: 'unchanged-line'
@@ -942,7 +943,12 @@ describe('assessRound — buildRoundRecord collects deferred findings (O4)', () 
     const { state, decisions } = runScenario(freshState(), [fakeGate(1, true), fakeVerdicts(1, [reviewer, security])])
     expect(decisions[decisions.length - 1]).toEqual({ type: 'publish' })
     expect(state.rounds[0]?.deferred).toEqual([
-      { severity: 'MAJOR', location: 'packages/aeg-core/src/x.ts:42', reason: 'unchanged-line' }
+      {
+        severity: 'MAJOR',
+        location: 'packages/aeg-core/src/x.ts:42',
+        reason: 'unchanged-line',
+        description: 'the unchanged finding'
+      }
     ])
   })
 

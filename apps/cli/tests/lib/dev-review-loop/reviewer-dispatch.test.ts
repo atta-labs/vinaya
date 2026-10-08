@@ -797,6 +797,7 @@ describe('buildVerdictFromReport — deferral context (O2/O3/O4)', () => {
     expect(result.observation.findings[0]).toMatchObject({
       severity: 'MAJOR',
       location: 'packages/aeg-core/src/x.ts:99',
+      description: 'perf regression on unchanged code',
       policyTreatment: 'non_blocking',
       deferred: 'unchanged-line'
     })

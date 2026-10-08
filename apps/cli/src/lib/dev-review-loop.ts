@@ -2180,7 +2180,14 @@ function deferredEntriesForRound(round: number, verdicts: VerdictObservation[]):
   for (const v of verdicts) {
     for (const f of v.findings) {
       if (f.deferred !== undefined) {
-        entries.push({ round, reviewer: v.role, severity: f.severity, location: f.location ?? '', reason: f.deferred })
+        entries.push({
+          round,
+          reviewer: v.role,
+          severity: f.severity,
+          location: f.location ?? '',
+          reason: f.deferred,
+          description: f.description ?? ''
+        })
       }
     }
   }
