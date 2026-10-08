@@ -561,7 +561,7 @@ export function fetchPrWorkflowRuns(head: string | null): RestWorkflowRun[] | nu
         'api',
         `repos/{owner}/{repo}/actions/runs?head_sha=${head}&per_page=100`,
         '--jq',
-        '.workflow_runs[] | {id, name, workflow_id, status, conclusion, created_at, run_started_at}'
+        '.workflow_runs[] | {id, name, path, workflow_id, status, conclusion, created_at, run_started_at}'
       ],
       {
         encoding: 'utf8',

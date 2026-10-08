@@ -26,7 +26,7 @@
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/gate-reading.ts",
-        "sha256": "a2de4062a02eba158f5bdb5bfdc5e117dec4b26a53125135fe11c8f748f4bf53"
+        "sha256": "8c65c4675d9eae3b4cba4733f8a8f3b3084a708f62d947b3d6d9843e7577accd"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/journal-history.ts",
