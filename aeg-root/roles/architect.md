@@ -23,7 +23,7 @@ summary: Ever had a Milestone's title quietly become the only place a version li
 ---
 # Architect — Role Reference
 
-**Read receipt — do this first.** `vinaya doctrine --role architect --print`'s output begins with a fixed acknowledgement token, one line, before anything else. Your first message in this session must repeat that exact token verbatim — e.g. `ACK: <token>` — so a transcript proves this doctrine was read, checked with one grep. The token lives only in this file's frontmatter, never in this paragraph, so editing this paragraph never invalidates a past session's proof.
+**Read receipt — do this first.** `vinaya doctrine --role architect --print`'s output begins with a fixed acknowledgement token, one line, before anything else. Your first message in this session must repeat that exact token verbatim — e.g. `ACK: <token>` — so a transcript proves this doctrine was read, checked with one grep. The token lives only in this file's frontmatter, never in this paragraph, so editing this paragraph never invalidates a past session's proof. A session the review loop dispatched gives no receipt: the driver puts this doctrine in your prompt itself, and every message you send there is the driver's structured turn result.
 
 ## The short version
 

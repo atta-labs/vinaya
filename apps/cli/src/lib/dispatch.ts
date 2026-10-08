@@ -4255,7 +4255,7 @@ export async function dispatchRole(
   const documentationSources = documentationSourcesFromPrompt(role, prompt)
   const codexDocumentationGuidance =
     agent === 'codex' && documentationSources.some((source) => isDocumentationUrl(source.source))
-      ? `\n\nCodex documentation receipt: read every URL in \`## Documentation\` with the dev-tools \`${FETCH_DOCUMENTATION_TOOL}\` tool before ending this turn — the driver fetches the page outside your sandbox and records the read. \`curl -L <URL>\` in a Bash tool call also counts when the host is reachable from the sandbox. Built-in web search is not a receipt route for this dispatch.\n`
+      ? `\n\nCodex documentation receipt: read every URL in \`## Documentation\` with the dev-tools \`${FETCH_DOCUMENTATION_TOOL}\` tool before ending this turn — the driver fetches the page outside your sandbox and records the read. \`curl -L <URL>\` in a Bash tool call also counts when the host is reachable from the sandbox; a \`curl\` your sandbox blocks never means the source cannot be opened — read it with \`${FETCH_DOCUMENTATION_TOOL}\`. Built-in web search is not a receipt route for this dispatch.\n`
       : ''
   if (agent === 'gemini' && documentationSources.some((s) => isDocumentationUrl(s.source))) {
     // round 2 security review, LOW — the PostToolUse/Stop hook
