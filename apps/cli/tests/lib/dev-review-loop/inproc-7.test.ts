@@ -19,6 +19,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { withDeveloperModelsLine } from '../../../src/lib/dev-review-loop/developer-dispatch.js'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../../src/lib/dev-review-loop/round-assess.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
 import {
@@ -522,12 +523,46 @@ describe('devReviewLoop — --resume with a different --agent continues the task
     }
   })
 
-  it('keeps the For line true when a Developer rewrites the body after the switch', async () => {
+  it('records the model run list the For line is rendered from', async () => {
     const { world, deps } = await pausedOnCodex()
     await runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude', model: 'claude-opus-5-5' }, deps)
     const runs = JSON.parse(readFileSync(join(ipTaskRunDir(world), 'developer-models.json'), 'utf8')) as {
       model: string
     }[]
     expect(runs.map((r) => r.model)).toEqual(['gpt-5.6-terra', 'claude-opus-5-5'])
+  })
+  it('re-applies the For line over a body the Developer writes through update_pull_request_body after the switch', async () => {
+    const { world } = await pausedOnCodex()
+    const devWrittenBody = [
+      'Closes #1',
+      '',
+      '**For:** claude-opus-5-5 (Claude Code)',
+      '',
+      '## Decisions',
+      '',
+      'None.'
+    ].join('\n')
+    world.worktreeChangedPaths = ['apps/cli/src/lib/x.ts']
+    await runLoopInProcess(
+      world,
+      { resumePr: world.prNumber, agent: 'claude', model: 'claude-opus-5-5' },
+      developerPublishesViaToolsDeps(world, { bodyOnly: true, body: devWrittenBody })
+    )
+    expect(world.prBodyUpdates.length).toBeGreaterThan(0)
+    expect(world.prBody).toContain('**For:** `gpt-5.6-terra` (round `1`), `claude-opus-5-5` (round `1` on)')
+    expect(world.prBody).toContain('## Decisions')
+  })
+
+  it('withDeveloperModelsLine edits only the header line and treats model names literally', () => {
+    const body = ['**For:** old', '', '## Brief', '', '**For:** [model] copy'].join('\n')
+    const runs = [
+      { model: 'a$&b', firstRound: 1, lastRound: 2 },
+      { model: 'codex', firstRound: 3, lastRound: 3 }
+    ]
+    const out = withDeveloperModelsLine(body, runs)
+    expect(out).toBe(
+      ['**For:** a$&b (rounds `1`–`2`), codex (round `3` on)', '', '## Brief', '', '**For:** [model] copy'].join('\n')
+    )
+    expect(withDeveloperModelsLine(body, [])).toBe(body)
   })
 })

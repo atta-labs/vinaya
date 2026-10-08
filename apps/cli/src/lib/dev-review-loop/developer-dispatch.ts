@@ -1296,13 +1296,13 @@ export function recordDeveloperModelRun(
   runs: readonly DeveloperModelRun[],
   model: string,
   round: number
-): { runs: DeveloperModelRun[]; changed: boolean } {
+): DeveloperModelRun[] {
   const last = runs[runs.length - 1]
-  if (last === undefined) return { runs: [{ model, firstRound: 1, lastRound: round }], changed: false }
+  if (last === undefined) return [{ model, firstRound: 1, lastRound: round }]
   if (last.model === model) {
-    return { runs: [...runs.slice(0, -1), { ...last, lastRound: Math.max(last.lastRound, round) }], changed: false }
+    return [...runs.slice(0, -1), { ...last, lastRound: Math.max(last.lastRound, round) }]
   }
-  return { runs: [...runs, { model, firstRound: round, lastRound: round }], changed: true }
+  return [...runs, { model, firstRound: round, lastRound: round }]
 }
 
 /**
@@ -1338,7 +1338,7 @@ export function withDeveloperModelsLine(body: string, runs: readonly DeveloperMo
   const forLine = /^\*\*For:\*\*.*$/m
   if (!forLine.test(header)) return body
   return (
-    header.replace(forLine, `**For:** ${renderDeveloperModelsLine(runs)}`) +
+    header.replace(forLine, () => `**For:** ${renderDeveloperModelsLine(runs)}`) +
     (headingAt === -1 ? '' : body.slice(headingAt))
   )
 }

@@ -3560,13 +3560,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         dispatchModel ?? dispatchAgent,
         roundNum
       )
-      writeDeveloperModelRuns(root, task, recorded.runs)
-      if (recorded.runs.length < 2) return
+      writeDeveloperModelRuns(root, task, recorded)
+      if (recorded.length < 2) return
       try {
         const pr = prNumber > 0 ? prNumber : (d.findOpenPrForBranch(branch)?.number ?? null)
         if (pr === null) return
         const body = d.fetchPrBody(pr)
-        const next = withDeveloperModelsLine(body, recorded.runs)
+        const next = withDeveloperModelsLine(body, recorded)
         if (next !== body) await d.updatePrBody({ prNumber: pr, body: next, repo })
       } catch (err) {
         appendRoleLine(
