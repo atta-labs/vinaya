@@ -20,7 +20,7 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { afterEach, describe, expect, it } from 'bun:test'
+import { afterEach, describe, expect, it, spyOn } from 'bun:test'
 import {
   type DriverWatchDeps,
   escalationIdFor,
@@ -431,7 +431,7 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
 })
 
 describe('runDriverLoop — issue-1194 stale watching-driver hand-off', () => {
-  function pausedWatchHarness(driverChanged: boolean, reexecResult: number | null = 0) {
+  function pausedWatchHarness(driverChanged: boolean, reexecResult: number | null = 0, headMoved = driverChanged) {
     const calls: LoopInput[] = []
     const reexecArgs: string[][] = []
     let ordinal = 0
@@ -465,7 +465,7 @@ describe('runDriverLoop — issue-1194 stale watching-driver hand-off', () => {
       },
       gitRevParseOriginMain: (() => {
         let reads = 0
-        return () => (++reads === 1 ? 'start' : driverChanged ? 'new-driver-code' : 'start')
+        return () => (++reads === 1 ? 'start' : headMoved ? 'new-driver-code' : 'start')
       })(),
       gitCommitsTouchingDriverPaths: () => (driverChanged ? ['apps/cli/src/lib/dev-review-loop.ts'] : []),
       pullDefaultBranch: () => ({ ok: true }),
@@ -493,8 +493,8 @@ describe('runDriverLoop — issue-1194 stale watching-driver hand-off', () => {
     expect(h.reexecArgs).toEqual([['dev-review-loop', '--resume', '42', '--agent', 'claude', '--model', 'gpt-5.6']])
   })
 
-  it('continues in process when no driver-owned commit landed', async () => {
-    const h = pausedWatchHarness(false)
+  it('continues in process when a moved default head has no driver-owned commits', async () => {
+    const h = pausedWatchHarness(false, 0, true)
     const result = await runDriverLoop({ task: 1165, agent: 'claude' }, {}, h.watch)
     expect(result.finalDecision).toEqual({ type: 'publish' })
     expect(h.calls).toHaveLength(2)
@@ -504,10 +504,36 @@ describe('runDriverLoop — issue-1194 stale watching-driver hand-off', () => {
   it('keeps the task paused when the fresh-driver pull fails', async () => {
     const h = pausedWatchHarness(true)
     h.watch.pullDefaultBranch = () => ({ ok: false, reason: 'network unavailable' })
-    const result = await runDriverLoop({ task: 1165, agent: 'claude' }, {}, h.watch)
-    expect(result.finalDecision.type).toBe('pause')
-    expect(h.calls).toHaveLength(1)
-    expect(h.reexecArgs).toEqual([])
+    const stderr = spyOn(process.stderr, 'write').mockImplementation(() => true)
+    try {
+      const result = await runDriverLoop({ task: 1165, agent: 'claude' }, {}, h.watch)
+      expect(result.finalDecision.type).toBe('pause')
+      expect(h.calls).toHaveLength(1)
+      expect(h.reexecArgs).toEqual([])
+      expect(stderr).toHaveBeenCalledWith(
+        expect.stringContaining('failed to pull the default branch: network unavailable')
+      )
+    } finally {
+      stderr.mockRestore()
+    }
+  })
+
+  it('keeps the task paused and names the failed fresh-driver spawn', async () => {
+    const world = makeWorld()
+    const h = pausedWatchHarness(true, null)
+    h.watch.runtimeDir = () => world.runtimeDir
+    const stderr = spyOn(process.stderr, 'write').mockImplementation(() => true)
+    try {
+      const result = await runDriverLoop({ task: 1165, agent: 'claude' }, {}, h.watch)
+      expect(result.finalDecision.type).toBe('pause')
+      expect(h.calls).toHaveLength(1)
+      expect(h.reexecArgs).toEqual([['dev-review-loop', '--resume', '42', '--agent', 'claude', '--model', 'gpt-5.6']])
+      expect(stderr).toHaveBeenCalledWith(
+        expect.stringContaining('could not start `vinaya dev-review-loop --resume 42')
+      )
+    } finally {
+      stderr.mockRestore()
+    }
   })
 })
 
