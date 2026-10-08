@@ -101,26 +101,33 @@ describe('appendLoopLogLine', () => {
 })
 
 describe('appendRoleLine', () => {
-  it('writes an ISO-timed, role-labelled line and marks detail lines', () => {
+  it('writes ASCII, ISO-timed primary and detail lines', () => {
     const dir = tempDir('loop-log-role-')
     const path = join(dir, '521.log')
     appendRoleLine(path, 'developer', 'line one', ['line two'])
     const lines = readFileSync(path, 'utf8').trim().split('\n')
-    expect(lines[0]).toMatch(/^\d{4}-\d{2}-\d{2}T.* {2}▸ Developer {3}line one$/)
-    expect(lines[1]).toBe('  · line two')
+    expect(lines[0]).toMatch(/^\d{4}-\d{2}-\d{2}T.* {2}> Developer {3}line one$/)
+    expect(lines[1]).toMatch(/^\d{4}-\d{2}-\d{2}T.* {2}· line two$/)
+  })
+
+  it('redacts detail text before persisting it', () => {
+    const dir = tempDir('loop-log-role-')
+    const path = join(dir, '521.log')
+    const token = `ghp_${'0123456789abcdefghijklmnopqrstuvwxyz'}`
+    appendRoleLine(path, 'developer', 'running command', [`GITHUB_TOKEN=${token}`])
+    const contents = readFileSync(path, 'utf8')
+    expect(contents).toContain('GITHUB_TOKEN=')
+    expect(contents).not.toContain(token)
   })
 })
 
 describe('appendRunStartMarker', () => {
-  it('writes a delineated marker naming the role, pid, and run id', () => {
+  it('writes a timed round line for a fresh process', () => {
     const dir = tempDir('loop-log-marker-')
     const path = join(dir, '521.log')
     appendRunStartMarker(path, { role: 'dev-review-loop', pid: 12345, runId: 'run-abc' })
     const content = readFileSync(path, 'utf8')
-    expect(content).toContain('=== run started')
-    expect(content).toContain('role=dev-review-loop')
-    expect(content).toContain('pid=12345')
-    expect(content).toContain('run_id=run-abc')
+    expect(content).toMatch(/^\d{4}-\d{2}-\d{2}T.* {2}# Loop {3}run started\n$/)
   })
 
   it('two markers in sequence both survive, in order — the two-relaunch shape', () => {
@@ -131,7 +138,7 @@ describe('appendRunStartMarker', () => {
     appendRunStartMarker(path, { role: 'dev-review-loop', pid: 2 })
     appendRoleLine(path, 'developer', 'round 2 narration (after relaunch)')
     const lines = readFileSync(path, 'utf8').trim().split('\n')
-    expect(lines.filter((l) => l.startsWith('=== run started')).length).toBe(2)
+    expect(lines.filter((l) => l.includes('# Loop   run started')).length).toBe(2)
     expect(lines.some((line) => line.endsWith('Developer   round 1 narration'))).toBe(true)
     expect(lines.some((line) => line.endsWith('Developer   round 2 narration (after relaunch)'))).toBe(true)
   })

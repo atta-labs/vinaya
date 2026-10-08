@@ -2297,9 +2297,10 @@ describe('dispatch observability — wired through a real run (#450)', () => {
     )
     expect(r.status).toBe(0)
 
-    // The path is announced once, correlated with the run's effect id.
-    expect(r.stderr).toContain('output teed to')
-    expect(r.stderr).toMatch(/\[vinaya dispatch [0-9a-f-]{36}\]/)
+    // The normal lifecycle view names only the short start action; the
+    // dispatch identifier and tee path remain confined to the raw file.
+    expect(r.stderr).toMatch(/\d\d:\d\d:\d\d {2}> Developer {3}started/)
+    expect(r.stderr).not.toContain('output teed to')
 
     const teeDir = join(home, '.vinaya', 'runtime', 'unresolved', 'tasks-execution', 'unscoped', 'output')
     const logs = readdirSync(teeDir)
@@ -2471,10 +2472,10 @@ describe('terminal colour — role prefix and TTY/NO_COLOR gating (#491)', () =>
     expect(r.stderr).toMatch(/\d\d:\d\d:\d\d {2}> Developer {3}hello world/)
     expect(r.stderr).not.toMatch(ANSI_ANY_RE)
 
-    // O2: the lifecycle line keeps its own existing role-naming text, with
-    // no second `[developer]` prefix stacked in front of it.
-    expect(r.stderr).toMatch(/\[vinaya dispatch [0-9a-f-]{36}\] developer via claude: output teed to/)
-    expect(r.stderr).not.toContain('[developer] [vinaya dispatch')
+    // O2: lifecycle output shares the renderer and does not expose the
+    // dispatch id or raw-output path in its normal line.
+    expect(r.stderr).toMatch(/\d\d:\d\d:\d\d {2}> Developer {3}started/)
+    expect(r.stderr).not.toContain('[vinaya dispatch')
 
     // O3: the tee file never sees the rendered/prefixed stderr lines at
     // all — it tees the child's raw stdout/stderr chunks — so it carries the
