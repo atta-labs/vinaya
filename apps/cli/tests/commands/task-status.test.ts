@@ -253,10 +253,6 @@ function stubGh(home: string): string {
     })
     .join('\n')
   const script = `#!/bin/sh
-# The head's workflow runs: none, so the table judges its check runs alone.
-if [ "$1" = "api" ]; then
-  exit 0
-fi
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
   cat <<'JSON'
 ${JSON.stringify(ISSUES)}

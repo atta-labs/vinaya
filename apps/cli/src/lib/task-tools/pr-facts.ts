@@ -46,7 +46,7 @@ import {
   type TaskPrVerdict
 } from '@attalabs/aeg-core'
 import { markerComments } from '../dev-review-loop/developer-dispatch.js'
-import { judgeWorkflowRuns, type RestWorkflowRun, sh } from '../dev-review-loop/gate-reading.js'
+import { sh } from '../dev-review-loop/gate-reading.js'
 import { PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME } from '../principal-test-plan-wait-check-name.js'
 import { REVIEW_GATE_CHECK_RUN_NAME, REVIEW_GATE_WORKFLOW_NAME } from '../review-gate-check-name.js'
 
@@ -419,21 +419,11 @@ function checkOutcome(check: TaskPrCheck): 'pass' | 'fail' | 'running' {
   return conclusion !== null && PASSING_CONCLUSIONS.has(conclusion) ? 'pass' : 'fail'
 }
 
-/**
- * The one word a set of check runs reads as — see {@link TaskPrCheckSummary} for the population and the precedence. A head with no check run reported at all is `running`: nothing has concluded on it yet.
- *
- * `workflowRuns` is the head's GitHub Actions workflow runs, judged by the loop's own rule (`judgeWorkflowRuns`): a newest run of a workflow that ended `failure`, `startup_failure`, `timed_out` or `cancelled` makes the head `red` even when every check run that exists passed, and a run still queued or in progress makes it `running`. `null` is a read of them that failed — `running`, never `green` or `red`. `undefined` is a caller that has no workflow runs to judge (the review gate's own check run).
- */
-export function summarizeChecks(
-  checks: readonly TaskPrCheck[],
-  workflowRuns?: readonly RestWorkflowRun[] | null
-): TaskPrCheckSummary {
-  const workflows =
-    workflowRuns === undefined ? 'ok' : workflowRuns === null ? 'pending' : judgeWorkflowRuns(workflowRuns)
-  const outcomes = checks.map(checkOutcome)
-  if (workflows === 'pending' || outcomes.includes('running')) return 'running'
-  if (workflows === 'red') return 'red'
+/** The one word a set of check runs reads as — see {@link TaskPrCheckSummary} for the population and the precedence. A head with no check run reported at all is `running`: nothing has concluded on it yet. */
+export function summarizeChecks(checks: readonly TaskPrCheck[]): TaskPrCheckSummary {
   if (checks.length === 0) return 'running'
+  const outcomes = checks.map(checkOutcome)
+  if (outcomes.includes('running')) return 'running'
   return outcomes.every((outcome) => outcome === 'pass') ? 'green' : 'red'
 }
 
@@ -464,8 +454,7 @@ export function taskPrFactsFrom(
   head: string | null,
   nodes: readonly RollupNode[],
   comments: readonly PrComment[],
-  allowlist: readonly string[],
-  workflowRuns?: readonly RestWorkflowRun[] | null
+  allowlist: readonly string[]
 ): TaskPrFacts {
   // Check runs only, before anything else reads a name or a conclusion — see
   // `isCheckRun` for the green gate a commit status could otherwise claim.
@@ -486,7 +475,7 @@ export function taskPrFactsFrom(
   const review = buildReviewRecord(comments, allowlist)
   return {
     head,
-    ci: summarizeChecks(mechanical, workflowRuns),
+    ci: summarizeChecks(mechanical),
     gate: gate === null ? null : summarizeChecks(toChecks([gate], () => null)),
     codeReview: verdictOnHead(review.verdicts, 'code-review', head),
     security: verdictOnHead(review.verdicts, 'security', head)
@@ -547,43 +536,10 @@ export function fetchPrFactsPayload(pr: number): string {
   }).trim()
 }
 
-/**
- * The head's GitHub Actions workflow runs, bounded in time and output like the
- * payload read beside it and, like it, not retried. `null` when the read fails
- * or its output does not parse — `summarizeChecks` reads that as `running`.
- */
-export function fetchPrWorkflowRuns(head: string | null): RestWorkflowRun[] | null {
-  if (head === null || !/^[0-9a-f]{40}$/i.test(head)) return null
-  try {
-    const out = execFileSync(
-      'gh',
-      [
-        'api',
-        `repos/{owner}/{repo}/actions/runs?head_sha=${head}&per_page=100`,
-        '--jq',
-        '.workflow_runs[] | {id, name, workflow_id, status, conclusion, created_at, run_started_at}'
-      ],
-      {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        maxBuffer: MAX_GH_STATUS_OUTPUT_BYTES,
-        timeout: GH_STATUS_READ_TIMEOUT_MS
-      }
-    )
-    return out
-      .split('\n')
-      .filter((l) => l.trim().length > 0)
-      .map((l) => JSON.parse(l) as RestWorkflowRun)
-  } catch {
-    return null
-  }
-}
-
 export function readTaskPrFacts(
   pr: number,
   allowlist: readonly string[],
-  fetchPayload: (pr: number) => string = fetchPrFactsPayload,
-  fetchWorkflowRuns: (head: string | null) => RestWorkflowRun[] | null = fetchPrWorkflowRuns
+  fetchPayload: (pr: number) => string = fetchPrFactsPayload
 ): TaskPrRead | null {
   // Checked HERE, before the number reaches an argument list — the same guard
   // `readPrComments` (`task-status-history.ts`) states at the identical
@@ -613,13 +569,7 @@ export function readTaskPrFacts(
     // `author.login` mapping beside it.
     const comments = markerComments(raw)
     return {
-      facts: taskPrFactsFrom(
-        parsed.headRefOid ?? null,
-        nodes,
-        comments,
-        allowlist,
-        fetchWorkflowRuns(parsed.headRefOid ?? null)
-      ),
+      facts: taskPrFactsFrom(parsed.headRefOid ?? null, nodes, comments, allowlist),
       comments
     }
   } catch {

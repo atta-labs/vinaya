@@ -21,7 +21,6 @@ import {
   taskPrFactsFrom,
   toChecks
 } from '../../../src/lib/task-tools/pr-facts.js'
-import type { RestWorkflowRun } from '../../../src/lib/dev-review-loop/gate-reading.js'
 import { type PrReadForge, taskPrReadHandler } from '../../../src/lib/task-tools/pr-read.js'
 
 /**
@@ -658,9 +657,6 @@ describe('the status table’s own pull-request columns', () => {
     })
   })
 
-  /** A forge read of the head's workflow runs that finds none — the fixtures below judge check runs alone. */
-  const NO_WORKFLOW_RUNS = (): RestWorkflowRun[] => []
-
   describe('summarizeChecks', () => {
     it('reads a suite that all passed as green, counting the three conclusions the driver also passes', () => {
       const checks = toChecks(
@@ -827,91 +823,6 @@ describe('the status table’s own pull-request columns', () => {
       expect(facts.codeReview).toBeNull()
     })
   })
-  describe('a head whose workflow run failed', () => {
-    const run = (over: Partial<RestWorkflowRun>): RestWorkflowRun => ({
-      id: 123,
-      name: 'CI',
-      workflow_id: 7,
-      status: 'completed',
-      conclusion: 'failure',
-      created_at: '2026-10-08T10:00:00Z',
-      run_started_at: '2026-10-08T10:00:00Z',
-      ...over
-    })
-    const passing = toChecks(
-      [check('lint', 'COMPLETED', 'SUCCESS'), check('build', 'COMPLETED', 'SUCCESS')],
-      () => null
-    )
-
-    it('reads red even though every job that exists passed — the outage case', () => {
-      expect(summarizeChecks(passing, [run({})])).toBe('red')
-      for (const conclusion of ['failure', 'startup_failure', 'timed_out', 'cancelled']) {
-        expect(summarizeChecks(passing, [run({ conclusion })])).toBe('red')
-      }
-      // No job created at all: still red, not a wait.
-      expect(summarizeChecks([], [run({ conclusion: 'startup_failure' })])).toBe('red')
-    })
-
-    it('reads green once a re-run of the same workflow succeeded', () => {
-      const rerun = run({ id: 124, conclusion: 'success', run_started_at: '2026-10-08T10:30:00Z' })
-      expect(summarizeChecks(passing, [run({}), rerun])).toBe('green')
-      expect(summarizeChecks(passing, [rerun, run({})])).toBe('green')
-    })
-
-    it('reads running while a workflow run is queued or in progress, and when the read of the runs failed', () => {
-      expect(summarizeChecks(passing, [run({ status: 'queued', conclusion: null })])).toBe('running')
-      expect(summarizeChecks(passing, [run({ status: 'in_progress', conclusion: null })])).toBe('running')
-      expect(summarizeChecks(passing, null)).toBe('running')
-    })
-
-    it('does not count the review gate, on-verdict or body-checks workflows', () => {
-      const excluded = ['Vinaya Review Gate', 'Vinaya Review Gate (on verdict)', 'Vinaya Body Checks'].map((name, i) =>
-        run({ id: i + 1, name, workflow_id: i + 1 })
-      )
-      expect(summarizeChecks(passing, excluded)).toBe('green')
-    })
-
-    it('feeds the pull request facts: ci is red while the gate stays its own check run', () => {
-      const facts = taskPrFactsFrom(HEAD, [check('lint', 'COMPLETED', 'SUCCESS'), gateRun('SUCCESS')], [], PRINCIPALS, [
-        run({})
-      ])
-      expect(facts.ci).toBe('red')
-      expect(facts.gate).toBe('green')
-    })
-
-    it('is read by the one forge read: a failed run reads red, an unreadable one running', () => {
-      const payload = JSON.stringify({
-        headRefOid: HEAD,
-        statusCheckRollup: [check('lint', 'COMPLETED', 'SUCCESS')],
-        comments: []
-      })
-      expect(
-        readTaskPrFacts(
-          811,
-          PRINCIPALS,
-          () => payload,
-          () => [run({})]
-        )?.facts.ci
-      ).toBe('red')
-      expect(
-        readTaskPrFacts(
-          811,
-          PRINCIPALS,
-          () => payload,
-          () => []
-        )?.facts.ci
-      ).toBe('green')
-      expect(
-        readTaskPrFacts(
-          811,
-          PRINCIPALS,
-          () => payload,
-          () => null
-        )?.facts.ci
-      ).toBe('running')
-    })
-  })
-
   describe('readTaskPrFacts — the one forge read', () => {
     function payload(nodes: RollupNode[], comments: { body: string; author: { login: string } }[] = []): string {
       return JSON.stringify({ headRefOid: HEAD, statusCheckRollup: nodes, comments })
@@ -919,18 +830,13 @@ describe('the status table’s own pull-request columns', () => {
 
     it('derives the facts and hands back the comments it read them from, from one payload', () => {
       const asked: number[] = []
-      const read = readTaskPrFacts(
-        811,
-        PRINCIPALS,
-        (pr) => {
-          asked.push(pr)
-          return payload(
-            [gateRun('SUCCESS')],
-            [{ body: `VERDICT: PASS\nJudged head: ${HEAD}`, author: { login: 'daniboomerang' } }]
-          )
-        },
-        NO_WORKFLOW_RUNS
-      )
+      const read = readTaskPrFacts(811, PRINCIPALS, (pr) => {
+        asked.push(pr)
+        return payload(
+          [gateRun('SUCCESS')],
+          [{ body: `VERDICT: PASS\nJudged head: ${HEAD}`, author: { login: 'daniboomerang' } }]
+        )
+      })
       expect(asked).toEqual([811])
       expect(read?.facts.gate).toBe('green')
       expect(read?.facts.security).toBe('PASS')
@@ -945,15 +851,10 @@ describe('the status table’s own pull-request columns', () => {
       for (const pr of [-1, 0, 1.5, Number.NaN]) {
         const asked: number[] = []
         expect(
-          readTaskPrFacts(
-            pr,
-            PRINCIPALS,
-            (n) => {
-              asked.push(n)
-              return payload([])
-            },
-            NO_WORKFLOW_RUNS
-          )
+          readTaskPrFacts(pr, PRINCIPALS, (n) => {
+            asked.push(n)
+            return payload([])
+          })
         ).toBeNull()
         expect(asked).toEqual([])
       }
@@ -964,25 +865,18 @@ describe('the status table’s own pull-request columns', () => {
       // so a full page may be hiding checks; a `ci` word over a partial set could
       // read green beside a red check this read never saw.
       const full = Array.from({ length: 100 }, (_, i) => check(`check-${i}`, 'COMPLETED', 'SUCCESS'))
-      expect(readTaskPrFacts(811, PRINCIPALS, () => payload(full), NO_WORKFLOW_RUNS)).toBeNull()
+      expect(readTaskPrFacts(811, PRINCIPALS, () => payload(full))).toBeNull()
       // One below the page is a whole answer.
-      expect(readTaskPrFacts(811, PRINCIPALS, () => payload(full.slice(0, 99)), NO_WORKFLOW_RUNS)?.facts.ci).toBe(
-        'green'
-      )
+      expect(readTaskPrFacts(811, PRINCIPALS, () => payload(full.slice(0, 99)))?.facts.ci).toBe('green')
     })
 
     it('answers nothing when the read throws or the payload does not parse', () => {
       expect(
-        readTaskPrFacts(
-          811,
-          PRINCIPALS,
-          () => {
-            throw new Error('gh: could not resolve to a PullRequest')
-          },
-          NO_WORKFLOW_RUNS
-        )
+        readTaskPrFacts(811, PRINCIPALS, () => {
+          throw new Error('gh: could not resolve to a PullRequest')
+        })
       ).toBeNull()
-      expect(readTaskPrFacts(811, PRINCIPALS, () => 'not json', NO_WORKFLOW_RUNS)).toBeNull()
+      expect(readTaskPrFacts(811, PRINCIPALS, () => 'not json')).toBeNull()
     })
   })
 })

@@ -1701,14 +1701,10 @@ async function defaultUpdatePrBody(input: {
  */
 export function failedCheckLogsOnHead(
   head: string,
-  fetchRuns: (head: string) => { name: string; id: number; detail?: string }[] = fetchFailingCheckRuns,
+  fetchRuns: (head: string) => { name: string; id: number }[] = fetchFailingCheckRuns,
   readTail: (jobId: number) => string | null = readJobLogTail
 ): FailedCheckLog[] {
-  // A failed workflow run is no job (`detail` is set): it has no job log to tail.
-  return readFailedCheckLogs(
-    fetchRuns(head).filter((run) => run.detail === undefined),
-    readTail
-  )
+  return readFailedCheckLogs(fetchRuns(head), readTail)
 }
 
 /**
@@ -4952,10 +4948,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         stats: computeStats(head, roundStartMs),
         ciConclusion: conclusion,
         failingChecks: failingRuns.map(describeFailingCheckRun),
-        failureLogs: readFailedCheckLogs(
-          failingRuns.filter((run) => run.detail === undefined),
-          d.readFailedCheckLogTail
-        )
+        failureLogs: readFailedCheckLogs(failingRuns, d.readFailedCheckLogTail)
       }
     }
 

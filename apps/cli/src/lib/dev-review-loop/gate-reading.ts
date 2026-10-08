@@ -10,7 +10,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME } from '../principal-test-plan-wait-check-name.js'
-import { REVIEW_GATE_CHECK_RUN_NAME, REVIEW_GATE_WORKFLOW_NAME } from '../review-gate-check-name.js'
+import { REVIEW_GATE_CHECK_RUN_NAME } from '../review-gate-check-name.js'
 
 /** Env-overridable, same idiom `dev-review-loop.ts`'s own `gatePollEnvOverride` uses — a fixture needs sub-millisecond backoff, real usage needs real spacing between retries. */
 function shEnvOverride(name: string, fallback: number): number {
@@ -148,183 +148,49 @@ function fetchMechanicalCheckRuns(headSha: string): RestCheckRun[] | null {
   )
 }
 
-/** One GitHub Actions workflow run for a head, as the REST runs list reports it. */
-export type RestWorkflowRun = {
-  id: number
-  name: string | null
-  workflow_id: number | null
-  status: string
-  conclusion: string | null
-  created_at: string | null
-  run_started_at: string | null
-}
-
-/**
- * The workflows whose own runs are NOT mechanical CI — the same exclusions the
- * check-run reader applies by check name, applied here by workflow: the review
- * gate (a gate that has not posted a verdict yet is not CI), its on-verdict
- * twin, and the body-checks workflow that hosts the principal-test-plan wait
- * (its red is the Principal's own wait; its other jobs still count, as
- * check-runs). Names are the `name:` of the managed workflows `artifacts.ts`
- * generates.
- */
-export const NON_CI_WORKFLOW_NAMES: readonly string[] = [
-  REVIEW_GATE_WORKFLOW_NAME,
-  'Vinaya Review Gate (on verdict)',
-  'Vinaya Body Checks'
-]
-
-/** The workflow-run conclusions that make a head red, whatever its jobs say. */
-export const FAILED_WORKFLOW_CONCLUSIONS: readonly string[] = ['failure', 'startup_failure', 'timed_out', 'cancelled']
-
-/**
- * Pure: the newest run of each mechanical workflow — `run_started_at` (falling
- * back to `created_at`) decides, ties keeping the first seen, so a re-run that
- * succeeded supersedes the failure it re-ran. The review-gate, on-verdict and
- * body-checks workflows are dropped.
- */
-export function latestMechanicalWorkflowRuns(runs: readonly RestWorkflowRun[]): RestWorkflowRun[] {
-  const startedAt = (r: RestWorkflowRun): number => Date.parse(r.run_started_at ?? r.created_at ?? '')
-  const latest = new Map<string, RestWorkflowRun>()
-  for (const run of runs) {
-    if (run.name !== null && NON_CI_WORKFLOW_NAMES.includes(run.name)) continue
-    const key = run.workflow_id !== null ? `id:${run.workflow_id}` : `name:${run.name ?? run.id}`
-    const seen = latest.get(key)
-    if (!seen) {
-      latest.set(key, run)
-      continue
-    }
-    const at = startedAt(run)
-    const seenAt = startedAt(seen)
-    if (Number.isFinite(at) && (!Number.isFinite(seenAt) || at > seenAt)) latest.set(key, run)
-  }
-  return [...latest.values()]
-}
-
-/** Pure: `'pending'` while any newest workflow run has not completed, else `'red'` when one ended in a failed conclusion, else `'ok'`. The same precedence the check-run reader uses — a head whose runs have not finished has not failed yet. */
-export function judgeWorkflowRuns(runs: readonly RestWorkflowRun[]): 'pending' | 'red' | 'ok' {
-  const latest = latestMechanicalWorkflowRuns(runs)
-  if (latest.some((r) => r.status !== 'completed')) return 'pending'
-  return latest.some((r) => r.conclusion !== null && FAILED_WORKFLOW_CONCLUSIONS.includes(r.conclusion)) ? 'red' : 'ok'
-}
-
-/** Pure: the newest mechanical workflow runs that completed in a failed conclusion. */
-export function failedWorkflowRuns(runs: readonly RestWorkflowRun[]): RestWorkflowRun[] {
-  return latestMechanicalWorkflowRuns(runs).filter(
-    (r) => r.status === 'completed' && r.conclusion !== null && FAILED_WORKFLOW_CONCLUSIONS.includes(r.conclusion)
-  )
-}
-
-/**
- * Every GitHub Actions workflow run for `headSha` (the REST runs list filtered
- * by head commit). `null` on a genuine fetch failure, read by every caller as
- * not-resolved-yet — a failed read of the runs never reads as green or red.
- */
-export function fetchWorkflowRuns(headSha: string): RestWorkflowRun[] | null {
-  let out: string
-  try {
-    out = sh('gh', [
-      'api',
-      `repos/{owner}/{repo}/actions/runs?head_sha=${headSha}&per_page=100`,
-      '--paginate',
-      '--jq',
-      '.workflow_runs[] | {id, name, workflow_id, status, conclusion, created_at, run_started_at}'
-    ])
-    return out
-      .split('\n')
-      .filter((l) => l.trim().length > 0)
-      .map((l) => JSON.parse(l) as RestWorkflowRun)
-  } catch {
-    return null
-  }
-}
-
 /**
  * The mechanical gate's own conclusion for `headSha` — never the review
  * gate's own check-run (excluded by `fetchMechanicalCheckRuns`), so a head
- * with green CI and no verdicts yet reads as green, never red. A workflow run
- * that ended `failure`, `startup_failure`, `timed_out` or `cancelled` (newest
- * run per workflow) reads red even when every check-run that exists passed —
- * a run can fail having created only some of its jobs.
- * `'pending'` when any latest-per-name mechanical run or newest workflow run
- * has not completed, either fetch fails, or nothing has reported at all yet
- * — the driver is expected to poll this, not treat one `'pending'` read as
- * final.
+ * with green CI and no verdicts yet reads as green, never red.
+ * `'pending'` when any latest-per-name mechanical run has not completed, the
+ * fetch fails, or no mechanical check-run exists at all yet — the driver is
+ * expected to poll this, not treat one `'pending'` read as final.
  */
 export function fetchCiConclusion(headSha: string): 'green' | 'red' | 'pending' {
   const latest = fetchMechanicalCheckRuns(headSha)
-  const workflowRuns = fetchWorkflowRuns(headSha)
-  if (latest === null || workflowRuns === null) return 'pending'
-  const workflows = judgeWorkflowRuns(workflowRuns)
-  if (workflows === 'pending' || latest.some((r) => r.status !== 'completed')) return 'pending'
-  if (workflows === 'red') return 'red'
-  if (latest.length === 0) return 'pending'
+  if (latest === null || latest.length === 0) return 'pending'
+  if (latest.some((r) => r.status !== 'completed')) return 'pending'
   if (latest.every((r) => r.conclusion === 'success' || r.conclusion === 'neutral' || r.conclusion === 'skipped')) {
     return 'green'
   }
   return 'red'
 }
 
-/** One completed, non-passing mechanical check-run — the identity a pause built from it can be audited against. A failed workflow run carries `detail`, its whole display form: it is no job, so no job log is read for it. */
-export type FailingCheckRun = { name: string; id: number; startedAt: string | null; detail?: string }
-
-/** The jobs of one workflow run, `null` when the read fails. */
-function fetchWorkflowRunJobConclusions(runId: number): (string | null)[] | null {
-  try {
-    const out = sh('gh', [
-      'api',
-      `repos/{owner}/{repo}/actions/runs/${runId}/jobs`,
-      '--paginate',
-      '--jq',
-      '.jobs[] | .conclusion // "null"'
-    ])
-    return out
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0)
-      .map((l) => (l === 'null' ? null : l))
-  } catch {
-    return null
-  }
-}
+/** One completed, non-passing mechanical check-run — the identity a pause built from it can be audited against. */
+export type FailingCheckRun = { name: string; id: number; startedAt: string | null }
 
 /**
  * Every completed, non-passing mechanical check-run for `headSha` — never
- * the review gate's own (same exclusion as `fetchCiConclusion`) — followed by
- * every newest workflow run that ended in a failed conclusion, named by
- * workflow, run id and conclusion, and saying when it created no failing job.
- * Already deduped to the newest run per check name
- * (`fetchMechanicalCheckRuns`'s own O3) and per workflow, so a failure a later
- * run has superseded with a pass is never in this list. Used to tell the
- * developer exactly what to fix, and to name the run a pause was built from,
- * instead of a bare "CI is red." Empty when the fetch fails or nothing has
- * failed yet (a still-`pending` run names nothing — there is nothing to fix
- * until it resolves).
+ * the review gate's own (same exclusion as `fetchCiConclusion`). Already
+ * deduped to the newest run per check name (`fetchMechanicalCheckRuns`'s own
+ * O3), so a failure a later same-named run has superseded with a
+ * pass is never in this list. Used to tell the developer
+ * exactly what to fix, and to name the run a pause was built from, instead
+ * of a bare "CI is red." Empty when the fetch fails or nothing has failed
+ * yet (a still-`pending` run names nothing — there is nothing to fix until
+ * it resolves).
  */
 export function fetchFailingCheckRuns(headSha: string): FailingCheckRun[] {
   const latest = fetchMechanicalCheckRuns(headSha)
   if (latest === null) return []
-  const failingChecks = latest
+  return latest
     .filter((r) => r.status === 'completed')
     .filter((r) => r.conclusion !== 'success' && r.conclusion !== 'neutral' && r.conclusion !== 'skipped')
-    .map((r): FailingCheckRun => ({ name: r.name, id: r.id, startedAt: r.started_at ?? null }))
-  const workflowRuns = fetchWorkflowRuns(headSha)
-  if (workflowRuns === null) return failingChecks
-  const failingWorkflows = failedWorkflowRuns(workflowRuns).map((r): FailingCheckRun => {
-    const name = r.name ?? `workflow ${r.workflow_id ?? r.id}`
-    const jobs = fetchWorkflowRunJobConclusions(r.id)
-    const hasFailingJob = jobs?.some((c) => c !== null && FAILED_WORKFLOW_CONCLUSIONS.includes(c)) ?? true
-    const detail = `workflow ${name} run ${r.id} ended ${r.conclusion}${
-      hasFailingJob ? '' : ' with no failing job — its jobs were not all created'
-    }`
-    return { name, id: r.id, startedAt: r.run_started_at ?? r.created_at, detail }
-  })
-  return [...failingChecks, ...failingWorkflows]
+    .map((r) => ({ name: r.name, id: r.id, startedAt: r.started_at ?? null }))
 }
 
 /** O3: the display form a pause detail (or a gate-red retry prompt) names a failing run by — the check name plus its run id, so the SAME name appearing again in a later, superseded run is never mistaken for the one a pause was actually built from. */
 export function describeFailingCheckRun(run: FailingCheckRun): string {
-  if (run.detail !== undefined) return run.detail
   return run.startedAt ? `${run.name} (run ${run.id}, started ${run.startedAt})` : `${run.name} (run ${run.id})`
 }
 // --- mergeability ------------------------------------------------

@@ -320,9 +320,6 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
   '
   exit 0
 fi
-if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
-  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
-fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
   exit 0
@@ -411,9 +408,6 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
     console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
   '
   exit 0
-fi
-if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
-  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
 fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   printf '%s\\n%s\\n' \\
@@ -644,9 +638,6 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
   '
   exit 0
 fi
-if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
-  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
-fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
   exit 0
@@ -736,9 +727,6 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
     console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
   '
   exit 0
-fi
-if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
-  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
 fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
@@ -2173,9 +2161,6 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
   '
   exit 0
 fi
-if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
-  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
-fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
   exit 0
@@ -2257,9 +2242,6 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
     console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
   '
   exit 0
-fi
-if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
-  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
 fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
@@ -2702,9 +2684,6 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
   '
   exit 0
 fi
-if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
-  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
-fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   printf '%s\\n' '{"id":1,"name":"ci","status":"completed","conclusion":"failure","started_at":"2026-09-14T10:00:00Z"}'
   printf '%s\\n' '{"id":2,"name":"ci","status":"completed","conclusion":"success","started_at":"2026-09-14T10:05:00Z"}'
@@ -2973,9 +2952,6 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "merg
   echo '{"mergeable":"MERGEABLE"}'
   exit 0
 fi
-if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
-  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
-fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"Vinaya CI","status":"completed","conclusion":"failure"}'
   exit 0
@@ -3045,9 +3021,6 @@ fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
   echo '{"mergeable":"MERGEABLE"}'
   exit 0
-fi
-if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
-  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
 fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   printf '%s\\n' '{"id":1,"name":"Vinaya CI","status":"completed","conclusion":"success","started_at":"2026-09-14T10:00:00Z"}'
@@ -4691,9 +4664,6 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
   '
   exit 0
 fi
-if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
-  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
-fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   printf '%s\\n' '{"id":1,"name":"vinaya check --all --diff-only","status":"completed","conclusion":"success"}'
   printf '%s\\n' '{"id":2,"name":"vinaya review gate","status":"completed","conclusion":"failure"}'
@@ -4900,9 +4870,6 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
   '
   exit 0
 fi
-if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
-  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
-fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
   exit 0
@@ -5001,9 +4968,6 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comm
     console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
   '
   exit 0
-fi
-if [ "$1" = "api" ] && [ "\${2#*actions/runs}" != "$2" ]; then
-  exit 0 # no workflow runs: the CI reading rests on the check-runs alone
 fi
 if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'

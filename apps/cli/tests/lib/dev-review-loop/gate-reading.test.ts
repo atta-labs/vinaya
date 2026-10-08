@@ -99,7 +99,6 @@ describe('fetchMechanicalCheckRuns dedupe — O3 (#595): newest started_at wins,
       dir,
       `
 if [ "$1" = "api" ]; then
-  case "$2" in *actions/runs*) exit 0 ;; esac
   printf '%s\\n' '{"id":1,"name":"evidence-fresh","status":"completed","conclusion":"failure","started_at":"2026-09-14T10:00:00Z"}'
   printf '%s\\n' '{"id":2,"name":"evidence-fresh","status":"completed","conclusion":"success","started_at":"2026-09-14T10:05:00Z"}'
   exit 0
@@ -123,7 +122,6 @@ exit 1
       dir,
       `
 if [ "$1" = "api" ]; then
-  case "$2" in *actions/runs*) exit 0 ;; esac
   printf '%s\\n' '{"id":5,"name":"evidence-fresh","status":"completed","conclusion":"success","started_at":"2026-09-14T10:00:00Z"}'
   printf '%s\\n' '{"id":1,"name":"evidence-fresh","status":"completed","conclusion":"failure","started_at":"2026-09-14T10:05:00Z"}'
   exit 0
@@ -151,7 +149,6 @@ describe("principal-test-plan-wait exclusion (O3): its own red is the Principal'
       dir,
       `
 if [ "$1" = "api" ]; then
-  case "$2" in *actions/runs*) exit 0 ;; esac
   printf '%s\\n' '{"id":1,"name":"vinaya check principal-test-plan-wait","status":"completed","conclusion":"failure","started_at":"2026-09-21T10:00:00Z"}'
   printf '%s\\n' '{"id":2,"name":"evidence-fresh","status":"completed","conclusion":"success","started_at":"2026-09-21T10:00:00Z"}'
   exit 0
@@ -175,7 +172,6 @@ exit 1
       dir,
       `
 if [ "$1" = "api" ]; then
-  case "$2" in *actions/runs*) exit 0 ;; esac
   printf '%s\\n' '{"id":1,"name":"vinaya check principal-test-plan-wait","status":"completed","conclusion":"failure","started_at":"2026-09-21T10:00:00Z"}'
   printf '%s\\n' '{"id":2,"name":"evidence-fresh","status":"completed","conclusion":"failure","started_at":"2026-09-21T10:00:00Z"}'
   exit 0
@@ -191,159 +187,6 @@ exit 1
     const [conclusion, runs] = r.stdout.trim().split('\n')
     expect(conclusion).toBe('red')
     expect(JSON.parse(runs as string)).toEqual([{ name: 'evidence-fresh', id: 2, startedAt: '2026-09-21T10:00:00Z' }])
-  })
-})
-
-/**
- * A fake `gh` answering the three reads the CI reader makes: the check-runs
- * list, the workflow-runs list, and a failed run's jobs.
- */
-function fakeGhReading(opts: { checkRuns: object[]; workflowRuns: object[] | 'fail'; jobs?: string[] }): string {
-  const lines = (items: object[]): string => items.map((i) => `printf '%s\\n' '${JSON.stringify(i)}'`).join('\n  ')
-  return `
-case "$2" in
-  *actions/runs/*/jobs*)
-  ${(opts.jobs ?? []).map((c) => `printf '%s\\n' '${c}'`).join('\n  ')}
-  exit 0 ;;
-  *actions/runs*)
-  ${opts.workflowRuns === 'fail' ? 'echo boom >&2; exit 1' : `${lines(opts.workflowRuns)}\n  exit 0`} ;;
-  *check-runs*)
-  ${lines(opts.checkRuns)}
-  exit 0 ;;
-esac
-exit 1
-`
-}
-
-const PASSING_JOBS = [
-  { id: 11, name: 'lint', status: 'completed', conclusion: 'success', started_at: '2026-10-08T10:00:00Z' },
-  { id: 12, name: 'typecheck', status: 'completed', conclusion: 'success', started_at: '2026-10-08T10:00:00Z' },
-  { id: 13, name: 'build', status: 'completed', conclusion: 'success', started_at: '2026-10-08T10:00:00Z' }
-]
-
-function ciRun(over: Record<string, unknown>): object {
-  return {
-    id: 123,
-    name: 'CI',
-    workflow_id: 7,
-    status: 'completed',
-    conclusion: 'failure',
-    created_at: '2026-10-08T10:00:00Z',
-    run_started_at: '2026-10-08T10:00:00Z',
-    ...over
-  }
-}
-
-function readCi(dir: string): { conclusion: string; runs: unknown } {
-  const r = runGateReading(
-    dir,
-    `console.log(fetchCiConclusion(${JSON.stringify(HEAD)})); console.log(JSON.stringify(fetchFailingCheckRuns(${JSON.stringify(HEAD)})))`
-  )
-  expect(r.stderr).toBe('')
-  const [conclusion, runs] = r.stdout.trim().split('\n')
-  return { conclusion: conclusion as string, runs: JSON.parse(runs as string) }
-}
-
-describe('workflow-run conclusion — a failed run reads red even when every job that exists passed', () => {
-  it('the outage case: a CI run ended failure, only its passing jobs were created, so the head reads red and names the run', () => {
-    const dir = tempDir('vinaya-gh-wf-outage-')
-    writeFakeGh(dir, fakeGhReading({ checkRuns: PASSING_JOBS, workflowRuns: [ciRun({})], jobs: ['success'] }))
-    const { conclusion, runs } = readCi(dir)
-    expect(conclusion).toBe('red')
-    expect(runs).toEqual([
-      {
-        name: 'CI',
-        id: 123,
-        startedAt: '2026-10-08T10:00:00Z',
-        detail: 'workflow CI run 123 ended failure with no failing job — its jobs were not all created'
-      }
-    ])
-  })
-
-  it('a run that failed through a failing job names the workflow, run and conclusion without the no-job note', () => {
-    const dir = tempDir('vinaya-gh-wf-failing-job-')
-    writeFakeGh(
-      dir,
-      fakeGhReading({
-        checkRuns: PASSING_JOBS,
-        workflowRuns: [ciRun({ conclusion: 'timed_out' })],
-        jobs: ['timed_out']
-      })
-    )
-    const { conclusion, runs } = readCi(dir)
-    expect(conclusion).toBe('red')
-    expect(runs).toMatchObject([{ detail: 'workflow CI run 123 ended timed_out' }])
-  })
-
-  it('startup_failure with no check-run at all reads red, not pending', () => {
-    const dir = tempDir('vinaya-gh-wf-startup-')
-    writeFakeGh(
-      dir,
-      fakeGhReading({ checkRuns: [], workflowRuns: [ciRun({ conclusion: 'startup_failure' })], jobs: [] })
-    )
-    expect(readCi(dir).conclusion).toBe('red')
-  })
-
-  it('a re-run of the same workflow that succeeded reads green', () => {
-    const dir = tempDir('vinaya-gh-wf-rerun-')
-    writeFakeGh(
-      dir,
-      fakeGhReading({
-        checkRuns: PASSING_JOBS,
-        workflowRuns: [
-          ciRun({}),
-          ciRun({
-            id: 124,
-            conclusion: 'success',
-            created_at: '2026-10-08T10:30:00Z',
-            run_started_at: '2026-10-08T10:30:00Z'
-          })
-        ]
-      })
-    )
-    const { conclusion, runs } = readCi(dir)
-    expect(conclusion).toBe('green')
-    expect(runs).toEqual([])
-  })
-
-  it('a workflow run still in progress reads pending, never green', () => {
-    const dir = tempDir('vinaya-gh-wf-pending-')
-    writeFakeGh(
-      dir,
-      fakeGhReading({
-        checkRuns: PASSING_JOBS,
-        workflowRuns: [ciRun({ status: 'in_progress', conclusion: null })]
-      })
-    )
-    expect(readCi(dir).conclusion).toBe('pending')
-  })
-
-  it('a failed read of the workflow runs reads pending, never green or red', () => {
-    const dir = tempDir('vinaya-gh-wf-readfail-')
-    writeFakeGh(dir, fakeGhReading({ checkRuns: PASSING_JOBS, workflowRuns: 'fail' }))
-    const r = runGateReading(dir, `console.log(fetchCiConclusion(${JSON.stringify(HEAD)}))`, {
-      VINAYA_DEV_REVIEW_LOOP_GH_RETRY_BACKOFF_MS: '0'
-    })
-    expect(r.stdout.trim()).toBe('pending')
-  })
-
-  it("the review gate's, on-verdict and body-checks workflow runs are not CI: their failure does not make the head red", () => {
-    const dir = tempDir('vinaya-gh-wf-excluded-')
-    writeFakeGh(
-      dir,
-      fakeGhReading({
-        checkRuns: PASSING_JOBS,
-        workflowRuns: [
-          ciRun({ id: 1, name: 'Vinaya Review Gate', workflow_id: 1 }),
-          ciRun({ id: 2, name: 'Vinaya Review Gate (on verdict)', workflow_id: 2 }),
-          ciRun({ id: 3, name: 'Vinaya Body Checks', workflow_id: 3, status: 'in_progress', conclusion: null }),
-          ciRun({ id: 4, conclusion: 'success' })
-        ]
-      })
-    )
-    const { conclusion, runs } = readCi(dir)
-    expect(conclusion).toBe('green')
-    expect(runs).toEqual([])
   })
 })
 
