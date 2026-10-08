@@ -147,6 +147,17 @@ describe('extractBoundaryFilePaths (task 5, Issue #447, O3)', () => {
 })
 
 describe('renderBrief', () => {
+  it('names controller-run verification without rendering hand-run static gates (O4)', () => {
+    const result = renderBrief(baseFacts(), TEMPLATE)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const verification =
+      result.brief.match(/## 8\. Verification before claiming done([\s\S]*?)## 9\. Test Plan/)?.[1] ?? ''
+    expect(verification).toContain('`run_checks`')
+    expect(verification).not.toContain('format-and-lint')
+    expect(verification).not.toContain('typecheck')
+  })
+
   it('renders a brief that checkBriefSections accepts with zero errors', () => {
     // A doc-only surface takes the `unit-tests-only` §9 path — the shape
     // `checkTestPlan` accepts today. A runtime-file surface renders §9 as a
