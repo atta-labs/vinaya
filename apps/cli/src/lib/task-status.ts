@@ -71,6 +71,7 @@ import {
   type TaskPrRead
 } from './task-tools/pr-facts.js'
 import { getProcessSnapshot, type ProcessSnapshot } from './dispatch.js'
+import { describeUsageLimitPause } from './dev-review-loop/round-assess.js'
 
 /**
  * The ceiling on one `gh` read this file makes — the SAME bounds
@@ -998,6 +999,8 @@ function renderStateText(state: TaskLoopState, disposition: PauseDisposition | n
       // reads `ruled, start continues it` (and `next` is `start`), one still
       // owed a ruling reads `needs ruling` (and `next` is `rule`) — never
       // `exited`. Every other disposition keeps the bare reason, as before.
+      const usageLimit = describeUsageLimitPause(state.detail)
+      if (usageLimit !== null) return `paused — ${usageLimit}`
       const base = `paused (${state.reason})`
       if (disposition === 'awaiting_ruling') return `${base} — needs ruling`
       if (disposition === 'ruled') return `${base} — ruled, start continues it`

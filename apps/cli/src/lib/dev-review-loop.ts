@@ -215,6 +215,11 @@ import {
   errorClassOf,
   isGitHubRateLimitError,
   isRateLimitPauseDetail,
+  isUsageLimitPauseDetail,
+  usageLimitPauseDetail,
+  usageLimitResetFromDetail,
+  usageLimitWaitMs,
+  DispatchUsageLimit,
   MAX_AUTOMATIC_RATE_LIMIT_RESUMES,
   MAX_CONSECUTIVE_RATE_LIMIT_WAITS,
   MAX_GATE_STALLED_TURNS,
@@ -6123,9 +6128,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             ? turnResultPause.message
             : err instanceof DispatchSignInRefused
               ? err.message
-              : isGitHubRateLimitError(err)
-                ? `${rateLimitPauseDetail(round === roundAtLastWait ? rateLimitWaits : 0)} (round ${round}: ${err instanceof Error ? err.message : String(err)})`
-                : `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
+              : err instanceof DispatchUsageLimit
+                ? usageLimitPauseDetail(err.limit, d.now())
+                : isGitHubRateLimitError(err)
+                  ? `${rateLimitPauseDetail(round === roundAtLastWait ? rateLimitWaits : 0)} (round ${round}: ${err instanceof Error ? err.message : String(err)})`
+                  : `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
       }
       keepLockAlive = true
       // The SAME durable snapshot every
@@ -7827,15 +7834,25 @@ async function watchPauseThenResume(
   // automatic at most `MAX_AUTOMATIC_RATE_LIMIT_RESUMES` times for one
   // round: past that the pause stays and a plain resume (or a ruling) clears it.
   let isRateLimitPause = false
+  // An agent's usage-limit pause is told the same way, from its detail's own
+  // prefix, and shares the bounded automatic-resume count. It resumes after
+  // its reset only when that reset is at most six hours away; otherwise it
+  // is not a bounded retry and the pause stays for the Principal.
+  let isUsageLimitPause = false
+  let usageLimitResetMs: number | null = null
   const classifyRateLimitPause = (pause: { round?: number; detail?: string } | null | undefined): void => {
     isRateLimitPause = isRateLimitPauseDetail(pause?.detail)
-    if (!isRateLimitPause) return
+    isUsageLimitPause = isUsageLimitPauseDetail(pause?.detail)
+    if (!isRateLimitPause && !isUsageLimitPause) return
     const round = pause?.round ?? -1
     if (rateLimitBudget.round !== round) {
       rateLimitBudget.round = round
       rateLimitBudget.count = 0
     }
-    isBoundedRetry = rateLimitBudget.count < MAX_AUTOMATIC_RATE_LIMIT_RESUMES
+    usageLimitResetMs = isUsageLimitPause ? usageLimitResetFromDetail(pause?.detail) : null
+    isBoundedRetry =
+      rateLimitBudget.count < MAX_AUTOMATIC_RATE_LIMIT_RESUMES &&
+      (!isUsageLimitPause || usageLimitWaitMs(usageLimitResetMs, w.now()) !== null)
   }
   // Read once, right as this pause begins being watched — this IS the
   // pause `devReviewLoop` just wrote `pause-state.json` for, so it is never
@@ -7885,6 +7902,9 @@ async function watchPauseThenResume(
 
   while (true) {
     if (replayedOnce) followCurrentPause()
+    // A usage limit that resets past six hours (or names no reset) ends the
+    // watch: the pause's own comment says so and names the command that continues it.
+    if (isUsageLimitPause && !isBoundedRetry) return { kind: 'unwatched' }
     const prState = watchReadOrFallback('pull-request state', () => w.fetchPrState(prNumber), 'OPEN' as const)
     if (prState === 'MERGED') return { kind: 'ended', reason: 'merged' }
     if (prState === 'CLOSED') return { kind: 'ended', reason: 'closed' }
@@ -7900,7 +7920,11 @@ async function watchPauseThenResume(
     }
 
     if (isBoundedRetry && !backoffDone) {
-      if (isRateLimitPause) {
+      if (isUsageLimitPause) {
+        // The agent's own reset, recorded in the pause — slept to, never polled.
+        rateLimitBudget.count += 1
+        await w.sleep(usageLimitWaitMs(usageLimitResetMs, w.now()) ?? 0)
+      } else if (isRateLimitPause) {
         // The reset is read once and slept to — never polled.
         rateLimitBudget.count += 1
         const reset = await w.readRateLimitReset()
@@ -8022,6 +8046,18 @@ async function watchPrePrPauseThenResume(
     rateLimitBudget.count += 1
     const reset = await w.readRateLimitReset()
     await w.sleep(rateLimitWaitMs(reset, w.now()))
+  } else if (isUsageLimitPauseDetail(held.detail)) {
+    // The agent's own reset, recorded in the pause; past six hours (or none
+    // given) the pause is left for the Principal.
+    const waitMs = usageLimitWaitMs(usageLimitResetFromDetail(held.detail), w.now())
+    if (waitMs === null) return { kind: 'unwatched' }
+    if (rateLimitBudget.round !== held.round) {
+      rateLimitBudget.round = held.round
+      rateLimitBudget.count = 0
+    }
+    if (rateLimitBudget.count >= MAX_AUTOMATIC_RATE_LIMIT_RESUMES) return { kind: 'unwatched' }
+    rateLimitBudget.count += 1
+    await w.sleep(waitMs)
   } else {
     if ((held.infrastructureRetries ?? 0) >= MAX_INFRASTRUCTURE_RETRIES) return { kind: 'unwatched' }
     await w.sleep(w.infrastructureBackoffMs)

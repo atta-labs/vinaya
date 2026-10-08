@@ -408,6 +408,14 @@ export type DispatchFailureReason =
   | 'startup-failed'
   | 'authentication-failed'
   | 'hook-setup-failed'
+  | 'usage-limit'
+
+/**
+ * An agent's subscription usage limit, read from the vendor's own output:
+ * the agent, the vendor's full message, and the reset time in epoch
+ * milliseconds (`null` when the output names none).
+ */
+export type UsageLimit = { agent: AgentVendor; message: string; resetAtMs: number | null }
 
 export type DispatchHandle = {
   exitCode: number | null
@@ -418,6 +426,8 @@ export type DispatchHandle = {
   timedOut: boolean
   /** Set only when the dispatch did not reach a normal `outcome_received`. */
   failureReason?: DispatchFailureReason
+  /** Set exactly when `failureReason` is `'usage-limit'`. */
+  usageLimit?: UsageLimit
   /**
    * The same `effect_id` this attempt's own `dispatch`/`role_attempt`/`usage`
    * lines already carry — optional so a hand-built fixture value in an
@@ -2505,6 +2515,122 @@ export function sawVendorConnectionRetry(stdout: string): boolean {
   return false
 }
 
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+
+function clockHours(hour: number, meridiem: string): number {
+  return (hour % 12) + (meridiem.toUpperCase() === 'PM' ? 12 : 0)
+}
+
+/**
+ * The reset time a Codex usage-limit message names after "try again at":
+ * the explicit date and time ("Oct 20th, 2026 6:25 PM") when it carries one,
+ * otherwise the next occurrence of the clock time ("5:55 PM"), both in the
+ * machine's local time. `null` when the message names no time.
+ */
+export function parseCodexUsageLimitReset(message: string, nowMs: number): number | null {
+  const at = /try again at ([^.]*?\b(?:AM|PM))/i.exec(message)?.[1]
+  if (!at) return null
+  const dated = /([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\s+(\d{1,2}):(\d{2})\s*(AM|PM)/i.exec(at)
+  if (dated) {
+    const month = MONTHS.indexOf((dated[1] as string).slice(0, 3).toLowerCase())
+    if (month >= 0) {
+      return new Date(
+        Number(dated[3]),
+        month,
+        Number(dated[2]),
+        clockHours(Number(dated[4]), dated[6] as string),
+        Number(dated[5])
+      ).getTime()
+    }
+  }
+  const clock = /(\d{1,2}):(\d{2})\s*(AM|PM)/i.exec(at)
+  if (!clock) return null
+  const now = new Date(nowMs)
+  const candidate = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    clockHours(Number(clock[1]), clock[3] as string),
+    Number(clock[2])
+  )
+  if (candidate.getTime() <= nowMs) candidate.setDate(candidate.getDate() + 1)
+  return candidate.getTime()
+}
+
+/**
+ * Did this run end because the agent's subscription usage limit was reached?
+ * Read only from the vendor's own output, never the exit code alone.
+ *
+ * Codex: a non-zero exit after an `error` or `turn.failed` event whose
+ * message contains "usage limit" (the stable part; the full message is kept).
+ * Claude Code: a `rate_limit_event` whose `status` is `rejected` with
+ * `isUsingOverage` `false`, followed by the run ending — a non-zero exit or a
+ * `result` with `is_error: true`. An `allowed`, `allowed_warning` or
+ * overage-backed rejection while the run goes on never classifies it.
+ */
+export function detectUsageLimit(
+  agent: AgentVendor,
+  stdout: string,
+  exitCode: number | null,
+  nowMs: number
+): UsageLimit | null {
+  if (agent === 'codex') {
+    if (exitCode === 0) return null
+    let found: string | null = null
+    for (const raw of stdout.split('\n')) {
+      if (!raw.includes('usage limit')) continue
+      try {
+        const obj = JSON.parse(raw) as { type?: unknown; message?: unknown; error?: { message?: unknown } }
+        const message = obj.type === 'error' ? obj.message : obj.type === 'turn.failed' ? obj.error?.message : undefined
+        if (typeof message === 'string' && message.toLowerCase().includes('usage limit')) found = message
+      } catch {
+        // not a JSON line — keep scanning
+      }
+    }
+    return found === null ? null : { agent, message: found, resetAtMs: parseCodexUsageLimitReset(found, nowMs) }
+  }
+  if (agent === 'claude') {
+    let rejected: { resetsAt: number | null; type: string } | null = null
+    let resultIsError = false
+    let resultText: string | null = null
+    for (const raw of stdout.split('\n')) {
+      if (!raw.includes('"rate_limit_event"') && !raw.includes('"result"')) continue
+      try {
+        const obj = JSON.parse(raw) as {
+          type?: unknown
+          is_error?: unknown
+          result?: unknown
+          rate_limit_info?: { status?: unknown; isUsingOverage?: unknown; resetsAt?: unknown; rateLimitType?: unknown }
+        }
+        if (obj.type === 'rate_limit_event') {
+          const info = obj.rate_limit_info
+          if (info?.status === 'rejected' && info.isUsingOverage === false) {
+            rejected = {
+              resetsAt: typeof info.resetsAt === 'number' ? info.resetsAt : null,
+              type: typeof info.rateLimitType === 'string' ? info.rateLimitType : 'usage'
+            }
+          } else {
+            // A later event that is not a limit means the run got past it.
+            rejected = null
+          }
+        } else if (obj.type === 'result') {
+          resultIsError = obj.is_error === true
+          resultText = typeof obj.result === 'string' ? obj.result : null
+        }
+      } catch {
+        // not a JSON line — keep scanning
+      }
+    }
+    if (rejected === null || !(exitCode !== 0 || resultIsError)) return null
+    return {
+      agent,
+      message: resultText ?? `Claude Code ${rejected.type} limit reached (rate_limit_event rejected)`,
+      resetAtMs: rejected.resetsAt === null ? null : rejected.resetsAt * 1000
+    }
+  }
+  return null
+}
+
 export function parseClaudeResumeId(stdout: string): string | null {
   // Same two-form tolerance as `parseClaudeUsage`: the terminal event of a
   // `stream-json` run carries `session_id`, and a whole-blob `json` payload
@@ -2732,7 +2858,8 @@ function coerceLaunchRecord(json: unknown): LaunchRecord | null {
     o.failureReason === 'connection-failed' ||
     o.failureReason === 'startup-failed' ||
     o.failureReason === 'authentication-failed' ||
-    o.failureReason === 'hook-setup-failed'
+    o.failureReason === 'hook-setup-failed' ||
+    o.failureReason === 'usage-limit'
       ? o.failureReason
       : null
   return {
@@ -5308,7 +5435,11 @@ export async function dispatchRole(
         return
       }
 
-      if (code !== 0) {
+      // An agent's subscription usage limit, read from the vendor's own
+      // output before any other non-zero classification: a limit is a wait
+      // for a reset, never a crash.
+      const usageLimit = detectUsageLimit(agent, stdoutBuf, code, Date.now())
+      if (code !== 0 || usageLimit !== null) {
         const priorSize = sizeOfSafe(outboxPath)
         log({
           kind: 'dispatch',
@@ -5318,7 +5449,15 @@ export async function dispatchRole(
           model: resolvedModel,
           ...roundField,
           effect_id: effectId,
-          reason: 'crash',
+          reason: usageLimit !== null ? 'usage_limit' : 'crash',
+          ...(usageLimit !== null
+            ? {
+                usage_limit: {
+                  agent: usageLimit.agent,
+                  reset_at: usageLimit.resetAtMs === null ? null : new Date(usageLimit.resetAtMs).toISOString()
+                }
+              }
+            : {}),
           usage,
           duration_ms: durationMs
         })
@@ -5355,12 +5494,15 @@ export async function dispatchRole(
         //
         // O2: same `'connection-failed'`
         // classification as the timeout branch above.
-        const failureReason = neverBoundSession
-          ? 'unbound'
-          : sawVendorConnectionRetry(stdoutBuf)
-            ? 'connection-failed'
-            : 'crash'
-        if (neverBoundSession) {
+        const failureReason: DispatchFailureReason =
+          usageLimit !== null
+            ? 'usage-limit'
+            : neverBoundSession
+              ? 'unbound'
+              : sawVendorConnectionRetry(stdoutBuf)
+                ? 'connection-failed'
+                : 'crash'
+        if (neverBoundSession && usageLimit === null) {
           writeLifecycle(
             `[vinaya dispatch ${effectId}] ${role} via ${agent}: exited (code ${code}) without ever producing a working vendor session — failing now as 'unbound'`
           )
@@ -5372,7 +5514,16 @@ export async function dispatchRole(
           resumeId: launch.resumeId ?? vendor.parseResumeId(stdoutBuf)
         })
         void finish(
-          { exitCode: code, durationMs, usage, resumeId: null, timedOut: false, failureReason, effectId },
+          {
+            exitCode: code,
+            durationMs,
+            usage,
+            resumeId: null,
+            timedOut: false,
+            failureReason,
+            ...(usageLimit !== null ? { usageLimit } : {}),
+            effectId
+          },
           'dispatch_failed',
           priorSize
         )

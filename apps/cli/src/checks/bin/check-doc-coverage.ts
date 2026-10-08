@@ -57,6 +57,19 @@ function changedFiles(base: string): string[] {
     .filter(Boolean)
 }
 
+function stagedChangedFiles(): string[] {
+  // Git sets GIT_INDEX_FILE for both pre-commit and pre-push. Only the
+  // generated pre-commit hook sets VINAYA_COMMIT_HOOK, so use its explicit
+  // marker as well before allowing staged paths to supplement the branch
+  // diff. Push and CI therefore retain the committed `<base>...HEAD` view.
+  if (process.env.VINAYA_COMMIT_HOOK !== '1' || !process.env.GIT_INDEX_FILE) return []
+
+  return git(['diff', '--cached', '--name-only'])
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
 function resolvePrBody(): string {
   if (process.env.PR_BODY) return process.env.PR_BODY
   if (process.env.PR_BODY_FILE) {
@@ -137,6 +150,10 @@ function main(): void {
     ref = 'main'
     changed = changedFiles(ref)
   }
+  // Resolve the committed-diff base before staged paths can supplement its
+  // result. A staged path must not mask an unavailable `origin/main` and
+  // prevent the existing `main` fallback from finding committed changes.
+  changed = [...new Set([...changed, ...stagedChangedFiles()])]
   if (changed.length === 0) {
     process.exit(0)
   }

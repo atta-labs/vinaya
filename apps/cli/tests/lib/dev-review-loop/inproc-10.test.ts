@@ -36,7 +36,16 @@ import {
   readPauseState,
   writeDriverLock
 } from '../../../src/lib/dev-review-loop/pause-resume.js'
-import { rateLimitPauseDetail } from '../../../src/lib/dev-review-loop/round-assess.js'
+import {
+  assertDispatchOrEscalate,
+  DispatchUsageLimit,
+  describeUsageLimitPause,
+  rateLimitPauseDetail,
+  spendsInfrastructureRetry,
+  usageLimitPauseDetail
+} from '../../../src/lib/dev-review-loop/round-assess.js'
+import { renderNoPushStopComment, renderPauseComment } from '../../../src/lib/dev-review-loop/pause-resume.js'
+import type { DispatchHandle, UsageLimit } from '../../../src/lib/dispatch.js'
 import {
   cleanupWorlds,
   makeInProcessDeps,
@@ -690,5 +699,100 @@ describe('watchPauseThenResume — a rate-limit pause resumes by itself after th
     await runDriverLoop({ task: 1129, agent: 'claude' }, {}, h.watch)
     expect(h.resetReads()).toBe(0)
     expect(h.sleeps).toEqual([60_000])
+  })
+})
+
+const HOUR_MS = 60 * 60 * 1000
+const CODEX_LIMIT_MESSAGE =
+  "You've hit your usage limit. Upgrade to Pro (<link>), visit <link> to purchase more credits or try again at 5:55 PM."
+const limitAt = (resetAtMs: number | null): UsageLimit => ({
+  agent: 'codex',
+  message: CODEX_LIMIT_MESSAGE,
+  resetAtMs
+})
+
+describe('an agent usage limit — a stop condition with a reset, never a crash', () => {
+  it('a limited dispatch handle throws a usage-limit stop that spends no infrastructure retry', async () => {
+    const limit = limitAt(RATE_LIMIT_NOW_MS + HOUR_MS)
+    const handle: DispatchHandle = {
+      exitCode: 1,
+      durationMs: 5,
+      usage: null,
+      resumeId: null,
+      timedOut: false,
+      failureReason: 'usage-limit',
+      usageLimit: limit
+    }
+    const err = await assertDispatchOrEscalate(handle, 'codex', true, true, 'the developer').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(DispatchUsageLimit)
+    expect(spendsInfrastructureRetry(err)).toBe(false)
+    expect(spendsInfrastructureRetry(new Error('boom'))).toBe(true)
+  })
+
+  it('the pause detail names the agent, the limit, the local reset and whether it resumes by itself', () => {
+    const near = usageLimitPauseDetail(limitAt(RATE_LIMIT_NOW_MS + HOUR_MS), RATE_LIMIT_NOW_MS)
+    expect(near).toContain("codex's usage limit was reached")
+    expect(near).toContain(new Date(RATE_LIMIT_NOW_MS + HOUR_MS).toISOString())
+    expect(near).toContain('resumes by itself after the reset')
+    expect(near).toContain(CODEX_LIMIT_MESSAGE)
+    const far = usageLimitPauseDetail(limitAt(RATE_LIMIT_NOW_MS + 7 * HOUR_MS), RATE_LIMIT_NOW_MS)
+    expect(far).toContain('does not resume by itself')
+    expect(usageLimitPauseDetail(limitAt(null), RATE_LIMIT_NOW_MS)).toContain('no reset time was given')
+    expect(describeUsageLimitPause(near)).toMatch(
+      /^usage limit \(codex\), resets \d{4}-\d{2}-\d{2} \d{2}:\d{2} \(UTC[+-]\d{2}:\d{2}\)$/
+    )
+    expect(describeUsageLimitPause(usageLimitPauseDetail(limitAt(null), 0))).toBe(
+      'usage limit (codex), no reset time given'
+    )
+  })
+
+  it('both pause comments, on the pull request and on the Issue, ask for no ruling and name the continuing command', () => {
+    const detail = usageLimitPauseDetail(limitAt(RATE_LIMIT_NOW_MS + HOUR_MS), RATE_LIMIT_NOW_MS)
+    const onPr = renderPauseComment(7, 'infrastructure', detail, { agent: 'codex' })
+    expect(onPr).toContain('usage limit was reached')
+    expect(onPr).toContain('No Principal ruling is needed')
+    expect(onPr).toContain('vinaya dev-review-loop --resume 7 --agent codex')
+    const onIssue = renderNoPushStopComment(1184, 'task/issue-1184', 'infrastructure', detail, { agent: 'codex' })
+    expect(onIssue).toContain('usage limit was reached')
+    expect(onIssue).toContain('No Principal ruling is needed')
+    expect(onIssue).toContain('--agent codex')
+  })
+
+  it('the watching driver sleeps to the recorded reset plus the slack, then resumes, without reading GitHub', async () => {
+    const detail = usageLimitPauseDetail(limitAt(RATE_LIMIT_NOW_MS + HOUR_MS), RATE_LIMIT_NOW_MS)
+    const h = rateLimitHarness(detail, [])
+    const result = await runDriverLoop({ task: 1129, agent: 'codex' }, {}, h.watch)
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    expect(h.resetReads()).toBe(0)
+    expect(h.sleeps).toEqual([HOUR_MS + 5_000])
+    expect(h.resumeInputs).toEqual([7])
+  })
+
+  it('shares the two-resume cap with the GitHub rate limit', async () => {
+    const detail = usageLimitPauseDetail(limitAt(RATE_LIMIT_NOW_MS + HOUR_MS), RATE_LIMIT_NOW_MS)
+    const h = rateLimitHarness(detail, [
+      rateLimitPauseResult(detail),
+      rateLimitPauseResult(detail),
+      rateLimitPauseResult(detail)
+    ])
+    let polls = 0
+    const sleep = h.watch.sleep!
+    h.watch.sleep = async (ms) => {
+      await sleep(ms)
+      if (ms === 1 && ++polls > 3) h.closed.value = true
+    }
+    await runDriverLoop({ task: 1129, agent: 'codex' }, {}, h.watch)
+    expect(h.resumeInputs).toEqual([7, 7])
+  })
+
+  it('leaves a pause whose reset is more than six hours away, or unknown, for the Principal', async () => {
+    for (const resetAtMs of [RATE_LIMIT_NOW_MS + 7 * HOUR_MS, null]) {
+      const detail = usageLimitPauseDetail(limitAt(resetAtMs), RATE_LIMIT_NOW_MS)
+      const h = rateLimitHarness(detail, [])
+      const result = await runDriverLoop({ task: 1129, agent: 'codex' }, {}, h.watch)
+      expect(result.finalDecision.type).toBe('pause')
+      expect(h.sleeps).toEqual([])
+      expect(h.resumeInputs).toEqual([])
+    }
   })
 })
