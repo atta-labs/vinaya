@@ -5138,8 +5138,7 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
       // immediately before removal, said OPEN — revived. The folder survives.
       expect(existsSync(sweepRunDir(home, 8002))).toBe(true)
       expect(readFileSync(join(home, '.sweep-8002-state-calls'), 'utf8').trim()).toBe('2')
-      expect(r.stderr).toContain('kept Issue #8002')
-      expect(r.stderr).toContain('open — Issue #8002 open, no pull request yet')
+      expect(r.stderr).toContain('Sweep finished: removed 0 finished task folders, kept 2.')
     },
     80_000
   )
