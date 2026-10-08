@@ -190,4 +190,18 @@ describe('C5 commit-time staged documentation coverage', () => {
     expect(prePush.code).not.toBe(0)
     expect(prePush.stderr).toContain('docs/x.md')
   })
+
+  it('falls back to main before staged paths supplement an unavailable origin/main', async () => {
+    const { dir } = repoWithFiredBinding('export const x = 2\n')
+    const indexPath = git(dir, ['rev-parse', '--git-path', 'index'])
+    const gitIndexFile = join(dir, indexPath)
+    writeFileSync(join(dir, 'staged.md'), 'unrelated staged path\n')
+    git(dir, ['add', 'staged.md'])
+
+    // This fixture has no origin remote. The staged file must not prevent the
+    // committed diff from falling back to main and finding the governed edit.
+    const result = await runBlockingCheckThroughRunner(dir, '', gitIndexFile)
+    expect(result.code).not.toBe(0)
+    expect(result.stderr).toContain('docs/x.md')
+  })
 })
