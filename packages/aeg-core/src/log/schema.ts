@@ -355,7 +355,12 @@ export const DispatchEventSchema = z.discriminatedUnion('event', [
     .object({
       ...dispatchShared,
       event: z.literal('dispatch_failed'),
-      reason: z.enum(['timeout', 'crash', 'refused', 'unattributed_write']),
+      reason: z.enum(['timeout', 'crash', 'refused', 'unattributed_write', 'usage_limit']),
+      /** Present on a `usage_limit` failure only: the agent that reached its limit and when it resets (ISO instant; `null` when the vendor named none). The vendor's message is never stored. */
+      usage_limit: z
+        .object({ agent: z.string().min(1), reset_at: z.string().nullable() })
+        .strict()
+        .optional(),
       usage: dispatchUsageField
     })
     .strict()

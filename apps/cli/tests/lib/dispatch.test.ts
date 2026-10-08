@@ -56,6 +56,8 @@ import {
   colourLoopLine,
   recoverUsageFromDispatchTee,
   sawVendorConnectionRetry,
+  detectUsageLimit,
+  parseCodexUsageLimitReset,
   unreadDocumentationSources,
   getProcessSnapshot,
   matchesCapturedIdentity,
@@ -5528,5 +5530,98 @@ describe('process hygiene (Issue #670) — the file leaves no fake vendor proces
   it('no NEW process — beyond whatever the host already carried before this file ran — still carries a vinaya-dispatch-bin- path in its command line', () => {
     const newSurvivors = vendorProcessSurvivors().filter((line) => !preExistingVendorSurvivors.has(line))
     expect(newSurvivors).toEqual([])
+  })
+})
+
+describe('detectUsageLimit (pure) — an agent usage limit is read from the vendor output, never an exit code', () => {
+  const NOW = new Date(2026, 9, 8, 10, 0).getTime()
+  const CODEX_MESSAGE =
+    "You've hit your usage limit. Upgrade to Pro (<link>), visit <link> to purchase more credits or try again at 5:55 PM."
+  const codexStream = (message: string): string =>
+    [
+      '{"type":"thread.started","thread_id":"t1"}',
+      JSON.stringify({ type: 'error', message }),
+      JSON.stringify({ type: 'turn.failed', error: { message } })
+    ].join('\n')
+
+  it('Codex: an error and turn.failed carrying "usage limit" classify with the clock-time reset, today', () => {
+    const limit = detectUsageLimit('codex', codexStream(CODEX_MESSAGE), 1, NOW)
+    expect(limit).toEqual({
+      agent: 'codex',
+      message: CODEX_MESSAGE,
+      resetAtMs: new Date(2026, 9, 8, 17, 55).getTime()
+    })
+  })
+
+  it('Codex: a clock time already past today is read as the next occurrence, tomorrow', () => {
+    const limit = detectUsageLimit('codex', codexStream(CODEX_MESSAGE.replace('5:55 PM', '9:30 AM')), 1, NOW)
+    expect(limit?.resetAtMs).toBe(new Date(2026, 9, 9, 9, 30).getTime())
+  })
+
+  it('Codex: an explicit date and time is read exactly', () => {
+    const message = CODEX_MESSAGE.replace('5:55 PM', 'Oct 20th, 2026 6:25 PM')
+    expect(detectUsageLimit('codex', codexStream(message), 1, NOW)?.resetAtMs).toBe(
+      new Date(2026, 9, 20, 18, 25).getTime()
+    )
+    expect(parseCodexUsageLimitReset('try again at 12:05 AM.', NOW)).toBe(new Date(2026, 9, 9, 0, 5).getTime())
+  })
+
+  it('Codex: a message with no time gives a null reset, and an unrelated failure is not a limit', () => {
+    expect(detectUsageLimit('codex', codexStream("You've hit your usage limit."), 1, NOW)?.resetAtMs).toBeNull()
+    expect(detectUsageLimit('codex', codexStream('stream disconnected'), 1, NOW)).toBeNull()
+  })
+
+  const rejected =
+    '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1789783200,"rateLimitType":"seven_day","overageStatus":"rejected","overageDisabledReason":"org_level_disabled","isUsingOverage":false}}'
+  const errorResult =
+    '{"type":"result","subtype":"success","is_error":true,"result":"You\'ve hit your weekly limit · resets Sep 19 at 9am (Asia/Bangkok)"}'
+
+  it('Claude Code: a rejected event without overage, then an error result, classifies with resetsAt', () => {
+    const stream = [rejected, '{"type":"assistant","message":{}}', errorResult].join('\n')
+    expect(detectUsageLimit('claude', stream, 0, NOW)).toEqual({
+      agent: 'claude',
+      message: "You've hit your weekly limit · resets Sep 19 at 9am (Asia/Bangkok)",
+      resetAtMs: 1789783200 * 1000
+    })
+    expect(detectUsageLimit('claude', rejected, 1, NOW)?.resetAtMs).toBe(1789783200 * 1000)
+  })
+
+  it('Claude Code: a rejected event with overage, or an allowed one, while the run goes on never classifies', () => {
+    const overage =
+      '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","overageStatus":"allowed","isUsingOverage":true}}'
+    const ok = '{"type":"result","subtype":"success","is_error":false,"result":"done"}'
+    expect(detectUsageLimit('claude', [overage, ok].join('\n'), 0, NOW)).toBeNull()
+    expect(detectUsageLimit('claude', overage, 1, NOW)).toBeNull()
+    const allowed = '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","isUsingOverage":false}}'
+    expect(detectUsageLimit('claude', [allowed, errorResult].join('\n'), 1, NOW)).toBeNull()
+    expect(detectUsageLimit('claude', [rejected, ok].join('\n'), 0, NOW)).toBeNull()
+  })
+})
+
+describe('dispatchRole — an agent usage limit is its own outcome, never a crash', () => {
+  it('a claude child that prints a rejected limit event and exits non-zero logs usage_limit with agent and reset', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' '{"type":"system","subtype":"init","session_id":"s-limit"}'\nprintf '%s\\n' '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1789783200,"rateLimitType":"seven_day","isUsingOverage":false}}'\nprintf '%s\\n' '{"type":"result","is_error":true,"result":"You have hit your weekly limit"}'\nexit 1\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--json'],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(1)
+    const parsed = JSON.parse(r.stdout) as { data: { failureReason: string | null } }
+    expect(parsed.data.failureReason).toBe('usage-limit')
+    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
+    const failed = lines.find((l) => l.event === 'dispatch_failed')
+    expect(failed?.reason).toBe('usage_limit')
+    expect(failed?.usage_limit).toEqual({ agent: 'claude', reset_at: new Date(1789783200 * 1000).toISOString() })
   })
 })

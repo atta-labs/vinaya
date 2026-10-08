@@ -24,7 +24,7 @@ import {
   type RoundHeadIdentity,
   type RoundStats
 } from '@attalabs/aeg-core'
-import type { AgentVendor, DispatchHandle } from '../dispatch.js'
+import type { AgentVendor, DispatchHandle, UsageLimit } from '../dispatch.js'
 import { controlStoreRoot } from '../effects.js'
 import { isControlCharacter } from './turn-result.js'
 
@@ -114,6 +114,22 @@ export class DispatchSignInRefused extends Error {
 }
 
 /**
+ * Thrown when the agent's subscription usage limit ended a dispatch: a stop
+ * condition with a known cause and, usually, a reset time — never a crash.
+ * The loop pauses on it, spends no infrastructure retry, and the watching
+ * driver resumes after the reset (`usageLimitPauseDetail`).
+ */
+export class DispatchUsageLimit extends Error {
+  constructor(
+    public readonly limit: UsageLimit,
+    public readonly subject: string
+  ) {
+    super(`devReviewLoop: ${subject} stopped — ${limit.agent}'s usage limit was reached: ${limit.message}`)
+    this.name = 'DispatchUsageLimit'
+  }
+}
+
+/**
  * Does this round-ending error spend a unit of the loop's
  * infrastructure-retry budget? Everything does, except a sign-in refusal
  * and a GitHub rate limit (the loop already waited it out in place, or
@@ -126,7 +142,7 @@ export class DispatchSignInRefused extends Error {
  * its bound.
  */
 export function spendsInfrastructureRetry(err: unknown): boolean {
-  return !(err instanceof DispatchSignInRefused) && !isGitHubRateLimitError(err)
+  return !(err instanceof DispatchSignInRefused) && !(err instanceof DispatchUsageLimit) && !isGitHubRateLimitError(err)
 }
 
 /** The rate-limit wording GitHub's REST and GraphQL APIs use, primary and secondary — nothing that merely mentions GitHub matches. */
@@ -250,6 +266,9 @@ export async function assertDispatchOrEscalate(
   // tenth, so a credential failure on a resumed round is never read as the
   // "this session worked last round and broke now" product escalation.
   if (handle.failureReason === 'authentication-failed') throw new DispatchSignInRefused(vendor, subject)
+  // Likewise a usage limit: it ends a first dispatch and a resumed one the same way, and the session stays resumable.
+  if (handle.failureReason === 'usage-limit' && handle.usageLimit)
+    throw new DispatchUsageLimit(handle.usageLimit, subject)
   if (isResume && previousDispatchSucceededForVendor) {
     const sinceClause = succeededInEarlierRound
       ? 'after succeeding last round'
@@ -584,4 +603,79 @@ export function errorClassOf(err: unknown): string {
   const name = typeof err === 'object' && err !== null ? err.constructor?.name : undefined
   const candidate = typeof code === 'string' && code !== '' ? code : name
   return typeof candidate === 'string' && CODE_TOKEN_PATTERN.test(candidate) ? candidate : 'unknown'
+}
+
+// --- agent usage limit --------------------------------------------------------
+
+/** The longest reset the watching driver waits out by itself; a later reset leaves the pause for the Principal. */
+export const MAX_USAGE_LIMIT_AUTO_WAIT_MS = 6 * 60 * 60 * 1000
+
+/** The prefix a usage-limit pause detail starts with — the one marker the watcher and the status reads tell it by. */
+const USAGE_LIMIT_PAUSE_PREFIX = 'Usage limit:'
+
+/** The reset time as a reader in this machine's time zone sees it, with the zone named. */
+function localResetText(resetAtMs: number): string {
+  const d = new Date(resetAtMs)
+  const offsetMin = -d.getTimezoneOffset()
+  const sign = offsetMin >= 0 ? '+' : '-'
+  const abs = Math.abs(offsetMin)
+  const zone = `UTC${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())} (${zone})`
+}
+
+/**
+ * The pause detail for an agent's usage limit: names the agent, that its
+ * usage limit was reached, the reset in local time (and as an ISO instant the
+ * watcher reads back), the vendor's full message, and whether the watching
+ * driver resumes by itself — only when the reset is at most six hours away.
+ */
+export function usageLimitPauseDetail(limit: UsageLimit, nowMs: number): string {
+  const reset =
+    limit.resetAtMs === null
+      ? 'no reset time was given'
+      : `resets ${localResetText(limit.resetAtMs)}, at ${new Date(limit.resetAtMs).toISOString()}`
+  const automatic =
+    limit.resetAtMs !== null && limit.resetAtMs - nowMs <= MAX_USAGE_LIMIT_AUTO_WAIT_MS
+      ? 'the watching driver resumes by itself after the reset'
+      : 'the reset is not within six hours, so the driver does not resume by itself'
+  return `${USAGE_LIMIT_PAUSE_PREFIX} ${limit.agent}'s usage limit was reached; ${reset}; ${automatic}. Vendor message: ${limit.message}`
+}
+
+/** Does this pause detail say the pause is an agent's usage limit? */
+export function isUsageLimitPauseDetail(detail: string | undefined): boolean {
+  return detail?.startsWith(USAGE_LIMIT_PAUSE_PREFIX) === true
+}
+
+/** The reset instant (epoch ms) a usage-limit pause detail carries, or `null` when it named none. */
+export function usageLimitResetFromDetail(detail: string | undefined): number | null {
+  if (!isUsageLimitPauseDetail(detail)) return null
+  const m = /, at (\d{4}-\d{2}-\d{2}T[\d:.]+Z);/.exec(detail ?? '')
+  if (!m) return null
+  const t = Date.parse(m[1] as string)
+  return Number.isNaN(t) ? null : t
+}
+
+/**
+ * How long the watching driver waits before resuming a usage-limit pause:
+ * until the reset plus the same slack a GitHub rate limit gets. `null` when
+ * the reset is missing or more than six hours away — the pause stays for the Principal.
+ */
+export function usageLimitWaitMs(resetAtMs: number | null, nowMs: number): number | null {
+  if (resetAtMs === null) return null
+  const until = resetAtMs - nowMs
+  if (until > MAX_USAGE_LIMIT_AUTO_WAIT_MS) return null
+  return Math.max(0, until) + RATE_LIMIT_RESET_SLACK_MS
+}
+
+/**
+ * How a status read shows a usage-limit pause: `usage limit (<agent>), resets
+ * <local time>` (or `no reset time given`), never the pause's infrastructure
+ * reason. `null` when the detail is not a usage-limit pause.
+ */
+export function describeUsageLimitPause(detail: string | undefined): string | null {
+  if (!isUsageLimitPauseDetail(detail)) return null
+  const agent = /^Usage limit: (\S+?)'s usage limit/.exec(detail ?? '')?.[1] ?? 'agent'
+  const reset = /; resets (.+?), at \d{4}-/.exec(detail ?? '')?.[1]
+  return `usage limit (${agent}), ${reset ? `resets ${reset}` : 'no reset time given'}`
 }
