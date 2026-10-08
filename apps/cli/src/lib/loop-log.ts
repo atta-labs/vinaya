@@ -89,7 +89,6 @@ export function appendLoopLogLine(path: string, line: string): void {
   }
 }
 
-/** `[<role>] <text>` — the same prefix shape `colourAgentLine` renders to the terminal, minus the ANSI wrapping (a log file is read later, never through a TTY). */
 export function appendRoleLine(path: string, role: string, text: string, details: readonly string[] = []): void {
   appendLoopLogLine(path, formatAgentLine(role, text, { log: true }))
   for (const detail of formatAgentDetails(details, false)) appendLoopLogLine(path, detail)
