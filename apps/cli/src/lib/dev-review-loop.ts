@@ -122,7 +122,13 @@ import { validatePrBodyForCreate } from '../commands/pr.js'
 import { createLogSink, drainLogSink, resolveLogAppendPath } from './log-sink.js'
 import { ensureRunDir, markProcessUnattended, runPath } from './run-paths.js'
 import { defaultTaskSweepAsyncDeps, sweepModernTasksAsync } from './task-sweep.js'
-import { appendRoleLine, appendRunStartMarker, loopLogPathFor } from './loop-log.js'
+import {
+  appendDriverLine,
+  appendRoleLine,
+  appendRunStartMarker,
+  loopLogPathFor,
+  narrateDriverEvent
+} from './loop-log.js'
 import { detectVendoredVinaya } from './self-host.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import {
@@ -2340,18 +2346,31 @@ export function buildReexecArgs(input: LoopInput, task: number): string[] {
  */
 async function defaultSweepTasksAtStart(task: number): Promise<void> {
   try {
+    const sweepLogPath = loopLogPathFor(null, task)
+    let removed = 0
+    let kept = 0
     await sweepModernTasksAsync(
       task,
       (decision) => {
-        const verb = decision.removed ? 'removed' : 'kept'
-        console.error(
-          `vinaya dev-review-loop: sweep — [${decision.completed}/${decision.total}] ${verb} ${decision.folder}: ${decision.reason}`
-        )
+        if (decision.removed) removed++
+        else kept++
+        // A folder the sweep could not remove is a failure, and stays visible on its own line.
+        if (decision.failed)
+          appendDriverLine(sweepLogPath, `Sweep could not remove ${decision.folder}: ${decision.reason}`, 'failed')
       },
       defaultTaskSweepAsyncDeps
     )
+    appendDriverLine(
+      sweepLogPath,
+      `Sweep finished: removed ${removed} finished task folder${removed === 1 ? '' : 's'}, kept ${kept}.`,
+      'done'
+    )
   } catch (err) {
-    console.error(`vinaya dev-review-loop: sweep failed — ${err instanceof Error ? err.message : String(err)}`)
+    appendDriverLine(
+      loopLogPathFor(null, task),
+      `Sweep failed: ${err instanceof Error ? err.message : String(err)}`,
+      'failed'
+    )
   }
 }
 
@@ -2678,9 +2697,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   // one) — passing `null` here means this marker never waits on
   // `resolveRepo()`, which only runs later, inside the body.
   const loopLogPath = loopLogPathFor(null, task)
-  appendRunStartMarker(loopLogPath, { role: 'dev-review-loop', pid: process.pid, runId })
-  appendRoleLine(loopLogPath, 'dev-review-loop', 'sweep — running')
-  console.error('vinaya dev-review-loop: sweep — running')
+  appendRunStartMarker(loopLogPath, { role: 'dev-review-loop', pid: process.pid, runId, resumed: 'resumePr' in input })
 
   // The same keep-policy `vinaya task sweep` runs on demand, started here
   // but never awaited before dispatch (O2) — `excludeScope` (this run's OWN
@@ -2902,8 +2919,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         const priorSize = sizeOfSafe(loopOutboxPath)
         log(e)
         await waitForOwnLoopLine(loopOutboxPath, priorSize, runId, e, d.sleep)
+        // The plain line for the event just written: text only, after the
+        // write, so when and whether the event is logged is unchanged.
+        narrateDriverEvent(loopLogPath, e, narratedEvents, task)
+        narratedEvents.push(e)
       }
     }
+    const narratedEvents: DevReviewLoopEventInput[] = []
 
     // Every `log()` call this process makes from
     // here on — this driver's own `dev_review_loop` events AND every
@@ -3679,6 +3701,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     ): Promise<DispatchHandle> {
       const isResume = devResumeId !== null
       await recordDeveloperModel(roundNum)
+      appendDriverLine(
+        loopLogPath,
+        `Developer starting round ${roundNum} with ${dispatchModel ?? dispatchAgent}`,
+        'round'
+      )
       // O4: no bare-forge-command rule rides the prompt any longer — the
       // Developer holds no `gh`/`git push` credential and publishes only
       // through the driver-run tools, so there is no excluded command to run
@@ -6889,6 +6916,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // took over ten minutes idled the session twice). The merge
             // gate's own `evidence-fresh` check is the real backstop for a
             // report that never lands.
+            appendDriverLine(loopLogPath, `Reviewers starting round ${round}`, 'round')
             const [reviewerResult, securityResult, evidenceOutcome] = await Promise.all([
               dispatchReviewer('reviewer', round, facts, candidateDir, candidateInputsReady),
               dispatchReviewer('security', round, facts, candidateDir, candidateInputsReady),

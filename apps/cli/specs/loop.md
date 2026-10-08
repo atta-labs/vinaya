@@ -167,6 +167,28 @@ this landed had to finish, or be cancelled, first, and nothing here reads
 or migrates one on its own; that command is an operator's or a
 principal's own call, never something a run in progress reaches for.
 
+## The driver's own lines
+
+The driver writes its own lines in the same form as the agents' lines —
+a time, a mark and a label — through the one renderer, to the loop log and
+to stderr. Each Log event the driver writes is read back into one plain
+line by the shared phrase function in the core package, after the event is
+written, so when and whether an event is logged does not change. A round
+is marked by a developer line ("Developer starting round N with
+<model>"), "Round N started.", a reviewers line, each verdict with its
+blocking count, and "Round N ended after <duration>: <outcome>." followed
+by the confidence the developer stated for it: a dash when none was
+asked, "not given" when unavailable, and a note when it came after the
+extra turn. A pause or a stop that needs a person says so, names what the
+person has to decide or repair, and says the run continues through the
+Operator's `task_resume` for that task, bound to the pause at its round; it prints no command.
+No line carries a process id or a run id.
+<!-- AEG:CLAIM: apps/cli/src/lib/loop-log.ts contains:formatAgentLine('dev-review-loop', text, { mark, unicode: Boolean(process.stderr.isTTY) }) -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:Developer starting round -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:Reviewers starting round -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:narrateDriverEvent(loopLogPath, e, narratedEvents, task) -->
+<!-- AEG:CLAIM: apps/cli/src/lib/loop-log.ts contains:The Operator's task_resume for task -->
+
 ## The sweep, at the start of every run (non-blocking and narrated as it runs)
 
 This run's own narration begins before the sweep ever makes a forge
@@ -174,8 +196,10 @@ lookup: right after the task and its developer branch are resolved (both
 the `--task` and the `--resume` path, above), the loop log (`<task
 folder>/output/driver.log`, the same file `vinaya task status --follow`
 tails) and this process's own stderr both receive the run-start marker
-and a `sweep — running` line — before the sweep's own `gh` calls, and
-before the one-driver-per-task lock below is even read. The sweep is
+— before the sweep's own `gh` calls, and before the one-driver-per-task
+lock below is even read. A first start reads "run started"; a relaunch of
+a task that already ran reads "Resumed".
+<!-- AEG:CLAIM: apps/cli/src/lib/loop-log.ts contains:detail.resumed ? 'Resumed' : 'run started' --> The sweep is
 then STARTED, not awaited: `devReviewLoop` calls
 `apps/cli/src/lib/task-sweep.ts`'s `sweepModernTasksAsync`
 (`LoopDeps.sweepTasksAtStart`) and keeps going immediately, so the
@@ -195,10 +219,12 @@ merged or closed is removed, exactly as the synchronous sweep decides
 it — the keep-policy itself is unchanged, only how it runs:
 `classifyTaskFolderAsync` mirrors `classifyTaskFolder`'s decision and
 reason text over non-blocking `gh` lookups, run with a small bounded
-concurrency rather than one after another. Each folder's own decision is
-printed to stderr — `[<completed>/<total>] removed|kept <folder>:
-<reason>` — the moment that folder's own classification finishes, never
-batched into one line after every lookup completes. A folder found
+concurrency rather than one after another. The sweep writes one summary line when it ends —
+"Sweep finished: removed N finished task folders, kept M." — and not a
+line per folder; a folder the sweep could not remove still gets its own
+failed line.
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:Sweep finished: removed -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:Sweep could not remove --> A folder found
 `finished` is classified a SECOND time, immediately before it is
 removed: a task revived in the interval (its Issue reopened, its pull
 request moved) is read again and kept, never deleted on the first,
@@ -283,6 +309,18 @@ at most once per thirty seconds. The raw output file retains the dispatch id
 and path; neither appears in the normal lifecycle line.
 
 Every driver — `task run` and `dev-review-loop` alike, since `task run` is a thin composition that calls `devReviewLoop` internally for the entire developer/reviewer dispatch — writes its own role-labelled stream to the task's `<runtimeDir>/tasks-execution/<issue>/output/driver.log` (`apps/cli/src/lib/loop-log.ts`). It sits in `output/`, beside the raw agent output, because it is human-readable narration — never a structured event a check reads, and deliberately nowhere near the telemetry outbox. The repo no longer appears in the path: the runtime directory is already per-repository, so two repositories sharing an Issue number still get two files. A new process starts with a timed round record, so relaunches remain visible without a separate line shape. Nothing here ever truncates the file.
+
+An agent's live stream reaches those records through its own translator — `translateClaudeEvent` for Claude Code, `translateCodexEvent` for Codex, `translateGeminiEvent` for Gemini — in `createAgentStreamRenderer` (`apps/cli/src/lib/agent-stream.ts`), which `dispatchRole` calls for each stream line. A shell command's text is a detail record beneath its action, at most twenty lines of four hundred characters each, and every detail is redacted before it reaches the terminal or the file. An event no translator handles falls back to the vendor's old text as a `Working` line with that text beneath it, and is dropped when that text is only an event name such as `item.completed`.
+<!-- AEG:CLAIM: apps/cli/src/lib/agent-stream.ts contains:export function createAgentStreamRenderer( -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:createAgentStreamRenderer( -->
+<!-- AEG:CLAIM: apps/cli/src/lib/loop-log.ts contains:mark: AgentLineMark = 'working' -->
+<!-- AEG:CLAIM: apps/cli/src/lib/agent-line.ts contains:export function renderNarratedUpdate( -->
+<!-- AEG:CLAIM: apps/cli/src/lib/agent-stream.ts contains:const TRANSLATORS = { claude: translateClaudeEvent, codex: translateCodexEvent, gemini: translateGeminiEvent } as const -->
+<!-- AEG:CLAIM: apps/cli/src/lib/agent-stream.ts contains:const DETAIL_LINES_MAX = 20 -->
+<!-- AEG:CLAIM: apps/cli/src/lib/agent-stream.ts contains:const DETAIL_LINE_MAX = 400 -->
+<!-- AEG:CLAIM: apps/cli/src/lib/agent-stream.ts contains:isEventName(rendered[0] ?? '') -->
+<!-- AEG:CLAIM: apps/cli/src/lib/agent-stream.ts contains:return [{ words: 'Working', mark: 'working', details: textLines(rendered.join('\n'), ctx) }] -->
+<!-- AEG:CLAIM: apps/cli/src/lib/loop-log.ts contains:redact(detail, homedir()) -->
 
 `dispatchRole` (`apps/cli/src/lib/dispatch.ts`) writes agent and lifecycle records to it: when the loop names a `roleLogPath` in its `DispatchOpts`, the shared renderer mirrors each primary and detail line in its plain, redacted file form alongside the per-dispatch raw-byte tee. The raw tee retains its dispatch-specific filename; the readable lifecycle line does not expose that identifier or path.
 

@@ -694,6 +694,8 @@ export type SweepAsyncDecision = {
   total: number
   folder: string
   removed: boolean
+  /** `true` only when the folder was finished but its removal threw. */
+  failed?: boolean
   reason: string
 }
 
@@ -783,7 +785,7 @@ export async function sweepModernTasksAsync(
       const reason = `finished (${recheck.reason}) but could not be removed: ${message(err)}`
       results[index] = { removed: false, entry: { folder: label, reason } }
       completed++
-      onDecision({ completed, total, folder: label, removed: false, reason })
+      onDecision({ completed, total, folder: label, removed: false, failed: true, reason })
     }
   }
 
@@ -905,7 +907,7 @@ async function sweepWorktreesAsync(
 
   let completed = 0
   const total = candidates.length
-  const record = (label: string, wasRemoved: boolean, reason: string): void => {
+  const record = (label: string, wasRemoved: boolean, reason: string, failed = false): void => {
     ;(wasRemoved ? removed : kept).push({ folder: label, reason })
     completed++
     onDecision({
@@ -913,6 +915,7 @@ async function sweepWorktreesAsync(
       total,
       folder: label,
       removed: wasRemoved,
+      ...(failed ? { failed } : {}),
       reason
     })
   }
@@ -934,7 +937,7 @@ async function sweepWorktreesAsync(
       await deps.removeWorktree(listing.main, entry.path)
       record(label, true, recheck.reason)
     } catch (err) {
-      record(label, false, `finished (${recheck.reason}) but could not be removed: ${message(err)}`)
+      record(label, false, `finished (${recheck.reason}) but could not be removed: ${message(err)}`, true)
     }
   }
   return { removed, kept }
