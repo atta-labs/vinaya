@@ -758,6 +758,13 @@ async function runOne(
  */
 export async function runChecks(specs: CheckSpec[], opts: RunOptions): Promise<CheckOutcome[]> {
   const callerEnv = opts.callerEnv ?? process.env
+  // `--skip-full` is exclusive to the generated pre-commit hook. Stamp its
+  // child checks here instead of trusting Git's GIT_INDEX_FILE, which Git
+  // also exports to pre-push. Conversely, remove any ambient marker from
+  // every other invocation so pre-push and CI always retain committed diffs.
+  const checkCallerEnv = { ...callerEnv }
+  if (opts.skipFull) checkCallerEnv.VINAYA_COMMIT_HOOK = '1'
+  else delete checkCallerEnv.VINAYA_COMMIT_HOOK
   const logFn = opts.log ?? defaultLog
   const runStart = performance.now()
   // Only for the real default sink — an injected test logger has no
@@ -771,7 +778,7 @@ export async function runChecks(specs: CheckSpec[], opts: RunOptions): Promise<C
 
   for (let i = 0; i < specs.length; i++) {
     const spec = specs[i] as CheckSpec
-    const fingerprint = inputFingerprintFor(spec, opts, callerEnv)
+    const fingerprint = inputFingerprintFor(spec, opts, checkCallerEnv)
     fingerprints[i] = fingerprint
     const skip = shouldSkip(spec, opts)
     if (skip.skip) {
@@ -798,7 +805,7 @@ export async function runChecks(specs: CheckSpec[], opts: RunOptions): Promise<C
       results[idx] = await runOne(
         spec,
         spec.timeoutMs ?? opts.defaultTimeoutMs,
-        callerEnv,
+        checkCallerEnv,
         fingerprints[idx] as string,
         logFn
       )
