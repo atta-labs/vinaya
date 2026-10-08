@@ -12,6 +12,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
   CODE_REVIEW_SEVERITY_ORDER,
@@ -28,6 +29,8 @@ import {
   type ManifestRecord,
   type Objective,
   type ReviewInputManifest,
+  redact,
+  REVIEW_FINDING_DESCRIPTION_MAX_LENGTH,
   SECURITY_SEVERITY_ORDER,
   type ReviewPolicy,
   type VerdictObservation,
@@ -1082,10 +1085,20 @@ export function buildVerdictFromReport(
     const t = policyTreatmentFor(f, scale, threshold, deferralContext)
     return { finding: f, id: `F${i + 1}`, treatment: t.treatment, deferred: t.deferred }
   })
+  // The reviewer wording is retained exactly from the parser: redacted first
+  // (so a cut never leaves half a secret, and redaction cannot grow past the
+  // cap), then bounded with a visible mark.
+  const captureDescription = (description: string): string => {
+    const redacted = redact(description, homedir())
+    return redacted.length > REVIEW_FINDING_DESCRIPTION_MAX_LENGTH
+      ? `${redacted.slice(0, REVIEW_FINDING_DESCRIPTION_MAX_LENGTH - 1)}…`
+      : redacted
+  }
   const findingObservations = classified.map((c) => ({
     id: c.id,
     severity: c.finding.severity,
     location: c.finding.location,
+    description: captureDescription(c.finding.description),
     fingerprint: findingFingerprint(c.finding.description),
     state: null,
     severityScale: role === 'reviewer' ? ('code-review' as const) : ('security' as const),

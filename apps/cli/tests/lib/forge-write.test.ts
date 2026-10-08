@@ -1438,14 +1438,16 @@ const OUTSIDE = {
   reviewer: 'reviewer',
   severity: 'MAJOR',
   location: 'x.ts:1',
-  reason: 'outside-surface' as const
+  reason: 'outside-surface' as const,
+  description: 'outside description'
 }
 const UNCHANGED = {
   round: 2,
   reviewer: 'security',
   severity: 'MEDIUM',
   location: 'y.ts:2',
-  reason: 'unchanged-line' as const
+  reason: 'unchanged-line' as const,
+  description: 'unchanged description'
 }
 
 describe('upsertDeferredFindingsIssue — one tracking Issue per pull request (#854)', () => {
@@ -1459,8 +1461,8 @@ describe('upsertDeferredFindingsIssue — one tracking Issue per pull request (#
     // its severity, `file:line` and reason (the shared reason wording).
     expect(body).toContain(deferredFindingsMarker(55))
     // O1: each line names the reviewer that reported it, its severity, file:line and reason.
-    expect(body).toContain('- round 1 — reviewer — MAJOR x.ts:1 — outside the Surface')
-    expect(body).toContain('- round 2 — security — MEDIUM y.ts:2 — unchanged line')
+    expect(body).toContain('- round 1 — reviewer — MAJOR x.ts:1 — outside the Surface — outside description')
+    expect(body).toContain('- round 2 — security — MEDIUM y.ts:2 — unchanged line — unchanged description')
     // Fixed backlog label, no tranche label, so no plan gate applies.
     const createCall = forge.calls.find((a) => a[0] === 'issue' && a[1] === 'create')!
     expect(createCall).toContain('--label')
@@ -1517,8 +1519,17 @@ describe('upsertDeferredFindingsIssue — one tracking Issue per pull request (#
 
   it('renders `(no location)` for a finding that carried none', () => {
     const body = renderDeferredFindingsIssueBody(7, [
-      { round: 1, reviewer: 'reviewer', severity: 'BLOCKER', location: '', reason: 'outside-surface' }
+      {
+        round: 1,
+        reviewer: 'reviewer',
+        severity: 'BLOCKER',
+        location: '',
+        reason: 'outside-surface',
+        description: 'description without a location'
+      }
     ])
-    expect(body).toContain('- round 1 — reviewer — BLOCKER (no location) — outside the Surface')
+    expect(body).toContain(
+      '- round 1 — reviewer — BLOCKER (no location) — outside the Surface — description without a location'
+    )
   })
 })
