@@ -91,9 +91,9 @@ On any failure: STOP and report.
 
 <!-- AEG:CLAIM: apps/cli/src/lib/artifacts.ts contains:pre-push-select-tests.ts -->
 
-- [the repo's static gates, by command, and nothing else — this repo: `bun run typecheck`, `bun run format-and-lint`, and the production build. Do NOT ask for a test-suite run per Part: the managed `pre-push` hook selects the test files the changed files' own import graph could affect and runs them itself, once, on the one push, refusing the push when it fails. A brief that also asks for it per Part buys nothing and pays the suite's full wall-clock on every Part.]
+- [Under the review loop, the controller runs static gates through the commit hook, the managed `pre-push` hook, `run_checks`, and CI. Do NOT list hand-run static-gate commands or ask for a test-suite run per Part: the push hook selects and runs affected tests once, on the one push, refusing it on failure. Working manually, the Developer uses the repository's declared static-gate commands.]
 - [every blast-radius consumer named in §4 re-verified, by name]
-- The tier checklist in `vinaya doctrine --role developer --print` genuinely satisfied, and `PR_BODY="$(cat <body-file>)" vinaya check doc-coverage` green. (In this repo the render also names `PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr`, which additionally evaluates the spec-status and code-requires-docs contracts.)
+- The tier checklist in `vinaya doctrine --role developer --print` genuinely satisfied; use the controller's `run_checks` result, hooks, and CI as gate evidence.
 
 ## 9. Test Plan
 
