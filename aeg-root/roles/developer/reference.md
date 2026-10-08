@@ -123,15 +123,14 @@ Documentation is not post-implementation optional cleanup. It is part of the tas
 
 **Update-or-waive is a DoD gate.** Beyond that list, `verify-docs` C5 mechanically enforces code → doc coverage from `.vinaya/doc-owners`. Whenever your diff touches a code surface bound in that file, you must do exactly one of: (a) update the bound doc in the same PR; (b) for URL bindings, add a `Doc-ack: <pointer> — <note>` body field; (c) have a principal apply the actor-verified `vinaya/waiver:docs` label to the PR — you cannot self-serve this one; it is not a body field and not something you can write yourself. Doing none of these is not an option; the gate will fail CI. The seam is dormant when `.vinaya/doc-owners` is absent or no binding matches, so a PR that touches no bound surface has no obligation.
 
-> The commands shown below are **this repo's** toolchain (Bun/JS). Substitute your repo's declared equivalents; the *obligations* (typecheck, lint, test, verify-docs) are the same everywhere.
+> The commands shown below are **this repo's** toolchain (Bun/JS). Substitute your repo's declared equivalents. Under the review loop, the controller runs static gates: the commit hook formats and lints staged files with safe fixes, typechecks affected packages, and runs Vinaya checks; the push hook runs affected tests; `run_checks` and CI provide authoritative results. A dispatched Developer does not hand-run, paste, or block on typecheck, lint/format, build, or documentation-gate output. Working manually, with no driver, run the commands named below yourself.
 
 ### Tier 0 checklist
 
 All of the following must pass before the PR is opened:
 
-- [ ] Code passes typecheck (this repo: `bun run typecheck`)
-- [ ] Code passes lint/format (this repo: `bun run format-and-lint`)
-- [ ] Tests pass if applicable — the pre-push hook's own affected-selection run, on your one push; never hand-run before pushing (see [§ Verification before reporting done](#verification-before-reporting-done) item 3)
+- [ ] Under the review loop, the controller's commit hook, push hook, `run_checks`, and CI report the static gates passing; a dispatched Developer does not run them by hand.
+- [ ] Working manually: code passes typecheck (this repo: `bun run typecheck`) and lint/format (this repo: `bun run format-and-lint`); the pre-push hook runs affected tests on the one push.
 - [ ] PR description follows the template, carries the report, and declares `Tier: 0`
 
 ### Tier 1 checklist
@@ -140,7 +139,7 @@ All Tier 0 items, plus:
 
 - [ ] Specs updated to reflect new behavior (if new patterns introduced or existing patterns changed)
 - [ ] Skills updated if conventions shifted in the area being changed
-- [ ] `verify-docs --pr` passes (this is a real gate now, not a stub; this repo: `bun run verify-docs --pr`)
+- [ ] Under the review loop, `run_checks` reports the documentation gate passing; working manually, `verify-docs --pr` passes (this repo: `bun run verify-docs --pr`).
 - [ ] `docs-index.md` updated if files were added, removed, or renamed
 
 ### Tier 3 checklist
@@ -152,7 +151,7 @@ All Tier 1 items, plus:
 
 **Hard rule:** If any tier-required item fails, the PR is not ready. Do not open it. Do not say "I'll fix the doc issues after merge." Fix them before.
 
-**Pre-PR gate (mandatory for every PR):** Before opening, confirm the Tier checklist above is genuinely satisfied — every item ticked, evidence in hand, not merely believed — and separately confirm doc-owners coverage: `vinaya check doc-coverage` locally with `PR_BODY` set to the intended PR body text (`PR_BODY="$(cat /tmp/pr-body.md)" vinaya check doc-coverage`). Fix any failure from either. Never open a PR that would fail either. **On this repo's toolchain**, `bun packages/aeg-core/bin/verify-docs.ts --pr` runs both checks — the tier checklist and doc-owners coverage — as one composite command; no shipped `vinaya` subcommand currently automates the tier-checklist half for an adopter, so self-verify it against the checklist above where this script isn't available.
+**Pre-PR gate (mandatory for every PR):** Under the review loop, use the controller's `run_checks`, publication hooks, and CI as the evidence that the Tier checklist and doc-owners coverage are satisfied; fix a failure returned by one of those authorities. Working manually, confirm the Tier checklist and doc-owners coverage yourself with `PR_BODY` set to the intended PR body text (`PR_BODY="$(cat /tmp/pr-body.md)" vinaya check doc-coverage`). **On this repo's toolchain**, `bun packages/aeg-core/bin/verify-docs.ts --pr` runs both checks — the tier checklist and doc-owners coverage — as one composite command; no shipped `vinaya` subcommand currently automates the tier-checklist half for an adopter, so self-verify it against the checklist above where this script isn't available.
 
 ---
 
@@ -306,20 +305,15 @@ A code comment, a pull-request body, and a doctrine page each describe the thing
 
 ## Verification before reporting done
 
-Before you say you are done or open a PR, run all of the following (substitute your repo's toolchain commands — shown here in this repo's Bun/JS form). Paste the actual output when reporting — not a summary.
+Under the review loop, static gates are controller work. Do not hand-run typecheck, lint/format, the build, `verify-docs`, or the affected-test selection; do not paste their output. The commit hook applies safe format/lint fixes to staged files, typechecks affected packages, and runs Vinaya checks. The pre-push hook runs affected tests on the one push; `run_checks` and CI are the authoritative reports. A check you ran by hand is never a reason to return a `blocked` turn result. Treat only a failure returned by `run_checks`, a hook, or CI as a gate failure, and fix it before continuing.
+
+Before you say you are done or open a PR under the review loop:
 
 0. **Commit message length** — for every commit on this branch: `git log origin/main..HEAD --format="%s" | awk '{ if (length > 72) print NR": "length" chars (OVER LIMIT): "$0 }'` — must return nothing. If any commit header exceeds 72 chars, amend it before opening the PR.
-1. `typecheck` (this repo: `bun run typecheck`) — paste the result line ("X successful, X total" or the error)
-2. `lint/format` (this repo: `bun run format-and-lint`) — paste "No fixes applied" or the violations
-3. **the affected tests — run exactly once, by the pre-push hook, on your one push; never a hand-run of the selection first and never a hand-run full suite.** The hook (this repo: `bun apps/cli/src/lib/pre-push-select-tests.ts | xargs -r bun test --timeout=30000 --`) IS this run — it selects and runs the depth-one suite itself and refuses the push on failure, so running that same selection yourself beforehand duplicates work the hook is about to do anyway, for no earlier catch: a failure the hand-run would have caught, the hook catches at the same push, at the same cost. Paste the hook's own "selected N of M" / "X pass, 0 fail" lines from your push's own terminal output as your evidence here — never a second, separately-run copy. Never hand-run the whole suite (`bun run test` with no file arguments) either: CI's own shards run every test regardless of what the hook selected, so a full local run only duplicates work CI already does, costing real minutes on a change to a widely-imported module.
-4. `verify-docs --pr` (this repo: `bun run verify-docs --pr`) — paste the result (real gate now — pass, or the specific failure to fix)
-5. `git status` — must be clean (everything committed) or explain what's uncommitted and why
-6. `git log --oneline -3` — confirm commit ancestry is correct (new commit is direct child of expected parent)
-7. `git diff main --stat` — paste the full change list; confirm only expected files changed
+1. Publish through the driver and read the publication hooks' result; use `run_checks` for the current head and read its result.
+2. Confirm `git status` is clean, `git log --oneline -3` has the expected ancestry, and `git diff main --stat` lists only expected files.
 
-If any of these fail: fix the failure, then re-verify. Do not report done until all pass. Do not say "tests pass" without running the test command and seeing the output.
-
-Items 1–4 are also composed into one command, `bun packages/aeg-core/bin/verify-task.ts` (plus a build step and the premise coverage/recheck pair) — **`open-pr.ts` now runs this composite itself** for task branches (task 25), so it also runs mechanically at PR-open time. Running it yourself first remains the cheaper, earlier catch.
+Working manually, with no driver, run the same static gates yourself before opening: `bun run typecheck`, `bun run format-and-lint`, the repository's production build, and `bun run verify-docs --pr`. The pre-push hook runs the affected suite once on the push; do not separately hand-run that selection or the full suite.
 
 ---
 
