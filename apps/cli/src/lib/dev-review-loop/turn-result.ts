@@ -31,6 +31,7 @@ import {
   BLOCKER_KINDS,
   DEVELOPER_TURN_RESULT_SCHEMA_VERSION,
   type DeveloperTurnResult,
+  type DeveloperTurnSchemaContext,
   parseDeveloperTurnResult,
   semanticErrors
 } from '../developer-turn-result.js'
@@ -250,10 +251,13 @@ export function judgeTurnOutput(
   if (output.event === null) {
     return { ok: false, failures: ['turnResult: the turn ended without a structured result'] }
   }
-  const shaped = parseDeveloperTurnResult(output.raw)
+  const required = context.documentation.sources
+  const shaped = parseDeveloperTurnResult(output.raw, {
+    knownFindingIds: context.knownFindingIds,
+    requiredSources: required
+  })
   if (!shaped.ok) return { ok: false, failures: shaped.errors }
   const result = shaped.result
-  const required = context.documentation.sources
   const failures = semanticErrors(result, {
     knownFindingIds: context.knownFindingIds,
     requiredSources: required,
@@ -301,7 +305,7 @@ export function turnResultInstruction(round: number, documentation: readonly str
   return [
     `End this turn with your turn result as your structured output, schemaVersion ${DEVELOPER_TURN_RESULT_SCHEMA_VERSION}, under the root key \`turnResult\`. The driver reads nothing else as your result, so write no result file.`,
     '- `status: "completed"` when this turn\'s work is done: `summary` (one sentence), `confidence` (a whole number from 0 to 100 for how sure you are the work is right), `confidenceExplanation` (one short sentence explaining that figure), ' +
-      `\`addressedFindingIds\` (${round === 1 ? 'empty in round 1' : "the finding ids from this round's handoff you addressed"}), \`sourceUses\` (one entry per required Documentation source of the brief: its \`source\` exactly as the brief names it and the decision it informed — \`null\` when the brief names none), and \`reportedChecks\` (the checks you ran, each as one command line with its outcome, or \`null\`).`,
+      `\`addressedFindingIds\` (${round === 1 ? 'empty in round 1' : "the finding ids from this round's handoff you addressed"}), \`sourceUses\` (one entry per required Documentation source of the brief: its \`source\` exactly as the brief names it and the decision it informed — an empty list when the brief names none), and \`reportedChecks\` (the checks you ran, each as one command line with its outcome, or \`null\`).`,
     `- \`status: "blocked"\` when a stop condition halts the work: \`summary\` and a \`blocker\` whose \`kind\` is one of ${BLOCKER_KINDS.join(', ')}, with a one-sentence \`detail\`.`,
     `- \`status: "needs_ruling"\` when only the Principal can decide: \`summary\` and a \`rulingRequest\` with your \`question\` and the \`decisions\` to choose between, each one of ${PERMISSIBLE_RULING_DECISIONS.join(', ')}.`,
     ...(documentation.length > 0 ? [`Required Documentation sources: ${documentation.join(', ')}.`] : [])
@@ -328,8 +332,8 @@ export function turnResultCorrectionPrompt(
 }
 
 /** A rejected attempt's value as recorded: the result when it at least matched the schema, else `null`. */
-export function schemaValidTurnResult(raw: unknown): DeveloperTurnResult | null {
-  const shaped = parseDeveloperTurnResult(raw)
+export function schemaValidTurnResult(raw: unknown, context: DeveloperTurnSchemaContext): DeveloperTurnResult | null {
+  const shaped = parseDeveloperTurnResult(raw, context)
   return shaped.ok ? shaped.result : null
 }
 

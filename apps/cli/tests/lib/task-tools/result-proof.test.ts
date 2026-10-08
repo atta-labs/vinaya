@@ -3,7 +3,6 @@ import {
   DEVELOPER_TURN_RESULT_SCHEMA_VERSION,
   type DeveloperTurnContext,
   developerTurnResultJsonSchema,
-  parseDeveloperTurnResult,
   validateDeveloperTurnResult
 } from '../../../src/lib/developer-turn-result.js'
 import {
@@ -71,7 +70,7 @@ describe('DeveloperTurnResult — valid examples of every variant', () => {
     const minimal = { ...completed, reportedChecks: null }
     expect(validateDeveloperTurnResult(wrap(minimal), context).ok).toBe(true)
     expect(
-      validateDeveloperTurnResult(wrap({ ...completed, sourceUses: null }), { ...context, requiredSources: [] }).ok
+      validateDeveloperTurnResult(wrap({ ...completed, sourceUses: [] }), { ...context, requiredSources: [] }).ok
     ).toBe(true)
   })
 })
@@ -107,7 +106,7 @@ describe('DeveloperTurnResult — schema rejections', () => {
 
 describe('DeveloperTurnResult — semantic rejections', () => {
   const cases: [string, unknown, string][] = [
-    ['an unknown finding id', { ...completed, addressedFindingIds: ['R9-XX-1'] }, 'unknown finding id'],
+    ['an unknown finding id', { ...completed, addressedFindingIds: ['R9-XX-1'] }, 'R1-CR-1'],
     [
       'a ruling request naming no permissible decision',
       { ...needsRuling, rulingRequest: { question: 'Merge?', decisions: ['merge-without-review'] } },
@@ -127,7 +126,7 @@ describe('DeveloperTurnResult — semantic rejections', () => {
     [
       'completed leaving a required source unreported',
       { ...completed, sourceUses: [{ source: 'https://other.example', use: 'x' }] },
-      'no use reported for required source'
+      'https://example.com/doc'
     ],
     [
       'a confidenceExplanation over the shared bound',
@@ -137,11 +136,9 @@ describe('DeveloperTurnResult — semantic rejections', () => {
   ]
   for (const [name, value, error] of cases) {
     it(`rejects ${name}`, () => {
-      expect(parseDeveloperTurnResult(wrap(value)).ok).toBe(true)
       const out = validateDeveloperTurnResult(wrap(value), context)
       expect(out.ok).toBe(false)
       if (!out.ok) {
-        expect(out.stage).toBe('semantic')
         expect(out.errors.join('\n')).toContain(error)
       }
     })
@@ -153,7 +150,7 @@ describe('DeveloperTurnResult — semantic rejections', () => {
 })
 
 describe('developerTurnResultJsonSchema', () => {
-  const schema = developerTurnResultJsonSchema()
+  const schema = developerTurnResultJsonSchema(context)
   it('is a plain object root holding the union under turnResult, with no $schema keyword', () => {
     expect(schema.type).toBe('object')
     expect(schema.required).toEqual(['turnResult'])
@@ -302,10 +299,10 @@ describe('driverVerdict — the adapter boundary', () => {
     const verdict = driverVerdict(readOf(wrap({ ...completed, confidence: 'high' })), PROOF_TURN_CONTEXT)
     expect(verdict.crossed).toBe(false)
   })
-  it('lets a semantically invalid value cross and rejects it', () => {
+  it('keeps handoff violations from crossing the adapter boundary', () => {
     const value = wrap({ ...completed, addressedFindingIds: ['R9-XX-404'], sourceUses: null })
     const verdict = driverVerdict(readOf(value), PROOF_TURN_CONTEXT)
-    expect(verdict).toMatchObject({ crossed: true, accepted: false })
+    expect(verdict).toMatchObject({ crossed: false })
   })
 })
 
@@ -347,42 +344,20 @@ describe('judgeCase', () => {
       false
     )
   })
-  it('passes a rejection case only when the driver refused it for the named reason', () => {
+  it('keeps a schema rejection outside controller-rejection cases', () => {
     const value = wrap({ ...completed, addressedFindingIds: ['R9-XX-404'], sourceUses: null })
     const read = readOf(value)
     const verdict = driverVerdict(read, PROOF_TURN_CONTEXT)
-    expect(judgeCase({ kind: 'rejected', error: 'unknown finding id' }, read, verdict).pass).toBe(true)
+    expect(judgeCase({ kind: 'rejected', error: 'R1-CR-1' }, read, verdict).pass).toBe(false)
     const valid = readOf(proofCompleted('a'))
     expect(
       judgeCase({ kind: 'rejected', error: 'unknown finding id' }, valid, driverVerdict(valid, PROOF_TURN_CONTEXT)).pass
     ).toBe(false)
   })
-  it('passes the controller-rejection case only when the first result was refused for the missing source and the same session then delivered the one accepted result', () => {
+  it('refuses a missing source at the schema boundary', () => {
     const missing = readOf(wrap({ ...completed, summary: 'missing-source-n', sourceUses: null }))
     const firstVerdict = driverVerdict(missing, PROOF_TURN_CONTEXT)
-    expect(firstVerdict).toMatchObject({ crossed: true, accepted: false })
-    const corrected = readOf(proofCompleted('missing-source-n'))
-    const expectation = { kind: 'rejected-then-accepted', error: 'sourceUses' } as const
-    expect(
-      judgeCase(expectation, corrected, driverVerdict(corrected, PROOF_TURN_CONTEXT), {
-        firstSessionId: 's-1',
-        firstVerdict
-      }).pass
-    ).toBe(true)
-    // Another session, or a first result the controller accepted, fails it.
-    const elsewhere = readOf(proofCompleted('missing-source-n'), { sessionId: 's-other' })
-    expect(
-      judgeCase(expectation, elsewhere, driverVerdict(elsewhere, PROOF_TURN_CONTEXT), {
-        firstSessionId: 's-1',
-        firstVerdict
-      }).pass
-    ).toBe(false)
-    expect(
-      judgeCase(expectation, corrected, driverVerdict(corrected, PROOF_TURN_CONTEXT), {
-        firstSessionId: 's-1',
-        firstVerdict: driverVerdict(corrected, PROOF_TURN_CONTEXT)
-      }).pass
-    ).toBe(false)
+    expect(firstVerdict).toMatchObject({ crossed: false })
   })
   it('passes the malformed case either way nothing malformed crossed, and the no-result cases only with no acceptance', () => {
     const none = readOf(null)

@@ -222,6 +222,8 @@ export type DispatchOpts = {
   task?: number
   pr?: number
   round?: number
+  /** Finding ids this Developer turn may report, resolved by the loop's handoff. */
+  turnResultKnownFindingIds?: readonly string[]
   /** The vendor's own session/thread identifier from a prior dispatch's `resumeId`, to resume that exact session instead of starting fresh. */
   resumeId?: string
   /**
@@ -4380,6 +4382,13 @@ export async function dispatchRole(
   // is what an unattended start's boundary resolution wraps below, rather
   // than wrapping a pre-settings argv and reconciling the two later.
   const documentationSources = documentationSourcesFromPrompt(role, prompt)
+  const developerTurnSchema =
+    role === 'developer'
+      ? developerTurnResultJsonSchema({
+          knownFindingIds: opts.turnResultKnownFindingIds ?? [],
+          requiredSources: documentationSources.map((source) => source.source)
+        })
+      : null
   const codexDocumentationGuidance =
     agent === 'codex' && documentationSources.some((source) => isDocumentationUrl(source.source))
       ? `\n\nCodex documentation receipt: read every URL in \`## Documentation\` with the dev-tools \`${FETCH_DOCUMENTATION_TOOL}\` tool before ending this turn — the driver fetches the page outside your sandbox and records the read. \`curl -L <URL>\` in a Bash tool call also counts when the host is reachable from the sandbox; a \`curl\` your sandbox blocks never means the source cannot be opened — read it with \`${FETCH_DOCUMENTATION_TOOL}\`. Built-in web search is not a receipt route for this dispatch.\n`
@@ -4848,11 +4857,11 @@ export async function dispatchRole(
       : null
   const turnResultArgs = (args: string[]): string[] => {
     if (turnResultAdapter === 'claude --json-schema') {
-      return [...args, '--json-schema', JSON.stringify(developerTurnResultJsonSchema())]
+      return [...args, '--json-schema', JSON.stringify(developerTurnSchema)]
     }
     if (turnSchemaDir !== null) {
       const schemaPath = join(turnSchemaDir, 'developer-turn-result.schema.json')
-      writeFileSync(schemaPath, `${JSON.stringify(developerTurnResultJsonSchema(), null, 2)}\n`, { mode: 0o600 })
+      writeFileSync(schemaPath, `${JSON.stringify(developerTurnSchema, null, 2)}\n`, { mode: 0o600 })
       // Codex's argv ends with `-` (read the prompt from stdin): the flag goes before it.
       return args[args.length - 1] === '-'
         ? [...args.slice(0, -1), '--output-schema', schemaPath, '-']

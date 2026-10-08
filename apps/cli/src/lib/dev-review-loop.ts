@@ -3685,6 +3685,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       opts: { skipResumeContext?: boolean; developerFiles?: readonly string[] }
     ): Promise<DispatchHandle> {
       const isResume = devResumeId !== null
+      // This is the same handoff the controller uses in settleTurnResult.
+      // Passing it into the launcher makes the vendor schema turn-specific.
+      const turnResultKnownFindingIds = handoffFindingIdsByRound.get(roundNum) ?? []
       await recordDeveloperModel(roundNum)
       // O4: no bare-forge-command rule rides the prompt any longer — the
       // Developer holds no `gh`/`git push` credential and publishes only
@@ -3796,6 +3799,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           d.dispatchRole('developer', dispatchAgent, fullPrompt, {
             task: task,
             round: roundNum,
+            turnResultKnownFindingIds,
             resumeId: devResumeId ?? undefined,
             promptFile,
             roleLogPath: loopLogPath,
@@ -4005,7 +4009,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           attempt,
           head,
           outcome: verdict.ok ? 'accepted' : 'rejected',
-          result: verdict.ok ? verdict.result : schemaValidTurnResult(raw),
+          result: verdict.ok
+            ? verdict.result
+            : schemaValidTurnResult(raw, {
+                knownFindingIds,
+                requiredSources: context(handle.documentation).documentation.sources
+              }),
           failures: verdict.ok ? [] : verdict.failures,
           recordedAt: new Date(d.now()).toISOString()
         })
