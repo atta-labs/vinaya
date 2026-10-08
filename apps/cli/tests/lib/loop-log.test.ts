@@ -110,6 +110,17 @@ describe('appendRoleLine', () => {
     expect(lines[1]).toMatch(/^\d{4}-\d{2}-\d{2}T.* {2}· line two$/)
   })
 
+  it('writes the line’s real mark', () => {
+    const dir = tempDir('loop-log-role-')
+    const path = join(dir, '521.log')
+    appendRoleLine(path, 'developer', 'Failed running x after 1.0s', ['exit 2'], 'failed')
+    appendRoleLine(path, 'developer', 'Finished running x in 1.0s', [], 'done')
+    const lines = readFileSync(path, 'utf8').trim().split('\n')
+    expect(lines[0]).toMatch(/ {2}x Developer {3}Failed/)
+    expect(lines[1]).toMatch(/ {2}· exit 2$/)
+    expect(lines[2]).toMatch(/ {2}\+ Developer {3}Finished/)
+  })
+
   it('redacts detail text before persisting it', () => {
     const dir = tempDir('loop-log-role-')
     const path = join(dir, '521.log')

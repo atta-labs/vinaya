@@ -45,7 +45,7 @@ function str(value: unknown): string {
 }
 
 /** A Codex command is the shell's `-c` argument: `/bin/zsh -lc "<command>"`. Returns that command's first line. */
-function unwrapShell(command: string): string {
+export function unwrapShell(command: string): string {
   const prefix = /^(?:\S*\/)?(?:ba|z|da)?sh\s+-\w*c\s+/.exec(command.trim())
   let inner = command.trim()
   if (prefix !== null) {
