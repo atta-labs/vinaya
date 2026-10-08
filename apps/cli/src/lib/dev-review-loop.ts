@@ -2355,7 +2355,7 @@ async function defaultSweepTasksAtStart(task: number): Promise<void> {
         if (decision.removed) removed++
         else kept++
         // A folder the sweep could not remove is a failure, and stays visible on its own line.
-        if (!decision.removed && decision.reason.includes('could not be removed'))
+        if (decision.failed)
           appendDriverLine(sweepLogPath, `Sweep could not remove ${decision.folder}: ${decision.reason}`, 'failed')
       },
       defaultTaskSweepAsyncDeps

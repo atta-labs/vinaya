@@ -395,7 +395,7 @@ describe('narrateDriverEvent', () => {
     }
     const text = readFileSync(path, 'utf8')
     expect(text).toContain('The loop paused for a person: the round limit was reached.')
-    expect(text).toContain("The Operator's task_resume continues this run (task 521, round 3)")
+    expect(text).toContain("The Operator's task_resume for task 521 continues this run, bound to the pause at round 3")
     expect(text).not.toMatch(/vinaya |bun /)
   })
 
@@ -430,5 +430,21 @@ describe('devReviewLoop — the driver lines of a whole run', () => {
     expect(driverLog).toMatch(/Round 1 verdicts: /)
     expect(driverLog).toMatch(/Round 1 ended after \d+m \d+s: approved\./)
     expect(driverLog).not.toMatch(/sweep — /)
+    // The Log events are the sequence the driver wrote before its lines were narrated.
+    expect(
+      outboxLines(world)
+        .filter((l) => l.kind === 'dev_review_loop')
+        .map((l) => l.event)
+    ).toEqual([
+      'loop_started',
+      'round_started',
+      'gate_result_read',
+      'verdicts_read',
+      'findings_compared',
+      'stop_condition_met',
+      'round_ended',
+      'journal_finalized',
+      'driver_exited'
+    ])
   })
 })

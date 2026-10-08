@@ -156,9 +156,9 @@ export function narrateDriverEvent(path: string, event: unknown, earlier: readon
   if (!line) return
   const fields = event as { event?: unknown; round?: unknown }
   const needsPerson = line.kind === 'blocked' && (fields.event === 'paused' || fields.event === 'stop_condition_met')
-  const round = typeof fields.round === 'number' ? `, round ${fields.round}` : ''
+  const pause = typeof fields.round === 'number' ? `the pause at round ${fields.round}` : 'this pause'
   const words = needsPerson
-    ? `${line.text} The Operator's task_resume continues this run (task ${task}${round}) once the person has decided or repaired it.`
+    ? `${line.text} The Operator's task_resume for task ${task} continues this run, bound to ${pause}, once the person has decided or repaired it.`
     : line.text
   appendDriverLine(path, words, marksByKind[line.kind])
 }

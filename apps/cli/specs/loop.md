@@ -181,12 +181,13 @@ by the confidence the developer stated for it: a dash when none was
 asked, "not given" when unavailable, and a note when it came after the
 extra turn. A pause or a stop that needs a person says so, names what the
 person has to decide or repair, and says the run continues through the
-Operator's `task_resume` for that task and round; it prints no command.
+Operator's `task_resume` for that task, bound to the pause at its round; it prints no command.
 No line carries a process id or a run id.
+<!-- AEG:CLAIM: apps/cli/src/lib/loop-log.ts contains:formatAgentLine('dev-review-loop', text, { mark, unicode: Boolean(process.stderr.isTTY) }) -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:Developer starting round -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:Reviewers starting round -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:narrateDriverEvent(loopLogPath, e, narratedEvents, task) -->
-<!-- AEG:CLAIM: apps/cli/src/lib/loop-log.ts contains:The Operator's task_resume continues this run -->
+<!-- AEG:CLAIM: apps/cli/src/lib/loop-log.ts contains:The Operator's task_resume for task -->
 
 ## The sweep, at the start of every run (non-blocking and narrated as it runs)
 
