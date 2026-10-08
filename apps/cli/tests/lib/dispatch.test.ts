@@ -2356,9 +2356,10 @@ describe('dispatch observability — wired through a real run (#450)', () => {
     )
     expect(r.status).toBe(0)
 
-    // The path is announced once, correlated with the run's effect id.
-    expect(r.stderr).toContain('output teed to')
-    expect(r.stderr).toMatch(/\[vinaya dispatch [0-9a-f-]{36}\]/)
+    // The normal lifecycle view names only the short start action; the
+    // dispatch identifier and tee path remain confined to the raw file.
+    expect(r.stderr).toMatch(/\d\d:\d\d:\d\d {2}> Developer {3}started/)
+    expect(r.stderr).not.toContain('output teed to')
 
     const teeDir = join(home, '.vinaya', 'runtime', 'unresolved', 'tasks-execution', 'unscoped', 'output')
     const logs = readdirSync(teeDir)
@@ -2408,7 +2409,7 @@ describe('dispatch role log — redaction (round 2 review, SECURITY HIGH)', () =
     expect(r.status).toBe(0)
 
     const contents = readFileSync(roleLogPath, 'utf8')
-    expect(contents).toContain('[developer]')
+    expect(contents).toContain('Developer')
     expect(contents).toContain('GITHUB_TOKEN=')
     expect(contents).not.toContain('ghp_0123456789abcdefghijklmnopqrstuvwxyz')
   })
@@ -2456,7 +2457,9 @@ describe('terminal colour — role prefix and TTY/NO_COLOR gating (#491)', () =>
     it(`colourAgentLine prefixes and colours a ${role} fixture line on a TTY, and gives every role a different colour`, () => {
       delete process.env.NO_COLOR
       const line = colourAgentLine(role, 'reading the brief', { isTTY: true })
-      expect(line).toContain(`[${role}] reading the brief`)
+      expect(line).toContain(
+        ` ${role === 'code-reviewer' ? 'Code review' : role.charAt(0).toUpperCase() + role.slice(1)}   reading the brief`
+      )
       expect(line).toMatch(ANSI_CODE_RE)
       expect(line.endsWith(ANSI_RESET_STR)).toBe(true)
       // Every other role's own line carries a DIFFERENT colour code — the
@@ -2474,12 +2477,12 @@ describe('terminal colour — role prefix and TTY/NO_COLOR gating (#491)', () =>
   it('colourAgentLine carries the prefix with NO escape codes off a TTY or under NO_COLOR', () => {
     delete process.env.NO_COLOR
     const plain = colourAgentLine('code-reviewer', 'reading the brief', { isTTY: false })
-    expect(plain).toBe('[code-reviewer] reading the brief')
+    expect(plain).toMatch(/^\d\d:\d\d:\d\d {2}> Code review {3}reading the brief$/)
     expect(plain).not.toMatch(ANSI_ANY_RE)
 
     process.env.NO_COLOR = '1'
     const noColour = colourAgentLine('code-reviewer', 'reading the brief', { isTTY: true })
-    expect(noColour).toBe('[code-reviewer] reading the brief')
+    expect(noColour).toMatch(/^\d\d:\d\d:\d\d {2}▸ Code review {3}reading the brief$/)
     expect(noColour).not.toMatch(ANSI_ANY_RE)
   })
 
@@ -2525,13 +2528,13 @@ describe('terminal colour — role prefix and TTY/NO_COLOR gating (#491)', () =>
     // O1: the rendered line carries the role prefix even off a TTY (only
     // colour is TTY-gated, never the prefix) — and no escape sequence, since
     // `execFileSync`/`spawnSync` pipes are never a live terminal.
-    expect(r.stderr).toContain('[developer] hello world')
+    expect(r.stderr).toMatch(/\d\d:\d\d:\d\d {2}> Developer {3}hello world/)
     expect(r.stderr).not.toMatch(ANSI_ANY_RE)
 
-    // O2: the lifecycle line keeps its own existing role-naming text, with
-    // no second `[developer]` prefix stacked in front of it.
-    expect(r.stderr).toMatch(/\[vinaya dispatch [0-9a-f-]{36}\] developer via claude: output teed to/)
-    expect(r.stderr).not.toContain('[developer] [vinaya dispatch')
+    // O2: lifecycle output shares the renderer and does not expose the
+    // dispatch id or raw-output path in its normal line.
+    expect(r.stderr).toMatch(/\d\d:\d\d:\d\d {2}> Developer {3}started/)
+    expect(r.stderr).not.toContain('[vinaya dispatch')
 
     // O3: the tee file never sees the rendered/prefixed stderr lines at
     // all — it tees the child's raw stdout/stderr chunks — so it carries the

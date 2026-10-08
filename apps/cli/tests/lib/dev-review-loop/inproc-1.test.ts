@@ -99,7 +99,7 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
     expect(result.finalDecision.type).toBe('pause')
 
     const roleLog = readFileSync(join(ipTaskRunDir(world), 'output', 'driver.log'), 'utf8')
-    expect(roleLog).toMatch(/^\[dev-review-loop\] driver_exited: reason=error last_decision=\S+$/m)
+    expect(roleLog).toMatch(/^.*\bLoop\s+driver_exited: reason=error last_decision=\S+$/m)
   })
 
   // O6: the SAME uncaught-error scenario, now proven to be a clean, decided

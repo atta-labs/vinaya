@@ -1597,7 +1597,7 @@ describe('devReviewLoop — the driver_exited lifecycle event (#949, O2/O3)', ()
     // An abnormal exit DOES leave the role-log trace — the signal a reader
     // follows when no decision reached the forge.
     const roleLogPath = join(ipTaskRunDir(world), 'output', 'driver.log')
-    expect(readFileSync(roleLogPath, 'utf8')).toMatch(/driver_exited: reason=error/)
+    expect(readFileSync(roleLogPath, 'utf8')).toMatch(/\bLoop\s+driver_exited: reason=error/)
   })
 
   it('recordDriverExited stops the heartbeat before it writes anything, on exactly one guarded path (#949, O1/Traps)', () => {
@@ -5089,8 +5089,8 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
       // loop log (the same file `vinaya task status --follow` tails) and on
       // this process's own stderr.
       const driverLog = readFileSync(join(sweepRunDir(home), 'output', 'driver.log'), 'utf8')
-      expect(driverLog).toMatch(/=== run started .*role=dev-review-loop/)
-      expect(driverLog).toContain('[dev-review-loop] sweep — running')
+      expect(driverLog).toMatch(/# Loop\s+run started/)
+      expect(driverLog).toMatch(/\bLoop\s+sweep — running/)
       expect(r.stderr).toContain('vinaya dev-review-loop: sweep — running')
 
       // The sweep genuinely ran to completion (not merely skipped) — the

@@ -30,8 +30,11 @@ import {
   statSync,
   writeSync
 } from 'node:fs'
+import { redact } from '@attalabs/aeg-core'
+import { homedir } from 'node:os'
 import { dirname } from 'node:path'
 import { runPath, runtimeDirForThisRepo } from './run-paths.js'
+import { formatAgentLine } from './agent-line.js'
 
 export type LoopLogRepo = { owner: string; repo: string } | null
 
@@ -88,17 +91,16 @@ export function appendLoopLogLine(path: string, line: string): void {
   }
 }
 
-/** `[<role>] <text>` — the same prefix shape `colourAgentLine` renders to the terminal, minus the ANSI wrapping (a log file is read later, never through a TTY). */
-export function appendRoleLine(path: string, role: string, text: string): void {
-  for (const line of text.split('\n')) {
-    appendLoopLogLine(path, `[${role}] ${line}`)
+export function appendRoleLine(path: string, role: string, text: string, details: readonly string[] = []): void {
+  appendLoopLogLine(path, formatAgentLine(role, redact(text, homedir()), { log: true, unicode: false }))
+  for (const detail of details.filter(Boolean)) {
+    appendLoopLogLine(path, `${new Date().toISOString()}  · ${redact(detail, homedir())}`)
   }
 }
 
 /** Marks a fresh process's start in the log — the delineation `--follow`/a human reader needs to tell one relaunch's narration apart from the last. */
 export function appendRunStartMarker(path: string, detail: { role: string; pid: number; runId?: string }): void {
-  const parts = [`role=${detail.role}`, `pid=${detail.pid}`, ...(detail.runId ? [`run_id=${detail.runId}`] : [])]
-  appendLoopLogLine(path, `=== run started ${new Date().toISOString()} ${parts.join(' ')} ===`)
+  appendLoopLogLine(path, formatAgentLine(detail.role, 'run started', { log: true, unicode: false, mark: 'round' }))
 }
 
 export type FollowLoopLogDeps = {

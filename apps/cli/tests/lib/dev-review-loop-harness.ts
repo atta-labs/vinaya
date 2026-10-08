@@ -247,6 +247,8 @@ export type LoopWorld = {
   evidenceRefreshes: number
   /** How many times the agent called `run_checks`. */
   runChecksCalls: number
+  /** The environment the last `run_checks` call handed `vinaya check --all`. */
+  runChecksEnv: Record<string, string> | null
   /** The result `run_checks`/`refresh_evidence` report — default a clean pass. */
   runChecksPassed: boolean
   // --- recorded side effects, for assertions ---
@@ -379,6 +381,7 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     prBodyUpdates: [],
     evidenceRefreshes: 0,
     runChecksCalls: 0,
+    runChecksEnv: null,
     runChecksPassed: true,
     remoteBranchCreations: [],
     evidenceOutcome: { ok: true, gatesFailed: false },
@@ -693,8 +696,9 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       body: world.prBody,
       failedChecks: []
     }),
-    runWorktreeChecks: async () => {
+    runWorktreeChecks: async (_worktreePath, env) => {
       world.runChecksCalls += 1
+      world.runChecksEnv = env ?? null
       return { passed: world.runChecksPassed, output: 'fake-check-all-output' }
     },
     fetchPrBody: (_pr) => world.prBody,

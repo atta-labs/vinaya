@@ -81,3 +81,4 @@ tests/conformance/dev-review-engine-architecture-exit.test.ts
 tests/lib/loop-narration-claude.test.ts
 tests/lib/dev-review-loop/pre-pr-pause-continuation.test.ts
 tests/lib/loop-narration-codex.test.ts
+tests/lib/agent-line.test.ts

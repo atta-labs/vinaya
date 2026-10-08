@@ -801,8 +801,11 @@ export type LoopDeps = {
   }) => Promise<{ head: string; checksPassed: boolean; evidence: string }>
   /** O2/O3: the loop's view of the PR — state, checks, reviews, body, head — for the `read_pull_request` tool (`gh pr view --json`). Injected so the harness fakes it. */
   readPrView: (input: { branch: string; repo: { owner: string; repo: string } | null }) => Promise<DevPullRequestView>
-  /** O2/O3: run `vinaya check --all` for the worktree's current head — the `run_checks` tool. Injected so the harness fakes it. */
-  runWorktreeChecks: (worktreePath: string) => Promise<{ passed: boolean; output: string }>
+  /** O2/O3: run `vinaya check --all` for the worktree's current head — the `run_checks` tool — with `env` (the pull request's body, number and branch, as CI passes them) added to the driver's own environment. Injected so the harness fakes it. */
+  runWorktreeChecks: (
+    worktreePath: string,
+    env?: Record<string, string>
+  ) => Promise<{ passed: boolean; output: string }>
 }
 
 function defaultRepoRoot(): string {
@@ -1782,10 +1785,33 @@ async function defaultReadPrView(input: {
   }
 }
 
-/** O2/O3: run `vinaya check --all` for the worktree's current head (the `run_checks` tool) — the driver's own CLI with the worktree as cwd, so it judges the branch's code. */
-async function defaultRunWorktreeChecks(worktreePath: string): Promise<{ passed: boolean; output: string }> {
+/**
+ * The environment CI's check job gives `vinaya check --all` on a pull request:
+ * the branch, and — once the pull request exists — its number and live body.
+ * The PR-body checks (`closes-n`, `brief-shape`, `evidence-fresh`, …) read
+ * them from the environment; without them they judge an empty body and fail
+ * a body the forge shows is correct.
+ */
+export function worktreeCheckEnv(input: {
+  branch: string
+  prNumber: number | null
+  body: string | null
+}): Record<string, string> {
+  const env: Record<string, string> = { BRANCH: input.branch }
+  if (input.prNumber === null) return env
+  env.PR_NUMBER = String(input.prNumber)
+  if (input.body !== null) env.PR_BODY = input.body
+  return env
+}
+
+/** O2/O3: run `vinaya check --all` for the worktree's current head (the `run_checks` tool) — the driver's own CLI with the worktree as cwd, so it judges the branch's code, and with `env` (`worktreeCheckEnv`) so it judges the pull request body CI judges. */
+export async function defaultRunWorktreeChecks(
+  worktreePath: string,
+  env: Record<string, string> = {}
+): Promise<{ passed: boolean; output: string }> {
   const res = guardedSpawnSync(process.argv[0] as string, [process.argv[1] as string, 'check', '--all'], {
     cwd: worktreePath,
+    env: { ...process.env, ...env },
     maxBuffer: 64 * 1024 * 1024
   })
   const output = `${res.stdout ?? ''}${res.stderr ?? ''}`
@@ -4406,7 +4432,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           return { ok: true, result }
         },
         readPullRequest: async () => ({ ok: true, result: await d.readPrView({ branch, repo }) }),
-        runChecks: async () => ({ ok: true, result: await d.runWorktreeChecks(worktree) }),
+        runChecks: async () => {
+          const pr = await d.readPrView({ branch, repo })
+          const env = worktreeCheckEnv({ branch, prNumber: pr.prNumber, body: pr.body })
+          return { ok: true, result: await d.runWorktreeChecks(worktree, env) }
+        },
         fetchDocumentation: createFetchDocumentationTool({
           receiptsPath: documentationReceiptsPathForTask(),
           ...(d.fetchDocumentationDeps ? { deps: d.fetchDocumentationDeps } : {})
