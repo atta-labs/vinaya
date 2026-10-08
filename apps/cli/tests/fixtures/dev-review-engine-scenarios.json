@@ -42,11 +42,11 @@
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts",
-        "sha256": "ea8966f790eea7a86f116e6b8aabb1f166d4ee35ddce89d687f65b4372ff2e0c"
+        "sha256": "25711f2629ebdfea1d9a7e0c98f67eb5612c28f36eafd856d0469a2964d49dbd"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/reviewer-isolation.ts",
-        "sha256": "b046a1991ea80121607321678b6edba6b85f96054a304eb0070e1a1ba64327ab"
+        "sha256": "2c961f4903a9613c9e27277ae5d79badf6d6e0c4ed72fd91360b90af4d9be687"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/round-assess.ts",

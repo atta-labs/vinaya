@@ -439,10 +439,14 @@ function loopSurface(): string[] {
 }
 
 /** Every loop-surface file whose content differs from the recorded baseline, or that the baseline does not list. */
-function baselineDrift(recorded: Corpus['baseline']['loopSurface'], current: string[]): string[] {
+function baselineDrift(
+  recorded: Corpus['baseline']['loopSurface'],
+  current: string[],
+  digest: (rel: string) => string = sha256
+): string[] {
   const byPath = new Map(recorded.map((f) => [f.path, f.sha256]))
   const out = current
-    .filter((p) => byPath.get(p) !== sha256(p))
+    .filter((p) => byPath.get(p) !== digest(p))
     .map((p) => (byPath.has(p) ? `${p}: changed` : `${p}: not in baseline`))
   for (const f of recorded) if (!current.includes(f.path)) out.push(`${f.path}: removed`)
   return out
@@ -651,12 +655,29 @@ describe('architecture exit gate (O4: the corpus pins its standalone baseline)',
   })
 
   it('a changed, added or removed loop module is drift', () => {
-    const current = loopSurface()
-    const [first, ...rest] = corpus.baseline.loopSurface as [Corpus['baseline']['loopSurface'][number]]
-    expect(baselineDrift([{ ...first, sha256: '0'.repeat(64) }, ...rest], current)).toEqual([`${first.path}: changed`])
-    expect(baselineDrift(rest, current)).toEqual([`${first.path}: not in baseline`])
-    expect(
-      baselineDrift([...corpus.baseline.loopSurface, { path: 'gone.ts', sha256: '0'.repeat(64) }], current)
-    ).toEqual(['gone.ts: removed'])
+    const root = mkdtempSync(join(tmpdir(), 'arch-exit-drift-'))
+    try {
+      const files = { 'a.ts': 'one', 'b.ts': 'two' }
+      for (const [name, text] of Object.entries(files)) writeFileSync(join(root, name), text)
+      const digest = (rel: string) =>
+        createHash('sha256')
+          .update(readFileSync(join(root, rel)))
+          .digest('hex')
+      const current = Object.keys(files)
+      const [first, second] = current.map((path) => ({ path, sha256: digest(path) })) as [
+        Corpus['baseline']['loopSurface'][number],
+        Corpus['baseline']['loopSurface'][number]
+      ]
+      expect(baselineDrift([first, second], current, digest)).toEqual([])
+      expect(baselineDrift([{ ...first, sha256: '0'.repeat(64) }, second], current, digest)).toEqual([
+        `${first.path}: changed`
+      ])
+      expect(baselineDrift([second], current, digest)).toEqual([`${first.path}: not in baseline`])
+      expect(baselineDrift([first, second, { path: 'gone.ts', sha256: '0'.repeat(64) }], current, digest)).toEqual([
+        'gone.ts: removed'
+      ])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
