@@ -751,12 +751,8 @@ describe('renderBrief', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.brief).not.toContain('Run `bunx turbo test --affected` before committing this Part')
-    expect(result.brief).toContain(
-      'The pre-push hook runs the affected suite on your one push and refuses it on failure'
-    )
-    expect(result.brief).toContain(
-      'The pre-push hook already ran the affected suite on your one push and refused it on failure'
-    )
+    expect(result.brief).toContain('the pre-push hook runs the affected suite')
+    expect(result.brief).toContain('Do not hand-run or paste static-gate commands')
   })
 
   describe('every command is written the way the rendered-for repository invokes the CLI (Issue #807)', () => {
@@ -808,9 +804,7 @@ describe('renderBrief', () => {
       expect(result.brief).not.toContain('Developer folder')
       expect(result.brief).not.toContain('check dispatch-readiness`')
       expect(result.brief).not.toContain('verify-dispatch.ts')
-      expect(result.brief).toContain(
-        '`PR_BODY="$(cat <body-file>)" npx --yes @attalabs/vinaya@9.9.9 check doc-coverage` green'
-      )
+      expect(result.brief).toContain("the controller's `run_checks` result, hooks, and CI as gate evidence")
       // §6's Parts heading and §12's PR-open line now name the driver-hosted
       // dev-tools, not raw `pr create`/`pr report --write` — the agent holds
       // no `gh`/`git push` credential.
@@ -825,11 +819,10 @@ describe('renderBrief', () => {
       const result = renderBrief(baseFacts(ADOPTER), TEMPLATE)
       expect(result.ok).toBe(true)
       if (!result.ok) return
-      // §8's Evidence-block line now names the driver-hosted `refresh_evidence`
-      // tool, never a bare `vinaya pr report --write` — so no adopter's brief
-      // leaks a bare `vinaya ` command here either.
+      // §8 names controller-owned gate evidence without leaking a bare CLI
+      // command into an adopter's brief.
       expect(result.brief).not.toContain('`vinaya ')
-      expect(result.brief).toContain('the `refresh_evidence` tool regenerates the PR body')
+      expect(result.brief).toContain("the controller's `run_checks` result, hooks, and CI as gate evidence")
     })
 
     it('§2 asks for a confirmation §5 can actually produce (round 3, F2)', () => {
@@ -883,12 +876,12 @@ describe('renderBrief', () => {
       expect(result.brief).toContain('plus, on this repository toolchain, its own fuller derivation')
       expect(result.brief).not.toContain('check dispatch-readiness`')
       expect(result.brief).not.toContain('verify-dispatch.ts')
-      expect(result.brief).toContain('`PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr`')
+      expect(result.brief).toContain("the controller's `run_checks` result, hooks, and CI as gate evidence")
       // Forge writes go through the driver-hosted dev-tools, so the PR-open and
-      // Evidence-block lines name the tools regardless of the repository's own
-      // CLI invocation.
+      // Gate-evidence lines name the controller regardless of the repository's
+      // own CLI invocation.
       expect(result.brief).toContain('Open the PR only via the `open_pull_request` tool')
-      expect(result.brief).toContain('the `refresh_evidence` tool regenerates the PR body')
+      expect(result.brief).toContain("the controller's `run_checks` result, hooks, and CI as gate evidence")
     })
 
     it("a backlog task's §5 names the dispatch-readiness gate the same command-free way a tranche task's does — no Issue-specific target leaks into the rendered text any more (O3, round 4 Principal ruling)", () => {
