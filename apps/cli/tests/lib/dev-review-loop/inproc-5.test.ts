@@ -1363,6 +1363,28 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
     expect(world.runChecksCalls).toBeGreaterThanOrEqual(1)
   })
 
+  it('run_checks hands check --all the pull request body, number and branch, as CI does', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    await runLoopInProcess(world, { task: world.task, agent: 'codex' }, developerPublishesViaToolsDeps(world))
+    world.prOpened = true
+    world.prBody = `<!-- AEG:CLOSES:START -->\nCloses #${world.task}\n<!-- AEG:CLOSES:END -->`
+    const checked = await world.devToolContext!.runChecks()
+    expect(checked.ok).toBe(true)
+    expect(world.runChecksEnv).toEqual({
+      BRANCH: world.branch,
+      PR_NUMBER: String(world.prNumber),
+      PR_BODY: world.prBody
+    })
+  })
+
+  it('run_checks before the pull request exists hands check --all the branch alone', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    await runLoopInProcess(world, { task: world.task, agent: 'codex' }, developerPublishesViaToolsDeps(world))
+    world.prOpened = false
+    await world.devToolContext!.runChecks()
+    expect(world.runChecksEnv).toEqual({ BRANCH: world.branch })
+  })
+
   it('O3/O5: a Surface-violating publish_changes is refused by the gate in the driver, committing nothing', async () => {
     const world = makeWorld({ worktreeExists: true, surface: { in: ['apps/cli'], out: ['packages'] } })
     // The agent calls publish_changes with a path outside the task's Surface —
