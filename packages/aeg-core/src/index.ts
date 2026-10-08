@@ -661,6 +661,7 @@ export {
   buildHeader,
   classifyStoredLine,
   CONFIDENCE_REASON_MAX_LENGTH,
+  REVIEW_FINDING_DESCRIPTION_MAX_LENGTH,
   createFixtureStore,
   DispatchEventSchema,
   DevReviewLoopEventSchema,

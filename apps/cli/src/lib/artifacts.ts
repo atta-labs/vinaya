@@ -25,6 +25,11 @@ import { resolveDoctrineRoot } from '../commands/doctrine.js'
 import type { AgentVendor } from './agent-vendors.js'
 import { buildAgentsSkillsOps } from './agents-skills-emitter.js'
 import { claudeMcpJsonFile } from './task-tools/adapters.js'
+import {
+  BODY_CHECKS_WORKFLOW_PATH,
+  REVIEW_VERDICT_WORKFLOW_PATH,
+  REVIEW_WORKFLOW_PATH
+} from './managed-workflow-paths.js'
 import { buildClaudeCommandOps } from './claude-command-emitter.js'
 import { buildClaudeStopHookOps } from './claude-stop-hook-emitter.js'
 import type { VinayaConfig } from './config.js'
@@ -78,10 +83,8 @@ export const CONFIG_PATH = 'vinaya.config.json'
 // beside README, not buried inside a governance/ subfolder.
 export const DOCTRINE_POINTER_PATH = 'VINAYA.md'
 export const CHECKS_WORKFLOW_PATH = '.github/workflows/vinaya-checks.yml'
-export const REVIEW_WORKFLOW_PATH = '.github/workflows/vinaya-review.yml'
-export const REVIEW_VERDICT_WORKFLOW_PATH = '.github/workflows/vinaya-review-verdict.yml'
+export { BODY_CHECKS_WORKFLOW_PATH, REVIEW_VERDICT_WORKFLOW_PATH, REVIEW_WORKFLOW_PATH }
 export const ARCHIVIST_WORKFLOW_PATH = '.github/workflows/vinaya-archivist.yml'
-export const BODY_CHECKS_WORKFLOW_PATH = '.github/workflows/vinaya-body-checks.yml'
 export const TASK_LOG_COLLECTOR_WORKFLOW_PATH = '.github/workflows/vinaya-task-log-collector.yml'
 // Empty scaffold folders — `vinaya new noop-check` writes into
 // `vinaya/checks/`, `vinaya new role` writes into `vinaya/roles/`. Git does

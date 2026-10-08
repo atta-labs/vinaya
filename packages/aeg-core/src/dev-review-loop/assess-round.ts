@@ -155,6 +155,9 @@ function gateResultReadEvent(
 function toReviewFinding(f: VerdictObservation['findings'][number]): {
   id: string
   severity: string
+  location?: string
+  deferral_reason?: 'outside-surface' | 'unchanged-line'
+  description?: string
   state?: string
   severity_scale?: string
   policy_treatment?: 'blocking' | 'non_blocking' | 'unavailable'
@@ -165,6 +168,9 @@ function toReviewFinding(f: VerdictObservation['findings'][number]): {
   return {
     id: f.id,
     severity: f.severity,
+    ...(f.location !== undefined ? { location: f.location } : {}),
+    ...(f.deferred !== undefined ? { deferral_reason: f.deferred } : {}),
+    ...(f.description !== undefined ? { description: f.description } : {}),
     ...(f.state !== null && f.state !== undefined ? { state: f.state } : {}),
     ...(f.severityScale !== undefined ? { severity_scale: f.severityScale } : {}),
     ...(f.policyTreatment !== undefined ? { policy_treatment: f.policyTreatment } : {}),
@@ -330,7 +336,12 @@ function buildRoundRecord(
         countsBySeverity[key] = (countsBySeverity[key] ?? 0) + 1
       }
       if (f.deferred !== undefined) {
-        deferred.push({ severity: f.severity, location: f.location ?? '', reason: f.deferred })
+        deferred.push({
+          severity: f.severity,
+          location: f.location ?? '',
+          reason: f.deferred,
+          ...(f.description !== undefined ? { description: f.description } : {})
+        })
       }
     }
   }

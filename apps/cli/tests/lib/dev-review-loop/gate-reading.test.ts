@@ -345,6 +345,64 @@ describe('workflow-run conclusion — a failed run reads red even when every job
     expect(conclusion).toBe('green')
     expect(runs).toEqual([])
   })
+
+  it('managed workflows are told apart by their workflow file, because GitHub reports their per-pull-request run name as `name`', () => {
+    const dir = tempDir('vinaya-gh-wf-run-name-')
+    const sha = '568abd8d4e882c8e3151e8bf4fd6e001bacb7ea7'
+    writeFakeGh(
+      dir,
+      fakeGhReading({
+        checkRuns: PASSING_JOBS,
+        workflowRuns: [
+          ciRun({
+            id: 1,
+            name: `Vinaya Review Gate PR #1189 @ ${sha}`,
+            path: '.github/workflows/vinaya-review.yml',
+            workflow_id: 1
+          }),
+          ciRun({
+            id: 2,
+            name: `Vinaya Body Checks PR #1189 @ ${sha}`,
+            path: '.github/workflows/vinaya-body-checks.yml',
+            workflow_id: 2
+          }),
+          ciRun({
+            id: 3,
+            name: 'Vinaya Review Gate (on verdict)',
+            path: '.github/workflows/vinaya-review-verdict.yml',
+            workflow_id: 3
+          }),
+          ciRun({ id: 4, conclusion: 'success', path: '.github/workflows/ci.yml' })
+        ]
+      })
+    )
+    const { conclusion, runs } = readCi(dir)
+    expect(conclusion).toBe('green')
+    expect(runs).toEqual([])
+  })
+
+  it('a failed CI run still reads red beside excluded managed workflows that carry a per-pull-request run name', () => {
+    const dir = tempDir('vinaya-gh-wf-run-name-ci-red-')
+    writeFakeGh(
+      dir,
+      fakeGhReading({
+        checkRuns: PASSING_JOBS,
+        workflowRuns: [
+          ciRun({
+            id: 1,
+            name: 'Vinaya Review Gate PR #1176 @ 7f9aacd5',
+            path: '.github/workflows/vinaya-review.yml',
+            workflow_id: 1
+          }),
+          ciRun({ path: '.github/workflows/ci.yml' })
+        ],
+        jobs: ['success']
+      })
+    )
+    const { conclusion, runs } = readCi(dir)
+    expect(conclusion).toBe('red')
+    expect(runs).toMatchObject([{ name: 'CI', id: 123 }])
+  })
 })
 
 describe('sh (gh reads) — O5 (#595): every gh read retries three times, with backoff, before counting as a failure', () => {

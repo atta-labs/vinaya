@@ -2814,6 +2814,8 @@ export type DeferredFindingEntry = {
   /** The finding's own `file:line`, or `''` when it carried none. */
   location: string
   reason: DeferralReason
+  /** The redacted, visibly capped reviewer wording; never rebuilt from its fingerprint. */
+  description: string
 }
 
 /** What `upsertDeferredFindingsIssue` returns — the tracking Issue's own number, for the published summary to link. */
@@ -2840,7 +2842,7 @@ function deferredFindingsTitle(prNumber: number): string {
 export function renderDeferredFindingsIssueBody(prNumber: number, entries: DeferredFindingEntry[]): string {
   const lines = entries.map((e) => {
     const where = e.location.length > 0 ? e.location : '(no location)'
-    return `- round ${e.round} — ${e.reviewer} — ${e.severity} ${where} — ${DEFERRAL_REASON_TEXT[e.reason]}`
+    return `- round ${e.round} — ${e.reviewer} — ${e.severity} ${where} — ${DEFERRAL_REASON_TEXT[e.reason]} — ${e.description}`
   })
   return [
     deferredFindingsMarker(prNumber),
