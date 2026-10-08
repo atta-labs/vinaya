@@ -39,7 +39,12 @@ import {
 } from '../effects.js'
 import { markedCommentBody, postMarkedCommentOrThrow, reconcileGhComment } from '../forge-write.js'
 import { log } from '../log-sink.js'
-import { isRateLimitPauseDetail, loadLoopState, MAX_INFRASTRUCTURE_RETRIES } from './round-assess.js'
+import {
+  isRateLimitPauseDetail,
+  isUsageLimitPauseDetail,
+  loadLoopState,
+  MAX_INFRASTRUCTURE_RETRIES
+} from './round-assess.js'
 import { readIfExists } from './reviewer-dispatch.js'
 import { DRIVER_LOCK_FILENAME, ensureRunDir, runPath } from '../run-paths.js'
 
@@ -205,7 +210,7 @@ export function renderPauseComment(
   return [
     `The dev-review-loop paused: ${reason}${detail ? ` — ${detail}` : ''}.`,
     '',
-    isRateLimitPauseDetail(detail)
+    isRateLimitPauseDetail(detail) || isUsageLimitPauseDetail(detail)
       ? 'No Principal ruling is needed. Once the limit has reset, resume with:'
       : 'A Principal ruling is needed before this can continue. Once one is posted on this PR, resume with:',
     '',
@@ -308,7 +313,7 @@ export function renderNoPushStopComment(
   // whose recorded baseline had reached `1`.
   const nextOrdinal = (rulingOrdinal ?? 0) + 1
   // A GitHub rate limit needs no ruling: the pause says so and names the resume.
-  if (isRateLimitPauseDetail(detail)) {
+  if (isRateLimitPauseDetail(detail) || isUsageLimitPauseDetail(detail)) {
     return [
       `The dev-review-loop paused: ${reason} — ${detail}.`,
       '',

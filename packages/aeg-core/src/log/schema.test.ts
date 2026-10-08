@@ -86,6 +86,27 @@ describe('LogEventSchema — dispatch family', () => {
     expect(LogEventSchema.safeParse(line).success).toBe(true)
   })
 
+  it('parses a usage_limit dispatch_failed line carrying the agent and the reset time', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'dispatch' as const,
+      event: 'dispatch_failed' as const,
+      payload: {},
+      target_role: 'developer' as const,
+      model: 'gpt-5',
+      effect_id: 'e1',
+      reason: 'usage_limit' as const,
+      usage_limit: { agent: 'codex', reset_at: '2026-10-08T10:55:00.000Z' },
+      usage: null
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+    expect(LogEventSchema.safeParse({ ...line, usage_limit: { agent: 'codex', reset_at: null } }).success).toBe(true)
+    expect(
+      LogEventSchema.safeParse({ ...line, usage_limit: { agent: 'codex', reset_at: null, message: 'x' } }).success
+    ).toBe(false)
+  })
+
   it('parses a dispatch_failed line with real usage — O10, a killed run still has figures', () => {
     const line = {
       meta,

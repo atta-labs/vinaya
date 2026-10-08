@@ -52,6 +52,7 @@ import {
   type TaskStatusRow
 } from '../task-status.js'
 import { tasksExecutionRoot } from '../run-paths.js'
+import { describeUsageLimitPause } from '../dev-review-loop/round-assess.js'
 
 // --- Observed<T> -------------------------------------------------------------
 
@@ -113,8 +114,10 @@ export function describeTaskLoopState(state: TaskLoopState): string {
   switch (state.kind) {
     case 'running':
       return `running (pid ${state.pid})`
-    case 'paused':
-      return `paused (${state.reason})`
+    case 'paused': {
+      const usageLimit = describeUsageLimitPause(state.detail)
+      return usageLimit !== null ? `paused — ${usageLimit}` : `paused (${state.reason})`
+    }
     case 'published':
       return 'published'
     case 'exited':
