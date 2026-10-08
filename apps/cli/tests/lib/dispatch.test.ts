@@ -772,6 +772,65 @@ describe('dispatchRole — no matching binary on PATH', () => {
   })
 })
 
+describe('dispatchRole — a task continued on another agent', () => {
+  it('records each dispatch’s own model on its dispatch and usage events across an agent switch', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    writeFakeBinary(
+      binDir,
+      'codex',
+      `#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":4}}'\n`
+    )
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\necho '{"usage":{"input_tokens":11,"output_tokens":22}}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    for (const [agent, model] of [
+      ['codex', 'gpt-5.6-terra'],
+      ['claude', 'claude-opus-5-5']
+    ] as const) {
+      const r = runDispatch(
+        ['developer', '--agent', agent, '--model', model, '--prompt-file', promptFile, '--task', '9001'],
+        cwd,
+        home,
+        path
+      )
+      expect(r.status).toBe(0)
+    }
+
+    const lines = outboxLines(home, 9001) as Array<Record<string, unknown>>
+    for (const [agent, model] of [
+      ['codex', 'gpt-5.6-terra'],
+      ['claude', 'claude-opus-5-5']
+    ] as const) {
+      const ofAgent = lines.filter((l) => (l.model as string | undefined)?.includes(model))
+      expect(
+        ofAgent.some((l) => l.kind === 'dispatch'),
+        `${agent} dispatch event`
+      ).toBe(true)
+      expect(
+        ofAgent.some((l) => l.kind === 'usage'),
+        `${agent} usage event`
+      ).toBe(true)
+    }
+    // Each dispatch's usage event names its own model, not the other's.
+    expect(
+      lines
+        .filter((l) => l.kind === 'usage')
+        .map((l) => l.model)
+        .sort()
+    ).toEqual(
+      expect.arrayContaining([expect.stringContaining('claude-opus-5-5'), expect.stringContaining('gpt-5.6-terra')])
+    )
+  })
+})
+
 describe('dispatchRole — present but not executable', () => {
   it('refuses the same way as absent, never spawning', () => {
     const home = tempDir('vinaya-dispatch-home-')

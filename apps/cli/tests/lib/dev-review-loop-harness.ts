@@ -736,7 +736,7 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       world.postedComments.push({ kind, ref, marker, body })
       return `https://github.com/example/repo/${kind}/${ref}#issuecomment-${world.postedComments.length}`
     },
-    postPauseComment: (_task, _round, _head, prNumber, reason, detail) => {
+    postPauseComment: (_task, _round, _head, prNumber, reason, detail, invocation) => {
       // Render the REAL marked body (sanitize → marker → renderPauseComment →
       // markedCommentBody) — the same pure pipeline production `postPauseComment`
       // runs before its `gh` post. Only the network post and the control-store
@@ -744,7 +744,7 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       // comment's marker/detail/shape reads exactly what the forge would receive.
       const publicDetail = detail === undefined ? undefined : sanitizePublicPauseDetail(detail)
       const marker = pauseMarker(reason)
-      const body = markedCommentBody(marker, renderPauseComment(prNumber, reason, publicDetail))
+      const body = markedCommentBody(marker, renderPauseComment(prNumber, reason, publicDetail, invocation))
       world.postedComments.push({ kind: 'pr', ref: String(prNumber), marker, body })
       return { posted: true, url: 'https://example/pause', attempts: 1 } as never
     },
