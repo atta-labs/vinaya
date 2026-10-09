@@ -7,11 +7,18 @@ import {
 } from '../../../src/lib/developer-turn-result.js'
 import {
   accountEnv,
+  CASE_TIME_LIMIT_LABEL,
+  CASE_TIME_LIMIT_MS,
+  checkSchemaRejects,
   driverVerdict,
   judgeCase,
   PROOF_TURN_CONTEXT,
   parseResultProofArgs,
   proofCases,
+  proofTurnSchema,
+  runChild,
+  runProofCases,
+  validatesJsonSchema,
   readClaudeTurnOutput,
   readCodexTurnOutput,
   redactProviderText,
@@ -58,48 +65,6 @@ const needsRuling = {
   sourceUses: null
 }
 const wrap = (turnResult: unknown) => ({ turnResult })
-
-/** A compact Draft-7 validator for the subset emitted by z.toJSONSchema. */
-function validatesJsonSchema(schema: unknown, value: unknown): boolean {
-  if (schema === null || typeof schema !== 'object') return true
-  const node = schema as Record<string, unknown>
-  if (Array.isArray(node.anyOf)) return node.anyOf.some((variant) => validatesJsonSchema(variant, value))
-  if ('const' in node && value !== node.const) return false
-  if (Array.isArray(node.enum) && !node.enum.includes(value)) return false
-  if (node.type === 'object') {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
-    const object = value as Record<string, unknown>
-    const properties = (node.properties ?? {}) as Record<string, unknown>
-    if (Array.isArray(node.required) && node.required.some((key) => typeof key !== 'string' || !(key in object)))
-      return false
-    if (node.additionalProperties === false && Object.keys(object).some((key) => !(key in properties))) return false
-    return Object.entries(properties).every(
-      ([key, property]) => !(key in object) || validatesJsonSchema(property, object[key])
-    )
-  }
-  if (node.type === 'array') {
-    if (!Array.isArray(value)) return false
-    if (typeof node.minItems === 'number' && value.length < node.minItems) return false
-    if (typeof node.maxItems === 'number' && value.length > node.maxItems) return false
-    return value.every((item) => validatesJsonSchema(node.items, item))
-  }
-  if (node.type === 'string') {
-    if (typeof value !== 'string') return false
-    return !(
-      (typeof node.minLength === 'number' && value.length < node.minLength) ||
-      (typeof node.maxLength === 'number' && value.length > node.maxLength)
-    )
-  }
-  if (node.type === 'number' || node.type === 'integer') {
-    if (typeof value !== 'number' || !Number.isFinite(value) || (node.type === 'integer' && !Number.isInteger(value)))
-      return false
-    return !(
-      (typeof node.minimum === 'number' && value < node.minimum) ||
-      (typeof node.maximum === 'number' && value > node.maximum)
-    )
-  }
-  return true
-}
 
 describe('DeveloperTurnResult — valid examples of every variant', () => {
   it('accepts completed, blocked and needs_ruling', () => {
@@ -520,48 +485,6 @@ describe('judgeCase', () => {
   })
 })
 
-describe('judgeCase — schema-blocks', () => {
-  const required = PROOF_TURN_CONTEXT.requiredSources[0]
-  const withValues = (overrides: Record<string, unknown>) =>
-    readOf(wrap({ ...completed, sourceUses: [{ source: required, use: 'decided' }], ...overrides }))
-  for (const invalid of ['missing-source', 'unknown-finding-id'] as const) {
-    it(`${invalid}: passes when the provider refused the invalid value`, () => {
-      const none = readOf(null)
-      const judged = judgeCase({ kind: 'schema-blocks', invalid }, none, driverVerdict(none, PROOF_TURN_CONTEXT))
-      expect(judged.pass).toBe(true)
-      expect(judged.why.join('\n')).toContain('the provider refused the invalid value')
-    })
-    it(`${invalid}: passes when the agent reported a valid value instead`, () => {
-      const read = withValues({})
-      const judged = judgeCase({ kind: 'schema-blocks', invalid }, read, driverVerdict(read, PROOF_TURN_CONTEXT))
-      expect(judged.pass).toBe(true)
-      expect(judged.why.join('\n')).toContain('the agent reported a valid value instead')
-    })
-  }
-  it('fails when the driver accepts a result that omits the required source', () => {
-    const read = withValues({ sourceUses: [] })
-    const verdict: ReturnType<typeof driverVerdict> = {
-      crossed: true,
-      accepted: true,
-      result: { ...(completed as object), sourceUses: [] } as never
-    }
-    const judged = judgeCase({ kind: 'schema-blocks', invalid: 'missing-source' }, read, verdict)
-    expect(judged.pass).toBe(false)
-    expect(judged.why.join('\n')).toContain('omits the required source')
-  })
-  it('fails when the driver accepts a result naming an id outside the handoff', () => {
-    const read = withValues({})
-    const verdict: ReturnType<typeof driverVerdict> = {
-      crossed: true,
-      accepted: true,
-      result: { ...(completed as object), addressedFindingIds: ['R9-XX-404'] } as never
-    }
-    const judged = judgeCase({ kind: 'schema-blocks', invalid: 'unknown-finding-id' }, read, verdict)
-    expect(judged.pass).toBe(false)
-    expect(judged.why.join('\n')).toContain('outside the handoff')
-  })
-})
-
 describe('proofCases', () => {
   it('runs the first session first and the resume second, and covers every rejection case', () => {
     for (const agent of ['claude', 'codex'] as const) {
@@ -585,11 +508,18 @@ describe('proofCases', () => {
     expect(proofCases('claude', 'n')[0]?.expectation).toEqual({ kind: 'accepted', summary: 'first-n' })
     expect(proofCases('codex', 'n')[0]?.expectation).toEqual({ kind: 'accepted', summary: 'first-n' })
   })
-  it('expects the schema to block the missing-source and unknown-finding-id cases', () => {
+  it('asks the two schema-blocked cases for the valid value, and the schema check for the invalid one', () => {
     const cases = proofCases('claude', 'n')
-    expect(cases[2]?.expectation).toEqual({ kind: 'schema-blocks', invalid: 'missing-source' })
-    expect(cases[2]?.prompt).toContain('sourceUses null')
-    expect(cases[3]?.expectation).toEqual({ kind: 'schema-blocks', invalid: 'unknown-finding-id' })
+    expect(cases[2]).toMatchObject({
+      expectation: { kind: 'accepted', summary: 'missing-source-n' },
+      schemaRejects: 'missing-source'
+    })
+    expect(cases[3]).toMatchObject({
+      expectation: { kind: 'accepted', summary: 'unknown-finding-n' },
+      schemaRejects: 'unknown-finding-id'
+    })
+    expect(cases[2]?.prompt).not.toContain('sourceUses null')
+    expect(cases[3]?.prompt).not.toContain('R9-XX-404')
   })
   it('never asks the model for its reasoning', () => {
     for (const c of proofCases('claude', 'n')) expect(c.prompt.toLowerCase()).not.toContain('reasoning')
@@ -623,5 +553,61 @@ describe('redactProviderText', () => {
   })
   it('leaves text without either unchanged', () => {
     expect(redactProviderText('Prompt is too long', '/Users/me')).toBe('Prompt is too long')
+  })
+})
+
+describe('checkSchemaRejects — the per-turn schema the proof sends', () => {
+  for (const invalid of ['missing-source', 'unknown-finding-id'] as const) {
+    it(`${invalid}: rejects the invalid value and accepts the valid one`, () => {
+      const checked = checkSchemaRejects(proofTurnSchema(), invalid)
+      expect(checked.pass).toBe(true)
+      expect(checked.why.join('\n')).toContain('rejects')
+      expect(checked.why.join('\n')).toContain('accepts the valid value')
+    })
+    it(`${invalid}: fails against a schema that accepts anything`, () => {
+      expect(checkSchemaRejects({}, invalid).pass).toBe(false)
+    })
+  }
+  it('proofTurnSchema rejects a result with an unknown status', () => {
+    expect(validatesJsonSchema(proofTurnSchema(), { turnResult: { status: 'nope' } })).toBe(false)
+  })
+})
+
+describe('the case time limit', () => {
+  it('is five minutes, and the label is derived from it', () => {
+    expect(CASE_TIME_LIMIT_MS).toBe(5 * 60 * 1000)
+    expect(CASE_TIME_LIMIT_LABEL).toBe('5 minutes')
+  })
+  const hang = { args: ['-c', 'sleep 30'], env: process.env }
+  const quick = { args: ['-c', 'echo done'], env: process.env }
+  it('runChild kills a child that never ends', async () => {
+    const started = Date.now()
+    const ran = await runChild('sh', hang, '', process.cwd(), undefined, 200)
+    expect(ran.timedOut).toBe(true)
+    expect(Date.now() - started).toBeLessThan(5000)
+  })
+  it('stops the hung case, reports it FAIL with the timeout message, and runs the next case', async () => {
+    const lines: string[] = []
+    let n = 0
+    const cases = [
+      { name: 'hangs', objectives: 'O2', prompt: '', expectation: { kind: 'none' as const } },
+      { name: 'after', objectives: 'O2', prompt: '', expectation: { kind: 'none' as const } }
+    ]
+    const run = await runProofCases({
+      agent: 'codex',
+      command: 'sh',
+      cases,
+      plan: { launch: () => (n++ === 0 ? hang : quick) },
+      recorded: [],
+      cwd: process.cwd(),
+      out: (line = '') => lines.push(line),
+      limitMs: 300
+    })
+    expect(run.allPass).toBe(false)
+    expect(lines.join('\n')).toContain('FAIL: hangs timed out after 5 minutes')
+    expect(run.summaries[0]).toContain('FAIL  hangs')
+    expect(run.summaries[0]).toContain('timed out after 5 minutes')
+    expect(lines.join('\n')).toContain('--- case: after')
+    expect(run.summaries[1]).toStartWith('PASS  after')
   })
 })

@@ -474,6 +474,40 @@ export function completedTurnOutput(
   }
 }
 
+/** A `needs_ruling` turn result as Claude's adapter would hand it over. */
+export function needsRulingTurnOutput(question: string, decisions: string[]): DeveloperTurnOutput {
+  return {
+    adapter: 'claude --json-schema',
+    event: 'result (subtype success) .structured_output',
+    raw: {
+      turnResult: {
+        schemaVersion: 1,
+        status: 'needs_ruling',
+        summary: 'fixture ruling request',
+        rulingRequest: { question, decisions },
+        sourceUses: null
+      }
+    }
+  }
+}
+
+/** A `blocked` turn result as Claude's adapter would hand it over. */
+export function blockedTurnOutput(kind: string, detail: string): DeveloperTurnOutput {
+  return {
+    adapter: 'claude --json-schema',
+    event: 'result (subtype success) .structured_output',
+    raw: {
+      turnResult: {
+        schemaVersion: 1,
+        status: 'blocked',
+        summary: 'fixture blocker',
+        blocker: { kind, detail },
+        sourceUses: null
+      }
+    }
+  }
+}
+
 /** The finding ids a prompt lists for the Developer to cite (`- R1-CR-1: …` in a findings prompt, `- R1-CR-1` in a correction). */
 export function handoffIdsInPrompt(prompt: string): string[] {
   return [...new Set([...prompt.matchAll(/^- (R\d+-(?:CR|SEC)-\d+)(?::|$)/gm)].map((m) => m[1]!))]

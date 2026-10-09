@@ -4032,7 +4032,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         }
         // A dispatch that only re-asks for the turn result (O1) is now
         // confirmed clean and publishes nothing.
-        if (!opts.skipPublish) {
+        // A turn that ends `blocked` or `needs_ruling` is read BEFORE the
+        // publication check: its work stays as it is and the round pauses for
+        // the Principal (`settleTurnResult` names the unpublished work), so
+        // the driver never first asks it to publish.
+        if (!opts.skipPublish && !endsInEscalation(handle, roundNum, opts.answersFindings === true)) {
           const published = await publishDeveloperTurn(roundNum)
           if (published.kind !== 'published' && published.kind !== 'nothing') {
             publicationRefusals += 1
@@ -4049,6 +4053,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         await settleTurnResult(handle, roundNum, opts.answersFindings === true)
         return handle
       }
+    }
+
+    /** Whether the turn ended with an accepted `blocked` or `needs_ruling` result — read before the publication check so the round pauses for the Principal instead of re-asking to publish. */
+    function endsInEscalation(handle: DispatchHandle, roundNum: number, answersFindings: boolean): boolean {
+      const verdict = judgeTurnOutput(handle.turnOutput, {
+        round: roundNum,
+        knownFindingIds: handoffFindingIdsByRound.get(roundNum) ?? [],
+        requireAddressedFindings: answersFindings && (handoffFindingIdsByRound.get(roundNum) ?? []).length > 0,
+        documentation: handle.documentation ?? { sources: [], countedReads: [] }
+      })
+      return verdict.ok && pauseForAcceptedResult(verdict.result) !== null
     }
 
     /**
@@ -4101,7 +4116,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
       const accept = (result: DeveloperTurnResult): void => {
         const pause = pauseForAcceptedResult(result)
-        if (pause !== null) throw pause
+        if (pause === null) return
+        // The work the turn left unpublished is kept; the pause names it so
+        // the ruling can say what to do with it.
+        const dir = worktreePathForBranch()
+        const unpushed = existsSync(dir) ? d.readUnpushedWorkDetail(dir) : { dirtyFiles: [], aheadCount: 0 }
+        if (unpushed.dirtyFiles.length === 0 && unpushed.aheadCount === 0) throw pause
+        throw new DeveloperTurnResultPause(
+          pause.kind,
+          `${pause.message} — work left unpublished, kept as it is: ${noPushPauseDetail(branch, unpushed)}`
+        )
       }
 
       const firstAttempt = nextTurnResultAttempt(root, task, roundNum)
