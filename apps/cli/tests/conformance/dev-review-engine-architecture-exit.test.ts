@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { cleanupWorlds } from '../lib/dev-review-loop-harness.js'
 import { NODE_CONTRACTS } from '../lib/dev-review-loop/dev-review-engine-state-contract.fixture.js'
+import { SCANNER_DECLARATIONS, underDeclaredRoot } from '../../src/lib/repo-scanner-tests.js'
 import { type Observation, SCENARIO_DRIVERS } from './dev-review-current-loop-adapter.js'
 
 /**
@@ -437,6 +438,15 @@ function loopSurface(): string[] {
     .filter((p) => existsSync(join(REPO_ROOT, p)))
     .sort()
 }
+
+it('declares every named input as a listed-files root', () => {
+  const declaration = SCANNER_DECLARATIONS.find(
+    (entry) => entry.test === 'apps/cli/tests/conformance/dev-review-engine-architecture-exit.test.ts'
+  )
+  expect(declaration?.trigger).toBe('listed-files')
+  const inputs = [CORPUS_REL, corpus.invariantRegister, corpus.capabilityMatrix, ...loopSurface()]
+  expect(inputs.filter((path) => !declaration?.roots.some((root) => underDeclaredRoot(path, root)))).toEqual([])
+})
 
 /** Every loop-surface file whose content differs from the recorded baseline, or that the baseline does not list. */
 function baselineDrift(

@@ -235,6 +235,18 @@ export type ScannerDeclaration = {
  * exist in another repository select nothing there.
  */
 export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
+  {
+    test: 'apps/cli/tests/conformance/dev-review-engine-architecture-exit.test.ts',
+    roots: [
+      'apps/cli/tests/fixtures/dev-review-engine-scenarios.json',
+      'apps/cli/tests/fixtures/dev-review-architecture-invariants.json',
+      'apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json',
+      'apps/cli/src/commands/dev-review-loop.ts',
+      'apps/cli/src/lib/dev-review-loop/',
+      'packages/aeg-core/src/dev-review-loop/'
+    ],
+    trigger: 'listed-files'
+  },
   { test: 'apps/cli/tests/ci-shards.test.ts', roots: ['apps/cli/'], trigger: 'tree-shape' },
   {
     test: 'apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts',
