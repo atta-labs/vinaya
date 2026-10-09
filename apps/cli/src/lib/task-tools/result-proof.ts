@@ -149,13 +149,6 @@ export type CaseExpectation =
    * accepted.
    */
   | { kind: 'rejected-then-accepted'; error: string }
-  /**
-   * The per-turn schema is the first guard: the case asks for a value the schema
-   * forbids. Passes when the provider refused it (nothing schema-valid crossed),
-   * when the agent reported a valid value instead, or when the driver rejected it;
-   * fails only when the driver accepted the invalid value.
-   */
-  | { kind: 'schema-blocks'; invalid: 'missing-source' | 'unknown-finding-id' }
   /** Nothing malformed crossed: either the provider repaired it into a valid result, or no result arrived. */
   | { kind: 'never-malformed' }
   /** The invocation ended with no accepted result. */
@@ -217,23 +210,6 @@ export function judgeCase(
     if (read.terminalResults !== 1)
       fail(`${read.terminalResults} terminal results on the correction — exactly one must be accepted`)
   }
-  if (expectation.kind === 'schema-blocks') {
-    const missing = expectation.invalid === 'missing-source'
-    const label = missing ? 'a result that omits the required source' : 'a result naming an id outside the handoff'
-    if (!verdict.crossed) {
-      why.push(`the provider refused the invalid value: nothing schema-valid reached the driver (${verdict.reason})`)
-    } else if (!verdict.accepted) {
-      why.push(`the driver rejected the invalid value: ${verdict.errors.join('; ')}`)
-    } else {
-      const sources = (verdict.result.sourceUses ?? []).map((use) => use.source)
-      const ids = 'addressedFindingIds' in verdict.result ? verdict.result.addressedFindingIds : []
-      const valid = missing
-        ? PROOF_TURN_CONTEXT.requiredSources.every((source) => sources.includes(source))
-        : ids.every((id) => PROOF_TURN_CONTEXT.knownFindingIds.includes(id))
-      if (valid) why.push('the agent reported a valid value instead: the driver accepted it')
-      else fail(`the driver accepted ${label}`)
-    }
-  }
   if (expectation.kind === 'never-malformed') {
     if (verdict.crossed) why.push('the provider repaired the output into a schema-valid result before it ended')
     else why.push(`no result crossed the adapter (${verdict.reason})`)
@@ -258,7 +234,16 @@ type ProofCase = {
   cancelAfterMs?: number
   /** Resume this case's own session once with the controller's typed failures, and judge that second result. */
   correctOnce?: boolean
+  /** The invalid value the per-turn schema must reject; checked without the agent, while the prompt asks for the valid one. */
+  schemaRejects?: SchemaInvalid
 }
+
+/** The two values the per-turn schema forbids, which the live cases no longer ask the agent to report. */
+export type SchemaInvalid = 'missing-source' | 'unknown-finding-id'
+
+/** The one time limit every proof case runs under. */
+export const CASE_TIME_LIMIT_MS = 5 * 60 * 1000
+export const CASE_TIME_LIMIT_LABEL = '5 minutes'
 
 function toolInstruction(agent: ResultProofAgent): string {
   return agent === 'claude'
@@ -284,6 +269,92 @@ function completedInstruction(summary: string, findingIds: readonly string[]): s
   )
 }
 
+/** The per-turn schema object the proof hands each agent — the one the schema check validates against. */
+export function proofTurnSchema(): Record<string, unknown> {
+  return developerTurnResultJsonSchema(PROOF_TURN_CONTEXT)
+}
+
+/** A compact Draft-7 validator for the subset emitted by z.toJSONSchema. */
+export function validatesJsonSchema(schema: unknown, value: unknown): boolean {
+  if (schema === null || typeof schema !== 'object') return true
+  const node = schema as Record<string, unknown>
+  if (Array.isArray(node.anyOf)) return node.anyOf.some((variant) => validatesJsonSchema(variant, value))
+  if ('const' in node && value !== node.const) return false
+  if (Array.isArray(node.enum) && !node.enum.includes(value)) return false
+  if (node.type === 'object') {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+    const object = value as Record<string, unknown>
+    const properties = (node.properties ?? {}) as Record<string, unknown>
+    if (Array.isArray(node.required) && node.required.some((key) => typeof key !== 'string' || !(key in object)))
+      return false
+    if (node.additionalProperties === false && Object.keys(object).some((key) => !(key in properties))) return false
+    return Object.entries(properties).every(
+      ([key, property]) => !(key in object) || validatesJsonSchema(property, object[key])
+    )
+  }
+  if (node.type === 'array') {
+    if (!Array.isArray(value)) return false
+    if (typeof node.minItems === 'number' && value.length < node.minItems) return false
+    if (typeof node.maxItems === 'number' && value.length > node.maxItems) return false
+    return value.every((item) => validatesJsonSchema(node.items, item))
+  }
+  if (node.type === 'string') {
+    if (typeof value !== 'string') return false
+    return !(
+      (typeof node.minLength === 'number' && value.length < node.minLength) ||
+      (typeof node.maxLength === 'number' && value.length > node.maxLength)
+    )
+  }
+  if (node.type === 'number' || node.type === 'integer') {
+    if (typeof value !== 'number' || !Number.isFinite(value) || (node.type === 'integer' && !Number.isInteger(value)))
+      return false
+    return !(
+      (typeof node.minimum === 'number' && value < node.minimum) ||
+      (typeof node.maximum === 'number' && value > node.maximum)
+    )
+  }
+  return true
+}
+
+/** A completed turn result carrying the valid values, and the same one carrying the invalid value. */
+function schemaCheckValues(invalid: SchemaInvalid): { valid: unknown; invalidValue: unknown } {
+  const validTurn = {
+    schemaVersion: DEVELOPER_TURN_RESULT_SCHEMA_VERSION,
+    status: 'completed',
+    summary: 'schema check',
+    confidence: 90,
+    confidenceExplanation: 'the schema check',
+    addressedFindingIds: [PROOF_TURN_CONTEXT.knownFindingIds[0]],
+    sourceUses: [{ source: PROOF_TURN_CONTEXT.requiredSources[0], use: 'schema check' }],
+    reportedChecks: null
+  }
+  const invalidTurn =
+    invalid === 'missing-source'
+      ? { ...validTurn, sourceUses: null }
+      : { ...validTurn, addressedFindingIds: ['R9-XX-404'] }
+  return { valid: { turnResult: validTurn }, invalidValue: { turnResult: invalidTurn } }
+}
+
+/** Checks, without the agent, that `schema` rejects the invalid value and accepts the valid one. */
+export function checkSchemaRejects(schema: unknown, invalid: SchemaInvalid): { pass: boolean; why: string[] } {
+  const { valid, invalidValue } = schemaCheckValues(invalid)
+  const label =
+    invalid === 'missing-source'
+      ? 'a result that omits the required source'
+      : 'a result naming an id outside the handoff'
+  const why: string[] = []
+  let pass = true
+  if (validatesJsonSchema(schema, invalidValue)) {
+    pass = false
+    why.push(`FAIL: the per-turn schema accepts ${label}`)
+  } else why.push(`the per-turn schema rejects ${label}`)
+  if (!validatesJsonSchema(schema, valid)) {
+    pass = false
+    why.push('FAIL: the per-turn schema rejects the valid value')
+  } else why.push('the per-turn schema accepts the valid value')
+  return { pass, why }
+}
+
 /** The cases, in run order — the first must come first: the resume resumes it. */
 export function proofCases(agent: ResultProofAgent, nonce: string): ProofCase[] {
   const preamble = turnPreamble()
@@ -307,17 +378,16 @@ export function proofCases(agent: ResultProofAgent, nonce: string): ProofCase[] 
     {
       name: 'missing required source — blocked by the schema',
       objectives: 'O3 O6',
-      prompt:
-        `${preamble}\nThis is a test of the driver's validation, so follow these values literally.\n` +
-        `Report status "completed" with summary exactly "missing-source-${nonce}", confidence 90, a one-sentence confidenceExplanation, ` +
-        'addressedFindingIds ["R1-CR-1"], sourceUses null, and reportedChecks null.',
-      expectation: { kind: 'schema-blocks', invalid: 'missing-source' }
+      prompt: `${preamble}\n${completedInstruction(`missing-source-${nonce}`, ['R1-CR-1'])}`,
+      expectation: { kind: 'accepted', summary: `missing-source-${nonce}` },
+      schemaRejects: 'missing-source'
     },
     {
       name: 'unknown finding id — blocked by the schema',
       objectives: 'O3',
-      prompt: `${preamble}\nThis is a test of the driver's validation, so follow these values literally.\n${completedInstruction(`unknown-finding-${nonce}`, ['R9-XX-404'])}`,
-      expectation: { kind: 'schema-blocks', invalid: 'unknown-finding-id' }
+      prompt: `${preamble}\n${completedInstruction(`unknown-finding-${nonce}`, ['R1-CR-1'])}`,
+      expectation: { kind: 'accepted', summary: `unknown-finding-${nonce}` },
+      schemaRejects: 'unknown-finding-id'
     },
     {
       name: 'ruling request naming no permissible decision',
@@ -410,7 +480,7 @@ function planLaunches(agent: ResultProofAgent, bridge: BridgeInvocation, scratch
     const mcpConfigPath = join(scratchDir, 'dev-tools.mcp.json')
     writeFileSync(mcpConfigPath, devToolsMcpConfigFileBody(bridge), { mode: 0o600 })
     const { settingsPath, sandbox, confined } = writeClaudeProofSettings(scratchDir, runId, cwd)
-    const schema = JSON.stringify(developerTurnResultJsonSchema(PROOF_TURN_CONTEXT))
+    const schema = JSON.stringify(proofTurnSchema())
     return {
       sandbox,
       launch: (resumeId, model) => ({
@@ -433,7 +503,7 @@ function planLaunches(agent: ResultProofAgent, bridge: BridgeInvocation, scratch
   const confinement: ConfinementDisclosure = resolveProofConfinement('codex', 'developer', cwd, scratchDir)
   const codexHome = stageProofCodexHome(bridge, scratchDir, confinement)
   const schemaPath = join(scratchDir, 'developer-turn-result.schema.json')
-  writeFileSync(schemaPath, `${JSON.stringify(developerTurnResultJsonSchema(PROOF_TURN_CONTEXT), null, 2)}\n`)
+  writeFileSync(schemaPath, `${JSON.stringify(proofTurnSchema(), null, 2)}\n`)
   return {
     sandbox: confinement.confined ? `ON — ${confinement.detail}` : `OFF (disclosed) — ${confinement.detail}`,
     launch: (resumeId, model) => ({
@@ -459,6 +529,8 @@ export type RunOutcome = {
   spawnError?: string
   /** The caller's own `cancelAfterMs` kill was sent while the child was still running — whatever exit code or signal followed. */
   cancelled?: boolean
+  /** The `timeoutMs` limit was reached and the child's process group was killed. */
+  timedOut?: boolean
 }
 
 export function runChild(
@@ -466,10 +538,29 @@ export function runChild(
   launch: Launch,
   prompt: string,
   cwd: string,
-  cancelAfterMs: number | undefined
+  cancelAfterMs: number | undefined,
+  timeoutMs?: number
 ): Promise<RunOutcome> {
   return new Promise((resolve) => {
-    const child = spawn(command, launch.args, { cwd, env: launch.env, stdio: ['pipe', 'pipe', 'pipe'] })
+    // Its own process group, so the time limit stops the agent's children with it.
+    const child = spawn(command, launch.args, { cwd, env: launch.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true })
+    let timedOut = false
+    const limit =
+      timeoutMs === undefined
+        ? undefined
+        : setTimeout(
+            () => {
+              timedOut = true
+              try {
+                if (child.pid !== undefined) process.kill(-child.pid, 'SIGKILL')
+              } catch {
+                child.kill('SIGKILL')
+              }
+              // a grandchild that escaped the group may hold the pipes open: do not wait for them
+              resolve({ exitCode: null, signal: 'SIGKILL', stdout, stderr, timedOut: true })
+            },
+            Math.max(0, timeoutMs)
+          )
     let stdout = ''
     let stderr = ''
     let cancelArmed = false
@@ -486,8 +577,14 @@ export function runChild(
       }
     })
     child.stderr.on('data', (chunk: string) => (stderr += chunk))
-    child.on('error', (err) => resolve({ exitCode: null, signal: null, stdout, stderr, spawnError: err.message }))
-    child.on('close', (exitCode, signal) => resolve({ exitCode, signal, stdout, stderr, cancelled }))
+    child.on('error', (err) => {
+      clearTimeout(limit)
+      resolve({ exitCode: null, signal: null, stdout, stderr, spawnError: err.message })
+    })
+    child.on('close', (exitCode, signal) => {
+      clearTimeout(limit)
+      resolve({ exitCode, signal, stdout, stderr, cancelled, ...(timedOut ? { timedOut } : {}) })
+    })
     child.stdin.on('error', () => {
       // a child that exits before reading its whole prompt closes the pipe — the outcome still reports it
     })
@@ -523,6 +620,160 @@ export function redactProviderText(text: string, home: string = homedir()): stri
 /** `clip` after `redactProviderText` — the one form provider text is printed in. */
 export function providerText(text: string, max?: number): string {
   return clip(redactProviderText(text), max)
+}
+
+/** Runs the cases in order, each under the one time limit; a case that reaches it is FAIL and the next case still runs. */
+export async function runProofCases(opts: {
+  agent: ResultProofAgent
+  command: string
+  cases: ProofCase[]
+  plan: Pick<LaunchPlan, 'launch'>
+  recorded: unknown[]
+  cwd: string
+  out: (line?: string) => void
+  limitMs?: number
+}): Promise<{ allPass: boolean; summaries: string[] }> {
+  const { agent, command, plan, recorded, cwd, out } = opts
+  const limitMs = opts.limitMs ?? CASE_TIME_LIMIT_MS
+  let allPass = true
+  let firstSessionId: string | null = null
+  let firstSummary: string | null = null
+  const summaries: string[] = []
+  for (const proofCase of opts.cases) {
+    out(`\n--- case: ${proofCase.name} (${proofCase.objectives}) ---`)
+    if (proofCase.resume && firstSessionId === null) {
+      out('FAIL: no first session id to resume')
+      allPass = false
+      summaries.push(`FAIL  ${proofCase.name}`)
+      continue
+    }
+    const callsBefore = recorded.length
+    const deadline = Date.now() + limitMs
+    let timedOut = false
+    const invoke = async (
+      resumeId: string | null,
+      prompt: string
+    ): Promise<{ ran: RunOutcome; read: TurnRead; verdict: DriverVerdict; stderrTail: string } | null> => {
+      const launch = plan.launch(resumeId, proofCase.model)
+      const shownArgs = launch.args.map((a) => (a.startsWith('{') ? '<schema>' : a))
+      out(`invocation: ${agent} ${shownArgs.join(' ')}`)
+      const ran = await runChild(
+        command,
+        launch,
+        prompt,
+        cwd,
+        proofCase.cancelAfterMs,
+        Math.max(0, deadline - Date.now())
+      )
+      if (ran.timedOut) {
+        out(`FAIL: ${proofCase.name} timed out after ${CASE_TIME_LIMIT_LABEL}`)
+        timedOut = true
+        return null
+      }
+      if (ran.spawnError) {
+        out(`FAIL: could not spawn ${agent}: ${ran.spawnError}`)
+        return null
+      }
+      const read = agent === 'claude' ? readClaudeTurnOutput(ran.stdout) : readCodexTurnOutput(ran.stdout)
+      const verdict = driverVerdict(read, PROOF_TURN_CONTEXT)
+      out(
+        `exit: code ${ran.exitCode}${ran.signal ? `, signal ${ran.signal}` : ''}; terminal event: ${read.terminal ?? '(none)'}`
+      )
+      out(`provider session: ${read.sessionId ?? '(none reported)'}`)
+      out(`structured emissions seen: ${read.emissions.length}`)
+      for (const emission of read.emissions) out(`  ${clip(JSON.stringify(emission))}`)
+      if (read.errors.length > 0) out(`stream errors: ${providerText(read.errors.join(' | '))}`)
+      const stderrTail = ran.stderr.trim().split('\n').slice(-3).join(' | ')
+      if (stderrTail.length > 0) out(`stderr tail: ${providerText(stderrTail)}`)
+      out(`event read: ${read.event ?? '(none)'}`)
+      out(`schema-valid result reached the driver: ${verdict.crossed ? 'yes' : 'no'}`)
+      if (verdict.crossed) {
+        out(`controller validation: ${verdict.accepted ? 'accepted' : `rejected — ${verdict.errors.join('; ')}`}`)
+        out(`result: ${JSON.stringify(verdict.result)}`)
+      } else {
+        out(`controller validation: nothing to validate — ${verdict.reason}`)
+      }
+      return { ran, read, verdict, stderrTail }
+    }
+    let outcome = await invoke(proofCase.resume ? firstSessionId : null, proofCase.prompt)
+    if (outcome === null) {
+      allPass = false
+      summaries.push(`FAIL  ${proofCase.name}${timedOut ? ` — timed out after ${CASE_TIME_LIMIT_LABEL}` : ''}`)
+      continue
+    }
+    // O6: the controller-rejection case — a first result the controller
+    // refused is answered by resuming the SAME session once with only the
+    // typed failures (the production correction prompt), and only that
+    // second result may be accepted.
+    let firstOfCase: { sessionId: string | null; verdict: DriverVerdict } | null = null
+    if (proofCase.correctOnce) {
+      const firstVerdict = outcome.verdict
+      firstOfCase = { sessionId: outcome.read.sessionId, verdict: firstVerdict }
+      const failures = firstVerdict.crossed && !firstVerdict.accepted ? firstVerdict.errors : []
+      if (outcome.read.sessionId !== null && failures.length > 0) {
+        out('correction: resuming the same session once with the typed failures')
+        const corrected = await invoke(
+          outcome.read.sessionId,
+          turnResultCorrectionPrompt(failures, {
+            round: 2,
+            attempt: 1,
+            head: null,
+            knownFindingIds: PROOF_TURN_CONTEXT.knownFindingIds
+          })
+        )
+        if (corrected === null) {
+          allPass = false
+          summaries.push(`FAIL  ${proofCase.name}${timedOut ? ` — timed out after ${CASE_TIME_LIMIT_LABEL}` : ''}`)
+          continue
+        }
+        outcome = corrected
+      } else out('correction: not run — the first result was not rejected')
+    }
+    const { read, verdict, stderrTail } = outcome
+    out(`dev-tools calls received by the driver: ${recorded.length - callsBefore}`)
+    const judged = judgeCase(
+      proofCase.expectation,
+      read,
+      verdict,
+      firstOfCase
+        ? { firstSessionId: firstOfCase.sessionId, firstVerdict: firstOfCase.verdict }
+        : { firstSessionId, firstSummary }
+    )
+    if (proofCase.name === 'first session') {
+      firstSessionId = read.sessionId
+      firstSummary = verdict.crossed ? verdict.result.summary : null
+      if (recorded.length - callsBefore < 1) {
+        judged.pass = false
+        judged.why.push('FAIL: the session made no dev-tools call')
+      }
+    }
+    if (proofCase.resume && recorded.length - callsBefore < 1) {
+      judged.pass = false
+      judged.why.push('FAIL: the resumed session made no dev-tools call')
+    }
+    if (proofCase.schemaRejects) {
+      const checked = checkSchemaRejects(proofTurnSchema(), proofCase.schemaRejects)
+      if (!checked.pass) judged.pass = false
+      judged.why.push(...checked.why)
+    }
+    for (const line of judged.why) out(`  ${line}`)
+    out(`verdict: ${judged.pass ? 'PASS' : 'FAIL'}`)
+    if (!judged.pass) allPass = false
+    // The summary repeats each case's deciding facts on one line, so a reader
+    // that keeps only the tail of this output still sees why a case failed.
+    const failures = judged.why.filter((line) => line.startsWith('FAIL: '))
+    const emitted = read.emissions.map((e) => emissionSummary(e)).join(',')
+    summaries.push(
+      `${judged.pass ? 'PASS' : 'FAIL'}  ${proofCase.name} — terminal ${read.terminal ?? '(none)'}; emissions [${emitted}]; ` +
+        `accepted ${verdict.crossed && verdict.accepted ? JSON.stringify(verdict.result.summary) : 'none'}` +
+        (failures.length > 0 ? `; ${clip(failures.join(' / '), 300)}` : '') +
+        (!verdict.crossed && read.event === null && read.errors.length > 0
+          ? `; errors: ${providerText(read.errors.join(' | '), 200)}`
+          : '') +
+        (read.event === null && stderrTail.length > 0 ? `; stderr: ${providerText(stderrTail, 200)}` : '')
+    )
+  }
+  return { allPass, summaries }
 }
 
 /** The command entry point: run every case for one agent and print the report. */
@@ -562,124 +813,17 @@ export async function resultProofCommand(args: string[]): Promise<void> {
     )
     out(`turn context: ${JSON.stringify(PROOF_TURN_CONTEXT)}`)
 
-    let firstSessionId: string | null = null
-    let firstSummary: string | null = null
-    const summaries: string[] = []
-    for (const proofCase of proofCases(agent, nonce)) {
-      out(`\n--- case: ${proofCase.name} (${proofCase.objectives}) ---`)
-      if (proofCase.resume && firstSessionId === null) {
-        out('FAIL: no first session id to resume')
-        allPass = false
-        summaries.push(`FAIL  ${proofCase.name}`)
-        continue
-      }
-      const callsBefore = recorded.length
-      const invoke = async (
-        resumeId: string | null,
-        prompt: string
-      ): Promise<{ ran: RunOutcome; read: TurnRead; verdict: DriverVerdict; stderrTail: string } | null> => {
-        const launch = plan.launch(resumeId, proofCase.model)
-        const shownArgs = launch.args.map((a) => (a.startsWith('{') ? '<schema>' : a))
-        out(`invocation: ${agent} ${shownArgs.join(' ')}`)
-        const ran = await runChild(agent, launch, prompt, cwd, proofCase.cancelAfterMs)
-        if (ran.spawnError) {
-          out(`FAIL: could not spawn ${agent}: ${ran.spawnError}`)
-          return null
-        }
-        const read = agent === 'claude' ? readClaudeTurnOutput(ran.stdout) : readCodexTurnOutput(ran.stdout)
-        const verdict = driverVerdict(read, PROOF_TURN_CONTEXT)
-        out(
-          `exit: code ${ran.exitCode}${ran.signal ? `, signal ${ran.signal}` : ''}; terminal event: ${read.terminal ?? '(none)'}`
-        )
-        out(`provider session: ${read.sessionId ?? '(none reported)'}`)
-        out(`structured emissions seen: ${read.emissions.length}`)
-        for (const emission of read.emissions) out(`  ${clip(JSON.stringify(emission))}`)
-        if (read.errors.length > 0) out(`stream errors: ${providerText(read.errors.join(' | '))}`)
-        const stderrTail = ran.stderr.trim().split('\n').slice(-3).join(' | ')
-        if (stderrTail.length > 0) out(`stderr tail: ${providerText(stderrTail)}`)
-        out(`event read: ${read.event ?? '(none)'}`)
-        out(`schema-valid result reached the driver: ${verdict.crossed ? 'yes' : 'no'}`)
-        if (verdict.crossed) {
-          out(`controller validation: ${verdict.accepted ? 'accepted' : `rejected — ${verdict.errors.join('; ')}`}`)
-          out(`result: ${JSON.stringify(verdict.result)}`)
-        } else {
-          out(`controller validation: nothing to validate — ${verdict.reason}`)
-        }
-        return { ran, read, verdict, stderrTail }
-      }
-      let outcome = await invoke(proofCase.resume ? firstSessionId : null, proofCase.prompt)
-      if (outcome === null) {
-        allPass = false
-        summaries.push(`FAIL  ${proofCase.name}`)
-        continue
-      }
-      // O6: the controller-rejection case — a first result the controller
-      // refused is answered by resuming the SAME session once with only the
-      // typed failures (the production correction prompt), and only that
-      // second result may be accepted.
-      let firstOfCase: { sessionId: string | null; verdict: DriverVerdict } | null = null
-      if (proofCase.correctOnce) {
-        const firstVerdict = outcome.verdict
-        firstOfCase = { sessionId: outcome.read.sessionId, verdict: firstVerdict }
-        const failures = firstVerdict.crossed && !firstVerdict.accepted ? firstVerdict.errors : []
-        if (outcome.read.sessionId !== null && failures.length > 0) {
-          out('correction: resuming the same session once with the typed failures')
-          const corrected = await invoke(
-            outcome.read.sessionId,
-            turnResultCorrectionPrompt(failures, {
-              round: 2,
-              attempt: 1,
-              head: null,
-              knownFindingIds: PROOF_TURN_CONTEXT.knownFindingIds
-            })
-          )
-          if (corrected === null) {
-            allPass = false
-            summaries.push(`FAIL  ${proofCase.name}`)
-            continue
-          }
-          outcome = corrected
-        } else out('correction: not run — the first result was not rejected')
-      }
-      const { read, verdict, stderrTail } = outcome
-      out(`dev-tools calls received by the driver: ${recorded.length - callsBefore}`)
-      const judged = judgeCase(
-        proofCase.expectation,
-        read,
-        verdict,
-        firstOfCase
-          ? { firstSessionId: firstOfCase.sessionId, firstVerdict: firstOfCase.verdict }
-          : { firstSessionId, firstSummary }
-      )
-      if (proofCase.name === 'first session') {
-        firstSessionId = read.sessionId
-        firstSummary = verdict.crossed ? verdict.result.summary : null
-        if (recorded.length - callsBefore < 1) {
-          judged.pass = false
-          judged.why.push('FAIL: the session made no dev-tools call')
-        }
-      }
-      if (proofCase.resume && recorded.length - callsBefore < 1) {
-        judged.pass = false
-        judged.why.push('FAIL: the resumed session made no dev-tools call')
-      }
-      for (const line of judged.why) out(`  ${line}`)
-      out(`verdict: ${judged.pass ? 'PASS' : 'FAIL'}`)
-      if (!judged.pass) allPass = false
-      // The summary repeats each case's deciding facts on one line, so a reader
-      // that keeps only the tail of this output still sees why a case failed.
-      const failures = judged.why.filter((line) => line.startsWith('FAIL: '))
-      const emitted = read.emissions.map((e) => emissionSummary(e)).join(',')
-      summaries.push(
-        `${judged.pass ? 'PASS' : 'FAIL'}  ${proofCase.name} — terminal ${read.terminal ?? '(none)'}; emissions [${emitted}]; ` +
-          `accepted ${verdict.crossed && verdict.accepted ? JSON.stringify(verdict.result.summary) : 'none'}` +
-          (failures.length > 0 ? `; ${clip(failures.join(' / '), 300)}` : '') +
-          (!verdict.crossed && read.event === null && read.errors.length > 0
-            ? `; errors: ${providerText(read.errors.join(' | '), 200)}`
-            : '') +
-          (read.event === null && stderrTail.length > 0 ? `; stderr: ${providerText(stderrTail, 200)}` : '')
-      )
-    }
+    const run = await runProofCases({
+      agent,
+      command: agent,
+      cases: proofCases(agent, nonce),
+      plan,
+      recorded,
+      cwd,
+      out
+    })
+    if (!run.allPass) allPass = false
+    const summaries = run.summaries
     out(`\n=== summary — ${agent} ===`)
     for (const line of summaries) out(line)
     out(`PROOF: ${allPass ? 'PASS' : 'FAIL'}`)
