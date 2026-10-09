@@ -148,6 +148,7 @@ import {
   checkDocumentationSourcesReadable,
   checkTaskDispatchReadiness,
   createTaskWorktree,
+  createTaskWorktreeFromRemote,
   describeObjectivesEdit,
   developerBranchFor,
   DeveloperStopSignal,
@@ -469,6 +470,13 @@ export type LoopDeps = {
    * can no longer fall back to creating one itself.
    */
   createTaskWorktree: (branch: string) => void
+  /**
+   * Creates `.worktrees/<branch>` from the branch already on the remote, at its
+   * pushed head, tracking it — for a task continued on a machine with no
+   * worktree. Never resets, rebases or pushes; throws when it cannot, or when an
+   * existing local branch's head differs from the remote head.
+   */
+  createTaskWorktreeFromRemote: (branch: string) => void
   /** O4: the durable session id `dispatch.ts` last recorded for this repo+role+vendor+task, or `null`. */
   readResumeRecord: (
     task: number,
@@ -2171,6 +2179,7 @@ function defaultDeps(): LoopDeps {
     findOpenPrForBranch,
     fetchIssueTitle,
     createTaskWorktree,
+    createTaskWorktreeFromRemote,
     readResumeRecord: (task, agent, repo) => realReadResumeRecord('developer', agent, repo, task),
     runtimeDir,
     resolveLogAppendPath,
@@ -3720,6 +3729,38 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       opts: { skipResumeContext?: boolean; developerFiles?: readonly string[] }
     ): Promise<DispatchHandle> {
       const isResume = devResumeId !== null
+      // A branch that holds task commits on the remote while this machine has no
+      // worktree for it (a task continued from another machine) gets its
+      // worktree from the pushed head now; a failure throws, which pauses as an
+      // infrastructure pause rather than dispatching a Developer with no worktree.
+      if (!existsSync(worktreePathForBranch())) {
+        let remoteBranchHead: string | null = null
+        try {
+          remoteBranchHead = d.resolveHead(branch)
+        } catch {
+          remoteBranchHead = null
+        }
+        // A pushed head this machine has never fetched cannot be an ancestor of
+        // its default branch, so an ancestry check that cannot resolve it means
+        // the branch holds task commits.
+        let hasTaskCommits = remoteBranchHead !== null
+        if (remoteBranchHead !== null) {
+          try {
+            hasTaskCommits = !d.gitIsAncestor(remoteBranchHead, d.gitRevParseOriginMain())
+          } catch {
+            hasTaskCommits = true
+          }
+        }
+        if (hasTaskCommits) {
+          try {
+            d.createTaskWorktreeFromRemote(branch)
+          } catch (err) {
+            throw new Error(
+              `could not create the task worktree for branch ${branch} at ${worktreePathForBranch()} from origin: ${err instanceof Error ? err.message : String(err)}`
+            )
+          }
+        }
+      }
       // This is the same handoff the controller uses in settleTurnResult.
       // Passing it into the launcher makes the vendor schema turn-specific.
       const turnResultKnownFindingIds = handoffFindingIdsByRound.get(roundNum) ?? []
@@ -3748,11 +3789,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             .join('\n\n')
       // O1/O3: confine the Developer to
       // its own worktree — this driver's own round-1 `createTaskWorktree`
-      // call (above, in the branch-creation branch) already created it before
-      // the first dispatch, so this is non-null from round 1 on in the normal
-      // case. `null` on a fresh attach with nothing dispatched here yet (the
-      // same "driver running on a different host" case `reviewer-isolation.ts`'s
-      // own doc names, or this driver's own worktree creation failing) — where
+      // call (above, in the branch-creation branch) or the from-remote creation
+      // at the top of this function already created it, so this is non-null in
+      // the normal case. `null` only when the branch is a commit-free address
+      // reservation whose own worktree creation failed — where
       // `dispatchRole` falls back to the repo root instead (its own doc
       // comment on `unattended`) rather than refusing.
       const devWorktreeDir = existsSync(worktreePathForBranch()) ? worktreePathForBranch() : null

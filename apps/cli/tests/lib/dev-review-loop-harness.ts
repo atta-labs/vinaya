@@ -256,6 +256,12 @@ export type LoopWorld = {
   // --- recorded side effects, for assertions ---
   /** O1/O2: each developer branch the loop created on the remote at round-1 start (`createTaskWorktree`) — empty on a start that found the branch already there (an open PR, or a remote branch with none). */
   remoteBranchCreations: string[]
+  /** Each worktree the loop created from the pushed branch (`createTaskWorktreeFromRemote`), with the remote head it was created at. */
+  worktreesFromRemote: Array<{ branch: string; head: string }>
+  /** When set, `createTaskWorktreeFromRemote` throws this message instead of creating the worktree. */
+  worktreeFromRemoteFailure?: string
+  /** When true, `createTaskWorktreeFromRemote` also creates `<repoRoot>/.worktrees/<branch>`; default `false`, so a fixture that never models a second machine keeps its worktree-less behaviour. */
+  worktreeFromRemoteCreatesDir?: boolean
   postedComments: PostedComment[]
   dispatches: DispatchRecord[]
   /** How many times each role was dispatched, cumulative across rounds. */
@@ -387,6 +393,7 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     runChecksEnv: null,
     runChecksPassed: true,
     remoteBranchCreations: [],
+    worktreesFromRemote: [],
     evidenceOutcome: { ok: true, gatesFailed: false },
     blockEvidenceUntilReviewerStarts: false,
     reviewerDispatchStarted: false,
@@ -625,6 +632,15 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       // `branchAtBaseTip` (`pushTaskBranch`).
       world.remoteBranchExists = true
       world.branchAtBaseTip = true
+    },
+    // A task continued on a machine with no worktree: the real function fetches
+    // the pushed branch and adds a tracking worktree at its head. Model it by
+    // recording the head and, when the fixture asks, creating the directory
+    // the driver's own `existsSync` then finds.
+    createTaskWorktreeFromRemote: (branch: string) => {
+      if (world.worktreeFromRemoteFailure !== undefined) throw new Error(world.worktreeFromRemoteFailure)
+      world.worktreesFromRemote.push({ branch, head: world.head })
+      if (world.worktreeFromRemoteCreatesDir) mkdirSync(join(world.repoRoot, '.worktrees', branch), { recursive: true })
     },
     readResumeRecord: () => null,
     runtimeDir: () => world.runtimeDir,

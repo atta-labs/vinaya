@@ -686,6 +686,39 @@ export function createTaskWorktree(branch: string): void {
   sh('git', ['-C', worktreeDir, 'branch', '-u', `origin/${branch}`])
 }
 
+/**
+ * Creates the task's worktree at `.worktrees/<branch>` from the branch already
+ * pushed to `origin`, at its pushed head — the continuation of a task whose
+ * worktree lives on another machine. The branch is fetched, never reset,
+ * rebased or pushed: a new local branch tracks `origin/<branch>`, and a local
+ * branch that already exists is reused only when its head equals the remote
+ * head, otherwise this throws naming both heads. A worktree that already exists
+ * is left untouched. Throws on any git failure.
+ */
+export function createTaskWorktreeFromRemote(branch: string): void {
+  const worktreeDir = join('.worktrees', branch)
+  if (existsSync(worktreeDir)) return
+  sh('git', ['fetch', '--quiet', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`])
+  const remoteHead = sh('git', ['rev-parse', `refs/remotes/origin/${branch}`]).trim()
+  let localHead: string | null = null
+  try {
+    localHead = sh('git', ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]).trim() || null
+  } catch {
+    localHead = null
+  }
+  if (localHead === null) {
+    sh('git', ['worktree', 'add', '--track', '-b', branch, worktreeDir, `origin/${branch}`])
+    return
+  }
+  if (localHead !== remoteHead) {
+    throw new Error(
+      `local branch ${branch} is at ${localHead} but origin/${branch} is at ${remoteHead}; reconcile them, then resume`
+    )
+  }
+  sh('git', ['worktree', 'add', worktreeDir, branch])
+  sh('git', ['-C', worktreeDir, 'branch', '-u', `origin/${branch}`])
+}
+
 /** The start found a remote task branch its existing worktree cannot fast-forward to. */
 export class TaskWorktreeDivergedError extends Error {
   constructor(

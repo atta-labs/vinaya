@@ -4,7 +4,8 @@
  * `dev-review-loop-harness.ts` for the shared in-process driver harness.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { newestPrincipalRulingOrdinal } from '@attalabs/aeg-core'
@@ -20,6 +21,7 @@ import {
   outboxLines,
   roundDir,
   runLoopInProcess,
+  taskRunDir,
   type LoopWorld,
   seedAcceptedTurnResult,
   defaultDeveloperTurnOutput,
@@ -38,6 +40,13 @@ import {
 import type { DispatchHandle } from '../../../src/lib/dispatch.js'
 
 afterEach(cleanupWorlds)
+
+/** A pid that has definitely already exited, so a same-process resume never refuses itself as a running driver. */
+function deadPid(): number {
+  const r = spawnSync('true', [])
+  if (typeof r.pid !== 'number') throw new Error('spawnSync did not report a pid')
+  return r.pid
+}
 
 function escalationRecordPath(world: LoopWorld, round: number, head: string): string {
   return join(controlDir(world), 'escalation', `${world.task}-${round}-${head}.json`)
@@ -1095,6 +1104,80 @@ describe('devReviewLoop — a start whose worktree cannot fast-forward to the re
     expect(decision.detail).toContain(world.branch)
     expect(decision.detail).toContain('aaaa111')
     expect(decision.detail).toContain('bbbb222')
+    expect(prompts).toHaveLength(0)
+  })
+})
+
+describe('devReviewLoop — a task continued on a machine with no worktree gets one from the pushed branch', () => {
+  function worktreePath(world: LoopWorld): string {
+    return join(world.repoRoot, '.worktrees', world.branch)
+  }
+
+  it('a fresh run creates the worktree at the remote head before the Developer turn starts', async () => {
+    const world = makeWorld({ developerPushed: true, worktreeFromRemoteCreatesDir: true })
+    expect(existsSync(worktreePath(world))).toBe(false)
+    const { deps } = controlledDeveloperDeps(world, { openPrAfterCall: 1 })
+    const cwds: Array<string | undefined> = []
+    const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
+      if (role === 'developer') cwds.push(opts.cwd)
+      return deps.dispatchRole!(role, agent, prompt, opts)
+    }
+    await runLoopInProcessSafe(world, { ...deps, dispatchRole })
+
+    expect(world.worktreesFromRemote).toEqual([{ branch: world.branch, head: world.head }])
+    expect(world.remoteBranchCreations).toEqual([])
+    expect(cwds).toEqual([worktreePath(world)])
+  })
+
+  it('a resume after a ruling creates the worktree before the Developer turn starts', async () => {
+    const world = makeWorld({
+      developerPushed: true,
+      worktreeFromRemoteCreatesDir: true,
+      roleOutcomes: {
+        1: {
+          reviewer: {
+            findings: '',
+            report: 'ESCALATE: authority\nSUMMARY: needs a call.\n',
+            objectives: null,
+            sessionId: 'rev-1'
+          }
+        }
+      }
+    })
+    const paused = await runLoopInProcess(world)
+    expect(paused.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+
+    // Another machine: the ruling arrives, and the worktree is not here.
+    rmSync(worktreePath(world), { recursive: true, force: true })
+    world.worktreesFromRemote.length = 0
+    world.rulings = ['Go ahead and fix it.']
+    world.rulingOrdinal = 1
+    world.rulingAuthor = 'daniboomerang'
+    world.roleOutcomes[1]!.reviewer = undefined
+    writeFileSync(
+      join(taskRunDir(world), 'driver.pid.json'),
+      JSON.stringify({ pid: deadPid(), startedAt: new Date(0).toISOString() }),
+      'utf8'
+    )
+
+    const resumed = await runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude' })
+    expect(resumed.finalDecision.type).toBe('publish')
+    expect(world.worktreesFromRemote).toEqual([{ branch: world.branch, head: world.head }])
+    const developerDispatches = world.dispatches.filter((dispatch) => dispatch.role === 'developer')
+    expect(developerDispatches.at(-1)?.cwd).toBe(worktreePath(world))
+  })
+
+  it('a failed creation pauses as an infrastructure pause naming branch, path and error, with no Developer turn', async () => {
+    const world = makeWorld({ developerPushed: true, worktreeFromRemoteFailure: 'fatal: simulated git error' })
+    const { deps, prompts } = controlledDeveloperDeps(world, { openPrAfterCall: 1 })
+    const result = await runLoopInProcessSafe(world, deps)
+
+    expect(result.finalDecision.type).toBe('pause')
+    const decision = result.finalDecision as { reason: string; detail: string }
+    expect(decision.reason).toBe('infrastructure')
+    expect(decision.detail).toContain(world.branch)
+    expect(decision.detail).toContain(worktreePath(world))
+    expect(decision.detail).toContain('fatal: simulated git error')
     expect(prompts).toHaveLength(0)
   })
 })
