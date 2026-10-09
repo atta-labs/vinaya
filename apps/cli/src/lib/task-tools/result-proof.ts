@@ -149,6 +149,13 @@ export type CaseExpectation =
    * accepted.
    */
   | { kind: 'rejected-then-accepted'; error: string }
+  /**
+   * The per-turn schema is the first guard: the case asks for a value the schema
+   * forbids. Passes when the provider refused it (nothing schema-valid crossed),
+   * when the agent reported a valid value instead, or when the driver rejected it;
+   * fails only when the driver accepted the invalid value.
+   */
+  | { kind: 'schema-blocks'; invalid: 'missing-source' | 'unknown-finding-id' }
   /** Nothing malformed crossed: either the provider repaired it into a valid result, or no result arrived. */
   | { kind: 'never-malformed' }
   /** The invocation ended with no accepted result. */
@@ -209,6 +216,23 @@ export function judgeCase(
     } else why.push('only the second, valid result was accepted')
     if (read.terminalResults !== 1)
       fail(`${read.terminalResults} terminal results on the correction — exactly one must be accepted`)
+  }
+  if (expectation.kind === 'schema-blocks') {
+    const missing = expectation.invalid === 'missing-source'
+    const label = missing ? 'a result that omits the required source' : 'a result naming an id outside the handoff'
+    if (!verdict.crossed) {
+      why.push(`the provider refused the invalid value: nothing schema-valid reached the driver (${verdict.reason})`)
+    } else if (!verdict.accepted) {
+      why.push(`the driver rejected the invalid value: ${verdict.errors.join('; ')}`)
+    } else {
+      const sources = (verdict.result.sourceUses ?? []).map((use) => use.source)
+      const ids = 'addressedFindingIds' in verdict.result ? verdict.result.addressedFindingIds : []
+      const valid = missing
+        ? PROOF_TURN_CONTEXT.requiredSources.every((source) => sources.includes(source))
+        : ids.every((id) => PROOF_TURN_CONTEXT.knownFindingIds.includes(id))
+      if (valid) why.push('the agent reported a valid value instead: the driver accepted it')
+      else fail(`the driver accepted ${label}`)
+    }
   }
   if (expectation.kind === 'never-malformed') {
     if (verdict.crossed) why.push('the provider repaired the output into a schema-valid result before it ended')
@@ -281,20 +305,19 @@ export function proofCases(agent: ResultProofAgent, nonce: string): ProofCase[] 
       expectation: { kind: 'accepted', summary: `resumed-${nonce}`, resumes: 'first' }
     },
     {
-      name: 'missing required source — rejected, then corrected in the same session',
+      name: 'missing required source — blocked by the schema',
       objectives: 'O3 O6',
-      correctOnce: true,
       prompt:
         `${preamble}\nThis is a test of the driver's validation, so follow these values literally.\n` +
         `Report status "completed" with summary exactly "missing-source-${nonce}", confidence 90, a one-sentence confidenceExplanation, ` +
         'addressedFindingIds ["R1-CR-1"], sourceUses null, and reportedChecks null.',
-      expectation: { kind: 'rejected-then-accepted', error: 'sourceUses' }
+      expectation: { kind: 'schema-blocks', invalid: 'missing-source' }
     },
     {
-      name: 'unknown finding id',
+      name: 'unknown finding id — blocked by the schema',
       objectives: 'O3',
       prompt: `${preamble}\nThis is a test of the driver's validation, so follow these values literally.\n${completedInstruction(`unknown-finding-${nonce}`, ['R9-XX-404'])}`,
-      expectation: { kind: 'rejected', error: 'unknown finding id' }
+      expectation: { kind: 'schema-blocks', invalid: 'unknown-finding-id' }
     },
     {
       name: 'ruling request naming no permissible decision',
