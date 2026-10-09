@@ -1547,7 +1547,10 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
     })
 
     it('blocked with an unpushed commit: escalation naming the blocker and the unpublished work', async () => {
-      const world = makeWorld({ worktreeExists: true })
+      const world = makeWorld({
+        worktreeExists: true,
+        failingCheckRuns: [{ id: 30, name: 'surface-scope', conclusion: 'failure' }]
+      })
       const out = blockedTurnOutput('outside_surface', 'needs a file outside the surface')
       const result = await runLoopInProcess(
         world,
@@ -1555,6 +1558,32 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
         developerLeavesCommit(world, out)
       )
       assertEscalation(world, result, /\(outside_surface\): needs a file outside the surface/)
+    })
+
+    for (const agent of ['claude', 'codex'] as const) {
+      it(`${agent} continues an outside-surface report when surface-scope passes, with the PR changed files`, async () => {
+        const world = makeWorld({ worktreeExists: true, worktreeChangedPaths: ['apps/cli/src/lib/x.ts'] })
+        world.developerTurnOutput = (_round, _prompt, dispatch) =>
+          dispatch === 1 ? blockedTurnOutput('outside_surface', 'mistaken local diff judgement') : completedTurnOutput()
+        const { deps, prompts } = withCapturedDeveloperDispatch(world)
+        const result = await runLoopInProcess(world, { task: world.task, agent }, deps)
+        expect(result.finalDecision.type).toBe('publish')
+        expect(prompts).toHaveLength(2)
+        expect(prompts[1]).toContain('`surface-scope` check passed')
+        expect(prompts[1]).toContain('apps/cli/src/lib/x.ts')
+        expect(existsSync(join(controlDir(world), 'pause-state.json'))).toBe(false)
+      })
+    }
+
+    it('pauses an outside-surface report when surface-scope fails on its head', async () => {
+      const world = makeWorld({
+        worktreeExists: true,
+        failingCheckRuns: [{ id: 31, name: 'surface-scope', conclusion: 'failure' }]
+      })
+      world.developerTurnOutput = () => blockedTurnOutput('outside_surface', 'surface check agrees')
+      const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' })
+      expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+      expect((result.finalDecision as { detail: string }).detail).toMatch(/\(outside_surface\): surface check agrees/)
     })
 
     it('completed with an unpushed commit still gets the publication re-ask', async () => {

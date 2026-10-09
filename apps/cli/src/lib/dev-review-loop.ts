@@ -4056,6 +4056,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           ].join('\n\n')
           continue
         }
+        const falseOutsideSurface = await outsideSurfaceRetryPaths(handle, roundNum, opts.answersFindings === true)
+        if (falseOutsideSurface !== null) {
+          currentPrompt = [
+            "Your previous turn reported `outside_surface`, but the driver's `surface-scope` check passed on that turn's head.",
+            'Continue the task without pausing. The pull request changed-file list (merge-base three-dot diff) is:',
+            falseOutsideSurface.length > 0
+              ? falseOutsideSurface.map((path) => `- ${path}`).join('\n')
+              : '- (no changed files found)',
+            `End your turn — ${publishingInstructionLine()}`
+          ].join('\n\n')
+          continue
+        }
         // A dispatch that only re-asks for the turn result (O1) is now
         // confirmed clean and publishes nothing.
         // A turn that ends `blocked` or `needs_ruling` is read BEFORE the
@@ -4090,6 +4102,37 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         documentation: handle.documentation ?? { sources: [], countedReads: [] }
       })
       return verdict.ok && pauseForAcceptedResult(verdict.result) !== null
+    }
+
+    /**
+     * `outside_surface` is only a real escalation when the authoritative
+     * surface-scope gate failed on the same head. A passing gate means the
+     * Developer's local diff judgement was a false alarm, so return the PR's
+     * merge-base diff for one ordinary retry instead of pausing the loop.
+     */
+    async function outsideSurfaceRetryPaths(
+      handle: DispatchHandle,
+      roundNum: number,
+      answersFindings: boolean
+    ): Promise<string[] | null> {
+      const verdict = judgeTurnOutput(handle.turnOutput, {
+        round: roundNum,
+        knownFindingIds: handoffFindingIdsByRound.get(roundNum) ?? [],
+        requireAddressedFindings: answersFindings && (handoffFindingIdsByRound.get(roundNum) ?? []).length > 0,
+        documentation: handle.documentation ?? { sources: [], countedReads: [] }
+      })
+      if (!verdict.ok || verdict.result.status !== 'blocked' || verdict.result.blocker.kind !== 'outside_surface')
+        return null
+      const worktree = worktreePathForBranch()
+      const head = existsSync(worktree) ? d.readWorktreeHead(worktree) : null
+      if (head === null || d.fetchFailingCheckRuns(head).some((run) => run.name === 'surface-scope')) return null
+      try {
+        const base = await d.gitMergeBase(head)
+        return d.gitWorktreeChangedPaths(worktree, base)
+      } catch {
+        // A missing merge base leaves the existing conservative escalation.
+        return null
+      }
     }
 
     /**
