@@ -1610,6 +1610,41 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
       })
     }
 
+    for (const agent of ['claude', 'codex'] as const) {
+      it(`${agent} continues a first test-failure report after one re-ask carrying the sandbox-versus-CI wording`, async () => {
+        const world = makeWorld({ worktreeExists: true })
+        world.developerTurnOutput = (_round, _prompt, dispatch) =>
+          dispatch === 1 ? blockedTurnOutput('test_failure', 'fails in my sandbox') : completedTurnOutput()
+        const { deps, prompts } = withCapturedDeveloperDispatch(world, {})
+        const result = await runLoopInProcess(world, { task: world.task, agent }, deps)
+        expect(result.finalDecision.type).toBe('publish')
+        expect(prompts).toHaveLength(2)
+        expect(prompts[1]).toContain("A failing test is the Developer's to fix")
+        expect(prompts[1]).toContain("CI on the pull request's head is the authority")
+        expect(prompts[1]).toContain('also fails on `origin/main` in a clean checkout')
+        expect(existsSync(join(controlDir(world), 'pause-state.json'))).toBe(false)
+      })
+
+      it(`${agent} pauses after the one allowed test-failure re-ask`, async () => {
+        const world = makeWorld({ worktreeExists: true })
+        world.developerTurnOutput = () => blockedTurnOutput('test_failure', 'still failing on main')
+        const { deps, prompts } = withCapturedDeveloperDispatch(world, {})
+        const result = await runLoopInProcess(world, { task: world.task, agent }, deps)
+        expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+        expect((result.finalDecision as { detail: string }).detail).toMatch(/\(test_failure\): still failing on main/)
+        expect(prompts).toHaveLength(2)
+      })
+    }
+
+    it('a needs_ruling report is not re-asked', async () => {
+      const world = makeWorld({ worktreeExists: true })
+      world.developerTurnOutput = () => needsRulingTurnOutput('Widen the surface?', ['widen_surface', 'stop_task'])
+      const { deps, prompts } = withCapturedDeveloperDispatch(world, {})
+      const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
+      expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+      expect(prompts).toHaveLength(1)
+    })
+
     it('completed with an unpushed commit still gets the publication re-ask', async () => {
       const world = makeWorld({ worktreeExists: true })
       const out = completedTurnOutput()
