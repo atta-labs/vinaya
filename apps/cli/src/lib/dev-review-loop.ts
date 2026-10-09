@@ -148,6 +148,7 @@ import {
   checkDocumentationSourcesReadable,
   checkTaskDispatchReadiness,
   createTaskWorktree,
+  createTaskWorktreeFromRemote,
   describeObjectivesEdit,
   developerBranchFor,
   DeveloperStopSignal,
@@ -469,6 +470,13 @@ export type LoopDeps = {
    * can no longer fall back to creating one itself.
    */
   createTaskWorktree: (branch: string) => void
+  /**
+   * Creates `.worktrees/<branch>` from the branch already on the remote, at its
+   * pushed head, tracking it — for a task continued on a machine with no
+   * worktree. Never resets, rebases or pushes; throws when it cannot, or when an
+   * existing local branch's head differs from the remote head.
+   */
+  createTaskWorktreeFromRemote: (branch: string) => void
   /** O4: the durable session id `dispatch.ts` last recorded for this repo+role+vendor+task, or `null`. */
   readResumeRecord: (
     task: number,
@@ -2171,6 +2179,7 @@ function defaultDeps(): LoopDeps {
     findOpenPrForBranch,
     fetchIssueTitle,
     createTaskWorktree,
+    createTaskWorktreeFromRemote,
     readResumeRecord: (task, agent, repo) => realReadResumeRecord('developer', agent, repo, task),
     runtimeDir,
     resolveLogAppendPath,
@@ -3755,6 +3764,27 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // own doc names, or this driver's own worktree creation failing) — where
       // `dispatchRole` falls back to the repo root instead (its own doc
       // comment on `unattended`) rather than refusing.
+      // A branch that holds task commits on the remote while this machine has no
+      // worktree for it (a task continued from another machine) gets its
+      // worktree from the pushed head now; a failure throws, which pauses as an
+      // infrastructure pause rather than dispatching a Developer with no worktree.
+      if (!existsSync(worktreePathForBranch())) {
+        let remoteBranchHead: string | null = null
+        try {
+          remoteBranchHead = d.resolveHead(branch)
+        } catch {
+          remoteBranchHead = null
+        }
+        if (remoteBranchHead !== null && !d.gitIsAncestor(remoteBranchHead, d.gitRevParseOriginMain())) {
+          try {
+            d.createTaskWorktreeFromRemote(branch)
+          } catch (err) {
+            throw new Error(
+              `could not create the task worktree for branch ${branch} at ${worktreePathForBranch()} from origin: ${err instanceof Error ? err.message : String(err)}`
+            )
+          }
+        }
+      }
       const devWorktreeDir = existsSync(worktreePathForBranch()) ? worktreePathForBranch() : null
       // O7: the head the Developer starts this turn from — its own worktree's
       // HEAD, when one exists — recorded so the publication step can confirm
