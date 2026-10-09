@@ -36,6 +36,36 @@ export const DOCTRINE_SOURCES = [
   'aeg-root/templates/brief-template.md'
 ] as const
 
+/**
+ * Every repo-relative file (or, when it ends in `/`, directory) the suite's
+ * result depends on. On a pull request whose diff touches none of them the
+ * live runs are skipped (`conformanceSkipReason`, `sandbox-launch.ts`). A test
+ * keeps it complete: every text the command list is read from and every
+ * module the suite imports must be covered.
+ */
+export const SUITE_INPUTS: readonly string[] = [
+  ...DOCTRINE_SOURCES,
+  // The command data file, the known-failures list and the suite's own code.
+  'apps/cli/tests/sandbox-conformance/',
+  'apps/cli/tests/lib/process-fixture.ts',
+  'apps/cli/tests/lib/dispatch/driver-socket-reach.ts',
+  // The driver code that builds each agent's sandbox settings.
+  'apps/cli/src/lib/dispatch.ts',
+  'apps/cli/src/lib/worker-boundary.ts',
+  'apps/cli/src/lib/task-tools/dev-tools-registration.ts',
+  // The brief renderer and the types it is built from.
+  'packages/aeg-core/src/',
+  'packages/aeg-types/src/',
+  'bun.lock',
+  'vinaya.config.json',
+  '.github/workflows/ci.yml'
+]
+
+/** Whether `path` is one of `SUITE_INPUTS`, or inside one of its directories. */
+export function isSuiteInput(path: string): boolean {
+  return SUITE_INPUTS.some((input) => (input.endsWith('/') ? path.startsWith(input) : path === input))
+}
+
 /** The label the rendered brief's commands are reported under. */
 export const RENDERED_BRIEF_SOURCE = 'rendered brief (renderBrief over aeg-root/templates/brief-template.md)'
 
