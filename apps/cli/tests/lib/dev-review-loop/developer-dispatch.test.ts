@@ -355,6 +355,12 @@ describe('renderDeveloperDoctrineBlock', () => {
     expect(block).toContain('bun apps/cli/src/index.ts doctrine --role developer --print')
     expect(block).not.toContain('aeg-root/roles/developer.md')
   })
+
+  it('says a dispatched session gives no read receipt, and a missing doctrine still sends no block (O1, O3)', () => {
+    const block = renderDeveloperDoctrineBlock(assembleDeveloperDoctrine(DEV_SHORT, REFERENCE_BODY) ?? '')
+    expect(block).toContain('A session the review loop dispatched gives no receipt')
+    expect(assembleDeveloperDoctrine('   \n  ', REFERENCE_BODY)).toBeNull()
+  })
 })
 
 // O1: real git, real worktree — `createTaskWorktree`
