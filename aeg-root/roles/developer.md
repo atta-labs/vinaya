@@ -53,7 +53,6 @@ You execute **one** brief, on **one** branch, and answer for it. You are the onl
 ---
 
 ## Reference
-
 **Surface:** judge it by the driver's `surface-scope` check, never by a diff run by hand.
 
 **Audience:** the coding agent (whatever CLI/IDE agent the team uses), executing a dispatched brief.
