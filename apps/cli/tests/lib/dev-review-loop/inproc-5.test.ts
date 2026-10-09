@@ -1169,8 +1169,10 @@ describe('devReviewLoop — a task continued on a machine with no worktree gets 
     const { deps } = controlledDeveloperDeps(world, { openPrAfterCall: 1 })
     await runLoopInProcessSafe(world, {
       ...deps,
-      gitIsAncestor: () => {
-        throw new Error('git merge-base exited 128: unknown commit')
+      gitIsAncestor: (ancestor, descendant) => {
+        if (ancestor === world.head && descendant === world.base)
+          throw new Error('git merge-base exited 128: unknown commit')
+        return ancestor === descendant
       }
     })
     expect(world.worktreesFromRemote).toEqual([{ branch: world.branch, head: world.head }])
