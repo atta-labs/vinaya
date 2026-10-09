@@ -7,7 +7,11 @@
       "run": "bun install --frozen-lockfile --silent"
     },
     { "id": "git-status", "forms": ["git status"], "run": "git status" },
-    { "id": "git-diff", "forms": ["git diff main --stat"], "run": "git diff origin/main --stat" },
+    {
+      "id": "git-diff",
+      "forms": ["git diff origin/main...HEAD --stat"],
+      "run": "git diff origin/main...HEAD --stat"
+    },
     { "id": "git-log", "forms": ["git log --oneline -3"], "run": "git log --oneline -3" },
     {
       "id": "git-log-header-length",
