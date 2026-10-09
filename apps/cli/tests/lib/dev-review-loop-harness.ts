@@ -260,6 +260,8 @@ export type LoopWorld = {
   worktreesFromRemote: Array<{ branch: string; head: string }>
   /** When set, `createTaskWorktreeFromRemote` throws this message instead of creating the worktree. */
   worktreeFromRemoteFailure?: string
+  /** When true, `createTaskWorktreeFromRemote` also creates `<repoRoot>/.worktrees/<branch>`; default `false`, so a fixture that never models a second machine keeps its worktree-less behaviour. */
+  worktreeFromRemoteCreatesDir?: boolean
   postedComments: PostedComment[]
   dispatches: DispatchRecord[]
   /** How many times each role was dispatched, cumulative across rounds. */
@@ -599,12 +601,12 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     },
     // A task continued on a machine with no worktree: the real function fetches
     // the pushed branch and adds a tracking worktree at its head. Model it by
-    // recording the head and creating the directory the driver's own
-    // `existsSync` then finds.
+    // recording the head and, when the fixture asks, creating the directory
+    // the driver's own `existsSync` then finds.
     createTaskWorktreeFromRemote: (branch: string) => {
       if (world.worktreeFromRemoteFailure !== undefined) throw new Error(world.worktreeFromRemoteFailure)
       world.worktreesFromRemote.push({ branch, head: world.head })
-      mkdirSync(join(world.repoRoot, '.worktrees', branch), { recursive: true })
+      if (world.worktreeFromRemoteCreatesDir) mkdirSync(join(world.repoRoot, '.worktrees', branch), { recursive: true })
     },
     readResumeRecord: () => null,
     runtimeDir: () => world.runtimeDir,

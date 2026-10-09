@@ -1111,7 +1111,7 @@ describe('devReviewLoop — a task continued on a machine with no worktree gets 
   }
 
   it('a fresh run creates the worktree at the remote head before the Developer turn starts', async () => {
-    const world = makeWorld({ developerPushed: true })
+    const world = makeWorld({ developerPushed: true, worktreeFromRemoteCreatesDir: true })
     expect(existsSync(worktreePath(world))).toBe(false)
     const { deps } = controlledDeveloperDeps(world, { openPrAfterCall: 1 })
     const cwds: Array<string | undefined> = []
@@ -1165,7 +1165,7 @@ describe('devReviewLoop — a task continued on a machine with no worktree gets 
 
   it('a failed creation pauses as an infrastructure pause naming branch, path and error, with no Developer turn', async () => {
     const world = makeWorld({ developerPushed: true, worktreeFromRemoteFailure: 'fatal: simulated git error' })
-    const { deps, prompts } = controlledDeveloperDeps(world, {})
+    const { deps, prompts } = controlledDeveloperDeps(world, { openPrAfterCall: 1 })
     const result = await runLoopInProcessSafe(world, deps)
 
     expect(result.finalDecision.type).toBe('pause')
