@@ -133,12 +133,14 @@ import { detectVendoredVinaya } from './self-host.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import {
   describeFailingCheckRun,
+  failureCheckName,
   fetchCiConclusion,
   fetchConflictingFiles,
   fetchFailingCheckRuns,
   fetchMergeableState,
   fetchPrState,
   gitCommitsTouchingDriverPaths,
+  type FailingCheckRun,
   type MergeableState,
   readWorktreeHead,
   resolveHead,
@@ -317,6 +319,7 @@ import {
 // the module that now owns it.
 export {
   describeFailingCheckRun,
+  failureCheckName,
   fetchCiConclusion,
   fetchConflictingFiles,
   fetchFailingCheckRuns,
@@ -1784,6 +1787,33 @@ export function renderFailedCheckLog(log: FailedCheckLog): string {
     log.logTail,
     fence
   ].join('\n')
+}
+
+/** A bounded subset of an untrusted job-log tail that identifies its failure. */
+const FAILURE_EVIDENCE_LINE =
+  /\(fail\)|\bfail(?:ed|ure)?\b|\berror\b|\b(?:E[A-Z_]+|AssertionError|TypeError|ReferenceError)\b|^\s+at\s/i
+const MAX_FAILURE_EVIDENCE_LINES = 20
+const MAX_FAILURE_EVIDENCE_LINE_CHARS = 300
+const MAX_FAILURE_EVIDENCE_CHARS = 2_000
+
+/**
+ * The text the repeat-failure policy compares for one failed check.  A log
+ * that cannot be read, or whose tail contains no failure-shaped line, falls
+ * back to its check name: absence of detail must never prevent a real repeat
+ * from pausing.  Tails are already sanitized, but this second bound keeps a
+ * pathological CI log from inflating a pause detail.
+ */
+export function failureSignaturePart(run: { name: string; detail?: string }, logTail: string | null): string {
+  const check = failureCheckName(run)
+  if (run.detail !== undefined || logTail === null) return check
+  const evidence = logTail
+    .split('\n')
+    .filter((line) => FAILURE_EVIDENCE_LINE.test(line))
+    .slice(-MAX_FAILURE_EVIDENCE_LINES)
+    .map((line) => line.slice(0, MAX_FAILURE_EVIDENCE_LINE_CHARS).trim())
+    .filter(Boolean)
+    .join('\n')
+  return evidence === '' ? check : `${check}: ${evidence}`.slice(0, MAX_FAILURE_EVIDENCE_CHARS)
 }
 
 /** O2/O3: the loop's view of the PR for the `read_pull_request` tool — `gh pr view --json`, a null-filled view when none is open, plus each failed check's log tail on its head. */
@@ -5268,7 +5298,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       ciConclusion: 'green' | 'red' | 'pending'
       /** O3: the mechanical check-runs that actually failed, named by check name AND run — never the review gate's own, never a superseded run (`fetchFailingCheckRuns` is already deduped to the newest per name) — empty unless `ciConclusion === 'red'`. */
       failingChecks: string[]
-      /** The same failed runs, each with its own sanitized job-log tail — for the red-CI retry prompt only, never the failure signature, since a log carries timestamps that differ every run. */
+      /** The failed runs themselves, kept to pair stable names with their own log tails for the repeat-failure signature. */
+      failingRuns: FailingCheckRun[]
+      /** The same failed runs, each with its own sanitized job-log tail — used both for the red-CI retry prompt and to distinguish repeat-failure signatures. */
       failureLogs: FailedCheckLog[]
     }> {
       const head = d.resolveHead(branch)
@@ -5288,6 +5320,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         stats: computeStats(head, roundStartMs),
         ciConclusion: conclusion,
         failingChecks: failingRuns.map(describeFailingCheckRun),
+        failingRuns,
         failureLogs: readFailedCheckLogs(
           failingRuns.filter((run) => run.detail === undefined),
           d.readFailedCheckLogTail
@@ -6721,10 +6754,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           unpushedResumeAttempted = false
           const confidence = round >= 2 && gateGreen ? roundConfidence(round) : undefined
           // The mechanical failure this attempt ended on, handed to the
-          // assessment verbatim — the same failing check-run names and
-          // premise re-assert messages this driver already prints in the
-          // gate-red retry prompt, never a second, differently-worded
-          // description of the same facts. Only the assessment decides what
+          // assessment verbatim — each stable failing check name plus the
+          // bounded failure evidence from its own log tail, then premise
+          // re-assert messages.  An unreadable or aggregate log contributes
+          // its check name alone, so a real repeat is never hidden. Only the assessment decides what
           // a repeat is: it normalises this text (`normalizeFailureSignature`,
           // `@attalabs/aeg-core`) and pauses when two consecutive attempts
           // match. A red gate whose cause could not be named sends nothing,
@@ -6741,7 +6774,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // the unmoved-head paths above (`no_push` after one resume,
           // `infrastructure` at `MAX_GATE_STALLED_TURNS`); neither compares
           // signatures, because neither has a failure message to compare.
-          const failure = gateGreen || lastFailingChecks.length === 0 ? undefined : lastFailingChecks.join('; ')
+          const failureParts = gate.failingChecks.map((check, index) => {
+            const run = gate.failingRuns[index]
+            if (run === undefined) return check
+            const log = gate.failureLogs.find((entry) => entry.runId === run.id) ?? null
+            return failureSignaturePart(run, log?.logTail ?? null)
+          })
+          const failure =
+            gateGreen || (failureParts.length === 0 && premiseFailureLines.length === 0)
+              ? undefined
+              : [...failureParts, ...premiseFailureLines].join('; ')
           const obs: Observations = {
             kind: 'gate',
             round,

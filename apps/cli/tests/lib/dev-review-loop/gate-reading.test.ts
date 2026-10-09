@@ -80,7 +80,7 @@ function runGateReading(
   extraEnv: Record<string, string> = {}
 ): { status: number; stdout: string; stderr: string } {
   const script = `
-    import { fetchCiConclusion, fetchFailingCheckRuns, fetchMergeableState } from ${JSON.stringify(GATE_READING)}
+    import { failureCheckName, fetchCiConclusion, fetchFailingCheckRuns, fetchMergeableState } from ${JSON.stringify(GATE_READING)}
     ${snippet}
   `
   return spawnSyncBudgeted(
@@ -141,6 +141,19 @@ exit 1
     // O3 (`#607`): the surviving run is named by id and started_at, not just
     // by check name — the audit trail a pause detail is later built from.
     expect(JSON.parse(runs as string)).toEqual([{ name: 'evidence-fresh', id: 1, startedAt: '2026-09-14T10:05:00Z' }])
+  })
+})
+
+describe('failureCheckName — the stable part of a repeat-failure signature (#1227)', () => {
+  it('keeps a check name while excluding its per-attempt run identity', () => {
+    const dir = tempDir('vinaya-gh-failure-name-')
+    writeFakeGh(dir, 'exit 0')
+    const r = runGateReading(
+      dir,
+      `console.log(failureCheckName({ name: 'Sandbox conformance (macOS)', id: 113692204562, startedAt: '2026-10-09T05:59:00Z' }))`
+    )
+    expect(r.stderr).toBe('')
+    expect(r.stdout.trim()).toBe('Sandbox conformance (macOS)')
   })
 })
 
