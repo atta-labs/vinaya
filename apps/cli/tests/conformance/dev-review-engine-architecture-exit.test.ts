@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path'
 import { cleanupWorlds } from '../lib/dev-review-loop-harness.js'
 import { NODE_CONTRACTS } from '../lib/dev-review-loop/dev-review-engine-state-contract.fixture.js'
 import { SCANNER_DECLARATIONS, underDeclaredRoot } from '../../src/lib/repo-scanner-tests.js'
+import { REFRESH_COMMAND, refreshLoopBaseline } from '../../scripts/refresh-loop-baseline.js'
 import { type Observation, SCENARIO_DRIVERS } from './dev-review-current-loop-adapter.js'
 
 /**
@@ -462,6 +463,18 @@ function baselineDrift(
   return out
 }
 
+/**
+ * Drift entries for a changed loop module, closed with the command that
+ * re-pins it. A module that is `not in baseline` keeps its plain text: adding
+ * a loop module stays a deliberate edit of the corpus.
+ */
+function withRefreshHint(drift: string[]): string[] {
+  const stale = drift.some(
+    (d) => d.endsWith(': changed') || d.endsWith('changed the loop without updating the baseline')
+  )
+  return stale ? [...drift, `Run \`${REFRESH_COMMAND}\` and commit its result after the loop change.`] : drift
+}
+
 function git(args: string[], cwd: string = REPO_ROOT): { ok: boolean; out: Buffer } {
   const r = spawnSync('git', args, { cwd, maxBuffer: 64 * 1024 * 1024 })
   return { ok: r.status === 0, out: r.stdout ?? Buffer.alloc(0) }
@@ -563,7 +576,7 @@ describe('architecture exit gate (O4: the corpus pins its standalone baseline)',
   it('records the default-branch commit the corpus ran against, verified against the checked-out history', () => {
     expect(corpus.baseline.commit).toMatch(/^[0-9a-f]{40}$/)
     expect(corpus.baseline.branch).toBe('main')
-    expect(commitDrift(corpus.baseline.commit, corpus.baseline.loopSurface)).toEqual([])
+    expect(withRefreshHint(commitDrift(corpus.baseline.commit, corpus.baseline.loopSurface))).toEqual([])
     process.stdout.write(
       `standalone baseline: ${corpus.baseline.branch}@${corpus.baseline.commit} (${corpus.baseline.loopSurface.length} loop modules pinned)\n`
     )
@@ -661,7 +674,7 @@ describe('architecture exit gate (O4: the corpus pins its standalone baseline)',
   })
 
   it('the standalone loop under test is byte-identical to that baseline', () => {
-    expect(baselineDrift(corpus.baseline.loopSurface, loopSurface())).toEqual([])
+    expect(withRefreshHint(baselineDrift(corpus.baseline.loopSurface, loopSurface()))).toEqual([])
   })
 
   it('a changed, added or removed loop module is drift', () => {
@@ -689,5 +702,53 @@ describe('architecture exit gate (O4: the corpus pins its standalone baseline)',
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+describe('architecture exit gate (the refresh command re-pins a changed loop module)', () => {
+  const fixture = (digestA: string) =>
+    [
+      '{',
+      '  "baseline": {',
+      '    "commit": "8fb270e9a28a76ceaffd7f795f52d4df3155a284",',
+      '    "branch": "main",',
+      '    "loopSurface": [',
+      '      {',
+      '        "path": "a.ts",',
+      `        "sha256": "${digestA}"`,
+      '      },',
+      '      {',
+      '        "path": "b.ts",',
+      `        "sha256": "${createHash('sha256').update('two').digest('hex')}"`,
+      '      }',
+      '    ]',
+      '  },',
+      '  "other": ["x"]',
+      '}',
+      ''
+    ].join('\n')
+
+  it('corrects one stale digest with a one-line diff, and a second run changes nothing', () => {
+    const root = mkdtempSync(join(tmpdir(), 'arch-exit-refresh-'))
+    try {
+      writeFileSync(join(root, 'a.ts'), 'one')
+      writeFileSync(join(root, 'b.ts'), 'two')
+      const stale = fixture('0'.repeat(64))
+      const once = refreshLoopBaseline(stale, root)
+      expect(once).toBe(fixture(createHash('sha256').update('one').digest('hex')))
+      const before = stale.split('\n')
+      const after = once.split('\n')
+      expect(after.length).toBe(before.length)
+      expect(after.filter((line, i) => line !== before[i])).toHaveLength(1)
+      expect(refreshLoopBaseline(once, root)).toBe(once)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('the failure names the command for a changed module and keeps `not in baseline` plain', () => {
+    expect(withRefreshHint(['a.ts: changed']).at(-1)).toContain(REFRESH_COMMAND)
+    expect(withRefreshHint(['abc: changed the loop without updating the baseline']).at(-1)).toContain(REFRESH_COMMAND)
+    expect(withRefreshHint(['a.ts: not in baseline'])).toEqual(['a.ts: not in baseline'])
   })
 })

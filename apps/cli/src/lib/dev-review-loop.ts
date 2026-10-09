@@ -4045,6 +4045,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       let currentPrompt = prompt
       let publishReasks = 0
       let outsideSurfaceReasks = 0
+      let testFailureReasks = 0
       let publicationRefusals = opts.publicationRefusal ? 1 : 0
       let previousPublicationRefusal: string | null = opts.publicationRefusal?.signature ?? null
       while (true) {
@@ -4087,6 +4088,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           ].join('\n\n')
           continue
         }
+        // A first `test_failure` block gets one re-ask, without a check: the
+        // driver cannot judge a test claim mechanically. A second one pauses.
+        if (testFailureReasks < 1 && reportsTestFailure(handle, roundNum, opts.answersFindings === true)) {
+          testFailureReasks += 1
+          currentPrompt = [
+            'Your previous turn reported `blocked` with reason `test_failure`.',
+            "A failing test is the Developer's to fix: read what it says and fix the code or the test. CI on the pull request's head is the authority for a test that fails only inside your sandbox, so a sandbox-only failure is not a block.",
+            'Report `blocked` again only if the same test also fails on `origin/main` in a clean checkout. This is the one allowed re-ask for that report.',
+            `End your turn — ${publishingInstructionLine()}`
+          ].join('\n\n')
+          continue
+        }
         // A dispatch that only re-asks for the turn result (O1) is now
         // confirmed clean and publishes nothing.
         // A turn that ends `blocked` or `needs_ruling` is read BEFORE the
@@ -4110,6 +4123,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         await settleTurnResult(handle, roundNum, opts.answersFindings === true)
         return handle
       }
+    }
+
+    /** Whether the turn's accepted result is `blocked` with reason `test_failure`. */
+    function reportsTestFailure(handle: DispatchHandle, roundNum: number, answersFindings: boolean): boolean {
+      const verdict = judgeTurnOutput(handle.turnOutput, {
+        round: roundNum,
+        knownFindingIds: handoffFindingIdsByRound.get(roundNum) ?? [],
+        requireAddressedFindings: answersFindings && (handoffFindingIdsByRound.get(roundNum) ?? []).length > 0,
+        documentation: handle.documentation ?? { sources: [], countedReads: [] }
+      })
+      return verdict.ok && verdict.result.status === 'blocked' && verdict.result.blocker.kind === 'test_failure'
     }
 
     /** Whether the turn ended with an accepted `blocked` or `needs_ruling` result — read before the publication check so the round pauses for the Principal instead of re-asking to publish. */
