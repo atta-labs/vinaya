@@ -163,18 +163,23 @@ describe('devReviewLoop — repeat_failure uses failed-log evidence (#1227)', ()
       failingCheckRuns: [{ id: 101, name: 'Sandbox conformance (macOS)', conclusion: 'failure' }]
     })
     let gateReads = 0
+    let tailReads = 0
     const { deps } = withCapturedDeveloperDispatch(world, {
       fetchCiConclusion: () => {
         gateReads += 1
-        return gateReads <= 2 ? 'red' : 'green'
+        return gateReads <= 3 ? 'red' : 'green'
       },
       fetchFailingCheckRuns: () =>
-        gateReads <= 2 ? ([{ id: 101, name: 'Sandbox conformance (macOS)', conclusion: 'failure' }] as never) : [],
+        gateReads <= 3 ? ([{ id: 101, name: 'Sandbox conformance (macOS)', conclusion: 'failure' }] as never) : [],
       resolveHead: () => ((world.dispatchCountByRole.developer ?? 0) >= 2 ? 'c'.repeat(40) : world.head),
-      readFailedCheckLogTail: () =>
-        gateReads === 1
-          ? 'error: listen EINVAL: invalid argument\n    at listenOnUnixSocket (mux-proxy.js:42:9)'
-          : 'error: gh-chained now exits 0 under claude\n(fail) sandbox conformance > gh-chained'
+      readFailedCheckLogTail: () => {
+        tailReads += 1
+        return [
+          'error: listen EINVAL: invalid argument\n    at listenOnUnixSocket (mux-proxy.js:42:9)',
+          'error: gh-chained now exits 0 under claude\n(fail) sandbox conformance > gh-chained',
+          'error: platform-independence rejects the new host-platform read'
+        ][tailReads - 1] as string
+      }
     })
 
     const result = await runLoopInProcessSafe(world, deps)
