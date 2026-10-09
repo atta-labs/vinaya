@@ -1164,6 +1164,18 @@ describe('devReviewLoop — a task continued on a machine with no worktree gets 
     expect(developerDispatches.at(-1)?.cwd).toBe(worktreePath(world))
   })
 
+  it('creates the worktree when the pushed head is unknown locally, so the ancestry check cannot resolve it', async () => {
+    const world = makeWorld({ developerPushed: true, worktreeFromRemoteCreatesDir: true })
+    const { deps } = controlledDeveloperDeps(world, { openPrAfterCall: 1 })
+    await runLoopInProcessSafe(world, {
+      ...deps,
+      gitIsAncestor: () => {
+        throw new Error('git merge-base exited 128: unknown commit')
+      }
+    })
+    expect(world.worktreesFromRemote).toEqual([{ branch: world.branch, head: world.head }])
+  })
+
   it('a failed creation pauses as an infrastructure pause naming branch, path and error, with no Developer turn', async () => {
     const world = makeWorld({ developerPushed: true, worktreeFromRemoteFailure: 'fatal: simulated git error' })
     const { deps, prompts } = controlledDeveloperDeps(world, { openPrAfterCall: 1 })

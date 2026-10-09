@@ -8,6 +8,7 @@ import {
   checkDocumentationSourcesReadable,
   checkTaskDispatchReadiness,
   createTaskWorktree,
+  createTaskWorktreeFromRemote,
   DEVELOPER_CHECKLIST_HEADINGS,
   developerBranchFor,
   extractDeveloperSection,
@@ -700,5 +701,73 @@ describe('checkDocumentationSourcesReadable', () => {
     )
     expect(result).toMatchObject({ ready: false, retryable: false, source: 'https://example.com/moved' })
     expect(result.output).toContain('another host')
+  })
+})
+
+describe('createTaskWorktreeFromRemote', () => {
+  const dirs: string[] = []
+  afterEach(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
+  })
+  const git = (cwd: string, ...args: string[]): string => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+
+  function setup(): { repoDir: string; originDir: string; remoteHead: string } {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-from-remote-')))
+    dirs.push(base)
+    const originDir = join(base, 'origin.git')
+    const repoDir = join(base, 'repo')
+    const otherDir = join(base, 'other')
+    execFileSync('git', ['init', '--bare', '-b', 'main', originDir])
+    for (const dir of [repoDir, otherDir]) {
+      execFileSync('git', ['init', '-b', 'main', dir])
+      git(dir, 'config', 'user.email', 'test@example.com')
+      git(dir, 'config', 'user.name', 'Test')
+      git(dir, 'remote', 'add', 'origin', originDir)
+    }
+    git(repoDir, 'commit', '--allow-empty', '-m', 'initial')
+    git(repoDir, 'push', 'origin', 'main')
+    // Another machine pushes the task branch with a task commit.
+    git(otherDir, 'fetch', 'origin')
+    git(otherDir, 'checkout', '-b', 'task/x/2', 'origin/main')
+    git(otherDir, 'commit', '--allow-empty', '-m', 'task work')
+    git(otherDir, 'push', 'origin', 'task/x/2')
+    return { repoDir, originDir, remoteHead: git(otherDir, 'rev-parse', 'HEAD') }
+  }
+
+  function inDir<T>(dir: string, fn: () => T): T {
+    const prev = process.cwd()
+    process.chdir(dir)
+    try {
+      return fn()
+    } finally {
+      process.chdir(prev)
+    }
+  }
+
+  it('creates a tracking worktree at the pushed head though this machine never fetched the branch', () => {
+    const { repoDir, remoteHead } = setup()
+    inDir(repoDir, () => createTaskWorktreeFromRemote('task/x/2'))
+    const wt = join(repoDir, '.worktrees', 'task/x/2')
+    expect(git(wt, 'rev-parse', 'HEAD')).toBe(remoteHead)
+    expect(git(wt, 'rev-parse', '--abbrev-ref', 'task/x/2@{upstream}')).toBe('origin/task/x/2')
+  })
+
+  it('reuses a local branch at the remote head', () => {
+    const { repoDir, remoteHead } = setup()
+    git(repoDir, 'fetch', 'origin')
+    git(repoDir, 'branch', 'task/x/2', remoteHead)
+    inDir(repoDir, () => createTaskWorktreeFromRemote('task/x/2'))
+    expect(git(join(repoDir, '.worktrees', 'task/x/2'), 'rev-parse', 'HEAD')).toBe(remoteHead)
+  })
+
+  it('refuses a local branch at another head, naming both heads, and leaves it untouched', () => {
+    const { repoDir, remoteHead } = setup()
+    git(repoDir, 'branch', 'task/x/2', 'main')
+    const localHead = git(repoDir, 'rev-parse', 'task/x/2')
+    expect(() => inDir(repoDir, () => createTaskWorktreeFromRemote('task/x/2'))).toThrow(
+      new RegExp(`${localHead}[\\s\\S]*${remoteHead}`)
+    )
+    expect(git(repoDir, 'rev-parse', 'task/x/2')).toBe(localHead)
+    expect(existsSync(join(repoDir, '.worktrees', 'task/x/2'))).toBe(false)
   })
 })
