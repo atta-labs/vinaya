@@ -24,9 +24,12 @@ import {
   seedAcceptedTurnResult,
   defaultDeveloperTurnOutput,
   completedTurnOutput,
+  needsRulingTurnOutput,
+  blockedTurnOutput,
   handoffIdsInPrompt
 } from '../dev-review-loop-harness.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
+import type { DeveloperTurnOutput } from '../../../src/lib/dev-review-loop/turn-result.js'
 import {
   rulingsAfterNewestBrief,
   TaskWorktreeDivergedError,
@@ -1351,6 +1354,74 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
     )
     expect(reask).toBeDefined()
     expect(result.finalDecision.type).toBe('pause')
+  })
+
+  describe('a Developer result that asks the Principal pauses before any publication re-ask', () => {
+    /** A Developer whose turn leaves one commit unpushed and ends with `output`. */
+    function developerLeavesCommit(
+      world: ReturnType<typeof makeWorld>,
+      output: DeveloperTurnOutput
+    ): Partial<LoopDeps> {
+      const base = makeInProcessDeps(world)
+      world.developerTurnOutput = () => output
+      return {
+        ...base,
+        dispatchRole: async (role, agent, prompt, dOpts) => {
+          if (role === 'developer') world.worktreeAhead = 1
+          return base.dispatchRole!(role, agent, prompt, dOpts)
+        }
+      }
+    }
+    function assertEscalation(
+      world: ReturnType<typeof makeWorld>,
+      result: { finalDecision: unknown },
+      expected: RegExp
+    ) {
+      const decision = result.finalDecision as { type: string; reason?: string; detail?: string }
+      expect(decision.type).toBe('pause')
+      expect(decision.reason).toBe('escalation')
+      expect(decision.detail).toMatch(expected)
+      expect(decision.detail).toMatch(/1 commit\(s\) ahead of the remote/)
+      expect(decision.detail).toContain(`branch ${world.branch}`)
+      expect(world.dispatchCountByRole.developer ?? 0).toBe(1)
+      expect(world.dispatches.some((dd) => (dd.prompt ?? '').includes('publish_changes'))).toBe(false)
+      expect(world.worktreeAhead).toBe(1)
+      expect(world.commits).toHaveLength(0)
+    }
+
+    it('needs_ruling with an unpushed commit: escalation naming the question and the unpublished work', async () => {
+      const world = makeWorld({ worktreeExists: true })
+      const out = needsRulingTurnOutput('Widen the surface?', ['widen_surface', 'stop_task'])
+      const result = await runLoopInProcess(
+        world,
+        { task: world.task, agent: 'codex' },
+        developerLeavesCommit(world, out)
+      )
+      assertEscalation(world, result, /Widen the surface\? \(decisions: widen_surface, stop_task\)/)
+    })
+
+    it('blocked with an unpushed commit: escalation naming the blocker and the unpublished work', async () => {
+      const world = makeWorld({ worktreeExists: true })
+      const out = blockedTurnOutput('outside_surface', 'needs a file outside the surface')
+      const result = await runLoopInProcess(
+        world,
+        { task: world.task, agent: 'codex' },
+        developerLeavesCommit(world, out)
+      )
+      assertEscalation(world, result, /\(outside_surface\): needs a file outside the surface/)
+    })
+
+    it('completed with an unpushed commit still gets the publication re-ask', async () => {
+      const world = makeWorld({ worktreeExists: true })
+      const out = completedTurnOutput()
+      const result = await runLoopInProcess(
+        world,
+        { task: world.task, agent: 'codex' },
+        developerLeavesCommit(world, out)
+      )
+      expect(world.dispatches.some((dd) => (dd.prompt ?? '').includes('publish_changes'))).toBe(true)
+      expect((result.finalDecision as { type: string }).type).toBe('pause')
+    })
   })
 
   it('O5: a body-only fix publishes through update_pull_request_body and refresh_evidence, touching no commit', async () => {
