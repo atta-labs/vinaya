@@ -1129,6 +1129,7 @@ describe('devReviewLoop — a task continued on a machine with no worktree gets 
   it('a resume after a ruling creates the worktree before the Developer turn starts', async () => {
     const world = makeWorld({
       developerPushed: true,
+      worktreeFromRemoteCreatesDir: true,
       roleOutcomes: {
         1: {
           reviewer: {
