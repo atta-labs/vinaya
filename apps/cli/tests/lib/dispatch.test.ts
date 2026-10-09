@@ -4969,6 +4969,7 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
     '',
     '- https://example.com/docs/fixture — the mechanism this fixture governs'
   ].join('\n')
+  const TWO_SOURCE_PROMPT = `${DOC_PROMPT}\n- https://example.com/docs/second — the second mechanism this fixture governs`
 
   it('wires PostToolUse (WebFetch) and Stop hooks, and writes a per-run sources file, for a developer dispatch whose prompt carries `## Documentation`', () => {
     const home = tempDir('vinaya-dispatch-home-')
@@ -5071,7 +5072,7 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
     const freshPrompt = join(cwd, 'fresh.md')
     const resumedPrompt = join(cwd, 'resumed.md')
     const script = join(cwd, 'schemas.ts')
-    writeFileSync(freshPrompt, DOC_PROMPT)
+    writeFileSync(freshPrompt, TWO_SOURCE_PROMPT)
     writeFileSync(resumedPrompt, 'Fix the reported finding.')
     writeFakeBinary(
       binDir,
@@ -5083,15 +5084,14 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
       script,
       [
         `import { dispatchRole } from ${JSON.stringify(dispatchLib)}`,
-        `await dispatchRole('developer', 'claude', ${JSON.stringify(DOC_PROMPT)}, { promptFile: ${JSON.stringify(freshPrompt)}, cwd: ${JSON.stringify(cwd)}, turnResultKnownFindingIds: ['R1-CR-1'] })`,
+        `await dispatchRole('developer', 'claude', ${JSON.stringify(TWO_SOURCE_PROMPT)}, { promptFile: ${JSON.stringify(freshPrompt)}, cwd: ${JSON.stringify(cwd)}, turnResultKnownFindingIds: ['R1-CR-1'] })`,
         `await dispatchRole('developer', 'claude', 'Fix the reported finding.', { promptFile: ${JSON.stringify(resumedPrompt)}, cwd: ${JSON.stringify(cwd)}, resumeId: 'session-1', turnResultKnownFindingIds: [] })`
       ].join('\n')
     )
-    runScriptWithBudget(
-      script,
-      cwd,
-      stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` })
-    )
+    runScriptWithBudget(script, cwd, {
+      ...stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }),
+      VINAYA_RUN_ID: 'shared-loop-run-id'
+    })
 
     const schema = (n: number) => {
       const argv = readArgv(join(cwd, `argv-${n}.out`))
@@ -5101,8 +5101,45 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
     const resumed = JSON.stringify(schema(1))
     expect(fresh).toContain('https://example.com/docs/fixture')
     expect(fresh).toContain('R1-CR-1')
-    expect(resumed).not.toContain('https://example.com/docs/fixture')
-    expect(resumed).toContain('"maxItems":0')
+    // a later turn's prompt names no sources, yet its schema requires the
+    // same ones the driver checks: the run's manifest
+    expect(resumed).toContain('https://example.com/docs/fixture')
+    expect(resumed).toContain('https://example.com/docs/second')
+    expect(resumed).toContain('"sourceUses":{"minItems":2,"maxItems":2')
+  })
+
+  it('gives a developer dispatch with no sources in any turn the empty-list schema', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const firstPrompt = join(cwd, 'first.md')
+    const laterPrompt = join(cwd, 'later.md')
+    const script = join(cwd, 'schemas.ts')
+    writeFileSync(firstPrompt, '## Objectives\n\nO1. No sources here.')
+    writeFileSync(laterPrompt, 'Fix the reported finding.')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\nN=$(ls ${cwd}/argv-*.out 2>/dev/null | wc -l | tr -d ' ')\nfor a in "$@"; do printf '%s\\n' "$a"; done > "${cwd}/argv-$N.out"\ncat > /dev/null\necho '{}'\n`
+    )
+    const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+    writeFileSync(
+      script,
+      [
+        `import { dispatchRole } from ${JSON.stringify(dispatchLib)}`,
+        `await dispatchRole('developer', 'claude', '## Objectives\\n\\nO1. No sources here.', { promptFile: ${JSON.stringify(firstPrompt)}, cwd: ${JSON.stringify(cwd)} })`,
+        `await dispatchRole('developer', 'claude', 'Fix the reported finding.', { promptFile: ${JSON.stringify(laterPrompt)}, cwd: ${JSON.stringify(cwd)}, resumeId: 'session-1' })`
+      ].join('\n')
+    )
+    runScriptWithBudget(
+      script,
+      cwd,
+      stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` })
+    )
+    for (const n of [0, 1]) {
+      const argv = readArgv(join(cwd, `argv-${n}.out`))
+      expect(argv[argv.indexOf('--json-schema') + 1]).toContain('"maxItems":0')
+    }
   })
 
   // round 2 review, BLOCKER (O1/O2, Issue #625) — the source string this
