@@ -5064,6 +5064,47 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
     expect(afterFetch.stderr.trim()).toBe('')
   })
 
+  it('gives fresh and resumed developer dispatches their respective generated schemas', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const freshPrompt = join(cwd, 'fresh.md')
+    const resumedPrompt = join(cwd, 'resumed.md')
+    const script = join(cwd, 'schemas.ts')
+    writeFileSync(freshPrompt, DOC_PROMPT)
+    writeFileSync(resumedPrompt, 'Fix the reported finding.')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\nN=$(ls ${cwd}/argv-*.out 2>/dev/null | wc -l | tr -d ' ')\nfor a in "$@"; do printf '%s\\n' "$a"; done > "${cwd}/argv-$N.out"\ncat > /dev/null\necho '{}'\n`
+    )
+    const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+    writeFileSync(
+      script,
+      [
+        `import { dispatchRole } from ${JSON.stringify(dispatchLib)}`,
+        `await dispatchRole('developer', 'claude', ${JSON.stringify(DOC_PROMPT)}, { promptFile: ${JSON.stringify(freshPrompt)}, cwd: ${JSON.stringify(cwd)}, turnResultKnownFindingIds: ['R1-CR-1'] })`,
+        `await dispatchRole('developer', 'claude', 'Fix the reported finding.', { promptFile: ${JSON.stringify(resumedPrompt)}, cwd: ${JSON.stringify(cwd)}, resumeId: 'session-1', turnResultKnownFindingIds: [] })`
+      ].join('\n')
+    )
+    runScriptWithBudget(
+      script,
+      cwd,
+      stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` })
+    )
+
+    const schema = (n: number) => {
+      const argv = readArgv(join(cwd, `argv-${n}.out`))
+      return JSON.parse(argv[argv.indexOf('--json-schema') + 1] as string) as Record<string, unknown>
+    }
+    const fresh = JSON.stringify(schema(0))
+    const resumed = JSON.stringify(schema(1))
+    expect(fresh).toContain('https://example.com/docs/fixture')
+    expect(fresh).toContain('R1-CR-1')
+    expect(resumed).not.toContain('https://example.com/docs/fixture')
+    expect(resumed).toContain('"maxItems":0')
+  })
+
   // round 2 review, BLOCKER (O1/O2, Issue #625) — the source string this
   // gate compares a real `WebFetch` call against comes from
   // `parseIssueDocumentation`, not from this file's own logic; a doc-page

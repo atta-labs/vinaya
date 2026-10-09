@@ -3,7 +3,6 @@ import {
   DEVELOPER_TURN_RESULT_SCHEMA_VERSION,
   type DeveloperTurnContext,
   developerTurnResultJsonSchema,
-  parseDeveloperTurnResult,
   validateDeveloperTurnResult
 } from '../../../src/lib/developer-turn-result.js'
 import {
@@ -60,6 +59,48 @@ const needsRuling = {
 }
 const wrap = (turnResult: unknown) => ({ turnResult })
 
+/** A compact Draft-7 validator for the subset emitted by z.toJSONSchema. */
+function validatesJsonSchema(schema: unknown, value: unknown): boolean {
+  if (schema === null || typeof schema !== 'object') return true
+  const node = schema as Record<string, unknown>
+  if (Array.isArray(node.anyOf)) return node.anyOf.some((variant) => validatesJsonSchema(variant, value))
+  if ('const' in node && value !== node.const) return false
+  if (Array.isArray(node.enum) && !node.enum.includes(value)) return false
+  if (node.type === 'object') {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+    const object = value as Record<string, unknown>
+    const properties = (node.properties ?? {}) as Record<string, unknown>
+    if (Array.isArray(node.required) && node.required.some((key) => typeof key !== 'string' || !(key in object)))
+      return false
+    if (node.additionalProperties === false && Object.keys(object).some((key) => !(key in properties))) return false
+    return Object.entries(properties).every(
+      ([key, property]) => !(key in object) || validatesJsonSchema(property, object[key])
+    )
+  }
+  if (node.type === 'array') {
+    if (!Array.isArray(value)) return false
+    if (typeof node.minItems === 'number' && value.length < node.minItems) return false
+    if (typeof node.maxItems === 'number' && value.length > node.maxItems) return false
+    return value.every((item) => validatesJsonSchema(node.items, item))
+  }
+  if (node.type === 'string') {
+    if (typeof value !== 'string') return false
+    return !(
+      (typeof node.minLength === 'number' && value.length < node.minLength) ||
+      (typeof node.maxLength === 'number' && value.length > node.maxLength)
+    )
+  }
+  if (node.type === 'number' || node.type === 'integer') {
+    if (typeof value !== 'number' || !Number.isFinite(value) || (node.type === 'integer' && !Number.isInteger(value)))
+      return false
+    return !(
+      (typeof node.minimum === 'number' && value < node.minimum) ||
+      (typeof node.maximum === 'number' && value > node.maximum)
+    )
+  }
+  return true
+}
+
 describe('DeveloperTurnResult — valid examples of every variant', () => {
   it('accepts completed, blocked and needs_ruling', () => {
     for (const example of [completed, blocked, needsRuling]) {
@@ -71,8 +112,17 @@ describe('DeveloperTurnResult — valid examples of every variant', () => {
     const minimal = { ...completed, reportedChecks: null }
     expect(validateDeveloperTurnResult(wrap(minimal), context).ok).toBe(true)
     expect(
-      validateDeveloperTurnResult(wrap({ ...completed, sourceUses: null }), { ...context, requiredSources: [] }).ok
+      validateDeveloperTurnResult(wrap({ ...completed, sourceUses: [] }), { ...context, requiredSources: [] }).ok
     ).toBe(true)
+    const nullSources = validateDeveloperTurnResult(wrap({ ...completed, sourceUses: null }), {
+      ...context,
+      requiredSources: []
+    })
+    expect(nullSources.ok).toBe(false)
+    if (!nullSources.ok)
+      expect(nullSources.errors).toContain(
+        'sourceUses: expected an empty list because this turn has no required sources'
+      )
   })
 })
 
@@ -107,7 +157,7 @@ describe('DeveloperTurnResult — schema rejections', () => {
 
 describe('DeveloperTurnResult — semantic rejections', () => {
   const cases: [string, unknown, string][] = [
-    ['an unknown finding id', { ...completed, addressedFindingIds: ['R9-XX-1'] }, 'unknown finding id'],
+    ['an unknown finding id', { ...completed, addressedFindingIds: ['R9-XX-1'] }, 'R1-CR-1'],
     [
       'a ruling request naming no permissible decision',
       { ...needsRuling, rulingRequest: { question: 'Merge?', decisions: ['merge-without-review'] } },
@@ -127,7 +177,7 @@ describe('DeveloperTurnResult — semantic rejections', () => {
     [
       'completed leaving a required source unreported',
       { ...completed, sourceUses: [{ source: 'https://other.example', use: 'x' }] },
-      'no use reported for required source'
+      'https://example.com/doc'
     ],
     [
       'a confidenceExplanation over the shared bound',
@@ -137,11 +187,9 @@ describe('DeveloperTurnResult — semantic rejections', () => {
   ]
   for (const [name, value, error] of cases) {
     it(`rejects ${name}`, () => {
-      expect(parseDeveloperTurnResult(wrap(value)).ok).toBe(true)
       const out = validateDeveloperTurnResult(wrap(value), context)
       expect(out.ok).toBe(false)
       if (!out.ok) {
-        expect(out.stage).toBe('semantic')
         expect(out.errors.join('\n')).toContain(error)
       }
     })
@@ -150,10 +198,34 @@ describe('DeveloperTurnResult — semantic rejections', () => {
     expect(validateDeveloperTurnResult(wrap(blocked), context).ok).toBe(true)
     expect(validateDeveloperTurnResult(wrap(needsRuling), context).ok).toBe(true)
   })
+  it("rejects duplicate valid values that exceed this turn's array bounds", () => {
+    const singleValueContext = { ...context, knownFindingIds: ['R1-CR-1'] }
+    const duplicateCases: [unknown, string][] = [
+      [{ ...completed, addressedFindingIds: ['R1-CR-1', 'R1-CR-1'] }, 'valid finding ids: "R1-CR-1"'],
+      [
+        {
+          ...completed,
+          sourceUses: [
+            { source: 'https://example.com/doc', use: 'one' },
+            { source: 'https://example.com/doc', use: 'two' }
+          ]
+        },
+        'sources: "https://example.com/doc"'
+      ]
+    ]
+    for (const [result, expected] of duplicateCases) {
+      const out = validateDeveloperTurnResult(wrap(result), singleValueContext)
+      expect(out.ok).toBe(false)
+      if (!out.ok) {
+        expect(out.stage).toBe('semantic')
+        expect(out.errors.join('\n')).toContain(expected)
+      }
+    }
+  })
 })
 
 describe('developerTurnResultJsonSchema', () => {
-  const schema = developerTurnResultJsonSchema()
+  const schema = developerTurnResultJsonSchema(context)
   it('is a plain object root holding the union under turnResult, with no $schema keyword', () => {
     expect(schema.type).toBe('object')
     expect(schema.required).toEqual(['turnResult'])
@@ -178,6 +250,78 @@ describe('developerTurnResultJsonSchema', () => {
       for (const value of Object.values(obj)) visit(value)
     }
     visit(schema)
+  })
+
+  it('gives fresh and resumed turns their own source and finding constraints', () => {
+    const fresh = JSON.stringify(
+      developerTurnResultJsonSchema({
+        knownFindingIds: ['R1-CR-1'],
+        requiredSources: ['https://example.com/fresh-source']
+      })
+    )
+    const resumed = JSON.stringify(developerTurnResultJsonSchema({ knownFindingIds: [], requiredSources: [] }))
+    expect(fresh).toContain('https://example.com/fresh-source')
+    expect(fresh).toContain('R1-CR-1')
+    expect(resumed).not.toContain('https://example.com/fresh-source')
+    expect(resumed).toContain('"maxItems":0')
+  })
+
+  it('rejects every completed-result constraint with the generated JSON Schema', () => {
+    const validate = (value: unknown) => validatesJsonSchema(schema, value)
+    const cases: [string, unknown][] = [
+      ['a missing required source', { ...completed, sourceUses: [] }],
+      ['an unexpected source', { ...completed, sourceUses: [{ source: 'https://other.example', use: 'x' }] }],
+      [
+        'a duplicate use of the sole required source',
+        {
+          ...completed,
+          sourceUses: [
+            { source: 'https://example.com/doc', use: 'one' },
+            { source: 'https://example.com/doc', use: 'two' }
+          ]
+        }
+      ],
+      ['an invalid finding id', { ...completed, addressedFindingIds: ['R9-CR-1'] }],
+      [
+        'a duplicate valid finding id over the maximum',
+        { ...completed, addressedFindingIds: ['R1-CR-1', 'R1-CR-1', 'R1-CR-1'] }
+      ],
+      ['an overlong confidence explanation', { ...completed, confidenceExplanation: 'x'.repeat(281) }]
+    ]
+    for (const [name, result] of cases) {
+      expect(validate(wrap(result)), name).toBe(false)
+    }
+  })
+
+  it('rejects non-empty source and finding lists for a zero-value turn with the generated JSON Schema', () => {
+    const schema = developerTurnResultJsonSchema({ knownFindingIds: [], requiredSources: [] })
+    const validate = (value: unknown) => validatesJsonSchema(schema, value)
+    expect(validate(wrap({ ...completed, sourceUses: [], addressedFindingIds: ['R1-CR-1'] }))).toBe(false)
+    expect(
+      validate(
+        wrap({ ...completed, sourceUses: [{ source: 'https://example.com/doc', use: 'x' }], addressedFindingIds: [] })
+      )
+    ).toBe(false)
+  })
+
+  it('rejects duplicate valid values against a single-value generated schema', () => {
+    const schema = developerTurnResultJsonSchema({
+      knownFindingIds: ['R1-CR-1'],
+      requiredSources: ['https://example.com/doc']
+    })
+    const validate = (value: unknown) => validatesJsonSchema(schema, value)
+    expect(validate(wrap({ ...completed, addressedFindingIds: ['R1-CR-1', 'R1-CR-1'] }))).toBe(false)
+    expect(
+      validate(
+        wrap({
+          ...completed,
+          sourceUses: [
+            { source: 'https://example.com/doc', use: 'one' },
+            { source: 'https://example.com/doc', use: 'two' }
+          ]
+        })
+      )
+    ).toBe(false)
   })
 })
 
@@ -302,10 +446,11 @@ describe('driverVerdict — the adapter boundary', () => {
     const verdict = driverVerdict(readOf(wrap({ ...completed, confidence: 'high' })), PROOF_TURN_CONTEXT)
     expect(verdict.crossed).toBe(false)
   })
-  it('lets a semantically invalid value cross and rejects it', () => {
+  it('passes handoff violations to the controller with their specific diagnostics', () => {
     const value = wrap({ ...completed, addressedFindingIds: ['R9-XX-404'], sourceUses: null })
     const verdict = driverVerdict(readOf(value), PROOF_TURN_CONTEXT)
     expect(verdict).toMatchObject({ crossed: true, accepted: false })
+    if ('errors' in verdict) expect(verdict.errors.join('\n')).toContain('valid finding ids: "R1-CR-1", "R1-SEC-1"')
   })
 })
 
@@ -347,42 +492,24 @@ describe('judgeCase', () => {
       false
     )
   })
-  it('passes a rejection case only when the driver refused it for the named reason', () => {
+  it('keeps a controller rejection within controller-rejection cases', () => {
     const value = wrap({ ...completed, addressedFindingIds: ['R9-XX-404'], sourceUses: null })
     const read = readOf(value)
     const verdict = driverVerdict(read, PROOF_TURN_CONTEXT)
-    expect(judgeCase({ kind: 'rejected', error: 'unknown finding id' }, read, verdict).pass).toBe(true)
+    expect(judgeCase({ kind: 'rejected', error: 'R1-CR-1' }, read, verdict).pass).toBe(true)
     const valid = readOf(proofCompleted('a'))
     expect(
       judgeCase({ kind: 'rejected', error: 'unknown finding id' }, valid, driverVerdict(valid, PROOF_TURN_CONTEXT)).pass
     ).toBe(false)
   })
-  it('passes the controller-rejection case only when the first result was refused for the missing source and the same session then delivered the one accepted result', () => {
+  it('reports a missing source from the controller with its expected value', () => {
     const missing = readOf(wrap({ ...completed, summary: 'missing-source-n', sourceUses: null }))
     const firstVerdict = driverVerdict(missing, PROOF_TURN_CONTEXT)
     expect(firstVerdict).toMatchObject({ crossed: true, accepted: false })
-    const corrected = readOf(proofCompleted('missing-source-n'))
-    const expectation = { kind: 'rejected-then-accepted', error: 'sourceUses' } as const
-    expect(
-      judgeCase(expectation, corrected, driverVerdict(corrected, PROOF_TURN_CONTEXT), {
-        firstSessionId: 's-1',
-        firstVerdict
-      }).pass
-    ).toBe(true)
-    // Another session, or a first result the controller accepted, fails it.
-    const elsewhere = readOf(proofCompleted('missing-source-n'), { sessionId: 's-other' })
-    expect(
-      judgeCase(expectation, elsewhere, driverVerdict(elsewhere, PROOF_TURN_CONTEXT), {
-        firstSessionId: 's-1',
-        firstVerdict
-      }).pass
-    ).toBe(false)
-    expect(
-      judgeCase(expectation, corrected, driverVerdict(corrected, PROOF_TURN_CONTEXT), {
-        firstSessionId: 's-1',
-        firstVerdict: driverVerdict(corrected, PROOF_TURN_CONTEXT)
-      }).pass
-    ).toBe(false)
+    if ('errors' in firstVerdict)
+      expect(firstVerdict.errors.join('\n')).toContain(
+        'required source "https://code.claude.com/docs/en/cli-reference"'
+      )
   })
   it('passes the malformed case either way nothing malformed crossed, and the no-result cases only with no acceptance', () => {
     const none = readOf(null)

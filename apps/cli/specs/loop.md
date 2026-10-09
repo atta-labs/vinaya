@@ -457,11 +457,13 @@ While any control is inactive the dispatch refuses before the agent starts: the 
 
 ## The Developer's turn result
 
-<!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:return [...args, '--json-schema', JSON.stringify(developerTurnResultJsonSchema())] -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:const developerTurnSchema = -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:? [...args.slice(0, -1), '--output-schema', schemaPath, '-'] -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop/turn-result.ts contains:export function judgeTurnOutput( -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:async function settleTurnResult( -->
 Every Developer dispatch, first and resumed alike, ends with one typed `DeveloperTurnResult` (`developer-turn-result.ts`), delivered as the CLI's own native structured final output: Claude Code through `--json-schema <schema>`, read off the terminal `result` event's `structured_output`; Codex through `--output-schema <file>`, read off the last `agent_message` before `turn.completed`. One authority per adapter — the Developer writes no confidence or round-response file, calls no report tool, and no Stop hook stores, selects, accepts or rejects the result. The driver reads the stream's tail for it, since a long session's terminal events fall past the head the dispatch otherwise keeps. Gemini offers no native structured output: its Developer turn delivers none, and the round pauses at once, with no correction turn, naming that.
+
+The driver builds this schema anew for each dispatch from the same Documentation manifest and finding handoff the controller judges: sources are limited to the manifest, finding ids to the handoff, empty lists are the only choice when either has no values, and `confidenceExplanation` uses the controller's length limit. Claude receives it through `--json-schema`; Codex receives the same value through `--output-schema`. The controller keeps every one of these checks as its acceptance gate, including source coverage that the vendors' supported enum/array constraints cannot distinguish from a duplicate source entry.
 
 The result is keyed by `status`. `completed` carries `summary`, `confidence` (a whole percent), `confidenceExplanation` (one short sentence explaining the figure — the prompt never asks for the model's reasoning), `addressedFindingIds`, `sourceUses` and the optional `reportedChecks`; `blocked` carries a typed `blocker`; `needs_ruling` carries a `rulingRequest` whose decisions must be among the permissible ones (`PERMISSIBLE_RULING_DECISIONS`). Each dispatch's prompt says so (`turnResultInstruction`); round 1 carries it ahead of the brief, which stays the prompt's contiguous suffix.
 

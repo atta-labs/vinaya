@@ -118,7 +118,7 @@ export type DriverVerdict =
 
 export function driverVerdict(read: TurnRead, context: DeveloperTurnContext): DriverVerdict {
   if (read.event === null) return { crossed: false, reason: 'the stream carried no structured result' }
-  const shaped = parseDeveloperTurnResult(read.raw)
+  const shaped = parseDeveloperTurnResult(read.raw, context)
   if (!shaped.ok) return { crossed: false, reason: `refused at the adapter (schema): ${shaped.errors.join('; ')}` }
   // The production controller judges it: a round past the first (the proof's
   // findings come from a review), and the proof's required source declared
@@ -387,7 +387,7 @@ function planLaunches(agent: ResultProofAgent, bridge: BridgeInvocation, scratch
     const mcpConfigPath = join(scratchDir, 'dev-tools.mcp.json')
     writeFileSync(mcpConfigPath, devToolsMcpConfigFileBody(bridge), { mode: 0o600 })
     const { settingsPath, sandbox, confined } = writeClaudeProofSettings(scratchDir, runId, cwd)
-    const schema = JSON.stringify(developerTurnResultJsonSchema())
+    const schema = JSON.stringify(developerTurnResultJsonSchema(PROOF_TURN_CONTEXT))
     return {
       sandbox,
       launch: (resumeId, model) => ({
@@ -410,7 +410,7 @@ function planLaunches(agent: ResultProofAgent, bridge: BridgeInvocation, scratch
   const confinement: ConfinementDisclosure = resolveProofConfinement('codex', 'developer', cwd, scratchDir)
   const codexHome = stageProofCodexHome(bridge, scratchDir, confinement)
   const schemaPath = join(scratchDir, 'developer-turn-result.schema.json')
-  writeFileSync(schemaPath, `${JSON.stringify(developerTurnResultJsonSchema(), null, 2)}\n`)
+  writeFileSync(schemaPath, `${JSON.stringify(developerTurnResultJsonSchema(PROOF_TURN_CONTEXT), null, 2)}\n`)
   return {
     sandbox: confinement.confined ? `ON — ${confinement.detail}` : `OFF (disclosed) — ${confinement.detail}`,
     launch: (resumeId, model) => ({
