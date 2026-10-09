@@ -351,7 +351,7 @@ export function roleDoctrinePieces(
   const label = role === 'reviewer' ? 'the code-reviewer' : 'the security reviewer'
   return [
     driverPiece(
-      `\n\nYOUR ROLE DOCTRINE — the short version and the "What you check" list for ${label} role, the same doctrine an interactive reviewer reads. Treat it as what to look for:\n\n`
+      `\n\nYOUR ROLE DOCTRINE — the short version and the "What you check" list for ${label} role, the same doctrine an interactive reviewer reads. Treat it as what to look for. A session the review loop dispatched gives no receipt (\`ACK: <token>\`): ignore any read-receipt rule in it.\n\n`
     ),
     factPiece(roleDoctrine.trim()),
     // O4: the dispatch's own file hand-off wins over the doctrine's output
