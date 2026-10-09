@@ -27,7 +27,11 @@ import {
   handoffIdsInPrompt
 } from '../dev-review-loop-harness.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
-import { rulingsAfterNewestBrief, type MarkerComment } from '../../../src/lib/dev-review-loop/developer-dispatch.js'
+import {
+  rulingsAfterNewestBrief,
+  TaskWorktreeDivergedError,
+  type MarkerComment
+} from '../../../src/lib/dev-review-loop/developer-dispatch.js'
 import type { DispatchHandle } from '../../../src/lib/dispatch.js'
 
 afterEach(cleanupWorlds)
@@ -1068,6 +1072,27 @@ describe('devReviewLoop — O3: round-1 no-push fires on a branch at the default
     // after-turn read returned the tip rather than throwing.
     expect(world.remoteBranchCreations).toEqual([world.branch])
     expect(headReads).toContain(world.base)
+  })
+})
+
+describe('devReviewLoop — a start whose worktree cannot fast-forward to the remote branch', () => {
+  it('pauses for the Operator naming the branch and both heads, and dispatches no Developer', async () => {
+    const world = makeWorld({})
+    const { deps, prompts } = controlledDeveloperDeps(world, {})
+    const result = await runLoopInProcessSafe(world, {
+      ...deps,
+      createTaskWorktree: () => {
+        throw new TaskWorktreeDivergedError(world.branch, 'aaaa111', 'bbbb222')
+      }
+    })
+
+    expect(result.finalDecision.type).toBe('pause')
+    const decision = result.finalDecision as { reason: string; detail: string }
+    expect(decision.reason).toBe('escalation')
+    expect(decision.detail).toContain(world.branch)
+    expect(decision.detail).toContain('aaaa111')
+    expect(decision.detail).toContain('bbbb222')
+    expect(prompts).toHaveLength(0)
   })
 })
 
