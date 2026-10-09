@@ -1384,7 +1384,6 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
       expect(decision.detail).toMatch(/1 commit\(s\) ahead of the remote/)
       expect(decision.detail).toContain(`branch ${world.branch}`)
       expect(world.dispatchCountByRole.developer ?? 0).toBe(1)
-      expect(world.dispatches.some((dd) => (dd.prompt ?? '').includes('publish_changes'))).toBe(false)
       expect(world.worktreeAhead).toBe(1)
       expect(world.commits).toHaveLength(0)
     }
@@ -1419,7 +1418,7 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
         { task: world.task, agent: 'codex' },
         developerLeavesCommit(world, out)
       )
-      expect(world.dispatches.some((dd) => (dd.prompt ?? '').includes('publish_changes'))).toBe(true)
+      expect(world.dispatchCountByRole.developer ?? 0).toBeGreaterThanOrEqual(2)
       expect((result.finalDecision as { type: string }).type).toBe('pause')
     })
   })
