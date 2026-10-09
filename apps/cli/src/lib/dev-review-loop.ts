@@ -4015,6 +4015,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
     }
 
+    /** Whether the turn ended with an accepted `blocked` or `needs_ruling` result — read before the publication check so the round pauses for the Principal instead of re-asking to publish. */
+    function endsInEscalation(handle: DispatchHandle, roundNum: number, answersFindings: boolean): boolean {
+      const verdict = judgeTurnOutput(handle.turnOutput, {
+        round: roundNum,
+        knownFindingIds: handoffFindingIdsByRound.get(roundNum) ?? [],
+        requireAddressedFindings: answersFindings && (handoffFindingIdsByRound.get(roundNum) ?? []).length > 0,
+        documentation: handle.documentation ?? { sources: [], countedReads: [] }
+      })
+      return verdict.ok && pauseForAcceptedResult(verdict.result) !== null
+    }
+
     /**
      * O3: the controller — the one place a Developer turn result is
      * accepted. Bound to this run, round, the worktree head the turn left and
@@ -4028,16 +4039,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * pauses the round with a typed reason. An accepted `blocked` or
      * `needs_ruling` result pauses it for the Principal.
      */
-    function endsInEscalation(handle: DispatchHandle, roundNum: number, answersFindings: boolean): boolean {
-      const verdict = judgeTurnOutput(handle.turnOutput, {
-        round: roundNum,
-        knownFindingIds: handoffFindingIdsByRound.get(roundNum) ?? [],
-        requireAddressedFindings: answersFindings && (handoffFindingIdsByRound.get(roundNum) ?? []).length > 0,
-        documentation: handle.documentation ?? { sources: [], countedReads: [] }
-      })
-      return verdict.ok && pauseForAcceptedResult(verdict.result) !== null
-    }
-
     async function settleTurnResult(handle: DispatchHandle, roundNum: number, answersFindings: boolean): Promise<void> {
       const knownFindingIds = handoffFindingIdsByRound.get(roundNum) ?? []
       const context = (documentation: DispatchHandle['documentation']): TurnResultControllerContext => ({

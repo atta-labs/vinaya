@@ -1419,6 +1419,10 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
         developerLeavesCommit(world, out)
       )
       expect(world.dispatchCountByRole.developer ?? 0).toBeGreaterThanOrEqual(2)
+      const reask = world.dispatches.filter((dd) => dd.role === 'developer')[1]
+      expect(reask?.prompt ?? '').toContain(
+        "The driver's publication check `unpublished-work` refused your previous turn"
+      )
       expect((result.finalDecision as { type: string }).type).toBe('pause')
     })
   })
