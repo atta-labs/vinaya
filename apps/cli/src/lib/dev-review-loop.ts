@@ -1789,7 +1789,6 @@ export function renderFailedCheckLog(log: FailedCheckLog): string {
   ].join('\n')
 }
 
-/** A bounded subset of an untrusted job-log tail that identifies its failure. */
 const FAILURE_EVIDENCE_LINE =
   /\(fail\)|\bfail(?:ed|ure)?\b|\berror\b|\b(?:E[A-Z_]+|AssertionError|TypeError|ReferenceError)\b|^\s+at\s/i
 const MAX_FAILURE_EVIDENCE_LINES = 20
@@ -3435,7 +3434,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     let resumedDispatch = resumeFrom !== null
     /** O3: the last red gate's failing check-run names, for the next gate-red dispatch prompt and, if it stalls, the pause detail. */
     let lastFailingChecks: string[] = []
-    /** The last red gate's failed runs with their job-log tails, rendered into the next gate-red dispatch prompt beside `lastFailingChecks` — kept apart from it so the failure signature stays the check names alone. */
     let lastFailureLogs: FailedCheckLog[] = []
     /** O2: true iff the current `dispatch_developer` decision came from a red gate (never inferred from `decision` itself — see this branch's own comment, below). Reset to `false` by every genuine `gate` observation. */
     let pendingGateRedRetry = false
@@ -5298,9 +5296,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       ciConclusion: 'green' | 'red' | 'pending'
       /** O3: the mechanical check-runs that actually failed, named by check name AND run — never the review gate's own, never a superseded run (`fetchFailingCheckRuns` is already deduped to the newest per name) — empty unless `ciConclusion === 'red'`. */
       failingChecks: string[]
-      /** The failed runs themselves, kept to pair stable names with their own log tails for the repeat-failure signature. */
       failingRuns: FailingCheckRun[]
-      /** The same failed runs, each with its own sanitized job-log tail — used both for the red-CI retry prompt and to distinguish repeat-failure signatures. */
       failureLogs: FailedCheckLog[]
     }> {
       const head = d.resolveHead(branch)
@@ -6753,27 +6749,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
           unpushedResumeAttempted = false
           const confidence = round >= 2 && gateGreen ? roundConfidence(round) : undefined
-          // The mechanical failure this attempt ended on, handed to the
-          // assessment verbatim — each stable failing check name plus the
-          // bounded failure evidence from its own log tail, then premise
-          // re-assert messages.  An unreadable or aggregate log contributes
-          // its check name alone, so a real repeat is never hidden. Only the assessment decides what
-          // a repeat is: it normalises this text (`normalizeFailureSignature`,
-          // `@attalabs/aeg-core`) and pauses when two consecutive attempts
-          // match. A red gate whose cause could not be named sends nothing,
-          // which is exactly how "unknown never matches unknown" is spelled.
-          //
-          // This is the ONLY site that feeds it, and it bounds what the stop
-          // can cover: a failure reaches here only if the developer pushed a
-          // head for the gate to read. A refused push never does — its
-          // refusal text lives in the developer's own session, and all this
-          // driver can read afterwards is `readUnpushedWorkDetail`'s dirty
-          // files and commits-ahead count, never why the push was refused —
-          // and neither does a test that fails inside the pre-push hook,
-          // for the same reason. Both are bounded a turn EARLIER instead, by
-          // the unmoved-head paths above (`no_push` after one resume,
-          // `infrastructure` at `MAX_GATE_STALLED_TURNS`); neither compares
-          // signatures, because neither has a failure message to compare.
           const failureParts = gate.failingChecks.map((check, index) => {
             const run = gate.failingRuns[index]
             if (run === undefined) return check

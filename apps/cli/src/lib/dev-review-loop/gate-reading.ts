@@ -345,13 +345,6 @@ export function describeFailingCheckRun(run: FailingCheckRun): string {
   return run.startedAt ? `${run.name} (run ${run.id}, started ${run.startedAt})` : `${run.name} (run ${run.id})`
 }
 
-/**
- * The stable check portion of a `repeat_failure` signature.  Run ids and
- * start times identify a failure to a person in `describeFailingCheckRun`,
- * but they change on every retry and must not decide whether the failure is
- * the same.  Aggregate workflow checks have no job log, so their name is the
- * complete signature evidence.
- */
 export function failureCheckName(run: Pick<FailingCheckRun, 'name'>): string {
   return run.name
 }
