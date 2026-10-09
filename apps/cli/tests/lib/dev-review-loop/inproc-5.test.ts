@@ -1636,14 +1636,16 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
       })
     }
 
-    it('a needs_ruling report is not re-asked', async () => {
-      const world = makeWorld({ worktreeExists: true })
-      world.developerTurnOutput = () => needsRulingTurnOutput('Widen the surface?', ['widen_surface', 'stop_task'])
-      const { deps, prompts } = withCapturedDeveloperDispatch(world, {})
-      const result = await runLoopInProcess(world, { task: world.task, agent: 'codex' }, deps)
-      expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
-      expect(prompts).toHaveLength(1)
-    })
+    for (const agent of ['claude', 'codex'] as const) {
+      it(`${agent} does not re-ask a needs_ruling report`, async () => {
+        const world = makeWorld({ worktreeExists: true })
+        world.developerTurnOutput = () => needsRulingTurnOutput('Widen the surface?', ['widen_surface', 'stop_task'])
+        const { deps, prompts } = withCapturedDeveloperDispatch(world, {})
+        const result = await runLoopInProcess(world, { task: world.task, agent }, deps)
+        expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+        expect(prompts).toHaveLength(1)
+      })
+    }
 
     it('completed with an unpushed commit still gets the publication re-ask', async () => {
       const world = makeWorld({ worktreeExists: true })
