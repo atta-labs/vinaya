@@ -160,9 +160,16 @@ function runOutsideSandbox(worktreeDir: string, command: string, env: Record<str
   )
 }
 
+// The Claude sandbox opens its proxy socket at TMPDIR/srt-mux-<pid>-<n>.sock,
+// and a macOS socket path holds 104 bytes: the runner's system temp directory
+// alone is 105, so the scratch directory goes under /tmp there.
+function claudeScratchRoot(): string {
+  return process.platform === 'darwin' ? '/tmp' : tmpdir()
+}
+
 function claudeSession(): SandboxSession {
   const worktreeDir = createWorktree('claude')
-  const scratchDir = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-claude-sandbox-')))
+  const scratchDir = realpathSync(mkdtempSync(join(claudeScratchRoot(), 'vinaya-claude-sandbox-')))
   const settingsDir = mkdtempSync(join(tmpdir(), 'vinaya-conformance-srt-'))
   const resolution = resolveClaudeConfinement(request('claude', worktreeDir, scratchDir))
   if (!resolution.confined) {
