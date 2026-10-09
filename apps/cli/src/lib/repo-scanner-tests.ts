@@ -204,12 +204,15 @@ export function scannedRootsOf(ts: TypeScriptApi, file: string, source: string, 
  * - `process-start` — the test checks how files under its roots start a
  *   process, so it is selected when a changed or added file there starts one
  *   in the lines the diff touched.
+ * - `listed-files` — the test reads specifically named repository files,
+ *   rather than walking the tree, so any change below a declared root can
+ *   change its assertion.
  * - `content` — the test asserts something about what every file says, so any
  *   edit under its roots can break it. The hook never selects it by its scan
  *   (it still can by its own imports); CI runs every shard, so
  *   it runs there on every pull request.
  */
-export type ScannerTrigger = 'tree-shape' | 'process-start' | 'content'
+export type ScannerTrigger = 'tree-shape' | 'process-start' | 'listed-files' | 'content'
 
 export type ScannerDeclaration = {
   /** Repo-root-relative path of the folder-scanning test. */
@@ -227,10 +230,24 @@ export type ScannerDeclaration = {
  * Every folder-scanning test in this repository, with what it reads and what
  * it judges. The selector reads this; a test checks that every file
  * {@link scannedRootsOf} classifies has an entry here and that no entry names
- * a file that no longer scans. Paths that do not exist in another repository
- * select nothing there.
+ * a file that no longer scans. `listed-files` declarations intentionally do
+ * not walk a tree and are exempt from that classifier check. Paths that do not
+ * exist in another repository select nothing there.
  */
 export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
+  {
+    test: 'apps/cli/tests/conformance/dev-review-engine-architecture-exit.test.ts',
+    roots: [
+      'apps/cli/tests/fixtures/dev-review-engine-scenarios.json',
+      'apps/cli/tests/fixtures/dev-review-architecture-invariants.json',
+      'apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json',
+      'apps/cli/src/commands/dev-review-loop.ts',
+      'apps/cli/src/lib/dev-review-loop.ts',
+      'apps/cli/src/lib/dev-review-loop/',
+      'packages/aeg-core/src/dev-review-loop/'
+    ],
+    trigger: 'listed-files'
+  },
   { test: 'apps/cli/tests/ci-shards.test.ts', roots: ['apps/cli/'], trigger: 'tree-shape' },
   {
     test: 'apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts',

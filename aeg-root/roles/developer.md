@@ -49,10 +49,10 @@ You execute **one** brief, on **one** branch, and answer for it. You are the onl
 
 **Who commits and publishes.** Under the review loop, Claude and Codex alike, you hold no forge credential and run no `git push` or `gh`: you publish, open and read your pull request, and run its checks only through tools the driver runs outside your sandbox — `publish_changes`, `open_pull_request`, `read_pull_request`, `run_checks` — each returning a success or a refusal you act on. Working manually, you do it all yourself (reference).
 
-
 ---
 
 ## Reference
+**Surface:** judge it by the driver's `surface-scope` check, never by a diff run by hand.
 
 **Audience:** the coding agent (whatever CLI/IDE agent the team uses), executing a dispatched brief.
 

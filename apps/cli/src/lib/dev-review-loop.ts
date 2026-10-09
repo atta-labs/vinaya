@@ -133,7 +133,6 @@ import { detectVendoredVinaya } from './self-host.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import {
   describeFailingCheckRun,
-  failureCheckName,
   fetchCiConclusion,
   fetchConflictingFiles,
   fetchFailingCheckRuns,
@@ -319,7 +318,6 @@ import {
 // the module that now owns it.
 export {
   describeFailingCheckRun,
-  failureCheckName,
   fetchCiConclusion,
   fetchConflictingFiles,
   fetchFailingCheckRuns,
@@ -832,6 +830,8 @@ export type LoopDeps = {
     worktreePath: string,
     env?: Record<string, string>
   ) => Promise<{ passed: boolean; output: string }>
+  /** Runs the registry's authoritative surface-scope check for a Developer turn's worktree head. */
+  runSurfaceScopeCheck: (worktreePath: string, head: string) => Promise<{ passed: boolean }>
 }
 
 function defaultRepoRoot(): string {
@@ -1803,7 +1803,7 @@ const MAX_FAILURE_EVIDENCE_CHARS = 2_000
  * pathological CI log from inflating a pause detail.
  */
 export function failureSignaturePart(run: { name: string; detail?: string }, logTail: string | null): string {
-  const check = failureCheckName(run)
+  const check = run.name
   if (run.detail !== undefined || logTail === null) return check
   const evidence = logTail
     .split('\n')
@@ -1887,6 +1887,20 @@ export async function defaultRunWorktreeChecks(
   })
   const output = `${res.stdout ?? ''}${res.stderr ?? ''}`
   return { passed: res.status === 0, output }
+}
+
+/** Run the one registry check that decides whether an outside-surface report is a real escalation. */
+export async function defaultRunSurfaceScopeCheck(worktreePath: string, _head: string): Promise<{ passed: boolean }> {
+  const res = guardedSpawnSync(
+    process.argv[0] as string,
+    [process.argv[1] as string, 'check', 'surface-scope', '--diff-only'],
+    {
+      cwd: worktreePath,
+      env: process.env,
+      maxBuffer: 64 * 1024 * 1024
+    }
+  )
+  return { passed: res.status === 0 }
 }
 
 /**
@@ -2255,6 +2269,7 @@ function defaultDeps(): LoopDeps {
     refreshPrEvidence: defaultRefreshPrEvidence,
     readPrView: defaultReadPrView,
     runWorktreeChecks: defaultRunWorktreeChecks,
+    runSurfaceScopeCheck: defaultRunSurfaceScopeCheck,
     fetchDeveloperStop,
     fetchMergeableState,
     fetchConflictingFiles,
@@ -4029,6 +4044,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     ): Promise<DispatchHandle> {
       let currentPrompt = prompt
       let publishReasks = 0
+      let outsideSurfaceReasks = 0
       let publicationRefusals = opts.publicationRefusal ? 1 : 0
       let previousPublicationRefusal: string | null = opts.publicationRefusal?.signature ?? null
       while (true) {
@@ -4055,6 +4071,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             'Your previous turn was refused by the driver — the after-turn confinement check (isolation.md) found:',
             describeTurnConfinementViolation(confinement),
             `Fix the problem above and end your turn — ${publishingInstructionLine()}`
+          ].join('\n\n')
+          continue
+        }
+        const falseOutsideSurface = await outsideSurfaceRetryPaths(handle, roundNum, opts.answersFindings === true)
+        if (falseOutsideSurface !== null && outsideSurfaceReasks < 1) {
+          outsideSurfaceReasks += 1
+          currentPrompt = [
+            "Your previous turn reported `outside_surface`, but the driver's `surface-scope` check passed on that turn's head.",
+            'Continue the task without pausing. This is the one allowed retry for that report. The pull request changed-file list (merge-base three-dot diff) is:',
+            falseOutsideSurface.length > 0
+              ? falseOutsideSurface.map((path) => `- ${path}`).join('\n')
+              : '- (no changed files found)',
+            `End your turn — ${publishingInstructionLine()}`
           ].join('\n\n')
           continue
         }
@@ -4092,6 +4121,42 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         documentation: handle.documentation ?? { sources: [], countedReads: [] }
       })
       return verdict.ok && pauseForAcceptedResult(verdict.result) !== null
+    }
+
+    /**
+     * `outside_surface` is only a real escalation when the authoritative
+     * surface-scope gate failed on the same head. A passing gate means the
+     * Developer's local diff judgement was a false alarm, so return the PR's
+     * merge-base diff for one ordinary retry instead of pausing the loop.
+     */
+    async function outsideSurfaceRetryPaths(
+      handle: DispatchHandle,
+      roundNum: number,
+      answersFindings: boolean
+    ): Promise<string[] | null> {
+      const verdict = judgeTurnOutput(handle.turnOutput, {
+        round: roundNum,
+        knownFindingIds: handoffFindingIdsByRound.get(roundNum) ?? [],
+        requireAddressedFindings: answersFindings && (handoffFindingIdsByRound.get(roundNum) ?? []).length > 0,
+        documentation: handle.documentation ?? { sources: [], countedReads: [] }
+      })
+      if (!verdict.ok || verdict.result.status !== 'blocked' || verdict.result.blocker.kind !== 'outside_surface')
+        return null
+      const worktree = worktreePathForBranch()
+      const head = existsSync(worktree) ? d.readWorktreeHead(worktree) : null
+      if (head === null) return null
+      try {
+        // `surface-scope` is a registry entry within a check job, not a
+        // forge check-run of its own. Retry only when that runner explicitly
+        // passes for the turn's actual worktree head; every other outcome is
+        // conservative and leaves the accepted block to pause the loop.
+        if (!(await d.runSurfaceScopeCheck(worktree, head)).passed) return null
+        const base = await d.gitMergeBase(head)
+        return d.gitWorktreeChangedPaths(worktree, base)
+      } catch {
+        // A missing merge base leaves the existing conservative escalation.
+        return null
+      }
     }
 
     /**
@@ -6749,9 +6814,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
           unpushedResumeAttempted = false
           const confidence = round >= 2 && gateGreen ? roundConfidence(round) : undefined
-          const failureParts = gate.failingChecks.map((check, index) => {
-            const run = gate.failingRuns[index]
-            if (run === undefined) return check
+          const failureParts = gate.failingRuns.map((run) => {
             const log = gate.failureLogs.find((entry) => entry.runId === run.id) ?? null
             return failureSignaturePart(run, log?.logTail ?? null)
           })

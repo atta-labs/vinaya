@@ -22,11 +22,13 @@ const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..')
 const DECLARATIONS: ScannerDeclaration[] = [
   { test: 'apps/cli/tests/shape.test.ts', roots: ['apps/cli/'], trigger: 'tree-shape' },
   { test: 'apps/cli/tests/processes.test.ts', roots: ['apps/cli/tests/'], trigger: 'process-start' },
-  { test: 'apps/cli/tests/content.test.ts', roots: ['.'], trigger: 'content' }
+  { test: 'apps/cli/tests/content.test.ts', roots: ['.'], trigger: 'content' },
+  { test: 'apps/cli/tests/listed.test.ts', roots: ['apps/cli/listed/'], trigger: 'listed-files' }
 ]
 const SHAPE = 'apps/cli/tests/shape.test.ts'
 const PROCESSES = 'apps/cli/tests/processes.test.ts'
 const CONTENT = 'apps/cli/tests/content.test.ts'
+const LISTED = 'apps/cli/tests/listed.test.ts'
 
 /** A workspace whose three scanner tests import nothing, so only a declared trigger can select them. */
 function workspace(): string {
@@ -41,6 +43,8 @@ function workspace(): string {
   write(SHAPE, 'export const shape = 1\n')
   write(PROCESSES, 'export const processes = 1\n')
   write(CONTENT, 'export const content = 1\n')
+  write(LISTED, 'export const listed = 1\n')
+  write('apps/cli/listed/input.json', '{}\n')
   write(
     'apps/cli/tests/spawner.test.ts',
     "import { spawnSync } from 'node:child_process'\nconst label = 'a'\nspawnSync('true', [])\nexport default label\n"
@@ -71,7 +75,7 @@ function select(
   // Sorted: selection follows directory-listing order, which only some filesystems sort.
   return selected
     .map((f) => f.slice(root.length + 1))
-    .filter((f) => [SHAPE, PROCESSES, CONTENT].includes(f))
+    .filter((f) => [SHAPE, PROCESSES, CONTENT, LISTED].includes(f))
     .sort()
 }
 
@@ -130,6 +134,18 @@ describe('pre-push selects a folder-scanning test only for the kind of change it
       rmSync(root, { recursive: true, force: true })
     }
   })
+
+  it('selects a listed-files test for any change under its roots, without an import edge', () => {
+    const root = workspace()
+    try {
+      expect(select(root, { changed: ['apps/cli/listed/input.json'] })).toContain(LISTED)
+      expect(select(root, { addedOrRenamed: ['apps/cli/listed/new.json'] })).toContain(LISTED)
+      expect(select(root, { removed: ['apps/cli/listed/removed.json'] })).toContain(LISTED)
+      expect(select(root, { changed: ['apps/cli/src/index.ts'] })).not.toContain(LISTED)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('startsProcessIn reads process starts with the compiler, not a text search', () => {
@@ -172,7 +188,14 @@ describe('every folder-scanning test in this repository declares its roots and i
   })
 
   it('no declaration names a file that is gone or no longer scans', () => {
-    expect(declared.filter((f) => !classified.includes(f))).toEqual([])
+    expect(
+      SCANNER_DECLARATIONS.filter((d) => d.trigger !== 'listed-files')
+        .map((d) => d.test)
+        .filter((f) => !classified.includes(f))
+    ).toEqual([])
+    expect(
+      SCANNER_DECLARATIONS.filter((d) => d.trigger === 'listed-files').every((d) => existsSync(join(REPO_ROOT, d.test)))
+    ).toBe(true)
     expect(new Set(declared).size).toBe(declared.length)
   })
 

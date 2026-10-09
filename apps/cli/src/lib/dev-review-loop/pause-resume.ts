@@ -212,7 +212,7 @@ export function renderPauseComment(
     '',
     isRateLimitPauseDetail(detail) || isUsageLimitPauseDetail(detail)
       ? 'No Principal ruling is needed. Once the limit has reset, resume with:'
-      : 'A Principal ruling is needed before this can continue. Once one is posted on this PR, resume with:',
+      : 'A Principal ruling is needed before this can continue. A loop process still running picks up a posted ruling by itself; use this --resume command only when that process has stopped:',
     '',
     '```',
     resume,

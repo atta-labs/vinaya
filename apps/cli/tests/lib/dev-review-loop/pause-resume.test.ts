@@ -192,6 +192,12 @@ describe('renderPauseComment (pure) — O1: every pause reason renders its detai
     })
     expect(body).toContain('vinaya dev-review-loop --resume 682 --agent codex --model gpt-5.6-terra')
   })
+
+  it('says a running loop picks up a ruling and reserves --resume for a stopped process', () => {
+    const body = renderPauseComment(682, 'escalation', 'a decision is needed')
+    expect(body).toContain('loop process still running picks up a posted ruling by itself')
+    expect(body).toContain('only when that process has stopped')
+  })
 })
 
 describe('renderNoPushStopComment (pure) — the no-PR-yet variant carries detail the same way', () => {

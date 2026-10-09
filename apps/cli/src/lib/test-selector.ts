@@ -70,8 +70,9 @@
  * keeps instead is each scanner's declared trigger (`SCANNER_DECLARATIONS`):
  * the kind of change the test judges — a file added, renamed or removed under
  * its roots, or a process started in the touched lines of a file there — and
- * the test is selected for that kind of change only. An ordinary edit selects
- * none of them.
+ * the test is selected for that kind of change only. A listed-files test is
+ * selected on any changed, added, renamed, or removed path below a declared
+ * root. An ordinary edit selects none of the other trigger kinds.
  *
  * ## Tests that spawn the built CLI as a fresh subprocess
  *
@@ -1347,7 +1348,9 @@ export function selectAffectedTestFiles(
               const ranges = addedOrRenamed.has(abs) ? undefined : changedRanges.get(abs)
               return startsProcessIn(typescript, abs, readSource(abs), ranges)
             })
-          : false
+          : declaration.trigger === 'listed-files'
+            ? [...absChanged, ...addedOrRenamed, ...(options.removed ?? [])].map(relative).some(under)
+            : false
     if (triggered) triggeredScanners.add(join(repoRoot, declaration.test))
   }
 
