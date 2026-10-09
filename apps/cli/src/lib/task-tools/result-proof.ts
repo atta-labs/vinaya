@@ -243,7 +243,7 @@ export type SchemaInvalid = 'missing-source' | 'unknown-finding-id'
 
 /** The one time limit every proof case runs under. */
 export const CASE_TIME_LIMIT_MS = 5 * 60 * 1000
-export const CASE_TIME_LIMIT_LABEL = '5 minutes'
+export const CASE_TIME_LIMIT_LABEL = `${CASE_TIME_LIMIT_MS / 60_000} minutes`
 
 function toolInstruction(agent: ResultProofAgent): string {
   return agent === 'claude'
@@ -542,8 +542,35 @@ export function runChild(
   timeoutMs?: number
 ): Promise<RunOutcome> {
   return new Promise((resolve) => {
-    // Its own process group, so the time limit stops the agent's children with it.
-    const child = spawn(command, launch.args, { cwd, env: launch.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true })
+    // With a time limit the child leads its own process group, so the limit stops its children with it;
+    // without one it stays in the caller's group and a terminal Ctrl+C reaches it as before.
+    const grouped = timeoutMs !== undefined
+    const child = spawn(command, launch.args, {
+      cwd,
+      env: launch.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: grouped
+    })
+    const killGroup = (): void => {
+      try {
+        if (child.pid !== undefined) process.kill(-child.pid, 'SIGKILL')
+      } catch {
+        child.kill('SIGKILL')
+      }
+    }
+    // A grouped child no longer receives the terminal's Ctrl+C, so the parent's abort or exit stops its group.
+    const onSignal = (): void => process.exit(130)
+    if (grouped) {
+      process.once('exit', killGroup)
+      process.once('SIGINT', onSignal)
+      process.once('SIGTERM', onSignal)
+    }
+    const release = (): void => {
+      if (!grouped) return
+      process.removeListener('exit', killGroup)
+      process.removeListener('SIGINT', onSignal)
+      process.removeListener('SIGTERM', onSignal)
+    }
     let timedOut = false
     const limit =
       timeoutMs === undefined
@@ -551,11 +578,8 @@ export function runChild(
         : setTimeout(
             () => {
               timedOut = true
-              try {
-                if (child.pid !== undefined) process.kill(-child.pid, 'SIGKILL')
-              } catch {
-                child.kill('SIGKILL')
-              }
+              killGroup()
+              release()
               // a grandchild that escaped the group may hold the pipes open: do not wait for them
               resolve({ exitCode: null, signal: 'SIGKILL', stdout, stderr, timedOut: true })
             },
@@ -579,10 +603,12 @@ export function runChild(
     child.stderr.on('data', (chunk: string) => (stderr += chunk))
     child.on('error', (err) => {
       clearTimeout(limit)
+      release()
       resolve({ exitCode: null, signal: null, stdout, stderr, spawnError: err.message })
     })
     child.on('close', (exitCode, signal) => {
       clearTimeout(limit)
+      release()
       resolve({ exitCode, signal, stdout, stderr, cancelled, ...(timedOut ? { timedOut } : {}) })
     })
     child.stdin.on('error', () => {

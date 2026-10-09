@@ -7,6 +7,7 @@ import {
 } from '../../../src/lib/developer-turn-result.js'
 import {
   accountEnv,
+  CASE_TIME_LIMIT_LABEL,
   CASE_TIME_LIMIT_MS,
   checkSchemaRejects,
   driverVerdict,
@@ -567,14 +568,15 @@ describe('checkSchemaRejects — the per-turn schema the proof sends', () => {
       expect(checkSchemaRejects({}, invalid).pass).toBe(false)
     })
   }
-  it('is the same schema object the launches write', () => {
+  it('proofTurnSchema rejects a result with an unknown status', () => {
     expect(validatesJsonSchema(proofTurnSchema(), { turnResult: { status: 'nope' } })).toBe(false)
   })
 })
 
 describe('the case time limit', () => {
-  it('is five minutes', () => {
+  it('is five minutes, and the label is derived from it', () => {
     expect(CASE_TIME_LIMIT_MS).toBe(5 * 60 * 1000)
+    expect(CASE_TIME_LIMIT_LABEL).toBe('5 minutes')
   })
   const hang = { args: ['-c', 'sleep 30'], env: process.env }
   const quick = { args: ['-c', 'echo done'], env: process.env }
