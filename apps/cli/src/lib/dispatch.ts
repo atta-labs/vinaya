@@ -4383,13 +4383,6 @@ export async function dispatchRole(
   // is what an unattended start's boundary resolution wraps below, rather
   // than wrapping a pre-settings argv and reconciling the two later.
   const documentationSources = documentationSourcesFromPrompt(role, prompt)
-  const developerTurnSchema =
-    role === 'developer'
-      ? developerTurnResultJsonSchema({
-          knownFindingIds: opts.turnResultKnownFindingIds ?? [],
-          requiredSources: documentationSources.map((source) => source.source)
-        })
-      : null
   const codexDocumentationGuidance =
     agent === 'codex' && documentationSources.some((source) => isDocumentationUrl(source.source))
       ? `\n\nCodex documentation receipt: read every URL in \`## Documentation\` with the dev-tools \`${FETCH_DOCUMENTATION_TOOL}\` tool before ending this turn — the driver fetches the page outside your sandbox and records the read. \`curl -L <URL>\` in a Bash tool call also counts when the host is reachable from the sandbox; a \`curl\` your sandbox blocks never means the source cannot be opened — read it with \`${FETCH_DOCUMENTATION_TOOL}\`. Built-in web search is not a receipt route for this dispatch.\n`
@@ -4429,6 +4422,27 @@ export async function dispatchRole(
       : null
   const codexHooksPath =
     agent === 'codex' ? writeCodexDispatchHooks(runId, documentationSources, scopeOf(opts.task, opts.pr), role) : null
+  // The schema requires the sources the driver's after-turn check demands:
+  // the run's manifest, which the first turn wrote and a later turn (whose
+  // prompt has no Documentation section) kept. Read through the same
+  // function the check uses; a dispatch with no manifest directory (neither
+  // Claude nor Codex settings written) falls back to the prompt's sources.
+  const manifestDir =
+    dispatchSettingsPath !== null
+      ? dirname(dispatchSettingsPath)
+      : codexHooksPath !== null
+        ? dirname(codexHooksPath)
+        : null
+  const developerTurnSchema =
+    role === 'developer'
+      ? developerTurnResultJsonSchema({
+          knownFindingIds: opts.turnResultKnownFindingIds ?? [],
+          requiredSources:
+            manifestDir !== null
+              ? deliveredDocumentation(agent, manifestDir, runId, join(manifestDir, 'no-receipts')).sources
+              : documentationSources.map((source) => source.source)
+        })
+      : null
   // O1/O2: the machine-state deny floor a Claude dispatch carries
   // as `permissions.deny`, translated into Codex's execpolicy `.rules` grammar
   // for the SAME role. In-memory here (no I/O, so no dispatch-time failure to

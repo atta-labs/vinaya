@@ -520,6 +520,48 @@ describe('judgeCase', () => {
   })
 })
 
+describe('judgeCase — schema-blocks', () => {
+  const required = PROOF_TURN_CONTEXT.requiredSources[0]
+  const withValues = (overrides: Record<string, unknown>) =>
+    readOf(wrap({ ...completed, sourceUses: [{ source: required, use: 'decided' }], ...overrides }))
+  for (const invalid of ['missing-source', 'unknown-finding-id'] as const) {
+    it(`${invalid}: passes when the provider refused the invalid value`, () => {
+      const none = readOf(null)
+      const judged = judgeCase({ kind: 'schema-blocks', invalid }, none, driverVerdict(none, PROOF_TURN_CONTEXT))
+      expect(judged.pass).toBe(true)
+      expect(judged.why.join('\n')).toContain('the provider refused the invalid value')
+    })
+    it(`${invalid}: passes when the agent reported a valid value instead`, () => {
+      const read = withValues({})
+      const judged = judgeCase({ kind: 'schema-blocks', invalid }, read, driverVerdict(read, PROOF_TURN_CONTEXT))
+      expect(judged.pass).toBe(true)
+      expect(judged.why.join('\n')).toContain('the agent reported a valid value instead')
+    })
+  }
+  it('fails when the driver accepts a result that omits the required source', () => {
+    const read = withValues({ sourceUses: [] })
+    const verdict: ReturnType<typeof driverVerdict> = {
+      crossed: true,
+      accepted: true,
+      result: { ...(completed as object), sourceUses: [] } as never
+    }
+    const judged = judgeCase({ kind: 'schema-blocks', invalid: 'missing-source' }, read, verdict)
+    expect(judged.pass).toBe(false)
+    expect(judged.why.join('\n')).toContain('omits the required source')
+  })
+  it('fails when the driver accepts a result naming an id outside the handoff', () => {
+    const read = withValues({})
+    const verdict: ReturnType<typeof driverVerdict> = {
+      crossed: true,
+      accepted: true,
+      result: { ...(completed as object), addressedFindingIds: ['R9-XX-404'] } as never
+    }
+    const judged = judgeCase({ kind: 'schema-blocks', invalid: 'unknown-finding-id' }, read, verdict)
+    expect(judged.pass).toBe(false)
+    expect(judged.why.join('\n')).toContain('outside the handoff')
+  })
+})
+
 describe('proofCases', () => {
   it('runs the first session first and the resume second, and covers every rejection case', () => {
     for (const agent of ['claude', 'codex'] as const) {
@@ -529,8 +571,8 @@ describe('proofCases', () => {
       expect(cases.map((c) => c.name)).toEqual([
         'first session',
         'resumed session',
-        'missing required source — rejected, then corrected in the same session',
-        'unknown finding id',
+        'missing required source — blocked by the schema',
+        'unknown finding id — blocked by the schema',
         'ruling request naming no permissible decision',
         'malformed model output',
         'cancelled run',
@@ -543,10 +585,11 @@ describe('proofCases', () => {
     expect(proofCases('claude', 'n')[0]?.expectation).toEqual({ kind: 'accepted', summary: 'first-n' })
     expect(proofCases('codex', 'n')[0]?.expectation).toEqual({ kind: 'accepted', summary: 'first-n' })
   })
-  it('replaces the forced Stop-hook case with the controller-rejection case, resumed once', () => {
-    const c = proofCases('claude', 'n').find((x) => x.correctOnce === true)
-    expect(c?.expectation).toEqual({ kind: 'rejected-then-accepted', error: 'sourceUses' })
-    expect(c?.prompt).toContain('sourceUses null')
+  it('expects the schema to block the missing-source and unknown-finding-id cases', () => {
+    const cases = proofCases('claude', 'n')
+    expect(cases[2]?.expectation).toEqual({ kind: 'schema-blocks', invalid: 'missing-source' })
+    expect(cases[2]?.prompt).toContain('sourceUses null')
+    expect(cases[3]?.expectation).toEqual({ kind: 'schema-blocks', invalid: 'unknown-finding-id' })
   })
   it('never asks the model for its reasoning', () => {
     for (const c of proofCases('claude', 'n')) expect(c.prompt.toLowerCase()).not.toContain('reasoning')

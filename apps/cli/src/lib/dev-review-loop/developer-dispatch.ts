@@ -1082,7 +1082,7 @@ export async function resolveDeveloperDoctrineText(): Promise<string | null> {
  */
 export function renderDeveloperDoctrineBlock(doctrine: string): string {
   return [
-    "YOUR ROLE DOCTRINE — the developer role's short version and its checklist (its Stop conditions and its Verification before reporting done), the same doctrine an interactive developer reads. Run `bun apps/cli/src/index.ts doctrine --role developer --print` for its full reference. This is your operating instruction; the frozen brief for this task follows it.",
+    "YOUR ROLE DOCTRINE — the developer role's short version and its checklist (its Stop conditions and its Verification before reporting done), the same doctrine an interactive developer reads. Run `bun apps/cli/src/index.ts doctrine --role developer --print` for its full reference. This is your operating instruction; the frozen brief for this task follows it. A session the review loop dispatched gives no receipt (`ACK: <token>`): ignore any read-receipt rule in the doctrine below.",
     doctrine.trim()
   ].join('\n\n')
 }

@@ -517,6 +517,15 @@ describe('renderReviewerDispatchPrompt — carries the role doctrine as a fact',
     expect(driverText).toContain('take precedence')
     expect(lintReviewerPrompt(driverText)).toEqual([])
   })
+
+  it('states a dispatched session gives no read receipt, and sends nothing for a missing doctrine (O2, O3)', () => {
+    for (const role of ['reviewer', 'security'] as const) {
+      const driverText = driverAuthoredPromptText(roleDoctrinePieces(role, 'A short version.'))
+      expect(driverText).toContain('A session the review loop dispatched gives no receipt')
+      expect(lintReviewerPrompt(driverText)).toEqual([])
+      expect(roleDoctrinePieces(role, null)).toEqual([])
+    }
+  })
 })
 
 // --- the driver-staged pull-request inputs: no gh, no forge credential (task 992, O1/O2/O3) ---
