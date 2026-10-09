@@ -156,6 +156,68 @@ describe('devReviewLoop — O1 (#595): one failing CI check never ends the drive
   })
 })
 
+describe('devReviewLoop — repeat_failure uses failed-log evidence (#1227)', () => {
+  it('continues when the same check changes from the macOS socket error to the known-failure test', async () => {
+    const world = makeWorld({
+      gate: 'red',
+      failingCheckRuns: [{ id: 101, name: 'Sandbox conformance (macOS)', conclusion: 'failure' }]
+    })
+    let gateReads = 0
+    let tailReads = 0
+    const { deps } = withCapturedDeveloperDispatch(world, {
+      fetchCiConclusion: () => {
+        gateReads += 1
+        return gateReads <= 3 ? 'red' : 'green'
+      },
+      fetchFailingCheckRuns: () =>
+        gateReads <= 3 ? ([{ id: 101, name: 'Sandbox conformance (macOS)', conclusion: 'failure' }] as never) : [],
+      resolveHead: () => String(world.dispatchCountByRole.developer).repeat(40),
+      readFailedCheckLogTail: () => {
+        tailReads += 1
+        return [
+          'error: listen EINVAL: invalid argument\n    at listenOnUnixSocket (mux-proxy.js:42:9)',
+          'error: gh-chained now exits 0 under claude\n(fail) sandbox conformance > gh-chained',
+          'error: platform-independence rejects the new host-platform read'
+        ][tailReads - 1] as string
+      }
+    })
+
+    const result = await runLoopInProcessSafe(world, deps)
+    expect(result.finalDecision.type).toBe('publish')
+  })
+
+  it('pauses when identical failed-log evidence repeats', async () => {
+    const world = makeWorld({
+      gate: 'red',
+      failingCheckRuns: [{ id: 101, name: 'Sandbox conformance (macOS)', conclusion: 'failure' }]
+    })
+    const { deps } = withCapturedDeveloperDispatch(world, {
+      resolveHead: () => String(world.dispatchCountByRole.developer).repeat(40),
+      readFailedCheckLogTail: () =>
+        'error: gh-chained now exits 0 under claude\n(fail) sandbox conformance > gh-chained'
+    })
+
+    const result = await runLoopInProcessSafe(world, deps)
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'repeat_failure' })
+    expect((result.finalDecision as { detail: string }).detail).toContain('gh-chained now exits 0')
+  })
+
+  it('falls back to the check name and still pauses when its tail is unreadable', async () => {
+    const world = makeWorld({
+      gate: 'red',
+      failingCheckRuns: [{ id: 101, name: 'Sandbox conformance (macOS)', conclusion: 'failure' }]
+    })
+    const { deps } = withCapturedDeveloperDispatch(world, {
+      resolveHead: () => String(world.dispatchCountByRole.developer).repeat(40),
+      readFailedCheckLogTail: () => null
+    })
+
+    const result = await runLoopInProcessSafe(world, deps)
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'repeat_failure' })
+    expect((result.finalDecision as { detail: string }).detail).toBe('Sandbox conformance (macOS)')
+  })
+})
+
 // --- a stale Premise pin pauses like a red gate, never a driver exit (O4) ---
 
 describe('devReviewLoop — a stale Premise pin pauses like a red gate, never a driver exit (O4)', () => {

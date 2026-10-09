@@ -10,7 +10,12 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { MAX_RETURNED_TEXT_CHARS } from '@attalabs/aeg-core'
-import { failedCheckLogsOnHead, type LoopDeps, renderFailedCheckLog } from '../../../src/lib/dev-review-loop.js'
+import {
+  failedCheckLogsOnHead,
+  failureSignaturePart,
+  type LoopDeps,
+  renderFailedCheckLog
+} from '../../../src/lib/dev-review-loop.js'
 import { readFailedCheckLogs, readJobLogTail } from '../../../src/lib/task-tools/pr-facts.js'
 import {
   cleanupWorlds,
@@ -24,6 +29,40 @@ afterEach(cleanupWorlds)
 
 const ESC = String.fromCharCode(27)
 const TOKEN = `ghp_${'A1b2C3d4'.repeat(5)}`
+
+// Tails from PR #1225's two red attempts, reduced to the relevant lines. The
+// aggregate Vinaya CI tail contained only its generic failure, so it is
+// intentionally represented by an unreadable/name-only entry below.
+const MACOS_SOCKET_FAILURE = [
+  'error: listen EINVAL: invalid argument, unix:///private/var/folders/.../srt-mux-1880-1.sock',
+  '    at listenOnUnixSocket (dist/sandbox/mux-proxy.js:42:9)'
+].join('\n')
+const MACOS_KNOWN_FAILURE = [
+  "error: gh-chained now exits 0 under claude's sandbox on darwin — remove its KNOWN_FAILURES entry",
+  '(fail) sandbox conformance — claude\'s sandbox > gh-chained: gh issue view 1026 --json number,title; echo "gh exit $?"'
+].join('\n')
+
+describe('failureSignaturePart — bounded failure evidence for repeat_failure', () => {
+  it('keeps the check name plus the failed test and error lines from the PR #1225 tails', () => {
+    expect(failureSignaturePart({ name: 'Sandbox conformance (macOS)' }, MACOS_SOCKET_FAILURE)).toContain(
+      'listen EINVAL'
+    )
+    const changed = failureSignaturePart({ name: 'Sandbox conformance (macOS)' }, MACOS_KNOWN_FAILURE)
+    expect(changed).toContain('gh-chained now exits 0')
+    expect(changed).toContain('(fail) sandbox conformance')
+    expect(changed).not.toBe(failureSignaturePart({ name: 'Sandbox conformance (macOS)' }, MACOS_SOCKET_FAILURE))
+  })
+
+  it('falls back to the check name when a log cannot be read or the check is aggregate', () => {
+    expect(failureSignaturePart({ name: 'Vinaya CI' }, null)).toBe('Vinaya CI')
+    expect(
+      failureSignaturePart(
+        { name: 'Vinaya CI', detail: 'workflow Vinaya CI run 113693938912 ended failure' },
+        'A required job did not succeed: failure'
+      )
+    ).toBe('Vinaya CI')
+  })
+})
 
 /** A job log as a runner writes it: coloured, leaking a token, carrying both authority grammars, and failing at its end. */
 const HOSTILE_LOG = [

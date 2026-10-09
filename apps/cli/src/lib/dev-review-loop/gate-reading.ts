@@ -344,6 +344,10 @@ export function describeFailingCheckRun(run: FailingCheckRun): string {
   if (run.detail !== undefined) return run.detail
   return run.startedAt ? `${run.name} (run ${run.id}, started ${run.startedAt})` : `${run.name} (run ${run.id})`
 }
+
+export function failureCheckName(run: Pick<FailingCheckRun, 'name'>): string {
+  return run.name
+}
 // --- mergeability ------------------------------------------------
 
 /** The forge's own three-value answer (GitHub's `mergeable` GraphQL field, read via `gh pr view --json mergeable`) — `UNKNOWN` is the forge still computing it, never read as clean and never as conflicting; the caller polls. */

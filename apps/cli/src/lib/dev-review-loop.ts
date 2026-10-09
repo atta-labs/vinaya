@@ -133,12 +133,14 @@ import { detectVendoredVinaya } from './self-host.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import {
   describeFailingCheckRun,
+  failureCheckName,
   fetchCiConclusion,
   fetchConflictingFiles,
   fetchFailingCheckRuns,
   fetchMergeableState,
   fetchPrState,
   gitCommitsTouchingDriverPaths,
+  type FailingCheckRun,
   type MergeableState,
   readWorktreeHead,
   resolveHead,
@@ -317,6 +319,7 @@ import {
 // the module that now owns it.
 export {
   describeFailingCheckRun,
+  failureCheckName,
   fetchCiConclusion,
   fetchConflictingFiles,
   fetchFailingCheckRuns,
@@ -1784,6 +1787,32 @@ export function renderFailedCheckLog(log: FailedCheckLog): string {
     log.logTail,
     fence
   ].join('\n')
+}
+
+const FAILURE_EVIDENCE_LINE =
+  /\(fail\)|\bfail(?:ed|ure)?\b|\berror\b|\b(?:E[A-Z_]+|AssertionError|TypeError|ReferenceError)\b|^\s+at\s/i
+const MAX_FAILURE_EVIDENCE_LINES = 20
+const MAX_FAILURE_EVIDENCE_LINE_CHARS = 300
+const MAX_FAILURE_EVIDENCE_CHARS = 2_000
+
+/**
+ * The text the repeat-failure policy compares for one failed check.  A log
+ * that cannot be read, or whose tail contains no failure-shaped line, falls
+ * back to its check name: absence of detail must never prevent a real repeat
+ * from pausing.  Tails are already sanitized, but this second bound keeps a
+ * pathological CI log from inflating a pause detail.
+ */
+export function failureSignaturePart(run: { name: string; detail?: string }, logTail: string | null): string {
+  const check = failureCheckName(run)
+  if (run.detail !== undefined || logTail === null) return check
+  const evidence = logTail
+    .split('\n')
+    .filter((line) => FAILURE_EVIDENCE_LINE.test(line))
+    .slice(-MAX_FAILURE_EVIDENCE_LINES)
+    .map((line) => line.slice(0, MAX_FAILURE_EVIDENCE_LINE_CHARS).trim())
+    .filter(Boolean)
+    .join('\n')
+  return evidence === '' ? check : `${check}: ${evidence}`.slice(0, MAX_FAILURE_EVIDENCE_CHARS)
 }
 
 /** O2/O3: the loop's view of the PR for the `read_pull_request` tool — `gh pr view --json`, a null-filled view when none is open, plus each failed check's log tail on its head. */
@@ -3405,7 +3434,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     let resumedDispatch = resumeFrom !== null
     /** O3: the last red gate's failing check-run names, for the next gate-red dispatch prompt and, if it stalls, the pause detail. */
     let lastFailingChecks: string[] = []
-    /** The last red gate's failed runs with their job-log tails, rendered into the next gate-red dispatch prompt beside `lastFailingChecks` — kept apart from it so the failure signature stays the check names alone. */
     let lastFailureLogs: FailedCheckLog[] = []
     /** O2: true iff the current `dispatch_developer` decision came from a red gate (never inferred from `decision` itself — see this branch's own comment, below). Reset to `false` by every genuine `gate` observation. */
     let pendingGateRedRetry = false
@@ -5268,7 +5296,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       ciConclusion: 'green' | 'red' | 'pending'
       /** O3: the mechanical check-runs that actually failed, named by check name AND run — never the review gate's own, never a superseded run (`fetchFailingCheckRuns` is already deduped to the newest per name) — empty unless `ciConclusion === 'red'`. */
       failingChecks: string[]
-      /** The same failed runs, each with its own sanitized job-log tail — for the red-CI retry prompt only, never the failure signature, since a log carries timestamps that differ every run. */
+      failingRuns: FailingCheckRun[]
       failureLogs: FailedCheckLog[]
     }> {
       const head = d.resolveHead(branch)
@@ -5288,6 +5316,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         stats: computeStats(head, roundStartMs),
         ciConclusion: conclusion,
         failingChecks: failingRuns.map(describeFailingCheckRun),
+        failingRuns,
         failureLogs: readFailedCheckLogs(
           failingRuns.filter((run) => run.detail === undefined),
           d.readFailedCheckLogTail
@@ -6720,28 +6749,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
           unpushedResumeAttempted = false
           const confidence = round >= 2 && gateGreen ? roundConfidence(round) : undefined
-          // The mechanical failure this attempt ended on, handed to the
-          // assessment verbatim — the same failing check-run names and
-          // premise re-assert messages this driver already prints in the
-          // gate-red retry prompt, never a second, differently-worded
-          // description of the same facts. Only the assessment decides what
-          // a repeat is: it normalises this text (`normalizeFailureSignature`,
-          // `@attalabs/aeg-core`) and pauses when two consecutive attempts
-          // match. A red gate whose cause could not be named sends nothing,
-          // which is exactly how "unknown never matches unknown" is spelled.
-          //
-          // This is the ONLY site that feeds it, and it bounds what the stop
-          // can cover: a failure reaches here only if the developer pushed a
-          // head for the gate to read. A refused push never does — its
-          // refusal text lives in the developer's own session, and all this
-          // driver can read afterwards is `readUnpushedWorkDetail`'s dirty
-          // files and commits-ahead count, never why the push was refused —
-          // and neither does a test that fails inside the pre-push hook,
-          // for the same reason. Both are bounded a turn EARLIER instead, by
-          // the unmoved-head paths above (`no_push` after one resume,
-          // `infrastructure` at `MAX_GATE_STALLED_TURNS`); neither compares
-          // signatures, because neither has a failure message to compare.
-          const failure = gateGreen || lastFailingChecks.length === 0 ? undefined : lastFailingChecks.join('; ')
+          const failureParts = gate.failingChecks.map((check, index) => {
+            const run = gate.failingRuns[index]
+            if (run === undefined) return check
+            const log = gate.failureLogs.find((entry) => entry.runId === run.id) ?? null
+            return failureSignaturePart(run, log?.logTail ?? null)
+          })
+          const failure =
+            gateGreen || (failureParts.length === 0 && premiseFailureLines.length === 0)
+              ? undefined
+              : [...failureParts, ...premiseFailureLines].join('; ')
           const obs: Observations = {
             kind: 'gate',
             round,
