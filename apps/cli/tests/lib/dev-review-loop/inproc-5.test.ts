@@ -170,6 +170,7 @@ describe('devReviewLoop — repeat_failure uses failed-log evidence (#1227)', ()
       },
       fetchFailingCheckRuns: () =>
         gateReads <= 2 ? ([{ id: 101, name: 'Sandbox conformance (macOS)', conclusion: 'failure' }] as never) : [],
+      resolveHead: () => ((world.dispatchCountByRole.developer ?? 0) >= 2 ? 'c'.repeat(40) : world.head),
       readFailedCheckLogTail: () =>
         gateReads === 1
           ? 'error: listen EINVAL: invalid argument\n    at listenOnUnixSocket (mux-proxy.js:42:9)'
@@ -186,6 +187,7 @@ describe('devReviewLoop — repeat_failure uses failed-log evidence (#1227)', ()
       failingCheckRuns: [{ id: 101, name: 'Sandbox conformance (macOS)', conclusion: 'failure' }]
     })
     const { deps } = withCapturedDeveloperDispatch(world, {
+      resolveHead: () => ((world.dispatchCountByRole.developer ?? 0) >= 2 ? 'c'.repeat(40) : world.head),
       readFailedCheckLogTail: () =>
         'error: gh-chained now exits 0 under claude\n(fail) sandbox conformance > gh-chained'
     })
@@ -200,7 +202,10 @@ describe('devReviewLoop — repeat_failure uses failed-log evidence (#1227)', ()
       gate: 'red',
       failingCheckRuns: [{ id: 101, name: 'Sandbox conformance (macOS)', conclusion: 'failure' }]
     })
-    const { deps } = withCapturedDeveloperDispatch(world, { readFailedCheckLogTail: () => null })
+    const { deps } = withCapturedDeveloperDispatch(world, {
+      resolveHead: () => ((world.dispatchCountByRole.developer ?? 0) >= 2 ? 'c'.repeat(40) : world.head),
+      readFailedCheckLogTail: () => null
+    })
 
     const result = await runLoopInProcessSafe(world, deps)
     expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'repeat_failure' })
