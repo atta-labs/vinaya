@@ -78,7 +78,12 @@ type KnownFailure = {
   readonly platform: Platform
   /** The denial the command hits today, as its own output names it. */
   readonly denial: string
+  /** When set, the entry applies only while this holds (default: always). */
+  readonly appliesWhen?: () => boolean
 }
+
+/** A real dispatch has no ambient forge token; a CI job that sets one lets `gh` authenticate without its token store. */
+const noAmbientForgeToken = (): boolean => !process.env.GH_TOKEN && !process.env.GITHUB_TOKEN
 
 /**
  * O2/O7: every Bash line runs INSIDE Claude's sandbox because the exclusion
@@ -131,6 +136,7 @@ const KNOWN_FAILURES: readonly KnownFailure[] = [
     id: 'gh-chained',
     agent: 'claude',
     platform: 'darwin',
+    appliesWhen: noAmbientForgeToken,
     denial: `a chained gh line is not a bare excluded command, so Claude Code runs it inside the sandbox, where ${GH_HOSTS_DENIED_INSIDE}`
   },
   {
@@ -161,7 +167,9 @@ const KNOWN_FAILURES: readonly KnownFailure[] = [
 ]
 
 function knownFailure(id: string, agent: Agent, platform: string): KnownFailure | undefined {
-  return KNOWN_FAILURES.find((f) => f.id === id && f.agent === agent && f.platform === platform)
+  return KNOWN_FAILURES.find(
+    (f) => f.id === id && f.agent === agent && f.platform === platform && (f.appliesWhen?.() ?? true)
+  )
 }
 
 describe('sandbox conformance — the command list', () => {
