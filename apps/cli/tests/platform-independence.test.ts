@@ -116,6 +116,8 @@ export function hostPlatformReads(fileName: string, source: string): number[] {
 const REAL_SANDBOX_FILES: Readonly<Record<string, string>> = {
   'sandbox-conformance/sandbox-conformance.test.ts':
     "drives each vendor's real sandbox on the host and asserts what it really confines",
+  'sandbox-conformance/sandbox-launch.ts':
+    'launches a real sandbox on the real host, so the scratch directory it hands the sandbox depends on the host platform',
   'lib/dispatch/linux-sandbox-probe.test.ts':
     'its live block runs the real Linux sandbox probe, which exists only on a Linux host',
   'lib/dispatch/worker-boundary.test.ts':
@@ -129,7 +131,7 @@ const REAL_SANDBOX_FILES: Readonly<Record<string, string>> = {
 }
 
 /** The size the list may not exceed. Lower it when an entry is removed. */
-const REAL_SANDBOX_FILES_CEILING = 6
+const REAL_SANDBOX_FILES_CEILING = 7
 
 function testFiles(dir: string): string[] {
   const out: string[] = []

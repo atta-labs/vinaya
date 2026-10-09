@@ -48,7 +48,7 @@ import {
   stageCodexPolicyHome
 } from '../../src/lib/worker-boundary.js'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture.js'
-import { REPO_ROOT } from './command-sources.js'
+import { isSuiteInput, REPO_ROOT } from './command-sources.js'
 
 export const AGENTS = ['claude', 'codex'] as const
 export type Agent = (typeof AGENTS)[number]
@@ -85,6 +85,37 @@ export function sourceBranch(): string {
   } catch {
     return ''
   }
+}
+
+/**
+ * Why the live runs are skipped, or `null` when they run. They are skipped
+ * only on a pull request whose diff against the merge base with the default
+ * branch touches none of `SUITE_INPUTS`. Any other event (a push to the
+ * default branch above all), a missing event, or a diff that cannot be
+ * computed runs everything: the suite never skips for want of an answer.
+ */
+export function conformanceSkipReason(
+  env: Record<string, string | undefined> = process.env,
+  changedFiles: () => string[] = changedFilesAgainstDefaultBranch
+): string | null {
+  const event = env.GITHUB_EVENT_NAME
+  if (event !== 'pull_request' && event !== 'pull_request_target') return null
+  let changed: string[]
+  try {
+    changed = changedFiles()
+  } catch {
+    return null
+  }
+  if (changed.some(isSuiteInput)) return null
+  return `no file the suite depends on changed in this pull request (${changed.length} changed)`
+}
+
+/** Files changed since the merge base with `origin/main` — never against main's tip, so a rebased branch is judged by its own changes. Throws when the diff cannot be computed. */
+function changedFilesAgainstDefaultBranch(): string[] {
+  const base = git(['merge-base', 'origin/main', 'HEAD'])
+  return git(['diff', '--name-only', base, 'HEAD'])
+    .split('\n')
+    .filter((f) => f !== '')
 }
 
 function createWorktree(agent: Agent): string {
@@ -129,9 +160,16 @@ function runOutsideSandbox(worktreeDir: string, command: string, env: Record<str
   )
 }
 
+// The Claude sandbox opens its proxy socket at TMPDIR/srt-mux-<pid>-<n>.sock,
+// and a macOS socket path holds 104 bytes: the runner's system temp directory
+// alone is 105, so the scratch directory goes under /tmp there.
+function claudeScratchRoot(): string {
+  return process.platform === 'darwin' ? '/tmp' : tmpdir()
+}
+
 function claudeSession(): SandboxSession {
   const worktreeDir = createWorktree('claude')
-  const scratchDir = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-claude-sandbox-')))
+  const scratchDir = realpathSync(mkdtempSync(join(claudeScratchRoot(), 'vinaya-claude-sandbox-')))
   const settingsDir = mkdtempSync(join(tmpdir(), 'vinaya-conformance-srt-'))
   const resolution = resolveClaudeConfinement(request('claude', worktreeDir, scratchDir))
   if (!resolution.confined) {

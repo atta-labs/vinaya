@@ -81,6 +81,9 @@ const workflowWithoutProducers = [
   'workflow:ci.yml:sandbox-conformance:Install the Linux sandbox tools',
   "workflow:ci.yml:sandbox-conformance:Install the checks' own tools",
   'workflow:ci.yml:sandbox-conformance:Run the suite under both sandboxes',
+  'workflow:ci.yml:sandbox-conformance-macos:Install dependencies',
+  "workflow:ci.yml:sandbox-conformance-macos:Install the checks' own tool",
+  'workflow:ci.yml:sandbox-conformance-macos:Run the suite under both sandboxes',
   'workflow:ci.yml:aggregate:Every upstream job succeeded or was correctly skipped (docs-only)',
   'workflow:published-lifecycle.yml:verify-published-lifecycle:Check published version',
   'workflow:published-lifecycle.yml:verify-published-lifecycle:Install dependencies',
@@ -296,7 +299,7 @@ describe('log entry-path producer inventory', () => {
 
   it("keeps today's no-producer list explicit and shrinking", () => {
     const noProducer = inventory.filter((row) => row.noProducer)
-    expect(noProducer).toHaveLength(42)
+    expect(noProducer).toHaveLength(45)
     expect(noProducer.every((row) => row.noProducer!.trim().length > 0)).toBe(true)
   })
 })

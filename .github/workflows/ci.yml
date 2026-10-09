@@ -361,8 +361,9 @@ jobs:
   # the driver sets up a confined dispatch. A command either exits 0 under
   # both or is in the suite's known-failures list, which only shrinks.
   #
-  # Every pull request, docs-only included: a doctrine or brief-template
-  # edit is exactly what adds a command to the list. No agent login — both
+  # Every pull request, docs-only included, runs the job; the suite itself
+  # skips its live runs when the diff touches none of its inputs
+  # (`SUITE_INPUTS`), a doctrine or brief-template edit being among them. No agent login — both
   # runtimes run a single command under their policy; the job token only
   # serves the suite's read-only `gh` lines.
   sandbox-conformance:
@@ -404,6 +405,45 @@ jobs:
       # inside a sandbox fails only on what the sandbox denies.
       - name: Install the checks' own tools
         run: bun -e 'process.stdout.write(require("./vinaya.config.json").ci.setup)' | bash
+      - name: Run the suite under both sandboxes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VINAYA_SANDBOX_CONFORMANCE: '1'
+        working-directory: apps/cli
+        run: bun test --timeout=900000 tests/sandbox-conformance/sandbox-conformance.test.ts
+
+  # The same suite on a macOS runner: confinement is platform-specific
+  # security behavior, and the Linux job cannot exercise the macOS sandbox
+  # (Seatbelt). The skip rule is the suite's own, not this file's: on a pull
+  # request whose diff changes none of the suite's inputs it runs no command
+  # in either sandbox and passes in seconds, so the macOS minutes are spent
+  # only when the inputs change. Its result is its own check; the `aggregate`
+  # job's list is unchanged.
+  sandbox-conformance-macos:
+    name: Sandbox conformance (macOS)
+    runs-on: macos-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - name: Restore Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'bun.lockb') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      # The repository's own checks need gitleaks, as on a Developer's Mac.
+      - name: Install the checks' own tool
+        run: brew install gitleaks
       - name: Run the suite under both sandboxes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
