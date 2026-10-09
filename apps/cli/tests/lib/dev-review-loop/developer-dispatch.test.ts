@@ -14,13 +14,15 @@ import {
   launchNeverSpawned,
   reconcileLaunch,
   type ReconcileLaunchDeps,
-  renderDeveloperDoctrineBlock
+  renderDeveloperDoctrineBlock,
+  TaskWorktreeDivergedError
 } from '../../../src/lib/dev-review-loop/developer-dispatch'
 import {
   FetchTransportError,
   type FetchDocumentationDeps,
   type RawResponse
 } from '../../../src/lib/task-tools/fetch-documentation'
+import { ownChangesRangeBase } from '../../../src/lib/dev-review-loop'
 import type { LaunchRecord, ParsedLaunch } from '../../../src/lib/dispatch'
 
 // task-run-v1 task 15, O1: `developerBranchFor` derives `task/issue-<n>` for
@@ -463,6 +465,147 @@ describe('createTaskWorktree (O1)', () => {
     withCwd(repoDir, () => createTaskWorktree(branch))
     const headAfterSecond = execFileSync('git', ['-C', worktreeDir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
     expect(headAfterSecond).toBe(headAfterFirst)
+  })
+})
+
+// A restarted task's existing worktree is reconciled with the remote branch,
+// never overwritten: real git, a real `origin`, a default branch that moves on.
+describe('createTaskWorktree on a restart with an existing worktree', () => {
+  const dirs: string[] = []
+  afterEach(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
+  })
+
+  function setup(): { repoDir: string; originDir: string; worktreeDir: string; branch: string } {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-restart-worktree-')))
+    dirs.push(base)
+    const originDir = join(base, 'origin.git')
+    const repoDir = join(base, 'repo')
+    execFileSync('git', ['init', '--bare', '-b', 'main', originDir])
+    execFileSync('git', ['init', '-b', 'main', repoDir])
+    const git = (args: string[], cwd = repoDir): string => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+    git(['config', 'user.email', 'test@example.com'])
+    git(['config', 'user.name', 'Test'])
+    git(['commit', '--allow-empty', '-m', 'initial'])
+    git(['remote', 'add', 'origin', originDir])
+    git(['push', 'origin', 'main'])
+    git(['fetch', 'origin'])
+    const branch = 'task/issue-9'
+    const cwd = process.cwd()
+    process.chdir(repoDir)
+    try {
+      createTaskWorktree(branch)
+    } finally {
+      process.chdir(cwd)
+    }
+    return { repoDir, originDir, worktreeDir: join(repoDir, '.worktrees', branch), branch }
+  }
+
+  function advanceMain(repoDir: string): void {
+    writeFileSync(join(repoDir, 'from-main.txt'), 'main moved on\n')
+    execFileSync('git', ['add', 'from-main.txt'], { cwd: repoDir })
+    execFileSync('git', ['commit', '-m', 'main moves on'], { cwd: repoDir })
+    execFileSync('git', ['push', 'origin', 'main'], { cwd: repoDir })
+  }
+
+  const rev = (dir: string, ref: string): string =>
+    execFileSync('git', ['-C', dir, 'rev-parse', ref], { encoding: 'utf8' }).trim()
+
+  it('leaves the remote branch unmoved and the task publishes only its own paths', () => {
+    const { repoDir, originDir, worktreeDir, branch } = setup()
+    const remoteBefore = rev(originDir, branch)
+    writeFileSync(join(worktreeDir, 'own-work.txt'), 'unpublished\n')
+    advanceMain(repoDir)
+
+    const cwd = process.cwd()
+    process.chdir(repoDir)
+    try {
+      createTaskWorktree(branch)
+    } finally {
+      process.chdir(cwd)
+    }
+
+    expect(rev(originDir, branch)).toBe(remoteBefore)
+    expect(existsSync(join(worktreeDir, 'own-work.txt'))).toBe(true)
+    expect(rev(worktreeDir, 'HEAD')).toBe(remoteBefore)
+  })
+
+  it('creates a missing remote branch at the worktree head, not at the default branch tip', () => {
+    const { repoDir, originDir, worktreeDir, branch } = setup()
+    const worktreeHead = rev(worktreeDir, 'HEAD')
+    execFileSync('git', ['push', 'origin', `:refs/heads/${branch}`], { cwd: repoDir })
+    advanceMain(repoDir)
+
+    const cwd = process.cwd()
+    process.chdir(repoDir)
+    try {
+      createTaskWorktree(branch)
+    } finally {
+      process.chdir(cwd)
+    }
+
+    expect(rev(originDir, branch)).toBe(worktreeHead)
+    expect(rev(originDir, 'main')).not.toBe(worktreeHead)
+  })
+
+  it('throws with both heads named when the worktree cannot fast-forward to the remote branch', () => {
+    const { repoDir, originDir, worktreeDir, branch } = setup()
+    writeFileSync(join(worktreeDir, 'own.txt'), 'task commit\n')
+    execFileSync('git', ['-C', worktreeDir, 'add', 'own.txt'])
+    execFileSync('git', ['-C', worktreeDir, 'commit', '-m', 'task commit'])
+    const worktreeHead = rev(worktreeDir, 'HEAD')
+    // Another machine put a different commit on the remote branch.
+    const other = join(repoDir, '..', 'other')
+    execFileSync('git', ['clone', '-b', branch, originDir, other])
+    writeFileSync(join(other, 'elsewhere.txt'), 'elsewhere\n')
+    execFileSync('git', ['-C', other, 'add', 'elsewhere.txt'])
+    execFileSync('git', ['-C', other, '-c', 'user.email=a@b.c', '-c', 'user.name=T', 'commit', '-m', 'elsewhere'])
+    execFileSync('git', ['-C', other, 'push', 'origin', branch])
+    const remoteHead = rev(originDir, branch)
+
+    const cwd = process.cwd()
+    process.chdir(repoDir)
+    let thrown: unknown
+    try {
+      createTaskWorktree(branch)
+    } catch (err) {
+      thrown = err
+    } finally {
+      process.chdir(cwd)
+    }
+
+    expect(thrown).toBeInstanceOf(TaskWorktreeDivergedError)
+    const diverged = thrown as TaskWorktreeDivergedError
+    expect(diverged.branch).toBe(branch)
+    expect(diverged.worktreeHead).toBe(worktreeHead)
+    expect(diverged.remoteHead).toBe(remoteHead)
+    expect(rev(originDir, branch)).toBe(remoteHead)
+  })
+
+  it('measures changed paths from the merge base when the pushed head is not an ancestor of the worktree head', () => {
+    const { repoDir, worktreeDir } = setup()
+    const base = rev(worktreeDir, 'HEAD')
+    advanceMain(repoDir)
+    const mainTip = rev(repoDir, 'origin/main')
+    writeFileSync(join(worktreeDir, 'own.txt'), 'task\n')
+    execFileSync('git', ['-C', worktreeDir, 'add', 'own.txt'])
+    execFileSync('git', ['-C', worktreeDir, 'commit', '-m', 'task'])
+
+    // The newer default-branch tip is not an ancestor of the task's head.
+    expect(ownChangesRangeBase(worktreeDir, mainTip)).toBe(base)
+    const paths = execFileSync(
+      'git',
+      ['-C', worktreeDir, 'diff', '--name-only', ownChangesRangeBase(worktreeDir, mainTip) ?? ''],
+      {
+        encoding: 'utf8'
+      }
+    )
+      .trim()
+      .split('\n')
+    expect(paths).toEqual(['own.txt'])
+    // An ancestor stays the bound as it is; no bound stays none.
+    expect(ownChangesRangeBase(worktreeDir, base)).toBe(base)
+    expect(ownChangesRangeBase(worktreeDir, null)).toBeNull()
   })
 })
 

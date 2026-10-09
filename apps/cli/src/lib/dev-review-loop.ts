@@ -152,6 +152,7 @@ import {
   developerBranchFor,
   DeveloperStopSignal,
   fetchDeveloperStop,
+  TaskWorktreeDivergedError,
   fetchFrozenBrief,
   fetchIssueRulings,
   fetchIssueRulingsAfterBrief,
@@ -1244,6 +1245,25 @@ export function defaultReadMergedDefaultCommit(
 /** The exclusive lower bound for paths attributed to one branch push. */
 export function pushedCommitRangeBase(remoteHead: string | null, branchBase: string | null): string | null {
   return remoteHead ?? branchBase
+}
+
+/**
+ * The lower bound that measures only the task's own changes: `pushedBase`
+ * itself when it is an ancestor of the worktree's head, else its merge base with
+ * that head, so changes that reached the remote branch or the default branch
+ * without being the task's are never counted as the task's. Falls back to
+ * `pushedBase` when git cannot tell.
+ */
+export function ownChangesRangeBase(worktreePath: string, pushedBase: string | null): string | null {
+  if (pushedBase === null) return null
+  try {
+    execFileSync('git', ['-C', worktreePath, 'merge-base', '--is-ancestor', pushedBase, 'HEAD'], { stdio: 'ignore' })
+    return pushedBase
+  } catch (err) {
+    if ((err as { status?: number }).status !== 1) return pushedBase
+  }
+  const mergeBase = gitOk(worktreePath, ['merge-base', pushedBase, 'HEAD'])
+  return mergeBase ? mergeBase.trim() : pushedBase
 }
 
 /**
@@ -4218,7 +4238,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // to an older default-branch state, which the merged commit cannot show.
       const defaultRemoteUrl = repo ? `https://github.com/${repo.owner}/${repo.repo}.git` : null
       const publicationRange = (remoteHead: string | null): { base: string | null; extraPaths: string[] } => {
-        const pushedBase = pushedCommitRangeBase(remoteHead, publicationExpectedBase)
+        const pushedBase = ownChangesRangeBase(worktree, pushedCommitRangeBase(remoteHead, publicationExpectedBase))
         const merged = d.readMergedDefaultCommit(worktree, pushedBase, defaultRemoteUrl)
         if (merged) return { base: merged.commit, extraPaths: merged.regressedPaths }
         return { base: pendingConflictFiles !== null ? 'origin/main' : pushedBase, extraPaths: [] }
@@ -5730,34 +5750,37 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             try {
               d.createTaskWorktree(branch)
               console.error(`vinaya dev-review-loop: created task worktree and branch ${branch} on origin at start`)
-              // O11: `createTaskWorktree`'s own
-              // commit-free ref push just moved the REMOTE branch to
-              // `origin/main`'s CURRENT tip (always safe here — this whole
-              // branch only runs when the task branch is missing or
-              // at-or-behind main, never when real commits exist). When the
-              // worktree already existed on disk (a prior, interrupted round
-              // that never got any Developer commits), that ref push leaves
-              // the LOCAL checkout exactly where it was created — possibly a
-              // now-stale `main` tip. Fast-forward it to match, so the
-              // Developer's first turn never starts from, or is told to
-              // reset to, a stale default-branch commit. Best-effort,
-              // swallowed the same way the push above is: a failure here
-              // leaves the worktree at its old commit, recoverable by hand
-              // at the Developer's own Step 0.
-              const worktreeDir = join('.worktrees', branch)
-              try {
-                execFileSync('git', ['-C', worktreeDir, 'fetch', '--quiet', 'origin', branch], {
-                  stdio: ['ignore', 'ignore', 'pipe']
-                })
-                execFileSync('git', ['-C', worktreeDir, 'merge', '--ff-only', `origin/${branch}`], {
-                  stdio: ['ignore', 'ignore', 'pipe']
-                })
-              } catch (ffErr) {
-                console.error(
-                  `vinaya dev-review-loop: could not fast-forward task worktree ${worktreeDir} to origin/${branch}: ${ffErr instanceof Error ? ffErr.message : String(ffErr)} — continuing`
-                )
-              }
             } catch (err) {
+              if (err instanceof TaskWorktreeDivergedError) {
+                // The remote branch is ahead of the existing worktree, which
+                // holds its own unpublished work: reconciling would mean
+                // discarding one side, so the start pauses for the Operator
+                // and dispatches no Developer.
+                const detail = `the start found task branch ${err.branch} on origin at ${err.remoteHead}, while the existing worktree is at ${err.worktreeHead} and cannot fast-forward to it; reconcile the worktree with the remote branch, then resume`
+                writePauseState(root, {
+                  task,
+                  round,
+                  head: err.worktreeHead,
+                  branch,
+                  prNumber: null,
+                  reason: 'escalation',
+                  detail,
+                  pausedAt: new Date().toISOString(),
+                  agent: dispatchAgent,
+                  ...(dispatchModel ? { model: dispatchModel } : {}),
+                  infrastructureRetries
+                })
+                await logPauseCommentRetryIfNotable(
+                  round,
+                  d.postIssuePauseComment(task, branch, round, 'escalation', detail, {
+                    agent: dispatchAgent,
+                    ...(dispatchModel ? { model: dispatchModel } : {})
+                  })
+                )
+                decision = { type: 'pause', reason: 'escalation', detail }
+                recordDriverExited('paused')
+                return { finalDecision: decision, prNumber: 0, task }
+              }
               console.error(
                 `vinaya dev-review-loop: could not create task worktree/branch ${branch} on origin at start: ${err instanceof Error ? err.message : String(err)} — continuing; the developer's first push will create it`
               )

@@ -673,12 +673,59 @@ export function developerBranchFor(
  */
 export function createTaskWorktree(branch: string): void {
   const worktreeDir = join('.worktrees', branch)
-  if (!existsSync(worktreeDir)) {
+  const worktreeExisted = existsSync(worktreeDir)
+  if (!worktreeExisted) {
     sh('git', ['worktree', 'add', worktreeDir, '-b', branch, '--no-track', 'origin/main'])
   }
   sh('git', ['config', 'push.autoSetupRemote', 'true'])
-  sh('git', ['push', '--no-verify', 'origin', `origin/main:refs/heads/${branch}`])
+  if (!worktreeExisted) {
+    sh('git', ['push', '--no-verify', 'origin', `origin/main:refs/heads/${branch}`])
+  } else {
+    reconcileExistingTaskWorktree(branch, worktreeDir)
+  }
   sh('git', ['-C', worktreeDir, 'branch', '-u', `origin/${branch}`])
+}
+
+/** The start found a remote task branch its existing worktree cannot fast-forward to. */
+export class TaskWorktreeDivergedError extends Error {
+  constructor(
+    readonly branch: string,
+    readonly worktreeHead: string,
+    readonly remoteHead: string
+  ) {
+    super(
+      `task branch ${branch} on origin is at ${remoteHead}, which the existing worktree at ${worktreeHead} cannot fast-forward to`
+    )
+    this.name = 'TaskWorktreeDivergedError'
+  }
+}
+
+/**
+ * An existing worktree is reconciled with the remote task branch, never
+ * overwritten: a missing remote branch is created at the worktree's own head, an
+ * existing one is left where it is, and the worktree fast-forwards to it. A
+ * remote tip the worktree cannot fast-forward to throws
+ * `TaskWorktreeDivergedError`; the worktree's uncommitted work is never touched.
+ */
+function reconcileExistingTaskWorktree(branch: string, worktreeDir: string): void {
+  const remoteListing = sh('git', ['ls-remote', '--heads', 'origin', branch]).trim()
+  if (remoteListing === '') {
+    sh('git', ['-C', worktreeDir, 'push', '--no-verify', 'origin', `HEAD:refs/heads/${branch}`])
+    return
+  }
+  sh('git', ['-C', worktreeDir, 'fetch', '--quiet', 'origin', branch])
+  const worktreeHead = sh('git', ['-C', worktreeDir, 'rev-parse', 'HEAD']).trim()
+  const remoteHead = sh('git', ['-C', worktreeDir, 'rev-parse', `origin/${branch}`]).trim()
+  try {
+    sh('git', ['-C', worktreeDir, 'merge', '--ff-only', `origin/${branch}`])
+  } catch {
+    // A remote branch the worktree is already ahead of needs no fast-forward.
+    try {
+      sh('git', ['-C', worktreeDir, 'merge-base', '--is-ancestor', remoteHead, worktreeHead])
+    } catch {
+      throw new TaskWorktreeDivergedError(branch, worktreeHead, remoteHead)
+    }
+  }
 }
 
 export type DispatchReadinessCheckResult = { ready: boolean; output: string }
