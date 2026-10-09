@@ -242,6 +242,7 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
       'apps/cli/tests/fixtures/dev-review-architecture-invariants.json',
       'apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json',
       'apps/cli/src/commands/dev-review-loop.ts',
+      'apps/cli/src/lib/dev-review-loop.ts',
       'apps/cli/src/lib/dev-review-loop/',
       'packages/aeg-core/src/dev-review-loop/'
     ],
