@@ -133,7 +133,6 @@ import { detectVendoredVinaya } from './self-host.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import {
   describeFailingCheckRun,
-  failureCheckName,
   fetchCiConclusion,
   fetchConflictingFiles,
   fetchFailingCheckRuns,
@@ -319,7 +318,6 @@ import {
 // the module that now owns it.
 export {
   describeFailingCheckRun,
-  failureCheckName,
   fetchCiConclusion,
   fetchConflictingFiles,
   fetchFailingCheckRuns,
@@ -1803,7 +1801,7 @@ const MAX_FAILURE_EVIDENCE_CHARS = 2_000
  * pathological CI log from inflating a pause detail.
  */
 export function failureSignaturePart(run: { name: string; detail?: string }, logTail: string | null): string {
-  const check = failureCheckName(run)
+  const check = run.name
   if (run.detail !== undefined || logTail === null) return check
   const evidence = logTail
     .split('\n')
@@ -6749,9 +6747,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
           unpushedResumeAttempted = false
           const confidence = round >= 2 && gateGreen ? roundConfidence(round) : undefined
-          const failureParts = gate.failingChecks.map((check, index) => {
-            const run = gate.failingRuns[index]
-            if (run === undefined) return check
+          const failureParts = gate.failingRuns.map((run) => {
             const log = gate.failureLogs.find((entry) => entry.runId === run.id) ?? null
             return failureSignaturePart(run, log?.logTail ?? null)
           })

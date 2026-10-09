@@ -174,11 +174,13 @@ describe('devReviewLoop — repeat_failure uses failed-log evidence (#1227)', ()
       resolveHead: () => String(world.dispatchCountByRole.developer).repeat(40),
       readFailedCheckLogTail: () => {
         tailReads += 1
-        return [
-          'error: listen EINVAL: invalid argument\n    at listenOnUnixSocket (mux-proxy.js:42:9)',
-          'error: gh-chained now exits 0 under claude\n(fail) sandbox conformance > gh-chained',
-          'error: platform-independence rejects the new host-platform read'
-        ][tailReads - 1] as string
+        return (
+          [
+            'error: listen EINVAL: invalid argument\n    at listenOnUnixSocket (mux-proxy.js:42:9)',
+            'error: gh-chained now exits 0 under claude\n(fail) sandbox conformance > gh-chained',
+            'error: platform-independence rejects the new host-platform read'
+          ][tailReads - 1] ?? 'error: repeated fallback failure'
+        )
       }
     })
 
