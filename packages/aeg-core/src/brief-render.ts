@@ -916,7 +916,7 @@ function renderSection12(facts: BriefFacts): string {
     '- Open the PR only via the `open_pull_request` tool (title and body); publish your commits with `publish_changes` and update the body with `update_pull_request_body`/`refresh_evidence` — you hold no `gh`/`git push` credential.',
     `- PR body = the Developer's PR report (print it with \`${facts.cliInvocation} doctrine --template pr-report --print\`), with this entire brief pasted as the reference copy inside a collapsed \`<details>\` block, and \`Closes #${facts.issue}\` at the top of the header block.`,
     `- Pre-open gate: tier checklist satisfied, and ${docGateCommand(facts)}.`,
-    "- Include `git diff main --stat` as context only; Surface is judged by the driver's `surface-scope` check, never by this hand-run diff. Include a token report (if unavailable, state so).",
+    "- Include `git diff origin/main...HEAD --stat` as context only; Surface is judged by the driver's `surface-scope` check, never by this hand-run diff. Include a token report (if unavailable, state so).",
     '- Then STOP. Review and Verification are separate invocations.'
   ].join('\n')
 }

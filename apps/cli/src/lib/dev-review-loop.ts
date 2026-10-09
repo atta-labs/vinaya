@@ -830,6 +830,8 @@ export type LoopDeps = {
     worktreePath: string,
     env?: Record<string, string>
   ) => Promise<{ passed: boolean; output: string }>
+  /** Runs the registry's authoritative surface-scope check for a Developer turn's worktree head. */
+  runSurfaceScopeCheck: (worktreePath: string, head: string) => Promise<{ passed: boolean }>
 }
 
 function defaultRepoRoot(): string {
@@ -1887,6 +1889,20 @@ export async function defaultRunWorktreeChecks(
   return { passed: res.status === 0, output }
 }
 
+/** Run the one registry check that decides whether an outside-surface report is a real escalation. */
+export async function defaultRunSurfaceScopeCheck(worktreePath: string, _head: string): Promise<{ passed: boolean }> {
+  const res = guardedSpawnSync(
+    process.argv[0] as string,
+    [process.argv[1] as string, 'check', 'surface-scope', '--diff-only'],
+    {
+      cwd: worktreePath,
+      env: process.env,
+      maxBuffer: 64 * 1024 * 1024
+    }
+  )
+  return { passed: res.status === 0 }
+}
+
 /**
  * The exact `vinaya pr report` argv `refresh_evidence` runs — `--push <pr>`,
  * the forge-updating mode, never the bare `--write` the old code passed with
@@ -2253,6 +2269,7 @@ function defaultDeps(): LoopDeps {
     refreshPrEvidence: defaultRefreshPrEvidence,
     readPrView: defaultReadPrView,
     runWorktreeChecks: defaultRunWorktreeChecks,
+    runSurfaceScopeCheck: defaultRunSurfaceScopeCheck,
     fetchDeveloperStop,
     fetchMergeableState,
     fetchConflictingFiles,
@@ -4027,6 +4044,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     ): Promise<DispatchHandle> {
       let currentPrompt = prompt
       let publishReasks = 0
+      let outsideSurfaceReasks = 0
       let publicationRefusals = opts.publicationRefusal ? 1 : 0
       let previousPublicationRefusal: string | null = opts.publicationRefusal?.signature ?? null
       while (true) {
@@ -4057,10 +4075,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           continue
         }
         const falseOutsideSurface = await outsideSurfaceRetryPaths(handle, roundNum, opts.answersFindings === true)
-        if (falseOutsideSurface !== null) {
+        if (falseOutsideSurface !== null && outsideSurfaceReasks < 1) {
+          outsideSurfaceReasks += 1
           currentPrompt = [
             "Your previous turn reported `outside_surface`, but the driver's `surface-scope` check passed on that turn's head.",
-            'Continue the task without pausing. The pull request changed-file list (merge-base three-dot diff) is:',
+            'Continue the task without pausing. This is the one allowed retry for that report. The pull request changed-file list (merge-base three-dot diff) is:',
             falseOutsideSurface.length > 0
               ? falseOutsideSurface.map((path) => `- ${path}`).join('\n')
               : '- (no changed files found)',
@@ -4125,8 +4144,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         return null
       const worktree = worktreePathForBranch()
       const head = existsSync(worktree) ? d.readWorktreeHead(worktree) : null
-      if (head === null || d.fetchFailingCheckRuns(head).some((run) => run.name === 'surface-scope')) return null
+      if (head === null) return null
       try {
+        // `surface-scope` is a registry entry within a check job, not a
+        // forge check-run of its own. Retry only when that runner explicitly
+        // passes for the turn's actual worktree head; every other outcome is
+        // conservative and leaves the accepted block to pause the loop.
+        if (!(await d.runSurfaceScopeCheck(worktree, head)).passed) return null
         const base = await d.gitMergeBase(head)
         return d.gitWorktreeChangedPaths(worktree, base)
       } catch {

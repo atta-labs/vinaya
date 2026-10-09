@@ -311,7 +311,7 @@ Before you say you are done or open a PR under the review loop:
 
 0. **Commit message length** — for every commit on this branch: `git log origin/main..HEAD --format="%s" | awk '{ if (length > 72) print NR": "length" chars (OVER LIMIT): "$0 }'` — must return nothing. If any commit header exceeds 72 chars, amend it before opening the PR.
 1. Publish through the driver and read the publication hooks' result; use `run_checks` for the current head and read its result.
-2. Confirm `git status` is clean and `git log --oneline -3` has the expected ancestry. `git diff main --stat` is context for the report only; judge Surface through the driver's `surface-scope` check, never a diff run by hand.
+2. Confirm `git status` is clean and `git log --oneline -3` has the expected ancestry. `git diff origin/main...HEAD --stat` is context for the report only; judge Surface through the driver's `surface-scope` check, never a diff run by hand.
 
 Working manually, with no driver, run the same static gates yourself before opening: `bun run typecheck`, `bun run format-and-lint`, the repository's production build, and `bun run verify-docs --pr`. The pre-push hook runs the affected suite once on the push; do not separately hand-run that selection or the full suite.
 
@@ -380,7 +380,7 @@ If any fails: post a comment listing the exact items missing, and STOP. The Prin
 
 These are failures the Developer must actively avoid. Several come from real incidents.
 
-**Trusting your own self-report without the authoritative surface gate.** Read the driver’s `surface-scope` result; a hand-run `git diff main --stat` is context, never the Surface verdict.
+**Trusting your own self-report without the authoritative surface gate.** Read the driver’s `surface-scope` result; a hand-run `git diff origin/main...HEAD --stat` is context, never the Surface verdict.
 
 **Reviewing your own work instead of handing off.** The code-reviewer and security passes are separate invocations for a reason — fresh eyes catch what the author's context hides.
 

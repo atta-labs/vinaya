@@ -127,5 +127,5 @@ STOP and report if: pre-flight fails; [the Planner's stop-and-escalate condition
 - PR body = the Developer's PR report (print it with `vinaya doctrine --template pr-report --print`), with this entire brief pasted as the reference copy inside a collapsed `<details>` block, and `Closes #[N]` at the top of the header block.
 - [what to state in the PR body: decisions made, confirmations required by §8]
 - Pre-open gate: tier checklist satisfied, and `PR_BODY="$(cat <body-file>)" vinaya check doc-coverage` green (in this repo the render also names `PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr`).
-- Include `git diff main --stat` as scope context only; the Developer judges Surface through the driver’s `surface-scope` check, never this hand-run diff. Token use needs no report here — it is recorded as the Vinaya log's own `usage` event.
+- Include `git diff origin/main...HEAD --stat` as scope context only; the Developer judges Surface through the driver’s `surface-scope` check, never this hand-run diff. Token use needs no report here — it is recorded as the Vinaya log's own `usage` event.
 - Then STOP. Review and Verification are separate invocations.
