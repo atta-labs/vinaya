@@ -5085,7 +5085,19 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
       [
         `import { dispatchRole } from ${JSON.stringify(dispatchLib)}`,
         `await dispatchRole('developer', 'claude', ${JSON.stringify(TWO_SOURCE_PROMPT)}, { promptFile: ${JSON.stringify(freshPrompt)}, cwd: ${JSON.stringify(cwd)}, turnResultKnownFindingIds: ['R1-CR-1'] })`,
-        `await dispatchRole('developer', 'claude', 'Fix the reported finding.', { promptFile: ${JSON.stringify(resumedPrompt)}, cwd: ${JSON.stringify(cwd)}, resumeId: 'session-1', turnResultKnownFindingIds: [] })`
+        `await dispatchRole('developer', 'claude', 'Fix the reported finding.', { promptFile: ${JSON.stringify(resumedPrompt)}, cwd: ${JSON.stringify(cwd)}, resumeId: 'session-1', turnResultKnownFindingIds: [] })`,
+        // the driver's own check, run on a second-turn result reporting both sources
+        `import { deliveredDocumentation } from ${JSON.stringify(dispatchLib)}`,
+        `import { judgeTurnOutput } from ${JSON.stringify(join(CLI_ROOT, 'src', 'lib', 'dev-review-loop', 'turn-result.ts'))}`,
+        `import { writeFileSync, mkdirSync } from 'node:fs'`,
+        `const hooksDir = ${JSON.stringify(join(home, '.vinaya', 'runtime', 'unresolved', 'tasks-execution', 'unscoped', 'hooks', 'developer'))}`,
+        `const receipts = ${JSON.stringify(join(cwd, 'receipts.jsonl'))}`,
+        `const sources = ['https://example.com/docs/fixture', 'https://example.com/docs/second']`,
+        `writeFileSync(receipts, sources.map((source) => JSON.stringify({ source })).join('\\n') + '\\n')`,
+        `const documentation = deliveredDocumentation('claude', hooksDir, 'shared-loop-run-id', receipts)`,
+        `const raw = { turnResult: { schemaVersion: 1, status: 'completed', summary: 'done', confidence: 80, confidenceExplanation: 'tested', addressedFindingIds: ['R1-CR-1'], sourceUses: sources.map((source) => ({ source, use: 'read' })), reportedChecks: null } }`,
+        `const verdict = judgeTurnOutput({ adapter: 'claude --json-schema', event: 'result', raw }, { round: 2, knownFindingIds: ['R1-CR-1'], requireAddressedFindings: true, documentation })`,
+        `writeFileSync(${JSON.stringify(join(cwd, 'verdict.json'))}, JSON.stringify(verdict))`
       ].join('\n')
     )
     runScriptWithBudget(script, cwd, {
@@ -5106,6 +5118,7 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
     expect(resumed).toContain('https://example.com/docs/fixture')
     expect(resumed).toContain('https://example.com/docs/second')
     expect(resumed).toContain('"sourceUses":{"minItems":2,"maxItems":2')
+    expect(JSON.parse(readFileSync(join(cwd, 'verdict.json'), 'utf8'))).toMatchObject({ ok: true })
   })
 
   it('gives a developer dispatch with no sources in any turn the empty-list schema', () => {
