@@ -171,7 +171,7 @@ describe('devReviewLoop — repeat_failure uses failed-log evidence (#1227)', ()
       },
       fetchFailingCheckRuns: () =>
         gateReads <= 3 ? ([{ id: 101, name: 'Sandbox conformance (macOS)', conclusion: 'failure' }] as never) : [],
-      resolveHead: () => ((world.dispatchCountByRole.developer ?? 0) >= 2 ? 'c'.repeat(40) : world.head),
+      resolveHead: () => String(world.dispatchCountByRole.developer).repeat(40),
       readFailedCheckLogTail: () => {
         tailReads += 1
         return [
@@ -192,7 +192,7 @@ describe('devReviewLoop — repeat_failure uses failed-log evidence (#1227)', ()
       failingCheckRuns: [{ id: 101, name: 'Sandbox conformance (macOS)', conclusion: 'failure' }]
     })
     const { deps } = withCapturedDeveloperDispatch(world, {
-      resolveHead: () => ((world.dispatchCountByRole.developer ?? 0) >= 2 ? 'c'.repeat(40) : world.head),
+      resolveHead: () => String(world.dispatchCountByRole.developer).repeat(40),
       readFailedCheckLogTail: () =>
         'error: gh-chained now exits 0 under claude\n(fail) sandbox conformance > gh-chained'
     })
@@ -208,7 +208,7 @@ describe('devReviewLoop — repeat_failure uses failed-log evidence (#1227)', ()
       failingCheckRuns: [{ id: 101, name: 'Sandbox conformance (macOS)', conclusion: 'failure' }]
     })
     const { deps } = withCapturedDeveloperDispatch(world, {
-      resolveHead: () => ((world.dispatchCountByRole.developer ?? 0) >= 2 ? 'c'.repeat(40) : world.head),
+      resolveHead: () => String(world.dispatchCountByRole.developer).repeat(40),
       readFailedCheckLogTail: () => null
     })
 
