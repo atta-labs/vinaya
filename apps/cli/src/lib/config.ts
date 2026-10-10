@@ -346,22 +346,29 @@ const ManagedManifestSchema = z.object({
 export type ManagedManifest = z.infer<typeof ManagedManifestSchema>
 
 const AGENTS_SKILLS_PREFIX = '.agents/skills/'
+const CLAUDE_SKILLS_PREFIX = '.claude/skills/vinaya-'
 
 /**
- * `true` for the three agent-vendor file paths, but ONLY when the manifest
+ * `true` for the agent-vendor file paths (the two commands and the role
+ * skills in both `.agents/skills/` and `.claude/skills/`), but ONLY when the manifest
  * has never recorded any `--agents` choice at all (`agents === undefined`,
  * same condition `resolveAgentVendors` below widens to every vendor for).
  * `upgrade`'s `planUpgrade` and `doctor`'s `diagnoseInstall` both gate a
  * `create-file` op on a SEPARATE `manifest.files` ownership list, unrelated
  * to `agents` — without this, `resolveAgentVendors` correctly resolving to
- * every vendor still would not get these three files past that second gate,
+ * every vendor still would not get these files past that second gate,
  * since `manifest.files` never listed them for an install predating the
  * feature. This is the shared other half both callers need; kept beside
  * `resolveAgentVendors` so the two conditions can never drift apart.
  */
 export function isDefaultedAgentVendorPath(path: string, manifest: Pick<ManagedManifest, 'agents'>): boolean {
   if (manifest.agents !== undefined) return false
-  return path === CLAUDE_COMMAND_PATH || path === GEMINI_COMMAND_PATH || path.startsWith(AGENTS_SKILLS_PREFIX)
+  return (
+    path === CLAUDE_COMMAND_PATH ||
+    path === GEMINI_COMMAND_PATH ||
+    path.startsWith(AGENTS_SKILLS_PREFIX) ||
+    path.startsWith(CLAUDE_SKILLS_PREFIX)
+  )
 }
 
 /**

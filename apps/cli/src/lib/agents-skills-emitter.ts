@@ -1,7 +1,13 @@
-// Emitter for .agents/skills/vinaya-<role>/SKILL.md
+// Emitter for .agents/skills/vinaya-<role>/SKILL.md and
+// .claude/skills/vinaya-<role>/SKILL.md
 //
-// Generates the shared agent-skill surface read natively by Codex, Antigravity,
-// and Grok Build. Each emitted file is a 3-line pointer delegating to
+// Generates the role-skill surface twice, once per directory a host scans:
+// `.agents/skills/` is read natively by Codex, Gemini CLI, Antigravity and
+// Grok Build; `.claude/skills/` is the only skill directory Claude Code reads.
+// The two files carry the same pointer and the same vendor-neutral `name` and
+// `description`; only the Claude file carries Claude-only frontmatter
+// (`allowed-tools`), since Codex documents nothing but `name` and
+// `description` there. Each emitted file is a 3-line pointer delegating to
 // `vinaya doctrine --role <role> --print` at read time — one hop: the
 // pointer's own output IS the role's operating instructions, not a second
 // path the agent must read again.
@@ -25,6 +31,17 @@ import type { CreateFileOp } from './ops.js'
 import type { VendoredVinaya } from './self-host.js'
 
 export const AGENTS_SKILLS_GROUP = 'Agent skills (.agents/skills/)'
+export const CLAUDE_SKILLS_GROUP = 'Claude Code skills (.claude/skills/)'
+
+/**
+ * Which skill directory a generated file lands in: `agents` for the portable
+ * `.agents/skills/` (installed under the `skills` vendor), `claude` for
+ * Claude Code's `.claude/skills/` (installed under the `claude` vendor).
+ */
+export type SkillTarget = 'agents' | 'claude'
+
+const SKILL_DIRS: Record<SkillTarget, string> = { agents: '.agents/skills', claude: '.claude/skills' }
+const SKILL_GROUPS: Record<SkillTarget, string> = { agents: AGENTS_SKILLS_GROUP, claude: CLAUDE_SKILLS_GROUP }
 
 /**
  * Format a role slug into a human-readable AEG role title.
@@ -77,9 +94,9 @@ export function discoverRoleNames(doctrineRoot: string): string[] {
     .sort()
 }
 
-/** The relative path for an agent skill file under .agents/skills/. */
-export function agentSkillPath(roleName: string): string {
-  return `.agents/skills/vinaya-${roleName}/SKILL.md`
+/** The relative path for a role skill file under `.agents/skills/` or `.claude/skills/`. */
+export function agentSkillPath(roleName: string, target: SkillTarget = 'agents'): string {
+  return `${SKILL_DIRS[target]}/vinaya-${roleName}/SKILL.md`
 }
 
 /**
@@ -146,31 +163,31 @@ export function roleDeniedTools(doctrineRoot: string, roleName: string): string[
 }
 
 /**
- * Render the pointer content for an agent skill. A role that declares an
- * `allowed-tools` grant gets that grant carried into the generated skill's
- * frontmatter, so the generated view exposes the SAME grant the role doc and
- * the router enforce; a role with no grant renders the unchanged 3-line
- * pointer.
+ * Render the pointer content for a role skill. On the `claude` target, a
+ * role that declares an `allowed-tools` grant gets that grant carried into
+ * the generated skill's frontmatter, so Claude Code exposes the SAME grant the
+ * role doc and the router enforce. `allowed-tools` is Claude-only frontmatter:
+ * the `agents` target never carries it, whatever the role declares, because
+ * the hosts reading `.agents/skills/` document only `name` and `description`.
+ * A role with no grant renders the same 3-line pointer on both targets.
  *
  * A role's `denied-tools` (O3) are carried as a plain BODY line, never a
- * frontmatter grant, on THIS file specifically: `disallowed-tools` is a
- * Claude-Code-only frontmatter extension, absent from the portable Agent
- * Skills spec this generator's own target hosts (Codex, Antigravity, Grok
- * Build — see this file's module doc) implement, and Claude Code itself
- * never reads `.agents/skills/` at all (it gets its own generated
- * `.claude/commands/vinaya.md` instead) — so no host this file reaches has
- * any confirmed mechanism to enforce a tool restriction from it. The denial
- * is real doctrine, just prose-enforced here rather than host-mechanized;
- * the body line keeps it visible rather than silently dropped.
+ * frontmatter grant, on both targets: `disallowed-tools` is absent from the
+ * portable Agent Skills spec the `.agents/skills/` hosts implement, and no
+ * host either file reaches has a confirmed mechanism to enforce a tool
+ * restriction from it. The denial is real doctrine, just prose-enforced here
+ * rather than host-mechanized; the body line keeps it visible rather than
+ * silently dropped.
  */
 export function renderAgentSkill(
   roleName: string,
   selfHost: VendoredVinaya | null = null,
   allowedTools: readonly string[] = [],
-  deniedTools: readonly string[] = []
+  deniedTools: readonly string[] = [],
+  target: SkillTarget = 'agents'
 ): string {
   const roleTitle = formatRoleTitle(roleName)
-  const grantLine = allowedTools.length > 0 ? `allowed-tools: ${allowedTools.join(', ')}\n` : ''
+  const grantLine = target === 'claude' && allowedTools.length > 0 ? `allowed-tools: ${allowedTools.join(', ')}\n` : ''
   const deniedLine =
     deniedTools.length > 0
       ? `\nDenied — this role's own doctrine forbids: ${deniedTools.join(', ')}. Enforced by doctrine text only: no confirmed host mechanism restricts tool availability from this file.\n`
@@ -183,24 +200,38 @@ Run \`${doctrineInvocation(selfHost)} --role ${roleName} --print\` and follow it
 ${deniedLine}`
 }
 
-/** Build the list of `create-file` ops for discovered roles under `.agents/skills/`. */
-export function buildAgentsSkillsOps(doctrineRoot: string, selfHost: VendoredVinaya | null = null): CreateFileOp[] {
+/** Build the list of `create-file` ops for discovered roles under one target's skill directory. */
+export function buildAgentsSkillsOps(
+  doctrineRoot: string,
+  selfHost: VendoredVinaya | null = null,
+  target: SkillTarget = 'agents'
+): CreateFileOp[] {
   const roles = discoverRoleNames(doctrineRoot)
   return roles.map((role) => ({
     kind: 'create-file',
-    path: agentSkillPath(role),
+    path: agentSkillPath(role, target),
     content: renderAgentSkill(
       role,
       selfHost,
       roleAllowedTools(doctrineRoot, role),
-      roleDeniedTools(doctrineRoot, role)
+      roleDeniedTools(doctrineRoot, role),
+      target
     ),
-    group: AGENTS_SKILLS_GROUP
+    group: SKILL_GROUPS[target]
   }))
 }
 
-/** Matches `agentSkillPath`'s own shape, capturing the role slug back out. */
-const AGENT_SKILL_PATH_PATTERN = /^\.agents\/skills\/vinaya-([^/]+)\/SKILL\.md$/
+/**
+ * Matches `agentSkillPath`'s own shape in either directory, capturing the
+ * role slug back out. Only the generated `vinaya-` prefix matches, so a
+ * hand-authored skill beside them (`.claude/skills/dispatch-vps/`) never does.
+ */
+const AGENT_SKILL_PATH_PATTERN = /^\.(?:agents|claude)\/skills\/vinaya-([^/]+)\/SKILL\.md$/
+
+/** `true` for a generated role-skill path in either skill directory. */
+export function isAgentSkillPath(path: string): boolean {
+  return AGENT_SKILL_PATH_PATTERN.test(path)
+}
 
 /**
  * Manifest-recorded agent-skill paths whose role no longer resolves under

@@ -1905,18 +1905,25 @@ export function buildInitOps(ctx: InitContext): Op[] {
   // Agent-native entry points — each opt-in via `ctx.agents`,
   // absent entirely (no op, not a skipped one) for a vendor not selected, so
   // `doctor` never reports a deliberately-excluded vendor as "missing".
-  if (ctx.agents.has('skills')) {
+  // Role skills land once per directory a host scans: `.agents/skills/` under
+  // `skills`, `.claude/skills/` under `claude` — the same pointers, so both
+  // vendors resolve the same bundled doctrine root.
+  const skillsDoctrineRoot = (vendor: AgentVendor): string => {
     const doctrineRoot = resolveDoctrineRoot()
     if (!doctrineRoot) {
       throw new Error(
-        'vinaya init: --agents includes "skills" but no bundled doctrine was found next to this CLI install — ' +
+        `vinaya init: --agents includes "${vendor}" but no bundled doctrine was found next to this CLI install — ` +
           'cannot discover agent-skill roles. Reinstall @attalabs/vinaya, or run bundle-doctrine first in a repo ' +
           'that vendors the CLI.'
       )
     }
-    ops.push(...buildAgentsSkillsOps(doctrineRoot, ctx.selfHost))
+    return doctrineRoot
+  }
+  if (ctx.agents.has('skills')) {
+    ops.push(...buildAgentsSkillsOps(skillsDoctrineRoot('skills'), ctx.selfHost, 'agents'))
   }
   if (ctx.agents.has('claude')) {
+    ops.push(...buildAgentsSkillsOps(skillsDoctrineRoot('claude'), ctx.selfHost, 'claude'))
     ops.push(...buildClaudeCommandOps(ctx.selfHost))
     ops.push(...buildClaudeStopHookOps())
     // Claude's stdio MCP registration for the task-tools server (refuse-if-foreign
@@ -1949,7 +1956,10 @@ export function buildInitOps(ctx: InitContext): Op[] {
   // file (`.gemini/commands/vinaya.toml`) unmentioned (a code-review finding).
   if (ctx.agents.size > 0) {
     const affected: string[] = []
-    if (ctx.agents.has('claude')) affected.push('the `/vinaya <role>` command (.claude/commands/vinaya.md)')
+    if (ctx.agents.has('claude'))
+      affected.push(
+        'the `/vinaya <role>` command (.claude/commands/vinaya.md) and every .claude/skills/vinaya-*/SKILL.md file'
+      )
     if (ctx.agents.has('gemini')) affected.push('the `/vinaya` command (.gemini/commands/vinaya.toml)')
     if (ctx.agents.has('skills')) affected.push('every .agents/skills/vinaya-*/SKILL.md file')
     ops.push({

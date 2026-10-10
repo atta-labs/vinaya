@@ -549,6 +549,31 @@ describe('vinaya upgrade — the persisted --agents selection, never re-flagged'
     expect(existsSync(join(root, '.agents/skills'))).toBe(true)
   })
 
+  it("removes a retired role's skill from both .agents/skills/ and .claude/skills/, and leaves a hand-authored skill alone", async () => {
+    await runInit(['--yes'], initDeps())
+    const stalePaths = [
+      '.agents/skills/vinaya-retired-fixture-role/SKILL.md',
+      '.claude/skills/vinaya-retired-fixture-role/SKILL.md'
+    ]
+    const handAuthored = ['.agents/skills/dispatch-vps/SKILL.md', '.claude/skills/dispatch-vps/SKILL.md']
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    for (const p of [...stalePaths, ...handAuthored]) {
+      mkdirSync(join(root, p, '..'), { recursive: true })
+      writeFileSync(join(root, p), '---\nname: fixture\n---\nbody\n')
+    }
+    cfg.managed.files.push(...stalePaths)
+    writeFileSync(join(root, CONFIG_PATH), `${JSON.stringify(cfg, null, 2)}\n`)
+
+    const out = await captureStdout(() => runUpgrade(['--yes'], upgradeDeps()))
+    for (const p of stalePaths) {
+      expect(out).toContain(`remove ${p}`)
+      expect(existsSync(join(root, p))).toBe(false)
+    }
+    for (const p of handAuthored) expect(readFileSync(join(root, p), 'utf-8')).toBe('---\nname: fixture\n---\nbody\n')
+    const after = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    for (const p of stalePaths) expect(after.managed.files).not.toContain(p)
+  })
+
   it('a manifest with an explicit, narrower --agents selection is NEVER widened by the defaulted-adopt path — only a truly unrecorded manifest gets every vendor', async () => {
     await runInit(['--yes', '--agents=claude'], initDeps())
     expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(false)

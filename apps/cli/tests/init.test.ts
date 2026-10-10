@@ -165,7 +165,12 @@ describe('vinaya init', () => {
     // else is written.
     const doctrineRoot = resolveDoctrineRoot()
     if (!doctrineRoot) throw new Error('no bundled doctrine found — this test requires the real aeg-root/')
-    const agentSkillPaths = discoverRoleNames(doctrineRoot).map(agentSkillPath)
+    // Every role skill lands twice: `.agents/skills/` (the `skills` vendor)
+    // and `.claude/skills/` (the `claude` vendor).
+    const agentSkillPaths = discoverRoleNames(doctrineRoot).flatMap((role) => [
+      agentSkillPath(role, 'agents'),
+      agentSkillPath(role, 'claude')
+    ])
     expect(agentSkillPaths.length).toBeGreaterThan(0) // sanity: role discovery actually found something
 
     for (const p of [
@@ -2362,13 +2367,28 @@ describe('vinaya init --agents narrowing', () => {
     expect(existsSync(join(root, CLAUDE_SETTINGS_PATH))).toBe(true)
     expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(false)
     expect(existsSync(join(root, '.agents/skills'))).toBe(false)
+    expect(existsSync(join(root, agentSkillPath('developer', 'claude')))).toBe(true)
 
     const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
     expect(cfg.managed.agents).toEqual(['claude'])
     expect(cfg.managed.files).toContain(CLAUDE_COMMAND_PATH)
+    expect(cfg.managed.files).toContain(agentSkillPath('developer', 'claude'))
     expect(cfg.managed.files).toContain(CLAUDE_SETTINGS_PATH)
     expect(cfg.managed.blocks.some((b: { path: string }) => b.path === CLAUDE_STOP_HOOK_SCRIPT_PATH)).toBe(true)
     expect(cfg.managed.files).not.toContain(GEMINI_COMMAND_PATH)
+  })
+
+  it('--agents=skills installs the portable .agents/skills/ role skills only — no Claude skills, no command', async () => {
+    const rc = await runInit(['--yes', '--agents=skills'], makeDeps())
+    expect(rc).toBe(0)
+    expect(existsSync(join(root, agentSkillPath('developer', 'agents')))).toBe(true)
+    expect(existsSync(join(root, '.claude/skills'))).toBe(false)
+    expect(existsSync(join(root, CLAUDE_COMMAND_PATH))).toBe(false)
+
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    expect(cfg.managed.agents).toEqual(['skills'])
+    expect(cfg.managed.files).toContain(agentSkillPath('developer', 'agents'))
+    expect(cfg.managed.files).not.toContain(agentSkillPath('developer', 'claude'))
   })
 
   it('--agents=none installs none of the three vendor emitters (nor the Stop hook), and persists an empty selection', async () => {
@@ -2379,6 +2399,7 @@ describe('vinaya init --agents narrowing', () => {
     expect(existsSync(join(root, CLAUDE_SETTINGS_PATH))).toBe(false)
     expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(false)
     expect(existsSync(join(root, '.agents/skills'))).toBe(false)
+    expect(existsSync(join(root, '.claude/skills'))).toBe(false)
 
     const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
     expect(cfg.managed.agents).toEqual([])
@@ -2400,7 +2421,10 @@ describe('vinaya eject removes all three agent-vendor emitters from a full insta
     expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(true)
     const doctrineRoot = resolveDoctrineRoot()
     if (!doctrineRoot) throw new Error('no bundled doctrine found — this test requires the real aeg-root/')
-    const skillPaths = discoverRoleNames(doctrineRoot).map(agentSkillPath)
+    const skillPaths = discoverRoleNames(doctrineRoot).flatMap((role) => [
+      agentSkillPath(role, 'agents'),
+      agentSkillPath(role, 'claude')
+    ])
     for (const p of skillPaths) expect(existsSync(join(root, p))).toBe(true)
 
     await runEject(['--yes'], ejectDeps())
