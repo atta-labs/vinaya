@@ -16,13 +16,13 @@ summary: Ever had a reviewer waste time on basics instead of judging the actual 
 
 This seam sits between finished work and the review of it. It exists so that an independent reviewer spends the session judging the work rather than verifying that it was ready to be looked at.
 
-**What crosses** — one open pull request, and everything that makes it reviewable. The brief, frozen on the task Issue's own comment before the Developer starts, read there rather than summarised, because it is the statement of intent the diff has to be judged against. The impact tier, which sets how deep the review goes. Green checks: the type checker, the linter, the tests and the documentation gate all passing already, so a failure found in review is the work's, not the environment's. A diff that stayed inside the file surface the brief named. A completed checklist. Every test-plan item an agent can run, actually run, with the real command output posted rather than a claim about it. And every document the brief named, updated in the same change.
+**What crosses** — one open pull request, and everything that makes it reviewable. The driver stages the frozen brief, pull-request body, diff and prior findings for both reviewer passes. The impact tier sets review depth. Green checks establish that the type checker, linter, tests and documentation gate passed. Every document the brief named is present for the reviewer to judge for truth rather than mere gate compliance.
 
-**The hand-off is malformed when** — the brief is missing, paraphrased or edited; when the checks are red; when the diff reaches outside the named surface; when a checklist item is ticked without evidence; when a test-plan item is claimed rather than shown; or when a promised document did not move. Each of those sends the change back rather than becoming a review finding, because none of them is a judgement call.
+**The hand-off is malformed when** — the staged brief or candidate artifacts are missing, or the required checks are red. Surface classification and verdict derivation remain repository-policy decisions rather than doctrine thresholds.
 
 **What it does not carry** — the authority to fix anything. The reviewer reports and the author repairs; the reviewer never edits the code, never merges, and never writes status. It also does not carry a second opinion on taste: a change is judged against its brief, the product's specification, and safety, not against how the reviewer would have written it.
 
-**How it physically runs** — the carrier is the open pull request plus the task Issue's frozen comment: the diff, plus the brief that comment holds. Coverage of the documents a change must touch is already enforced mechanically before review begins, which is why the reviewer's remaining job is the question no check can answer — whether the update is true, or a no-op edit that silenced the gate without describing the change. The verdict lands as comments on the pull request, with a severity on every finding, and a change cannot merge without a clean one.
+**How it physically runs** — the unattended driver dispatches code and security review in parallel with isolated staged inputs. Each pass returns findings, objective judgments and a report through the work directory; the driver validates and publishes them. Coverage is enforced mechanically, leaving reviewers to judge correctness and meaning.
 
 
 ---
@@ -39,7 +39,7 @@ This seam sits between finished work and the review of it. It exists so that an 
 
 A review is only as good as the artifact it reviews. When the Developer hands off an incomplete, CI-failing, or brief-free PR, the Reviewer's independence is wasted — they spend the session verifying basics rather than judging correctness and spec-conformance. This contract removes ambiguity about what "ready for review" means: the Developer cannot open a PR without satisfying the left column; the Reviewer cannot start without verifying the right column.
 
-The failure mode this prevents: a Reviewer who begins reviewing a diff without reading the brief (and therefore judges code rather than intent), or who reviews a red-CI PR (and cannot distinguish the Developer's errors from pre-existing failures), or who accepts a PR that touched files outside the brief's surface map without flagging it as a BLOCKER.
+The failure mode this prevents: a Reviewer who begins reviewing a diff without reading the brief (and therefore judges code rather than intent), or who reviews a red-CI PR (and cannot distinguish the Developer's errors from pre-existing failures), or who overlooks scope drift instead of reporting it for repository-policy classification.
 
 ---
 
@@ -60,14 +60,13 @@ Every item the Developer produces in the open PR (left) has exactly one obligati
 | **Frozen `aeg:brief:v1` comment on the task Issue** (the brief, posted verbatim by the dispatch act) | Entry — read before looking at the diff | The Reviewer reads the brief first to understand intent, boundary, surface map, and traps. Reviewing a diff without the brief is not a valid review pass. |
 | **Tier:** field in PR body | Determines review depth | Tier 0 → light pass; Tier 1 → standard including spec-conformance; Tier 3 → full including spec and state doc verification. |
 | **CI green** (typecheck, lint, tests, `verify-docs`) | Entry gate | The Reviewer does not start if CI is red. A red CI is a Developer problem, not a Reviewer finding. |
-| **Surface map respected** (diff touches only files named in the brief's surface map) | First diff check | If the diff touches files outside the surface map, that is a BLOCKER finding before reading any logic. |
-| **Task Done checklist ticked** | Confirms Developer self-checked | The Reviewer verifies the checklist is present and ticked. An unticked item that the Reviewer then finds broken is a MAJOR finding. |
-| **`[agent]` Test Plan items run with evidence comment** | Confirms runtime verification | The Reviewer checks that actual command output was posted for every `[agent]` item. Missing evidence = unticked item = MAJOR finding. |
+| **Surface map** | Scope judgment | The Reviewer reports drift at its real severity; repository policy classifies whether it is actionable this round. |
+| **Controller evidence** | Context for judgment | The Reviewer consumes the staged diff and green check result rather than reconstructing Developer-side checklists. |
 | **Documentation-update list honored** (every named doc updated in the diff) | Doc coupling check — first diff step after surface-map check | A named doc absent from the diff or present but incorrect is a BLOCKER (it is a DoD obligation, not guidance). `verify-docs` gates structural presence; the Reviewer gates content correctness. |
 | **Every copy of a false doc claim fixed** | Re-review of that finding id | A `doc-correctness` finding carries a `Search:` pattern — a repo-wide `git grep -n -iE` pattern, with no path filter — and is resolved only when every hit it returns at the new head is a true statement. `vinaya review post` refuses a missing or path-filtered pattern mechanically; the rest is the Reviewer's. A missing pasted search output, a still-false hit, or a corrected claim about code left unbound by `AEG:CLAIM` keeps the id open — a BLOCKER id keeps driving the verdict. |
 | **`.vinaya/doc-owners` coverage (C5) satisfied** — every binding fired by the diff is bound (in-diff doc), URL-acked (`Doc-ack: <pointer> — <note>`), or waived by an actor-verified `vinaya/waiver:docs` label applied by a principal. | Coverage check — *mechanical* via CI; the Reviewer reads it as already-true and moves on. | Coverage presence is mechanical (`verify-docs` C5 fails CI if missing). The Reviewer's job shrinks to **judging correctness of the covered doc**: a passing C5 plus an incorrect / no-op / misleading doc update is still a BLOCKER. A waiver is no longer the author's to grant — it is an actor-verified `vinaya/waiver:docs` label applied by a principal, so there is no deferral line for the Reviewer to judge. The seam is dormant when `.vinaya/doc-owners` is absent or no binding matches; in that case there is nothing for either side to do. |
 
-**Reading the table:** left is the producer obligation (Developer role doc and this contract enforce it), right is the consumer obligation (Reviewer role doc and this contract enforce it). The two role docs must not contradict this table. A MAJOR finding in this table is a surfaced finding — it is listed and shown to the Principal at the go, and never by itself produces REQUEST CHANGES; only a BLOCKER row does.
+**Reading the table:** left is the producer obligation, right is the consumer obligation. The two role docs point here rather than redefining this seam; repository policy decides which surfaced findings affect the verdict.
 
 ---
 
@@ -79,7 +78,6 @@ Every item the Developer produces in the open PR (left) has exactly one obligati
 - CI must be green before requesting review. Do not request review with a red CI and expect the Reviewer to begin.
 - The brief is already frozen, unmodified, on the task Issue's `aeg:brief:v1` comment before the Developer's worktree exists — the PR body carries only the Developer's report (optionally with a reference copy of the brief in a collapsed `<details>` block). The whole body is authored once, at open. After open the Developer changes nothing outside the `AEG:EVIDENCE` anchor. The body carries no token table for either role to read: a dispatched turn's token use is recorded as the Vinaya log's own `usage` event. The Principal's `[principal]` ticks are the Principal's writes and must survive every Developer edit. A review round's response and any re-run evidence are PR comments, not body edits.
 - The diff must touch only files in the brief's Technical Surface Map. Files outside it are a stop-and-escalate before opening the PR, not a finding for the Reviewer to catch.
-- The Task Done checklist must be ticked — all items, with actual verification evidence for each.
 - Every `[agent]` Test Plan item must have an evidence comment posted on the PR — the actual command output, not a paraphrase. A re-run after fixes posts a new comment; it never edits the one already there.
 - One row appended to the tranche's token ledger before opening the PR.
 
@@ -87,7 +85,7 @@ Every item the Developer produces in the open PR (left) has exactly one obligati
 
 - Read the brief — the task Issue's frozen `aeg:brief:v1` comment — before the diff. This is not optional — the brief is the intent document; the diff without the brief is just code.
 - Do not start if CI is red. Post a comment: *"CI is red — returning to Developer. Start review once CI is green."*
-- Check surface map compliance as the first diff-inspection step. A surface map violation is a BLOCKER before any logic review.
+- Check the staged diff against the surface map and report drift at its real severity.
 - **Verify documentation-update-list compliance as a BLOCKER gate.** For every doc named in the list, confirm it appears in the diff AND is correct (not just present — `verify-docs` already checks presence). A named doc absent from the diff or present but wrong is a BLOCKER finding before reviewing logic. This is a hard gate, not an advisory; the list is a DoD commitment.
 - **Judge correctness of `.vinaya/doc-owners` coverage.** Coverage *presence* is mechanical — `verify-docs` C5 has already enforced it (or the PR would not be green). Your job is to read each in-diff doc update that satisfied a C5 binding and confirm it actually reflects the code change, not a no-op edit or misleading rewrite that silenced the gate. A passing C5 + an incorrect doc update is a BLOCKER. A doc-coverage waiver is no longer a body field you weigh: it exists only as an actor-verified `vinaya/waiver:docs` label applied by a principal, which is a forge-authenticated human act rather than a parseable string.
 - Produce a structured verdict per `roles/reviewer.md` output format — with severity tags on every finding. A verdict without severity tags is malformed.

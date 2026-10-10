@@ -4045,7 +4045,8 @@ describe('renderReviewerPrompt (pure) — task 4, #483, O2', () => {
       objectivesVersion: null,
       rulingOrdinal: 0,
       policyDigest: 'd'.repeat(64)
-    }
+    },
+    policy: DEFAULT_REVIEW_POLICY
   }
 
   it('names the revision as its own fact line', () => {

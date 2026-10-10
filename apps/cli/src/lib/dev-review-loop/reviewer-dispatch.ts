@@ -15,6 +15,7 @@ import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
+  blockingSeverities,
   CODE_REVIEW_SEVERITY_ORDER,
   classifyFinding,
   defaultControlStoreDeps,
@@ -76,6 +77,8 @@ export type ReviewerPromptFacts = {
    * `objectivesVersion`/`rulingOrdinal` are no longer separate fields here.
    */
   manifest: ReviewInputManifest
+  /** The effective policy whose digest is bound by `manifest.policyDigest`. */
+  policy: ReviewPolicy
   /**
    * O2/O3: the round's deferral rules, built by the driver from the previous
    * round's head and the task's `## Surface` (`buildRoundDeferralContext`).
@@ -339,9 +342,7 @@ export function renderReviewerPrompt(facts: ReviewerPromptFacts): string {
  * author: an adopter override whose short version happens to carry a banned
  * phrase renders and the round proceeds, rather than crashing every round
  * (Traps to avoid). A `null`/blank doctrine contributes no pieces at all — the
- * dispatch's pre-task shape, unchanged. The precedence sentence that resolves
- * the doctrine's own output wording against this dispatch's file hand-off is
- * appended here too (O4, `renderReviewerDispatchPrompt`).
+ * dispatch's pre-task shape, unchanged.
  */
 export function roleDoctrinePieces(
   role: 'reviewer' | 'security',
@@ -353,18 +354,20 @@ export function roleDoctrinePieces(
     driverPiece(
       `\n\nYOUR ROLE DOCTRINE — the short version and the "What you check" list for ${label} role, the same doctrine an interactive reviewer reads. Treat it as what to look for. A session the review loop dispatched gives no receipt (\`ACK: <token>\`): ignore any read-receipt rule in it.\n\n`
     ),
-    factPiece(roleDoctrine.trim()),
-    // O4: the dispatch's own file hand-off wins over the doctrine's output
-    // wording. The short versions still say a reviewer posts PR comments and
-    // "writes nothing to disk"; this dispatch contradicts that on purpose
-    // (rewriting the short versions is a later phase, by Principal ruling), so
-    // the block states the precedence plainly rather than leaving the reviewer
-    // to reconcile two conflicting instructions. Driver text, so the lint reads
-    // it — it carries no banned phrase.
-    driverPiece(
-      '\n\nWhere the doctrine above describes its OWN output — posting pull-request comments, running `vinaya review post`, "writing nothing to disk" — the dispatch instructions below take precedence: write the findings, report and objectives files named below to the work directory. The doctrine tells you WHAT to check; these instructions tell you WHERE to put the result.'
-    )
+    factPiece(roleDoctrine.trim())
   ]
+}
+
+/** Blocking severities for this role, derived from the effective policy bound by the manifest. */
+export function blockingSeverityPieces(
+  role: 'reviewer' | 'security',
+  policy: ReviewPolicy
+): readonly ReviewerPromptPiece[] {
+  const severities =
+    role === 'reviewer'
+      ? blockingSeverities(CODE_REVIEW_SEVERITY_ORDER, policy.codeReviewThreshold)
+      : blockingSeverities(SECURITY_SEVERITY_ORDER, policy.securityThreshold)
+  return [driverPiece(`\n\nBLOCKING SEVERITIES UNDER THE EFFECTIVE REVIEW POLICY: ${severities.join(', ')}`)]
 }
 
 // --- held-verdict outbox ---------------------------------------------------
@@ -1240,6 +1243,7 @@ export function renderReviewerDispatchPrompt(
   const scanPieces = role === 'security' ? securityScanPieces(facts.configScan) : []
   const pieces = [
     ...buildReviewerPromptPieces(facts),
+    ...blockingSeverityPieces(role, facts.policy),
     ...candidateInputPieces(candidateInputPaths),
     ...roleDoctrinePieces(role, roleDoctrine),
     ...scanPieces
