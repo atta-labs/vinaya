@@ -29,7 +29,6 @@ import type { DispatchHandle } from '../../../src/lib/dispatch'
 import { drainLogSink } from '../../../src/lib/log-sink'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../../src/lib/dev-review-loop/round-assess'
 import { readEscalationPacket } from '../../../src/lib/task-tools/read'
-import { defaultPauseDisposition } from '../../../src/lib/task-tools/start'
 import { type RunTaskDeps, runTask } from '../../../src/lib/task-run'
 import { LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV } from '../../../src/lib/worker-boundary'
 import {
@@ -768,7 +767,6 @@ describe('a sandbox capability refusal pauses once for the Operator and is never
     const world = makeWorld({ developerPushed: true, gate: 'red' })
     await runLoopInProcess(world, { task: world.task, agent: 'claude' }, sandboxRefused(world))
     const held = readPauseState(world.runtimeDir, world.task)!
-    expect(await withWorldEnv(world, () => defaultPauseDisposition(world.task, world.runtimeDir))).toBe('host_repair')
 
     await runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude' })
 

@@ -680,7 +680,7 @@ export function isAutomaticRecoveryPause(reason: PauseReason): boolean {
 
 /**
  * A pause the driver never resumes by itself but the ordinary start
- * continues with no ruling once the Operator reports the host repaired: a
+ * (`vinaya task run`) continues with no ruling once the host is repaired: a
  * sandbox capability refusal. Outside the automatic-recovery set, so neither
  * the watcher's retry nor `MAX_INFRASTRUCTURE_RETRIES` applies to it.
  */
@@ -1006,7 +1006,7 @@ export const PAUSE_REASON_PROFILE: Record<
     attemptedRecovery: `none — a sandbox that cannot run a command on this host does not recover by itself, so the driver did not retry it and will not resume it on its own. The probe's own error is in \`detail\`. Remedy: fix the agent's sandbox on this host — for Claude Code on Linux, when the error is the Unix-socket seccomp step (\`apply-seccomp\`), the host's owner may set \`${LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV}=1\` in the driver's own environment, which turns off only that filter (\`apps/cli/specs/isolation.md\`, section 4d); otherwise make the sandbox's own tools work for the user the driver runs as.`,
     nextActions: [
       "Have the host's owner apply the remedy in `attemptedRecovery` for the error in `detail` — a host change, outside the Operator's tools.",
-      'Then start the task again with the ordinary start (`task_start`, or `vinaya task run`): no ruling is needed, and the pause is resolved once as it continues.'
+      'Then start the task again with `vinaya task run` on that host: no ruling is needed, and the pause is resolved once as it continues. Through the Operator’s tools, `task_resume` continues it against a Principal ruling posted where the pause comment went.'
     ]
   }
 }

@@ -137,7 +137,6 @@ import {
 import {
   escalationIdFor,
   isDriverPidAlive,
-  isHostRepairPause,
   pauseStatePath,
   readDriverLock,
   readEscalationRecord,
@@ -675,10 +674,6 @@ export const INFRASTRUCTURE_RETRY_BOUND = 5
  *     Inside it, `task_resume` has no such waiver and refuses `authority`
  *     for a ruling nobody posts for an automatic hiccup, so this tool is the
  *     one that moves it.
- *   - `host_repair` — a sandbox capability refusal (`sandbox_refused`),
- *     addressed to the Operator: the loop never resumes it by itself, and no
- *     ruling is owed. Once the host is repaired, this tool continues it, and
- *     the continuation records the pause's resolution once.
  *   - `unreadable` — a pause record or a resolution that could not be read
  *     or did not parse. Not the same as "no decision recorded": we do not
  *     know whose the run is, so the gate refuses rather than guessing, and
@@ -693,7 +688,6 @@ export type PauseDisposition =
   | 'resolved_resume'
   | 'resolved_cancel'
   | 'self_resuming'
-  | 'host_repair'
   | 'unreadable'
   | 'none'
 
@@ -755,9 +749,6 @@ export function defaultPauseDisposition(issue: number, root: string = runtimeDir
     // These two reasons share the loop's bounded, ruling-free automatic
     // recovery gate. Classifying either as awaiting a ruling would strand a
     // dead driver behind a decision nobody needs to provide.
-    // A sandbox capability refusal owes no ruling and is never self-resumed:
-    // the host is repaired, then the ordinary start continues it.
-    if (isHostRepairPause(held.reason)) return 'host_repair'
     if (held.reason !== 'infrastructure' && held.reason !== 'stale_driver') return 'awaiting_ruling'
     // …and only inside the loop's own bound, computed its way: the control
     // store's recorded count floored against the one this pause carries, a
@@ -1019,11 +1010,10 @@ export function startRefusalForState(
       `task_start: ${describeTaskRef(target)}'s pause was already resolved as 'cancel' — that run was stopped deliberately, and restarting it here would reverse a Principal decision. \`task_cancel\` reports the cancellation again if you need to read it.`
     )
   }
-  // `resolved_resume`, `self_resuming`, `host_repair` and `ruled` all continue
-  // through THIS tool: the decision they needed has already been made (a ruling
-  // consumed into a resolution record), is one the loop makes for itself (a
-  // recoverable infrastructure hiccup, within its own retry bound), is a host
-  // repair the Operator reports done by starting again, or is a ruling already
+  // `resolved_resume`, `self_resuming` and `ruled` all continue through THIS
+  // tool: the decision they needed has already been made (a ruling consumed
+  // into a resolution record), is one the loop makes for itself (a recoverable
+  // infrastructure hiccup, within its own retry bound), or is a ruling already
   // posted that postdates this pause (`ruled`) — the very check `task_resume`
   // makes, having passed before this call. `task_resume` launches nothing for
   // the first two — it replays `already_resumed` for one and refuses
@@ -1433,9 +1423,7 @@ export function createTaskStartHandler(
       // `task_resume` reads; config is the fallback for a pause that records
       // none, which the loop accepts.
       const launchAgent =
-        disposition === 'resolved_resume' || disposition === 'self_resuming' || disposition === 'host_repair'
-          ? (deps.heldAgent(issue) ?? agent)
-          : agent
+        disposition === 'resolved_resume' || disposition === 'self_resuming' ? (deps.heldAgent(issue) ?? agent) : agent
       let outcome: LaunchResult
       try {
         outcome = await deps.launch({ ref: target, agent: launchAgent, issue }, { requestId, caller: caller.id })

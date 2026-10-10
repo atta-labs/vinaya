@@ -1004,7 +1004,6 @@ function renderStateText(state: TaskLoopState, disposition: PauseDisposition | n
       const base = `paused (${state.reason})`
       if (disposition === 'awaiting_ruling') return `${base} — needs ruling`
       if (disposition === 'ruled') return `${base} — ruled, start continues it`
-      if (disposition === 'host_repair') return `${base} — repair the host, then start continues it`
       return base
     }
     case 'published':
@@ -1069,9 +1068,6 @@ export const NEXT_ACTION_BY_PAUSE_DISPOSITION: Record<PauseDisposition, TaskNext
   ruled: 'start',
   resolved_resume: 'start',
   self_resuming: 'start',
-  // A sandbox the host cannot run: once the host is repaired, `task_start`
-  // continues it — no ruling is owed.
-  host_repair: 'start',
   resolved_cancel: 'cancel',
   unreadable: 'investigate',
   // A pause record that reads as no hold at all (a round already published
