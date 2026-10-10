@@ -2530,9 +2530,9 @@ const FIXTURE_COMMAND_REFERENCE: CommandReferenceFacts = {
   file: 'packages/sources/src/commands.ts',
   binary: 'vinaya',
   commands: [
-    { name: 'check', flags: ['--all', '--json'] },
-    { name: 'issue create', flags: ['--body-file', '--validate-only'] },
-    { name: 'doctrine', flags: ['--role', '--print'] }
+    { name: 'check', flags: ['--all', '--json'], needs: [] },
+    { name: 'issue create', flags: ['--body-file', '--validate-only'], needs: ['forge'] },
+    { name: 'doctrine', flags: ['--role', '--print'], needs: [] }
   ],
   text: 'Runs one check, or every registered check. `--print` writes the resolved text to stdout.'
 }
@@ -3481,28 +3481,88 @@ describe('isNonPublicHost', () => {
 
 describe('checkTestPlanDeveloperRunnable — a Test plan line is one the dispatched Developer can run', () => {
   const plan = (...lines: string[]): string => ['## Test plan', '', '```', ...lines, '```', ''].join('\n')
+  const entry = (name: string, needs: string[]) => ({ name, flags: [], needs })
+  const reference: CommandReferenceFacts = {
+    file: 'packages/sources/src/commands.ts',
+    binary: 'vinaya',
+    text: '',
+    commands: [
+      entry('check', []),
+      entry('doctrine', []),
+      entry('issue', ['forge']),
+      entry('issue create', ['forge']),
+      entry('issue surface', []),
+      entry('issue objectives edit', ['forge']),
+      entry('brief render', ['forge', 'default-branch']),
+      entry('task status', ['forge']),
+      entry('task run', ['forge', 'operator-seat']),
+      entry('pr rule', ['forge', 'operator-seat']),
+      entry('release', ['forge', 'default-branch', 'operator-seat'])
+    ]
+  }
+  const run = (...lines: string[]) => checkTestPlanDeveloperRunnable(plan(...lines), reference)
 
   it.each([
     'bun apps/cli/src/index.ts task run loop-determinism-cleanup-v1 3',
-    'bun apps/cli/src/index.ts task brief loop-determinism-cleanup-v1 3',
-    'bun apps/cli/src/index.ts task dispatch loop-determinism-cleanup-v1 3',
     'bun apps/cli/src/index.ts pr rule 12 --file ruling.md',
     'bun apps/cli/src/index.ts release',
     'vinaya task run demo-v1 1',
+    'bun apps/cli/src/index.ts brief render loop-determinism-cleanup-v1 4',
+    'vinaya brief render demo-v1 1',
+    'bun apps/cli/src/index.ts task status',
+    'bun apps/cli/src/index.ts issue create --validate-only --body-file x.md',
+    'bun apps/cli/src/index.ts issue create --body-file x.md',
+    'bun apps/cli/src/index.ts issue objectives edit 12 --file o.md',
     'gh pr merge 12 --squash',
     'gh pr review 12 --approve',
     'git push origin HEAD',
     'ssh root@example.test uptime'
   ])('refuses `%s`, naming the line', (line) => {
-    const result = checkTestPlanDeveloperRunnable(plan('bun test a/b.test.ts → 0 fail', line))
+    const result = run('bun test a/b.test.ts → 0 fail', line)
     expect(result.status).toBe('fail')
     expect(result.errors).toHaveLength(1)
     expect(result.errors[0]).toContain(`\`${line}\``)
     expect(result.errors[0]).toContain('the dispatched Developer cannot run')
   })
 
+  it('names the need the Developer lacks', () => {
+    expect(run('bun apps/cli/src/index.ts brief render a 4').errors[0]).toContain(
+      'needs a forge credential and a default-branch checkout'
+    )
+    expect(run('bun apps/cli/src/index.ts task status').errors[0]).toContain('needs a forge credential')
+    expect(run('bun apps/cli/src/index.ts task run a 1').errors[0]).toContain("the Operator's seat")
+  })
+
+  it('accepts the declared-free commands and a bare test file', () => {
+    expect(
+      run(
+        'bun test apps/cli/tests/lib/forge-write.test.ts → 0 fail',
+        'bun apps/cli/src/index.ts check --all → exits 0',
+        'bun apps/cli/src/index.ts doctrine --role developer --print → exits 0',
+        'bun apps/cli/src/index.ts issue surface --body-file b.md → exits 0'
+      )
+    ).toEqual({ status: 'pass', errors: [] })
+  })
+
+  it('reads the longest declared name, never a shorter prefix', () => {
+    expect(run('bun apps/cli/src/index.ts issue surface --body-file b.md').status).toBe('pass')
+    expect(run('bun apps/cli/src/index.ts issue objectives edit 1').status).toBe('fail')
+  })
+
+  it('derives the forbidden set from the declarations alone: a command declared free is runnable', () => {
+    const free: CommandReferenceFacts = {
+      ...reference,
+      commands: reference.commands.map((c) => ({ ...c, needs: [] }))
+    }
+    expect(
+      checkTestPlanDeveloperRunnable(plan('bun apps/cli/src/index.ts brief render a 4', 'vinaya task run a 1'), free)
+        .status
+    ).toBe('pass')
+    expect(checkTestPlanDeveloperRunnable(plan('git push', 'ssh host'), free).errors).toHaveLength(2)
+  })
+
   it('passes the same plan without the line', () => {
-    expect(checkTestPlanDeveloperRunnable(plan('bun test a/b.test.ts → 0 fail')).status).toBe('pass')
+    expect(run('bun test a/b.test.ts → 0 fail').status).toBe('pass')
   })
 
   it('judges every statement of a chained, piped, or env-prefixed line', () => {
@@ -3510,21 +3570,19 @@ describe('checkTestPlanDeveloperRunnable — a Test plan line is one the dispatc
       'bun test a/b.test.ts && git push',
       'echo yes | ssh host',
       'GH_TOKEN=x gh pr merge 12',
-      'true; bun apps/cli/src/index.ts pr rule 12'
+      'true; bun apps/cli/src/index.ts pr rule 12',
+      'FOO=1 bun apps/cli/src/index.ts brief render a 1 | cat'
     ]) {
-      expect(checkTestPlanDeveloperRunnable(plan(line)).status).toBe('fail')
+      expect(run(line).status).toBe('fail')
     }
   })
 
-  it('keeps the gate-task proofs and quoted or commented text allowed', () => {
-    const result = checkTestPlanDeveloperRunnable(
-      plan(
-        'bun apps/cli/src/index.ts issue create --validate-only --body-file b.md → exits 0',
-        'bun apps/cli/src/index.ts check --all → exits 0',
-        "grep -ciE 'git push|ssh' aeg-root/roles/developer.md → prints 0",
-        'bun test a/b.test.ts # never git push here',
-        'echo "gh pr merge" → prints the words'
-      )
+  it('keeps quoted or commented text allowed', () => {
+    const result = run(
+      'bun apps/cli/src/index.ts check --all → exits 0',
+      "grep -ciE 'git push|ssh' aeg-root/roles/developer.md → prints 0",
+      'bun test a/b.test.ts # never git push here',
+      'echo "gh pr merge" → prints the words'
     )
     expect(result).toEqual({ status: 'pass', errors: [] })
   })
@@ -3539,8 +3597,8 @@ describe('checkTestPlanDeveloperRunnable — a Test plan line is one the dispatc
       'bun test a/b.test.ts',
       '```'
     ].join('\n')
-    expect(checkTestPlanDeveloperRunnable(prose).status).toBe('pass')
-    expect(checkTestPlanDeveloperRunnable('## Objectives\n\nO1. x\n').status).toBe('pass')
+    expect(checkTestPlanDeveloperRunnable(prose, reference).status).toBe('pass')
+    expect(checkTestPlanDeveloperRunnable('## Objectives\n\nO1. x\n', reference).status).toBe('pass')
   })
 })
 

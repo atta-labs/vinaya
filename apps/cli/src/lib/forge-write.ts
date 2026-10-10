@@ -1031,7 +1031,7 @@ export function readCommandReference(root: string = repoRoot()): CommandReferenc
   return {
     file: present ? COMMAND_REFERENCE_FILE : null,
     binary: CLI_BINARY,
-    commands: COMMANDS.map((c) => ({ name: c.name, flags: (c.flags ?? []).map((f) => f.flag) })),
+    commands: COMMANDS.map((c) => ({ name: c.name, flags: (c.flags ?? []).map((f) => f.flag), needs: c.needs })),
     text: COMMANDS.flatMap((c) => [
       c.description,
       ...(c.details ?? []),
@@ -1551,7 +1551,7 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     [checkPinnedFileImportersCovered(input.body, input.pinnedFileImporters).errors, 'pinnedFileImporters'],
     [checkNewTestFilesCoverShards(input.body, input.trackedFiles ?? []).errors, 'newTestFilesCoverShards'],
     [checkNewLoopFilesCoverInvariantMap(input.body, input.trackedFiles ?? []).errors, 'newLoopFilesCoverInvariantMap'],
-    [checkTestPlanDeveloperRunnable(input.body).errors, 'testPlanDeveloperRunnable'],
+    [checkTestPlanDeveloperRunnable(input.body, input.commandReference).errors, 'testPlanDeveloperRunnable'],
     [checkDocumentationPathsExist(input.body, input.readFile).errors, 'documentationPathsExist'],
     [checkIssuePremises(input.body, input.readFile).errors, 'issuePremises'],
     [checkPremiseDependencyDeclared(input.body).errors, 'premiseDependencyDeclared'],

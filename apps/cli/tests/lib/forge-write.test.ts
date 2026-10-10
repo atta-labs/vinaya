@@ -9,7 +9,8 @@ import { sha256Hex } from '../../src/lib/effects'
 import {
   DEFAULT_COLLISION_THRESHOLD,
   checkIntroducedCommandsCovered,
-  checkIntroducedConfigKeysCovered
+  checkIntroducedConfigKeysCovered,
+  checkTestPlanDeveloperRunnable
 } from '@attalabs/aeg-core'
 import {
   collectTaskIssueErrors,
@@ -17,6 +18,7 @@ import {
   deferredFindingsMarker,
   type GhRunner,
   isPendingOnlyFailure,
+  readCommandReference,
   readPinnedFileImporters,
   renderDeferredFindingsIssueBody,
   tokenExistsInTree,
@@ -28,6 +30,7 @@ import {
   validateIssueContent
 } from '../../src/lib/forge-write'
 import { readFileSync } from 'node:fs'
+import { COMMANDS } from '@attalabs/vinaya-sources'
 
 const CLI_ROOT = join(import.meta.dir, '..', '..')
 const REPO_ROOT = join(CLI_ROOT, '..', '..')
@@ -974,6 +977,43 @@ describe('validateIssueContent refuses an unregistered project, an unrunnable Te
   })
 })
 
+describe('the Developer-runnable rule reads the command reference, never a typed list', () => {
+  const reference = readCommandReference()
+  const plan = (line: string): string => ['## Test plan', '', '```', line, '```', ''].join('\n')
+  const verdict = (line: string) => checkTestPlanDeveloperRunnable(plan(line), reference)
+
+  it('carries every command declaration through readCommandReference', () => {
+    expect(reference.commands.map((c) => [c.name, c.needs])).toEqual(COMMANDS.map((c) => [c.name, c.needs]))
+  })
+
+  it('refuses exactly the commands that declare a need, in both spellings', () => {
+    for (const command of COMMANDS) {
+      for (const prefix of ['bun apps/cli/src/index.ts', 'vinaya']) {
+        const refused = verdict(`${prefix} ${command.name}`).status === 'fail'
+        expect(refused, `${prefix} ${command.name}`).toBe(command.needs.length > 0)
+      }
+    }
+  })
+
+  it.each([
+    'bun apps/cli/src/index.ts brief render loop-determinism-cleanup-v1 4',
+    'bun apps/cli/src/index.ts task status',
+    'bun apps/cli/src/index.ts issue create --validate-only --body-file x.md'
+  ])('refuses `%s`, naming the need', (line) => {
+    const result = verdict(line)
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('needs a forge credential')
+  })
+
+  it.each([
+    'bun test apps/cli/tests/lib/forge-write.test.ts',
+    'bun apps/cli/src/index.ts check --all',
+    'bun apps/cli/src/index.ts doctrine --role developer --print'
+  ])('accepts `%s`', (line) => {
+    expect(verdict(line)).toEqual({ status: 'pass', errors: [] })
+  })
+})
+
 // ---------------------------------------------------------------------------
 // `reconcileGhComment` (security review, round 2, HIGH) — the `gh`-backed
 // `EffectReconciler` `apps/cli/src/lib/effects.ts`'s `EffectExecutor` calls
@@ -1382,8 +1422,8 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
     file: 'packages/sources/src/commands.ts',
     binary: 'vinaya',
     commands: [
-      { name: 'issue create', flags: ['--body-file'] },
-      { name: 'check', flags: ['--all', '--deeper'] }
+      { name: 'issue create', flags: ['--body-file'], needs: ['forge'] },
+      { name: 'check', flags: ['--all', '--deeper'], needs: [] }
     ],
     text: ''
   }

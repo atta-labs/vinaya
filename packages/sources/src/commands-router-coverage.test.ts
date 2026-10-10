@@ -109,3 +109,23 @@ describe('router -> COMMANDS coverage', () => {
     )
   })
 })
+
+describe('COMMANDS -> needs declaration', () => {
+  const NEEDS = ['forge', 'default-branch', 'operator-seat']
+
+  it('every command declares what it needs beyond the sandbox, from the known set', () => {
+    for (const command of COMMANDS) {
+      expect(Array.isArray(command.needs), `\`${command.name}\` declares no \`needs\``).toBe(true)
+      for (const need of command.needs) expect(NEEDS, `\`${command.name}\``).toContain(need)
+    }
+  })
+
+  it('declares the reference examples the Test plan gate depends on', () => {
+    const needs = (name: string) => COMMANDS.find((c) => c.name === name)?.needs
+    expect(needs('brief render')).toEqual(['forge', 'default-branch'])
+    expect(needs('task status')).toEqual(['forge'])
+    expect(needs('issue create')).toEqual(['forge'])
+    expect(needs('check')).toEqual([])
+    expect(needs('doctrine')).toEqual([])
+  })
+})
