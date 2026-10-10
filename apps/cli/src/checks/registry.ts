@@ -785,6 +785,22 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   ],
   [
     {
+      name: 'doc-claims',
+      run: bin('check-doc-claims'),
+      scope: 'full',
+      timeoutMs: 30_000,
+      // Local-only: `git ls-files` and tracked-file reads, never the
+      // network, `gh`, or a PR-scoped fact — no forge call, no PR content.
+      env: {},
+      // See `reader-resolvable-prose`'s identical `include` comment above.
+      // The corpus the bin sweeps; a binding goes stale when its CITED file
+      // changes, which may sit anywhere in the repository.
+      include: ['aeg-root/**/*.md', 'apps/**/*.ts', 'apps/**/*.md', 'packages/**/*.ts', 'packages/**/*.md']
+    },
+    0
+  ],
+  [
+    {
       name: 'exec-bits',
       run: bin('check-exec-bits'),
       scope: 'diff',
