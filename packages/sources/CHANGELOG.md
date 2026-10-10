@@ -1,5 +1,29 @@
 # @atta/vinaya-sources
 
+## 0.38.0
+
+### Patch Changes
+
+- a7672c2: New `vinaya task-tools result-proof --agent <claude|codex>` runs real Developer-shaped dispatches on this host and checks that each CLI hands back the Developer's turn result as its own structured final output: Claude Code through `--json-schema` and Codex through `--output-schema`, on both a first and a resumed session. The schema is the new versioned `DeveloperTurnResult`, with three variants keyed by `status`: `completed`, `blocked` and `needs_ruling`. For each case the command prints whether a schema-valid result reached the driver, what the result was, and which event it came from. It also checks rejections. The driver refuses a result naming an unknown finding id, or a ruling request naming no permissible decision. Malformed output never reaches the driver. A cancelled run, a provider error and context exhaustion each end with no accepted result. Loop behaviour does not change.
+- 374b81d: `vinaya task status --follow` shows a task's log with its detail lines and hides them with `--quiet`; `vinaya task run --quiet` hides them on the live terminal. The log file always keeps the detail lines. The command reference lists both flags, and the missing `--follow` row on the status command.
+- c5a6081: New `vinaya task-tools review-result-proof --agent <claude|codex>` runs real reviewer-shaped dispatches on this host and checks that each CLI hands back a reviewer's result as its own structured final output: Claude Code through `--json-schema` and Codex through `--output-schema`, for both the code-reviewer and the security-reviewer, running concurrently against one manifest in fresh sessions with read-only grants. The schema is the new versioned `ReviewResult`, with two variants keyed by `status`: `completed` and `blocked`. The controller binds each result to its own role, head and manifest digest, and refuses a role mismatch, a stale head or digest, an objective id outside the brief, a severity outside the role's scale and a finding with no file. A missing, malformed, blocked, cancelled, context-exhausted or provider-errored run is recorded as no review, never approval. The command prints, for each case, whether a schema-valid result reached the driver. Loop behaviour does not change.
+- Updated dependencies [1cfc921]
+- Updated dependencies [ee50040]
+- Updated dependencies [ff9e173]
+- Updated dependencies [4cebcb2]
+- Updated dependencies [00fa6b5]
+- Updated dependencies [56941b2]
+- Updated dependencies [72ca2e2]
+- Updated dependencies [01f6b4e]
+- Updated dependencies [7229e69]
+- Updated dependencies [bbca06f]
+- Updated dependencies [dec0b77]
+- Updated dependencies [50a62b6]
+- Updated dependencies [7865055]
+  - @attalabs/aeg-core@0.38.0
+  - @attalabs/aeg-forge-state@0.38.0
+  - @attalabs/aeg-types@0.38.0
+
 ## 0.37.0
 
 ### Patch Changes
