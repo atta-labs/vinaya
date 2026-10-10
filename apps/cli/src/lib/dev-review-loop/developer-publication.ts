@@ -83,6 +83,8 @@ export type PublicationCheckInput = {
   remoteHead?: string | null
   /** The commit the driver's own publication made whose push did not complete, with its parent, or `null` when there is none. */
   driverUnpushedCommit?: { sha: string; parent: string | null } | null
+  /** The default branch's tip as the remote reports it, with whether `recordedHead` is its ancestor, or `null` when unread. Only consulted to recognize the Developer fast-forwarding its worktree onto that tip. */
+  defaultBranchTip?: { sha: string; recordedHeadIsAncestor: boolean } | null
   /** The worktree branch's base (merge base with the default branch), or `null` when unreadable. */
   base: string | null
   /** The base this task was cut from — what `base` must equal. `null` only before a known base has been recorded. */
@@ -112,10 +114,31 @@ function undidDriverUnpushedCommit(input: PublicationCheckInput): boolean {
 }
 
 /**
+ * True when the Developer fast-forwarded its worktree onto the default
+ * branch's tip: the head is exactly that tip as the remote reports it, the
+ * recorded head is its ancestor, and the branch's base is that same tip. All
+ * three must hold — a head that merely descends from the recorded head is a
+ * commit the Developer made, not this case. The driver then re-records its
+ * base and head at the tip.
+ */
+export function fastForwardedOntoDefaultTip(
+  input: Pick<PublicationCheckInput, 'worktreeHead' | 'recordedHead' | 'base' | 'defaultBranchTip'>
+): boolean {
+  const tip = input.defaultBranchTip
+  return (
+    tip != null &&
+    input.recordedHead !== null &&
+    tip.recordedHeadIsAncestor &&
+    input.worktreeHead === tip.sha &&
+    input.base === tip.sha
+  )
+}
+
+/**
  * O7: run before the driver commits or uses its GitHub credential — the
  * worktree must be on the task branch, its base the expected base, its head
  * the head recorded before the turn (the Developer left its work
- * uncommitted), and every changed path inside the task's Surface `in:` globs
+ * uncommitted, or fast-forwarded onto the default branch's tip), and every changed path inside the task's Surface `in:` globs
  * and outside its `out:` globs. The first failing check names itself; the
  * caller sends that text back to the same Developer session and commits and
  * pushes nothing. Pure — the caller resolves every input.
@@ -135,7 +158,8 @@ export function checkPublicationPreconditions(
   if (input.base === null) {
     return { ok: false, reason: 'could not read the worktree branch base — refusing to publish without the base check' }
   }
-  if (input.expectedBase !== null && input.base !== input.expectedBase) {
+  const fastForwarded = fastForwardedOntoDefaultTip(input)
+  if (input.expectedBase !== null && input.base !== input.expectedBase && !fastForwarded) {
     return {
       ok: false,
       reason: `the worktree branch's base is \`${input.base}\`, not the expected base \`${input.expectedBase}\` — rebase onto the base this task was cut from before leaving changes to publish`
@@ -145,7 +169,8 @@ export function checkPublicationPreconditions(
     input.recordedHead !== null &&
     input.worktreeHead !== null &&
     input.worktreeHead !== input.recordedHead &&
-    !undidDriverUnpushedCommit(input)
+    !undidDriverUnpushedCommit(input) &&
+    !fastForwarded
   ) {
     return {
       ok: false,

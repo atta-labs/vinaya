@@ -264,6 +264,7 @@ import type { DeveloperTurnResult } from './developer-turn-result.js'
 import { buildReport, gh, resolveMergeBase, runReportForOpenPr } from './pr-report-engine.js'
 import { reassertPrBodyPremise } from '../checks/bin/check-pr-premise-reassert.js'
 import type { PremiseReassertResult } from '../checks/premise-reassert-logic.js'
+import { fastForwardedOntoDefaultTip } from './dev-review-loop/developer-publication.js'
 import { postForgeEffectOnce, publishRound, unboundFields } from './dev-review-loop/publication.js'
 import { patchIdAt } from './patch-id.js'
 import { createDeveloperDevToolContext, type DeveloperDevToolDeps } from './task-tools/developer-dev-tools-context.js'
@@ -740,6 +741,8 @@ export type LoopDeps = {
   readWorktreeBranch: (worktreePath: string) => string | null
   /** O7: every path the worktree changed since `base` (committed AND uncommitted — `git diff --name-only <base>`), for the Surface check. Best-effort: `[]` when unreadable. */
   gitWorktreeChangedPaths: (worktreePath: string, base: string) => string[]
+  /** The default branch's tip as the remote at `remoteUrl` reports it (never a local ref the Developer could move), or `null` when unreadable. */
+  readDefaultBranchTip: (remoteUrl: string | null) => string | null
   /** The exact default-branch commit this turn merged into the worktree (an in-progress merge's incoming commit, else a merge commit's default-branch parent in `sinceBase..HEAD`), or `null` when the turn merged none. */
   readMergedDefaultCommit: (
     worktreePath: string,
@@ -1217,19 +1220,8 @@ export function defaultReadMergedDefaultCommit(
   sinceBase: string | null,
   remoteUrl: string | null
 ): MergedDefaultCommit | null {
-  if (!remoteUrl) return null
-  let remote: string | null = null
-  try {
-    remote = execFileSync('git', ['ls-remote', remoteUrl, 'refs/heads/main'], {
-      cwd: tmpdir(),
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe']
-    }).trim()
-  } catch {
-    return null
-  }
-  const head = remote.split(/\s+/)[0]
-  if (!head || !/^[0-9a-f]{40,64}$/.test(head)) return null
+  const head = defaultReadDefaultBranchTip(remoteUrl)
+  if (!remoteUrl || head === null) return null
   if (gitOk(worktreePath, ['cat-file', '-e', `${head}^{commit}`]) === null) {
     gitOk(worktreePath, ['fetch', '-q', remoteUrl, 'refs/heads/main'])
     if (gitOk(worktreePath, ['cat-file', '-e', `${head}^{commit}`]) === null) return null
@@ -1255,6 +1247,28 @@ export function defaultReadMergedDefaultCommit(
     }
   }
   return null
+}
+
+/**
+ * The default branch's head as the remote at `remoteUrl` reports it
+ * (`git ls-remote <remoteUrl> refs/heads/main`, run from outside any checkout so
+ * no worktree config can rewrite the URL). `null` when the URL is absent, the
+ * call fails, or the answer is not a commit hash.
+ */
+export function defaultReadDefaultBranchTip(remoteUrl: string | null): string | null {
+  if (!remoteUrl) return null
+  let remote: string
+  try {
+    remote = execFileSync('git', ['ls-remote', remoteUrl, 'refs/heads/main'], {
+      cwd: tmpdir(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+  } catch {
+    return null
+  }
+  const head = remote.split(/\s+/)[0]
+  return head && /^[0-9a-f]{40,64}$/.test(head) ? head : null
 }
 
 /** The exclusive lower bound for paths attributed to one branch push. */
@@ -2261,6 +2275,7 @@ function defaultDeps(): LoopDeps {
     readUnpushedWorkDetail: defaultReadUnpushedWorkDetail,
     readWorktreeBranch: defaultReadWorktreeBranch,
     gitWorktreeChangedPaths: defaultGitWorktreeChangedPaths,
+    readDefaultBranchTip: defaultReadDefaultBranchTip,
     readMergedDefaultCommit: defaultReadMergedDefaultCommit,
     gitWorktreeDiffText: defaultGitWorktreeDiffText,
     buildVendoredCliIfMissing: defaultBuildVendoredCliIfMissing,
@@ -3507,6 +3522,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     let publicationExpectedBase: string | null =
       recoveredLoopState.status === 'ok' ? recoveredLoopState.value.publicationExpectedBase : null
     /**
+     * The default branch's tip the Developer fast-forwarded its worktree onto,
+     * until the next landed push: the turn's changed paths are measured from
+     * it, never from the task branch's older remote head, which would count the
+     * default branch's own files as the task's.
+     */
+    let publicationFastForwardBase: string | null = null
+    /**
      * O4: the pre-push hook's own refusal text from the most recent refused
      * driver push, carried into the existing mechanical-failure path's message
      * so a reader sees why the push never landed. Cleared on a landed push.
@@ -4435,7 +4457,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // to an older default-branch state, which the merged commit cannot show.
       const defaultRemoteUrl = repo ? `https://github.com/${repo.owner}/${repo.repo}.git` : null
       const publicationRange = (remoteHead: string | null): { base: string | null; extraPaths: string[] } => {
-        const pushedBase = ownChangesRangeBase(worktree, pushedCommitRangeBase(remoteHead, publicationExpectedBase))
+        const pushedBase =
+          publicationFastForwardBase ??
+          ownChangesRangeBase(worktree, pushedCommitRangeBase(remoteHead, publicationExpectedBase))
         const merged = d.readMergedDefaultCommit(worktree, pushedBase, defaultRemoteUrl)
         if (merged) return { base: merged.commit, extraPaths: merged.regressedPaths }
         return { base: pendingConflictFiles !== null ? 'origin/main' : pushedBase, extraPaths: [] }
@@ -4465,10 +4489,36 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         return changed.length > 0 ? changed : null
       }
       let driverUnpushedCommit: { sha: string; parent: string | null } | null = null
+      // The remote's default-branch tip, read only when the head moved and
+      // equals it — the one case the fast-forward exception can accept.
+      const readFastForwardTip = (
+        worktreeHead: string | null
+      ): { sha: string; recordedHeadIsAncestor: boolean } | null => {
+        if (worktreeHead === null || turnPreHead === null || worktreeHead === turnPreHead) return null
+        const tip = d.readDefaultBranchTip(defaultRemoteUrl)
+        if (tip === null || tip !== worktreeHead) return null
+        let recordedHeadIsAncestor = false
+        try {
+          recordedHeadIsAncestor = d.gitIsAncestor(turnPreHead, tip)
+        } catch {
+          recordedHeadIsAncestor = false
+        }
+        return { sha: tip, recordedHeadIsAncestor }
+      }
       const deps: DeveloperDevToolDeps = {
         readPublicationCheckInput: async () => {
           const worktreeHead = d.readWorktreeHead(worktree)
           const base = await resolvePublicationBase(worktreeHead)
+          const defaultBranchTip = readFastForwardTip(worktreeHead)
+          // A fast-forward onto the default branch's tip re-records the base
+          // and the head at that tip, here, so this check and every later one
+          // in the turn compare against it and measure changed paths from it.
+          if (fastForwardedOntoDefaultTip({ worktreeHead, recordedHead: turnPreHead, base, defaultBranchTip })) {
+            const tip = defaultBranchTip!.sha
+            turnPreHead = tip
+            publicationExpectedBase = tip
+            publicationFastForwardBase = tip
+          }
           return {
             worktreeBranch: d.readWorktreeBranch(worktree),
             expectedBranch: branch,
@@ -4476,6 +4526,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             recordedHead: turnPreHead,
             remoteHead: safeRemoteHead(),
             driverUnpushedCommit,
+            defaultBranchTip,
             base,
             expectedBase: publicationExpectedBase,
             changedPaths: worktreeChangedPaths(),
@@ -4578,6 +4629,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             lastPushRefusal = null
           }
           driverUnpushedCommit = null
+          publicationFastForwardBase = null
           const pushedHead = d.readWorktreeHead(worktree) ?? localHead ?? ''
           // A successful commit+push advances the worktree head. Move the
           // recorded pre-turn head forward to it so a SECOND (and third)
