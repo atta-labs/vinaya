@@ -91,11 +91,11 @@ This is not optional politeness to the backlog — a backlog hint that survives 
 
 ---
 
-## Objectives (above the rationale)
+## Objectives (mandatory, above the rationale)
 
 The `## Objectives` section sits above the eight-field rationale: numbered `O<n>. <sentence>` lines, contiguous from `O1`, one observable outcome each, with no file path — mapping outcomes to files is the render's job, not yours. The dispatch act's render copies this section into the brief byte-for-byte and cites each `O<n>` from at least one numbered Part — see `aeg-root/contracts/planner-developer.md`'s Objectives row.
 
-## The Planner's rationale (one block per task)
+## The Planner's rationale (mandatory, one block per task)
 
 The **`Planner's rationale` block** on each task Issue's body is the durable record of the conclusions your deep dig produced. It exists because the architectural reasoning that decided a task's boundary, size, dependencies, and agent-class does **not** decay — and throwing it away forces the dispatch act's render to fail for want of a fact, and lets the executing agent walk into traps you already saw.
 
