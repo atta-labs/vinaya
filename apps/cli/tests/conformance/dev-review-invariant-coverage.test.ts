@@ -216,12 +216,22 @@ function headingsOf(markdown: string): Set<string> {
   return out
 }
 
-/** Every entry of either register missing its classification or its scope. */
+/**
+ * Every entry of either register missing its classification, its scope or its
+ * summary. An invariant's summary is its `behavior`; a defect's is its `summary`.
+ */
 function missingFields(inv: Inventory): string[] {
   const out: string[] = []
-  for (const e of [...inv.invariants, ...inv.defects] as { id: string; classification?: string; scope?: string }[]) {
+  const entries = [...inv.invariants.map((i) => ({ ...i, summary: i.behavior })), ...inv.defects] as {
+    id: string
+    classification?: string
+    scope?: string
+    summary?: string
+  }[]
+  for (const e of entries) {
     if (!e.classification) out.push(`${e.id}: classification`)
     if (!e.scope) out.push(`${e.id}: scope`)
+    if (!e.summary?.trim()) out.push(`${e.id}: summary`)
   }
   return out
 }
@@ -353,22 +363,30 @@ describe('standalone dev-review loop invariant map (O3: every behavior classifie
     expect(untested.map((i) => i.id)).toEqual([])
   })
 
-  it('an entry missing its classification or its scope is reported', () => {
+  it('an entry missing its classification, its scope or its summary is reported', () => {
     expect(missingFields(inventory)).toEqual([])
-    const [first, second] = inventory.invariants as [Invariant, Invariant]
-    const [firstDefect] = inventory.defects as [Inventory['defects'][number]]
+    const [first, second, third] = inventory.invariants as [Invariant, Invariant, Invariant]
+    const [firstDefect, secondDefect] = inventory.defects as [
+      Inventory['defects'][number],
+      Inventory['defects'][number]
+    ]
     const { scope: _scope, ...noScope } = first
     const { classification: _classification, ...noClass } = second
     const { scope: _defectScope, ...noDefectScope } = firstDefect
     const probe = {
       ...inventory,
-      invariants: [noScope as Invariant, noClass as Invariant],
-      defects: [noDefectScope as Inventory['defects'][number]]
+      invariants: [noScope as Invariant, noClass as Invariant, { ...third, behavior: ' ' }],
+      defects: [
+        noDefectScope as Inventory['defects'][number],
+        { ...secondDefect, summary: '' } as Inventory['defects'][number]
+      ]
     }
     expect(missingFields(probe)).toEqual([
       `${first.id}: scope`,
       `${second.id}: classification`,
-      `${firstDefect.id}: scope`
+      `${third.id}: summary`,
+      `${firstDefect.id}: scope`,
+      `${secondDefect.id}: summary`
     ])
   })
 
@@ -446,6 +464,14 @@ describe('standalone dev-review loop invariant map (O3: every behavior classifie
       inventory.invariants.flatMap((i) => i.scenarios as (typeof SCENARIOS)[number][]),
       SCENARIOS
     )
+    const defectsByClass = countBy(
+      inventory.defects.map((d) => d.classification),
+      CLASSIFICATIONS
+    )
+    const defectsByScope = countBy(
+      inventory.defects.map((d) => d.scope),
+      SCOPES
+    )
     const addedImpl = added.filter((a) => a.kind === 'implementation').length
     const addedTests = added.filter((a) => a.kind === 'test').length
     const lines = [
@@ -459,11 +485,17 @@ describe('standalone dev-review loop invariant map (O3: every behavior classifie
       `by scope: ${SCOPES.map((s) => `${s} ${byScope[s]}`).join(', ')}`,
       `by authority: ${AUTHORITIES.map((a) => `${a} ${byAuthority[a]}`).join(', ')}`,
       `by scenario: ${SCENARIOS.map((s) => `${s} ${byScenario[s]}`).join(', ')}`,
-      `defects: ${inventory.defects.length}; ambiguities awaiting a ruling: ${inventory.ambiguities.filter((a) => a.rulingStatus === 'awaiting-principal').length}`
+      `defects: ${inventory.defects.length}; ambiguities awaiting a ruling: ${inventory.ambiguities.filter((a) => a.rulingStatus === 'awaiting-principal').length}`,
+      `defects by classification: ${CLASSIFICATIONS.filter((c) => defectsByClass[c] > 0)
+        .map((c) => `${c} ${defectsByClass[c]}`)
+        .join(', ')}`,
+      `defects by scope: ${SCOPES.map((s) => `${s} ${defectsByScope[s]}`).join(', ')}`
     ]
     process.stdout.write(`${lines.join('\n')}\n`)
     expect(missingFields(inventory)).toEqual([])
     expect(Object.values(byScope).reduce((a, b) => a + b, 0)).toBe(inventory.invariants.length)
     expect(Object.values(byClass).reduce((a, b) => a + b, 0)).toBe(inventory.invariants.length)
+    expect(Object.values(defectsByScope).reduce((a, b) => a + b, 0)).toBe(inventory.defects.length)
+    expect(Object.values(defectsByClass).reduce((a, b) => a + b, 0)).toBe(inventory.defects.length)
   })
 })
