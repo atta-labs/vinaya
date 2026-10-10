@@ -5,8 +5,19 @@ export type CommandFlag = {
   description: string
 }
 
+/**
+ * What a command needs beyond the dispatched Developer's sandbox: `forge` — a
+ * forge credential (it reads or writes the forge); `default-branch` — a
+ * checkout of the default branch; `operator-seat` — the Operator's own seat
+ * (it starts, rules on or releases work). A command that needs none declares
+ * `[]`.
+ */
+export type CommandNeed = 'forge' | 'default-branch' | 'operator-seat'
+
 export type Command = {
   name: string
+  /** What this command needs beyond the sandbox — required, so a command added without the declaration fails to typecheck and its exhaustiveness test. */
+  needs: readonly CommandNeed[]
   description: string
   flags?: CommandFlag[]
   /**
@@ -21,17 +32,20 @@ export type Command = {
 export const COMMANDS: readonly Command[] = [
   {
     name: 'help',
+    needs: [],
     description: 'Show this help text',
     status: 'shipped'
   },
   {
     name: 'version',
+    needs: [],
     description: 'Print the CLI version',
     flags: [{ flag: '--json', description: 'Enveloped JSON output (schema: 1)' }],
     status: 'shipped'
   },
   {
     name: 'init',
+    needs: [],
     description: "Install Vinaya's git hooks, CI workflow, and starter config (diff-and-confirm, non-destructive)",
     flags: [
       { flag: '--dry-run', description: 'Print the full diff without installing anything' },
@@ -49,6 +63,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'init product',
+    needs: [],
     description: 'Register a project in .vinaya/projects.md in an already-initialized repo',
     flags: [
       {
@@ -65,6 +80,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'check',
+    needs: [],
     description: 'Run one check, or every registered check',
     flags: [
       { flag: '--all', description: 'Run every registered check instead of one named check' },
@@ -92,6 +108,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'commit-msg',
+    needs: [],
     description: "The generated `commit-msg` hook's invocation target — validates a commit message's first line",
     details: [
       "Not meant to be run by hand day-to-day: the managed `commit-msg` hook calls `vinaya commit-msg <message-file> [source]` with the two arguments git itself passes a commit-msg hook (githooks(5)) — the message file path and, when known, the commit's source keyword.",
@@ -101,6 +118,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'new check',
+    needs: [],
     description: 'Scaffold a custom check into ./scripts/vinaya-checks/',
     details: [
       'Takes the REGISTRATION KEY, not a bare name: `vinaya new check <yourname>/<id>` writes `./scripts/vinaya-checks/<id>.ts` and prints the namespaced `checks` entry to paste. It refuses a bare, un-namespaced name — `vinaya check` refuses its entire run over a key it cannot resolve, so scaffolding one would brick every check invocation in the repo — and refuses a core check id, since registering one REPLACES that core gate and a scaffolded stub is never what an adopter means by that.'
@@ -109,6 +127,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'new noop-check',
+    needs: [],
     description: 'Scaffold an explicit no-op into vinaya/checks/ that silences a core check',
     details: [
       'Takes a CORE check id — the opposite of what `new check` accepts, which refuses one. `vinaya new noop-check <core-check-id>` writes `vinaya/checks/<id>.ts`, an explicit, contract-satisfying no-op (always exits `0`, emits no findings, carries a comment marking the silencing as intentional) and prints the `checks` entry that REPLACES the named core check with it. This is the only sanctioned way to silence a core check.'
@@ -117,6 +136,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'new role',
+    needs: [],
     description: 'Scaffold an additive role contract into vinaya/roles/',
     details: [
       'Takes the REGISTRATION KEY: `vinaya new role <yourname>/<id>` writes `vinaya/roles/<id>.md` — a structurally-valid role contract stub (the six frontmatter keys plus `title`/`order`, and a non-empty "## The short version" section) whose own `role_id` is set to `<id>` — and prints the `roles` entry to paste. It refuses a bare, un-namespaced key: that shape resolves as an OVERRIDE of a core role, a complete replacement of that role\'s contract and a real governance decision this scaffolder does not make for you.'
@@ -125,6 +145,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'brief render',
+    needs: ['forge', 'default-branch'],
     description: 'Emit the twelve-section brief skeleton from the forge and the tree, every derivable section filled',
     flags: [
       { flag: '--surfaces <glob1,glob2,...>', description: 'Intended surface globs, expanded against tracked files' },
@@ -140,6 +161,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'task dispatch',
+    needs: ['forge', 'operator-seat'],
     description:
       'Deprecated — render, pin, and post the brief on the Issue as the frozen original; start the developer',
     flags: [
@@ -156,6 +178,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'task brief',
+    needs: ['forge', 'operator-seat'],
     description: "Render and freeze the brief as the Issue's original comment — preparation only, starts nobody",
     details: [
       // AEG:CLAIM: apps/cli/src/lib/dispatch-task.ts contains:export async function prepareTask(
@@ -166,6 +189,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'task run',
+    needs: ['forge', 'operator-seat'],
     description: 'One command from a planned Issue to a reviewed pull request — exactly one developer started',
     flags: [
       {
@@ -189,6 +213,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'task status',
+    needs: ['forge'],
     description:
       'Every open task with a frozen brief, its pull request, and whether its loop is running, paused, or published',
     flags: [
@@ -209,6 +234,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'task sweep',
+    needs: ['forge'],
     description:
       "Remove a finished task's folder — its Issue closed, or its pull request merged or closed — printing each folder removed or kept with the reason",
     flags: [
@@ -229,6 +255,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'task-tools serve',
+    needs: [],
     description: 'Run the task-operator MCP tool server over stdio — the command both runtime adapters register',
     details: [
       // AEG:CLAIM: apps/cli/src/lib/task-tools/server.ts contains:export async function serveTaskToolsStdio(
@@ -240,6 +267,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'task-tools result-proof',
+    needs: ['operator-seat'],
     description:
       "Prove, live on this host, that a CLI delivers the Developer's turn result as its own structured final output",
     flags: [{ flag: '--agent <claude|codex>', description: 'The CLI to prove' }],
@@ -252,6 +280,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'task-tools review-result-proof',
+    needs: ['operator-seat'],
     description:
       "Prove, live on this host, that a CLI delivers a reviewer's result as its own structured final output, concurrent and fresh",
     flags: [{ flag: '--agent <claude|codex>', description: 'The CLI to prove' }],
@@ -264,6 +293,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'pr create',
+    needs: ['forge'],
     description: 'Open a pull request after full brief-schema validation',
     flags: [
       { flag: '--title', description: 'PR title (validated against the forge-title grammar)' },
@@ -281,6 +311,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'pr edit',
+    needs: ['forge'],
     description: 'Edit an existing pull request (<n>) after full brief-schema validation',
     flags: [
       { flag: '--title', description: 'New PR title (validated against the forge-title grammar)' },
@@ -296,6 +327,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'pr report',
+    needs: ['forge'],
     description: "Emit the AEG:EVIDENCE block — a PR body's factual claims, from commands, never typed",
     flags: [
       {
@@ -318,6 +350,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'pr rule',
+    needs: ['forge', 'operator-seat'],
     description: 'Post a Principal ruling on a PR, marked and versioned — never mistaken for a review verdict',
     flags: [
       { flag: '--file', description: 'Path to the ruling file to post as a PR comment' },
@@ -332,6 +365,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'pr verify-evidence',
+    needs: ['forge'],
     description: "Prove a pull request's AEG:EVIDENCE region was machine-generated — regenerate it and compare",
     flags: [],
     details: [
@@ -344,6 +378,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'issue create',
+    needs: ['forge'],
     description: 'Open an issue after full brief-schema validation',
     flags: [
       { flag: '--title', description: 'Issue title (validated on task Issues)' },
@@ -359,6 +394,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'issue edit',
+    needs: ['forge'],
     description: 'Edit an existing issue (<n>) after full brief-schema validation',
     flags: [
       { flag: '--title', description: 'New Issue title (validated on task Issues)' },
@@ -373,6 +409,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'issue surface',
+    needs: [],
     description: "Print what a draft Issue's Boundary pins force on its `## Surface`",
     flags: [
       { flag: '--body-file', description: 'Path to the draft Issue body' },
@@ -387,6 +424,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'issue objectives edit',
+    needs: ['forge'],
     description: "Rewrite a task Issue's `## Objectives` section by command — versioned, findable on the forge",
     flags: [
       { flag: '--add', description: 'Append a new objective as `O<max+1>` with the given sentence' },
@@ -407,6 +445,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'milestone create',
+    needs: ['forge'],
     description: 'Create a GitHub Milestone from a validated body',
     flags: [
       { flag: '--title', description: 'Milestone title — free text, never parsed for a version' },
@@ -424,6 +463,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'milestone adopt',
+    needs: ['forge'],
     description: 'Move one or more existing tranches into a target Milestone',
     flags: [
       { flag: '--target', description: 'The Milestone every named slug is adopted into' },
@@ -438,6 +478,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'milestone edit',
+    needs: ['forge'],
     description: 'Edit an existing Milestone (<n>) after full brief-schema validation',
     flags: [
       {
@@ -454,6 +495,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'milestone close',
+    needs: ['forge'],
     description: "Close a tranche's Milestone after verifying every labeled Issue is actually attached",
     flags: [
       { flag: '--slug', description: 'The tranche whose Milestone is being closed' },
@@ -467,6 +509,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'milestone status',
+    needs: ['forge'],
     description: "Print each of a Milestone's declared tranche intents with its derived lifecycle and issue counts",
     flags: [{ flag: '--json', description: 'Enveloped JSON output (schema: 1)' }],
     details: [
@@ -476,6 +519,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'review status',
+    needs: ['forge'],
     description: "Print the review loop's own state for a PR, and its branch's distance from the base",
     details: [
       'Two lines at most. The first is `CONTINUE`, `PAUSE: <reason>[ <id>]` for `reappearance`, `zero-deaths` or `max-rounds` — or, for `stale`, the actionable fact itself: `push after verdict — re-review required`. The second reads `behind main by <n> — merge first` when the branch is behind its base, or `behind main: unknown — fetch origin/<base> first` when git cannot measure the distance; it is absent only when the branch is measurably not behind.',
@@ -486,6 +530,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'review post',
+    needs: ['forge'],
     description: 'Render, post, and self-verify a code-reviewer or security-review verdict comment on a PR',
     flags: [
       { flag: '--role', description: '`code-reviewer` or `security` — selects which role template is rendered' },
@@ -556,6 +601,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'doctor',
+    needs: ['forge'],
     description: 'Diagnose hook, workflow, and config health — report only, never mutates',
     flags: [{ flag: '--json', description: 'Enveloped JSON output (schema: 1)' }],
     details: [
@@ -566,6 +612,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'tokens',
+    needs: [],
     description: "Print a role's `Tokens: …` report line — the portable front door over the collection adapter",
     flags: [
       { flag: '--phase', description: 'e.g. `"<task-id>: develop"` — required' },
@@ -593,6 +640,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'doctrine',
+    needs: [],
     description:
       "Print the absolute path of the bundled doctrine's front door (aeg-root/skills/aeg/SKILL.md) on this machine",
     flags: [
@@ -619,6 +667,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'upgrade',
+    needs: [],
     description: 'Regenerate hooks, workflow, and config to the current contract version (diff-and-confirm)',
     flags: [
       { flag: '--dry-run', description: 'Print the full diff without regenerating anything' },
@@ -631,6 +680,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'archive',
+    needs: ['forge'],
     description: 'Run the post-merge Archivist directly: provenance + Issue close-out for a merged task PR',
     flags: [{ flag: '--merge-sha', description: 'The merge commit to resolve (defaults to the current HEAD)' }],
     details: [
@@ -642,6 +692,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'archive tranche',
+    needs: ['forge'],
     description: 'Close a tranche — the tranche-level bookend to `init product`, closing the Milestone via the CLI',
     flags: [{ flag: '--yes', description: 'Skip the confirmation prompt' }],
     details: [
@@ -655,6 +706,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'archive tranches',
+    needs: ['forge'],
     description: 'Archive every finished tranche that has no closed Milestone carrying its retrospective',
     flags: [{ flag: '--yes', description: 'Skip the confirmation prompt' }],
     details: [
@@ -665,6 +717,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'audit',
+    needs: ['forge'],
     description: 'Run the ring-2 dead-branch-push and direct-main-push detection checks directly',
     flags: [
       { flag: '--only', description: "Scope to one check: 'dead-branches' or 'direct-push'" },
@@ -680,6 +733,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'eject',
+    needs: [],
     description: 'Remove every Vinaya-installed artifact, restoring the repo to stock',
     flags: [
       { flag: '--dry-run', description: 'Print the full removal diff without removing anything' },
@@ -689,6 +743,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'demo break',
+    needs: [],
     description: 'Run a guided refusal-then-fix demo on an isolated, discardable branch',
     flags: [{ flag: '--keep', description: 'Skip cleanup and leave the demo branch checked out to inspect' }],
     details: [
@@ -699,6 +754,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'waiver',
+    needs: ['forge'],
     description:
       "Apply the actor-verified 'vinaya/waiver:docs' or 'vinaya/waiver:review' label after prompting for a reason",
     flags: [
@@ -713,6 +769,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'studio',
+    needs: [],
     description:
       'Launch Vinaya Studio — runs the Studio dev app when its source (apps/vinaya-studio/web) is in a checkout above the current directory; a published install launches its bundled standalone server instead',
     flags: [
@@ -730,6 +787,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'quickstart',
+    needs: ['forge'],
     description: 'Guided wizard: init, doc-owners, project, commit, demo break, doctor, push — one command',
     details: [
       "Calls `init`'s own diff-and-confirm flow unchanged (pausing on Enter before the diff prints, so its own step header isn't scrolled off by a long diff), then Y/n-prompts through the workarounds a guest used to run by hand: binding `.vinaya/doc-owners` pairs (bad input offers a retry instead of silently skipping, and a pointer that doesn't exist on disk is refused outright — both loop across as many pairs as the guest wants, not just one), registering tracked projects (`init product`, same retry/loop shape), committing the install, running `demo break` as proof the gates actually work (default yes — the one step this wizard makes hardest to skip), running `doctor`, and pushing. Each declined prompt skips only that step; the install commit itself is never prompt-gated — it just no-ops when there is genuinely nothing to commit.",
@@ -739,6 +797,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'release',
+    needs: ['forge', 'default-branch', 'operator-seat'],
     description:
       "Run this repo's own publish sequence in one command, refusing to start unless every precondition holds",
     flags: [
@@ -760,6 +819,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'dispatch',
+    needs: ['operator-seat'],
     description:
       "Start a role's headless agent session (claude/codex/gemini) with attribution set on its environment, recording the outcome through the Vinaya Log",
     flags: [
@@ -794,6 +854,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'dev-review-loop',
+    needs: ['forge', 'operator-seat'],
     description:
       'Dispatch the developer, run review rounds against the forge, resume the same developer session every round, and hold every verdict until the policy says publish',
     flags: [
@@ -815,6 +876,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'log selftest',
+    needs: [],
     description:
       'Prove log delivery works end to end: send one marked test event and read it back — PASS (exit 0) or FAIL with the one reason (exit 1)',
     details: [
@@ -826,6 +888,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'log emit',
+    needs: [],
     description:
       'Record a consumer-declared event (`logs.events` in vinaya.config.json) from a script or agent outside Vinaya',
     flags: [
@@ -840,6 +903,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'log send',
+    needs: [],
     description: "Deliver this repository's locally-held log events to the configured `logs.url` server, once",
     flags: [{ flag: '--json', description: 'Enveloped JSON output (schema: 1)' }],
     details: [
@@ -851,6 +915,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'sync',
+    needs: [],
     description:
       "Fill, resume and rebuild the local log cache from this repository's configured destination (read-only)",
     flags: [

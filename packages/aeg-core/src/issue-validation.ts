@@ -601,38 +601,66 @@ export function parseIssueTestPlan(body: string): ParsedIssueSection<IssueTestPl
 }
 
 /**
- * The operations a dispatched Developer cannot perform, as the leading tokens
- * of a command statement. The Developer holds no forge credential and no
- * shell outside its sandbox: it never starts, briefs or dispatches a task,
- * posts a ruling, releases, merges or reviews a pull request, pushes, or opens
- * a remote shell — the driver publishes on its behalf. A Test plan line that
- * needs one of these can only block the task it belongs to. Each operation is
- * listed in both the repository-source form and the installed `vinaya` form.
- * `issue create --validate-only` and `vinaya check` are deliberately absent:
- * they are how a gate task proves itself.
+ * The foreign binaries a dispatched Developer cannot run, as the leading
+ * tokens of a command statement: no forge credential for `gh`, no push, no
+ * shell outside the sandbox. The reference describes this CLI only, so these
+ * stay typed; every operation of the CLI itself is judged by the `needs` its
+ * command declares in the command reference (`developerUnrunnableCommand`).
  */
-const DEVELOPER_UNRUNNABLE_PREFIXES: readonly (readonly string[])[] = [
-  ...[['task', 'run'], ['task', 'brief'], ['task', 'dispatch'], ['pr', 'rule'], ['release']].flatMap((sub) => [
-    ['bun', 'apps/cli/src/index.ts', ...sub],
-    ['vinaya', ...sub]
-  ]),
+const DEVELOPER_UNRUNNABLE_FOREIGN_PREFIXES: readonly (readonly string[])[] = [
   ['gh', 'pr', 'merge'],
   ['gh', 'pr', 'review'],
   ['git', 'push'],
   ['ssh']
 ]
 
+/** The two spellings the CLI is invoked with: repository source, and the installed binary. */
+const CLI_INVOCATION_PREFIXES: readonly (readonly string[])[] = [['bun', 'apps/cli/src/index.ts'], ['vinaya']]
+
+/** What each declared need means for the Developer, named in the refusal. */
+const DEVELOPER_LACKS: Record<string, string> = {
+  forge: 'a forge credential',
+  'default-branch': 'a default-branch checkout',
+  'operator-seat': "the Operator's seat"
+}
+
 /** `NAME=value` — an environment assignment before the command itself, never the command. */
 const ENV_ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/
 
+/**
+ * The command this statement runs when the reference declares it needs
+ * something the Developer lacks, with the need named, or `null`. The
+ * longest declared command name that prefixes the tokens after the CLI
+ * invocation wins, so `issue objectives edit` is never read as `issue`.
+ */
+function developerUnrunnableCommand(
+  tokens: string[],
+  reference: CommandReferenceFacts
+): { name: string; lacks: string } | null {
+  const invocation = CLI_INVOCATION_PREFIXES.find((p) => p.every((token, i) => tokens[i] === token))
+  if (invocation === undefined) return null
+  const rest = tokens.slice(invocation.length)
+  let best: CommandReferenceEntry | null = null
+  for (const command of reference.commands) {
+    const words = command.name.split(' ')
+    if (!words.every((w, i) => rest[i] === w)) continue
+    if (best === null || words.length > best.name.split(' ').length) best = command
+  }
+  if (best === null || best.needs.length === 0) return null
+  return { name: best.name, lacks: best.needs.map((n) => DEVELOPER_LACKS[n] ?? n).join(' and ') }
+}
+
 /** The prefix this statement starts with, or `null` — leading env assignments skipped, tokens compared exactly. */
-function developerUnrunnablePrefix(statement: string): string | null {
+function developerUnrunnablePrefix(
+  statement: string,
+  reference: CommandReferenceFacts
+): { name: string; lacks: string | null } | null {
   const tokens = statement.trim().split(/\s+/).filter(Boolean)
   while (tokens.length > 0 && ENV_ASSIGNMENT_RE.test(tokens[0] as string)) tokens.shift()
-  for (const prefix of DEVELOPER_UNRUNNABLE_PREFIXES) {
-    if (prefix.every((token, i) => tokens[i] === token)) return prefix.join(' ')
+  for (const prefix of DEVELOPER_UNRUNNABLE_FOREIGN_PREFIXES) {
+    if (prefix.every((token, i) => tokens[i] === token)) return { name: prefix.join(' '), lacks: null }
   }
-  return null
+  return developerUnrunnableCommand(tokens, reference)
 }
 
 /**
@@ -645,7 +673,7 @@ function developerUnrunnablePrefix(statement: string): string | null {
  * carries the `unit-tests-only` sentinel; `parseIssueTestPlan` reports those
  * shapes.
  */
-export function checkTestPlanDeveloperRunnable(body: string): IssueSectionResult {
+export function checkTestPlanDeveloperRunnable(body: string, reference: CommandReferenceFacts): IssueSectionResult {
   const located = locateTestPlanSection(body)
   if (!located.found) return { status: 'pass', errors: [] }
   const lines = extractFencedBlocks(located.section).flatMap((b) =>
@@ -670,10 +698,14 @@ export function checkTestPlanDeveloperRunnable(body: string): IssueSectionResult
       pieces.push(stmt.slice(last))
       return pieces
     })
-    const hit = statements.map(developerUnrunnablePrefix).find((p): p is string => p !== null)
-    if (hit !== undefined) {
+    const hit = statements.map((st) => developerUnrunnablePrefix(st, reference)).find((p) => p !== null)
+    if (hit !== undefined && hit !== null) {
+      const why =
+        hit.lacks === null
+          ? 'it holds no forge credential and no shell outside its sandbox'
+          : `the command reference declares it needs ${hit.lacks}, which the Developer does not hold`
       errors.push(
-        `issue-validation Test plan/developer-runnable: \`${line}\` runs \`${hit}\`, which the dispatched Developer cannot run — it holds no forge credential and no shell outside its sandbox, so it never starts, briefs or dispatches a task, posts a ruling, releases, merges or reviews a pull request, pushes, or opens a remote shell. A line it cannot run can only block the task.`
+        `issue-validation Test plan/developer-runnable: \`${line}\` runs \`${hit.name}\`, which the dispatched Developer cannot run — ${why}. Put it under \`**[principal]**\`; a line the Developer cannot run can only block the task.`
       )
     }
   }
@@ -2555,7 +2587,12 @@ export function checkPartsCoverageAndSequence(body: string): IssueSectionResult 
 // ---------------------------------------------------------------------------
 
 /** One command as the command reference records it — its name (`issue create`) and the flags it documents. */
-export type CommandReferenceEntry = { name: string; flags: string[] }
+export type CommandReferenceEntry = {
+  name: string
+  flags: string[]
+  /** What the command needs beyond the Developer's sandbox (`forge`, `default-branch`, `operator-seat`); empty ⇒ runnable by the Developer. */
+  needs: readonly string[]
+}
 
 /**
  * The command reference as the caller resolved it. `file` is the tracked file
