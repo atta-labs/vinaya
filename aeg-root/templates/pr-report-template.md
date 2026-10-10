@@ -31,7 +31,7 @@ Closes #[N]
 ## Test plan
 
 <!-- AEG:TEST-PLAN:START -->
-[the `[agent]` half is a fenced list of commands carried from the brief's §9 — one command per line, each with its expected observable after a literal `→`. the controller's `refresh_evidence` tool runs every line from the PR head and writes the command plus its actual output into the AEG:EVIDENCE block below; there is no `[agent]` checkbox to tick (an agent never ticks a box or edits a PR body). A pure-logic brief with no runtime surface uses the `Test Plan: unit-tests-only` sentinel instead of a fenced list.]
+[the `[agent]` half is a fenced list of commands carried from the brief's §9 — one command per line, each with its expected observable after a literal `→`. The controller's `refresh_evidence` tool runs every line from the PR head and writes the command plus its actual output into the AEG:EVIDENCE block below; there is no `[agent]` checkbox to tick (an agent never ticks a box or edits a PR body). A pure-logic brief with no runtime surface uses the `Test Plan: unit-tests-only` sentinel instead of a fenced list.]
 
 ```
 [<scriptable / non-auth / no-vendor-key command from the brief's §9> → <expected observable>]
