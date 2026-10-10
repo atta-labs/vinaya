@@ -459,6 +459,13 @@ export type ForgeValidationInput = {
    * (O1) — and this repo's own key restates its historical cutovers (O2).
    */
   gateCutovers?: GateCutovers
+  /**
+   * The Issue is a single fix — its labels carry no `vinaya/tranche:<slug>` —
+   * so the `issueRationale` builtin grades the single-fix form, which omits
+   * Sizing, Project(s) + blast radius and Dependency rationale. Omitted means
+   * the full eight-field form; a `pr` or Milestone write never sets it.
+   */
+  singleFix?: boolean
 }
 
 const CHECK_BRIEF_SCHEMA = 'brief-schema'
@@ -497,7 +504,7 @@ function runBuiltin(name: BriefBuiltin, input: ForgeValidationInput, cutovers: G
     for: () => checkForField(body),
     closesN: () => checkBriefClosesN(body),
     premiseCoverage: () => checkPremiseCoverage(body, changedFiles),
-    issueRationale: () => checkIssueRationale(body),
+    issueRationale: () => checkIssueRationale(body, { singleFix: input.singleFix === true }),
     objectives: () => checkIssueObjectives(body, input.issueNumber ?? null, cutovers.objectivesSinceIssue),
     briefSections: () =>
       checkIssueBriefSections(
@@ -536,7 +543,7 @@ const BUILTIN_RECOVERY: Record<BriefBuiltin, string> = {
   closesN: 'Add a `Closes #<N>` reference naming the task Issue to the body, then re-run `{cmd}`.',
   premiseCoverage: 'Add a `Premise:` assertion whose path matches a file this change touches, then re-run `{cmd}`.',
   issueRationale:
-    'Add the missing Planner-rationale field named above (every task Issue carries all eight fields), then re-run `{cmd}`.',
+    'Add the missing Planner-rationale field named above (a tranche task Issue carries all eight fields; a single-fix Issue all but Sizing, Project(s) + blast radius and Dependency rationale), then re-run `{cmd}`.',
   objectives:
     'Add a `## Objectives` section of numbered `O<n>. <sentence>` lines (one observable outcome each), then re-run `{cmd}`.',
   briefSections:
@@ -2515,7 +2522,8 @@ export async function collectTaskIssueErrors(
       sections,
       changedFiles: [],
       retryCommand,
-      issueNumber
+      issueNumber,
+      singleFix: !isTaskIssueLabelSet(labels)
     })
   )
 

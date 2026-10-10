@@ -513,8 +513,18 @@ export function extractSourceRevision(briefText: string): string | null {
   return m ? (m[1] as string) : null
 }
 
+/**
+ * The line §3 carries for a single-fix Issue — one with no tranche — that
+ * declares no Dependency rationale: a single fix has no siblings to relate to,
+ * so the render states the absence of edges rather than refusing for prose the
+ * Issue gate no longer asks of it.
+ */
+export const SINGLE_FIX_NO_EDGES_LINE =
+  '**Dependency rationale** — none: this single-fix Issue declares no `Depends-on` or `Conflicts-with` edge.'
+
 function renderSection3(facts: BriefFacts): string {
-  return ['## 3. Technical dependencies', '', `${facts.rationale.dependencyRationale}`].join('\n')
+  const dependencies = facts.rationale.dependencyRationale ?? SINGLE_FIX_NO_EDGES_LINE
+  return ['## 3. Technical dependencies', '', dependencies].join('\n')
 }
 
 // O6: the nearest ancestor directory of `path` that is itself
@@ -1005,6 +1015,10 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
   if (!facts.dispatchReady) missing.push(...facts.dispatchBlockers)
 
   for (const key of Object.keys(RATIONALE_FIELD_PATTERNS) as RationaleFieldKey[]) {
+    // A single-fix Issue (no tranche) may omit its Dependency rationale;
+    // `renderSection3` then writes `SINGLE_FIX_NO_EDGES_LINE`. A tranche task
+    // still needs the field to render.
+    if (key === 'dependencyRationale' && facts.trancheSlug === null) continue
     if (!facts.rationale[key]) missing.push(RATIONALE_FIELD_NAMES[key])
   }
 

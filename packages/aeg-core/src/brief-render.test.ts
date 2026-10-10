@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   checkBriefSections,
   checkConsumerTests,
+  checkIssueRationale,
   NO_GATE_CUTOVERS,
   objectivesOf,
   parseIssueParts,
@@ -17,7 +18,8 @@ import {
   extractBoundaryFilePaths,
   extractSourceRevision,
   parseRationaleFields,
-  renderBrief
+  renderBrief,
+  SINGLE_FIX_NO_EDGES_LINE
 } from './brief-render'
 
 const FIXTURE_REVISION = 'a'.repeat(40)
@@ -902,6 +904,41 @@ describe('renderBrief', () => {
       if (result.ok) return
       expect(result.missing.join('\n')).toContain('CLI invocation')
     })
+  })
+})
+
+// A single-fix Issue — no tranche label — carries no Sizing, no Project(s) +
+// blast radius and no Dependency rationale; the render writes §3 itself.
+describe('renderBrief — a single-fix Issue with no Dependency rationale', () => {
+  const SINGLE_FIX_BODY = ISSUE_BODY.replace('**Sizing** — Passes all four tests.\n\n', '')
+    .replace('**Project(s) + blast radius** — `Project: aeg-core`. No shared-package fan-out.\n\n', '')
+    .replace('**Dependency rationale** — `Depends-on: —` — nothing this task needs already exists elsewhere.\n\n', '')
+
+  it('is the single-fix form the Issue gate accepts', () => {
+    expect(SINGLE_FIX_BODY).not.toMatch(/Sizing|blast radius|Dependency rationale/)
+    expect(checkIssueRationale(SINGLE_FIX_BODY, { singleFix: true }).status).toBe('pass')
+  })
+
+  it('renders, with §3 stating no edges, and the brief passes every check `checkBriefSections` runs', () => {
+    const rationale = parseRationaleFields(SINGLE_FIX_BODY)
+    expect(rationale.dependencyRationale).toBeUndefined()
+    expect(rationale.suggestedAgentClass).toContain('low')
+    const result = renderBrief(baseFacts({ trancheSlug: null, rationale }), TEMPLATE)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.brief).toContain(`## 3. Technical dependencies\n\n${SINGLE_FIX_NO_EDGES_LINE}`)
+    const { errors } = checkBriefSections(result.brief, readTierFromPrBody, {
+      requireClosesN: true,
+      consumersOf: () => []
+    })
+    expect(errors).toEqual([])
+  })
+
+  it('still refuses a tranche task whose Issue carries no Dependency rationale', () => {
+    const result = renderBrief(baseFacts({ rationale: parseRationaleFields(SINGLE_FIX_BODY) }), TEMPLATE)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.missing).toContain('Dependency rationale')
   })
 })
 

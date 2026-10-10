@@ -70,9 +70,36 @@ const RATIONALE_FIELDS: Array<{ name: string; pattern: string }> = [
 const DEPENDENCY_RATIONALE_FIELD_NAME = 'Dependency rationale'
 
 /**
+ * The three fields a single-fix Issue — one with no tranche label — may omit.
+ * Each is tranche prose no gate checks and the render does not need: sizing
+ * against sibling tasks, a blast-radius narrative (the blast-radius gate reads
+ * the `**Project:**` field and the Surface instead), and the edges to siblings
+ * a single fix does not have. Every other field stays required: the render
+ * reads the Boundary, the Traps, the Suggested agent-class and the
+ * Stop-and-escalate, and `checkRationaleNamesDocs` reads Docs to keep coherent.
+ */
+const SINGLE_FIX_OPTIONAL_FIELDS: ReadonlySet<string> = new Set([
+  'Sizing',
+  'Project(s) + blast radius',
+  DEPENDENCY_RATIONALE_FIELD_NAME
+])
+
+export type IssueRationaleOptions = {
+  /**
+   * The Issue is a single fix — its labels carry no `vinaya/tranche:<slug>`.
+   * The caller decides from the labels, exactly as it decides whether the
+   * check applies at all. Defaults to `false`: the full eight-field form.
+   */
+  singleFix?: boolean
+}
+
+/**
  * Every one of the eight Planner's-rationale fields must be present in a task
  * Issue's body. One error line per missing field, mirroring
- * `checkBriefSections`'s error style.
+ * `checkBriefSections`'s error style. With `singleFix`, the three fields in
+ * `SINGLE_FIX_OPTIONAL_FIELDS` may be absent; one that is present is still
+ * graded, so a single-fix Issue that declares edges declares them in the form
+ * amend-deps can edit.
  *
  * `Dependency rationale` carries a second, stricter requirement the other
  * seven fields do not: `amendRationaleDeps` (`@attalabs/aeg-forge-state`, the ONLY
@@ -84,12 +111,16 @@ const DEPENDENCY_RATIONALE_FIELD_NAME = 'Dependency rationale'
  * on the only sanctioned edit path. Importing `SECTION_HEADER` rather than a
  * second hand-written regex keeps this one grammar.
  */
-export function checkIssueRationale(body: string): IssueSectionResult {
+export function checkIssueRationale(body: string, options: IssueRationaleOptions = {}): IssueSectionResult {
+  const singleFix = options.singleFix === true
   const errors: string[] = []
   for (const f of RATIONALE_FIELDS) {
     if (!hasRationaleField(body, f.pattern)) {
+      if (singleFix && SINGLE_FIX_OPTIONAL_FIELDS.has(f.name)) continue
       errors.push(
-        `issue-validation ${f.name}: rationale field not found in the Issue body — every task Issue carries the full Planner's rationale (aeg-root/contracts/planner-brief.md).`
+        singleFix
+          ? `issue-validation ${f.name}: rationale field not found in the Issue body — a single-fix Issue carries every Planner's-rationale field except Sizing, Project(s) + blast radius and Dependency rationale (aeg-root/templates/issue-rationale-template.md).`
+          : `issue-validation ${f.name}: rationale field not found in the Issue body — every task Issue carries the full Planner's rationale (aeg-root/contracts/planner-brief.md).`
       )
       continue
     }

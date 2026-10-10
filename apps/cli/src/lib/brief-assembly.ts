@@ -23,6 +23,7 @@ import {
   extractBoundaryFilePaths,
   fetchForgeFacts,
   fetchOpenIssuesByLabel,
+  isTaskIssueLabelSet,
   objectivesOf,
   parseIssueDocumentation,
   parseIssueParts,
@@ -1084,7 +1085,10 @@ export async function assembleAndRenderBriefForIssue(
     return { ok: false, missing: [`Issue #${issueNumber} is not open (state: ${found.state}) — not renderable.`] }
   }
   const issueBody = found.body
-  const issueRationalePass = checkIssueRationale(issueBody).status !== 'fail'
+  // A tranche-less Issue is a single fix and owes the single-fix rationale; a
+  // `trancheDraft` render carries its tranche label and owes all eight fields.
+  const issueRationalePass =
+    checkIssueRationale(issueBody, { singleFix: !isTaskIssueLabelSet(found.labels) }).status !== 'fail'
 
   // O3 — the same premise re-assertion the tranche path runs, on the one
   // shared function and under the same scope rule; a backlog Issue's premises

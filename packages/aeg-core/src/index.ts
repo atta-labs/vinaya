@@ -272,6 +272,7 @@ export {
   checkIssueObjectives,
   checkIssuePremises,
   checkIssueRationale,
+  type IssueRationaleOptions,
   checkIssueType,
   checkIntroducedCommandsCovered,
   checkIntroducedConfigKeysCovered,

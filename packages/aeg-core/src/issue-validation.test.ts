@@ -168,6 +168,87 @@ describe('checkIssueRationale', () => {
   })
 })
 
+// The single-fix form: an Issue with no tranche label omits the three
+// tranche-only fields; every field a gate or the render reads stays required.
+const SINGLE_FIX_STYLE = `
+**Project:** aeg-core
+
+## Planner's rationale
+
+**Boundary** — One function and its test. Pinned files: \`packages/aeg-core/src/x.ts\`.
+
+**Traps to avoid** — Do not do X.
+
+**Suggested agent-class** — high.
+
+**Stop-and-escalate** — If Y happens, stop.
+
+**Docs to keep coherent** — no-doc-surface.
+`
+
+const TRANCHE_ONLY_FIELDS = ['Sizing', 'Project(s) + blast radius', 'Dependency rationale']
+const ALWAYS_REQUIRED = [
+  ['Boundary', '**Boundary** — One function and its test. Pinned files: `packages/aeg-core/src/x.ts`.\n'],
+  ['Traps to avoid', '**Traps to avoid** — Do not do X.\n'],
+  ['Suggested agent-class', '**Suggested agent-class** — high.\n'],
+  ['Stop-and-escalate', '**Stop-and-escalate** — If Y happens, stop.\n'],
+  ['Docs to keep coherent', '**Docs to keep coherent** — no-doc-surface.\n']
+] as const
+
+describe('checkIssueRationale — single-fix form', () => {
+  it('passes a single-fix body with no Sizing, Project(s) + blast radius or Dependency rationale', () => {
+    expect(checkIssueRationale(SINGLE_FIX_STYLE, { singleFix: true })).toEqual({ status: 'pass', errors: [] })
+  })
+
+  it('refuses the same body as a tranche task, naming exactly the three tranche-only fields', () => {
+    const r = checkIssueRationale(SINGLE_FIX_STYLE)
+    expect(r.status).toBe('fail')
+    expect(r.errors).toHaveLength(3)
+    for (const name of TRANCHE_ONLY_FIELDS)
+      expect(r.errors.some((e) => e.includes(`issue-validation ${name}:`))).toBe(true)
+  })
+
+  it.each(ALWAYS_REQUIRED)('still refuses a single-fix body missing %s', (name, line) => {
+    const body = SINGLE_FIX_STYLE.replace(line, '')
+    expect(body).not.toBe(SINGLE_FIX_STYLE)
+    const r = checkIssueRationale(body, { singleFix: true })
+    expect(r.status).toBe('fail')
+    expect(r.errors).toHaveLength(1)
+    expect(r.errors[0]).toContain(`issue-validation ${name}:`)
+  })
+
+  it('still grades a Dependency rationale a single-fix Issue does declare', () => {
+    const body = `${SINGLE_FIX_STYLE}\n**Dependency rationale:** \`Depends-on: #12\`.\n`
+    const r = checkIssueRationale(body, { singleFix: true })
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/amend-deps/)
+  })
+
+  it('still refuses a tranche task Issue missing any one of the eight fields', () => {
+    const fields = [
+      '**Boundary** — What this task is and is not.\n',
+      '**Sizing** — Passes all four tests.\n',
+      '**Project(s) + blast radius** — aeg, aeg-core.\n',
+      '**Dependency rationale** — No depends-on.\n',
+      '**Traps to avoid** — Do not do X.\n',
+      '**Suggested agent-class** — high.\n',
+      '**Stop-and-escalate** — If Y happens, stop.\n',
+      '**Docs to keep coherent** — state-machine.md §12.\n'
+    ]
+    // The header line also names `Project(s)`; drop it so the blast-radius
+    // field's removal is not masked by the header's own match.
+    const base = BOLD_STYLE.replace('**Tranche:** aeg-governance-hardening · **Task:** 5d · **Project(s):** aeg\n', '')
+    expect(checkIssueRationale(base).status).toBe('pass')
+    for (const field of fields) {
+      const body = base.replace(field, '')
+      expect(body).not.toBe(base)
+      const r = checkIssueRationale(body)
+      expect(r.status).toBe('fail')
+      expect(r.errors).toHaveLength(1)
+    }
+  })
+})
+
 // issue-809, O1 — a lettered edge id is refused at authoring, naming the
 // whole-number rule, so no plan the gates accept names a task `task run` refuses.
 describe('checkEdgeIdsWholeNumbers', () => {
