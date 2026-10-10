@@ -114,16 +114,12 @@ Each invariant records:
 
 ### The classification and scope fields
 
-<!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:if (!e.summary?.trim()) out.push(`${e.id}: summary`) -->
-<!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:`defects by scope: ${SCOPES.map((s) => `${s} ${defectsByScope[s]}`).join(', ')}` -->
 Every entry of the invariant register and of the defect register carries two
-separate fields and a summary, and the architecture test fails on an entry
-missing any of the three. An invariant's summary is its `behavior`; a defect's
-is its `summary`. The classification says what the finding is; the scope says
-whose it is, so a process-specific defect and product-level hygiene stay
-distinguishable. The test prints the count of entries under each
-classification and under each scope, for the invariant register and for the
-defect register.
+separate fields, and the architecture test fails on an entry missing either.
+The classification says what the finding is; the scope says whose it is, so a
+process-specific defect and product-level hygiene stay distinguishable. The
+test prints the count of entries under each classification and under each
+scope.
 
 The classification vocabulary was extended, not replaced. The five values
 above keep their meaning and their counts, and an entry's recorded
@@ -148,18 +144,14 @@ recorded; they were not re-checked against revision 9.
 | Scope | Meaning |
 | -- | -- |
 | `product` | The behavior belongs to the product the Engine path delivers, whichever process runs it. |
-| `reference-process` | The behavior belongs to the process around the product, not to a loop module: how tasks are numbered, how many loops an operator starts, and the role doctrine the agents read — what it tells a reviewer, a Developer or a Planner, and whether each rule it states has a check behind it. |
+| `reference-process` | The behavior belongs to the process around the product (how tasks are numbered, how many loops an operator starts), not to a loop module. |
 | `implementation` | The behavior belongs to this standalone implementation (its launcher, its test selection, its test hygiene) and does not carry into the Engine path. |
 
 Only a `product`-scope guarantee becomes an Engine contract. A guarantee or a
 defect of any other scope is recorded and fixed where it lives, and the Engine
 path does not inherit it. Existing entries were given a scope from their owner:
 those owned by `standalone-only` are `implementation` scope, every other
-entry is `product` scope. Later entries carry the scope their finding states.
-A rule the Issue write gate, the controller or the rendered brief must keep is
-`product` scope, whichever repository runs the loop; a sentence of role
-doctrine that contradicts the controller, the policy or another rule is
-`reference-process` scope, fixed in the doctrine where it lives.
+entry is `product` scope.
 
 ## Control state versus telemetry
 
@@ -183,13 +175,9 @@ it adds, and the map records no transition that depends on it.
 
 ## Registers
 
-<!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"id": "DEF-51", -->
-The **defect register** (`defects`) holds 51 entries: 24 `named-defect` and
-27 `defect`, of which 40 are `product` scope, 8 `reference-process` and 3
-`implementation`. Each one names the code or doctrine locator and the spec or
-doctrine section it contradicts, or the weakness it demonstrates. The
-invariant register holds 162 entries, 137 of them `product` scope, 10
-`reference-process` and 15 `implementation`. The most consequential are:
+The **defect register** (`defects`) holds 34 entries. Each one names the
+code locator and the spec section it contradicts, or the weakness it
+demonstrates. The most consequential are:
 
 - `--resume` and `--cancel` accept the mere presence of a ruling;
 - a resolution is consumed before the one-driver lock check;
@@ -201,29 +189,6 @@ invariant register holds 162 entries, 137 of them `product` scope, 10
   preconditions refuse;
 - reviewers can be dispatched on a head whose CI never passed the gate;
 - the below-50 extra developer turn is re-granted after a restart.
-
-<!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"id": "INV-162", -->
-`INV-145` to `INV-162`, with `DEF-35` to `DEF-51`, record a study of the role
-doctrine against the code and a study of how single-fix Issues degenerated.
-They cover the doctrine the agents read, the Issue write gate and the brief
-the controller renders, which the register held almost nothing about. All are
-`open`. The `product`-scope ones are rules the Engine path inherits: the Issue
-write gate resolves a Project against the registry, checks that every
-Documentation source exists, accepts only Test plan lines the Developer can
-run, prints the conflict warning the doctrine describes and grades only
-content a gate checks; the documentation-claim binding check runs where the
-doctrine says; a rendered brief carries no instruction a tool refuses; both
-agent adapters are refused the same commands; a prompt names the installed
-command, never a repository path; and a reported test failure is checked by
-the controller. The `reference-process`-scope ones are fixed in the doctrine:
-a reviewer's blocking severities come from policy, and every severity it
-names rests on a check that runs and sits on its role's scale; reviewer and
-Developer instructions describe the loop and the controller that run them;
-planner doctrine names only commands that exist; and every Issue the loop
-runs passed a read-the-code-first step. `INV-162` is an advisory, not a
-defect: the role doctrine's rule lines grew from 248 to 437 in eight weeks
-while the registered checks stayed at 38, and a rule with no check behind it is a
-smell, never a guarantee.
 
 The **ambiguity register** (`ambiguities`) holds 13 questions, each ruled by
 the Principal: the entry's `rulingStatus` is `ruled` and its `ruling` field
@@ -254,9 +219,5 @@ with a reason. When a defect is fixed, keep its entry and set its status
 to `fixed`, so the register remains a record of what the Engine path must
 not regress to. Run the architecture test by naming it: it prints the
 module and test totals, the unmapped and unresolved path counts (both
-must be zero), the count of invariants under each classification,
-scope, authority and scenario, and the count of defect-register entries
-under each classification and scope. When a finding is recorded, give it the
-next free identifier in each register it enters, a classification, a scope
-and a summary of its evidence; recording it never changes an existing
-entry's classification or scope.
+must be zero), and the count of invariants under each classification,
+scope, authority and scenario.
