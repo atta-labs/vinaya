@@ -18,6 +18,27 @@
  * line per failure, naming the exact task/Issue/PR involved.
  */
 
+import { edgesNameEachOther } from './issue-validation'
+
+/** The one edge reader both gates use — the write gate's own function, re-exposed so a test can assert identity. */
+export const conflictEdgeReader = edgesNameEachOther
+
+/** One task Issue reduced to what an edge reader needs: its reference and its parsed `Conflicts-with` ids. */
+export type ConflictEdgeParty = { ref: string; conflictsWith: string[] }
+
+/**
+ * The dispatch gate's edge reader: the same `edgesNameEachOther` the Issue
+ * write gate uses, so a `Conflicts-with` edge is present when EITHER task
+ * names the other. Returns the siblings sharing an edge with `subject`,
+ * whichever side declared it. `Depends-on` is directed and never read here.
+ */
+export function siblingsSharingConflictEdge<S extends ConflictEdgeParty>(
+  subject: ConflictEdgeParty,
+  siblings: S[]
+): S[] {
+  return siblings.filter((s) => s.ref !== subject.ref && conflictEdgeReader(subject, s))
+}
+
 import type { Task } from './types'
 import { isPrincipal, PRINCIPAL_ALLOWLIST } from './waiver-label'
 

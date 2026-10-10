@@ -87,6 +87,7 @@ import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 import { containedAbs } from '../../lib/ops'
 import { type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../edge-resolve'
+import { resolveSiblingConflictFacts } from '../sibling-conflict-facts'
 import { reassertPremiseFile } from '../premise-reassert-logic'
 
 const CHECK_NAME = 'dispatch-readiness'
@@ -454,12 +455,20 @@ async function runTrancheMode(trancheSlug: string, taskId: string): Promise<void
       }
     })
   )
-  const conflictsWith: DispatchConflictsWithFact[] = await Promise.all(
+  const ownConflictFacts: DispatchConflictsWithFact[] = await Promise.all(
     task.conflictsWith.map(async (c) => {
       const r = await resolveEdge(c, taskById, factsByTaskId, repo)
       return { id: c, issue: r.issue, openOrInFlight: r.open }
     })
   )
+  // An edge a sibling names is present too — read from the same open-Issue
+  // listing, through the reader the write gate shares. Backlog (tranche-less)
+  // mode keeps reading only the Issue's own list: it has no tranche label to
+  // list siblings by.
+  const siblingConflictFacts = await resolveSiblingConflictFacts(task, openIssues, ownConflictFacts, (edge) =>
+    resolveEdge(edge, taskById, factsByTaskId, repo)
+  )
+  const conflictsWith: DispatchConflictsWithFact[] = [...ownConflictFacts, ...siblingConflictFacts]
 
   const priorTrancheArchival: DispatchPriorTrancheFact[] = []
 
