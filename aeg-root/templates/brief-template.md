@@ -51,7 +51,8 @@ You are the AEG Developer. Run `vinaya doctrine --role developer --print` and re
 - [exact file paths to modify, with what changes in each]
 
 <!-- AEG:CLAIM: packages/aeg-core/src/brief-render.ts contains:'**Out of surface:** ' + -->
-**Out of surface:** [adjacent files/dirs the executor must NOT touch, named explicitly — `vinaya brief render` fills this verbatim from the Issue's `## Surface` `out:` list, never a hand-authored placeholder]
+<!-- AEG:CLAIM: packages/aeg-core/src/brief-render.ts contains:records each such path in the pull request body's beyond-Surface block -->
+**Out of surface:** [adjacent files/dirs the plan leaves alone, named explicitly — `vinaya brief render` fills this verbatim from the Issue's `## Surface` `out:` list, never a hand-authored placeholder, and appends the recording rule: a change there, or to any path no Surface `in:` glob covers, is still published — the review-loop driver records each such path in the pull request body's beyond-Surface block, and the reviewers judge it like any change]
 
 #### Premise pins
 

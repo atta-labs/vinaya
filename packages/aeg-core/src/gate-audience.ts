@@ -126,7 +126,7 @@ export const CLI_CHECK_RING: Readonly<Record<string, 0 | 1 | 2>> = {
   'dispatch-readiness': 0,
   'closes-n': 1,
   'single-plan-pr': 0,
-  'surface-scope': 0,
+  'surface-scope': 1,
   'test-plan': 1,
   'principal-test-plan-wait': 1,
   'body-bare-digits': 1,

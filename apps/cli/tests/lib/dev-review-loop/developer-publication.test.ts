@@ -99,8 +99,8 @@ describe('checkPublicationPreconditions (O7)', () => {
     surface: { in: ['apps/cli'], out: ['packages'] }
   }
 
-  it('passes when branch, base, head and Surface all hold', () => {
-    expect(checkPublicationPreconditions(ok).ok).toBe(true)
+  it('passes when branch, base and head hold, recording no path beyond the Surface', () => {
+    expect(checkPublicationPreconditions(ok)).toEqual({ ok: true, beyondSurface: [] })
   })
 
   it('fails when the worktree is on the wrong branch', () => {
@@ -227,16 +227,30 @@ describe('checkPublicationPreconditions (O7)', () => {
     })
   })
 
-  it('fails when a changed path crosses an out: glob', () => {
-    const r = checkPublicationPreconditions({ ...ok, changedPaths: ['packages/aeg-core/src/x.ts'] })
-    expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.reason).toMatch(/out:/)
+  it('publishes a changed path that crosses an out: glob, recording it with the glob', () => {
+    const r = checkPublicationPreconditions({
+      ...ok,
+      changedPaths: ['apps/cli/src/lib/x.ts', 'packages/aeg-core/src/x.ts']
+    })
+    expect(r).toEqual({
+      ok: true,
+      beyondSurface: [{ path: 'packages/aeg-core/src/x.ts', reason: 'out', glob: 'packages' }]
+    })
   })
 
-  it('fails when a changed path matches no in: glob', () => {
+  it('publishes a changed path that matches no in: glob, recording it', () => {
     const r = checkPublicationPreconditions({ ...ok, changedPaths: ['apps/log-server/x.ts'] })
+    expect(r).toEqual({ ok: true, beyondSurface: [{ path: 'apps/log-server/x.ts', reason: 'in', glob: null }] })
+  })
+
+  it('a beyond-Surface path never hides a failing precondition', () => {
+    const r = checkPublicationPreconditions({
+      ...ok,
+      worktreeHead: 'c'.repeat(40),
+      changedPaths: ['apps/log-server/x.ts']
+    })
     expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.reason).toMatch(/no `in:` glob/)
+    if (!r.ok) expect(r.reason).toMatch(/do not commit yourself/)
   })
 
   it('allows an initial unrecorded expected base and inactive head/Surface checks', () => {
@@ -409,6 +423,7 @@ describe('publication range after a default-branch merge', () => {
 
     const baseDeps = makeInProcessDeps(world)
     const publicationResults: boolean[] = []
+    const recorded: (string[] | undefined)[] = []
     await runLoopInProcess(
       world,
       { task: world.task, agent: 'codex' },
@@ -424,6 +439,7 @@ describe('publication range after a default-branch merge', () => {
           if (role !== 'developer') return baseDeps.dispatchRole!(role, agent, prompt, opts)
           const publicationResult = await world.devToolContext!.publishChanges('Fix(cli): publish uncommitted merge')
           publicationResults.push(publicationResult.ok)
+          if (publicationResult.ok) recorded.push(publicationResult.result.beyondSurface)
           if (publicationResult.ok) {
             await world.devToolContext!.openPullRequest(world.issueTitle, '## Scope\n\n**Tier:** 3\n')
           }
@@ -442,10 +458,13 @@ describe('publication range after a default-branch merge', () => {
 
     expect(readMerged(dir, pushed)?.commit).toBe(tip)
     expect(publicationResults).toEqual([true])
+    // The default branch's own `main-only.txt` is no task change, so it is
+    // never recorded beyond the Surface though an `out:` glob covers it.
+    expect(recorded).toEqual([[]])
     expect(world.commits).toHaveLength(1)
   })
 
-  it('still reports a file the Developer itself changed outside the Surface', () => {
+  it('still records a file the Developer itself changed outside the Surface', () => {
     const { dir } = fixture()
     const pushed = git(dir, 'rev-parse', 'HEAD')
     advanceMain(dir, 'main-only.txt')
@@ -468,7 +487,7 @@ describe('publication range after a default-branch merge', () => {
       changedPaths: changed,
       surface: { in: ['own.txt'], out: [] }
     })
-    expect(verdict.ok).toBe(false)
+    expect(verdict).toEqual({ ok: true, beyondSurface: [{ path: 'a.txt', reason: 'in', glob: null }] })
   })
 
   it('publishes a worktree fast-forwarded onto the default tip, measured from that tip, and keeps the re-recorded head for the next check', async () => {
@@ -501,7 +520,7 @@ describe('publication range after a default-branch merge', () => {
         .map((l) => l.slice(3))
     let tipReads = 0
     const baseDeps = makeInProcessDeps(world)
-    const results: { ok: boolean; reason: string }[] = []
+    const results: { ok: boolean; reason: string; beyondSurface?: string[] }[] = []
     await runLoopInProcess(
       world,
       { task: world.task, agent: 'codex' },
@@ -530,10 +549,18 @@ describe('publication range after a default-branch merge', () => {
             writeFileSync(join(dir, 'own.txt'), 'own\n')
             writeFileSync(join(dir, 'stray.txt'), 'stray\n')
             const first = await world.devToolContext!.publishChanges('Fix(cli): publish after a fast-forward')
-            results.push({ ok: first.ok, reason: first.ok ? '' : JSON.stringify(first) })
+            results.push(
+              first.ok
+                ? { ok: true, reason: '', beyondSurface: first.result.beyondSurface }
+                : { ok: false, reason: JSON.stringify(first) }
+            )
             rmSync(join(dir, 'stray.txt'))
             const second = await world.devToolContext!.publishChanges('Fix(cli): publish after a fast-forward')
-            results.push({ ok: second.ok, reason: second.ok ? '' : JSON.stringify(second) })
+            results.push(
+              second.ok
+                ? { ok: true, reason: '', beyondSurface: second.result.beyondSurface }
+                : { ok: false, reason: JSON.stringify(second) }
+            )
             if (second.ok) await world.devToolContext!.openPullRequest(world.issueTitle, '## Scope\n\n**Tier:** 3\n')
           }
           return {
@@ -550,13 +577,13 @@ describe('publication range after a default-branch merge', () => {
     )
 
     expect(realHead()).toBe(tip)
-    // The first check accepted the fast-forward and refused only the stray
-    // file, never the default branch's own `main-only.txt`.
-    expect(results[0]?.ok).toBe(false)
-    expect(results[0]?.reason).toContain('stray.txt')
-    expect(results[0]?.reason).not.toContain('do not commit yourself')
-    expect(results[0]?.reason).not.toContain('main-only.txt')
-    expect(results[1]).toEqual({ ok: true, reason: '' })
-    expect(world.commits).toHaveLength(1)
+    // The first check accepted the fast-forward, measured from the tip: it
+    // records the stray file beyond the Surface, never the default branch's
+    // own `main-only.txt`, and publishes rather than refusing.
+    expect(results[0]).toEqual({ ok: true, reason: '', beyondSurface: ['stray.txt'] })
+    // The second check sees the head the first publication recorded, and
+    // measures from it: the stray file is gone, so nothing is beyond.
+    expect(results[1]).toEqual({ ok: true, reason: '', beyondSurface: [] })
+    expect(world.commits).toHaveLength(2)
   })
 })

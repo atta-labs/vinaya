@@ -30,7 +30,11 @@ import {
   writeTurnResultRecord,
   REPORTED_CHECK_COMMAND_MAX_LENGTH
 } from '../../../src/lib/dev-review-loop/turn-result.js'
-import { BLOCKER_KINDS, type DeveloperTurnResult } from '../../../src/lib/developer-turn-result.js'
+import {
+  BLOCKER_KINDS,
+  type DeveloperTurnResult,
+  developerTurnResultJsonSchema
+} from '../../../src/lib/developer-turn-result.js'
 import { deliveredDocumentation } from '../../../src/lib/dispatch.js'
 import {
   cleanupWorlds,
@@ -154,6 +158,20 @@ describe('judgeTurnOutput — the controller accepts a result (O3)', () => {
       sourceUses: null
     }
     expect(failuresOf(output(blocked))).toEqual([])
+  })
+
+  it('refuses the retired `outside_surface` blocker kind — a path beyond the Surface is published and recorded, never a block', () => {
+    const blocked = {
+      status: 'blocked',
+      summary: 'stopped',
+      blocker: { kind: 'outside_surface', detail: 'needs a file outside the surface' },
+      sourceUses: null
+    }
+    expect([...BLOCKER_KINDS] as string[]).not.toContain('outside_surface')
+    expect(failuresOf(output(blocked)).join()).toContain('blocker.kind')
+    const jsonSchema = JSON.stringify(developerTurnResultJsonSchema({ knownFindingIds: [], requiredSources: [] }))
+    expect(jsonSchema).toContain('tooling_unavailable')
+    expect(jsonSchema).not.toContain('outside_surface')
   })
 
   it('requires a ruling request to name only permissible decisions', () => {

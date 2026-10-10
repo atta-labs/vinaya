@@ -27,7 +27,8 @@ import {
   SECTION_HEADER,
   splitSlugQualifiedEdge
 } from '@attalabs/aeg-forge-state'
-import { stripCode } from './anchored-region'
+import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
+import { anchoredRegion, anchoredRegionBounds, stripCode } from './anchored-region'
 import { checkTestPlan, extractFencedBlocks } from './brief-validation'
 import { type ClaimBinding, type ClaimVoice, evaluateClaimBindings } from './doc-claim'
 import { DOC_OWNERS_PATH, isUrlPointer, parseDocOwners, pointerToPath } from './doc-owners'
@@ -388,33 +389,116 @@ export function checkSurfaceGlobsResolve(body: string, resolvesToFile: (glob: st
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }
 
-export type SurfaceScopeViolation = { file: string; glob: string }
-export type SurfaceScopeResult = { ok: true } | { ok: false; violations: SurfaceScopeViolation[] }
+/**
+ * One changed path the task's `## Surface` does not cover: it crosses an
+ * `out:` glob (`glob` names it — the stronger signal, decided first), or it
+ * matches no `in:` glob (`glob` is `null`).
+ */
+export type BeyondSurfacePath =
+  | { path: string; reason: 'out'; glob: string }
+  | { path: string; reason: 'in'; glob: null }
 
 /**
- * **O7 — a task-branch PR's changed files must stay inside its Issue's
- * declared surface.** `outGlobs` is the Issue's own `## Surface` `out:`
- * list (parsed by the caller via `parseIssueSurface`, same reuse discipline
- * as everything else here); `changedFiles` is the PR/branch's own diff.
- * Every changed file crossing a declared `out:` glob is a violation, naming
- * both the file and the glob it crosses — collected in one pass (O12's own
- * discipline), never only the first. Uses the SAME `globCoversPath`
- * predicate O4/O6 already use to decide whether a Surface glob covers a
- * path, so "does this file cross the boundary" can never disagree with how
- * the boundary itself is read elsewhere in this module.
- *
- * Pure: takes the already-resolved file list and glob list, never reads
- * disk or the forge itself — the caller (a check-bin adapter) resolves
- * both.
+ * Every path in `changedPaths` the Surface does not cover, in input order —
+ * the one measurement the review loop's publication records in the pull
+ * request body and the `surface-scope` check compares that record against.
+ * An `in:` list with no globs covers everything, so only `out:` crossings
+ * count then. Uses the SAME `globCoversPath` every other Surface reader here
+ * uses. Pure.
  */
-export function checkSurfaceScope(changedFiles: string[], outGlobs: string[]): SurfaceScopeResult {
-  if (outGlobs.length === 0) return { ok: true }
-  const violations: SurfaceScopeViolation[] = []
-  for (const file of changedFiles) {
-    const glob = outGlobs.find((g) => globCoversPath(g, file))
-    if (glob) violations.push({ file, glob })
+export function beyondSurfacePaths(
+  changedPaths: readonly string[],
+  surface: Pick<IssueSurface, 'in' | 'out'>
+): BeyondSurfacePath[] {
+  const beyond: BeyondSurfacePath[] = []
+  for (const path of changedPaths) {
+    const glob = surface.out.find((g) => globCoversPath(g, path))
+    if (glob !== undefined) beyond.push({ path, reason: 'out', glob })
+    else if (surface.in.length > 0 && !surface.in.some((g) => globCoversPath(g, path)))
+      beyond.push({ path, reason: 'in', glob: null })
   }
-  return violations.length > 0 ? { ok: false, violations } : { ok: true }
+  return beyond
+}
+
+/** The block's lead line, written only when the block lists a path. */
+const BEYOND_SURFACE_LEAD =
+  '**Beyond the Surface** — recorded by the review-loop driver on every body write; never edit it:'
+
+/** One recorded path's line — the path first, in a code span, so the reader below can recover it and the body's bare-digit rule never sees a digit in it. */
+function beyondSurfaceLine(entry: BeyondSurfacePath): string {
+  return entry.reason === 'out'
+    ? `- \`${entry.path}\` crosses the \`out:\` glob \`${entry.glob}\``
+    : `- \`${entry.path}\` matches no \`in:\` glob`
+}
+
+/** The whole marked block — the `AEG:BEYOND-SURFACE` pair around the lead line and one line per entry, or around nothing when there is none. */
+export function renderBeyondSurfaceBlock(entries: readonly BeyondSurfacePath[]): string {
+  const inner = entries.length === 0 ? '' : `${[BEYOND_SURFACE_LEAD, ...entries.map(beyondSurfaceLine)].join('\n')}\n`
+  return `<!-- AEG:BEYOND-SURFACE:START -->\n${inner}<!-- AEG:BEYOND-SURFACE:END -->`
+}
+
+/**
+ * `body` with its `AEG:BEYOND-SURFACE` block rewritten to list `entries` —
+ * only that marked region is replaced, whatever it held. A body with no such
+ * block gets one in its `## Scope` section, just before the `AEG:TIER` pair
+ * when that pair sits there, else at the section's end; a body with no
+ * `## Scope` section gets one appended. Pure.
+ */
+export function withBeyondSurfaceBlock(body: string, entries: readonly BeyondSurfacePath[]): string {
+  const block = renderBeyondSurfaceBlock(entries)
+  const existing = anchoredRegionBounds(body, 'BEYOND-SURFACE')
+  if (existing) return body.slice(0, existing.outerStart) + block + body.slice(existing.outerEnd)
+  const masked = maskCode(body)
+  const scope = /^##[ \t]+Scope[ \t]*$/m.exec(masked)
+  if (!scope) return `${body.replace(/\s*$/, '')}\n\n## Scope\n\n${block}\n`
+  const sectionStart = scope.index + scope[0].length
+  const nextHeading = /^##?[ \t]/m.exec(masked.slice(sectionStart))
+  const sectionEnd = nextHeading ? sectionStart + nextHeading.index : body.length
+  const tier = anchoredRegionBounds(body, 'TIER')
+  if (tier && tier.outerStart >= sectionStart && tier.outerStart < sectionEnd) {
+    return `${body.slice(0, tier.outerStart)}${block}\n\n${body.slice(tier.outerStart)}`
+  }
+  const before = body.slice(0, sectionEnd).replace(/\s*$/, '')
+  const after = body.slice(sectionEnd)
+  return `${before}\n\n${block}\n${after.length > 0 ? `\n${after}` : ''}`
+}
+
+/**
+ * The paths the body's `AEG:BEYOND-SURFACE` block lists, or `[]` when the
+ * body carries no such block — an absent record lists nothing.
+ */
+export function recordedBeyondSurfacePaths(body: string): string[] {
+  const region = anchoredRegion(body, 'BEYOND-SURFACE')
+  if (region === null) return []
+  const paths: string[] = []
+  for (const line of region.split(/\r?\n/)) {
+    const m = /^\s*-\s+`([^`]+)`/.exec(line)
+    if (m?.[1]) paths.push(m[1])
+  }
+  return paths
+}
+
+export type SurfaceScopeResult = { ok: true } | { ok: false; violation: BeyondSurfacePath }
+
+/**
+ * **A task-branch PR's changed files outside its Issue's Surface must be
+ * recorded, never hidden.** `changedFiles` is the branch's own diff;
+ * `recorded` is the pull request body's `AEG:BEYOND-SURFACE` list. Passes
+ * when every changed path beyond the Surface (`beyondSurfacePaths`) is
+ * recorded; otherwise fails naming the FIRST changed path that is beyond the
+ * Surface and not recorded, with the `out:` glob it crosses or the `in:` list
+ * it misses.
+ *
+ * Pure: the caller (a check-bin adapter) resolves every input.
+ */
+export function checkSurfaceScope(
+  changedFiles: readonly string[],
+  surface: Pick<IssueSurface, 'in' | 'out'>,
+  recorded: readonly string[]
+): SurfaceScopeResult {
+  const listed = new Set(recorded)
+  const violation = beyondSurfacePaths(changedFiles, surface).find((entry) => !listed.has(entry.path))
+  return violation ? { ok: false, violation } : { ok: true }
 }
 
 /** One `Part <n> (<refs>) — <outcome>` line, anywhere in the `## Parts` section. */

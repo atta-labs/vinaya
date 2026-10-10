@@ -112,8 +112,15 @@ export function createDeveloperDevToolContext(deps: DeveloperDevToolDeps): DevTo
             'Resolve the precondition named above before publishing.'
           )
         }
-        // The protected-path and pre-push gates run inside this closure.
-        return deps.commitAndPush(validated.header)
+        // The protected-path and pre-push gates run inside this closure. A
+        // path beyond the Surface is published and named back to the
+        // Developer; the driver records it in the pull request body.
+        const pushed = await deps.commitAndPush(validated.header)
+        if (!pushed.ok) return pushed
+        return {
+          ok: true,
+          result: { ...pushed.result, beyondSurface: preconditions.beyondSurface.map((entry) => entry.path) }
+        }
       }),
     openPullRequest: (title, body) =>
       publication('open_pull_request', async () => {

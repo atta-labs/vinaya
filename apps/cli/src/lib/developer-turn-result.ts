@@ -42,7 +42,6 @@ export const BLOCKER_KINDS = [
   'preflight_failed',
   'premise_stale',
   'brief_contradicts_code',
-  'outside_surface',
   'test_failure',
   'destructive_unauthorized',
   'tooling_unavailable'
