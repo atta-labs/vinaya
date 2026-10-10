@@ -1067,7 +1067,9 @@ describe('the render and both templates carry no retired instruction', () => {
     // `refresh_evidence` regenerates the Evidence block; no hand-run report.
     'Run `vinaya pr report --write <this-body-file>`',
     // No check of this name runs; `pr-premise-reassert` is the live one.
-    '`premise-recheck`'
+    '`premise-recheck`',
+    // `pr-premise-own-additions` refuses a pin only the PR's own diff adds.
+    'Put a fresh, post-fix, currently-true assertion'
   ]
 
   const PUBLICATION_RULE =
