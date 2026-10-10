@@ -76,7 +76,6 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
         'dead-branch-push',
         'dispatch-readiness',
         'doc-coverage',
-        'doc-claims',
         'doc-coverage-push',
         'doctrine-no-procedures',
         'doctrine-portability',

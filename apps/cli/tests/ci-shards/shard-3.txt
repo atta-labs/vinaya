@@ -1,6 +1,5 @@
 scripts/bundle-doctrine.test.ts
 tests/archive.test.ts
-tests/checks/check-doc-claims.test.ts
 tests/checks/check-pr-premise-reassert.test.ts
 tests/checks/check-review-gate-true-head.test.ts
 tests/checks/config-reference-coverage.test.ts
