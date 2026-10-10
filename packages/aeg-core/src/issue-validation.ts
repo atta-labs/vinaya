@@ -600,86 +600,6 @@ export function parseIssueTestPlan(body: string): ParsedIssueSection<IssueTestPl
   return { ok: true, value: { kind: 'commands', lines, principal } }
 }
 
-/**
- * The operations a dispatched Developer cannot perform, as the leading tokens
- * of a command statement. The Developer holds no forge credential and no
- * shell outside its sandbox: it never starts, briefs or dispatches a task,
- * posts a ruling, releases, merges or reviews a pull request, pushes, or opens
- * a remote shell — the driver publishes on its behalf. A Test plan line that
- * needs one of these can only block the task it belongs to. Each operation is
- * listed in both the repository-source form and the installed `vinaya` form.
- * `issue create --validate-only` and `vinaya check` are deliberately absent:
- * they are how a gate task proves itself.
- */
-const DEVELOPER_UNRUNNABLE_PREFIXES: readonly (readonly string[])[] = [
-  ...[['task', 'run'], ['task', 'brief'], ['task', 'dispatch'], ['pr', 'rule'], ['release']].flatMap((sub) => [
-    ['bun', 'apps/cli/src/index.ts', ...sub],
-    ['vinaya', ...sub]
-  ]),
-  ['gh', 'pr', 'merge'],
-  ['gh', 'pr', 'review'],
-  ['git', 'push'],
-  ['ssh']
-]
-
-/** `NAME=value` — an environment assignment before the command itself, never the command. */
-const ENV_ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/
-
-/** The prefix this statement starts with, or `null` — leading env assignments skipped, tokens compared exactly. */
-function developerUnrunnablePrefix(statement: string): string | null {
-  const tokens = statement.trim().split(/\s+/).filter(Boolean)
-  while (tokens.length > 0 && ENV_ASSIGNMENT_RE.test(tokens[0] as string)) tokens.shift()
-  for (const prefix of DEVELOPER_UNRUNNABLE_PREFIXES) {
-    if (prefix.every((token, i) => tokens[i] === token)) return prefix.join(' ')
-  }
-  return null
-}
-
-/**
- * **A Test plan line is one the dispatched Developer can run.** Reads the
- * fenced command lines of `## Test plan` and judges each one statement at a
- * time — `commandStatements`/`stripLineComment`, the same split the
- * whole-suite rule uses, plus an unquoted `|` so a piped command is judged
- * too — by its leading tokens against `DEVELOPER_UNRUNNABLE_PREFIXES`. Prose
- * outside the fence is never judged. Passes when the section is absent or
- * carries the `unit-tests-only` sentinel; `parseIssueTestPlan` reports those
- * shapes.
- */
-export function checkTestPlanDeveloperRunnable(body: string): IssueSectionResult {
-  const located = locateTestPlanSection(body)
-  if (!located.found) return { status: 'pass', errors: [] }
-  const lines = extractFencedBlocks(located.section).flatMap((b) =>
-    b.content
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0)
-  )
-  const errors: string[] = []
-  for (const line of lines) {
-    const statements = commandStatements(line).flatMap((raw) => {
-      const stmt = stripLineComment(raw)
-      const masked = maskQuoted(stmt)
-      const pieces: string[] = []
-      let last = 0
-      for (let i = 0; i < masked.length; i++) {
-        if (masked[i] === '|') {
-          pieces.push(stmt.slice(last, i))
-          last = i + 1
-        }
-      }
-      pieces.push(stmt.slice(last))
-      return pieces
-    })
-    const hit = statements.map(developerUnrunnablePrefix).find((p): p is string => p !== null)
-    if (hit !== undefined) {
-      errors.push(
-        `issue-validation Test plan/developer-runnable: \`${line}\` runs \`${hit}\`, which the dispatched Developer cannot run — it holds no forge credential and no shell outside its sandbox, so it never starts, briefs or dispatches a task, posts a ruling, releases, merges or reviews a pull request, pushes, or opens a remote shell. A line it cannot run can only block the task.`
-      )
-    }
-  }
-  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
-}
-
 /** `## Stop conditions` — a bullet list, each item the outcome-agnostic condition under which the executing agent must stop and escalate. */
 export function parseIssueStopConditions(body: string): ParsedIssueSection<string[]> {
   const section = topLevelSectionText(body, 'Stop conditions')
@@ -3170,36 +3090,6 @@ export function checkDocumentationReadable(
     }
   }
   return { status: errors.length > 0 ? 'fail' : 'pass', errors, warnings }
-}
-
-/**
- * **An in-repository Documentation source exists in the checkout.** A source
- * carrying a URL scheme belongs to `checkDocumentationReadable` and is never
- * probed here; any other source is a repository path — its first inline code
- * span when it has one, else the whole source, with a `#fragment` dropped —
- * read through the injected `readFile` (this module reads no `fs`), and
- * refused when the read answers `null`. Passes on the `None` sentinel and on
- * a section that does not parse; `parseIssueDocumentation` reports that.
- */
-export function checkDocumentationPathsExist(
-  body: string,
-  readFile: (path: string) => string | null
-): IssueSectionResult {
-  const documentation = parseIssueDocumentation(body)
-  if (!documentation.ok || documentation.value.kind === 'none') return { status: 'pass', errors: [] }
-  const errors: string[] = []
-  for (const { source } of documentation.value.sources) {
-    if (/[a-z][a-z0-9+.-]*:\/\//i.test(source)) continue
-    const span = /`([^`]+)`/.exec(source)
-    const path = (span ? (span[1] as string) : source).trim().replace(/#.*$/, '')
-    if (path.length === 0) continue
-    if (readFile(path) === null) {
-      errors.push(
-        `issue-validation Documentation/exists: \`${path}\` is an in-repository Documentation source the checkout does not contain — a source without a URL scheme is read as a repository file path, and the Developer is told to read it.`
-      )
-    }
-  }
-  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }
 
 // ---------------------------------------------------------------------------

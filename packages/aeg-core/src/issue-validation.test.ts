@@ -20,7 +20,6 @@ import {
   checkPinnedFileImportersCovered,
   checkNewTestFilesCoverShards,
   checkNewLoopFilesCoverInvariantMap,
-  checkDocumentationPathsExist,
   checkDocumentationReadable,
   isNonPublicHost,
   type CommandReferenceFacts,
@@ -42,7 +41,6 @@ import {
   checkSurfaceGlobsResolve,
   checkSurfaceOverlap,
   checkSurfaceScope,
-  checkTestPlanDeveloperRunnable,
   checkTrancheLabelPresence,
   declaredProjects,
   DOCUMENTATION_SINCE_ISSUE,
@@ -3361,109 +3359,5 @@ describe('isNonPublicHost', () => {
     for (const h of ['example.com', 'code.claude.com', '93.184.216.34', '172.32.0.1', '8.8.8.8']) {
       expect(isNonPublicHost(h)).toBe(false)
     }
-  })
-})
-
-describe('checkTestPlanDeveloperRunnable — a Test plan line is one the dispatched Developer can run', () => {
-  const plan = (...lines: string[]): string => ['## Test plan', '', '```', ...lines, '```', ''].join('\n')
-
-  it.each([
-    'bun apps/cli/src/index.ts task run loop-determinism-cleanup-v1 3',
-    'bun apps/cli/src/index.ts task brief loop-determinism-cleanup-v1 3',
-    'bun apps/cli/src/index.ts task dispatch loop-determinism-cleanup-v1 3',
-    'bun apps/cli/src/index.ts pr rule 12 --file ruling.md',
-    'bun apps/cli/src/index.ts release',
-    'vinaya task run demo-v1 1',
-    'gh pr merge 12 --squash',
-    'gh pr review 12 --approve',
-    'git push origin HEAD',
-    'ssh root@example.test uptime'
-  ])('refuses `%s`, naming the line', (line) => {
-    const result = checkTestPlanDeveloperRunnable(plan('bun test a/b.test.ts → 0 fail', line))
-    expect(result.status).toBe('fail')
-    expect(result.errors).toHaveLength(1)
-    expect(result.errors[0]).toContain(`\`${line}\``)
-    expect(result.errors[0]).toContain('the dispatched Developer cannot run')
-  })
-
-  it('passes the same plan without the line', () => {
-    expect(checkTestPlanDeveloperRunnable(plan('bun test a/b.test.ts → 0 fail')).status).toBe('pass')
-  })
-
-  it('judges every statement of a chained, piped, or env-prefixed line', () => {
-    for (const line of [
-      'bun test a/b.test.ts && git push',
-      'echo yes | ssh host',
-      'GH_TOKEN=x gh pr merge 12',
-      'true; bun apps/cli/src/index.ts pr rule 12'
-    ]) {
-      expect(checkTestPlanDeveloperRunnable(plan(line)).status).toBe('fail')
-    }
-  })
-
-  it('keeps the gate-task proofs and quoted or commented text allowed', () => {
-    const result = checkTestPlanDeveloperRunnable(
-      plan(
-        'bun apps/cli/src/index.ts issue create --validate-only --body-file b.md → exits 0',
-        'bun apps/cli/src/index.ts check --all → exits 0',
-        "grep -ciE 'git push|ssh' aeg-root/roles/developer.md → prints 0",
-        'bun test a/b.test.ts # never git push here',
-        'echo "gh pr merge" → prints the words'
-      )
-    )
-    expect(result).toEqual({ status: 'pass', errors: [] })
-  })
-
-  it('never judges prose outside the fence, nor a missing section', () => {
-    const prose = [
-      '## Test plan',
-      '',
-      'The Principal runs `gh pr merge` after review.',
-      '',
-      '```',
-      'bun test a/b.test.ts',
-      '```'
-    ].join('\n')
-    expect(checkTestPlanDeveloperRunnable(prose).status).toBe('pass')
-    expect(checkTestPlanDeveloperRunnable('## Objectives\n\nO1. x\n').status).toBe('pass')
-  })
-})
-
-describe('checkDocumentationPathsExist — an in-repository Documentation source exists in the checkout', () => {
-  const doc = (...lines: string[]): string => ['## Documentation', '', ...lines, ''].join('\n')
-  const checkout: Record<string, string> = { 'aeg-root/roles/planner.md': '# Planner' }
-  const reads: string[] = []
-  const readFile = (path: string): string | null => {
-    reads.push(path)
-    return checkout[path] ?? null
-  }
-
-  it('refuses a path the checkout lacks, naming the path', () => {
-    const result = checkDocumentationPathsExist(
-      doc('- aeg-root/roles/missing.md — a spec never written (O1)'),
-      readFile
-    )
-    expect(result.status).toBe('fail')
-    expect(result.errors).toHaveLength(1)
-    expect(result.errors[0]).toContain('`aeg-root/roles/missing.md`')
-  })
-
-  it('passes the same section when the path exists, in bare, code-span, and fragment forms', () => {
-    for (const line of [
-      '- aeg-root/roles/planner.md — the entry gate (O1)',
-      '- `aeg-root/roles/planner.md` — the entry gate (O1)',
-      '- aeg-root/roles/planner.md#entry-gate — the entry gate (O1)'
-    ]) {
-      expect(checkDocumentationPathsExist(doc(line), readFile)).toEqual({ status: 'pass', errors: [] })
-    }
-  })
-
-  it('never reads a source with a URL scheme, and passes the None sentinel', () => {
-    reads.length = 0
-    expect(checkDocumentationPathsExist(doc('- https://example.test/missing — a page (O1)'), readFile).status).toBe(
-      'pass'
-    )
-    expect(checkDocumentationPathsExist(doc('None — no normative source.'), readFile).status).toBe('pass')
-    expect(reads).toEqual([])
   })
 })
