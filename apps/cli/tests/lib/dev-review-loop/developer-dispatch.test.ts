@@ -589,6 +589,61 @@ describe('createTaskWorktree on a restart with an existing worktree', () => {
     expect(rev(originDir, branch)).toBe(remoteHead)
   })
 
+  function createIn(repoDir: string, branch: string, opts: { branchHasTaskCommits?: boolean }): void {
+    const cwd = process.cwd()
+    process.chdir(repoDir)
+    try {
+      createTaskWorktree(branch, opts)
+    } finally {
+      process.chdir(cwd)
+    }
+  }
+
+  it('moves an empty branch worktree and its remote branch to the default tip', () => {
+    const { repoDir, originDir, worktreeDir, branch } = setup()
+    const oldTip = rev(worktreeDir, 'HEAD')
+    advanceMain(repoDir)
+    const newTip = rev(originDir, 'main')
+    expect(newTip).not.toBe(oldTip)
+
+    createIn(repoDir, branch, { branchHasTaskCommits: false })
+
+    expect(rev(worktreeDir, 'HEAD')).toBe(newTip)
+    expect(rev(originDir, branch)).toBe(newTip)
+    expect(existsSync(join(worktreeDir, 'from-main.txt'))).toBe(true)
+  })
+
+  it('leaves a worktree whose branch has task commits where it is', () => {
+    const { repoDir, originDir, worktreeDir, branch } = setup()
+    writeFileSync(join(worktreeDir, 'own.txt'), 'task commit\n')
+    execFileSync('git', ['-C', worktreeDir, 'add', 'own.txt'])
+    execFileSync('git', ['-C', worktreeDir, 'commit', '-m', 'task commit'])
+    execFileSync('git', ['-C', worktreeDir, 'push', '--no-verify', 'origin', `HEAD:refs/heads/${branch}`])
+    const taskHead = rev(worktreeDir, 'HEAD')
+    advanceMain(repoDir)
+
+    createIn(repoDir, branch, { branchHasTaskCommits: true })
+
+    expect(rev(worktreeDir, 'HEAD')).toBe(taskHead)
+    expect(rev(originDir, branch)).toBe(taskHead)
+    expect(existsSync(join(worktreeDir, 'from-main.txt'))).toBe(false)
+  })
+
+  it('leaves a worktree holding a local commit no push carried, even on a remote branch with none', () => {
+    const { repoDir, originDir, worktreeDir, branch } = setup()
+    const remoteBefore = rev(originDir, branch)
+    writeFileSync(join(worktreeDir, 'own.txt'), 'unpushed task commit\n')
+    execFileSync('git', ['-C', worktreeDir, 'add', 'own.txt'])
+    execFileSync('git', ['-C', worktreeDir, 'commit', '-m', 'unpushed task commit'])
+    const localHead = rev(worktreeDir, 'HEAD')
+    advanceMain(repoDir)
+
+    createIn(repoDir, branch, { branchHasTaskCommits: false })
+
+    expect(rev(worktreeDir, 'HEAD')).toBe(localHead)
+    expect(rev(originDir, branch)).toBe(remoteBefore)
+  })
+
   it('measures changed paths from the merge base when the pushed head is not an ancestor of the worktree head', () => {
     const { repoDir, worktreeDir } = setup()
     const base = rev(worktreeDir, 'HEAD')

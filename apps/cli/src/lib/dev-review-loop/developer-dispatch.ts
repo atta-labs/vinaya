@@ -646,9 +646,12 @@ export function developerBranchFor(
  * cut from `origin/main`'s tip — the loop's round-1 fresh-dispatch path calls
  * it once, before the first Developer dispatch, so the brief's own Step 0 can
  * simply ENTER the worktree rather than create it (`brief-render.ts`). Reuses
- * an existing worktree untouched rather than recreating it (Traps to avoid) —
- * a worktree another host or a crashed prior run already created for this
- * branch is left alone, and only the push/upstream step below still runs.
+ * an existing worktree rather than recreating it (Traps to avoid). When the
+ * caller found the branch carrying no commits beyond the default branch
+ * (`branchHasTaskCommits: false`), that worktree and its remote branch are
+ * moved to the default branch's current tip together
+ * (`resetEmptyTaskWorktree`); otherwise the worktree is left as it is and only
+ * reconciled with its remote branch.
  *
  * Then creates the remote branch with a commit-free REF push —
  * `origin/main:refs/heads/<branch>`, `--no-verify` — never `git -C
@@ -671,7 +674,7 @@ export function developerBranchFor(
  * Paired with `developerBranchFor` above — that names the branch, this is
  * what first makes the worktree and the remote branch exist.
  */
-export function createTaskWorktree(branch: string): void {
+export function createTaskWorktree(branch: string, opts: { branchHasTaskCommits?: boolean } = {}): void {
   const worktreeDir = join('.worktrees', branch)
   const worktreeExisted = existsSync(worktreeDir)
   if (!worktreeExisted) {
@@ -680,7 +683,7 @@ export function createTaskWorktree(branch: string): void {
   sh('git', ['config', 'push.autoSetupRemote', 'true'])
   if (!worktreeExisted) {
     sh('git', ['push', '--no-verify', 'origin', `origin/main:refs/heads/${branch}`])
-  } else {
+  } else if (opts.branchHasTaskCommits !== false || !resetEmptyTaskWorktree(branch, worktreeDir)) {
     reconcileExistingTaskWorktree(branch, worktreeDir)
   }
   sh('git', ['-C', worktreeDir, 'branch', '-u', `origin/${branch}`])
@@ -731,6 +734,32 @@ export class TaskWorktreeDivergedError extends Error {
     )
     this.name = 'TaskWorktreeDivergedError'
   }
+}
+
+/**
+ * An existing worktree on a branch with no task commits is moved to the
+ * default branch's freshly fetched tip, and the remote branch with it, so a
+ * worktree a previous run left at an older tip never serves stale files to the
+ * first turn. Both moves are fast-forwards — the worktree head and the remote
+ * branch sit at or behind the tip — so nothing is discarded. `false`, moving
+ * nothing, when the worktree's own head is not contained in the tip (local
+ * commits no push carried) or its uncommitted changes block the fast-forward;
+ * the caller then reconciles the worktree as it is.
+ */
+function resetEmptyTaskWorktree(branch: string, worktreeDir: string): boolean {
+  sh('git', ['-C', worktreeDir, 'fetch', '--quiet', 'origin', 'main'])
+  const tip = sh('git', ['-C', worktreeDir, 'rev-parse', 'origin/main']).trim()
+  const head = sh('git', ['-C', worktreeDir, 'rev-parse', 'HEAD']).trim()
+  if (head !== tip) {
+    try {
+      sh('git', ['-C', worktreeDir, 'merge-base', '--is-ancestor', head, tip])
+      sh('git', ['-C', worktreeDir, 'merge', '--ff-only', '--quiet', tip])
+    } catch {
+      return false
+    }
+  }
+  sh('git', ['-C', worktreeDir, 'push', '--no-verify', 'origin', `${tip}:refs/heads/${branch}`])
+  return true
 }
 
 /**
