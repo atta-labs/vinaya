@@ -62,6 +62,8 @@ import {
   isNonPublicHost,
   type DocumentationProbe,
   type PinnedFileImporters,
+  surfaceForcedSet,
+  type SurfaceForcedSet,
   checkPremiseDependencyDeclared,
   checkPremiseCoverage,
   checkPrincipalPlaceholder,
@@ -1254,6 +1256,92 @@ export function readPinnedFileImporters(body: string, root: string = repoRoot())
     }
     return { file, importers: [...importers].sort() }
   })
+}
+
+/**
+ * What a draft Issue's Boundary pins force on its Surface (`vinaya issue
+ * surface`), read through the same importer listing and tracked-file
+ * snapshot the write gate passes to `validateIssueContent`, so the report and
+ * the refusal decide every importer from one listing with one function.
+ * `null` when `## Surface` does not parse.
+ */
+export function readSurfaceForcedSet(
+  body: string,
+  root: string = repoRoot(),
+  tracked: string[] = listTrackedFiles()
+): SurfaceForcedSet | null {
+  return surfaceForcedSet(body, readPinnedFileImporters(body, root), tracked)
+}
+
+/**
+ * The plain-text `issue surface` report: every pinned file with each importer
+ * and its decision, then the shard list and the loop map when a pinned file
+ * is new. Each undecided line names the `in:` glob that would reach it.
+ */
+export function renderSurfaceForcedSet(set: SurfaceForcedSet): string {
+  const lines: string[] = []
+  if (set.importers.length === 0) lines.push('The Boundary pins no file.')
+  for (const { file, importers } of set.importers) {
+    lines.push(`${file} — ${importers.length === 0 ? 'no tracked importer' : `${importers.length} importer(s)`}`)
+    for (const d of importers) {
+      if (d.state === 'reached') lines.push(`  reached     ${d.importer} (in: ${d.by})`)
+      else if (d.state === 'disclaimed') lines.push(`  disclaimed  ${d.importer} (Boundary Out: ${d.by})`)
+      else lines.push(`  uncovered   ${d.importer} (add ${d.fix} to in:, or name it in the Boundary's Out: clause)`)
+    }
+  }
+  if (set.ciShards !== null) {
+    const { newFiles, companion, fix } = set.ciShards
+    lines.push(
+      `CI shard list — new test file(s) ${newFiles.join(', ')}: ${companion.reached ? `reached (${fix})` : `uncovered (add ${fix} to in:)`}`
+    )
+  }
+  if (set.loopInvariantMap !== null) {
+    const { newFiles, companions, fix } = set.loopInvariantMap
+    lines.push(`Loop invariant map — new loop file(s) ${newFiles.join(', ')}:`)
+    for (const c of companions) lines.push(`  ${c.reached ? 'reached  ' : 'uncovered'}   ${c.path}`)
+    if (fix.length > 0) lines.push(`  add ${fix.join(' and ')} to in:`)
+  }
+  const undecided =
+    set.importers.flatMap((f) => f.importers).filter((d) => d.state === 'uncovered').length +
+    (set.ciShards !== null && !set.ciShards.companion.reached ? 1 : 0) +
+    (set.loopInvariantMap?.fix.length ?? 0)
+  lines.push(
+    undecided === 0
+      ? 'Every forced file is reached or disclaimed.'
+      : `${undecided} forced file(s) undecided — \`issue create\`/\`issue edit\` refuse this Surface.`
+  )
+  return `${lines.join('\n')}\n`
+}
+
+/**
+ * The whole of `vinaya issue surface`: reads the draft body named by
+ * `--body-file`, prints the forced set (`--json` for the enveloped form), and
+ * returns the exit code — `0` with the report, `2` when the body cannot be
+ * read or its `## Surface` does not parse. Writes nothing.
+ */
+export function runIssueSurface(args: string[]): number {
+  const json = args.includes('--json')
+  let body: string | null = null
+  try {
+    body = locateBody(args.filter((a) => a !== '--json'))?.body ?? null
+  } catch (e) {
+    process.stderr.write(`issue surface: ${e instanceof Error ? e.message : String(e)}\n`)
+    return 2
+  }
+  if (body === null) {
+    process.stderr.write('issue surface: pass the draft Issue body with `--body-file <path>`.\n')
+    return 2
+  }
+  const set = readSurfaceForcedSet(body)
+  if (set === null) {
+    const parsed = parseIssueSurface(body)
+    const why = parsed.ok ? '' : ` ${parsed.errors.join(' ')}`
+    process.stderr.write(`issue surface: the body's \`## Surface\` does not parse.${why}\n`)
+    return 2
+  }
+  if (json) printJson(set)
+  else process.stdout.write(renderSurfaceForcedSet(set))
+  return 0
 }
 
 /**

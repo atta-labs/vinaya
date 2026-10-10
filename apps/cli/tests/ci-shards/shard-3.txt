@@ -43,6 +43,7 @@ tests/lib/dev-review-loop/inproc-4.test.ts
 tests/lib/dev-review-loop/inproc-6.test.ts
 tests/lib/dev-review-loop/inproc-8.test.ts
 tests/lib/forge-write.test.ts
+tests/lib/issue-surface.test.ts
 tests/lib/gate-cutovers.test.ts
 tests/lib/log-cache-sqlite.test.ts
 tests/lib/log-readers-integration.test.ts

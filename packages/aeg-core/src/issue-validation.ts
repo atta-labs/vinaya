@@ -2935,40 +2935,77 @@ export function boundaryPinnedFiles(body: string): string[] {
 }
 
 /**
- * **A pinned file's importers are in the Surface, or deliberately out of
- * it.** Changing a file other tracked sources import almost always forces a
- * change at the call site; a Surface that reaches the pinned file and none of
- * its importers is the shape that cost one adopter task five rounds and two
- * rulings, because the caller that had to pass the new signal sat outside it.
+ * What a task decided about one importer of a pinned file: an `in:` glob
+ * reaches it (`by` is that glob), the Boundary's `Out:` clause names it or its
+ * directory (`by` is the named path), or neither (`fix` is the directory glob
+ * that would reach it).
+ */
+export type PinnedImporterDecision =
+  | { importer: string; state: 'reached'; by: string }
+  | { importer: string; state: 'disclaimed'; by: string }
+  | { importer: string; state: 'uncovered'; fix: string }
+
+/** One pinned file and the decision made about each of its importers. */
+export type PinnedFileDecisions = { file: string; importers: PinnedImporterDecision[] }
+
+/**
+ * Decides every importer of every pinned file against the body's `## Surface`
+ * `in:` globs and its Boundary's `Out:` clause — the one function both the
+ * write gate (`checkPinnedFileImportersCovered`) and the planning report
+ * (`surfaceForcedSet`) read, so the report can never call an importer covered
+ * where the gate calls it uncovered. `null` when `## Surface` does not parse.
  *
- * An importer counts as covered when any `in:` glob covers it, or when the
- * Boundary's `Out:` clause names it or its directory — those two, and no
- * third. The Boundary is where a task says what it deliberately leaves out of
- * work it is otherwise committed to, and saying it there is a sentence the
- * Planner writes on purpose; a `## Surface` `out:` glob is a coarser
- * declaration that the task does not touch a directory at all, which is
- * exactly the claim a forced call-site edit contradicts. Reading `out:` as an
- * excuse let a pinned file's only importer sit under a directory the Issue had
- * merely declared untouched, and the refusal this rule exists for never fired.
- * Refused only when NONE of a pinned file's importers is covered either way:
- * one importer in the Surface means the task already reaches its call sites.
+ * Only those two count. A `## Surface` `out:` glob claims a directory is
+ * untouched, which is exactly what a forced call-site edit contradicts, so it
+ * never excuses an importer; the Boundary's `Out:` clause is the sentence a
+ * Planner writes on purpose to leave one out.
+ */
+export function decidePinnedFileImporters(
+  body: string,
+  importers: PinnedFileImporters[]
+): PinnedFileDecisions[] | null {
+  const surface = parseIssueSurface(body)
+  if (!surface.ok) return null
+  const disclaimed = namedPathsIn(boundaryOutText(body))
+  return importers.map(({ file, importers: found }) => ({
+    file,
+    importers: found.map((importer): PinnedImporterDecision => {
+      const glob = surface.value.in.find((g) => globCoversPath(g, importer))
+      if (glob !== undefined) return { importer, state: 'reached', by: glob }
+      const named = disclaimed.find((d) => globCoversPath(d, importer))
+      if (named !== undefined) return { importer, state: 'disclaimed', by: named }
+      return { importer, state: 'uncovered', fix: directoryGlobFor(importer) }
+    })
+  }))
+}
+
+/**
+ * **Every importer of a pinned file is in the Surface, or deliberately out of
+ * it.** Changing a file other tracked sources import almost always forces a
+ * change at the call site; a Surface that reaches the pinned file and leaves
+ * one of its importers undecided is the shape that pauses a task at publish,
+ * because the caller — or the inventory test that lists the changed thing —
+ * that had to change sat outside it.
+ *
+ * Each importer is decided by `decidePinnedFileImporters`: reached by an `in:`
+ * glob, or named (itself or its directory) in the Boundary's `Out:` clause.
+ * Refused when ANY importer is neither — one covered importer no longer
+ * speaks for the others, since a call site in one directory says nothing
+ * about a test in another.
  */
 export function checkPinnedFileImportersCovered(body: string, importers: PinnedFileImporters[]): IssueSectionResult {
   if (importers.length === 0) return { status: 'pass', errors: [] }
-  const surface = parseIssueSurface(body)
-  if (!surface.ok) return { status: 'pass', errors: [] }
-  const disclaimed = namedPathsIn(boundaryOutText(body))
+  const decided = decidePinnedFileImporters(body, importers)
+  if (decided === null) return { status: 'pass', errors: [] }
 
   const errors: string[] = []
-  for (const { file, importers: found } of importers) {
-    if (found.length === 0) continue
-    const uncovered = found.filter(
-      (i) => !surface.value.in.some((g) => globCoversPath(g, i)) && !disclaimed.some((d) => globCoversPath(d, i))
+  for (const { file, importers: decisions } of decided) {
+    const uncovered = decisions.filter(
+      (d): d is Extract<PinnedImporterDecision, { state: 'uncovered' }> => d.state === 'uncovered'
     )
-    if (uncovered.length < found.length) continue
-    const globs = [...new Set(uncovered.map(directoryGlobFor))]
+    if (uncovered.length === 0) continue
     errors.push(
-      `issue-validation Surface/importers: the Boundary pins \`${file}\`, which is imported by ${uncovered.map((i) => `\`${i}\``).join(', ')} — and no \`## Surface\` \`in:\` glob covers any of them, nor does the Boundary's \`Out:\` clause name one. Add ${globs.map((g) => `\`${g}\``).join(' or ')} to \`in:\`, or name the importer in the Boundary's \`Out:\` clause to exclude it deliberately (a \`## Surface\` \`out:\` glob is not that statement — it claims the directory is untouched, which a forced call-site edit contradicts).`
+      `issue-validation Surface/importers: the Boundary pins \`${file}\`, and ${uncovered.length === 1 ? 'its importer' : 'its importers'} ${uncovered.map((d) => `\`${d.importer}\` (add \`${d.fix}\` to \`in:\`)`).join(', ')} ${uncovered.length === 1 ? 'is' : 'are'} neither reached by a \`## Surface\` \`in:\` glob nor named in the Boundary's \`Out:\` clause. Add the named glob to \`in:\`, or name the importer (or its directory) in the Boundary's \`Out:\` clause to exclude it deliberately (a \`## Surface\` \`out:\` glob is not that statement — it claims the directory is untouched, which a forced call-site edit contradicts). \`vinaya issue surface --body-file <path>\` prints every importer and its decision.`
     )
   }
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
@@ -3051,6 +3088,59 @@ export function checkNewLoopFilesCoverInvariantMap(body: string, tracked: string
     errors: [
       `issue-validation Surface/loop invariant map: the Boundary pins ${created.map((f) => `\`${f}\``).join(', ')}, a review-loop file that does not exist yet — the loop invariant map must map or exclude it in the same change, but no \`## Surface\` \`in:\` glob covers ${missing.map((f) => `\`${f}\``).join(' or ')}. Add ${globs.map((g) => `\`${g}\``).join(' and ')} to \`in:\`.`
     ]
+  }
+}
+
+/** A forced companion file and whether an `in:` glob already reaches it. */
+export type ForcedCompanion = { path: string; reached: boolean }
+
+/** What a draft Issue's Boundary pins force on its Surface — the `vinaya issue surface` report. */
+export type SurfaceForcedSet = {
+  /** Every importer of every pinned file, decided by `decidePinnedFileImporters` — the write gate's own reading. */
+  importers: PinnedFileDecisions[]
+  /** The CI shard requirement, present only when a pinned CLI test file is new. */
+  ciShards: { newFiles: string[]; companion: ForcedCompanion; fix: string } | null
+  /** The loop invariant map requirement, present only when a pinned loop file is new. */
+  loopInvariantMap: { newFiles: string[]; companions: ForcedCompanion[]; fix: string[] } | null
+}
+
+/**
+ * Everything a draft Issue's Boundary pins force, computed from the same
+ * functions the write gate refuses with: `decidePinnedFileImporters` for the
+ * importers, and the new-file readings of `checkNewTestFilesCoverShards` and
+ * `checkNewLoopFilesCoverInvariantMap` for the shard list and the loop map.
+ * Writes nothing; `null` when `## Surface` does not parse. With no tracked
+ * tree the new-file companions are unknown and reported absent, exactly as
+ * the two rules go dormant.
+ */
+export function surfaceForcedSet(
+  body: string,
+  importers: PinnedFileImporters[],
+  tracked: string[]
+): SurfaceForcedSet | null {
+  const surface = parseIssueSurface(body)
+  const decided = decidePinnedFileImporters(body, importers)
+  if (!surface.ok || decided === null) return null
+  const reached = (path: string): ForcedCompanion => ({
+    path,
+    reached: surface.value.in.some((g) => globCoversPath(g, path))
+  })
+
+  const newTests = tracked.length === 0 ? [] : newPinnedFiles(body, tracked, isCliTestPath)
+  const newLoop = tracked.length === 0 ? [] : newPinnedFiles(body, tracked, isLoopSurfacePath)
+  const loopCompanions = [LOOP_INVARIANT_FIXTURE, LOOP_INVARIANT_SPEC].map(reached)
+  return {
+    importers: decided,
+    ciShards:
+      newTests.length === 0 ? null : { newFiles: newTests, companion: reached(CI_SHARD_PROBE), fix: CI_SHARD_DIR },
+    loopInvariantMap:
+      newLoop.length === 0
+        ? null
+        : {
+            newFiles: newLoop,
+            companions: loopCompanions,
+            fix: [...new Set(loopCompanions.filter((c) => !c.reached).map((c) => directoryGlobFor(c.path)))]
+          }
   }
 }
 

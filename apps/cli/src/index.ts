@@ -19,7 +19,7 @@ import { logSendCommand } from './commands/log-send.js'
 import { doctrineCommand } from './commands/doctrine.js'
 import { ejectCommand } from './commands/eject.js'
 import { initCommand, initProductCommand } from './commands/init.js'
-import { issueCreateCommand, issueEditCommand } from './commands/issue.js'
+import { issueCreateCommand, issueEditCommand, issueSurfaceCommand } from './commands/issue.js'
 import { issueObjectivesEditCommand } from './commands/issue-objectives.js'
 import {
   milestoneAdoptCommand,
@@ -257,9 +257,11 @@ try {
         await issueEditCommand(passthrough)
       } else if (subcommand === 'objectives edit') {
         await issueObjectivesEditCommand(passthrough)
+      } else if (subcommand === 'surface') {
+        issueSurfaceCommand(passthrough)
       } else {
         console.error(
-          `Unknown 'issue' subcommand: ${rawSubcommand ?? '(none)'} (expected 'create', 'edit', or 'objectives edit')`
+          `Unknown 'issue' subcommand: ${rawSubcommand ?? '(none)'} (expected 'create', 'edit', 'surface', or 'objectives edit')`
         )
         process.exit(2)
       }

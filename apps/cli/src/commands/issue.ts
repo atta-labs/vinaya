@@ -15,6 +15,7 @@ import {
   refuseUnlabeledTaskShapedBody,
   resolveMilestoneAttachArgs,
   runGhWrite,
+  runIssueSurface,
   validateTaskIssue,
   writeValidatedIssueEdit
 } from '../lib/forge-write'
@@ -147,6 +148,17 @@ export async function issueEditCommand(args: string[]): Promise<void> {
   }
 
   await writeValidatedIssueEdit({ issueRef, ghArgs, bodyResult, json, retryCommand: RETRY_EDIT })
+}
+
+/**
+ * `vinaya issue surface --body-file <path>` — prints what a draft Issue's
+ * Boundary pins force on its Surface (`runIssueSurface`). Writes nothing.
+ * Exits 0 with the report, or 2 when the body cannot be read or its
+ * `## Surface` does not parse.
+ */
+export function issueSurfaceCommand(args: string[]): void {
+  const exitCode = runIssueSurface(args)
+  if (exitCode !== 0) process.exit(exitCode)
 }
 
 import type { SurfaceExemption } from '../lib/surface-exemption'
