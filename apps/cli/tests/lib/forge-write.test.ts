@@ -176,6 +176,120 @@ describe('collectTaskIssueErrors — one gate sequence, every group, one refusal
 })
 
 // ---------------------------------------------------------------------------
+// The Issue gate grades a single-fix Issue — no tranche label — against the
+// single-fix rationale form, and a tranche task Issue against all eight fields.
+// ---------------------------------------------------------------------------
+
+describe('the issueRationale builtin grades the single-fix form when the labels carry no tranche', () => {
+  let cwd: string
+  let originalCwd: string
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-single-fix-rationale-'))
+    writeFileSync(
+      join(cwd, 'vinaya.config.json'),
+      JSON.stringify({ briefSchema: { issue: { sections: [{ builtin: 'issueRationale' }] } } }),
+      'utf8'
+    )
+    execFileSync('git', ['init', '-q'], { cwd })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd })
+    mkdirSync(join(cwd, 'apps', 'cli'), { recursive: true })
+    writeFileSync(join(cwd, 'apps', 'cli', 'dummy.ts'), '')
+    execFileSync('git', ['add', '.'], { cwd })
+    execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd })
+    originalCwd = process.cwd()
+    process.chdir(cwd)
+  })
+
+  afterEach(() => {
+    process.chdir(originalCwd)
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  // Every rationale field except Sizing, Project(s) + blast radius and
+  // Dependency rationale.
+  const singleFixBody = [
+    '**Project:** cli',
+    '',
+    "## Planner's rationale",
+    '',
+    '**Boundary** — One fix. Pinned files: `apps/cli/dummy.ts`.',
+    '',
+    '**Traps to avoid** — Do not widen it.',
+    '',
+    '**Suggested agent-class** — mid.',
+    '',
+    '**Stop-and-escalate** — If a second file is needed, stop.',
+    '',
+    '**Docs to keep coherent** — no-doc-surface.'
+  ].join('\n')
+
+  const deps: TaskIssueValidationDeps = {
+    computeRenderedBriefErrors: async () => ({ errors: [], skipped: null }),
+    runIssueChecks: async () => []
+  }
+
+  const rationaleFindings = (errors: CheckError[]) =>
+    errors.filter((e) => e.check === 'brief-schema' && e.message.includes('rationale field not found'))
+
+  it('validateForgeWrite passes the single-fix body with `singleFix` and refuses the three tranche-only fields without it', () => {
+    const base = { body: singleFixBody, title: null, changedFiles: [], retryCommand: 'vinaya issue create …' }
+    const sections = [{ builtin: 'issueRationale' as const }]
+    expect(validateForgeWrite({ ...base, sections, singleFix: true })).toEqual([])
+    const full = validateForgeWrite({ ...base, sections })
+    expect(full.map((e) => e.message.split(':')[0]).sort()).toEqual([
+      'issue-validation Dependency rationale',
+      'issue-validation Project(s) + blast radius',
+      'issue-validation Sizing'
+    ])
+  })
+
+  it('`issue create` with no tranche label accepts the single-fix body', async () => {
+    const { errors } = await collectTaskIssueErrors(
+      singleFixBody,
+      'Fix(cli): a single fix',
+      ['vinaya/type:fix'],
+      'vinaya issue create --validate-only …',
+      null,
+      undefined,
+      deps
+    )
+    expect(rationaleFindings(errors)).toEqual([])
+  })
+
+  it('`issue create` with a tranche label still refuses the body for each of the three tranche-only fields', async () => {
+    const { errors } = await collectTaskIssueErrors(
+      singleFixBody,
+      '[some-tranche-v1] 1 — a task',
+      ['vinaya/tranche:some-tranche-v1', 'vinaya/type:fix'],
+      'vinaya issue create --validate-only …',
+      null,
+      undefined,
+      deps
+    )
+    expect(rationaleFindings(errors)).toHaveLength(3)
+  })
+
+  it('a single-fix body missing the Suggested agent-class is still refused', async () => {
+    const body = singleFixBody.replace('**Suggested agent-class** — mid.\n\n', '')
+    expect(body).not.toBe(singleFixBody)
+    const { errors } = await collectTaskIssueErrors(
+      body,
+      'Fix(cli): a single fix',
+      ['vinaya/type:fix'],
+      'vinaya issue create --validate-only …',
+      null,
+      undefined,
+      deps
+    )
+    const findings = rationaleFindings(errors)
+    expect(findings).toHaveLength(1)
+    expect(findings[0]?.message).toContain('issue-validation Suggested agent-class')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Round-3 review finding (MEDIUM) — a `gh` fetch failure inside the O5
 // sibling-overlap lookup used to call `refuse()` directly, discarding every
 // finding `collectTaskIssueErrors` had already pushed into its union (the

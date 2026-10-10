@@ -266,7 +266,7 @@ export function checkDispatchReadiness(input: DispatchGateInput): DispatchResult
   if (input.issue !== null && !input.issueRationalePass) {
     push(
       'rationale',
-      `dispatch-gate rationale: Issue #${input.issue.number} for ${taskLabel} fails the rationale gate (checkIssueRationale) — the Planner must complete the eight-field rationale before this task is dispatchable.`
+      `dispatch-gate rationale: Issue #${input.issue.number} for ${taskLabel} fails the rationale gate (checkIssueRationale) — the Planner must complete the rationale (all eight fields for a tranche task; a single-fix Issue omits only Sizing, Project(s) + blast radius and Dependency rationale) before this task is dispatchable.`
     )
   }
 

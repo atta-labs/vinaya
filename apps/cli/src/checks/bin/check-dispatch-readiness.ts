@@ -282,7 +282,9 @@ async function runIssueMode(issueNumber: number): Promise<void> {
     )
   }
 
-  const issueRationalePass = checkIssueRationale(issueJson.body).status !== 'fail'
+  // A tranche-less Issue is a single fix: the rationale it owes omits the
+  // tranche-only fields (`checkIssueRationale`'s `singleFix`).
+  const issueRationalePass = checkIssueRationale(issueJson.body, { singleFix: true }).status !== 'fail'
   const { dependsOn: dependsOnIds, conflictsWith: conflictsWithIds } = parseRationaleDeps(issueJson.body)
 
   const taskById = new Map<string, EdgeTaskRef>()

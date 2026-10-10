@@ -1351,7 +1351,9 @@ async function runGateModeForIssue(issueNumber: number): Promise<void> {
     process.exit(1)
   }
 
-  const issueRationalePass = checkIssueRationale(issueJson.body).status === 'pass'
+  // A tranche-less Issue is a single fix: the rationale it owes omits the
+  // tranche-only fields (`checkIssueRationale`'s `singleFix`).
+  const issueRationalePass = checkIssueRationale(issueJson.body, { singleFix: true }).status === 'pass'
   const { dependsOn: dependsOnIds, conflictsWith: conflictsWithIds } = parseRationaleDeps(issueJson.body)
 
   const emptyTranche: Tranche = { name: '', lifecycle: 'active', goal: '', tasks: [], backlog: [] }

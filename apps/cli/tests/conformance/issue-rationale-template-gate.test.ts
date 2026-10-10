@@ -87,21 +87,23 @@ const CHECKOUT: Record<string, string> = {
   [PINNED_FILE]: 'export function greeting(name: string): string {\n  return `Hello, ${name}`\n}\n'
 }
 
-function gate(body: string): CheckError[] {
+/** `singleFix` grades the body as a single-fix Issue: no tranche label, a plain title, the single-fix rationale form. */
+function gate(body: string, singleFix = false): CheckError[] {
   const retryCommand = 'vinaya issue create --validate-only …'
   return [
     ...validateForgeWrite({
       body,
-      title: '[demo-v1] 1 — The greeting names its caller',
+      title: singleFix ? 'Feat(demo): The greeting names its caller' : '[demo-v1] 1 — The greeting names its caller',
       sections: issueSections(),
       changedFiles: [],
       retryCommand,
       issueNumber: null,
-      gateCutovers: NO_GATE_CUTOVERS
+      gateCutovers: NO_GATE_CUTOVERS,
+      singleFix
     }),
     ...validateIssueContent({
       body,
-      labels: ['vinaya/tranche:demo-v1'],
+      labels: singleFix ? ['vinaya/type:feat'] : ['vinaya/tranche:demo-v1'],
       sharedPackages: [],
       projectPaths: [{ name: 'demo', path: 'apps/demo' }],
       retryCommand,
@@ -141,6 +143,25 @@ describe('the Issue-rationale template, filled as written, passes the Issue gate
   it('carries a Documentation section and names the sentinel the gate accepts', () => {
     expect(block).toMatch(/^## Documentation$/m)
     expect(block).toContain('`no-doc-surface`')
+  })
+
+  it('the single-fix form — the filled body without Sizing, Project(s) + blast radius and Dependency rationale — passes as a single-fix Issue and is refused as a tranche task', () => {
+    const singleFix = filled.replace(
+      /\*\*(?:Sizing|Project\(s\) \+ blast radius|Dependency rationale)\*\* — [^\n]*\n\n/g,
+      ''
+    )
+    expect(singleFix).not.toMatch(/\*\*(?:Sizing|Project\(s\) \+ blast radius|Dependency rationale)\*\*/)
+    expect(gate(singleFix, true).map((e) => e.message)).toEqual([])
+    expect(
+      gate(singleFix)
+        .map((e) => e.message.split(':')[0])
+        .filter((m) => m?.startsWith('issue-validation '))
+        .sort()
+    ).toEqual([
+      'issue-validation Dependency rationale',
+      'issue-validation Project(s) + blast radius',
+      'issue-validation Sizing'
+    ])
   })
 
   it('the gate refuses the same body with its Documentation section removed, so the pass above is not vacuous', () => {

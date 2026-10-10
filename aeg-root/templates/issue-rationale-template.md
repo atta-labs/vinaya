@@ -7,6 +7,21 @@ sidebar_title: "Template: Issue rationale"
 
 **Copy the block below the divider into the task Issue's body and replace every `[…]` placeholder with real content.** This is the shape the Issue gate (`vinaya issue create`/`vinaya issue edit`) and `vinaya check coherence`'s R1 check parse: a header block, a `## Objectives` section, all eight producer fields of the `aeg-root/contracts/planner-developer.md` contract in bold-inline form (`**<Field>** — …`; the `### <Field>` heading form is equally valid, except for **Dependency rationale**, which is bold-inline only), then the judgment sections the brief render fills its surface map, Parts, Test plan and stop conditions from. The contract and `aeg-root/roles/planner/reference.md` §§ "The Planner's rationale" and "Rationale grammar" remain the source of truth for what each field must *contain* — this file packages the shape; it does not lower the reasoning bar. A field filled with boilerplate is still a malformed rationale, even though it parses. A conformance test fills every placeholder below with a minimal task and runs the result through the Issue gate, so this shape and the gate cannot drift apart.
 
+**Two forms, one block.** The block below is the **full form**, the one every tranche task Issue (labeled `vinaya/tranche:<slug>`) carries: all eight rationale fields. A **single-fix Issue** — one with no `vinaya/tranche:*` label, dispatched by `vinaya task run --issue <n>` — carries the **single-fix form**: the same block with three fields deleted, because each is tranche prose that no gate checks and the brief render does not need:
+
+| Field | Full form (tranche task) | Single-fix form (no tranche label) |
+|---|---|---|
+| Boundary, with its `Pinned files:` | required | required |
+| Sizing | required | omitted |
+| Project(s) + blast radius | required | omitted — the `**Project:**` header field and `## Surface` carry the blast radius; a fix that reaches a shared package no declared project owns still needs a second project or a `blast-radius-ack:` line |
+| Dependency rationale | required | omitted — the render states that the Issue declares no edge; write it only if the fix does have a `Depends-on` or `Conflicts-with` edge |
+| Traps to avoid | required | required |
+| Suggested agent-class | required | required — dispatch reads the agent class from it |
+| Stop-and-escalate | required | required |
+| Docs to keep coherent | required | required |
+
+Every other section — the header block, `## Objectives`, `## Documentation`, `## Premises`, `## Surface`, `## Parts`, `## Test plan`, `## Stop conditions` — is the same in both forms, under the same grammar. A single-fix Issue's title takes the commit-type form `Type(scope): Description`, which the brief render reuses as the pull request's title. Facts about the code go in `## Premises`, where the gate checks them, never in prose.
+
 ---
 
 [TITLE — the Issue title, repeated: tranche slug, task number, an em dash, then the outcome title]
