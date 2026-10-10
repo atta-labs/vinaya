@@ -215,10 +215,8 @@ The brief's stop conditions tell you when to STOP and ask. Honor them. If the st
 Every brief includes stop conditions. Honor them unconditionally. Common reasons to STOP:
 
 - Pre-flight checks fail (dirty tree, wrong branch, worktree could not be created cleanly, missing tools, missing reference files)
-- A dispatch gate is not satisfied (a `depends-on` PR isn't merged, or a `conflicts-with` sibling's PR is open)
 - Brief contradicts the current state of the codebase in a way you cannot resolve without external information
 - A test still fails after genuine diagnosis — but a failing test is yours to fix, in the code or the test. CI on the pull request's head is the authority for a test that fails only inside your sandbox, so a sandbox-only failure is not a block; return `blocked` with reason `test_failure` only when the same test also fails on `origin/main` in a clean checkout
-- You are about to touch files outside the brief's stated scope — stop and ask first
 - Any destructive action (force push, file deletion, database mutation) not explicitly authorized by the brief
 - You discover a decision that should be Type 1 (irreversible) but the brief doesn't mention it
 - A link or file the task references cannot be opened — stop at once and return a `blocked` turn result with kind `preflight_failed`, naming the reference. For a URL under the review loop, "cannot be opened" means the driver's `fetch_documentation` tool failed to read it; a `curl` or other network call your sandbox blocks never counts, so read the URL with `fetch_documentation` before deciding. Working without the driver's tools, it means your own fetch failed. Never develop around it: the task named it because the work needs what it holds.
@@ -250,7 +248,7 @@ When working manually (no driver watching), nobody created it for you. Create it
 
 The `task/<tranche>/<n>` branch name is the convention that lets any role find this task's branch and PR (and therefore its derived status) with one forge query.
 
-Working manually, after every commit, `git log --oneline -3` confirms the new commit is a direct child of the expected parent — a mixed reset between sessions can leave HEAD at an older ancestor silently. (Under the review loop, `publish_changes` refuses a head that moved during the turn.)
+Working manually, before the push `git status` shows a clean tree, and after every commit `git log --oneline -3` confirms the new commit is a direct child of the expected parent — a mixed reset between sessions can leave HEAD at an older ancestor silently. (Under the review loop, `publish_changes` refuses a head that moved during the turn.)
 
 **Stash is off-limits in a shared-repo worktree.** Never `git stash` while working in `.worktrees/task/<tranche>/<n>/`. Stash refs are global across every worktree of a shared repo clone — a stray `stash pop` run in one task's worktree can pop a *different* task's in-progress stash, silently corrupting its uncommitted work. This is not hypothetical: a near-miss surfaced live on a task branch's own PR. Working manually, set aside in-progress changes with a WIP commit on your own branch instead (`git commit -m "Chore: WIP checkpoint"` — squashed away before opening the PR); under the review loop, leave them uncommitted for `publish_changes`.
 
@@ -290,7 +288,7 @@ Under the review loop, static gates are controller work: you do not hand-run typ
 Before you say you are done or open a PR under the review loop:
 
 1. Publish through `publish_changes` and read its result — it validates the commit header and runs the publication hooks; use `run_checks` for the current head and read its result.
-2. Confirm `git status` is clean. `git diff origin/main...HEAD --stat` is context for the report only; Surface is judged by the driver's `surface-scope` check.
+2. `git diff origin/main...HEAD --stat` is context for the report only; Surface is judged by the driver's `surface-scope` check.
 
 Working manually, with no driver, run the same static gates yourself before opening: `bun run typecheck`, `bun run format-and-lint`, the repository's production build, and `bun run verify-docs --pr`. The pre-push hook runs the affected suite once on the push.
 
