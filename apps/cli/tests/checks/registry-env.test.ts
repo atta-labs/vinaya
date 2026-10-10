@@ -46,6 +46,7 @@ describe('registry env declarations', () => {
         'dead-branch-push',
         'dispatch-readiness',
         'doc-coverage',
+        'doc-claims',
         'doc-coverage-push',
         'doctrine-no-procedures',
         'doctrine-portability',

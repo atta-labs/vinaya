@@ -84,7 +84,8 @@ describe('enforcement.md Ring 0/1/2 tables (implementation column)', () => {
     // The `token-report` row was retired with the PR-body token table it
     // policed — token use is recorded as the Vinaya log's own `usage` event.
     // The G7 log-producer row joined the other G rows.
-    expect(ring1.rows).toHaveLength(33)
+    // The `doc-claims` row joined the doctrine sweeps.
+    expect(ring1.rows).toHaveLength(34)
 
     // (2026-07-13) removed the "Daily drift check — stuck row-adjacent
     // blockers" ring-2 row (its subject matter, stale-blocker.ts, was retired).

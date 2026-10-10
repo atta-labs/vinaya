@@ -877,6 +877,104 @@ describe('runIssueChecks returns findings rather than refusing (O1)', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The content gate refuses three facts the shape checks never graded: a
+// `**Project:**` name with no registry row, a Test plan line the dispatched
+// Developer cannot run, and an in-repository Documentation path the checkout
+// does not contain. Each body with the defect is refused, the same body
+// without it passes, and every refusal names its fix.
+// ---------------------------------------------------------------------------
+
+describe('validateIssueContent refuses an unregistered project, an unrunnable Test plan line, and a missing Documentation path', () => {
+  const REGISTRY = [
+    { name: 'cli', path: 'apps/cli' },
+    { name: 'aeg-core', path: 'packages/aeg-core' }
+  ]
+  const CHECKOUT: Record<string, string> = { 'aeg-root/roles/planner.md': '# Planner' }
+
+  function issueBody(opts: { project?: string; testPlanLine?: string; documentation?: string }): string {
+    return [
+      '## Documentation',
+      '',
+      opts.documentation ?? '- aeg-root/roles/planner.md — the entry gate this task makes real (O1)',
+      '',
+      '## Test plan',
+      '',
+      '```',
+      'bun test apps/cli/tests/lib/forge-write.test.ts → 0 fail',
+      ...(opts.testPlanLine ? [opts.testPlanLine] : []),
+      '```',
+      '',
+      '**Docs to keep coherent** — no-doc-surface.',
+      `**Project:** ${opts.project ?? 'aeg-core, cli'}`
+    ].join('\n')
+  }
+
+  function gate(body: string, projectPaths = REGISTRY): CheckError[] {
+    return validateIssueContent({
+      body,
+      labels: [],
+      sharedPackages: [],
+      projectPaths,
+      retryCommand: 'vinaya issue create --validate-only …',
+      issueNumber: null,
+      briefSectionsSinceIssue: null,
+      resolvesToFile: () => true,
+      readFile: (path) => CHECKOUT[path] ?? null,
+      docOwnersContent: null,
+      milestoneSiblings: null,
+      subjectRef: '',
+      collisionPeers: null,
+      subjectFiles: [],
+      collisionThreshold: DEFAULT_COLLISION_THRESHOLD,
+      commandReference: DORMANT_COMMAND_REFERENCE,
+      configReference: DORMANT_CONFIG_REFERENCE,
+      pinnedFileImporters: [],
+      existsInTree: () => false
+    })
+  }
+
+  it('passes the body that carries none of the three defects', () => {
+    expect(gate(issueBody({}))).toEqual([])
+  })
+
+  it('refuses a project with no registry row, naming it and the registered rows', () => {
+    const errors = gate(issueBody({ project: 'aeg-core, nonexistent' }))
+    expect(errors.length).toBe(1)
+    const [e] = errors as [CheckError]
+    expect(e.message).toContain('nonexistent')
+    expect(e.message).toContain('registered: cli, aeg-core')
+    expect(e.agent_recovery_prompt).toContain('names a project the registry lists')
+    expect(recoveryNamesItsFix(e)).toBe(true)
+  })
+
+  it('leaves a repository with no registry unaffected', () => {
+    expect(gate(issueBody({ project: 'nonexistent' }), [])).toEqual([])
+  })
+
+  it('refuses a Test plan line that merges a pull request, naming the line', () => {
+    const line = 'gh pr merge 12 --squash'
+    const errors = gate(issueBody({ testPlanLine: line }))
+    expect(errors.length).toBe(1)
+    const [e] = errors as [CheckError]
+    expect(e.message).toContain(line)
+    expect(e.message).toContain('the dispatched Developer cannot run')
+    expect(e.agent_recovery_prompt).toContain('Rewrite the named `## Test plan` line')
+    expect(recoveryNamesItsFix(e)).toBe(true)
+  })
+
+  it('refuses a Documentation path the checkout lacks, naming the path', () => {
+    const errors = gate(
+      issueBody({ documentation: '- aeg-root/roles/missing.md — a spec that was never written (O1)' })
+    )
+    expect(errors.length).toBe(1)
+    const [e] = errors as [CheckError]
+    expect(e.message).toContain('`aeg-root/roles/missing.md`')
+    expect(e.agent_recovery_prompt).toContain('Correct the named `## Documentation` path')
+    expect(recoveryNamesItsFix(e)).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // `reconcileGhComment` (security review, round 2, HIGH) — the `gh`-backed
 // `EffectReconciler` `apps/cli/src/lib/effects.ts`'s `EffectExecutor` calls
 // on recovery. A fake `gh` answers `{issue,pr} view --json comments` with a
