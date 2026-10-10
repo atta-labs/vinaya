@@ -14,7 +14,7 @@
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop.ts",
-        "sha256": "4cbeaebe43d6e4220d5ffef65b06c7a391b7fd8c636100b7583dd533b46edda1"
+        "sha256": "e6990c2ecc2d2b0053dc569cd2d4bf74894d691fa50f0e012bcfbbc7968a0d77"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/developer-dispatch.ts",
@@ -22,7 +22,7 @@
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts",
-        "sha256": "3cad6dd08dc488dab6865b576838a984f0ad4fff8c892b71d1fe28b3b74f8bb5"
+        "sha256": "98424e14ae8e715174edec3adb2789680833756b9e1e8712c54361bb4f859800"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/gate-reading.ts",

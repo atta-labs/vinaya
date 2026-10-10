@@ -8,7 +8,7 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -18,6 +18,7 @@ import {
 } from '../../../src/lib/dev-review-loop.js'
 import {
   checkPublicationPreconditions,
+  fastForwardedOntoDefaultTip,
   validateCommitHeader
 } from '../../../src/lib/dev-review-loop/developer-publication.js'
 import {
@@ -163,6 +164,67 @@ describe('checkPublicationPreconditions (O7)', () => {
         driverUnpushedCommit: { sha: 'd'.repeat(40), parent: 'p'.repeat(40) }
       }).ok
     ).toBe(false)
+  })
+
+  describe('a worktree fast-forwarded onto the default branch tip', () => {
+    const recorded = 'a'.repeat(40)
+    const tip = 't'.repeat(40)
+    const movedReason = (head: string) =>
+      `the worktree head moved to \`${head}\` during your turn (expected the recorded \`${recorded}\`) — do not commit yourself; call \`publish_changes\` to make this turn's single commit`
+    const fastForward = {
+      ...ok,
+      recordedHead: recorded,
+      worktreeHead: tip,
+      base: tip,
+      defaultBranchTip: { sha: tip, recordedHeadIsAncestor: true }
+    }
+
+    it('accepts a head equal to the tip, the recorded head its ancestor and the base that tip', () => {
+      expect(fastForwardedOntoDefaultTip(fastForward)).toBe(true)
+      expect(checkPublicationPreconditions(fastForward).ok).toBe(true)
+    })
+
+    it('refuses a commit the Developer made, with the existing reason', () => {
+      const own = 'e'.repeat(40)
+      expect(checkPublicationPreconditions({ ...fastForward, worktreeHead: own, base: 'b'.repeat(40) })).toEqual({
+        ok: false,
+        reason: movedReason(own)
+      })
+    })
+
+    it('refuses a merge commit of the tip, with the existing reason', () => {
+      const merge = 'm'.repeat(40)
+      expect(checkPublicationPreconditions({ ...fastForward, worktreeHead: merge, expectedBase: tip })).toEqual({
+        ok: false,
+        reason: movedReason(merge)
+      })
+    })
+
+    it('refuses a rebase onto anything but the tip, with the existing reason', () => {
+      const rebased = 'r'.repeat(40)
+      const other = 'o'.repeat(40)
+      const verdict = checkPublicationPreconditions({
+        ...fastForward,
+        worktreeHead: rebased,
+        base: other,
+        expectedBase: other,
+        defaultBranchTip: { sha: tip, recordedHeadIsAncestor: true }
+      })
+      expect(verdict).toEqual({ ok: false, reason: movedReason(rebased) })
+    })
+
+    it('needs every one of the three facts', () => {
+      const noAncestor = { ...fastForward, defaultBranchTip: { sha: tip, recordedHeadIsAncestor: false } }
+      const baseElsewhere = { ...fastForward, base: 'c'.repeat(40), expectedBase: 'c'.repeat(40) }
+      const tipUnread = { ...fastForward, expectedBase: tip, defaultBranchTip: null }
+      for (const input of [noAncestor, baseElsewhere, tipUnread]) {
+        expect(fastForwardedOntoDefaultTip(input)).toBe(false)
+        expect(checkPublicationPreconditions({ ...input, expectedBase: input.base })).toEqual({
+          ok: false,
+          reason: movedReason(tip)
+        })
+      }
+    })
   })
 
   it('fails when a changed path crosses an out: glob', () => {
@@ -407,5 +469,94 @@ describe('publication range after a default-branch merge', () => {
       surface: { in: ['own.txt'], out: [] }
     })
     expect(verdict.ok).toBe(false)
+  })
+
+  it('publishes a worktree fast-forwarded onto the default tip, measured from that tip, and keeps the re-recorded head for the next check', async () => {
+    const world = makeWorld({
+      worktreeExists: true,
+      surface: { in: ['own.txt', 'stray.txt'], out: ['main-only.txt', 'stray.txt'] }
+    })
+    const dir = join(world.repoRoot, '.worktrees', world.branch)
+    const remote = mkdtempSync(join(tmpdir(), 'pub-origin-'))
+    mkdirSync(dir, { recursive: true })
+    git(remote, 'init', '-q', '--bare', '-b', 'main')
+    git(dir, 'init', '-q', '-b', 'main')
+    git(dir, 'remote', 'add', 'origin', remote)
+    writeFileSync(join(dir, 'a.txt'), 'a\n')
+    git(dir, 'add', '.')
+    git(dir, 'commit', '-q', '-m', 'base')
+    const base = git(dir, 'rev-parse', 'HEAD')
+    git(dir, 'push', '-q', 'origin', 'main')
+    git(dir, 'checkout', '-q', '-b', world.branch)
+    const tip = advanceMain(dir, 'main-only.txt', world.branch)
+    world.head = base
+    world.base = base
+    world.mergeBase = base
+
+    const realHead = (): string => git(dir, 'rev-parse', 'HEAD')
+    const dirty = (): string[] =>
+      git(dir, 'status', '--porcelain')
+        .split('\n')
+        .filter((l) => l.trim().length > 0)
+        .map((l) => l.slice(3))
+    let tipReads = 0
+    const baseDeps = makeInProcessDeps(world)
+    const results: { ok: boolean; reason: string }[] = []
+    await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex' },
+      {
+        ...baseDeps,
+        resolveHead: () => world.head,
+        readWorktreeHead: () => realHead(),
+        readUnpushedWorkDetail: () => ({ dirtyFiles: dirty(), aheadCount: 0 }),
+        gitMergeBase: async (head) => git(dir, 'merge-base', head, 'main'),
+        gitIsAncestor: (ancestor, descendant) => {
+          try {
+            git(dir, 'merge-base', '--is-ancestor', ancestor, descendant)
+            return true
+          } catch {
+            return false
+          }
+        },
+        gitWorktreeChangedPaths: defaultGitWorktreeChangedPaths,
+        // The first read sees the tip; every later read sees the default
+        // branch moved on, so only a re-recorded head lets the second check pass.
+        readDefaultBranchTip: () => (tipReads++ === 0 ? tip : 'f'.repeat(40)),
+        dispatchRole: async (role, agent, prompt, opts) => {
+          if (role !== 'developer') return baseDeps.dispatchRole!(role, agent, prompt, opts)
+          if (results.length === 0) {
+            git(dir, 'merge', '-q', '--ff-only', 'main')
+            writeFileSync(join(dir, 'own.txt'), 'own\n')
+            writeFileSync(join(dir, 'stray.txt'), 'stray\n')
+            const first = await world.devToolContext!.publishChanges('Fix(cli): publish after a fast-forward')
+            results.push({ ok: first.ok, reason: first.ok ? '' : JSON.stringify(first) })
+            rmSync(join(dir, 'stray.txt'))
+            const second = await world.devToolContext!.publishChanges('Fix(cli): publish after a fast-forward')
+            results.push({ ok: second.ok, reason: second.ok ? '' : JSON.stringify(second) })
+            if (second.ok) await world.devToolContext!.openPullRequest(world.issueTitle, '## Scope\n\n**Tier:** 3\n')
+          }
+          return {
+            exitCode: 0,
+            durationMs: 1,
+            usage: null,
+            resumeId: 'dev',
+            timedOut: false,
+            effectId: 'dev',
+            turnOutput: defaultDeveloperTurnOutput(prompt)
+          }
+        }
+      }
+    )
+
+    expect(realHead()).toBe(tip)
+    // The first check accepted the fast-forward and refused only the stray
+    // file, never the default branch's own `main-only.txt`.
+    expect(results[0]?.ok).toBe(false)
+    expect(results[0]?.reason).toContain('stray.txt')
+    expect(results[0]?.reason).not.toContain('do not commit yourself')
+    expect(results[0]?.reason).not.toContain('main-only.txt')
+    expect(results[1]).toEqual({ ok: true, reason: '' })
+    expect(world.commits).toHaveLength(1)
   })
 })
