@@ -62,7 +62,7 @@ None — no externally-normative source governs this task.
 
 ## Planner's rationale
 
-**Boundary** — In: \`apps/cli/src/lib/dispatch.ts\`, a stand-in real file (issue-657, O3: the render now refuses when the Surface resolves to a tracked file but the Boundary names none of them). Out: everything else.
+**Boundary** — In: \`apps/cli/src/lib/dispatch.ts\`, a stand-in real file (issue-657, O3: the render now refuses when the Surface resolves to a tracked file but the Boundary names none of them). Out: everything else, including every importer of it outside \`apps/cli/src/lib\`, named as \`apps/cli/src/commands\` and \`apps/cli/tests\`.
 
 **Sizing** — n/a, synthetic fixture.
 
