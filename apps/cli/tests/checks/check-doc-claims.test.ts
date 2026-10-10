@@ -4,6 +4,7 @@ import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CheckError } from '../../src/checks/contract'
+import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture'
 
 // Bin-level tests for check-doc-claims.ts — the pure evaluator
 // (`checkDocClaims`, aeg-core) has its own unit suite fed hand-built file
@@ -37,11 +38,8 @@ function newRepo(doc: string, cited: string): string {
 }
 
 async function runBin(cwd: string): Promise<{ exitCode: number; stderr: string; stdout: string }> {
-  const proc = Bun.spawn(['bun', BIN], { cwd, stdout: 'pipe', stderr: 'pipe', env: process.env })
-  const exitCode = await proc.exited
-  const stderr = await new Response(proc.stderr).text()
-  const stdout = await new Response(proc.stdout).text()
-  return { exitCode, stderr, stdout }
+  const { status, stdout, stderr } = await spawnBudgetedAsync(['bun', BIN], { cwd, env: stripVinayaEnv() })
+  return { exitCode: status, stderr, stdout }
 }
 
 function parseFindings(stderr: string): CheckError[] {
