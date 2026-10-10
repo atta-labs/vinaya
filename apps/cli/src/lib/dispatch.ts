@@ -420,6 +420,13 @@ export type DispatchFailureReason =
  */
 export type UsageLimit = { agent: AgentVendor; message: string; resetAtMs: number | null }
 
+/**
+ * A dispatch refused before the agent started because the agent's own
+ * sandbox could not run the probe command on this host: the agent, and the
+ * probe's own error (`probeAgentSandbox`, `worker-boundary.ts`).
+ */
+export type SandboxProbeRefusal = { agent: AgentVendor; error: string }
+
 export type DispatchHandle = {
   exitCode: number | null
   durationMs: number
@@ -431,6 +438,8 @@ export type DispatchHandle = {
   failureReason?: DispatchFailureReason
   /** Set exactly when `failureReason` is `'usage-limit'`. */
   usageLimit?: UsageLimit
+  /** Set exactly when `failureReason` is `'refused'` because the agent's sandbox probe failed on this host. */
+  sandboxProbeRefusal?: SandboxProbeRefusal
   /**
    * The same `effect_id` this attempt's own `dispatch`/`role_attempt`/`usage`
    * lines already carry — optional so a hand-built fixture value in an
@@ -4832,7 +4841,22 @@ export async function dispatchRole(
     }
     patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
     await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
-    return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason, effectId }
+    // The probe's refusal travels typed, beside the shared `'refused'`
+    // reason, only when it is the cause the refusal line above names.
+    const sandboxProbeRefusal =
+      !unconfinedClaude && agentControlsError === null && sandboxProbeError !== null
+        ? { sandboxProbeRefusal: { agent, error: sandboxProbeError } }
+        : {}
+    return {
+      exitCode: null,
+      durationMs,
+      usage: null,
+      resumeId: null,
+      timedOut: false,
+      failureReason,
+      effectId,
+      ...sandboxProbeRefusal
+    }
   }
   // O2: Claude's per-dispatch dev-tools registration — a driver-written
   // `--mcp-config` file passed with `--strict-mcp-config`, so that file is the

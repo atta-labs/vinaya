@@ -24,7 +24,7 @@ import {
   type RoundHeadIdentity,
   type RoundStats
 } from '@attalabs/aeg-core'
-import type { AgentVendor, DispatchHandle, UsageLimit } from '../dispatch.js'
+import type { AgentVendor, DispatchHandle, SandboxProbeRefusal, UsageLimit } from '../dispatch.js'
 import { controlStoreRoot } from '../effects.js'
 import { isControlCharacter } from './turn-result.js'
 
@@ -130,10 +130,34 @@ export class DispatchUsageLimit extends Error {
 }
 
 /**
+ * Thrown when the dispatch was refused before the agent started because the
+ * agent's own sandbox could not run the probe command on this host — a
+ * capability refusal, never a transient: nothing on the host changes by
+ * itself, so retrying the round cannot succeed. The loop pauses on it with
+ * `sandbox_refused`, addressed to the Operator, whose packet carries the
+ * probe's own error and the host remedy; it spends no infrastructure retry,
+ * and the watching driver never resumes it by itself.
+ */
+export class DispatchSandboxRefused extends Error {
+  constructor(
+    public readonly refusal: SandboxProbeRefusal,
+    subject: string
+  ) {
+    super(
+      `devReviewLoop: ${subject} was not started — ${refusal.agent}'s sandbox could not run a probe command on this ` +
+        'host, so the dispatch was refused before any session started and no work was lost. Repair the host, then ' +
+        `start the task again. The probe's own error: ${refusal.error}`
+    )
+    this.name = 'DispatchSandboxRefused'
+  }
+}
+
+/**
  * Does this round-ending error spend a unit of the loop's
- * infrastructure-retry budget? Everything does, except a sign-in refusal
- * and a GitHub rate limit (the loop already waited it out in place, or
- * pauses for the reset): that budget bounds how often a task may be resumed past a recoverable
+ * infrastructure-retry budget? Everything does, except a sign-in refusal,
+ * a sandbox capability refusal (its own `sandbox_refused` pause, outside
+ * the automatic-recovery set) and a GitHub rate limit (the loop already
+ * waited it out in place, or pauses for the reset): that budget bounds how often a task may be resumed past a recoverable
  * hiccup with no genuine round in between, and a host with no credentials
  * never produced a round to bound — counting it would exhaust the budget
  * and demand a Principal ruling for a failure a `claude`/`codex`/`gemini`
@@ -142,7 +166,12 @@ export class DispatchUsageLimit extends Error {
  * its bound.
  */
 export function spendsInfrastructureRetry(err: unknown): boolean {
-  return !(err instanceof DispatchSignInRefused) && !(err instanceof DispatchUsageLimit) && !isGitHubRateLimitError(err)
+  return (
+    !(err instanceof DispatchSignInRefused) &&
+    !(err instanceof DispatchUsageLimit) &&
+    !(err instanceof DispatchSandboxRefused) &&
+    !isGitHubRateLimitError(err)
+  )
 }
 
 /** The rate-limit wording GitHub's REST and GraphQL APIs use, primary and secondary — nothing that merely mentions GitHub matches. */
@@ -269,6 +298,10 @@ export async function assertDispatchOrEscalate(
   // Likewise a usage limit: it ends a first dispatch and a resumed one the same way, and the session stays resumable.
   if (handle.failureReason === 'usage-limit' && handle.usageLimit)
     throw new DispatchUsageLimit(handle.usageLimit, subject)
+  // And a sandbox the host cannot run: carried typed from the probe result,
+  // never matched from the refusal's text.
+  if (handle.failureReason === 'refused' && handle.sandboxProbeRefusal)
+    throw new DispatchSandboxRefused(handle.sandboxProbeRefusal, subject)
   if (isResume && previousDispatchSucceededForVendor) {
     const sinceClause = succeededInEarlierRound
       ? 'after succeeding last round'

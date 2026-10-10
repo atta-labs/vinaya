@@ -551,7 +551,11 @@ describe('dispatchRole runs the probe before spawn on Linux', () => {
     const logPath = join(home, '.vinaya', 'runtime', 'unresolved', 'logs', 'unresolved', 'none.ndjson')
     return {
       stderr: child.stderr,
-      result: JSON.parse(readFileSync(resultFile, 'utf8')) as { failureReason?: string; exitCode: number | null },
+      result: JSON.parse(readFileSync(resultFile, 'utf8')) as {
+        failureReason?: string
+        exitCode: number | null
+        sandboxProbeRefusal?: { agent: string; error: string }
+      },
       calls: existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n') : [],
       log: (existsSync(logPath) ? readFileSync(logPath, 'utf8').trim().split('\n') : [])
         .filter(Boolean)
@@ -574,6 +578,9 @@ describe('dispatchRole runs the probe before spawn on Linux', () => {
     expect(run.calls[0]).toContain('--settings')
     expect(run.result.failureReason).toBe('refused')
     expect(run.result.exitCode).toBeNull()
+    // Typed beside the shared reason, so the loop classifies it without reading the line below.
+    expect(run.result.sandboxProbeRefusal?.agent).toBe('claude')
+    expect(run.result.sandboxProbeRefusal?.error).toContain(SECCOMP_ERROR)
     expect(run.stderr).toContain("refused — claude's sandbox could not run a probe command on this host")
     expect(run.stderr).toContain(SECCOMP_ERROR)
     const probeLine = run.log.find((l) => l.kind === 'operation' && l.operation === 'linux-sandbox-probe')
@@ -588,6 +595,7 @@ describe('dispatchRole runs the probe before spawn on Linux', () => {
     expect(settingsOf(run.calls[0] as string).sandbox.network.allowAllUnixSockets).toBeUndefined()
     expect(run.stderr).not.toContain('Unix-socket filter is off')
     expect(run.result.failureReason).toBeUndefined()
+    expect(run.result.sandboxProbeRefusal).toBeUndefined()
     expect(run.log.find((l) => l.event === 'dispatched')).toBeDefined()
     expect(run.log.find((l) => l.operation === 'linux-sandbox-probe')).toBeUndefined()
   }, 40_000)

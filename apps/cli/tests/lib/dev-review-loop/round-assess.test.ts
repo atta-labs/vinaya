@@ -13,6 +13,7 @@ import {
   assertDispatchOrEscalate,
   DeveloperDispatchHistory,
   DevReviewLoopResumeError,
+  DispatchSandboxRefused,
   DispatchSignInRefused,
   isGitHubRateLimitError,
   isRateLimitPauseDetail,
@@ -61,6 +62,29 @@ describe('assertDispatchOrEscalate — resume-failure crash message (ruling 986-
     await expect(
       assertDispatchOrEscalate(handle, 'claude', true, true, 'the developer', false)
     ).resolves.toBeUndefined()
+  })
+})
+
+describe('assertDispatchOrEscalate — a sandbox capability refusal is typed from the probe result', () => {
+  const refusal = { agent: 'claude' as const, error: 'apply-seccomp: Permission denied' }
+
+  it('throws DispatchSandboxRefused for a refused handle carrying the probe result, on a fresh round and a resumed one alike', async () => {
+    for (const isResume of [false, true]) {
+      const handle: DispatchHandle = { ...failedHandle('refused'), sandboxProbeRefusal: refusal }
+      const promise = assertDispatchOrEscalate(handle, 'claude', isResume, true, 'the developer', true)
+      await expect(promise).rejects.toBeInstanceOf(DispatchSandboxRefused)
+      await promise.catch((err: Error) => expect(err.message).toContain(refusal.error))
+    }
+  })
+
+  it('a refused handle with no probe result keeps the generic dispatch failure', async () => {
+    const promise = assertDispatchOrEscalate(failedHandle('refused'), 'claude', false, false, 'the developer')
+    await expect(promise).rejects.not.toBeInstanceOf(DispatchSandboxRefused)
+    await promise.catch((err: Error) => expect(err.message).toContain('dispatching claude failed (refused)'))
+  })
+
+  it('spends no infrastructure retry', () => {
+    expect(spendsInfrastructureRetry(new DispatchSandboxRefused(refusal, 'the developer'))).toBe(false)
   })
 })
 
