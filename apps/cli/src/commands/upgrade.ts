@@ -969,5 +969,5 @@ export async function upgradeCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  upgrade: { date: '2026-09-08', callsToday: 22, retiresVia: 'sharedCommandShell' }
+  upgrade: { date: '2026-09-08', callsToday: 23, retiresVia: 'sharedCommandShell' }
 }
