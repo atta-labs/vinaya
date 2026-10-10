@@ -519,6 +519,7 @@ describe('renderReviewerDispatchPrompt — carries the role doctrine as a fact',
     expect(reviewer).not.toContain('**BLOCKER** — blocks merge')
     expect(reviewer).not.toContain('git diff origin/main...HEAD --stat')
     expect(reviewer).not.toContain('The order is: **code-reviewer pass')
+    expect(reviewer).not.toContain('write anything to disk')
     expect(security).not.toContain('Any CRITICAL → FAIL')
     expect(security).not.toContain('writes exactly `SECRETS: none found')
     expect(security).not.toContain('code-reviewer pass → **security pass')
