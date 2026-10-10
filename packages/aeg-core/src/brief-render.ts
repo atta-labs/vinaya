@@ -351,7 +351,12 @@ export type BriefFacts = {
 export type LocalGateCommands = {
   /** e.g. `bun packages/aeg-core/bin/verify-dispatch.ts`, or `null`. */
   dispatchReadiness: string | null
-  /** e.g. `bun packages/aeg-core/bin/verify-docs.ts`, or `null`. */
+  /**
+   * e.g. `bun packages/aeg-core/bin/verify-docs.ts`, or `null`. No longer
+   * rendered: the documentation gate is the controller's (`run_checks`, CI),
+   * so §12 names no hand-run pre-open command. Still a fact the caller
+   * states, so the caller's own shape is unchanged.
+   */
   docCoverage: string | null
 }
 
@@ -459,8 +464,8 @@ function renderSection2(facts: BriefFacts): string {
   const branch = developerBranchForFacts(facts)
   const identityLine =
     facts.trancheSlug !== null
-      ? `- **Tranche:** \`${facts.trancheSlug}\`, task ${facts.taskId}, Issue #${facts.issue}. Branch \`${branch}\`. \`Depends-on: ${depends}\`, \`Conflicts-with: ${conflicts}\`. Confirm dispatch readiness at your own Step 0, with the command §5 names.`
-      : `- **Backlog Issue:** #${facts.issue}, no tranche. Branch \`${branch}\`. \`Depends-on: ${depends}\`, \`Conflicts-with: ${conflicts}\`. Confirm dispatch readiness at your own Step 0, with the command §5 names.`
+      ? `- **Tranche:** \`${facts.trancheSlug}\`, task ${facts.taskId}, Issue #${facts.issue}. Branch \`${branch}\`. \`Depends-on: ${depends}\`, \`Conflicts-with: ${conflicts}\`.`
+      : `- **Backlog Issue:** #${facts.issue}, no tranche. Branch \`${branch}\`. \`Depends-on: ${depends}\`, \`Conflicts-with: ${conflicts}\`.`
   const lines = [
     '## 2. Context — read before doing anything',
     '',
@@ -717,6 +722,20 @@ const RENDER_FORGE_WRITE_COMMAND_RE =
   /\bgh\s+(?:pr|issue)\s+(?:create|merge|close|comment|edit|review)\b|\bgit\s+push\b|\bvinaya\s+pr\s+(?:create|report\s+--write)\b/i
 
 /**
+ * The one publication rule the brief states, in §6's heading and in full in
+ * §12. A publication is one `publish_changes` call: a single commit of the
+ * whole worktree plus the push that runs the affected suite
+ * (`developer-publication.ts`, `apps/cli`) — so publishing per Part would run
+ * that suite once per Part, where §6's own Part lines already speak of one push.
+ * The driver's own re-ask prompts (no commit yet, pushed with no pull request,
+ * a refused push, a merge conflict) each ask for exactly the publication this
+ * rule already allows.
+ */
+const PUBLICATION_RULE_HEADING = 'publish once with `publish_changes` when every Part is done, then `open_pull_request`'
+const PUBLICATION_RULE =
+  '- Publish once, with `publish_changes`, when every Part is done; then open the pull request with `open_pull_request`. Publish again only to answer review findings or a red gate — a refused hook, a failing check, a merge conflict.'
+
+/**
  * §6 — one numbered Part per `IssuePart` (facts.parts), citation
  * reconstructed verbatim per `renderPartCitation`. Files stay grouped by
  * package exactly as before this task; a Part is zipped by position to a
@@ -778,11 +797,7 @@ function renderSection6(facts: BriefFacts): string {
     return lines.join('\n')
   })
 
-  return [
-    '## 6. Numbered parts — call `publish_changes` after EACH part; `open_pull_request` once the first part is published',
-    '',
-    ...rendered
-  ].join('\n')
+  return [`## 6. Numbered parts — ${PUBLICATION_RULE_HEADING}`, '', ...rendered].join('\n')
 }
 
 function renderSection7(section7Pointers: string[]): string {
@@ -795,19 +810,6 @@ function renderSection7(section7Pointers: string[]): string {
     )
   }
   return lines.join('\n')
-}
-
-/**
- * The pre-open documentation gate, as one command the reader can run — cited
- * by both §8 and §12, so it is written once. `check doc-coverage` is the
- * portable form; the authoring repository's fuller `--pr` derivation is
- * appended only when `facts` says that repository ships one.
- */
-function docGateCommand(facts: BriefFacts): string {
-  const portable = `\`PR_BODY="$(cat <body-file>)" ${facts.cliInvocation} check doc-coverage\` green`
-  return facts.localGateCommands.docCoverage !== null
-    ? `${portable} (this repository also ships \`PR_BODY="$(cat <body-file>)" ${facts.localGateCommands.docCoverage} --pr\`, which additionally evaluates the spec-status and code-requires-docs contracts)`
-    : portable
 }
 
 function renderSection8(facts: BriefFacts): string {
@@ -914,9 +916,10 @@ function renderSection12(facts: BriefFacts): string {
     '',
     `- PR title (exact): \`${prTitle}\``,
     '- Open the PR only via the `open_pull_request` tool (title and body); publish your commits with `publish_changes` and update the body with `update_pull_request_body`/`refresh_evidence` — you hold no `gh`/`git push` credential.',
-    `- PR body = the Developer's PR report (print it with \`${facts.cliInvocation} doctrine --template pr-report --print\`), with this entire brief pasted as the reference copy inside a collapsed \`<details>\` block, and \`Closes #${facts.issue}\` at the top of the header block.`,
-    `- Pre-open gate: tier checklist satisfied, and ${docGateCommand(facts)}.`,
-    "- Include `git diff origin/main...HEAD --stat` as context only; Surface is judged by the driver's `surface-scope` check, never by this hand-run diff. Include a token report (if unavailable, state so).",
+    PUBLICATION_RULE,
+    `- PR body = the Developer's PR report (print it with \`${facts.cliInvocation} doctrine --template pr-report --print\`), with \`Closes #${facts.issue}\` at the top of the header block. This brief stays frozen on the task Issue and never rides in the body.`,
+    "- Pre-open: tier checklist satisfied. The documentation gate is the controller's — `run_checks` and CI run it.",
+    "- Include `git diff origin/main...HEAD --stat` as context only; Surface is judged by the driver's `surface-scope` check, never by this hand-run diff. Token use needs no report — the Vinaya log records it.",
     '- Then STOP. Review and Verification are separate invocations.'
   ].join('\n')
 }

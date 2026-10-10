@@ -809,7 +809,7 @@ describe('renderBrief', () => {
       // dev-tools, not raw `pr create`/`pr report --write` — the agent holds
       // no `gh`/`git push` credential.
       expect(result.brief).toContain(
-        '## 6. Numbered parts — call `publish_changes` after EACH part; `open_pull_request` once the first part is published'
+        '## 6. Numbered parts — publish once with `publish_changes` when every Part is done, then `open_pull_request`'
       )
       expect(result.brief).toContain('Open the PR only via the `open_pull_request` tool')
       expect(result.brief).not.toContain('also ships')
@@ -825,14 +825,15 @@ describe('renderBrief', () => {
       expect(result.brief).toContain("the controller's `run_checks` result, hooks, and CI as gate evidence")
     })
 
-    it('§2 asks for a confirmation §5 can actually produce (round 3, F2)', () => {
+    it('§2 asks for no readiness confirmation of its own — §5 says the driver already ran it (round 3, F2)', () => {
       const result = renderBrief(baseFacts(ADOPTER), TEMPLATE)
       expect(result.ok).toBe(true)
       if (!result.ok) return
       // `check dispatch-readiness` prints `✓ dispatch-readiness: pass`, never
       // `READY TO DISPATCH` — which only this repository's own unabridged
       // derivation emits, and an adopter's §5 does not name it.
-      expect(result.brief).toContain('Confirm dispatch readiness at your own Step 0, with the command §5 names.')
+      expect(result.brief).not.toContain('Confirm dispatch readiness')
+      expect(result.brief).toContain('`Depends-on: —`, `Conflicts-with: —`.\n')
       expect(result.brief).not.toContain('READY TO DISPATCH')
     })
 
@@ -1033,5 +1034,78 @@ describe('renderBrief — the `## Premises` section', () => {
     )
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.brief).toMatch(/Checked against the code when this task Issue was cut/)
+  })
+})
+
+// The render, the brief template and the PR report template once told the
+// Developer things the controller's own tools refuse or already do. One absence list, held against all three texts, so
+// none of them can carry a retired instruction back alone.
+describe('the render and both templates carry no retired instruction', () => {
+  const PR_REPORT_TEMPLATE = readFileSync(
+    join(import.meta.dirname, '../../../aeg-root/templates/pr-report-template.md'),
+    'utf8'
+  )
+
+  // Each entry, and the tool or gate that makes it wrong.
+  const RETIRED: readonly string[] = [
+    // The brief never rides in the PR body — it stays frozen on the Issue.
+    'pasted as the reference copy',
+    'a reference copy rides along',
+    // Token use is the Vinaya log's `usage` event, never the body's.
+    'Include a token report',
+    // The driver runs dispatch readiness before it dispatches (§5).
+    'Confirm dispatch readiness at your own Step 0',
+    // One publication when the Parts are done, not one per Part.
+    'after EACH part',
+    // The documentation gate is the controller's: `run_checks` and CI.
+    'Pre-open gate: tier checklist satisfied, and',
+    'check doc-coverage` green',
+    // The report rules reject an agent checkbox; §9 is a fenced command list.
+    '- [ ] **[agent]**',
+    // The body changes after open through `update_pull_request_body`.
+    'This body is written once, at open.',
+    // `refresh_evidence` regenerates the Evidence block; no hand-run report.
+    'Run `vinaya pr report --write <this-body-file>`',
+    // No check of this name runs; `pr-premise-reassert` is the live one.
+    '`premise-recheck`',
+    // `pr-premise-own-additions` refuses a pin only the PR's own diff adds.
+    'Put a fresh, post-fix, currently-true assertion'
+  ]
+
+  const PUBLICATION_RULE =
+    'Publish once, with `publish_changes`, when every Part is done; then open the pull request with `open_pull_request`. Publish again only to answer review findings or a red gate'
+
+  function renderedBriefs(): Array<[string, string]> {
+    const out: Array<[string, string]> = []
+    for (const [label, overrides] of [
+      ['vendored', {}],
+      [
+        'adopter',
+        {
+          cliInvocation: 'npx --yes @attalabs/vinaya@9.9.9',
+          localGateCommands: { dispatchReadiness: null, docCoverage: null }
+        }
+      ],
+      ['backlog', { trancheSlug: null }]
+    ] as const) {
+      const result = renderBrief(baseFacts(overrides), TEMPLATE)
+      if (!result.ok) throw new Error(`fixture brief (${label}) did not render: ${result.missing.join(', ')}`)
+      out.push([`rendered brief (${label})`, result.brief])
+    }
+    return out
+  }
+
+  it.each([...renderedBriefs(), ['brief template', TEMPLATE], ['PR report template', PR_REPORT_TEMPLATE]])(
+    '%s names none of the retired instructions',
+    (_label, text) => {
+      expect(RETIRED.filter((phrase) => text.includes(phrase))).toEqual([])
+    }
+  )
+
+  it.each([...renderedBriefs(), ['brief template', TEMPLATE]])('%s states the one publication rule', (_label, text) => {
+    expect(text).toContain(PUBLICATION_RULE)
+    expect(text).toContain(
+      '## 6. Numbered parts — publish once with `publish_changes` when every Part is done, then `open_pull_request`'
+    )
   })
 })
