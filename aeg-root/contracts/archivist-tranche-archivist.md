@@ -45,7 +45,7 @@ The failure mode this prevents: a Tranche Archivist who begins close-out before 
 
 ## The hand-off carrier
 
-The **set of merged PRs**, each bearing a per-task provenance block comment, plus the **tranche file** at `aeg-root/tranches/<name>.md` which provides the task topology the Tranche Archivist checks against. Every task in the topology must have a merged PR with a provenance block; the absence of either is a gap the Tranche Archivist must flag before proceeding.
+The **set of merged PRs**, each bearing a per-task provenance block comment, plus the **tranche's labeled task Issues** on its Milestone, which give the task list the Tranche Archivist checks against. Every task in that list must have a merged PR with a provenance block; the absence of either is a gap the Tranche Archivist must flag before proceeding.
 
 ---
 
@@ -75,7 +75,7 @@ Every output the per-task Archivist produces (left) has exactly one obligation f
 - Verify every task PR has a provenance block comment before starting. If any is missing, stop and flag — do not proceed with partial close-out. Partial close-out is worse than no close-out: it creates a plausible-looking but incomplete record.
 - Read the pinned lessons Issue's comments since the tranche start date before assembling the retrospective. Carry-forward lessons that appear there but are not reflected in the retrospective are a gap.
 - List open follow-up Issues in the close-out report as DANGLING items — the follow-up Issue itself is the durable record, open until resolved. If a `STALE-SPEC` finding has no follow-up Issue (the per-task Archivist missed it), flag it as DANGLING and open the Issue on behalf of the Principal. (`now.md` and the pinned state Issue are both retired.)
-- Do not assemble the tranche retrospective from memory or inference — assemble it from merged PR summaries, the pinned lessons Issue's comments, and the tranche topology file. The retrospective is a structured projection of facts.
+- Do not assemble the tranche retrospective from memory or inference — assemble it from merged PR summaries, the pinned lessons Issue's comments, and the tranche's labeled Issues. The retrospective is a structured projection of facts.
 
 ---
 

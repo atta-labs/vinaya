@@ -30,9 +30,11 @@
  * `reader-resolvable-prose` — one config key, two checks reading the same
  * doctrine-root fact, never two separate knobs for the same thing.
  *
- * Report-only, same rollout precedent as `reader-resolvable-prose`
- * (`aeg-root/enforcement.md`'s G1/G2 period): findings print as `warning`
- * severity, exit code stays 0 for that class. Orthogonal exception:
+ * Blocking: the doctrine tree carries zero findings, so a finding prints as
+ * `error` severity and the check exits `1`, failing `check --all`. It shipped
+ * report-only under the same rollout precedent as `reader-resolvable-prose`
+ * (`aeg-root/enforcement.md`'s G1/G2 period) and turned blocking once its
+ * backlog was cleared. Orthogonal exception:
  * a genuinely unresolvable doctrine root is not a backlog finding —
  * `main()` exits non-`0`/non-`1` for that case, so it reads as a distinct
  * `status: 'error'`, never a clean pass.
@@ -87,7 +89,7 @@ function isSweptFile(name: string): boolean {
   return /\.(md|ts|tsx|yml)$/.test(name) || name === 'doc-owners' || name === 'packages'
 }
 
-/** Recursively collects repo-relative paths under `dir` whose name passes `isSweptFile`. Missing/unreadable `dir` degrades to `[]`, never throws — this check's contract is report-only. */
+/** Recursively collects repo-relative paths under `dir` whose name passes `isSweptFile`. Missing/unreadable `dir` degrades to `[]`, never throws — an unreadable subtree is skipped, not reported. */
 function collect(dir: string, out: string[] = []): string[] {
   let entries: string[]
   try {
@@ -119,9 +121,9 @@ function readAll(paths: string[]): VocabSourceFile[] {
 
 function main(): void {
   // Genuinely unresolvable — see `check-reader-resolvable-prose.ts`'s
-  // identical guard for the full reasoning. `severity: 'error'` and a
-  // non-{0,1} exit code (never `'warning'`, which the reportable-findings
-  // loop below uses) make the runner mark this run `status: 'error'`, never
+  // identical guard for the full reasoning. A non-{0,1} exit code (never
+  // the `1` a reportable finding below exits with) makes the runner mark
+  // this run `status: 'error'`, never
   // `'pass'` with zero findings — structurally indistinguishable, before
   // this fix, from "swept the real tree and found nothing".
   if (DOCTRINE_ROOT === null) {
@@ -178,19 +180,18 @@ function main(): void {
     emitCheckError({
       schema: CHECK_SCHEMA_VERSION,
       check: CHECK_NAME,
-      severity: 'warning',
+      severity: 'error',
       message: `${finding.file}:${finding.line}: ${finding.message}`,
       file: finding.file,
       line: finding.line,
       agent_recovery_prompt:
         'This doctrine page claims a mechanism AEG itself retired is still live (a decision-log entry, the lock, ' +
-        'the `team-leader` role, …). Rewrite it to describe the CURRENT mechanism, or remove the claim — never ' +
+        'the `team-leader` role, the tranche topology file, …). Rewrite it to describe the CURRENT mechanism, or remove the claim — never ' +
         'describe a retired concept as something a reader can still do today.'
     })
   }
 
-  // Report-only, same precedent as reader-resolvable-prose.
-  process.exit(0)
+  process.exit(reportable.length > 0 ? 1 : 0)
 }
 
 main()

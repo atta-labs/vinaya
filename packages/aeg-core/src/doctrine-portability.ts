@@ -83,7 +83,12 @@ const STATIC_PORTABLE_PREFIXES: readonly string[] = [
   // genuinely has — adopter-owned by construction, the same class as
   // `.github/`/`.vinaya/`/`.claude/` above.
   '.git/',
-  '.husky/'
+  '.husky/',
+  // The per-role entry points `vinaya init` writes into every adopter — the
+  // shared agent-skills directory and a second host's command directory —
+  // adopter-owned by construction, the same class as `.claude/` above.
+  '.agents/',
+  '.gemini/'
 ]
 
 /**

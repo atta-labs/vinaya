@@ -25,6 +25,7 @@ Role is determined by **how you were invoked** — the *kind* of surface and the
 | Invoked specifically to **review an open PR** (fresh context) | **Reviewer — code** | `roles/reviewer.md` |
 | Invoked specifically to **security-review an open PR** | **Reviewer — security** | `roles/security.md` |
 | Executing an **open PR's runtime Test Plan before merge** (the `[agent]` half is your Developer session; the Principal runs the `[principal]` half) | **Developer — Verification phase** (not a separate role) | `roles/developer/reference.md` § Verification |
+| Running **one already-planned task** through the controller with the task tools (start, status, red pull request, escalation, resume, cancel) | **Operator** | `roles/operator.md` |
 | **Closing out a merged PR** (per-task close-out pass, by hand or automation) | **Archivist** | `roles/archivist.md` |
 | **Closing out a finished tranche** (the Principal has declared it done) | **Tranche Archivist** | `roles/tranche-archivist.md` |
 | The human directing the work | **Principal** | `roles/principal.md` |
@@ -41,7 +42,8 @@ Always also skim `roles/principal.md` to know what sits in the Principal's seat 
 - **Developer** — executes ONE dispatched brief. **Entry gate:** read the brief fully; confirm dispatch gates against the forge (`depends-on` merged, no `conflicts-with` sibling PR open); **Step 0 = create the worktree** (`task/<tranche>/<n>`); then pre-flight. Opens the PR and stops — does not merge, does not review itself, never writes status.
 - **Reviewer (code)** — invoked fresh on an open PR. **Entry gate:** an open PR whose task Issue carries the frozen `aeg:brief:v1` comment, else refuse. Reads the diff + the brief (from that comment) + (advisory) the project spec; emits a VERDICT; read + review-comment authority only; does not edit code, does not merge.
 - **Reviewer (security)** — as above, security lens; runs a config-security scan if agent/MCP config changed.
-- **Archivist** — **entry gate:** the PR is merged, else refuse. Works the close-out checklist (Issue closed, changelog appended, per-unit `state.md` updated, provenance block posted, orphan branch/worktree flagged). Writes **no** task status — the merge *is* the status. (`now.md` is retired.)
+- **Operator** — runs one already-planned task through the controller with the task tools the server grants it: starts it, reads its grounded status, reads why its pull request is red, presents the persisted escalation, and requests resume or cancel. Process authority only — never plans, codes, rules, approves, or merges.
+- **Archivist** — **entry gate:** the PR is merged, else refuse. Works the close-out checklist (Issue closed, docs coherent with what merged, any non-derivable fact recorded as an ordinary open Issue, provenance block posted, orphan branch/worktree flagged). Writes **no** task status and keeps no state document — the merge *is* the status.
 - **Verification** — a **phase**, not a role: nobody is dispatched as a Verifier. It runs on an open PR after the code-review and security passes and before merge. **Entry gate:** an open PR whose brief carries a tagged Test Plan; refuse if there is no open PR, no brief, no Test Plan section, or the plan is declared `unit-tests-only` while the diff touches a runtime surface. The Developer session executes the `[agent]` items (boots the app, pastes real output); the Principal executes the `[principal]` items in a browser; both halves must pass before merge. Writes no status. Documented in `roles/developer/reference.md` § Verification, because the Developer is the actor that runs its agent half.
 - **Tranche Archivist** — closes out a finished tranche (Phase 13), on explicit Principal declaration only. **Entry gate:** every task terminal (merged / dropped / moved out), the Principal has declared the tranche done, and the Milestone is still open (not already archived), else refuse. Assembles the retrospective, closes the Milestone, surfaces pending Type 1 ratifications, posts the tranche provenance block. Forge-read only; ratifies nothing; writes no status. Distinct from the per-task Archivist (`roles/archivist.md`).
 
@@ -50,7 +52,8 @@ Always also skim `roles/principal.md` to know what sits in the Principal's seat 
 - Only the **Principal** ratifies Type 1 (irreversible) decisions. The **Planner** (either act) may ratify Type 2 (reversible) — ACTIVE immediately.
 - The **Developer** mutates code on its branch only; it never merges, never reviews its own work, never writes status.
 - **Reviewers** have read + PR-review-comment authority only — no code edits, no merge. Review is always a **separate, fresh-context** invocation from the Developer.
-- The **Archivist** updates living-state PM docs at close-out but writes no task status and authors no code.
+- The **Archivist** posts the provenance block and records non-derivable facts as ordinary Issues at close-out, but writes no task status, keeps no state document, and authors no code.
+- The **Operator** decides when a planned task runs, pauses, resumes, or stops — never what it contains; it calls only the task tools in its grant.
 - **Escalation severity** routes the ask: `execution` and `strategy` → Planner (how to run the task vs which design path to take), `product` → Principal. Labels `needs:execution-input` / `needs:strategy-input` / `needs:principal-input`.
 
 ## 4. Reminder

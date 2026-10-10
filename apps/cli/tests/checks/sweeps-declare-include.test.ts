@@ -6,8 +6,8 @@ import { coreCheckRegistry } from '../../src/checks/registry'
 /**
  * Pins task 12's (#387) cost-savings claim: every `scope: 'full'` registry
  * entry whose bin reads `<doctrineRoot>` declares an `include` — the
- * report-only sweeps (`reader-resolvable-prose`, `retired-vocabulary`,
- * `doctrine-portability`, `workspace-escape`) plus the blocking
+ * report-only sweeps (`reader-resolvable-prose`, `doctrine-portability`,
+ * `workspace-escape`) plus the blocking `retired-vocabulary` and
  * `doctrine-no-procedures`. Reads each bin's SOURCE directly (same
  * discipline `registry-env.test.ts`'s own `readCode` uses), never
  * `spec.run` — that path resolves to a bundled `dist/` file when a build

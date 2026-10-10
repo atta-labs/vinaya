@@ -153,7 +153,10 @@ for (const check of [
         execFileSync('git', ['commit', '-q', '-m', 'Docs: add a note with a real finding'], { cwd: root })
 
         const { exitCode, stderr } = run(root)
-        expect(exitCode).toBe(0) // report-only — never fails CI
+        // `retired-vocabulary` blocks — a reportable finding exits `1` and
+        // fails `check --all`; `reader-resolvable-prose`'s doctrine classes
+        // stay report-only.
+        expect(exitCode).toBe(check.name === 'retired-vocabulary' ? 1 : 0)
         expect(stderr).toContain('docs/note.md')
         for (const fragment of check.findingContains) expect(stderr).toContain(fragment)
       } finally {
@@ -348,8 +351,11 @@ describe('doctrine-root checkout-location independence (Issue #314)', () => {
         const plain = run(plainRoot, checkName)
         const nested = run(nestedRoot, checkName)
 
-        expect(plain.exitCode).toBe(0)
-        expect(nested.exitCode).toBe(0)
+        // Both fixtures carry the same one real finding: `retired-vocabulary`
+        // blocks on it, `reader-resolvable-prose` reports it.
+        const expectedExit = checkName === 'retired-vocabulary' ? 1 : 0
+        expect(plain.exitCode).toBe(expectedExit)
+        expect(nested.exitCode).toBe(expectedExit)
         // Each run actually resolved INTO its own fixture, not (with the fix
         // reverted) both silently escaping to this dev repo's own real
         // `aeg-root/` — see `doctrineRootPath`'s doc comment for why a

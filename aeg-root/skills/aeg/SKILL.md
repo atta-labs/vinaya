@@ -1,7 +1,7 @@
 ---
 name: aeg
 sidebar_title: Operating Model (aeg)
-description: The front door to Agentic Execution Governance (AEG) — the operating model every agent works inside. Load at the start of ANY session in this repo, before doing anything substantive, regardless of role. Covers what AEG is, the four truth domains, forge-derived status, the tranche topology file, where the plan vs the flow vs governance live, the dispatch gates, the brief, the anti-regression rules, the orient-from-root layout (`aeg-root/` model + `aeg-project/` state), and the model-vs-product distinction. Ends by routing to the aeg-roles skill and the reading order. Does NOT cover role specifics (see aeg-roles + roles/*.md) or the mechanics of dispatching one task's brief (see `roles/planner/reference.md` § The dispatch act).
+description: The front door to Agentic Execution Governance (AEG) — the operating model every agent works inside. Load at the start of ANY session in this repo, before doing anything substantive, regardless of role. Covers what AEG is, the four truth domains, forge-derived status, the plan as a Milestone plus labeled Issues, where the plan vs the flow vs governance live, the dispatch gates, the brief, the anti-regression rules, the doctrine tree at `aeg-root/` with all living state on the forge, and the model-vs-product distinction. Ends by routing to your role's entry point and the reading order. Does NOT cover role specifics (see aeg-roles + roles/*.md) or the mechanics of dispatching one task's brief (see `roles/planner/reference.md` § The dispatch act).
 ---
 
 <!-- CANONICAL SOURCE. This file is the canonical home of the `aeg` skill, inside the AEG unit (aeg-root/skills/). provides for an agent-specific GENERATED VIEW under `.claude/skills/` (or another agent's equivalent), rebuilt from this file rather than authored by hand — but no such generator exists yet, and this repo has no generated view of this skill: agents are pointed at aeg-root/ directly (this repo's root agent-context file). Edit THIS file; if a generator is ever built, regenerate rather than hand-editing its output. -->
@@ -34,7 +34,7 @@ AEG runs on **the Repo + the Git forge (GitHub/GitLab) + plain git worktrees**, 
    - PR open → in-review · review = CHANGES_REQUESTED → changes-requested
    - PR merged → merged · `aeg:blocked` label → blocked
    Labels are only `tier:*`, `aeg:blocked`, `needs:*-input` — never status.
-2. **The Repo** = code, specs, skills, PM docs, role docs, the thin tranche topology files, decisions. The source of truth for **plan and governance** (not live status).
+2. **The Repo** = code, specs, and the doctrine tree (`aeg-root/`: role docs, contracts, the models, skills), plus the per-role entry points `vinaya init` installs (§11). The source of truth for **governance** — not for the plan, which is a Milestone plus labeled Issues on the forge (§5), and not for live status.
 3. **The task Issue's `aeg:brief:v1` comment** = the **just-in-time brief** — a task's full execution context, rendered mechanically and posted once, frozen, never hand-written. The PR body carries only the Developer's report (optionally a reference copy of the brief in a collapsed `<details>` block).
 4. **Local filesystem** = orchestration-tool runtime, worktrees, dev servers. Ephemeral, never canonical.
 
@@ -43,15 +43,16 @@ Conversation logs / thinking are **not** artifacts — never cite them as author
 ## 4. Where the plan / the flow / governance live
 
 - **The plan (backlogs)** → a unit's `specs/`: `specs/<unit>-backlog.md` (per unit / per project) and a repo-level backlog in the root `specs/`. **Out of the flow.** The Planner *may* read it to compose a tranche but the flow never operates on it.
-- **The flow + governance (the model)** → the **root** `aeg-root/`: the constitution, the role docs, the skills, the tranche files. Exists **once**, at the repo root only.
-- **The living state** → forge-native, never the model: active/blocked/next is derived from Issue/branch/PR state, and completed-work history, lessons, per-project operational state, and ratification items live on the forge.
+- **The plan for a batch of work (a tranche)** → the forge: a Milestone plus the Issues carrying its `tranche:<slug>` label, each Issue's body declaring its own `Depends-on` / `Conflicts-with` edges. No file in the repo holds it.
+- **The flow + governance (the model)** → the **root** `aeg-root/`: the constitution, the role docs, the contracts, the models, the skills. Exists **once**, at the repo root only.
+- **The living state** → forge-native, never the model and never a file: active/blocked/next is derived from Issue/branch/PR state, and completed-work history, lessons, per-project operational state, and ratification items live on the forge.
 - **`roadmap.md` is retired**. Never read or write it.
 
-A unit's `aeg-project/` carries only that unit's *living state* — never a copy of the model. The AEG skills are part of the model and live at `aeg-root/skills/` (canonical); the `.claude/skills/` copies are a generated view.
+The AEG skills are part of the model and live at `aeg-root/skills/` (canonical).
 
-## 5. The tranche — AEG's top-level artifact
+## 5. The tranche — a Milestone plus labeled Issues
 
-A tranche (`aeg-root/tranches/<name>.md`) is a **thin topology file**: task→Issue map, `depends-on` / `conflicts-with` edges, grouping. **No status, no PR numbers, no dates, no priority, no estimates.** It is the active slice of work the Planner pulled from a backlog. The link from backlog → tranche is a *human* (the Planner), not a file. (Full model: `aeg-root/tranche-model.md`.)
+A tranche is **a Milestone plus the Issues that carry its tranche label**: one Issue per task, each declaring its own `depends-on` / `conflicts-with` edges. **No status, no PR numbers, no dates, no priority, no estimates** on any of them. It is the active slice of work the Planner pulled from a backlog. The link from backlog → tranche is a *human* (the Planner), not a file. (Full model: `aeg-root/tranche-model.md`.)
 
 ## 6. Conflicts and the two dispatch gates
 
@@ -65,7 +66,7 @@ The brief is the task's full execution context: **rendered mechanically, never h
 
 ## 8. Roles (one line each — load the role doc for detail)
 
-Principal → Planner → Developer → Reviewer (code + security) → merge, plus the non-conversational Archivist. The Planner turns intent plus a backlog slice into a tranche (its plan act) and later checks a task's gates and dispatches its rendered brief (its dispatch act) — two acts, one role. **Do not operate from this list — load your role doc.** The **aeg-roles** skill routes you to the right one.
+Principal → Planner → Developer → Reviewer (code + security) → merge, plus the non-conversational Archivist. The Planner has two acts, one role: its **plan act** turns intent plus a backlog slice into a tranche — it cuts the Milestone's Issues — and its **dispatch act** checks one task's gates and posts its rendered brief. The **Operator** runs one already-planned task through the controller with its task tools — start it, read its status, read why its pull request is red, present an escalation, request resume or cancel — and never plans, codes, rules, or merges. **Do not operate from this list — load your role doc.** The **aeg-roles** skill routes you to the right one.
 
 ## 9. Tiers, decisions, ratification (the governance layer)
 
@@ -77,7 +78,7 @@ Principal → Planner → Developer → Reviewer (code + security) → merge, pl
 ## 10. The anti-regression rules — never violate
 
 - ❌ Never write task status anywhere (file, Issue field, label) — it is derived from the forge.
-- ❌ Never add execution metadata (status, PR #, dates) to the tranche topology file — topology only.
+- ❌ Never add execution metadata (status, PR #, dates) to a task Issue — its body holds the plan only.
 - ❌ Never hand-write the brief into the Issue body — it is rendered mechanically and posted frozen as the Issue's own `aeg:brief:v1` comment, never in the PR body.
 - ❌ Never put planning metadata (priority, estimates, points) on an Issue — that's the roadmap, outside AEG.
 - ❌ Never build a dynamic conflict scanner — declare conservatively and serialize.
@@ -87,7 +88,7 @@ Principal → Planner → Developer → Reviewer (code + security) → merge, pl
 
 ## 11. What to do next (the reading order)
 
-After this skill, load in order: **`aeg-roles`** (routes you to your role doc) → your **`aeg-root/roles/<role>.md`** → the altitude you're working at — **`aeg-root/milestone-model.md`** (declaring or reading a goal), **`aeg-root/tranche-model.md`** (planning or executing across a batch), and/or **`aeg-root/task-model.md`** (executing one task) — → the session-start forge queries below. When anything disagrees, `state-machine.md` wins.
+After this skill, load in order: **`aeg-roles`** (routes you to your role) → your role's doctrine, through the entry point your agent reads: a skill per role under `.agents/skills/vinaya-<role>/` for an agent that reads the shared skills directory, or the one `/vinaya <role>` command under `.claude/commands/` or `.gemini/commands/` for an agent that reads a per-host command directory — each prints the same `aeg-root/roles/<role>.md` → the altitude you're working at — **`aeg-root/milestone-model.md`** (declaring or reading a goal), **`aeg-root/tranche-model.md`** (planning or executing across a batch), and/or **`aeg-root/task-model.md`** (executing one task) — → the session-start forge queries below. When anything disagrees, `state-machine.md` wins.
 
 ## 12. Session-start forge queries — deriving current state
 
