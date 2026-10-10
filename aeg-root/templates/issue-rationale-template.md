@@ -3,67 +3,69 @@ sidebar_title: "Template: Issue rationale"
 ---
 # Template — Issue rationale (the Planner's eight fields)
 
-**Copy the block below the divider into the task Issue's body and replace every `[…]` placeholder with real content.** This is the rationale grammar that the ring-0 creation gate (`vinaya issue create`/`vinaya issue edit`) and `vinaya check coherence`'s R1 check parse: a `## Objectives` section above all eight producer fields of the `aeg-root/contracts/planner-developer.md` contract, in bold-inline form (`**<Field>** — …`; the `### <Field>` heading form is equally valid). The contract and `aeg-root/roles/planner.md` §§ "The Planner's rationale" and "Rationale grammar" remain the source of truth for what each field must *contain* — this file packages the shape; it does not lower the reasoning bar. A field filled with boilerplate is still a malformed rationale, even though it parses.
+> AEG terms used below (tranche, brief, dispatch, spec, plan, gate) are defined in the [glossary](../glossary.md).
+
+**Copy the block below the divider into the task Issue's body and replace every `[…]` placeholder with real content.** This is the shape the Issue gate (`vinaya issue create`/`vinaya issue edit`) and `vinaya check coherence`'s R1 check parse: a header block, a `## Objectives` section, all eight producer fields of the `aeg-root/contracts/planner-developer.md` contract in bold-inline form (`**<Field>** — …`; the `### <Field>` heading form is equally valid, except for **Dependency rationale**, which is bold-inline only), then the judgment sections the brief render fills its surface map, Parts, Test plan and stop conditions from. The contract and `aeg-root/roles/planner/reference.md` §§ "The Planner's rationale" and "Rationale grammar" remain the source of truth for what each field must *contain* — this file packages the shape; it does not lower the reasoning bar. A field filled with boilerplate is still a malformed rationale, even though it parses. A conformance test fills every placeholder below with a minimal task and runs the result through the Issue gate, so this shape and the gate cannot drift apart.
 
 ---
 
-[tranche-slug] [n] — [task title, repeated from the Issue title]
+[TITLE — the Issue title, repeated: tranche slug, task number, an em dash, then the outcome title]
 
-**Tier:** [0 | 1 | 3]
-**Project:** [project(s), comma-separated, matching the blast radius stated in the "Project(s) + blast radius" field below]
-**Type:** [build | chore | docs | feat | fix | perf | refactor | revert | style | test — the commit-type word this task belongs to; free-text metadata, not a forge label]
+**Tier:** [TIER — 0, 1 or 3]
+**Project:** [PROJECT — the registered project names this task touches, comma-separated, matching the blast radius stated in the "Project(s) + blast radius" field below]
+**Type:** [TYPE — the commit-type word this task belongs to: build, chore, docs, feat, fix, perf, refactor, revert, style or test]
 
 ## Objectives
 
-O1. [OBJECTIVE — one observable outcome this task makes true, as a sentence — never a file path; the dispatch act's render maps it to files.]
-O2. [OBJECTIVE — numbered contiguously from O1, one line per objective, as many as this task genuinely has.]
+O1. [OBJECTIVE — one observable outcome this task makes true, as a sentence, with no file path; the dispatch act's render maps it to files.]
+O2. [SECOND OBJECTIVE — numbered contiguously from O1, one line per objective, as many as this task genuinely has.]
+
+## Documentation
+
+- [SOURCE — an in-repository path, or an official public documentation URL that answers an unauthenticated fetch, the task must read] — [MECHANISM — what that source governs in this task] ([CITED OBJECTIVES — the objective ids it informs, e.g. O1])
+
+[DOCUMENTATION NOTE — one bullet per source; every link the task gives belongs here. A task no external or in-repository source governs replaces the bullets with the single line `None`.]
 
 ## Planner's rationale
 
-**Boundary** — [BOUNDARY — what this task is and, crucially, what it is NOT: what was deliberately split out, where the edges sit. Make the in/out sets concrete enough that the dispatch act's render can bound a file surface from them.]
+**Boundary** — [BOUNDARY — what this task is and what it is NOT: what was deliberately split out, where the edges sit.] Pinned files: [PINNED FILES — every real file the task touches, each backticked, each under a `## Surface` `in:` glob; the brief render pins these and refuses a Boundary that names none.] Out: [OUT — what was deliberately left out, including any importer of a pinned file that stays outside the Surface.]
 
-**Sizing** — [SIZING — state that the task passed the four "too big?" tests (one verification story; one agent can hold it; bounded file surface; single failure mode) — or how a larger candidate was split when it failed one. Name the single verification story.]
+**Sizing** — [SIZING — that the task passed the four "too big?" tests (one verification story; one agent can hold it; bounded file surface; single failure mode), or how a larger candidate was split when it failed one. Name the single verification story.]
 
-**Project(s) + blast radius** — [PROJECTS + BLAST RADIUS — every project touched, resolving against `.vinaya/projects.md`. For shared-package changes: which consumers are in the blast radius, and whether each needs re-verification only or actual edits.]
+**Project(s) + blast radius** — [BLAST RADIUS — every project touched, each registered in `.vinaya/projects.md`; for a shared-package change, which consumers are in the blast radius and whether each needs re-verification only or actual edits.]
 
-**Dependency rationale** — [DEPENDENCY RATIONALE — *why* each `depends-on` / `conflicts-with` edge exists, not just that it does. "No `depends-on`; no `conflicts-with`" is a valid value — state it explicitly, with the check that established it.]
+**Dependency rationale** — [DEPENDENCY RATIONALE — why each `Depends-on: #<n>` / `Conflicts-with: #<n>` edge exists, naming the overlap on both sides; or "No Depends-on; no Conflicts-with", with the check that established it.]
 
-**Traps to avoid** — [TRAPS — concrete pitfalls the dig surfaced that would otherwise bite the executing agent, phrased as "do NOT do X; do Y instead". Highest-value field — never generic advice.]
+**Traps to avoid** — [TRAPS — concrete pitfalls the dig surfaced that would otherwise bite the executing agent, phrased as "do NOT do X; do Y instead".]
 
-**Suggested agent-class** — [high | mid | fast — with a one-line reason tied to this task's real difficulty, e.g. "mid — mechanical repackaging, but the changes touch live gates and need round-trip proof".]
+**Suggested agent-class** — [AGENT CLASS — high, mid or fast, with a one-line reason tied to this task's real difficulty.]
 
-**Stop-and-escalate** — [STOP-AND-ESCALATE — the conditions under which the executing agent must stop and escalate rather than improvise, e.g. "if making X work requires changing shared contract Y, escalate severity:strategy".]
+**Stop-and-escalate** — [STOP-AND-ESCALATE — the conditions under which the executing agent stops and escalates rather than improvises, e.g. "if making X work requires changing shared contract Y, escalate severity:strategy".]
 
-**Docs to keep coherent** — [DOCS — which specs/skills/docs this task will make incoherent and must update, derived from reading them, not from memory — or state "No docs touched." explicitly.]
+**Docs to keep coherent** — [DOCS — each spec, skill or doc this task will make incoherent, by its repository path, derived from reading them; for a surface no doc covers, the `no-doc-surface` sentinel followed by the reason.]
 
 ## Surface
 
-in: [directory-level glob list, comma-separated, e.g. `packages/aeg-core/src`, `apps/cli/src/commands` — never a file path]
-out: [directory-level glob list explicitly excluded from this task's surface — comma-separated, or empty]
+in: [SURFACE IN — directory-level globs this task touches, comma-separated, e.g. `packages/aeg-core/src`, `apps/cli/src/commands`; no file path]
+out: [SURFACE OUT — directory-level globs explicitly excluded from this task's surface, comma-separated]
 
 ## Parts
 
-Part 1 (O1) — [OUTCOME — one observable outcome this Part makes true, naming outcomes and symbols, never a file path.]
-Part 2 (O2) — [OUTCOME — numbered contiguously from 1, one line per Part, as many as this task genuinely has.]
+Part 1 (O1) — [PART OUTCOME — one observable outcome this Part makes true, naming outcomes and symbols, with no file path.]
+Part 2 (O2) — [SECOND PART OUTCOME — numbered contiguously from 1, one line per Part, as many as this task genuinely has.]
 
 ## Test plan
 
-[Either the sentinel below, for a pure-logic task with no runtime-observable surface —]
-
-Test plan: unit-tests-only
-
-[— or a fenced command list, one command per line, each with its expected observable after a literal `→`, plus any auth-gated/visual `[principal]` items:]
+[TEST PLAN NOTE — a fenced command list, one command per line, each naming the test file or `vinaya check` it runs and its expected observable after a literal `→`, plus any auth-gated or visual item the Principal checks as a principal checkbox line. A pure-logic task with no runtime-observable surface replaces the whole section's content with the single line `Test plan: unit-tests-only`.]
 
 ```
-[command] → [expected observable]
+[COMMAND — a command the dispatched Developer can run, naming the test file or check it runs] → [EXPECTED — the observable it prints]
 ```
-
-- [ ] **[principal]** [auth-gated / vendor-key-dependent / visual check, if any]
 
 ## Stop conditions
 
-- [the condition under which the executing agent must stop and escalate rather than improvise]
+- [STOP CONDITION — the condition under which the executing agent stops and escalates rather than improvises]
 
 ## Origin
 
-[ORIGIN — where this task came from: Principal-directed, backlog item, incident follow-up — with dates and the Issue/PR references that motivated it.]
+[ORIGIN — where this task came from: Principal-directed, backlog item, incident follow-up — with dates and the records that motivated it.]
