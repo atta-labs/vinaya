@@ -44,8 +44,14 @@ describe('issue surface — the report and the gate agree on every importer', ()
     rmSync(fixture, { recursive: true, force: true })
   })
 
-  const tracked = () =>
-    execFileSync('git', ['ls-files'], { cwd: fixture, encoding: 'utf8' }).split('\n').filter(Boolean)
+  /** The fixture's tracked files, exactly as `beforeEach` committed them. */
+  const tracked = () => [
+    'apps/cli/src/commands/issue.ts',
+    'apps/cli/tests/ci-shards/shard-1.txt',
+    'apps/cli/tests/lib/gate.test.ts',
+    'packages/core/src/gate.ts',
+    'packages/core/src/index.ts'
+  ]
 
   const body = (inGlobs: string, boundaryOut: string, pinned = '`packages/core/src/gate.ts`') =>
     [
