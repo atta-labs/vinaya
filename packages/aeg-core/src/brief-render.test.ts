@@ -825,7 +825,7 @@ describe('renderBrief', () => {
       expect(result.brief).toContain("the controller's `run_checks` result, hooks, and CI as gate evidence")
     })
 
-    it('§2 asks for no readiness confirmation of its own — §5 says the driver already ran it (round 3, F2; Issue #1238)', () => {
+    it('§2 asks for no readiness confirmation of its own — §5 says the driver already ran it (round 3, F2)', () => {
       const result = renderBrief(baseFacts(ADOPTER), TEMPLATE)
       expect(result.ok).toBe(true)
       if (!result.ok) return
@@ -1037,11 +1037,10 @@ describe('renderBrief — the `## Premises` section', () => {
   })
 })
 
-// Issue #1238: the render and the two templates it and the PR report are
-// copied from once told the Developer things the controller's own tools
-// refuse or already do. One absence list, held against all three texts, so
+// The render, the brief template and the PR report template once told the
+// Developer things the controller's own tools refuse or already do. One absence list, held against all three texts, so
 // none of them can carry a retired instruction back alone.
-describe('the render and both templates carry no retired instruction (Issue #1238)', () => {
+describe('the render and both templates carry no retired instruction', () => {
   const PR_REPORT_TEMPLATE = readFileSync(
     join(import.meta.dirname, '../../../aeg-root/templates/pr-report-template.md'),
     'utf8'
