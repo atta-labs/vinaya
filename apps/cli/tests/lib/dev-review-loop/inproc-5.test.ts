@@ -1908,3 +1908,120 @@ describe('devReviewLoop — every Developer prompt names the driver-run tools an
     })
   }
 })
+
+describe('devReviewLoop — an existing worktree on a commit-free branch starts at the default tip', () => {
+  it('hands the start sequence its no-task-commits fact to the worktree creation', async () => {
+    const movedMain = 'e'.repeat(40)
+    const world = makeWorld({ branchAtBaseTip: true })
+    const calls: Array<{ branch: string; opts: { branchHasTaskCommits?: boolean } | undefined }> = []
+    const base = makeInProcessDeps(world)
+    const result = await runLoopInProcessSafe(world, base, {
+      gitRevParseOriginMain: () => movedMain,
+      gitIsAncestor: (ancestor, descendant) => ancestor === world.base && descendant === movedMain,
+      createTaskWorktree: (branch, opts) => {
+        calls.push({ branch, opts })
+        base.createTaskWorktree!(branch, opts)
+      }
+    })
+    expect(result.finalDecision.type).toBe('publish')
+    expect(calls).toEqual([{ branch: world.branch, opts: { branchHasTaskCommits: false } }])
+  })
+
+  it('never resets a branch that already carries task commits', async () => {
+    const world = makeWorld({ remoteBranchExists: true })
+    const calls: string[] = []
+    await runLoopInProcessSafe(world, makeInProcessDeps(world), {
+      createTaskWorktree: (branch) => {
+        calls.push(branch)
+      }
+    })
+    expect(calls).toEqual([])
+    expect(world.remoteBranchCreations).toEqual([])
+  })
+})
+
+describe('devReviewLoop — a tooling_unavailable report on a red check is rerun once before it pauses', () => {
+  function toolingDeps(
+    world: LoopWorld,
+    failedRunIds: () => number[]
+  ): { deps: Partial<LoopDeps>; prompts: string[]; events: string[] } {
+    const events: string[] = []
+    const { deps, prompts } = withCapturedDeveloperDispatch(world, {
+      fetchFailedCheckWorkflowRunIds: (head) => {
+        events.push(`read:${head}`)
+        return failedRunIds()
+      },
+      rerunFailedWorkflowJobs: (runId) => {
+        events.push(`rerun:${runId}`)
+      },
+      fetchCiConclusion: () => {
+        events.push('gate')
+        return 'green'
+      }
+    })
+    return { deps, prompts, events }
+  }
+
+  for (const agent of ['claude', 'codex'] as const) {
+    it(`${agent} reruns the failed run, waits for the gate, and re-dispatches the turn in the same round`, async () => {
+      const world = makeWorld({ worktreeExists: true })
+      world.developerTurnOutput = (_round, _prompt, dispatch) =>
+        dispatch === 1
+          ? blockedTurnOutput('tooling_unavailable', 'cannot rerun CI from my sandbox')
+          : completedTurnOutput()
+      const { deps, prompts, events } = toolingDeps(world, () => [4242])
+      const result = await runLoopInProcess(world, { task: world.task, agent }, deps)
+      expect(result.finalDecision.type).toBe('publish')
+      expect(prompts).toHaveLength(2)
+      expect(events.slice(0, 3)).toEqual([`read:${world.head}`, 'rerun:4242', 'gate'])
+      expect(events.filter((e) => e.startsWith('rerun:'))).toEqual(['rerun:4242'])
+      expect(world.dispatches.filter((d) => d.role === 'developer').map((d) => d.round)).toEqual([1, 1])
+      expect(prompts[1]).toContain('reran the failed jobs of workflow run 4242')
+      expect(prompts[1]).toContain('it now reads green')
+      expect(existsSync(join(controlDir(world), 'pause-state.json'))).toBe(false)
+    })
+
+    it(`${agent} pauses on a second tooling_unavailable report in the same round`, async () => {
+      const world = makeWorld({ worktreeExists: true })
+      world.developerTurnOutput = () => blockedTurnOutput('tooling_unavailable', 'still cannot rerun CI')
+      const { deps, prompts, events } = toolingDeps(world, () => [4242])
+      const result = await runLoopInProcess(world, { task: world.task, agent }, deps)
+      expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+      expect((result.finalDecision as { detail: string }).detail).toMatch(
+        /\(tooling_unavailable\): still cannot rerun CI/
+      )
+      expect(prompts).toHaveLength(2)
+      expect(events.filter((e) => e.startsWith('rerun:'))).toEqual(['rerun:4242'])
+    })
+
+    it(`${agent} pauses a tooling_unavailable report when the head has no failed check run`, async () => {
+      const world = makeWorld({ worktreeExists: true })
+      world.developerTurnOutput = () => blockedTurnOutput('tooling_unavailable', 'no red check to rerun')
+      const { deps, prompts, events } = toolingDeps(world, () => [])
+      const result = await runLoopInProcess(world, { task: world.task, agent }, deps)
+      expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+      expect((result.finalDecision as { detail: string }).detail).toMatch(
+        /\(tooling_unavailable\): no red check to rerun/
+      )
+      expect(prompts).toHaveLength(1)
+      expect(events.some((e) => e.startsWith('rerun:'))).toBe(false)
+    })
+  }
+
+  it('pauses a tooling_unavailable report when no pull request is open', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    world.developerTurnOutput = () => blockedTurnOutput('tooling_unavailable', 'nothing opened yet')
+    const { deps, prompts, events } = toolingDeps(world, () => [4242])
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        ...deps,
+        findOpenPrForBranch: () => null
+      }
+    )
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+    expect(prompts).toHaveLength(1)
+    expect(events).toEqual([])
+  })
+})

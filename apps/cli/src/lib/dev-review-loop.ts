@@ -135,6 +135,7 @@ import {
   describeFailingCheckRun,
   fetchCiConclusion,
   fetchConflictingFiles,
+  fetchFailedCheckWorkflowRunIds,
   fetchFailingCheckRuns,
   fetchMergeableState,
   fetchPrState,
@@ -142,6 +143,7 @@ import {
   type FailingCheckRun,
   type MergeableState,
   readWorktreeHead,
+  rerunFailedWorkflowJobs,
   resolveHead,
   sh
 } from './dev-review-loop/gate-reading.js'
@@ -429,6 +431,10 @@ export type LoopDeps = {
   fetchCiConclusion: typeof fetchCiConclusion
   /** O3: named check-runs, never the review gate's own (excluded upstream). */
   fetchFailingCheckRuns: typeof fetchFailingCheckRuns
+  /** The workflow runs behind a head's failed mechanical check runs, each read off the failed check run's own check suite — empty when none failed or none belongs to a workflow run. */
+  fetchFailedCheckWorkflowRunIds: typeof fetchFailedCheckWorkflowRunIds
+  /** Reruns one workflow run's failed jobs — a forge write under the driver's identity. Throws when the forge refuses it. */
+  rerunFailedWorkflowJobs: typeof rerunFailedWorkflowJobs
   /** A failed check run's own job-log tail, sanitized and size-capped — the Operator's PR read's own reader (`readJobLogTail`), so a red-CI retry and `read_pull_request` can show the Developer what failed. Injected so the harness fakes it. */
   readFailedCheckLogTail: (jobId: number) => string | null
   fetchRulings: typeof fetchRulings
@@ -461,7 +467,8 @@ export type LoopDeps = {
   fetchIssueTitle: typeof fetchIssueTitle
   /**
    * O1: creates this task's own worktree (`.worktrees/<branch>`, cut from
-   * `origin/main`'s tip, reused untouched if one already exists) and pushes
+   * `origin/main`'s tip; an existing one is reused, and moved to the default
+   * tip with its remote branch when `branchHasTaskCommits` is `false`) and pushes
    * `branch` to the remote FROM that worktree with `-u` — the round-1
    * fresh-dispatch path calls it once, ONLY when the branch exists neither as
    * an open PR nor on the remote (O2 leaves an existing one untouched) —
@@ -475,7 +482,7 @@ export type LoopDeps = {
    * WORKTREE creation instead surfaces at the Developer's own Step 0, which
    * can no longer fall back to creating one itself.
    */
-  createTaskWorktree: (branch: string) => void
+  createTaskWorktree: typeof createTaskWorktree
   /**
    * Creates `.worktrees/<branch>` from the branch already on the remote, at its
    * pushed head, tracking it — for a task continued on a machine with no
@@ -2209,6 +2216,8 @@ function defaultDeps(): LoopDeps {
     reviewPolicy: reviewPolicyForLoop,
     fetchCiConclusion,
     fetchFailingCheckRuns,
+    fetchFailedCheckWorkflowRunIds,
+    rerunFailedWorkflowJobs,
     readFailedCheckLogTail: (jobId) => readJobLogTail(jobId),
     fetchRulings,
     fetchNewestRulingOrdinal,
@@ -3002,6 +3011,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * the same ids again).
      */
     const handoffFindingIdsByRound = new Map<number, string[]>()
+    /** The rounds whose one red-check rerun for a `tooling_unavailable` report is spent — a second report in the same round pauses. */
+    const toolingRerunRounds = new Set<number>()
     /** The findings the newest review handed over, with the ids the Developer cites — set when a round's verdicts request changes, cleared by a ruling or a recovered verdict that carries no ids. */
     let lastHandoffFindings: { id: string; line: string }[] | null = null
     const loopOutboxPath = await d.resolveLogAppendPath(repo, task)
@@ -4126,6 +4137,26 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           ].join('\n\n')
           continue
         }
+        // A `tooling_unavailable` block on a pull request whose head has a
+        // failed mechanical check run gets that run's failed jobs rerun once
+        // per round, the gate waited for, and the turn re-dispatched. Keyed on
+        // the forge's check runs, never on the blocker's prose.
+        if (!toolingRerunRounds.has(roundNum)) {
+          const rerun = await rerunRedCheckForToolingReport(handle, roundNum, opts.answersFindings === true)
+          if (rerun !== null) {
+            toolingRerunRounds.add(roundNum)
+            currentPrompt = [
+              "Your previous turn reported `blocked` with reason `tooling_unavailable`, and the pull request's head had a failed check run.",
+              `The driver reran the failed jobs of workflow run${rerun.runIds.length === 1 ? '' : 's'} ${rerun.runIds.join(', ')} and waited for the gate: it now reads ${rerun.ciConclusion}.`,
+              rerun.failingChecks.length > 0
+                ? `Still failing:\n${rerun.failingChecks.map((check) => `- ${check}`).join('\n')}`
+                : 'No mechanical check is failing now.',
+              'Continue the task without pausing. This is the one allowed rerun for that report in this round.',
+              `End your turn — ${publishingInstructionLine()}`
+            ].join('\n\n')
+            continue
+          }
+        }
         // A first `test_failure` block gets one re-ask, without a check: the
         // driver cannot judge a test claim mechanically. A second one pauses.
         if (testFailureReasks < 1 && reportsTestFailure(handle, roundNum, opts.answersFindings === true)) {
@@ -4183,6 +4214,53 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         documentation: handle.documentation ?? { sources: [], countedReads: [] }
       })
       return verdict.ok && pauseForAcceptedResult(verdict.result) !== null
+    }
+
+    /**
+     * A `tooling_unavailable` report is settled by the driver when the open
+     * pull request's head has failed mechanical check runs: each one's
+     * workflow run has its failed jobs rerun through the forge, then the gate
+     * is waited for as after any push. `null` — the report pauses as it
+     * stands — when the result is another kind, no pull request is open, no
+     * failed check run names a workflow run, or the forge refused every rerun.
+     */
+    async function rerunRedCheckForToolingReport(
+      handle: DispatchHandle,
+      roundNum: number,
+      answersFindings: boolean
+    ): Promise<{ runIds: number[]; ciConclusion: 'green' | 'red' | 'pending'; failingChecks: string[] } | null> {
+      const verdict = judgeTurnOutput(handle.turnOutput, {
+        round: roundNum,
+        knownFindingIds: handoffFindingIdsByRound.get(roundNum) ?? [],
+        requireAddressedFindings: answersFindings && (handoffFindingIdsByRound.get(roundNum) ?? []).length > 0,
+        documentation: handle.documentation ?? { sources: [], countedReads: [] }
+      })
+      if (!verdict.ok || verdict.result.status !== 'blocked' || verdict.result.blocker.kind !== 'tooling_unavailable')
+        return null
+      if (d.findOpenPrForBranch(branch) === null) return null
+      let head: string
+      try {
+        head = d.resolveHead(branch)
+      } catch {
+        return null
+      }
+      const rerunIds: number[] = []
+      for (const runId of d.fetchFailedCheckWorkflowRunIds(head)) {
+        try {
+          d.rerunFailedWorkflowJobs(runId)
+          rerunIds.push(runId)
+        } catch (err) {
+          console.error(
+            `vinaya dev-review-loop: could not rerun the failed jobs of workflow run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+          )
+        }
+      }
+      if (rerunIds.length === 0) return null
+      console.error(
+        `vinaya dev-review-loop: reran the failed jobs of workflow run ${rerunIds.join(', ')} for a tooling_unavailable report in round ${roundNum}`
+      )
+      const gate = await waitForGreenGate(d.now())
+      return { runIds: rerunIds, ciConclusion: gate.ciConclusion, failingChecks: gate.failingChecks }
     }
 
     /**
@@ -5998,7 +6076,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // the Developer's own Step 0 (which can no longer fall back to
             // creating one itself), never a reason this driver turn stops.
             try {
-              d.createTaskWorktree(branch)
+              // An existing worktree on this commit-free branch is moved to
+              // the default tip with its remote branch, so the files the
+              // first turn reads are the ones the brief's pins were taken from.
+              d.createTaskWorktree(branch, { branchHasTaskCommits })
               console.error(`vinaya dev-review-loop: created task worktree and branch ${branch} on origin at start`)
             } catch (err) {
               if (err instanceof TaskWorktreeDivergedError) {

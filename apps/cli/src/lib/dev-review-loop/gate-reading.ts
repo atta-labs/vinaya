@@ -1,8 +1,9 @@
 /**
  * `dev-review-loop`'s gate-reading concern — every forge/git read about a head's mechanical readiness:
  * mechanical CI conclusion, mergeability, base-head staleness, and a
- * developer's own worktree head. Pure reads, no forge-write function
- * anywhere in this module — moved out of `apps/cli/src/lib/dev-review-loop.ts`
+ * developer's own worktree head. Reads only, save one forge write: rerunning a
+ * failed workflow run's failed jobs (`rerunFailedWorkflowJobs`), made beside
+ * the check-run reader that names the run — moved out of `apps/cli/src/lib/dev-review-loop.ts`
  * verbatim; `dev-review-loop.ts` stays the composition root, re-exporting
  * every name below under the same path it always had.
  */
@@ -99,7 +100,15 @@ export function resolveHead(branch: string): string {
   return sha
 }
 
-type RestCheckRun = { id: number; name: string; status: string; conclusion: string | null; started_at: string }
+type RestCheckRun = {
+  id: number
+  name: string
+  status: string
+  conclusion: string | null
+  started_at: string
+  /** The check suite the run belongs to — for an Actions job, the suite of its workflow run. */
+  check_suite_id?: number | null
+}
 
 /**
  * Every mechanical check-run GitHub reports for `headSha`, deduped to the
@@ -126,7 +135,7 @@ function fetchMechanicalCheckRuns(headSha: string): RestCheckRun[] | null {
       `repos/{owner}/{repo}/commits/${headSha}/check-runs`,
       '--paginate',
       '--jq',
-      '.check_runs[] | {id, name, status, conclusion, started_at}'
+      '.check_runs[] | {id, name, status, conclusion, started_at, check_suite_id: .check_suite.id}'
     ])
   } catch {
     return null
@@ -337,6 +346,56 @@ export function fetchFailingCheckRuns(headSha: string): FailingCheckRun[] {
     return { name, id: r.id, startedAt: r.run_started_at ?? r.created_at, detail }
   })
   return [...failingChecks, ...failingWorkflows]
+}
+
+/**
+ * The workflow runs behind `headSha`'s failed mechanical check runs — the same
+ * newest-per-name, review-gate-excluded runs `fetchFailingCheckRuns` names.
+ * Each failed check run's own record carries its check suite, and the runs list
+ * filtered by that suite names the one workflow run it belongs to. Deduped, in
+ * first-seen order; empty when nothing failed, a read fails, or a failed check
+ * run belongs to no workflow run (a check posted by an app, not Actions).
+ */
+export function fetchFailedCheckWorkflowRunIds(headSha: string): number[] {
+  const latest = fetchMechanicalCheckRuns(headSha)
+  if (latest === null) return []
+  const suites = new Set<number>()
+  for (const run of latest) {
+    if (run.status !== 'completed') continue
+    if (run.conclusion === 'success' || run.conclusion === 'neutral' || run.conclusion === 'skipped') continue
+    if (typeof run.check_suite_id === 'number') suites.add(run.check_suite_id)
+  }
+  const runIds: number[] = []
+  for (const suite of suites) {
+    let out: string
+    try {
+      out = sh('gh', [
+        'api',
+        `repos/{owner}/{repo}/actions/runs?check_suite_id=${suite}`,
+        '--jq',
+        '.workflow_runs[].id'
+      ])
+    } catch {
+      continue
+    }
+    for (const line of out.split('\n')) {
+      const id = Number(line.trim())
+      if (line.trim().length > 0 && Number.isInteger(id) && !runIds.includes(id)) runIds.push(id)
+    }
+  }
+  return runIds
+}
+
+/**
+ * Reruns the failed jobs of workflow run `runId` — one forge write, made under
+ * the driver's own forge identity. Never retried: a second request for a run
+ * already rerunning is refused by the forge, so a failure throws to the caller.
+ */
+export function rerunFailedWorkflowJobs(runId: number): void {
+  execFileSync('gh', ['api', '-X', 'POST', `repos/{owner}/{repo}/actions/runs/${runId}/rerun-failed-jobs`], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
 }
 
 /** O3: the display form a pause detail (or a gate-red retry prompt) names a failing run by — the check name plus its run id, so the SAME name appearing again in a later, superseded run is never mistaken for the one a pause was actually built from. */
