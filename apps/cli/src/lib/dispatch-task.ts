@@ -190,7 +190,7 @@ export async function validateIssueWriteGate(
 }
 
 /** The real, forge-reading default for `PrepareTaskDeps.runIssueWriteGate`/`PrepareIssueTaskDeps.runIssueWriteGate` — fetches Issue `issue`'s live body and labels, then grades them with `validateIssueWriteGate`. */
-async function runIssueWriteGate(issue: number, retryCommand: string): Promise<void> {
+export async function runIssueWriteGate(issue: number, retryCommand: string): Promise<void> {
   const body = fetchIssueBody(issue)
   const labels = fetchIssueLabels(issue)
   await validateIssueWriteGate(body, labels, issue, retryCommand)
@@ -310,6 +310,21 @@ export function widenSurfaceInLine(
   ])
   const newBody = body.slice(0, afterHeadingStart) + newSection + body.slice(sectionEnd)
   return { newBody, newIn, newOut }
+}
+
+/**
+ * Grades the body a widen WOULD write, and writes nothing: Issue `issue`'s
+ * live body widened by `widenSurfaceInLine` (whose refusal — an added glob
+ * still under a broader `out:` glob — propagates verbatim), then the same
+ * write gate `widenSurface` runs before its own edit. A caller that must
+ * refuse before any supersede posts runs this first, so a widening the gate
+ * refuses leaves the Issue and its frozen briefs exactly as they were.
+ */
+export async function gradeWidenedSurface(issue: number, addedGlobs: string[], retryCommand: string): Promise<void> {
+  const body = fetchIssueBody(issue)
+  const labels = fetchIssueLabels(issue)
+  const { newBody } = widenSurfaceInLine(body, addedGlobs)
+  await validateIssueWriteGate(newBody, labels, issue, retryCommand)
 }
 
 /**
@@ -458,7 +473,7 @@ export type DispatchAuthorization = { authorized: boolean; login: string | null 
  * `pr rule`/`issue objectives edit`): an unresolvable identity refuses the
  * same as a disallowed one.
  */
-function resolveDispatchAuthorization(): DispatchAuthorization {
+export function resolveDispatchAuthorization(): DispatchAuthorization {
   const login = currentGhLogin()
   const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
   return { authorized: login !== null && isPrincipal(login, allowlist), login }

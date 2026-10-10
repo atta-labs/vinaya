@@ -7,7 +7,7 @@ import { describe, expect, it } from 'bun:test'
 import { logQuiet } from '../../src/lib/agent-line.js'
 import { appendRoleLine } from '../../src/lib/loop-log.js'
 import { quietLogWriter } from '../../src/commands/task-status.js'
-import { applyQuiet, parseFlags, pauseResumeCommand } from '../../src/commands/task-run.js'
+import { applyQuiet, parseFlags, parseWidenSurface, pauseResumeCommand } from '../../src/commands/task-run.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -335,5 +335,33 @@ describe('vinaya task status --follow --quiet — quietLogWriter', () => {
     ]
     write(Buffer.from(`${lines.join('\n')}\n`))
     expect(out.join('').split('\n').filter(Boolean)).toEqual(actions)
+  })
+})
+
+describe('vinaya task run --widen-surface — argv parsing', () => {
+  it('parses the pair into globs and a reason', () => {
+    expect(parseWidenSurface(parseFlags(['--widen-surface', 'a/b, c/d ,', '--reason', 'needs the row']))).toEqual({
+      globs: ['a/b', 'c/d'],
+      reason: 'needs the row'
+    })
+    expect(parseWidenSurface(parseFlags(['--agent', 'claude']))).toBeNull()
+  })
+
+  it('refuses one flag without the other, or globs that resolve to none', () => {
+    expect(parseWidenSurface(parseFlags(['--widen-surface', 'a/b']))).toEqual({
+      error: '--widen-surface requires --reason <text> — the superseding brief records why its Surface widened.'
+    })
+    expect(parseWidenSurface(parseFlags(['--reason', 'x']))).toEqual({
+      error: '--reason is only meaningful with --widen-surface.'
+    })
+    expect(parseWidenSurface(parseFlags(['--widen-surface', ' , ', '--reason', 'x']))).toEqual({
+      error: '--widen-surface <glob,...> resolved to zero globs.'
+    })
+  })
+
+  it('exits 2 on a lone --widen-surface, before anything reaches the forge', () => {
+    const r = runCli(['task', 'run', 'task-run-v1', '2', '--agent', 'claude', '--widen-surface', 'a/b'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('--widen-surface requires --reason <text>')
   })
 })

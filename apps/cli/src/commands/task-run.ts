@@ -25,6 +25,15 @@
  * `--resume`/`--cancel` an operator issues directly against `dev-review-loop`
  * stays a one-shot debug/direct entry, unaffected by this.
  *
+ * `--widen-surface <glob,...> --reason <text>` continues a pre-pull-request
+ * escalation whose Developer asked for `widen_surface`: `runTask` supersedes
+ * the frozen brief with the widened Surface, records that as the
+ * escalation's resolution, grades the widened Issue through the write gate,
+ * and only then starts the run — refusing before any of it when the pause is
+ * not such an escalation, a driver is still alive, or the widened body fails
+ * the gate. With `--background`, the widening happens in this process before
+ * the detached controller is launched, never in the controller.
+ *
  * Exit codes (round 2 security review, HIGH): `0` publish OR a watched
  * pause's own genuine end (`'ended'` — merged, closed, or `--cancel`), `1`
  * the one un-watchable pause above, `2` a usage/argv error, `3` any other
@@ -49,7 +58,7 @@ import { noPushResumeCommandFor } from '../lib/dev-review-loop/pause-resume.js'
 /** Any failure other than a usage/argv error or a policy `pause` — see the module doc comment's exit-code table. */
 const TASK_RUN_FAILURE_EXIT_CODE = 3
 
-const KNOWN_FLAGS = ['--agent', '--issue', '--background', '--model', '--quiet']
+const KNOWN_FLAGS = ['--agent', '--issue', '--background', '--model', '--quiet', '--widen-surface', '--reason']
 
 type ParsedFlags = {
   agent: string | undefined
@@ -58,6 +67,10 @@ type ParsedFlags = {
   background: boolean
   quiet: boolean
   model: string | undefined
+  widenSurface: string | undefined
+  widenSurfaceFlagPresent: boolean
+  reason: string | undefined
+  reasonFlagPresent: boolean
   unknown: string[]
 }
 
@@ -83,6 +96,10 @@ export function parseFlags(rest: string[]): ParsedFlags {
   let background = false
   let quiet = false
   let model: string | undefined
+  let widenSurface: string | undefined
+  let widenSurfaceFlagPresent = false
+  let reason: string | undefined
+  let reasonFlagPresent = false
   const unknown: string[] = []
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]
@@ -97,9 +114,51 @@ export function parseFlags(rest: string[]): ParsedFlags {
       quiet = true
     } else if (a === '--model') {
       model = rest[++i]
+    } else if (a === '--widen-surface') {
+      widenSurfaceFlagPresent = true
+      widenSurface = rest[++i]
+    } else if (a === '--reason') {
+      reasonFlagPresent = true
+      reason = rest[++i]
     } else if (a !== undefined) unknown.push(a)
   }
-  return { agent, agentFlagPresent, issue, background, quiet, model, unknown }
+  return {
+    agent,
+    agentFlagPresent,
+    issue,
+    background,
+    quiet,
+    model,
+    widenSurface,
+    widenSurfaceFlagPresent,
+    reason,
+    reasonFlagPresent,
+    unknown
+  }
+}
+
+/**
+ * `--widen-surface <glob,...> --reason <text>`, always as a pair: the globs
+ * the superseding brief adds to `## Surface` and the reason it records. `null`
+ * when neither flag was given; a usage error (message returned) for one
+ * without the other, a flag with no value, or globs that resolve to none.
+ */
+export function parseWidenSurface(
+  parsed: Pick<ParsedFlags, 'widenSurface' | 'widenSurfaceFlagPresent' | 'reason' | 'reasonFlagPresent'>
+): { globs: string[]; reason: string } | { error: string } | null {
+  if (!parsed.widenSurfaceFlagPresent && !parsed.reasonFlagPresent) return null
+  if (!parsed.widenSurfaceFlagPresent) return { error: '--reason is only meaningful with --widen-surface.' }
+  if (!parsed.reasonFlagPresent || !parsed.reason || parsed.reason.trim().length === 0) {
+    return {
+      error: '--widen-surface requires --reason <text> — the superseding brief records why its Surface widened.'
+    }
+  }
+  const globs = (parsed.widenSurface ?? '')
+    .split(',')
+    .map((g) => g.trim())
+    .filter(Boolean)
+  if (globs.length === 0) return { error: '--widen-surface <glob,...> resolved to zero globs.' }
+  return { globs, reason: parsed.reason }
 }
 
 /** `--quiet` sets the value the renderer reads for its terminal view; the driver log file still receives every detail record. */
@@ -108,9 +167,20 @@ export function applyQuiet(parsed: Pick<ParsedFlags, 'quiet'>): void {
 }
 
 const USAGE = [
-  `Usage: vinaya task run <tranche> <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>]`,
-  `   or: vinaya task run --issue <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>]`
+  `Usage: vinaya task run <tranche> <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>] [--widen-surface <glob,...> --reason <text>]`,
+  `   or: vinaya task run --issue <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>] [--widen-surface <glob,...> --reason <text>]`
 ].join('\n')
+
+/** `parseWidenSurface`, with a usage error reported and exited on. */
+function widenSurfaceOrExit(parsed: ParsedFlags): { widenSurface?: { globs: string[]; reason: string } } {
+  const widen = parseWidenSurface(parsed)
+  if (widen === null) return {}
+  if ('error' in widen) {
+    console.error(`vinaya task run: ${widen.error}\n${USAGE}`)
+    process.exit(2)
+  }
+  return { widenSurface: widen }
+}
 
 /** `--agent` falls back to `dispatch.agent` in `vinaya.config.json` when omitted entirely — see `parseFlags`'s own doc comment on `agentFlagPresent`. `null` when no valid agent could be resolved (message already printed). */
 function resolveAgentOrReport(parsed: ParsedFlags): DispatchAgent | null {
@@ -292,12 +362,13 @@ export async function taskRunCommand(args: string[]): Promise<void> {
     }
     const agent = resolveAgentOrReport(parsed)
     if (!agent) process.exit(2)
+    const widen = widenSurfaceOrExit(parsed)
     applyQuiet(parsed)
     if (parsed.background) {
-      await runBackgroundAndReport({ issue: issueN, agent, model: parsed.model })
+      await runBackgroundAndReport({ issue: issueN, agent, model: parsed.model, ...widen })
       return
     }
-    await runAndReport({ issue: issueN, agent, model: parsed.model })
+    await runAndReport({ issue: issueN, agent, model: parsed.model, ...widen })
     return
   }
 
@@ -323,12 +394,13 @@ export async function taskRunCommand(args: string[]): Promise<void> {
   }
   const agent = resolveAgentOrReport(parsed)
   if (!agent) process.exit(2)
+  const widen = widenSurfaceOrExit(parsed)
   applyQuiet(parsed)
   if (parsed.background) {
-    await runBackgroundAndReport({ tranche: trancheSlug, n, agent, model: parsed.model })
+    await runBackgroundAndReport({ tranche: trancheSlug, n, agent, model: parsed.model, ...widen })
     return
   }
-  await runAndReport({ tranche: trancheSlug, n, agent, model: parsed.model })
+  await runAndReport({ tranche: trancheSlug, n, agent, model: parsed.model, ...widen })
 }
 
 import type { SurfaceExemption } from '../lib/surface-exemption'

@@ -16,6 +16,7 @@
  * `devReviewLoop`'s own developer dispatch is the only place it is spent.
  */
 
+import { defaultControlStoreDeps, readResolution, type ResolutionRecord } from '@attalabs/aeg-core'
 import { resolveRepo as realResolveRepo, type RepoRef } from '@attalabs/aeg-forge-state'
 import {
   type AssembleAndRenderBriefResult,
@@ -30,14 +31,32 @@ import {
   type LoopInput,
   runDriverLoop as realRunDriverLoop
 } from './dev-review-loop.js'
-import { isDriverPidAlive, readDriverLock, readPauseState } from './dev-review-loop/pause-resume.js'
-import { runtimeDir } from './dev-review-loop/reviewer-dispatch.js'
-import { markProcessUnattended } from './run-paths.js'
 import {
+  escalationIdFor,
+  isDriverPidAlive,
+  noPushResumeArgv,
+  noPushResumeCommandFor,
+  type PauseState,
+  ReplayedResolutionError,
+  readDriverLock,
+  readEscalationRecord,
+  readPauseState,
+  resolveEscalation
+} from './dev-review-loop/pause-resume.js'
+import { runtimeDir } from './dev-review-loop/reviewer-dispatch.js'
+import { readTurnResultRecords, type TurnResultRecord } from './dev-review-loop/turn-result.js'
+import { markProcessUnattended, tasksExecutionRoot } from './run-paths.js'
+import {
+  type DispatchAuthorization,
   DispatchTaskError,
+  gradeWidenedSurface as realGradeWidenedSurface,
+  type PrepareTaskOrIssueInput,
   prepareIssueTask as realPrepareIssueTask,
   prepareTask as realPrepareTask,
+  prepareTaskOrIssue as realPrepareTaskOrIssue,
+  resolveDispatchAuthorization as realResolveDispatchAuthorization,
   resolveModelForDispatch as realResolveModelForDispatch,
+  runIssueWriteGate as realRunIssueWriteGate,
   type PrepareTaskResult
 } from './dispatch-task.js'
 
@@ -77,7 +96,18 @@ export function isAlreadyDispatchedError(err: unknown): boolean {
 export type RunTaskInput = ({ tranche: string; n: number } | { issue: number }) & {
   agent: AgentVendor
   model?: string
+  /**
+   * `--widen-surface <glob,...> --reason <text>`: continue a pre-pull-request
+   * escalation whose Developer asked for `widen_surface` — supersede the
+   * frozen brief with these globs added to `## Surface`, record that as the
+   * escalation's resolution, grade the widened Issue through the write gate,
+   * then start the run (`widenSurfaceBeforeRun`).
+   */
+  widenSurface?: WidenSurfaceRequest
 }
+
+/** The globs a widen-surface continuation adds to `## Surface` `in:`, and the reason its superseding brief records. */
+export type WidenSurfaceRequest = { globs: string[]; reason: string }
 /**
  * `prUrl` — the published/paused PR's real `https://github.com/<owner>/<repo>/pull/<n>`
  * URL, per this module's own Sizing story ("...runs the loop to publish and
@@ -162,6 +192,35 @@ export type RunTaskDeps = {
    */
   devReviewLoop: (input: LoopInput) => Promise<DriverResult>
   resolveRepo: () => Promise<RepoRef | null>
+  /** The widen-surface continuation's own seams, read only when `RunTaskInput.widenSurface` is given; absent, the real ones. */
+  widen?: WidenSurfaceDeps
+}
+
+/**
+ * The records a widen-surface continuation is judged against, all local: the
+ * held pause, whether its escalation was durably recorded, the resolution
+ * already consumed for it (if any), and the Developer's turn-result records
+ * for the paused round.
+ */
+export type WidenSurfaceFacts = {
+  pause: PauseState | null
+  escalationRecorded: boolean
+  resolution: ResolutionRecord | null
+  turnResults: readonly TurnResultRecord[]
+}
+
+export type WidenSurfaceDeps = {
+  readFacts: (issue: number) => WidenSurfaceFacts
+  /** The Principal allowlist check `task brief --supersede` already applies; its login is the resolution's `authenticatedBy`. */
+  resolveAuthorization: () => DispatchAuthorization
+  /** Grades the widened body and writes nothing (`dispatch-task.ts`'s `gradeWidenedSurface`). */
+  gradeWidenedSurface: (issue: number, globs: string[], retryCommand: string) => Promise<void>
+  /** `task brief --supersede --surface-in`'s own lib path: widens `## Surface`, re-renders and posts the next frozen brief. */
+  supersede: (input: PrepareTaskOrIssueInput) => Promise<PrepareTaskResult>
+  /** Consumes the escalation's single resolution (`resolveEscalation`, decision `resume`). */
+  recordResolution: (issue: number, escalationId: string, authenticatedBy: string, authenticatedFrom: string) => void
+  /** The write gate over the Issue's live body — the widened one, once the supersede has written it. */
+  runIssueWriteGate: (issue: number, retryCommand: string) => Promise<void>
 }
 
 /** The real production check — a dead or absent lock reads `false`, exactly like `devReviewLoop`'s own entry-gate takeover check (`dev-review-loop.ts`'s `existingDriverLock`/`isDriverPidAlive`), read here from the SAME on-disk shape rather than a second one. */
@@ -173,6 +232,45 @@ function realIsDriverAlive(task: number): boolean {
 /** issue-711 O5: the real production check — reads the SAME on-disk `pause-state.json` `devReviewLoop`'s own `--resume` entry reads, rather than a second copy. */
 function realHasPauseState(task: number): boolean {
   return readPauseState(runtimeDir(), task) !== null
+}
+
+/** The same control-store root `task_resume` derives from the runtime directory, so both read and consume one escalation's records. */
+function controlStoreDepsFor(root: string) {
+  return defaultControlStoreDeps(() => tasksExecutionRoot(root))
+}
+
+function realReadWidenSurfaceFacts(issue: number): WidenSurfaceFacts {
+  const root = runtimeDir()
+  const pause = readPauseState(root, issue)
+  if (pause === null) return { pause, escalationRecorded: false, resolution: null, turnResults: [] }
+  const escalationId = pause.escalationId ?? escalationIdFor(issue, pause.round, pause.head)
+  const store = controlStoreDepsFor(root)
+  const resolution = readResolution(store, issue, escalationId)
+  return {
+    pause,
+    escalationRecorded: readEscalationRecord(issue, escalationId, store) !== null,
+    resolution: resolution.status === 'ok' ? resolution.value : null,
+    turnResults: readTurnResultRecords(root, issue, pause.round)
+  }
+}
+
+const defaultWidenSurfaceDeps: WidenSurfaceDeps = {
+  readFacts: realReadWidenSurfaceFacts,
+  resolveAuthorization: realResolveDispatchAuthorization,
+  gradeWidenedSurface: realGradeWidenedSurface,
+  supersede: realPrepareTaskOrIssue,
+  recordResolution: (issue, escalationId, authenticatedBy, authenticatedFrom) => {
+    resolveEscalation(
+      issue,
+      escalationId,
+      null,
+      'resume',
+      authenticatedBy,
+      authenticatedFrom,
+      controlStoreDepsFor(runtimeDir())
+    )
+  },
+  runIssueWriteGate: realRunIssueWriteGate
 }
 
 /** Exported for `task-run-background.ts`'s own `resolveIssueForRunTask` call — the same real preparation functions, never a second copy. */
@@ -187,7 +285,8 @@ export const defaultRunTaskDeps: RunTaskDeps = {
   hasPauseState: realHasPauseState,
   resolveModelForDispatch: realResolveModelForDispatch,
   devReviewLoop: realRunDriverLoop,
-  resolveRepo: () => realResolveRepo()
+  resolveRepo: () => realResolveRepo(),
+  widen: defaultWidenSurfaceDeps
 }
 
 /** `null` on any resolution failure — a display-only nicety never worth failing `runTask` over. */
@@ -247,9 +346,17 @@ export async function resolveIssueForRunTask(
   input: RunTaskInput,
   deps: Pick<
     RunTaskDeps,
-    'prepareTask' | 'prepareIssueTask' | 'assembleAndRenderBrief' | 'assembleAndRenderBriefForIssue'
+    | 'prepareTask'
+    | 'prepareIssueTask'
+    | 'assembleAndRenderBrief'
+    | 'assembleAndRenderBriefForIssue'
+    | 'developerBranchFor'
+    | 'findOpenPrForBranch'
+    | 'isDriverAlive'
+    | 'widen'
   >
 ): Promise<number> {
+  if (input.widenSurface) return widenSurfaceBeforeRun(input, input.widenSurface, deps)
   try {
     return 'tranche' in input
       ? (await deps.prepareTask({ tranche: input.tranche, n: input.n })).issue
@@ -330,4 +437,225 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
   )
   const prUrl = await resolvePrUrl(deps.resolveRepo, loopResult.prNumber)
   return { ...loopResult, prUrl, branch }
+}
+
+// --- widen-surface continuation ---------------------------------------------
+
+/** A token that needs no shell quoting — every real tranche slug, agent, model and repository path. */
+const SHELL_SAFE_WORD = /^[A-Za-z0-9._@%+=:,/*-]+$/
+
+function shellWord(token: string): string {
+  return SHELL_SAFE_WORD.test(token) ? token : `'${token.replaceAll("'", `'\\''`)}'`
+}
+
+/** A backticked token in the Developer's own words that reads as a repository path or glob — relative, no `..`. */
+const REQUESTED_GLOB = /^[A-Za-z0-9._@*-][A-Za-z0-9._@*/-]*$/
+
+/**
+ * The Developer's widen-surface request, when the paused round's newest
+ * accepted turn result is a `needs_ruling` whose decisions include
+ * `widen_surface`; `null` otherwise. The turn-result grammar carries no glob
+ * field, so the globs are the backticked repository paths the Developer named
+ * in its question and summary — possibly none, in which case the command a
+ * reader is shown keeps a placeholder for the Planner to fill.
+ */
+export function widenSurfaceRequestOf(records: readonly TurnResultRecord[]): { globs: string[] } | null {
+  const accepted = records.filter((r) => r.outcome === 'accepted' && r.result !== null)
+  const newest = accepted[accepted.length - 1]?.result
+  if (newest?.status !== 'needs_ruling') return null
+  if (!newest.rulingRequest.decisions.includes('widen_surface')) return null
+  const text = `${newest.rulingRequest.question}\n${newest.summary}`
+  const globs = [...text.matchAll(/`([^`\s]+)`/g)]
+    .map((m) => m[1] as string)
+    .filter((t) => t.includes('/') && !t.includes('..') && REQUESTED_GLOB.test(t))
+  return { globs: [...new Set(globs)] }
+}
+
+/**
+ * The one Planner command that continues a pre-pull-request widen-surface
+ * escalation — `task run` in whichever address form this task's branch takes
+ * (`noPushResumeArgv`, the builder every other pre-pull-request continuation
+ * uses), with the requested globs and a reason placeholder, and the agent and
+ * model the paused run was dispatched under.
+ */
+export function widenSurfaceCommandFor(
+  task: number,
+  branch: string,
+  globs: readonly string[],
+  agent?: string,
+  model?: string
+): string {
+  const argv = [
+    ...noPushResumeArgv(task, branch),
+    '--widen-surface',
+    globs.length > 0 ? globs.join(',') : '<glob,...>',
+    '--reason',
+    '<why the Surface widens>',
+    ...(agent ? ['--agent', agent] : []),
+    ...(model ? ['--model', model] : [])
+  ]
+  return `vinaya ${argv.map(shellWord).join(' ')}`
+}
+
+/**
+ * The widen-surface command for a held pause, when it is one this command
+ * answers — a pre-pull-request escalation whose paused round's accepted
+ * Developer result asks for `widen_surface`; `null` for any other pause. One
+ * reader for the escalation packet's permitted next actions and the
+ * Operator's resume refusal, so both name the same command.
+ */
+export function widenSurfaceContinuationFor(root: string, pause: PauseState): string | null {
+  if (pause.prNumber !== null || pause.reason !== 'escalation') return null
+  const request = widenSurfaceRequestOf(readTurnResultRecords(root, pause.task, pause.round))
+  return request === null
+    ? null
+    : widenSurfaceCommandFor(pause.task, pause.branch, request.globs, pause.agent, pause.model)
+}
+
+/** This invocation's own command line, named as the retry in the write gate's findings. */
+function widenRetryCommand(input: RunTaskInput, request: WidenSurfaceRequest): string {
+  const address =
+    'tranche' in input
+      ? ['task', 'run', input.tranche, String(input.n)]
+      : ['task', 'run', '--issue', String(input.issue)]
+  const argv = [...address, '--widen-surface', request.globs.join(','), '--reason', request.reason]
+  return `vinaya ${argv.map(shellWord).join(' ')}`
+}
+
+/**
+ * Which held pause this continuation answers, or a refusal naming why it
+ * answers none: no pause, a pause that has a pull request (its continuation
+ * is the ruling on that pull request), a pause that is not a Developer's
+ * `widen_surface` request, an escalation never durably recorded, or one whose
+ * resolution is already consumed — the replay of a widening already done.
+ */
+export function widenSurfaceEscalationOf(
+  issue: number,
+  label: string,
+  facts: WidenSurfaceFacts,
+  openPr: number | null
+): { escalationId: string; pause: PauseState } {
+  const { pause } = facts
+  if (pause === null) {
+    throw new RunTaskError(
+      `runTask: ${label} holds no paused run — \`--widen-surface\` answers a widen-surface escalation, and there is none to answer. Widen a frozen brief that no escalation asked for with \`vinaya task brief … --supersede --reason <text> --surface-in <glob,...>\`.`
+    )
+  }
+  const pr = pause.prNumber ?? openPr
+  if (pr !== null) {
+    throw new RunTaskError(
+      `runTask: ${label}'s pause has pull request #${pr} — its continuation is a Principal ruling on that pull request (\`vinaya pr rule ${pr} --file <ruling>\`), never \`--widen-surface\`, which answers only a pause raised before any pull request existed.`
+    )
+  }
+  const request = pause.reason === 'escalation' ? widenSurfaceRequestOf(facts.turnResults) : null
+  if (request === null) {
+    throw new RunTaskError(
+      `runTask: ${label}'s pause (reason \`${pause.reason}\`, round ${pause.round}) is not a widen-surface escalation — the round's accepted Developer result asks for no \`widen_surface\` decision. Continue it with \`${noPushResumeCommandFor(issue, pause.branch, pause.agent, pause.model)}\` once its own ruling is settled.`
+    )
+  }
+  const escalationId = pause.escalationId ?? escalationIdFor(issue, pause.round, pause.head)
+  if (facts.resolution !== null) {
+    throw new RunTaskError(
+      `runTask: ${label}'s escalation '${escalationId}' already has a consumed '${facts.resolution.decision}' resolution (by ${facts.resolution.authenticatedBy}, from ${facts.resolution.authenticatedFrom}) — replay refused; the Surface is not widened twice. Continue the task with \`${noPushResumeCommandFor(issue, pause.branch, pause.agent, pause.model)}\`.`
+    )
+  }
+  if (!facts.escalationRecorded) {
+    throw new RunTaskError(
+      `runTask: ${label}'s escalation '${escalationId}' has no durable record, so its widening cannot be recorded as its resolution — refused before anything was superseded.`
+    )
+  }
+  return { escalationId, pause }
+}
+
+/**
+ * The widen-surface continuation, before the run starts. Every refusal comes
+ * first and writes nothing: the Principal allowlist, a driver still alive for
+ * the task, a pause that is not a pre-pull-request widen-surface escalation
+ * (or whose resolution is already consumed), and the widened body failing the
+ * write gate — graded here, read-only, with `widenSurfaceInLine`'s own
+ * refusal and the gate's findings passed through verbatim. Then, in order:
+ *
+ * 1. the supersede (`task brief --supersede --surface-in`'s own lib path),
+ *    which widens the Issue and returns the posted comment of the next frozen
+ *    brief — nothing later runs until it has;
+ * 2. that widening recorded as the escalation's resolution, so the same
+ *    command run again is a replay, refused above;
+ * 3. the write gate over the Issue's live, now-widened body;
+ *
+ * and `runTask` then starts the run from the newest brief. This never edits
+ * any other Issue field: a gate finding names the field the Planner edits
+ * first.
+ */
+async function widenSurfaceBeforeRun(
+  input: RunTaskInput,
+  request: WidenSurfaceRequest,
+  deps: Pick<
+    RunTaskDeps,
+    'assembleAndRenderBrief' | 'developerBranchFor' | 'findOpenPrForBranch' | 'isDriverAlive' | 'widen'
+  >
+): Promise<number> {
+  const label = taskLabelFor(input)
+  const retryCommand = widenRetryCommand(input, request)
+  const widen = deps.widen ?? defaultWidenSurfaceDeps
+
+  const { authorized, login } = widen.resolveAuthorization()
+  if (!authorized || login === null) {
+    throw new RunTaskError(
+      login === null
+        ? `runTask: could not resolve the identity \`gh\` is authenticated as — widening ${label}'s Surface is Principal-only, refused.`
+        : `runTask: \`${login}\` is not on the Principal allowlist — widening ${label}'s Surface is Principal-only, refused.`
+    )
+  }
+
+  let issue: number
+  if ('tranche' in input) {
+    const rendered = await deps.assembleAndRenderBrief(input.tranche, String(input.n))
+    if (!rendered.ok) {
+      throw new RunTaskError(
+        `runTask: could not resolve ${label}'s Issue:\n${rendered.missing.map((m) => `  - ${m}`).join('\n')}`
+      )
+    }
+    issue = rendered.issue
+  } else {
+    issue = input.issue
+  }
+
+  if (deps.isDriverAlive(issue)) {
+    throw new RunTaskError(
+      `runTask: a driver is still running ${label} — refused before anything was superseded. Widening a Surface answers a paused run; \`vinaya task status\` shows where the live one is.`
+    )
+  }
+
+  const openPr = deps.findOpenPrForBranch(deps.developerBranchFor(issue))
+  const { escalationId } = widenSurfaceEscalationOf(issue, label, widen.readFacts(issue), openPr?.number ?? null)
+
+  try {
+    await widen.gradeWidenedSurface(issue, request.globs, retryCommand)
+  } catch (err) {
+    throw new RunTaskError(
+      `runTask: refused before anything was superseded — the widened \`## Surface\` does not pass:\n${err instanceof Error ? err.message : String(err)}`
+    )
+  }
+
+  const superseded = await widen.supersede({
+    ...('tranche' in input ? { tranche: input.tranche, n: input.n } : { issue: input.issue }),
+    supersede: { reason: request.reason, surfaceIn: request.globs }
+  })
+  console.error(
+    `vinaya task run: ${label} — brief superseded to v${superseded.version} with \`## Surface\` widened by ${request.globs.join(', ')}: ${superseded.commentUrl}`
+  )
+
+  try {
+    widen.recordResolution(issue, escalationId, login, `widen-surface:${superseded.commentUrl}`)
+  } catch (err) {
+    if (err instanceof ReplayedResolutionError) {
+      throw new RunTaskError(
+        `runTask: ${err.message}. The brief was superseded (${superseded.commentUrl}), but another continuation consumed this escalation first — the run was not started from here.`
+      )
+    }
+    throw err
+  }
+
+  await widen.runIssueWriteGate(issue, retryCommand)
+  return issue
 }

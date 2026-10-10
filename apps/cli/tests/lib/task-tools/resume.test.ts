@@ -26,6 +26,8 @@ import {
   resolveEscalation,
   writePauseState
 } from '../../../src/lib/dev-review-loop/pause-resume.js'
+import { writeTurnResultRecord } from '../../../src/lib/dev-review-loop/turn-result.js'
+import { readEscalationPacket } from '../../../src/lib/task-tools/read.js'
 
 /**
  * `task_resume` (task-operator-v1 4, O1) driven in-process with injected
@@ -862,5 +864,80 @@ describe('defaultResumeLaunch — the argv each pause shape continues through', 
         'no-pr-model'
       )
     ).toEqual(['task', 'run', 'unattended-run-v1', '22', '--agent', 'codex', '--model', 'gpt-5.6-terra'])
+  })
+})
+
+describe('task_resume handler — a widen-surface escalation is the Planner’s', () => {
+  function writeWidenRequest(decisions: string[] = ['widen_surface', 'stop_task']) {
+    writeTurnResultRecord(outbox, ISSUE, {
+      version: 1,
+      runId: 'run-1',
+      round: 1,
+      attempt: 1,
+      head: 'headsha1',
+      outcome: 'accepted',
+      result: {
+        schemaVersion: 1,
+        status: 'needs_ruling',
+        summary: 'The command reference row lives outside the Surface.',
+        rulingRequest: {
+          question: 'May the Surface widen to `packages/sources/src` for the command reference row?',
+          decisions
+        },
+        sourceUses: null
+      },
+      failures: [],
+      recordedAt: '2026-01-01T00:00:00.000Z'
+    })
+  }
+
+  it('refuses a pre-pull-request widen_surface escalation, naming the Planner command with the requested globs', async () => {
+    writePause({ prNumber: null, agent: 'codex' })
+    writeEscalationFixture({ pr: null, agent: 'codex' })
+    writeWidenRequest()
+    const { handler, launches, events } = harness({
+      issueRulings: ['Ruling: widen the Surface.'],
+      newestIssueRulingOrdinal: 1
+    })
+    const result = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.kind).toBe('authority')
+      expect(result.error.message).toBe(
+        `task ${ISSUE}'s escalation '${ISSUE}-1-headsha1' asks for \`widen_surface\` — widening a Surface is the Planner's act, not the Operator's, so task_resume does not continue it. The Planner continues it with \`vinaya task run x 1 --widen-surface packages/sources/src --reason '<why the Surface widens>' --agent codex\`.`
+      )
+    }
+    expect(launches).toHaveLength(0)
+    // Nothing consumed: the Planner's command records the widening as the resolution.
+    expect(readResolution(controlStoreDeps, ISSUE, `${ISSUE}-1-headsha1`).status).toBe('absent')
+    expect(events).toEqual([
+      { operation: 'task_resume', target: `task:${ISSUE}`, result: 'refused', error_class: 'authority' }
+    ])
+  })
+
+  it('names the same command in the escalation packet’s permitted next actions', () => {
+    writePause({ prNumber: null, agent: 'codex' })
+    writeEscalationFixture({ pr: null, agent: 'codex' })
+    writeWidenRequest()
+    const packet = readEscalationPacket(outbox, ISSUE)
+    expect(packet?.permittedNextActions).toContain(
+      "To widen the Surface the Developer asked for (Planner): vinaya task run x 1 --widen-surface packages/sources/src --reason '<why the Surface widens>' --agent codex"
+    )
+  })
+
+  it('still continues a pre-pull-request escalation whose Developer asked for no widen_surface', async () => {
+    writePause({ prNumber: null })
+    writeEscalationFixture({ pr: null })
+    writeWidenRequest(['proceed_as_briefed', 'stop_task'])
+    const { handler, launches } = harness({
+      issueRulings: ['Ruling: proceed as briefed.'],
+      newestIssueRulingOrdinal: 1
+    })
+    const result = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(result.ok).toBe(true)
+    expect(launches).toHaveLength(1)
+    expect(readEscalationPacket(outbox, ISSUE)?.permittedNextActions.some((a) => a.includes('--widen-surface'))).toBe(
+      false
+    )
   })
 })

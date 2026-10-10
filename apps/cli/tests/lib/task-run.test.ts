@@ -24,13 +24,20 @@
  */
 
 import { describe, expect, it } from 'bun:test'
+import type { ResolutionRecord } from '@attalabs/aeg-core'
 import {
   describeModelResolution,
   isAlreadyDispatchedError,
   RunTaskError,
   runTask,
-  type RunTaskDeps
+  type RunTaskDeps,
+  type WidenSurfaceDeps,
+  type WidenSurfaceFacts,
+  widenSurfaceCommandFor,
+  widenSurfaceRequestOf
 } from '../../src/lib/task-run.js'
+import type { PauseState } from '../../src/lib/dev-review-loop/pause-resume.js'
+import type { TurnResultRecord } from '../../src/lib/dev-review-loop/turn-result.js'
 import { DispatchTaskError } from '../../src/lib/dispatch-task.js'
 import type { LoopResult } from '../../src/lib/dev-review-loop.js'
 
@@ -684,5 +691,279 @@ describe('runTask — issue-711 O5: a paused pull request continues from the new
       })
     )
     expect(result.prNumber).toBe(501)
+  })
+})
+
+describe('runTask — --widen-surface continues a pre-pull-request widen-surface escalation', () => {
+  const PAUSE: PauseState = {
+    task: 1245,
+    round: 1,
+    head: 'headsha1',
+    branch: 'task/t-v1/10',
+    prNumber: null,
+    reason: 'escalation',
+    pausedAt: '2026-01-01T00:00:00.000Z',
+    escalationId: '1245-1-headsha1',
+    agent: 'claude'
+  }
+
+  function needsRuling(decisions: string[]): TurnResultRecord {
+    return {
+      version: 1,
+      runId: 'run-1',
+      round: 1,
+      attempt: 1,
+      head: 'headsha1',
+      outcome: 'accepted',
+      result: {
+        schemaVersion: 1,
+        status: 'needs_ruling',
+        summary: 'Needs `packages/sources/src` for the command row.',
+        rulingRequest: { question: 'May the Surface widen to `packages/sources/src`?', decisions },
+        sourceUses: null
+      },
+      failures: [],
+      recordedAt: '2026-01-01T00:00:00.000Z'
+    }
+  }
+
+  const WIDEN_FACTS: WidenSurfaceFacts = {
+    pause: PAUSE,
+    escalationRecorded: true,
+    resolution: null,
+    turnResults: [needsRuling(['widen_surface', 'stop_task'])]
+  }
+
+  const INPUT = {
+    tranche: 't-v1',
+    n: 10,
+    agent: 'claude' as const,
+    widenSurface: { globs: ['packages/sources/src'], reason: 'the command reference row' }
+  }
+
+  /** Every widen step and the run's start append to one `calls` log, so the order is asserted, not inferred. */
+  function widenDeps(
+    calls: string[],
+    over: { widen?: Partial<WidenSurfaceDeps> } & Omit<Partial<RunTaskDeps>, 'widen'> = {}
+  ) {
+    const { widen: widenOver, ...rest } = over
+    const widen: WidenSurfaceDeps = {
+      readFacts: () => WIDEN_FACTS,
+      resolveAuthorization: () => ({ authorized: true, login: 'principal-1' }),
+      gradeWidenedSurface: async () => {
+        calls.push('grade')
+      },
+      supersede: async (input) => {
+        calls.push('supersede')
+        expect(input).toEqual({
+          tranche: 't-v1',
+          n: 10,
+          supersede: { reason: 'the command reference row', surfaceIn: ['packages/sources/src'] }
+        })
+        return { issue: 1245, brief: 'brief v2', commentUrl: 'https://example.test/c/2', version: 2 }
+      },
+      recordResolution: (issue, escalationId, by, from) => {
+        calls.push('record')
+        expect([issue, escalationId, by, from]).toEqual([
+          1245,
+          '1245-1-headsha1',
+          'principal-1',
+          'widen-surface:https://example.test/c/2'
+        ])
+      },
+      runIssueWriteGate: async () => {
+        calls.push('gate')
+      },
+      ...widenOver
+    }
+    return deps({
+      assembleAndRenderBrief: (async () => ({ ok: true, issue: 1245, brief: 'brief v1' })) as never,
+      developerBranchFor: () => 'task/t-v1/10',
+      findOpenPrForBranch: () => null,
+      isDriverAlive: () => false,
+      devReviewLoop: async (input) => {
+        calls.push('start')
+        expect(input).toEqual({ task: 1245, agent: 'claude' })
+        return { finalDecision: { type: 'publish' }, prNumber: 1300, task: 1245 }
+      },
+      widen,
+      ...rest
+    })
+  }
+
+  it('supersedes, records the resolution, runs the write gate, then starts the run — in that order, once each', async () => {
+    const calls: string[] = []
+    await runTask(INPUT, widenDeps(calls))
+    // `grade` is the read-only pre-check every refusal relies on; nothing is written before it.
+    expect(calls).toEqual(['grade', 'supersede', 'record', 'gate', 'start'])
+  })
+
+  it('refuses a pause that is not a widen-surface escalation, before any write', async () => {
+    const calls: string[] = []
+    const run = runTask(
+      INPUT,
+      widenDeps(calls, {
+        widen: { readFacts: () => ({ ...WIDEN_FACTS, turnResults: [needsRuling(['proceed_as_briefed'])] }) }
+      })
+    )
+    await expect(run).rejects.toThrow(
+      "runTask: task 10 in tranche `t-v1`'s pause (reason `escalation`, round 1) is not a widen-surface escalation — the round's accepted Developer result asks for no `widen_surface` decision. Continue it with `vinaya task run t-v1 10 --agent claude` once its own ruling is settled."
+    )
+    expect(calls).toEqual([])
+  })
+
+  it('refuses a pause that already has a pull request — its continuation is the ruling there', async () => {
+    const calls: string[] = []
+    const run = runTask(
+      INPUT,
+      widenDeps(calls, { widen: { readFacts: () => ({ ...WIDEN_FACTS, pause: { ...PAUSE, prNumber: 1300 } }) } })
+    )
+    await expect(run).rejects.toThrow(
+      'pause has pull request #1300 — its continuation is a Principal ruling on that pull request'
+    )
+    expect(calls).toEqual([])
+  })
+
+  it('refuses when no pause is held at all', async () => {
+    const calls: string[] = []
+    const run = runTask(INPUT, widenDeps(calls, { widen: { readFacts: () => ({ ...WIDEN_FACTS, pause: null }) } }))
+    await expect(run).rejects.toThrow('holds no paused run')
+    expect(calls).toEqual([])
+  })
+
+  it('refuses while a driver is still alive for the task, before any write', async () => {
+    const calls: string[] = []
+    const run = runTask(INPUT, widenDeps(calls, { isDriverAlive: () => true }))
+    await expect(run).rejects.toThrow(
+      'runTask: a driver is still running task 10 in tranche `t-v1` — refused before anything was superseded.'
+    )
+    expect(calls).toEqual([])
+  })
+
+  it('refuses when the widened body fails the write gate, passing its findings through and superseding nothing', async () => {
+    const calls: string[] = []
+    const finding =
+      "Issue #1245's write gate refused — the same findings `vinaya issue edit` would report:\n  - [error] [issue-content] Add a second registered `Project(s)` this task also touches"
+    const run = runTask(
+      INPUT,
+      widenDeps(calls, {
+        widen: {
+          gradeWidenedSurface: async (_issue, _globs, retry) => {
+            calls.push('grade')
+            expect(retry).toBe(
+              "vinaya task run t-v1 10 --widen-surface packages/sources/src --reason 'the command reference row'"
+            )
+            throw new DispatchTaskError(finding)
+          }
+        }
+      })
+    )
+    await expect(run).rejects.toThrow(
+      `runTask: refused before anything was superseded — the widened \`## Surface\` does not pass:\n${finding}`
+    )
+    expect(calls).toEqual(['grade'])
+  })
+
+  it('passes widenSurfaceInLine’s broader-out: refusal through verbatim', async () => {
+    const calls: string[] = []
+    const refusal =
+      'cannot widen `## Surface` — `packages/aeg-core/src` still falls under the broader `out:` glob `packages/aeg-core`.'
+    const run = runTask(
+      INPUT,
+      widenDeps(calls, {
+        widen: {
+          gradeWidenedSurface: async () => {
+            throw new DispatchTaskError(refusal)
+          }
+        }
+      })
+    )
+    await expect(run).rejects.toThrow(refusal)
+    expect(calls).toEqual([])
+  })
+
+  it('refuses a second run against the same escalation as a replay — the Surface is never widened twice', async () => {
+    const calls: string[] = []
+    const consumed: ResolutionRecord = {
+      version: 1,
+      kind: 'resolution',
+      task: 1245,
+      escalationId: '1245-1-headsha1',
+      decision: 'resume',
+      authenticatedBy: 'principal-1',
+      authenticatedFrom: 'widen-surface:https://example.test/c/2',
+      consumedAt: '2026-01-01T00:00:00.000Z'
+    }
+    const run = runTask(
+      INPUT,
+      widenDeps(calls, { widen: { readFacts: () => ({ ...WIDEN_FACTS, resolution: consumed }) } })
+    )
+    await expect(run).rejects.toThrow(
+      "already has a consumed 'resume' resolution (by principal-1, from widen-surface:https://example.test/c/2) — replay refused; the Surface is not widened twice"
+    )
+    expect(calls).toEqual([])
+  })
+
+  it('refuses an identity off the Principal allowlist before reading anything', async () => {
+    const calls: string[] = []
+    const run = runTask(
+      INPUT,
+      widenDeps(calls, { widen: { resolveAuthorization: () => ({ authorized: false, login: 'someone' }) } })
+    )
+    await expect(run).rejects.toThrow('`someone` is not on the Principal allowlist')
+    expect(calls).toEqual([])
+  })
+
+  it('never starts the run when the supersede refuses', async () => {
+    const calls: string[] = []
+    const run = runTask(
+      INPUT,
+      widenDeps(calls, {
+        widen: {
+          supersede: async () => {
+            calls.push('supersede')
+            throw new DispatchTaskError('could not write the widened `## Surface`')
+          }
+        }
+      })
+    )
+    await expect(run).rejects.toThrow('could not write the widened')
+    expect(calls).toEqual(['grade', 'supersede'])
+  })
+})
+
+describe('widenSurfaceRequestOf / widenSurfaceCommandFor', () => {
+  it('reads the backticked repository paths of the newest accepted needs_ruling that asks for widen_surface', () => {
+    const record = (decisions: string[], question: string): TurnResultRecord => ({
+      version: 1,
+      runId: 'r',
+      round: 1,
+      attempt: 1,
+      head: null,
+      outcome: 'accepted',
+      result: {
+        schemaVersion: 1,
+        status: 'needs_ruling',
+        summary: 'see `widen_surface` and `apps/cli/specs`',
+        rulingRequest: { question, decisions },
+        sourceUses: null
+      },
+      failures: [],
+      recordedAt: 'x'
+    })
+    expect(widenSurfaceRequestOf([record(['widen_surface'], 'Add `packages/sources/src` and `../etc`?')])).toEqual({
+      globs: ['packages/sources/src', 'apps/cli/specs']
+    })
+    expect(widenSurfaceRequestOf([record(['proceed_as_briefed'], 'x')])).toBeNull()
+    expect(widenSurfaceRequestOf([])).toBeNull()
+  })
+
+  it('renders the address form the branch takes, quoting what a shell would split', () => {
+    expect(widenSurfaceCommandFor(77, 'task/issue-77', [], 'codex', 'gpt-5')).toBe(
+      "vinaya task run --issue 77 --widen-surface '<glob,...>' --reason '<why the Surface widens>' --agent codex --model gpt-5"
+    )
+    expect(widenSurfaceCommandFor(77, 'task/t-v1/3', ['a/b', 'c/**'])).toBe(
+      "vinaya task run t-v1 3 --widen-surface a/b,c/** --reason '<why the Surface widens>'"
+    )
   })
 })

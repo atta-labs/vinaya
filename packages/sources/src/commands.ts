@@ -200,9 +200,16 @@ export const COMMANDS: readonly Command[] = [
         flag: '--quiet',
         description:
           "Hide the detail lines (an agent's prose, full commands, failed-result tails) on the live terminal; the driver log file keeps them"
+      },
+      {
+        flag: '--widen-surface <glob,...> --reason <text>',
+        description:
+          "Continue a pre-pull-request escalation whose Developer asked for `widen_surface`: supersede the frozen brief with the globs added to `## Surface`, record that as the escalation's resolution, grade the widened Issue through the write gate, then start the run"
       }
     ],
     details: [
+      // AEG:CLAIM: apps/cli/src/lib/task-run.ts contains:async function widenSurfaceBeforeRun(
+      "`--widen-surface` is the Planner's one command for a widen-surface escalation, and refuses before any write when the held pause is not one (no pause, a pause with a pull request — whose continuation is the ruling on that pull request — or a round whose Developer asked for no `widen_surface`), when a driver is still alive for the task, when the escalation's resolution is already consumed (a replay — the Surface is never widened twice), or when the widened body fails the write gate, whose findings name the field to edit first. The escalation packet's permitted next actions name this command with the globs the Developer asked for, and `task_resume` refuses such an escalation naming it.",
       // AEG:CLAIM: apps/cli/src/lib/task-run.ts contains:export async function runTask(
       "Composes `task brief`'s own preparation (`prepareTask`) with the watching driver (`runDriverLoop`, `dev-review-loop.ts`) — nothing else. Preparation starts no agent; the loop's own round 1 reads the frozen brief off the Issue and is the only place a developer is ever dispatched from a fresh task, so exactly one developer is started by construction.",
       'A brief already frozen on the Issue is reused, never re-posted — the second `task dispatch`/`task brief` call this composes around does not fail the whole run, it just skips straight to running the loop. A task whose Issue refuses preparation (a missing brief section, an unmet dispatch gate) is refused before any agent starts, with nothing posted.',

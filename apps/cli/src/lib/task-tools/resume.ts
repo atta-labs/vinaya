@@ -93,6 +93,7 @@ import {
 } from '../dev-review-loop/pause-resume.js'
 import { runtimeDir } from '../dev-review-loop.js'
 import { newestPublishedRound } from '../task-status.js'
+import { widenSurfaceContinuationFor } from '../task-run.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
 import { taskFromEscalationId } from '../dev-review-loop/pause-resume.js'
 import { log } from '../log-sink.js'
@@ -486,6 +487,22 @@ export function createTaskResumeHandler(
         authenticatedBy: existingResolution.authenticatedBy,
         authenticatedFrom: existingResolution.authenticatedFrom
       })
+    }
+
+    // A pre-pull-request escalation whose Developer asked for `widen_surface`
+    // is the Planner's to continue, under the Principal-Operator contract: the
+    // continuation changes the task's Surface, which this tool never does. It
+    // refuses with the one command that does, rather than relaunching the
+    // Developer onto the same narrow brief.
+    const widenSurface = escalationPr === null ? widenSurfaceContinuationFor(root, held) : null
+    if (widenSurface !== null) {
+      emitOperationEvent(deps.log, issue, target, 'refused', 'authority')
+      return fail(
+        taskToolError(
+          'authority',
+          `task ${issue}'s escalation '${escalationId}' asks for \`widen_surface\` — widening a Surface is the Planner's act, not the Operator's, so task_resume does not continue it. The Planner continues it with \`${widenSurface}\`.`
+        )
+      )
     }
 
     const escalation = readEscalationRecord(issue, escalationId, controlStoreDeps)
