@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -508,6 +508,21 @@ describe('renderReviewerDispatchPrompt — carries the role doctrine as a fact',
     expect(reviewerPrompt).toContain('BLOCKING SEVERITIES UNDER THE EFFECTIVE REVIEW POLICY: BLOCKER, MAJOR')
     expect(securityPrompt).toContain('BLOCKING SEVERITIES UNDER THE EFFECTIVE REVIEW POLICY: CRITICAL, HIGH')
     expect(reviewerPrompt).not.toContain('take precedence')
+  })
+
+  it('keeps policy thresholds and unattended-loop procedures out of reviewer doctrine', () => {
+    const doctrineRoot = join(import.meta.dir, '..', '..', '..', '..', '..', 'aeg-root')
+    const reviewer = readFileSync(join(doctrineRoot, 'roles', 'reviewer.md'), 'utf8')
+    const security = readFileSync(join(doctrineRoot, 'roles', 'security.md'), 'utf8')
+    const contract = readFileSync(join(doctrineRoot, 'contracts', 'developer-reviewer.md'), 'utf8')
+
+    expect(reviewer).not.toContain('**BLOCKER** — blocks merge')
+    expect(reviewer).not.toContain('git diff origin/main...HEAD --stat')
+    expect(reviewer).not.toContain('The order is: **code-reviewer pass')
+    expect(security).not.toContain('Any CRITICAL → FAIL')
+    expect(security).not.toContain('writes exactly `SECRETS: none found')
+    expect(security).not.toContain('code-reviewer pass → **security pass')
+    expect(contract).not.toContain('flagging it as a BLOCKER')
   })
 
   it('states a dispatched session gives no read receipt, and sends nothing for a missing doctrine (O2, O3)', () => {

@@ -137,7 +137,7 @@ SECRETS: [none found — atta-labs/secret-scan passed | listed above, redacted]
 <!-- AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string { -->
 <!-- AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string { -->
 <!-- AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult { -->
-- **CRITICAL** — leaked live credential, auth bypass, key sent to client. Any CRITICAL → FAIL.
+- **CRITICAL** — leaked live credential, auth bypass, or key sent to a client.
 - **HIGH** — likely exploitable misconfig or injection surface.
 - **MEDIUM/LOW** — hardening notes.
 
@@ -148,11 +148,11 @@ A re-pass reports the verified state of every prior finding id and judges new fi
 <!-- AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function noneFoundClaimCitesScanCheck( -->
 <!-- AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:function scanCheckConclusionPasses(line: string): boolean { -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts contains:if (!noneFoundClaimCitesScanCheck(report.SECRETS, null)) { -->
-The `SECRETS:` line is evidence-backed, not asserted: the secret scan is the required `atta-labs/secret-scan` CI check (check 1), so a `SECRETS: none found` line cites that check's result on the judged head by name — necessary evidence that the scan ran and passed, never sufficient on its own, since the judgment half of check 1 still stands behind the claim. You cite the result; you never run a scanner yourself or paste its output. `SECRETS: none found` with no citation of the check is an unbacked self-attestation — the exact claim this check exists to catch in others' work, not to commit in your own. One rule holds on both paths: a dispatched security pass writes exactly `SECRETS: none found — atta-labs/secret-scan passed` in its report, puts any note from its own read of the diff on the lines below it, and the review loop refuses a bare `none found`. The rule reads only the word right after the check's name (`pass`, `passed`, `passing` or `success` backs the claim; `fail`, `failed`, `missing`, `skipped`, `pending` or `not present` does not), never the rest of the line. The check's result is read from the `vinaya check --all --diff-only` CI job, which runs the scan — `gh pr checks` lists no separate `atta-labs/secret-scan` entry, so its absence there is not a missing check; `vinaya review post` refuses `--secrets "none found"` without `--secrets-evidence-file <path>` holding the check's result (its name and conclusion, taken from that CI job) that names `atta-labs/secret-scan` beside a passing conclusion AND beside the judged head's own sha — a check shown failed, missing, skipped or pending never backs the claim, and neither does a passing result tied to a different commit or to no commit at all: put the judged head's sha in the evidence file beside the passing line, and no other commit's sha, on either path.
+Treat the secret scan as evidence, not as a substitute for reading the diff and judging whether credentials or sensitive values were exposed.
 
 ## Escalation
 
-If you discover something that needs a decision above review authority, post it with `vinaya review post --escalate <class> --summary <text>` — never as a finding inside a FAIL. An escalation is its own review outcome: it renders `ESCALATE: <class>`, never a `VERDICT:` line, and the command refuses it alongside `--verdict` or alongside any CRITICAL/HIGH finding in the same findings file. Three classes:
+If you discover something that needs a decision above review authority, escalate it instead of turning it into a security finding. Three classes:
 
 - `authority` — the decision is above review authority outright; you have no basis to rule on it.
 - `strategy` — the brief assumes an approach the codebase has gone a different way on, or a required edit sits outside the brief's stated surface but is genuine blast radius of the change.
@@ -162,6 +162,6 @@ Do not design the fix yourself; route it to the Planner or Principal.
 
 ## Where you sit in the process
 
-Phase 10 (Review) in `process.md`: code-reviewer pass → **security pass (you)** → Principal code review → Planner spec review → merge.
+Phase 10 (Review) in `process.md`: the code and security passes run in parallel, then their results feed the Principal and Planner reviews.
 
 **Your verdict is also a mechanical merge gate (the review-gate tranche, task 1).** A required, blocking CI check (the `review-gate` check — `vinaya check review-gate`, wired into every adopter's generated CI) reads every PR comment from a **principal-allowlisted author** (verdict-author verification, 2026-08-09 — bot and unknown-author comments are ignored) for a clean `PASS` verdict that also covers the PR's current head commit (reviewed-commit binding) and the current objectives list (objectives-version binding) — `FAIL`, a missing verdict, an unclear one, or one bound to a superseded commit or a superseded objectives list all fail the check and block merge, same as the code-reviewer pass. This is not advisory: it is the same enforcement class as typecheck or lint. A principal can waive it for one PR with an actor-verified `vinaya/waiver:review` label (`aeg-root/enforcement.md`) — label presence alone is never sufficient.

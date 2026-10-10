@@ -39,7 +39,7 @@ This seam sits between finished work and the review of it. It exists so that an 
 
 A review is only as good as the artifact it reviews. When the Developer hands off an incomplete, CI-failing, or brief-free PR, the Reviewer's independence is wasted — they spend the session verifying basics rather than judging correctness and spec-conformance. This contract removes ambiguity about what "ready for review" means: the Developer cannot open a PR without satisfying the left column; the Reviewer cannot start without verifying the right column.
 
-The failure mode this prevents: a Reviewer who begins reviewing a diff without reading the brief (and therefore judges code rather than intent), or who reviews a red-CI PR (and cannot distinguish the Developer's errors from pre-existing failures), or who accepts a PR that touched files outside the brief's surface map without flagging it as a BLOCKER.
+The failure mode this prevents: a Reviewer who begins reviewing a diff without reading the brief (and therefore judges code rather than intent), or who reviews a red-CI PR (and cannot distinguish the Developer's errors from pre-existing failures), or who overlooks scope drift instead of reporting it for repository-policy classification.
 
 ---
 
