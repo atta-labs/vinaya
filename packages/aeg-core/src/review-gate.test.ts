@@ -1325,14 +1325,26 @@ describe('checkReviewGate — deferral context (O2/O3/O4)', () => {
     expect(result.verdict).toBe('fail')
   })
 
-  it('O3/O4: an out-of-Surface blocker is deferred — the gate passes and names it in its output', () => {
+  it('O3/O4: a blocker on an unchanged out-of-Surface file is deferred — the gate passes and names it in its output', () => {
     const result = checkReviewGate({
       ...base,
       comments: [APPROVE_WITH_OUT_OF_SURFACE_BLOCKER, PASS_COMMENT],
-      deferralContext: { inSurface: (loc) => !loc.startsWith('apps/log-server/') }
+      deferralContext: { inSurface: (loc) => !loc.startsWith('apps/log-server/'), changedFile: () => false }
     })
     expect(result.verdict).toBe('pass')
     expect(result.reason).toContain('deferred, not blocking this round')
     expect(result.reason).toContain('BLOCKER apps/log-server/x.ts:9 (outside the Surface)')
+  })
+
+  it('a blocker on a changed file beyond the Surface is reviewed like any change — the gate fails', () => {
+    const result = checkReviewGate({
+      ...base,
+      comments: [APPROVE_WITH_OUT_OF_SURFACE_BLOCKER, PASS_COMMENT],
+      deferralContext: {
+        inSurface: (loc) => !loc.startsWith('apps/log-server/'),
+        changedFile: (loc) => loc.startsWith('apps/log-server/x.ts')
+      }
+    })
+    expect(result.verdict).toBe('fail')
   })
 })
