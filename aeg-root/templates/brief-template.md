@@ -3,11 +3,11 @@ sidebar_title: "Template: Task brief"
 ---
 # Template — Task brief (the 12-section shape)
 
-**This file is the render's shape reference, not a hand-fill-in-the-blanks template any more.** The brief is no longer hand-authored: the Planner's dispatch act runs `vinaya task dispatch`, which mechanically renders every section below from the task Issue's own rationale and judgment sections (see `aeg-root/roles/planner.md` § The dispatch act and § The Planner's rationale) and posts the result, frozen, as the Issue's `aeg:brief:v1` comment. This file exists so a reader can see the 12-section shape the render fills — the required sections, their order, and the fields the gates read — without reverse-engineering it from the renderer's source. The brief is **never committed as a repo file** on its own; it is posted as the Issue comment, and a reference copy rides along inside a collapsed `<details>` block in the Developer's PR report when the Developer opens the PR.
+**This file is the render's shape reference, not a hand-fill-in-the-blanks template any more.** The brief is no longer hand-authored: the Planner's dispatch act runs `vinaya task dispatch`, which mechanically renders every section below from the task Issue's own rationale and judgment sections (see `aeg-root/roles/planner.md` § The dispatch act and § The Planner's rationale) and posts the result, frozen, as the Issue's `aeg:brief:v1` comment. This file exists so a reader can see the 12-section shape the render fills — the required sections, their order, and the fields the gates read — without reverse-engineering it from the renderer's source. The brief is **never committed as a repo file**, and it never rides in the pull-request body: it is posted as the Issue comment, and that comment is its one home.
 
 **Every command below is written the way the repository the brief is rendered for invokes the CLI.** The render substitutes that invocation for the bare `vinaya` shown here — `npx --yes @attalabs/vinaya@<version>` in a repository that installs the CLI from the registry, `bun <dir>/src/index.ts` in one that vendors it as a workspace member (the same decision the generated hooks and workflows make). A brief that named a path only this repository has was unrunnable everywhere else, and read as spoofed instructions to at least one Developer that received one. The Developer doctrine and this PR report template are named the same way — as commands that print them out of the installed package, never as paths under `aeg-root/`.
 
-The brief itself carries no anchor comments: it rides into the PR body as the *reference copy*, and the anchored gate-read fields live in the Developer's PR report (`aeg-root/templates/pr-report-template.md`) — anchoring the same fields twice in one body would recreate the very ambiguity anchors exist to remove.
+The brief itself carries no anchor comments: it stays on the task Issue, and the anchored gate-read fields live in the Developer's PR report (`aeg-root/templates/pr-report-template.md`).
 
 ---
 
@@ -34,7 +34,7 @@ You are the AEG Developer. Run `vinaya doctrine --role developer --print` and re
 
 ## 2. Context — read before doing anything
 
-- **Tranche:** [`tranche-slug`], task [n], Issue #[N]. Branch `task/[tranche-slug]/[n]`. `Depends-on: [—|ids]`, `Conflicts-with: [—|ids]`. Confirm dispatch readiness at your own Step 0, with the command §5 names.
+- **Tranche:** [`tranche-slug`], task [n], Issue #[N]. Branch `task/[tranche-slug]/[n]`. `Depends-on: [—|ids]`, `Conflicts-with: [—|ids]`.
 - **Read Issue #[N] in full** for the complete rationale — do not re-derive it.
 - [CONTEXT — the Planner's rationale carried forward (boundary, blast radius, traps), what was previously validated, what is settled and must not be re-litigated, and everything your own Dig confirmed about the current surface. If it isn't in the brief, it doesn't exist. No behavioural fact about code belongs here as prose — a `Premise:` pin or a fenced command with its executed output is the only form (skill §2's rule).]
 
@@ -75,7 +75,7 @@ git worktree add .worktrees/task/[tranche-slug]/[n] -b task/[tranche-slug]/[n] -
 
 On any failure: STOP and report.
 
-## 6. Numbered parts — call `publish_changes` after EACH part; `open_pull_request` once the first part is published
+## 6. Numbered parts — publish once with `publish_changes` when every Part is done, then `open_pull_request`
 
 <!-- AEG:CLAIM: packages/aeg-core/src/brief-render.ts contains:function renderPartCitation(part: IssuePart): string { -->
 [Rendered from the Issue's `## Parts` section — `vinaya brief render` fills one numbered Part per `Part <k> (O<n>[, O<m>]) — <outcome>` line, citation reconstructed verbatim, files grouped by package as today. Hand-authoring the same: exact files + exact function/type signatures + constraints — not prose. A Part that depends on a fact about current code opens with the fenced command that establishes it, followed by the executed output (skill §2's rule). Cite at least one `O<n>` from the Objectives section above; an administrative Part with no objective of its own (a changeset commit, the final push) may omit the citation.]
@@ -100,10 +100,13 @@ On any failure: STOP and report.
 <!-- AEG:CLAIM: packages/aeg-core/src/brief-render.ts contains:...facts.testPlan.lines, -->
 [Rendered from the Issue's `## Test plan` section — `vinaya brief render` copies it verbatim, never re-deriving one from the surface file list.]
 
-- [ ] **[agent]** [scriptable, non-auth check — the exact command + the concrete observable; evidence pasted, not paraphrased]
+```
+[<scriptable, non-auth command> → <expected observable>]
+```
+
 - [ ] **[principal]** [auth-gated / vendor-key / visual check — what the Principal does and what they should observe]
 
-[Pure-logic tasks with no runtime surface in §4 declare the `unit-tests-only` sentinel on the Test Plan field instead of a checklist — one form or the other, never both.]
+[Pure-logic tasks with no runtime surface in §4 declare the `unit-tests-only` sentinel on the Test Plan field instead of a command list — one form or the other, never both.]
 
 ## 10. Stop conditions
 
@@ -124,8 +127,9 @@ STOP and report if: pre-flight fails; [the Planner's stop-and-escalate condition
 
 - PR title (exact): `[[tranche-slug]] [n] — [task title]`
 - Open the PR only via the `open_pull_request` tool (title and body); publish your commits with `publish_changes`, and update the body with `update_pull_request_body`/`refresh_evidence` — you hold no `gh`/`git push` credential of your own. (Working manually, with no driver, you publish these yourself with the CLI the way this repository invokes it.)
-- PR body = the Developer's PR report (print it with `vinaya doctrine --template pr-report --print`), with this entire brief pasted as the reference copy inside a collapsed `<details>` block, and `Closes #[N]` at the top of the header block.
+- Publish once, with `publish_changes`, when every Part is done; then open the pull request with `open_pull_request`. Publish again only to answer review findings or a red gate — a refused hook, a failing check, a merge conflict.
+- PR body = the Developer's PR report (print it with `vinaya doctrine --template pr-report --print`), with `Closes #[N]` at the top of the header block. This brief stays frozen on the task Issue and never rides in the body.
 - [what to state in the PR body: decisions made, confirmations required by §8]
-- Pre-open gate: tier checklist satisfied, and `PR_BODY="$(cat <body-file>)" vinaya check doc-coverage` green (in this repo the render also names `PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr`).
+- Pre-open: tier checklist satisfied. The documentation gate is the controller's — `run_checks` and CI run it.
 - Include `git diff origin/main...HEAD --stat` as scope context only; the Developer judges Surface through the driver’s `surface-scope` check, never this hand-run diff. Token use needs no report here — it is recorded as the Vinaya log's own `usage` event.
 - Then STOP. Review and Verification are separate invocations.
