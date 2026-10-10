@@ -74,7 +74,6 @@ import {
   checkIssueRationale,
   fetchOpenIssuesByLabel,
   parseTaskBranchIdentity,
-  siblingsSharingConflictEdge,
   type DispatchBlockerClass,
   type DispatchConflictsWithFact,
   type DispatchDependsOnFact,
@@ -88,6 +87,7 @@ import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 import { containedAbs } from '../../lib/ops'
 import { type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../edge-resolve'
+import { resolveSiblingConflictFacts } from '../sibling-conflict-facts'
 import { reassertPremiseFile } from '../premise-reassert-logic'
 
 const CHECK_NAME = 'dispatch-readiness'
@@ -462,21 +462,12 @@ async function runTrancheMode(trancheSlug: string, taskId: string): Promise<void
     })
   )
   // An edge a sibling names is present too — read from the same open-Issue
-  // listing, through the reader the write gate shares.
-  const namedBySibling =
-    task.issue === null
-      ? []
-      : siblingsSharingConflictEdge(
-          { ref: String(task.issue), conflictsWith: task.conflictsWith },
-          openIssues.map((i) => ({ ref: String(i.number), conflictsWith: parseRationaleDeps(i.body).conflictsWith }))
-        )
-  const seenIssues = new Set(ownConflictFacts.map((f) => f.issue).filter((n): n is number => n !== null))
-  const siblingConflictFacts: DispatchConflictsWithFact[] = []
-  for (const sib of namedBySibling) {
-    if (seenIssues.has(Number(sib.ref))) continue
-    const r = await resolveEdge(`#${sib.ref}`, taskById, factsByTaskId, repo)
-    siblingConflictFacts.push({ id: `#${sib.ref}`, issue: r.issue, openOrInFlight: r.open })
-  }
+  // listing, through the reader the write gate shares. Backlog (tranche-less)
+  // mode keeps reading only the Issue's own list: it has no tranche label to
+  // list siblings by.
+  const siblingConflictFacts = await resolveSiblingConflictFacts(task, openIssues, ownConflictFacts, (edge) =>
+    resolveEdge(edge, taskById, factsByTaskId, repo)
+  )
   const conflictsWith: DispatchConflictsWithFact[] = [...ownConflictFacts, ...siblingConflictFacts]
 
   const priorTrancheArchival: DispatchPriorTrancheFact[] = []

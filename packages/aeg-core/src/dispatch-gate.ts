@@ -20,6 +20,9 @@
 
 import { edgesNameEachOther } from './issue-validation'
 
+/** The one edge reader both gates use — the write gate's own function, re-exposed so a test can assert identity. */
+export const conflictEdgeReader = edgesNameEachOther
+
 /** One task Issue reduced to what an edge reader needs: its reference and its parsed `Conflicts-with` ids. */
 export type ConflictEdgeParty = { ref: string; conflictsWith: string[] }
 
@@ -33,7 +36,7 @@ export function siblingsSharingConflictEdge<S extends ConflictEdgeParty>(
   subject: ConflictEdgeParty,
   siblings: S[]
 ): S[] {
-  return siblings.filter((s) => s.ref !== subject.ref && edgesNameEachOther(subject, s))
+  return siblings.filter((s) => s.ref !== subject.ref && conflictEdgeReader(subject, s))
 }
 
 import type { Task } from './types'

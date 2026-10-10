@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { parseRationaleDeps } from '@attalabs/aeg-forge-state'
-import { readFileSync } from 'node:fs'
-import { checkDispatchReadiness, siblingsSharingConflictEdge, type DispatchGateInput } from './dispatch-gate'
+import {
+  checkDispatchReadiness,
+  conflictEdgeReader,
+  siblingsSharingConflictEdge,
+  type DispatchGateInput
+} from './dispatch-gate'
 import { edgesNameEachOther } from './issue-validation'
 import type { Task } from './types'
 
@@ -455,13 +459,11 @@ describe('conflicts-with edge read from either side', () => {
     }
   })
 
-  it('uses the write gate reader itself, not a copy', () => {
-    const src = readFileSync(new URL('./dispatch-gate.ts', import.meta.url), 'utf8')
-    expect(src).toContain("import { edgesNameEachOther } from './issue-validation'")
-    expect(src).toContain('edgesNameEachOther(subject, s)')
+  it('reads edges with the write gate reader itself, the same function', () => {
+    expect(conflictEdgeReader).toBe(edgesNameEachOther)
   })
 
-  it('blocks while the sibling pull request is open and releases once it merges', () => {
+  it('blocks while the sibling pull request is open and releases once it merges (facts hand-fed)', () => {
     const edge = { id: '#1255', issue: 1255 }
     const blocked = checkDispatchReadiness(makeInput({ conflictsWith: [{ ...edge, openOrInFlight: true }] }))
     expect(blocked.ready).toBe(false)

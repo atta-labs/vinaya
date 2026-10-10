@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto'
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, sep } from 'node:path'
+import { checkDispatchReadiness, type DispatchConflictsWithFact, type DispatchGateInput } from '@attalabs/aeg-core'
+import { resolveSiblingConflictFacts } from '../../src/checks/sibling-conflict-facts'
 import { reassertPremiseFile } from '../../src/checks/premise-reassert-logic'
 import { containedAbs } from '../../src/lib/ops'
 
@@ -326,5 +328,67 @@ describe('checkPremiseReassertion — containment on the per-pin fileReader', ()
         cleanup()
       }
     })
+  })
+})
+
+describe('check-dispatch-readiness: Conflicts-with named only by a sibling', () => {
+  const sibling = (n: number, conflicts: string) => ({
+    number: n,
+    body: `**Dependency rationale** — \`Conflicts-with: ${conflicts}\` — shared files.
+
+**Traps to avoid** — none known.`
+  })
+  // Fake forge: the sibling's pull request is open until `merged` flips.
+  const forge = (state: { merged: boolean }) => async (edge: string) => ({
+    issue: Number(edge.replace('#', '')),
+    open: !state.merged
+  })
+  const gate = (conflictsWith: DispatchConflictsWithFact[]) => {
+    const input: DispatchGateInput = {
+      trancheSlug: 't',
+      task: { id: '1', title: '', issue: 1264, projects: [], dependsOn: [], conflictsWith: [], rationaleMarkdown: '' },
+      issue: { number: 1264, state: 'open' },
+      issueRationalePass: true,
+      dependsOn: [],
+      conflictsWith,
+      priorTask: null,
+      priorTrancheArchival: []
+    }
+    return checkDispatchReadiness(input)
+  }
+
+  it('blocks dispatch while the naming sibling has an open pull request, and releases on merge', async () => {
+    const state = { merged: false }
+    const subject = { issue: 1264, conflictsWith: [] as string[] }
+    const listing = [sibling(1255, '#1264'), sibling(9, '#8')]
+
+    const open = await resolveSiblingConflictFacts(subject, listing, [], forge(state))
+    expect(open).toEqual([{ id: '#1255', issue: 1255, openOrInFlight: true }])
+    const blocked = gate(open)
+    expect(blocked.ready).toBe(false)
+    expect(blocked.blockers.join('\n')).toContain('conflicts with #1255 (#1255), whose PR is open or in-flight')
+
+    state.merged = true
+    const released = await resolveSiblingConflictFacts(subject, listing, [], forge(state))
+    expect(gate(released).ready).toBe(true)
+  })
+
+  it('adds nothing for an unrelated listing, a sibling already in the own list, or a task with no Issue', async () => {
+    const state = { merged: false }
+    expect(
+      await resolveSiblingConflictFacts({ issue: 1264, conflictsWith: [] }, [sibling(9, '#8')], [], forge(state))
+    ).toEqual([])
+    const own = [{ id: '#1255', issue: 1255, openOrInFlight: true }]
+    expect(
+      await resolveSiblingConflictFacts(
+        { issue: 1264, conflictsWith: ['#1255'] },
+        [sibling(1255, '#1264')],
+        own,
+        forge(state)
+      )
+    ).toEqual([])
+    expect(
+      await resolveSiblingConflictFacts({ issue: null, conflictsWith: [] }, [sibling(1255, '#1264')], [], forge(state))
+    ).toEqual([])
   })
 })
