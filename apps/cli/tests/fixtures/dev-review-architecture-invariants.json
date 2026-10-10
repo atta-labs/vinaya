@@ -785,7 +785,7 @@
     },
     {
       "id": "INV-033",
-      "behavior": "Before publishing a turn the driver checks branch, base, pre-turn head and that every changed path is inside the Surface; a failure is sent back at most twice.",
+      "behavior": "Before publishing a turn the driver checks branch, base and pre-turn head; a failure is sent back at most twice. A changed path beyond the Surface is published and recorded in the pull request body, never refused.",
       "classification": "product-guarantee",
       "owner": "governed-operation",
       "authority": "pure-policy",

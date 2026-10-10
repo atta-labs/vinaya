@@ -597,7 +597,7 @@
     },
     {
       "id": "isolation-refusal",
-      "title": "A turn that changes a path outside the Surface is never committed, pushed or opened and never reaches a reviewer.",
+      "title": "A turn whose publication preconditions fail is never committed, pushed or opened and never reaches a reviewer.",
       "categories": ["isolation-refusal"],
       "guarantees": ["INV-033", "INV-120", "INV-123"],
       "expect": {

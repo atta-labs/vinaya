@@ -461,7 +461,11 @@ const DRIVERS: Record<string, Driver> = {
   },
 
   'isolation-refusal': async () => {
+    // A worktree on another branch fails the publication preconditions; a
+    // path beyond the Surface is recorded, never refused, so it is no
+    // isolation refusal.
     const world = makeWorld({ worktreeExists: true, surface: { in: ['apps/cli'], out: ['packages'] } })
+    world.worktreeBranchName = 'task/other/1'
     return runAndObserve(
       world,
       { task: world.task, agent: 'codex' },

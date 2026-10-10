@@ -20,7 +20,7 @@ afterEach(cleanupWorlds)
 const POLL_MS = 7
 const POLL_ATTEMPTS = 40
 
-/** Round 1 publishes through the tools; every later turn either attempts an out-of-Surface publication or does nothing. */
+/** Round 1 publishes through the tools; every later turn either attempts a publication from the wrong branch or does nothing. */
 function redGateDeps(
   world: LoopWorld,
   laterTurn: 'refused' | 'idle'
@@ -44,11 +44,13 @@ function redGateDeps(
       if (developerTurns === 1) return publishing.dispatchRole!(role, agent, prompt, dOpts)
       world.dispatchCountByRole.developer = developerTurns
       if (laterTurn === 'refused') {
-        world.worktreeDirty = ['packages/other/y.ts']
-        world.worktreeChangedPaths = ['packages/other/y.ts']
-        const refused = await world.devToolContext!.publishChanges('Fix(cli): touch a path outside the surface')
+        world.worktreeDirty = ['apps/cli/src/lib/y.ts']
+        world.worktreeChangedPaths = ['apps/cli/src/lib/y.ts']
+        world.worktreeBranchName = 'task/other/1'
+        const refused = await world.devToolContext!.publishChanges('Fix(cli): publish from the wrong branch')
         expect(refused.ok).toBe(false)
         // The Developer gives up on the refused change: nothing is left unpublished for the driver to re-ask.
+        world.worktreeBranchName = undefined
         world.worktreeDirty = []
         world.worktreeChangedPaths = []
       }
