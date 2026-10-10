@@ -1,5 +1,25 @@
 # @atta/aeg-core
 
+## 0.38.0
+
+### Patch Changes
+
+- 1cfc921: An agent's usage limit is no longer recorded as a crash. A Codex or Claude Code run that stops because its subscription usage limit was reached pauses the task with the agent's reset time and the command that continues it, spends no infrastructure retry, and a watching driver resumes it by itself after the reset when that is within six hours. The Log records it as its own dispatch outcome, and `vinaya task status` shows it as a usage limit with its reset time. The log server must be deployed before this CLI release, since it classifies stored lines with the new outcome.
+- ee50040: Rendered Developer briefs now direct dispatched Developers to use controller-run gate evidence instead of hand-running static gates.
+- ff9e173: Keep redacted, capped deferred finding descriptions in tracking Issues and review Log events.
+- 4cebcb2: The dispatch readiness check no longer reports a dependency as "not merged" when the forge could not be read: it now refuses with its own retryable reason (a distinct "forge could not be read" message). A backlog dependency's pull request is read for that Issue directly instead of from the newest 300 pull requests, so a dependency merged long ago is recognized as merged.
+- 56941b2: Creating or editing a task Issue is now refused when its body links to something outside `## Documentation` that the section does not also list, because every link a task gives the Developer is required reading; the repository's own Issue and pull-request links are exempt. Every link in the body, not only the Documentation ones, must answer an unauthenticated fetch with a success status. The Planner reference states how to reference rather than copy, and the Developer reference states that an unopenable reference stops the Developer with a `missing_access` blocked result.
+- 72ca2e2: Run declared file-reading tests before push and avoid false outside-surface pauses.
+- 01f6b4e: One function in the log module, `narrate`, turns a loop or dispatch record into one plain line with a kind and the words, so the terminal log and a live screen use the same wording. A round end states the confidence as recorded, a pause or stop says who has to act, and a record it has no wording for returns nothing.
+- 7229e69: The Issue write gate now refuses a new CLI test file whose Surface omits the CI shard directory, a Documentation URL that does not answer an unauthenticated fetch with a success status on its own host, and a new loop module or loop test file whose Surface omits the loop invariant map's fixture and spec; the planner reference lists the three checks.
+- bbca06f: A review finding on the pull request body now reaches the Developer instead of being set aside as outside the Surface. Reviewers read the body from a file the loop stages for them, and a finding they located on that file used to be deferred in every round, so the Developer never saw it. The loop now records such a finding at `PR body`, where it is capped at MINOR like any other body finding and kept in the verdict the Developer receives. Both reviewer prompts and the reviewer doctrine now say that an unmet objective is reported `NOT MET` in the objectives file with code or test evidence, never only as a finding on the body.
+- dec0b77: The registry gates gain a seventh rule: every file that writes to GitHub, and every file implementing a blocking gate, must reach a log producer or carry a reasoned exemption. It runs only where the enforcement map exists.
+- 50a62b6: The repeat-finding stop now identifies a finding by reviewer role, file and a normalized description fingerprint instead of the positional identifier, so a new finding that reuses an earlier round's F1 no longer pauses the loop as a repeat.
+- 7865055: Task surfaces may share `.changeset` without requiring a serialization edge, because each task adds its own uniquely named changeset file.
+- Updated dependencies [00fa6b5]
+  - @attalabs/aeg-forge-state@0.38.0
+  - @attalabs/aeg-types@0.38.0
+
 ## 0.37.0
 
 ### Minor Changes
