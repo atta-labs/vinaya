@@ -74,6 +74,7 @@ import {
   checkIssueRationale,
   fetchOpenIssuesByLabel,
   parseTaskBranchIdentity,
+  siblingsSharingConflictEdge,
   type DispatchBlockerClass,
   type DispatchConflictsWithFact,
   type DispatchDependsOnFact,
@@ -454,12 +455,29 @@ async function runTrancheMode(trancheSlug: string, taskId: string): Promise<void
       }
     })
   )
-  const conflictsWith: DispatchConflictsWithFact[] = await Promise.all(
+  const ownConflictFacts: DispatchConflictsWithFact[] = await Promise.all(
     task.conflictsWith.map(async (c) => {
       const r = await resolveEdge(c, taskById, factsByTaskId, repo)
       return { id: c, issue: r.issue, openOrInFlight: r.open }
     })
   )
+  // An edge a sibling names is present too — read from the same open-Issue
+  // listing, through the reader the write gate shares.
+  const namedBySibling =
+    task.issue === null
+      ? []
+      : siblingsSharingConflictEdge(
+          { ref: String(task.issue), conflictsWith: task.conflictsWith },
+          openIssues.map((i) => ({ ref: String(i.number), conflictsWith: parseRationaleDeps(i.body).conflictsWith }))
+        )
+  const seenIssues = new Set(ownConflictFacts.map((f) => f.issue).filter((n): n is number => n !== null))
+  const siblingConflictFacts: DispatchConflictsWithFact[] = []
+  for (const sib of namedBySibling) {
+    if (seenIssues.has(Number(sib.ref))) continue
+    const r = await resolveEdge(`#${sib.ref}`, taskById, factsByTaskId, repo)
+    siblingConflictFacts.push({ id: `#${sib.ref}`, issue: r.issue, openOrInFlight: r.open })
+  }
+  const conflictsWith: DispatchConflictsWithFact[] = [...ownConflictFacts, ...siblingConflictFacts]
 
   const priorTrancheArchival: DispatchPriorTrancheFact[] = []
 

@@ -444,7 +444,8 @@ export type {
   LocalAnchorCoverageOptions,
   LocalAnchorCoverageResult
 } from './local-anchor-coverage'
-export { checkDispatchReadiness } from './dispatch-gate'
+export { checkDispatchReadiness, siblingsSharingConflictEdge } from './dispatch-gate'
+export type { ConflictEdgeParty } from './dispatch-gate'
 export type {
   DispatchBlocker,
   DispatchBlockerClass,

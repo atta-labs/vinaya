@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { parseRationaleDeps } from '@attalabs/aeg-forge-state'
-import { checkDispatchReadiness, type DispatchGateInput } from './dispatch-gate'
+import { readFileSync } from 'node:fs'
+import { checkDispatchReadiness, siblingsSharingConflictEdge, type DispatchGateInput } from './dispatch-gate'
+import { edgesNameEachOther } from './issue-validation'
 import type { Task } from './types'
 
 function makeTask(overrides: Partial<Task> = {}): Task {
@@ -425,5 +427,46 @@ describe('self-dependency — end-to-end from a real rationale body', () => {
     const notMerged = result.blockers.filter((b) => b.includes('not merged yet'))
     expect(notMerged).toHaveLength(1)
     expect(notMerged[0]).toContain('#1034')
+  })
+})
+
+describe('conflicts-with edge read from either side', () => {
+  const subject = { ref: '1264', conflictsWith: [] as string[] }
+  const sibling = { ref: '1255', conflictsWith: ['#1264'] }
+
+  it('finds a sibling that names the subject though the subject names nobody', () => {
+    expect(siblingsSharingConflictEdge(subject, [sibling])).toEqual([sibling])
+  })
+
+  it('finds a sibling the subject names though the sibling names nobody', () => {
+    const quiet = { ref: '1255', conflictsWith: [] as string[] }
+    expect(siblingsSharingConflictEdge({ ref: '1264', conflictsWith: ['#1255'] }, [quiet])).toEqual([quiet])
+  })
+
+  it('ignores an unrelated sibling and the subject itself', () => {
+    const other = { ref: '9', conflictsWith: ['#8'] }
+    expect(siblingsSharingConflictEdge(subject, [other, { ...subject }])).toEqual([])
+  })
+
+  it('answers exactly as the write gate reader does', () => {
+    const cases = [sibling, { ref: '1255', conflictsWith: [] }, { ref: '2', conflictsWith: ['some-slug #1264'] }]
+    for (const c of cases) {
+      expect(siblingsSharingConflictEdge(subject, [c]).length === 1).toBe(edgesNameEachOther(subject, c))
+    }
+  })
+
+  it('uses the write gate reader itself, not a copy', () => {
+    const src = readFileSync(new URL('./dispatch-gate.ts', import.meta.url), 'utf8')
+    expect(src).toContain("import { edgesNameEachOther } from './issue-validation'")
+    expect(src).toContain('edgesNameEachOther(subject, s)')
+  })
+
+  it('blocks while the sibling pull request is open and releases once it merges', () => {
+    const edge = { id: '#1255', issue: 1255 }
+    const blocked = checkDispatchReadiness(makeInput({ conflictsWith: [{ ...edge, openOrInFlight: true }] }))
+    expect(blocked.ready).toBe(false)
+    expect(blocked.blockers.join('\n')).toContain('conflicts with #1255 (#1255), whose PR is open or in-flight')
+    const merged = checkDispatchReadiness(makeInput({ conflictsWith: [{ ...edge, openOrInFlight: false }] }))
+    expect(merged.ready).toBe(true)
   })
 })
