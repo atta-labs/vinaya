@@ -7115,6 +7115,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             ciConclusion,
             revision,
             manifest,
+            policy,
             deferralContext
           }
 

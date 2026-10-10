@@ -330,7 +330,8 @@ describe('renderReviewerPrompt — the banned-framing lint checks only the text 
     rulings: [],
     ciConclusion: 'green',
     revision: 'f'.repeat(40),
-    manifest: MANIFEST
+    manifest: MANIFEST,
+    policy: DEFAULT_REVIEW_POLICY
   }
 
   // Every phrase in the module's own BANNED_FRAMING list, as a Principal
@@ -429,7 +430,8 @@ describe('renderReviewerDispatchPrompt — carries the role doctrine as a fact',
     rulings: [],
     ciConclusion: 'green',
     revision: 'f'.repeat(40),
-    manifest: MANIFEST
+    manifest: MANIFEST,
+    policy: DEFAULT_REVIEW_POLICY
   }
   const REVIEWER_DOCTRINE =
     'You judge one open pull request against the brief it came from.\n\n## What you check\n\n1. Does the code match the brief?\n2. Honest tests.'
@@ -499,23 +501,13 @@ describe('renderReviewerDispatchPrompt — carries the role doctrine as a fact',
     expect(driverText).not.toContain('The developer says')
   })
 
-  it('carries one precedence sentence: the dispatch output instructions win over the doctrine wording (O4)', () => {
-    const prompt = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work', REVIEWER_DOCTRINE)
-    expect(prompt).toContain('the dispatch instructions below take precedence')
-    expect(prompt).toContain('writing nothing to disk')
-    // The precedence sentence sits between the doctrine and the file-writing instructions.
-    const doctrineAt = prompt.indexOf('YOUR ROLE DOCTRINE')
-    const precedenceAt = prompt.indexOf('take precedence')
-    const findingsAt = prompt.indexOf('Write your findings to')
-    expect(doctrineAt).toBeLessThan(precedenceAt)
-    expect(precedenceAt).toBeLessThan(findingsAt)
-  })
-
-  it('the precedence sentence is driver text the lint reads, and carries no banned phrase (O4)', () => {
-    const pieces = roleDoctrinePieces('security', 'A short version.\n\n## What you check\n\n1. Secrets.')
-    const driverText = driverAuthoredPromptText(pieces)
-    expect(driverText).toContain('take precedence')
-    expect(lintReviewerPrompt(driverText)).toEqual([])
+  it("states each role's blocking severities from the effective policy as linted driver text", () => {
+    const policy = { ...DEFAULT_REVIEW_POLICY, codeReviewThreshold: 'MAJOR' as const }
+    const reviewerPrompt = renderReviewerDispatchPrompt('reviewer', { ...FACTS, policy }, '/tmp/work')
+    const securityPrompt = renderReviewerDispatchPrompt('security', { ...FACTS, policy }, '/tmp/work')
+    expect(reviewerPrompt).toContain('BLOCKING SEVERITIES UNDER THE EFFECTIVE REVIEW POLICY: BLOCKER, MAJOR')
+    expect(securityPrompt).toContain('BLOCKING SEVERITIES UNDER THE EFFECTIVE REVIEW POLICY: CRITICAL, HIGH')
+    expect(reviewerPrompt).not.toContain('take precedence')
   })
 
   it('states a dispatched session gives no read receipt, and sends nothing for a missing doctrine (O2, O3)', () => {
@@ -545,7 +537,8 @@ describe('candidateInputPieces / renderReviewerDispatchPrompt — the driver-sta
     rulings: [],
     ciConclusion: 'green',
     revision: 'f'.repeat(40),
-    manifest: MANIFEST
+    manifest: MANIFEST,
+    policy: DEFAULT_REVIEW_POLICY
   }
   const PATHS = {
     brief: '/scratch/.vinaya-reviewer-inputs/brief.md',
@@ -1005,7 +998,8 @@ describe('securityScanPieces / renderReviewerDispatchPrompt — the scan reaches
     rulings: [],
     ciConclusion: 'green',
     revision: 'f'.repeat(40),
-    manifest: MANIFEST
+    manifest: MANIFEST,
+    policy: DEFAULT_REVIEW_POLICY
   }
 
   it('contributes nothing when no scan was decided', () => {
