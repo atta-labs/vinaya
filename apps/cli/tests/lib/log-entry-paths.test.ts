@@ -133,7 +133,6 @@ const checkNames = [
   'issue-assignment',
   'evidence-fresh',
   'reader-resolvable-prose',
-  'doc-claims',
   'retired-vocabulary',
   'doctrine-portability',
   'doctrine-no-procedures',
