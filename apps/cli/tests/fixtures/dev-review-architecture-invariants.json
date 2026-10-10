@@ -2991,6 +2991,370 @@
       ],
       "loopSpec": ["Pause and `--resume`", "The driver never ends on a pause"],
       "reason": "Before it, every exit from such a pause refused and named another exit that refused, and the driver ended unwatched, so the automatic rate-limit resume never fired."
+    },
+    {
+      "id": "INV-145",
+      "behavior": "The reviewer's injected instructions say the verdict follows from BLOCKER findings alone, while the review policy this repository declares blocks at MAJOR; blocking severities reach a reviewer from policy, never from doctrine.",
+      "classification": "defect",
+      "defect": "DEF-35",
+      "scope": "reference-process",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["invalid-reviews"],
+      "sources": [
+        {
+          "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts",
+          "symbol": "renderReviewerDispatchPrompt"
+        },
+        {
+          "path": "packages/aeg-core/src/review-policy.ts",
+          "symbol": "blockingSeverities"
+        }
+      ],
+      "tests": [],
+      "loopSpec": ["Which severities block is repository policy"],
+      "reason": "Not fixed. Evidence: the reviewer doctrine's short version states the verdict follows from the BLOCKER findings alone, and `vinaya.config.json` sets `reviewPolicy.codeReviewThreshold` to MAJOR, so a reviewer reading its instructions under-weights a MAJOR finding the policy blocks on."
+    },
+    {
+      "id": "INV-146",
+      "behavior": "The documentation-claim binding check exists and runs in no hook, CI job or controller step, so broken bindings on the default branch go unnoticed; a check the doctrine names as enforcing a rule runs where the rule says.",
+      "classification": "defect",
+      "defect": "DEF-36",
+      "scope": "product",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["stale-evidence"],
+      "sources": [
+        {
+          "path": "packages/aeg-core/bin/verify-docs.ts",
+          "symbol": "runC8"
+        }
+      ],
+      "tests": [],
+      "loopSpec": [],
+      "reason": "Not fixed. Evidence: no workflow under `.github/workflows` and no hook under `.vinaya/hooks` invokes `verify-docs`, and its full mode reports five broken bindings on the default branch, while the enforcement map lists the documentation gate, doc-claim bindings included, as a CI check."
+    },
+    {
+      "id": "INV-147",
+      "behavior": "The reviewer instructions make a documentation sentence without a binding marker a blocking MAJOR finding although no check verifies bindings; a reviewer severity rests on a check that runs.",
+      "classification": "defect",
+      "defect": "DEF-37",
+      "scope": "reference-process",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["invalid-reviews"],
+      "sources": [
+        {
+          "path": "aeg-root/roles/reviewer.md",
+          "symbol": "What you check"
+        }
+      ],
+      "tests": [],
+      "loopSpec": [],
+      "reason": "Not fixed. Evidence: the reviewer doctrine says the binding check verifies every marker and rates an unbound claim MAJOR, but the binding check runs nowhere, so the severity rests on an unenforced rule."
+    },
+    {
+      "id": "INV-148",
+      "behavior": "The Issue write gate accepts an unregistered Project although planner doctrine says it is refused; an Issue's Project resolves against the registry at write.",
+      "classification": "defect",
+      "defect": "DEF-38",
+      "scope": "product",
+      "owner": "governed-operation",
+      "authority": "forge",
+      "scenarios": ["developer-failure"],
+      "sources": [
+        {
+          "path": "apps/cli/src/lib/forge-write.ts",
+          "symbol": "validateIssueContent"
+        },
+        {
+          "path": "packages/aeg-core/src/issue-validation.ts",
+          "symbol": "checkProjectsRegistered"
+        }
+      ],
+      "tests": [],
+      "loopSpec": [],
+      "reason": "Not fixed. Evidence: the validated Issue write path runs its content checks without the project-registry check, which only the coherence sweep and the standalone opener call, while planner doctrine says `vinaya issue create` refuses an unresolved Project."
+    },
+    {
+      "id": "INV-149",
+      "behavior": "The Issue write gate accepts Test plan lines only a human operator can run (starting a task, merging, posting a ruling, pushing, logging into a server); every Test plan line is runnable by the dispatched Developer.",
+      "classification": "defect",
+      "defect": "DEF-39",
+      "scope": "product",
+      "owner": "governed-operation",
+      "authority": "forge",
+      "scenarios": ["developer-failure"],
+      "sources": [
+        {
+          "path": "apps/cli/src/lib/forge-write.ts",
+          "symbol": "validateIssueContent"
+        }
+      ],
+      "tests": [],
+      "loopSpec": [],
+      "reason": "Not fixed. Evidence: no content check of the Issue write path grades a Test plan line for whether the sandboxed Developer can run it, so lines that start a task, merge, post a ruling, push or log into a server reach the brief."
+    },
+    {
+      "id": "INV-150",
+      "behavior": "The Issue write gate does not check that an in-repo Documentation path exists; every Documentation source resolves.",
+      "classification": "defect",
+      "defect": "DEF-40",
+      "scope": "product",
+      "owner": "governed-operation",
+      "authority": "forge",
+      "scenarios": ["developer-failure"],
+      "sources": [
+        {
+          "path": "packages/aeg-core/src/issue-validation.ts",
+          "symbol": "checkDocumentationReadable"
+        }
+      ],
+      "tests": [],
+      "loopSpec": [],
+      "reason": "Not fixed. Evidence: the Documentation check probes only links, so a misspelled or deleted in-repo path passes the write and reaches the Developer, whose doctrine says to stop when a referenced file cannot be opened."
+    },
+    {
+      "id": "INV-151",
+      "behavior": "Conflicts-with completeness is described as a warning the Issue write gate prints, and the gate never calls it; a warning the doctrine describes is printed.",
+      "classification": "defect",
+      "defect": "DEF-41",
+      "scope": "product",
+      "owner": "governed-operation",
+      "authority": "forge",
+      "scenarios": ["developer-failure"],
+      "sources": [
+        {
+          "path": "apps/cli/src/lib/forge-write.ts",
+          "symbol": "validateIssueContent"
+        },
+        {
+          "path": "packages/aeg-core/src/issue-validation.ts",
+          "symbol": "checkConflictCompleteness"
+        }
+      ],
+      "tests": [],
+      "loopSpec": [],
+      "reason": "Not fixed. Evidence: the completeness check is called only by the standalone opener script, never by the validated `vinaya issue create`/`edit` path, while planner doctrine describes it as a warning that write prints."
+    },
+    {
+      "id": "INV-152",
+      "behavior": "Developer instructions contradict the controller: commit after every part and amend, while publication refuses a commit the Developer makes; merge or rebase the default branch before publishing, while rulings forbid it unprompted; never edit the pull-request body after open, while the controller offers a body-update tool; write a confidence file, while the turn result replaced it; the controller runs a task verifier at open, while nothing calls it. No Developer instruction contradicts a controller refusal or tool.",
+      "classification": "defect",
+      "defect": "DEF-42",
+      "scope": "reference-process",
+      "owner": "provider-adapter",
+      "authority": "effect",
+      "scenarios": ["developer-failure"],
+      "sources": [
+        {
+          "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts",
+          "symbol": "checkPublicationPreconditions"
+        },
+        {
+          "path": "apps/cli/src/lib/dev-review-loop/developer-dispatch.ts",
+          "symbol": "assembleDeveloperDoctrine"
+        }
+      ],
+      "tests": [],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
+      "reason": "Not fixed. Evidence: the developer reference still tells the Developer to commit, merge the default branch, leave the body alone after open and write round files, and names a task verifier at open that no controller code path invokes, while the controller publishes through its own tools and offers a body-update tool."
+    },
+    {
+      "id": "INV-153",
+      "behavior": "The rendered brief contradicts itself and the tools: paste the brief into the pull-request body; include a token report; confirm readiness at Step 0 while later saying run neither script; publish after each part while saying one push; an agent checkbox the report rules reject. A rendered brief carries no instruction a tool refuses.",
+      "classification": "defect",
+      "defect": "DEF-43",
+      "scope": "product",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["developer-failure"],
+      "sources": [
+        {
+          "path": "apps/cli/src/lib/brief-assembly.ts"
+        }
+      ],
+      "tests": [],
+      "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
+      "reason": "Not fixed. Evidence: the brief template asks for the brief pasted into the body and a token report, while the report rules keep the brief and token figures out of the body; it asks for readiness at Step 0 and then says run neither readiness script; it says publish after each part and then one push; and its Test Plan carries the agent checkbox the brief-shape rules refuse."
+    },
+    {
+      "id": "INV-154",
+      "behavior": "Codex receives only the machine-state denials while Claude Code is also refused push, the forge CLI, hook-skipping commits, stash, hard reset, recursive delete and sudo; both adapters are refused the same commands.",
+      "classification": "defect",
+      "defect": "DEF-44",
+      "scope": "product",
+      "owner": "provider-adapter",
+      "authority": "effect",
+      "scenarios": ["isolation-refusal"],
+      "sources": [
+        {
+          "path": "apps/cli/src/lib/dispatch.ts",
+          "symbol": "buildCodexExecpolicyRules"
+        },
+        {
+          "path": "apps/cli/src/lib/dispatch.ts",
+          "symbol": "buildRolePermissions"
+        }
+      ],
+      "tests": [],
+      "loopSpec": [],
+      "reason": "Not fixed. Evidence: the Codex execution policy is built from the machine-state deny list alone, while the Claude Code permission rules add the forge, publication and destructive-command denials on top of it; the developer doctrine says both agents carry the same list."
+    },
+    {
+      "id": "INV-155",
+      "behavior": "Four controller prompts hardcode this repository's doctrine command path; a prompt names the installed command, never a repository path.",
+      "classification": "defect",
+      "defect": "DEF-45",
+      "scope": "product",
+      "owner": "provider-adapter",
+      "authority": "effect",
+      "scenarios": ["happy-path"],
+      "sources": [
+        {
+          "path": "apps/cli/src/lib/dev-review-loop.ts",
+          "symbol": "devReviewLoop"
+        }
+      ],
+      "tests": [],
+      "loopSpec": [],
+      "reason": "Not fixed. Evidence: four Developer re-prompts in the driver name `bun apps/cli/src/index.ts doctrine --role developer --print`, a path that exists only in this repository's checkout, so in an adopter's repository the instruction names nothing."
+    },
+    {
+      "id": "INV-156",
+      "behavior": "A test-failure block gets one re-ask with no check behind it; the controller does not re-run the named tests before deciding. A reported test failure is checked by the controller.",
+      "classification": "defect",
+      "defect": "DEF-46",
+      "scope": "product",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["developer-failure"],
+      "sources": [
+        {
+          "path": "apps/cli/src/lib/dev-review-loop.ts",
+          "symbol": "reportsTestFailure"
+        }
+      ],
+      "tests": [],
+      "loopSpec": ["The Developer's turn result"],
+      "reason": "Not fixed. Evidence: the driver re-asks the same session once and then pauses on a second report, deciding from the Developer's own claim; neither step runs the named tests."
+    },
+    {
+      "id": "INV-157",
+      "behavior": "The single-fix Issue form requires the planned-task fields (sizing, blast radius, dependency rationale) that no gate grades, and a free-text sentence about code passes every gate; an Issue carries only content a gate checks, and facts about code are premises.",
+      "classification": "defect",
+      "defect": "DEF-47",
+      "scope": "product",
+      "owner": "governed-operation",
+      "authority": "forge",
+      "scenarios": ["developer-failure"],
+      "sources": [
+        {
+          "path": "packages/aeg-core/src/issue-validation.ts",
+          "symbol": "checkIssueRationale"
+        }
+      ],
+      "tests": [],
+      "loopSpec": [],
+      "reason": "Not fixed. Evidence: a backlog Issue is validated against the same rationale grammar as a planned task, which checks those fields for presence only, and a sentence asserting what code does passes unless written as a premise."
+    },
+    {
+      "id": "INV-158",
+      "behavior": "Single-fix Issues skip the planner's readiness step because doctrine places them outside the Planner role; every Issue the loop runs passed a read-the-code-first step.",
+      "classification": "defect",
+      "defect": "DEF-48",
+      "scope": "reference-process",
+      "owner": "vinaya-policy",
+      "authority": "forge",
+      "scenarios": ["developer-failure"],
+      "sources": [
+        {
+          "path": "apps/cli/src/lib/task-run.ts"
+        }
+      ],
+      "tests": [],
+      "loopSpec": [],
+      "reason": "Not fixed. Evidence: planner doctrine puts a backlog Issue out of the Planner's scope entirely, opened directly and dispatched with no planning stage, so the readiness gate that makes the Planner read the surface before cutting never applies to it."
+    },
+    {
+      "id": "INV-159",
+      "behavior": "Security instructions call a leaked key a BLOCKER, a severity outside the security scale; every named severity is on its role's scale.",
+      "classification": "defect",
+      "defect": "DEF-49",
+      "scope": "reference-process",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["invalid-reviews"],
+      "sources": [
+        {
+          "path": "packages/aeg-core/src/review-policy.ts",
+          "symbol": "SECURITY_SEVERITY_ORDER"
+        }
+      ],
+      "tests": [],
+      "loopSpec": [],
+      "reason": "Not fixed. Evidence: the security doctrine says a single real leaked key is a BLOCKER, while the security scale is CRITICAL, HIGH, MEDIUM and LOW."
+    },
+    {
+      "id": "INV-160",
+      "behavior": "Reviewer instructions say write nothing to disk, run the passes in sequence and expect parked findings as input, while the loop requires three files, runs both reviewers in parallel and stages rulings only; reviewer instructions describe the loop that runs them.",
+      "classification": "defect",
+      "defect": "DEF-50",
+      "scope": "reference-process",
+      "owner": "provider-adapter",
+      "authority": "effect",
+      "scenarios": ["invalid-reviews"],
+      "sources": [
+        {
+          "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts",
+          "symbol": "renderReviewerDispatchPrompt"
+        }
+      ],
+      "tests": [],
+      "loopSpec": ["Rounds"],
+      "reason": "Not fixed. Evidence: the reviewer doctrine forbids writing anything to disk and says the dispatch names parked findings, while the dispatch prompt asks for findings, report and objectives files, passes only the rulings on the pull request, and the driver runs the code and security reviewers concurrently."
+    },
+    {
+      "id": "INV-161",
+      "behavior": "Planner doctrine names a command for editing edges that does not exist and forbids attaching a Milestone that the write path attaches automatically; planner doctrine names only commands that exist.",
+      "classification": "defect",
+      "defect": "DEF-51",
+      "scope": "reference-process",
+      "owner": "vinaya-policy",
+      "authority": "forge",
+      "scenarios": ["happy-path"],
+      "sources": [
+        {
+          "path": "apps/cli/src/commands/issue.ts"
+        },
+        {
+          "path": "apps/cli/src/lib/forge-write.ts",
+          "symbol": "findMilestoneAttachTargetForSlug"
+        }
+      ],
+      "tests": [],
+      "loopSpec": [],
+      "reason": "Not fixed. Evidence: `vinaya issue` accepts only `create`, `edit` and `objectives edit`, so the `amend-deps` route the planner reference names is refused, and `issue create` attaches the tranche's Milestone itself while the planner reference says the Planner never attaches one."
+    },
+    {
+      "id": "INV-162",
+      "behavior": "Rule lines in role doctrine grew from 248 to 437 in eight weeks while registered checks stayed at 38 from mid-September; a rule with no check behind it is a smell, never a guarantee.",
+      "classification": "advisory",
+      "scope": "reference-process",
+      "owner": "vinaya-policy",
+      "authority": "effect",
+      "scenarios": ["happy-path"],
+      "sources": [
+        {
+          "path": "aeg-root/roles/developer.md"
+        },
+        {
+          "path": "apps/cli/src/checks/registry.ts"
+        }
+      ],
+      "tests": [],
+      "loopSpec": [],
+      "reason": "A residual risk, stated and never claimed closed. Evidence: the doctrine study counted the rule lines of the role pages and the registered checks over eight weeks; rules kept growing while checks did not."
     }
   ],
   "defects": [
@@ -3487,6 +3851,260 @@
       "status": "fixed",
       "classification": "defect",
       "scope": "product"
+    },
+    {
+      "id": "DEF-35",
+      "summary": "The reviewer's injected instructions say the verdict follows from BLOCKER findings alone, while the review policy this repository declares blocks at MAJOR; blocking severities reach a reviewer from policy, never from doctrine.",
+      "code": {
+        "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts",
+        "locator": "renderReviewerDispatchPrompt"
+      },
+      "spec": {
+        "path": "aeg-root/roles/reviewer.md",
+        "locator": "The short version"
+      },
+      "status": "open",
+      "classification": "defect",
+      "scope": "reference-process"
+    },
+    {
+      "id": "DEF-36",
+      "summary": "The documentation-claim binding check exists and runs in no hook, CI job or controller step, so broken bindings on the default branch go unnoticed; a check the doctrine names as enforcing a rule runs where the rule says.",
+      "code": {
+        "path": "packages/aeg-core/bin/verify-docs.ts",
+        "locator": "runC8"
+      },
+      "spec": {
+        "path": "aeg-root/enforcement.md",
+        "locator": "Ring 1 — Branch Rules (what turns the forge red)"
+      },
+      "status": "open",
+      "classification": "defect",
+      "scope": "product"
+    },
+    {
+      "id": "DEF-37",
+      "summary": "The reviewer instructions make a documentation sentence without a binding marker a blocking MAJOR finding although no check verifies bindings; a reviewer severity rests on a check that runs.",
+      "code": {
+        "path": "aeg-root/roles/reviewer.md",
+        "locator": "What you check"
+      },
+      "spec": {
+        "path": "aeg-root/documentation-coherence.md",
+        "locator": "Reader-facing readability — no unresolvable symbols"
+      },
+      "status": "open",
+      "classification": "defect",
+      "scope": "reference-process"
+    },
+    {
+      "id": "DEF-38",
+      "summary": "The Issue write gate accepts an unregistered Project although planner doctrine says it is refused; an Issue's Project resolves against the registry at write.",
+      "code": {
+        "path": "apps/cli/src/lib/forge-write.ts",
+        "locator": "validateIssueContent"
+      },
+      "spec": {
+        "path": "aeg-root/roles/planner.md",
+        "locator": "Entry gate (self-locating)"
+      },
+      "status": "open",
+      "classification": "defect",
+      "scope": "product"
+    },
+    {
+      "id": "DEF-39",
+      "summary": "The Issue write gate accepts Test plan lines only a human operator can run (starting a task, merging, posting a ruling, pushing, logging into a server); every Test plan line is runnable by the dispatched Developer.",
+      "code": {
+        "path": "apps/cli/src/lib/forge-write.ts",
+        "locator": "validateIssueContent"
+      },
+      "spec": {
+        "path": "aeg-root/roles/planner/reference.md",
+        "locator": "Rationale grammar"
+      },
+      "status": "open",
+      "classification": "defect",
+      "scope": "product"
+    },
+    {
+      "id": "DEF-40",
+      "summary": "The Issue write gate does not check that an in-repo Documentation path exists; every Documentation source resolves.",
+      "code": {
+        "path": "packages/aeg-core/src/issue-validation.ts",
+        "locator": "checkDocumentationReadable"
+      },
+      "spec": {
+        "path": "aeg-root/roles/developer.md",
+        "locator": "Entry gate (self-locating)"
+      },
+      "status": "open",
+      "classification": "defect",
+      "scope": "product"
+    },
+    {
+      "id": "DEF-41",
+      "summary": "Conflicts-with completeness is described as a warning the Issue write gate prints, and the gate never calls it; a warning the doctrine describes is printed.",
+      "code": {
+        "path": "apps/cli/src/lib/forge-write.ts",
+        "locator": "validateIssueContent"
+      },
+      "spec": {
+        "path": "aeg-root/roles/planner/reference.md",
+        "locator": "Rationale grammar"
+      },
+      "status": "open",
+      "classification": "defect",
+      "scope": "product"
+    },
+    {
+      "id": "DEF-42",
+      "summary": "Developer instructions contradict the controller: commit after every part and amend, while publication refuses a commit the Developer makes; merge or rebase the default branch before publishing, while rulings forbid it unprompted; never edit the pull-request body after open, while the controller offers a body-update tool; write a confidence file, while the turn result replaced it; the controller runs a task verifier at open, while nothing calls it. No Developer instruction contradicts a controller refusal or tool.",
+      "code": {
+        "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts",
+        "locator": "checkPublicationPreconditions"
+      },
+      "spec": {
+        "path": "aeg-root/roles/developer/reference.md",
+        "locator": "What the Developer owns"
+      },
+      "status": "open",
+      "classification": "defect",
+      "scope": "reference-process"
+    },
+    {
+      "id": "DEF-43",
+      "summary": "The rendered brief contradicts itself and the tools: paste the brief into the pull-request body; include a token report; confirm readiness at Step 0 while later saying run neither script; publish after each part while saying one push; an agent checkbox the report rules reject. A rendered brief carries no instruction a tool refuses.",
+      "code": {
+        "path": "aeg-root/templates/brief-template.md",
+        "locator": "12. Deliverable"
+      },
+      "spec": {
+        "path": "apps/cli/specs/loop.md",
+        "locator": "Publishing each Developer turn (both agents, only through the driver-run tools)"
+      },
+      "status": "open",
+      "classification": "defect",
+      "scope": "product"
+    },
+    {
+      "id": "DEF-44",
+      "summary": "Codex receives only the machine-state denials while Claude Code is also refused push, the forge CLI, hook-skipping commits, stash, hard reset, recursive delete and sudo; both adapters are refused the same commands.",
+      "code": {
+        "path": "apps/cli/src/lib/dispatch.ts",
+        "locator": "buildCodexExecpolicyRules"
+      },
+      "spec": {
+        "path": "apps/cli/specs/isolation.md",
+        "locator": "6. The settings-file permission policy"
+      },
+      "status": "open",
+      "classification": "defect",
+      "scope": "product"
+    },
+    {
+      "id": "DEF-45",
+      "summary": "Four controller prompts hardcode this repository's doctrine command path; a prompt names the installed command, never a repository path.",
+      "code": {
+        "path": "apps/cli/src/lib/dev-review-loop.ts",
+        "locator": "devReviewLoop"
+      },
+      "spec": {
+        "path": "apps/cli/specs/loop.md",
+        "locator": "Publishing each Developer turn (both agents, only through the driver-run tools)"
+      },
+      "status": "open",
+      "classification": "defect",
+      "scope": "product"
+    },
+    {
+      "id": "DEF-46",
+      "summary": "A test-failure block gets one re-ask with no check behind it; the controller does not re-run the named tests before deciding. A reported test failure is checked by the controller.",
+      "code": {
+        "path": "apps/cli/src/lib/dev-review-loop.ts",
+        "locator": "reportsTestFailure"
+      },
+      "spec": {
+        "path": "apps/cli/specs/loop.md",
+        "locator": "The Developer's turn result"
+      },
+      "status": "open",
+      "classification": "defect",
+      "scope": "product"
+    },
+    {
+      "id": "DEF-47",
+      "summary": "The single-fix Issue form requires the planned-task fields (sizing, blast radius, dependency rationale) that no gate grades, and a free-text sentence about code passes every gate; an Issue carries only content a gate checks, and facts about code are premises.",
+      "code": {
+        "path": "packages/aeg-core/src/issue-validation.ts",
+        "locator": "checkIssueRationale"
+      },
+      "spec": {
+        "path": "aeg-root/roles/planner/reference.md",
+        "locator": "The Planner's rationale (mandatory, one block per task)"
+      },
+      "status": "open",
+      "classification": "defect",
+      "scope": "product"
+    },
+    {
+      "id": "DEF-48",
+      "summary": "Single-fix Issues skip the planner's readiness step because doctrine places them outside the Planner role; every Issue the loop runs passed a read-the-code-first step.",
+      "code": {
+        "path": "aeg-root/roles/planner.md",
+        "locator": "Reference"
+      },
+      "spec": {
+        "path": "aeg-root/roles/planner/reference.md",
+        "locator": "Readiness gate — verify ALL inputs are present and reachable BEFORE planning a single task"
+      },
+      "status": "open",
+      "classification": "defect",
+      "scope": "reference-process"
+    },
+    {
+      "id": "DEF-49",
+      "summary": "Security instructions call a leaked key a BLOCKER, a severity outside the security scale; every named severity is on its role's scale.",
+      "code": {
+        "path": "aeg-root/roles/security.md",
+        "locator": "What you do NOT do"
+      },
+      "spec": {
+        "path": "aeg-root/roles/security.md",
+        "locator": "Output format"
+      },
+      "status": "open",
+      "classification": "defect",
+      "scope": "reference-process"
+    },
+    {
+      "id": "DEF-50",
+      "summary": "Reviewer instructions say write nothing to disk, run the passes in sequence and expect parked findings as input, while the loop requires three files, runs both reviewers in parallel and stages rulings only; reviewer instructions describe the loop that runs them.",
+      "code": {
+        "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts",
+        "locator": "renderReviewerDispatchPrompt"
+      },
+      "spec": {
+        "path": "aeg-root/roles/reviewer.md",
+        "locator": "What you do NOT do"
+      },
+      "status": "open",
+      "classification": "defect",
+      "scope": "reference-process"
+    },
+    {
+      "id": "DEF-51",
+      "summary": "Planner doctrine names a command for editing edges that does not exist and forbids attaching a Milestone that the write path attaches automatically; planner doctrine names only commands that exist.",
+      "code": {
+        "path": "apps/cli/src/commands/issue.ts"
+      },
+      "spec": {
+        "path": "aeg-root/roles/planner/reference.md",
+        "locator": "Rationale grammar"
+      },
+      "status": "open",
+      "classification": "defect",
+      "scope": "reference-process"
     }
   ],
   "ambiguities": [
