@@ -14,6 +14,9 @@
  * `--surface-in`, only meaningful alongside `--supersede`, widens the
  * frozen brief's `## Surface` `in:` list with the given globs before
  * re-freezing — the one self-serve way to broaden a Surface once frozen.
+ * A Surface widened in answer to a Developer's `widen_surface` escalation
+ * goes through `vinaya task run … --widen-surface <glob,...> --reason <text>`
+ * instead, which runs this same supersede and then starts the run in order.
  */
 
 import { DISPATCH_AGENTS, type DispatchAgent, dispatchTask, prepareTaskOrIssue } from '../lib/dispatch-task.js'

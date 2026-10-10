@@ -52,6 +52,7 @@ import {
   type TaskStatusRow
 } from '../task-status.js'
 import { tasksExecutionRoot } from '../run-paths.js'
+import { widenSurfaceContinuationFor } from '../task-run.js'
 import { describeUsageLimitPause } from '../dev-review-loop/round-assess.js'
 
 // --- Observed<T> -------------------------------------------------------------
@@ -216,6 +217,7 @@ export function readEscalationPacket(root: string, task: number): TaskEscalation
   const escalationId = pause.escalationId ?? escalationIdFor(pause.task, pause.round, pause.head)
   const controlStoreDeps = defaultControlStoreDeps(() => tasksExecutionRoot(root))
   const escalation = readEscalationRecord(pause.task, escalationId, controlStoreDeps)
+  const widenSurface = widenSurfaceContinuationFor(root, pause)
 
   return {
     reason: pause.reason,
@@ -240,8 +242,13 @@ export function readEscalationPacket(root: string, task: number): TaskEscalation
     // branch says it takes — `noPushResumeCommandFor`'s single builder
     // (`pause-resume.ts`), the same one that pause's Issue comment prints and
     // `task_resume`'s launcher spawns, so none of the three can disagree.
+    // A pre-pull-request escalation whose Developer asked for `widen_surface`
+    // names the one Planner command that continues it — supersede with the
+    // widened Surface, gate, start — ahead of the plain restart, which would
+    // freeze the next Developer on the same narrow brief.
     permittedNextActions: [
       ...profile.nextActions,
+      ...(widenSurface === null ? [] : [`To widen the Surface the Developer asked for (Planner): ${widenSurface}`]),
       `Or run: ${pause.prNumber === null ? noPushResumeCommandFor(pause.task, pause.branch, pause.agent, pause.model) : resumeCommandFor(pause.prNumber)}`
     ],
     runIdentity: escalation ? { runId: escalation.runId, pid: escalation.pid, host: escalation.host } : null,
