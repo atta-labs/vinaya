@@ -47,6 +47,7 @@ import {
 } from './round-assess.js'
 import { readIfExists } from './reviewer-dispatch.js'
 import { DRIVER_LOCK_FILENAME, ensureRunDir, runPath } from '../run-paths.js'
+import { LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV } from '../worker-boundary.js'
 
 /** O1 — the bound `postWithRetry`, below, retries a failed pause/escalation comment post against, in real usage; env-overridable for a fixture that wants sub-millisecond backoff. */
 export const PAUSE_COMMENT_RETRY_ATTEMPTS = 5
@@ -181,6 +182,10 @@ export function sanitizePublicPauseDetail(raw: string): string {
 
 // --- pause (O2) --------------------------------------------------------------
 
+/** The host remedy a `sandbox_refused` pause comment names; the full one is the escalation packet's `attemptedRecovery`. */
+const SANDBOX_REFUSED_COMMENT_REMEDY =
+  "the agent's sandbox could not run a command on this host, which only a change to the host fixes (the escalation packet names the remedy)."
+
 /** Exactly `<!-- aeg:loop:paused:<reason> -->` — carries no verdict grammar (Traps to avoid). */
 export function pauseMarker(reason: PauseReason): string {
   return `<!-- aeg:loop:paused:${reason} -->`
@@ -210,9 +215,11 @@ export function renderPauseComment(
   return [
     `The dev-review-loop paused: ${reason}${detail ? ` — ${detail}` : ''}.`,
     '',
-    isRateLimitPauseDetail(detail) || isUsageLimitPauseDetail(detail)
-      ? 'No Principal ruling is needed. Once the limit has reset, resume with:'
-      : 'A Principal ruling is needed before this can continue. A loop process still running picks up a posted ruling by itself; use this --resume command only when that process has stopped:',
+    isHostRepairPause(reason)
+      ? `No Principal ruling is needed, and the loop does not retry this by itself: ${SANDBOX_REFUSED_COMMENT_REMEDY} Once the host is repaired, start the task again, or resume with:`
+      : isRateLimitPauseDetail(detail) || isUsageLimitPauseDetail(detail)
+        ? 'No Principal ruling is needed. Once the limit has reset, resume with:'
+        : 'A Principal ruling is needed before this can continue. A loop process still running picks up a posted ruling by itself; use this --resume command only when that process has stopped:',
     '',
     '```',
     resume,
@@ -312,6 +319,19 @@ export function renderNoPushStopComment(
   // instructed failed the very gate it was posted to satisfy, for every pause
   // whose recorded baseline had reached `1`.
   const nextOrdinal = (rulingOrdinal ?? 0) + 1
+  // A sandbox the host cannot run needs the host repaired, not a ruling.
+  if (isHostRepairPause(reason)) {
+    return [
+      `The dev-review-loop paused: ${reason}${detail ? ` — ${detail}` : ''}.`,
+      '',
+      'No pull request exists yet for this task, so the pause is recorded on this Issue instead.',
+      `No Principal ruling is needed, and the loop does not retry this by itself: ${SANDBOX_REFUSED_COMMENT_REMEDY} Once the host is repaired, continue with:`,
+      '',
+      '```',
+      noPushResumeCommandFor(task, branch, invocation?.agent, invocation?.model),
+      '```'
+    ].join('\n')
+  }
   // A GitHub rate limit needs no ruling: the pause says so and names the resume.
   if (isRateLimitPauseDetail(detail) || isUsageLimitPauseDetail(detail)) {
     return [
@@ -659,13 +679,25 @@ export function isAutomaticRecoveryPause(reason: PauseReason): boolean {
 }
 
 /**
+ * A pause the driver never resumes by itself but the ordinary start
+ * (`vinaya task run`) continues with no ruling once the host is repaired: a
+ * sandbox capability refusal. Outside the automatic-recovery set, so neither
+ * the watcher's retry nor `MAX_INFRASTRUCTURE_RETRIES` applies to it.
+ */
+export function isHostRepairPause(reason: PauseReason): boolean {
+  return reason === 'sandbox_refused'
+}
+
+/**
  * Does this pause's own record still grant `--resume`'s bare, no-ruling
- * allowance — an automatic-recovery pause under `MAX_INFRASTRUCTURE_RETRIES`?
- * Read off the pause record's own count, the floor `--resume` itself applies
- * beside the control store's; a caller holding the control store's count too
- * (`--resume`) decides with both and passes its own answer instead.
+ * allowance — a host-repair pause, or an automatic-recovery pause under
+ * `MAX_INFRASTRUCTURE_RETRIES`? Read off the pause record's own count, the
+ * floor `--resume` itself applies beside the control store's; a caller
+ * holding the control store's count too (`--resume`) decides with both and
+ * passes its own answer instead.
  */
 export function pauseGrantsBareResume(held: PauseState): boolean {
+  if (isHostRepairPause(held.reason)) return true
   return isAutomaticRecoveryPause(held.reason) && (held.infrastructureRetries ?? 0) < MAX_INFRASTRUCTURE_RETRIES
 }
 
@@ -678,6 +710,9 @@ export function pauseGrantsBareResume(held: PauseState): boolean {
  * one Principal decision left.
  */
 export function missingEscalationNextStep(held: PauseState, bareResumable = pauseGrantsBareResume(held)): string {
+  if (bareResumable && isHostRepairPause(held.reason)) {
+    return `This pause (${held.reason}) needs the host repaired, not a ruling. Once it is, continue it with \`${noPushResumeCommandFor(held.task, held.branch, held.agent, held.model)}\`.`
+  }
   return bareResumable
     ? `This is an automatic-recovery pause (${held.reason}) — no ruling is needed. Continue it with \`${noPushResumeCommandFor(held.task, held.branch, held.agent, held.model)}\`.`
     : `No ruling can be bound to a ${held.reason} pause with no escalation record, so whether task ${held.task} continues or stops is a Principal decision.`
@@ -965,6 +1000,14 @@ export const PAUSE_REASON_PROFILE: Record<
     requestedAuthority: 'self',
     attemptedRecovery: 'none required — the driver detected the policy change itself and paused for safety.',
     nextActions: ['Resume — the round will re-resolve the current review policy on its own.']
+  },
+  sandbox_refused: {
+    requestedAuthority: 'operator',
+    attemptedRecovery: `none — a sandbox that cannot run a command on this host does not recover by itself, so the driver did not retry it and will not resume it on its own. The probe's own error is in \`detail\`. Remedy: fix the agent's sandbox on this host — for Claude Code on Linux, when the error is the Unix-socket seccomp step (\`apply-seccomp\`), the host's owner may set \`${LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV}=1\` in the driver's own environment, which turns off only that filter (\`apps/cli/specs/isolation.md\`, section 4d); otherwise make the sandbox's own tools work for the user the driver runs as.`,
+    nextActions: [
+      "Have the host's owner apply the remedy in `attemptedRecovery` for the error in `detail` — a host change, outside the Operator's tools.",
+      'Then start the task again with `vinaya task run` on that host: no ruling is needed, and the pause is resolved once as it continues. Through the Operator’s tools, `task_resume` continues it against a Principal ruling posted where the pause comment went.'
+    ]
   }
 }
 
@@ -1290,6 +1333,36 @@ export function resolveEscalation(
     })
   }
   return { escalation: escalation.value, resolution: outcome.record, epoch: acquired.epoch }
+}
+
+/**
+ * The ordinary start's continuation of a host-repair pause recorded before
+ * any pull request existed (a pause on a pull request is resolved by
+ * `--resume`'s own entry): records the pause's `resume` resolution once, as
+ * the driver's own no-ruling recovery, so the same packet is never consumed
+ * twice. `true` only when this call recorded it; a resolution already
+ * recorded, an escalation with no durable record, or any other pause reads
+ * `false`. Best-effort, like every other pause bookkeeping write: a store
+ * failure is reported on stderr and never stops the start it belongs to.
+ */
+export function consumeHostRepairPauseOnStart(
+  root: string,
+  task: number,
+  storeDeps: ControlStoreDeps = defaultControlStoreDeps(controlStoreRoot)
+): boolean {
+  const held = readPauseState(root, task)
+  if (!held || held.prNumber !== null || !isHostRepairPause(held.reason)) return false
+  const escalationId = held.escalationId ?? escalationIdFor(task, held.round, held.head)
+  try {
+    resolveEscalation(task, escalationId, null, 'resume', 'driver-self', `issue-${task}-host-repaired`, storeDeps)
+    return true
+  } catch (err) {
+    if (err instanceof ReplayedResolutionError || err instanceof StaleEscalationError) return false
+    printDriverLockLine(
+      `task ${task}'s ${held.reason} pause could not record its resolution — ${err instanceof Error ? err.message : String(err)}; continuing`
+    )
+    return false
+  }
 }
 
 /** The durable resolution record for `(task, escalationId)`, or `null` — never thrown. */

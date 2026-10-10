@@ -3355,6 +3355,31 @@
       "tests": [],
       "loopSpec": [],
       "reason": "A residual risk, stated and never claimed closed. Evidence: the doctrine study counted the rule lines of the role pages and the registered checks over eight weeks; rules kept growing while checks did not."
+    },
+    {
+      "id": "INV-163",
+      "behavior": "A dispatch refused because the agent's sandbox probe failed on the host pauses sandbox_refused, addressed to the Operator with the probe error and the host remedy, spends no infrastructure retry and is never resumed by the watcher; the ordinary start continues it with no ruling and records its resolution once, while a transient dispatch failure still pauses infrastructure and is retried within the bound.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "control-state",
+      "scenarios": ["isolation-refusal", "developer-failure", "operator-intervention"],
+      "sources": [
+        {
+          "path": "apps/cli/src/lib/dev-review-loop/round-assess.ts",
+          "symbol": "DispatchSandboxRefused"
+        },
+        {
+          "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts",
+          "symbol": "isHostRepairPause"
+        }
+      ],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/pause-resume.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/round-assess.test.ts"
+      ],
+      "loopSpec": ["Infrastructure failures and driver-decided pauses"],
+      "reason": "A confinement capability that fails on first use is a capability refusal, not a transient: the host cannot change by itself, so a retry only spends the budget before anyone is asked.",
+      "scope": "product"
     }
   ],
   "defects": [

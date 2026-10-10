@@ -217,6 +217,7 @@ import {
 import {
   assertDispatchOrEscalate,
   DeveloperDispatchHistory,
+  DispatchSandboxRefused,
   DispatchSignInRefused,
   developerRoundMarker,
   driverCrashEvents,
@@ -285,11 +286,13 @@ import {
   acquireDriverLockAtomic,
   bindPauseToPullRequest,
   clearDriverLock,
+  consumeHostRepairPauseOnStart,
   escalationIdFor,
   escalationPrOf,
   fenceStartedEffectsAsUncertain,
   isAutomaticRecoveryPause,
   isDriverPidAlive,
+  isHostRepairPause,
   missingEscalationNextStep,
   noPushResumeCommandFor,
   type PauseCommentPostResult,
@@ -393,6 +396,7 @@ export type { EscalationFacts, ResolveEscalationResult } from './dev-review-loop
 export {
   developerRoundMarker,
   DevReviewLoopResumeError,
+  DispatchSandboxRefused,
   DispatchSignInRefused,
   renderDeveloperRoundComment,
   routeCompletionEvents,
@@ -2579,9 +2583,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           ? Number.POSITIVE_INFINITY
           : 0
     const infrastructureRetriesSoFar = Math.max(controlStoreInfrastructureRetries, held.infrastructureRetries ?? 0)
+    // A host-repair pause (`sandbox_refused`) is no automatic recovery — the
+    // watcher never resumes it — but the ordinary start continues it with no
+    // ruling once the host is repaired, and outside the retry bound: it
+    // never spent one.
+    const hostRepairResume = isHostRepairPause(held.reason)
     const bareAutomaticResume =
-      (held.reason === 'infrastructure' || held.reason === 'stale_driver') &&
-      infrastructureRetriesSoFar < MAX_INFRASTRUCTURE_RETRIES
+      hostRepairResume ||
+      ((held.reason === 'infrastructure' || held.reason === 'stale_driver') &&
+        infrastructureRetriesSoFar < MAX_INFRASTRUCTURE_RETRIES)
     // `held.escalationId` is the escalation's OWN real id — a disambiguating
     // suffix when `writeEscalation` had to claim one (code review, round 2,
     // MEDIUM); the natural key is still correct whenever no collision ever
@@ -2625,12 +2635,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // rather than a principal decision — still consumed at most once, so a
     // duplicate bare `--resume` against the SAME held hiccup is refused too.
     const resumeAuthenticatedBy =
-      held.reason === 'infrastructure' || held.reason === 'stale_driver'
+      held.reason === 'infrastructure' || held.reason === 'stale_driver' || hostRepairResume
         ? 'driver-self'
         : ((escalationPr === null ? d.fetchNewestIssueRulingAuthor(closesTask) : d.fetchNewestRulingAuthor(resumePr)) ??
           'unknown-principal')
-    const resumeAuthenticatedFrom =
-      held.reason === 'infrastructure' || held.reason === 'stale_driver'
+    const resumeAuthenticatedFrom = hostRepairResume
+      ? `${resumePr}-host-repaired`
+      : held.reason === 'infrastructure' || held.reason === 'stale_driver'
         ? `${resumePr}-infrastructure-retry`
         : escalationPr === null
           ? `issue-${closesTask}-${d.fetchNewestIssueRulingOrdinal(closesTask)}`
@@ -2857,6 +2868,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   // (above): this run builds its own artifacts for whichever round it
   // reaches first and never reads a prior run's leftovers.
   cleanupAllReviewerIsolationArtifacts(root, task)
+  // A host-repair pause recorded before any pull request existed is
+  // continued by this same start: its resolution is recorded once, under the
+  // lock just taken, so the same packet is never consumed twice. (A pause on
+  // a pull request is resolved by the `--resume` entry above.)
+  if (!('resumePr' in input)) consumeHostRepairPauseOnStart(root, task)
 
   // True only for the two pause reasons that are
   // themselves an infrastructure/re-exec hiccup, never a human decision
@@ -3070,7 +3086,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           loop_id: config.loopId,
           event: 'resumed',
           round: resumeFrom.round,
-          by: resumeFrom.reason === 'infrastructure' ? 'driver' : 'principal'
+          by: resumeFrom.reason === 'infrastructure' || isHostRepairPause(resumeFrom.reason) ? 'driver' : 'principal'
         }
       ])
     }
@@ -6321,7 +6337,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // is a decided pause, never a crash — logged as one, with its own typed
       // reason code.
       const turnResultPause = err instanceof DeveloperTurnResultPause ? err : null
-      if (turnResultPause === null) recordDriverExited('error', { error: err })
+      // A sandbox the host cannot run is a decided pause too, addressed to
+      // the Operator — never an infrastructure crash the watcher retries.
+      const sandboxRefusal = err instanceof DispatchSandboxRefused ? err : null
+      if (turnResultPause === null && sandboxRefusal === null) recordDriverExited('error', { error: err })
       let head = 'unknown'
       try {
         head = d.resolveHead(branch)
@@ -6329,14 +6348,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // Left as 'unknown' — the schema only requires a string.
       }
       let decidedPauseEvents: DevReviewLoopEventInput[] | null = null
-      if (turnResultPause !== null) {
+      if (turnResultPause !== null || sandboxRefusal !== null) {
         try {
           decidedPauseEvents = driverDecidedPauseEvents(
             config.loopId,
             state,
             round,
             computeStats(head, roundStartMs),
-            turnResultPause.reasonCode
+            turnResultPause?.reasonCode ?? 'sandbox_refused'
           )
         } catch {
           decidedPauseEvents = null
@@ -6356,19 +6375,23 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // that an unnamed error ended the round.
       decision = {
         type: 'pause',
-        reason: turnResultPause?.pauseReason ?? 'infrastructure',
+        reason: turnResultPause?.pauseReason ?? (sandboxRefusal !== null ? 'sandbox_refused' : 'infrastructure'),
         detail:
           turnResultPause !== null
             ? turnResultPause.message
-            : err instanceof DispatchSignInRefused
-              ? err.message
-              : err instanceof DispatchUsageLimit
-                ? usageLimitPauseDetail(err.limit, d.now())
-                : isGitHubRateLimitError(err)
-                  ? `${rateLimitPauseDetail(round === roundAtLastWait ? rateLimitWaits : 0)} (round ${round}: ${err instanceof Error ? err.message : String(err)})`
-                  : `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
+            : sandboxRefusal !== null
+              ? sandboxRefusal.message
+              : err instanceof DispatchSignInRefused
+                ? err.message
+                : err instanceof DispatchUsageLimit
+                  ? usageLimitPauseDetail(err.limit, d.now())
+                  : isGitHubRateLimitError(err)
+                    ? `${rateLimitPauseDetail(round === roundAtLastWait ? rateLimitWaits : 0)} (round ${round}: ${err instanceof Error ? err.message : String(err)})`
+                    : `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
       }
-      keepLockAlive = true
+      // A host-repair pause ends this driver and frees the lock, so the
+      // ordinary start can continue the task once the host is repaired.
+      keepLockAlive = sandboxRefusal === null
       // The SAME durable snapshot every
       // other pause reason gets, best-effort like the write itself already
       // is — a genuinely uncaught error is exactly the case this record
@@ -6379,7 +6402,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // produced a round for that bound to bound, so no number of sign-in
       // pauses should ever demand a Principal ruling to resume past; a
       // rate limit is a wait for the reset, not a recoverable-hiccup retry.
-      if (turnResultPause !== null) recordDriverExited('paused')
+      if (turnResultPause !== null || sandboxRefusal !== null) recordDriverExited('paused')
       else if (spendsInfrastructureRetry(err)) infrastructureRetries += 1
       persistCurrentLoopState('pause', decision.reason)
       // This bookkeeping is best-effort, never a second chance for the
@@ -8048,6 +8071,10 @@ async function watchPauseThenResume(
 > {
   const { prNumber, task } = pauseResult
   const reason = pauseResult.finalDecision.type === 'pause' ? pauseResult.finalDecision.reason : undefined
+  // A host-repair pause is never resumed by this watcher, not even on a
+  // ruling: the driver ends, its lock freed, and the ordinary start
+  // continues the task once the host is repaired.
+  if (reason !== undefined && isHostRepairPause(reason)) return { kind: 'unwatched' }
   let isBoundedRetry = reason === 'infrastructure' || reason === 'stale_driver'
   // A GitHub rate-limit pause is told from the recorded pause detail
   // (`rateLimitPauseDetail`'s own prefix), never from comment text. Its
@@ -8105,9 +8132,11 @@ async function watchPauseThenResume(
   // `--resume` led to), so every poll re-reads the current pause and
   // follows it rather than the one captured when watching began.
   let replayedOnce = false
+  let hostRepairFollowed = false
   const followCurrentPause = (): void => {
     const current = watchReadOrFallback('pause state', () => w.readPauseState(w.runtimeDir(), task), null)
     if (!current?.escalationId || current.escalationId === escalationId) return
+    hostRepairFollowed = isHostRepairPause(current.reason)
     escalationId = current.escalationId
     agent = current.agent
     model = current.model
@@ -8123,6 +8152,7 @@ async function watchPauseThenResume(
 
   while (true) {
     if (replayedOnce) followCurrentPause()
+    if (hostRepairFollowed) return { kind: 'unwatched' }
     // A usage limit that resets past six hours (or names no reset) ends the
     // watch: the pause's own comment says so and names the command that continues it.
     if (isUsageLimitPause && !isBoundedRetry) return { kind: 'unwatched' }

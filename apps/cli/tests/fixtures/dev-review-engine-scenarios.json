@@ -14,7 +14,7 @@
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop.ts",
-        "sha256": "480746c31eda1c1da3b135bdb9658025bf636db484bdfef0169311aad704adf6"
+        "sha256": "4cbeaebe43d6e4220d5ffef65b06c7a391b7fd8c636100b7583dd533b46edda1"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/developer-dispatch.ts",
@@ -34,7 +34,7 @@
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts",
-        "sha256": "28bcd314d2ba633faea951f19a92fc49db757306e62b06b32c3c6d62307fa788"
+        "sha256": "8b59f74a507d2744e221bacb2b6ec00248cfdae6595ee623a9f2449e64c56406"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/publication.ts",
@@ -50,7 +50,7 @@
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/round-assess.ts",
-        "sha256": "5c20b0b01782cfb2a5fd52d0849ea33fe8befc4815a0829ac955ecd0b3797ff7"
+        "sha256": "027d256dff92407ff80caf93ecd441dc2116e72542e1ca44395609a31a2de41e"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/turn-result.ts",
@@ -78,7 +78,7 @@
       },
       {
         "path": "packages/aeg-core/src/dev-review-loop/types.ts",
-        "sha256": "e0b1a3d45c6bb272215436ab57440288cad4540dd79955578319f29c486839f4"
+        "sha256": "784d0a11c7f493516d92f90a16342cb62c711c251ccce2fe55c5b01f8530dd74"
       }
     ]
   },
@@ -942,6 +942,10 @@
     {
       "id": "INV-144",
       "node": "raise_human_handoff"
+    },
+    {
+      "id": "INV-163",
+      "node": "dispatch_developer"
     }
   ]
 }

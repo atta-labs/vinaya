@@ -11,7 +11,7 @@
  * already uses for the identical reason.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -24,9 +24,13 @@ import {
   readEffect,
   writeEffect
 } from '@attalabs/aeg-core'
-import type { LoopDeps } from '../../../src/lib/dev-review-loop'
+import { type LoopDeps, readResolutionRecord } from '../../../src/lib/dev-review-loop'
+import type { DispatchHandle } from '../../../src/lib/dispatch'
 import { drainLogSink } from '../../../src/lib/log-sink'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../../src/lib/dev-review-loop/round-assess'
+import { readEscalationPacket } from '../../../src/lib/task-tools/read'
+import { type RunTaskDeps, runTask } from '../../../src/lib/task-run'
+import { LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV } from '../../../src/lib/worker-boundary'
 import {
   cleanupWorlds,
   controlDir,
@@ -34,13 +38,17 @@ import {
   makeInProcessDeps,
   makeWorld,
   outboxLines,
+  runDriverLoopInProcess,
   runLoopInProcess,
   taskRunDir,
   withWorldEnv
 } from '../dev-review-loop-harness'
 import {
+  consumeHostRepairPauseOnStart,
   type EscalationFacts,
   escalationIdFor,
+  isAutomaticRecoveryPause,
+  isHostRepairPause,
   fenceStartedEffectsAsUncertain,
   noPushResumeArgv,
   noPushResumeCommandFor,
@@ -48,9 +56,11 @@ import {
   PAUSE_REASON_PROFILE,
   pauseGrantsBareResume,
   postWithRetry,
+  readDriverLock,
   readPauseState,
   renderNoPushStopComment,
   renderPauseComment,
+  ReplayedResolutionError,
   resolveEscalation,
   writeEscalationRecord,
   writePauseState
@@ -498,7 +508,7 @@ describe('round 5 review, MINOR — a failure that never reaches postWithRetry/r
 })
 
 describe('PAUSE_REASON_PROFILE — every reason whose next-action mentions `detail` presumes one is rendered (O3)', () => {
-  it('carries exactly the fifteen documented PauseReason members, no more, no fewer', () => {
+  it('carries exactly the sixteen documented PauseReason members, no more, no fewer', () => {
     expect(ALL_PAUSE_REASONS.sort()).toEqual(
       [
         'escalation',
@@ -515,7 +525,8 @@ describe('PAUSE_REASON_PROFILE — every reason whose next-action mentions `deta
         'ruling_posted',
         'stale_driver',
         'brief_superseded',
-        'policy_changed'
+        'policy_changed',
+        'sandbox_refused'
       ].sort()
     )
   })
@@ -655,6 +666,164 @@ describe('a pre-spawn sign-in refusal never blocks the task', () => {
     const held = heldPauseState(world)
     expect(String(held.detail)).not.toContain('could not sign in')
     expect(held.infrastructureRetries).toBe(1)
+  })
+})
+
+/**
+ * A sandbox capability refusal — the dispatch refused before the agent
+ * started because the agent's sandbox probe failed on this host — pauses once,
+ * addressed to the Operator, and is never retried as infrastructure: the host
+ * does not change by itself. Driven in-process on the real loop and the real
+ * watching driver, with only the forge and the agents faked; the refusal is
+ * the handle `dispatchRole` returns for it, `failureReason: 'refused'` plus
+ * the typed probe result.
+ */
+describe('a sandbox capability refusal pauses once for the Operator and is never retried as infrastructure', () => {
+  afterEach(cleanupWorlds)
+
+  const PROBE_ERROR =
+    'apply-seccomp: write /proc/self/setgroups (nested userns is capability-restricted; caller must provide CAP_SYS_ADMIN): Permission denied'
+
+  /** Deps whose developer dispatch is refused with `refusal` merged into the handle; reviewers keep the world's own fakes. */
+  function refusedDeps(world: LoopWorld, refusal: Partial<DispatchHandle>): Partial<LoopDeps> {
+    const base = makeInProcessDeps(world)
+    return {
+      dispatchRole: async (role, agent, prompt, opts) => {
+        if (role !== 'developer') return base.dispatchRole!(role, agent, prompt, opts)
+        world.dispatchCountByRole[role] = (world.dispatchCountByRole[role] ?? 0) + 1
+        return { exitCode: null, durationMs: 1, usage: null, resumeId: null, timedOut: false, ...refusal }
+      }
+    }
+  }
+
+  const sandboxRefused = (world: LoopWorld): Partial<LoopDeps> =>
+    refusedDeps(world, { failureReason: 'refused', sandboxProbeRefusal: { agent: 'claude', error: PROBE_ERROR } })
+  /** A refusal that carries no probe result — any other pre-spawn refusal — stays the generic, transient path. */
+  const otherRefusal = (world: LoopWorld): Partial<LoopDeps> => refusedDeps(world, { failureReason: 'refused' })
+
+  it('classifies by the typed probe result, never by the shared refused reason, and keeps the reason out of automatic recovery', () => {
+    expect(isHostRepairPause('sandbox_refused')).toBe(true)
+    expect(isAutomaticRecoveryPause('sandbox_refused')).toBe(false)
+    expect(PAUSE_REASON_PROFILE.sandbox_refused.requestedAuthority).toBe('operator')
+    const held = {
+      task: TASK,
+      round: 1,
+      head: 'headsha1',
+      branch: 'task/x/1',
+      prNumber: null,
+      reason: 'sandbox_refused' as const,
+      pausedAt: '2026-10-10T00:00:00.000Z',
+      // However many infrastructure pauses came before, this one owes no ruling.
+      infrastructureRetries: MAX_INFRASTRUCTURE_RETRIES
+    }
+    expect(pauseGrantsBareResume(held)).toBe(true)
+    expect(missingEscalationNextStep(held)).toContain('needs the host repaired, not a ruling')
+  })
+
+  it('pauses with sandbox_refused on a pull request: the packet carries the probe error and the remedy, no retry is spent, and the lock is freed', async () => {
+    const world = makeWorld({ developerPushed: true, gate: 'red' })
+
+    const result = await runLoopInProcess(world, { task: world.task, agent: 'claude' }, sandboxRefused(world))
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'sandbox_refused' })
+    const held = readPauseState(world.runtimeDir, world.task)
+    expect(held?.reason).toBe('sandbox_refused')
+    expect(held?.detail).toContain(PROBE_ERROR)
+    expect(held?.infrastructureRetries).toBe(0)
+    // The driver ends instead of holding the task: the next start takes it.
+    expect(readDriverLock(world.runtimeDir, world.task)).toBeNull()
+    const packet = await withWorldEnv(world, () => readEscalationPacket(world.runtimeDir, world.task))
+    expect(packet?.requestedAuthority).toBe('operator')
+    expect(packet?.detail).toContain(PROBE_ERROR)
+    expect(packet?.attemptedRecovery).toContain(`${LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV}=1`)
+    const comment = world.postedComments.find((c) => c.marker === '<!-- aeg:loop:paused:sandbox_refused -->')
+    expect(comment?.body).toContain('No Principal ruling is needed')
+    expect(comment?.body).not.toContain('A Principal ruling is needed')
+  })
+
+  it('the watching driver never restarts it — on a pull request or before one exists', async () => {
+    for (const shape of [{ developerPushed: true, gate: 'red' as const }, {}]) {
+      const world = makeWorld(shape)
+
+      const result = await runDriverLoopInProcess(world, { task: world.task, agent: 'claude' }, sandboxRefused(world))
+
+      expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'sandbox_refused' })
+      expect(world.dispatchCountByRole.developer).toBe(1)
+    }
+  })
+
+  it('a transient refusal still pauses as infrastructure and the watcher retries it within the bound', async () => {
+    const world = makeWorld()
+
+    const result = await runDriverLoopInProcess(world, { task: world.task, agent: 'claude' }, otherRefusal(world))
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+    const held = readPauseState(world.runtimeDir, world.task)
+    expect(held?.infrastructureRetries).toBe(MAX_INFRASTRUCTURE_RETRIES)
+    expect(world.dispatchCountByRole.developer).toBe(MAX_INFRASTRUCTURE_RETRIES)
+  })
+
+  it('once the host is repaired, the ordinary --resume continues a pull-request pause with no ruling and records its resolution once', async () => {
+    const world = makeWorld({ developerPushed: true, gate: 'red' })
+    await runLoopInProcess(world, { task: world.task, agent: 'claude' }, sandboxRefused(world))
+    const held = readPauseState(world.runtimeDir, world.task)!
+
+    await runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude' })
+
+    expect(world.dispatchCountByRole.developer).toBeGreaterThanOrEqual(2)
+    expect(world.rulings).toEqual([])
+    const resolution = await withWorldEnv(world, () => readResolutionRecord(world.task, held.escalationId!))
+    expect(resolution).toMatchObject({
+      decision: 'resume',
+      authenticatedBy: 'driver-self',
+      authenticatedFrom: `${world.prNumber}-host-repaired`
+    })
+    await withWorldEnv(world, () => {
+      expect(() =>
+        resolveEscalation(world.task, held.escalationId!, world.prNumber, 'resume', 'driver-self', 'replay')
+      ).toThrow(ReplayedResolutionError)
+    })
+  })
+
+  it('once the host is repaired, `task run` continues a pause recorded before any pull request and records its resolution once', async () => {
+    const world = makeWorld()
+    await runLoopInProcess(world, { task: world.task, agent: 'claude' }, sandboxRefused(world))
+    const held = readPauseState(world.runtimeDir, world.task)!
+    expect(held.prNumber).toBeNull()
+    expect(existsSync(join(taskRunDir(world), 'driver.pid.json'))).toBe(false)
+    const deps = makeInProcessDeps(world)
+    const runTaskDeps: RunTaskDeps = {
+      prepareTask: async () => {
+        throw new Error('unused: a backlog task')
+      },
+      prepareIssueTask: async ({ issue }) => ({
+        issue,
+        brief: world.frozenBrief,
+        commentUrl: 'https://example/brief',
+        version: 1
+      }),
+      assembleAndRenderBrief: async () => {
+        throw new Error('unused: a backlog task')
+      },
+      assembleAndRenderBriefForIssue: async () => {
+        throw new Error('unused: the brief is not frozen twice')
+      },
+      developerBranchFor: () => world.branch,
+      findOpenPrForBranch: (branch) => deps.findOpenPrForBranch!(branch),
+      isDriverAlive: () => false,
+      hasPauseState: (task) => readPauseState(world.runtimeDir, task) !== null,
+      resolveModelForDispatch: () => undefined,
+      devReviewLoop: (input) => runDriverLoopInProcess(world, input),
+      resolveRepo: async () => null
+    }
+
+    const result = await withWorldEnv(world, () => runTask({ issue: world.task, agent: 'claude' }, runTaskDeps))
+
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.rulings).toEqual([])
+    const resolution = await withWorldEnv(world, () => readResolutionRecord(world.task, held.escalationId!))
+    expect(resolution).toMatchObject({ decision: 'resume', authenticatedFrom: `issue-${world.task}-host-repaired` })
+    expect(await withWorldEnv(world, () => consumeHostRepairPauseOnStart(world.runtimeDir, world.task))).toBe(false)
   })
 })
 

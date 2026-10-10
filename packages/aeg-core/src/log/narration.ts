@@ -39,6 +39,7 @@ const REASONS: Record<string, { words: string; person: boolean }> = {
   stale_driver: { words: 'the base branch moved past the driver code', person: false },
   brief_superseded: { words: 'the brief was replaced during the round', person: false },
   policy_changed: { words: 'the review policy changed during the round', person: false },
+  sandbox_refused: { words: "the agent's sandbox could not run a command on this host", person: true },
   principal_stop: { words: 'an item needs a person to decide', person: true },
   escalated: { words: 'a role escalated a question', person: true }
 }

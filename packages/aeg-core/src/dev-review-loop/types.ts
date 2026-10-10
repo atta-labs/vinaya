@@ -229,6 +229,15 @@ export type Observations =
  * `assessRound` from the clock its caller reads (this module has none of its
  * own); `detail` names the budget, the active time spent, and the active phases
  * that time was summed from.
+ *
+ * `'sandbox_refused'`: a dispatch was refused before the agent started
+ * because the agent's own sandbox could not run a probe command on this host
+ * — a capability refusal, not a transient: the host does not change by
+ * itself, so the driver never retries it. Driver-decided from the dispatch's
+ * typed probe result, addressed to the Operator; `detail` carries the
+ * probe's own error. It is outside the automatic-recovery set and spends no
+ * infrastructure retry; once the host is repaired, the ordinary start
+ * continues the task from it, recording the pause's resolution once.
  */
 export type PauseReason =
   | 'escalation'
@@ -246,6 +255,7 @@ export type PauseReason =
   | 'stale_driver'
   | 'brief_superseded'
   | 'policy_changed'
+  | 'sandbox_refused'
 
 export type Decision =
   | { type: 'dispatch_developer'; reason?: 'confidence' }
