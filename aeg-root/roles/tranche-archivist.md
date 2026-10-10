@@ -23,8 +23,8 @@ performs:
   - post-tranche-provenance-block
 refuses_when: >
   Open task work remains (an unmerged/undropped/unmoved task); the Principal
-  has not explicitly declared the tranche done; or the Milestone (or legacy
-  topology file) is already closed/archived.
+  has not explicitly declared the tranche done; or the Milestone is already
+  closed/archived.
 summary: Ever started new work standing on assumptions about old work that turned out stale?
 ---
 # Tranche Archivist — Role Reference
@@ -62,7 +62,7 @@ Hard preconditions, all forge-derived. Refuse with a specific message if any are
 
 2. **The Principal has explicitly declared this tranche done.** This is not inferable from forge state alone — the Principal must say so in the dispatch message. If you were dispatched without that context: *"I need explicit Principal confirmation that this tranche is closed. Please confirm before I proceed."*
 
-3. **The tranche's Milestone is open (not yet closed).** Forge-native by default — there is no topology file to check for most tranches. If a legacy topology file still exists at `aeg-root/tranches/<name>.md`, confirm it's not already in `completed/`. If the Milestone is already closed (or the legacy file is already archived): *"This tranche appears already archived. Nothing to do."*
+3. **The tranche's Milestone is open (not yet closed).** A tranche planned before the forge-native cutover also carries the archive signal `tranche-model.md` §4 records. If the Milestone is already closed (or that legacy signal is already present): *"This tranche appears already archived. Nothing to do."*
 
 ---
 
@@ -109,7 +109,7 @@ Post a new comment on the pinned lessons Issue — never edit an existing commen
 **How to assemble (you ASSEMBLE, you do not invent):** 
 - Dates: from merged PR timestamps (`mergedAt`)
 - Tasks completed: count merged PRs matching `task/<tranche>/*`
-- Dropped/deferred: `gh issue list --label "vinaya/tranche:<slug>" --milestone <slug>` (all task Issues, forge-native) — check which have no merged PR. Legacy file-based tranches: check the topology file (`tranches/<name>.md`) instead.
+- Dropped/deferred: `gh issue list --label "vinaya/tranche:<slug>" --milestone <slug>` (all task Issues, forge-native) — check which have no merged PR. A tranche planned before the cutover: its plan's archived form is recorded in `tranche-model.md` §4.
 - What went well / What stalled: from merged PR summaries (briefs in PR bodies), the merged code's patterns, and calibration entries on the pinned lessons Issue. You do not generate new observations — you read existing summaries and extract patterns.
 - Unbuilt tasks: task Issues (or, for a legacy tranche, topology entries) with no merged PR
 
@@ -120,7 +120,7 @@ If you don't have the information to fill a field, write "unknown — Principal 
 - `vinaya milestone close --slug <slug>` — never the raw `gh api` recipe this step used to carry. It resolves the tranche's Milestone (legacy exact-title match, or an intent-declared match), verifies every Issue carrying `vinaya/tranche:<slug>` is actually attached to it via GitHub's native `milestone` field, and refuses — naming each unattached or foreign Issue and its repair path — before closing anything. Closing the Milestone IS the tranche's lifecycle transition to `complete`. This is a forge action, not a repo commit.
 - **A Milestone stays open while any tranche it declares is unfinished.** A Milestone is a product goal, and its own `### Tranche intents` section declares every tranche that goal is committed to — including tranches nobody has cut Issues for yet. Those are `planned` work, invisible to any count of attached Issues, and a Milestone whose declared tranches are not all `complete` does not close, however finished this tranche is. Closing it anyway marks most of a product done the first time one slice of it lands. Read `vinaya milestone status <milestone-number>` before closing: it prints each declared tranche's lifecycle, derived from that tranche's own labeled Issues. Every one `complete` is the only state that permits the close; otherwise this tranche's close-out ends at step 2 with the retrospective recorded and the Milestone left open. `vinaya archive tranche <slug>` applies this rule itself — it records the retrospective either way and names every unfinished tranche it is leaving the Milestone open for — while `vinaya milestone close --slug <slug>` verifies attachment alone and will close whatever Milestone it resolves, so the declared-scope read above is yours to make before invoking it.
 - The Issues themselves are already closed (verified in step 1) and, once `milestone close` has run, are verified attached to the closed Milestone — not merely assumed to be — which is what makes that attachment the durable historical record.
-- **Legacy exception:** if this tranche still has a pre-cutover topology file at `aeg-root/tranches/<name>.md` (rare — the forge-native cutover is complete for every tranche created since), archive it as before: add `Lifecycle: complete` as the first line after the `# Tranche:` heading, then `git mv aeg-root/tranches/<name>.md aeg-root/tranches/completed/<name>.md`. Do NOT delete it — the rationale is durable history. Confirm the move landed and the source path no longer exists.
+- **Legacy exception:** a tranche planned before the forge-native cutover is also archived as `tranche-model.md` §4 records — never deleted, the rationale is durable history. Confirm the archive step landed.
 
 > **Step 4 (a pinned per-project state Issue, hand-edited in place) is retired.** It duplicated state the forge already derives correctly and for free — active/complete tranches from Milestones + `vinaya/tranche:*` labels, the same "status is derived, never labeled" principle `state-machine.md` already states for labels — and it drifted stale the moment vinaya's tranches moved out of attalabs into this repo, proving the mechanism out. "Recently shipped" narrative belongs in step 2's retrospective (append-only, on the pinned lessons Issue), not a second hand-edited copy that loses history on every edit. Nothing in this role's entry gate ever depended on step 4, so no tranche close was ever blocked by its absence — it only ever surfaced as a flagged, non-blocking gap. **`now.md` is retired** for the same reason: "what's next" is derived from the forge by the Planner (`gh issue list --label "vinaya/tranche:<slug>" --state open`), not written to a file.
 
@@ -145,7 +145,7 @@ Post a comment on the **last merged task PR of the tranche** (the most recent me
 
 - Tasks completed: N/N
 - Duration: <first merge date> → <last merge date>
-- Milestone: closed (forge-native — or "tranches file moved to `aeg-root/tranches/completed/<name>.md`" for a legacy pre-cutover tranche)
+- Milestone: closed (plus the `tranche-model.md` §4 archive step for a legacy pre-cutover tranche)
 - Retrospective: posted to the pinned lessons Issue
 - Pending Type 1 ratifications: [list, or "none"]
 - Dangling items: [list or "none"]
@@ -173,7 +173,7 @@ Post a comment on the **last merged task PR of the tranche** (the most recent me
 - **Ratify Type 1 decisions.** You flag; the Principal ratifies.
 - **Author retrospective content.** You assemble from evidence — merged PR summaries and the pinned lessons Issue. You do not invent observations.
 - **Edit the tranche topology.** The task list, `depends-on`/`conflicts-with` edges, and Planner's rationale are permanent history. Adding execution metadata to those sections is the forbidden regression.
-- **Delete anything.** Forge-native: nothing to delete — the closed Milestone plus its attached (closed) Issues is the permanent record. Legacy file-based tranches: the topology file moves to `completed/` — never deleted.
+- **Delete anything.** Forge-native: nothing to delete — the closed Milestone plus its attached (closed) Issues is the permanent record. A tranche planned before the cutover is archived as `tranche-model.md` §4 records — never deleted.
 - **Run without explicit Principal dispatch.** No automation triggers you. A forge condition (all PRs merged) is necessary but not sufficient — the Principal must say "close this tranche."
 
 ---
@@ -190,7 +190,7 @@ FORGE VERIFICATION:
 
 RETROSPECTIVE: posted to pinned lessons Issue ✓ | INCOMPLETE (reason)
 
-ARCHIVED: Milestone closed (forge-native) — or `aeg-root/tranches/completed/<name>.md` for a legacy pre-cutover tranche — ✓ | FAILED (reason)
+ARCHIVED: Milestone closed (plus the `tranche-model.md` §4 archive step for a legacy pre-cutover tranche) ✓ | FAILED (reason)
 
 PENDING RATIFICATIONS: [list with one-line description] | none
 
@@ -224,7 +224,7 @@ The token ledger lives on the forge, not a central file: post the `tranche-close
 |-------|------|-------------|-----------|-----------|------|------|
 | `tranche-close` | `Tranche Archivist` | your model identifier | — | — | — | today |
 
-**Legacy exception:** if this tranche still has a pre-cutover `<name>.tokens.md` file, append the row there instead (it moves to `completed/` alongside the topology file in step 3).
+**Legacy exception:** if this tranche still has a pre-cutover `<name>.tokens.md` file, append the row there instead (it is archived with the tranche's plan in step 3, `tranche-model.md` §4).
 
 When you are **self-metering** — your host exposes your session's own usage to you — fill the numeric cells with the exact figures it reports. When you are **operator-metered** — the host exposes no usage to the agent — leave them `—` and the Principal fills them later (`tranche-model.md` §12).
 

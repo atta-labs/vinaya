@@ -26,12 +26,12 @@ Every fact in AEG lives in exactly **one** place. Nothing is duplicated; no arti
 
 | Domain | Holds | Mutable by |
 |--------|-------|-----------|
-| **The forge Issue** | Task identity + metadata (project label, ticket link, dependency/conflict references) | Planner (at plan time) |
-| **The thin tranche file** | Planning *topology* only — task→issue mapping, dependency graph, conflict graph, tranche grouping | Planner (at plan time) |
+| **The forge Issue** | Task identity + metadata (project label, ticket link, its own `Depends-on` / `Conflicts-with` edges) | Planner (at plan time) |
+| **The tranche's label and Milestone** | Planning *grouping* only — which Issues form the tranche, and the goal they serve | Planner (at plan time) |
 | **The Git forge** (branch / PR / review / merge state) | All live execution *status* — derived, never stored | the act of working (opening a branch, a PR, a review, a merge) |
 | **The task Issue's `aeg:brief:v1` comment** | The just-in-time brief — the task's full execution context | The Planner's dispatch act, once, when work starts (mechanically rendered, never hand-typed) |
 
-The cardinal rule, stated once and enforced everywhere below: **the forge holds what is happening; the file and the issue hold the plan. Never copy "what is happening" into the file or the issue.**
+The cardinal rule, stated once and enforced everywhere below: **the forge's live facts hold what is happening; the Issue and its Milestone hold the plan. Never copy "what is happening" into the Issue or the Milestone.**
 
 ---
 
@@ -45,10 +45,10 @@ What AEG holds is the **tranche**: the bounded set of tasks currently being turn
 Company roadmap / Jira / project backlog   ← NOT in AEG. Reference only. The human reads it.
         │  (human translation — Planner, plan act)
         ▼
-Tranche  =  a set of forge Issues  +  a thin topology file        ← TOP of AEG.
+Tranche  =  a Milestone  +  the forge Issues carrying its tranche label
    ├─ Task (Issue) ── brief rendered mechanically at dispatch → posted as the Issue's frozen comment
    ├─ Task (Issue)
-   └─ …          edges (depends-on / conflicts-with) declared in the thin file
+   └─ …          edges (depends-on / conflicts-with) declared on each Issue's body
         │
         ▼
 Per task: branch → PR → Reviewer + Security → merge → close-out
@@ -92,17 +92,21 @@ So: there is **no status column anywhere.** The Developer does not "flip to in-r
 
 > **A tranche's identity is its `vinaya/tranche:<slug>` label, not a Milestone.** Full model — the Milestone/Architect relationship, `adopt`, the `Release:` field, the `Tranche intents` grammar, the closed-legacy-Milestone trap — moved to `milestone-model.md`, one altitude up. What's kept here is only the one fact this file's own reasoning depends on: a tranche's goal is derived, never stored, the same discipline this section applies to everything else a tranche might otherwise hoard.
 
-The file held **only** what the forge models poorly: the task→Issue mapping and the dependency/conflict graph. It contains **no status, no PR numbers, no merge dates, no timestamps — nothing the forge already knows. It contains no task prose, no boundary descriptions, no rationale — nothing that belongs on the Issue.** Its task topology was edited only by the Planner, at plan time, so it could not race and could not drift on status (it stored none). The same rule now binds the Milestone and its Issues: the Planner cuts them, and nothing downstream writes status back. The one exception is the tranche's own **lifecycle marker** (active/complete — §12), a single header line the Archivist sets at close-out; this is the tranche's lifecycle, not per-task execution status, and it is set once when the whole tranche ends.
+The file held **only** what the forge models poorly: the task→Issue mapping and the dependency/conflict graph. It contains **no status, no PR numbers, no merge dates, no timestamps — nothing the forge already knows. It contains no task prose, no boundary descriptions, no rationale — nothing that belongs on the Issue.** Its task topology was edited only by the Planner, at plan time, so it could not race and could not drift on status (it stored none). The same rule now binds the Milestone and its Issues: the Planner cuts them, and nothing downstream writes status back. The one exception was the tranche's own **lifecycle marker** (active/complete), a single header line the Archivist set at close-out — the tranche's lifecycle, not per-task execution status; a closed Milestone carries that fact now (§11).
 
 **`#TBD` is still forbidden, wherever a task is recorded.** Every task must carry a real forge Issue number. A tranche that contains `#TBD` is an incomplete plan — the Planner has not cut the Issues, which is the canonical plan act. **The Planner's rationale (Boundary, Sizing, Project(s)+blast radius, Dependency rationale, Traps to avoid, Suggested agent-class, Stop-and-escalate) lives on the Issue body.** Nothing outside the Issue repeats the rationale. The dispatch act's render reads it from the Issue, which is now its only home.
 
 `dependsOn`/`conflictsWith` for every active tranche is now genuinely forge-derived, no file fallback anywhere. `completed/*.md` files are never deleted, by design (§11) — the birth rule never applied to them.
 
+**What the archive still holds, and what a pre-cutover tranche still needs.** A tranche planned before the cutover that still carries its topology file is archived the old way, in addition to closing its Milestone: the Tranche Archivist adds `Lifecycle: complete` after the file's heading and moves it from `aeg-root/tranches/<name>.md` to `aeg-root/tranches/completed/<name>.md`, its `<name>.tokens.md` ledger beside it; for such a tranche the Planner's readiness gate also confirms the moved file exists. A forge-native tranche carries no file to move or check.
+
+**The per-project state directory went with it.** `aeg-project/` once held each unit's living state — `state.md` (the active-work pointer), `lessons.md` and `retrospectives/` (close-out observations), and committed `briefs/`. Each has a forge home now: active work is derived from Issues, branches and pull requests; a retrospective is a comment on the pinned lessons Issue; a brief is the task Issue's frozen `aeg:brief:v1` comment; and anything genuinely non-derivable is an ordinary open Issue, closed when resolved.
+
 Template:
 
 ```
 # Tranche: <short name> — <timeframe>
-Lifecycle: active            ← active | complete (§12). Set to complete by the Archivist when every task is merged.
+Lifecycle: active            ← active | complete. Set to complete by the Archivist when every task was merged.
 
 Goal (execution, not roadmap-why): <what ships, end to end>
 Repo: <repo>   ·   Planner: <name>
@@ -122,13 +126,13 @@ To see **live status**, you do not read this file — you ask the forge: `gh pr 
 
 ### Naming a tranche
 
-The filename slug (`<name>` in `aeg-root/tranches/<name>.md`) should name the tranche's **center of gravity — the durable, highest-leverage work — not its narrowest downstream feature.** The test: *what is the lasting, reusable thing this tranche produces?* Name that.
+The tranche slug (`<slug>` in its `tranche:<slug>` label and in every task branch `task/<slug>/<n>`) should name the tranche's **center of gravity — the durable, highest-leverage work — not its narrowest downstream feature.** The test: *what is the lasting, reusable thing this tranche produces?* Name that.
 
 - When a tranche **onboards a project onto shared infrastructure** (or grows that infra), name the **onboarding / infra**, not the feature that happens to ride on it. The infra work outlives and outscopes the feature, and other projects inherit it. Example: a tranche that migrates a product onto a shared billing engine and adds multi-vendor payment support to that shared engine — with "refund UI" as the proximate feature on that product — is named **`billing-onto-engine`**, *not* `billing-refund-ui`. The engine maturing is the center of gravity; the refund UI is one feature on top.
 - When a tranche is genuinely **one project's self-contained feature** (no shared-infra change, no cross-project blast radius), `<project>-<feature>` is fine (e.g. `<project>-reviewers-benchmark`).
-- A name should not imply a narrower scope than the `Project(s)` column reveals. If tasks span several projects, a filename naming only one of them misleads a reader scanning `tranches/`. When in doubt, name the broadest/most-shared layer the tranche touches.
+- A name should not imply a narrower scope than the `Project(s)` column reveals. If tasks span several projects, a slug naming only one of them misleads a reader scanning the tranche labels. When in doubt, name the broadest/most-shared layer the tranche touches.
 
-The `Project(s)` column remains the authoritative blast-radius record per task; the filename is a human-readable handle, chosen to not mislead about scope.
+Each Issue's `Project(s)` field remains the authoritative blast-radius record per task; the slug is a human-readable handle, chosen to not mislead about scope.
 
 ---
 
@@ -136,12 +140,12 @@ The `Project(s)` column remains the authoritative blast-radius record per task; 
 
 Two tasks conflict if they touch the same **collision domain** and therefore must not run in parallel. The rules, after the panel's correction:
 
-- **Conflicts are declared by the Planner** as `conflicts-with` edges in the thin file. Declared, not inferred.
+- **Conflicts are declared by the Planner** as `conflicts-with` edges on the task Issues. Declared, not inferred.
 - **Collision domains are packages**, live-derived from the repo's own workspace declaration's `packages/*` members (`package.json`'s `workspaces` array, or `pnpm-workspace.yaml`'s `packages:` list on a pnpm repo) — no file to author or keep in sync. Known cross-cutting collision paths that are detectable by convention — **whichever lockfile exists, monorepo config (`tsconfig.json`/`biome.json`/`turbo.json`), `.github/workflows`, `.husky`** — ship as a built-in default set for the same reason. Paths that couple tasks across package boundaries but have no universal convention — **`migrations/`, codegen outputs (protobuf/GraphQL/OpenAPI)** — are declared as their own collision domains via `vinaya.config.json`'s `blastRadius.extraDomains`. The legacy static `.aeg/packages` file is retired — no longer read, zero backward compatibility.
 - **The conflict gate is forge-answerable with zero stored state:** "is a `conflicts-with` sibling's PR currently open?" If yes, don't start. That's it.
 - **There is no dynamic path-overlap check.** (The panel's decisive correction.) Computing "which files is each in-flight task touching right now" would require a live task→changed-files map — exactly the mutable execution state the design eliminates. So it is forbidden (§10).
 
-**Conflicts hold across tranches, not just within one.** A `conflicts-with` edge is declared *within* a tranche's thin file, but the collision domain it protects is global — a package is a package no matter which tranche touches it. So when two tranches run concurrently (§12), the conflict rule still binds **across** them: if a task in tranche A and a task in tranche B touch the same collision domain, they conflict, even though neither file lists the other (the files only know their own tasks). The Planner of the *second* concurrent tranche is responsible for checking the first's `Project(s)` / collision domains and either keeping the tranches disjoint or declaring the cross-tranche serialization (§12). The gate itself is unchanged and still forge-answerable — "is a PR touching this collision domain currently open?" does not care which tranche it belongs to.
+**Conflicts hold across tranches, not just within one.** A `conflicts-with` edge is declared on one tranche's Issues, but the collision domain it protects is global — a package is a package no matter which tranche touches it. So when two tranches run concurrently (§11), the conflict rule still binds **across** them: if a task in tranche A and a task in tranche B touch the same collision domain, they conflict, even though neither tranche's Issues name the other's. The Planner of the *second* concurrent tranche is responsible for checking the first's `Project(s)` / collision domains and either keeping the tranches disjoint or declaring the cross-tranche serialization (§12). The gate itself is unchanged and still forge-answerable — "is a PR touching this collision domain currently open?" does not care which tranche it belongs to.
 
 **Acknowledged limitation, stated openly:** AEG catches *declared* and *package-level* collisions. It does **not** automatically catch novel, undeclared, file-level coupling between tasks in *different* packages (e.g. one task changes a shared type/config another package embeds). No tool catches that reliably without becoming unreliable, expensive, or stateful. AEG places its trust boundary at **planning**: when unsure whether two tasks collide, the Planner **declares the conflict and serializes them** — erring toward serialization is cheap; erring toward "run parallel and hope" is the failure mode. Safe parallelism assumes real package ownership boundaries (explicit APIs, no shared types leaking across packages); most monorepos earn this only with discipline.
 
@@ -149,7 +153,7 @@ Two tasks conflict if they touch the same **collision domain** and therefore mus
 
 ## 6. The Planner
 
-The **Planner** has two acts, same intelligence, two altitudes (`roles/planner.md`). Dispatch act: one task's Issue → a rendered, gate-checked brief. Plan act: intent + a slice of tickets → a whole tranche (a set of Issues + the thin topology file).
+The **Planner** has two acts, same intelligence, two altitudes (`roles/planner.md`). Dispatch act: one task's Issue → a rendered, gate-checked brief. Plan act: intent + a slice of tickets → a whole tranche (a Milestone's set of labeled Issues, edges declared on each).
 
 The Planner's job — the reason the tranche exists — is the relationships a brief-in-isolation can't see: decompose the ticket slice into agent-sized tasks (Issues), declare `depends-on` and `conflicts-with` edges, and decide **split vs. combine** by the **verification-coupling** test:
 
@@ -190,10 +194,10 @@ With a single principal these rules live in one head; with a team they must be a
 
 The review panel predicted, unanimously, two of the ways teams will accidentally rebuild the original flaw (rules 1–2 below); rule 3 and rule 4 were added later as further incidents surfaced the same underlying pattern. All four are **forbidden** and the Planner agent flags them (§ `roles/planner.md`):
 
-1. **No execution metadata in the thin file or the Issue.** Never add `status`, `PR #`, `merged date`, `current state`, `assignee history`, or generated collision data to the tranche file. The reason is always reasonable ("just to glance without querying") and it is always wrong — the forge already holds these, and copying them in recreates the racing, drifting, lying status store. **Thin file = topology. Forge = state.** The line is bright; keep it bright. (The tranche's own active/complete lifecycle marker in §12 is **not** an exception to this: it is the tranche's lifecycle set once at close-out, not per-task execution status, and the forge has no native fact for "this whole tranche is done.")
+1. **No execution metadata on the Issue or the Milestone.** Never add `status`, `PR #`, `merged date`, `current state`, `assignee history`, or generated collision data to a task Issue's body or a Milestone's description. The reason is always reasonable ("just to glance without querying") and it is always wrong — the forge already holds these, and copying them in recreates the racing, drifting, lying status store. **Issue = plan. Forge facts = state.** The line is bright; keep it bright. (Closing the Milestone at close-out is **not** an exception to this: it is the tranche's own lifecycle, set once, not per-task execution status.)
 2. **No dynamic conflict scanner.** Do not build a script that checks out in-flight branches and diffs them to "catch conflicts the Planner missed." It cannot work without a live task→changed-files map — the mutable state we removed. When unsure two tasks collide, **declare the conflict and serialize** (§5). Conservative declaration is the sanctioned answer; a scanner is not.
 3. **No planning metadata on Issues.** No priority, estimates, points, or roadmap fields. Enforced mechanically: a required Issue template (deps, conflicts, project label, ticket link — and nothing else) + a CI check that rejects forbidden fields/labels. Discipline alone will not hold this; the *place to put planning info is removed*, not just discouraged.
-4. **No committed report/scratch files.** Never commit a new repo file whose sole purpose is a one-off report, audit finding, coverage summary, or working brief. The reason is always reasonable ("it's a big deliverable, it deserves its own file," "there's no prior convention, I'll set one") and it is always wrong — that content belongs in the PR body (task-scoped findings) or an Issue/PR comment (findings with no task PR of their own), exactly like a brief's permanent home is a frozen Issue comment, never the Issue body or a repo file (§7). A committed scratch file recreates the racing, drifting problem the other three rules already forbid, one layer up: it is a fifth truth domain nobody asked for, competing with the forge for where "what happened" lives. This is not hypothetical — it has already happened twice: a 120-row audit deliverable committed as `aeg-root/tranches/<name>.audit.md` broke AEG Studio's tranche loader (which globs every `.md` file in this directory as a tranche), and a full task brief was committed as a permanent file under `aeg-project/briefs/`, contradicting §7's own rule that a brief is pasted, not committed. **Thin file = topology. Forge = state. PR body / Issue comment = findings and briefs.** Sanctioned exceptions: durable reference artifacts (specs, skills, role docs, contracts) and the `.tokens.md` sibling ledgers (§12) — these are pre-existing, separately-governed, durable-by-design; a one-off report is neither.
+4. **No committed report/scratch files.** Never commit a new repo file whose sole purpose is a one-off report, audit finding, coverage summary, or working brief. The reason is always reasonable ("it's a big deliverable, it deserves its own file," "there's no prior convention, I'll set one") and it is always wrong — that content belongs in the PR body (task-scoped findings) or an Issue/PR comment (findings with no task PR of their own), exactly like a brief's permanent home is a frozen Issue comment, never the Issue body or a repo file (§7). A committed scratch file recreates the racing, drifting problem the other three rules already forbid, one layer up: it is a fifth truth domain nobody asked for, competing with the forge for where "what happened" lives. This is not hypothetical — it has already happened twice: a 120-row audit deliverable committed beside the tranche plans broke AEG Studio's tranche loader, which read every markdown file there as a tranche, and a full task brief was committed as a permanent repo file, contradicting §7's own rule that a brief is posted, not committed. **Issue = plan. Forge facts = state. PR body / Issue comment = findings and briefs.** Sanctioned exceptions: durable reference artifacts (specs, skills, role docs, contracts) — separately-governed, durable-by-design; a one-off report is neither.
 
 ---
 
@@ -212,14 +216,14 @@ Raw forge tooling is a dashboard. AEG is a thin, forge-native discipline layer o
 
 ## 11. Tranche lifecycle and concurrency
 
-The earlier sections describe a single tranche's *internals*. This section covers a tranche's *life* — when it begins, when it ends, what happens to the file, and how many can run at once.
+The earlier sections describe a single tranche's *internals*. This section covers a tranche's *life* — when it begins, when it ends, what remains of it, and how many can run at once.
 
 ### The lifecycle: planned → active → complete → archived
 
-- **planned** — the thin file exists and the Issues are cut, but no work has started. Every task is `todo` (open, unassigned — committed tranche work, minimum `todo`). The tranche is a plan ready to execute.
-- **active** — at least one task has an open branch (`in-flight`) or is further along. The tranche is in flight. `Lifecycle: active` in the header.
-- **complete** — **every task's PR is merged** (every task derives to `merged` from the forge). The work is done. At this point — and only this point — the **Archivist** sets `Lifecycle: complete` in the header (one line; the single lifecycle mutation the file ever takes after plan time) and assembles the per-task provenance blocks on the merged PRs. "Complete" is itself **derived** from the forge (all linked PRs merged); the header marker is a convenience flag the Archivist writes once, not a status anyone maintains.
-- **archived** — for a forge-native tranche, the Tranche Archivist **closes the Milestone**; that closed Milestone is the current signal a new tranche's readiness gate reads (`contracts/tranche-archivist-planner.md`). **Legacy exception:** a tranche still carrying a pre-cutover topology file also has that file **moved to `aeg-root/tranches/completed/<name>.md`**, kept (not deleted) for tranches created before the forge-native cutover.
+- **planned** — the Issues are cut and labeled, but no work has started. Every task is `todo` (open, unassigned — committed tranche work, minimum `todo`). The tranche is a plan ready to execute.
+- **active** — at least one task has an open branch (`in-flight`) or is further along. The tranche is in flight.
+- **complete** — **every task's PR is merged** (every task derives to `merged` from the forge). The work is done, and the per-task provenance blocks sit on the merged PRs. "Complete" is **derived** from the forge (all linked PRs merged); nobody writes it.
+- **archived** — the Tranche Archivist **closes the Milestone**; that closed Milestone is the signal a new tranche's readiness gate reads (`contracts/tranche-archivist-planner.md`). A tranche planned before the forge-native cutover is archived as §4 records.
 
 ### Flow stages — what actually happens, in order
 
@@ -227,26 +231,26 @@ The lifecycle above is the derived-status vocabulary — what Studio reads off t
 
 1. **Plan** — the Planner turns an intent plus a slice of tickets into the tranche's tasks (Issues) and their `depends-on`/`conflicts-with` edges (§6). No Milestone required.
 2. **Dispatch** — each task runs its own Task flow (`task-model.md` §3: Brief → Code → Review → Verify → Merge → Archive), independently, in parallel wherever `depends-on` allows and the conflict rule (§5) doesn't force a serialization. Deciding *when* each task actually starts is a real act, not an implicit one: today the Principal or a thin dispatch script — this file's own opening note names that actor for every altitude — tomorrow the Atta Engine's scheduler.
-3. **Archive** — once every task has merged, the Tranche Archivist closes out: closes the Milestone (the legacy exception additionally sets the lifecycle marker and moves the file to `completed/`), flags (does not perform) orphaned branches and worktree removal.
+3. **Archive** — once every task has merged, the Tranche Archivist closes out: closes the Milestone, flags (does not perform) orphaned branches and worktree removal.
 
 ### Tranches are never deleted — they are durable history
 
-A completed tranche file is **kept, moved, never removed.** The **Issues** carry the Planner's rationale for each task — the durable architectural reasoning that decided each boundary, blast radius, and trap. The archived tranche file carries the **topology** — which tasks were planned, their grouping, and their dependency/conflict edges. Neither artifact is deleted: the file moves to `completed/` (human-browsable topology archive); the Issues remain on the forge (frozen forge artifacts with the full rationale). Paired with the provenance blocks on the merged PRs, the archived file + Issues together are the **forensic record of why the work was shaped the way it was**: what was split from what, which traps were foreseen, what the blast radius was. `completed/` is an archive, not a graveyard; `git` retains full history regardless, and the moved file keeps the topology human-browsable.
+A completed tranche is **closed, never deleted.** The **Issues** carry the Planner's rationale for each task — the durable architectural reasoning that decided each boundary, blast radius, and trap — and their own dependency/conflict edges. The closed **Milestone** carries the grouping and the goal. Neither is deleted: both remain on the forge as frozen artifacts. Paired with the provenance blocks on the merged PRs, they are the **forensic record of why the work was shaped the way it was**: what was split from what, which traps were foreseen, what the blast radius was.
 
-(The Archivist also flags merged-but-undeleted **worktrees** and orphaned branches at this point — those *are* ephemeral and get cleaned up, §3. The tranche *file* is not ephemeral; the worktrees are. Don't confuse the two.)
+(The Archivist also flags merged-but-undeleted **worktrees** and orphaned branches at this point — those *are* ephemeral and get cleaned up, §3. The closed Milestone and its Issues are not ephemeral; the worktrees are. Don't confuse the two.)
 
 ### How many tranches can run at once — no hard cap, governed by two real limits
 
 There is **no fixed maximum.** Multiple tranches may be `active` simultaneously. What actually bounds concurrency is two things, neither of them a number:
 
-1. **The conflict rule binds across tranches (§5).** Two concurrent tranches are safe to run fully in parallel **only if their tasks do not share a collision domain.** If tranche A and tranche B both touch `@atta/ui`, their colliding tasks must serialize across the tranche boundary exactly as if they were siblings — the gate doesn't care which file a PR's task belongs to. **The cleanest concurrency is between disjoint tranches** (different projects, no shared package), where nothing can collide by construction. Example: `billing-onto-engine` (billing + engine) and a `vinaya-pages` tranche (the `apps/vinaya/web` app) share no collision domain, so they run fully parallel with zero cross-checks needed.
+1. **The conflict rule binds across tranches (§5).** Two concurrent tranches are safe to run fully in parallel **only if their tasks do not share a collision domain.** If tranche A and tranche B both touch `@atta/ui`, their colliding tasks must serialize across the tranche boundary exactly as if they were siblings — the gate doesn't care which tranche a PR's task belongs to. **The cleanest concurrency is between disjoint tranches** (different projects, no shared package), where nothing can collide by construction. Example: `billing-onto-engine` (billing + engine) and a `vinaya-pages` tranche (the `apps/vinaya/web` app) share no collision domain, so they run fully parallel with zero cross-checks needed.
 2. **Principal attention.** Every active tranche is a live front the Principal is reviewing, ratifying, and merging. Concurrency is bounded by how many fronts one Principal can hold well — a human limit, not a model limit. The model permits many; judgment sets the real number.
 
 **The second-tranche planning obligation:** when planning a tranche while another is already active, the Planner's readiness gate (`roles/planner.md`) must additionally **read the active tranche(s)' `Project(s)` / collision domains** and confirm disjointness — or, where they overlap, declare the cross-tranche serialization explicitly. This is the cross-tranche case of "when unsure, declare and serialize." Disjoint tranches need only the confirmation; overlapping ones need the serialization plan before either dispatches into the shared domain.
 
 ### What "current" means
 
-There is no single "current tranche." `aeg-root/tranches/` holds every active tranche's file at the top level; `completed/` holds the archive. "What's active right now" is, like everything else, **answered from the forge** (which Issues are open/assigned across the tranche files), not from a pointer the model maintains.
+There is no single "current tranche." Every tranche whose Milestone is open, or whose labeled Issues are still open, is active; a closed Milestone is the archive. "What's active right now" is, like everything else, **answered from the forge** (which labeled Issues are open or assigned), not from a pointer the model maintains.
 
 ---
 
@@ -256,9 +260,9 @@ Every role that runs in a tranche reports its **token spend and cost**; the per-
 
 ### Where it lives
 
-**Historically**, one sibling file per tranche at `aeg-root/tranches/<name>.tokens.md`, next to the topology file. Both went with the forge-native cutover; the four that remain sit in `completed/` and are read, never written.
+**Historically**, one sibling ledger file per tranche, beside the tranche's plan file. Both went with the forge-native cutover (§4 records where the survivors sit); they are read, never written.
 
-The sibling form was chosen over an inline `## Token ledger` section for a reason worth keeping: two roles appending rows to one file at the same time is exactly the merge-collision the topology file's "Planner-only at plan time" rule existed to avoid. A ledger in its own append-only file meant a Planner editing topology and a Developer reporting a turn-end never touched the same bytes. `@attalabs/aeg-core`'s `parseLedger` still reads both forms, which is what keeps the archived ledgers legible.
+The sibling form was chosen over an inline `## Token ledger` section for a reason worth keeping: two roles appending rows to one file at the same time is exactly the merge-collision a "Planner-only at plan time" rule exists to avoid. A ledger in its own append-only file meant a Planner editing the plan and a Developer reporting a turn-end never touched the same bytes. `@attalabs/aeg-core`'s `parseLedger` still reads both forms, which is what keeps the archived ledgers legible.
 
 ### Format
 
@@ -340,7 +344,7 @@ The ledger is a Section-13 append-only artifact. The familiar forbidden moves ap
 
 - **No stored total.** Do not add a "current total" row, header field, or anything that has to be edited when a row appends. Derive it.
 - **No edits to past rows** (except the forward-reference exception in §13: the Principal filling a previously `—` numeric cell from whatever usage view the host offers a human is permitted — it does not change history, only completes it).
-- **No "current spend"** field anywhere — including the tranche file's header. The forge holds execution state; the ledger file holds the cost history. The thin tranche file holds topology. Three artifacts, three concerns.
+- **No "current spend"** field anywhere — including a Milestone's description. The forge's live facts hold execution state; the ledger holds the cost history; the Issues hold the plan. Three artifacts, three concerns.
 
 ---
 

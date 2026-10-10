@@ -282,6 +282,23 @@ const RETIRED = [
 ]
 
 /**
+ * The plan-on-disk layout the forge-native cutover retired — the tranche
+ * topology file, the directory that held it, and the per-project state
+ * directory. A plan is a Milestone plus labeled Issues now. Scoped to the
+ * doctrine tree: product source still names the archive directory it reads
+ * old ledgers from, which is a live code path, not a doctrine claim.
+ *
+ * The tranche model is exempt by file because one of its sections exists to
+ * record that retirement; the suite below proves every mention it carries
+ * sits inside that one section, so the file exemption cannot hide a live
+ * claim anywhere else in it.
+ */
+const RETIRED_IN_DOCTRINE = ['[Tt]opology files?', 'aeg-root/tranches/', 'aeg-project/']
+const DOCTRINE_SCOPE = ['aeg-root']
+const TRANCHE_MODEL = 'aeg-root/tranche-model.md'
+const RETIREMENT_SECTION_HEADING = '## 4. The thin tranche file — retired, and what survives it'
+
+/**
  * Where a mention is legitimate:
  *  - the frozen archive and per-product logs are records of what was decided
  *  - `tranches/completed/**` and retrospectives are history, never rewritten
@@ -448,6 +465,36 @@ describe('the product carries no trace of a history the adopter lacks', () => {
   }
 })
 
+describe('the plan-on-disk layout stays retired in the doctrine', () => {
+  for (const pattern of RETIRED_IN_DOCTRINE) {
+    it(`no doctrine page but the tranche model names: ${pattern}`, () => {
+      const hits = grep(pattern, DOCTRINE_SCOPE).filter((line) => {
+        const path = line.slice(0, line.indexOf(':'))
+        return path !== TRANCHE_MODEL && !EXEMPT.some((e) => path.includes(e))
+      })
+      expect(hits, `\n${hits.join('\n')}\n`).toEqual([])
+    })
+  }
+
+  it('the tranche model names them only inside its retirement section', () => {
+    const lines = readFileSync(join(REPO_ROOT, TRANCHE_MODEL), 'utf8').split('\n')
+    const start = lines.indexOf(RETIREMENT_SECTION_HEADING)
+    expect(start, 'the retirement section heading moved — update RETIREMENT_SECTION_HEADING').toBeGreaterThan(-1)
+    const next = lines.findIndex((line, i) => i > start && line.startsWith('## '))
+    const end = next === -1 ? lines.length : next
+    const outside = lines
+      .map((line, i) => ({ line, n: i + 1 }))
+      .filter(({ n }) => n - 1 < start || n - 1 >= end)
+      .filter(({ line }) => RETIRED_IN_DOCTRINE.some((pattern) => new RegExp(pattern).test(line)))
+      .map(({ line, n }) => `${TRANCHE_MODEL}:${n}: ${line}`)
+    expect(outside, `\n${outside.join('\n')}\n`).toEqual([])
+    const inside = lines
+      .slice(start, end)
+      .filter((line) => RETIRED_IN_DOCTRINE.some((pattern) => new RegExp(pattern).test(line)))
+    expect(inside.length, 'the retirement section no longer names what it retired').toBeGreaterThan(0)
+  })
+})
+
 describe('grep() distinguishes "no matches" from a real failure', () => {
   // The exact regression this task exists to prevent: a bare `catch { return
   // [] }` cannot tell grep's real "nothing found" (exit 1) apart from a
@@ -506,11 +553,14 @@ const SAMPLES: Record<string, string> = {
   // The strip-wreckage shapes, each written as the artifact itself.
   '\\(,': 'a rationale block (, point-of-power principle) shipped once',
   ',\\)': 'the seam contract (planner-brief contract,) named here',
-  '\\(\\.\\)': 'forces every agent back for the rules. (.)'
+  '\\(\\.\\)': 'forces every agent back for the rules. (.)',
+  '[Tt]opology files?': 'the Planner edits the thin topology file at plan time',
+  'aeg-root/tranches/': 'every active tranche file sits in aeg-root/tranches/',
+  'aeg-project/': 'append the retrospective to aeg-project/lessons.md'
 }
 
 describe('the gate can see what it bans', () => {
-  for (const pattern of [...RETIRED, ...RETIRED_IN_PRODUCT]) {
+  for (const pattern of [...RETIRED, ...RETIRED_IN_PRODUCT, ...RETIRED_IN_DOCTRINE]) {
     it(`matches a real instance: ${pattern}`, () => {
       const sample = SAMPLES[pattern]
       expect(sample, `no sample for pattern ${pattern} — add one`).toBeDefined()

@@ -131,8 +131,10 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
         env: { ...process.env, PR_BODY: undefined }
       })
       expect(result.status, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0)
-      // Report-only, always exit 0 regardless of what they find — proof
-      // they're registered and never block, not proof of what they swept.
+      // Proof they're registered and pass on a doctrine tree with no
+      // finding, not proof of what they swept: `reader-resolvable-prose`'s
+      // doctrine classes report only, and `retired-vocabulary` blocks only on
+      // a finding, which the shipped doctrine tree carries none of.
       expect(result.stdout).toContain('reader-resolvable-prose: pass')
       expect(result.stdout).toContain('retired-vocabulary: pass')
       // Never a plain-text line on stderr — that channel is CheckError JSON

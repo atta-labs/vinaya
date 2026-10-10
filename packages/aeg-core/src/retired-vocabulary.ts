@@ -39,6 +39,14 @@ export type VocabFinding = {
   message: string
 }
 
+/**
+ * The plan-on-disk layout the forge-native cutover retired: a plan is a
+ * Milestone plus labeled Issues now, so a doctrine page naming the topology
+ * file, its directory, or the per-project state directory as something a
+ * reader writes or reads today is describing a mechanism that is gone.
+ */
+export const PLAN_ON_DISK_PATTERNS: readonly string[] = ['[Tt]opology files?', 'aeg-root/tranches/', 'aeg-project/']
+
 /** The retired mechanisms this scan bans as claims of current-ness — see the module header for what is deliberately NOT here. */
 export const RETIRED_PATTERNS: readonly string[] = [
   // the deleted decision-id format
@@ -75,8 +83,12 @@ export const RETIRED_PATTERNS: readonly string[] = [
   // function call, and banning it would make any TypeScript source unusable.
   String.raw`\(,`,
   String.raw`,\)`,
-  String.raw`\(\.\)`
+  String.raw`\(\.\)`,
+  ...PLAN_ON_DISK_PATTERNS
 ]
+
+/** The doctrine page that records the plan-on-disk layout's retirement — see `PATTERN_EXEMPT`. */
+export const TRANCHE_MODEL_FILE = '/tranche-model.md'
 
 /** Paths where a retired-vocabulary mention is legitimate: frozen archives and historical records. Substring match, same as the vitest suite's own `EXEMPT`. */
 export const RETIRED_EXEMPT_SUBSTRINGS: readonly string[] = [
@@ -122,7 +134,12 @@ export const PATTERN_EXEMPT: Readonly<Record<string, readonly string[]>> = {
     'apps/vada-ai/web/CLAUDE.md',
     'apps/vada-ai/CLAUDE.md'
   ],
-  CONTRADICTION: ['apps/vada-ai/specs/vada-reviewers-spec.md']
+  CONTRADICTION: ['apps/vada-ai/specs/vada-reviewers-spec.md'],
+  // The tranche model's own retirement section is the one place whose job is
+  // to say these existed and what replaced them. Exempted by file, for these
+  // three patterns only — every other retired class still binds that file,
+  // and its other sections carry none of the three.
+  ...Object.fromEntries(PLAN_ON_DISK_PATTERNS.map((pattern) => [pattern, [TRANCHE_MODEL_FILE]]))
 }
 
 function lineNumbers(content: string, pattern: RegExp): number[] {

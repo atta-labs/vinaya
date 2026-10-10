@@ -13,7 +13,7 @@ If you are starting a new session and need to understand the workflow, read this
 
 ## Where tasks come from: the tranche
 
-The phases below are the **per-task** flow. Tasks do not appear from nowhere — they are produced by the **Planner**'s plan act when a tranche is planned: the Planner turns an intent plus a slice of tickets into a set of **forge Issues** (one per task) plus a thin topology file declaring their `depends-on` / `conflicts-with` edges (`tranche-model.md`, `roles/planner.md`). Each Issue that enters the flow below is a task the Planner already shaped — its rationale and judgment sections already written onto the Issue at plan time.
+The phases below are the **per-task** flow. Tasks do not appear from nowhere — they are produced by the **Planner**'s plan act when a tranche is planned: the Planner turns an intent plus a slice of tickets into a set of **forge Issues** (one per task) on the tranche's Milestone, each declaring its own `depends-on` / `conflicts-with` edges (`tranche-model.md`, `roles/planner.md`). Each Issue that enters the flow below is a task the Planner already shaped — its rationale and judgment sections already written onto the Issue at plan time.
 
 **Status is never stored.** Throughout every phase, a task's status is *derived* from the forge — Issue open/assigned, branch existence, PR open, review decision, merge — never written to a label or a file. When a phase below says a task "becomes in-review," it means *a PR was opened*, not that anyone set a status field.
 
@@ -262,11 +262,11 @@ When the last task of a tranche has merged, the Principal declares it done and d
 
 1. **Verify the forge** — confirm all task PRs are merged, all task Issues are closed, no orphaned branches remain.
 
-2. **Write the retrospective** — append a new section to `aeg-project/lessons.md` with observations on what went well, what stalled, carry-forward lessons, decisions made, and unbuilt tasks. Assembled from merged PR summaries and topology — not invented.
+2. **Write the retrospective** — post it as a new comment on the pinned lessons Issue, with observations on what went well, what stalled, carry-forward lessons, decisions made, and unbuilt tasks. Assembled from merged PR summaries and the tranche's Issues — not invented.
 
-3. **Archive the tranche** — close the tranche's Milestone. That closed Milestone is the current signal to the Planner's readiness gate (`contracts/tranche-archivist-planner.md`) and to any reader that the tranche is no longer active. **Legacy exception:** for a tranche still carrying a pre-cutover topology file, also set `Lifecycle: complete` as the first line after the file's heading and move it from `aeg-root/tranches/` to `aeg-root/tranches/completed/` (one commit: `git mv`) — kept for tranches created before the forge-native cutover; a forge-native tranche carries no such file to move.
+3. **Archive the tranche** — close the tranche's Milestone. That closed Milestone is the current signal to the Planner's readiness gate (`contracts/tranche-archivist-planner.md`) and to any reader that the tranche is no longer active. A tranche planned before the forge-native cutover is archived as `tranche-model.md` §4 records.
 
-4. **Update state docs** — refresh `aeg-project/state.md` (last-updated date, current focus pointer, recently shipped section, clear any resolved pending-manual-ops). Active-work state is derived from the forge — no `now.md`.
+4. **Record what the forge cannot derive** — no state document to refresh: active and shipped work is derived from the forge, and a pending manual operation or known production issue is an ordinary open Issue, closed when resolved.
 
 5. **Surface pending Type 1 decisions** — query the `needs:principal-input` label for this tranche's open items. List them explicitly; the Principal ratifies at the next ratification window.
 
@@ -274,9 +274,9 @@ When the last task of a tranche has merged, the Principal declares it done and d
 
 7. **Post tranche provenance** — comment on the last merged task PR with a summary of tasks completed, duration, archival path, pending ratifications, and any dangling items.
 
-**Artifacts:** no new commits beyond the tranche file move and state doc updates — those commits *are* the close-out. Lessons appended to `lessons.md`. Pending decisions surfaced (not ratified by the Archivist).
+**Artifacts:** no new commits — the closed Milestone and the retrospective comment on the pinned lessons Issue *are* the close-out. Pending decisions surfaced (not ratified by the Archivist).
 
-**Exit:** tranche is archived, state docs are current, pending decisions are surfaced, and the Principal has declared what's next (new tranche, pause, pivot, cross-cutting initiative).
+**Exit:** tranche is archived, pending decisions are surfaced, and the Principal has declared what's next (new tranche, pause, pivot, cross-cutting initiative).
 
 ---
 
@@ -310,7 +310,7 @@ A rollback is its own task with its own brief. The decision to roll back is a Ty
 - **Going straight to dispatch without Phase 1** — a rationale written on top of an unexamined idea produces briefs that solve the wrong problem.
 - **Dispatching a task whose gates aren't met, or forcing a render past a gap it flagged** — the Developer's own entry gate refuses it anyway; bypassing the gate manually just moves the failure one stage later.
 - **Letting the Developer review its own work** — the Phase 10 agent passes are separate fresh-context invocations for a reason.
-- **Writing status anywhere** — status is derived from the forge. Setting a label or editing the tranche file to record state recreates the racing status model the design eliminated.
+- **Writing status anywhere** — status is derived from the forge. Setting a label or editing a task Issue's body to record state recreates the racing status model the design eliminated.
 - **Hand-writing brief content into the Issue's own body** — the Issue body is task identity + metadata + the Planner's rationale + judgment sections only; the brief itself is a mechanically rendered comment on it, posted by `vinaya task dispatch`, never typed by hand into either the Issue or the PR body.
 - **Developer scope creep** — "while I'm here…" is a new task and a new brief.
 - **Planner self-ratifying Type 1 decisions in solo sessions** — they queue as PENDING for a ratification window.

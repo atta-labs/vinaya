@@ -139,10 +139,12 @@ export type CoreCheckRing = 0 | 1 | 2
  * bins now read their doctrine root, reader-facing globs, and legacy-slug
  * corpus from `vinaya.config.json`'s `proseGates` key (`lib/config.ts`),
  * defaulting to this repo's own prior hardcoded shape when unset, so an
- * install that sets nothing behaves exactly as before this task. Both are
- * report-only (`aeg-root/enforcement.md`'s G1/G2 precedent) — a `warning`
- * finding, never a failing exit code — so registering them cannot newly
- * fail any existing install's CI.
+ * install that sets nothing behaves exactly as before this task. Both
+ * registered report-only (`aeg-root/enforcement.md`'s G1/G2 precedent) — a
+ * `warning` finding, never a failing exit code — so registering them could
+ * not newly fail any existing install's CI. `retired-vocabulary` has since
+ * turned blocking, once the shipped doctrine tree it sweeps carried zero
+ * findings.
  *
  * Each entry is paired with its ring in `REGISTRY` below — see
  * `CoreCheckRing`'s doc comment for how the ring is derived and why it is

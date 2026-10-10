@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   PATTERN_EXEMPT,
+  PLAN_ON_DISK_PATTERNS,
   RETIRED_EXEMPT_SUBSTRINGS,
   RETIRED_PATTERNS,
   scanRetiredVocabulary
@@ -40,7 +41,10 @@ describe('scanRetiredVocabulary', () => {
       'roles/team-leader\\.md': 'see roles/team-leader.md',
       '\\(,': 'a rationale block (, point-of-power principle) shipped once',
       ',\\)': 'the seam contract (planner-brief contract,) named here',
-      '\\(\\.\\)': 'forces every agent back for the rules. (.)'
+      '\\(\\.\\)': 'forces every agent back for the rules. (.)',
+      '[Tt]opology files?': 'the Planner edits the thin topology file at plan time',
+      'aeg-root/tranches/': 'every active tranche file sits in aeg-root/tranches/',
+      'aeg-project/': 'append the retrospective to aeg-project/lessons.md'
     }
 
     for (const pattern of RETIRED_PATTERNS) {
@@ -88,6 +92,31 @@ describe('scanRetiredVocabulary', () => {
         message: expect.stringContaining('retired AEG mechanism')
       }
     ])
+  })
+
+  it('flags the plan-on-disk layout in any doctrine page but the tranche model', () => {
+    const content = [
+      'Topology files list the edges.',
+      'the archive is aeg-root/tranches/completed/',
+      'state lives under aeg-project/state.md'
+    ].join('\n')
+    const findings = scanRetiredVocabulary([{ path: '/repo/aeg-root/state-machine.md', content }])
+    expect(findings.map((f) => [f.line, f.pattern])).toEqual([
+      [1, '[Tt]opology files?'],
+      [2, 'aeg-root/tranches/'],
+      [3, 'aeg-project/']
+    ])
+  })
+
+  it('exempts the tranche model by file for the plan-on-disk patterns, and for nothing else', () => {
+    for (const pattern of PLAN_ON_DISK_PATTERNS) expect(PATTERN_EXEMPT[pattern]).toEqual(['/tranche-model.md'])
+    const content = [
+      '## 4. The thin tranche file — retired',
+      'There is no topology file, and aeg-root/tranches/ holds nothing but the archive; aeg-project/ is gone.',
+      'see the approves locks rule'
+    ].join('\n')
+    const findings = scanRetiredVocabulary([{ path: '/repo/aeg-root/tranche-model.md', content }])
+    expect(findings.map((f) => [f.line, f.pattern])).toEqual([[3, 'approves locks']])
   })
 
   it("RETIRED_EXEMPT_SUBSTRINGS exempts this module's own file — it legitimately carries every pattern as data", () => {

@@ -22,18 +22,17 @@ AEG "init" is not software — it is a **state the repo is in**. A repo is runni
    - the `verify-docs` script (`packages/aeg-core/bin/verify-docs.ts`) — the doc-tier gate. In this repo it runs at authoring time (`open-pr.ts` / `bun run verify-docs --pr`); the CI-side counterparts are the `brief-shape`/`doc-coverage` checks in `.github/workflows/vinaya-checks.yml`. (In the attalabs reference implementation it ran as a step of that repo's consolidated gate job.)
    - the Issue template restricting Issues to deps / conflicts / project label / ticket link, and the CI check rejecting forbidden planning fields (`tranche-model.md` §9.3).
    - the generated agent-surface skill view (e.g. `.claude/skills/`) — derived from `aeg-root/skills/`.
-4. At least one tranche file exists, and the role docs are reachable.
+4. At least one tranche exists on the forge (a Milestone plus its labeled Issues), and the role docs are reachable.
 
-You can create that by hand, or use **`aeg.sh`** — one self-contained, downloadable shell script (from the AEG site). It is a **dumb scaffolder**: it writes files, nothing else. It does not dispatch agents, query the forge, or reason — that's a tool's or a human's job. Self-contained (scaffold embedded, no network) so you can read every byte first. It lays down **all four layers above** — not just `aeg-root/` + `aeg-project/` — so the unit it produces is complete: nothing the model references is missing. Subcommands:
+You can create that by hand, or use **`aeg.sh`** — one self-contained, downloadable shell script (from the AEG site). It is a **dumb scaffolder**: it writes files, nothing else. It does not dispatch agents, query the forge, or reason — that's a tool's or a human's job. Self-contained (scaffold embedded, no network) so you can read every byte first. It lays down **every layer above** — not just `aeg-root/` — so the unit it produces is complete: nothing the model references is missing. Subcommands:
 
 ```
-aeg init [folder]                       # scaffold the repo (once): model + state + enforcement + skills
+aeg init [folder]                       # scaffold the repo (once): model + enforcement + skills
 aeg add-project <name> --path <folder>  # register a project (creates/appends projects.md + stubs)
-aeg new-tranche <name>                # create a thin tranche topology file
 aeg generate-skills                     # regenerate the agent-surface skill view from aeg-root/skills/
 ```
 
-`init` scaffolds the enforcement layer (the verify-docs workflow + script, the Issue template/CI check — blast-radius collision domains need no scaffolded file, see above) and the skills alongside `aeg-root/` + `aeg-project/`, because the model docs reference all of them — a unit missing any of them references a gate that isn't there. `add-project` stores the `--path` verbatim (never derives it), refuses to overwrite an existing folder or re-register a name, and on first use promotes a single-project repo to multi-project. `generate-skills` writes the agent-specific skill view (this host's own skill directory, e.g. `.claude/skills/`, or another agent's equivalent) from the canonical skills in `aeg-root/skills/` — so the canonical skills travel with the unit and the loadable view is rebuilt, never authored by hand. See `projects.md`. Tasks themselves are **forge Issues**, created by the Planner on the forge — not by `aeg.sh`.
+`init` scaffolds the enforcement layer (the verify-docs workflow + script, the Issue template/CI check — blast-radius collision domains need no scaffolded file, see above) and the skills alongside `aeg-root/`, because the model docs reference all of them — a unit missing any of them references a gate that isn't there. `add-project` stores the `--path` verbatim (never derives it), refuses to overwrite an existing folder or re-register a name, and on first use promotes a single-project repo to multi-project. `generate-skills` writes the agent-specific skill view (this host's own skill directory, e.g. `.claude/skills/`, or another agent's equivalent) from the canonical skills in `aeg-root/skills/` — so the canonical skills travel with the unit and the loadable view is rebuilt, never authored by hand. See `projects.md`. Tasks themselves are **forge Issues**, created by the Planner on the forge — not by `aeg.sh`.
 
 ---
 
@@ -62,7 +61,7 @@ A **task is a forge Issue.** Its status is never written anywhere — it is **de
 
 This table is a **reader's summary, not the source.** The authoritative list is `DERIVED_STATUSES` + the ordered `DERIVATION_RULES` in `@attalabs/aeg-core`'s state-machine model, rendered live at `/docs/state-machine`; order is load-bearing there in ways a flat table cannot show.
 
-So **no role ever writes status.** Opening the PR *is* the in-review signal; merging *is* the done signal. To see the board you query the forge (`gh pr list`, the Issues view, a project board) — you never read status from a file. The thin tranche file holds only topology (task→issue, dependency/conflict edges); see `tranche-model.md`.
+So **no role ever writes status.** Opening the PR *is* the in-review signal; merging *is* the done signal. To see the board you query the forge (`gh pr list`, the Issues view, a project board) — you never read status from a file. The plan is the tranche's Milestone plus its labeled Issues, each declaring its own dependency/conflict edges; see `tranche-model.md`.
 
 ---
 
@@ -78,7 +77,7 @@ So **no role ever writes status.** Opening the PR *is* the in-review signal; mer
 
 When invoked, an agent does not trust that you called it correctly. It checks two things first: **is this my phase?** (given forge state) and **is my input well-formed?** If either fails, it **refuses or redirects.** Every role has an entry gate.
 
-**Shared state = the forge** (Issue / branch / PR / review / merge) **+ the thin tranche file** (topology). The gates read state that exists whether or not any tool runs. **The PR is the state machine:** no PR yet = not ready to review; open PR = ready to review; merged PR = ready to close out. That's what makes the gates work identically with or without a tool — and why no agent needs to write status.
+**Shared state = the forge** (Issue / branch / PR / review / merge) — the tranche's plan included (its Milestone and labeled Issues). The gates read state that exists whether or not any tool runs. **The PR is the state machine:** no PR yet = not ready to review; open PR = ready to review; merged PR = ready to close out. That's what makes the gates work identically with or without a tool — and why no agent needs to write status.
 
 ---
 
@@ -112,7 +111,7 @@ Keep all of this **light** — a sentence at each seam, not paragraphs. The goal
 
 | Step | Role | You hand it | It produces | Entry gate (refuses if…) |
 |------|------|-------------|-------------|--------------------------|
-| 0 | **Planner** (plan act) | intent + a ticket slice | a tranche: Issues + thin topology file | asked to write one brief / to implement |
+| 0 | **Planner** (plan act) | intent + a ticket slice | a tranche: a Milestone plus labeled Issues, edges on each | asked to write one brief / to implement |
 | 1 | **Principal** (you) | an intent / goal | a decision to proceed, a tier | — |
 | 2 | **Planner** (dispatch act) | the task's gate check + its Issue | a rendered brief, posted frozen on the Issue | a dispatch gate unmet, or the render can't derive a required section |
 | 3 | **Developer** | the brief | a worktree, the work, an open PR carrying its report | input isn't a well-formed brief; a `depends-on` isn't merged; a `conflicts-with` sibling's PR is open |
@@ -134,7 +133,7 @@ Each agent finds the task's PR via the branch convention `task/<tranche>/<n>` an
 
 The Principal **initiates** tranche close explicitly (declares "we're closing this tranche" and hands off to the Planner). The Archivist **may detect** it automatically in future versions — when all task PRs merged and no open branches remain for the tranche. Until then, the Principal's explicit call is the gate.
 
-See `process.md` Phase 13 for the full close-out steps: verify all tasks merged, run a brief retrospective, archive the tranche file, update state docs, ratify pending Type 1 decisions, declare what's next.
+See `process.md` Phase 13 for the full close-out steps: verify all tasks merged, run a brief retrospective, close the Milestone, record what the forge cannot derive as ordinary Issues, ratify pending Type 1 decisions, declare what's next.
 
 ### Pre-merge gate (Step 8 prerequisite)
 
@@ -150,7 +149,7 @@ Before the Principal merges (Step 8), any Developer helping merge or pushing a "
 
 If any fails: post a comment listing the exact items missing. The Principal decides whether to proceed.
 
-> **At the end of every role's turn: report your tokens — you do not append your own row** to the tranche's token/cost ledger (`aeg-root/tranches/<name>.tokens.md`). No role writes its own row on a task branch. A role is **self-metering** — its host exposes the session's own usage to the agent — or **operator-metered** — the host exposes nothing, leaving a human the only source. A self-metering role (typically the Developer, and the Archivist when automated) reports exact figures in the PR body, collected by whatever mechanism that host offers. An operator-metered role (typically the Planner in either act, Reviewer and Security) reports in its verdict comment or planning report with the numeric cells `—`. That host capability is the only thing that licenses a `—`; no role estimates, and no role fills in another's cell. The per-task **Archivist** collects every report and appends the rows — Phase, Role, Agent/Model, Tokens in, Tokens out, Cost, Date — post-merge at close-out; never edits a row; re-entry appends. See `tranche-model.md` §12 for the canonical format and the rationale; the file is a §13 append-only artifact.
+> **At the end of every role's turn: report your tokens — you do not append your own row** to the tranche's token/cost ledger (`tranche-model.md` §12). No role writes its own row on a task branch. A role is **self-metering** — its host exposes the session's own usage to the agent — or **operator-metered** — the host exposes nothing, leaving a human the only source. A self-metering role (typically the Developer, and the Archivist when automated) reports exact figures in the PR body, collected by whatever mechanism that host offers. An operator-metered role (typically the Planner in either act, Reviewer and Security) reports in its verdict comment or planning report with the numeric cells `—`. That host capability is the only thing that licenses a `—`; no role estimates, and no role fills in another's cell. The per-task **Archivist** collects every report and appends the rows — Phase, Role, Agent/Model, Tokens in, Tokens out, Cost, Date — post-merge at close-out; never edits a row; re-entry appends. See `tranche-model.md` §12 for the canonical format and the rationale; the file is a §13 append-only artifact.
 
 ---
 
@@ -180,7 +179,7 @@ If any fails: post a comment listing the exact items missing. The Principal deci
 
 **Archivist** (close-out)
 - Requires a **merged** PR. Refuses: not merged → *"Nothing to close out; merge first."*
-- Confirms: Issue closed (the merge auto-closes it if linked), docs updated. Closes the tranche's Milestone when every task is merged (`tranche-model.md` §11) — the legacy exception additionally sets the `Lifecycle: complete` marker and moves the file to `tranches/completed/`, for a tranche still carrying a pre-cutover topology file. (`now.md` and the hand-edited per-project state Issue are both retired — non-derivable facts live as ordinary open Issues, closed when resolved.)
+- Confirms: Issue closed (the merge auto-closes it if linked), docs updated. Closes the tranche's Milestone when every task is merged (`tranche-model.md` §11; a tranche planned before the forge-native cutover is archived as §4 records). (`now.md` and the hand-edited per-project state Issue are both retired — non-derivable facts live as ordinary open Issues, closed when resolved.)
 - Assembles the **provenance block** from frozen facts (brief, PR reviews, merge metadata) and posts it to the merged PR (append-only, never a status field) — see `roles/archivist.md`.
 - Flags — does not perform — orphaned branches (branch with no/stale PR) and local worktree removal as cleanup candidates for the human. Writes no status (the merge already is the status).
 - Produces a close-out report listing anything dangling.
