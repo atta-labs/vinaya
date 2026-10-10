@@ -11,7 +11,9 @@ import {
   DispatchTaskError,
   dispatchTask,
   extractAgentClass,
+  type PrepareIssueTaskDeps,
   type PrepareTaskDeps,
+  prepareIssueTask,
   prepareTask,
   resolveModelFromRationale,
   validateIssueWriteGate,
@@ -791,6 +793,89 @@ describe('prepareTask --supersede --surface-in (O3) — widens a frozen Surface 
       )
     ).rejects.toThrow(/no longer renders a valid brief/)
     expect(postCalled).toBe(false)
+  })
+})
+
+describe('prepareTask / prepareIssueTask --supersede --surface-in — the gate grades the widened body', () => {
+  const FROZEN = {
+    body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nold brief',
+    url: 'https://github.com/acme/widget/issues/427#issuecomment-1',
+    author: 'a-principal',
+    version: 1
+  }
+
+  /** A stateful stand-in for the Issue: the gate refuses an uncovered importer and, when `otherFinding`, a second unrelated finding. */
+  function issueFake(otherFinding: boolean) {
+    const state = { covered: false, gateRuns: [] as string[] }
+    const gate = async () => {
+      state.gateRuns.push(state.covered ? 'widened' : 'live')
+      const findings: string[] = []
+      if (!state.covered) findings.push('pinned file has an undecided importer')
+      if (otherFinding) findings.push('Objectives section is unrelated-broken')
+      if (findings.length > 0) throw new Error(`write gate refused: ${findings.join('; ')}`)
+    }
+    const widen = async () => {
+      state.covered = true
+      await gate()
+    }
+    return { state, gate, widen }
+  }
+
+  const render = async () => ({ ok: true as const, brief: BRIEF_TEXT, issue: 427 })
+  const common = {
+    findExistingFrozenBrief: () => FROZEN,
+    postMarkedComment: () => 'https://github.com/acme/widget/issues/427#issuecomment-2',
+    resolveDispatchAuthorization: () => ({ authorized: true as const, login: 'a-principal' })
+  }
+  const supersede = { reason: 'widen', surfaceIn: ['apps/cli/src/importer'] }
+
+  const forms: Array<[string, (fake: ReturnType<typeof issueFake>) => Promise<unknown>]> = [
+    [
+      '<tranche> <n>',
+      (fake) =>
+        prepareTask({ tranche: 'task-run-v1', n: 1, supersede }, {
+          ...common,
+          assembleAndRenderBrief: render,
+          runIssueWriteGate: fake.gate,
+          widenSurface: fake.widen
+        } as PrepareTaskDeps)
+    ],
+    [
+      '--issue <n>',
+      (fake) =>
+        prepareIssueTask({ issue: 1, supersede }, {
+          ...common,
+          assembleAndRenderBriefForIssue: render,
+          runIssueWriteGate: fake.gate,
+          widenSurface: fake.widen
+        } as PrepareIssueTaskDeps)
+    ]
+  ]
+
+  for (const [form, run] of forms) {
+    it(`${form}: a body refused only for an uncovered importer passes once the added glob covers it`, async () => {
+      const fake = issueFake(false)
+      await run(fake)
+      expect(fake.state.gateRuns).toEqual(['widened'])
+    })
+
+    it(`${form}: still refused, naming the finding, when a second unrelated finding remains`, async () => {
+      const fake = issueFake(true)
+      await expect(run(fake)).rejects.toThrow(/Objectives section is unrelated-broken/)
+    })
+  }
+
+  it('a supersede without --surface-in still grades the live body first', async () => {
+    const fake = issueFake(false)
+    await expect(
+      prepareTask({ tranche: 'task-run-v1', n: 1, supersede: { reason: 'wrong tier' } }, {
+        ...common,
+        assembleAndRenderBrief: render,
+        runIssueWriteGate: fake.gate,
+        widenSurface: fake.widen
+      } as PrepareTaskDeps)
+    ).rejects.toThrow(/undecided importer/)
+    expect(fake.state.gateRuns).toEqual(['live'])
   })
 })
 

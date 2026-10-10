@@ -598,7 +598,13 @@ export async function prepareTask(
   // it. Ahead of the existing-brief check: a defect the gate would refuse is
   // refused here regardless of whether this is a first dispatch or a
   // supersede.
-  await deps.runIssueWriteGate(issue, retryCommand)
+  // A supersede that widens `## Surface` skips this pre-widen run: the widen
+  // exists for a live body the gate refuses only for a Surface too narrow, and
+  // `widenSurface` grades the widened body through the same gate before it
+  // writes, so the widened body is what gets graded.
+  if (!(supersede?.surfaceIn && supersede.surfaceIn.length > 0)) {
+    await deps.runIssueWriteGate(issue, retryCommand)
+  }
 
   const existing = deps.findExistingFrozenBrief(issue)
 
@@ -713,7 +719,13 @@ export async function prepareIssueTask(
   const issue = result.issue
   const retryCommand = `vinaya task brief --issue ${n}`
 
-  await deps.runIssueWriteGate(issue, retryCommand)
+  // A supersede that widens `## Surface` skips this pre-widen run: the widen
+  // exists for a live body the gate refuses only for a Surface too narrow, and
+  // `widenSurface` grades the widened body through the same gate before it
+  // writes, so the widened body is what gets graded.
+  if (!(supersede?.surfaceIn && supersede.surfaceIn.length > 0)) {
+    await deps.runIssueWriteGate(issue, retryCommand)
+  }
 
   const existing = deps.findExistingFrozenBrief(issue)
 
