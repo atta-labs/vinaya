@@ -58,6 +58,7 @@ import {
   checkNewTestFilesCoverShards,
   checkNewLoopFilesCoverInvariantMap,
   checkDocumentationReadable,
+  checkDocumentationPathsExist,
   isNonPublicHost,
   type DocumentationProbe,
   type PinnedFileImporters,
@@ -65,6 +66,7 @@ import {
   checkPremiseCoverage,
   checkPrincipalPlaceholder,
   checkProjectField,
+  checkProjectsRegistered,
   checkRationaleNamesDocs,
   checkRationaleSurfaceCoverage,
   checkStopConditions,
@@ -73,6 +75,7 @@ import {
   checkSurfaceMap,
   checkSurfaceOverlap,
   checkTestPlan,
+  checkTestPlanDeveloperRunnable,
   checkTestPlanExclusivity,
   checkTierField,
   checkTrancheLabelPresence,
@@ -1277,6 +1280,8 @@ const CHECK_ISSUE_CONTENT = 'issue-content'
 const ISSUE_CONTENT_RECOVERY = {
   blastRadius:
     'Add a second registered `Project(s)` this task also touches, or a `blast-radius-ack: <why one lens is enough>` line, then re-run `{cmd}`.',
+  projectsRegistered:
+    'Fix the `**Project:**` field so it names a project the registry lists (the registered names are quoted above), or register the project with `vinaya init product <name> --path <folder>` first. Then re-run `{cmd}`.',
   noBriefContent:
     "Move the brief-shaped section named above out of the Issue body and into the brief — the Issue carries the Planner's durable rationale, not the brief's just-in-time surface — then re-run `{cmd}`.",
   rationaleNamesDocs:
@@ -1313,6 +1318,10 @@ const ISSUE_CONTENT_RECOVERY = {
     "Add the named CI shard directory glob to `## Surface`'s `in:` list so the new test file can be listed in a shard, or pin an existing test file instead. Then re-run `{cmd}`.",
   newLoopFilesCoverInvariantMap:
     "Add the named directory globs to `## Surface`'s `in:` list so the loop invariant map's fixture and spec can map the new file, or pin an existing loop file instead. Then re-run `{cmd}`.",
+  testPlanDeveloperRunnable:
+    'Rewrite the named `## Test plan` line as a command the Developer runs inside its sandbox — a test file of its own or a `vinaya check` command that proves the same outcome — or move the step to a `**[principal]**` item when only the Principal can perform it. Then re-run `{cmd}`.',
+  documentationPathsExist:
+    'Correct the named `## Documentation` path to a file the repository contains, or drop the source if it does not exist yet. Then re-run `{cmd}`.',
   documentationReadable:
     'Put the knowledge the unreadable URL carries into an in-repository spec and cite the spec in `## Documentation` instead of the URL. Then re-run `{cmd}`.',
   issuePremises:
@@ -1417,6 +1426,14 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
       ).errors,
       'blastRadius'
     ],
+    [
+      checkProjectsRegistered(
+        input.body,
+        input.labels,
+        input.projectPaths.map((p) => p.name)
+      ).errors,
+      'projectsRegistered'
+    ],
     [checkNoBriefContent(input.body).errors, 'noBriefContent'],
     [checkRationaleNamesDocs(input.body).errors, 'rationaleNamesDocs'],
     [checkSurfaceGlobsResolve(input.body, input.resolvesToFile).errors, 'surfaceGlobsResolve'],
@@ -1446,6 +1463,8 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     [checkPinnedFileImportersCovered(input.body, input.pinnedFileImporters).errors, 'pinnedFileImporters'],
     [checkNewTestFilesCoverShards(input.body, input.trackedFiles ?? []).errors, 'newTestFilesCoverShards'],
     [checkNewLoopFilesCoverInvariantMap(input.body, input.trackedFiles ?? []).errors, 'newLoopFilesCoverInvariantMap'],
+    [checkTestPlanDeveloperRunnable(input.body).errors, 'testPlanDeveloperRunnable'],
+    [checkDocumentationPathsExist(input.body, input.readFile).errors, 'documentationPathsExist'],
     [checkIssuePremises(input.body, input.readFile).errors, 'issuePremises'],
     [checkPremiseDependencyDeclared(input.body).errors, 'premiseDependencyDeclared'],
     [checkBoundaryClaimsNeedPremise(input.body).errors, 'boundaryClaimsNeedPremise']
