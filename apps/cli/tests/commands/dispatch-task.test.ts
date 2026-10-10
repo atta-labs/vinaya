@@ -81,7 +81,7 @@ None — no externally-normative source governs this task.
 ## Surface
 
 in: apps/cli/src/lib
-out: aeg-root
+out: aeg-root, apps/cli/src/commands, apps/cli/tests
 
 ## Parts
 
