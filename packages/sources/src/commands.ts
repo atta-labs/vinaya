@@ -372,6 +372,20 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'issue surface',
+    description: "Print what a draft Issue's Boundary pins force on its `## Surface`",
+    flags: [
+      { flag: '--body-file', description: 'Path to the draft Issue body' },
+      { flag: '--json', description: 'Enveloped JSON output (schema: 1)' }
+    ],
+    details: [
+      "For every Boundary-pinned file, each tracked source or test that imports it, marked `reached` (an `in:` glob covers it), `disclaimed` (the Boundary's `Out:` clause names it or its directory) or `uncovered` (with the directory glob that would reach it). A `## Surface` `out:` glob never disclaims an importer. Also reports the CI shard list when a pinned CLI test file is new, and the loop invariant map's fixture and spec when a pinned loop file is new.",
+      'The importers are decided by the same function `issue create` and `issue edit` refuse with, over the same importer listing — an importer this report calls `uncovered` is one the write gate refuses, and every other one it accepts.',
+      'Writes nothing and reads no forge. Exits 0 with the report, or 2 when the body cannot be read or its `## Surface` does not parse.'
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'issue objectives edit',
     description: "Rewrite a task Issue's `## Objectives` section by command — versioned, findable on the forge",
     flags: [

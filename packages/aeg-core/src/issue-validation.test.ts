@@ -18,6 +18,8 @@ import {
   checkIntroducedCommandsCovered,
   checkIntroducedConfigKeysCovered,
   checkPinnedFileImportersCovered,
+  decidePinnedFileImporters,
+  surfaceForcedSet,
   checkNewTestFilesCoverShards,
   checkNewLoopFilesCoverInvariantMap,
   checkDocumentationPathsExist,
@@ -2878,13 +2880,12 @@ describe('checkPinnedFileImportersCovered', () => {
     ).toBe('pass')
   })
 
-  it('refuses when no importer is reachable, listing the importers and the glob to add', () => {
+  it('refuses when no importer is reachable, naming the importer and the glob that would reach it', () => {
     const result = checkPinnedFileImportersCovered(body('packages/aeg-core/src', 'apps/log-server'), importers)
     expect(result.status).toBe('fail')
     expect(result.errors).toHaveLength(1)
     expect(result.errors[0]).toContain('pins `packages/aeg-core/src/gate.ts`')
-    expect(result.errors[0]).toContain('`apps/cli/src/commands/issue.ts`')
-    expect(result.errors[0]).toContain('Add `apps/cli/src/commands` to `in:`')
+    expect(result.errors[0]).toContain('`apps/cli/src/commands/issue.ts` (add `apps/cli/src/commands` to `in:`)')
   })
 
   it('passes when an `in:` glob covers the importer', () => {
@@ -2911,15 +2912,129 @@ describe('checkPinnedFileImportersCovered', () => {
     ).toBe('pass')
   })
 
-  it('passes when at least one of several importers is inside the Surface', () => {
+  it('refuses an importer left undecided even when another importer of the same file is inside the Surface', () => {
+    const result = checkPinnedFileImportersCovered(body('packages/aeg-core/src', 'apps/log-server'), [
+      {
+        file: 'packages/aeg-core/src/gate.ts',
+        importers: [
+          'apps/cli/src/commands/issue.ts',
+          'apps/cli/tests/lib/gate.test.ts',
+          'packages/aeg-core/src/index.ts'
+        ]
+      }
+    ])
+    expect(result.status).toBe('fail')
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain('`apps/cli/src/commands/issue.ts` (add `apps/cli/src/commands` to `in:`)')
+    expect(result.errors[0]).toContain('`apps/cli/tests/lib/gate.test.ts` (add `apps/cli/tests/lib` to `in:`)')
+    expect(result.errors[0]).not.toContain('packages/aeg-core/src/index.ts')
+  })
+
+  it('passes once every importer is reached or disclaimed', () => {
     expect(
-      checkPinnedFileImportersCovered(body('packages/aeg-core/src', 'apps/log-server'), [
+      checkPinnedFileImportersCovered(
+        body('packages/aeg-core/src, apps/cli/src/commands', 'apps/log-server', 'the tests under `apps/cli/tests/lib`'),
+        [
+          {
+            file: 'packages/aeg-core/src/gate.ts',
+            importers: [
+              'apps/cli/src/commands/issue.ts',
+              'apps/cli/tests/lib/gate.test.ts',
+              'packages/aeg-core/src/index.ts'
+            ]
+          }
+        ]
+      ).status
+    ).toBe('pass')
+  })
+})
+
+describe('decidePinnedFileImporters', () => {
+  const body = issueBody({
+    boundary:
+      'In: the gate. Pinned files: `packages/aeg-core/src/gate.ts`. Out: every caller under `apps/cli/src/commands`.',
+    objectives: ['O1. The gate refuses the body.'],
+    partLines: ['Part 1 (O1) — the gate refuses the body.'],
+    in: 'packages/aeg-core/src',
+    out: 'apps/cli/tests/lib'
+  })
+
+  it('decides each importer reached, disclaimed or uncovered — never excused by a Surface `out:` glob', () => {
+    expect(
+      decidePinnedFileImporters(body, [
         {
           file: 'packages/aeg-core/src/gate.ts',
-          importers: ['apps/cli/src/commands/issue.ts', 'packages/aeg-core/src/index.ts']
+          importers: [
+            'apps/cli/src/commands/issue.ts',
+            'apps/cli/tests/lib/gate.test.ts',
+            'packages/aeg-core/src/index.ts'
+          ]
         }
-      ]).status
-    ).toBe('pass')
+      ])
+    ).toEqual([
+      {
+        file: 'packages/aeg-core/src/gate.ts',
+        importers: [
+          { importer: 'apps/cli/src/commands/issue.ts', state: 'disclaimed', by: 'apps/cli/src/commands' },
+          { importer: 'apps/cli/tests/lib/gate.test.ts', state: 'uncovered', fix: 'apps/cli/tests/lib' },
+          { importer: 'packages/aeg-core/src/index.ts', state: 'reached', by: 'packages/aeg-core/src' }
+        ]
+      }
+    ])
+  })
+
+  it('is null when `## Surface` does not parse', () => {
+    expect(decidePinnedFileImporters('**Boundary** — Pinned files: `a/b.ts`.', [])).toBeNull()
+  })
+})
+
+describe('surfaceForcedSet', () => {
+  const body = (inGlobs: string, pinned: string) =>
+    issueBody({
+      boundary: `In: the gate. Pinned files: ${pinned}. Out: nothing.`,
+      objectives: ['O1. The gate refuses the body.'],
+      partLines: ['Part 1 (O1) — the gate refuses the body.'],
+      in: inGlobs,
+      out: 'apps/log-server'
+    })
+  const tracked = ['packages/aeg-core/src/gate.ts', 'apps/cli/tests/ci-shards/shard-1.txt']
+
+  it("reports the importers with the gate's own decisions, and no companion when no pinned file is new", () => {
+    const importers = [{ file: 'packages/aeg-core/src/gate.ts', importers: ['apps/cli/src/lib/x.ts'] }]
+    const b = body('packages/aeg-core/src', '`packages/aeg-core/src/gate.ts`')
+    expect(surfaceForcedSet(b, importers, tracked)).toEqual({
+      importers: decidePinnedFileImporters(b, importers),
+      ciShards: null,
+      loopInvariantMap: null
+    })
+  })
+
+  it('reports the shard list for a new CLI test file and the loop map for a new loop file', () => {
+    const result = surfaceForcedSet(
+      body(
+        'packages/aeg-core/src, apps/cli/tests/lib, apps/cli/tests/fixtures',
+        '`apps/cli/tests/lib/dev-review-loop-fresh.test.ts`'
+      ),
+      [],
+      tracked
+    )
+    expect(result?.ciShards).toEqual({
+      newFiles: ['apps/cli/tests/lib/dev-review-loop-fresh.test.ts'],
+      companion: { path: 'apps/cli/tests/ci-shards/shard-1.txt', reached: false },
+      fix: 'apps/cli/tests/ci-shards'
+    })
+    expect(result?.loopInvariantMap).toEqual({
+      newFiles: ['apps/cli/tests/lib/dev-review-loop-fresh.test.ts'],
+      companions: [
+        { path: 'apps/cli/tests/fixtures/dev-review-architecture-invariants.json', reached: true },
+        { path: 'apps/cli/specs/dev-review-invariants.md', reached: false }
+      ],
+      fix: ['apps/cli/specs']
+    })
+  })
+
+  it('is null when `## Surface` does not parse', () => {
+    expect(surfaceForcedSet('no sections here', [], tracked)).toBeNull()
   })
 })
 
