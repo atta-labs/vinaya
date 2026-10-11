@@ -1538,6 +1538,54 @@ describe('protectedPathsForTurn — O1 the concrete per-turn protected-path list
     // `code-reviewer` is `security`'s concurrent sibling this round — also excluded.
     expect(paths).not.toContain(join(round1, 'reviewer-work'))
   })
+
+  it("excludes the concurrently-dispatched sibling's SAME-round scratch copies (plain and -retry1) for either reviewer", () => {
+    dir = tempDir('vinaya-wb-turn-')
+    const round1 = join(taskDir(dir, 1), 'rounds', '1')
+    mkdirSync(join(round1, 'reviewer-scratch'), { recursive: true })
+    mkdirSync(join(round1, 'reviewer-scratch-retry1'), { recursive: true })
+    mkdirSync(join(round1, 'security-scratch'), { recursive: true })
+    mkdirSync(join(round1, 'security-scratch-retry1'), { recursive: true })
+    const securityTurn = protectedPathsForTurn({
+      runtimeDir: dir,
+      task: 1,
+      round: 1,
+      role: 'security',
+      vinayaConfigPath: join(dir, 'vinaya.config.json')
+    }).map((e) => e.path)
+    const reviewerTurn = protectedPathsForTurn({
+      runtimeDir: dir,
+      task: 1,
+      round: 1,
+      role: 'code-reviewer',
+      vinayaConfigPath: join(dir, 'vinaya.config.json')
+    }).map((e) => e.path)
+    // The code-reviewer's turn excuses the security sibling's scratch; the security turn excuses the reviewer's.
+    expect(reviewerTurn).not.toContain(join(round1, 'security-scratch'))
+    expect(reviewerTurn).not.toContain(join(round1, 'security-scratch-retry1'))
+    expect(securityTurn).not.toContain(join(round1, 'reviewer-scratch'))
+    expect(securityTurn).not.toContain(join(round1, 'reviewer-scratch-retry1'))
+  })
+
+  it("still protects the sibling's scratch copies in every OTHER round, and the shared candidate in the same round", () => {
+    dir = tempDir('vinaya-wb-turn-')
+    const round1 = join(taskDir(dir, 1), 'rounds', '1')
+    const round2 = join(taskDir(dir, 1), 'rounds', '2')
+    mkdirSync(join(round1, 'candidate'), { recursive: true })
+    mkdirSync(join(round1, 'security-scratch'), { recursive: true })
+    mkdirSync(join(round2, 'security-scratch'), { recursive: true })
+    mkdirSync(join(round2, 'security-scratch-retry1'), { recursive: true })
+    const paths = protectedPathsForTurn({
+      runtimeDir: dir,
+      task: 1,
+      round: 1,
+      role: 'code-reviewer',
+      vinayaConfigPath: join(dir, 'vinaya.config.json')
+    }).map((e) => e.path)
+    expect(paths).toContain(join(round1, 'candidate'))
+    expect(paths).toContain(join(round2, 'security-scratch'))
+    expect(paths).toContain(join(round2, 'security-scratch-retry1'))
+  })
 })
 
 describe('findCredentialPatterns — O2 recognizes a shape, never reports the value', () => {

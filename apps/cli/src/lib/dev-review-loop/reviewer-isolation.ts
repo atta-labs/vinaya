@@ -464,6 +464,17 @@ export function buildReviewerScratch(
  */
 const ISOLATION_ARTIFACT_NAME_RE = /^(?:candidate|(?:reviewer|security)-scratch(?:-retry\d+)?)$/
 
+/**
+ * Whether `name` is `role`'s own scratch copy inside a round folder — the
+ * same name family `ISOLATION_ARTIFACT_NAME_RE` matches, narrowed to one
+ * reviewer role and never `candidate`, which both reviewers share. The
+ * boundary check reads it to excuse a concurrent sibling's scratch copy in
+ * the round both reviewers were dispatched for.
+ */
+export function isReviewerScratchName(name: string, role: ReviewerRole): boolean {
+  return name !== 'candidate' && ISOLATION_ARTIFACT_NAME_RE.test(name) && name.startsWith(`${role}-`)
+}
+
 /** Removes every isolation artifact in one already-resolved round folder. Best-effort; never throws. */
 function removeIsolationArtifactsIn(roundDir: string): void {
   let entries: string[]
