@@ -1331,11 +1331,16 @@ function packageImporters(root: string, pinned: string, target: string): string[
     } catch {
       continue
     }
-    const bindings = reexportedBindings(entry.index, indexText, target, pinnedText)
+    // A subpath whose export target is the pinned module itself exposes its own exports.
+    const bindings =
+      entry.index === pinned ? ownExports(pinnedText) : reexportedBindings(entry.index, indexText, target, pinnedText)
     if (bindings.size === 0) continue
     const quoted = escapeForExtendedRegex(entry.specifier)
     const candidates = git(['-C', root, 'grep', '-lE', `['"]${quoted}['"]`, '--', ...IMPORT_SEARCH_PATHSPEC])
-    const importRe = new RegExp(`(?:import|export)\\s+(?:type\\s+)?\\{([^}]*)\\}\\s*from\\s*['"]${quoted}['"]`, 'g')
+    const importRe = new RegExp(
+      `(?:import|export)\\s+(?:type\\s+)?(?:[\\w$]+\\s*,\\s*)?\\{([^}]*)\\}\\s*from\\s*['"]${quoted}['"]`,
+      'g'
+    )
     for (const file of candidates === '' ? [] : candidates.split('\n')) {
       if (file === pinned) continue
       let text: string

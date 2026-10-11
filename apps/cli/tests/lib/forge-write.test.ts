@@ -1818,6 +1818,10 @@ describe('readPinnedFileImporters — through a workspace package name', () => {
     write('apps/cli/src/uses-other.ts', "import { other } from '@fx/core'\n")
     // Namespace import names no binding.
     write('apps/cli/src/uses-namespace.ts', "import * as core from '@fx/core'\n")
+    // A package subpath whose exports target is a module itself, with a default-plus-named import.
+    write('packages/sub/package.json', JSON.stringify({ name: '@fx/sub', exports: { './leaf': './src/leaf.ts' } }))
+    write('packages/sub/src/leaf.ts', 'export const leaf = 1\n')
+    write('apps/cli/src/uses-leaf.ts', "import dflt, { leaf } from '@fx/sub/leaf'\n")
     write('apps/cli/src/relative.ts', "import { gate } from '../../../packages/core/src/gate'\n")
     execFileSync('git', ['add', '-A'], { cwd: fixture })
     execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-qm', 'fixture'], { cwd: fixture })
@@ -1867,5 +1871,10 @@ describe('readPinnedFileImporters — through a workspace package name', () => {
       'apps/cli/src/uses-other.ts',
       'packages/core/src/index.ts'
     ])
+  })
+
+  it('lists a caller of a package subpath that targets the pinned module itself', () => {
+    const [result] = readPinnedFileImporters(bodyPinning('packages/sub/src/leaf.ts'), fixture)
+    expect(result?.importers).toEqual(['apps/cli/src/uses-leaf.ts'])
   })
 })
