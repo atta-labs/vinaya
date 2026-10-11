@@ -77,10 +77,14 @@ describe('the grant has one source of truth across the doc, the skill, the catal
     expect(roleAllowedTools(REAL_DOCTRINE_ROOT, 'operator')).toEqual([...OPERATOR_TOOL_GRANT])
   })
 
-  it('the generated skill carries the same allowed-tools grant', () => {
-    const skill = renderAgentSkill('operator', null, roleAllowedTools(REAL_DOCTRINE_ROOT, 'operator'))
-    expect(skill).toContain(`allowed-tools: ${[...TASK_TOOL_NAMES].join(', ')}`)
-    expect(skill).toContain('name: vinaya-operator')
+  it('the generated Claude skill carries the same allowed-tools grant; the portable skill carries none', () => {
+    const grant = roleAllowedTools(REAL_DOCTRINE_ROOT, 'operator')
+    const claudeSkill = renderAgentSkill('operator', null, grant, [], 'claude')
+    expect(claudeSkill).toContain(`allowed-tools: ${[...TASK_TOOL_NAMES].join(', ')}`)
+    expect(claudeSkill).toContain('name: vinaya-operator')
+    const portableSkill = renderAgentSkill('operator', null, grant, [], 'agents')
+    expect(portableSkill).not.toContain('allowed-tools:')
+    expect(portableSkill).toContain('name: vinaya-operator')
   })
 
   it("the task-tools server's tools/list serves exactly the granted tools", async () => {

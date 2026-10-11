@@ -11,9 +11,10 @@
 // left exactly alone — upgrade regenerates what init already owns, it does
 // not perform a fresh install.
 //
-// ONE deliberate exception to "never a fresh install": the three
+// ONE deliberate exception to "never a fresh install": the
 // agent-native emitter files (`.claude/commands/vinaya.md`,
-// `.gemini/commands/vinaya.toml`, `.agents/skills/vinaya-<role>/SKILL.md`).
+// `.gemini/commands/vinaya.toml`, and the role skills
+// `.agents/skills/vinaya-<role>/SKILL.md` and `.claude/skills/vinaya-<role>/SKILL.md`).
 // `resolveAgentVendors` already defaults an install that predates the
 // `--agents` flag entirely to every vendor — the same default a fresh
 // `vinaya init` gives everyone else — precisely so new capability reaches an
@@ -42,7 +43,7 @@ import {
   TASK_LOG_COLLECTOR_WORKFLOW_PATH,
   TRACKED_HOOK_DIR
 } from '../lib/artifacts.js'
-import { staleAgentSkillPaths } from '../lib/agents-skills-emitter.js'
+import { isAgentSkillPath, staleAgentSkillPaths } from '../lib/agents-skills-emitter.js'
 import {
   CLAUDE_SETTINGS_PATH,
   CLAUDE_STOP_HOOK_MARKER,
@@ -470,6 +471,15 @@ export function planUpgrade(
         // foreign file at a vinaya path.
         action = 'recreate'
         hasChanges = true
+      } else if (isAgentSkillPath(op.path) && !owned && !exists) {
+        // Retrofit for a role skill the recorded selection never wrote: a
+        // new role, or a skill directory added after the install (the
+        // `.claude/skills/` copy for a `claude` install). The op exists
+        // only for a selected vendor, so a selection is never widened; a
+        // file already present that vinaya never recorded falls through to
+        // the ordinary `!owned` branch and is refused like any foreign file.
+        action = 'recreate'
+        hasChanges = true
       } else if (!owned) {
         action = exists ? 'refuse-foreign' : 'not-installed'
       } else if (!exists) {
@@ -567,6 +577,20 @@ function withClaudeStopHookRecorded(manifest: ManagedManifest, plan: UpgradePlan
     !files.includes(CLAUDE_SETTINGS_PATH)
   ) {
     files = [...files, CLAUDE_SETTINGS_PATH]
+  }
+
+  // A role skill the retrofit just wrote for a recorded selection is now
+  // owned; a defaulted install (no recorded selection) keeps deriving
+  // ownership from `isDefaultedAgentVendorPath`, never from `files`.
+  for (const e of plan.entries) {
+    if (
+      e.kind === 'create-file' &&
+      e.action === 'recreate' &&
+      isAgentSkillPath(e.op.path) &&
+      !isDefaultedAgentVendorPath(e.op.path, manifest) &&
+      !files.includes(e.op.path)
+    )
+      files = [...files, e.op.path]
   }
 
   const mcpEntry = plan.entries.find((e) => e.kind === 'create-file' && e.op.path === MCP_JSON_PATH)
@@ -842,11 +866,12 @@ export async function runUpgrade(args: string[], deps: UpgradeDeps): Promise<num
     agents: resolveAgentVendors(planManifest)
   }
   const ops = buildInitOps(ctx)
-  // Only when the `skills` vendor is active: a repo that never opted into
-  // `.agents/skills/` never recorded one in `manifest.files` either, so
+  // Only when a skill-writing vendor is active (`skills` for `.agents/skills/`,
+  // `claude` for `.claude/skills/`): a repo that opted into neither never
+  // recorded a role skill in `manifest.files` either, so
   // `staleAgentSkillPaths` would trivially find nothing — but resolving a
   // doctrine root it doesn't need is needless work on every other upgrade.
-  const doctrineRootForStaleSkills = ctx.agents.has('skills') ? resolveDoctrineRoot() : null
+  const doctrineRootForStaleSkills = ctx.agents.has('skills') || ctx.agents.has('claude') ? resolveDoctrineRoot() : null
   const staleSkillPaths = doctrineRootForStaleSkills
     ? staleAgentSkillPaths(doctrineRootForStaleSkills, planManifest.files)
     : []
@@ -944,5 +969,5 @@ export async function upgradeCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  upgrade: { date: '2026-09-08', callsToday: 22, retiresVia: 'sharedCommandShell' }
+  upgrade: { date: '2026-09-08', callsToday: 23, retiresVia: 'sharedCommandShell' }
 }

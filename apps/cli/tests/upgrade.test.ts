@@ -549,6 +549,83 @@ describe('vinaya upgrade — the persisted --agents selection, never re-flagged'
     expect(existsSync(join(root, '.agents/skills'))).toBe(true)
   })
 
+  it('a recorded claude selection that predates .claude/skills/ gets the Claude role skills on upgrade, recorded as owned', async () => {
+    await runInit(['--yes', '--agents=claude'], initDeps())
+    const claudeSkill = '.claude/skills/vinaya-developer/SKILL.md'
+    expect(existsSync(join(root, claudeSkill))).toBe(true)
+    // Simulate an install made before the emitter wrote .claude/skills/.
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    cfg.managed.files = cfg.managed.files.filter((f: string) => !f.startsWith('.claude/skills/'))
+    writeFileSync(join(root, CONFIG_PATH), `${JSON.stringify(cfg, null, 2)}\n`)
+    rmSync(join(root, '.claude/skills'), { recursive: true, force: true })
+
+    const out = await captureStdout(() => runUpgrade(['--yes'], upgradeDeps()))
+    expect(out).toContain(`+ recreate   ${claudeSkill}`)
+    expect(existsSync(join(root, claudeSkill))).toBe(true)
+    expect(existsSync(join(root, '.agents/skills'))).toBe(false)
+    const after = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    expect(after.managed.files).toContain(claudeSkill)
+    expect(after.managed.agents).toEqual(['claude'])
+
+    expect(await captureStdout(() => runUpgrade(['--yes'], upgradeDeps()))).toContain('already current')
+  })
+
+  it('a role-skill file vinaya never recorded is refused as foreign, never overwritten', async () => {
+    await runInit(['--yes', '--agents=claude'], initDeps())
+    const claudeSkill = '.claude/skills/vinaya-developer/SKILL.md'
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    cfg.managed.files = cfg.managed.files.filter((f: string) => f !== claudeSkill)
+    writeFileSync(join(root, CONFIG_PATH), `${JSON.stringify(cfg, null, 2)}\n`)
+    writeFileSync(join(root, claudeSkill), 'adopter-owned\n')
+
+    await captureStdout(() => runUpgrade(['--yes'], upgradeDeps()))
+    expect(readFileSync(join(root, claudeSkill), 'utf-8')).toBe('adopter-owned\n')
+    const after = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    expect(after.managed.files).not.toContain(claudeSkill)
+  })
+
+  it("a claude-only install removes a retired role's .claude/skills/ skill", async () => {
+    await runInit(['--yes', '--agents=claude'], initDeps())
+    const stalePath = '.claude/skills/vinaya-retired-fixture-role/SKILL.md'
+    mkdirSync(join(root, '.claude/skills/vinaya-retired-fixture-role'), { recursive: true })
+    writeFileSync(join(root, stalePath), '---\nname: vinaya-retired-fixture-role\n---\nstale\n')
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    cfg.managed.files.push(stalePath)
+    writeFileSync(join(root, CONFIG_PATH), `${JSON.stringify(cfg, null, 2)}\n`)
+
+    const out = await captureStdout(() => runUpgrade(['--yes'], upgradeDeps()))
+    expect(out).toContain(`remove ${stalePath}`)
+    expect(existsSync(join(root, stalePath))).toBe(false)
+    const after = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    expect(after.managed.files).not.toContain(stalePath)
+    expect(after.managed.agents).toEqual(['claude'])
+  })
+
+  it("removes a retired role's skill from both .agents/skills/ and .claude/skills/, and leaves a hand-authored skill alone", async () => {
+    await runInit(['--yes'], initDeps())
+    const stalePaths = [
+      '.agents/skills/vinaya-retired-fixture-role/SKILL.md',
+      '.claude/skills/vinaya-retired-fixture-role/SKILL.md'
+    ]
+    const handAuthored = ['.agents/skills/dispatch-vps/SKILL.md', '.claude/skills/dispatch-vps/SKILL.md']
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    for (const p of [...stalePaths, ...handAuthored]) {
+      mkdirSync(join(root, p, '..'), { recursive: true })
+      writeFileSync(join(root, p), '---\nname: fixture\n---\nbody\n')
+    }
+    cfg.managed.files.push(...stalePaths)
+    writeFileSync(join(root, CONFIG_PATH), `${JSON.stringify(cfg, null, 2)}\n`)
+
+    const out = await captureStdout(() => runUpgrade(['--yes'], upgradeDeps()))
+    for (const p of stalePaths) {
+      expect(out).toContain(`remove ${p}`)
+      expect(existsSync(join(root, p))).toBe(false)
+    }
+    for (const p of handAuthored) expect(readFileSync(join(root, p), 'utf-8')).toBe('---\nname: fixture\n---\nbody\n')
+    const after = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    for (const p of stalePaths) expect(after.managed.files).not.toContain(p)
+  })
+
   it('a manifest with an explicit, narrower --agents selection is NEVER widened by the defaulted-adopt path — only a truly unrecorded manifest gets every vendor', async () => {
     await runInit(['--yes', '--agents=claude'], initDeps())
     expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(false)

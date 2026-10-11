@@ -82,12 +82,14 @@ That's the difference between "the agent said it passed" and a record you can ac
 Claude Code, Codex, Gemini CLI — keep the one you already use. Vinaya checks the merge,
 not the model.
 
-- **Claude Code** gets a native `/vinaya <role>` command and a `Stop` hook that keeps a session
-  honest about what it actually did.
+- **Claude Code** gets a native `/vinaya <role>` command, every role as a skill in
+  `.claude/skills/` (the only skill directory Claude Code reads), and a `Stop` hook that keeps a
+  session honest about what it actually did.
 - **Codex** and **Gemini CLI** get the same doctrine through their own native command surfaces —
   one source of truth, never a copy baked into a vendor-specific file.
 - Every role also ships as a portable [Agent Skill](https://vinaya.attalabs.dev/docs/reference),
-  discovered natively by anything that scans `.agents/skills/` — Codex, Antigravity, Grok Build.
+  discovered natively by anything that scans `.agents/skills/` — Codex, Gemini CLI, Antigravity,
+  Grok Build. Both skill files are the same three-line pointer to `vinaya doctrine`, never a copy.
 - `vinaya dispatch` runs any of them headless, attributed, timed, and logged — the same command
   whether it's kicking off a Developer or a Reviewer.
 

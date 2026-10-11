@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   agentSkillPath,
   buildAgentsSkillsOps,
   discoverRoleNames,
+  isAgentSkillPath,
   formatRoleTitle,
   renderAgentSkill,
   roleDeniedTools,
@@ -111,6 +112,68 @@ Run \`bun apps/cli/src/index.ts doctrine --role developer --print\` and follow i
 
     it('is unchanged for the ordinary adopter when selfHost is explicitly null', () => {
       expect(renderAgentSkill('developer', null)).toBe(renderAgentSkill('developer'))
+    })
+  })
+
+  describe('two targets: .agents/skills/ and .claude/skills/', () => {
+    const OPERATOR_GRANT = ['task_start', 'task_status']
+
+    it('places each target under its own directory, same role slug', () => {
+      expect(agentSkillPath('developer', 'agents')).toBe('.agents/skills/vinaya-developer/SKILL.md')
+      expect(agentSkillPath('developer', 'claude')).toBe('.claude/skills/vinaya-developer/SKILL.md')
+    })
+
+    it('carries allowed-tools only in the Claude file; name and description in both', () => {
+      const agents = renderAgentSkill('operator', null, OPERATOR_GRANT, [], 'agents')
+      const claude = renderAgentSkill('operator', null, OPERATOR_GRANT, [], 'claude')
+      expect(agents).toBe(`---
+name: vinaya-operator
+description: Act as the AEG Operator for this repo.
+---
+Run \`vinaya doctrine --role operator --print\` and follow its output as your operating instructions for this session.
+`)
+      expect(claude).toBe(`---
+name: vinaya-operator
+description: Act as the AEG Operator for this repo.
+allowed-tools: task_start, task_status
+---
+Run \`vinaya doctrine --role operator --print\` and follow its output as your operating instructions for this session.
+`)
+    })
+
+    it('a role with no grant renders byte-identical pointers on both targets', () => {
+      expect(renderAgentSkill('developer', null, [], ['merge'], 'claude')).toBe(
+        renderAgentSkill('developer', null, [], ['merge'], 'agents')
+      )
+    })
+
+    it('buildAgentsSkillsOps writes one file per role per target, against the real bundled doctrine', () => {
+      const realRoot = join(import.meta.dir, '..', '..', '..', 'aeg-root')
+      const roles = discoverRoleNames(realRoot)
+      const agentsOps = buildAgentsSkillsOps(realRoot, null, 'agents')
+      const claudeOps = buildAgentsSkillsOps(realRoot, null, 'claude')
+      expect(agentsOps.map((op) => op.path)).toEqual(roles.map((r) => agentSkillPath(r, 'agents')))
+      expect(claudeOps.map((op) => op.path)).toEqual(roles.map((r) => agentSkillPath(r, 'claude')))
+      expect(agentsOps.every((op) => op.group === 'Agent skills (.agents/skills/)')).toBe(true)
+      expect(claudeOps.every((op) => op.group === 'Claude Code skills (.claude/skills/)')).toBe(true)
+      for (const op of agentsOps) expect(op.content).not.toContain('allowed-tools:')
+      const claudeOperator = claudeOps.find((op) => op.path === agentSkillPath('operator', 'claude'))
+      expect(claudeOperator?.content).toContain('allowed-tools: task_start')
+      for (const op of [...agentsOps, ...claudeOps]) {
+        const role = /vinaya-([^/]+)\/SKILL\.md$/.exec(op.path)?.[1] as string
+        expect(op.content).toContain(`name: vinaya-${role}\n`)
+        expect(op.content).toContain(`--role ${role} --print`)
+      }
+    })
+
+    it("this repository's committed skill files match the generator for both targets", () => {
+      const repoRoot = join(import.meta.dir, '..', '..', '..')
+      const selfHost = { dir: 'apps/cli', bin: 'apps/cli/dist/index.js' }
+      for (const target of ['agents', 'claude'] as const) {
+        for (const op of buildAgentsSkillsOps(join(repoRoot, 'aeg-root'), selfHost, target)) {
+          expect(readFileSync(join(repoRoot, op.path), 'utf8'), op.path).toBe(op.content)
+        }
+      }
     })
   })
 
@@ -222,6 +285,33 @@ Run \`bun apps/cli/src/index.ts doctrine --role developer --print\` and follow i
       writeFileSync(join(rolesDir, 'developer.md'), '# Developer\n')
 
       expect(staleAgentSkillPaths(tempDir, ['.agents/skills/vinaya-developer/SKILL.md'])).toEqual([])
+    })
+
+    it("flags a retired role's skill in both .agents/skills/ and .claude/skills/", () => {
+      const rolesDir = join(tempDir, 'roles')
+      mkdirSync(rolesDir, { recursive: true })
+      writeFileSync(join(rolesDir, 'developer.md'), '# Developer\n')
+
+      expect(
+        staleAgentSkillPaths(tempDir, [
+          '.agents/skills/vinaya-developer/SKILL.md',
+          '.claude/skills/vinaya-developer/SKILL.md',
+          '.agents/skills/vinaya-brief-author/SKILL.md',
+          '.claude/skills/vinaya-brief-author/SKILL.md'
+        ])
+      ).toEqual(['.agents/skills/vinaya-brief-author/SKILL.md', '.claude/skills/vinaya-brief-author/SKILL.md'])
+    })
+
+    it('never matches a hand-authored skill beside the generated ones, even when recorded', () => {
+      const rolesDir = join(tempDir, 'roles')
+      mkdirSync(rolesDir, { recursive: true })
+      writeFileSync(join(rolesDir, 'developer.md'), '# Developer\n')
+
+      const handAuthored = ['.agents/skills/dispatch-vps/SKILL.md', '.claude/skills/dispatch-vps/SKILL.md']
+      expect(staleAgentSkillPaths(tempDir, handAuthored)).toEqual([])
+      for (const path of handAuthored) expect(isAgentSkillPath(path)).toBe(false)
+      expect(isAgentSkillPath('.claude/skills/vinaya-developer/SKILL.md')).toBe(true)
+      expect(isAgentSkillPath('.agents/skills/vinaya-developer/SKILL.md')).toBe(true)
     })
 
     it('ignores paths outside the .agents/skills/vinaya-<role>/SKILL.md shape', () => {
