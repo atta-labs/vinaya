@@ -62,7 +62,7 @@ Every field below has exactly one named obligation for the Developer (right colu
 | **`Project:` field** (rendered from the Issue's `Project(s) + blast radius`) | PR description + `verify-docs` | The Developer confirms the project resolves against `.vinaya/projects.md`. |
 | **Context** (rendered from `Boundary` + `Traps to avoid`) | Mental model before any code | The Developer reads the boundary ("what this task is NOT") to know what to refuse to build, and the traps to know what not to do. |
 | **Technical Dependencies** (rendered from `Dependency rationale`) | Verify all depends-on are merged | The Developer confirms every named dependency is on `main` before starting. A depends-on not yet merged is a hard stop. |
-| **Technical Surface Map** (rendered from `## Surface` plus a `sha256` premise pin per file) | Bounds the diff | The Developer touches only files in the surface map. Files outside it are a stop-and-escalate. |
+| **Technical Surface Map** (rendered from `## Surface` plus a `sha256` premise pin per file) | Bounds the diff | The Developer works within the surface map. A file outside it is recorded in the pull request, reviewed like any change. |
 | **Premise pins (`Premise:` block, mandatory when the surface map names a real code surface)** | Re-asserted before Step 0, via `verify-dispatch --premise <body-file>`; re-asserted again pre-PR via `verify-task` | A failed premise means the surface moved since the Issue's rationale was written — the Developer stops and re-digs rather than executing against a stale mental model. This is a stop condition, not a silent re-guess. |
 | **A fenced command with its executed output pasted beneath it (the only other form a behavioural fact about code may take in a brief)** | Re-run before the Part that depends on it; output pasted in that round's PR comment | The Developer re-runs the command and compares its own output against what the brief pasted. A mismatch is a brief defect, not a fact to transcribe — the Developer stops, `severity: strategy`, and never writes the brief's sentence into doctrine or code. |
 | **Documentation-update list** (rendered from `Docs to keep coherent`, mechanically derived against `.vinaya/doc-owners`) | Self-check before opening PR + Reviewer doc check | The Developer updates every doc named in the list before claiming done. The list is a DoD obligation, not a recommendation — a named doc not updated is a BLOCKER at review. `verify-docs --pr` gates structural presence; the Reviewer gates content correctness. |
@@ -125,7 +125,7 @@ The dispatch act's enforcement is the same forge-derived check the Developer run
 - Read the full brief before opening the worktree. Not a skim — every section.
 - Execute step 0 first, always. Never branch from `HEAD` of the current local checkout.
 - Verify all dependencies are merged before the first line of code.
-- Stay within the surface map. Files outside it are a stop-and-escalate, not a judgment call.
+- Stay within the surface map. A file outside it is no stop: the driver records it in the pull request body's beyond-Surface block, and the reviewers judge it like any change.
 - Run every `[agent]` Test Plan item and post the actual command output as evidence. Do not paraphrase verification results.
 - Stop on any stop condition — post a blocker comment, do not improvise.
 - Report tokens in the PR body at turn-end, per `aeg-root/roles/developer/reference.md` — never append your own row to a ledger file.

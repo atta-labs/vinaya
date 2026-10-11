@@ -53,7 +53,8 @@ body's marked `AEG:BEYOND-SURFACE` block in the `## Scope` section from the
 branch's merge-base diff (`withBeyondSurfaceRecord` → `withBeyondSurfaceBlock`),
 replacing only that region the way it replaces the `**For:**` line, so a list
 the Developer writes never survives. The block is empty when no path is beyond
-the Surface. The `surface-scope` check reads the same block from the body CI
+the Surface, and written empty when the Surface, the worktree head or the merge
+base cannot be read, so a hand-written list never survives a read failure. The `surface-scope` check reads the same block from the body CI
 passes in, and the reviewers judge those files like any change. The
 `outside_surface` blocker kind is gone from the Developer's turn result, and
 with it the loop's one-time retry for that report.

@@ -11,7 +11,9 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { recordedBeyondSurfacePaths } from '@attalabs/aeg-core'
 import {
+  type LoopDeps,
   defaultGitWorktreeChangedPaths,
   defaultGitWorktreeUntrackedPaths,
   defaultReadMergedDefaultCommit
@@ -586,4 +588,94 @@ describe('publication range after a default-branch merge', () => {
     expect(results[1]).toEqual({ ok: true, reason: '', beyondSurface: [] })
     expect(world.commits).toHaveLength(2)
   })
+})
+
+describe('the beyond-Surface record when an input cannot be read', () => {
+  const handWritten =
+    '## Scope\n\nScope.\n\n<!-- AEG:BEYOND-SURFACE:START -->\n- `src/sneaked.ts` hand-added\n<!-- AEG:BEYOND-SURFACE:END -->\n\n**Tier:** 3\n'
+
+  /**
+   * Runs a loop whose round-1 review blocks; between that review and the
+   * round-2 Developer dispatch the open body carries `handWritten` and
+   * `unreadable` replaces the reads, so the body returned is the one the
+   * driver writes before that dispatch (its `**For:**` line update).
+   */
+  async function writtenBody(world: ReturnType<typeof makeWorld>, unreadable: Partial<LoopDeps>): Promise<string> {
+    const baseDeps = makeInProcessDeps(world)
+    let broken = false
+    let firstUpdate = -1
+    const read = <K extends 'resolveTaskSurface' | 'readWorktreeHead' | 'gitMergeBase'>(key: K): LoopDeps[K] =>
+      ((...args: unknown[]) =>
+        ((broken && unreadable[key] ? unreadable[key] : baseDeps[key]) as (...a: unknown[]) => unknown)(
+          ...args
+        )) as LoopDeps[K]
+    await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex' },
+      {
+        ...baseDeps,
+        resolveTaskSurface: read('resolveTaskSurface'),
+        readWorktreeHead: read('readWorktreeHead'),
+        gitMergeBase: read('gitMergeBase'),
+        dispatchRole: async (role, agent, prompt, opts) => {
+          if (role === 'developer') broken = false
+          const handle = await baseDeps.dispatchRole!(role, agent, prompt, opts)
+          if (role === 'code-reviewer' && (opts.round ?? 1) === 1) {
+            world.prBody = handWritten
+            firstUpdate = world.prBodyUpdates.length
+            broken = true
+          }
+          return handle
+        }
+      }
+    )
+    return world.prBodyUpdates[firstUpdate] ?? ''
+  }
+
+  function surfaceWorld(): ReturnType<typeof makeWorld> {
+    return makeWorld({
+      worktreeExists: true,
+      developerPushed: true,
+      prOpened: true,
+      surface: { in: ['apps/cli/src'], out: [] },
+      worktreeChangedPaths: ['apps/cli/src/lib/x.ts', 'docs/z.md'],
+      roleOutcomes: {
+        1: {
+          reviewer: {
+            findings: 'BLOCKER|apps/cli/src/lib/x.ts:1|clarify the PR body',
+            report: 'BRIEF_CONFORMANCE: yes\nSPEC_CONFORMANCE: yes\nSCOPE: small\nTESTS: pass\nDOCS: n/a\n',
+            objectives: 'O1|MET|done.\n',
+            sessionId: 'rev-session-1'
+          }
+        }
+      }
+    })
+  }
+
+  it('lists the paths beyond the Surface when the Surface, head and merge base all read', async () => {
+    const body = await writtenBody(surfaceWorld(), {})
+    expect(recordedBeyondSurfacePaths(body)).toEqual(['docs/z.md'])
+    expect(body).not.toContain('src/sneaked.ts')
+  })
+
+  const unreadable: [string, Partial<LoopDeps>][] = [
+    ['the Surface', { resolveTaskSurface: () => null }],
+    ['the worktree head', { readWorktreeHead: () => null }],
+    [
+      'the merge base',
+      {
+        gitMergeBase: async () => {
+          throw new Error('no merge base')
+        }
+      }
+    ]
+  ]
+  for (const [input, overrides] of unreadable) {
+    it(`writes the block empty when ${input} cannot be read, dropping the hand-written list`, async () => {
+      const body = await writtenBody(surfaceWorld(), overrides)
+      expect(body).toContain('<!-- AEG:BEYOND-SURFACE:START -->\n<!-- AEG:BEYOND-SURFACE:END -->')
+      expect(recordedBeyondSurfacePaths(body)).toEqual([])
+      expect(body).not.toContain('src/sneaked.ts')
+    })
+  }
 })

@@ -3783,20 +3783,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * the task branch changed (from its merge base, the same three-dot diff
      * the `surface-scope` check reads) that the task's Surface does not cover
      * — the driver's own marked region, replaced on every body write the way
-     * the `**For:**` line is, so an agent edit to it never survives. `body`
-     * unchanged when the Surface, the head or the merge base cannot be read.
+     * the `**For:**` line is, so an agent edit to it never survives. The
+     * block is written empty when the Surface, the head or the merge base
+     * cannot be read, so a list the agent wrote never survives a read failure.
      */
     async function withBeyondSurfaceRecord(body: string): Promise<string> {
       const surface = d.resolveTaskSurface ? d.resolveTaskSurface(task) : null
-      if (!surface) return body
+      if (!surface) return withBeyondSurfaceBlock(body, [])
       const worktree = worktreePathForBranch()
       try {
         const head = d.readWorktreeHead(worktree)
-        if (head === null) return body
+        if (head === null) return withBeyondSurfaceBlock(body, [])
         const base = await d.gitMergeBase(head)
         return withBeyondSurfaceBlock(body, beyondSurfacePaths(d.gitWorktreeChangedPaths(worktree, base), surface))
       } catch {
-        return body
+        return withBeyondSurfaceBlock(body, [])
       }
     }
 
