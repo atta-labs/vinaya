@@ -162,3 +162,84 @@ describe('issue surface — the report and the gate agree on every importer', ()
     expect(bad.stderr).toContain('does not parse')
   })
 })
+
+describe('issue surface — a pinned module imported only through a package name', () => {
+  let fixture: string
+
+  const write = (path: string, content: string) => {
+    const full = join(fixture, path)
+    mkdirSync(join(full, '..'), { recursive: true })
+    writeFileSync(full, content)
+  }
+
+  beforeEach(() => {
+    fixture = mkdtempSync(join(tmpdir(), 'vinaya-issue-surface-pkg-'))
+    execFileSync('git', ['init', '-q'], { cwd: fixture })
+    write('packages/core/package.json', JSON.stringify({ name: '@fx/core', main: './src/index.ts' }))
+    write('packages/core/src/gate.ts', 'export const gate = 1\n')
+    write('packages/core/src/other.ts', 'export const other = 2\n')
+    write('packages/core/src/index.ts', "export { gate } from './gate'\nexport { other } from './other'\n")
+    write('apps/cli/src/checks/uses-gate.ts', "import { gate } from '@fx/core'\n")
+    write('apps/cli/src/checks/uses-other.ts', "import { other } from '@fx/core'\n")
+    execFileSync('git', ['add', '-A'], { cwd: fixture })
+    execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-qm', 'fixture'], { cwd: fixture })
+  })
+
+  afterEach(() => {
+    rmSync(fixture, { recursive: true, force: true })
+  })
+
+  const body = (inGlobs: string) =>
+    [
+      "## Planner's rationale",
+      '',
+      '**Boundary** — In: the gate. Pinned files: `packages/core/src/gate.ts`. Out: nothing else.',
+      '',
+      '## Objectives',
+      '',
+      'O1. The gate refuses the body.',
+      '',
+      '## Surface',
+      '',
+      `in: ${inGlobs}`,
+      'out: apps/log-server',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — the gate refuses the body.'
+    ].join('\n')
+
+  const tracked = () => [
+    'apps/cli/src/checks/uses-gate.ts',
+    'apps/cli/src/checks/uses-other.ts',
+    'packages/core/package.json',
+    'packages/core/src/gate.ts',
+    'packages/core/src/index.ts',
+    'packages/core/src/other.ts'
+  ]
+
+  it('reports the package-name importer as uncovered and the gate refuses it; the non-importer is absent', () => {
+    const undecided = body('packages/core/src')
+    const set = readSurfaceForcedSet(undecided, fixture, tracked())
+    expect(set?.importers).toEqual([
+      {
+        file: 'packages/core/src/gate.ts',
+        importers: [
+          { importer: 'apps/cli/src/checks/uses-gate.ts', state: 'uncovered', fix: 'apps/cli/src/checks' },
+          { importer: 'packages/core/src/index.ts', state: 'reached', by: 'packages/core/src' }
+        ]
+      }
+    ])
+    const result = checkPinnedFileImportersCovered(undecided, readPinnedFileImporters(undecided, fixture))
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`apps/cli/src/checks/uses-gate.ts` (add `apps/cli/src/checks` to `in:`)')
+    expect(result.errors[0]).not.toContain('uses-other.ts')
+  })
+
+  it('the gate accepts once the package-name importer is reached, and the report agrees', () => {
+    const reached = body('packages/core/src, apps/cli/src/checks')
+    expect(checkPinnedFileImportersCovered(reached, readPinnedFileImporters(reached, fixture)).status).toBe('pass')
+    const text = renderSurfaceForcedSet(readSurfaceForcedSet(reached, fixture, tracked()) as never)
+    expect(text).toContain('Every forced file is reached or disclaimed.')
+  })
+})
