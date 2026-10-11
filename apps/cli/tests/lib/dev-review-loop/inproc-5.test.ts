@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { newestPrincipalRulingOrdinal, recordedBeyondSurfacePaths } from '@attalabs/aeg-core'
+import { newestPrincipalRulingOrdinal, recordedBeyondSurfacePaths, withBeyondSurfaceBlock } from '@attalabs/aeg-core'
 import {
   cleanupWorlds,
   controlDir,
@@ -1384,6 +1384,9 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
           }
         }
       })
+      // The open body already carries the driver's empty record, so the one
+      // body update counted below is the Developer's own.
+      world.prBody = withBeyondSurfaceBlock(world.prBody, [])
       const publishing = developerPublishesViaToolsDeps(world, { bodyOnly: true })
       const dispatch = publishing.dispatchRole!
       const originalHead = world.head

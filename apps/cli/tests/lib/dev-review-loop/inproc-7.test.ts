@@ -17,6 +17,7 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
+import { withBeyondSurfaceBlock } from '@attalabs/aeg-core'
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { withDeveloperModelsLine } from '../../../src/lib/dev-review-loop/developer-dispatch.js'
@@ -525,7 +526,10 @@ describe('devReviewLoop — --resume with a different --agent continues the task
   it('resuming without --agent, or with the same agent, does not rewrite an already matching model line', async () => {
     for (const input of [{}, { agent: 'codex' as const }]) {
       const { world, seen, deps } = await pausedOnCodex()
-      world.prBody = withDeveloperModelsLine(world.prBody, [{ model: 'gpt-5.6-terra', firstRound: 1, lastRound: 1 }])
+      world.prBody = withBeyondSurfaceBlock(
+        withDeveloperModelsLine(world.prBody, [{ model: 'gpt-5.6-terra', firstRound: 1, lastRound: 1 }]),
+        []
+      )
       const bodyBefore = world.prBody
       const resumed = await runLoopInProcess(world, { resumePr: world.prNumber, ...input }, deps)
       expect(resumed.finalDecision).toEqual({ type: 'publish' })
