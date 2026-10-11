@@ -1785,3 +1785,87 @@ describe('upsertDeferredFindingsIssue — one tracking Issue per pull request (#
     )
   })
 })
+
+describe('readPinnedFileImporters — through a workspace package name', () => {
+  let fixture: string
+
+  const write = (path: string, content: string) => {
+    const full = join(fixture, path)
+    mkdirSync(join(full, '..'), { recursive: true })
+    writeFileSync(full, content)
+  }
+
+  beforeEach(() => {
+    fixture = mkdtempSync(join(tmpdir(), 'vinaya-pkg-importers-'))
+    execFileSync('git', ['init', '-q'], { cwd: fixture })
+    write('packages/core/package.json', JSON.stringify({ name: '@fx/core', main: './src/index.ts' }))
+    write(
+      'packages/core/src/gate.ts',
+      'export const gate = 1\nexport function check(): void {}\nexport type GateKind = string\n'
+    )
+    write('packages/core/src/other.ts', 'export const other = 2\n')
+    write(
+      'packages/core/src/index.ts',
+      "export { gate, check as gateCheck } from './gate'\nexport type { GateKind } from './gate'\nexport * from './other'\n"
+    )
+    // Named binding, multi-line, from the package name.
+    write('apps/cli/src/uses-gate.ts', "import {\n  other,\n  gate\n} from '@fx/core'\n")
+    // An alias in the index matches by its alias; the original name is `check`.
+    write('apps/cli/src/uses-alias.ts', "import { gateCheck } from '@fx/core'\n")
+    // A type-only import is still an import.
+    write('apps/cli/src/uses-type.ts', "import type { GateKind } from '@fx/core'\n")
+    // Same package, only a binding the pinned module does not export.
+    write('apps/cli/src/uses-other.ts', "import { other } from '@fx/core'\n")
+    // Namespace import names no binding.
+    write('apps/cli/src/uses-namespace.ts', "import * as core from '@fx/core'\n")
+    write('apps/cli/src/relative.ts', "import { gate } from '../../../packages/core/src/gate'\n")
+    execFileSync('git', ['add', '-A'], { cwd: fixture })
+    execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-qm', 'fixture'], { cwd: fixture })
+  })
+
+  afterEach(() => {
+    rmSync(fixture, { recursive: true, force: true })
+  })
+
+  const bodyPinning = (path: string) =>
+    [
+      "## Planner's rationale",
+      '',
+      `**Boundary** — In: the gate. Pinned files: \`${path}\`. Out: nothing else.`,
+      '',
+      '## Objectives',
+      '',
+      'O1. The gate refuses the body.',
+      '',
+      '## Surface',
+      '',
+      'in: packages/core/src',
+      'out: apps/log-server'
+    ].join('\n')
+
+  it('lists a file importing a shared binding by the package name, and the relative importer as before', () => {
+    const [result] = readPinnedFileImporters(bodyPinning('packages/core/src/gate.ts'), fixture)
+    expect(result?.importers).toEqual([
+      'apps/cli/src/relative.ts',
+      'apps/cli/src/uses-alias.ts',
+      'apps/cli/src/uses-gate.ts',
+      'apps/cli/src/uses-type.ts',
+      'packages/core/src/index.ts'
+    ])
+  })
+
+  it('does not list a file importing from the package only bindings the pinned module does not export', () => {
+    const [result] = readPinnedFileImporters(bodyPinning('packages/core/src/gate.ts'), fixture)
+    expect(result?.importers).not.toContain('apps/cli/src/uses-other.ts')
+    expect(result?.importers).not.toContain('apps/cli/src/uses-namespace.ts')
+  })
+
+  it("resolves an `export *` re-export through the pinned module's own exports", () => {
+    const [result] = readPinnedFileImporters(bodyPinning('packages/core/src/other.ts'), fixture)
+    expect(result?.importers).toEqual([
+      'apps/cli/src/uses-gate.ts',
+      'apps/cli/src/uses-other.ts',
+      'packages/core/src/index.ts'
+    ])
+  })
+})

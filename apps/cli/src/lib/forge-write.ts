@@ -1211,8 +1211,9 @@ function normalizeRelative(path: string): string {
 /**
  * Every relative import specifier written in `line`, resolved against the
  * importing file's own directory. A bare package specifier (`@attalabs/…`,
- * `node:fs`) resolves to no file and is skipped — it names a package, never a
- * path in this tree.
+ * `node:fs`) resolves to no file here and is skipped — it names a package, never
+ * a path in this tree; `packageImporters` resolves a workspace package's name
+ * by shared binding instead.
  */
 function resolvedSpecifiers(importerFile: string, line: string): string[] {
   const dir = importerFile.includes('/') ? importerFile.slice(0, importerFile.lastIndexOf('/')) : ''
@@ -1222,6 +1223,136 @@ function resolvedSpecifiers(importerFile: string, line: string): string[] {
     out.push(normalizeRelative(`${dir}/${spec}`))
   }
   return out
+}
+
+/** A workspace package's import specifier (`@scope/pkg`, `@scope/pkg/log`) and the tracked index file it resolves to. */
+type PackageEntry = { specifier: string; index: string }
+
+/** The tracked file an `exports`/`main` target names, minus a leading `./`. */
+function packageTargetPath(dir: string, target: string): string {
+  return normalizeRelative(`${dir}/${target}`)
+}
+
+/**
+ * Every workspace package's entry points, read from the `package.json` files
+ * under `packages/` and `apps/` — never a typed list. Text-only: the manifests
+ * are parsed as JSON, the entry files are never loaded as modules.
+ */
+function workspacePackageEntries(root: string): PackageEntry[] {
+  const manifests = git(['-C', root, 'ls-files', '--', 'packages/*/package.json', 'apps/*/package.json'])
+  const entries: PackageEntry[] = []
+  for (const manifest of manifests === '' ? [] : manifests.split('\n')) {
+    let parsed: { name?: unknown; main?: unknown; exports?: unknown }
+    try {
+      parsed = JSON.parse(readFileSync(join(root, manifest), 'utf8'))
+    } catch {
+      continue
+    }
+    if (typeof parsed.name !== 'string' || parsed.name === '') continue
+    const dir = manifest.slice(0, manifest.lastIndexOf('/'))
+    const targets: Array<[string, string]> = []
+    if (typeof parsed.exports === 'object' && parsed.exports !== null) {
+      for (const [key, value] of Object.entries(parsed.exports as Record<string, unknown>)) {
+        if (typeof value === 'string' && key.startsWith('.')) targets.push([key.slice(1), value])
+      }
+    }
+    if (!targets.some(([key]) => key === '') && typeof parsed.main === 'string') targets.push(['', parsed.main])
+    for (const [key, target] of targets) {
+      entries.push({ specifier: `${parsed.name}${key}`, index: packageTargetPath(dir, target) })
+    }
+  }
+  return entries
+}
+
+/** The names a `{ a, b as c, type d }` list binds: each item's original name (left of `as`) and the name it is known by (right of `as`). */
+function bindingList(list: string): Array<{ original: string; alias: string }> {
+  const out: Array<{ original: string; alias: string }> = []
+  for (const raw of list.split(',')) {
+    const item = raw.replace(/^\s*type\s+/, '').trim()
+    if (item === '') continue
+    const [original, alias] = item.split(/\s+as\s+/) as [string, string | undefined]
+    out.push({ original: original.trim(), alias: (alias ?? original).trim() })
+  }
+  return out
+}
+
+/** The names a module declares with `export` — declarations and `export { … }` lists without a `from`; a default export names no binding. */
+function ownExports(text: string): Set<string> {
+  const names = new Set<string>()
+  for (const m of text.matchAll(
+    /^\s*export\s+(?:declare\s+)?(?:abstract\s+)?(?:async\s+)?(?:const\s+enum|const|let|var|function\*?|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/gm
+  )) {
+    names.add(m[1] as string)
+  }
+  for (const m of text.matchAll(/^\s*export\s+(?:type\s+)?\{([^}]*)\}\s*(?!from)(?:;|$)/gm)) {
+    for (const b of bindingList(m[1] as string)) names.add(b.alias)
+  }
+  return names
+}
+
+/**
+ * The binding names an index file exposes from the pinned module: the names in
+ * `export { … } from './<module>'` (an alias matches by its alias) and, for
+ * `export * from './<module>'`, the module's own exports.
+ */
+function reexportedBindings(indexFile: string, indexText: string, target: string, pinnedText: string): Set<string> {
+  const dir = indexFile.includes('/') ? indexFile.slice(0, indexFile.lastIndexOf('/')) : ''
+  const resolve = (spec: string) => normalizeRelative(`${dir}/${stripImportableExtension(spec)}`)
+  const names = new Set<string>()
+  for (const m of indexText.matchAll(/export\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"](\.[^'"]*)['"]/g)) {
+    if (resolve(m[2] as string) !== target) continue
+    for (const b of bindingList(m[1] as string)) names.add(b.alias)
+  }
+  for (const m of indexText.matchAll(/export\s+(?:type\s+)?\*\s*from\s*['"](\.[^'"]*)['"]/g)) {
+    if (resolve(m[1] as string) !== target) continue
+    for (const name of ownExports(pinnedText)) names.add(name)
+  }
+  return names
+}
+
+/**
+ * Tracked files that import `pinned` through a workspace package's name: the
+ * package's index re-exports the pinned module, and the importing file names at
+ * least one binding the module exports and the index re-exports. An importer of
+ * the same package that names only other bindings is not an importer.
+ */
+function packageImporters(root: string, pinned: string, target: string): string[] {
+  let pinnedText: string
+  try {
+    pinnedText = readFileSync(join(root, pinned), 'utf8')
+  } catch {
+    return []
+  }
+  const importers = new Set<string>()
+  for (const entry of workspacePackageEntries(root)) {
+    let indexText: string
+    try {
+      indexText = readFileSync(join(root, entry.index), 'utf8')
+    } catch {
+      continue
+    }
+    const bindings = reexportedBindings(entry.index, indexText, target, pinnedText)
+    if (bindings.size === 0) continue
+    const quoted = escapeForExtendedRegex(entry.specifier)
+    const candidates = git(['-C', root, 'grep', '-lE', `['"]${quoted}['"]`, '--', ...IMPORT_SEARCH_PATHSPEC])
+    const importRe = new RegExp(`(?:import|export)\\s+(?:type\\s+)?\\{([^}]*)\\}\\s*from\\s*['"]${quoted}['"]`, 'g')
+    for (const file of candidates === '' ? [] : candidates.split('\n')) {
+      if (file === pinned) continue
+      let text: string
+      try {
+        text = readFileSync(join(root, file), 'utf8')
+      } catch {
+        continue
+      }
+      for (const m of text.matchAll(importRe)) {
+        if (bindingList(m[1] as string).some((b) => bindings.has(b.original))) {
+          importers.add(file)
+          break
+        }
+      }
+    }
+  }
+  return [...importers]
 }
 
 /**
@@ -1235,6 +1366,10 @@ function resolvedSpecifiers(importerFile: string, line: string): string[] {
  * `apps/cli/src/lib/task-tools/server.ts` share a basename and nothing else,
  * and a prefilter-only answer named every importer of the second as an
  * importer of the first.
+ *
+ * A workspace package's name is a second route to the same module: a file that
+ * imports, from the package's name, a binding the pinned module exports and the
+ * package's index re-exports is an importer too (`packageImporters`).
  *
  * Outside a git repository, with no pinned file named, or with a pinned file
  * that is not an importable module at all, this returns an empty importer list
@@ -1261,6 +1396,7 @@ export function readPinnedFileImporters(body: string, root: string = repoRoot())
       const target = file.slice(0, -extension.length)
       if (resolvedSpecifiers(importer, text).includes(target)) importers.add(importer)
     }
+    for (const importer of packageImporters(root, file, file.slice(0, -extension.length))) importers.add(importer)
     return { file, importers: [...importers].sort() }
   })
 }
