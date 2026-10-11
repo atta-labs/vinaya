@@ -68,6 +68,7 @@ import {
 import { realLocalGateControl } from '../local-gate-control.js'
 import { ensureRunDir, runPath } from '../run-paths.js'
 import { sh } from './gate-reading.js'
+import { type ForgeComment, isForgeReadOversize, readIssueComments } from '../forge-read.js'
 
 const RULING_MARKER = /^<!-- aeg:principal:ruling:\d+-\d+ -->$/
 
@@ -360,15 +361,18 @@ export function fetchNewestIssueRulingAuthor(issueNumber: number): string | null
 }
 
 function fetchIssueComments(issueNumber: number, caller: string): MarkerComment[] {
-  let out: string
   try {
-    out = sh('gh', ['issue', 'view', String(issueNumber), '--json', 'comments'])
+    return readIssueComments(issueNumber, `Issue #${issueNumber}`).map(toMarkerComment)
   } catch (err) {
+    if (isForgeReadOversize(err)) throw new Error(`${caller}: ${err.message}`)
     throw new Error(
       `${caller}: could not fetch Issue #${issueNumber}'s comments: ${err instanceof Error ? err.message : String(err)}`
     )
   }
-  return markerComments(out)
+}
+
+function toMarkerComment(c: ForgeComment): MarkerComment {
+  return { body: c.body, author: c.author?.login ?? null, url: c.url }
 }
 
 /**
@@ -537,15 +541,7 @@ export type ObjectivesResolution = {
  * One `gh issue view --json comments` call serves both sources.
  */
 export function resolveIssueObjectives(issueNumber: number): ObjectivesResolution {
-  let out: string
-  try {
-    out = sh('gh', ['issue', 'view', String(issueNumber), '--json', 'comments'])
-  } catch (err) {
-    throw new Error(
-      `resolveIssueObjectives: could not fetch Issue #${issueNumber}'s comments: ${err instanceof Error ? err.message : String(err)}`
-    )
-  }
-  const comments = markerComments(out)
+  const comments = fetchIssueComments(issueNumber, 'resolveIssueObjectives')
   const allowlist = principalAllowlist()
 
   const latestEdit = findLatestPrincipalObjectivesEdit(comments, allowlist)

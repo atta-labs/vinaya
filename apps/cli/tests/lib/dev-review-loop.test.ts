@@ -272,6 +272,10 @@ if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
+if [ "$1" = "api" ] && case "$2" in repos/*/issues/*/comments*) true ;; *) false ;; esac; then
+  "$0" issue view 0 --json comments | bun -e 'const j = JSON.parse(require("fs").readFileSync(0, "utf8")); process.stdout.write(JSON.stringify(j.comments.map((c) => ({ body: c.body, html_url: c.url ?? "", user: c.author ?? null }))))'
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
   printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
   exit 0
@@ -364,6 +368,10 @@ if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
+if [ "$1" = "api" ] && case "$2" in repos/*/issues/*/comments*) true ;; *) false ;; esac; then
+  "$0" issue view 0 --json comments | bun -e 'const j = JSON.parse(require("fs").readFileSync(0, "utf8")); process.stdout.write(JSON.stringify(j.comments.map((c) => ({ body: c.body, html_url: c.url ?? "", user: c.author ?? null }))))'
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
   printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
   exit 0
@@ -582,6 +590,10 @@ fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 ISSUE_STATE_DIR="$HOME/.fake-gh-posted-issue-comments"
 mkdir -p "$STATE_DIR" "$ISSUE_STATE_DIR"
+if [ "$1" = "api" ] && case "$2" in repos/*/issues/*/comments*) true ;; *) false ;; esac; then
+  "$0" issue view 0 --json comments | bun -e 'const j = JSON.parse(require("fs").readFileSync(0, "utf8")); process.stdout.write(JSON.stringify(j.comments.map((c) => ({ body: c.body, html_url: c.url ?? "", user: c.author ?? null }))))'
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
   FAKE_GH_STATE="$ISSUE_STATE_DIR" bun -e '
     const fs = require("fs")
@@ -683,6 +695,10 @@ fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 ISSUE_STATE_DIR="$HOME/.fake-gh-posted-issue-comments"
 mkdir -p "$STATE_DIR" "$ISSUE_STATE_DIR"
+if [ "$1" = "api" ] && case "$2" in repos/*/issues/*/comments*) true ;; *) false ;; esac; then
+  "$0" issue view 0 --json comments | bun -e 'const j = JSON.parse(require("fs").readFileSync(0, "utf8")); process.stdout.write(JSON.stringify(j.comments.map((c) => ({ body: c.body, html_url: c.url ?? "", user: c.author ?? null }))))'
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
   FAKE_GH_STATE="$ISSUE_STATE_DIR" bun -e '
     const fs = require("fs")
@@ -2120,6 +2136,10 @@ if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
+if [ "$1" = "api" ] && case "$2" in repos/*/issues/*/comments*) true ;; *) false ;; esac; then
+  "$0" issue view 0 --json comments | bun -e 'const j = JSON.parse(require("fs").readFileSync(0, "utf8")); process.stdout.write(JSON.stringify(j.comments.map((c) => ({ body: c.body, html_url: c.url ?? "", user: c.author ?? null }))))'
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
   printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
   exit 0
@@ -2206,6 +2226,10 @@ if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
+if [ "$1" = "api" ] && case "$2" in repos/*/issues/*/comments*) true ;; *) false ;; esac; then
+  "$0" issue view 0 --json comments | bun -e 'const j = JSON.parse(require("fs").readFileSync(0, "utf8")); process.stdout.write(JSON.stringify(j.comments.map((c) => ({ body: c.body, html_url: c.url ?? "", user: c.author ?? null }))))'
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
   printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
   exit 0
@@ -2654,6 +2678,10 @@ if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
+if [ "$1" = "api" ] && case "$2" in repos/*/issues/*/comments*) true ;; *) false ;; esac; then
+  "$0" issue view 0 --json comments | bun -e 'const j = JSON.parse(require("fs").readFileSync(0, "utf8")); process.stdout.write(JSON.stringify(j.comments.map((c) => ({ body: c.body, html_url: c.url ?? "", user: c.author ?? null }))))'
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
   printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
   exit 0
@@ -2942,6 +2970,10 @@ if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
+if [ "$1" = "api" ] && case "$2" in repos/*/issues/*/comments*) true ;; *) false ;; esac; then
+  "$0" issue view 0 --json comments | bun -e 'const j = JSON.parse(require("fs").readFileSync(0, "utf8")); process.stdout.write(JSON.stringify(j.comments.map((c) => ({ body: c.body, html_url: c.url ?? "", user: c.author ?? null }))))'
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
   printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n","author":{"login":"daniboomerang"}}]}'
   exit 0
@@ -3015,6 +3047,10 @@ if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
+if [ "$1" = "api" ] && case "$2" in repos/*/issues/*/comments*) true ;; *) false ;; esac; then
+  "$0" issue view 0 --json comments | bun -e 'const j = JSON.parse(require("fs").readFileSync(0, "utf8")); process.stdout.write(JSON.stringify(j.comments.map((c) => ({ body: c.body, html_url: c.url ?? "", user: c.author ?? null }))))'
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
   printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n","author":{"login":"daniboomerang"}}]}'
   exit 0
@@ -4644,6 +4680,10 @@ if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
+if [ "$1" = "api" ] && case "$2" in repos/*/issues/*/comments*) true ;; *) false ;; esac; then
+  "$0" issue view 0 --json comments | bun -e 'const j = JSON.parse(require("fs").readFileSync(0, "utf8")); process.stdout.write(JSON.stringify(j.comments.map((c) => ({ body: c.body, html_url: c.url ?? "", user: c.author ?? null }))))'
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
   printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
   exit 0
@@ -4853,6 +4893,10 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$3" = "${blockedIssue}" ] && [ 
   echo '{"state":"CLOSED"}'
   exit 0
 fi
+if [ "$1" = "api" ] && case "$2" in repos/*/issues/*/comments*) true ;; *) false ;; esac; then
+  "$0" issue view 0 --json comments | bun -e 'const j = JSON.parse(require("fs").readFileSync(0, "utf8")); process.stdout.write(JSON.stringify(j.comments.map((c) => ({ body: c.body, html_url: c.url ?? "", user: c.author ?? null }))))'
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
   printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
   exit 0
@@ -4953,6 +4997,10 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$3" = "${revivedIssue}" ] && [ 
 fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$3" = "${revivedIssue}" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
   echo '{"labels":[]}'
+  exit 0
+fi
+if [ "$1" = "api" ] && case "$2" in repos/*/issues/*/comments*) true ;; *) false ;; esac; then
+  "$0" issue view 0 --json comments | bun -e 'const j = JSON.parse(require("fs").readFileSync(0, "utf8")); process.stdout.write(JSON.stringify(j.comments.map((c) => ({ body: c.body, html_url: c.url ?? "", user: c.author ?? null }))))'
   exit 0
 fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then

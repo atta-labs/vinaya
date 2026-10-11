@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,6 +13,7 @@ import {
 import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../lib/config.js'
 import { prepareTaskOrIssue } from '../lib/dispatch-task.js'
+import { isForgeReadOversize, readIssueComments, readIssueFields } from '../lib/forge-read.js'
 import { printJson } from '../lib/envelope'
 import {
   countMarkerComments,
@@ -243,44 +243,40 @@ function parseArgs(args: string[]): { json: boolean; issueRef: string; op: EditO
 /** A comment reduced to what both `countMarkerComments` (body only) and `resolveNewestFrozenBrief` (body + author, O6) need, plus its own URL to name in a superseding-brief context. */
 type IssueComment = FrozenBriefCandidate & { url: string }
 
-function fetchIssueBodyAndComments(issueRef: string): {
+export function fetchIssueBodyAndComments(issueRef: string): {
   number: number
   body: string
   title: string
   labels: string[]
   comments: IssueComment[]
 } {
-  let out: string
   try {
-    out = execFileSync('gh', ['issue', 'view', issueRef, '--json', 'number,body,title,labels,comments'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-  } catch (err) {
-    refuse([
-      makeCheckError(
-        'forge-fetch',
-        `Could not fetch Issue ${issueRef} (\`gh issue view\`): ${err instanceof Error ? err.message : String(err)}`,
-        `Check \`gh auth status\` and network, then re-run \`${RETRY}\`.`
-      )
-    ])
-  }
-  try {
-    const parsed = JSON.parse(out) as {
+    const parsed = readIssueFields<{
       number?: number
       body?: string
       title?: string
       labels?: Array<{ name: string }>
-      comments?: Array<{ body: string; url: string; author: { login: string } | null }>
-    }
+    }>(issueRef, 'number,body,title,labels')
     return {
       number: parsed.number ?? Number.NaN,
       body: parsed.body ?? '',
       title: parsed.title ?? '',
       labels: (parsed.labels ?? []).map((l) => l.name),
-      comments: (parsed.comments ?? []).map((c) => ({ body: c.body, url: c.url, author: c.author?.login ?? null }))
+      comments: readIssueComments(issueRef).map((c) => ({ body: c.body, url: c.url, author: c.author?.login ?? null }))
     }
-  } catch {
+  } catch (err) {
+    if (isForgeReadOversize(err)) {
+      refuse([makeCheckError('forge-fetch', err.message, `Trim the Issue's comments, then re-run \`${RETRY}\`.`)])
+    }
+    if (!(err instanceof SyntaxError)) {
+      refuse([
+        makeCheckError(
+          'forge-fetch',
+          `Could not fetch Issue ${issueRef} (\`gh issue view\`): ${err instanceof Error ? err.message : String(err)}`,
+          `Check \`gh auth status\` and network, then re-run \`${RETRY}\`.`
+        )
+      ])
+    }
     refuse([
       makeCheckError(
         'forge-fetch',
@@ -482,5 +478,5 @@ export async function issueObjectivesEditCommand(args: string[]): Promise<void> 
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'issue objectives edit': { date: '2026-09-14', callsToday: 11, retiresVia: 'forgeWrite' }
+  'issue objectives edit': { date: '2026-09-14', callsToday: 14, retiresVia: 'forgeWrite' }
 }

@@ -115,6 +115,7 @@ import {
   resolveReviewPolicy
 } from '../lib/config'
 import { printJson } from '../lib/envelope'
+import { isForgeReadOversize, readIssueComments } from '../lib/forge-read'
 import { makeCheckError, refuse } from '../lib/forge-write'
 
 // --- shared finding grammar ---------------------------------------------------
@@ -1453,14 +1454,20 @@ function resolveRulingOrdinalForPr(pr: string): number {
  * this file, even though the gate's own independent re-check later fails
  * closed on the resulting mismatch.
  */
-function resolveBriefHashForPr(pr: string, principalAllowlist: readonly string[]): string | null {
+export function resolveBriefHashForPr(pr: string, principalAllowlist: readonly string[]): string | null {
   const prBody = fetchPrBody(pr)
   const { issue } = extractIssue(prBody)
   if (issue === null) return null
-  let out: string
+  let comments: Array<{ body: string; author: string | null }>
   try {
-    out = gh(['issue', 'view', String(issue), '--json', 'comments'])
+    comments = readIssueComments(issue, `Issue #${issue}`).map((c) => ({
+      body: c.body,
+      author: c.author?.login ?? null
+    }))
   } catch (err) {
+    if (isForgeReadOversize(err)) {
+      refuseCmd(`${err.message} No frozen brief can be bound.`, "Trim the Issue's comments, then re-run.")
+    }
     if (isIssueNotFoundError(err)) {
       refuseCmd(
         `Issue #${issue} does not resolve via \`gh issue view\` — no frozen brief to bind against.`,
@@ -1472,8 +1479,6 @@ function resolveBriefHashForPr(pr: string, principalAllowlist: readonly string[]
       'Confirm `gh auth status` passes, then re-run.'
     )
   }
-  const parsed = JSON.parse(out) as { comments: Array<{ body: string; author?: { login?: string } | null }> }
-  const comments = parsed.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
   const frozen = resolveNewestFrozenBrief(comments, principalAllowlist as string[])
   return frozen ? briefHash(frozen.content) : null
 }
@@ -2199,5 +2204,5 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'review post': { date: '2026-09-11', callsToday: 8, retiresVia: 'devReviewLoop' }
+  'review post': { date: '2026-09-11', callsToday: 10, retiresVia: 'devReviewLoop' }
 }

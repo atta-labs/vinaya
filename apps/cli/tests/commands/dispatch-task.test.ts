@@ -167,6 +167,9 @@ case "$ARGS" in
   "issue view ${ISSUE_NUMBER} --json comments")
     echo '{"comments":[]}'
     ;;
+  "api repos/{owner}/{repo}/issues/${ISSUE_NUMBER}/comments?per_page=100&page=1")
+    echo '[]'
+    ;;
   "issue view ${ISSUE_NUMBER} --json body")
     cat "${issueBodyPath}"
     ;;

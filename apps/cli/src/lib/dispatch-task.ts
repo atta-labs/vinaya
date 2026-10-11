@@ -43,6 +43,7 @@ import { dispatchRole, isAgentClass, resolveClassModel, type AgentClass } from '
 import { assembleAndRenderBrief, assembleAndRenderBriefForIssue } from './brief-assembly.js'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 import { collectTaskIssueErrors, currentGhLogin, postMarkedComment } from './forge-write.js'
+import { isForgeReadOversize, readIssueComments } from './forge-read.js'
 import { emitCheckError } from '../checks/contract'
 
 export { AEG_BRIEF_V1_MARKER, briefHash, contentAfterTwoLines } from '@attalabs/aeg-core'
@@ -83,25 +84,24 @@ function sh(cmd: string, args: string[]): string {
 }
 
 type IssueComment = { body: string; url: string; author: string | null }
-type IssueCommentsJson = { comments: Array<{ body: string; url: string; author?: { login?: string } | null }> }
 
-function fetchIssueComments(n: number): IssueComment[] {
-  let out: string
+export function fetchIssueComments(n: number): IssueComment[] {
   try {
-    out = sh('gh', ['issue', 'view', String(n), '--json', 'comments'])
-  } catch (err) {
-    throw new DispatchTaskError(
-      `could not fetch Issue #${n}'s comments (\`gh issue view\`) to check for an existing brief — refusing rather than risking a duplicate: ${err instanceof Error ? err.message : String(err)}`
-    )
-  }
-  try {
-    return (JSON.parse(out) as IssueCommentsJson).comments.map((c) => ({
+    return readIssueComments(n, `Issue #${n}`).map((c) => ({
       body: c.body,
       url: c.url,
       author: c.author?.login ?? null
     }))
-  } catch {
-    throw new DispatchTaskError(`could not parse \`gh issue view ${n} --json comments\` output.`)
+  } catch (err) {
+    if (isForgeReadOversize(err)) {
+      throw new DispatchTaskError(
+        `${err.message} Cannot check for an existing brief — refusing rather than risking a duplicate.`
+      )
+    }
+    if (err instanceof SyntaxError) throw new DispatchTaskError(`could not parse Issue #${n}'s comments listing.`)
+    throw new DispatchTaskError(
+      `could not fetch Issue #${n}'s comments (\`gh api\`) to check for an existing brief — refusing rather than risking a duplicate: ${err instanceof Error ? err.message : String(err)}`
+    )
   }
 }
 

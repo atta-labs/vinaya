@@ -149,6 +149,19 @@ function stubGh(opts: {
     })
   )
   writeFileSync(labelsJsonPath, JSON.stringify({ labels: [{ name: 'vinaya/tranche:demo' }] }))
+  const restCommentsJsonPath = join(dir, 'rest-comments.json')
+  writeFileSync(
+    restCommentsJsonPath,
+    JSON.stringify(
+      opts.comments.map((c) => ({
+        body: c.body,
+        html_url: c.url ?? '',
+        user: c.author ? { login: c.author.login } : null
+      }))
+    )
+  )
+  const bodyOnlyJsonPath = join(dir, 'body-only.json')
+  writeFileSync(bodyOnlyJsonPath, JSON.stringify({ body: opts.body }))
   writeFileSync(editedBodyLogPath, '')
   writeFileSync(commentsLogPath, '')
   const login = opts.login ?? 'daniboomerang'
@@ -158,6 +171,10 @@ function stubGh(opts: {
     `#!/bin/sh
 if [ "$1" = "api" ] && [ "$2" = "user" ]; then
   echo "${login}"
+  exit 0
+fi
+if [ "$1" = "api" ] && case "$2" in repos/*/issues/*/comments*) true ;; *) false ;; esac; then
+  cat "${restCommentsJsonPath}"
   exit 0
 fi
 if [ "$1" = "label" ] && [ "$2" = "list" ]; then
@@ -175,6 +192,7 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
     *title*) cat "${fullContextJsonPath}" ;;
     *comments*) cat "${bodyCommentsJsonPath}" ;;
     *labels*) cat "${labelsJsonPath}" ;;
+    *"--json body") cat "${bodyOnlyJsonPath}" ;;
     *) echo "unhandled issue view: $*" >&2; exit 1 ;;
   esac
   exit 0
@@ -616,9 +634,14 @@ if [ "$1" = "api" ] && [ "$2" = "user" ]; then
   echo "daniboomerang"
   exit 0
 fi
+if [ "$1" = "api" ]; then
+  echo '[]'
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
   case "$*" in
     *title*) cat "${fullContextJsonPath}" ;;
+    *"--json body") cat "${fullContextJsonPath}" ;;
     *comments*) cat "${bodyCommentsJsonPath}" ;;
     *labels*) cat "${labelsJsonPath}" ;;
     *) echo "unhandled issue view: $*" >&2; exit 1 ;;
@@ -790,6 +813,12 @@ function readState() {
 
 if (args[0] === 'api' && args[1] === 'user') {
   console.log('daniboomerang')
+  process.exit(0)
+}
+if (args[0] === 'api' && /issues\\/\\d+\\/comments/.test(args[1])) {
+  console.log(
+    JSON.stringify(readState().comments.map((c) => ({ body: c.body, html_url: c.url ?? '', user: c.author ?? null })))
+  )
   process.exit(0)
 }
 // The two listings the pinned-file collision gate makes — an empty forge, so

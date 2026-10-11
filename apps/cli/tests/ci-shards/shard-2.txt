@@ -42,6 +42,7 @@ tests/lib/dev-review-loop/developer-publication.test.ts
 tests/lib/dev-review-loop/inproc-7.test.ts
 tests/lib/dev-review-loop/inproc-11.test.ts
 tests/lib/dispatch-task.test.ts
+tests/lib/forge-read.test.ts
 tests/lib/dispatch.test.ts
 tests/lib/codex-execpolicy.test.ts
 tests/lib/log-sync-folder-source.test.ts
