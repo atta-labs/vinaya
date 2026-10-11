@@ -16,7 +16,6 @@
  * the repo's own content, so the "diff" scope is otherwise unchanged.
  */
 
-import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import {
   buildConsumersOf as buildConsumersOfShared,
@@ -34,6 +33,7 @@ import {
   resolveNewestFrozenBrief
 } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { isForgeReadOversize, readIssueBody, readIssueComments } from '../../lib/forge-read'
 import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolvePrincipalAllowlist } from '../../lib/config'
 
 const CHECK_NAME = 'brief-shape'
@@ -41,18 +41,7 @@ const CHECK_NAME = 'brief-shape'
 type IssueCommentsJson = { comments: Array<{ body: string; author?: { login?: string } | null }> }
 
 function fetchIssueComments(issueNumber: number): IssueCommentsJson {
-  // `maxBuffer` matches the same 32 MiB ceiling every other `gh`-reading
-  // `execFileSync` call in this codebase already declares (`patch-id.ts`,
-  // `pr-report-engine.ts`, `pr-verify-evidence.ts`) — Node's own 1 MiB
-  // default throws `ENOBUFS` well before a long-running task Issue's real
-  // comment count gets anywhere near this bound (reproduced live: a task
-  // Issue carrying dozens of round/escalation comments already exceeds it).
-  const out = execFileSync('gh', ['issue', 'view', String(issueNumber), '--json', 'comments'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    maxBuffer: 32 * 1024 * 1024
-  })
-  return JSON.parse(out) as IssueCommentsJson
+  return { comments: readIssueComments(issueNumber, `Issue #${issueNumber}`) }
 }
 
 type GradedBodyResolution = { ok: true; body: string } | { ok: false; message: string }
@@ -90,6 +79,7 @@ function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResol
     if (isIssueNotFoundError(err)) {
       return { ok: true, body: prBody }
     }
+    if (isForgeReadOversize(err)) return { ok: false, message: err.message }
     return {
       ok: false,
       message: `could not fetch Issue #${issue}'s comments (\`gh issue view\`) to grade the dispatched brief: ${err instanceof Error ? err.message : String(err)}`
@@ -143,10 +133,7 @@ function buildConsumersOf(): (pkg: string) => string[] {
 }
 
 function fetchIssueBody(issueNumber: number): string {
-  return execFileSync('gh', ['issue', 'view', String(issueNumber), '--json', 'body', '--jq', '.body'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe']
-  })
+  return readIssueBody(issueNumber, `Issue #${issueNumber}`)
 }
 
 type ObjectivesResolution =

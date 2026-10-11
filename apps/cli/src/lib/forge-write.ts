@@ -26,6 +26,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'nod
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
+import { isForgeReadOversize, readIssueBody, readIssueComments } from './forge-read'
 import {
   boundaryPinnedFiles,
   checkAutonomyClause,
@@ -1854,31 +1855,29 @@ export function fetchForgeIssueContext(
   issueRef: string,
   retryCommand: string
 ): { body: string; comments: FrozenBriefCandidateWithUrl[] } {
-  let out: string
   try {
-    out = execFileSync('gh', ['issue', 'view', issueRef, '--json', 'body,comments'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
+    const body = readIssueBody(issueRef)
+    const comments = readIssueComments(issueRef)
+    return { body, comments: comments.map((c) => ({ body: c.body, url: c.url, author: c.author?.login ?? null })) }
   } catch (err) {
-    refuse([
-      makeCheckError(
-        'forge-fetch',
-        `Could not fetch Issue ${issueRef}'s body/comments from the forge (\`gh issue view\`) — the frozen-brief gate cannot decide whether it applies: ${(err as Error).message}`,
-        `Check \`gh auth status\` and network, then re-run \`${retryCommand}\`. The edit is refused rather than passed through unvalidated.`
-      )
-    ])
-  }
-  try {
-    const parsed = JSON.parse(out) as {
-      body: string
-      comments: Array<{ body: string; url: string; author: { login: string } | null }>
+    if (isForgeReadOversize(err)) {
+      refuse([
+        makeCheckError(
+          'forge-fetch',
+          `${err.message} The frozen-brief gate cannot decide whether it applies.`,
+          "Trim the Issue's comments, then re-run the command. The edit is refused rather than passed through unvalidated."
+        )
+      ])
     }
-    return {
-      body: parsed.body,
-      comments: parsed.comments.map((c) => ({ body: c.body, url: c.url, author: c.author?.login ?? null }))
+    if (!(err instanceof SyntaxError)) {
+      refuse([
+        makeCheckError(
+          'forge-fetch',
+          `Could not fetch Issue ${issueRef}'s body/comments from the forge (\`gh issue view\`) — the frozen-brief gate cannot decide whether it applies: ${(err as Error).message}`,
+          `Check \`gh auth status\` and network, then re-run \`${retryCommand}\`. The edit is refused rather than passed through unvalidated.`
+        )
+      ])
     }
-  } catch {
     refuse([
       makeCheckError(
         'forge-fetch',

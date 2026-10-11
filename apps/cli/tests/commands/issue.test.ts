@@ -72,6 +72,7 @@ function fakeGhLabelsPath(dir: string): string {
     gh,
     `#!/bin/sh
 case "$*" in
+  api*) echo '[]' ;;
   *labels*) echo '{"labels":[{"name":"vinaya/tranche:demo"}]}' ;;
   *) echo '{"body":"","comments":[]}' ;;
 esac
@@ -655,11 +656,26 @@ describe('vinaya issue edit (real write) — O3 frozen-brief section lock', () =
         ]
       })
     )
+    const bodyOnlyPath = join(dir, 'body-only.json')
+    writeFileSync(bodyOnlyPath, JSON.stringify({ body: OLD_BODY }))
+    const restCommentsPath = join(dir, 'rest-comments.json')
+    writeFileSync(
+      restCommentsPath,
+      JSON.stringify([
+        {
+          body: '<!-- aeg:brief:v1 -->\nBrief hash: x\nfrozen brief text',
+          html_url: '',
+          user: { login: 'daniboomerang' }
+        }
+      ])
+    )
     writeFileSync(
       gh,
       `#!/bin/sh
 case "$*" in
+  api*) cat "${restCommentsPath}" ;;
   *labels*) echo '{"labels":[{"name":"vinaya/tranche:demo"}]}' ;;
+  *"--json body") cat "${bodyOnlyPath}" ;;
   *comments*) cat "${bodyCommentsPath}" ;;
   *) echo "unhandled: $*" >&2; exit 1 ;;
 esac

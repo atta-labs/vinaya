@@ -71,6 +71,11 @@ if [ "$1" = "api" ]; then
     *git/ref/heads/stub-branch*) echo "${headSha}"; exit 0 ;;
   esac
 fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    repos/*/issues/*/comments*) echo '[]'; exit 0 ;;
+  esac
+fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
   case "$*" in
     *comments*) echo '{"comments": []}'; exit 0 ;;

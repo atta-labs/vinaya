@@ -160,6 +160,10 @@ if (args[0] === 'pr' && args[1] === 'view' && args.includes('comments')) {
   process.stdout.write(JSON.stringify({ comments: list.map((c) => ({ body: c.body, author: { login: c.author } })) }))
   process.exit(0)
 }
+if (args[0] === 'api' && /^repos\\/\\{owner\\}\\/\\{repo\\}\\/issues\\/\\d+\\/comments/.test(args[1])) {
+  process.stdout.write('[]')
+  process.exit(0)
+}
 if (args[0] === 'issue' && args[1] === 'view' && args.includes('comments')) {
   // resolveBriefHashForPr (task 4, #478, O1) always reaches this call —
   // this PR's own "Closes #1" resolves to a real Issue number. No
@@ -233,6 +237,10 @@ if (args[0] === 'api' && args[1] === 'repos/{owner}/{repo}/git/ref/heads/stub-br
 }
 if (args[0] === 'pr' && args[1] === 'view' && args.includes('body')) {
   process.stdout.write(${JSON.stringify(prBody)})
+  process.exit(0)
+}
+if (args[0] === 'api' && /^repos\\/\\{owner\\}\\/\\{repo\\}\\/issues\\/\\d+\\/comments/.test(args[1])) {
+  process.stdout.write('[]')
   process.exit(0)
 }
 if (args[0] === 'issue' && args[1] === 'view' && args.includes('comments')) {
@@ -871,6 +879,10 @@ if (args[0] === 'pr' && args[1] === 'view' && args.includes('body')) {
 if (args[0] === 'pr' && args[1] === 'view' && args.includes('comments')) {
   const list = readComments()
   process.stdout.write(JSON.stringify({ comments: list.map((c) => ({ body: c.body, author: { login: c.author } })) }))
+  process.exit(0)
+}
+if (args[0] === 'api' && /^repos\\/\\{owner\\}\\/\\{repo\\}\\/issues\\/\\d+\\/comments/.test(args[1])) {
+  process.stdout.write('[]')
   process.exit(0)
 }
 if (args[0] === 'issue' && args[1] === 'view' && args.includes('comments')) {
