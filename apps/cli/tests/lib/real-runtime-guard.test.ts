@@ -42,6 +42,22 @@ describe('real runtime directory guard', () => {
     }
   })
 
+  it('does not flag a directory whose only change is an exempt entry added inside it', () => {
+    const root = mkdtempSync(join(tmpdir(), 'real-runtime-guard-'))
+    try {
+      mkdirSync(join(root, 'tasks-execution', 'old'), { recursive: true })
+      const cutoff = Date.now() + 1000
+      Bun.sleepSync(1100)
+      mkdirSync(join(root, 'tasks-execution', '7'))
+      writeFileSync(join(root, 'tasks-execution', '7', 'a'), 'x')
+      expect(touchedSince(root, cutoff, [join('tasks-execution', '7')])).toEqual([])
+      // the same directory created after the cutoff, not exempt, is flagged
+      expect(touchedSince(root, cutoff, [])).toEqual([join('tasks-execution', '7'), join('tasks-execution', '7', 'a')])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('exempts a task whose lock names a running process, not one whose pid is dead', () => {
     const root = mkdtempSync(join(tmpdir(), 'real-runtime-guard-'))
     try {

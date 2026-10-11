@@ -752,7 +752,7 @@ const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>> = {
   doctrine: ({ bin, fixtureDir }) => {
     // The published-tarball resolution shape, for real: the scratch install's
     // own bundled `aeg-root/` (in the `files` array) is what must resolve —
-    // exactly the path the committed VINAYA.md pointer hands every reader.
+    // exactly the path the committed AGENTS.md pointer hands every reader.
     const plain = run(bin, ['doctrine'], fixtureDir)
     const printed = plain.stdout.trim()
     const entrySuffix = join('aeg-root', 'skills', 'aeg', 'SKILL.md')

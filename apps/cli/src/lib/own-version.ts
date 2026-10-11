@@ -6,7 +6,7 @@
 // the workflows did not). `doctor.ts` and `quickstart.ts` read the same
 // `package.json` for display, but neither feeds a generated artifact, so
 // neither can cause that drift — nor can `index.ts`'s own `readVersion()`, the
-// third such display reader. The root `VINAYA.md` doctrine pointer
+// third such display reader. The root `AGENTS.md` doctrine pointer
 // (`doctrinePointer`) is deliberately left unpinned — it is a reading-order
 // hint a human runs by hand, not a CI invocation.
 //

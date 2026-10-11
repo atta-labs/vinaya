@@ -319,7 +319,7 @@ Run \`vinaya doctrine --role operator --print\` and follow its output as your op
       mkdirSync(rolesDir, { recursive: true })
       writeFileSync(join(rolesDir, 'developer.md'), '# Developer\n')
 
-      expect(staleAgentSkillPaths(tempDir, ['.claude/commands/vinaya.md', 'VINAYA.md'])).toEqual([])
+      expect(staleAgentSkillPaths(tempDir, ['.claude/commands/vinaya.md', 'AGENTS.md'])).toEqual([])
     })
   })
 

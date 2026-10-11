@@ -113,7 +113,11 @@ async function runSync(
   const { status, stdout, stderr } = spawnSyncBudgeted(
     'bun',
     [script],
-    { cwd, encoding: 'utf8', env: { ...stripVinayaEnv(), HOME: home } },
+    // `BUN_RUNTIME_TRANSPILER_CACHE_PATH: '0'` — Bun's own transpiler cache
+    // would otherwise land under this throwaway `$HOME` (`Library/Caches/bun`
+    // on macOS) for any large enough imported source file, and the O5 test
+    // below reads every new file under `$HOME` as the command's own write.
+    { cwd, encoding: 'utf8', env: { ...stripVinayaEnv(), HOME: home, BUN_RUNTIME_TRANSPILER_CACHE_PATH: '0' } },
     20_000,
     'vinaya sync'
   )

@@ -37,9 +37,11 @@ import { DOC_OWNERS_PATH } from '@attalabs/aeg-core'
 import {
   buildInitOps,
   CONFIG_PATH,
+  DOCTRINE_POINTER_PATHS,
   type HookDir,
   type InitContext,
   MCP_JSON_PATH,
+  RETIRED_DOCTRINE_POINTER_PATH,
   TASK_LOG_COLLECTOR_WORKFLOW_PATH,
   TRACKED_HOOK_DIR
 } from '../lib/artifacts.js'
@@ -471,6 +473,15 @@ export function planUpgrade(
         // foreign file at a vinaya path.
         action = 'recreate'
         hasChanges = true
+      } else if (DOCTRINE_POINTER_PATHS.includes(op.path) && !owned && !exists) {
+        // Retrofit for the doctrine pointer's vendor-read files: an install
+        // that predates them recorded the old `VINAYA.md` instead, so the
+        // generic `!owned` branch below would skip them forever as
+        // `not-installed`. Written only when nothing exists yet — an
+        // adopter's own `AGENTS.md`, `CLAUDE.md` or `.gemini/settings.json`
+        // falls through to that branch and is refused, left untouched.
+        action = 'recreate'
+        hasChanges = true
       } else if (isAgentSkillPath(op.path) && !owned && !exists) {
         // Retrofit for a role skill the recorded selection never wrote: a
         // new role, or a skill directory added after the install (the
@@ -588,6 +599,17 @@ function withClaudeStopHookRecorded(manifest: ManagedManifest, plan: UpgradePlan
       e.action === 'recreate' &&
       isAgentSkillPath(e.op.path) &&
       !isDefaultedAgentVendorPath(e.op.path, manifest) &&
+      !files.includes(e.op.path)
+    )
+      files = [...files, e.op.path]
+  }
+
+  // The doctrine pointer files the retrofit just wrote are now owned.
+  for (const e of plan.entries) {
+    if (
+      e.kind === 'create-file' &&
+      e.action === 'recreate' &&
+      DOCTRINE_POINTER_PATHS.includes(e.op.path) &&
       !files.includes(e.op.path)
     )
       files = [...files, e.op.path]
@@ -884,7 +906,16 @@ export async function runUpgrade(args: string[], deps: UpgradeDeps): Promise<num
   const staleWorkflowPaths = planManifest.files.includes(TASK_LOG_COLLECTOR_WORKFLOW_PATH)
     ? [TASK_LOG_COLLECTOR_WORKFLOW_PATH]
     : []
-  const plan = planUpgrade(ops, repo.repoRoot, planManifest, routing, [...staleSkillPaths, ...staleWorkflowPaths])
+  // The pointer's former name is retired the same way: `AGENTS.md` replaces
+  // it, so a manifest that still owns `VINAYA.md` gets it removed.
+  const stalePointerPaths = planManifest.files.includes(RETIRED_DOCTRINE_POINTER_PATH)
+    ? [RETIRED_DOCTRINE_POINTER_PATH]
+    : []
+  const plan = planUpgrade(ops, repo.repoRoot, planManifest, routing, [
+    ...staleSkillPaths,
+    ...staleWorkflowPaths,
+    ...stalePointerPaths
+  ])
   const hasChanges = plan.hasChanges || ringsMigration !== null
 
   if (!hasChanges) {
