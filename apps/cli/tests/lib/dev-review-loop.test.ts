@@ -2575,7 +2575,7 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
       // held verdict must not survive on disk either (round 1 review finding,
       // BLOCKER, PR #489: `writeHeldVerdict` used to run inside `dispatchReviewer`
       // itself, so the succeeding role's file was already written by the time
-      // `Promise.all` rejected on its sibling).
+      // its sibling failed).
       expect(existsSync(join(ipRoundDir(world, 1), 'reviewer.md'))).toBe(false)
       expect(existsSync(join(ipRoundDir(world, 1), 'security.md'))).toBe(false)
       const pauseState = JSON.parse(readFileSync(join(ipControlDir(world), 'pause-state.json'), 'utf8')) as Record<
@@ -2612,11 +2612,13 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
         'gate_result_read',
         'stop_condition_met',
         'paused',
-        'round_ended',
+        // No `round_ended`: the round held no verdict, so it is never closed
+        // as `changes_requested` — the resumed run reviews it and ends it.
         'journal_finalized',
         // #949, O2: the driver's own exit event, after the round's pause record.
         'driver_exited'
       ])
+      expect(ipOutboxLines(world).some((l) => l.event === 'round_ended')).toBe(false)
       const stop = ipOutboxLines(world).find((l) => l.event === 'stop_condition_met') as Record<string, unknown>
       expect(stop.condition).toBe('principal_stop')
       const journalFinalized = ipOutboxLines(world).find((l) => l.event === 'journal_finalized') as Record<
