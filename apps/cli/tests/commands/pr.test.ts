@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -299,10 +299,27 @@ describe('vinaya pr create --validate-only — runs the registry PR_BODY checks 
   })
 
   it('opens a clean, fully-conformant body — --validate-only reports PASS, writes nothing', () => {
+    // This repository's own config, in a repository of its own on a non-task
+    // branch: `pr create` grades the branch it opens from, and run from the
+    // real checkout on a `task/<tranche>/<n>` branch the brief gate would ask
+    // the forge for the fixture's `Closes #N` Issue's brief instead.
+    const cwd = mkdtempSync(join(tmpdir(), 'vinaya-pr-clean-'))
+    writeFileSync(join(cwd, 'vinaya.config.json'), readFileSync(join(REPO_ROOT, 'vinaya.config.json'), 'utf8'), 'utf8')
+    const gitEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'x',
+      GIT_AUTHOR_EMAIL: 'x@x.com',
+      GIT_COMMITTER_NAME: 'x',
+      GIT_COMMITTER_EMAIL: 'x@x.com'
+    }
+    execFileSync('git', ['init', '-q', '-b', 'fix/clean-body'], { cwd })
+    execFileSync('git', ['add', '.'], { cwd, env: gitEnv })
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd, env: gitEnv })
     const r = runCli(
       ['pr', 'create', '--validate-only', '--body-file', join(FORGE_FIXTURES, 'pr-clean-body.md'), '--title', 'Fix: x'],
-      { cwd: REPO_ROOT }
+      { cwd }
     )
+    rmSync(cwd, { recursive: true, force: true })
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('PASS')
   })

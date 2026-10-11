@@ -6,8 +6,8 @@
  * listed in). Metadata only (`lstat`) — never a file's contents. It imports
  * nothing from `src/`, so it adds no dependent to any module's test selection.
  *
- * Every entry whose mtime/ctime is at or after this process's own start was
- * written during this run. Two paths are exempt, only when `VINAYA_TASK` says a
+ * Every file whose mtime/ctime, and every directory whose birth time, is at or
+ * after this process's own start was written during this run. Two paths are exempt, only when `VINAYA_TASK` says a
  * dispatched run is live, because that run legitimately writes them while its
  * own suite runs: `tasks-execution/<VINAYA_TASK>` and `tasks-execution/unscoped`.
  * A task whose `tasks-execution/<task>/driver.pid.json` names a running process
@@ -105,8 +105,14 @@ export function touchedSince(root: string, sinceMs: number, exempt: string[]): s
       } catch {
         continue
       }
-      if (st.mtimeMs >= sinceMs || st.ctimeMs >= sinceMs) touched.push(rel)
-      if (st.isDirectory()) walk(full)
+      // A directory's own mtime moves whenever an entry inside it is added or
+      // removed — an exempt live task's folder included — so a directory counts
+      // only when it was created during this run; a changed file inside it is
+      // flagged on its own path by the walk.
+      if (st.isDirectory()) {
+        if (st.birthtimeMs >= sinceMs) touched.push(rel)
+        walk(full)
+      } else if (st.mtimeMs >= sinceMs || st.ctimeMs >= sinceMs) touched.push(rel)
     }
   }
   walk(root)
