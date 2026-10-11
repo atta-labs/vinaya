@@ -1,5 +1,31 @@
 # @atta/vinaya-sources
 
+## 0.39.0
+
+### Minor Changes
+
+- 8871356: New `vinaya issue surface --body-file <path>` prints what a draft Issue's Boundary pins force on its `## Surface`: every tracked source or test importing a pinned file, marked reached by an `in:` glob, disclaimed in the Boundary's `Out:` clause, or uncovered with the glob that would reach it; plus the CI shard list for a new pinned test file and the loop invariant map for a new pinned loop file. It writes nothing and exits 0, or 2 when the body does not parse. `vinaya issue create` and `vinaya issue edit` now refuse an Issue when any importer of a pinned file is undecided — one covered importer no longer silences the rule for the others — and both the report and the refusal come from one function, `decidePinnedFileImporters`.
+- 3371b1c: `vinaya task run <tranche> <n> --widen-surface <glob,...> --reason <text>` (and the `--issue <n>` form) continues a pre-pull-request escalation whose Developer asked for `widen_surface`: it supersedes the frozen brief with the widened Surface, records that as the escalation's resolution, grades the widened Issue through the write gate, then starts the run. It refuses before any of that when the pause is not such an escalation, a driver is still alive, the escalation was already answered, or the widened body fails the gate. The escalation packet names the command with the globs the Developer asked for, and `task_resume` refuses such an escalation naming it.
+
+### Patch Changes
+
+- ca105a0: Every command in the command reference now declares what it needs beyond the sandbox — a forge credential, a default-branch checkout, an operator seat, or nothing — and the Issue gate's Developer-runnable rule derives its forbidden set from those declarations instead of a typed list. `vinaya issue create` and `vinaya issue edit` therefore refuse a Test plan line that runs `brief render`, `task status`, `issue create` (even with `--validate-only`) or any other command that needs the forge or the default branch, naming the need; only the foreign binaries (`gh`, `git push`, `ssh`) stay typed.
+- 52def41: Every agent session now loads the doctrine pointer from the file its vendor reads at start. `vinaya init` and `vinaya upgrade` write the pointer to a root `AGENTS.md` (Codex reads it), a root `CLAUDE.md` whose body is the import line `@AGENTS.md` plus one sentence naming `/vinaya <role>` (Claude Code reads it), and, for the `gemini` agent vendor, `.gemini/settings.json` naming `AGENTS.md` as Gemini CLI's context file. Each is written only where no file of that name exists; an adopter's own file is refused and left untouched. The pointer's role list is generated from the bundled doctrine's roles, with human-only and retired roles left out the way the role skills leave them out, so it now names the Operator and no longer names the Principal. `VINAYA.md` is no longer generated: `upgrade` removes a copy the manifest records, `eject` removes it like any recorded file, and `doctor` reports a recorded `VINAYA.md`, and a missing or drifted `AGENTS.md`, `CLAUDE.md` or `.gemini/settings.json`, like every other managed artifact. The `pr-report-density` check no longer counts the driver-written `AEG:BEYOND-SURFACE` block in `## Scope` as a second paragraph: it strips every anchored field the body grammar declares.
+- Updated dependencies [67ebb17]
+- Updated dependencies [edf803d]
+- Updated dependencies [ca105a0]
+- Updated dependencies [4be39fa]
+- Updated dependencies [b970ceb]
+- Updated dependencies [52def41]
+- Updated dependencies [b970ceb]
+- Updated dependencies [8871356]
+- Updated dependencies [28a268e]
+- Updated dependencies [312f42d]
+- Updated dependencies [19a7e36]
+  - @attalabs/aeg-core@0.39.0
+  - @attalabs/aeg-forge-state@0.39.0
+  - @attalabs/aeg-types@0.39.0
+
 ## 0.38.0
 
 ### Patch Changes
