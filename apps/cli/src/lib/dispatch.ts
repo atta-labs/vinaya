@@ -3879,7 +3879,7 @@ export const LINUX_SANDBOX_PROBE_DEPS: { platform: NodeJS.Platform; run: Sandbox
  * named allowlist — shared by the real spawn and the pre-spawn probe, so the
  * probe's sandboxed command sees what the dispatch's commands will.
  */
-function confinedClaudeEnvExtras(scratchDir: string, pathOverride: string | undefined): Record<string, string> {
+export function confinedClaudeEnvExtras(scratchDir: string, pathOverride: string | undefined): Record<string, string> {
   return {
     TMPDIR: scratchDir,
     TMP: scratchDir,

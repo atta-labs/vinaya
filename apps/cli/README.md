@@ -317,6 +317,12 @@ Two things worth knowing about its shape. `ack` is one flat list rather than per
 
 Report-only, like every other `vinaya doctor` diagnostic: it restores nothing itself.
 
+## Agent sandbox probe
+
+On Linux, `vinaya doctor` runs the same sandbox probe a dispatch runs before it starts a Claude agent: one trivial command through Claude Code's own sandbox, configured from a throwaway copy of the dispatch's settings file that is removed afterwards. The `agent-sandbox` finding says, before any task is launched, whether a dispatched agent could run a command on this host. A failure quotes the sandbox's own error; when that error is the kernel refusing the sandbox's Unix-socket seccomp step, it names `VINAYA_LINUX_SANDBOX_ALLOW_UNIX_SOCKETS=1`, the host opt-in that turns off only that filter. A Linux host missing the sandbox's tools is reported as a refused dispatch. With no `claude` on `PATH`, or on any platform other than Linux, the finding says the probe did not run and never fails the command.
+
+Report-only, like every other `vinaya doctor` diagnostic: it changes nothing on the host.
+
 ## Pinning Studio's port
 
 `vinaya studio` binds `3008`, or `3108` when that is taken. `--port <n>` overrides both, and the override does **not** fall back: if the port you named is busy, the command refuses instead of quietly binding a different one.

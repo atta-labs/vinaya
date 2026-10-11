@@ -2,12 +2,25 @@
 // wrote (see lib/artifacts.ts, lib/ops.ts) and reports drift against them.
 //
 // Contract: doctor NEVER mutates. Every code path in this file is
-// read-only — no fs write, no `gh` write, no forge mutation. It exists
+// read-only — no fs write, no `gh` write, no forge mutation. The one
+// exception is the agent-sandbox probe's throwaway settings directory under
+// the OS temp directory, removed before its finding is reported. It exists
 // precisely because a doctor that "fixes" silently destroys the support
 // story; `vinaya upgrade` is the only sanctioned path back to a clean state.
 
 import { execFileSync } from 'node:child_process'
-import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync
+} from 'node:fs'
+import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import type { CheckSpec } from '../checks/contract.js'
 import { coreCheckRegistry } from '../checks/registry.js'
@@ -95,6 +108,18 @@ import { checksMissingEnvDeclaration, envDeclarationWarning } from '../lib/env-l
 import { PROJECTS_REGISTRY_PATH } from '../lib/registry-write.js'
 import { markerLines, renderBlock, resolveManagedBlockPath } from '../lib/ops.js'
 import { packageRoot } from '../lib/package-root.js'
+import { confinedClaudeEnvExtras, writeDispatchSettingsAt } from '../lib/dispatch.js'
+import {
+  buildWorkerEnv,
+  CLAUDE_SANDBOX_ALLOWED_DOMAINS,
+  type ConfinementPlatformDeps,
+  LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV,
+  probeAgentSandbox,
+  realConfinementPlatformDeps,
+  resolveClaudeConfinement,
+  runRealSandboxProbe,
+  type SandboxProbeRunner
+} from '../lib/worker-boundary.js'
 
 export type DoctorDeps = {
   detectRepo: () => Promise<RepoInfo | null>
@@ -112,6 +137,17 @@ export type DoctorDeps = {
   probeLogServer: (url: string, headers: Record<string, string> | undefined) => Promise<LogServerProbe>
   /** O3: the last time an unattended run fell back to the local folder although a server was configured — read from the machine-local state file the sink records it in, so the cause survives a launch path that keeps no standard error. `null` when none is recorded. Optional and injected so the check is provable with a fixture; an omitted entry falls back to the real per-repository reader, so every existing `DoctorDeps` constructor keeps compiling unchanged. */
   readLastLogFallback?: () => Promise<FolderFallbackRecord | null>
+  /** The host facts and runner the dispatch's own sandbox probe uses. Omitted, no probe runs and no finding is reported: only `realDeps` reads the real host, so a test fixture never starts an agent. */
+  agentSandboxProbe?: AgentSandboxProbeDeps
+}
+
+/** What the `agent-sandbox` finding reads from the host — each swapped by a test to prove the finding's outcomes without a Linux host or a real agent. */
+export type AgentSandboxProbeDeps = {
+  /** The platform, the sandbox tools and the Unix-socket opt-in, exactly as a dispatch reads them. */
+  confinementPlatform: () => ConfinementPlatformDeps
+  /** The absolute path of the `claude` binary on `PATH`, or `null` when there is none. */
+  claudeBinary: () => string | null
+  run: SandboxProbeRunner
 }
 
 function readVersion(): string {
@@ -279,8 +315,27 @@ export function realDeps(): DoctorDeps {
     meteringCapability: () => resolveMeteringCapability(hardenedMeteringDeps()),
     resolveLogDestination: resolveLogDestinationForDoctor,
     probeLogServer: probeLogDestinationServer,
-    readLastLogFallback: readLastLogFallbackReal
+    readLastLogFallback: readLastLogFallbackReal,
+    agentSandboxProbe: {
+      confinementPlatform: realConfinementPlatformDeps,
+      claudeBinary: () => executableOnPath('claude'),
+      run: runRealSandboxProbe
+    }
   }
+}
+
+/** A pure `PATH` scan for an executable file, never a subprocess spawn — the same discipline as `diagnoseVinayaOnPath`. */
+function executableOnPath(name: string): string | null {
+  for (const dir of (process.env.PATH ?? '').split(delimiter).filter(Boolean)) {
+    const candidate = join(dir, name)
+    try {
+      accessSync(candidate, constants.X_OK)
+      if (statSync(candidate).isFile()) return candidate
+    } catch {
+      // not here
+    }
+  }
+  return null
 }
 
 /** The real per-repository read of the O3 fallback state file — the default when a `DoctorDeps` omits its own `readLastLogFallback`. Bounded like every other forge read doctor makes. */
@@ -1495,6 +1550,100 @@ async function diagnoseLastLogFallback(deps: DoctorDeps): Promise<Finding[]> {
 }
 
 // ---------------------------------------------------------------------------
+// agent-sandbox — report-only. On Linux, runs the dispatch's own pre-spawn
+// sandbox probe (`probeAgentSandbox`) against a settings file written by the
+// dispatch's own writer into a throwaway directory, so `doctor` says before
+// any task is launched whether a dispatched Claude agent could run a command
+// on this host. Any other platform: the probe does not apply, and says so.
+// The throwaway directory is removed before the finding is returned.
+// ---------------------------------------------------------------------------
+async function diagnoseAgentSandbox(deps: DoctorDeps, repoRoot: string): Promise<Finding[]> {
+  const probeDeps = deps.agentSandboxProbe
+  if (probeDeps === undefined) return []
+  const platform = probeDeps.confinementPlatform()
+  if (platform.platform !== 'linux') {
+    return [
+      info(
+        'agent-sandbox',
+        `the dispatch's sandbox probe applies only on Linux — on ${platform.platform} it does not apply and did not run.`
+      )
+    ]
+  }
+  const binaryPath = probeDeps.claudeBinary()
+  if (binaryPath === null) {
+    return [
+      info('agent-sandbox', "`claude` is not on PATH, so the dispatch's sandbox probe could not run on this host.")
+    ]
+  }
+  const scratchDir = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-doctor-sandbox-probe-')))
+  try {
+    const confinement = resolveClaudeConfinement(
+      {
+        role: 'developer',
+        agent: 'claude',
+        worktreeDir: repoRoot,
+        scratchDir,
+        allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS
+      },
+      platform
+    )
+    if (!confinement.confined) {
+      return [
+        error('agent-sandbox', `a dispatched Claude agent would be refused on this host — ${confinement.warning}`)
+      ]
+    }
+    const settingsPath = writeDispatchSettingsAt(
+      join(scratchDir, 'hooks'),
+      'doctor-sandbox-probe',
+      [],
+      'developer',
+      repoRoot,
+      [],
+      [],
+      confinement.settings
+    )
+    if (settingsPath === null) {
+      return [
+        warn('agent-sandbox', "the dispatch's settings file could not be written, so the sandbox probe did not run.")
+      ]
+    }
+    const probe = await probeAgentSandbox(
+      {
+        agent: 'claude',
+        binaryPath,
+        cwd: repoRoot,
+        env: buildWorkerEnv(process.env, {
+          GH_TELEMETRY: '0',
+          ...confinedClaudeEnvExtras(confinement.scratchDir, confinement.pathOverride)
+        }),
+        settingsPath
+      },
+      { platform: platform.platform, run: probeDeps.run }
+    )
+    const filterNote = confinement.unixSocketFilterOff
+      ? ` (the sandbox's Unix-socket filter is off: ${LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV}=1)`
+      : ''
+    if (probe.ok) {
+      return [ok('agent-sandbox', `a dispatched Claude agent ran a command in its sandbox on this host${filterNote}.`)]
+    }
+    const remedy =
+      !confinement.unixSocketFilterOff && /seccomp/i.test(probe.error)
+        ? ` The kernel refuses the sandbox's Unix-socket seccomp step: the host's owner may set ` +
+          `${LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV}=1 in the driver's own environment, which turns off only that filter.`
+        : ''
+    return [
+      error(
+        'agent-sandbox',
+        `a dispatched Claude agent could not run a command in its sandbox on this host${filterNote}, ` +
+          `so every Claude dispatch here is refused — ${probe.error}${remedy}`
+      )
+    ]
+  } finally {
+    rmSync(scratchDir, { recursive: true, force: true })
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Report rendering
 // ---------------------------------------------------------------------------
 function symbolFor(severity: Severity): string {
@@ -1586,6 +1735,7 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
   findings.push(...diagnoseTestCi(repo.repoRoot))
   findings.push(...(await diagnoseLogDestination(deps)))
   findings.push(...(await diagnoseLastLogFallback(deps)))
+  findings.push(...(await diagnoseAgentSandbox(deps, repo.repoRoot)))
 
   const healthy = findings.every((f) => f.severity === 'ok' || f.severity === 'info')
 
