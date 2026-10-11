@@ -2204,5 +2204,5 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'review post': { date: '2026-09-11', callsToday: 8, retiresVia: 'devReviewLoop' }
+  'review post': { date: '2026-09-11', callsToday: 10, retiresVia: 'devReviewLoop' }
 }
