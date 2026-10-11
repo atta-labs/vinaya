@@ -35,6 +35,7 @@ import { join } from 'node:path'
 import type { Role } from '@attalabs/aeg-core'
 import { devToolsSocketRoot } from './task-tools/dev-tools-registration.js'
 import { documentationReceiptsPath } from './task-tools/fetch-documentation.js'
+import { isReviewerScratchName } from './dev-review-loop/reviewer-isolation.js'
 
 /** The same allowlist discipline `apps/cli/src/checks/runner.ts`'s `buildCheckEnv` already applies to a custom check's child — named here again, deliberately, rather than imported: `checks/runner.ts` sits outside this task's surface (`apps/cli/src/checks` is explicitly named `out:` in the dispatched brief), and this list is small enough that naming it twice costs less than reaching across that boundary. `apps/cli/specs/isolation.md` §2 documents this precedent as the pattern this module extends to the Worker/Reviewer dispatch path. */
 export const WORKER_ENV_ALLOWLIST_KEYS = [
@@ -1915,6 +1916,18 @@ function roundEntryBelongsToRole(name: string, role: Role): boolean {
   return name === prefix || name.startsWith(`${prefix}-retry`)
 }
 
+/**
+ * A round-folder entry a concurrently-dispatched sibling reviewer creates or
+ * removes during its own turn: its work directory (`roundEntryBelongsToRole`)
+ * and its scratch copy of the candidate (`reviewerScratchDir`'s name family).
+ * `candidate` itself is never one of these — the driver builds it once per
+ * round for both reviewers, so a change to it during a turn is a violation.
+ */
+function isConcurrentSiblingRoundEntry(name: string, sibling: Role): boolean {
+  if (roundEntryBelongsToRole(name, sibling)) return true
+  return isReviewerScratchName(name, sibling === 'code-reviewer' ? 'reviewer' : 'security')
+}
+
 /** Every role this file's sessions area ever names in a filename — the three worker roles a turn can actually be dispatched as. `code-reviewer` itself contains a `-`, so matching against this list (longest/most-specific first) is what makes the split unambiguous; splitting on the first `-` alone (round 2 review, BLOCKER) misreads `code-reviewer-<agent>.json` as role `code`. */
 const SESSION_ENTRY_ROLES: readonly Role[] = ['code-reviewer', 'developer', 'security']
 
@@ -1940,6 +1953,8 @@ function sessionEntryRole(name: string): string {
  *   which may still be mid-write when this dispatch's own turn ends. Every
  *   OTHER round's sibling folder stays protected; only `round`'s is excused,
  *   and only for the sibling, never for a THIRD role (there is none here).
+ *   That same-round excusal covers the sibling's scratch copies too
+ *   (`isConcurrentSiblingRoundEntry`), never the shared `candidate`.
  */
 function otherRolesProtectedPaths(input: {
   runtimeDir: string
@@ -1970,7 +1985,11 @@ function otherRolesProtectedPaths(input: {
       const roundDir = join(roundsDir, roundName)
       for (const name of readdirSync(roundDir)) {
         if (roundEntryBelongsToRole(name, input.role)) continue
-        if (concurrentSibling !== null && roundNum === input.round && roundEntryBelongsToRole(name, concurrentSibling))
+        if (
+          concurrentSibling !== null &&
+          roundNum === input.round &&
+          isConcurrentSiblingRoundEntry(name, concurrentSibling)
+        )
           continue
         const path = join(roundDir, name)
         entries.push({ path, kind: entryKind(path) })
