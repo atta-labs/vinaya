@@ -912,11 +912,21 @@ export function makeInSurfacePredicate(inGlobs: readonly string[]): (location: s
   }
 }
 
+/** The `changedFile` predicate: a finding's file is one the task branch changed — an exact path in the branch's merge-base changed-path set. */
+export function makeChangedFilePredicate(changedPaths: readonly string[]): (location: string) => boolean {
+  const changed = new Set(changedPaths)
+  return (location: string) => changed.has(parseFindingLocation(location).file)
+}
+
 /**
  * The round's deferral context (O2/O3), from what the driver could resolve:
  *
- *   - `inSurface` is active whenever the task's `## Surface` `in:` list
- *     resolved — ANY round (O3);
+ *   - `inSurface` and `changedFile` are active together whenever the task's
+ *     `## Surface` `in:` list resolved and the branch's changed-path set was
+ *     read — ANY round (O3). A finding on a changed file beyond the Surface is
+ *     reviewed; only one on an unchanged file beyond it is deferred. Without
+ *     the changed-path set neither is set, so nothing is deferred for the
+ *     Surface;
  *   - `changedLine` is active only from round 2 on, AND only when the previous
  *     round's head was recovered, differs from the current head, and the diff
  *     between them was readable. Round 1, an unrecoverable previous head, an
@@ -929,11 +939,14 @@ export function buildRoundDeferralContext(args: {
   previousRoundHead: string | null
   head: string
   surface: IssueSurface | null
+  /** The task branch's changed paths (merge base to `head`), or `null` when they could not be read. */
+  changedPaths: readonly string[] | null
   unifiedDiff?: (from: string, to: string) => string | null
 }): FindingDeferralContext {
   const context: FindingDeferralContext = {}
-  if (args.surface && args.surface.in.length > 0) {
+  if (args.surface && args.surface.in.length > 0 && args.changedPaths !== null) {
     context.inSurface = makeInSurfacePredicate(args.surface.in)
+    context.changedFile = makeChangedFilePredicate(args.changedPaths)
   }
   if (args.round >= 2 && args.previousRoundHead !== null && args.previousRoundHead !== args.head && args.unifiedDiff) {
     const diff = args.unifiedDiff(args.previousRoundHead, args.head)

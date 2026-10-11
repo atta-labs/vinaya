@@ -44,6 +44,10 @@ import {
   checkSurfaceGlobsResolve,
   checkSurfaceOverlap,
   checkSurfaceScope,
+  beyondSurfacePaths,
+  recordedBeyondSurfacePaths,
+  renderBeyondSurfaceBlock,
+  withBeyondSurfaceBlock,
   checkTestPlanDeveloperRunnable,
   checkTrancheLabelPresence,
   declaredProjects,
@@ -2053,41 +2057,115 @@ describe('globCoversPath — the root glob `*` (#826, O1/O2/O3)', () => {
   })
 })
 
-describe('checkSurfaceScope (O7)', () => {
-  it('passes when no changed file falls inside an out: glob', () => {
-    const result = checkSurfaceScope(['packages/aeg-core/src/issue-validation.ts'], ['packages/aeg-core/src/other/**'])
+describe('checkSurfaceScope — a beyond-Surface path passes only when the body records it', () => {
+  it('passes when no changed file is beyond the Surface', () => {
+    const result = checkSurfaceScope(
+      ['packages/aeg-core/src/issue-validation.ts'],
+      { in: ['packages/aeg-core/src'], out: ['packages/aeg-core/src/other/**'] },
+      []
+    )
     expect(result.ok).toBe(true)
   })
 
-  it('fails, naming the file and the glob, when a changed file falls inside an out: glob', () => {
-    const result = checkSurfaceScope(['packages/aeg-core/src/other/thing.ts'], ['packages/aeg-core/src/other/**'])
-    expect(result.ok).toBe(false)
-    if (result.ok) return
-    expect(result.violations).toEqual([
-      { file: 'packages/aeg-core/src/other/thing.ts', glob: 'packages/aeg-core/src/other/**' }
-    ])
+  it('fails, naming the file and the out: glob it crosses, when the crossing is not recorded', () => {
+    const result = checkSurfaceScope(
+      ['packages/aeg-core/src/other/thing.ts'],
+      { in: [], out: ['packages/aeg-core/src/other/**'] },
+      []
+    )
+    expect(result).toEqual({
+      ok: false,
+      violation: { path: 'packages/aeg-core/src/other/thing.ts', reason: 'out', glob: 'packages/aeg-core/src/other/**' }
+    })
   })
 
-  it('reports every violation in one pass, not only the first (O12 discipline)', () => {
-    const result = checkSurfaceScope(['a/one.ts', 'b/two.ts', 'c/three.ts'], ['a/**', 'b/**'])
-    expect(result.ok).toBe(false)
-    if (result.ok) return
-    expect(result.violations).toEqual([
-      { file: 'a/one.ts', glob: 'a/**' },
-      { file: 'b/two.ts', glob: 'b/**' }
-    ])
+  it('fails on a changed file no in: glob covers, when it is not recorded', () => {
+    const result = checkSurfaceScope(['docs/x.md'], { in: ['src'], out: [] }, [])
+    expect(result).toEqual({ ok: false, violation: { path: 'docs/x.md', reason: 'in', glob: null } })
   })
 
-  it('passes trivially when no out: globs are declared', () => {
-    const result = checkSurfaceScope(['anything.ts'], [])
+  it('names only the first unrecorded beyond-Surface path, skipping recorded ones', () => {
+    const result = checkSurfaceScope(['a/one.ts', 'b/two.ts', 'c/three.ts'], { in: [], out: ['a/**', 'b/**'] }, [
+      'a/one.ts'
+    ])
+    expect(result).toEqual({ ok: false, violation: { path: 'b/two.ts', reason: 'out', glob: 'b/**' } })
+  })
+
+  it('passes when every beyond-Surface path is recorded', () => {
+    const result = checkSurfaceScope(['a/one.ts', 'docs/x.md'], { in: ['a', 'src'], out: ['a/**'] }, [
+      'a/one.ts',
+      'docs/x.md'
+    ])
     expect(result.ok).toBe(true)
   })
 
-  it('names the first matching glob when a file falls under more than one', () => {
-    const result = checkSurfaceScope(['a/b/c.ts'], ['a/**', 'a/b/**'])
+  it('names the first matching out: glob when a file falls under more than one', () => {
+    const result = checkSurfaceScope(['a/b/c.ts'], { in: [], out: ['a/**', 'a/b/**'] }, [])
     expect(result.ok).toBe(false)
     if (result.ok) return
-    expect(result.violations[0]?.glob).toBe('a/**')
+    expect(result.violation.glob).toBe('a/**')
+  })
+})
+
+describe('the AEG:BEYOND-SURFACE body block', () => {
+  const body = [
+    'Closes #1',
+    '',
+    '## Evidence',
+    '',
+    'x',
+    '',
+    '## Scope',
+    '',
+    'One paragraph.',
+    '',
+    '<!-- AEG:TIER:START -->',
+    '**Tier:** 1',
+    '<!-- AEG:TIER:END -->',
+    ''
+  ].join('\n')
+
+  it('measures beyond-Surface paths, an out: crossing before an in: miss', () => {
+    expect(beyondSurfacePaths(['src/a.ts', 'src/gen/b.ts', 'docs/c.md'], { in: ['src'], out: ['src/gen'] })).toEqual([
+      { path: 'src/gen/b.ts', reason: 'out', glob: 'src/gen' },
+      { path: 'docs/c.md', reason: 'in', glob: null }
+    ])
+  })
+
+  it('is empty when no path is beyond the Surface', () => {
+    expect(renderBeyondSurfaceBlock([])).toBe('<!-- AEG:BEYOND-SURFACE:START -->\n<!-- AEG:BEYOND-SURFACE:END -->')
+    expect(recordedBeyondSurfacePaths(withBeyondSurfaceBlock(body, []))).toEqual([])
+  })
+
+  it('is inserted in the Scope section just before the Tier pair, and round-trips its paths', () => {
+    const written = withBeyondSurfaceBlock(body, [
+      { path: 'docs/c.md', reason: 'in', glob: null },
+      { path: 'src/gen/b.ts', reason: 'out', glob: 'src/gen' }
+    ])
+    expect(written.indexOf('<!-- AEG:BEYOND-SURFACE:START -->')).toBeGreaterThan(written.indexOf('## Scope'))
+    expect(written.indexOf('<!-- AEG:BEYOND-SURFACE:END -->')).toBeLessThan(written.indexOf('<!-- AEG:TIER:START -->'))
+    expect(written).toContain('- `src/gen/b.ts` crosses the `out:` glob `src/gen`')
+    expect(recordedBeyondSurfacePaths(written)).toEqual(['docs/c.md', 'src/gen/b.ts'])
+  })
+
+  it('replaces only its own marked region on a rewrite, discarding an agent-edited list', () => {
+    const tampered = withBeyondSurfaceBlock(body, [{ path: 'docs/c.md', reason: 'in', glob: null }]).replace(
+      '- `docs/c.md` matches no `in:` glob',
+      '- `docs/c.md` matches no `in:` glob\n- `src/sneaked.ts` hand-added'
+    )
+    const rewritten = withBeyondSurfaceBlock(tampered, [])
+    expect(recordedBeyondSurfacePaths(rewritten)).toEqual([])
+    expect(rewritten).toBe(withBeyondSurfaceBlock(body, []))
+  })
+
+  it('appends a Scope section to a body that has none', () => {
+    const written = withBeyondSurfaceBlock('Closes #1\n', [{ path: 'x.ts', reason: 'in', glob: null }])
+    expect(written).toMatch(/## Scope\n\n<!-- AEG:BEYOND-SURFACE:START -->/)
+    expect(recordedBeyondSurfacePaths(written)).toEqual(['x.ts'])
+  })
+
+  it('a body with no block records nothing', () => {
+    expect(recordedBeyondSurfacePaths(body)).toEqual([])
   })
 })
 

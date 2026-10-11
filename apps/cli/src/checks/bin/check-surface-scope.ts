@@ -1,16 +1,21 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: surface-scope. A task-branch PR whose
- * changed files fall inside its own Issue's declared `## Surface` `out:`
- * globs is refused, naming the file and the glob it crosses — an
- * undeclared boundary crossing caught mechanically instead of by a
- * reviewer's eye.
+ * Core check: surface-scope. A task-branch PR may change a file beyond its
+ * own Issue's declared `## Surface` — one crossing an `out:` glob, or
+ * matching no `in:` glob — only when the pull request body records it: the
+ * review-loop driver writes every such path into the body's
+ * `AEG:BEYOND-SURFACE` block on each body write, and this check fails
+ * naming the first changed path that is beyond the Surface and not listed
+ * there. A beyond-Surface change is therefore never hidden: the body names
+ * it, the reviewers review it, and an unrecorded one is caught here.
  *
  * `scope: diff` — a branch's own changed-file list decides this, the same
  * `git diff --name-only <base>...HEAD` every sibling diff-scoped adapter
- * here uses (`single-plan-pr`, `closes-n`, …), so this also runs pre-PR
- * from a push-time hook, not only in CI.
+ * here uses (`single-plan-pr`, `closes-n`, …). `requiresOpenPr`: the record
+ * lives in the pull request body (`PR_BODY`, or the file `PR_BODY_FILE`
+ * names), which exists only once the pull request is open, so the local
+ * hooks skip this check and CI, which passes the body, runs it.
  *
  * Dormant, never blocking, for exactly ONE reason: the branch is not a task
  * branch at all (`taskBranchTopologyFields` returns `null`) — O7 binds a
@@ -45,7 +50,13 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { checkSurfaceScope, parseIssueSurface, parseTaskBranchIdentity } from '@attalabs/aeg-core'
+import { readFileSync } from 'node:fs'
+import {
+  checkSurfaceScope,
+  parseIssueSurface,
+  parseTaskBranchIdentity,
+  recordedBeyondSurfacePaths
+} from '@attalabs/aeg-core'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
@@ -91,6 +102,19 @@ function fetchIssueBody(issue: number): string | null {
   } catch {
     return null
   }
+}
+
+/** The pull request body CI passes in, from `PR_BODY` or the file `PR_BODY_FILE` names; `''` when neither is set. */
+function resolvePrBody(): string {
+  if (process.env.PR_BODY) return process.env.PR_BODY
+  if (process.env.PR_BODY_FILE) {
+    try {
+      return readFileSync(process.env.PR_BODY_FILE, 'utf8')
+    } catch {
+      return ''
+    }
+  }
+  return ''
 }
 
 /** Emits one refusal and exits 1 — the shared shape every named resolution-failure path below uses. */
@@ -178,19 +202,22 @@ async function checkAgainstIssue(issue: number): Promise<void> {
   let files = changedFiles(base)
   if (files.length === 0) files = changedFiles('main')
 
-  const result = checkSurfaceScope(files, surface.value.out)
+  const result = checkSurfaceScope(files, surface.value, recordedBeyondSurfacePaths(resolvePrBody()))
   if (!result.ok) {
-    for (const v of result.violations) {
-      emitCheckError({
-        schema: CHECK_SCHEMA_VERSION,
-        check: CHECK_NAME,
-        severity: 'error',
-        message: `surface-scope: \`${v.file}\` falls inside Issue #${issue}'s \`## Surface\` \`out:\` glob \`${v.glob}\` — this task's own declared surface excludes it.`,
-        agent_recovery_prompt:
-          "Either the file genuinely belongs outside this task (drop the change from this PR), or the Issue's own `## Surface` `out:` list is wrong (fix it via `vinaya issue edit`, which re-validates it) — then re-run `vinaya check surface-scope`.",
-        file: v.file
-      })
-    }
+    const v = result.violation
+    const beyond =
+      v.reason === 'out'
+        ? `falls inside Issue #${issue}'s \`## Surface\` \`out:\` glob \`${v.glob}\``
+        : `matches no \`in:\` glob of Issue #${issue}'s \`## Surface\``
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `surface-scope: \`${v.path}\` ${beyond}, and the pull request body's \`AEG:BEYOND-SURFACE\` block does not record it.`,
+      agent_recovery_prompt:
+        "Under the review loop the driver rewrites that block on every body write — call `refresh_evidence` or `update_pull_request_body` so it records the branch's current changes. Otherwise drop the change from this PR, or fix the Issue's own `## Surface` via `vinaya issue edit` — then re-run `vinaya check surface-scope`.",
+      file: v.path
+    })
     process.exit(1)
   }
 

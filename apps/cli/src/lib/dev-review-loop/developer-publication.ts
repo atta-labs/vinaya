@@ -17,7 +17,13 @@
  * already are.
  */
 
-import { COMMIT_TYPE_STYLE, COMMIT_TYPES, globCoversPath, type IssueSurface } from '@attalabs/aeg-core'
+import {
+  type BeyondSurfacePath,
+  beyondSurfacePaths,
+  COMMIT_TYPE_STYLE,
+  COMMIT_TYPES,
+  type IssueSurface
+} from '@attalabs/aeg-core'
 
 // --- commit-header validation (O2) ------------------------------------------
 
@@ -91,7 +97,7 @@ export type PublicationCheckInput = {
   expectedBase: string | null
   /** Every path the turn changed, relative to the repo root. */
   changedPaths: readonly string[]
-  /** The task Issue's own `## Surface` globs, or `null` when none could be resolved; the Surface check is then inactive. */
+  /** The task Issue's own `## Surface` globs, or `null` when none could be resolved; no path is then measured beyond it. */
   surface: IssueSurface | null
 }
 
@@ -136,16 +142,21 @@ export function fastForwardedOntoDefaultTip(
 
 /**
  * O7: run before the driver commits or uses its GitHub credential — the
- * worktree must be on the task branch, its base the expected base, its head
- * the head recorded before the turn (the Developer left its work
- * uncommitted, or fast-forwarded onto the default branch's tip), and every changed path inside the task's Surface `in:` globs
- * and outside its `out:` globs. The first failing check names itself; the
- * caller sends that text back to the same Developer session and commits and
- * pushes nothing. Pure — the caller resolves every input.
+ * worktree must be on the task branch, its base the expected base, and its
+ * head the head recorded before the turn (the Developer left its work
+ * uncommitted, or fast-forwarded onto the default branch's tip). The first
+ * failing check names itself; the caller sends that text back to the same
+ * Developer session and commits and pushes nothing.
+ *
+ * The Surface never refuses a publication. Every changed path the Surface
+ * does not cover — one crossing an `out:` glob, or matching no `in:` glob —
+ * is returned as `beyondSurface`, and the driver records the branch's
+ * beyond-Surface paths in the pull request body, where the reviewers and the
+ * `surface-scope` check read them. Pure — the caller resolves every input.
  */
 export function checkPublicationPreconditions(
   input: PublicationCheckInput
-): { ok: true } | { ok: false; reason: string } {
+): { ok: true; beyondSurface: BeyondSurfacePath[] } | { ok: false; reason: string } {
   if (input.worktreeBranch === null) {
     return { ok: false, reason: `could not read the worktree's current branch — expected \`${input.expectedBranch}\`` }
   }
@@ -177,23 +188,5 @@ export function checkPublicationPreconditions(
       reason: `the worktree head moved to \`${input.worktreeHead}\` during your turn (expected the recorded \`${input.recordedHead}\`) — do not commit yourself; call \`publish_changes\` to make this turn's single commit`
     }
   }
-  if (input.surface) {
-    const inGlobs = input.surface.in
-    const outGlobs = input.surface.out
-    for (const path of input.changedPaths) {
-      if (outGlobs.some((g) => globCoversPath(g, path))) {
-        return {
-          ok: false,
-          reason: `changed path \`${path}\` is outside the task's Surface — it crosses an \`out:\` glob; revert it before leaving changes to publish`
-        }
-      }
-      if (inGlobs.length > 0 && !inGlobs.some((g) => globCoversPath(g, path))) {
-        return {
-          ok: false,
-          reason: `changed path \`${path}\` is outside the task's Surface — it matches no \`in:\` glob; revert it before leaving changes to publish`
-        }
-      }
-    }
-  }
-  return { ok: true }
+  return { ok: true, beyondSurface: input.surface ? beyondSurfacePaths(input.changedPaths, input.surface) : [] }
 }

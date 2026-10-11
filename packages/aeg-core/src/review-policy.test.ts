@@ -300,8 +300,8 @@ describe('classifyFinding — the one blocking decision (O1, O2, O3, O5)', () =>
     )
   })
 
-  test('O3: a would-block finding outside the Surface is deferred, any round, no security exception', () => {
-    const ctx: FindingDeferralContext = { inSurface: (l) => l.startsWith('in/') }
+  test('O3: a would-block finding on an unchanged file outside the Surface is deferred, any round, no security exception', () => {
+    const ctx: FindingDeferralContext = { inSurface: (l) => l.startsWith('in/'), changedFile: () => false }
     expect(classifyFinding({ severity: 'MAJOR', location: 'out/x.ts:9' }, CODE, 'MAJOR', ctx)).toEqual({
       outcome: 'deferred',
       deferralReason: 'outside-surface'
@@ -311,6 +311,36 @@ describe('classifyFinding — the one blocking decision (O1, O2, O3, O5)', () =>
     expect(classifyFinding({ severity: 'CRITICAL', location: 'out/x.ts:9' }, SEC, 'HIGH', ctx)).toEqual({
       outcome: 'deferred',
       deferralReason: 'outside-surface'
+    })
+  })
+
+  test('O3: a finding on a changed file the Surface does not cover counts at its reported severity', () => {
+    const ctx: FindingDeferralContext = {
+      inSurface: (l) => l.startsWith('in/'),
+      changedFile: (l) => l.startsWith('out/changed.ts')
+    }
+    expect(classifyFinding({ severity: 'MAJOR', location: 'out/changed.ts:9' }, CODE, 'MAJOR', ctx)).toEqual({
+      outcome: 'blocking',
+      deferralReason: null
+    })
+    expect(classifyFinding({ severity: 'MINOR', location: 'out/changed.ts:9' }, CODE, 'MAJOR', ctx).outcome).toBe(
+      'non_blocking'
+    )
+    expect(classifyFinding({ severity: 'CRITICAL', location: 'out/changed.ts:9' }, SEC, 'HIGH', ctx).outcome).toBe(
+      'blocking'
+    )
+    // the unchanged file beside it is still deferred
+    expect(classifyFinding({ severity: 'MAJOR', location: 'out/other.ts:9' }, CODE, 'MAJOR', ctx)).toEqual({
+      outcome: 'deferred',
+      deferralReason: 'outside-surface'
+    })
+  })
+
+  test('O3 is inactive without a changed-file predicate: an out-of-Surface finding blocks', () => {
+    const ctx: FindingDeferralContext = { inSurface: () => false }
+    expect(classifyFinding({ severity: 'MAJOR', location: 'out/x.ts:9' }, CODE, 'MAJOR', ctx)).toEqual({
+      outcome: 'blocking',
+      deferralReason: null
     })
   })
 
@@ -335,7 +365,7 @@ describe('classifyFinding — the one blocking decision (O1, O2, O3, O5)', () =>
   })
 
   test('O3 is decided before O2 — an out-of-Surface unchanged-line finding reads outside-surface', () => {
-    const ctx: FindingDeferralContext = { changedLine: () => false, inSurface: () => false }
+    const ctx: FindingDeferralContext = { changedLine: () => false, inSurface: () => false, changedFile: () => false }
     expect(classifyFinding({ severity: 'MAJOR', location: 'x.ts:1' }, CODE, 'MAJOR', ctx).deferralReason).toBe(
       'outside-surface'
     )
@@ -361,7 +391,7 @@ describe('classifyFinding — the one blocking decision (O1, O2, O3, O5)', () =>
     // a MINOR threshold is the one case the capped severity still blocks, so
     // the deferral rules would otherwise be reached for a location no Surface
     // glob and no diff ever covers
-    const ctx: FindingDeferralContext = { changedLine: () => false, inSurface: () => false }
+    const ctx: FindingDeferralContext = { changedLine: () => false, inSurface: () => false, changedFile: () => false }
     for (const location of ['PR body:1', 'PR body', 'a review comment']) {
       expect(classifyFinding({ severity: 'BLOCKER', location }, CODE, 'MINOR', ctx)).toEqual({
         outcome: 'blocking',
@@ -408,7 +438,7 @@ describe('evaluateReviewFindings — deferred findings carried out (O4)', () => 
       maxRounds: 3,
       maxTaskMinutes: 180
     }
-    const ctx: FindingDeferralContext = { inSurface: () => false }
+    const ctx: FindingDeferralContext = { inSurface: () => false, changedFile: () => false }
     expect(evaluateCodeReview([{ severity: 'MAJOR', location: 'x.ts:1' }], policy, ctx).deferredFindings).toHaveLength(
       1
     )

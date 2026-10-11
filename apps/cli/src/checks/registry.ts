@@ -357,22 +357,29 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       run: bin('check-surface-scope'),
       scope: 'diff',
       timeoutMs: 15_000,
+      // Reads the pull request body's `AEG:BEYOND-SURFACE` record, which
+      // exists only once the pull request is open — the local hooks skip it.
+      // See `CheckSpec.requiresOpenPr`'s doc comment.
+      requiresOpenPr: true,
       // BASE_SHA defaults to `'origin/main'`; BRANCH defaults to
       // `git rev-parse --abbrev-ref HEAD`. AEG_REPO/GITHUB_TOKEN/GH_TOKEN
       // feed the live forge read (topology + Issue body) `gh`/
-      // `createForgeSource` need on a CI runner — all optional, since every
-      // failure path here degrades to dormant (exit 0), never a hard error,
-      // matching `single-plan-pr`'s identical "a transient forge outage
-      // must never fabricate a false [finding]" posture.
+      // `createForgeSource` need on a CI runner. PR_BODY/PR_BODY_FILE carry
+      // the pull request body whose beyond-Surface record this check reads;
+      // absent, the body records nothing.
       env: {
         AEG_REPO: { optional: true },
         BASE_SHA: { optional: true },
         BRANCH: { optional: true },
+        PR_BODY: { optional: true },
+        PR_BODY_FILE: { optional: true },
         GITHUB_TOKEN: { optional: true },
         GH_TOKEN: { optional: true }
       }
     },
-    0
+    // requiresOpenPr: cannot run under the local hook (`--local` skips it) —
+    // CI/PR-only, see `CoreCheckRing`'s doc comment.
+    1
   ],
   [
     {

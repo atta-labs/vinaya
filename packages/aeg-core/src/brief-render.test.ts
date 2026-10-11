@@ -14,6 +14,7 @@ import {
   readTierFromPrBody
 } from './index'
 import {
+  BEYOND_SURFACE_RECORDING_RULE,
   type BriefFacts,
   extractBoundaryFilePaths,
   extractSourceRevision,
@@ -605,6 +606,12 @@ describe('renderBrief', () => {
     if (!result.ok) return
     expect(result.brief).toContain('**Out of surface:** packages/aeg-core/tests')
     expect(result.brief).not.toContain('named explicitly by the Planner')
+    // The line states the recording rule: a change beyond the Surface is
+    // published and recorded in the pull request body, never refused.
+    expect(result.brief).toContain(`**Out of surface:** packages/aeg-core/tests${BEYOND_SURFACE_RECORDING_RULE}`)
+    expect(BEYOND_SURFACE_RECORDING_RULE).toContain(
+      "records each such path in the pull request body's beyond-Surface block"
+    )
   })
 
   it('§6 renders one numbered Part per IssuePart, its citation reconstructed verbatim', () => {

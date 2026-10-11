@@ -52,13 +52,24 @@
 import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
 
 /**
- * The six gate-read fields with an anchored home. A `TOKENS` entry belonged
+ * The gate-read fields with an anchored home. `BEYOND-SURFACE`, like
+ * `EVIDENCE`, is never hand-typed: the review-loop driver rewrites it on every
+ * pull-request body write with each changed path the task's Surface does not
+ * cover, and the `surface-scope` check reads it. A `TOKENS` entry belonged
  * here while a pull-request body carried a token table; that table is retired
  * — token use is recorded as the Vinaya log's own `usage` event — so nothing
  * writes or reads that anchor any more. An older body that still carries the
  * pair keeps it: no reader here resolves it, and no writer touches it.
  */
-export const ANCHOR_FIELDS = ['CLOSES', 'PROJECT', 'TIER', 'PREMISE', 'TEST-PLAN', 'EVIDENCE'] as const
+export const ANCHOR_FIELDS = [
+  'CLOSES',
+  'PROJECT',
+  'TIER',
+  'PREMISE',
+  'TEST-PLAN',
+  'EVIDENCE',
+  'BEYOND-SURFACE'
+] as const
 
 export type AnchorField = (typeof ANCHOR_FIELDS)[number]
 

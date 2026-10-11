@@ -558,6 +558,14 @@ function nearestTestDir(path: string): string {
   return path
 }
 
+/**
+ * Appended to §4's out-of-surface line: what happens to a change the Surface
+ * does not cover. Names no path, so the consumer-tests scan of §4 never reads
+ * a package in it.
+ */
+export const BEYOND_SURFACE_RECORDING_RULE =
+  " — a change there, or to any path no Surface `in:` glob covers, is still published: the review-loop driver records each such path in the pull request body's beyond-Surface block, and the reviewers judge it like any change."
+
 function renderSection4(facts: BriefFacts): string {
   const created = facts.surfaceFiles.filter((f) => f.sha256 === null).map((f) => f.path)
   const modified = facts.surfaceFiles.filter((f) => f.sha256 !== null).map((f) => f.path)
@@ -593,11 +601,15 @@ function renderSection4(facts: BriefFacts): string {
       : '- (none named)'
 
   const createdBlock = created.length > 0 ? bulletList(created) : '- (none — every surface file already exists)'
+  // The recording rule rides on the same line: a change beyond the Surface is
+  // published, never refused — the driver records it in the pull request
+  // body and the reviewers judge it like any change.
   const outOfSurfaceLine =
     '**Out of surface:** ' +
     (facts.surface.out.length > 0
       ? facts.surface.out.join(', ')
-      : "(none named — the Issue's `## Surface` `out:` line is empty)")
+      : "(none named — the Issue's `## Surface` `out:` line is empty)") +
+    BEYOND_SURFACE_RECORDING_RULE
   const premisePinsBlock = bulletList(
     facts.surfaceFiles
       .filter((f): f is SurfaceFileFact & { sha256: string } => f.sha256 !== null)

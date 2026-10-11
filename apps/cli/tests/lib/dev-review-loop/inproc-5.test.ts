@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { newestPrincipalRulingOrdinal } from '@attalabs/aeg-core'
+import { newestPrincipalRulingOrdinal, recordedBeyondSurfacePaths } from '@attalabs/aeg-core'
 import {
   cleanupWorlds,
   controlDir,
@@ -1550,63 +1550,93 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
 
     it('blocked with an unpushed commit: escalation naming the blocker and the unpublished work', async () => {
       const world = makeWorld({ worktreeExists: true })
-      const out = blockedTurnOutput('outside_surface', 'needs a file outside the surface')
+      const out = blockedTurnOutput('brief_contradicts_code', 'the named function no longer exists')
       const result = await runLoopInProcess(
         world,
         { task: world.task, agent: 'codex' },
-        developerLeavesCommit(world, out, { runSurfaceScopeCheck: async () => ({ passed: false }) })
+        developerLeavesCommit(world, out)
       )
-      assertEscalation(world, result, /\(outside_surface\): needs a file outside the surface/)
+      assertEscalation(world, result, /\(brief_contradicts_code\): the named function no longer exists/)
     })
 
     for (const agent of ['claude', 'codex'] as const) {
-      it(`${agent} continues an outside-surface report when surface-scope passes, with the PR changed files`, async () => {
-        const world = makeWorld({ worktreeExists: true, worktreeChangedPaths: ['apps/cli/src/lib/x.ts'] })
-        world.developerTurnOutput = (_round, _prompt, dispatch) =>
-          dispatch === 1 ? blockedTurnOutput('outside_surface', 'mistaken local diff judgement') : completedTurnOutput()
-        let checks = 0
-        const { deps, prompts } = withCapturedDeveloperDispatch(world, {
-          runSurfaceScopeCheck: async (worktree, head) => {
-            checks += 1
-            expect(head).toBe(world.worktreeHead)
-            expect(worktree).toContain(world.branch)
-            return { passed: true }
+      // A changed path beyond the Surface is published and recorded in the
+      // pull request body's driver-owned block, never refused.
+      async function publishAndOpen(
+        world: ReturnType<typeof makeWorld>,
+        agentBody: string,
+        afterOpen?: () => Promise<void>
+      ): Promise<{ beyondSurface: string[] | undefined; published: boolean }> {
+        const base = makeInProcessDeps(world)
+        const seen: { beyondSurface: string[] | undefined; published: boolean } = {
+          beyondSurface: undefined,
+          published: false
+        }
+        await runLoopInProcess(
+          world,
+          { task: world.task, agent },
+          {
+            ...base,
+            dispatchRole: async (role, dispatchAgent, prompt, opts) => {
+              if (role === 'developer' && !seen.published) {
+                world.worktreeDirty = [...world.worktreeChangedPaths]
+                const published = await world.devToolContext!.publishChanges('Fix(cli): record the beyond-Surface path')
+                seen.published = published.ok
+                if (published.ok) seen.beyondSurface = published.result.beyondSurface
+                await world.devToolContext!.openPullRequest(world.issueTitle, agentBody)
+                world.prBody = world.prOpens[0]?.body ?? world.prBody
+                if (afterOpen) await afterOpen()
+              }
+              return base.dispatchRole!(role, dispatchAgent, prompt, opts)
+            }
           }
+        )
+        return seen
+      }
+
+      it(`${agent} publishes a path beyond the Surface and records it, with its glob, in the body block`, async () => {
+        const world = makeWorld({
+          worktreeExists: true,
+          surface: { in: ['apps/cli/src'], out: ['packages/sources'] },
+          worktreeChangedPaths: ['apps/cli/src/lib/x.ts', 'packages/sources/y.ts', 'docs/z.md']
         })
-        const result = await runLoopInProcess(world, { task: world.task, agent }, deps)
-        expect(result.finalDecision.type).toBe('publish')
-        expect(prompts).toHaveLength(2)
-        expect(prompts[1]).toContain('`surface-scope` check passed')
-        expect(prompts[1]).toContain('apps/cli/src/lib/x.ts')
-        expect(checks).toBe(1)
-        expect(existsSync(join(controlDir(world), 'pause-state.json'))).toBe(false)
+        const seen = await publishAndOpen(world, '## Scope\n\nScope.\n\n**Tier:** 3\n')
+        expect(seen.published).toBe(true)
+        expect(seen.beyondSurface).toEqual(['packages/sources/y.ts', 'docs/z.md'])
+        expect(world.commits.length).toBeGreaterThanOrEqual(1)
+        const opened = world.prOpens[0]?.body ?? ''
+        expect(opened).toContain('- `packages/sources/y.ts` crosses the `out:` glob `packages/sources`')
+        expect(opened).toContain('- `docs/z.md` matches no `in:` glob')
+        expect(recordedBeyondSurfacePaths(opened)).toEqual(['packages/sources/y.ts', 'docs/z.md'])
+        expect(opened.indexOf('<!-- AEG:BEYOND-SURFACE:START -->')).toBeGreaterThan(opened.indexOf('## Scope'))
       })
 
-      it(`${agent} pauses an outside-surface report when the registry surface-scope check fails`, async () => {
-        const world = makeWorld({ worktreeExists: true })
-        world.developerTurnOutput = () => blockedTurnOutput('outside_surface', 'surface check agrees')
-        const { deps } = withCapturedDeveloperDispatch(world, {
-          runSurfaceScopeCheck: async () => ({ passed: false })
+      it(`${agent} writes an empty block when every changed path is inside the Surface`, async () => {
+        const world = makeWorld({
+          worktreeExists: true,
+          surface: { in: ['apps/cli/src'], out: ['packages/sources'] },
+          worktreeChangedPaths: ['apps/cli/src/lib/x.ts']
         })
-        const result = await runLoopInProcess(world, { task: world.task, agent }, deps)
-        expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
-        expect((result.finalDecision as { detail: string }).detail).toMatch(/\(outside_surface\): surface check agrees/)
+        const seen = await publishAndOpen(world, '## Scope\n\nScope.\n\n**Tier:** 3\n')
+        expect(seen.beyondSurface).toEqual([])
+        const opened = world.prOpens[0]?.body ?? ''
+        expect(opened).toContain('<!-- AEG:BEYOND-SURFACE:START -->\n<!-- AEG:BEYOND-SURFACE:END -->')
+        expect(recordedBeyondSurfacePaths(opened)).toEqual([])
       })
 
-      it(`${agent} pauses after the one allowed outside-surface retry`, async () => {
-        const world = makeWorld({ worktreeExists: true, worktreeChangedPaths: ['apps/cli/src/lib/x.ts'] })
-        world.developerTurnOutput = () => blockedTurnOutput('outside_surface', 'still reports outside surface')
-        let checks = 0
-        const { deps, prompts } = withCapturedDeveloperDispatch(world, {
-          runSurfaceScopeCheck: async () => {
-            checks += 1
-            return { passed: true }
-          }
+      it(`${agent} rewrites the block on a body update, discarding a list the agent wrote`, async () => {
+        const world = makeWorld({
+          worktreeExists: true,
+          surface: { in: ['apps/cli/src'], out: [] },
+          worktreeChangedPaths: ['apps/cli/src/lib/x.ts', 'docs/z.md']
         })
-        const result = await runLoopInProcess(world, { task: world.task, agent }, deps)
-        expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
-        expect(prompts).toHaveLength(2)
-        expect(checks).toBe(2)
+        await publishAndOpen(world, '## Scope\n\nScope.\n\n**Tier:** 3\n', async () => {
+          const edited = world.prBody.replace('- `docs/z.md` matches no `in:` glob', '- `src/sneaked.ts` hand-added')
+          await world.devToolContext!.updatePullRequestBody(edited)
+        })
+        const updated = world.prBodyUpdates.at(-1) ?? ''
+        expect(recordedBeyondSurfacePaths(updated)).toEqual(['docs/z.md'])
+        expect(updated).not.toContain('src/sneaked.ts')
       })
     }
 
@@ -1800,19 +1830,19 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
     expect(world.runChecksEnv).toEqual({ BRANCH: world.branch })
   })
 
-  it('O3/O5: a Surface-violating publish_changes is refused by the gate in the driver, committing nothing', async () => {
+  it('O3/O5: a publish_changes with a path beyond the Surface is committed, pushed and opened, never refused', async () => {
     const world = makeWorld({ worktreeExists: true, surface: { in: ['apps/cli'], out: ['packages'] } })
     // The agent calls publish_changes with a path outside the task's Surface —
-    // the publication-precondition gate runs IN THE DRIVER and refuses before
-    // any commit, so nothing lands and no PR opens.
+    // the publication-precondition gate runs IN THE DRIVER and lets it
+    // through; the driver records the path in the pull request body instead.
     await runLoopInProcess(
       world,
       { task: world.task, agent: 'codex' },
       developerPublishesViaToolsDeps(world, { changedPaths: ['packages/aeg-core/src/x.ts'] })
     )
-    expect(world.commits).toHaveLength(0)
-    expect(world.pushes).toHaveLength(0)
-    expect(world.prOpens).toHaveLength(0)
+    expect(world.commits).toHaveLength(1)
+    expect(world.pushes).toHaveLength(1)
+    expect(world.prOpens).toHaveLength(1)
   })
 })
 

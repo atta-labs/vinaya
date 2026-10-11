@@ -756,7 +756,6 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       world.runChecksEnv = env ?? null
       return { passed: world.runChecksPassed, output: 'fake-check-all-output' }
     },
-    runSurfaceScopeCheck: async () => ({ passed: true }),
     fetchPrBody: (_pr) => world.prBody,
     fetchDeveloperStop: (_issue) =>
       (world.dispatchCountByRole.developer ?? 0) === 0 || world.developerStop === null

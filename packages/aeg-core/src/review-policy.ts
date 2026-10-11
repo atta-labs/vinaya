@@ -187,8 +187,8 @@ export const DEFERRAL_REASON_TEXT: Record<DeferralReason, string> = {
  *     (or the round-1/no-previous-head case where the unchanged-line rule does
  *     not apply), or a security finding at or above HIGH the unchanged-line
  *     rule never defers;
- *   - `'deferred'` — WOULD block, but this round cannot act on it: outside the
- *     Surface (any round, O3) or on a line that did not change since the
+ *   - `'deferred'` — WOULD block, but this round cannot act on it: on a file
+ *     outside the Surface the branch did not change (any round, O3) or on a line that did not change since the
  *     previous round's head (round 2 on, O2). `deferralReason` names which;
  *   - `'non_blocking'` — below threshold, or a prose-located finding capped to
  *     `PROSE_CAP_SEVERITY` (O5). Never deferred: it was never going to block,
@@ -218,13 +218,21 @@ export type FindingClassification = {
  *     recover one treats every in-Surface finding as blocking rather than
  *     guessing. Never inferred here from a `false` return.
  *   - `inSurface` — `inSurface(location)` is `true` when the finding's file is
- *     covered by the task's `## Surface` `in:` list. Undefined means the
- *     Surface is not known to this caller, so the out-of-Surface rule (O3) is
- *     not applied — never a silent "everything is out of Surface."
+ *     covered by the task's `## Surface` `in:` list.
+ *   - `changedFile` — `changedFile(location)` is `true` when the task branch
+ *     changed the finding's file (its merge-base diff names it).
+ *
+ *     The out-of-Surface rule (O3) needs BOTH: it defers only a finding on a
+ *     file the Surface does not cover AND the branch did not change. A changed
+ *     file beyond the Surface is recorded in the pull request and reviewed
+ *     like any change, so its finding counts at its reported severity. Either
+ *     predicate undefined means this caller cannot tell, so the rule is not
+ *     applied — never a silent "everything is out of Surface."
  */
 export type FindingDeferralContext = {
   changedLine?: (location: string) => boolean
   inSurface?: (location: string) => boolean
+  changedFile?: (location: string) => boolean
 }
 
 /**
@@ -234,8 +242,9 @@ export type FindingDeferralContext = {
  * `CRITICAL` and `HIGH`; those two severities exist on no other scale, so
  * membership alone identifies a security finding of that rank without needing
  * to know which scale the caller passed. The out-of-Surface rule (O3) carries
- * NO such exception — a finding outside the Surface never blocks, security or
- * not — so this is consulted only on the unchanged-line path below.
+ * NO such exception — a finding on an unchanged file outside the Surface never
+ * blocks, security or not — so this is consulted only on the unchanged-line
+ * path below.
  */
 const SECURITY_HIGH_AND_ABOVE: readonly string[] = blockingSeverities(SECURITY_SEVERITY_ORDER, 'HIGH')
 
@@ -250,9 +259,11 @@ const SECURITY_HIGH_AND_ABOVE: readonly string[] = blockingSeverities(SECURITY_S
  *   2. the threshold — below it, `'non_blocking'` (never deferred: a finding
  *      that was never going to block is not "set aside", it simply passes);
  *   3. the out-of-Surface rule (O3) — a would-block finding whose file the
- *      Surface `in:` does not cover is `'deferred'`, ANY round, no exception
- *      among files; a PR-body or comment location is no file, so neither this
- *      rule nor the next ever defers it;
+ *      Surface `in:` does not cover AND the task branch did not change is
+ *      `'deferred'`, ANY round; a changed file beyond the Surface is reviewed
+ *      like any change and blocks at its reported severity; a PR-body or
+ *      comment location is no file, so neither this rule nor the next ever
+ *      defers it;
  *   4. the unchanged-line rule (O2) — from round 2 on (`context.changedLine`
  *      present), a would-block finding on an unchanged line is `'deferred'`,
  *      EXCEPT a security finding at or above HIGH, which blocks anyway.
@@ -284,9 +295,17 @@ export function classifyFinding(
   // neither deferral rule applies to it — it is capped above, never set aside.
   const hasLocation = location !== undefined && location.length > 0 && !isBodyOrCommentLocation(location)
 
-  // O3 first: findings outside the Surface never block, in ANY round, with no
-  // security exception — so it is decided before the unchanged-line rule.
-  if (hasLocation && context.inSurface && !context.inSurface(location as string)) {
+  // O3 first: a finding on a file outside the Surface that the branch did not
+  // change never blocks, in ANY round, with no security exception — so it is
+  // decided before the unchanged-line rule. A file the branch changed is
+  // reviewed whatever the Surface says.
+  if (
+    hasLocation &&
+    context.inSurface &&
+    context.changedFile &&
+    !context.inSurface(location as string) &&
+    !context.changedFile(location as string)
+  ) {
     return { outcome: 'deferred', deferralReason: 'outside-surface' }
   }
 

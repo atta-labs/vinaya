@@ -63,6 +63,7 @@ import {
 import {
   activeBudgetMs,
   assessRound,
+  beyondSurfacePaths,
   briefHash as briefHashOf,
   buildReviewInputManifest,
   compareManifest,
@@ -94,7 +95,8 @@ import {
   type RoundHeadIdentity,
   type RoundStats,
   type TaskClock,
-  type VerdictObservation
+  type VerdictObservation,
+  withBeyondSurfaceBlock
 } from '@attalabs/aeg-core'
 import {
   AGENT_VENDOR_NAMES,
@@ -844,8 +846,6 @@ export type LoopDeps = {
     worktreePath: string,
     env?: Record<string, string>
   ) => Promise<{ passed: boolean; output: string }>
-  /** Runs the registry's authoritative surface-scope check for a Developer turn's worktree head. */
-  runSurfaceScopeCheck: (worktreePath: string, head: string) => Promise<{ passed: boolean }>
 }
 
 function defaultRepoRoot(): string {
@@ -1914,20 +1914,6 @@ export async function defaultRunWorktreeChecks(
   return { passed: res.status === 0, output }
 }
 
-/** Run the one registry check that decides whether an outside-surface report is a real escalation. */
-export async function defaultRunSurfaceScopeCheck(worktreePath: string, _head: string): Promise<{ passed: boolean }> {
-  const res = guardedSpawnSync(
-    process.argv[0] as string,
-    [process.argv[1] as string, 'check', 'surface-scope', '--diff-only'],
-    {
-      cwd: worktreePath,
-      env: process.env,
-      maxBuffer: 64 * 1024 * 1024
-    }
-  )
-  return { passed: res.status === 0 }
-}
-
 /**
  * The exact `vinaya pr report` argv `refresh_evidence` runs — `--push <pr>`,
  * the forge-updating mode, never the bare `--write` the old code passed with
@@ -2297,7 +2283,6 @@ function defaultDeps(): LoopDeps {
     refreshPrEvidence: defaultRefreshPrEvidence,
     readPrView: defaultReadPrView,
     runWorktreeChecks: defaultRunWorktreeChecks,
-    runSurfaceScopeCheck: defaultRunSurfaceScopeCheck,
     fetchDeveloperStop,
     fetchMergeableState,
     fetchConflictingFiles,
@@ -3793,6 +3778,44 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         .join('\n\n')
     }
 
+    /**
+     * `body` with its `AEG:BEYOND-SURFACE` block rewritten to list every path
+     * the task branch changed (from its merge base, the same three-dot diff
+     * the `surface-scope` check reads) that the task's Surface does not cover
+     * — the driver's own marked region, replaced on every body write the way
+     * the `**For:**` line is, so an agent edit to it never survives. `body`
+     * unchanged when the Surface, the head or the merge base cannot be read.
+     */
+    async function withBeyondSurfaceRecord(body: string): Promise<string> {
+      const surface = d.resolveTaskSurface ? d.resolveTaskSurface(task) : null
+      if (!surface) return body
+      const worktree = worktreePathForBranch()
+      try {
+        const head = d.readWorktreeHead(worktree)
+        if (head === null) return body
+        const base = await d.gitMergeBase(head)
+        return withBeyondSurfaceBlock(body, beyondSurfacePaths(d.gitWorktreeChangedPaths(worktree, base), surface))
+      } catch {
+        return body
+      }
+    }
+
+    /** Rewrite the open pull request's `AEG:BEYOND-SURFACE` block after the branch moved — a no-op with no open pull request or no change to the block. Never throws: a failed write is logged, and the next body write records it. */
+    async function syncBeyondSurfaceRecord(pr: number | null): Promise<void> {
+      if (pr === null) return
+      try {
+        const body = d.fetchPrBody(pr)
+        const next = await withBeyondSurfaceRecord(body)
+        if (next !== body) await d.updatePrBody({ prNumber: pr, body: next, repo })
+      } catch (err) {
+        appendRoleLine(
+          loopLogPath,
+          'dev-review-loop',
+          `beyond_surface_update_failed: ${err instanceof Error ? err.message : String(err)}`
+        )
+      }
+    }
+
     async function recordDeveloperModel(roundNum: number): Promise<void> {
       const recorded = recordDeveloperModelRun(
         readDeveloperModelRuns(root, task),
@@ -3804,7 +3827,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         const pr = prNumber > 0 ? prNumber : (d.findOpenPrForBranch(branch)?.number ?? null)
         if (pr === null) return
         const body = d.fetchPrBody(pr)
-        const next = withDeveloperModelsLine(body, recorded)
+        const next = await withBeyondSurfaceRecord(withDeveloperModelsLine(body, recorded))
         if (next !== body) await d.updatePrBody({ prNumber: pr, body: next, repo })
       } catch (err) {
         appendRoleLine(
@@ -4093,7 +4116,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     ): Promise<DispatchHandle> {
       let currentPrompt = prompt
       let publishReasks = 0
-      let outsideSurfaceReasks = 0
       let testFailureReasks = 0
       let publicationRefusals = opts.publicationRefusal ? 1 : 0
       let previousPublicationRefusal: string | null = opts.publicationRefusal?.signature ?? null
@@ -4121,19 +4143,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             'Your previous turn was refused by the driver — the after-turn confinement check (isolation.md) found:',
             describeTurnConfinementViolation(confinement),
             `Fix the problem above and end your turn — ${publishingInstructionLine()}`
-          ].join('\n\n')
-          continue
-        }
-        const falseOutsideSurface = await outsideSurfaceRetryPaths(handle, roundNum, opts.answersFindings === true)
-        if (falseOutsideSurface !== null && outsideSurfaceReasks < 1) {
-          outsideSurfaceReasks += 1
-          currentPrompt = [
-            "Your previous turn reported `outside_surface`, but the driver's `surface-scope` check passed on that turn's head.",
-            'Continue the task without pausing. This is the one allowed retry for that report. The pull request changed-file list (merge-base three-dot diff) is:',
-            falseOutsideSurface.length > 0
-              ? falseOutsideSurface.map((path) => `- ${path}`).join('\n')
-              : '- (no changed files found)',
-            `End your turn — ${publishingInstructionLine()}`
           ].join('\n\n')
           continue
         }
@@ -4261,42 +4270,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       )
       const gate = await waitForGreenGate(d.now())
       return { runIds: rerunIds, ciConclusion: gate.ciConclusion, failingChecks: gate.failingChecks }
-    }
-
-    /**
-     * `outside_surface` is only a real escalation when the authoritative
-     * surface-scope gate failed on the same head. A passing gate means the
-     * Developer's local diff judgement was a false alarm, so return the PR's
-     * merge-base diff for one ordinary retry instead of pausing the loop.
-     */
-    async function outsideSurfaceRetryPaths(
-      handle: DispatchHandle,
-      roundNum: number,
-      answersFindings: boolean
-    ): Promise<string[] | null> {
-      const verdict = judgeTurnOutput(handle.turnOutput, {
-        round: roundNum,
-        knownFindingIds: handoffFindingIdsByRound.get(roundNum) ?? [],
-        requireAddressedFindings: answersFindings && (handoffFindingIdsByRound.get(roundNum) ?? []).length > 0,
-        documentation: handle.documentation ?? { sources: [], countedReads: [] }
-      })
-      if (!verdict.ok || verdict.result.status !== 'blocked' || verdict.result.blocker.kind !== 'outside_surface')
-        return null
-      const worktree = worktreePathForBranch()
-      const head = existsSync(worktree) ? d.readWorktreeHead(worktree) : null
-      if (head === null) return null
-      try {
-        // `surface-scope` is a registry entry within a check job, not a
-        // forge check-run of its own. Retry only when that runner explicitly
-        // passes for the turn's actual worktree head; every other outcome is
-        // conservative and leaves the accepted block to pause the loop.
-        if (!(await d.runSurfaceScopeCheck(worktree, head)).passed) return null
-        const base = await d.gitMergeBase(head)
-        return d.gitWorktreeChangedPaths(worktree, base)
-      } catch {
-        // A missing merge base leaves the existing conservative escalation.
-        return null
-      }
     }
 
     /**
@@ -4716,6 +4689,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // `recordedHead`) rather than refusing on the very commit this tool
           // just made — a Developer may publish more than once per turn.
           if (pushedHead) turnPreHead = pushedHead
+          await syncBeyondSurfaceRecord(prNumberNow())
           return { ok: true, result: { pushedHead } }
         },
         validatePrBody: async (body, title) => {
@@ -4768,7 +4742,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             task,
             branch,
             title,
-            body: withDeveloperModelsLine(body, modelRuns()),
+            body: await withBeyondSurfaceRecord(withDeveloperModelsLine(body, modelRuns())),
             round: roundNum,
             agent: dispatchAgent,
             repo
@@ -4797,7 +4771,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               }
             }
           }
-          await d.updatePrBody({ prNumber, body: withDeveloperModelsLine(body, modelRuns()), repo })
+          await d.updatePrBody({
+            prNumber,
+            body: await withBeyondSurfaceRecord(withDeveloperModelsLine(body, modelRuns())),
+            repo
+          })
           return { ok: true, result: { prNumber } }
         },
         refreshEvidence: async () => {
@@ -4813,6 +4791,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             }
           }
           const result = await d.refreshPrEvidence({ worktreePath: worktree, prNumber, round: roundNum, repo })
+          await syncBeyondSurfaceRecord(prNumber)
           return { ok: true, result }
         },
         readPullRequest: async () => ({ ok: true, result: await d.readPrView({ branch, repo }) }),
@@ -7096,16 +7075,28 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             policy
           })
           lastDispatchedManifest = manifest
-          // O2/O3: the round's deferral rules — the task's `## Surface` (any
-          // round) and the changed lines since the previous round's head
-          // (round 2 on). Both resolved via optional deps: absent in a fixture
-          // that stubs neither, so the loop's existing behaviour — every
-          // in-Surface finding blocks — is unchanged where they are not wired.
+          // The branch's changed paths from its merge base, read once per
+          // round: the deferral rules below and the security scan further on
+          // both use this one set. `null` when unreadable — the out-of-Surface
+          // rule is then inactive, and the scan sees no changed path.
+          let branchChangedPaths: readonly string[] | null = null
+          let branchChangedPathsError: unknown = null
+          try {
+            branchChangedPaths = d.gitChangedPaths ? d.gitChangedPaths(baseSha, head) : null
+          } catch (err) {
+            branchChangedPathsError = err
+          }
+          // O2/O3: the round's deferral rules — the task's `## Surface` with
+          // the branch's changed paths (any round) and the changed lines since
+          // the previous round's head (round 2 on). Resolved via optional deps:
+          // absent in a fixture that stubs them, so every finding blocks where
+          // they are not wired.
           const deferralContext = buildRoundDeferralContext({
             round,
             previousRoundHead,
             head,
             surface: d.resolveTaskSurface ? d.resolveTaskSurface(task) : null,
+            changedPaths: branchChangedPaths,
             unifiedDiff: d.gitUnifiedDiff
           })
           const facts: ReviewerPromptFacts = {
@@ -7246,7 +7237,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             try {
               scanOutcome = decideSecurityScan({
                 command: d.resolveSecurityScanCommand ? d.resolveSecurityScanCommand() : null,
-                changedPaths: d.gitChangedPaths ? d.gitChangedPaths(baseSha, head) : [],
+                changedPaths: (() => {
+                  if (branchChangedPathsError !== null) throw branchChangedPathsError
+                  return branchChangedPaths ?? []
+                })(),
                 candidateDir,
                 runScan:
                   d.runSecurityScanSubprocess ?? (() => ({ ok: false, reason: 'no scanner runner is available' }))

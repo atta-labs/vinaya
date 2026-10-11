@@ -62,7 +62,8 @@ export type FindingObservation = {
   /**
    * Set only when the round set this finding aside rather than let it block
    * (O2/O3): `'unchanged-line'` (round 2 on, a line that did not change) or
-   * `'outside-surface'` (any round, a file the Surface `in:` does not cover).
+   * `'outside-surface'` (any round, a file the Surface `in:` does not cover
+   * and the task branch did not change).
    * Absent means the finding was NOT deferred — it blocked, or was below
    * threshold. `policyTreatment` reads `non_blocking` whenever this is set.
    */

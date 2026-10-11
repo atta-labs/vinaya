@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   DEFAULT_REVIEW_POLICY,
   defaultControlStoreDeps,
+  evaluateCodeReview,
   readManifest,
   type ReviewInputManifest
 } from '@attalabs/aeg-core'
@@ -729,16 +730,55 @@ describe('deferral helpers (O2/O3)', () => {
       previousRoundHead: null,
       head: 'h1',
       surface: { in: ['packages/aeg-core/src'], out: [] },
+      changedPaths: ['apps/log-server/changed.ts'],
       unifiedDiff: () => 'diff'
     })
     expect(ctx1.changedLine).toBeUndefined()
     expect(ctx1.inSurface?.('packages/aeg-core/src/a.ts:1')).toBe(true)
+    expect(ctx1.changedFile?.('apps/log-server/changed.ts:4')).toBe(true)
+    expect(ctx1.changedFile?.('apps/log-server/other.ts:4')).toBe(false)
+  })
+
+  it('buildRoundDeferralContext: a changed file beyond the Surface is reviewed; an unchanged one is still deferred', () => {
+    const ctx = buildRoundDeferralContext({
+      round: 1,
+      previousRoundHead: null,
+      head: 'h1',
+      surface: { in: ['packages/aeg-core/src'], out: [] },
+      changedPaths: ['packages/aeg-core/src/a.ts', 'apps/log-server/changed.ts']
+    })
+    const policy = { ...DEFAULT_REVIEW_POLICY, codeReviewThreshold: 'MAJOR' as const }
+    const evaluated = evaluateCodeReview(
+      [
+        { severity: 'MAJOR', location: 'apps/log-server/changed.ts:4' },
+        { severity: 'MAJOR', location: 'apps/log-server/untouched.ts:4' }
+      ],
+      policy,
+      ctx
+    )
+    expect(evaluated.blockingFindings.map((f) => f.location)).toEqual(['apps/log-server/changed.ts:4'])
+    expect(evaluated.deferredFindings.map((d) => [d.finding.location, d.reason])).toEqual([
+      ['apps/log-server/untouched.ts:4', 'outside-surface']
+    ])
+  })
+
+  it('buildRoundDeferralContext: an unreadable changed-path set leaves the out-of-Surface rule inactive', () => {
+    const ctx = buildRoundDeferralContext({
+      round: 1,
+      previousRoundHead: null,
+      head: 'h1',
+      surface: { in: ['packages/aeg-core/src'], out: [] },
+      changedPaths: null
+    })
+    expect(ctx.inSurface).toBeUndefined()
+    expect(ctx.changedFile).toBeUndefined()
 
     const ctx2 = buildRoundDeferralContext({
       round: 2,
       previousRoundHead: 'h1',
       head: 'h2',
       surface: null,
+      changedPaths: null,
       unifiedDiff: (_from, _to) => '--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n+one\n'
     })
     expect(ctx2.inSurface).toBeUndefined()
@@ -748,8 +788,14 @@ describe('deferral helpers (O2/O3)', () => {
 
   it('buildRoundDeferralContext leaves changedLine inactive when the head did not move or the diff is unreadable', () => {
     expect(
-      buildRoundDeferralContext({ round: 2, previousRoundHead: 'h', head: 'h', surface: null, unifiedDiff: () => 'x' })
-        .changedLine
+      buildRoundDeferralContext({
+        round: 2,
+        previousRoundHead: 'h',
+        head: 'h',
+        surface: null,
+        changedPaths: null,
+        unifiedDiff: () => 'x'
+      }).changedLine
     ).toBeUndefined()
     expect(
       buildRoundDeferralContext({
@@ -757,6 +803,7 @@ describe('deferral helpers (O2/O3)', () => {
         previousRoundHead: 'h1',
         head: 'h2',
         surface: null,
+        changedPaths: null,
         unifiedDiff: () => null
       }).changedLine
     ).toBeUndefined()
