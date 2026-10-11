@@ -131,7 +131,9 @@ import {
   resolveGitCommonDir,
   reuseStagedCodexHome,
   stageCodexPolicyHome,
-  type ClaudeSandboxSettings
+  type ClaudeSandboxSettings,
+  type ConfinementPlatformDeps,
+  type SandboxProbeResult
 } from './worker-boundary.js'
 import { agentControlsRefusal } from './enforcement-controls.js'
 import { repoRoot } from './diff-evidence.js'
@@ -3872,6 +3874,68 @@ export function missingSubscriptionLoginReason(
 export const LINUX_SANDBOX_PROBE_DEPS: { platform: NodeJS.Platform; run: SandboxProbeRunner } = {
   platform: process.platform,
   run: runRealSandboxProbe
+}
+
+/** What the dispatch's pre-spawn Claude sandbox probe found on this host, run outside any dispatch. */
+export type HostSandboxProbeOutcome =
+  | { readonly kind: 'unconfined'; readonly warning: string }
+  | { readonly kind: 'settings-unwritten' }
+  | { readonly kind: 'probed'; readonly result: SandboxProbeResult; readonly unixSocketFilterOff: boolean }
+
+/**
+ * The dispatch's own pre-spawn Claude sandbox probe, run outside any dispatch:
+ * the same confinement resolution, the same settings writer and the same
+ * probe environment, against a throwaway directory under the OS temp
+ * directory that is removed before this returns — so a host's readiness is
+ * known before any task is launched, without a task's runtime folder.
+ */
+export async function probeClaudeSandboxOnHost(input: {
+  readonly repoRoot: string
+  readonly binaryPath: string
+  readonly platform: ConfinementPlatformDeps
+  readonly run: SandboxProbeRunner
+}): Promise<HostSandboxProbeOutcome> {
+  const scratchDir = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-host-sandbox-probe-')))
+  try {
+    const confinement = resolveClaudeConfinement(
+      {
+        role: 'developer',
+        agent: 'claude',
+        worktreeDir: input.repoRoot,
+        scratchDir,
+        allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS
+      },
+      input.platform
+    )
+    if (!confinement.confined) return { kind: 'unconfined', warning: confinement.warning }
+    const settingsPath = writeDispatchSettingsAt(
+      join(scratchDir, 'hooks'),
+      'host-sandbox-probe',
+      [],
+      'developer',
+      input.repoRoot,
+      [],
+      [],
+      confinement.settings
+    )
+    if (settingsPath === null) return { kind: 'settings-unwritten' }
+    const result = await probeAgentSandbox(
+      {
+        agent: 'claude',
+        binaryPath: input.binaryPath,
+        cwd: input.repoRoot,
+        env: buildWorkerEnv(process.env, {
+          GH_TELEMETRY: '0',
+          ...confinedClaudeEnvExtras(confinement.scratchDir, confinement.pathOverride)
+        }),
+        settingsPath
+      },
+      { platform: input.platform.platform, run: input.run }
+    )
+    return { kind: 'probed', result, unixSocketFilterOff: confinement.unixSocketFilterOff }
+  } finally {
+    rmSync(scratchDir, { recursive: true, force: true })
+  }
 }
 
 /**

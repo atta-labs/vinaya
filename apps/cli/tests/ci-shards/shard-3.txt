@@ -86,3 +86,4 @@ tests/lib/loop-narration-codex.test.ts
 tests/lib/agent-line.test.ts
 tests/conformance/developer-doctrine-shape.test.ts
 tests/conformance/issue-rationale-template-gate.test.ts
+tests/conformance/agent-config-locations.test.ts

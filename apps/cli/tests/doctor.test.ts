@@ -1,9 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
-import type { DoctorDeps, Finding } from '../src/commands/doctor.js'
+import type { AgentSandboxProbeDeps, DoctorDeps, Finding } from '../src/commands/doctor.js'
 import {
   credentialVarNames,
   logDestinationTargetFrom,
@@ -31,6 +41,12 @@ import { CLAUDE_SETTINGS_PATH, CLAUDE_STOP_HOOK_SCRIPT_PATH } from '../src/lib/c
 import { GEMINI_COMMAND_PATH } from '../src/lib/gemini-command-emitter.js'
 import type { LabelGateway } from '../src/lib/ops.js'
 import { freshProjectsRegistry, PROJECTS_REGISTRY_PATH } from '../src/lib/registry-write.js'
+import {
+  claudeSandboxProbeArgs,
+  type ConfinementPlatformDeps,
+  LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV,
+  SANDBOX_PROBE_MARKER
+} from '../src/lib/worker-boundary.js'
 
 let root: string
 
@@ -1939,5 +1955,145 @@ describe('vinaya doctor — the log destination works (Issue #793)', () => {
       expect(urlForDisplay('https://logs.example.com/events')).toBe('https://logs.example.com/events')
       expect(urlForDisplay('not a url at all')).toBe('<unparseable logs.url>')
     })
+  })
+})
+
+describe("vinaya doctor — the dispatch's own sandbox probe (agent-sandbox)", () => {
+  const LINUX: ConfinementPlatformDeps = {
+    platform: 'linux',
+    linuxTools: { available: true, missing: [] },
+    developerDir: null,
+    unixSocketFilterOptIn: false
+  }
+
+  function toolResult(text: string, isError: boolean): string {
+    return JSON.stringify({
+      type: 'user',
+      message: { content: [{ type: 'tool_result', content: text, is_error: isError }] }
+    })
+  }
+
+  type ProbeCall = { args: readonly string[]; settings: { sandbox?: { network?: Record<string, unknown> } } }
+
+  function probeDeps(
+    platform: ConfinementPlatformDeps,
+    stdout: string,
+    calls: ProbeCall[] = [],
+    claudeBinary: string | null = '/usr/local/bin/claude'
+  ): AgentSandboxProbeDeps {
+    return {
+      confinementPlatform: () => platform,
+      claudeBinary: () => claudeBinary,
+      run: async (input) => {
+        const settingsPath = input.args[input.args.indexOf('--settings') + 1] as string
+        calls.push({ args: input.args, settings: JSON.parse(readFileSync(settingsPath, 'utf8')) })
+        return { exitCode: 0, stdout, stderr: '', timedOut: false }
+      }
+    }
+  }
+
+  function sandboxFinding(findings: Finding[]): Finding {
+    const found = findings.filter((f) => f.check === 'agent-sandbox')
+    expect(found).toHaveLength(1)
+    return found[0] as Finding
+  }
+
+  it('reports the probe as passing on Linux, from a throwaway copy of the dispatch settings file', async () => {
+    await runInit(['--yes'], initDeps())
+    const calls: ProbeCall[] = []
+    const report = await runDoctorJson({
+      agentSandboxProbe: probeDeps(LINUX, toolResult(SANDBOX_PROBE_MARKER, false), calls)
+    })
+    const finding = sandboxFinding(report.findings)
+    expect(finding.severity).toBe('ok')
+    expect(finding.message).toContain('ran a command in its sandbox on this host')
+    expect(calls).toHaveLength(1)
+    const call = calls[0] as ProbeCall
+    expect(call.args).toEqual(claudeSandboxProbeArgs(call.args[call.args.length - 1] as string))
+    expect(call.settings.sandbox?.network?.strictAllowlist).toBe(true)
+    // The throwaway settings file is gone once the finding is reported.
+    expect(existsSync(call.args[call.args.length - 1] as string)).toBe(false)
+  })
+
+  it('reports the probe as failing on Linux and names the opt-in variable for the Unix-socket filter', async () => {
+    await runInit(['--yes'], initDeps())
+    const report = await runDoctorJson({
+      agentSandboxProbe: probeDeps(LINUX, toolResult('bwrap: apply-seccomp: Operation not permitted', true))
+    })
+    const finding = sandboxFinding(report.findings)
+    expect(finding.severity).toBe('error')
+    expect(finding.message).toContain('could not run a command in its sandbox on this host')
+    expect(finding.message).toContain('apply-seccomp: Operation not permitted')
+    expect(finding.message).toContain(`${LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV}=1`)
+    expect(report.healthy).toBe(false)
+  })
+
+  it('names no opt-in when the failure is not the Unix-socket filter, or the filter is already off', async () => {
+    await runInit(['--yes'], initDeps())
+    const other = sandboxFinding(
+      (await runDoctorJson({ agentSandboxProbe: probeDeps(LINUX, toolResult('bwrap: no permission', true)) })).findings
+    )
+    expect(other.severity).toBe('error')
+    expect(other.message).not.toContain('turns off only that filter')
+    const calls: ProbeCall[] = []
+    const off = sandboxFinding(
+      (
+        await runDoctorJson({
+          agentSandboxProbe: probeDeps(
+            { ...LINUX, unixSocketFilterOptIn: true },
+            toolResult('apply-seccomp failed', true),
+            calls
+          )
+        })
+      ).findings
+    )
+    expect(off.severity).toBe('error')
+    expect(off.message).toContain(`filter is off: ${LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV}=1`)
+    expect(off.message).not.toContain('turns off only that filter')
+    expect(calls[0]?.settings.sandbox?.network?.allowAllUnixSockets).toBe(true)
+  })
+
+  it('reports the probe as not applicable off Linux, runs nothing, and keeps the command healthy', async () => {
+    await runInit(['--yes'], initDeps())
+    const calls: ProbeCall[] = []
+    const report = await runDoctorJson({
+      agentSandboxProbe: probeDeps({ ...LINUX, platform: 'darwin' }, '', calls)
+    })
+    const finding = sandboxFinding(report.findings)
+    expect(finding.severity).toBe('info')
+    expect(finding.message).toContain('does not apply')
+    expect(calls).toHaveLength(0)
+    expect(report.healthy).toBe(true)
+  })
+
+  it('reports an absent claude binary, never a failure', async () => {
+    await runInit(['--yes'], initDeps())
+    const calls: ProbeCall[] = []
+    const finding = sandboxFinding(
+      (await runDoctorJson({ agentSandboxProbe: probeDeps(LINUX, '', calls, null) })).findings
+    )
+    expect(finding.severity).toBe('info')
+    expect(finding.message).toContain('`claude` is not on PATH')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('reports a Linux host missing the sandbox tools as a refused dispatch, without running the probe', async () => {
+    await runInit(['--yes'], initDeps())
+    const calls: ProbeCall[] = []
+    const finding = sandboxFinding(
+      (
+        await runDoctorJson({
+          agentSandboxProbe: probeDeps({ ...LINUX, linuxTools: { available: false, missing: ['socat'] } }, '', calls)
+        })
+      ).findings
+    )
+    expect(finding.severity).toBe('error')
+    expect(finding.message).toContain('missing: socat')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('runs no probe when the deps name none', async () => {
+    await runInit(['--yes'], initDeps())
+    expect((await runDoctorJson()).findings.filter((f) => f.check === 'agent-sandbox')).toHaveLength(0)
   })
 })
