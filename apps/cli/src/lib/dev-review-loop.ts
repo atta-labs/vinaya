@@ -5477,6 +5477,30 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       )
     }
 
+    /**
+     * Keeps the verdict of a reviewer role that finished while its sibling
+     * failed the same round: written to `rounds/<n>/<role>-kept-on-pause.md`
+     * — never the held-verdict file (`writeHeldVerdict`), which only a round
+     * both roles finished may hold — and logged, so a pause never loses the
+     * sibling's findings. Returns the one-line note the pause detail carries.
+     */
+    function keepSiblingVerdictOnPause(
+      roundNum: number,
+      role: 'reviewer' | 'security',
+      verdict: RoundVerdictParse
+    ): string {
+      const file = `${role}-kept-on-pause.md`
+      ensureRunDir(runPath(root, task, { area: 'round', round: roundNum }), root)
+      writeFileSync(runPath(root, task, { area: 'round', round: roundNum, file }), verdict.rendered, 'utf8')
+      const findings = verdict.observation.findings.length
+      appendRoleLine(
+        loopLogPath,
+        'dev-review-loop',
+        `sibling_verdict_kept: round=${roundNum} role=${role} verdict=${verdict.observation.verdict.replace(/ /g, '_')} findings=${findings} file=${file}`
+      )
+      return `the ${role === 'reviewer' ? 'code reviewer' : 'security reviewer'} finished this round (${verdict.observation.verdict}, ${findings} finding(s)), kept at rounds/${roundNum}/${file}`
+    }
+
     function computeStats(head: string, roundStartMs: number): RoundStats {
       const baseHead = d.gitRevParseOriginMain()
       d.gitFetch(head)
@@ -5895,6 +5919,22 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         const rulings = d.fetchRulings(prNumber)
         lastReviewContext = rulings.map((r, i) => `${i + 1}. ${r}`).join('\n')
         lastHandoffFindings = null
+        // An automatic recovery (`'infrastructure'`/`'stale_driver'`) on an
+        // unmoved head owes the Developer a fix turn only when held reviewer
+        // findings for THAT head exist to deliver. A pause raised in the
+        // reviewer phase held none — the round never finished — so the
+        // resumed run reviews the same head afresh instead of handing the
+        // Developer a turn with nothing to fix.
+        if (
+          !resumeHeadAlreadyMoved &&
+          (resumeFrom.reason === 'infrastructure' || resumeFrom.reason === 'stale_driver')
+        ) {
+          const heldFindings = latestHeldRequestChanges(root, task)
+          if (heldFindings === null || heldFindings.head !== resumeFrom.head) {
+            firstPass = true
+            resumedDispatch = false
+          }
+        }
         // O1: the pause comment this run
         // is resuming from may never have reached the forge (a network
         // drop mid-post, or the pause path's own exhausted retry) — the
@@ -7156,6 +7196,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 { verdict: RoundVerdictParse; findingsUncitable: boolean }
               ]
             | null = null
+          /** Set when one reviewer role failed while its sibling finished: names the sibling's kept verdict for the pause detail. */
+          let keptSiblingNote: string | null = null
           // O1: ONE shared, read-only candidate for this round,
           // built once here — before either reviewer dispatches — from the
           // developer's own local worktree, so both roles judge byte-
@@ -7269,12 +7311,33 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // gate's own `evidence-fresh` check is the real backstop for a
             // report that never lands.
             appendDriverLine(loopLogPath, `Reviewers starting round ${round}`, 'round')
-            const [reviewerResult, securityResult, evidenceOutcome] = await Promise.all([
+            // Settled together, never `Promise.all`: one role's failure (a
+            // confinement violation, an unreadable report) must not end the
+            // round while its sibling is still running. The round waits for
+            // both, keeps a sibling that finished (`keepSiblingVerdictOnPause`)
+            // and only then raises the failure — so the cleanup below never
+            // removes a scratch copy a still-running sibling works in.
+            const [reviewerSettled, securitySettled, evidenceSettled] = await Promise.allSettled([
               dispatchReviewer('reviewer', round, facts, candidateDir, candidateInputsReady),
               dispatchReviewer('security', round, facts, candidateDir, candidateInputsReady),
               d.runEvidenceReport(prNumber, worktreePathForBranch(), branch)
             ])
-            verdicts = [reviewerResult, securityResult]
+            if (reviewerSettled.status === 'rejected' || securitySettled.status === 'rejected') {
+              const settled = [
+                { role: 'reviewer' as const, result: reviewerSettled },
+                { role: 'security' as const, result: securitySettled }
+              ]
+              for (const { role, result } of settled) {
+                if (result.status === 'fulfilled') {
+                  keptSiblingNote = keepSiblingVerdictOnPause(round, role, result.value.verdict)
+                }
+              }
+              const failure = settled.find((s) => s.result.status === 'rejected')?.result as PromiseRejectedResult
+              throw failure.reason
+            }
+            if (evidenceSettled.status === 'rejected') throw evidenceSettled.reason
+            const evidenceOutcome = evidenceSettled.value
+            verdicts = [reviewerSettled.value, securitySettled.value]
             if (!evidenceOutcome.ok) {
               // Logged to the driver's own role log, never a PR comment: a
               // report failure is never counted toward `no_progress` or a
@@ -7325,8 +7388,20 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               duration_ms: err.attemptDurationMs ?? d.now() - roundStartMs
             })
             const stats = computeStats(head, roundStartMs)
-            await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats, 'infrastructure'))
-            decision = { type: 'pause', reason: 'infrastructure', detail: err.message }
+            // No round verdict exists, so the round is never closed here: no
+            // `round_ended` (whose only outcome on this path would claim
+            // `changes_requested` with no findings) — the resumed run reviews
+            // this same round on this same head and ends it then.
+            await logEvents(
+              driverDecidedPauseEvents(config.loopId, state, round, stats, 'infrastructure').filter(
+                (event) => event.event !== 'round_ended'
+              )
+            )
+            decision = {
+              type: 'pause',
+              reason: 'infrastructure',
+              detail: keptSiblingNote ? `${err.message} — ${keptSiblingNote}` : err.message
+            }
             infrastructureRetries += 1
           } finally {
             // O3: this round's candidate and every scratch copy any attempt
