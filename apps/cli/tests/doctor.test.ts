@@ -16,7 +16,16 @@ import type { VinayaConfig } from '../src/lib/config.js'
 import type { InitDeps } from '../src/commands/init.js'
 import { runInit } from '../src/commands/init.js'
 import { DOC_OWNERS_PATH } from '@attalabs/aeg-core'
-import { CHECKS_WORKFLOW_PATH, CONFIG_PATH, DOCTRINE_POINTER_PATH, REVIEW_WORKFLOW_PATH } from '../src/lib/artifacts.js'
+import {
+  CHECKS_WORKFLOW_PATH,
+  CLAUDE_POINTER_PATH,
+  CONFIG_PATH,
+  DOCTRINE_POINTER_PATH,
+  DOCTRINE_POINTER_PATHS,
+  GEMINI_SETTINGS_PATH,
+  RETIRED_DOCTRINE_POINTER_PATH,
+  REVIEW_WORKFLOW_PATH
+} from '../src/lib/artifacts.js'
 import { CLAUDE_COMMAND_PATH } from '../src/lib/claude-command-emitter.js'
 import { CLAUDE_SETTINGS_PATH, CLAUDE_STOP_HOOK_SCRIPT_PATH } from '../src/lib/claude-stop-hook-emitter.js'
 import { GEMINI_COMMAND_PATH } from '../src/lib/gemini-command-emitter.js'
@@ -346,6 +355,62 @@ describe('vinaya doctor — never mutates', () => {
     expect(hit?.message).toContain('drifted')
 
     expect(snapshot(root)).toEqual(before) // doctor fixed nothing
+  })
+
+  it('reports the doctrine pointer files clean on a fresh install', async () => {
+    await runInit(['--yes'], initDeps())
+
+    const report = await runDoctorJson()
+    for (const path of DOCTRINE_POINTER_PATHS) {
+      const hit = report.findings.find((f) => f.message.includes(path))
+      expect(hit?.severity).toBe('ok')
+    }
+    expect(report.findings.find((f) => f.message.includes(GEMINI_SETTINGS_PATH))?.check).toBe('gemini-settings')
+  })
+
+  it('flags a missing AGENTS.md and a drifted CLAUDE.md like every other managed artifact, without fixing them', async () => {
+    await runInit(['--yes'], initDeps())
+    rmSync(join(root, DOCTRINE_POINTER_PATH))
+    writeFileSync(join(root, CLAUDE_POINTER_PATH), '@AGENTS.md\n\nhand-edited\n')
+    const before = snapshot(root)
+
+    const report = await runDoctorJson()
+    expect(report.healthy).toBe(false)
+    const missing = report.findings.find(
+      (f) => f.check === 'doctrine-pointer' && f.message.startsWith(`${DOCTRINE_POINTER_PATH} `)
+    )
+    expect(missing?.severity).toBe('error')
+    expect(missing?.message).toContain('missing on disk')
+    const drifted = report.findings.find(
+      (f) => f.check === 'doctrine-pointer' && f.message.startsWith(`${CLAUDE_POINTER_PATH} `)
+    )
+    expect(drifted?.severity).toBe('warn')
+    expect(drifted?.message).toContain('drifted')
+
+    expect(snapshot(root)).toEqual(before)
+  })
+
+  it('points an install that still records VINAYA.md at `vinaya upgrade`', async () => {
+    await runInit(['--yes'], initDeps())
+    for (const path of DOCTRINE_POINTER_PATHS) rmSync(join(root, path))
+    writeFileSync(join(root, RETIRED_DOCTRINE_POINTER_PATH), '# old pointer\n')
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    cfg.managed.files = [
+      ...cfg.managed.files.filter((f: string) => !DOCTRINE_POINTER_PATHS.includes(f)),
+      RETIRED_DOCTRINE_POINTER_PATH
+    ]
+    writeFileSync(join(root, CONFIG_PATH), `${JSON.stringify(cfg, null, 2)}\n`)
+
+    const report = await runDoctorJson()
+    expect(report.healthy).toBe(false)
+    for (const path of DOCTRINE_POINTER_PATHS) {
+      const hit = report.findings.find((f) => f.message.startsWith(`${path} `))
+      expect(hit?.severity).toBe('error')
+      expect(hit?.message).toContain('run `vinaya upgrade`')
+    }
+    const retired = report.findings.find((f) => f.message.startsWith(`${RETIRED_DOCTRINE_POINTER_PATH} `))
+    expect(retired?.severity).toBe('warn')
+    expect(retired?.message).toContain('run `vinaya upgrade`')
   })
 
   it('does not flag .vinaya/doc-owners as drifted once a real binding is added (found live: was recommending `vinaya upgrade`, which would have wiped it)', async () => {

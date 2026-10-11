@@ -1,5 +1,7 @@
 import { afterAll, describe, expect, it, mock } from 'bun:test'
-import { doctrinePointer } from '../src/lib/artifacts.js'
+import { resolveDoctrineRoot } from '../src/commands/doctrine.js'
+import { discoverRoleNames } from '../src/lib/agents-skills-emitter.js'
+import { doctrinePointer, pointerRoleNames } from '../src/lib/artifacts.js'
 // Imported from the SAME specifier artifacts.ts uses, so the mock.module
 // interception below is provably live (see the sanity assertion) — a mock
 // that silently failed to resolve would make the byte-identity test pass
@@ -17,6 +19,7 @@ afterAll(() => {
 })
 
 const VENDORED: VendoredVinaya = { dir: 'apps/cli', bin: 'apps/cli/dist/index.js' }
+const ROLES = ['architect', 'developer', 'operator']
 
 /**
  * Regenerate the pointer as if the CLI physically sat at `fakeRoot` on this
@@ -28,7 +31,7 @@ function pointerWithCliAt(fakeRoot: string, selfHost: VendoredVinaya | null): st
   // The mock is live for artifacts.ts too (same module registry entry); if
   // this ever reads the real root, the whole test is void — fail loudly.
   expect(packageRoot('file:///anywhere/x.js')).toBe(fakeRoot)
-  return doctrinePointer(selfHost)
+  return doctrinePointer(selfHost, ROLES)
 }
 
 describe('doctrine pointer machine-independence (atta-labs/attalabs#928)', () => {
@@ -57,12 +60,12 @@ describe('doctrine pointer machine-independence (atta-labs/attalabs#928)', () =>
   })
 
   it('still points at something a reader can open: package name, front door, resolution command', () => {
-    const adopter = doctrinePointer(null)
+    const adopter = doctrinePointer(null, ROLES)
     expect(adopter).toContain('@attalabs/vinaya')
     expect(adopter).toContain('aeg-root/skills/aeg/SKILL.md')
     expect(adopter).toContain('npx --yes @attalabs/vinaya doctrine')
 
-    const vendored = doctrinePointer(VENDORED)
+    const vendored = doctrinePointer(VENDORED, ROLES)
     expect(vendored).toContain('aeg-root/skills/aeg/SKILL.md')
     expect(vendored).toContain('node apps/cli/dist/index.js doctrine')
   })
@@ -72,7 +75,7 @@ describe('doctrine pointer machine-independence (atta-labs/attalabs#928)', () =>
     // `.gemini/commands/vinaya.toml` path, so it never drifts as the vendor
     // set the `--agents` flag installs changes.
     for (const selfHost of [null, VENDORED]) {
-      const content = doctrinePointer(selfHost)
+      const content = doctrinePointer(selfHost, ROLES)
       expect(content).toContain('slash-style commands')
       expect(content).toContain('/vinaya <role>')
       expect(content).not.toContain('.claude/commands')
@@ -84,14 +87,14 @@ describe('doctrine pointer machine-independence (atta-labs/attalabs#928)', () =>
 
 describe('doctrine pointer content (atta-labs/vinaya#41 — honest adopter entry point)', () => {
   it('names all three rings, one sentence each', () => {
-    const content = doctrinePointer(null)
+    const content = doctrinePointer(null, ROLES)
     expect(content).toContain('Ring 0 (hooks)')
     expect(content).toContain('Ring 1 (branch rules)')
     expect(content).toContain('Ring 2 (audits)')
   })
 
   it('points at real, shipped governance surfaces in THIS repo — never attalabs-internal aeg-root/', () => {
-    const content = doctrinePointer(null)
+    const content = doctrinePointer(null, ROLES)
     const governanceSection = content.split('## Where governance lives in this repo')[1]?.split('##')[0] ?? ''
     expect(content).toContain('vinaya.config.json')
     expect(content).toContain('.vinaya/hooks')
@@ -106,7 +109,7 @@ describe('doctrine pointer content (atta-labs/vinaya#41 — honest adopter entry
   })
 
   it('names how to see what is running and how to extend, using only shipped commands', () => {
-    const content = doctrinePointer(null)
+    const content = doctrinePointer(null, ROLES)
     expect(content).toContain('vinaya check --plan')
     expect(content).toContain('vinaya doctor')
     expect(content).toContain('vinaya new check')
@@ -117,10 +120,29 @@ describe('doctrine pointer content (atta-labs/vinaya#41 — honest adopter entry
   })
 
   it('carries the security paragraph: env allowlist, literal-never-secret, audit-trail caveat', () => {
-    const content = doctrinePointer(null)
+    const content = doctrinePointer(null, ROLES)
     expect(content).toContain('never the full parent')
     expect(content).toContain('breaking-change tightening')
     expect(content).toContain('must never be a secret')
     expect(content).toContain('pull request review is actually enforced')
+  })
+})
+
+describe('doctrine pointer role list — discovered, never hand-written', () => {
+  it('renders exactly the roles it is given', () => {
+    expect(doctrinePointer(null, ROLES)).toContain('`architect`, `developer`, or `operator`')
+    expect(doctrinePointer(null, ['developer', 'reviewer'])).toContain('`developer` or `reviewer`')
+  })
+
+  it('lists the roles the skill emitter discovers in the bundled doctrine — the Operator in, the Principal out', () => {
+    const doctrineRoot = resolveDoctrineRoot()
+    expect(doctrineRoot).not.toBeNull()
+    const roles = pointerRoleNames()
+    expect(roles).toEqual(discoverRoleNames(doctrineRoot as string))
+    expect(roles).toContain('operator')
+    expect(roles).not.toContain('principal')
+    const content = doctrinePointer(null, roles)
+    for (const role of roles) expect(content).toContain(`\`${role}\``)
+    expect(content).not.toContain('`principal`')
   })
 })

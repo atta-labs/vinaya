@@ -31,10 +31,14 @@ import {
 import {
   buildInitOps,
   CHECKS_FOLDER_PLACEHOLDER_PATH,
+  CLAUDE_POINTER_PATH,
   CONFIG_PATH,
   DOCTRINE_POINTER_PATH,
+  DOCTRINE_POINTER_PATHS,
+  GEMINI_SETTINGS_PATH,
   type HookDir,
   type InitContext,
+  RETIRED_DOCTRINE_POINTER_PATH,
   ROLES_FOLDER_PLACEHOLDER_PATH,
   starterConfig,
   TRACKED_HOOK_DIR
@@ -323,7 +327,8 @@ function readConfig(repoRoot: string): ConfigRead {
 
 function labelForPath(path: string): string {
   if (path === CONFIG_PATH) return 'config'
-  if (path === DOCTRINE_POINTER_PATH) return 'doctrine-pointer'
+  if (path === DOCTRINE_POINTER_PATH || path === CLAUDE_POINTER_PATH) return 'doctrine-pointer'
+  if (path === GEMINI_SETTINGS_PATH) return 'gemini-settings'
   if (path.startsWith('.agents/skills/')) return 'agent-skills'
   if (path === CLAUDE_COMMAND_PATH) return 'claude-command'
   if (path === CLAUDE_SETTINGS_PATH) return 'claude-stop-hook'
@@ -333,7 +338,7 @@ function labelForPath(path: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Checks 1/2/3/4 — hooks, workflows, config, VINAYA.md — one pass over the
+// Checks 1/2/3/4 — hooks, workflows, config, AGENTS.md — one pass over the
 // SAME op list `vinaya init` builds (lib/artifacts.ts), classified against
 // disk + the manifest instead of applied.
 // ---------------------------------------------------------------------------
@@ -359,7 +364,9 @@ function diagnoseInstall(
         findings.push(
           owned
             ? error(check, `${op.path} is recorded as vinaya-managed but missing on disk — run \`vinaya upgrade\`.`)
-            : error(check, `${op.path} is not installed — run \`vinaya init\`.`)
+            : DOCTRINE_POINTER_PATHS.includes(op.path)
+              ? error(check, `${op.path} is not installed — run \`vinaya upgrade\`.`)
+              : error(check, `${op.path} is not installed — run \`vinaya init\`.`)
         )
         continue
       }
@@ -443,6 +450,19 @@ function diagnoseInstall(
         findings.push(error(check, `${op.path} is not executable.`))
       }
     }
+  }
+
+  // The pointer's former name: nothing generates it, so the op pass above
+  // never sees it — a manifest still recording it is an install `upgrade`
+  // has not yet moved to `AGENTS.md`.
+  if (ownedFiles.has(RETIRED_DOCTRINE_POINTER_PATH)) {
+    hasDrift = true
+    findings.push(
+      warn(
+        'doctrine-pointer',
+        `${RETIRED_DOCTRINE_POINTER_PATH} is retired — no agent tool reads it; run \`vinaya upgrade\` to replace it with ${DOCTRINE_POINTER_PATH}.`
+      )
+    )
   }
 
   return { findings, hasDrift }

@@ -52,7 +52,7 @@
  * full, is the one thing being said.
  */
 
-import { anchoredRegionBounds, stripCode } from './anchored-region'
+import { ANCHOR_FIELDS, anchoredRegionBounds, stripCode } from './anchored-region'
 
 export type DensityResult = { status: 'pass' | 'fail'; errors: string[] }
 
@@ -75,14 +75,16 @@ function headingSectionBody(prBody: string, heading: string): string | null {
 /**
  * `headingSectionBody`'s text with every well-formed `AEG:*` anchor block removed
  * outright (not just unwrapped) — an anchored field (Scope's trailing
- * `AEG:TIER` block, in the canonical template) is a field, not a second
- * prose paragraph, and must not count as one. Reuses `anchoredRegionBounds`
+ * `AEG:TIER` block, in the canonical template, or the driver-written
+ * `AEG:BEYOND-SURFACE` block beside it) is a field, not a second prose
+ * paragraph, and must not count as one. Every field in `ANCHOR_FIELDS`, so an
+ * anchor added there is never a paragraph here. Reuses `anchoredRegionBounds`
  * (the same span `vinaya pr report --write` targets) rather than a second,
  * drifting regex for "what an anchor block looks like."
  */
 function stripAnchorBlocks(sectionText: string): string {
   let result = sectionText
-  for (const field of ['CLOSES', 'PROJECT', 'TIER', 'PREMISE', 'TEST-PLAN', 'EVIDENCE'] as const) {
+  for (const field of ANCHOR_FIELDS) {
     for (;;) {
       const bounds = anchoredRegionBounds(result, field)
       if (!bounds) break

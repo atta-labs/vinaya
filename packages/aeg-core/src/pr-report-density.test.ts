@@ -80,6 +80,23 @@ describe('checkScopeDensity', () => {
     expect(checkScopeDensity(ONE_PARAGRAPH_SCOPE_WITH_TIER)).toEqual({ status: 'pass', errors: [] })
   })
 
+  it('passes a single-paragraph Scope carrying the driver-written AEG:BEYOND-SURFACE block before AEG:TIER', () => {
+    const body = `## Scope
+
+One paragraph of blast-radius prose.
+
+<!-- AEG:BEYOND-SURFACE:START -->
+**Beyond the Surface** — recorded by the review-loop driver on every body write; never edit it:
+- \`docs/x.md\` matches no \`in:\` glob
+<!-- AEG:BEYOND-SURFACE:END -->
+
+<!-- AEG:TIER:START -->
+**Tier:** 1
+<!-- AEG:TIER:END -->
+`
+    expect(checkScopeDensity(body)).toEqual({ status: 'pass', errors: [] })
+  })
+
   it('fails a two-paragraph Scope, the AEG:TIER anchor block never counting as the second paragraph', () => {
     const result = checkScopeDensity(TWO_PARAGRAPH_SCOPE_WITH_TIER)
     expect(result.status).toBe('fail')
