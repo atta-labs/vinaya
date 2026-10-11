@@ -9,18 +9,7 @@
 // story; `vinaya upgrade` is the only sanctioned path back to a clean state.
 
 import { execFileSync } from 'node:child_process'
-import {
-  accessSync,
-  constants,
-  existsSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  statSync
-} from 'node:fs'
-import { tmpdir } from 'node:os'
+import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { delimiter, dirname, join } from 'node:path'
 import type { CheckSpec } from '../checks/contract.js'
 import { coreCheckRegistry } from '../checks/registry.js'
@@ -108,15 +97,11 @@ import { checksMissingEnvDeclaration, envDeclarationWarning } from '../lib/env-l
 import { PROJECTS_REGISTRY_PATH } from '../lib/registry-write.js'
 import { markerLines, renderBlock, resolveManagedBlockPath } from '../lib/ops.js'
 import { packageRoot } from '../lib/package-root.js'
-import { confinedClaudeEnvExtras, writeDispatchSettingsAt } from '../lib/dispatch.js'
+import { probeClaudeSandboxOnHost } from '../lib/dispatch.js'
 import {
-  buildWorkerEnv,
-  CLAUDE_SANDBOX_ALLOWED_DOMAINS,
   type ConfinementPlatformDeps,
   LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV,
-  probeAgentSandbox,
   realConfinementPlatformDeps,
-  resolveClaudeConfinement,
   runRealSandboxProbe,
   type SandboxProbeRunner
 } from '../lib/worker-boundary.js'
@@ -1551,10 +1536,10 @@ async function diagnoseLastLogFallback(deps: DoctorDeps): Promise<Finding[]> {
 
 // ---------------------------------------------------------------------------
 // agent-sandbox — report-only. On Linux, runs the dispatch's own pre-spawn
-// sandbox probe (`probeAgentSandbox`) against a settings file written by the
-// dispatch's own writer into a throwaway directory, so `doctor` says before
-// any task is launched whether a dispatched Claude agent could run a command
-// on this host. Any other platform: the probe does not apply, and says so.
+// sandbox probe (`probeClaudeSandboxOnHost`, which runs `probeAgentSandbox`
+// against a settings file the dispatch's own writer puts in a throwaway
+// directory), so `doctor` says before any task is launched whether a
+// dispatched Claude agent could run a command on this host. Any other platform: the probe does not apply, and says so.
 // The throwaway directory is removed before the finding is returned.
 // ---------------------------------------------------------------------------
 async function diagnoseAgentSandbox(deps: DoctorDeps, repoRoot: string): Promise<Finding[]> {
@@ -1575,72 +1560,34 @@ async function diagnoseAgentSandbox(deps: DoctorDeps, repoRoot: string): Promise
       info('agent-sandbox', "`claude` is not on PATH, so the dispatch's sandbox probe could not run on this host.")
     ]
   }
-  const scratchDir = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-doctor-sandbox-probe-')))
-  try {
-    const confinement = resolveClaudeConfinement(
-      {
-        role: 'developer',
-        agent: 'claude',
-        worktreeDir: repoRoot,
-        scratchDir,
-        allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS
-      },
-      platform
-    )
-    if (!confinement.confined) {
-      return [
-        error('agent-sandbox', `a dispatched Claude agent would be refused on this host — ${confinement.warning}`)
-      ]
-    }
-    const settingsPath = writeDispatchSettingsAt(
-      join(scratchDir, 'hooks'),
-      'doctor-sandbox-probe',
-      [],
-      'developer',
-      repoRoot,
-      [],
-      [],
-      confinement.settings
-    )
-    if (settingsPath === null) {
-      return [
-        warn('agent-sandbox', "the dispatch's settings file could not be written, so the sandbox probe did not run.")
-      ]
-    }
-    const probe = await probeAgentSandbox(
-      {
-        agent: 'claude',
-        binaryPath,
-        cwd: repoRoot,
-        env: buildWorkerEnv(process.env, {
-          GH_TELEMETRY: '0',
-          ...confinedClaudeEnvExtras(confinement.scratchDir, confinement.pathOverride)
-        }),
-        settingsPath
-      },
-      { platform: platform.platform, run: probeDeps.run }
-    )
-    const filterNote = confinement.unixSocketFilterOff
-      ? ` (the sandbox's Unix-socket filter is off: ${LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV}=1)`
-      : ''
-    if (probe.ok) {
-      return [ok('agent-sandbox', `a dispatched Claude agent ran a command in its sandbox on this host${filterNote}.`)]
-    }
-    const remedy =
-      !confinement.unixSocketFilterOff && /seccomp/i.test(probe.error)
-        ? ` The kernel refuses the sandbox's Unix-socket seccomp step: the host's owner may set ` +
-          `${LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV}=1 in the driver's own environment, which turns off only that filter.`
-        : ''
-    return [
-      error(
-        'agent-sandbox',
-        `a dispatched Claude agent could not run a command in its sandbox on this host${filterNote}, ` +
-          `so every Claude dispatch here is refused — ${probe.error}${remedy}`
-      )
-    ]
-  } finally {
-    rmSync(scratchDir, { recursive: true, force: true })
+  const outcome = await probeClaudeSandboxOnHost({ repoRoot, binaryPath, platform, run: probeDeps.run })
+  if (outcome.kind === 'unconfined') {
+    return [error('agent-sandbox', `a dispatched Claude agent would be refused on this host — ${outcome.warning}`)]
   }
+  if (outcome.kind === 'settings-unwritten') {
+    return [
+      warn('agent-sandbox', "the dispatch's settings file could not be written, so the sandbox probe did not run.")
+    ]
+  }
+  const filterNote = outcome.unixSocketFilterOff
+    ? ` (the sandbox's Unix-socket filter is off: ${LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV}=1)`
+    : ''
+  if (outcome.result.ok) {
+    return [ok('agent-sandbox', `a dispatched Claude agent ran a command in its sandbox on this host${filterNote}.`)]
+  }
+  const probeError = outcome.result.error
+  const remedy =
+    !outcome.unixSocketFilterOff && /seccomp/i.test(probeError)
+      ? ` The kernel refuses the sandbox's Unix-socket seccomp step: the host's owner may set ` +
+        `${LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV}=1 in the driver's own environment, which turns off only that filter.`
+      : ''
+  return [
+    error(
+      'agent-sandbox',
+      `a dispatched Claude agent could not run a command in its sandbox on this host${filterNote}, ` +
+        `so every Claude dispatch here is refused — ${probeError}${remedy}`
+    )
+  ]
 }
 
 // ---------------------------------------------------------------------------
@@ -1755,5 +1702,5 @@ export async function doctorCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  doctor: { date: '2026-09-05', callsToday: 20, retiresVia: 'sharedCommandShell' }
+  doctor: { date: '2026-09-05', callsToday: 21, retiresVia: 'sharedCommandShell' }
 }
