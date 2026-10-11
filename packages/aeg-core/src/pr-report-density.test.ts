@@ -37,6 +37,47 @@ Second paragraph that should not be here.
 
 ## Token report`
 
+const ONE_PARAGRAPH_SCOPE_WITH_BEYOND_SURFACE = `## Scope
+
+One paragraph of blast-radius prose.
+
+<!-- AEG:BEYOND-SURFACE:START -->
+Beyond the task's Surface, recorded by the review loop:
+- \`apps/cli/src/lib/example.ts\`
+<!-- AEG:BEYOND-SURFACE:END -->
+
+<!-- AEG:TIER:START -->
+**Tier:** 1
+<!-- AEG:TIER:END -->
+
+## Token report`
+
+const EMPTY_BEYOND_SURFACE_SCOPE = `## Scope
+
+One paragraph of blast-radius prose.
+
+<!-- AEG:BEYOND-SURFACE:START -->
+<!-- AEG:BEYOND-SURFACE:END -->
+
+<!-- AEG:TIER:START -->
+**Tier:** 1
+<!-- AEG:TIER:END -->
+
+## Token report`
+
+const TWO_PARAGRAPH_SCOPE_WITH_BEYOND_SURFACE = `## Scope
+
+First paragraph of blast-radius prose.
+
+Second paragraph that should not be here.
+
+<!-- AEG:BEYOND-SURFACE:START -->
+Beyond the task's Surface, recorded by the review loop:
+- \`apps/cli/src/lib/example.ts\`
+<!-- AEG:BEYOND-SURFACE:END -->
+
+## Token report`
+
 describe('checkDecisionsDensity', () => {
   it('passes a single-block Decisions section (a real bullet list, no blank lines between items)', () => {
     expect(checkDecisionsDensity(ONE_PARAGRAPH_DECISIONS)).toEqual({ status: 'pass', errors: [] })
@@ -84,6 +125,20 @@ describe('checkScopeDensity', () => {
     const result = checkScopeDensity(TWO_PARAGRAPH_SCOPE_WITH_TIER)
     expect(result.status).toBe('fail')
     expect(result.errors[0]).toContain('Scope')
+    expect(result.errors[0]).toContain('2 paragraphs')
+  })
+
+  it('passes a one-paragraph Scope beside a populated AEG:BEYOND-SURFACE block — the driver-owned block is a field, not a second paragraph', () => {
+    expect(checkScopeDensity(ONE_PARAGRAPH_SCOPE_WITH_BEYOND_SURFACE)).toEqual({ status: 'pass', errors: [] })
+  })
+
+  it('passes a one-paragraph Scope beside an empty AEG:BEYOND-SURFACE block', () => {
+    expect(checkScopeDensity(EMPTY_BEYOND_SURFACE_SCOPE)).toEqual({ status: 'pass', errors: [] })
+  })
+
+  it('still fails two real paragraphs beside the AEG:BEYOND-SURFACE block, counting only the prose', () => {
+    const result = checkScopeDensity(TWO_PARAGRAPH_SCOPE_WITH_BEYOND_SURFACE)
+    expect(result.status).toBe('fail')
     expect(result.errors[0]).toContain('2 paragraphs')
   })
 

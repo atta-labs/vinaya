@@ -82,7 +82,7 @@ function headingSectionBody(prBody: string, heading: string): string | null {
  */
 function stripAnchorBlocks(sectionText: string): string {
   let result = sectionText
-  for (const field of ['CLOSES', 'PROJECT', 'TIER', 'PREMISE', 'TEST-PLAN', 'EVIDENCE'] as const) {
+  for (const field of ['CLOSES', 'PROJECT', 'TIER', 'PREMISE', 'TEST-PLAN', 'EVIDENCE', 'BEYOND-SURFACE'] as const) {
     for (;;) {
       const bounds = anchoredRegionBounds(result, field)
       if (!bounds) break
