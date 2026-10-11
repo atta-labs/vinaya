@@ -10,10 +10,20 @@ import type { InitDeps } from '../src/commands/init.js'
 import { runInit } from '../src/commands/init.js'
 import type { UpgradeDeps } from '../src/commands/upgrade.js'
 import { planRingsMigration, runUpgrade } from '../src/commands/upgrade.js'
+import { runEject } from '../src/commands/eject.js'
 import {
   CHECKS_WORKFLOW_PATH,
+  CLAUDE_POINTER_PATH,
   CONFIG_PATH,
+  claudePointer,
+  DOCTRINE_POINTER_PATH,
+  DOCTRINE_POINTER_PATHS,
+  doctrinePointer,
+  GEMINI_SETTINGS_PATH,
+  geminiSettings,
   MCP_JSON_PATH,
+  pointerRoleNames,
+  RETIRED_DOCTRINE_POINTER_PATH,
   REVIEW_WORKFLOW_PATH,
   TASK_LOG_COLLECTOR_WORKFLOW_PATH
 } from '../src/lib/artifacts.js'
@@ -404,14 +414,16 @@ describe('vinaya upgrade', () => {
     // foreign (present on disk, not owned), and hand-edit its content —
     // alongside a real drift elsewhere so the run isn't a trivial no-op.
     const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
-    cfg.managed.files = cfg.managed.files.filter((f: string) => f !== 'VINAYA.md')
+    cfg.managed.files = cfg.managed.files.filter((f: string) => f !== DOCTRINE_POINTER_PATH)
     writeFileSync(join(root, CONFIG_PATH), `${JSON.stringify(cfg, null, 2)}\n`)
-    writeFileSync(join(root, 'VINAYA.md'), '# my own notes, not vinaya-generated\n')
+    writeFileSync(join(root, DOCTRINE_POINTER_PATH), '# my own notes, not vinaya-generated\n')
     writeFileSync(join(root, CHECKS_WORKFLOW_PATH), 'name: hand-edited\n')
 
     const out = await captureStdout(() => runUpgrade(['--yes'], upgradeDeps()))
     expect(out).toContain('REFUSE')
-    expect(readFileSync(join(root, 'VINAYA.md'), 'utf-8')).toBe('# my own notes, not vinaya-generated\n')
+    expect(readFileSync(join(root, DOCTRINE_POINTER_PATH), 'utf-8')).toBe('# my own notes, not vinaya-generated\n')
+    const after = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    expect(after.managed.files).not.toContain(DOCTRINE_POINTER_PATH)
     // the real drift elsewhere still got regenerated
     expect(readFileSync(join(root, CHECKS_WORKFLOW_PATH), 'utf-8')).not.toBe('name: hand-edited\n')
   })
@@ -851,5 +863,95 @@ describe('vinaya upgrade — rings migration end-to-end', () => {
 
     const after = JSON.parse(readFileSync(configAbs, 'utf-8'))
     expect(after.rings).toEqual({ ring1_forgeWriteInterception: true, ring2_asyncAudits: false })
+  })
+})
+
+describe('vinaya upgrade — the doctrine pointer moves from VINAYA.md to the files each vendor reads', () => {
+  // An install made before the move: the manifest records `VINAYA.md` and
+  // none of the three vendor-read files, and none of them is on disk.
+  async function installPredatingTheMove(): Promise<void> {
+    await runInit(['--yes'], initDeps())
+    for (const path of DOCTRINE_POINTER_PATHS) rmSync(join(root, path))
+    writeFileSync(join(root, RETIRED_DOCTRINE_POINTER_PATH), '<!-- Managed by Vinaya -->\n# old pointer\n')
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    cfg.managed.files = [
+      ...cfg.managed.files.filter((f: string) => !DOCTRINE_POINTER_PATHS.includes(f)),
+      RETIRED_DOCTRINE_POINTER_PATH
+    ]
+    writeFileSync(join(root, CONFIG_PATH), `${JSON.stringify(cfg, null, 2)}\n`)
+  }
+
+  it('writes AGENTS.md, CLAUDE.md and .gemini/settings.json byte-for-byte, removes VINAYA.md, and records the swap', async () => {
+    await installPredatingTheMove()
+
+    let rc = -1
+    const out = await captureStdout(async () => {
+      rc = await runUpgrade(['--yes'], upgradeDeps())
+    })
+    expect(rc).toBe(0)
+    expect(out).toContain(`remove ${RETIRED_DOCTRINE_POINTER_PATH}`)
+    expect(existsSync(join(root, RETIRED_DOCTRINE_POINTER_PATH))).toBe(false)
+    expect(readFileSync(join(root, DOCTRINE_POINTER_PATH), 'utf-8')).toBe(doctrinePointer(null, pointerRoleNames()))
+    expect(readFileSync(join(root, CLAUDE_POINTER_PATH), 'utf-8')).toBe(
+      "@AGENTS.md\n\nRun `/vinaya <role>` to load that role's doctrine for this session.\n"
+    )
+    expect(readFileSync(join(root, CLAUDE_POINTER_PATH), 'utf-8')).toBe(claudePointer())
+    expect(readFileSync(join(root, GEMINI_SETTINGS_PATH), 'utf-8')).toBe(
+      '{\n  "context": {\n    "fileName": "AGENTS.md"\n  }\n}\n'
+    )
+    expect(readFileSync(join(root, GEMINI_SETTINGS_PATH), 'utf-8')).toBe(geminiSettings())
+
+    const after = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    expect(after.managed.files).not.toContain(RETIRED_DOCTRINE_POINTER_PATH)
+    for (const path of DOCTRINE_POINTER_PATHS) expect(after.managed.files).toContain(path)
+
+    // A second run has nothing left to do, and doctor reports the install clean.
+    const second = await captureStdout(() => runUpgrade(['--yes'], upgradeDeps()))
+    expect(second).toContain('already current')
+    expect(await runDoctor([], doctorDeps())).toBe(0)
+  })
+
+  it("leaves an adopter's own CLAUDE.md and .gemini/settings.json untouched, refusing them like any foreign file", async () => {
+    await installPredatingTheMove()
+    writeFileSync(join(root, CLAUDE_POINTER_PATH), '# our own Claude notes\n')
+    mkdirSync(join(root, '.gemini'), { recursive: true })
+    writeFileSync(join(root, GEMINI_SETTINGS_PATH), '{ "theme": "ours" }\n')
+
+    const out = await captureStdout(() => runUpgrade(['--yes'], upgradeDeps()))
+    expect(out).toContain('REFUSE')
+    expect(readFileSync(join(root, CLAUDE_POINTER_PATH), 'utf-8')).toBe('# our own Claude notes\n')
+    expect(readFileSync(join(root, GEMINI_SETTINGS_PATH), 'utf-8')).toBe('{ "theme": "ours" }\n')
+    expect(existsSync(join(root, DOCTRINE_POINTER_PATH))).toBe(true)
+
+    const after = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    expect(after.managed.files).toContain(DOCTRINE_POINTER_PATH)
+    expect(after.managed.files).not.toContain(CLAUDE_POINTER_PATH)
+    expect(after.managed.files).not.toContain(GEMINI_SETTINGS_PATH)
+  })
+
+  it('--dry-run reports the swap and writes nothing', async () => {
+    await installPredatingTheMove()
+
+    const out = await captureStdout(() => runUpgrade(['--dry-run'], upgradeDeps()))
+    expect(out).toContain(`remove ${RETIRED_DOCTRINE_POINTER_PATH}`)
+    for (const path of DOCTRINE_POINTER_PATHS) expect(out).toContain(path)
+    expect(existsSync(join(root, RETIRED_DOCTRINE_POINTER_PATH))).toBe(true)
+    for (const path of DOCTRINE_POINTER_PATHS) expect(existsSync(join(root, path))).toBe(false)
+  })
+
+  it('eject removes a VINAYA.md the manifest still records', async () => {
+    await installPredatingTheMove()
+
+    let rc = -1
+    await captureStdout(async () => {
+      rc = await runEject(['--yes'], {
+        detectRepo: async () => ({ repoRoot: root, owner: 'acme', repo: 'widget' }),
+        readHooksPath: async () => null,
+        unsetHooksPath: async () => {},
+        confirm: async () => true
+      })
+    })
+    expect(rc).toBe(0)
+    expect(existsSync(join(root, RETIRED_DOCTRINE_POINTER_PATH))).toBe(false)
   })
 })

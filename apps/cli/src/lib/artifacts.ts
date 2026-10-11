@@ -9,7 +9,7 @@
 // body checks, the archivist's ring-2 post-merge/scheduled jobs, and the
 // task-log collector that gives task-path CI evidence a credentialed
 // publisher), git-hook managed blocks, a root
-// `VINAYA.md` doctrine pointer (reading-order convention), an empty
+// `AGENTS.md` doctrine pointer with the `CLAUDE.md` that imports it, an empty
 // `.vinaya/doc-owners` starter manifest, and labels. Everything else
 // the earlier amendment-4 manifest carried (GitHub templates, the
 // governance/ scaffold, example check scripts) was this monorepo's own
@@ -23,7 +23,7 @@
 import { DOC_OWNERS_PATH, LABELS, type LabelKey, VERDICT_MARKER_SOURCE, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
 import { resolveDoctrineRoot } from '../commands/doctrine.js'
 import type { AgentVendor } from './agent-vendors.js'
-import { buildAgentsSkillsOps } from './agents-skills-emitter.js'
+import { buildAgentsSkillsOps, discoverRoleNames } from './agents-skills-emitter.js'
 import { claudeMcpJsonFile } from './task-tools/adapters.js'
 import {
   BODY_CHECKS_WORKFLOW_PATH,
@@ -78,10 +78,28 @@ export type InitContext = {
 
 // --- neutral scaffold paths (never aeg-root / aeg-project) ------------------
 export const CONFIG_PATH = 'vinaya.config.json'
-// Root VINAYA.md — the doctrine pointer. Root placement is the whole point
-// (reading-order convention): an agent orienting in a fresh repo finds it
-// beside README, not buried inside a governance/ subfolder.
-export const DOCTRINE_POINTER_PATH = 'VINAYA.md'
+// Root AGENTS.md — the doctrine pointer. Root placement and the name are the
+// whole point: each agent vendor auto-loads one project file at session
+// start, and Codex reads `AGENTS.md` there. Claude Code reads `CLAUDE.md`
+// instead (and `AGENTS.md` only when no `CLAUDE.md` exists anywhere above),
+// so a two-line `CLAUDE.md` imports the pointer rather than copying it; Gemini
+// CLI reads whatever context file its project settings name, so
+// `.gemini/settings.json` names this one. One text, three readers.
+export const DOCTRINE_POINTER_PATH = 'AGENTS.md'
+export const CLAUDE_POINTER_PATH = 'CLAUDE.md'
+export const GEMINI_SETTINGS_PATH = '.gemini/settings.json'
+// The pointer's former name — a file no agent vendor reads, so no session
+// ever loaded it unprompted. No longer generated: `upgrade` removes a copy the
+// manifest still records, and `eject` removes it like any recorded file.
+export const RETIRED_DOCTRINE_POINTER_PATH = 'VINAYA.md'
+// The three files above, as one set: an install that predates them never
+// recorded them, so `upgrade` writes each one that is absent (never one an
+// adopter already has) and `doctor` points a missing one at `upgrade`.
+export const DOCTRINE_POINTER_PATHS: readonly string[] = [
+  DOCTRINE_POINTER_PATH,
+  CLAUDE_POINTER_PATH,
+  GEMINI_SETTINGS_PATH
+]
 export const CHECKS_WORKFLOW_PATH = '.github/workflows/vinaya-checks.yml'
 export { BODY_CHECKS_WORKFLOW_PATH, REVIEW_VERDICT_WORKFLOW_PATH, REVIEW_WORKFLOW_PATH }
 export const ARCHIVIST_WORKFLOW_PATH = '.github/workflows/vinaya-archivist.yml'
@@ -1466,9 +1484,11 @@ ${hookRun(selfHost, 'commit-msg "$1" "$2"')}`
 }
 
 // ---------------------------------------------------------------------------
-// Doctrine pointer (root VINAYA.md, the only orientation artifact)
+// Doctrine pointer (root AGENTS.md, the only orientation artifact; CLAUDE.md
+// and .gemini/settings.json only route their vendor's reader to it)
 //
-// MUST be a pure function of `selfHost` — never of where the CLI physically
+// MUST be a pure function of `selfHost` and the bundled doctrine's role files
+// — never of where the CLI physically
 // sits. This file is COMMITTED into the adopter's repo, so any
 // `packageRoot()` interpolation makes its bytes a function of one machine's
 // filesystem: teammates clone a pointer naming a directory that doesn't
@@ -1477,9 +1497,13 @@ ${hookRun(selfHost, 'commit-msg "$1" "$2"')}`
 // every machine except the installer's. The pointer
 // therefore names the PACKAGE and hands the reader `vinaya doctrine` — the
 // command that resolves the bundled doctrine at READ time, on the reader's
-// own machine.
+// own machine. The role list comes from the doctrine the package bundles,
+// which is the same at one version on every machine.
+//
+// Every agent session loads this file at start, a dispatched one on every
+// turn — keep it short.
 // ---------------------------------------------------------------------------
-export function doctrinePointer(selfHost: VendoredVinaya | null): string {
+export function doctrinePointer(selfHost: VendoredVinaya | null, roles: readonly string[]): string {
   // Same generation-time selection the workflows and hooks use: in a repo
   // that vendors the CLI, `npx @attalabs/vinaya` misresolves to the unbuilt
   // workspace member, so the reader is handed the
@@ -1528,9 +1552,7 @@ anything substantive:
 
     vinaya doctrine --role <name>
 
-prints the absolute path to that role's doctrine — \`architect\`,
-\`developer\`, \`reviewer\`, \`planner\`, \`security\`, \`archivist\`,
-\`tranche-archivist\`, or \`principal\`. If your agent tool
+prints the absolute path to that role's doctrine — ${formatRoleList(roles)}. If your agent tool
 supports slash-style commands, the same doctrine is likely exposed as
 \`/vinaya <role>\` — check your tool's command list before falling back to
 the raw CLI form.
@@ -1602,6 +1624,51 @@ ${resolveNote}
 Live task status is derived from the forge (Issues, labels, comments) via
 \`vinaya check\` — it is never written into a file here.
 `
+}
+
+/** `\`a\``, `\`a\` or \`b\``, `\`a\`, \`b\`, or \`c\`` — the pointer's inline role list. */
+function formatRoleList(roles: readonly string[]): string {
+  const quoted = roles.map((role) => `\`${role}\``)
+  if (quoted.length <= 1) return quoted.join('')
+  if (quoted.length === 2) return `${quoted[0]} or ${quoted[1]}`
+  return `${quoted.slice(0, -1).join(', ')}, or ${quoted[quoted.length - 1]}`
+}
+
+/**
+ * The agent roles the pointer lists — discovered the way the skill emitter
+ * discovers the roles it writes a skill for (`discoverRoleNames`: every
+ * `roles/*.md` of the bundled doctrine, minus human-only and retired roles),
+ * so a role added to or retired from the doctrine changes the pointer on the
+ * next `upgrade`, and the pointer and the skills never disagree.
+ */
+export function pointerRoleNames(): string[] {
+  const doctrineRoot = resolveDoctrineRoot()
+  if (!doctrineRoot) {
+    throw new Error(
+      'vinaya: no bundled doctrine was found next to this CLI install — cannot list the roles the doctrine ' +
+        `pointer (${DOCTRINE_POINTER_PATH}) names. Reinstall @attalabs/vinaya, or run bundle-doctrine first in a ` +
+        'repo that vendors the CLI.'
+    )
+  }
+  return discoverRoleNames(doctrineRoot)
+}
+
+// Root CLAUDE.md — Claude Code's start-of-session file. The import line loads
+// `AGENTS.md` in full (Claude Code's documented `@path` import), so the
+// pointer text lives once. Never a symlink: Windows checkouts break them.
+export function claudePointer(): string {
+  return `@${DOCTRINE_POINTER_PATH}
+
+Run \`/vinaya <role>\` to load that role's doctrine for this session.
+`
+}
+
+// .gemini/settings.json — Gemini CLI's project settings. `context.fileName`
+// replaces Gemini's default `GEMINI.md`, so a Gemini session loads the same
+// pointer Codex and Claude Code do. Strict JSON: a refuse-if-foreign whole
+// file, like `.claude/settings.json` and `.mcp.json`.
+export function geminiSettings(): string {
+  return `${JSON.stringify({ context: { fileName: DOCTRINE_POINTER_PATH } }, null, 2)}\n`
 }
 
 // ---------------------------------------------------------------------------
@@ -1871,11 +1938,18 @@ export function buildInitOps(ctx: InitContext): Op[] {
     group: 'Config (starter ruleset)'
   })
 
-  // Doctrine pointer — root VINAYA.md, the only orientation artifact.
+  // Doctrine pointer — root AGENTS.md, the only orientation artifact, and
+  // the CLAUDE.md that imports it.
   ops.push({
     kind: 'create-file',
     path: DOCTRINE_POINTER_PATH,
-    content: doctrinePointer(ctx.selfHost),
+    content: doctrinePointer(ctx.selfHost, pointerRoleNames()),
+    group: 'Doctrine pointer'
+  })
+  ops.push({
+    kind: 'create-file',
+    path: CLAUDE_POINTER_PATH,
+    content: claudePointer(),
     group: 'Doctrine pointer'
   })
 
@@ -1937,6 +2011,12 @@ export function buildInitOps(ctx: InitContext): Op[] {
   }
   if (ctx.agents.has('gemini')) {
     ops.push(buildGeminiCommandOp(ctx.selfHost))
+    ops.push({
+      kind: 'create-file',
+      path: GEMINI_SETTINGS_PATH,
+      content: geminiSettings(),
+      group: 'Gemini CLI context file (.gemini/settings.json)'
+    })
   }
 
   // The agent-native entry points above all invoke a bare `vinaya doctrine`

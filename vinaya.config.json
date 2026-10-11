@@ -110,11 +110,13 @@
       ".github/workflows/vinaya-archivist.yml",
       ".github/workflows/vinaya-body-checks.yml",
       "vinaya.config.json",
-      "VINAYA.md",
+      "AGENTS.md",
+      "CLAUDE.md",
       ".vinaya/doc-owners",
       ".claude/settings.json",
       "vinaya/checks/.gitkeep",
-      "vinaya/roles/.gitkeep"
+      "vinaya/roles/.gitkeep",
+      ".gemini/settings.json"
     ],
     "blocks": [
       {

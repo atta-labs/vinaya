@@ -21,9 +21,12 @@ import {
   buildInitOps,
   CHECKS_FOLDER_PLACEHOLDER_PATH,
   CHECKS_WORKFLOW_PATH,
+  CLAUDE_POINTER_PATH,
   CLI_DIST_ARTIFACT_NAME,
   CONFIG_PATH,
   DOCTRINE_POINTER_PATH,
+  doctrinePointer,
+  GEMINI_SETTINGS_PATH,
   labelOps,
   MCP_JSON_PATH,
   ROLES_FOLDER_PLACEHOLDER_PATH,
@@ -51,7 +54,7 @@ let createdLabels: string[]
 
 /**
  * This package's own version — what both invocation emitters pin to (the four
- * workflows via `vinayaRun`, the two git hooks via `hookRun`); the `VINAYA.md`
+ * workflows via `vinayaRun`, the two git hooks via `hookRun`); the `AGENTS.md`
  * doctrine pointer is human-facing prose and deliberately unpinned. Formerly
  * described as the single thing every generated published-shape
  * invocation pins to (`ownVersion()` in lib/artifacts.ts), workflows and git
@@ -157,7 +160,8 @@ describe('vinaya init', () => {
     // retired outright (task-files-v1 6, O2) — telemetry reaches its
     // configured destination live now, so nothing uploads a log artifact or
     // runs a collector any more:
-    // config + root VINAYA.md + five workflows (tracked) +
+    // config + root AGENTS.md and the CLAUDE.md importing it (with
+    // .gemini/settings.json naming it for the gemini vendor) + five workflows (tracked) +
     // three hook stubs (pre-commit/pre-push/commit-msg, the last added by
     // Issue #63) + the .vinaya/doc-owners starter, PLUS — as of task 5
     // (#152) — the three agent-vendor emitters (tasks 2/3/4), installed by
@@ -176,6 +180,7 @@ describe('vinaya init', () => {
     for (const p of [
       CONFIG_PATH,
       DOCTRINE_POINTER_PATH,
+      CLAUDE_POINTER_PATH,
       CHECKS_WORKFLOW_PATH,
       REVIEW_WORKFLOW_PATH,
       REVIEW_VERDICT_WORKFLOW_PATH,
@@ -192,11 +197,27 @@ describe('vinaya init', () => {
       CLAUDE_STOP_HOOK_SCRIPT_PATH,
       CLAUDE_SETTINGS_PATH,
       MCP_JSON_PATH,
-      GEMINI_COMMAND_PATH
+      GEMINI_COMMAND_PATH,
+      GEMINI_SETTINGS_PATH
     ]) {
       expect(existsSync(join(root, p))).toBe(true)
     }
-    expect(DOCTRINE_POINTER_PATH).toBe('VINAYA.md') // root placement, not governance/
+    // Root placement under the names each vendor auto-loads at session start.
+    expect(DOCTRINE_POINTER_PATH).toBe('AGENTS.md')
+    expect(CLAUDE_POINTER_PATH).toBe('CLAUDE.md')
+    expect(GEMINI_SETTINGS_PATH).toBe('.gemini/settings.json')
+    expect(existsSync(join(root, 'VINAYA.md'))).toBe(false)
+    // The three files' bytes: the pointer, the one-line import plus the
+    // `/vinaya` sentence, and Gemini's context-file setting.
+    expect(readFileSync(join(root, DOCTRINE_POINTER_PATH), 'utf-8')).toBe(
+      doctrinePointer(null, discoverRoleNames(doctrineRoot))
+    )
+    expect(readFileSync(join(root, CLAUDE_POINTER_PATH), 'utf-8')).toBe(
+      "@AGENTS.md\n\nRun `/vinaya <role>` to load that role's doctrine for this session.\n"
+    )
+    expect(readFileSync(join(root, GEMINI_SETTINGS_PATH), 'utf-8')).toBe(
+      '{\n  "context": {\n    "fileName": "AGENTS.md"\n  }\n}\n'
+    )
 
     // Exhaustiveness: NOTHING outside the manifest lands. The cut artifacts
     // (governance/, GitHub templates, example scripts) must be absent.
@@ -205,6 +226,7 @@ describe('vinaya init', () => {
       'README.md', // pre-existing adopter file
       CONFIG_PATH,
       DOCTRINE_POINTER_PATH,
+      CLAUDE_POINTER_PATH,
       CHECKS_WORKFLOW_PATH,
       REVIEW_WORKFLOW_PATH,
       REVIEW_VERDICT_WORKFLOW_PATH,
@@ -221,7 +243,8 @@ describe('vinaya init', () => {
       CLAUDE_STOP_HOOK_SCRIPT_PATH,
       CLAUDE_SETTINGS_PATH,
       MCP_JSON_PATH,
-      GEMINI_COMMAND_PATH
+      GEMINI_COMMAND_PATH,
+      GEMINI_SETTINGS_PATH
     ])
     expect(tree).toEqual(expected)
     for (const gone of [
@@ -254,6 +277,9 @@ describe('vinaya init', () => {
     expect(cfg.managed.version).toBe(3)
     expect(cfg.managed.files).toContain(CHECKS_WORKFLOW_PATH)
     expect(cfg.managed.files).toContain(DOCTRINE_POINTER_PATH)
+    expect(cfg.managed.files).toContain(CLAUDE_POINTER_PATH)
+    expect(cfg.managed.files).toContain(GEMINI_SETTINGS_PATH)
+    expect(cfg.managed.files).not.toContain('VINAYA.md')
     expect(cfg.managed.files).toContain(CHECKS_FOLDER_PLACEHOLDER_PATH)
     expect(cfg.managed.files).toContain(ROLES_FOLDER_PLACEHOLDER_PATH)
     expect(cfg.managed.blocks.some((b: { path: string }) => b.path === '.husky/pre-commit')).toBe(true)
@@ -480,12 +506,12 @@ describe('remoteless graceful-skip (spec D3)', () => {
 })
 
 describe('never-clobber', () => {
-  it('appends to a pre-existing hook and REFUSES a foreign workflow + root VINAYA.md', async () => {
+  it('appends to a pre-existing hook and REFUSES a foreign workflow + root AGENTS.md', async () => {
     mkdirSync(join(root, '.husky'), { recursive: true })
     writeFileSync(join(root, '.husky/pre-commit'), '#!/usr/bin/env sh\nnpm run lint\n')
     mkdirSync(join(root, '.github/workflows'), { recursive: true })
     writeFileSync(join(root, CHECKS_WORKFLOW_PATH), 'name: not-ours\n')
-    // A pre-existing root VINAYA.md is the new refuse-if-foreign collision case
+    // A pre-existing root AGENTS.md is a refuse-if-foreign collision case
     // (it replaces the PR-template collision the old manifest carried).
     writeFileSync(join(root, DOCTRINE_POINTER_PATH), '# my own notes\n')
 
@@ -499,7 +525,7 @@ describe('never-clobber', () => {
     expect(readFileSync(join(root, CHECKS_WORKFLOW_PATH), 'utf-8')).toBe('name: not-ours\n')
     expect(out).toContain('REFUSE')
     expect(out).toContain(CHECKS_WORKFLOW_PATH)
-    // foreign root VINAYA.md: untouched, and REFUSE shown in the diff
+    // foreign root AGENTS.md: untouched, and REFUSE shown in the diff
     expect(readFileSync(join(root, DOCTRINE_POINTER_PATH), 'utf-8')).toBe('# my own notes\n')
     expect(out).toContain(DOCTRINE_POINTER_PATH)
     // the non-foreign review workflow still installs

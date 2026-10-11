@@ -548,7 +548,7 @@ describe('translateHookPaths', () => {
   it('rewrites only .git/hooks/ block paths', () => {
     const manifest: ManagedManifest = {
       version: 2,
-      files: ['VINAYA.md'],
+      files: ['AGENTS.md'],
       blocks: [
         { path: '.git/hooks/pre-commit', marker: 'pre-commit', comment: 'hash' },
         { path: '.husky/pre-push', marker: 'pre-push', comment: 'hash' }

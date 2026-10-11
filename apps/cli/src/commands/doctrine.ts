@@ -1,6 +1,6 @@
 // `vinaya doctrine` — print where the bundled doctrine lives on THIS machine.
 //
-// The committed root `VINAYA.md` pointer deliberately carries no filesystem
+// The committed root `AGENTS.md` pointer deliberately carries no filesystem
 // path: the package's install location is a property of each machine, and
 // that file is committed for every clone. This
 // command is the resolution step the pointer hands the reader — it resolves
