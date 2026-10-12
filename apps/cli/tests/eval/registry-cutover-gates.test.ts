@@ -78,9 +78,9 @@ function compareWithTable(rows: readonly RawRow[], universe: readonly CutoverGat
     if (gate.evidence !== entry.evidence || !String(row.contract).includes(entry.evidence)) {
       differ('evidence', String(gate.evidence))
     }
-    const [owner, ...rest] = entry.modules
+    const [, ...rest] = entry.modules
     if (
-      row.module !== owner ||
+      row.module !== entry.owner ||
       JSON.stringify(gate.modules) !== JSON.stringify(entry.modules) ||
       JSON.stringify(gate.layers) !== JSON.stringify(entry.layers) ||
       rest.some((id) => !String(row.contract).includes(`module ${id} (`))
@@ -129,6 +129,7 @@ describe('the cutover-gate universe parsed from the mirror', () => {
     expect(gate(7).modules).toEqual(['6.13', '6.14'])
     expect(gate(9).layers).toEqual(['L8'])
     expect(gate(17).modules).toEqual(['6.24'])
+    expect([gate(2).modules, gate(2).owner]).toEqual([[], '6.7'])
   })
 
   it('follows the table, not a list: a reworded gate changes the universe', () => {
@@ -169,8 +170,10 @@ describe('the cutover-gates shard', () => {
   })
 
   it('cites, on each row, Engine specification section 16.18 at the revision its mirror states', () => {
-    const mirror = readFileSync(join(import.meta.dir, '../../../..', ENGINE_SPEC.document), 'utf8')
-    expect(mirror).toContain(`revision ${ENGINE_SPEC.revision}`)
+    const stated = readFileSync(join(import.meta.dir, '../../../..', ENGINE_SPEC.revisionStatedIn), 'utf8')
+    expect(stated.replace(/\s+/g, ' ')).toContain(`revision ${ENGINE_SPEC.revision}, section 16`)
+    const program = readFileSync(join(import.meta.dir, '../../specs/dev-review-evaluation-program.md'), 'utf8')
+    expect(program).toContain(`Engine spec §${ENGINE_SPEC.section} gate`)
     for (const row of rawShard.components) expect(row.cutoverGate.engineSpec).toEqual(engineSpec())
   })
 

@@ -48,7 +48,7 @@
         "modules": ["6.17"],
         "layers": [],
         "engineSpec": {
-          "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+          "document": "Tech spec — Developer-review on Atta Engine",
           "revision": 17,
           "section": "16.18"
         }
@@ -96,10 +96,10 @@
         "number": 2,
         "title": "Invariant map complete and reviewed",
         "evidence": "Architecture exit test (L1): every guarantee has owner, representation, failure behaviour, executed scenario; plus a recorded review",
-        "modules": ["6.7"],
+        "modules": [],
         "layers": ["L1"],
         "engineSpec": {
-          "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+          "document": "Tech spec — Developer-review on Atta Engine",
           "revision": 17,
           "section": "16.18"
         }
@@ -147,10 +147,10 @@
         "number": 3,
         "title": "Standalone defects fixed or replaced",
         "evidence": "L1 register check: every registered defect carries a disposition (fixed in shared code, or replaced on the Engine path); the defect's task passes on the Engine backend in every case; any standalone failure remains comparison evidence only",
-        "modules": ["6.7"],
+        "modules": [],
         "layers": ["L1"],
         "engineSpec": {
-          "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+          "document": "Tech spec — Developer-review on Atta Engine",
           "revision": 17,
           "section": "16.18"
         }
@@ -201,7 +201,7 @@
         "modules": ["6.3", "6.4", "6.8", "6.21", "6.22"],
         "layers": [],
         "engineSpec": {
-          "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+          "document": "Tech spec — Developer-review on Atta Engine",
           "revision": 17,
           "section": "16.18"
         }
@@ -258,7 +258,7 @@
         "modules": ["6.2"],
         "layers": [],
         "engineSpec": {
-          "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+          "document": "Tech spec — Developer-review on Atta Engine",
           "revision": 17,
           "section": "16.18"
         }
@@ -309,7 +309,7 @@
         "modules": ["6.6"],
         "layers": [],
         "engineSpec": {
-          "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+          "document": "Tech spec — Developer-review on Atta Engine",
           "revision": 17,
           "section": "16.18"
         }
@@ -366,7 +366,7 @@
         "modules": ["6.13", "6.14"],
         "layers": [],
         "engineSpec": {
-          "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+          "document": "Tech spec — Developer-review on Atta Engine",
           "revision": 17,
           "section": "16.18"
         }
@@ -423,7 +423,7 @@
         "modules": ["6.8", "6.9", "6.10"],
         "layers": [],
         "engineSpec": {
-          "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+          "document": "Tech spec — Developer-review on Atta Engine",
           "revision": 17,
           "section": "16.18"
         }
@@ -474,7 +474,7 @@
         "modules": ["6.13"],
         "layers": ["L8"],
         "engineSpec": {
-          "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+          "document": "Tech spec — Developer-review on Atta Engine",
           "revision": 17,
           "section": "16.18"
         }
@@ -525,7 +525,7 @@
         "modules": ["6.16"],
         "layers": [],
         "engineSpec": {
-          "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+          "document": "Tech spec — Developer-review on Atta Engine",
           "revision": 17,
           "section": "16.18"
         }
@@ -576,7 +576,7 @@
         "modules": ["6.14", "6.23"],
         "layers": [],
         "engineSpec": {
-          "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+          "document": "Tech spec — Developer-review on Atta Engine",
           "revision": 17,
           "section": "16.18"
         }
@@ -627,7 +627,7 @@
         "modules": ["6.10"],
         "layers": ["L8"],
         "engineSpec": {
-          "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+          "document": "Tech spec — Developer-review on Atta Engine",
           "revision": 17,
           "section": "16.18"
         }
@@ -678,7 +678,7 @@
         "modules": ["6.20"],
         "layers": [],
         "engineSpec": {
-          "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+          "document": "Tech spec — Developer-review on Atta Engine",
           "revision": 17,
           "section": "16.18"
         }
@@ -729,7 +729,7 @@
         "modules": ["6.15"],
         "layers": [],
         "engineSpec": {
-          "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+          "document": "Tech spec — Developer-review on Atta Engine",
           "revision": 17,
           "section": "16.18"
         }
@@ -780,7 +780,7 @@
         "modules": ["6.15"],
         "layers": [],
         "engineSpec": {
-          "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+          "document": "Tech spec — Developer-review on Atta Engine",
           "revision": 17,
           "section": "16.18"
         }
@@ -831,7 +831,7 @@
         "modules": ["6.17"],
         "layers": [],
         "engineSpec": {
-          "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+          "document": "Tech spec — Developer-review on Atta Engine",
           "revision": 17,
           "section": "16.18"
         }
@@ -882,7 +882,7 @@
         "modules": ["6.24"],
         "layers": [],
         "engineSpec": {
-          "document": "apps/cli/specs/dev-review-engine-state-machine.md",
+          "document": "Tech spec — Developer-review on Atta Engine",
           "revision": 17,
           "section": "16.18"
         }
