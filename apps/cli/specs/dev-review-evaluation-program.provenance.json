@@ -18,7 +18,10 @@
   "totalBytes": 75888,
   "sha256": "26df2b16aec7978137fc5a09b2d7da30710726b7e2692d4929811c62812f0e1e",
   "documents": {
-    "Tech spec — Developer-review on Atta Engine": null,
+    "Tech spec — Developer-review on Atta Engine": {
+      "path": "apps/cli/specs/dev-review-engine-state-machine.md",
+      "revisionPinned": false
+    },
     "Tech spec — Developer-review capabilities and contracts": {
       "path": "apps/cli/specs/dev-review-capabilities-contracts.md",
       "revisionPinned": false
