@@ -2635,6 +2635,185 @@ export function checkNoForeignTaskOwnership(body: string): IssueSectionResult {
 }
 
 /**
+ * One prose field split into sentences: each line, then each `.`/`!`/`?`
+ * followed by whitespace. A dot with no space after it — `issue-validation.ts`,
+ * `checks.timeoutMs` — never ends a sentence, so a backticked path or dotted
+ * value stays inside the sentence that names it.
+ */
+function proseSentences(text: string): string[] {
+  return text
+    .split('\n')
+    .flatMap((line) => line.split(/(?<=[.!?])\s+/))
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+}
+
+/**
+ * The closed list of phrasings that forbid an edit or tell the Developer to
+ * stop on one. Exact, case-insensitive, whitespace-tolerant — never a
+ * classifier: a sentence trips this rule only by carrying one of these
+ * phrases verbatim. Extending the list is a code change, reviewed like any
+ * other, never a heuristic that drifts.
+ */
+const SURFACE_PROHIBITION_PHRASES: ReadonlyArray<{ phrase: string; re: RegExp }> = [
+  { phrase: 'do not edit', re: /\bdo\s+not\s+edit\b/i },
+  { phrase: 'do not change', re: /\bdo\s+not\s+change\b/i },
+  { phrase: 'do not touch', re: /\bdo\s+not\s+touch\b/i },
+  { phrase: 'never edit', re: /\bnever\s+edit\b/i },
+  { phrase: 'stop if', re: /\bstop\s+if\b/i },
+  { phrase: 'escalate if … cannot', re: /\bescalate\s+if\b.*\bcannot\b/i }
+]
+
+/** A pinned file's module name — its basename up to the first `.` (`issue-validation.test.ts` → `issue-validation`). */
+function moduleNameOf(file: string): string {
+  const base = file.slice(file.lastIndexOf('/') + 1)
+  const dot = base.indexOf('.')
+  return dot > 0 ? base.slice(0, dot) : base
+}
+
+/** Does `sentence` name `module` as `<module> module` (the name optionally backticked)? Whole token only. */
+function namesModule(sentence: string, module: string): boolean {
+  const escaped = module.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(?<![\\w./-])\`?${escaped}\`?\\s+module\\b`, 'i').test(sentence)
+}
+
+/**
+ * **A task's prose never forbids a beyond-Surface edit.** The shipped rule is
+ * that a change to a path no Surface `in:` glob covers, or one an `out:` glob
+ * covers, is published anyway: the review-loop driver records it in the pull
+ * request body's beyond-Surface block and the reviewers judge it like any
+ * change. A `Traps to avoid`, `Stop-and-escalate` or `## Stop conditions`
+ * sentence that says "do not edit" such a path, or "stop if" it needs a
+ * change, overrides that rule from inside the brief — and a dispatched task
+ * once paused for a ruling it never needed on exactly that sentence.
+ *
+ * Lexical, and closed: a sentence is refused only when it carries one of
+ * `SURFACE_PROHIBITION_PHRASES` AND names, in the same sentence, a backticked
+ * repository path — or `<module> module` for a Boundary-pinned file — that
+ * `beyondSurfacePaths` (the same measurement the publication records) puts
+ * outside the Surface. Code is never parsed; a sentence about a path an `in:`
+ * glob covers passes. Dormant when `## Surface` does not parse — its own gate
+ * reports that.
+ */
+export function checkProseAllowsBeyondSurfaceEdit(body: string): IssueSectionResult {
+  const surface = parseIssueSurface(body)
+  if (!surface.ok) return { status: 'pass', errors: [] }
+
+  const text = PATH_TEXT(body)
+  const fields: Array<[string, string]> = [
+    ['Traps to avoid', rationaleFieldText(text, 'Traps')],
+    ['Stop-and-escalate', rationaleFieldText(text, 'Stop-and-escalate')],
+    ['Stop conditions', topLevelSectionText(text, 'Stop conditions') ?? '']
+  ]
+  const outsideModules = beyondSurfacePaths(boundaryPinnedFiles(body), surface.value).map((entry) => ({
+    module: moduleNameOf(entry.path),
+    entry
+  }))
+
+  const errors: string[] = []
+  for (const [name, fieldText] of fields) {
+    for (const sentence of proseSentences(fieldText)) {
+      const prohibition = SURFACE_PROHIBITION_PHRASES.find((p) => p.re.test(sentence))
+      if (!prohibition) continue
+      const beyond = beyondSurfacePaths(namedPathsIn(sentence), surface.value)
+      for (const { module, entry } of outsideModules) {
+        if (namesModule(sentence, module) && !beyond.some((b) => b.path === entry.path)) beyond.push(entry)
+      }
+      for (const entry of beyond) {
+        const why =
+          entry.reason === 'out'
+            ? `the Surface's \`out:\` glob \`${entry.glob}\` covers`
+            : 'no Surface `in:` glob covers'
+        errors.push(
+          `issue-validation ${name}: "${sentence}" says "${prohibition.phrase}" about \`${entry.path}\`, which ${why} — but a change beyond the Surface is never refused: it is published, and the review-loop driver records it in the pull request body's beyond-Surface block for the reviewers to judge. Rewrite the sentence so it no longer forbids, or stops on, that change.`
+        )
+      }
+    }
+  }
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
+/** A bare identifier — `camelCase`, `snake_case`, `kebab-case`, `a.dotted.member` — never a flag, a path or a command line. */
+const CROSS_TASK_IDENTIFIER_RE = /^[A-Za-z_$][\w$]*(?:[.-][A-Za-z_$][\w$]*)*$/
+/** A quoted string literal with no whitespace, quote or backslash inside it. */
+const CROSS_TASK_STRING_LITERAL_RE = /^(['"])([^'"`\s\\]+)\1$/
+
+/**
+ * The words a sentence uses when THIS task creates the value it names. A
+ * closed list, matched as whole words: a sentence carrying one is the task
+ * stating what it introduces, never what it relies on.
+ */
+const CREATES_VALUE_RE = /\b(?:add|adds|create|creates|introduce|introduces|define|defines|declare|declares|new)\b/i
+
+/**
+ * The value one backticked span names, when it reads as an identifier or a
+ * string literal — the literal's contents for a quoted span — or `null` for a
+ * path (`/`), a filename (a file-extension last segment), a command (any
+ * whitespace) or a flag.
+ */
+function crossTaskValueOf(span: string): string | null {
+  const literal = CROSS_TASK_STRING_LITERAL_RE.exec(span)
+  if (!literal && !CROSS_TASK_IDENTIFIER_RE.test(span)) return null
+  const value = literal ? (literal[2] as string) : span
+  if (value.length < 2 || value.includes('/')) return null
+  const segments = value.split('.')
+  if (segments.length > 1 && FILE_EXTENSIONS.has((segments[segments.length - 1] as string).toLowerCase())) return null
+  return value
+}
+
+/**
+ * **A value another task creates is pinned by a premise.** A task that
+ * declares `Depends-on` and names, in its Objectives or its Traps, a
+ * backticked identifier or string literal that no file of the default branch
+ * contains is relying on a task it depends on to create it. That reliance is
+ * a fact about another task's output, so it is written as one: a premise
+ * `after #<n>: `<path>` contains `<value>`` on a task this Issue declares in
+ * `Depends-on`, checked at dispatch. A later task once relied on component
+ * kinds an earlier task never created, and nothing refused it before dispatch.
+ *
+ * Mechanical throughout, no judgment of what the prose means: the value must
+ * be a backticked span `crossTaskValueOf` reads as an identifier or literal,
+ * `existsInTree` (the gate's injected tracked-tree probe) must find it in no
+ * file, and its sentence must carry none of `CREATES_VALUE_RE`'s words — a
+ * sentence saying this task adds the value is the task's own introduction.
+ * Dormant for an Issue that declares no `Depends-on`: with no task to rely on,
+ * a value missing from the tree is this task's own to create.
+ */
+export function checkCrossTaskValuesPinned(body: string, existsInTree: (token: string) => boolean): IssueSectionResult {
+  const dependsOn = parseRationaleDeps(body).dependsOn
+  if (dependsOn.length === 0) return { status: 'pass', errors: [] }
+  const declared = new Set(dependsOn.map((edge) => (splitSlugQualifiedEdge(edge)?.bareId ?? edge).replace(/^#/, '')))
+  const premises = parseIssuePremises(body)
+  const pinned = (premises.ok ? premises.value : []).filter(
+    (p) => p.afterIssue !== null && declared.has(String(p.afterIssue))
+  )
+
+  const sources: Array<{ where: string; text: string }> = []
+  const objectives = objectivesOf(body)
+  if (objectives.ok) for (const o of objectives.objectives) sources.push({ where: o.id, text: o.text })
+  sources.push({ where: 'Traps to avoid', text: rationaleFieldText(PATH_TEXT(body), 'Traps') })
+
+  const errors: string[] = []
+  const reported = new Set<string>()
+  for (const { where, text } of sources) {
+    for (const sentence of proseSentences(text)) {
+      if (CREATES_VALUE_RE.test(sentence.replace(/`[^`\n]*`/g, ' '))) continue
+      for (const span of backtickedSpans(sentence)) {
+        const value = crossTaskValueOf(span)
+        if (value === null || reported.has(value)) continue
+        if (pinned.some((p) => p.text.includes(value))) continue
+        if (existsInTree(value)) continue
+        reported.add(value)
+        errors.push(
+          `issue-validation Premises/cross-task value: ${where} relies on \`${value}\`, which no file of the default branch contains and no sentence of this Issue says it creates — so a task it depends on (\`Depends-on: ${dependsOn.join(', ')}\`) must. Pin it in \`## Premises\` as \`after #<n>: \`<path>\` contains \`${value}\`\` on the \`Depends-on\` task that creates it, or state in the same sentence that this task adds it.`
+        )
+      }
+    }
+  }
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
+/**
  * **Parts and Objectives agree by construction, the other half.** A Part
  * citing an objective `## Objectives` does not define is already refused by
  * `checkPartsCiteDefinedObjectives`, above; this predicate closes the other

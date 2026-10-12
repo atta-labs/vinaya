@@ -33,6 +33,8 @@ import {
   checkMilestoneAttach,
   checkNoBriefContent,
   checkNoForeignTaskOwnership,
+  checkProseAllowsBeyondSurfaceEdit,
+  checkCrossTaskValuesPinned,
   checkObjectivesRespectBoundary,
   checkPartsCiteDefinedObjectives,
   checkPartsCoverageAndSequence,
@@ -1809,6 +1811,161 @@ describe('checkNoForeignTaskOwnership', () => {
     expect(r.status).toBe('fail')
     expect(r.errors[0]).toMatch(/Boundary/)
     expect(r.errors[0]).toMatch(/#545/)
+  })
+})
+
+describe('checkProseAllowsBeyondSurfaceEdit', () => {
+  const bodyWith = (field: string): string =>
+    [
+      '**Boundary** — Pinned files: `packages/aeg-core/src/issue-validation.ts`, `apps/log-server/src/server.ts`. Out: the loop.',
+      '',
+      field,
+      '',
+      '## Surface',
+      '',
+      'in: packages/aeg-core/src',
+      'out: apps/cli/src/lib/dev-review-loop'
+    ].join('\n')
+
+  const phrasings = [
+    'Do not edit `apps/log-server/src/server.ts` here.',
+    'Do not change `apps/log-server/src/server.ts` here.',
+    'Do not touch `apps/log-server/src/server.ts` here.',
+    'Never edit `apps/log-server/src/server.ts` here.',
+    'Stop if `apps/log-server/src/server.ts` needs a change.',
+    'Escalate if the fix cannot avoid `apps/log-server/src/server.ts`.'
+  ]
+
+  for (const sentence of phrasings) {
+    it(`refuses "${sentence}" on a path no \`in:\` glob covers, naming the field, path and sentence`, () => {
+      const r = checkProseAllowsBeyondSurfaceEdit(bodyWith(`**Traps to avoid** — ${sentence}`))
+      expect(r.status).toBe('fail')
+      expect(r.errors).toHaveLength(1)
+      expect(r.errors[0]).toContain('Traps to avoid')
+      expect(r.errors[0]).toContain('`apps/log-server/src/server.ts`')
+      expect(r.errors[0]).toContain(sentence)
+      expect(r.errors[0]).toMatch(/beyond-Surface block/)
+      expect(r.errors[0]).toMatch(/no Surface `in:` glob covers/)
+    })
+
+    it(`passes "${sentence}" once the path is in the Surface`, () => {
+      const inSurface = sentence.replace('apps/log-server/src/server.ts', 'packages/aeg-core/src/issue-validation.ts')
+      expect(checkProseAllowsBeyondSurfaceEdit(bodyWith(`**Traps to avoid** — ${inSurface}`)).status).toBe('pass')
+    })
+  }
+
+  it('refuses a path an `out:` glob covers, naming the glob, in Stop-and-escalate', () => {
+    const r = checkProseAllowsBeyondSurfaceEdit(
+      bodyWith('**Stop-and-escalate** — Stop if `apps/cli/src/lib/dev-review-loop/driver.ts` must change.')
+    )
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toContain('Stop-and-escalate')
+    expect(r.errors[0]).toContain("the Surface's `out:` glob `apps/cli/src/lib/dev-review-loop` covers")
+  })
+
+  it('refuses in the `## Stop conditions` section', () => {
+    const body = `${bodyWith('**Traps to avoid** — none.')}\n\n## Stop conditions\n\n- Do not edit \`apps/log-server/src/server.ts\`.\n`
+    const r = checkProseAllowsBeyondSurfaceEdit(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toContain('issue-validation Stop conditions')
+  })
+
+  it('refuses a sentence naming an out-of-Surface pinned file by its module', () => {
+    const r = checkProseAllowsBeyondSurfaceEdit(bodyWith('**Traps to avoid** — Do not touch the server module.'))
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toContain('`apps/log-server/src/server.ts`')
+  })
+
+  it('passes a sentence naming an in-Surface pinned file by its module', () => {
+    const r = checkProseAllowsBeyondSurfaceEdit(
+      bodyWith('**Traps to avoid** — Do not touch the `issue-validation` module.')
+    )
+    expect(r.status).toBe('pass')
+  })
+
+  it('passes an out-of-Surface path with no prohibition phrase, and a phrase outside the three fields', () => {
+    expect(
+      checkProseAllowsBeyondSurfaceEdit(bodyWith('**Traps to avoid** — Read `apps/log-server/src/server.ts` first.'))
+        .status
+    ).toBe('pass')
+    expect(
+      checkProseAllowsBeyondSurfaceEdit(bodyWith('**Sizing** — Do not edit `apps/log-server/src/server.ts`.')).status
+    ).toBe('pass')
+  })
+
+  it('is dormant when `## Surface` does not parse', () => {
+    expect(checkProseAllowsBeyondSurfaceEdit('**Traps to avoid** — Do not edit `apps/x/y.ts`.').status).toBe('pass')
+  })
+})
+
+describe('checkCrossTaskValuesPinned', () => {
+  const tree = new Set(['readFile', 'existing-kind'])
+  const existsInTree = (token: string): boolean => tree.has(token)
+  const bodyWith = (objective: string, premises = '', deps = '`Depends-on: #900`.'): string =>
+    [
+      `**Dependency rationale** — ${deps}`,
+      '',
+      '**Traps to avoid** — Read through `readFile`.',
+      '',
+      '## Objectives',
+      '',
+      `O1. ${objective}`,
+      ...(premises ? ['', '## Premises', '', premises] : [])
+    ].join('\n')
+
+  it('refuses a value no default-branch file contains when no premise pins it', () => {
+    const r = checkCrossTaskValuesPinned(bodyWith('The shard covers the `isolation-boundary` kind.'), existsInTree)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toContain('O1')
+    expect(r.errors[0]).toContain('`isolation-boundary`')
+    expect(r.errors[0]).toContain('Depends-on: #900')
+  })
+
+  it('refuses a quoted string literal, naming its contents', () => {
+    const r = checkCrossTaskValuesPinned(bodyWith("The registry reads the `'gate'` kind."), existsInTree)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toContain('`gate`')
+  })
+
+  it('passes once an `after #<n>:` premise on a declared dependency pins it', () => {
+    const body = bodyWith(
+      'The shard covers the `isolation-boundary` kind.',
+      '- after #900: `apps/cli/src/kinds.ts` contains `isolation-boundary`'
+    )
+    expect(checkCrossTaskValuesPinned(body, existsInTree).status).toBe('pass')
+  })
+
+  it('still refuses when the pinning premise defers to an undeclared task', () => {
+    const body = bodyWith(
+      'The shard covers the `isolation-boundary` kind.',
+      '- after #901: `apps/cli/src/kinds.ts` contains `isolation-boundary`'
+    )
+    expect(checkCrossTaskValuesPinned(body, existsInTree).status).toBe('fail')
+  })
+
+  it('needs no premise for a value the default branch already carries', () => {
+    expect(
+      checkCrossTaskValuesPinned(bodyWith('The shard covers the `existing-kind` kind.'), existsInTree).status
+    ).toBe('pass')
+  })
+
+  it('passes a value the same sentence says this task adds', () => {
+    expect(checkCrossTaskValuesPinned(bodyWith('Add the `isolation-boundary` kind.'), existsInTree).status).toBe('pass')
+  })
+
+  it('ignores paths, filenames, commands and flags', () => {
+    const r = checkCrossTaskValuesPinned(
+      bodyWith('Run `bun test` on `src/kinds.ts` and `kinds.json` with `--fast`.'),
+      existsInTree
+    )
+    expect(r.status).toBe('pass')
+  })
+
+  it('is dormant for an Issue that declares no Depends-on', () => {
+    expect(
+      checkCrossTaskValuesPinned(bodyWith('The shard covers the `isolation-boundary` kind.', '', 'none.'), existsInTree)
+        .status
+    ).toBe('pass')
   })
 })
 
