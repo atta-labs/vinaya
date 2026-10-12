@@ -1,0 +1,892 @@
+{
+  "schemaVersion": 1,
+  "shard": "cutover-gates",
+  "kinds": ["cutover-gate"],
+  "components": [
+    {
+      "id": "cutover-gate:gate-1",
+      "kind": "cutover-gate",
+      "module": "6.17",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "contract": "Cutover gate 1 (Packed external dependency) is satisfied only by its named evidence: §6.17 packed-consumer suite.",
+      "owner": "engine",
+      "officialBasis": "Evaluation program §12, the cutover-gate coverage of Engine spec §16.18 (revision 17); gate 1 is \"Packed external dependency\".",
+      "suite": ["engine-boundary.l3@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 1 runs and passes on the Engine backend: §6.17 packed-consumer suite."
+        },
+        "negative": {
+          "notApplicable": "The gate is satisfied or not by its named evidence; the evidence suites hold the negative cases."
+        },
+        "refusal": {
+          "notApplicable": "The gate adds no refusal case of its own; the evidence suites hold them."
+        },
+        "recovery": {
+          "notApplicable": "The gate adds no recovery case of its own; the evidence suites hold them."
+        },
+        "adversarial": {
+          "notApplicable": "The gate adds no adversarial case of its own; §13 rows and the evidence suites hold them."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code, plus an import check that the Engine path references only public packed exports and never drives the graph outside public run control."
+      },
+      "backends": ["engine"],
+      "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14: module 6.17 cuts over only when cutover gate 1 is satisfied by its named evidence.",
+      "cutoverGate": {
+        "number": 1,
+        "title": "Packed external dependency",
+        "evidence": "§6.17 packed-consumer suite",
+        "modules": ["6.17"],
+        "layers": [],
+        "engineSpec": {
+          "document": "Tech spec — Developer-review on Atta Engine",
+          "revision": 17,
+          "section": "16.18"
+        }
+      }
+    },
+    {
+      "id": "cutover-gate:gate-2",
+      "kind": "cutover-gate",
+      "module": "6.7",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "contract": "Cutover gate 2 (Invariant map complete and reviewed) is satisfied only by its named evidence: Architecture exit test (L1): every guarantee has owner, representation, failure behaviour, executed scenario; plus a recorded review. The evidence names no §6 module; the row is filed under module 6.7, whose suites run at the layers it names.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Evaluation program §12, the cutover-gate coverage of Engine spec §16.18 (revision 17); gate 2 is \"Invariant map complete and reviewed\".",
+      "suite": ["mechanical-gates.l1@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 2 runs and passes on the Engine backend: Architecture exit test (L1): every guarantee has owner, representation, failure behaviour, executed scenario; plus a recorded review."
+        },
+        "negative": {
+          "notApplicable": "The gate is satisfied or not by its named evidence; the evidence suites hold the negative cases."
+        },
+        "refusal": {
+          "notApplicable": "The gate adds no refusal case of its own; the evidence suites hold them."
+        },
+        "recovery": {
+          "notApplicable": "The gate adds no recovery case of its own; the evidence suites hold them."
+        },
+        "adversarial": {
+          "notApplicable": "The gate adds no adversarial case of its own; §13 rows and the evidence suites hold them."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: classification and pause-reason assertions."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14: module 6.7 cuts over only when cutover gate 2 is satisfied by its named evidence.",
+      "cutoverGate": {
+        "number": 2,
+        "title": "Invariant map complete and reviewed",
+        "evidence": "Architecture exit test (L1): every guarantee has owner, representation, failure behaviour, executed scenario; plus a recorded review",
+        "modules": [],
+        "layers": ["L1"],
+        "engineSpec": {
+          "document": "Tech spec — Developer-review on Atta Engine",
+          "revision": 17,
+          "section": "16.18"
+        }
+      }
+    },
+    {
+      "id": "cutover-gate:gate-3",
+      "kind": "cutover-gate",
+      "module": "6.7",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "contract": "Cutover gate 3 (Standalone defects fixed or replaced) is satisfied only by its named evidence: L1 register check: every registered defect carries a disposition (fixed in shared code, or replaced on the Engine path); the defect's task passes on the Engine backend in every case; any standalone failure remains comparison evidence only. The evidence names no §6 module; the row is filed under module 6.7, whose suites run at the layers it names.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Evaluation program §12, the cutover-gate coverage of Engine spec §16.18 (revision 17); gate 3 is \"Standalone defects fixed or replaced\".",
+      "suite": ["mechanical-gates.l1@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 3 runs and passes on the Engine backend: L1 register check: every registered defect carries a disposition (fixed in shared code, or replaced on the Engine path); the defect's task passes on the Engine backend in every case; any standalone failure remains comparison evidence only."
+        },
+        "negative": {
+          "notApplicable": "The gate is satisfied or not by its named evidence; the evidence suites hold the negative cases."
+        },
+        "refusal": {
+          "notApplicable": "The gate adds no refusal case of its own; the evidence suites hold them."
+        },
+        "recovery": {
+          "notApplicable": "The gate adds no recovery case of its own; the evidence suites hold them."
+        },
+        "adversarial": {
+          "notApplicable": "The gate adds no adversarial case of its own; §13 rows and the evidence suites hold them."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: classification and pause-reason assertions."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14: module 6.7 cuts over only when cutover gate 3 is satisfied by its named evidence.",
+      "cutoverGate": {
+        "number": 3,
+        "title": "Standalone defects fixed or replaced",
+        "evidence": "L1 register check: every registered defect carries a disposition (fixed in shared code, or replaced on the Engine path); the defect's task passes on the Engine backend in every case; any standalone failure remains comparison evidence only",
+        "modules": [],
+        "layers": ["L1"],
+        "engineSpec": {
+          "document": "Tech spec — Developer-review on Atta Engine",
+          "revision": 17,
+          "section": "16.18"
+        }
+      }
+    },
+    {
+      "id": "cutover-gate:gate-4",
+      "kind": "cutover-gate",
+      "module": "6.3",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "contract": "Cutover gate 4 (Adapter parity) is satisfied only by its named evidence: §6.3, §6.4, §6.8, §6.21, §6.22 on both adapters. The evidence spans further modules: module 6.4 (Developer result acceptance (`validate_developer_output`; contracts §6.0–6.1)), module 6.8 (Reviewer invocation, isolation and validity (`dispatch_reviewers`, `validate_reviewer_outputs`; contracts §6.2)), module 6.21 (Role context delivery (adapter)), module 6.22 (Host dispatch readiness (sandbox)).",
+      "owner": "adapter",
+      "officialBasis": "Evaluation program §12, the cutover-gate coverage of Engine spec §16.18 (revision 17); gate 4 is \"Adapter parity\".",
+      "suite": ["developer-invocation.l4@1", "developer-invocation.l7@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 4 runs and passes on the Engine backend: §6.3, §6.4, §6.8, §6.21, §6.22 on both adapters."
+        },
+        "negative": {
+          "notApplicable": "The gate is satisfied or not by its named evidence; the evidence suites hold the negative cases."
+        },
+        "refusal": {
+          "notApplicable": "The gate adds no refusal case of its own; the evidence suites hold them."
+        },
+        "recovery": {
+          "notApplicable": "The gate adds no recovery case of its own; the evidence suites hold them."
+        },
+        "adversarial": {
+          "notApplicable": "The gate adds no adversarial case of its own; §13 rows and the evidence suites hold them."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: one typed outcome per conformance case, on both adapters."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
+      "cadence": ["every-affected-change", "scheduled-live"],
+      "migrationGate": "§14: module 6.3 cuts over only when cutover gate 4 is satisfied by its named evidence.",
+      "cutoverGate": {
+        "number": 4,
+        "title": "Adapter parity",
+        "evidence": "§6.3, §6.4, §6.8, §6.21, §6.22 on both adapters",
+        "modules": ["6.3", "6.4", "6.8", "6.21", "6.22"],
+        "layers": [],
+        "engineSpec": {
+          "document": "Tech spec — Developer-review on Atta Engine",
+          "revision": 17,
+          "section": "16.18"
+        }
+      }
+    },
+    {
+      "id": "cutover-gate:gate-5",
+      "kind": "cutover-gate",
+      "module": "6.2",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "contract": "Cutover gate 5 (Controller-owned source evidence) is satisfied only by its named evidence: §6.2.",
+      "owner": "governed-effect",
+      "officialBasis": "Evaluation program §12, the cutover-gate coverage of Engine spec §16.18 (revision 17); gate 5 is \"Controller-owned source evidence\".",
+      "suite": [
+        "source-delivery.l1@1",
+        "source-delivery.l2@1",
+        "source-delivery.l3@1",
+        "source-delivery.l5@1",
+        "source-delivery.l7@1"
+      ],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 5 runs and passes on the Engine backend: §6.2."
+        },
+        "negative": {
+          "notApplicable": "The gate is satisfied or not by its named evidence; the evidence suites hold the negative cases."
+        },
+        "refusal": {
+          "notApplicable": "The gate adds no refusal case of its own; the evidence suites hold them."
+        },
+        "recovery": {
+          "notApplicable": "The gate adds no recovery case of its own; the evidence suites hold them."
+        },
+        "adversarial": {
+          "notApplicable": "The gate adds no adversarial case of its own; §13 rows and the evidence suites hold them."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Controller receipts and manifest digests; completion refused when a required source lacks a receipt-backed `sourceUses` entry."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
+      "cadence": ["every-affected-change", "scheduled-live"],
+      "migrationGate": "§14: module 6.2 cuts over only when cutover gate 5 is satisfied by its named evidence.",
+      "cutoverGate": {
+        "number": 5,
+        "title": "Controller-owned source evidence",
+        "evidence": "§6.2",
+        "modules": ["6.2"],
+        "layers": [],
+        "engineSpec": {
+          "document": "Tech spec — Developer-review on Atta Engine",
+          "revision": 17,
+          "section": "16.18"
+        }
+      }
+    },
+    {
+      "id": "cutover-gate:gate-6",
+      "kind": "cutover-gate",
+      "module": "6.6",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "contract": "Cutover gate 6 (Tool catalog held-out evaluation) is satisfied only by its named evidence: §6.6.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Evaluation program §12, the cutover-gate coverage of Engine spec §16.18 (revision 17); gate 6 is \"Tool catalog held-out evaluation\".",
+      "suite": ["tool-catalog.l4@1", "tool-catalog.l5@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 6 runs and passes on the Engine backend: §6.6."
+        },
+        "negative": {
+          "notApplicable": "The gate is satisfied or not by its named evidence; the evidence suites hold the negative cases."
+        },
+        "refusal": {
+          "notApplicable": "The gate adds no refusal case of its own; the evidence suites hold them."
+        },
+        "recovery": {
+          "notApplicable": "The gate adds no recovery case of its own; the evidence suites hold them."
+        },
+        "adversarial": {
+          "notApplicable": "The gate adds no adversarial case of its own; §13 rows and the evidence suites hold them."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Trace predicate on tool name and arguments, plus an outcome check on the resulting state."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
+      "cadence": ["every-affected-change", "scheduled-live"],
+      "migrationGate": "§14: module 6.6 cuts over only when cutover gate 6 is satisfied by its named evidence.",
+      "cutoverGate": {
+        "number": 6,
+        "title": "Tool catalog held-out evaluation",
+        "evidence": "§6.6",
+        "modules": ["6.6"],
+        "layers": [],
+        "engineSpec": {
+          "document": "Tech spec — Developer-review on Atta Engine",
+          "revision": 17,
+          "section": "16.18"
+        }
+      }
+    },
+    {
+      "id": "cutover-gate:gate-7",
+      "kind": "cutover-gate",
+      "module": "6.13",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "contract": "Cutover gate 7 (Restart, resume, cancellation, uncertain effects) is satisfied only by its named evidence: §6.13, §6.14, §13. The evidence spans further modules: module 6.14 (Run control, pauses and Operator (`RunControl`; Engine §16.11)).",
+      "owner": "governed-effect",
+      "officialBasis": "Evaluation program §12, the cutover-gate coverage of Engine spec §16.18 (revision 17); gate 7 is \"Restart, resume, cancellation, uncertain effects\".",
+      "suite": [
+        "governed-effects.l1@1",
+        "governed-effects.l2@1",
+        "governed-effects.l3@1",
+        "governed-effects.l7@1",
+        "governed-effects.l8@1"
+      ],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 7 runs and passes on the Engine backend: §6.13, §6.14, §13."
+        },
+        "negative": {
+          "notApplicable": "The gate is satisfied or not by its named evidence; the evidence suites hold the negative cases."
+        },
+        "refusal": {
+          "notApplicable": "The gate adds no refusal case of its own; the evidence suites hold them."
+        },
+        "recovery": {
+          "notApplicable": "The gate adds no recovery case of its own; the evidence suites hold them."
+        },
+        "adversarial": {
+          "notApplicable": "The gate adds no adversarial case of its own; §13 rows and the evidence suites hold them."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Forge-fake ledger: every effect exactly once with a verified postcondition; zero effects in shadow mode; the beyond-Surface record equals the branch's actual beyond-Surface paths after every write."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
+      "cadence": ["every-affected-change", "scheduled-live", "pre-release", "canary"],
+      "migrationGate": "§14: module 6.13 cuts over only when cutover gate 7 is satisfied by its named evidence.",
+      "cutoverGate": {
+        "number": 7,
+        "title": "Restart, resume, cancellation, uncertain effects",
+        "evidence": "§6.13, §6.14, §13",
+        "modules": ["6.13", "6.14"],
+        "layers": [],
+        "engineSpec": {
+          "document": "Tech spec — Developer-review on Atta Engine",
+          "revision": 17,
+          "section": "16.18"
+        }
+      }
+    },
+    {
+      "id": "cutover-gate:gate-8",
+      "kind": "cutover-gate",
+      "module": "6.8",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "contract": "Cutover gate 8 (Independent, valid, evidence-bound reviews) is satisfied only by its named evidence: §6.8, §6.9, §6.10. The evidence spans further modules: module 6.9 (Code reviewer quality (role eval)), module 6.10 (Security reviewer quality (role eval)).",
+      "owner": "vinaya-policy",
+      "officialBasis": "Evaluation program §12, the cutover-gate coverage of Engine spec §16.18 (revision 17); gate 8 is \"Independent, valid, evidence-bound reviews\".",
+      "suite": [
+        "reviewer-validity.l1@1",
+        "reviewer-validity.l2@1",
+        "reviewer-validity.l3@1",
+        "reviewer-validity.l4@1",
+        "reviewer-validity.l7@1"
+      ],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 8 runs and passes on the Engine backend: §6.8, §6.9, §6.10."
+        },
+        "negative": {
+          "notApplicable": "The gate is satisfied or not by its named evidence; the evidence suites hold the negative cases."
+        },
+        "refusal": {
+          "notApplicable": "The gate adds no refusal case of its own; the evidence suites hold them."
+        },
+        "recovery": {
+          "notApplicable": "The gate adds no recovery case of its own; the evidence suites hold them."
+        },
+        "adversarial": {
+          "notApplicable": "The gate adds no adversarial case of its own; §13 rows and the evidence suites hold them."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: review-validity, manifest and audit assertions."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
+      "cadence": ["every-affected-change", "scheduled-live"],
+      "migrationGate": "§14: module 6.8 cuts over only when cutover gate 8 is satisfied by its named evidence.",
+      "cutoverGate": {
+        "number": 8,
+        "title": "Independent, valid, evidence-bound reviews",
+        "evidence": "§6.8, §6.9, §6.10",
+        "modules": ["6.8", "6.9", "6.10"],
+        "layers": [],
+        "engineSpec": {
+          "document": "Tech spec — Developer-review on Atta Engine",
+          "revision": 17,
+          "section": "16.18"
+        }
+      }
+    },
+    {
+      "id": "cutover-gate:gate-9",
+      "kind": "cutover-gate",
+      "module": "6.13",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "contract": "Cutover gate 9 (Shadow mode cannot mutate) is satisfied only by its named evidence: §6.13 shadow tasks; L8.",
+      "owner": "governed-effect",
+      "officialBasis": "Evaluation program §12, the cutover-gate coverage of Engine spec §16.18 (revision 17); gate 9 is \"Shadow mode cannot mutate\".",
+      "suite": ["governed-effects.l8@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 9 runs and passes on the Engine backend: §6.13 shadow tasks; L8."
+        },
+        "negative": {
+          "notApplicable": "The gate is satisfied or not by its named evidence; the evidence suites hold the negative cases."
+        },
+        "refusal": {
+          "notApplicable": "The gate adds no refusal case of its own; the evidence suites hold them."
+        },
+        "recovery": {
+          "notApplicable": "The gate adds no recovery case of its own; the evidence suites hold them."
+        },
+        "adversarial": {
+          "notApplicable": "The gate adds no adversarial case of its own; §13 rows and the evidence suites hold them."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Forge-fake ledger: every effect exactly once with a verified postcondition; zero effects in shadow mode; the beyond-Surface record equals the branch's actual beyond-Surface paths after every write."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
+      "cadence": ["every-affected-change", "scheduled-live", "pre-release", "canary"],
+      "migrationGate": "§14: module 6.13 cuts over only when cutover gate 9 is satisfied by its named evidence.",
+      "cutoverGate": {
+        "number": 9,
+        "title": "Shadow mode cannot mutate",
+        "evidence": "§6.13 shadow tasks; L8",
+        "modules": ["6.13"],
+        "layers": ["L8"],
+        "engineSpec": {
+          "document": "Tech spec — Developer-review on Atta Engine",
+          "revision": 17,
+          "section": "16.18"
+        }
+      }
+    },
+    {
+      "id": "cutover-gate:gate-10",
+      "kind": "cutover-gate",
+      "module": "6.16",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "contract": "Cutover gate 10 (Log correlation, redaction, non-blocking outage) is satisfied only by its named evidence: §6.16.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Evaluation program §12, the cutover-gate coverage of Engine spec §16.18 (revision 17); gate 10 is \"Log correlation, redaction, non-blocking outage\".",
+      "suite": ["observability.l2@1", "observability.l3@1", "observability.l7@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 10 runs and passes on the Engine backend: §6.16."
+        },
+        "negative": {
+          "notApplicable": "The gate is satisfied or not by its named evidence; the evidence suites hold the negative cases."
+        },
+        "refusal": {
+          "notApplicable": "The gate adds no refusal case of its own; the evidence suites hold them."
+        },
+        "recovery": {
+          "notApplicable": "The gate adds no recovery case of its own; the evidence suites hold them."
+        },
+        "adversarial": {
+          "notApplicable": "The gate adds no adversarial case of its own; §13 rows and the evidence suites hold them."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Event-set and redaction assertions."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
+      "cadence": ["every-affected-change", "scheduled-live"],
+      "migrationGate": "§14: module 6.16 cuts over only when cutover gate 10 is satisfied by its named evidence.",
+      "cutoverGate": {
+        "number": 10,
+        "title": "Log correlation, redaction, non-blocking outage",
+        "evidence": "§6.16",
+        "modules": ["6.16"],
+        "layers": [],
+        "engineSpec": {
+          "document": "Tech spec — Developer-review on Atta Engine",
+          "revision": 17,
+          "section": "16.18"
+        }
+      }
+    },
+    {
+      "id": "cutover-gate:gate-11",
+      "kind": "cutover-gate",
+      "module": "6.14",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "contract": "Cutover gate 11 (Operator actions on authoritative state (inspect, resume, cancel; halt is controller run control)) is satisfied only by its named evidence: §6.14, §6.23. The evidence spans further modules: module 6.23 (Operator role and capabilities (Engine §16.11; contracts §3)).",
+      "owner": "engine",
+      "officialBasis": "Evaluation program §12, the cutover-gate coverage of Engine spec §16.18 (revision 17); gate 11 is \"Operator actions on authoritative state (inspect, resume, cancel; halt is controller run control)\".",
+      "suite": ["run-control.l2@1", "run-control.l3@1", "run-control.l4@1", "run-control.l7@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 11 runs and passes on the Engine backend: §6.14, §6.23."
+        },
+        "negative": {
+          "notApplicable": "The gate is satisfied or not by its named evidence; the evidence suites hold the negative cases."
+        },
+        "refusal": {
+          "notApplicable": "The gate adds no refusal case of its own; the evidence suites hold them."
+        },
+        "recovery": {
+          "notApplicable": "The gate adds no recovery case of its own; the evidence suites hold them."
+        },
+        "adversarial": {
+          "notApplicable": "The gate adds no adversarial case of its own; §13 rows and the evidence suites hold them."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Checkpoint and control-state assertions; a process-tree check for cancellation."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
+      "cadence": ["every-affected-change", "scheduled-live"],
+      "migrationGate": "§14: module 6.14 cuts over only when cutover gate 11 is satisfied by its named evidence.",
+      "cutoverGate": {
+        "number": 11,
+        "title": "Operator actions on authoritative state (inspect, resume, cancel; halt is controller run control)",
+        "evidence": "§6.14, §6.23",
+        "modules": ["6.14", "6.23"],
+        "layers": [],
+        "engineSpec": {
+          "document": "Tech spec — Developer-review on Atta Engine",
+          "revision": 17,
+          "section": "16.18"
+        }
+      }
+    },
+    {
+      "id": "cutover-gate:gate-12",
+      "kind": "cutover-gate",
+      "module": "6.10",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "contract": "Cutover gate 12 (Canary thresholds; no open critical or high finding) is satisfied only by its named evidence: L8 with §10 floors; §6.10.",
+      "owner": "adapter",
+      "officialBasis": "Evaluation program §12, the cutover-gate coverage of Engine spec §16.18 (revision 17); gate 12 is \"Canary thresholds; no open critical or high finding\".",
+      "suite": ["security-reviewer-quality.l5@1", "security-reviewer-quality.l7@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 12 runs and passes on the Engine backend: L8 with §10 floors; §6.10."
+        },
+        "negative": {
+          "notApplicable": "The gate is satisfied or not by its named evidence; the evidence suites hold the negative cases."
+        },
+        "refusal": {
+          "notApplicable": "The gate adds no refusal case of its own; the evidence suites hold them."
+        },
+        "recovery": {
+          "notApplicable": "The gate adds no recovery case of its own; the evidence suites hold them."
+        },
+        "adversarial": {
+          "notApplicable": "The gate adds no adversarial case of its own; §13 rows and the evidence suites hold them."
+        }
+      },
+      "grader": {
+        "kinds": ["code", "model", "human"],
+        "detail": "As §6.9: binary per item, a pinned calibrated model grader only where code cannot judge, human adjudication of clean-set blocking findings."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
+      "cadence": ["every-affected-change", "scheduled-live"],
+      "migrationGate": "§14: module 6.10 cuts over only when cutover gate 12 is satisfied by its named evidence.",
+      "cutoverGate": {
+        "number": 12,
+        "title": "Canary thresholds; no open critical or high finding",
+        "evidence": "L8 with §10 floors; §6.10",
+        "modules": ["6.10"],
+        "layers": ["L8"],
+        "engineSpec": {
+          "document": "Tech spec — Developer-review on Atta Engine",
+          "revision": 17,
+          "section": "16.18"
+        }
+      }
+    },
+    {
+      "id": "cutover-gate:gate-13",
+      "kind": "cutover-gate",
+      "module": "6.20",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "contract": "Cutover gate 13 (Rollback rehearsed and documented) is satisfied only by its named evidence: §6.20 backend selection and rollback suite; live rehearsal record.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Evaluation program §12, the cutover-gate coverage of Engine spec §16.18 (revision 17); gate 13 is \"Rollback rehearsed and documented\".",
+      "suite": ["backend-selection.l2@1", "backend-selection.l3@1", "backend-selection.l6@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 13 runs and passes on the Engine backend: §6.20 backend selection and rollback suite; live rehearsal record."
+        },
+        "negative": {
+          "notApplicable": "The gate is satisfied or not by its named evidence; the evidence suites hold the negative cases."
+        },
+        "refusal": {
+          "notApplicable": "The gate adds no refusal case of its own; the evidence suites hold them."
+        },
+        "recovery": {
+          "notApplicable": "The gate adds no recovery case of its own; the evidence suites hold them."
+        },
+        "adversarial": {
+          "notApplicable": "The gate adds no adversarial case of its own; §13 rows and the evidence suites hold them."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: the new run pinned to standalone; continued runs reach their unrolled terminal state; restarted runs start from the reconciled state; the cross-backend resume refused with a typed reason; the rehearsal record retained."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
+      "cadence": ["every-affected-change", "scheduled-live", "pre-release"],
+      "migrationGate": "§14: module 6.20 cuts over only when cutover gate 13 is satisfied by its named evidence.",
+      "cutoverGate": {
+        "number": 13,
+        "title": "Rollback rehearsed and documented",
+        "evidence": "§6.20 backend selection and rollback suite; live rehearsal record",
+        "modules": ["6.20"],
+        "layers": [],
+        "engineSpec": {
+          "document": "Tech spec — Developer-review on Atta Engine",
+          "revision": 17,
+          "section": "16.18"
+        }
+      }
+    },
+    {
+      "id": "cutover-gate:gate-14",
+      "kind": "cutover-gate",
+      "module": "6.15",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "contract": "Cutover gate 14 (Worktree code cannot reach forge credentials) is satisfied only by its named evidence: §6.15, every case green on the Engine backend; no known-failure entry admitted.",
+      "owner": "sandbox",
+      "officialBasis": "Evaluation program §12, the cutover-gate coverage of Engine spec §16.18 (revision 17); gate 14 is \"Worktree code cannot reach forge credentials\".",
+      "suite": ["isolation.l4@1", "isolation.l7@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 14 runs and passes on the Engine backend: §6.15, every case green on the Engine backend; no known-failure entry admitted."
+        },
+        "negative": {
+          "notApplicable": "The gate is satisfied or not by its named evidence; the evidence suites hold the negative cases."
+        },
+        "refusal": {
+          "notApplicable": "The gate adds no refusal case of its own; the evidence suites hold them."
+        },
+        "recovery": {
+          "notApplicable": "The gate adds no recovery case of its own; the evidence suites hold them."
+        },
+        "adversarial": {
+          "notApplicable": "The gate adds no adversarial case of its own; §13 rows and the evidence suites hold them."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: no forbidden effect, a typed refusal, and an audit event for every rejected call."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Must pass: every §6.15 case green on the Engine backend before cutover. No known-failure entry is admitted for this gate.",
+      "cadence": ["every-affected-change", "scheduled-live"],
+      "migrationGate": "§14: module 6.15 cuts over only when cutover gate 14 is satisfied by its named evidence.",
+      "cutoverGate": {
+        "number": 14,
+        "title": "Worktree code cannot reach forge credentials",
+        "evidence": "§6.15, every case green on the Engine backend; no known-failure entry admitted",
+        "modules": ["6.15"],
+        "layers": [],
+        "engineSpec": {
+          "document": "Tech spec — Developer-review on Atta Engine",
+          "revision": 17,
+          "section": "16.18"
+        }
+      }
+    },
+    {
+      "id": "cutover-gate:gate-15",
+      "kind": "cutover-gate",
+      "module": "6.15",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "contract": "Cutover gate 15 (Per-dispatch capability on every tool call) is satisfied only by its named evidence: §6.15, every case green on the Engine backend; no known-failure entry admitted.",
+      "owner": "sandbox",
+      "officialBasis": "Evaluation program §12, the cutover-gate coverage of Engine spec §16.18 (revision 17); gate 15 is \"Per-dispatch capability on every tool call\".",
+      "suite": ["isolation.l4@1", "isolation.l7@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 15 runs and passes on the Engine backend: §6.15, every case green on the Engine backend; no known-failure entry admitted."
+        },
+        "negative": {
+          "notApplicable": "The gate is satisfied or not by its named evidence; the evidence suites hold the negative cases."
+        },
+        "refusal": {
+          "notApplicable": "The gate adds no refusal case of its own; the evidence suites hold them."
+        },
+        "recovery": {
+          "notApplicable": "The gate adds no recovery case of its own; the evidence suites hold them."
+        },
+        "adversarial": {
+          "notApplicable": "The gate adds no adversarial case of its own; §13 rows and the evidence suites hold them."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: no forbidden effect, a typed refusal, and an audit event for every rejected call."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Must pass: every §6.15 case green on the Engine backend before cutover. No known-failure entry is admitted for this gate.",
+      "cadence": ["every-affected-change", "scheduled-live"],
+      "migrationGate": "§14: module 6.15 cuts over only when cutover gate 15 is satisfied by its named evidence.",
+      "cutoverGate": {
+        "number": 15,
+        "title": "Per-dispatch capability on every tool call",
+        "evidence": "§6.15, every case green on the Engine backend; no known-failure entry admitted",
+        "modules": ["6.15"],
+        "layers": [],
+        "engineSpec": {
+          "document": "Tech spec — Developer-review on Atta Engine",
+          "revision": 17,
+          "section": "16.18"
+        }
+      }
+    },
+    {
+      "id": "cutover-gate:gate-16",
+      "kind": "cutover-gate",
+      "module": "6.17",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "contract": "Cutover gate 16 (Public start and resume accept Vinaya's executor) is satisfied only by its named evidence: §6.17.",
+      "owner": "engine",
+      "officialBasis": "Evaluation program §12, the cutover-gate coverage of Engine spec §16.18 (revision 17); gate 16 is \"Public start and resume accept Vinaya's executor\".",
+      "suite": ["engine-boundary.l3@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 16 runs and passes on the Engine backend: §6.17."
+        },
+        "negative": {
+          "notApplicable": "The gate is satisfied or not by its named evidence; the evidence suites hold the negative cases."
+        },
+        "refusal": {
+          "notApplicable": "The gate adds no refusal case of its own; the evidence suites hold them."
+        },
+        "recovery": {
+          "notApplicable": "The gate adds no recovery case of its own; the evidence suites hold them."
+        },
+        "adversarial": {
+          "notApplicable": "The gate adds no adversarial case of its own; §13 rows and the evidence suites hold them."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code, plus an import check that the Engine path references only public packed exports and never drives the graph outside public run control."
+      },
+      "backends": ["engine"],
+      "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14: module 6.17 cuts over only when cutover gate 16 is satisfied by its named evidence.",
+      "cutoverGate": {
+        "number": 16,
+        "title": "Public start and resume accept Vinaya's executor",
+        "evidence": "§6.17",
+        "modules": ["6.17"],
+        "layers": [],
+        "engineSpec": {
+          "document": "Tech spec — Developer-review on Atta Engine",
+          "revision": 17,
+          "section": "16.18"
+        }
+      }
+    },
+    {
+      "id": "cutover-gate:gate-17",
+      "kind": "cutover-gate",
+      "module": "6.24",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "contract": "Cutover gate 17 (Principal approval) is satisfied only by its named evidence: §6.24 cutover authorization evidence suite; the decision itself stays the Principal's.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Evaluation program §12, the cutover-gate coverage of Engine spec §16.18 (revision 17); gate 17 is \"Principal approval\".",
+      "suite": ["cutover-authorization.l1@1", "cutover-authorization.l2@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 17 runs and passes on the Engine backend: §6.24 cutover authorization evidence suite; the decision itself stays the Principal's."
+        },
+        "negative": {
+          "notApplicable": "The gate is satisfied or not by its named evidence; the evidence suites hold the negative cases."
+        },
+        "refusal": {
+          "notApplicable": "The gate adds no refusal case of its own; the evidence suites hold them."
+        },
+        "recovery": {
+          "notApplicable": "The gate adds no recovery case of its own; the evidence suites hold them."
+        },
+        "adversarial": {
+          "notApplicable": "The gate adds no adversarial case of its own; §13 rows and the evidence suites hold them."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: approval validity and binding assertions."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Satisfied when the cutover authorization evidence suite passes. The decision itself stays the Principal's; its evidence is the cutover authorization suite (§6.24).",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14: module 6.24 cuts over only when cutover gate 17 is satisfied by its named evidence.",
+      "cutoverGate": {
+        "number": 17,
+        "title": "Principal approval",
+        "evidence": "§6.24 cutover authorization evidence suite; the decision itself stays the Principal's",
+        "modules": ["6.24"],
+        "layers": [],
+        "engineSpec": {
+          "document": "Tech spec — Developer-review on Atta Engine",
+          "revision": 17,
+          "section": "16.18"
+        }
+      }
+    }
+  ]
+}
