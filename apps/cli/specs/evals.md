@@ -2,9 +2,9 @@
 
 Status: draft
 
-The evaluation program (`apps/cli/specs/dev-review-evaluation-program.md`) defines four harness ports — Task, Trial, Grader, Report — and the statistics reported over them (its §3, §7, §8, §9 and §11). This file describes the code that implements those contracts and estimators, `apps/cli/src/lib/dev-review-eval/contracts.ts` and `apps/cli/src/lib/dev-review-eval/estimators.ts`, and the module registry the program's §6 requires, `apps/cli/src/lib/dev-review-eval/registry.ts`. Vocabulary is the evaluation program's §3, used exactly.
+The evaluation program (`apps/cli/specs/dev-review-evaluation-program.md`) defines four harness ports — Task, Trial, Grader, Report — and the statistics reported over them (its §3, §7, §8, §9 and §11). This file describes the code that implements those contracts and estimators, `apps/cli/src/lib/dev-review-eval/contracts.ts` and `apps/cli/src/lib/dev-review-eval/estimators.ts`, the module registry the program's §6 requires, `apps/cli/src/lib/dev-review-eval/registry.ts`, and the trial staging and contamination test its §11 requires, `apps/cli/src/lib/dev-review-eval/staging.ts` and `apps/cli/src/lib/dev-review-eval/contamination.ts`. Vocabulary is the evaluation program's §3, used exactly.
 
-Nothing here stages a trial, isolates a repository, runs an agent or decides acceptance. Those come later; this layer gives them typed values to exchange and pure functions to compute what a report shows.
+Nothing here runs an agent or decides acceptance. Those come later; this layer gives them typed values to exchange, pure functions to compute what a report shows, and a clean, proven-isolated workspace for each trial.
 
 ## Not shipped
 
@@ -124,6 +124,60 @@ The first shard, `typed-sources.json`, covers the kinds a typed repository sourc
 Each row's owner is its typed source's owner read into the program's vocabulary — `engine-runtime` is `engine`, `provider-adapter` is `adapter`, `governed-operation` is `governed-effect`, and `vinaya-policy`, `log` and `operator-control` are `vinaya-policy`, since the capability matrix gives Vinaya the Log and the Operator controls; ports and transitions are `vinaya-policy`, which the matrix names as owner of the five core ports and the legal transitions. Each row cites a heading of its source document at that revision, and the test checks the heading exists. The shard says nothing about roles, tools, effects, adapters, isolation boundaries, gates, faults or attacks; later shards add them.
 
 `apps/cli/tests/eval/registry.test.ts` checks the catalog against the mirror — one entry per `### 6.n` heading, the ten fields of its table in order, one suite per listed layer, the mirror's revision — and every refusal above; the typed-sources test prints the per-kind counts and fails on any missing, extra or invalid row.
+
+## Trial staging
+
+The evaluation program's §11 "Repository isolation" requires every trial to start clean, proven mechanically before any model process starts. `staging.ts` stages a trial; `contamination.ts` tests it, admits or refuses it, and, after the trial, attributes what it created and builds the grading copy. Neither runs an agent, and neither touches the product's own linked-worktree mechanism, which adapter conformance proves separately.
+
+Every harness git process runs with a fixed environment: system, global and XDG configuration off, no home directory and no inherited `GIT_*` variable. No operator setting reaches a staged repository, and the operator's own home and vendor state are never read.
+
+### Staging
+
+`stageTrial` takes a trial id, the source repository, the base commit, a parent directory and a mode, and creates the trial's own directory holding the workspace and the agent state.
+
+- **Clone** — for a role that needs git. A non-local clone (`git clone --no-local --no-hardlinks`, the regular git transport, so no object file is shared or hard-linked) of exactly the history leading to the base commit (`--revision`, which needs git 2.49 or later), with no tags and no templates. Staging then creates the one task branch at the base commit, points `HEAD` at it, removes the configured remote and deletes every reflog the clone wrote. It is never a linked worktree of the operator's repository.
+- **Snapshot** — for a role that needs no git metadata, such as a reviewer. The base commit's tree written byte for byte from its blobs read with `git cat-file --batch`, with no filters applied: regular and executable files, symlinks, and a gitlink as an empty directory. There is no `.git`.
+- **Agent state** — the vendor home, session store, transcripts, tool state, cache and temporary directory, each created empty for this trial, recorded with the device and inode it had when created.
+
+The source repository is only read.
+
+### The allowed-object manifest
+
+Before staging creates the workspace, the controller freezes the allowed-object manifest from its declared starter input, the base commit, reading the source repository and not the clone it will judge. For a clone it is every object `git rev-list --objects` reaches from the base commit; for a snapshot it is the base commit's tree, every entry with its mode and blob id. The manifest is deeply frozen and carries a SHA-256 digest over its sorted contents. Objects a trial later creates are never admitted to it.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/staging.ts contains:export function freezeObjectManifest(source: string, baseCommit: string): Readonly<AllowedObjectManifest> { -->
+
+### The contamination test
+
+`testContamination` collects every finding rather than stopping at the first, each with a typed `code`, its `subject` and, for objects, the complete list of offending ids. It compares complete sets and never samples. A clone is refused unless every check below holds:
+
+| Check | Refused as |
+| -- | -- |
+| The workspace `.git` is a directory of its own, with no `commondir` or `worktrees` | `linked_worktree` |
+| The set of every object — loose objects read from the directory, packed ones read from every pack index with `git show-index`, and any further object `git cat-file --batch-all-objects` sees — equals the manifest, in the manifest's object format | `object_set_mismatch` |
+| The object store holds nothing but loose objects and complete packs | `stray_object_file` |
+| `git fsck --full --unreachable --no-reflogs` succeeds and lists no unreachable object | `integrity_check_failed`, `unreachable_object` |
+| No ref exists but the task branch — no tag, remote-tracking ref, replacement ref or note — and it points at the base commit, with `HEAD` on it | `foreign_ref`, `task_branch_moved`, `head_not_task_branch` |
+| No pseudo-ref such as `ORIG_HEAD` or `FETCH_HEAD` | `pseudo_ref` |
+| Every reflog is empty | `reflog_not_empty` |
+| No alternates; no promisor remote, partial-clone extension or promisor pack; no grafts; no shallow boundary | `alternates`, `promisor`, `graft`, `shallow` |
+| No remote is configured, nothing is included, and the local configuration sets only what a fresh repository needs | `remote_configured`, `config_include`, `unexpected_config` |
+
+A snapshot is refused when any `.git` exists anywhere in it (`git_metadata_present`) or its files differ from the base tree by path, mode or content (`snapshot_mismatch`). For either kind, every agent state directory must still be the directory staging created and still empty (`prior_agent_state`), and no hidden input may be visible (`hidden_input_visible`): not in the manifest, not in the object database, and not anywhere in the trial's directory, byte for byte under any name. An empty hidden file is indistinguishable from any other empty file and is not compared. A clone git cannot read is refused, never admitted.
+
+`admitTrial` runs the test and calls the trial's start function — the only way its model process is launched — when, and only when, the test is clean; otherwise it returns the report as the refusal and the start function is never called.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/contamination.ts contains:export function admitTrial<T>( -->
+
+### Hidden inputs and the grading copy
+
+A task's hidden fail-to-pass tests and its reference solution are given to the contamination test only so it can prove them invisible; nothing writes them into the trial's directory. After the trial, `attributeTrialObjects` checks every object outside the manifest: it is attributable to the trial when it lives in the clone's own store — a loose object, or a pack staging did not leave — written after staging froze the manifest, and is not a hidden input. Each is refused otherwise, as `foreign_source`, `in_staged_pack`, `predates_trial` or `hidden_input`. The report also separates the created objects the task branch reaches beyond the base commit from those nothing reaches, and lists any manifest object no longer present. For a snapshot it lists the files that differ from the base tree and refuses any whose content is a hidden input.
+
+`prepareGradingCopy` builds a separate copy, outside the trial's directory, only for a trial whose every created object is attributed: for `fail-to-pass`, a non-local clone of the task branch with the hidden tests written in; for `reference-solution`, the base commit with the reference solution and the hidden tests written in. The copy has no remote, a hidden path may not leave it or enter `.git`, and the trial's own clone is only read.
+
+### What the test proves
+
+`apps/cli/tests/eval/staging.test.ts` runs real git in a temporary directory it removes afterwards. A clean clone and a clean snapshot pass, and the clone shares no inode with the source and leaves the source unchanged. Each planted contamination is refused with its own code: a later commit's object, loose and packed; a missing object; a tag; a remote-tracking ref; a replacement ref and a note; a moved task branch and a detached `HEAD`; a pseudo-ref; a reflog entry; an alternates file; a promisor remote and a promisor pack; a graft; a shallow boundary; a configured remote; an include and an unexpected setting; a linked worktree; a stray object file; prior vendor state, as a leftover file or a replaced directory, in each agent state directory; and a visible hidden test or reference solution in the working tree, the object database, agent state or the base history. It also proves attribution, the refusal to grade an unattributed trial, and that hidden inputs reach the grading copy alone.
 
 ## Failure taxonomy
 
