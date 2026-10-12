@@ -222,6 +222,37 @@ describe('component row validation', () => {
     refusedWith(validateComponentRow(row({ module: '6.19' }), catalog), 'module_excluded', 'module')
   })
 
+  it('refuses an additional module that is unknown, excluded, repeated or the row’s own', () => {
+    expect(validateComponentRow(row({ additionalModules: ['6.21'] }), catalog).ok).toBe(true)
+    refusedWith(
+      validateComponentRow(row({ additionalModules: ['6.99'] }), catalog),
+      'unknown_module',
+      'additionalModules[0]'
+    )
+    refusedWith(
+      validateComponentRow(row({ additionalModules: ['6.19'] }), catalog),
+      'module_excluded',
+      'additionalModules[0]'
+    )
+    refusedWith(
+      validateComponentRow(row({ additionalModules: ['6.11'] }), catalog),
+      'duplicate',
+      'additionalModules[0]'
+    )
+    refusedWith(
+      validateComponentRow(row({ additionalModules: ['6.21', '6.21'] }), catalog),
+      'duplicate',
+      'additionalModules[1]'
+    )
+    refusedWith(validateComponentRow(row({ additionalModules: '6.21' }), catalog), 'wrong_type', 'additionalModules')
+  })
+
+  it('refuses a catalog scope other than system', () => {
+    const modules = (catalog.modules as unknown[]).map((m) => ({ ...(m as object) }))
+    ;(modules[0] as Record<string, unknown>).scope = 'component'
+    refusedWith(validateModuleCatalog({ schemaVersion: 1, modules }), 'unknown_value', 'modules[0].scope')
+  })
+
   it('refuses a suite its module does not declare, and a malformed suite reference', () => {
     refusedWith(validateComponentRow(row({ suite: ['run-control.l2@1'] }), catalog), 'unknown_suite', 'suite[0]')
     refusedWith(validateComponentRow(row({ suite: ['assessment.l1@2'] }), catalog), 'unknown_suite', 'suite[0]')

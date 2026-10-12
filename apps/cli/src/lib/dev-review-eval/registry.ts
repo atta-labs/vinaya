@@ -138,6 +138,8 @@ export type ModuleEntry = {
   title: string
   source: RowSource
   excluded: string | null
+  /** `system`: proven by its own suites and owned by no single component, so no row need name it. */
+  scope?: 'system'
   suites: SuiteDeclaration[]
 } & { [K in RequiredField]: RequiredFields[K] | NotApplicable }
 
@@ -151,6 +153,8 @@ export interface ComponentRow extends RequiredFields {
   id: string
   kind: ComponentKind
   module: string
+  /** Further catalog modules this component also names, never its own `module`. */
+  additionalModules?: string[]
   source: RowSource
 }
 
@@ -408,6 +412,9 @@ function moduleEntry(input: unknown, path: string): ModuleEntry {
     refuse('bad_name', at(path, 'id'), `${at(path, 'id')} must be a §6 module number such as 6.1`)
   const rawExcluded = field(obj, 'excluded', path)
   const excluded = rawExcluded === null ? null : text(rawExcluded, at(path, 'excluded'))
+  const rawScope = obj.scope
+  if (rawScope !== undefined && rawScope !== 'system')
+    refuse('unknown_value', at(path, 'scope'), `${at(path, 'scope')} must be "system" when present`)
   const suitesPath = at(path, 'suites')
   const rawSuites = field(obj, 'suites', path)
   if (!Array.isArray(rawSuites)) refuse('wrong_type', suitesPath, `${suitesPath} must be an array`)
@@ -424,6 +431,11 @@ function moduleEntry(input: unknown, path: string): ModuleEntry {
     excluded,
     suites
   } as ModuleEntry
+  if (rawScope === 'system') {
+    if (excluded !== null)
+      refuse('wrong_type', at(path, 'scope'), `module ${id} is excluded and cannot be system scope`)
+    entry.scope = 'system'
+  }
   const declared = new Set(suites.map(suiteId))
   for (const key of REQUIRED_FIELDS) {
     const raw = field(obj, key, path)
@@ -510,6 +522,24 @@ function componentRow(input: unknown, path: string, modules: ReadonlyMap<string,
     module: moduleId,
     source: source(field(obj, 'source', path), at(path, 'source'))
   } as ComponentRow
+  if (obj.additionalModules !== undefined) {
+    const listPath = at(path, 'additionalModules')
+    if (!Array.isArray(obj.additionalModules)) refuse('wrong_type', listPath, `${listPath} must be an array`)
+    const named = new Set<string>([moduleId])
+    row.additionalModules = obj.additionalModules.map((value, index) => {
+      const entryPath = at(listPath, index)
+      const other = text(value, entryPath)
+      const found = modules.get(other)
+      if (found === undefined)
+        refuse('unknown_module', entryPath, `${id} names module ${other}, which the catalog does not list`)
+      if (found.excluded !== null)
+        refuse('module_excluded', entryPath, `${id} names module ${other}, which is excluded: ${found.excluded}`)
+      if (named.has(other))
+        refuse('duplicate', entryPath, `${id} names module ${other} twice; additionalModules never repeats module`)
+      named.add(other)
+      return other
+    })
+  }
   const declared = new Set(module.suites.map(suiteId))
   for (const key of REQUIRED_FIELDS) {
     const raw = field(obj, key, path)
