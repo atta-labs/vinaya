@@ -1113,14 +1113,73 @@ const DOCUMENTATION_PROBE_MAX_HOPS = 5
 /** A path segment naming a sign-in page — where a login-gated host sends an unauthenticated reader. */
 const LOGIN_PATH_RE = /\/(?:log-?in|sign-?in|signin|sso|auth|oauth|authorize)(?:[/?#]|$)/i
 
+/** One unauthenticated response, reduced to what the probe reads: status, redirect target and lower-cased header names. */
+export type DocumentationResponse = { code: number; location: string; headers: ReadonlyMap<string, string> }
+
+/** Fetches one URL without following redirects; `undefined` on a timeout, a missing `curl` or no network. */
+export type DocumentationFetch = (url: string) => DocumentationResponse | undefined
+
+/** Parses `curl -D -` output (header blocks, then a `<code> <redirect_url>` line from `-w`) — the last block's headers win. */
+function parseCurlResponse(out: string): DocumentationResponse {
+  const lines = out.split(/\r?\n/)
+  const [codeText = '', location = ''] = (lines.pop() ?? '').trim().split(' ')
+  const headers = new Map<string, string>()
+  for (const line of lines) {
+    if (/^HTTP\//i.test(line)) headers.clear()
+    const colon = line.indexOf(':')
+    if (colon > 0) headers.set(line.slice(0, colon).trim().toLowerCase(), line.slice(colon + 1).trim())
+  }
+  return { code: Number.parseInt(codeText, 10), location, headers }
+}
+
+const curlDocumentationFetch: DocumentationFetch = (url) => {
+  try {
+    const out = execFileSync(
+      'curl',
+      [
+        '-sS',
+        '--globoff',
+        '-o',
+        '/dev/null',
+        '-D',
+        '-',
+        '--max-time',
+        String(DOCUMENTATION_PROBE_TIMEOUT_SECONDS),
+        '-w',
+        '\n%{http_code} %{redirect_url}',
+        url
+      ],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: (DOCUMENTATION_PROBE_TIMEOUT_SECONDS + 2) * 1000
+      }
+    )
+    return parseCurlResponse(out)
+  } catch {
+    return undefined
+  }
+}
+
+/** A rate-limited reply: 429, a 403 whose `x-ratelimit-remaining` is 0, or any reply carrying `retry-after`. */
+function isRateLimited(response: DocumentationResponse): boolean {
+  if (response.code === 429 || response.headers.has('retry-after')) return true
+  return response.code === 403 && response.headers.get('x-ratelimit-remaining') === '0'
+}
+
 /**
  * An unauthenticated fetch of one Documentation URL. Redirects are followed by
  * hand, only while they stay on the URL's own host; a redirect to another host,
  * to a sign-in path, or a non-success final status is `unreadable`. A timeout,
  * a missing `curl` or no network is `unknown` — a warning, so planning offline
- * still works. No host is special-cased.
+ * still works — and so is a rate-limited reply (`reason: 'rate-limited'`): the
+ * link was not checked now, and is re-probed on the next gate run. No host is
+ * special-cased. `fetchUrl` is injectable so tests never touch the network.
  */
-export function probeDocumentationUrl(url: string): DocumentationProbe {
+export function probeDocumentationUrl(
+  url: string,
+  fetchUrl: DocumentationFetch = curlDocumentationFetch
+): DocumentationProbe {
   let host: string
   try {
     host = new URL(url).host
@@ -1132,32 +1191,9 @@ export function probeDocumentationUrl(url: string): DocumentationProbe {
   }
   let current = url
   for (let hop = 0; hop <= DOCUMENTATION_PROBE_MAX_HOPS; hop++) {
-    let out: string
-    try {
-      out = execFileSync(
-        'curl',
-        [
-          '-sS',
-          '--globoff',
-          '-o',
-          '/dev/null',
-          '--max-time',
-          String(DOCUMENTATION_PROBE_TIMEOUT_SECONDS),
-          '-w',
-          '%{http_code} %{redirect_url}',
-          current
-        ],
-        {
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'ignore'],
-          timeout: (DOCUMENTATION_PROBE_TIMEOUT_SECONDS + 2) * 1000
-        }
-      ).trim()
-    } catch {
-      return { kind: 'unknown' }
-    }
-    const [codeText, location = ''] = out.split(' ')
-    const code = Number.parseInt(codeText as string, 10)
+    const response = fetchUrl(current)
+    if (response === undefined) return { kind: 'unknown' }
+    const { code, location } = response
     if (code >= 300 && code < 400 && location !== '') {
       let next: URL
       try {
@@ -1172,7 +1208,8 @@ export function probeDocumentationUrl(url: string): DocumentationProbe {
       continue
     }
     if (code >= 200 && code < 300) return { kind: 'readable' }
-    return code === 0 ? { kind: 'unknown' } : { kind: 'unreadable', detail: `status ${code}` }
+    if (isRateLimited(response)) return { kind: 'unknown', reason: 'rate-limited' }
+    return code === 0 || Number.isNaN(code) ? { kind: 'unknown' } : { kind: 'unreadable', detail: `status ${code}` }
   }
   return { kind: 'unreadable', detail: 'too many redirects' }
 }
