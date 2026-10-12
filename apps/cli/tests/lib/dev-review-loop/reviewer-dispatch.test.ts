@@ -1,6 +1,6 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, join, relative } from 'node:path'
+import { basename, dirname, join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   DEFAULT_REVIEW_POLICY,
@@ -41,6 +41,17 @@ import {
   writeHeldVerdict
 } from '../../../src/lib/dev-review-loop/reviewer-dispatch'
 import { reviewerCandidateInputPaths } from '../../../src/lib/dev-review-loop/reviewer-isolation'
+import type { LoopDeps } from '../../../src/lib/dev-review-loop'
+import {
+  cleanupWorlds,
+  makeInProcessDeps,
+  makeWorld,
+  roundDir,
+  runDriverLoopInProcess,
+  taskRunDir,
+  type LoopWorld,
+  type RoleOutcome
+} from '../dev-review-loop-harness'
 import type {
   ReviewerPromptFacts,
   ReviewerPromptPiece,
@@ -1151,5 +1162,99 @@ describe('defaultRunSecurityScanSubprocess — the real runner isolates the scan
       else process.env.GITHUB_TOKEN = priorGithub
       rmSync(target, { recursive: true, force: true })
     }
+  })
+})
+
+// --- a reviewer-phase pause waits for, and keeps, the sibling reviewer's result ---
+
+describe('devReviewLoop — a confinement pause raised while the sibling reviewer is still running', () => {
+  afterEach(cleanupWorlds)
+
+  const REQUEST_CHANGES_REVIEWER: RoleOutcome = {
+    findings: 'BLOCKER|apps/cli/src/lib/x.ts:12|the sibling reviewer finding',
+    report: 'BRIEF_CONFORMANCE: yes\nSPEC_CONFORMANCE: yes\nSCOPE: small\nTESTS: pass\nDOCS: n/a\n',
+    objectives: 'O1|MET|done.\n',
+    sessionId: 'rev-session-sibling'
+  }
+
+  /**
+   * Finish order is controlled, never timed: the security reviewer's first
+   * turn prints a credential shape and returns; the code reviewer's first turn does not finish until the
+   * security turn has returned and the event loop has turned once more —
+   * by then the security role's after-turn check has already thrown. The
+   * resumed run's reviewer turns are clean.
+   */
+  function siblingStillRunningDeps(world: LoopWorld): {
+    deps: Partial<LoopDeps>
+    order: string[]
+  } {
+    const base = makeInProcessDeps(world)
+    const order: string[] = []
+    let securityReturned: () => void = () => {}
+    const securityHasReturned = new Promise<void>((resolve) => {
+      securityReturned = resolve
+    })
+    const calls: Record<string, number> = {}
+    const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
+      calls[role] = (calls[role] ?? 0) + 1
+      if (role === 'security' && calls[role] === 1) {
+        const result = await base.dispatchRole!(role, agent, prompt, opts)
+        // A credential shape in this turn's own raw output trips only this
+        // role's check — a protected-path write would trip the sibling too.
+        const tee = join(taskRunDir(world), 'output', `${result.effectId}.log`)
+        mkdirSync(dirname(tee), { recursive: true })
+        writeFileSync(tee, `printed ${['ghp', 'a'.repeat(36)].join('_')}\n`, 'utf8')
+        order.push('security-returned')
+        securityReturned()
+        return result
+      }
+      if (role === 'code-reviewer' && calls[role] === 1) {
+        await securityHasReturned
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        world.roleOutcomes[opts.round ?? 1] = {
+          ...world.roleOutcomes[opts.round ?? 1],
+          reviewer: REQUEST_CHANGES_REVIEWER
+        }
+        const result = await base.dispatchRole!(role, agent, prompt, opts)
+        order.push('reviewer-finished')
+        return result
+      }
+      // The resumed run's reviews are clean; the paused round's own
+      // finding-id resend (the code reviewer's second dispatch) is not.
+      if (role === 'code-reviewer' && calls[role] > 2) delete world.roleOutcomes[opts.round ?? 1]?.reviewer
+      order.push(`${role}-dispatched`)
+      return base.dispatchRole!(role, agent, prompt, opts)
+    }
+    return { deps: { dispatchRole }, order }
+  }
+
+  it('waits for the sibling, keeps its findings, and the automatic infrastructure resume reviews the same head — never a Developer turn', async () => {
+    const world = makeWorld()
+    const { deps, order } = siblingStillRunningDeps(world)
+
+    const result = await runDriverLoopInProcess(world, { task: world.task, agent: 'claude' }, deps)
+
+    // The round waited: the sibling finished after the security failure and
+    // before the pause; the resume then dispatched only the two reviewers.
+    expect(order).toEqual([
+      'developer-dispatched',
+      'security-returned',
+      'reviewer-finished',
+      // the sibling's own finding-id resend, still inside the paused round
+      'code-reviewer-dispatched',
+      // the resumed run: a fresh review of the same head
+      'code-reviewer-dispatched',
+      'security-dispatched'
+    ])
+    expect(world.dispatchCountByRole.developer).toBe(1)
+    expect(world.dispatches.filter((d) => d.role !== 'developer').every((d) => d.round === 1)).toBe(true)
+    expect(result.finalDecision.type).toBe('publish')
+
+    // The pause named the security violation; the sibling's verdict is kept.
+    const pause = world.postedComments.find((c) => c.marker === '<!-- aeg:loop:paused:infrastructure -->')
+    expect(pause?.body).toContain("security's turn failed the after-turn confinement check")
+    const kept = readFileSync(join(roundDir(world, 1), 'reviewer-kept-on-pause.md'), 'utf8')
+    expect(kept).toContain('the sibling reviewer finding')
+    expect(kept).toMatch(/REQUEST CHANGES/)
   })
 })

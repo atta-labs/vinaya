@@ -1928,6 +1928,18 @@ function isConcurrentSiblingRoundEntry(name: string, sibling: Role): boolean {
   return isReviewerScratchName(name, sibling === 'code-reviewer' ? 'reviewer' : 'security')
 }
 
+/**
+ * A round-folder entry that is the dispatched reviewer's OWN scratch copy of
+ * the candidate (`reviewerScratchDir`'s name family, every attempt) — the
+ * directory this turn runs in and is expected to change. Never `candidate`
+ * itself, and never the sibling's copy (`isReviewerScratchName` matches one
+ * role's prefix only); a developer has no scratch copy at all.
+ */
+function isOwnScratchRoundEntry(name: string, role: Role): boolean {
+  if (role === 'developer') return false
+  return isReviewerScratchName(name, role === 'code-reviewer' ? 'reviewer' : 'security')
+}
+
 /** Every role this file's sessions area ever names in a filename — the three worker roles a turn can actually be dispatched as. `code-reviewer` itself contains a `-`, so matching against this list (longest/most-specific first) is what makes the split unambiguous; splitting on the first `-` alone (round 2 review, BLOCKER) misreads `code-reviewer-<agent>.json` as role `code`. */
 const SESSION_ENTRY_ROLES: readonly Role[] = ['code-reviewer', 'developer', 'security']
 
@@ -1946,7 +1958,10 @@ function sessionEntryRole(name: string): string {
  * two deliberate exceptions:
  *
  * - This role's own entries are never in the list at all — this IS the
- *   dispatch whose turn is ending, and it is expected to write there.
+ *   dispatch whose turn is ending, and it is expected to write there. For a
+ *   reviewer that includes its own scratch copies of the candidate in the
+ *   round being judged (`isOwnScratchRoundEntry`) — its working directory —
+ *   never another round's, and never the shared `candidate`.
  * - `code-reviewer` and `security` dispatch CONCURRENTLY, in one
  *   `Promise.all` (`dev-review-loop.ts`), for the SAME round — so a
  *   reviewer's own check must not protect its sibling's SAME-round folder,
@@ -1985,6 +2000,7 @@ function otherRolesProtectedPaths(input: {
       const roundDir = join(roundsDir, roundName)
       for (const name of readdirSync(roundDir)) {
         if (roundEntryBelongsToRole(name, input.role)) continue
+        if (roundNum === input.round && isOwnScratchRoundEntry(name, input.role)) continue
         if (
           concurrentSibling !== null &&
           roundNum === input.round &&

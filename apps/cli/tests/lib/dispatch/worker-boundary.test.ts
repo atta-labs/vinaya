@@ -1586,6 +1586,77 @@ describe('protectedPathsForTurn — O1 the concrete per-turn protected-path list
     expect(paths).toContain(join(round2, 'security-scratch'))
     expect(paths).toContain(join(round2, 'security-scratch-retry1'))
   })
+
+  it("excludes the dispatched reviewer's OWN same-round scratch copies (plain and every retry), for either reviewer", () => {
+    dir = tempDir('vinaya-wb-turn-')
+    const round1 = join(taskDir(dir, 1), 'rounds', '1')
+    for (const name of ['reviewer-scratch', 'reviewer-scratch-retry1', 'security-scratch', 'security-scratch-retry1']) {
+      mkdirSync(join(round1, name), { recursive: true })
+    }
+    const turn = (role: 'code-reviewer' | 'security') =>
+      protectedPathsForTurn({
+        runtimeDir: dir,
+        task: 1,
+        round: 1,
+        role,
+        vinayaConfigPath: join(dir, 'vinaya.config.json')
+      }).map((e) => e.path)
+    expect(turn('code-reviewer')).not.toContain(join(round1, 'reviewer-scratch'))
+    expect(turn('code-reviewer')).not.toContain(join(round1, 'reviewer-scratch-retry1'))
+    expect(turn('security')).not.toContain(join(round1, 'security-scratch'))
+    expect(turn('security')).not.toContain(join(round1, 'security-scratch-retry1'))
+  })
+
+  it("still protects the reviewer's OWN scratch copies in every OTHER round, and never excuses a developer's turn", () => {
+    dir = tempDir('vinaya-wb-turn-')
+    const round1 = join(taskDir(dir, 1), 'rounds', '1')
+    const round2 = join(taskDir(dir, 1), 'rounds', '2')
+    mkdirSync(join(round1, 'reviewer-scratch'), { recursive: true })
+    mkdirSync(join(round1, 'reviewer-scratch-retry1'), { recursive: true })
+    mkdirSync(join(round2, 'reviewer-scratch'), { recursive: true })
+    const reviewerRound2 = protectedPathsForTurn({
+      runtimeDir: dir,
+      task: 1,
+      round: 2,
+      role: 'code-reviewer',
+      vinayaConfigPath: join(dir, 'vinaya.config.json')
+    }).map((e) => e.path)
+    expect(reviewerRound2).toContain(join(round1, 'reviewer-scratch'))
+    expect(reviewerRound2).toContain(join(round1, 'reviewer-scratch-retry1'))
+    expect(reviewerRound2).not.toContain(join(round2, 'reviewer-scratch'))
+    const developerRound2 = protectedPathsForTurn({
+      runtimeDir: dir,
+      task: 1,
+      round: 2,
+      role: 'developer',
+      vinayaConfigPath: join(dir, 'vinaya.config.json')
+    }).map((e) => e.path)
+    expect(developerRound2).toContain(join(round2, 'reviewer-scratch'))
+  })
+
+  it('a reviewer writing a file inside its own scratch copy passes the after-turn check; a write to the shared candidate still fails it', () => {
+    dir = tempDir('vinaya-wb-turn-')
+    const round1 = join(taskDir(dir, 1), 'rounds', '1')
+    mkdirSync(join(round1, 'candidate'), { recursive: true })
+    writeFileSync(join(round1, 'candidate', 'src.ts'), 'original\n', 'utf8')
+    mkdirSync(join(round1, 'reviewer-scratch-retry1'), { recursive: true })
+    writeFileSync(join(round1, 'reviewer-scratch-retry1', 'src.ts'), 'original\n', 'utf8')
+    const entries = protectedPathsForTurn({
+      runtimeDir: dir,
+      task: 1,
+      round: 1,
+      role: 'code-reviewer',
+      vinayaConfigPath: join(dir, 'vinaya.config.json')
+    })
+    const before = snapshotProtectedPaths(entries)
+
+    writeFileSync(join(round1, 'reviewer-scratch-retry1', 'src.ts'), 'edited by the reviewer\n', 'utf8')
+    writeFileSync(join(round1, 'reviewer-scratch-retry1', 'notes.txt'), 'scratch notes\n', 'utf8')
+    expect(changedProtectedPaths(entries, before)).toEqual([])
+
+    writeFileSync(join(round1, 'candidate', 'src.ts'), 'tampered\n', 'utf8')
+    expect(changedProtectedPaths(entries, before)).toEqual([join(round1, 'candidate')])
+  })
 })
 
 describe('findCredentialPatterns — O2 recognizes a shape, never reports the value', () => {
