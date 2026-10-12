@@ -29,7 +29,8 @@
     "Tech spec — Agent sandbox": {
       "path": "apps/cli/specs/isolation.md",
       "revisionPinned": false
-    }
+    },
+    "Any Process, One Harness": null
   },
   "authority": {
     "normativeSource": "The source document stays normative.",

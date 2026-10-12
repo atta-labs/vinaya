@@ -13,6 +13,7 @@ type Manifest = {
   chunks: { commentId: number; bytes: number; sha256: string }[]
   totalBytes: number
   sha256: string
+  documents: Record<string, { path: string; revisionPinned: boolean } | null>
 }
 
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Manifest
@@ -26,6 +27,24 @@ describe('developer-review evaluation program mirror', () => {
     )
     expect(manifest.sourceDocumentId).toBe('535a4392-b658-4c92-835a-4b8f2d2830d4')
     expect(manifest.revision).toBe(11)
+  })
+
+  it('accounts for every named source document', () => {
+    expect(manifest.documents).toEqual({
+      'Tech spec — Developer-review on Atta Engine': {
+        path: 'apps/cli/specs/dev-review-engine-state-machine.md',
+        revisionPinned: false
+      },
+      'Tech spec — Developer-review capabilities and contracts': {
+        path: 'apps/cli/specs/dev-review-capabilities-contracts.md',
+        revisionPinned: false
+      },
+      'Tech spec — Agent sandbox': {
+        path: 'apps/cli/specs/isolation.md',
+        revisionPinned: false
+      },
+      'Any Process, One Harness': null
+    })
   })
 
   it('matches the manifest byte count and complete digest', () => {
