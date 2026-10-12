@@ -82,3 +82,5 @@ tests/lib/dev-review-loop/readiness-gate-adopter.test.ts
 tests/eval/contracts.test.ts
 tests/eval/estimators.test.ts
 tests/eval/not-shipped.test.ts
+tests/eval/registry.test.ts
+tests/eval/registry-typed-sources.test.ts
