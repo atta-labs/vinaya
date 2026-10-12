@@ -5,7 +5,7 @@ Status: draft
 Scope: the final, provider-neutral state model, transitions, terminal
 outcomes, node contracts, human-handoff contract, cancellation behavior, and
 effect-once boundaries for the Atta-backed developer-review workflow (Linear
-"Tech spec — Developer-review on Atta Engine", revision 9, section 16). This
+"Tech spec — Developer-review on Atta Engine", revision 17, section 16). This
 is the TARGET contract production execution must satisfy. It does not
 implement that execution, does not assess provider or runtime capabilities,
 and does not alter the standalone loop — `apps/cli/specs/loop.md` remains the
@@ -120,14 +120,18 @@ and exhausting max-rounds stop for the Principal.
 
 <!-- AEG:CLAIM: apps/cli/tests/lib/dev-review-loop/dev-review-engine-state-contract.fixture.ts contains:export const TERMINAL_OUTCOMES: TerminalOutcome[] = [ -->
 Five, never collapsed into one value: `ready_for_merge`, `paused`, `failed`,
-`cancelled`, `exhausted`. Each carries explicit **persistence** (what
+`cancelled`, `exhausted`. They are the outcomes of one execution leg (one
+start or one resume, tech spec § 16.4): four end the run, and `paused` is a
+durable, nonterminal interrupt the run leaves when its pause is resolved.
+Each carries explicit **persistence** (what
 control-state records the instant it is reached) and **resumption**
 (whether and how a later action can continue past it — never implied merely
 because a graph node can rerun):
 
 - **`ready_for_merge`** — terminal; never resumed. A later task or round
   starts a new run instead.
-- **`paused`** — the one outcome with real resumption: typed external input,
+- **`paused`** — the one outcome that does not end the run, and so the one
+  with real resumption: typed external input,
   revalidated for authority and freshness before it changes anything. A
   stale ruling, a changed patch, or a superseded objective set refuses to
   resume the old checkpoint silently (tech spec § 16.11). `stale_driver`
