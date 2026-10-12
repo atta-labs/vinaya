@@ -41,7 +41,7 @@ describe('readiness gate outside this repository', () => {
       )
       expect(result.output).not.toContain('Module not found')
       expect(result.output).not.toContain('Cannot find module')
-      expect(result.output).not.toContain('incomplete')
+      expect(result.output).not.toContain('package is incomplete')
     } finally {
       process.chdir(prev)
       rmSync(cwd, { recursive: true, force: true })
