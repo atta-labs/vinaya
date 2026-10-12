@@ -83,4 +83,5 @@ tests/eval/contracts.test.ts
 tests/eval/estimators.test.ts
 tests/eval/not-shipped.test.ts
 tests/eval/registry.test.ts
+tests/eval/registry-fault-attack.test.ts
 tests/eval/registry-typed-sources.test.ts
