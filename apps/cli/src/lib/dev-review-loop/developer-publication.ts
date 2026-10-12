@@ -93,7 +93,7 @@ export type PublicationCheckInput = {
   defaultBranchTip?: { sha: string; recordedHeadIsAncestor: boolean } | null
   /** The worktree branch's base (merge base with the default branch), or `null` when unreadable. */
   base: string | null
-  /** The base this task was cut from — what `base` must equal. `null` only before a known base has been recorded. */
+  /** The base recorded before this attempt (the base this task was cut from, moved forward only at a turn start or after a push) — what `base` must equal. `null` only before a known base has been recorded. */
   expectedBase: string | null
   /** Every path the turn changed, relative to the repo root. */
   changedPaths: readonly string[]
