@@ -1,0 +1,702 @@
+{
+  "bundle": "apps/cli/tests/eval/failure-taxonomy/bundle.jsonl",
+  "method": "Open coding of every loop pause and Principal ruling in the bundle, then grouping by the earliest point in each run where it went wrong. A task's first failure is that earliest point, not the round where the loop noticed it. Every task cites only bundle records by their commentId.",
+  "categories": [
+    {
+      "id": "progress-guard-false-pause",
+      "definition": "The loop's no-progress or repeat guard pauses a round that was moving forward, because the evidence it counts (finding ids, reviewer files) does not reflect the work done."
+    },
+    {
+      "id": "reviewer-output-rejected",
+      "definition": "A reviewer finishes its pass but the driver refuses its output on a format or coverage rule, so the round ends with no verdict."
+    },
+    {
+      "id": "developer-report-missing",
+      "definition": "The Developer's work is done but its report to the driver (round comment or turn result) is missing or refused, so the loop cannot advance."
+    },
+    {
+      "id": "instructions-contradict-controller",
+      "definition": "What a role is told (doctrine, brief, prompt or ruling) contradicts what the driver or its tools accept, so following the instruction ends in a refusal."
+    },
+    {
+      "id": "work-unpublished",
+      "definition": "Work the Developer committed does not reach the forge, or the loop misreads what was published, so reviewers judge a stale head or the loop pauses as if nothing was pushed."
+    },
+    {
+      "id": "default-branch-merge-counted",
+      "definition": "A merge of the default branch into the task branch is judged as the task's own change, so publication refuses files the task never touched."
+    },
+    {
+      "id": "brief-scope-defect",
+      "definition": "The frozen brief asks for something the task cannot deliver as written: an objective forces a path outside the Surface, a step only the operator can run, or a measurement this pull request cannot make."
+    },
+    {
+      "id": "premise-pins-moving-text",
+      "definition": "A Premise line pins text that the run's own change adds, moves or removes, so the premise re-assertion fails at the head and the round stops."
+    },
+    {
+      "id": "forge-read-failure",
+      "definition": "A forge read fails (oversized response, transient error or outage) and the round ends as a pause awaiting a ruling instead of a bounded wait and retry."
+    },
+    {
+      "id": "agent-launch-failure",
+      "definition": "The vendor agent process fails to start, sign in or bind a session, and the round ends with no work done."
+    },
+    {
+      "id": "confinement-mismatch",
+      "definition": "The agent's confinement does not match the task: it denies an operation the task legitimately needs, or confines the two adapters differently."
+    },
+    {
+      "id": "gate-false-refusal",
+      "definition": "A check, gate or broker refuses correct work because of a defect or missing rule in the check itself, not in the change it judges."
+    },
+    {
+      "id": "implementation-defect",
+      "definition": "The Developer's first implementation of an objective misses a case that a reviewer then finds and the Principal confirms."
+    },
+    {
+      "id": "non-convergent-objective",
+      "definition": "An objective whose defect class is open-ended: each round fixes one instance and the next review finds another, until the Principal narrows the objective."
+    },
+    {
+      "id": "report-not-supported",
+      "definition": "A Developer report or pull-request body states something the code or the record does not support, or omits a statement the brief requires."
+    },
+    {
+      "id": "host-dependent-test",
+      "definition": "A test's result depends on the host it runs on, so the Developer's local run and CI disagree."
+    },
+    {
+      "id": "doc-code-drift",
+      "definition": "A document the change touches (specification, doctrine, README or comment) still describes behaviour the code does not have."
+    },
+    {
+      "id": "driver-lifecycle-conflict",
+      "definition": "The driver's own lifecycle (a launch lock, a re-execution on a moved base, a second start) stops a run whose work had nothing wrong with it."
+    },
+    {
+      "id": "ruling-not-applied",
+      "definition": "A Principal decision does not reach the mechanism that should apply it, so the loop or its reviewers keep acting on the earlier state."
+    },
+    {
+      "id": "plan-reference-in-prose",
+      "definition": "Prose the change adds cites a tranche, task or Issue number in place of describing the thing itself, and the prose rule refuses it."
+    },
+    {
+      "id": "host-contention",
+      "definition": "The shared host's load or a leftover process keeps a gate from finishing, so time and rounds are spent on the host, not on the task."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "FT-01",
+      "pr": 539,
+      "issue": 538,
+      "commentIds": [5636924844, 5636938071],
+      "firstFailure": "Round 2 was clean after the round-1 BLOCKER was fixed at 137c205e, but the guard counted a finding as resolved only when a reviewer cited its round-1 id; neither reviewer cited it, so a clean round read as no progress.",
+      "category": "progress-guard-false-pause"
+    },
+    {
+      "id": "FT-02",
+      "pr": 630,
+      "issue": 625,
+      "commentIds": [5679110936, 5679236710],
+      "firstFailure": "In round 2 the code reviewer wrote findings.txt, objectives.txt and report.txt and ended its turn normally; the driver paused no_progress without reading those files, and the pause comment carried no detail.",
+      "category": "progress-guard-false-pause"
+    },
+    {
+      "id": "FT-03",
+      "pr": 685,
+      "issue": 683,
+      "commentIds": [5755567989, 5755749277],
+      "firstFailure": "Every round-1 finding was fixed in 2e2e0996, but the loop numbered findings by their position in each list, so round 2's five different findings took round 1's ids and none counted as resolved.",
+      "category": "progress-guard-false-pause"
+    },
+    {
+      "id": "FT-04",
+      "pr": 623,
+      "issue": 560,
+      "commentIds": [5677055154, 5677072049],
+      "firstFailure": "In round 3 the reviewer's findings.txt carried a doc-correctness finding without its trailing `Search: <pattern>` clause, and the driver refused the whole file, ending the round with no verdict.",
+      "category": "reviewer-output-rejected"
+    },
+    {
+      "id": "FT-05",
+      "pr": 908,
+      "issue": 903,
+      "commentIds": [5915330835, 5915733133],
+      "firstFailure": "Round 1's security pass wrote its SECRETS citation of the secret-scan check followed by notes on the same line; the parser refuses any line naming the check that also holds a word such as \"no\", so a correct report did not parse.",
+      "category": "reviewer-output-rejected"
+    },
+    {
+      "id": "FT-06",
+      "pr": 544,
+      "issue": 541,
+      "commentIds": [5646208099, 5646216471],
+      "firstFailure": "Head ec3cb55b addressed every round-1 finding, but the Developer posted no `aeg:developer:round-N` comment, so the loop saw zero finding ids resolved and paused no_progress.",
+      "category": "developer-report-missing"
+    },
+    {
+      "id": "FT-07",
+      "pr": 1178,
+      "issue": 1120,
+      "commentIds": [6053479268, 6053613193, 6053674421],
+      "firstFailure": "After ruling 1178-3 the code was done, but the Developer's turn result listed the ruling ids as addressed finding ids and omitted the required sourceUses, so the driver rejected the result twice and paused.",
+      "category": "developer-report-missing"
+    },
+    {
+      "id": "FT-08",
+      "pr": 1169,
+      "issue": 1165,
+      "commentIds": [6042878937, 6042936538, 6043002227],
+      "firstFailure": "Ruling 1169-1 told the Developer to merge the default branch in a task worktree that did not exist, while the Developer doctrine forbids that merge; the Developer reported the task blocked and the ruling was withdrawn.",
+      "category": "instructions-contradict-controller"
+    },
+    {
+      "id": "FT-09",
+      "pr": 1188,
+      "issue": 1175,
+      "commentIds": [6051922578, 6051978146, 6052027048],
+      "firstFailure": "The brief named two in-repository Documentation sources and the driver required a sourceUses entry for each, but the source names never reached the Developer's prompt; its turn result carried `sourceUses: null` and was rejected twice.",
+      "category": "instructions-contradict-controller"
+    },
+    {
+      "id": "FT-10",
+      "pr": 1218,
+      "issue": 1181,
+      "commentIds": [6073031337, 6073741523],
+      "firstFailure": "On a turn after the first, the structured-output schema the driver sent allowed no sourceUses entry on a completed result, while the driver's own check required one for each of the brief's sources, so no completed result could pass both and the Developer reported the task blocked.",
+      "category": "instructions-contradict-controller"
+    },
+    {
+      "id": "FT-11",
+      "pr": 589,
+      "issue": 549,
+      "commentIds": [5658384088, 5658390259],
+      "firstFailure": "Head 84b3689d was already pushed with CI green, but the loop read its own `.vinaya-confidence` file as unpushed work, resumed the Developer, and paused no_push when the resumed turns pushed nothing.",
+      "category": "work-unpublished"
+    },
+    {
+      "id": "FT-12",
+      "pr": 1008,
+      "issue": 1005,
+      "commentIds": [5966938333, 5967037732],
+      "firstFailure": "The Developer's fix commit 3090d370 existed only locally because the driver's publication step did not push it, so round 3's reviewers judged the old head ed20f08e and raised BLOCKERs that commit already fixed.",
+      "category": "work-unpublished"
+    },
+    {
+      "id": "FT-13",
+      "pr": 1023,
+      "issue": 1009,
+      "commentIds": [5970551656, 5970571126],
+      "firstFailure": "The round-2 and round-3 fix commits 8bc80ced and a8c4e996 were committed but never published, so the following rounds re-reviewed the old head 43f9a721 until the round cap was reached.",
+      "category": "work-unpublished"
+    },
+    {
+      "id": "FT-14",
+      "pr": 1027,
+      "issue": 995,
+      "commentIds": [5971531118, 5972224537],
+      "firstFailure": "In round 2 the Developer's merge of the default branch put a file main had changed, `aeg-root/roles/principal.md`, among the changed paths, and the publication preconditions refused it as outside the Surface.",
+      "category": "default-branch-merge-counted"
+    },
+    {
+      "id": "FT-15",
+      "pr": 1100,
+      "issue": 1081,
+      "commentIds": [6019926718, 6020023553],
+      "firstFailure": "The branch conflicted with main; the Developer merged main mid-turn, which brought main's `.changeset/codex-login-refresh.md` into the changed paths, and the Surface check refused publication twice on an unchanged head.",
+      "category": "default-branch-merge-counted"
+    },
+    {
+      "id": "FT-16",
+      "pr": 582,
+      "issue": 580,
+      "commentIds": [5654555510, 5654600642],
+      "firstFailure": "Round 3's two MAJORs could be fixed only in `apps/cli/src/commands`, which the frozen Surface listed under `out:`, and no command widened a frozen Surface, so no Developer round could land them.",
+      "category": "brief-scope-defect"
+    },
+    {
+      "id": "FT-17",
+      "pr": 671,
+      "issue": 661,
+      "commentIds": [5747085072, 5747750524],
+      "firstFailure": "O1 needed a run-command flag while the Surface excluded the commands directory, and O2 required a skip status the check runner has no outcome for; the reviewer escalated both in round 1.",
+      "category": "brief-scope-defect"
+    },
+    {
+      "id": "FT-18",
+      "pr": 886,
+      "issue": 764,
+      "commentIds": [5910808482, 5911108953],
+      "firstFailure": "Two stale copies of the retired rule lay outside the frozen Surface, in a security contract and in `packages/sources`, so rounds 3 and 4 raised findings no Developer round could fix, and the attempted Surface widening was refused by the collision gate.",
+      "category": "brief-scope-defect"
+    },
+    {
+      "id": "FT-19",
+      "pr": 1249,
+      "issue": 1238,
+      "commentIds": [6095022773, 6095183636],
+      "firstFailure": "The Test plan carried a `brief render` line that needs the forge, which the Developer's sandbox has no credential for, so the line could never run from the task worktree and the round cap was spent before the Principal removed it.",
+      "category": "brief-scope-defect"
+    },
+    {
+      "id": "FT-20",
+      "pr": 582,
+      "issue": 580,
+      "commentIds": [5654369228],
+      "firstFailure": "The body's Premise named `function nameTheFix(...)`, which the branch's last commit deleted; the re-assertion errored, the driver exited, and every relaunch died the same way.",
+      "category": "premise-pins-moving-text"
+    },
+    {
+      "id": "FT-21",
+      "pr": 592,
+      "issue": 588,
+      "commentIds": [5658387307, 5658520385],
+      "firstFailure": "The pull-request body's Premise named symbols this pull request itself adds, so the dispatch gate's premise re-assertion failed and round 1 paused infrastructure.",
+      "category": "premise-pins-moving-text"
+    },
+    {
+      "id": "FT-22",
+      "pr": 593,
+      "issue": 558,
+      "commentIds": [5658609772, 5658614296],
+      "firstFailure": "`gh pr view 593 --json comments` timed out while the host's network reconnected, and the uncaught error ended round 2 as an infrastructure pause awaiting a ruling.",
+      "category": "forge-read-failure"
+    },
+    {
+      "id": "FT-23",
+      "pr": 628,
+      "issue": 564,
+      "commentIds": [5676805318, 5676846285],
+      "firstFailure": "Telemetry dumps were published to the task Issue the loop reads, 28 `aeg:log:` comments of 1,136,288 bytes, so the `gh` read of its comments overflowed Node's 1 MiB buffer (ENOBUFS) in round 1.",
+      "category": "forge-read-failure"
+    },
+    {
+      "id": "FT-24",
+      "pr": 1176,
+      "issue": 1174,
+      "commentIds": [6043912731, 6049888851],
+      "firstFailure": "A GitHub API outage rejected pull-request body edits, so the Evidence block could not be written and `vinaya check --all --diff-only` failed twice on head 7f9aacd5, pausing repeat_failure.",
+      "category": "forge-read-failure"
+    },
+    {
+      "id": "FT-25",
+      "pr": 623,
+      "issue": 560,
+      "commentIds": [5691119921, 5691156294],
+      "firstFailure": "The Developer launch (attempt 12) was cancelled by a signal before its vendor session was bound; its dispatch output stayed at 0 bytes while the driver went on reporting it as still running for thirty-two minutes.",
+      "category": "agent-launch-failure"
+    },
+    {
+      "id": "FT-26",
+      "pr": 644,
+      "issue": 575,
+      "commentIds": [5711353723, 5711672889],
+      "firstFailure": "The Codex Developer could edit the worktree but could not write Git metadata or reach the forge, so its fixes were never committed or pushed and two rounds passed on the same head.",
+      "category": "confinement-mismatch"
+    },
+    {
+      "id": "FT-27",
+      "pr": 1113,
+      "issue": 1111,
+      "commentIds": [6030039163, 6030086920],
+      "firstFailure": "The round-4 fix was published at 2eb5e1d, but the sandboxed shell could not write the round's confidence file, so the loop found no confidence line and paused.",
+      "category": "confinement-mismatch"
+    },
+    {
+      "id": "FT-28",
+      "pr": 393,
+      "issue": 385,
+      "commentIds": [5522513737, 5522747704],
+      "firstFailure": "`pr-body-frozen` hashed the body file with its trailing newline at open, while CI fed the body GitHub returns without it, so an unedited body read as edited.",
+      "category": "gate-false-refusal"
+    },
+    {
+      "id": "FT-29",
+      "pr": 747,
+      "issue": 736,
+      "commentIds": [5844923065, 5845379871],
+      "firstFailure": "The banned-framing lint ran over the whole rendered reviewer prompt, including the objective text the Planner wrote, matched `clearly`, and ended round 1 with an uncaught error.",
+      "category": "gate-false-refusal"
+    },
+    {
+      "id": "FT-30",
+      "pr": 1028,
+      "issue": 1026,
+      "commentIds": [5971520388, 5971528400],
+      "firstFailure": "The broker refused the driver's push because the branch touches `.github/workflows/ci.yml`, a protected path that the task's Surface includes by design.",
+      "category": "gate-false-refusal"
+    },
+    {
+      "id": "FT-31",
+      "pr": 1035,
+      "issue": 975,
+      "commentIds": [5979170648, 5979505319, 5979513429, 5979520617],
+      "firstFailure": "`verify-dispatch` treated the branch's own commits as leftover work, so the driver's readiness gate refused the Developer's turn, and the red test the turn should have fixed repeated without reaching the Developer.",
+      "category": "gate-false-refusal"
+    },
+    {
+      "id": "FT-32",
+      "pr": 616,
+      "issue": 557,
+      "commentIds": [5669535906, 5669562650],
+      "firstFailure": "The first implementation left `InvocationContext` an unbranded object any caller could construct, and compared protected paths as raw strings, so a caller could forge a grant and `foo/../.github/...` evaded the protected-path check.",
+      "category": "implementation-defect"
+    },
+    {
+      "id": "FT-33",
+      "pr": 638,
+      "issue": 566,
+      "commentIds": [5693597343, 5693877720],
+      "firstFailure": "`server.ts` dispatched concurrent task operations without awaiting them and `resume.ts`/`cancel.ts` never scoped `VINAYA_TASK`, so events misfiled; the round-2 test set `VINAYA_TASK` itself and masked the defect.",
+      "category": "implementation-defect"
+    },
+    {
+      "id": "FT-34",
+      "pr": 1230,
+      "issue": 1229,
+      "commentIds": [6078074756],
+      "firstFailure": "The retry for a false outside-Surface block looked for a failing check-run named surface-scope, but surface-scope runs inside the `vinaya check --all --diff-only` job and no check-run carries that name, so every outside-Surface block was treated as false.",
+      "category": "implementation-defect"
+    },
+    {
+      "id": "FT-35",
+      "pr": 665,
+      "issue": 660,
+      "commentIds": [5744628172, 5744649645, 5745426491],
+      "firstFailure": "The Developer applied O3's process-fixture pattern to one test file while O3 covers every fixture that starts a real process; reviewers named further files by hand each round until the Principal turned O3 into an architecture test.",
+      "category": "non-convergent-objective"
+    },
+    {
+      "id": "FT-36",
+      "pr": 867,
+      "issue": 865,
+      "commentIds": [5883658744, 5883845116],
+      "firstFailure": "The machine-state deny list was enforced by a hand-written shell tokenizer, and each round found another bypass (newlines, wrapper words, `command`) until the Principal replaced the parser with Claude Code's own deny rules.",
+      "category": "non-convergent-objective"
+    },
+    {
+      "id": "FT-37",
+      "pr": 540,
+      "issue": 535,
+      "commentIds": [5644872705, 5644880217],
+      "firstFailure": "The round-5 Developer comment said a Decisions line about the C1/C5 budget and the CI run had been added to the body; the live body the reviewers read carried none of it.",
+      "category": "report-not-supported"
+    },
+    {
+      "id": "FT-38",
+      "pr": 620,
+      "issue": 565,
+      "commentIds": [5673114211],
+      "firstFailure": "The brief required the body to record the mechanism chosen and the supported runtime version from its named documentation; the body recorded neither and cited none of that documentation.",
+      "category": "report-not-supported"
+    },
+    {
+      "id": "FT-39",
+      "pr": 1230,
+      "issue": 1229,
+      "commentIds": [6082546098, 6082584535, 6082686097],
+      "firstFailure": "The Developer reported two failing tests as a block and said the same failures were present on origin/main; main and a clean checkout of the pushed head both passed them, and they failed only inside the Developer's sandbox.",
+      "category": "report-not-supported"
+    },
+    {
+      "id": "FT-40",
+      "pr": 1208,
+      "issue": 1191,
+      "commentIds": [6065217388, 6065746595],
+      "firstFailure": "The fake Developer in the loop tests still printed `\"sourceUses\":null`, which the change now rejects; those scenarios skip on macOS, so they passed locally and failed only on Linux CI.",
+      "category": "host-dependent-test"
+    },
+    {
+      "id": "FT-41",
+      "pr": 1225,
+      "issue": 1030,
+      "commentIds": [6075215138],
+      "firstFailure": "On the macOS runner every Claude command in the new conformance job failed with `listen EINVAL`, because the sandbox runtime opens its proxy socket under TMPDIR and the suite's scratch TMPDIR made that path longer than macOS's 104-byte socket-path limit.",
+      "category": "host-dependent-test"
+    },
+    {
+      "id": "FT-42",
+      "pr": 939,
+      "issue": 761,
+      "commentIds": [5918094884, 5923169490],
+      "firstFailure": "Round 1 left two doctrine sentences describing a merge-gate hook that does not ship, in `aeg-root/state-machine.md` and the planner reference, while the task's objective was to remove that claim.",
+      "category": "doc-code-drift"
+    },
+    {
+      "id": "FT-43",
+      "pr": 1148,
+      "issue": 1138,
+      "commentIds": [6041903915, 6042122103],
+      "firstFailure": "The loop specification said Codex reviewers run with `--sandbox read-only`, while the proof launches them with the dispatch's own `--sandbox workspace-write` arguments.",
+      "category": "doc-code-drift"
+    },
+    {
+      "id": "FT-44",
+      "pr": 601,
+      "issue": 568,
+      "commentIds": [5663609812],
+      "firstFailure": "A prior dispatched Developer launch (pid 60145) was still running for the task, so the driver refused to start a second worker and ended round 1 with an uncaught error.",
+      "category": "driver-lifecycle-conflict"
+    },
+    {
+      "id": "FT-45",
+      "pr": 795,
+      "issue": 791,
+      "commentIds": [5854404987, 5855170649],
+      "firstFailure": "When the base moved under the driver's own code, its re-execution needed a fast-forward pull of the default branch, but the main checkout was on another branch, so the run paused stale_driver.",
+      "category": "driver-lifecycle-conflict"
+    },
+    {
+      "id": "FT-46",
+      "pr": 623,
+      "issue": 560,
+      "commentIds": [5679139478, 5679149907, 5685115849, 5686297809],
+      "firstFailure": "Ruling 623-6 raised the round cap in prose, but the loop reads the cap from the default branch's review policy, where the key was absent, so it kept the default of three and paused max_rounds again.",
+      "category": "ruling-not-applied"
+    },
+    {
+      "id": "FT-47",
+      "pr": 956,
+      "issue": 954,
+      "commentIds": [5925748732, 5925996574],
+      "firstFailure": "The Issue's own ruling replaced the visible round table with a hidden marker comment, but the reviewers judged against the original objectives and blocked the ruled design.",
+      "category": "ruling-not-applied"
+    },
+    {
+      "id": "FT-48",
+      "pr": 934,
+      "issue": 760,
+      "commentIds": [5925038661, 5925997604],
+      "firstFailure": "Lines the change added to two specifications and to code comments cited a tranche task and Issue numbers in place of describing the mechanism, failing the prose check and pushing both specifications over their limits.",
+      "category": "plan-reference-in-prose"
+    },
+    {
+      "id": "FT-49",
+      "pr": 629,
+      "issue": 626,
+      "commentIds": [5678973121, 5678990281],
+      "firstFailure": "The pre-push test gate did not finish under host load: several agents and an orphaned two-hour-old test process competed for two cores, and the loop paused no_push.",
+      "category": "host-contention"
+    },
+    {
+      "id": "FT-50",
+      "pr": 1219,
+      "issue": 1177,
+      "commentIds": [6073855774, 6073924153],
+      "firstFailure": "The Developer's publishes failed because the pre-publish typecheck ran out of JavaScript heap on the host, leaving a staged, uncommitted merge of main in the worktree and the round paused as unpublished work.",
+      "category": "host-contention"
+    }
+  ],
+  "registerSeed": [
+    {
+      "defect": "DEF-01",
+      "notObserved": "No bundle record shows a round published on an empty or partial verdict set, or on a task with no objectives."
+    },
+    {
+      "defect": "DEF-02",
+      "notObserved": "Whether the below-50 extra turn survives a restart is loop-state bookkeeping no forge comment records; the bundle's confidence pauses show the turn used, never a restart re-granting it."
+    },
+    {
+      "defect": "DEF-03",
+      "notObserved": "round_started and round_ended are Log events; the bundle holds forge comments only, so a repeated round number in the Log is invisible to it."
+    },
+    {
+      "defect": "DEF-04",
+      "notObserved": "The zero-seeded counts are written to the Log, not to the forge; the bundle's confidence pause comments carry no counts to inspect."
+    },
+    {
+      "defect": "DEF-05",
+      "category": "work-unpublished"
+    },
+    {
+      "defect": "DEF-06",
+      "category": "instructions-contradict-controller"
+    },
+    {
+      "defect": "DEF-07",
+      "category": "doc-code-drift"
+    },
+    {
+      "defect": "DEF-08",
+      "notObserved": "No bundle record shows a reviewer's workspace removed while its sibling reviewer was still running; the reviewer pauses it records are parse and sign-in failures."
+    },
+    {
+      "defect": "DEF-09",
+      "notObserved": "Every escalation pause in the bundle names a known class; none records an unknown ESCALATE class or a missed fresh retry."
+    },
+    {
+      "defect": "DEF-10",
+      "category": "progress-guard-false-pause"
+    },
+    {
+      "defect": "DEF-11",
+      "category": "reviewer-output-rejected"
+    },
+    {
+      "defect": "DEF-12",
+      "category": "confinement-mismatch"
+    },
+    {
+      "defect": "DEF-13",
+      "category": "forge-read-failure"
+    },
+    {
+      "defect": "DEF-14",
+      "notObserved": "No bundle record shows a reviewer dispatched against a head whose gate was red; the stale-head reviews it records come from unpublished commits, mapped under work-unpublished."
+    },
+    {
+      "defect": "DEF-15",
+      "notObserved": "The pause-state file is local to the driver's host; no forge comment records it written partially or read as absent."
+    },
+    {
+      "defect": "DEF-16",
+      "category": "ruling-not-applied"
+    },
+    {
+      "defect": "DEF-17",
+      "category": "ruling-not-applied"
+    },
+    {
+      "defect": "DEF-18",
+      "category": "ruling-not-applied"
+    },
+    {
+      "defect": "DEF-19",
+      "category": "ruling-not-applied"
+    },
+    {
+      "defect": "DEF-20",
+      "notObserved": "Command-line parsing of a valueless --agent leaves no forge trace; no bundle record shows a run started on a default agent the operator did not name."
+    },
+    {
+      "defect": "DEF-21",
+      "category": "driver-lifecycle-conflict"
+    },
+    {
+      "defect": "DEF-22",
+      "notObserved": "The crash handler's own logging happens on the host and in the Log, not on the forge, so the bundle cannot show it escaping its guard."
+    },
+    {
+      "defect": "DEF-23",
+      "notObserved": "A per-event wait on the Log destination costs time on the host; no forge comment records that wait."
+    },
+    {
+      "defect": "DEF-24",
+      "category": "doc-code-drift"
+    },
+    {
+      "defect": "DEF-25",
+      "category": "default-branch-merge-counted"
+    },
+    {
+      "defect": "DEF-26",
+      "category": "agent-launch-failure"
+    },
+    {
+      "defect": "DEF-27",
+      "category": "confinement-mismatch"
+    },
+    {
+      "defect": "DEF-28",
+      "category": "host-dependent-test"
+    },
+    {
+      "defect": "DEF-29",
+      "category": "forge-read-failure"
+    },
+    {
+      "defect": "DEF-30",
+      "category": "default-branch-merge-counted"
+    },
+    {
+      "defect": "DEF-31",
+      "category": "gate-false-refusal"
+    },
+    {
+      "defect": "DEF-32",
+      "category": "forge-read-failure"
+    },
+    {
+      "defect": "DEF-33",
+      "category": "progress-guard-false-pause"
+    },
+    {
+      "defect": "DEF-34",
+      "category": "ruling-not-applied"
+    },
+    {
+      "defect": "DEF-35",
+      "category": "instructions-contradict-controller"
+    },
+    {
+      "defect": "DEF-36",
+      "category": "doc-code-drift"
+    },
+    {
+      "defect": "DEF-37",
+      "category": "instructions-contradict-controller"
+    },
+    {
+      "defect": "DEF-38",
+      "notObserved": "No bundle record mentions an Issue whose Project failed to resolve against the project registry."
+    },
+    {
+      "defect": "DEF-39",
+      "category": "brief-scope-defect"
+    },
+    {
+      "defect": "DEF-40",
+      "category": "brief-scope-defect"
+    },
+    {
+      "defect": "DEF-41",
+      "notObserved": "The bundle holds pull-request comments, not Issue writes; no record shows a missing Conflicts-with edge or the warning it should print."
+    },
+    {
+      "defect": "DEF-42",
+      "category": "instructions-contradict-controller"
+    },
+    {
+      "defect": "DEF-43",
+      "category": "instructions-contradict-controller"
+    },
+    {
+      "defect": "DEF-44",
+      "category": "confinement-mismatch"
+    },
+    {
+      "defect": "DEF-45",
+      "category": "instructions-contradict-controller"
+    },
+    {
+      "defect": "DEF-46",
+      "category": "report-not-supported"
+    },
+    {
+      "defect": "DEF-47",
+      "category": "brief-scope-defect"
+    },
+    {
+      "defect": "DEF-48",
+      "category": "brief-scope-defect"
+    },
+    {
+      "defect": "DEF-49",
+      "category": "instructions-contradict-controller"
+    },
+    {
+      "defect": "DEF-50",
+      "category": "instructions-contradict-controller"
+    },
+    {
+      "defect": "DEF-51",
+      "notObserved": "Planner doctrine is exercised when Issues are written, which the bundle does not hold; no pull-request comment shows a Planner following the missing command."
+    },
+    {
+      "defect": "DEF-52",
+      "category": "ruling-not-applied"
+    }
+  ]
+}
