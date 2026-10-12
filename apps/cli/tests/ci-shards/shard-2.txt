@@ -82,3 +82,4 @@ tests/lib/detached-launch.test.ts
 tests/lib/driver-shutdown-children.test.ts
 tests/lib/test-env-log-tokens.test.ts
 tests/eval/staging.test.ts
+tests/eval/registry-contract-kinds.test.ts
