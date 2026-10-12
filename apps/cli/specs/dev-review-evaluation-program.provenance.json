@@ -1,0 +1,40 @@
+{
+  "sourceUrl": "https://linear.app/attalabs/document/tech-spec-developer-review-evaluation-program-768283062392",
+  "sourceDocumentId": "535a4392-b658-4c92-835a-4b8f2d2830d4",
+  "revision": 11,
+  "retrieved": "2026-10-11",
+  "chunks": [
+    {
+      "commentId": 6110694355,
+      "bytes": 60281,
+      "sha256": "1f6fc178b287ebefaa0459e2c8014cd7b566e6f79b9f509440fd129237ce1085"
+    },
+    {
+      "commentId": 6110694709,
+      "bytes": 15607,
+      "sha256": "d3c5b987a60d2a74f3b07323e435162a05e5cc7f80116a862d101ee6a7420b3c"
+    }
+  ],
+  "totalBytes": 75888,
+  "sha256": "26df2b16aec7978137fc5a09b2d7da30710726b7e2692d4929811c62812f0e1e",
+  "documents": {
+    "Tech spec — Developer-review on Atta Engine": {
+      "path": "apps/cli/specs/dev-review-engine-state-machine.md",
+      "revisionPinned": false
+    },
+    "Tech spec — Developer-review capabilities and contracts": {
+      "path": "apps/cli/specs/dev-review-capabilities-contracts.md",
+      "revisionPinned": false
+    },
+    "Tech spec — Agent sandbox": {
+      "path": "apps/cli/specs/isolation.md",
+      "revisionPinned": false
+    },
+    "Any Process, One Harness": null
+  },
+  "authority": {
+    "normativeSource": "The source document stays normative.",
+    "repositoryCopy": "The repository copy is never an independent authority.",
+    "refreshPolicy": "The mirror changes only through an explicit source-refresh task."
+  }
+}
