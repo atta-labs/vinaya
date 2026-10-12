@@ -563,24 +563,31 @@ describe('the rulings a review round hands its reviewers', () => {
     const world = makeWorld()
     world.rulings = ['Pull request ruling survives.']
     const [prompt] = await reviewerPrompts(world, {
+      // Only the review round's read fails; the Developer's dispatch before it reads fine.
       fetchIssueRulingsAfterBrief: () => {
-        throw new Error('gh: transient failure')
+        if ((world.dispatchCountByRole.developer ?? 0) >= 1) throw new Error('gh: transient failure')
+        return []
       }
     })
     expect(prompt).toContain('1. Pull request ruling survives.')
   })
 
   it("leaves the manifest's ruling ordinal to the pull request alone", async () => {
-    const withIssue = makeWorld()
-    withIssue.rulingOrdinal = 3
-    withIssue.issueRulings = ['Issue ruling.']
-    const without = makeWorld()
-    without.rulingOrdinal = 3
-    const read = (world: LoopWorld): string[] =>
-      world.postedComments.map((c) => (c.body.match(/Ruling ordinal: .*/) ?? [''])[0]!).filter((l) => l !== '')
-    await reviewerPrompts(withIssue)
-    await reviewerPrompts(without)
-    expect(read(withIssue)).toEqual(read(without))
-    expect(read(withIssue).length).toBeGreaterThan(0)
+    const world = makeWorld()
+    world.rulingOrdinal = 3
+    world.issueRulings = ['Issue ruling.']
+    const ordinalReads: string[] = []
+    const base = makeInProcessDeps(world)
+    const prompts = await reviewerPrompts(world, {
+      fetchNewestRulingOrdinal: (pr) => {
+        ordinalReads.push(`pr:${pr}`)
+        return base.fetchNewestRulingOrdinal!(pr)
+      },
+      fetchNewestIssueRulingOrdinal: () => {
+        throw new Error('the review round must not read the Issue ruling ordinal')
+      }
+    })
+    expect(prompts.length).toBeGreaterThan(0)
+    expect(ordinalReads.length).toBeGreaterThan(0)
   })
 })
