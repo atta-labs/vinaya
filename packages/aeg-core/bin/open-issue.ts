@@ -80,6 +80,7 @@ import {
   checkIssueType,
   checkNoBriefContent,
   checkNoForeignTaskOwnership,
+  checkProseAllowsBeyondSurfaceEdit,
   checkObjectivesRespectBoundary,
   checkPartsCiteDefinedObjectives,
   checkPartsCoverageAndSequence,
@@ -954,6 +955,7 @@ export function main(): void {
       // whether an Issue's Objectives/Boundary/Parts agree.
       ...checkObjectivesRespectBoundary(body).errors,
       ...checkNoForeignTaskOwnership(body).errors,
+      ...checkProseAllowsBeyondSurfaceEdit(body).errors,
       ...checkPartsCoverageAndSequence(body).errors,
       ...typeErrors
     ]

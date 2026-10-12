@@ -279,6 +279,8 @@ export {
   checkMilestoneAttach,
   checkNoBriefContent,
   checkNoForeignTaskOwnership,
+  checkProseAllowsBeyondSurfaceEdit,
+  checkCrossTaskValuesPinned,
   checkObjectivesRespectBoundary,
   checkPartsCiteDefinedObjectives,
   checkPartsCoverageAndSequence,

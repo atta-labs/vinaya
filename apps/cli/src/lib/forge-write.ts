@@ -52,6 +52,8 @@ import {
   checkMilestoneShape,
   checkNoBriefContent,
   checkNoForeignTaskOwnership,
+  checkProseAllowsBeyondSurfaceEdit,
+  checkCrossTaskValuesPinned,
   checkObjectivesRespectBoundary,
   checkPartsCiteDefinedObjectives,
   checkPartsCoverageAndSequence,
@@ -1541,6 +1543,8 @@ const ISSUE_CONTENT_RECOVERY = {
     "Drop or rewrite the named Objective/Part/Test plan line so it no longer names a path the Boundary's `Out:` clause or the Surface's `out:` list excludes — this task cannot both exclude and require that path. Then re-run `{cmd}`.",
   noForeignTaskOwnership:
     "Rewrite the named sentence so it does not assign ownership of this task's own objective to another task — depend on the other task instead (`Dependency rationale`), or fold the work back into this task's own Objectives/Parts. Then re-run `{cmd}`.",
+  proseAllowsBeyondSurfaceEdit:
+    "Rewrite the named sentence so it no longer forbids, or stops on, a change to that path — a change beyond the Surface is published and recorded in the pull request body's beyond-Surface block, never refused. If the path really is this task's to change, add its directory to `## Surface`'s `in:` instead. Then re-run `{cmd}`.",
   partsCoverageAndSequence:
     'Fix the named `## Parts` defect — cite every declared objective from at least one Part, and number Parts contiguously from 1 — then re-run `{cmd}`.',
   fileCollision:
@@ -1566,7 +1570,9 @@ const ISSUE_CONTENT_RECOVERY = {
   premiseDependencyDeclared:
     'Add the missing `Depends-on` edge for the deferred premise named above to the `**Dependency rationale**` field (`vinaya issue amend-deps`), or drop the `after #<n>:` prefix and write a premise that holds now. Then re-run `{cmd}`.',
   boundaryClaimsNeedPremise:
-    "Add a `## Premises` section pinning what the Boundary asserts already exists — one `` `<path>` contains `<text>` `` line per claim — or rewrite the Boundary so it no longer states the code's current shape. Then re-run `{cmd}`."
+    "Add a `## Premises` section pinning what the Boundary asserts already exists — one `` `<path>` contains `<text>` `` line per claim — or rewrite the Boundary so it no longer states the code's current shape. Then re-run `{cmd}`.",
+  crossTaskValuesPinned:
+    'Add a `## Premises` line `` after #<n>: `<path>` contains `<value>` `` for the named value, on the `Depends-on` task that creates it, or say in the same sentence that this task adds it. Then re-run `{cmd}`.'
 } as const
 
 export type IssueContentInput = {
@@ -1688,6 +1694,7 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     ],
     [checkObjectivesRespectBoundary(input.body).errors, 'objectivesRespectBoundary'],
     [checkNoForeignTaskOwnership(input.body).errors, 'noForeignTaskOwnership'],
+    [checkProseAllowsBeyondSurfaceEdit(input.body).errors, 'proseAllowsBeyondSurfaceEdit'],
     [checkPartsCoverageAndSequence(input.body).errors, 'partsCoverageAndSequence'],
     [
       checkIntroducedCommandsCovered(input.body, input.commandReference, input.existsInTree).errors,
@@ -1704,7 +1711,8 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     [checkDocumentationPathsExist(input.body, input.readFile).errors, 'documentationPathsExist'],
     [checkIssuePremises(input.body, input.readFile).errors, 'issuePremises'],
     [checkPremiseDependencyDeclared(input.body).errors, 'premiseDependencyDeclared'],
-    [checkBoundaryClaimsNeedPremise(input.body).errors, 'boundaryClaimsNeedPremise']
+    [checkBoundaryClaimsNeedPremise(input.body).errors, 'boundaryClaimsNeedPremise'],
+    [checkCrossTaskValuesPinned(input.body, input.existsInTree).errors, 'crossTaskValuesPinned']
   ]
   const errors: CheckError[] = []
   for (const [messages, kind] of findings) {
