@@ -34,6 +34,7 @@
  * scope: diff — reads the PR body alone, no live forge state.
  */
 
+import { isEntryPoint } from '@attalabs/aeg-core'
 import { readFileSync, realpathSync } from 'node:fs'
 import { sep } from 'node:path'
 import { parsePremiseBlock } from '@attalabs/aeg-core'
@@ -122,6 +123,6 @@ function main(): void {
 
 // Guarded so this module can be imported by unit tests without executing the
 // check. Spawned as a bin (the only way it runs for real) this is still true.
-if (import.meta.main) {
+if (isEntryPoint(import.meta.url, 'check-pr-premise-reassert')) {
   main()
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, statSync, utimesSync } from 'node:fs'
+import { chmodSync, readdirSync, readFileSync, statSync, utimesSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture'
 
@@ -53,4 +53,36 @@ describe('every checks/bin executable carries mode 100755 in the git index', () 
       utimesSync(staleDistCheck, original.atime, original.mtime)
     }
   })
+})
+
+describe('every built dist/checks/bin script loads under node and bun', () => {
+  it('carries no __require.main and raises no load-time ReferenceError', () => {
+    const build = spawnSyncBudgeted('bun', ['run', '--cwd', 'apps/cli', 'build'], { cwd: REPO_ROOT, encoding: 'utf8' })
+    expect(build.status, `${build.stdout}\n${build.stderr}`).toBe(0)
+    const binDir = join(REPO_ROOT, 'apps/cli/dist/checks/bin')
+    const files = readdirSync(binDir).filter((f) => f.endsWith('.js'))
+    expect(files).toContain('verify-dispatch.js')
+    for (const file of files) {
+      const path = join(binDir, file)
+      expect(readFileSync(path, 'utf8'), `${file} carries __require.main`).not.toContain('__require.main')
+      for (const runtime of ['node', 'bun']) {
+        // A script started with no arguments runs its body against closed stdin; only a load-time
+        // error is under test, so the exit status is not asserted.
+        // The verification tools bundled for the finding counts run a full repository sweep when
+        // started as a script, so they are only imported: that still raises any load-time error.
+        const importOnly = file === 'verify-docs.js' || file === 'verify-coherence.js'
+        const result = spawnSyncBudgeted(
+          runtime,
+          importOnly
+            ? runtime === 'node'
+              ? ['--input-type=module', '-e', `await import(${JSON.stringify(path)})`]
+              : ['-e', `await import(${JSON.stringify(path)})`]
+            : [path],
+          { cwd: REPO_ROOT, encoding: 'utf8', input: '', env: stripVinayaEnv() },
+          30000
+        )
+        expect(`${result.stderr}`, `${file} under ${runtime}`).not.toContain('ReferenceError')
+      }
+    }
+  }, 300000)
 })

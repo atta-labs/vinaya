@@ -107,7 +107,8 @@ import {
   issueBranchName,
   parsePremiseBlock,
   PRINCIPAL_ALLOWLIST,
-  resolveNewestFrozenBrief
+  resolveNewestFrozenBrief,
+  isEntryPoint
 } from '../src/index'
 import type { Tranche, Task } from '../src/types'
 
@@ -884,6 +885,17 @@ function firstStderrLine(stderr: string): string | undefined {
 }
 
 /**
+ * Absolute path of a sibling verification tool, resolved against THIS module's
+ * own directory and never the caller's working directory: the built copy
+ * (`<name>.js`) when this runs from the bundle, the source (`<name>.ts`)
+ * otherwise.
+ */
+function siblingTool(name: string): string {
+  const built = join(import.meta.dirname, `${name}.js`)
+  return existsSync(built) ? built : join(import.meta.dirname, `${name}.ts`)
+}
+
+/**
  * Counts findings regardless of exit code — `verify-docs` and
  * `verify-coherence --json` both exit non-zero exactly when findings exist
  * (a normal, parseable run), which is the case that was previously
@@ -895,7 +907,7 @@ export function currentFindingCounts(): FindingCount[] {
   // verify-docs is COUNTED, not parsed: `✗` lines are scanned, and a stray
   // stderr line cannot corrupt a line count the way it corrupts a JSON parse.
   // Both streams are scanned so a finding printed to stderr still counts.
-  const docs = captureStreams('bun', ['packages/aeg-core/bin/verify-docs.ts'])
+  const docs = captureStreams('bun', [siblingTool('verify-docs')])
   const docsFindingCount = docs.ranAtAll ? countErrorLines(`${docs.stdout}${docs.stderr}`) : 0
   // verify-docs's own contract: exit 1 iff errors.length > 0 (bin/verify-docs.ts).
   // A non-zero exit with zero ✗ lines means it crashed before reaching that
@@ -906,7 +918,7 @@ export function currentFindingCounts(): FindingCount[] {
   // document to stdout; anything on stderr is a subprocess's diagnostic noise
   // and is not part of the payload. Including it is what made a healthy run
   // report UNAVAILABLE (#173).
-  const coherence = captureStreams('bun', ['packages/aeg-core/bin/verify-coherence.ts', '--json'])
+  const coherence = captureStreams('bun', [siblingTool('verify-coherence'), '--json'])
   const coherenceRead = coherence.ranAtAll ? coherenceFailedCount(coherence.stdout) : null
   const coherenceFailed = typeof coherenceRead === 'number' ? coherenceRead : null
   // Three ways to be unavailable: the tool could not run, its stdout is not
@@ -1437,7 +1449,7 @@ function resolvePriorTaskRaw(tranche: Tranche, taskId: string): Task | null {
 /** `--existing-work`: the caller resumes this task's existing worktree (the review-loop driver), so commits already ahead of main are expected and never refuse dispatch. */
 const EXISTING_WORK = process.argv.includes('--existing-work')
 
-if (import.meta.main) {
+if (isEntryPoint(import.meta.url, 'verify-dispatch')) {
   const argv = process.argv.slice(2)
 
   // `--issue <n>` (task-run-v1 task 15, O1) — a backlog Issue with no

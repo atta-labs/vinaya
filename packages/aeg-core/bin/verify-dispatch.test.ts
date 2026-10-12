@@ -77,9 +77,8 @@ function spawnFailureResult(): { error: Error; stdout: null; stderr: null; statu
 describe('currentFindingCounts', () => {
   it('(a) reports 0 when both tools exit 0 with no findings', () => {
     spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (args.includes('packages/aeg-core/bin/verify-docs.ts'))
-        return successResult('verify-docs passed (full mode).\n')
-      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-docs.ts'))) return successResult('verify-docs passed (full mode).\n')
+      if (args.some((a) => a.endsWith('/bin/verify-coherence.ts'))) {
         return successResult(JSON.stringify({ summary: { passed: 5, failed: 0, info: 0 } }))
       }
       throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
@@ -93,7 +92,7 @@ describe('currentFindingCounts', () => {
 
   it('(b) counts real findings from a non-zero exit — the bug this task fixes', () => {
     spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-docs.ts'))) {
         return failureResult(
           [
             '',
@@ -106,7 +105,7 @@ describe('currentFindingCounts', () => {
           ].join('\n')
         )
       }
-      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-coherence.ts'))) {
         return failureResult(JSON.stringify({ summary: { passed: 2, failed: 4, info: 0 } }))
       }
       throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
@@ -129,8 +128,8 @@ describe('currentFindingCounts', () => {
    */
   it('(#173) a healthy verify-coherence that also writes to stderr is NOT unavailable', () => {
     spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
-      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-docs.ts'))) return successResult('')
+      if (args.some((a) => a.endsWith('/bin/verify-coherence.ts'))) {
         return {
           stdout: JSON.stringify({ summary: { passed: 10, failed: 0, info: 6 } }),
           stderr: [
@@ -159,8 +158,8 @@ describe('currentFindingCounts', () => {
 
   it('(#173) stderr noise does not hide a REAL finding count either', () => {
     spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
-      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-docs.ts'))) return successResult('')
+      if (args.some((a) => a.endsWith('/bin/verify-coherence.ts'))) {
         return {
           stdout: JSON.stringify({ summary: { passed: 2, failed: 4, info: 0 } }),
           stderr: 'fatal: Not a valid object name origin/main:aeg-root/tranches\n',
@@ -188,8 +187,8 @@ describe('currentFindingCounts', () => {
   // deliberate one replaced it.
   it('(#173) a genuinely unparseable stdout is still UNAVAILABLE — the signal is not lost', () => {
     spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
-      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-docs.ts'))) return successResult('')
+      if (args.some((a) => a.endsWith('/bin/verify-coherence.ts'))) {
         return { stdout: 'Segmentation fault', stderr: 'fatal: something else\n', status: 139 }
       }
       throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
@@ -221,8 +220,8 @@ describe('currentFindingCounts', () => {
     ['null', 'null']
   ])('(#173) %s on stdout is UNAVAILABLE, not a crash and not a 0 count', (_label, payload) => {
     spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
-      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-docs.ts'))) return successResult('')
+      if (args.some((a) => a.endsWith('/bin/verify-coherence.ts'))) {
         return { stdout: payload, stderr: '', status: 0 }
       }
       throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
@@ -243,7 +242,7 @@ describe('currentFindingCounts', () => {
 
   it('(c) reports UNAVAILABLE for verify-coherence when --json output is a crash, not a report', () => {
     spawnSyncMock.mockImplementation((_cmd: string, args: string[]) => {
-      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-docs.ts'))) {
         return successResult('verify-docs passed (full mode).\n')
       }
       return failureResult('TypeError: Cannot read properties of undefined\n    at runCoherenceChecks (...)')
@@ -260,7 +259,7 @@ describe('currentFindingCounts', () => {
 
   it('(c) reports UNAVAILABLE for verify-docs when a non-zero exit produces no ✗ lines (crash, not a real 0)', () => {
     spawnSyncMock.mockImplementation((_cmd: string, args: string[]) => {
-      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-coherence.ts'))) {
         return successResult(JSON.stringify({ summary: { passed: 1, failed: 0, info: 0 } }))
       }
       return failureResult('Segmentation fault\n')
@@ -386,8 +385,8 @@ describe('(e) every gh invocation carries an explicit repo target (Part 1, task 
 describe("(#179) the baseline carries the child's diagnostic", () => {
   it('surfaces stderr from a coherence run that otherwise SUCCEEDED', () => {
     spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
-      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-docs.ts'))) return successResult('')
+      if (args.some((a) => a.endsWith('/bin/verify-coherence.ts'))) {
         return {
           stdout: JSON.stringify({ summary: { passed: 10, failed: 0, info: 6 } }),
           stderr: '[verify-coherence] ref "deadbeef" does not resolve — input incomplete\n',
@@ -404,8 +403,8 @@ describe("(#179) the baseline carries the child's diagnostic", () => {
 
   it('carries the reason a tool is unavailable, not just the fact', () => {
     spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
-      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-docs.ts'))) return successResult('')
+      if (args.some((a) => a.endsWith('/bin/verify-coherence.ts'))) {
         return { stdout: 'Segmentation fault', stderr: 'bun: fatal error\n', status: 139 }
       }
       throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
@@ -420,10 +419,10 @@ describe("(#179) the baseline carries the child's diagnostic", () => {
     // verify-docs writes its own `✗` findings to stderr, so an unconditional
     // diagnostic there would report every ordinary finding as an error.
     spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-docs.ts'))) {
         return { stdout: '', stderr: '  ✗ a real finding\n', status: 1 }
       }
-      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-coherence.ts'))) {
         return { stdout: JSON.stringify({ summary: { failed: 0 } }), stderr: '', status: 0 }
       }
       throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
@@ -440,8 +439,8 @@ describe('(#179) the shape guard rejects a number that is not a count', () => {
     ['an overflowing failed', '{"summary":{"failed":1e999}}']
   ])('%s is UNAVAILABLE, not a count', (_label, payload) => {
     spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
-      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-docs.ts'))) return successResult('')
+      if (args.some((a) => a.endsWith('/bin/verify-coherence.ts'))) {
         return { stdout: payload, stderr: '', status: 0 }
       }
       throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
@@ -466,8 +465,8 @@ describe('(#179) the shape guard rejects a number that is not a count', () => {
 describe('(#179) a forge-degraded coherence sweep is UNAVAILABLE, not a small count', () => {
   it('rejects a report flagged forgeUnavailable even though its shape is valid', () => {
     spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
-      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-docs.ts'))) return successResult('')
+      if (args.some((a) => a.endsWith('/bin/verify-coherence.ts'))) {
         return {
           stdout: JSON.stringify({ forgeUnavailable: true, summary: { passed: 2, failed: 1, info: 0 } }),
           stderr: '',
@@ -491,8 +490,8 @@ describe('(#179) a forge-degraded coherence sweep is UNAVAILABLE, not a small co
 
   it('accepts the same report when the forge WAS reachable', () => {
     spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
-      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-docs.ts'))) return successResult('')
+      if (args.some((a) => a.endsWith('/bin/verify-coherence.ts'))) {
         return {
           stdout: JSON.stringify({ forgeUnavailable: false, summary: { passed: 2, failed: 1, info: 0 } }),
           stderr: '',
@@ -511,8 +510,8 @@ describe('(#179) a diagnostic that is cut says so', () => {
   it('marks a truncated line instead of ending mid-token', () => {
     const long = `x${'y'.repeat(400)}`
     spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
-      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-docs.ts'))) return successResult('')
+      if (args.some((a) => a.endsWith('/bin/verify-coherence.ts'))) {
         return { stdout: JSON.stringify({ summary: { failed: 0 } }), stderr: `${long}\n`, status: 0 }
       }
       throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
@@ -525,8 +524,8 @@ describe('(#179) a diagnostic that is cut says so', () => {
 
   it('leaves a short line untouched', () => {
     spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
-      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-docs.ts'))) return successResult('')
+      if (args.some((a) => a.endsWith('/bin/verify-coherence.ts'))) {
         return { stdout: JSON.stringify({ summary: { failed: 0 } }), stderr: 'short line\n', status: 0 }
       }
       throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
@@ -540,10 +539,10 @@ describe('(#179) a diagnostic that is cut says so', () => {
 describe('(#179) verify-docs surfaces its stderr only when unavailable', () => {
   it('carries the reason when a non-zero exit produced no findings (a crash)', () => {
     spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-docs.ts'))) {
         return { stdout: '', stderr: 'bun: cannot find module\n', status: 1 }
       }
-      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-coherence.ts'))) {
         return { stdout: JSON.stringify({ summary: { failed: 0 } }), stderr: '', status: 0 }
       }
       throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`)
@@ -563,8 +562,8 @@ describe('(#179) verify-docs surfaces its stderr only when unavailable', () => {
 describe('(#179) an outage reason outranks an incidental stderr line', () => {
   it('reports the outage, not the probe noise, when both are present', () => {
     spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (args.includes('packages/aeg-core/bin/verify-docs.ts')) return successResult('')
-      if (args.includes('packages/aeg-core/bin/verify-coherence.ts')) {
+      if (args.some((a) => a.endsWith('/bin/verify-docs.ts'))) return successResult('')
+      if (args.some((a) => a.endsWith('/bin/verify-coherence.ts'))) {
         return {
           stdout: JSON.stringify({ forgeUnavailable: true, summary: { failed: 0 } }),
           stderr: 'fatal: Not a valid object name origin/main:aeg-root/tranches\n',

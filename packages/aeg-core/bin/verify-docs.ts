@@ -100,7 +100,8 @@ import {
   parseDocOwners,
   PRINCIPAL_ALLOWLIST,
   readTierFromPrBody,
-  WAIVER_LABEL
+  WAIVER_LABEL,
+  isEntryPoint
 } from '../src/index'
 
 const REPO_ROOT = join(import.meta.dir, '../../..')
@@ -558,7 +559,7 @@ function finish(): void {
 
 // ---- run -------------------------------------------------------------------
 
-if (import.meta.main) {
+if (isEntryPoint(import.meta.url, 'verify-docs')) {
   if (mode === 'pr') runPrMode()
   else if (mode === 'push') runPushMode()
   else runFullMode()

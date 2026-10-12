@@ -47,6 +47,7 @@
  * scope: full — a review verdict is a property of the PR, not the diff.
  */
 
+import { isEntryPoint } from '@attalabs/aeg-core'
 import { checkReviewGate } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { assembleReviewGateInput } from '../../lib/review-gate-input'
@@ -96,6 +97,6 @@ function main(): void {
 
 // Guarded so this module can be imported by unit tests without executing the
 // check. Spawned as a bin (the only way it runs for real) this is still true.
-if (import.meta.main) {
+if (isEntryPoint(import.meta.url, 'check-review-gate')) {
   main()
 }

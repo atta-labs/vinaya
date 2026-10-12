@@ -92,12 +92,23 @@ if (!existsSync(verifyDispatchSource)) {
   console.error(`cannot bundle the existing-work dispatch verification: ${verifyDispatchSource} is missing`)
   process.exit(1)
 }
-await build([verifyDispatchSource], checkOutdir)
+// verify-dispatch counts findings by running verify-docs and verify-coherence,
+// so their built copies ship beside it.
+const verifyToolSources = ['verify-docs', 'verify-coherence'].map((n) =>
+  join(pkgRoot, '..', '..', 'packages', 'aeg-core', 'bin', `${n}.ts`)
+)
+await build([verifyDispatchSource, ...verifyToolSources], checkOutdir)
 if (!existsSync(join(checkOutdir, 'verify-dispatch.js'))) {
   console.error('the build emitted no dist/checks/bin/verify-dispatch.js')
   process.exit(1)
 }
-normalizeExecutable(join(checkOutdir, 'verify-dispatch.js'))
+for (const n of ['verify-dispatch', 'verify-docs', 'verify-coherence']) {
+  if (!existsSync(join(checkOutdir, `${n}.js`))) {
+    console.error(`the build emitted no dist/checks/bin/${n}.js`)
+    process.exit(1)
+  }
+  normalizeExecutable(join(checkOutdir, `${n}.js`))
+}
 
 // task-run-v1 20, O5/O6 — the pre-push hook's changed-files lister and test
 // selector, two more `bin` entries (`package.json`'s `vinaya-changed-files`,

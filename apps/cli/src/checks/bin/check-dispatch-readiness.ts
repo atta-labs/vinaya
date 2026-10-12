@@ -65,6 +65,7 @@
  * scope: full — reads the live forge, not the local diff.
  */
 
+import { isEntryPoint } from '@attalabs/aeg-core'
 import { execFile, execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { sep } from 'node:path'
@@ -608,6 +609,6 @@ function assertNeverBlockerClass(x: never): never {
 
 // Guarded so this module can be imported by unit tests without executing the
 // check. Spawned as a bin (the only way it runs for real) this is still true.
-if (import.meta.main) {
+if (isEntryPoint(import.meta.url, 'check-dispatch-readiness')) {
   main()
 }

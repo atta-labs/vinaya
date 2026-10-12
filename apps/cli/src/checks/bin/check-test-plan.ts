@@ -18,6 +18,7 @@
  * scope: diff — reads only the PR body, never the whole repo.
  */
 
+import { isEntryPoint } from '@attalabs/aeg-core'
 import { evaluateTestPlanGate, type TestPlanGateResult } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '../contract'
 
@@ -77,6 +78,6 @@ function main(): void {
 
 // Guarded so this module can be imported by unit tests without executing the
 // check. Spawned as a bin (the only way it runs for real) this is still true.
-if (import.meta.main) {
+if (isEntryPoint(import.meta.url, 'check-test-plan')) {
   main()
 }
