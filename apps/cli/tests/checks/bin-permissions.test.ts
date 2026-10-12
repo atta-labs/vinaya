@@ -68,9 +68,16 @@ describe('every built dist/checks/bin script loads under node and bun', () => {
       for (const runtime of ['node', 'bun']) {
         // A script started with no arguments runs its body against closed stdin; only a load-time
         // error is under test, so the exit status is not asserted.
+        // The verification tools bundled for the finding counts run a full repository sweep when
+        // started as a script, so they are only imported: that still raises any load-time error.
+        const importOnly = file === 'verify-docs.js' || file === 'verify-coherence.js'
         const result = spawnSyncBudgeted(
           runtime,
-          [path],
+          importOnly
+            ? runtime === 'node'
+              ? ['--input-type=module', '-e', `await import(${JSON.stringify(path)})`]
+              : ['-e', `await import(${JSON.stringify(path)})`]
+            : [path],
           { cwd: REPO_ROOT, encoding: 'utf8', input: '', env: stripVinayaEnv() },
           30000
         )
