@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { chmodSync, readdirSync, readFileSync, statSync, utimesSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture'
@@ -66,15 +66,14 @@ describe('every built dist/checks/bin script loads under node and bun', () => {
       const path = join(binDir, file)
       expect(readFileSync(path, 'utf8'), `${file} carries __require.main`).not.toContain('__require.main')
       for (const runtime of ['node', 'bun']) {
-        // A script started with no arguments may run its body or wait on stdin; a short timeout only
-        // ends that, so only a load-time error shows in stderr.
-        const result = spawnSync(runtime, [path], {
-          cwd: REPO_ROOT,
-          encoding: 'utf8',
-          input: '',
-          timeout: 15000,
-          env: stripVinayaEnv()
-        })
+        // A script started with no arguments runs its body against closed stdin; only a load-time
+        // error is under test, so the exit status is not asserted.
+        const result = spawnSyncBudgeted(
+          runtime,
+          [path],
+          { cwd: REPO_ROOT, encoding: 'utf8', input: '', env: stripVinayaEnv() },
+          30000
+        )
         expect(`${result.stderr}`, `${file} under ${runtime}`).not.toContain('ReferenceError')
       }
     }
