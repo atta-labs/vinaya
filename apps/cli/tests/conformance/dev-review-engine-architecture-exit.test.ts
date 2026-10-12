@@ -108,8 +108,8 @@ const CATEGORIES = [
   'isolation-refusal',
   'operator-intervention'
 ] as const
-const GUARANTEE_CLASSES = ['product-guarantee', 'guarantee']
-const DEFECT_CLASSES = ['named-defect', 'defect']
+const GUARANTEE_CLASSES = ['product-guarantee']
+const DEFECT_CLASSES = ['named-defect']
 const OWNERS = [
   'vinaya-policy',
   'engine-runtime',

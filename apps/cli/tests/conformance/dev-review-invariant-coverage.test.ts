@@ -17,35 +17,37 @@ import { join } from 'node:path'
 
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..')
 const FIXTURE_PATH = join(REPO_ROOT, 'apps', 'cli', 'tests', 'fixtures', 'dev-review-architecture-invariants.json')
+const INVARIANT_SPEC = 'apps/cli/specs/dev-review-invariants.md'
+/** The specifications that name the normative design's revision beside the register. */
+const DESIGN_SPECS = [
+  INVARIANT_SPEC,
+  'apps/cli/specs/dev-review-engine-state-machine.md',
+  'apps/cli/specs/dev-review-engine-capability-matrix.md'
+] as const
 
+/** The register's one classification vocabulary: the five the invariant specification defines. */
 const CLASSIFICATIONS = [
   'product-guarantee',
   'implementation-accident',
   'named-defect',
   'advisory',
-  'principal-ruling-required',
-  // The register's classification-of-guarantee vocabulary, added beside the five above
-  // (never replacing them, so an entry's recorded classification and its count stay put).
-  'guarantee',
-  'defect',
-  'accident',
-  'hygiene'
+  'principal-ruling-required'
 ] as const
 type Classification = (typeof CLASSIFICATIONS)[number]
 
 /** Classes that promise behavior the Engine path must keep: each names a test oracle. */
-const GUARANTEE_CLASSES: readonly Classification[] = ['product-guarantee', 'guarantee']
+const GUARANTEE_CLASSES: readonly Classification[] = ['product-guarantee']
 /** Classes that record a demonstrated weakness: each cites the defect register. */
-const DEFECT_CLASSES: readonly Classification[] = ['named-defect', 'defect']
-/** Classes that must map to at least one corpus scenario; the rest may map to none. */
+const DEFECT_CLASSES: readonly Classification[] = ['named-defect']
+/**
+ * Classes that must map to at least one corpus scenario. An implementation
+ * accident need not: nothing promises it, so no scenario has to exercise it.
+ */
 const SCENARIO_CLASSES: readonly Classification[] = [
   'product-guarantee',
   'named-defect',
-  'implementation-accident',
   'advisory',
-  'principal-ruling-required',
-  'guarantee',
-  'defect'
+  'principal-ruling-required'
 ]
 /** Whose a finding is: the product, the reference process around it, or this implementation. */
 const SCOPES = ['product', 'reference-process', 'implementation'] as const
@@ -107,6 +109,7 @@ interface ReasonedPath {
 }
 interface Inventory {
   schemaVersion: number
+  normativeDesign: { title: string; revision: number; url: string; sections: string[] }
   loopSpec: string
   baseline: {
     revision: string
@@ -240,6 +243,103 @@ function countBy<T extends string>(values: readonly T[], keys: readonly T[]): Re
   const counts = Object.fromEntries(keys.map((k) => [k, 0])) as Record<T, number>
   for (const v of values) counts[v] += 1
   return counts
+}
+
+/** Every entry of either register whose classification is outside the one vocabulary. */
+function unknownClassifications(inv: Inventory): string[] {
+  const known = new Set<string>(CLASSIFICATIONS)
+  return [...inv.invariants, ...inv.defects]
+    .filter((e) => !known.has(e.classification))
+    .map((e) => `${e.id}: ${e.classification}`)
+}
+
+/** Every `revision <n>` a text states, read across its line breaks. */
+function revisionsStated(text: string): number[] {
+  return [...text.replace(/\s+/g, ' ').matchAll(/\brevision (\d+)\b/gi)].map((m) => Number(m[1]))
+}
+
+/** Every specification that states no revision, or a revision other than the register's own. */
+function revisionDisagreements(revision: number, specs: Record<string, string>): string[] {
+  return Object.entries(specs).flatMap(([path, markdown]) => {
+    const stated = revisionsStated(markdown)
+    if (stated.length === 0) return [`${path}: states no revision`]
+    return stated.filter((r) => r !== revision).map((r) => `${path}: revision ${r}`)
+  })
+}
+
+/**
+ * Every reason that cites a revision other than the register's, or a numbered
+ * section the register's normative design does not list as one it rests on.
+ */
+function staleReasonCitations(inv: Inventory): string[] {
+  const sections = new Set(inv.normativeDesign.sections.map((s) => s.split(' ')[0]))
+  return inv.invariants.flatMap((i) => {
+    const out = revisionsStated(i.reason)
+      .filter((r) => r !== inv.normativeDesign.revision)
+      .map((r) => `${i.id}: revision ${r}`)
+    for (const m of i.reason.matchAll(/\bsections? (\d+(?:\.\d+)?(?:(?:,| and) \d+(?:\.\d+)?)*)/gi)) {
+      for (const s of m[1]?.match(/\d+(?:\.\d+)?/g) ?? []) if (!sections.has(s)) out.push(`${i.id}: section ${s}`)
+    }
+    return out
+  })
+}
+
+/** The heading of the invariant specification's table of register counts. */
+const COUNTS_HEADING = '## Register counts'
+
+/** The register's counts, computed from the fixture and keyed by the label the count table uses. */
+function computedCounts(inv: Inventory): Map<string, number> {
+  const byClass = countBy(
+    inv.invariants.map((i) => i.classification),
+    CLASSIFICATIONS
+  )
+  const byScope = countBy(
+    inv.invariants.map((i) => i.scope),
+    SCOPES
+  )
+  const defectsByStatus = countBy(
+    inv.defects.map((d) => d.status as (typeof DEFECT_STATUSES)[number]),
+    DEFECT_STATUSES
+  )
+  const defectsByScope = countBy(
+    inv.defects.map((d) => d.scope),
+    SCOPES
+  )
+  return new Map<string, number>([
+    ['invariants', inv.invariants.length],
+    ...CLASSIFICATIONS.map((c) => [`invariants classified ${c}`, byClass[c]] as const),
+    ...SCOPES.map((s) => [`invariants in ${s} scope`, byScope[s]] as const),
+    ['defects', inv.defects.length],
+    ...DEFECT_STATUSES.map((s) => [`defects ${s}`, defectsByStatus[s]] as const),
+    ...SCOPES.map((s) => [`defects in ${s} scope`, defectsByScope[s]] as const),
+    ['ambiguities', inv.ambiguities.length]
+  ])
+}
+
+/** The counts the specification states: the `| label | n |` rows under its count heading. */
+function statedCounts(markdown: string): Map<string, number> {
+  const lines = markdown.split('\n')
+  const start = lines.findIndex((l) => l.trim() === COUNTS_HEADING)
+  const out = new Map<string, number>()
+  if (start === -1) return out
+  for (const line of lines.slice(start + 1)) {
+    if (line.startsWith('## ')) break
+    const row = line.match(/^\|\s*([^|]+?)\s*\|\s*(\d+)\s*\|\s*$/)
+    if (row?.[1] !== undefined) out.set(row[1].replaceAll('`', ''), Number(row[2]))
+  }
+  return out
+}
+
+/** Every count the specification leaves out, states wrongly, or states without a computed counterpart. */
+function countDifferences(computed: Map<string, number>, stated: Map<string, number>): string[] {
+  const out: string[] = []
+  for (const [label, n] of computed) {
+    const s = stated.get(label)
+    if (s === undefined) out.push(`${label}: not stated (computed ${n})`)
+    else if (s !== n) out.push(`${label}: stated ${s}, computed ${n}`)
+  }
+  for (const label of stated.keys()) if (!computed.has(label)) out.push(`${label}: stated, never computed`)
+  return out
 }
 
 const surface = discoverLoopSurface()
@@ -497,5 +597,94 @@ describe('standalone dev-review loop invariant map (O3: every behavior classifie
     expect(Object.values(byClass).reduce((a, b) => a + b, 0)).toBe(inventory.invariants.length)
     expect(Object.values(defectsByScope).reduce((a, b) => a + b, 0)).toBe(inventory.defects.length)
     expect(Object.values(defectsByClass).reduce((a, b) => a + b, 0)).toBe(inventory.defects.length)
+  })
+})
+
+const specText = (rel: string) => readFileSync(join(REPO_ROOT, rel), 'utf8')
+
+describe('standalone dev-review loop invariant map (one normative revision, everywhere)', () => {
+  it('the register and the invariant, state-machine and capability-matrix specifications state the same revision', () => {
+    const specs = Object.fromEntries(DESIGN_SPECS.map((p) => [p, specText(p)]))
+    expect(revisionDisagreements(inventory.normativeDesign.revision, specs)).toEqual([])
+    expect(inventory.normativeDesign.sections.length).toBeGreaterThan(0)
+  })
+
+  it('a specification that states another revision, or none, is reported', () => {
+    expect(
+      revisionDisagreements(17, {
+        'a.md': 'the Linear "Tech spec —\nDeveloper-review on Atta Engine", revision 9.',
+        'b.md': 'no revision named here',
+        'c.md': 'revision 17'
+      })
+    ).toEqual(['a.md: revision 9', 'b.md: states no revision'])
+  })
+
+  it('no reason cites an earlier revision or a section the register does not rest on', () => {
+    expect(staleReasonCitations(inventory)).toEqual([])
+  })
+
+  it('a reason citing an earlier revision or an unlisted section is reported', () => {
+    const [first] = inventory.invariants as [Invariant]
+    const probe: Inventory = {
+      ...inventory,
+      normativeDesign: { ...inventory.normativeDesign, sections: ['16.4', '16.17 Outcome A'] },
+      invariants: [
+        { ...first, id: 'INV-PROBE-1', reason: 'Revision 7 section 16.10: stale basis.' },
+        { ...first, id: 'INV-PROBE-2', reason: 'Revision 17 sections 16.4 and 16.17, Outcome A; section 2.' }
+      ]
+    }
+    expect(staleReasonCitations(probe)).toEqual([
+      'INV-PROBE-1: revision 7',
+      'INV-PROBE-1: section 16.10',
+      'INV-PROBE-2: section 2'
+    ])
+  })
+})
+
+describe('standalone dev-review loop invariant map (one classification vocabulary)', () => {
+  it('every invariant and defect carries one of the five classifications', () => {
+    expect(unknownClassifications(inventory)).toEqual([])
+  })
+
+  it('a classification outside the five is refused', () => {
+    const [first] = inventory.invariants as [Invariant]
+    const [firstDefect] = inventory.defects as [Inventory['defects'][number]]
+    const probe = {
+      ...inventory,
+      invariants: [{ ...first, classification: 'guarantee' }],
+      defects: [{ ...firstDefect, classification: 'defect' }]
+    } as unknown as Inventory
+    expect(unknownClassifications(probe)).toEqual([`${first.id}: guarantee`, `${firstDefect.id}: defect`])
+  })
+})
+
+describe('standalone dev-review loop invariant map (counts computed from the register and stated by its specification)', () => {
+  const computed = computedCounts(inventory)
+
+  it('every count the specification states equals the count computed from the register', () => {
+    const lines = [...computed].map(([label, n]) => `${label}: ${n}`)
+    process.stdout.write(`${lines.join('\n')}\n`)
+    expect(countDifferences(computed, statedCounts(specText(INVARIANT_SPEC)))).toEqual([])
+  })
+
+  it('a wrong, missing or uncomputed stated count is reported', () => {
+    const table = [
+      COUNTS_HEADING,
+      '',
+      '| Count | Value |',
+      '| -- | -- |',
+      ...[...computed]
+        .filter(([label]) => label !== 'ambiguities')
+        .map(([label, n]) => `| ${label} | ${label === 'invariants' ? n + 1 : n} |`),
+      '| registered checks | 38 |',
+      '',
+      '## Next section',
+      '| ambiguities | 13 |'
+    ].join('\n')
+    expect(countDifferences(computed, statedCounts(table))).toEqual([
+      `invariants: stated ${(computed.get('invariants') ?? 0) + 1}, computed ${computed.get('invariants')}`,
+      `ambiguities: not stated (computed ${computed.get('ambiguities')})`,
+      'registered checks: stated, never computed'
+    ])
   })
 })

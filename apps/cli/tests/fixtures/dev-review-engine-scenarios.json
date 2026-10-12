@@ -812,10 +812,6 @@
       "node": "reconcile_external_state"
     },
     {
-      "id": "INV-084",
-      "node": "raise_human_handoff"
-    },
-    {
       "id": "INV-086",
       "node": "raise_human_handoff"
     },

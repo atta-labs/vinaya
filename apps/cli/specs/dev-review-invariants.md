@@ -5,7 +5,7 @@ Status: draft
 Scope: the standalone developer-review loop as it ships today
 (`apps/cli/specs/loop.md`), frozen as the behavioral oracle for the
 Atta Engine productionization described in the Linear "Tech spec —
-Developer-review on Atta Engine", revision 9. That design keeps the
+Developer-review on Atta Engine", revision 17, section 16. That design keeps the
 standalone path as oracle, fallback and regression source, but does not
 treat it as the ideal design: every valid guarantee must be preserved,
 and every demonstrated weakness must be replaced on purpose. This file
@@ -80,7 +80,7 @@ Each invariant records:
 - **classification**: what the finding is (below);
 - **scope**: whose the finding is (below);
 - **owner**: the layer that owns the behavior in the target design
-  (revision 9, section 16.2). `vinaya-policy` covers the controller and
+  (revision 17, section 16.2). `vinaya-policy` covers the controller and
   policy libraries; `engine-runtime` covers scheduling, joins,
   checkpoints, interrupts and locks; `provider-adapter` covers vendor
   invocation, sessions and sandboxing; `governed-operation` covers
@@ -95,21 +95,31 @@ Each invariant records:
   and marked comments. `pure-policy` is a deterministic function of its
   inputs. `effect` is an external or filesystem mutation. `telemetry` is
   the Vinaya Log and the per-task driver log;
-- **scenarios**: which of the design's Phase A scenarios exercise it
+- **scenarios**: which of the scenario corpus's categories exercise it
   (happy path, revisions, invalid reviews, stale evidence, reviewer
   failure, developer failure, context pressure, cancellation, restart,
-  uncertain effects, isolation refusal, Operator intervention);
+  uncertain effects, isolation refusal, Operator intervention). The
+  evaluation program that section 16.16 of the design now points to reuses
+  this corpus and this register;
 - **sources** (path and symbol), **tests** (paths), and the **loop.md
   sections** that state it.
 
 ### The five classifications
 
+<!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:function unknownClassifications(inv: Inventory): string[] { -->
+The register uses one classification vocabulary: the five values below, the
+four kinds section 16.17's Outcome A asks the oracle to decide between
+(guarantees, implementation accidents, known defects, advisory mechanisms)
+plus the policy questions only the Principal settles. The architecture test
+refuses any other value, in the invariant register and in the defect
+register alike.
+
 | Classification | Meaning |
 | -- | -- |
-| `product-guarantee` | loop.md promises it, deterministic code outside the worker enforces it, and at least one test is its oracle. When its scope is `product`, the Engine path must preserve it; at any other scope it is recorded and kept where it lives (see the scope rule below). |
-| `implementation-accident` | Incidental structure or ordering that nothing promises. The Engine path need not reproduce it. |
-| `named-defect` | The code contradicts loop.md, or a weakness has been demonstrated. Each entry cites both sides in the defect register. When its scope is `product`, the Engine path must correct it, not copy it; at any other scope it is fixed where it lives. |
-| `advisory` | Enforced only inside the worker, through hooks, permission rules or prompt text, so a worker can bypass it. It never counts as a product guarantee (revision 9, sections 16.3 and 16.7). |
+| `product-guarantee` | The loop promises it (in loop.md, or through a shipped fix the entry records), deterministic code outside the worker enforces it, and at least one test is its oracle. When its scope is `product`, the Engine path must preserve it; at any other scope it is recorded and kept where it lives (see the scope rule below). |
+| `implementation-accident` | Incidental structure or ordering, an emergent property of how the loop is run, or care for the repository, its tests or its tooling, that nothing promises. The Engine path need not reproduce it, and it maps to a scenario only where one exercises it. |
+| `named-defect` | The code contradicts loop.md, the design or its own promise, or a weakness has been demonstrated. Each entry cites both sides in the defect register and records whether its fix shipped. When its scope is `product`, the Engine path must correct it, not copy it; at any other scope it is fixed where it lives. |
+| `advisory` | Enforced only inside the worker, through hooks, permission rules or prompt text, so a worker can bypass it; or a residual risk, stated and never claimed closed. It never counts as a product guarantee (revision 17, sections 16.3 and 16.7). |
 | `principal-ruling-required` | Spec and code are silent or in conflict on a policy choice. The entry is recorded with its ruling status and is never decided here. |
 
 ### The classification and scope fields
@@ -125,25 +135,12 @@ distinguishable. The test prints the count of entries under each
 classification and under each scope, for the invariant register and for the
 defect register.
 
-The classification vocabulary was extended, not replaced. The five values
-above keep their meaning and their counts, and an entry's recorded
-classification is never changed silently. Findings recorded since the register
-froze use the five values below, which name nearly the same ideas more plainly:
-`guarantee` is the new name for `product-guarantee`, `defect` for
-`named-defect`, and `advisory` is shared. `accident` widens
-`implementation-accident` to cover an emergent property of how the loop is
-run, and a scenario mapping is required of `guarantee` and `defect` but is
-optional for `accident` and `hygiene`. The section citations in the existing
-entries' reasons were written against revision 7 of the design and are kept as
-recorded; they were not re-checked against revision 9.
-
-| Classification | Meaning |
-| -- | -- |
-| `guarantee` | A promise the loop keeps through deterministic code outside the worker, with at least one test as its oracle, and a mapping to the corpus scenario that will exercise it. |
-| `defect` | A demonstrated weakness: the code contradicted its own promise, or a failure was observed. It cites the defect register, records whether its fix shipped, and maps to a corpus scenario. |
-| `accident` | Incidental structure, or an emergent property of how the loop is run, that nothing promises and that need not be reproduced. |
-| `hygiene` | Care for the repository, its tests or its tooling that protects no product behavior. It is kept so it is not lost, and it is never an Engine contract. |
-| `advisory` | A residual risk or a control enforceable only inside the worker, stated and never claimed closed. |
+Findings recorded for a while under a second vocabulary — `guarantee`,
+`defect`, `accident` and `hygiene` — were each read and folded into the five
+above, and each folded entry's reason records its old value: every `guarantee`
+is enforced by the controller outside the worker with a test as its oracle, so
+it is a `product-guarantee`; every `defect` is a `named-defect` cited in the
+defect register; `accident` and `hygiene` are `implementation-accident`.
 
 | Scope | Meaning |
 | -- | -- |
@@ -184,12 +181,11 @@ it adds, and the map records no transition that depends on it.
 ## Registers
 
 <!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"id": "DEF-51", -->
-The **defect register** (`defects`) holds 51 entries: 24 `named-defect` and
-27 `defect`, of which 40 are `product` scope, 8 `reference-process` and 3
-`implementation`. Each one names the code or doctrine locator and the spec or
-doctrine section it contradicts, or the weakness it demonstrates. The
-invariant register holds 162 entries, 137 of them `product` scope, 10
-`reference-process` and 15 `implementation`. The most consequential are:
+The **defect register** (`defects`) holds one entry per `named-defect`
+invariant. Each one names the code or doctrine locator and the spec or
+doctrine section it contradicts, or the weakness it demonstrates. Both
+registers' sizes are stated under "Register counts" below. The most
+consequential defects are:
 
 - `--resume` and `--cancel` accept the mere presence of a ruling;
 - a resolution is consumed before the one-driver lock check;
@@ -200,7 +196,10 @@ invariant register holds 162 entries, 137 of them `product` scope, 10
 - the conflict prompt instructs a push that the driver's own publication
   preconditions refuse;
 - reviewers can be dispatched on a head whose CI never passed the gate;
-- the below-50 extra developer turn is re-granted after a restart.
+- the below-50 extra developer turn is re-granted after a restart;
+- once the infrastructure retry bound is spent, a bare `--resume` needs a
+  Principal ruling, where the design asks for an Operator-remediation pause
+  (`INV-084`, `DEF-52`).
 
 <!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"id": "INV-162", -->
 `INV-145` to `INV-162`, with `DEF-35` to `DEF-51`, record a study of the role
@@ -225,7 +224,7 @@ defect: the role doctrine's rule lines grew from 248 to 437 in eight weeks
 while the registered checks stayed at 38, and a rule with no check behind it is a
 smell, never a guarantee.
 
-The **ambiguity register** (`ambiguities`) holds 13 questions, each ruled by
+The **ambiguity register** (`ambiguities`) holds thirteen questions, each ruled by
 the Principal: the entry's `rulingStatus` is `ruled` and its `ruling` field
 holds the ruling. Among them:
 
@@ -245,6 +244,83 @@ escalation, a principal item and max rounds stop for the Principal.
 No agent may resolve one of these by editing this map. Only a Principal
 ruling can, and that ruling's status is then recorded on the entry.
 
+## Re-checked against revision 17
+
+<!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"revision": 17, -->
+<!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:function staleReasonCitations(inv: Inventory): string[] { -->
+The register's normative design is revision 17 of the Engine specification,
+and the fixture's `normativeDesign` names it with the sections the register
+rests on. This file, `apps/cli/specs/dev-review-engine-state-machine.md` and
+`apps/cli/specs/dev-review-engine-capability-matrix.md` state the same
+revision, and the architecture test fails when any of the four disagrees.
+Every entry, defect and ambiguity was re-read against revision 17's section
+16; every reason that cited a section now cites revision 17, and the test
+fails on a reason citing another revision or a section the fixture does not
+list. The contracts revision 17 changed or added since the register was last
+pinned, and the entries they touched:
+
+- **A pause is a durable, nonterminal interrupt, resolved one of three ways**
+  (sections 16.4 and 16.11: automatic recovery, Operator remediation,
+  Principal ruling). The pause record, escalation and lock entries
+  (`INV-076`, `INV-086`, `INV-106`) and the automatic-recovery entries
+  (`INV-023`, `INV-057`, `INV-109`, `INV-140`, `INV-144`) keep their
+  classification with reasons stating it; `INV-163`'s host-repair pause is the
+  Operator-remediation pause. `INV-084` changed classification: past the
+  retry bound the standalone path asks for a Principal ruling where revision
+  17 asks for Operator remediation and says infrastructure is never a stop for
+  the Principal, so it is now a `named-defect` (`DEF-52`). The rulings
+  `AMB-10` and `AMB-11` already agree with the three-way split.
+- **Cutover gates 16 and 17** (section 16.18). Gate 16 requires the Engine
+  path to resume and run through Atta Engine's public start and resume with
+  Vinaya's injected executor; the self-driven watcher and round sequence
+  (`INV-090`, `INV-099`) are the oracle for the behavior, not the mechanism
+  kept. Gate 17, the Principal's approval of the default-backend change, has
+  no standalone behavior to register.
+- **The beyond-Surface publication rule** (section 16.12). Publication never
+  refuses a path beyond the Surface and the controller rebuilds its record;
+  the standalone loop already does both (`INV-033`, `INV-068`), and protected
+  paths stay refused unless the frozen scope names them (`INV-120`,
+  `INV-137`).
+- **Two secret classes** (section 16.15). Controller-held secrets never enter
+  controller-composed model context or events (`INV-078`, `INV-126`); a secret
+  an agent meets through an authorized open read must be contained
+  (`INV-065`). The staged Codex login stays an `advisory` residual risk
+  (`INV-135`), and same-user reach stays recorded as cutover gates 14 and 15
+  (`INV-136`).
+- **The evaluation program takes over section 16.16.** No entry's contract
+  changed; the program reuses this register and the scenario corpus, and its
+  register check reads the counts below.
+- **The outcome exits of section 16.17.** Outcome A's exit — no target
+  guarantee lacks an owner, a representation, a failure behavior and a test
+  oracle — is what the architecture exit test checks over every
+  `product-guarantee`. Outcome C's authoritative actor attribution is the
+  basis of `INV-122`.
+
+## Register counts
+
+<!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:function computedCounts(inv: Inventory): Map<string, number> { -->
+The architecture test computes every count below from the fixture and fails
+when a row here differs, is missing, or names a count it does not compute.
+
+| Count | Value |
+| -- | -- |
+| invariants | 163 |
+| invariants classified product-guarantee | 81 |
+| invariants classified implementation-accident | 10 |
+| invariants classified named-defect | 52 |
+| invariants classified advisory | 7 |
+| invariants classified principal-ruling-required | 13 |
+| invariants in product scope | 138 |
+| invariants in reference-process scope | 10 |
+| invariants in implementation scope | 15 |
+| defects | 52 |
+| defects open | 40 |
+| defects fixed | 12 |
+| defects in product scope | 41 |
+| defects in reference-process scope | 8 |
+| defects in implementation scope | 3 |
+| ambiguities | 13 |
+
 ## Changing the map
 
 <!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:`unmapped paths: ${unmapped.length}`, -->
@@ -257,6 +333,8 @@ module and test totals, the unmapped and unresolved path counts (both
 must be zero), the count of invariants under each classification,
 scope, authority and scenario, and the count of defect-register entries
 under each classification and scope. When a finding is recorded, give it the
-next free identifier in each register it enters, a classification, a scope
-and a summary of its evidence; recording it never changes an existing
-entry's classification or scope.
+next free identifier in each register it enters, one of the five
+classifications, a scope and a summary of its evidence, and update the
+register counts above in the same change. Recording a finding never changes
+an existing entry's classification or scope silently: a reclassification
+records its old value and its basis in the entry's reason.

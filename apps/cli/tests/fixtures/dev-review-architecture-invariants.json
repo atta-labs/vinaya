@@ -2,9 +2,30 @@
   "schemaVersion": 1,
   "normativeDesign": {
     "title": "Tech spec \u2014 Developer-review on Atta Engine",
-    "revision": 9,
+    "revision": 17,
     "url": "https://linear.app/attalabs/document/tech-spec-developer-review-on-atta-engine-95fb28028b78",
-    "sections": ["16.2", "16.4", "16.7", "16.10", "16.12", "16.13", "16.17 Outcome A"]
+    "sections": [
+      "16",
+      "16.1",
+      "16.2",
+      "16.3",
+      "16.4",
+      "16.5",
+      "16.6",
+      "16.7",
+      "16.8",
+      "16.9",
+      "16.10",
+      "16.11",
+      "16.12",
+      "16.13",
+      "16.14",
+      "16.15",
+      "16.16",
+      "16.17 Outcome A",
+      "16.17 Outcome C",
+      "16.18"
+    ]
   },
   "loopSpec": "apps/cli/specs/loop.md",
   "baseline": {
@@ -220,7 +241,7 @@
       ],
       "tests": [],
       "loopSpec": ["The exits"],
-      "reason": "Revision 7 section 16.10: absence of a failure signal is never completion; the decision function itself does not require both verdicts.",
+      "reason": "Revision 17 section 16.10: absence of a failure signal is never completion; the decision function itself does not require both verdicts.",
       "scope": "product"
     },
     {
@@ -402,7 +423,7 @@
         "apps/cli/tests/lib/dev-review-loop.test.ts"
       ],
       "loopSpec": ["The confidence rule"],
-      "reason": "Deterministic driver-side validation of the CLI's own structured output; the worker only reports it, and writes no file.",
+      "reason": "Deterministic driver-side validation of the CLI's own structured output; the worker only reports it, and writes no file. Revision 17 section 16.6: the completion output is DeveloperTurnResult, delivered as native structured output and validated by the controller.",
       "scope": "product"
     },
     {
@@ -505,7 +526,7 @@
         "Which severities block is repository policy",
         "Which findings block after round 1 \u2014 the deferral rules"
       ],
-      "reason": "Revision 7 section 16.10: reviewers classify, policy decides; the layering is promised.",
+      "reason": "Revision 17 section 16.10: reviewers classify, policy decides; the layering is promised.",
       "scope": "product"
     },
     {
@@ -541,7 +562,7 @@
       ],
       "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
       "loopSpec": ["The exits"],
-      "reason": "Revision 7 section 16.14: exhaustion is a typed non-success pause; spec and tests match.",
+      "reason": "Revision 17 section 16.14: exhaustion is a typed non-success terminal or pause reason; spec and tests match. The time_budget pause is section 16.4's durable nonterminal interrupt, never success.",
       "scope": "product"
     },
     {
@@ -598,7 +619,7 @@
         "apps/cli/tests/lib/dev-review-loop/inproc-7.test.ts"
       ],
       "loopSpec": ["Infrastructure failures and driver-decided pauses"],
-      "reason": "Revision 7 section 16.14: retries are class-specific and bounded.",
+      "reason": "Revision 17 section 16.14: retries are class-specific and bounded, and section 16.11 makes a recoverable infrastructure failure an automatic-recovery pause that retries within its bound and resumes by itself. The bound is the guarantee. What the standalone path asks for once the bound is spent, a Principal ruling where section 16.11 asks for an Operator-remediation pause with no ruling, is the defect recorded on INV-084 (DEF-52).",
       "scope": "product"
     },
     {
@@ -659,7 +680,7 @@
       ],
       "tests": ["apps/cli/tests/lib/dispatch/reconcile-launch.test.ts", "apps/cli/tests/lib/dispatch.test.ts"],
       "loopSpec": ["A killed driver leaves no orphan"],
-      "reason": "Revision 7 section 16.15: cancellation terminates owned process trees.",
+      "reason": "Revision 17 section 16.15: cancellation terminates owned process trees with bounded escalation.",
       "scope": "product"
     },
     {
@@ -680,7 +701,7 @@
         "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
       ],
       "loopSpec": ["Rounds"],
-      "reason": "Revision 7 section 2 guarantee 4; the driver holds the session id.",
+      "reason": "Revision 17 section 16.1, promise 8: feedback returns to the same developer session when revision is allowed; section 16.6 rebuilds authoritative state from control records, and the driver holds the session id.",
       "scope": "product"
     },
     {
@@ -719,7 +740,7 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop.test.ts"],
       "loopSpec": ["The Documentation read-gate"],
-      "reason": "Revision 7 section 16.6: later rounds receive a delta packet.",
+      "reason": "Revision 17 section 16.6: later rounds receive a delta packet.",
       "scope": "product"
     },
     {
@@ -801,7 +822,7 @@
         "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
       ],
       "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
-      "reason": "Deterministic precondition check outside the worker.",
+      "reason": "Deterministic precondition check outside the worker. Revision 17 section 16.12: publication never refuses a path beyond the Surface; the controller rebuilds the beyond-Surface record from the branch on every body write and every landed push, replacing any record an agent wrote, and reviewers judge it from the staged pull-request body (INV-068).",
       "scope": "product"
     },
     {
@@ -881,7 +902,7 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
       "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
-      "reason": "Revision 7 section 16.12: effects are authorized, keyed and reconciled.",
+      "reason": "Revision 17 section 16.12: effects are authorized, keyed and reconciled.",
       "scope": "product"
     },
     {
@@ -1035,7 +1056,7 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/publication.test.ts", "apps/cli/tests/lib/dev-review-loop.test.ts"],
       "loopSpec": ["Publication"],
-      "reason": "Revision 7 section 16.10: all publish effects have verified postconditions.",
+      "reason": "Revision 17 section 16.10: all publish effects have verified postconditions.",
       "scope": "product"
     },
     {
@@ -1128,7 +1149,7 @@
       ],
       "tests": ["apps/cli/tests/lib/dispatch.test.ts"],
       "loopSpec": ["The Documentation read-gate"],
-      "reason": "Revision 7 section 16.7 names this mechanism advisory; controller-owned receipts replace it.",
+      "reason": "Revision 17 section 16.7 names this read-gate advisory: its receipts sit in the worker's reach, and controller-owned delivery receipts recorded against the run's required-source manifest replace it as the guarantee.",
       "scope": "product"
     },
     {
@@ -1204,7 +1225,7 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-2.test.ts"],
       "loopSpec": ["Rounds", "Infrastructure failures and driver-decided pauses"],
-      "reason": "Revision 7 section 16.5: parallel fan-out and join, a target runtime capability.",
+      "reason": "Revision 17 section 16.5: parallel code and security reviewer fan-out and join, a target runtime capability.",
       "scope": "product"
     },
     {
@@ -1269,7 +1290,7 @@
         "apps/cli/tests/lib/dev-review-loop/reviewer-dispatch.test.ts"
       ],
       "loopSpec": ["Infrastructure failures and driver-decided pauses"],
-      "reason": "Revision 7 section 16.9: invalid output never becomes approval.",
+      "reason": "Revision 17 section 16.9: invalid output never becomes approval. The infrastructure pause after the second miss is section 16.11's automatic-recovery pause, retried within its bound.",
       "scope": "product"
     },
     {
@@ -1365,7 +1386,7 @@
         "apps/cli/tests/lib/dev-review-loop/inproc-2.test.ts"
       ],
       "loopSpec": ["The review-input manifest and its equivalence"],
-      "reason": "Revision 7 section 16.9: review evidence is bound to head, brief, objectives, ruling and policy.",
+      "reason": "Revision 17 section 16.9: review evidence is bound to head, brief, objectives, ruling and policy.",
       "scope": "product"
     },
     {
@@ -1422,7 +1443,7 @@
         "apps/cli/tests/lib/dev-review-loop/inproc-2.test.ts"
       ],
       "loopSpec": ["Reviewer isolation \u2014 one immutable candidate, isolated scratch space"],
-      "reason": "Both reviewers judge the same immutable input (revision 7 section 16.10).",
+      "reason": "Both reviewers judge the same immutable input (revision 17 section 16.10). Leaving secret-named files out of the candidate keeps a secret from reaching a reviewer through its open read of the candidate, the containment revision 17 section 16.15 asks for a secret an agent meets that way.",
       "scope": "product"
     },
     {
@@ -1441,7 +1462,7 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/reviewer-isolation.test.ts"],
       "loopSpec": ["Reviewer isolation \u2014 one immutable candidate, isolated scratch space"],
-      "reason": "Revision 7 section 16.15: missing confinement must fail with a capability refusal.",
+      "reason": "Revision 17 section 16.15: missing confinement must fail with an explicit capability refusal when isolation is required.",
       "scope": "product"
     },
     {
@@ -1481,7 +1502,7 @@
         "apps/cli/tests/lib/dev-review-loop/reviewer-dispatch.test.ts"
       ],
       "loopSpec": ["Reviewer isolation \u2014 one immutable candidate, isolated scratch space"],
-      "reason": "Driver-staged evidence before any scratch copy.",
+      "reason": "Driver-staged evidence before any scratch copy. The staged body carries the controller-rebuilt beyond-Surface record that revision 17 section 16.12 hands to reviewers as a staged input.",
       "scope": "product"
     },
     {
@@ -1499,7 +1520,7 @@
       ],
       "tests": ["apps/cli/tests/lib/dispatch.test.ts", "apps/cli/tests/lib/dev-review-loop/reviewer-dispatch.test.ts"],
       "loopSpec": ["Reviewer isolation \u2014 one immutable candidate, isolated scratch space"],
-      "reason": "Revision 7 section 16.3: hooks and permission prompts are defense in depth, not the boundary.",
+      "reason": "Revision 17 sections 16.3 and 16.15: hooks and permission prompts are defense in depth, not the authorization boundary.",
       "scope": "product"
     },
     {
@@ -1560,7 +1581,7 @@
       ],
       "tests": [],
       "loopSpec": ["Rounds"],
-      "reason": "Revision 7 section 16.14: raw exceptions must become typed outcomes.",
+      "reason": "Revision 17 section 16.14: failures are distinguished by class and no generic catch reclassifies them; a raw exception out of a reader is not a typed outcome.",
       "scope": "product"
     },
     {
@@ -1640,7 +1661,7 @@
         "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts"
       ],
       "loopSpec": ["Pause and `--resume`"],
-      "reason": "Revision 7 section 16.11: a pause is a durable record.",
+      "reason": "Revision 17 sections 16.4 and 16.11: a pause is a durable, nonterminal interrupt whose record is written before anything is reported; the run leaves it when the pause is resolved.",
       "scope": "product"
     },
     {
@@ -1680,7 +1701,7 @@
         "apps/cli/tests/lib/dev-review-loop/inproc-8.test.ts"
       ],
       "loopSpec": ["Pause and `--resume`"],
-      "reason": "Idempotent, reconciled effect.",
+      "reason": "Idempotent, reconciled effect. The detail is sanitized before it is posted (revision 17 section 16.13: sensitive content is redacted before emission).",
       "scope": "product"
     },
     {
@@ -1724,7 +1745,7 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-3.test.ts"],
       "loopSpec": ["Escalation, resolution, and `--cancel`"],
-      "reason": "Revision 7 section 16.11: CLI and Operator call the same run-control operation; a stale ruling must not resume.",
+      "reason": "Revision 17 section 16.11: CLI and Operator call the same run-control operations, and a stale ruling cannot resume the old checkpoint silently.",
       "scope": "product"
     },
     {
@@ -1786,7 +1807,7 @@
     {
       "id": "INV-084",
       "behavior": "A bare --resume without a ruling is allowed only for an infrastructure pause and only under the retry bound, with a corrupt store read counting as exhausted.",
-      "classification": "product-guarantee",
+      "classification": "named-defect",
       "owner": "operator-control",
       "authority": "control-state",
       "scenarios": ["restart"],
@@ -1798,8 +1819,9 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-7.test.ts"],
       "loopSpec": ["Pause and `--resume`", "The loop's own recovery record"],
-      "reason": "Bounded and fail-closed.",
-      "scope": "product"
+      "reason": "Revision 17 section 16.11 changed this contract. Bounded and fail-closed within the bound, as before; past it, the standalone path refuses a bare --resume of an infrastructure or stale_driver pause until a Principal ruling is posted, while section 16.11 makes a spent automatic-recovery budget an Operator-remediation pause the Operator resumes with no ruling: infrastructure is never a stop for the Principal. Reclassified from `product-guarantee` to `named-defect` (DEF-52).",
+      "scope": "product",
+      "defect": "DEF-52"
     },
     {
       "id": "INV-085",
@@ -1838,7 +1860,7 @@
         "apps/cli/tests/lib/dev-review-loop/inproc-3.test.ts"
       ],
       "loopSpec": ["Escalation, resolution, and `--cancel`"],
-      "reason": "Control record first, telemetry after.",
+      "reason": "Control record first, telemetry after. Revision 17 section 16.4: the running-to-paused transition enters a durable nonterminal interrupt, and the paused run's control state changes again when it resumes.",
       "scope": "product"
     },
     {
@@ -1908,7 +1930,7 @@
         "apps/cli/tests/lib/dev-review-loop/inproc-3.test.ts"
       ],
       "loopSpec": ["Escalation, resolution, and `--cancel`", "Resumed/cancelled are now logged too"],
-      "reason": "Revision 7 section 16.12: a timed-out commit is uncertain, never assumed failed.",
+      "reason": "Revision 17 sections 16.5 and 16.12: resume never assumes a timed-out commit failed; an unacknowledged effect is uncertain and is reconciled.",
       "scope": "product"
     },
     {
@@ -1926,7 +1948,7 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-10.test.ts"],
       "loopSpec": ["The driver never ends on a pause"],
-      "reason": "Revision 7 section 16.2: interrupts and continuation are runtime capabilities.",
+      "reason": "Revision 17 section 16.2: interrupts and continuation are runtime capabilities. Cutover gate 16 (section 16.18) requires the Engine path to resume through Atta Engine's public start and resume operations with Vinaya's injected executor, so this self-driven watcher is the oracle for the behavior, not the mechanism the Engine path keeps.",
       "scope": "product"
     },
     {
@@ -1985,7 +2007,7 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-4.test.ts"],
       "loopSpec": ["The loop's own recovery record"],
-      "reason": "Revision 7 section 16.4: checkpoint/control state is authoritative for continuation.",
+      "reason": "Revision 17 section 16.4: checkpoint and control state is authoritative for continuation.",
       "scope": "product"
     },
     {
@@ -2048,7 +2070,7 @@
         "apps/cli/tests/lib/dev-review-loop/inproc-8.test.ts"
       ],
       "loopSpec": ["Pause and `--resume`", "The loop's own recovery record"],
-      "reason": "Revision 7 section 16.4: forge state is authoritative for externally visible facts; the Log never is.",
+      "reason": "Revision 17 section 16.4: forge state is authoritative for externally visible facts; Log events are never read to authorize or recover a transition.",
       "scope": "product"
     },
     {
@@ -2085,7 +2107,7 @@
       ],
       "tests": ["apps/cli/tests/commands/dev-review-loop.test.ts"],
       "loopSpec": ["The command"],
-      "reason": "Revision 7 section 16.11: transports, not separate implementations.",
+      "reason": "Revision 17 section 16.11: Operator and CLI surfaces are transports over the same run-control operations, not separate implementations.",
       "scope": "product"
     },
     {
@@ -2103,7 +2125,7 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop.test.ts", "apps/cli/tests/lib/dev-review-loop/inproc-6.test.ts"],
       "loopSpec": ["Rounds"],
-      "reason": "Revision 7 section 16.5 graph; the order is the oracle's legal transition sequence.",
+      "reason": "Revision 17 section 16.5 graph; the order is the oracle's legal transition sequence. Cutover gate 16 (section 16.18) requires the Engine path to run it through Atta Engine's public start and resume, never as a graph driven outside the public run-control boundary.",
       "scope": "product"
     },
     {
@@ -2125,7 +2147,7 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop.test.ts", "apps/cli/tests/lib/dev-review-loop/inproc-4.test.ts"],
       "loopSpec": ["Rounds"],
-      "reason": "Revision 7 section 2 guarantee 5.",
+      "reason": "Revision 17 sections 16.2 and 16.5: legal transitions are selected by deterministic code, and an agent node returns a typed observation, never the next node name.",
       "scope": "product"
     },
     {
@@ -2182,7 +2204,7 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop.test.ts"],
       "loopSpec": ["Which severities block is repository policy"],
-      "reason": "Revision 7 section 16.10: the policy digest is pinned into the run.",
+      "reason": "Revision 17 section 16.10: the policy digest is pinned into the run and the verdict.",
       "scope": "product"
     },
     {
@@ -2240,7 +2262,7 @@
         "apps/cli/tests/lib/dev-review-loop/inproc-10.test.ts"
       ],
       "loopSpec": ["One driver per task"],
-      "reason": "Matches the spec's lock-retention rules.",
+      "reason": "Matches the spec's lock-retention rules: the pauses that keep the lock are the ones that resume by themselves (revision 17 section 16.11, automatic recovery) or under the watching driver.",
       "scope": "product"
     },
     {
@@ -2258,7 +2280,7 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-6.test.ts", "apps/cli/tests/lib/dev-review-loop.test.ts"],
       "loopSpec": ["A stale driver re-execs in place, and pauses only if that fails"],
-      "reason": "Promised for the standalone driver; the Engine path pins process versions instead (revision 7 section 16.4).",
+      "reason": "Promised for the standalone driver; the Engine path pins the process version in its pinned inputs instead (revision 17 section 16.4).",
       "scope": "implementation"
     },
     {
@@ -2299,7 +2321,7 @@
         "apps/cli/tests/lib/dev-review-loop.test.ts"
       ],
       "loopSpec": ["No round-end flush"],
-      "reason": "Revision 7 section 16.14: failures are typed outcomes.",
+      "reason": "Revision 17 section 16.14: failures are typed outcomes. The infrastructure pause it becomes is section 16.11's automatic-recovery pause, retried within its bound.",
       "scope": "product"
     },
     {
@@ -2336,7 +2358,7 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts", "apps/cli/tests/lib/dev-review-loop.test.ts"],
       "loopSpec": ["No round-end flush"],
-      "reason": "Revision 7 section 16.13: the Log observes and never decides.",
+      "reason": "Revision 17 sections 16.4 and 16.13: the Log is fail-open telemetry that observes and never decides.",
       "scope": "product"
     },
     {
@@ -2495,7 +2517,7 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop.test.ts"],
       "loopSpec": ["The in-process test seam"],
-      "reason": "File layout is incidental; revision 7 section 16 does not protect accidental structure.",
+      "reason": "File layout is incidental; revision 17 section 16 does not preserve accidental structure.",
       "scope": "implementation"
     },
     {
@@ -2517,7 +2539,7 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
       "loopSpec": ["The command"],
-      "reason": "The publication boundary is now explicit in the specification and exercised for later pushes, current protected changes and post-commit discovery.",
+      "reason": "The publication boundary is now explicit in the specification and exercised for later pushes, current protected changes and post-commit discovery. Revision 17 section 16.12: protected paths remain refused unless the frozen scope names them.",
       "scope": "product"
     },
     {
@@ -2548,7 +2570,7 @@
     {
       "id": "INV-122",
       "behavior": "A driver tool's own write into a protected record was attributed to the Developer by the after-turn check; every mutation must have one authoritative actor, so only a write the Developer's own process made is blamed on it.",
-      "classification": "guarantee",
+      "classification": "product-guarantee",
       "scope": "product",
       "owner": "governed-operation",
       "authority": "effect",
@@ -2561,12 +2583,12 @@
       ],
       "tests": ["apps/cli/tests/lib/dispatch/after-turn-attribution.test.ts"],
       "loopSpec": [],
-      "reason": "Shipped: the after-turn check separates the driver tools' writes from the worker's. Evidence: the Developer was told it had edited records the driver's own tools had written during its turn."
+      "reason": "Shipped: the after-turn check separates the driver tools' writes from the worker's. Evidence: the Developer was told it had edited records the driver's own tools had written during its turn. Revision 17 section 16.17, Outcome C: every capability handler carries authoritative actor attribution. Reclassified from `guarantee` to `product-guarantee`: the controller enforces it outside the worker and a test is its oracle, which is what `product-guarantee` means."
     },
     {
       "id": "INV-123",
       "behavior": "A publication the driver refused left the loop waiting its full thirty-minute window for a push that could not come; a structured refusal must return control to the Developer immediately.",
-      "classification": "guarantee",
+      "classification": "product-guarantee",
       "scope": "product",
       "owner": "operator-control",
       "authority": "control-state",
@@ -2578,12 +2600,12 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/refused-publication-wait.test.ts"],
       "loopSpec": [],
-      "reason": "Shipped: a refused publication goes straight back to the Developer. Evidence: a round idled for the whole push wait after a refusal that already named its reason."
+      "reason": "Shipped: a refused publication goes straight back to the Developer. Evidence: a round idled for the whole push wait after a refusal that already named its reason. Revision 17 section 16.8: a structured refusal is a tool outcome the agent acts on. Reclassified from `guarantee` to `product-guarantee`: the controller enforces it outside the worker and a test is its oracle, which is what `product-guarantee` means."
     },
     {
       "id": "INV-124",
       "behavior": "A Linux sandbox started but could not run any command, and the dispatch went ahead anyway; a capability is proven by executing a real command inside it before the agent is dispatched.",
-      "classification": "guarantee",
+      "classification": "product-guarantee",
       "scope": "product",
       "owner": "provider-adapter",
       "authority": "effect",
@@ -2596,12 +2618,12 @@
       ],
       "tests": ["apps/cli/tests/lib/dispatch/linux-sandbox-probe.test.ts"],
       "loopSpec": [],
-      "reason": "Shipped: the dispatch refuses before any agent starts when the sandbox cannot run a probe command. Evidence: the tool binaries existed and the sandbox launched, yet every command inside it failed."
+      "reason": "Shipped: the dispatch refuses before any agent starts when the sandbox cannot run a probe command. Evidence: the tool binaries existed and the sandbox launched, yet every command inside it failed. Revision 17 section 16.15: the capability check runs before the developer's turn is counted and exercises a command. Reclassified from `guarantee` to `product-guarantee`: the controller enforces it outside the worker and a test is its oracle, which is what `product-guarantee` means."
     },
     {
       "id": "INV-125",
       "behavior": "A login page or an empty body counted as the Developer having read a required Documentation source; a source receipt is recorded only when the fetch returned real content, judged on the page's visible text.",
-      "classification": "guarantee",
+      "classification": "product-guarantee",
       "scope": "product",
       "owner": "governed-operation",
       "authority": "pure-policy",
@@ -2619,12 +2641,12 @@
         "apps/cli/tests/lib/dispatch/fetch-documentation-visible-text.test.ts"
       ],
       "loopSpec": [],
-      "reason": "Shipped: the read check counts a source only on real content. Evidence: an HTML sign-in page satisfied the read-gate for a document nobody had read."
+      "reason": "Shipped: the read check counts a source only on real content. Evidence: an HTML sign-in page satisfied the read-gate for a document nobody had read. Revision 17 section 16.7: delivery is recorded by the controller against the run's required-source manifest, and a sign-in page is not the source. Reclassified from `guarantee` to `product-guarantee`: the controller enforces it outside the worker and a test is its oracle, which is what `product-guarantee` means."
     },
     {
       "id": "INV-126",
       "behavior": "The Developer could not see why CI failed, only that it did; the evidence of a failed check crosses the worker boundary as a bounded, sanitized job-log tail the driver reads on its behalf.",
-      "classification": "guarantee",
+      "classification": "product-guarantee",
       "scope": "product",
       "owner": "governed-operation",
       "authority": "forge",
@@ -2637,12 +2659,12 @@
       ],
       "tests": ["apps/cli/tests/lib/task-tools/developer-ci-failure-detail.test.ts"],
       "loopSpec": [],
-      "reason": "Shipped: red-CI retries and the pull-request read carry failed log tails. Evidence: a red-CI retry gave the Developer a check name and no output."
+      "reason": "Shipped: red-CI retries and the pull-request read carry failed log tails. Evidence: a red-CI retry gave the Developer a check name and no output. Revision 17 section 16.15: the tail is controller-composed model context, so it is sanitized and redacted before it crosses, and no controller-held secret enters it. Reclassified from `guarantee` to `product-guarantee`: the controller enforces it outside the worker and a test is its oracle, which is what `product-guarantee` means."
     },
     {
       "id": "INV-127",
       "behavior": "Local enforcement controls (the commit and push hooks, the agent's settings and hooks) were silently inactive and the loop dispatched anyway; every required control is verified active and executable before any agent starts.",
-      "classification": "guarantee",
+      "classification": "product-guarantee",
       "scope": "product",
       "owner": "vinaya-policy",
       "authority": "effect",
@@ -2659,12 +2681,12 @@
       ],
       "tests": ["apps/cli/tests/lib/enforcement-controls-active.test.ts"],
       "loopSpec": [],
-      "reason": "Shipped: dispatch refuses unless the controls are active. Evidence: a checkout with an unlinked hook directory ran a whole task with no local gate."
+      "reason": "Shipped: dispatch refuses unless the controls are active. Evidence: a checkout with an unlinked hook directory ran a whole task with no local gate. Hooks are adapter mechanisms (revision 17 section 16.3); the guarantee is the controller's own check, outside the worker, that they are active before dispatch. Reclassified from `guarantee` to `product-guarantee`: the controller enforces it outside the worker and a test is its oracle, which is what `product-guarantee` means."
     },
     {
       "id": "INV-128",
       "behavior": "A push that resolved a merge conflict was judged against the whole branch rather than the commit range the driver intended to publish; the effect is evaluated against the intended commit range only.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-25",
       "scope": "product",
       "owner": "governed-operation",
@@ -2677,12 +2699,12 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/developer-publication.test.ts"],
       "loopSpec": [],
-      "reason": "Shipped fix. Evidence: the publication checks saw files that came in with the merge, not the Developer's change."
+      "reason": "Shipped fix. Evidence: the publication checks saw files that came in with the merge, not the Developer's change. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-129",
       "behavior": "A Codex dispatch ran with a copy of the operator's login made by an earlier dispatch, so an expired or rotated login failed the turn; an adapter credential is refreshed from the operator's current login at each dispatch.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-26",
       "scope": "product",
       "owner": "provider-adapter",
@@ -2696,12 +2718,12 @@
       ],
       "tests": ["apps/cli/tests/lib/dispatch/codex-login-refresh.test.ts"],
       "loopSpec": [],
-      "reason": "Shipped fix. Evidence: a reused staged Codex home carried a stale login across dispatches."
+      "reason": "Shipped fix. Evidence: a reused staged Codex home carried a stale login across dispatches. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-130",
       "behavior": "Codex could not reach public documentation, and the receipt files it was told to write were blamed on it; documentation reaches both agents through a driver-run fetch tool that records the read, with no per-provider network allowlist.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-27",
       "scope": "product",
       "owner": "governed-operation",
@@ -2714,12 +2736,12 @@
       ],
       "tests": ["apps/cli/tests/lib/dispatch/fetch-documentation-tool.test.ts"],
       "loopSpec": [],
-      "reason": "Shipped fix. Evidence: the sandboxed Codex agent had no route to the documentation host and its own receipt files tripped the after-turn check."
+      "reason": "Shipped fix. Evidence: the sandboxed Codex agent had no route to the documentation host and its own receipt files tripped the after-turn check. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-131",
       "behavior": "Folder-scanning tests and host-dependent tests were not selected by the local pre-push gate and failed only in CI; the local gate selects what CI would fail.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-28",
       "scope": "implementation",
       "owner": "standalone-only",
@@ -2737,12 +2759,12 @@
       ],
       "tests": ["apps/cli/tests/lib/pre-push-scanner-triggers.test.ts"],
       "loopSpec": [],
-      "reason": "Shipped fix. Evidence: tests that scan the repository tree, and tests that depend on the host's sandbox tools, passed the hook and failed on the CI runner."
+      "reason": "Shipped fix. Evidence: tests that scan the repository tree, and tests that depend on the host's sandbox tools, passed the hook and failed on the CI runner. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-132",
       "behavior": "Two task Issues sharing one task number made the forge query fail with a duplicate error that hid the real forge error; a query error keeps its real identity.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-29",
       "scope": "reference-process",
       "owner": "vinaya-policy",
@@ -2755,12 +2777,12 @@
       ],
       "tests": ["packages/aeg-forge-state/src/duplicate-task-ids.test.ts"],
       "loopSpec": [],
-      "reason": "Shipped fix. Evidence: a forge read failure was reported as a duplicate-task-id condition; the process around task numbering, not the loop, produced the duplicate."
+      "reason": "Shipped fix. Evidence: a forge read failure was reported as a duplicate-task-id condition; the process around task numbering, not the loop, produced the duplicate. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-133",
       "behavior": "A driver died with the shell that launched it; the run's lifetime belongs to the runtime, not to the launcher.",
-      "classification": "accident",
+      "classification": "implementation-accident",
       "scope": "implementation",
       "owner": "standalone-only",
       "authority": "effect",
@@ -2773,12 +2795,12 @@
       ],
       "tests": ["apps/cli/tests/lib/detached-launch.test.ts"],
       "loopSpec": [],
-      "reason": "Shipped: every driver launch is detached through one helper. An incidental consequence of how the standalone driver was started; the Engine path owns run lifetime itself."
+      "reason": "Shipped: every driver launch is detached through one helper. An incidental consequence of how the standalone driver was started; the Engine path owns run lifetime itself. Reclassified from `accident` to `implementation-accident`: nothing promises it and the Engine path need not reproduce it."
     },
     {
       "id": "INV-134",
       "behavior": "Tests wrote into the real runtime directory of the machine they ran on; runtime roots are injected and isolated in tests.",
-      "classification": "hygiene",
+      "classification": "implementation-accident",
       "scope": "implementation",
       "owner": "standalone-only",
       "authority": "effect",
@@ -2790,7 +2812,7 @@
       ],
       "tests": ["apps/cli/tests/lib/real-runtime-guard.test.ts"],
       "loopSpec": [],
-      "reason": "Shipped: a preload guard fails a test that touches the real runtime root. Product-neutral test hygiene of the standalone suite."
+      "reason": "Shipped: a preload guard fails a test that touches the real runtime root. Product-neutral test hygiene of the standalone suite. Reclassified from `hygiene` to `implementation-accident`: it protects no product behavior, nothing in the loop promises it, and it is never an Engine contract."
     },
     {
       "id": "INV-135",
@@ -2808,7 +2830,7 @@
       ],
       "tests": [],
       "loopSpec": [],
-      "reason": "The copied login must be readable by the process that uses it. It is not a guarantee and the Engine path must not claim it closed."
+      "reason": "The copied login must be readable by the process that uses it. Under revision 17 section 16.15 it is a controller-held secret placed in the worker's reach; once the agent reads it, it is a secret met through an open read, which must never propagate into output, tool arguments, diffs, telemetry or effects. It is not a guarantee and the Engine path must not claim it closed."
     },
     {
       "id": "INV-136",
@@ -2829,12 +2851,12 @@
       ],
       "tests": [],
       "loopSpec": [],
-      "reason": "Same-uid separation is the only barrier. Recorded as a gate on the Engine cutover, never as a standalone guarantee."
+      "reason": "Same-uid separation is the only barrier. Recorded as cutover gates 14 and 15 (revision 17 section 16.18), which admit no known-failure entry, never as a standalone guarantee."
     },
     {
       "id": "INV-137",
       "behavior": "A doctrine edit the task's scope required was refused as a protected administrative path; a protected policy path is writable only when the frozen task scope names it.",
-      "classification": "guarantee",
+      "classification": "product-guarantee",
       "scope": "product",
       "owner": "governed-operation",
       "authority": "pure-policy",
@@ -2847,12 +2869,12 @@
       ],
       "tests": ["apps/cli/tests/lib/broker/request-effect.test.ts"],
       "loopSpec": [],
-      "reason": "Shipped: the broker permits a protected path when the frozen scope names it, and refuses it otherwise. Evidence: a task whose scope named the doctrine file could not push it."
+      "reason": "Shipped: the broker permits a protected path when the frozen scope names it, and refuses it otherwise. Evidence: a task whose scope named the doctrine file could not push it. Revision 17 section 16.12: protected paths remain refused unless the frozen scope names them. Reclassified from `guarantee` to `product-guarantee`: the controller enforces it outside the worker and a test is its oracle, which is what `product-guarantee` means."
     },
     {
       "id": "INV-138",
       "behavior": "A Developer's own merge of the default branch, committed or left uncommitted, counted the default branch's files as the task's change; a task's changes are measured against the exact default-branch commit merged in, proven against the remote.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-30",
       "scope": "product",
       "owner": "governed-operation",
@@ -2868,12 +2890,12 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/developer-publication.test.ts"],
       "loopSpec": [],
-      "reason": "Shipped fix for both the committed and the uncommitted merge. Evidence: the publication checks listed files the default branch had changed."
+      "reason": "Shipped fix for both the committed and the uncommitted merge. Evidence: the publication checks listed files the default branch had changed. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-139",
       "behavior": "The readiness gate ran scripts by repository path, so in an adopter's repository the loop stopped after its first round; every gate the loop runs ships with the installed package.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-31",
       "scope": "product",
       "owner": "vinaya-policy",
@@ -2889,12 +2911,12 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/readiness-gate-adopter.test.ts"],
       "loopSpec": [],
-      "reason": "Shipped fix. Evidence: only this repository's own checkout contained the scripts the gate invoked."
+      "reason": "Shipped fix. Evidence: only this repository's own checkout contained the scripts the gate invoked. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-140",
       "behavior": "A GitHub rate limit paused the loop and asked for a Principal ruling; a transient provider limit is waited out and the round retried, never escalated as a decision.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-32",
       "scope": "product",
       "owner": "operator-control",
@@ -2910,12 +2932,12 @@
         "apps/cli/tests/lib/dev-review-loop/round-assess.test.ts"
       ],
       "loopSpec": [],
-      "reason": "Shipped fix. Evidence: a spent hourly forge budget produced a human pause although the limit resets by itself."
+      "reason": "Shipped fix. Evidence: a spent hourly forge budget produced a human pause although the limit resets by itself. Revision 17 section 16.11 makes a provider rate limit automatic recovery, never a ruling. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-141",
       "behavior": "A repeated finding was identified by its position in the list, so a new finding at the same position paused the loop as a repeat; a finding's identity is its role, file and description.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-33",
       "scope": "product",
       "owner": "vinaya-policy",
@@ -2929,12 +2951,12 @@
       ],
       "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
       "loopSpec": [],
-      "reason": "Shipped fix. Evidence: different findings at one index in successive rounds counted as a reappearance."
+      "reason": "Shipped fix. Evidence: different findings at one index in successive rounds counted as a reappearance. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-142",
       "behavior": "Five loops in parallel exhausted one forge account's hourly budget; concurrency must be bounded per forge credential.",
-      "classification": "accident",
+      "classification": "implementation-accident",
       "scope": "reference-process",
       "owner": "standalone-only",
       "authority": "forge",
@@ -2946,12 +2968,12 @@
       ],
       "tests": [],
       "loopSpec": [],
-      "reason": "Not fixed. An emergent property of how many drivers the operator starts under one account; the process, not a loop module, owns the bound."
+      "reason": "Not fixed. An emergent property of how many drivers the operator starts under one account; the process, not a loop module, owns the bound. Reclassified from `accident` to `implementation-accident`: nothing promises it and the Engine path need not reproduce it."
     },
     {
       "id": "INV-143",
       "behavior": "A paused driver retried a resolution that was already consumed on every poll interval and never saw a newer Principal ruling; a resolution is consumed exactly once and resume progress is bounded.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-34",
       "scope": "product",
       "owner": "operator-control",
@@ -2965,7 +2987,7 @@
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-10.test.ts"],
       "loopSpec": [],
-      "reason": "Shipped fix. Evidence: the same spent resolution was re-read forever, so a later ruling was never reached."
+      "reason": "Shipped fix. Evidence: the same spent resolution was re-read forever, so a later ruling was never reached. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-144",
@@ -2990,12 +3012,12 @@
         "apps/cli/tests/lib/task-tools/resume.test.ts"
       ],
       "loopSpec": ["Pause and `--resume`", "The driver never ends on a pause"],
-      "reason": "Before it, every exit from such a pause refused and named another exit that refused, and the driver ended unwatched, so the automatic rate-limit resume never fired."
+      "reason": "Before it, every exit from such a pause refused and named another exit that refused, and the driver ended unwatched, so the automatic rate-limit resume never fired. Revision 17 section 16.11: an infrastructure pause, rate limit included, is automatic recovery that resumes by itself within its bound."
     },
     {
       "id": "INV-145",
       "behavior": "The reviewer's injected instructions say the verdict follows from BLOCKER findings alone, while the review policy this repository declares blocks at MAJOR; blocking severities reach a reviewer from policy, never from doctrine.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-35",
       "scope": "reference-process",
       "owner": "vinaya-policy",
@@ -3013,12 +3035,12 @@
       ],
       "tests": [],
       "loopSpec": ["Which severities block is repository policy"],
-      "reason": "Not fixed. Evidence: the reviewer doctrine's short version states the verdict follows from the BLOCKER findings alone, and `vinaya.config.json` sets `reviewPolicy.codeReviewThreshold` to MAJOR, so a reviewer reading its instructions under-weights a MAJOR finding the policy blocks on."
+      "reason": "Not fixed. Evidence: the reviewer doctrine's short version states the verdict follows from the BLOCKER findings alone, and `vinaya.config.json` sets `reviewPolicy.codeReviewThreshold` to MAJOR, so a reviewer reading its instructions under-weights a MAJOR finding the policy blocks on. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-146",
       "behavior": "The documentation-claim binding check exists and runs in no hook, CI job or controller step, so broken bindings on the default branch go unnoticed; a check the doctrine names as enforcing a rule runs where the rule says.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-36",
       "scope": "product",
       "owner": "vinaya-policy",
@@ -3032,12 +3054,12 @@
       ],
       "tests": [],
       "loopSpec": [],
-      "reason": "Not fixed. Evidence: no workflow under `.github/workflows` and no hook under `.vinaya/hooks` invokes `verify-docs`, and its full mode reports five broken bindings on the default branch, while the enforcement map lists the documentation gate, doc-claim bindings included, as a CI check."
+      "reason": "Not fixed. Evidence: no workflow under `.github/workflows` and no hook under `.vinaya/hooks` invokes `verify-docs`, and its full mode reports five broken bindings on the default branch, while the enforcement map lists the documentation gate, doc-claim bindings included, as a CI check. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-147",
       "behavior": "The reviewer instructions make a documentation sentence without a binding marker a blocking MAJOR finding although no check verifies bindings; a reviewer severity rests on a check that runs.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-37",
       "scope": "reference-process",
       "owner": "vinaya-policy",
@@ -3051,12 +3073,12 @@
       ],
       "tests": [],
       "loopSpec": [],
-      "reason": "Not fixed. Evidence: the reviewer doctrine says the binding check verifies every marker and rates an unbound claim MAJOR, but the binding check runs nowhere, so the severity rests on an unenforced rule."
+      "reason": "Not fixed. Evidence: the reviewer doctrine says the binding check verifies every marker and rates an unbound claim MAJOR, but the binding check runs nowhere, so the severity rests on an unenforced rule. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-148",
       "behavior": "The Issue write gate accepts an unregistered Project although planner doctrine says it is refused; an Issue's Project resolves against the registry at write.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-38",
       "scope": "product",
       "owner": "governed-operation",
@@ -3074,12 +3096,12 @@
       ],
       "tests": [],
       "loopSpec": [],
-      "reason": "Not fixed. Evidence: the validated Issue write path runs its content checks without the project-registry check, which only the coherence sweep and the standalone opener call, while planner doctrine says `vinaya issue create` refuses an unresolved Project."
+      "reason": "Not fixed. Evidence: the validated Issue write path runs its content checks without the project-registry check, which only the coherence sweep and the standalone opener call, while planner doctrine says `vinaya issue create` refuses an unresolved Project. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-149",
       "behavior": "The Issue write gate accepts Test plan lines only a human operator can run (starting a task, merging, posting a ruling, pushing, logging into a server); every Test plan line is runnable by the dispatched Developer.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-39",
       "scope": "product",
       "owner": "governed-operation",
@@ -3093,12 +3115,12 @@
       ],
       "tests": [],
       "loopSpec": [],
-      "reason": "Not fixed. Evidence: no content check of the Issue write path grades a Test plan line for whether the sandboxed Developer can run it, so lines that start a task, merge, post a ruling, push or log into a server reach the brief."
+      "reason": "Not fixed. Evidence: no content check of the Issue write path grades a Test plan line for whether the sandboxed Developer can run it, so lines that start a task, merge, post a ruling, push or log into a server reach the brief. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-150",
       "behavior": "The Issue write gate does not check that an in-repo Documentation path exists; every Documentation source resolves.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-40",
       "scope": "product",
       "owner": "governed-operation",
@@ -3112,12 +3134,12 @@
       ],
       "tests": [],
       "loopSpec": [],
-      "reason": "Not fixed. Evidence: the Documentation check probes only links, so a misspelled or deleted in-repo path passes the write and reaches the Developer, whose doctrine says to stop when a referenced file cannot be opened."
+      "reason": "Not fixed. Evidence: the Documentation check probes only links, so a misspelled or deleted in-repo path passes the write and reaches the Developer, whose doctrine says to stop when a referenced file cannot be opened. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-151",
       "behavior": "Conflicts-with completeness is described as a warning the Issue write gate prints, and the gate never calls it; a warning the doctrine describes is printed.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-41",
       "scope": "product",
       "owner": "governed-operation",
@@ -3135,12 +3157,12 @@
       ],
       "tests": [],
       "loopSpec": [],
-      "reason": "Not fixed. Evidence: the completeness check is called only by the standalone opener script, never by the validated `vinaya issue create`/`edit` path, while planner doctrine describes it as a warning that write prints."
+      "reason": "Not fixed. Evidence: the completeness check is called only by the standalone opener script, never by the validated `vinaya issue create`/`edit` path, while planner doctrine describes it as a warning that write prints. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-152",
       "behavior": "Developer instructions contradict the controller: commit after every part and amend, while publication refuses a commit the Developer makes; merge or rebase the default branch before publishing, while rulings forbid it unprompted; never edit the pull-request body after open, while the controller offers a body-update tool; write a confidence file, while the turn result replaced it; the controller runs a task verifier at open, while nothing calls it. No Developer instruction contradicts a controller refusal or tool.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-42",
       "scope": "reference-process",
       "owner": "provider-adapter",
@@ -3158,12 +3180,12 @@
       ],
       "tests": [],
       "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
-      "reason": "Not fixed. Evidence: the developer reference still tells the Developer to commit, merge the default branch, leave the body alone after open and write round files, and names a task verifier at open that no controller code path invokes, while the controller publishes through its own tools and offers a body-update tool."
+      "reason": "Not fixed. Evidence: the developer reference still tells the Developer to commit, merge the default branch, leave the body alone after open and write round files, and names a task verifier at open that no controller code path invokes, while the controller publishes through its own tools and offers a body-update tool. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-153",
       "behavior": "The rendered brief contradicts itself and the tools: paste the brief into the pull-request body; include a token report; confirm readiness at Step 0 while later saying run neither script; publish after each part while saying one push; an agent checkbox the report rules reject. A rendered brief carries no instruction a tool refuses.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-43",
       "scope": "product",
       "owner": "vinaya-policy",
@@ -3176,12 +3198,12 @@
       ],
       "tests": [],
       "loopSpec": ["Publishing each Developer turn (both agents, only through the driver-run tools)"],
-      "reason": "Not fixed. Evidence: the brief template asks for the brief pasted into the body and a token report, while the report rules keep the brief and token figures out of the body; it asks for readiness at Step 0 and then says run neither readiness script; it says publish after each part and then one push; and its Test Plan carries the agent checkbox the brief-shape rules refuse."
+      "reason": "Not fixed. Evidence: the brief template asks for the brief pasted into the body and a token report, while the report rules keep the brief and token figures out of the body; it asks for readiness at Step 0 and then says run neither readiness script; it says publish after each part and then one push; and its Test Plan carries the agent checkbox the brief-shape rules refuse. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-154",
       "behavior": "Codex receives only the machine-state denials while Claude Code is also refused push, the forge CLI, hook-skipping commits, stash, hard reset, recursive delete and sudo; both adapters are refused the same commands.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-44",
       "scope": "product",
       "owner": "provider-adapter",
@@ -3199,12 +3221,12 @@
       ],
       "tests": [],
       "loopSpec": [],
-      "reason": "Not fixed. Evidence: the Codex execution policy is built from the machine-state deny list alone, while the Claude Code permission rules add the forge, publication and destructive-command denials on top of it; the developer doctrine says both agents carry the same list."
+      "reason": "Not fixed. Evidence: the Codex execution policy is built from the machine-state deny list alone, while the Claude Code permission rules add the forge, publication and destructive-command denials on top of it; the developer doctrine says both agents carry the same list. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-155",
       "behavior": "Four controller prompts hardcode this repository's doctrine command path; a prompt names the installed command, never a repository path.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-45",
       "scope": "product",
       "owner": "provider-adapter",
@@ -3218,12 +3240,12 @@
       ],
       "tests": [],
       "loopSpec": [],
-      "reason": "Not fixed. Evidence: four Developer re-prompts in the driver name `bun apps/cli/src/index.ts doctrine --role developer --print`, a path that exists only in this repository's checkout, so in an adopter's repository the instruction names nothing."
+      "reason": "Not fixed. Evidence: four Developer re-prompts in the driver name `bun apps/cli/src/index.ts doctrine --role developer --print`, a path that exists only in this repository's checkout, so in an adopter's repository the instruction names nothing. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-156",
       "behavior": "A test-failure block gets one re-ask with no check behind it; the controller does not re-run the named tests before deciding. A reported test failure is checked by the controller.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-46",
       "scope": "product",
       "owner": "vinaya-policy",
@@ -3237,12 +3259,12 @@
       ],
       "tests": [],
       "loopSpec": ["The Developer's turn result"],
-      "reason": "Not fixed. Evidence: the driver re-asks the same session once and then pauses on a second report, deciding from the Developer's own claim; neither step runs the named tests."
+      "reason": "Not fixed. Evidence: the driver re-asks the same session once and then pauses on a second report, deciding from the Developer's own claim; neither step runs the named tests. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-157",
       "behavior": "The single-fix Issue form requires the planned-task fields (sizing, blast radius, dependency rationale) that no gate grades, and a free-text sentence about code passes every gate; an Issue carries only content a gate checks, and facts about code are premises.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-47",
       "scope": "product",
       "owner": "governed-operation",
@@ -3256,12 +3278,12 @@
       ],
       "tests": [],
       "loopSpec": [],
-      "reason": "Not fixed. Evidence: a backlog Issue is validated against the same rationale grammar as a planned task, which checks those fields for presence only, and a sentence asserting what code does passes unless written as a premise."
+      "reason": "Not fixed. Evidence: a backlog Issue is validated against the same rationale grammar as a planned task, which checks those fields for presence only, and a sentence asserting what code does passes unless written as a premise. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-158",
       "behavior": "Single-fix Issues skip the planner's readiness step because doctrine places them outside the Planner role; every Issue the loop runs passed a read-the-code-first step.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-48",
       "scope": "reference-process",
       "owner": "vinaya-policy",
@@ -3274,12 +3296,12 @@
       ],
       "tests": [],
       "loopSpec": [],
-      "reason": "Not fixed. Evidence: planner doctrine puts a backlog Issue out of the Planner's scope entirely, opened directly and dispatched with no planning stage, so the readiness gate that makes the Planner read the surface before cutting never applies to it."
+      "reason": "Not fixed. Evidence: planner doctrine puts a backlog Issue out of the Planner's scope entirely, opened directly and dispatched with no planning stage, so the readiness gate that makes the Planner read the surface before cutting never applies to it. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-159",
       "behavior": "Security instructions call a leaked key a BLOCKER, a severity outside the security scale; every named severity is on its role's scale.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-49",
       "scope": "reference-process",
       "owner": "vinaya-policy",
@@ -3293,12 +3315,12 @@
       ],
       "tests": [],
       "loopSpec": [],
-      "reason": "Not fixed. Evidence: the security doctrine says a single real leaked key is a BLOCKER, while the security scale is CRITICAL, HIGH, MEDIUM and LOW."
+      "reason": "Not fixed. Evidence: the security doctrine says a single real leaked key is a BLOCKER, while the security scale is CRITICAL, HIGH, MEDIUM and LOW. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-160",
       "behavior": "Reviewer instructions say write nothing to disk, run the passes in sequence and expect parked findings as input, while the loop requires three files, runs both reviewers in parallel and stages rulings only; reviewer instructions describe the loop that runs them.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-50",
       "scope": "reference-process",
       "owner": "provider-adapter",
@@ -3312,12 +3334,12 @@
       ],
       "tests": [],
       "loopSpec": ["Rounds"],
-      "reason": "Not fixed. Evidence: the reviewer doctrine forbids writing anything to disk and says the dispatch names parked findings, while the dispatch prompt asks for findings, report and objectives files, passes only the rulings on the pull request, and the driver runs the code and security reviewers concurrently."
+      "reason": "Not fixed. Evidence: the reviewer doctrine forbids writing anything to disk and says the dispatch names parked findings, while the dispatch prompt asks for findings, report and objectives files, passes only the rulings on the pull request, and the driver runs the code and security reviewers concurrently. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-161",
       "behavior": "Planner doctrine names a command for editing edges that does not exist and forbids attaching a Milestone that the write path attaches automatically; planner doctrine names only commands that exist.",
-      "classification": "defect",
+      "classification": "named-defect",
       "defect": "DEF-51",
       "scope": "reference-process",
       "owner": "vinaya-policy",
@@ -3334,7 +3356,7 @@
       ],
       "tests": [],
       "loopSpec": [],
-      "reason": "Not fixed. Evidence: `vinaya issue` accepts only `create`, `edit` and `objectives edit`, so the `amend-deps` route the planner reference names is refused, and `issue create` attaches the tranche's Milestone itself while the planner reference says the Planner never attaches one."
+      "reason": "Not fixed. Evidence: `vinaya issue` accepts only `create`, `edit` and `objectives edit`, so the `amend-deps` route the planner reference names is refused, and `issue create` attaches the tranche's Milestone itself while the planner reference says the Planner never attaches one. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."
     },
     {
       "id": "INV-162",
@@ -3378,7 +3400,7 @@
         "apps/cli/tests/lib/dev-review-loop/round-assess.test.ts"
       ],
       "loopSpec": ["Infrastructure failures and driver-decided pauses"],
-      "reason": "A confinement capability that fails on first use is a capability refusal, not a transient: the host cannot change by itself, so a retry only spends the budget before anyone is asked.",
+      "reason": "A confinement capability that fails on first use is a capability refusal, not a transient (revision 17 section 16.15): the host cannot change by itself, so a retry only spends the budget before anyone is asked. Section 16.11 makes it an Operator-remediation pause, resumed once the host is repaired, with no ruling.",
       "scope": "product"
     }
   ],
@@ -3753,7 +3775,7 @@
         "path": "apps/cli/specs/loop.md"
       },
       "status": "fixed",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "product"
     },
     {
@@ -3767,7 +3789,7 @@
         "path": "apps/cli/specs/loop.md"
       },
       "status": "fixed",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "product"
     },
     {
@@ -3780,7 +3802,7 @@
         "path": "apps/cli/specs/loop.md"
       },
       "status": "fixed",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "product"
     },
     {
@@ -3794,7 +3816,7 @@
         "path": "apps/cli/specs/loop.md"
       },
       "status": "fixed",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "implementation"
     },
     {
@@ -3807,7 +3829,7 @@
         "path": "apps/cli/specs/loop.md"
       },
       "status": "fixed",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "reference-process"
     },
     {
@@ -3820,7 +3842,7 @@
         "path": "apps/cli/specs/loop.md"
       },
       "status": "fixed",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "product"
     },
     {
@@ -3833,7 +3855,7 @@
         "path": "apps/cli/specs/loop.md"
       },
       "status": "fixed",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "product"
     },
     {
@@ -3846,7 +3868,7 @@
         "path": "apps/cli/specs/loop.md"
       },
       "status": "fixed",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "product"
     },
     {
@@ -3860,7 +3882,7 @@
         "path": "apps/cli/specs/loop.md"
       },
       "status": "fixed",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "product"
     },
     {
@@ -3874,7 +3896,7 @@
         "path": "apps/cli/specs/loop.md"
       },
       "status": "fixed",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "product"
     },
     {
@@ -3889,7 +3911,7 @@
         "locator": "The short version"
       },
       "status": "open",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "reference-process"
     },
     {
@@ -3904,7 +3926,7 @@
         "locator": "Ring 1 — Branch Rules (what turns the forge red)"
       },
       "status": "open",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "product"
     },
     {
@@ -3919,7 +3941,7 @@
         "locator": "Reader-facing readability — no unresolvable symbols"
       },
       "status": "open",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "reference-process"
     },
     {
@@ -3934,7 +3956,7 @@
         "locator": "Entry gate (self-locating)"
       },
       "status": "open",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "product"
     },
     {
@@ -3949,7 +3971,7 @@
         "locator": "Rationale grammar"
       },
       "status": "open",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "product"
     },
     {
@@ -3964,7 +3986,7 @@
         "locator": "Entry gate (self-locating)"
       },
       "status": "open",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "product"
     },
     {
@@ -3979,7 +4001,7 @@
         "locator": "Rationale grammar"
       },
       "status": "open",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "product"
     },
     {
@@ -3994,7 +4016,7 @@
         "locator": "What the Developer owns"
       },
       "status": "open",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "reference-process"
     },
     {
@@ -4009,7 +4031,7 @@
         "locator": "Publishing each Developer turn (both agents, only through the driver-run tools)"
       },
       "status": "open",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "product"
     },
     {
@@ -4024,7 +4046,7 @@
         "locator": "6. The settings-file permission policy"
       },
       "status": "open",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "product"
     },
     {
@@ -4039,7 +4061,7 @@
         "locator": "Publishing each Developer turn (both agents, only through the driver-run tools)"
       },
       "status": "open",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "product"
     },
     {
@@ -4054,7 +4076,7 @@
         "locator": "The Developer's turn result"
       },
       "status": "open",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "product"
     },
     {
@@ -4069,7 +4091,7 @@
         "locator": "The Planner's rationale (mandatory, one block per task)"
       },
       "status": "open",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "product"
     },
     {
@@ -4084,7 +4106,7 @@
         "locator": "Readiness gate — verify ALL inputs are present and reachable BEFORE planning a single task"
       },
       "status": "open",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "reference-process"
     },
     {
@@ -4099,7 +4121,7 @@
         "locator": "Output format"
       },
       "status": "open",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "reference-process"
     },
     {
@@ -4114,7 +4136,7 @@
         "locator": "What you do NOT do"
       },
       "status": "open",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "reference-process"
     },
     {
@@ -4128,8 +4150,23 @@
         "locator": "Rationale grammar"
       },
       "status": "open",
-      "classification": "defect",
+      "classification": "named-defect",
       "scope": "reference-process"
+    },
+    {
+      "id": "DEF-52",
+      "summary": "Once the infrastructure retry bound is spent, a bare --resume of an infrastructure or stale_driver pause is refused until a Principal ruling is posted, although the pause needs operational repair, not a decision; a spent automatic-recovery budget is an Operator-remediation pause the Operator resumes with no ruling.",
+      "code": {
+        "path": "apps/cli/src/lib/dev-review-loop.ts",
+        "locator": "devReviewLoop"
+      },
+      "spec": {
+        "path": "apps/cli/specs/dev-review-invariants.md",
+        "locator": "Registers"
+      },
+      "status": "open",
+      "classification": "named-defect",
+      "scope": "product"
     }
   ],
   "ambiguities": [
