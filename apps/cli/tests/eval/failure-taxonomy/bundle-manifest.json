@@ -1,0 +1,119 @@
+{
+  "source": {
+    "repository": "atta-labs/vinaya",
+    "dataIssue": 1297
+  },
+  "exportWindow": {
+    "from": "2026-08-28",
+    "to": "2026-10-11",
+    "scope": "pull requests created in this window, the newest 500"
+  },
+  "selectionRule": "Pull requests whose head branch starts with `task/` and that reached a second Developer round or carry a loop pause or a Principal ruling; for each, every comment carrying a loop, Developer-round or Principal-ruling marker, oldest first, pull requests in number order.",
+  "recordFields": ["pr", "title", "issues", "state", "mergedAt", "commentId", "createdAt", "author", "body"],
+  "pullRequests": 238,
+  "records": 1304,
+  "chunks": [
+    {
+      "commentId": 6110916133,
+      "bytes": 58620,
+      "sha256": "98246908b064ba6d5e5bdce7a07fcd0120008d689724f9f55df6d8b885a07f10"
+    },
+    {
+      "commentId": 6110916670,
+      "bytes": 54604,
+      "sha256": "cc05424f4432f8d781e9d914babcb5d42d581f84161644bf31017db038792c49"
+    },
+    {
+      "commentId": 6110917168,
+      "bytes": 60291,
+      "sha256": "e1658b9d5703cfa19356a387a8aa53f70bbcc877086f34d1010ec86026133c53"
+    },
+    {
+      "commentId": 6110917581,
+      "bytes": 59445,
+      "sha256": "37aceaffdada298c476d726c48f7a6e5d4aeb023213b75ba90c582d3639551fc"
+    },
+    {
+      "commentId": 6110917951,
+      "bytes": 59471,
+      "sha256": "4e181ab38cd10a4d0eefb27876117e7a13597297a665a280a2dc65f30d5ff198"
+    },
+    {
+      "commentId": 6110918366,
+      "bytes": 58855,
+      "sha256": "d58b0132ad4481439e90a7ee5d4b69361295a9a8d0cf65111bada2f64eaad9e4"
+    },
+    {
+      "commentId": 6110918804,
+      "bytes": 60221,
+      "sha256": "4898f2ae0cc3b3ad1cfc27b0c1c581ceb1618539356d1f60cbf36868ab96cebb"
+    },
+    {
+      "commentId": 6110919293,
+      "bytes": 60032,
+      "sha256": "91a72de0476da3623598c83d53c831fe336af8bcbaf6be91f000f50e961635cc"
+    },
+    {
+      "commentId": 6110919769,
+      "bytes": 59987,
+      "sha256": "47902e1ee3766e309c6ed3b3ac49df17c047066e67c3828011f0796611e80f06"
+    },
+    {
+      "commentId": 6110920211,
+      "bytes": 59735,
+      "sha256": "36aa436a75f1ad0795bcfb083f10e95d21d3713bdd175db40eb6c705c53b46b6"
+    },
+    {
+      "commentId": 6110920709,
+      "bytes": 60035,
+      "sha256": "25f78667c1ab80e56cc1ff1b5e0d0b4353970c556f9a1b03317c634ab5f1cbe6"
+    },
+    {
+      "commentId": 6110921101,
+      "bytes": 59643,
+      "sha256": "8ff14adadc702d2acc329c18f6390cae03b20c9d0b3201121d75549e24c5aa10"
+    },
+    {
+      "commentId": 6110921543,
+      "bytes": 60072,
+      "sha256": "3091a74a1535f4bb46ae6517189dcca71d7973a53fe84ab6d7f7be42d4c8c67c"
+    },
+    {
+      "commentId": 6110921880,
+      "bytes": 59764,
+      "sha256": "9d7cdaad079e55ef1acdb342b24b637c1944a8cba7f0dcc7692a146e0e044ce9"
+    },
+    {
+      "commentId": 6110922418,
+      "bytes": 59780,
+      "sha256": "479940f37bafed95b933977b6b4083aec090fff5daac6ecc48ddde09ec8b4ba3"
+    },
+    {
+      "commentId": 6110922839,
+      "bytes": 55848,
+      "sha256": "053b487920d8a10019f978ff11100fc25666823e3b6417ac29e506d4290ddb4d"
+    },
+    {
+      "commentId": 6110923208,
+      "bytes": 60086,
+      "sha256": "f38523577c3e858826d300065d04375ec87825992866b41d1eaf96cde01c83bc"
+    },
+    {
+      "commentId": 6110923629,
+      "bytes": 59942,
+      "sha256": "855295c53daf6da652bf0e3f85bac7a5c3c27719873f8f2a19b29ebff62d7ccf"
+    },
+    {
+      "commentId": 6110924057,
+      "bytes": 59975,
+      "sha256": "f00c0bfa69b0bef9646770f442e8835d02a54744507616bb1b824d6aaf099e91"
+    },
+    {
+      "commentId": 6110924413,
+      "bytes": 6426,
+      "sha256": "e140dfdd424b70c871c7a4eaf87a73d5569a714d1d304a96e4dd5f32313c00ea"
+    }
+  ],
+  "totalBytes": 1132832,
+  "sha256": "fe3a6a40a5cc01df031fbbb8905cc7e4c41601858c77639f2a1debbdc3d59ad8"
+}

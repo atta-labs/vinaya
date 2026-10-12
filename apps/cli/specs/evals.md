@@ -79,3 +79,32 @@ No default method, seed, resample count, confidence level or threshold is built 
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/estimators.ts contains:export const BOOTSTRAP_METHODS = ['percentile', 'basic'] as const -->
 
 `apps/cli/tests/eval/estimators.test.ts` checks each method, pass^k and the paired estimates against values computed by hand from pinned resample indices.
+
+## Failure taxonomy
+
+The evaluation program's §9 asks for 20 to 50 representative failures from real loop history, each with its first failure, grouped into a taxonomy that the defect register seeds, before any live suite is frozen. This section describes that taxonomy and the frozen input it is built from. It is not a live suite: it stages no task, runs no grader and changes no harness source.
+
+### The frozen bundle
+
+`apps/cli/tests/eval/failure-taxonomy/bundle.jsonl` is the historical input, in JSON Lines: one record per forge comment, holding the pull request's number, title, closing Issues, state and merge time, and the comment's id, creation time, author and raw body. A dispatched Developer cannot read the forge, so the history was exported once, as twenty comments on a separate data Issue, and the bundle is those comments' bodies concatenated in their pinned order, byte for byte: never reformatted, sorted or re-encoded.
+
+`apps/cli/tests/eval/failure-taxonomy/bundle-manifest.json` records its provenance: the repository and data Issue; each source comment's id, byte count and SHA-256, in order; the total byte count and the complete SHA-256; the export window; the selection rule; and the pull-request and record counts. The window takes the newest 500 pull requests created between its two dates. The rule keeps those whose head branch starts with `task/` and that reached a second Developer round or carry a loop pause or a Principal ruling, and from each it takes every comment carrying a loop, Developer-round or Principal-ruling marker, oldest first, pull requests in number order.
+
+### The taxonomy
+
+`apps/cli/tests/eval/failure-taxonomy/taxonomy.json` is built from the bundle alone. Every loop pause and Principal ruling in it was read, the failures were open-coded, and the codes were grouped into categories ([Husain and Shankar](<https://hamel.dev/blog/posts/evals-faq/>)). Each category carries a definition. Each failure task carries its pull request and Issue, the bundle comment ids it rests on, its first failure and one category. The first failure is the earliest point in the run where it went wrong, not the round where the loop noticed it: a pause caused by telemetry overflowing a forge read is recorded as the telemetry published where the loop reads, not as the read.
+
+The `registerSeed` list accounts for every defect in the invariant register (`apps/cli/tests/fixtures/dev-review-architecture-invariants.json`) by id: it maps the defect to the category its failure belongs to, or states why the bundle cannot show it — most often because the defect lives in Log events or host state, and the bundle holds forge comments only.
+
+### What the test proves
+
+`apps/cli/tests/eval/failure-taxonomy.test.ts` fails when:
+
+- the bundle's bytes disagree with the manifest's total, complete digest or any chunk's byte count and digest, read in order;
+- a record lacks the manifest's fields, or the record or pull-request counts drift;
+- the taxonomy holds fewer than 20 or more than 50 tasks, a task cites a comment id the bundle does not hold or one from another pull request or Issue, a category has no task or no definition, or a task names an unknown category;
+- a register defect is missing from the seed, appears twice, or a seed entry names an id the register does not hold, maps to an unknown category, or neither maps nor gives a reason.
+
+### Not part of this foundation
+
+Deeper trace review is ongoing work (the evaluation program's §16), not part of this foundation. The bundle holds only forge comments; agent transcripts and Log events are not in it, so a failure visible only there is not in this taxonomy, and several register defects are marked as not observed for that reason.
