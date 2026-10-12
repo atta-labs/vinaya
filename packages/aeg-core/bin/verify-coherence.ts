@@ -68,7 +68,8 @@ import {
   parseTranche,
   R1_GRANDFATHERED_ISSUES,
   scopeT2ToPlanPr,
-  touchesAnyTopology
+  touchesAnyTopology,
+  isEntryPoint
 } from '../src/index'
 import type { CheckResult, ForgeFacts, TrancheFile, TaskEntry } from '../src/index'
 
@@ -1042,7 +1043,7 @@ function printHuman(results: CheckResult[], forgeUnavailable: boolean): void {
 
 // ---------- CLI entry point --------------------------------------------------
 
-if (import.meta.main) {
+if (isEntryPoint(import.meta.url, 'verify-coherence')) {
   const args = process.argv.slice(2)
 
   // --closes-n: Closes #N gate for task branches (CI Layer 1).

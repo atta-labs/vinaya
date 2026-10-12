@@ -48,6 +48,31 @@ describe('readiness gate outside this repository', () => {
     }
   }, 120_000)
 
+  it('starts verify-docs and verify-coherence from the built gate, not from the caller directory, when run outside this repository', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'vinaya-adopter-counts-'))
+    try {
+      const gate = pathToFileURL(join(PKG, 'dist', 'checks', 'bin', 'verify-dispatch.js')).href
+      const ran = spawnSyncBudgeted(
+        'bun',
+        [
+          '-e',
+          `const m = await import(${JSON.stringify(gate)}); console.log(JSON.stringify(m.currentFindingCounts()))`
+        ],
+        { cwd, encoding: 'utf8', env: stripVinayaEnv() },
+        60_000
+      )
+      expect(ran.status).toBe(0)
+      const counts = JSON.parse(String(ran.stdout).trim().split('\n').pop() ?? '[]') as { diagnostic?: string }[]
+      expect(counts.length).toBe(2)
+      for (const count of counts) {
+        expect(count.diagnostic ?? '').not.toContain('Module not found')
+        expect(count.diagnostic ?? '').not.toContain('Cannot find module')
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  }, 120_000)
+
   it('is not ready, naming the missing step and the incomplete package, when a step cannot be found', () => {
     const result = checkTaskDispatchReadiness(
       'task/issue-1',
