@@ -7110,7 +7110,20 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           const head = d.resolveHead(branch)
           const ciConclusion = d.fetchCiConclusion(head)
           const resolvedObjectives = d.resolveIssueObjectives(task)
-          const rulings = d.fetchRulings(prNumber)
+          // The reviewers read the rulings posted on the task Issue after its
+          // newest frozen brief (each once, in posting order), then the pull
+          // request's. A failed Issue read falls back to the pull request's
+          // alone. The ordinal below stays read from the pull request only.
+          let issueRulings: string[] = []
+          try {
+            issueRulings = d.fetchIssueRulingsAfterBrief(task)
+          } catch (err) {
+            console.error(
+              `vinaya dev-review-loop: reading the task Issue's rulings failed (${err instanceof Error ? err.message : String(err)}) — reviewers get the pull request's rulings alone`
+            )
+          }
+          const prRulings = d.fetchRulings(prNumber)
+          const rulings = [...issueRulings, ...prRulings]
           const rulingOrdinal = d.fetchNewestRulingOrdinal(prNumber)
           const revision = d.fetchSourceRevision(task)
           const briefContentAtDispatch = d.fetchFrozenBrief(task)
