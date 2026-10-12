@@ -510,3 +510,84 @@ describe('a pause whose escalation has no durable record — every refusal names
     expect(readPauseState(world.runtimeDir, world.task)?.prNumber).toBeNull()
   })
 })
+
+describe('the rulings a review round hands its reviewers', () => {
+  /** Every reviewer prompt a clean run of the loop dispatched, round 1 onward. */
+  async function reviewerPrompts(world: LoopWorld, overrides: Partial<LoopDeps> = {}): Promise<string[]> {
+    const base = makeInProcessDeps(world)
+    const prompts: string[] = []
+    const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
+      if (role === 'code-reviewer') prompts.push(prompt)
+      return base.dispatchRole!(role, agent, prompt, opts)
+    }
+    await runLoopInProcess(world, { task: world.task, agent: 'claude' }, { dispatchRole, ...overrides })
+    return prompts
+  }
+
+  it('carries a ruling posted on the task Issue before the pull request existed in the round-1 prompt', async () => {
+    const world = makeWorld()
+    world.issueRulings = ['Use the fallback path.']
+    const prompts = await reviewerPrompts(world)
+    expect(prompts.length).toBeGreaterThan(0)
+    expect(prompts[0]).toContain('1. Use the fallback path.')
+  })
+
+  it('lists the Issue rulings once each in posting order, then the pull request rulings', async () => {
+    const world = makeWorld()
+    world.issueRulings = ['Issue ruling A.', 'Issue ruling B.']
+    world.rulings = ['Pull request ruling C.']
+    const [prompt] = await reviewerPrompts(world)
+    const a = prompt!.indexOf('1. Issue ruling A.')
+    const b = prompt!.indexOf('2. Issue ruling B.')
+    const c = prompt!.indexOf('3. Pull request ruling C.')
+    expect(a).toBeGreaterThanOrEqual(0)
+    expect(b).toBeGreaterThan(a)
+    expect(c).toBeGreaterThan(b)
+    expect(prompt!.split('Issue ruling A.').length - 1).toBe(1)
+  })
+
+  it('still carries a pull request ruling when the Issue has none', async () => {
+    const world = makeWorld()
+    world.rulings = ['Pull request ruling only.']
+    const [prompt] = await reviewerPrompts(world)
+    expect(prompt).toContain('1. Pull request ruling only.')
+  })
+
+  it('is unchanged with no Issue ruling: the rulings list reads (none)', async () => {
+    const world = makeWorld()
+    const [prompt] = await reviewerPrompts(world)
+    expect(prompt).toContain('(none)')
+  })
+
+  it('falls back to the pull request rulings when the Issue read fails', async () => {
+    const world = makeWorld()
+    world.rulings = ['Pull request ruling survives.']
+    const [prompt] = await reviewerPrompts(world, {
+      // Only the review round's read fails; the Developer's dispatch before it reads fine.
+      fetchIssueRulingsAfterBrief: () => {
+        if ((world.dispatchCountByRole.developer ?? 0) >= 1) throw new Error('gh: transient failure')
+        return []
+      }
+    })
+    expect(prompt).toContain('1. Pull request ruling survives.')
+  })
+
+  it("leaves the manifest's ruling ordinal to the pull request alone", async () => {
+    const world = makeWorld()
+    world.rulingOrdinal = 3
+    world.issueRulings = ['Issue ruling.']
+    const ordinalReads: string[] = []
+    const base = makeInProcessDeps(world)
+    const prompts = await reviewerPrompts(world, {
+      fetchNewestRulingOrdinal: (pr) => {
+        ordinalReads.push(`pr:${pr}`)
+        return base.fetchNewestRulingOrdinal!(pr)
+      },
+      fetchNewestIssueRulingOrdinal: () => {
+        throw new Error('the review round must not read the Issue ruling ordinal')
+      }
+    })
+    expect(prompts.length).toBeGreaterThan(0)
+    expect(ordinalReads.length).toBeGreaterThan(0)
+  })
+})
