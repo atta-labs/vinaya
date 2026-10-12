@@ -284,6 +284,27 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
   { test: 'apps/cli/tests/commands/sync.test.ts', roots: ['apps/cli/src/commands/sync.ts'], trigger: 'content' },
   { test: 'apps/cli/tests/doctrine.test.ts', roots: ['apps/cli/src/index.ts'], trigger: 'content' },
   { test: 'apps/cli/tests/eval/not-shipped.test.ts', roots: ['.'], trigger: 'content' },
+  {
+    test: 'apps/cli/tests/eval/registry.test.ts',
+    roots: [
+      'apps/cli/tests/eval/registry/',
+      'apps/cli/specs/dev-review-evaluation-program.md',
+      'apps/cli/specs/dev-review-evaluation-program.provenance.json'
+    ],
+    trigger: 'listed-files'
+  },
+  {
+    test: 'apps/cli/tests/eval/registry-typed-sources.test.ts',
+    roots: [
+      'apps/cli/tests/eval/registry/',
+      'apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json',
+      'apps/cli/tests/fixtures/dev-review-architecture-invariants.json',
+      'apps/cli/specs/dev-review-engine-capability-matrix.md',
+      'apps/cli/specs/dev-review-engine-state-machine.md',
+      'apps/cli/specs/dev-review-invariants.md'
+    ],
+    trigger: 'listed-files'
+  },
   { test: 'apps/cli/tests/import-boundary.test.ts', roots: ['apps/cli/'], trigger: 'content' },
   {
     test: 'apps/cli/tests/lib/log-entry-paths.test.ts',
