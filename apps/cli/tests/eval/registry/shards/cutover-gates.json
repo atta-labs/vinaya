@@ -1,0 +1,796 @@
+{
+  "schemaVersion": 1,
+  "shard": "cutover-gates",
+  "kinds": ["gate"],
+  "components": [
+    {
+      "id": "gate:1",
+      "kind": "gate",
+      "module": "6.17",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "engineSource": {
+        "document": "apps/cli/specs/dev-review-invariants.md",
+        "revision": 17,
+        "section": "Re-checked against revision 17"
+      },
+      "evidence": "§6.17 packed-consumer suite",
+      "contract": "Engine specification revision 17 §16.18 gate 1, Packed external dependency, is satisfied only by its named evidence: §6.17 packed-consumer suite.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision: the cutover gates of the Engine specification, with the evidence the evaluation program names for each.",
+      "suite": ["engine-boundary.l3@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 1 runs green on the Engine backend."
+        },
+        "negative": {
+          "present": "A case that breaks the guarantee gate 1 names is detected by its evidence."
+        },
+        "refusal": {
+          "notApplicable": "Gate 1 adds no refusal case beyond those its evidence suites already carry."
+        },
+        "recovery": {
+          "notApplicable": "Gate 1 adds no recovery case beyond those its evidence suites already carry."
+        },
+        "adversarial": {
+          "notApplicable": "Gate 1 adds no adversarial case beyond those its evidence suites already carry."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: the named evidence's own graders, unchanged."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: 100% of its evidence on the Engine backend.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14 and §12 gate 1: its evidence (§6.17 packed-consumer suite) is green on the Engine backend before cutover."
+    },
+    {
+      "id": "gate:2",
+      "kind": "gate",
+      "module": "6.1",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "engineSource": {
+        "document": "apps/cli/specs/dev-review-invariants.md",
+        "revision": 17,
+        "section": "Re-checked against revision 17"
+      },
+      "evidence": "Architecture exit test (L1): every guarantee has owner, representation, failure behaviour, executed scenario; plus a recorded review",
+      "contract": "Engine specification revision 17 §16.18 gate 2, Invariant map complete and reviewed, is satisfied only by its named evidence: Architecture exit test (L1): every guarantee has owner, representation, failure behaviour, executed scenario; plus a recorded review. The architecture exit test and its recorded review are L1 evidence outside any module suite; module 6.1 is named as the first L1 module.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision: the cutover gates of the Engine specification, with the evidence the evaluation program names for each.",
+      "suite": ["run-preparation.l1@1", "run-preparation.l2@1", "run-preparation.l3@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 2 runs green on the Engine backend."
+        },
+        "negative": {
+          "present": "A case that breaks the guarantee gate 2 names is detected by its evidence."
+        },
+        "refusal": {
+          "notApplicable": "Gate 2 adds no refusal case beyond those its evidence suites already carry."
+        },
+        "recovery": {
+          "notApplicable": "Gate 2 adds no recovery case beyond those its evidence suites already carry."
+        },
+        "adversarial": {
+          "notApplicable": "Gate 2 adds no adversarial case beyond those its evidence suites already carry."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: the named evidence's own graders, unchanged."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: 100% of its evidence on the Engine backend.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14 and §12 gate 2: its evidence (Architecture exit test (L1): every guarantee has owner, representation, failure behaviour, executed scenario; plus a recorded review) is green on the Engine backend before cutover."
+    },
+    {
+      "id": "gate:3",
+      "kind": "gate",
+      "module": "6.1",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "engineSource": {
+        "document": "apps/cli/specs/dev-review-invariants.md",
+        "revision": 17,
+        "section": "Re-checked against revision 17"
+      },
+      "evidence": "L1 register check: every registered defect carries a disposition (fixed in shared code, or replaced on the Engine path); the defect's task passes on the Engine backend in every case; any standalone failure remains comparison evidence only",
+      "contract": "Engine specification revision 17 §16.18 gate 3, Standalone defects fixed or replaced, is satisfied only by its named evidence: L1 register check: every registered defect carries a disposition (fixed in shared code, or replaced on the Engine path); the defect's task passes on the Engine backend in every case; any standalone failure remains comparison evidence only. The register check is L1 evidence outside any module suite; module 6.1 is named as the first L1 module, and the defect tasks run in the suites of the modules they belong to.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision: the cutover gates of the Engine specification, with the evidence the evaluation program names for each.",
+      "suite": ["run-preparation.l1@1", "run-preparation.l2@1", "run-preparation.l3@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 3 runs green on the Engine backend."
+        },
+        "negative": {
+          "present": "A case that breaks the guarantee gate 3 names is detected by its evidence."
+        },
+        "refusal": {
+          "notApplicable": "Gate 3 adds no refusal case beyond those its evidence suites already carry."
+        },
+        "recovery": {
+          "notApplicable": "Gate 3 adds no recovery case beyond those its evidence suites already carry."
+        },
+        "adversarial": {
+          "notApplicable": "Gate 3 adds no adversarial case beyond those its evidence suites already carry."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: the named evidence's own graders, unchanged."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: 100% of its evidence on the Engine backend.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14 and §12 gate 3: its evidence (L1 register check: every registered defect carries a disposition (fixed in shared code, or replaced on the Engine path); the defect's task passes on the Engine backend in every case; any standalone failure remains comparison evidence only) is green on the Engine backend before cutover."
+    },
+    {
+      "id": "gate:4",
+      "kind": "gate",
+      "module": "6.3",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "engineSource": {
+        "document": "apps/cli/specs/dev-review-invariants.md",
+        "revision": 17,
+        "section": "Re-checked against revision 17"
+      },
+      "evidence": "§6.3, §6.4, §6.8, §6.21, §6.22 on both adapters",
+      "contract": "Engine specification revision 17 §16.18 gate 4, Adapter parity, is satisfied only by its named evidence: §6.3, §6.4, §6.8, §6.21, §6.22 on both adapters. Also modules 6.4, 6.8, 6.21 and 6.22.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision: the cutover gates of the Engine specification, with the evidence the evaluation program names for each.",
+      "suite": ["developer-invocation.l4@1", "developer-invocation.l7@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 4 runs green on the Engine backend."
+        },
+        "negative": {
+          "present": "A case that breaks the guarantee gate 4 names is detected by its evidence."
+        },
+        "refusal": {
+          "notApplicable": "Gate 4 adds no refusal case beyond those its evidence suites already carry."
+        },
+        "recovery": {
+          "notApplicable": "Gate 4 adds no recovery case beyond those its evidence suites already carry."
+        },
+        "adversarial": {
+          "notApplicable": "Gate 4 adds no adversarial case beyond those its evidence suites already carry."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: the named evidence's own graders, unchanged."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: 100% of its evidence on the Engine backend.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14 and §12 gate 4: its evidence (§6.3, §6.4, §6.8, §6.21, §6.22 on both adapters) is green on the Engine backend before cutover."
+    },
+    {
+      "id": "gate:5",
+      "kind": "gate",
+      "module": "6.2",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "engineSource": {
+        "document": "apps/cli/specs/dev-review-invariants.md",
+        "revision": 17,
+        "section": "Re-checked against revision 17"
+      },
+      "evidence": "§6.2",
+      "contract": "Engine specification revision 17 §16.18 gate 5, Controller-owned source evidence, is satisfied only by its named evidence: §6.2.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision: the cutover gates of the Engine specification, with the evidence the evaluation program names for each.",
+      "suite": [
+        "source-delivery.l1@1",
+        "source-delivery.l2@1",
+        "source-delivery.l3@1",
+        "source-delivery.l5@1",
+        "source-delivery.l7@1"
+      ],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 5 runs green on the Engine backend."
+        },
+        "negative": {
+          "present": "A case that breaks the guarantee gate 5 names is detected by its evidence."
+        },
+        "refusal": {
+          "notApplicable": "Gate 5 adds no refusal case beyond those its evidence suites already carry."
+        },
+        "recovery": {
+          "notApplicable": "Gate 5 adds no recovery case beyond those its evidence suites already carry."
+        },
+        "adversarial": {
+          "notApplicable": "Gate 5 adds no adversarial case beyond those its evidence suites already carry."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: the named evidence's own graders, unchanged."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: 100% of its evidence on the Engine backend.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14 and §12 gate 5: its evidence (§6.2) is green on the Engine backend before cutover."
+    },
+    {
+      "id": "gate:6",
+      "kind": "gate",
+      "module": "6.6",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "engineSource": {
+        "document": "apps/cli/specs/dev-review-invariants.md",
+        "revision": 17,
+        "section": "Re-checked against revision 17"
+      },
+      "evidence": "§6.6",
+      "contract": "Engine specification revision 17 §16.18 gate 6, Tool catalog held-out evaluation, is satisfied only by its named evidence: §6.6.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision: the cutover gates of the Engine specification, with the evidence the evaluation program names for each.",
+      "suite": ["tool-catalog.l4@1", "tool-catalog.l5@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 6 runs green on the Engine backend."
+        },
+        "negative": {
+          "present": "A case that breaks the guarantee gate 6 names is detected by its evidence."
+        },
+        "refusal": {
+          "notApplicable": "Gate 6 adds no refusal case beyond those its evidence suites already carry."
+        },
+        "recovery": {
+          "notApplicable": "Gate 6 adds no recovery case beyond those its evidence suites already carry."
+        },
+        "adversarial": {
+          "notApplicable": "Gate 6 adds no adversarial case beyond those its evidence suites already carry."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: the named evidence's own graders, unchanged."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: 100% of its evidence on the Engine backend.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14 and §12 gate 6: its evidence (§6.6) is green on the Engine backend before cutover."
+    },
+    {
+      "id": "gate:7",
+      "kind": "gate",
+      "module": "6.13",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "engineSource": {
+        "document": "apps/cli/specs/dev-review-invariants.md",
+        "revision": 17,
+        "section": "Re-checked against revision 17"
+      },
+      "evidence": "§6.13, §6.14, §13",
+      "contract": "Engine specification revision 17 §16.18 gate 7, Restart, resume, cancellation, uncertain effects, is satisfied only by its named evidence: §6.13, §6.14, §13. Also module 6.14 and §13.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision: the cutover gates of the Engine specification, with the evidence the evaluation program names for each.",
+      "suite": [
+        "governed-effects.l1@1",
+        "governed-effects.l2@1",
+        "governed-effects.l3@1",
+        "governed-effects.l7@1",
+        "governed-effects.l8@1"
+      ],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 7 runs green on the Engine backend."
+        },
+        "negative": {
+          "present": "A case that breaks the guarantee gate 7 names is detected by its evidence."
+        },
+        "refusal": {
+          "notApplicable": "Gate 7 adds no refusal case beyond those its evidence suites already carry."
+        },
+        "recovery": {
+          "notApplicable": "Gate 7 adds no recovery case beyond those its evidence suites already carry."
+        },
+        "adversarial": {
+          "notApplicable": "Gate 7 adds no adversarial case beyond those its evidence suites already carry."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: the named evidence's own graders, unchanged."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: 100% of its evidence on the Engine backend.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14 and §12 gate 7: its evidence (§6.13, §6.14, §13) is green on the Engine backend before cutover."
+    },
+    {
+      "id": "gate:8",
+      "kind": "gate",
+      "module": "6.8",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "engineSource": {
+        "document": "apps/cli/specs/dev-review-invariants.md",
+        "revision": 17,
+        "section": "Re-checked against revision 17"
+      },
+      "evidence": "§6.8, §6.9, §6.10",
+      "contract": "Engine specification revision 17 §16.18 gate 8, Independent, valid, evidence-bound reviews, is satisfied only by its named evidence: §6.8, §6.9, §6.10. Also modules 6.9 and 6.10.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision: the cutover gates of the Engine specification, with the evidence the evaluation program names for each.",
+      "suite": [
+        "reviewer-validity.l1@1",
+        "reviewer-validity.l2@1",
+        "reviewer-validity.l3@1",
+        "reviewer-validity.l4@1",
+        "reviewer-validity.l7@1"
+      ],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 8 runs green on the Engine backend."
+        },
+        "negative": {
+          "present": "A case that breaks the guarantee gate 8 names is detected by its evidence."
+        },
+        "refusal": {
+          "notApplicable": "Gate 8 adds no refusal case beyond those its evidence suites already carry."
+        },
+        "recovery": {
+          "notApplicable": "Gate 8 adds no recovery case beyond those its evidence suites already carry."
+        },
+        "adversarial": {
+          "notApplicable": "Gate 8 adds no adversarial case beyond those its evidence suites already carry."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: the named evidence's own graders, unchanged."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: 100% of its evidence on the Engine backend.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14 and §12 gate 8: its evidence (§6.8, §6.9, §6.10) is green on the Engine backend before cutover."
+    },
+    {
+      "id": "gate:9",
+      "kind": "gate",
+      "module": "6.13",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "engineSource": {
+        "document": "apps/cli/specs/dev-review-invariants.md",
+        "revision": 17,
+        "section": "Re-checked against revision 17"
+      },
+      "evidence": "§6.13 shadow tasks; L8",
+      "contract": "Engine specification revision 17 §16.18 gate 9, Shadow mode cannot mutate, is satisfied only by its named evidence: §6.13 shadow tasks; L8. Also layer L8.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision: the cutover gates of the Engine specification, with the evidence the evaluation program names for each.",
+      "suite": [
+        "governed-effects.l1@1",
+        "governed-effects.l2@1",
+        "governed-effects.l3@1",
+        "governed-effects.l7@1",
+        "governed-effects.l8@1"
+      ],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 9 runs green on the Engine backend."
+        },
+        "negative": {
+          "present": "A case that breaks the guarantee gate 9 names is detected by its evidence."
+        },
+        "refusal": {
+          "notApplicable": "Gate 9 adds no refusal case beyond those its evidence suites already carry."
+        },
+        "recovery": {
+          "notApplicable": "Gate 9 adds no recovery case beyond those its evidence suites already carry."
+        },
+        "adversarial": {
+          "notApplicable": "Gate 9 adds no adversarial case beyond those its evidence suites already carry."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: the named evidence's own graders, unchanged."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: 100% of its evidence on the Engine backend.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14 and §12 gate 9: its evidence (§6.13 shadow tasks; L8) is green on the Engine backend before cutover."
+    },
+    {
+      "id": "gate:10",
+      "kind": "gate",
+      "module": "6.16",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "engineSource": {
+        "document": "apps/cli/specs/dev-review-invariants.md",
+        "revision": 17,
+        "section": "Re-checked against revision 17"
+      },
+      "evidence": "§6.16",
+      "contract": "Engine specification revision 17 §16.18 gate 10, Log correlation, redaction, non-blocking outage, is satisfied only by its named evidence: §6.16.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision: the cutover gates of the Engine specification, with the evidence the evaluation program names for each.",
+      "suite": ["observability.l2@1", "observability.l3@1", "observability.l7@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 10 runs green on the Engine backend."
+        },
+        "negative": {
+          "present": "A case that breaks the guarantee gate 10 names is detected by its evidence."
+        },
+        "refusal": {
+          "notApplicable": "Gate 10 adds no refusal case beyond those its evidence suites already carry."
+        },
+        "recovery": {
+          "notApplicable": "Gate 10 adds no recovery case beyond those its evidence suites already carry."
+        },
+        "adversarial": {
+          "notApplicable": "Gate 10 adds no adversarial case beyond those its evidence suites already carry."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: the named evidence's own graders, unchanged."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: 100% of its evidence on the Engine backend.",
+      "cadence": ["every-affected-change", "scheduled-live", "pre-release"],
+      "migrationGate": "§14 and §12 gate 10: its evidence (§6.16) is green on the Engine backend before cutover."
+    },
+    {
+      "id": "gate:11",
+      "kind": "gate",
+      "module": "6.14",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "engineSource": {
+        "document": "apps/cli/specs/dev-review-invariants.md",
+        "revision": 17,
+        "section": "Re-checked against revision 17"
+      },
+      "evidence": "§6.14, §6.23",
+      "contract": "Engine specification revision 17 §16.18 gate 11, Operator actions on authoritative state (inspect, resume, cancel; halt is controller run control), is satisfied only by its named evidence: §6.14, §6.23. Also module 6.23.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision: the cutover gates of the Engine specification, with the evidence the evaluation program names for each.",
+      "suite": ["run-control.l2@1", "run-control.l3@1", "run-control.l4@1", "run-control.l7@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 11 runs green on the Engine backend."
+        },
+        "negative": {
+          "present": "A case that breaks the guarantee gate 11 names is detected by its evidence."
+        },
+        "refusal": {
+          "notApplicable": "Gate 11 adds no refusal case beyond those its evidence suites already carry."
+        },
+        "recovery": {
+          "notApplicable": "Gate 11 adds no recovery case beyond those its evidence suites already carry."
+        },
+        "adversarial": {
+          "notApplicable": "Gate 11 adds no adversarial case beyond those its evidence suites already carry."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: the named evidence's own graders, unchanged."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: 100% of its evidence on the Engine backend.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14 and §12 gate 11: its evidence (§6.14, §6.23) is green on the Engine backend before cutover."
+    },
+    {
+      "id": "gate:12",
+      "kind": "gate",
+      "module": "6.10",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "engineSource": {
+        "document": "apps/cli/specs/dev-review-invariants.md",
+        "revision": 17,
+        "section": "Re-checked against revision 17"
+      },
+      "evidence": "L8 with §10 floors; §6.10",
+      "contract": "Engine specification revision 17 §16.18 gate 12, Canary thresholds; no open critical or high finding, is satisfied only by its named evidence: L8 with §10 floors; §6.10. Also layer L8 with the §10 floors.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision: the cutover gates of the Engine specification, with the evidence the evaluation program names for each.",
+      "suite": ["security-reviewer-quality.l5@1", "security-reviewer-quality.l7@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 12 runs green on the Engine backend."
+        },
+        "negative": {
+          "present": "A case that breaks the guarantee gate 12 names is detected by its evidence."
+        },
+        "refusal": {
+          "notApplicable": "Gate 12 adds no refusal case beyond those its evidence suites already carry."
+        },
+        "recovery": {
+          "notApplicable": "Gate 12 adds no recovery case beyond those its evidence suites already carry."
+        },
+        "adversarial": {
+          "notApplicable": "Gate 12 adds no adversarial case beyond those its evidence suites already carry."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: the named evidence's own graders, unchanged."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: 100% of its evidence on the Engine backend.",
+      "cadence": ["every-affected-change", "scheduled-live", "pre-release"],
+      "migrationGate": "§14 and §12 gate 12: its evidence (L8 with §10 floors; §6.10) is green on the Engine backend before cutover."
+    },
+    {
+      "id": "gate:13",
+      "kind": "gate",
+      "module": "6.20",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "engineSource": {
+        "document": "apps/cli/specs/dev-review-invariants.md",
+        "revision": 17,
+        "section": "Re-checked against revision 17"
+      },
+      "evidence": "§6.20 backend selection and rollback suite; live rehearsal record",
+      "contract": "Engine specification revision 17 §16.18 gate 13, Rollback rehearsed and documented, is satisfied only by its named evidence: §6.20 backend selection and rollback suite; live rehearsal record. Also a live rehearsal record.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision: the cutover gates of the Engine specification, with the evidence the evaluation program names for each.",
+      "suite": ["backend-selection.l2@1", "backend-selection.l3@1", "backend-selection.l6@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 13 runs green on the Engine backend."
+        },
+        "negative": {
+          "present": "A case that breaks the guarantee gate 13 names is detected by its evidence."
+        },
+        "refusal": {
+          "notApplicable": "Gate 13 adds no refusal case beyond those its evidence suites already carry."
+        },
+        "recovery": {
+          "notApplicable": "Gate 13 adds no recovery case beyond those its evidence suites already carry."
+        },
+        "adversarial": {
+          "notApplicable": "Gate 13 adds no adversarial case beyond those its evidence suites already carry."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: the named evidence's own graders, unchanged."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: 100% of its evidence on the Engine backend.",
+      "cadence": ["every-affected-change", "scheduled-live", "pre-release"],
+      "migrationGate": "§14 and §12 gate 13: its evidence (§6.20 backend selection and rollback suite; live rehearsal record) is green on the Engine backend before cutover."
+    },
+    {
+      "id": "gate:14",
+      "kind": "gate",
+      "module": "6.15",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "engineSource": {
+        "document": "apps/cli/specs/dev-review-invariants.md",
+        "revision": 17,
+        "section": "Re-checked against revision 17"
+      },
+      "evidence": "§6.15, every case green on the Engine backend; no known-failure entry admitted",
+      "contract": "Engine specification revision 17 §16.18 gate 14, Worktree code cannot reach forge credentials, is satisfied only by its named evidence: §6.15, every case green on the Engine backend; no known-failure entry admitted. For this gate every case is green on the Engine backend and no known-failure entry is admitted.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision: the cutover gates of the Engine specification, with the evidence the evaluation program names for each.",
+      "suite": ["isolation.l4@1", "isolation.l7@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 14 runs green on the Engine backend."
+        },
+        "negative": {
+          "present": "A case that breaks the guarantee gate 14 names is detected by its evidence."
+        },
+        "refusal": {
+          "notApplicable": "Gate 14 adds no refusal case beyond those its evidence suites already carry."
+        },
+        "recovery": {
+          "notApplicable": "Gate 14 adds no recovery case beyond those its evidence suites already carry."
+        },
+        "adversarial": {
+          "notApplicable": "Gate 14 adds no adversarial case beyond those its evidence suites already carry."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: the named evidence's own graders, unchanged."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: 100% of the §6.15 cases; every case is green on the Engine backend and no known-failure entry is admitted.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14 and §12 gate 14: its evidence (§6.15, every case green on the Engine backend; no known-failure entry admitted) is green on the Engine backend before cutover. No known-failure entry is admitted."
+    },
+    {
+      "id": "gate:15",
+      "kind": "gate",
+      "module": "6.15",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "engineSource": {
+        "document": "apps/cli/specs/dev-review-invariants.md",
+        "revision": 17,
+        "section": "Re-checked against revision 17"
+      },
+      "evidence": "§6.15, every case green on the Engine backend; no known-failure entry admitted",
+      "contract": "Engine specification revision 17 §16.18 gate 15, Per-dispatch capability on every tool call, is satisfied only by its named evidence: §6.15, every case green on the Engine backend; no known-failure entry admitted. For this gate every case is green on the Engine backend and no known-failure entry is admitted.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision: the cutover gates of the Engine specification, with the evidence the evaluation program names for each.",
+      "suite": ["isolation.l4@1", "isolation.l7@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 15 runs green on the Engine backend."
+        },
+        "negative": {
+          "present": "A case that breaks the guarantee gate 15 names is detected by its evidence."
+        },
+        "refusal": {
+          "notApplicable": "Gate 15 adds no refusal case beyond those its evidence suites already carry."
+        },
+        "recovery": {
+          "notApplicable": "Gate 15 adds no recovery case beyond those its evidence suites already carry."
+        },
+        "adversarial": {
+          "notApplicable": "Gate 15 adds no adversarial case beyond those its evidence suites already carry."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: the named evidence's own graders, unchanged."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: 100% of the §6.15 cases; every case is green on the Engine backend and no known-failure entry is admitted.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14 and §12 gate 15: its evidence (§6.15, every case green on the Engine backend; no known-failure entry admitted) is green on the Engine backend before cutover. No known-failure entry is admitted."
+    },
+    {
+      "id": "gate:16",
+      "kind": "gate",
+      "module": "6.17",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "engineSource": {
+        "document": "apps/cli/specs/dev-review-invariants.md",
+        "revision": 17,
+        "section": "Re-checked against revision 17"
+      },
+      "evidence": "§6.17",
+      "contract": "Engine specification revision 17 §16.18 gate 16, Public start and resume accept Vinaya's executor, is satisfied only by its named evidence: §6.17.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision: the cutover gates of the Engine specification, with the evidence the evaluation program names for each.",
+      "suite": ["engine-boundary.l3@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 16 runs green on the Engine backend."
+        },
+        "negative": {
+          "present": "A case that breaks the guarantee gate 16 names is detected by its evidence."
+        },
+        "refusal": {
+          "notApplicable": "Gate 16 adds no refusal case beyond those its evidence suites already carry."
+        },
+        "recovery": {
+          "notApplicable": "Gate 16 adds no recovery case beyond those its evidence suites already carry."
+        },
+        "adversarial": {
+          "notApplicable": "Gate 16 adds no adversarial case beyond those its evidence suites already carry."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: the named evidence's own graders, unchanged."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: 100% of its evidence on the Engine backend.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14 and §12 gate 16: its evidence (§6.17) is green on the Engine backend before cutover."
+    },
+    {
+      "id": "gate:17",
+      "kind": "gate",
+      "module": "6.24",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 11,
+        "section": "12. Cutover gate coverage"
+      },
+      "engineSource": {
+        "document": "apps/cli/specs/dev-review-invariants.md",
+        "revision": 17,
+        "section": "Re-checked against revision 17"
+      },
+      "evidence": "§6.24 cutover authorization evidence suite; the decision itself stays the Principal's",
+      "contract": "Engine specification revision 17 §16.18 gate 17, Principal approval, is satisfied only by its named evidence: §6.24 cutover authorization evidence suite; the decision itself stays the Principal's. The decision itself stays the Principal's; its evidence is the cutover authorization suite (§6.24), which validates the approval's authority and binding.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision: the cutover gates of the Engine specification, with the evidence the evaluation program names for each.",
+      "suite": ["cutover-authorization.l1@1", "cutover-authorization.l2@1"],
+      "tasks": {
+        "positive": {
+          "present": "The named evidence for gate 17 runs green on the Engine backend."
+        },
+        "negative": {
+          "present": "A case that breaks the guarantee gate 17 names is detected by its evidence."
+        },
+        "refusal": {
+          "notApplicable": "Gate 17 adds no refusal case beyond those its evidence suites already carry."
+        },
+        "recovery": {
+          "notApplicable": "Gate 17 adds no recovery case beyond those its evidence suites already carry."
+        },
+        "adversarial": {
+          "notApplicable": "Gate 17 adds no adversarial case beyond those its evidence suites already carry."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: the named evidence's own graders, unchanged."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: 100% of the cutover authorization suite; the approval itself is the Principal's decision.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14 and §12 gate 17: its evidence (§6.24 cutover authorization evidence suite; the decision itself stays the Principal's) is green on the Engine backend before cutover. The decision itself stays the Principal's."
+    }
+  ]
+}
