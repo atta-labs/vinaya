@@ -19,19 +19,22 @@
  */
 
 import {
+  closeSync,
+  constants,
   cpSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  openSync,
   readlinkSync,
   realpathSync,
   rmSync,
   statSync,
-  writeFileSync
+  writeSync
 } from 'node:fs'
-import { dirname, join, relative } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import {
   AGENT_STATE_DIRS,
   type CloneStaging,
@@ -315,6 +318,16 @@ function cloneFindings(staging: CloneStaging): ContaminationFinding[] {
   if (lstatExists(join(gitDir, 'info', 'grafts'))) finding('graft', 'info/grafts', 'grafts rewrite the visible history')
   if (lstatExists(join(gitDir, 'shallow'))) finding('shallow', 'shallow', 'a shallow boundary hides history')
 
+  // Remotes git still reads from legacy files rather than configuration.
+  for (const legacy of ['remotes', 'branches']) {
+    const dir = join(gitDir, legacy)
+    if (!lstatExists(dir)) continue
+    finding('remote_configured', legacy, `the git directory holds ${legacy}/, which can define a remote`)
+    for (const name of readdirSync(dir)) {
+      finding('remote_configured', `${legacy}/${name}`, `${legacy}/${name} defines a remote outside configuration`)
+    }
+  }
+
   // Configuration: only the entries a fresh repository needs.
   for (const { key, value } of localConfig(staging.workspace, gitDir)) {
     const code = configCode(key)
@@ -573,6 +586,8 @@ export interface SnapshotAttribution {
   trialId: string
   /** Paths whose content differs from the base tree, or that it lacks. */
   created: string[]
+  /** Base-tree paths the trial removed. */
+  deleted: string[]
   unattributable: Array<{ path: string; reason: 'hidden_input' }>
   attributable: boolean
 }
@@ -597,10 +612,12 @@ export function attributeTrialObjects(staging: Staging, hidden: HiddenInputs): A
     const unattributable = created
       .filter((path) => hiddenIds.has((observed.entries.get(path) as string).split(' ')[1] as string))
       .map((path) => ({ path, reason: 'hidden_input' as const }))
+    const deleted = [...expected.keys()].filter((path) => !observed.entries.has(path)).sort()
     return {
       kind: 'snapshot',
       trialId: staging.trialId,
       created,
+      deleted,
       unattributable,
       attributable: unattributable.length === 0
     }
@@ -645,6 +662,40 @@ export function attributeTrialObjects(staging: Staging, hidden: HiddenInputs): A
 }
 
 // ── After the trial: the grading copy ───────────────────────────────────────
+
+/**
+ * Writes `content` at `rel` below `root` without following any symlink the
+ * trial left: each existing directory on the way must be a real directory,
+ * a missing one is created, and the file itself is opened with `O_NOFOLLOW`
+ * and must be absent or a regular file. Otherwise the write is refused, so a
+ * hidden input never lands outside the grading copy.
+ */
+function writeInside(root: string, rel: string, content: string | Uint8Array): void {
+  const parts = rel.split(sep)
+  let dir = root
+  for (const part of parts.slice(0, -1)) {
+    dir = join(dir, part)
+    const stat = lstatSync(dir, { throwIfNoEntry: false })
+    if (stat === undefined) mkdirSync(dir)
+    else if (!stat.isDirectory()) {
+      throw new StagingError('bad_hidden_path', `${relative(root, dir)} in the grading copy is not a real directory`)
+    }
+  }
+  const target = join(dir, parts[parts.length - 1] as string)
+  const stat = lstatSync(target, { throwIfNoEntry: false })
+  if (stat !== undefined && !stat.isFile()) {
+    throw new StagingError('bad_hidden_path', `${rel} in the grading copy is not a regular file`)
+  }
+  if (!isInside(realpathSync(dir), realpathSync(root))) {
+    throw new StagingError('bad_hidden_path', `${rel} resolves outside the grading copy`)
+  }
+  const fd = openSync(target, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o644)
+  try {
+    writeSync(fd, typeof content === 'string' ? Buffer.from(content) : content)
+  } finally {
+    closeSync(fd)
+  }
+}
 
 export interface GradingCopyRequest {
   staging: Staging
@@ -721,11 +772,7 @@ export function prepareGradingCopy(request: GradingCopyRequest): GradingCopy {
     } else {
       writeSnapshot(staging.sourceRepository, staging.manifest, copy)
     }
-    for (const [rel, content] of targets) {
-      const target = join(copy, rel)
-      mkdirSync(dirname(target), { recursive: true })
-      writeFileSync(target, content)
-    }
+    for (const [rel, content] of targets) writeInside(copy, rel, content)
     return { trialId: staging.trialId, apply, path: copy, written: targets.map(([rel]) => rel).sort() }
   } catch (error) {
     rmSync(path, { recursive: true, force: true })

@@ -329,6 +329,20 @@ describe('the contamination test refuses each planted contamination', () => {
     expect(report.findings.find((f) => f.code === 'remote_configured')?.subject).toBe('remote.origin.url')
   })
 
+  it('a remote defined in the legacy remotes or branches files', () => {
+    for (const legacy of ['remotes', 'branches']) {
+      const staging = stageClone()
+      mkdirSync(join(staging.gitDir, legacy))
+      writeFileSync(
+        join(staging.gitDir, legacy, 'origin'),
+        legacy === 'remotes' ? `URL: ${source}\nPull: main\n` : `${source}\n`
+      )
+      const report = testContamination(staging, HIDDEN)
+      expectRefused(report, 'remote_configured')
+      expect(report.findings.map((f) => f.subject)).toContain(`${legacy}/origin`)
+    }
+  })
+
   it('a configuration include and an unexpected setting', () => {
     const staging = stageClone()
     git(staging.workspace, ['config', 'include.path', '/elsewhere'])
@@ -566,6 +580,46 @@ describe('after the trial', () => {
     ).toThrow(StagingError)
   })
 
+  it('never follows a symlink the trial left on a hidden input’s path', () => {
+    const outside = freshDir('symlink-target')
+    for (const plant of ['directory', 'file'] as const) {
+      const staging = stageClone()
+      mkdirSync(join(staging.workspace, 'tests'), { recursive: true })
+      if (plant === 'directory') {
+        rmSync(join(staging.workspace, 'tests'), { recursive: true })
+        symlinkSync(outside, join(staging.workspace, 'tests'))
+      } else {
+        symlinkSync(join(outside, 'victim.ts'), join(staging.workspace, 'tests', 'hidden.test.ts'))
+      }
+      commitAll(staging.workspace, `symlink ${plant}`)
+      const attribution = attributeTrialObjects(staging, HIDDEN)
+      expect(attribution.attributable).toBe(true)
+      expect(() =>
+        prepareGradingCopy({
+          staging,
+          attribution,
+          hidden: HIDDEN,
+          parentDirectory: freshDir('grading'),
+          apply: 'fail-to-pass'
+        })
+      ).toThrow(StagingError)
+      expect(readdirSync(outside)).toEqual([])
+    }
+
+    const snapshot = stageSnapshot()
+    symlinkSync(outside, join(snapshot.workspace, 'tests'))
+    expect(() =>
+      prepareGradingCopy({
+        staging: snapshot,
+        attribution: attributeTrialObjects(snapshot, HIDDEN),
+        hidden: HIDDEN,
+        parentDirectory: freshDir('grading'),
+        apply: 'fail-to-pass'
+      })
+    ).toThrow(StagingError)
+    expect(readdirSync(outside)).toEqual([])
+  })
+
   it('attributes a snapshot trial’s changed files, refusing a hidden input among them', () => {
     const staging = stageSnapshot()
     writeFileSync(join(staging.workspace, 'src', 'parse.ts'), 'export const parse = () => "attempt"\n')
@@ -573,9 +627,14 @@ describe('after the trial', () => {
       kind: 'snapshot',
       trialId: staging.trialId,
       created: ['src/parse.ts'],
+      deleted: [],
       unattributable: [],
       attributable: true
     })
+    rmSync(join(staging.workspace, 'src', 'util.ts'))
+    const afterDelete = attributeTrialObjects(staging, HIDDEN)
+    if (afterDelete.kind !== 'snapshot') throw new Error('expected a snapshot attribution')
+    expect(afterDelete.deleted).toEqual(['src/util.ts'])
     writeFileSync(join(staging.workspace, 'copied.ts'), HIDDEN.referenceSolution['src/parse.ts'] as string)
     expect(attributeTrialObjects(staging, HIDDEN).unattributable).toEqual([
       { path: 'copied.ts', reason: 'hidden_input' }
