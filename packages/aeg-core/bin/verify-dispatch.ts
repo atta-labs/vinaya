@@ -1438,7 +1438,7 @@ function resolvePriorTaskRaw(tranche: Tranche, taskId: string): Task | null {
 /** `--existing-work`: the caller resumes this task's existing worktree (the review-loop driver), so commits already ahead of main are expected and never refuse dispatch. */
 const EXISTING_WORK = process.argv.includes('--existing-work')
 
-if (isEntryPoint(import.meta.url)) {
+if (isEntryPoint(import.meta.url, 'verify-dispatch')) {
   const argv = process.argv.slice(2)
 
   // `--issue <n>` (task-run-v1 task 15, O1) — a backlog Issue with no

@@ -123,6 +123,6 @@ function main(): void {
 
 // Guarded so this module can be imported by unit tests without executing the
 // check. Spawned as a bin (the only way it runs for real) this is still true.
-if (isEntryPoint(import.meta.url)) {
+if (isEntryPoint(import.meta.url, 'check-pr-premise-reassert')) {
   main()
 }
