@@ -57,6 +57,7 @@
  * which files this bin ever hands the scanner, not in the scanner itself.
  */
 
+import { isEntryPoint } from '@attalabs/aeg-core'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { findWorkspaceEscapes, type WorkspaceEscapeSourceFile } from '@attalabs/aeg-core'
@@ -156,6 +157,6 @@ function main(): void {
 // Guarded so this module can be imported by unit tests (for `isTestFile`)
 // without executing the check. Spawned as a bin (the only way it runs for
 // real) this is still true.
-if (import.meta.main) {
+if (isEntryPoint(import.meta.url)) {
   main()
 }

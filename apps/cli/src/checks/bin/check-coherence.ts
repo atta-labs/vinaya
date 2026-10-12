@@ -24,6 +24,7 @@
  * scope: full — reads the live forge, not the local diff.
  */
 
+import { isEntryPoint } from '@attalabs/aeg-core'
 import { execFile, execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -341,6 +342,6 @@ async function main(): Promise<void> {
 
 // Guarded so this module can be imported by unit tests without executing the
 // check. Spawned as a bin (the only way it runs for real) this is still true.
-if (import.meta.main) {
+if (isEntryPoint(import.meta.url)) {
   main()
 }

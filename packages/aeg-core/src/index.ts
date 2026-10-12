@@ -1,3 +1,4 @@
+export { isEntryPoint } from './entry-point'
 export * from './types'
 export type { StateSource } from './state-source'
 export type { DoctrineContent, DoctrineSource } from './doctrine-source'
