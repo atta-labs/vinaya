@@ -3504,7 +3504,10 @@ export function isNonPublicHost(hostname: string): boolean {
 }
 
 /** What an unauthenticated fetch of a Documentation URL came to. */
-export type DocumentationProbe = { kind: 'readable' } | { kind: 'unreadable'; detail: string } | { kind: 'unknown' }
+export type DocumentationProbe =
+  | { kind: 'readable' }
+  | { kind: 'unreadable'; detail: string }
+  | { kind: 'unknown'; reason?: 'rate-limited' }
 
 const DOCUMENTATION_URL_RE = /https?:\/\/[^\s<>()`'"\]]+/g
 
@@ -3583,6 +3586,10 @@ export function checkDocumentationReadable(
     if (result.kind === 'unreadable') {
       errors.push(
         `issue-validation Documentation/readable: \`${url}\` is not publicly readable (${result.detail}) — an unauthenticated fetch must answer with a success status on its own host. Put that knowledge in an in-repository spec and cite the spec instead.`
+      )
+    } else if (result.kind === 'unknown' && result.reason === 'rate-limited') {
+      warnings.push(
+        `issue-validation Documentation/readable: \`${url}\` answered with a rate limit, so its public readability was not checked now. It is re-checked on the next gate run; confirm by hand that it answers an unauthenticated fetch if the limit persists.`
       )
     } else if (result.kind === 'unknown') {
       warnings.push(
