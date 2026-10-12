@@ -123,6 +123,19 @@ The first shard, `typed-sources.json`, covers the kinds a typed repository sourc
 
 Each row's owner is its typed source's owner read into the program's vocabulary — `engine-runtime` is `engine`, `provider-adapter` is `adapter`, `governed-operation` is `governed-effect`, and `vinaya-policy`, `log` and `operator-control` are `vinaya-policy`, since the capability matrix gives Vinaya the Log and the Operator controls; ports and transitions are `vinaya-policy`, which the matrix names as owner of the five core ports and the legal transitions. Each row cites a heading of its source document at that revision, and the test checks the heading exists. The shard says nothing about roles, tools, effects, adapters, isolation boundaries, gates, faults or attacks; later shards add them.
 
+The second shard, `contract-kinds.json`, covers the kinds stated in the contract specifications and typed tool lists. `apps/cli/tests/eval/registry/contract-kinds-universe.ts` derives each universe from its source, and refuses when two sources that state one universe disagree:
+
+| Kind | Universe | Source |
+| -- | -- | -- |
+| `role` | the grant table's roles | `apps/cli/specs/dev-review-capabilities-contracts.md` §3 |
+| `tool` | `DEV_TOOL_NAMES`, matched against the §4.1 table; the planned `read_source` of §4.2; `TASK_TOOL_NAMES`, the Operator's five tools and its pull-request read | `apps/cli/src/lib/task-tools/dev-tools-server.ts`, `packages/aeg-core/src/task-tools.ts`, the contracts specification |
+| `effect` | each §4.1 tool marked as a write, and the controller's own publications named in the evaluation program's §6.12 and §6.13 | the contracts specification and the evaluation program |
+| `adapter` | `adapters` | `apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json` |
+| `isolation-boundary` | the six rows of the boundary table | `apps/cli/specs/isolation.md` §1 |
+| `gate` | the workflow-gate list | the contracts specification §7 |
+
+Each row cites the section that states its component: an evaluation-program section at the mirror's revision, and any other specification at the Engine revision the register is pinned to. The `read_source` row says it is planned, not live. `apps/cli/tests/eval/registry-contract-kinds.test.ts` fails on any missing, extra or invalid row, and checks that the shard aggregates with the others without a duplicate id.
+
 `apps/cli/tests/eval/registry.test.ts` checks the catalog against the mirror — one entry per `### 6.n` heading, the ten fields of its table in order, one suite per listed layer, the mirror's revision — and every refusal above; the typed-sources test prints the per-kind counts and fails on any missing, extra or invalid row.
 
 ## Failure taxonomy
