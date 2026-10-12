@@ -4422,19 +4422,32 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     /**
-     * O7: resolve the task branch's base (its merge base with the default
-     * branch) once, lazily, recording it the first time — a base that changes
-     * between turns means the branch was re-pointed, which the publication
-     * check refuses. Never throws.
+     * O7: read the task branch's base (its merge base with the default
+     * branch) for `worktreeHead`, recording nothing — the publication check
+     * compares it against the base recorded before the attempt, so a refused
+     * attempt never moves that expectation. Never throws.
+     */
+    async function readPublicationBase(worktreeHead: string | null): Promise<string | null> {
+      if (worktreeHead === null) return publicationExpectedBase
+      try {
+        return await d.gitMergeBase(worktreeHead)
+      } catch {
+        return null
+      }
+    }
+
+    /**
+     * O7: read the task branch's base and record it as the expected base when
+     * none is recorded yet or it descends from the recorded one — the base a
+     * merge from the default branch legitimately moves forward. Called only at
+     * a Developer turn start and after a publication that pushed, never from
+     * the publication check's input, so a refused rebase cannot advance it.
+     * A base that changes any other way means the branch was re-pointed, which
+     * the publication check refuses. Never throws.
      */
     async function resolvePublicationBase(worktreeHead: string | null): Promise<string | null> {
       if (worktreeHead === null) return publicationExpectedBase
-      let base: string | null = null
-      try {
-        base = await d.gitMergeBase(worktreeHead)
-      } catch {
-        base = null
-      }
+      const base = await readPublicationBase(worktreeHead)
       if (base !== null && (publicationExpectedBase === null || d.gitIsAncestor(publicationExpectedBase, base))) {
         publicationExpectedBase = base
       }
@@ -4541,6 +4554,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         return changed.length > 0 ? changed : null
       }
       let driverUnpushedCommit: { sha: string; parent: string | null } | null = null
+      // The base of `driverUnpushedCommit` — a merge commit the driver made
+      // moves it past the recorded base, and retrying that same head is no
+      // re-pointed branch.
+      let driverUnpushedCommitBase: string | null = null
       // The remote's default-branch tip, read only when the head moved and
       // equals it — the one case the fast-forward exception can accept.
       const readFastForwardTip = (
@@ -4560,7 +4577,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const deps: DeveloperDevToolDeps = {
         readPublicationCheckInput: async () => {
           const worktreeHead = d.readWorktreeHead(worktree)
-          const base = await resolvePublicationBase(worktreeHead)
+          const base = await readPublicationBase(worktreeHead)
           const defaultBranchTip = readFastForwardTip(worktreeHead)
           // A fast-forward onto the default branch's tip re-records the base
           // and the head at that tip, here, so this check and every later one
@@ -4580,7 +4597,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             driverUnpushedCommit,
             defaultBranchTip,
             base,
-            expectedBase: publicationExpectedBase,
+            expectedBase:
+              driverUnpushedCommit !== null &&
+              worktreeHead === driverUnpushedCommit.sha &&
+              driverUnpushedCommitBase !== null
+                ? driverUnpushedCommitBase
+                : publicationExpectedBase,
             changedPaths: worktreeChangedPaths(),
             surface: d.resolveTaskSurface ? d.resolveTaskSurface(task) : null
           }
@@ -4653,6 +4675,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             if (unpushed.dirtyFiles.length > 0) {
               turnPreHead = localHead
               driverUnpushedCommit = { sha: localHead, parent: remoteHeadBefore }
+              driverUnpushedCommitBase = await readPublicationBase(localHead)
             }
             const changedPaths = publicationChangedPaths(publicationRange(remoteHeadBefore))
             const push = d.pushTaskBranch({
@@ -4681,6 +4704,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             lastPushRefusal = null
           }
           driverUnpushedCommit = null
+          driverUnpushedCommitBase = null
           publicationFastForwardBase = null
           const pushedHead = d.readWorktreeHead(worktree) ?? localHead ?? ''
           // A successful commit+push advances the worktree head. Move the
@@ -4690,6 +4714,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // `recordedHead`) rather than refusing on the very commit this tool
           // just made — a Developer may publish more than once per turn.
           if (pushedHead) turnPreHead = pushedHead
+          // The publication pushed, so a base it moved forward (a merge from
+          // the default branch) becomes the one later checks expect.
+          if (pushedHead) await resolvePublicationBase(pushedHead)
           await syncBeyondSurfaceRecord(prNumberNow())
           return { ok: true, result: { pushedHead } }
         },

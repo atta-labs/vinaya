@@ -590,6 +590,110 @@ describe('publication range after a default-branch merge', () => {
   })
 })
 
+describe('a refused publication never advances the recorded base', () => {
+  const turnStartHead = 'a'.repeat(40)
+  const recordedBase = 'b'.repeat(40)
+  const newerTip = 'e'.repeat(40)
+  const rebasedHead = 'd'.repeat(40)
+  type Outcome = { ok: true } | { ok: false; check: string; output: string }
+
+  /** Runs one Developer turn whose `attempts` each prepare the worktree and call `publish_changes`, returning every outcome. */
+  async function publishAttempts(
+    world: ReturnType<typeof makeWorld>,
+    mergeBaseOf: (head: string) => string,
+    attempts: (() => void)[]
+  ): Promise<Outcome[]> {
+    mkdirSync(join(world.repoRoot, '.worktrees', world.branch), { recursive: true })
+    const baseDeps = makeInProcessDeps(world)
+    const outcomes: Outcome[] = []
+    let dispatched = false
+    await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex' },
+      {
+        ...baseDeps,
+        gitMergeBase: async (head) => mergeBaseOf(head),
+        // The newer default-branch tip descends from the recorded base.
+        gitIsAncestor: (ancestor, descendant) =>
+          ancestor === descendant || (ancestor === recordedBase && descendant === newerTip),
+        dispatchRole: async (role, agent, prompt, opts) => {
+          if (role !== 'developer' || dispatched) return baseDeps.dispatchRole!(role, agent, prompt, opts)
+          dispatched = true
+          for (const prepare of attempts) {
+            prepare()
+            const result = await world.devToolContext!.publishChanges('Fix(cli): publish the turn')
+            outcomes.push(
+              result.ok ? { ok: true } : { ok: false, check: result.error.check, output: result.error.output }
+            )
+          }
+          if (outcomes.some((o) => o.ok)) {
+            await world.devToolContext!.openPullRequest(world.issueTitle, '## Scope\n\n**Tier:** 3\n')
+          }
+          return {
+            exitCode: 0,
+            durationMs: 1,
+            usage: null,
+            resumeId: 'dev',
+            timedOut: false,
+            effectId: 'dev',
+            turnOutput: defaultDeveloperTurnOutput(prompt)
+          }
+        }
+      }
+    )
+    return outcomes
+  }
+
+  it('refuses a rebase onto a newer tip by the base check, then publishes the reset turn-start head against the turn-start base', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    world.worktreeHead = turnStartHead
+    world.worktreeChangedPaths = ['apps/cli/src/lib/x.ts']
+    const outcomes = await publishAttempts(world, (head) => (head === rebasedHead ? newerTip : recordedBase), [
+      () => {
+        // The Developer rebases its work onto the newer default-branch tip.
+        world.worktreeHead = rebasedHead
+        world.worktreeDirty = ['apps/cli/src/lib/x.ts']
+      },
+      () => {
+        // It undoes the rebase, back to the head the turn started from.
+        world.worktreeHead = turnStartHead
+      }
+    ])
+
+    expect(outcomes[0]).toEqual({
+      ok: false,
+      check: 'publication-preconditions',
+      output: expect.stringContaining(
+        `the worktree branch's base is \`${newerTip}\`, not the expected base \`${recordedBase}\``
+      )
+    })
+    expect(outcomes[1]).toEqual({ ok: true })
+    expect(world.commits).toHaveLength(1)
+    expect(world.pushes).toEqual([{ sha: world.nextCommitSha }])
+  })
+
+  it('retries the driver merge commit whose push the hook refused, its base past the recorded one', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    world.worktreeHead = turnStartHead
+    world.worktreeChangedPaths = ['apps/cli/src/lib/x.ts']
+    world.pushRefusal = 'pre-push: a test failed'
+    const mergeCommit = world.nextCommitSha
+    const outcomes = await publishAttempts(world, (head) => (head === mergeCommit ? newerTip : recordedBase), [
+      () => {
+        // An uncommitted merge of the newer tip: the head and its base are unmoved until the driver commits.
+        world.worktreeDirty = ['apps/cli/src/lib/x.ts']
+      },
+      () => {
+        world.pushRefusal = null
+      }
+    ])
+
+    expect(outcomes[0]).toMatchObject({ ok: false, check: 'pre-push-hook' })
+    expect(outcomes[1]).toEqual({ ok: true })
+    expect(world.pushes).toEqual([{ sha: mergeCommit }])
+  })
+})
+
 describe('the beyond-Surface record when an input cannot be read', () => {
   const handWritten =
     '## Scope\n\nScope.\n\n<!-- AEG:BEYOND-SURFACE:START -->\n- `src/sneaked.ts` hand-added\n<!-- AEG:BEYOND-SURFACE:END -->\n\n**Tier:** 3\n'

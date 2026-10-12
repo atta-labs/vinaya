@@ -58,6 +58,19 @@ base cannot be read, so a hand-written list never survives a read failure. The `
 passes in, and the reviewers judge those files like any change. The
 `outside_surface` blocker kind is gone from the Developer's turn result, and
 with it the loop's one-time retry for that report.
+
+**A refused publication never moves the expected base.** The base check
+compares the worktree's current merge base with the default branch against the
+base recorded before the attempt; reading it for the check records nothing
+(`readPublicationBase`), so a local rebase onto a newer default-branch tip is
+refused as an unexpected base by the base check itself, and undoing that rebase
+publishes again against the base the turn started from. The recorded base moves
+forward — to a merge base that descends from it — only at a Developer turn
+start and after a publication that pushed (`resolvePublicationBase`), or
+through the fast-forward-onto-the-default-tip rule below. A retry of the
+driver's own commit whose push the pre-push hook refused is checked against
+that commit's own base, so a merge from the default branch it carries still
+publishes. <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:const base = await readPublicationBase(worktreeHead) -->
 For an uncommitted merge, the publication check filters the worktree's dirty
 paths through that same comparison point: tracked files count only when they
 differ from the merged commit, while untracked, non-ignored files always count.
