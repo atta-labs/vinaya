@@ -49,7 +49,9 @@ export const COMPONENT_KINDS = [
   'effect',
   'adapter',
   'isolation-boundary',
-  'product-guarantee'
+  'product-guarantee',
+  'fault-attack',
+  'cutover-gate'
 ] as const
 export type ComponentKind = (typeof COMPONENT_KINDS)[number]
 
