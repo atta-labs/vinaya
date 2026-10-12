@@ -94,6 +94,8 @@ The evaluation program's §6 requires every migrating component to carry a recor
 - **Owner, backends, cadence and grader kinds** take the program's own vocabulary: owners `engine`, `vinaya-policy`, `adapter`, `sandbox`, `governed-effect`, `process-package`; backends `standalone`, `engine`; cadences `every-affected-change`, `scheduled-live`, `pre-release`, `canary`; grader kinds `code`, `model`, `human`.
 - **Every row carries its own source**: the document, its revision and a heading in it. A catalog entry cites its `### 6.n` heading of `apps/cli/specs/dev-review-evaluation-program.md` at the mirror's pinned revision; a component row cites the document that states it.
 
+- **Two modules or none.** A component row may carry an optional `additionalModules` list of further catalog module ids — each a live catalog module, never the row's own `module`, none repeated; a violation is refused as `unknown_module`, `module_excluded` or `duplicate`. The one-module rule stands for `module`; the list exists because a component such as an adapter is also what proves another module (`adapter:claude-code` and `adapter:codex` name `6.21`, role context delivery). A catalog entry may carry `"scope": "system"` — a module proven by its own suites and owned by no single component (`6.18`, the whole loop); no other `scope` value is accepted.
+
 A pending number is written with the program's own marker — a floor marked *Principal*, a margin from the milestone-3 paired pilot — never left blank.
 
 ### Validation
@@ -137,6 +139,22 @@ The second shard, `contract-kinds.json`, covers the kinds stated in the contract
 Each row cites the section that states its component: an evaluation-program section at the mirror's revision, and any other specification at the Engine revision the register is pinned to. The `read_source` row says it is planned, not live. `apps/cli/tests/eval/registry-contract-kinds.test.ts` fails on any missing, extra or invalid row, and checks that the shard aggregates with the others without a duplicate id.
 
 `apps/cli/tests/eval/registry.test.ts` checks the catalog against the mirror — one entry per `### 6.n` heading, the ten fields of its table in order, one suite per listed layer, the mirror's revision — and every refusal above; the typed-sources test prints the per-kind counts and fails on any missing, extra or invalid row.
+
+## Global exit check
+
+`apps/cli/src/lib/dev-review-eval/exit-check.ts` holds `checkExit`, a pure function over the aggregated registry rows and the universes the caller derives. This check, and only this check, claims the evaluation foundation's zero-uncovered exit; each shard's own check (`checkShardCompleteness`) proves completeness for its kinds alone. `apps/cli/tests/eval/exit-check.test.ts` runs it in continuous integration, assembling the universes from each shard's own universe module; the CLI does not import it.
+
+It reports, by kind, the components covered, the empty fields and the unmapped components, and passes only when every one of these holds:
+
+- every kind in the registry's `COMPONENT_KINDS` has at least one row and a derived universe, and every expected shard (`typed-sources`, `contract-kinds`, `cutover-gates`, `fault-attack`) is present;
+- no component id appears twice, and no row of a kind lacks a universe member or names none;
+- no required field is empty, absent or a placeholder;
+- every component names a live catalog module, in `module` or `additionalModules`;
+- every non-excluded catalog module is named by a component, or carries `"scope": "system"`; the excluded module (`6.19`) stays excluded;
+- the cutover gates number seventeen and the fault-and-attack rows fifty-eight, each matching the mirror's table;
+- the empty-field and unmapped counts are both zero.
+
+A failure names its cause: `shard_absent`, `kind_missing`, `duplicate_id`, `empty_field`, `no_module`, `module_unnamed`, `universe_missing`, `universe_extra` or `count_mismatch`. The test plants each gap on a copy of the real data and edits no shard.
 
 ## Trial staging
 

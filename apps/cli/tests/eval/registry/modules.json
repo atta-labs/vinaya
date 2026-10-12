@@ -975,6 +975,7 @@
         "section": "6.18 The whole loop (orchestration eval)"
       },
       "excluded": null,
+      "scope": "system",
       "suites": [
         {
           "name": "whole-loop.l6",
