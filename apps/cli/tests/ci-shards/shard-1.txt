@@ -86,3 +86,4 @@ tests/eval/registry.test.ts
 tests/eval/registry-fault-attack.test.ts
 tests/eval/registry-typed-sources.test.ts
 tests/lib/documentation-probe.test.ts
+tests/lib/task-tools/tool-catalog.test.ts

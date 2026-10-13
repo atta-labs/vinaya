@@ -178,13 +178,15 @@ const REFUSAL_SCHEMA = {
     error: {
       type: 'object',
       properties: { check: { type: 'string' }, output: { type: 'string' }, fix: { type: 'string' } },
-      required: ['check', 'output', 'fix']
+      required: ['check', 'output', 'fix'],
+      additionalProperties: false
     }
   },
-  required: ['error']
+  required: ['error'],
+  additionalProperties: false
 } as const
 
-const SUCCESS_SCHEMA = {
+export const FETCH_DOCUMENTATION_SUCCESS_SCHEMA = {
   type: 'object',
   properties: {
     notice: { type: 'string' },
@@ -198,7 +200,8 @@ const SUCCESS_SCHEMA = {
     receipt: {
       type: 'object',
       properties: { recorded: { type: 'boolean' }, reason: { type: 'string' } },
-      required: ['recorded']
+      required: ['recorded'],
+      additionalProperties: false
     },
     offset: { type: 'integer' },
     nextOffset: { type: ['integer', 'null'] },
@@ -217,7 +220,8 @@ const SUCCESS_SCHEMA = {
     'offset',
     'nextOffset',
     'text'
-  ]
+  ],
+  additionalProperties: false
 } as const
 
 export const FETCH_DOCUMENTATION_INPUT_SCHEMA = {
@@ -236,8 +240,7 @@ export const FETCH_DOCUMENTATION_INPUT_SCHEMA = {
 
 /** A success or a structured refusal — the two outcomes a call can have. */
 export const FETCH_DOCUMENTATION_OUTPUT_SCHEMA = {
-  type: 'object',
-  anyOf: [SUCCESS_SCHEMA, REFUSAL_SCHEMA]
+  anyOf: [FETCH_DOCUMENTATION_SUCCESS_SCHEMA, REFUSAL_SCHEMA]
 } as const
 
 export const FETCH_DOCUMENTATION_DESCRIPTION =
