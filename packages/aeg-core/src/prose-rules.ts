@@ -81,9 +81,7 @@ const retiredPatterns = [
   String.raw`\(,`,
   String.raw`,\)`,
   String.raw`\(\.\)`,
-  '[Tt]opology files?',
-  'aeg-root/tranches/',
-  'aeg-project/'
+  ...PLAN_ON_DISK_PATTERNS
 ] as const
 
 const published = [

@@ -3,16 +3,17 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { PLAN_ON_DISK_PATTERNS, rulesForGroup } from './prose-rules'
+import { FORGE_NUMBER_PATTERN as FORGE_NUMBER_REGEXP } from './reader-resolvable-prose'
 
 /**
  * The doctrine sweep, as a check instead of a habit.
  *
- * `retired-vocabulary.ts` gives this suite's `RETIRED`
- * array, plus `RETIRED_IN_PRODUCT`'s non-citation members, a CheckSpec
- * adapter (`apps/cli/src/checks/bin/check-retired-vocabulary.ts`) — a
- * deliberate copy of the pattern/exempt content here, not an import, so this
- * suite's own `grep -E` proof (below) stays independent of that module's
- * native-`RegExp` evaluator. `RETIRED_IN_PRODUCT`'s citation members
+ * The retired patterns come from the shared rule module (`prose-rules.ts`)
+ * and are evaluated here with the JavaScript regular expression engine; this
+ * suite keeps only its own scopes and exemptions. The CheckSpec adapter
+ * (`apps/cli/src/checks/bin/check-retired-vocabulary.ts`) reads the same
+ * patterns. The product citation members
  * (`FORGE_NUMBER_PATTERN`/`LEGACY_SLUG_PATTERN`) are NOT copied there — those
  * ban a live, unexplained citation, not a retired concept, and are already
  * `reader-resolvable-prose.ts`'s own `checkUnresolvableReferences`. The
@@ -96,7 +97,8 @@ function legacySlugs(): string[] {
     .filter((slug) => !/-v[0-9]+$/.test(slug))
 }
 
-const FORGE_NUMBER_PATTERN = '#[0-9]{2,4}'
+const MODULE_PATTERNS = rulesForGroup('retired-vocabulary').map((rule) => String(rule.patterns.repository))
+const FORGE_NUMBER_PATTERN = FORGE_NUMBER_REGEXP.source
 const LEGACY_SLUGS = legacySlugs()
 // Empty only if every archived tranche ever adopts the `-vN` suffix — in
 // which case there is nothing left for this pattern to catch, and it is
@@ -105,44 +107,7 @@ const LEGACY_SLUG_PATTERN = LEGACY_SLUGS.length > 0 ? `(${LEGACY_SLUGS.join('|')
 
 /** Claims that a removed mechanism is current. */
 const RETIRED_IN_PRODUCT = [
-  // `[0-9]`, never `\d`. Every pattern in this file is POSIX ERE, which has no
-  // `\d`/`\w`/`\s` and no lookaheads — GNU grep reads `\d` as a literal `d`, so
-  // `\bD-\d{3}\b` matches nothing on Linux. It shipped that way: the citation
-  // ban was vacuous on CI while passing locally, because a dev machine's `grep`
-  // may resolve to something more permissive. Local green is not evidence for
-  // this file; only CI is. The self-test below is what caught it.
-  String.raw`\bD-[0-9]{3}\b`,
-  // The placeholder forms too. A doc that says `D-###` or `## D-NNN` is
-  // teaching the grammar of a record that no longer exists, which is the same
-  // failure as citing a real one — and it is the form four sweeps missed,
-  // because a census for digits never sees a hash.
-  //
-  // NO `\b` HERE, and the omission is the whole point. `#` is a non-word
-  // character, so `\bD-###\b` cannot anchor after the final `#` and silently
-  // never matches — the pattern written to close this gap reported green over
-  // eleven live sites. There is no real word ending in `###`/`NNN`/`xxx` for a
-  // boundary to protect against, so the literal alternation is both correct
-  // and sufficient. The "gate can see what it bans" suite below pins it.
-  'D-(###|NNN|nnn|xxx)',
-  // `decision log`, in every inflection, but never `decision logic` — the
-  // latter is ordinary English about where branching lives, and has nothing to
-  // do with the retired record. Written without a lookahead: `grep -E` is POSIX
-  // ERE, where `(?!…)` is not a negation but a literal.
-  'decision log(s|ged|ging)?([^a-z]|$)',
-  'decision-log',
-  'decision entr',
-  // The verb forms a noun-phrase census steps over: "decisions are logged",
-  // "logged as a", "without log entries".
-  'decisions? (are |is )?logged',
-  'log entries',
-  String.raw`decisions\.md`,
-  // `decisions.md` does not match `decisions-legacy.md`, so the one sentence
-  // this gate was built to end — "a task updates the root
-  // `docs/decisions-legacy.md`" — was the one string it could not see. It
-  // survived seven rounds that way.
-  'decisions-legacy',
-  'CONTRADICTION',
-  'assumes Tier 3',
+  ...MODULE_PATTERNS.filter((pattern) => !PLAN_ON_DISK_PATTERNS.includes(pattern)),
   // A pull-request or Issue number cited as an unexplained parenthetical —
   // `#NNN` — inside the doctrine `aeg-root/**` publishes. It
   // resolves only inside this repo's own tracker; an adopter reading the
@@ -251,36 +216,6 @@ const PATTERN_EXEMPT: Record<string, string[]> = {
   // never consulted for it any more.
 }
 
-const RETIRED = [
-  // the retired record as a live, writable, required artifact
-  'decision (entry|logged)',
-  'decision-log entry',
-  'decision log entry',
-  // the lock
-  'Lock: ?YES',
-  'Lock: ?NO',
-  'lock approvals?',
-  'approves locks',
-  'Conforms to lock',
-  'Challenges lock',
-  // checks deleted with the machinery
-  'checkDecisionNumbersFresh',
-  // the role that no longer exists
-  String.raw`roles/team-leader\.md`,
-  // The wreckage a citation strip leaves when it deletes the contents of a
-  // parenthetical and not the punctuation around it. Three rounds produced
-  // three different signatures — `(, ` then ` (.)` then `,)` — because each
-  // scan looked for the shapes the previous round taught it. A pattern ends
-  // that: the shape is banned, not the instance.
-  //
-  // `()` is deliberately NOT here. It is a function call in every TypeScript
-  // file in the repo, and banning it would make this suite unrunnable — the
-  // empty-parenthesis case is caught by the guards in the strip itself.
-  String.raw`\(,`,
-  String.raw`,\)`,
-  String.raw`\(\.\)`
-]
-
 /**
  * The plan-on-disk layout the forge-native cutover retired — the tranche
  * topology file, the directory that held it, and the per-project state
@@ -293,7 +228,7 @@ const RETIRED = [
  * sits inside that one section, so the file exemption cannot hide a live
  * claim anywhere else in it.
  */
-const RETIRED_IN_DOCTRINE = ['[Tt]opology files?', 'aeg-root/tranches/', 'aeg-project/']
+const RETIRED_IN_DOCTRINE = [...PLAN_ON_DISK_PATTERNS]
 const DOCTRINE_SCOPE = ['aeg-root']
 const TRANCHE_MODEL = 'aeg-root/tranche-model.md'
 const RETIREMENT_SECTION_HEADING = '## 4. The thin tranche file — retired, and what survives it'
@@ -424,18 +359,6 @@ function matches(pattern: string, sample: string): boolean {
   return new RegExp(pattern).test(sample)
 }
 
-describe('retired vocabulary stays retired', () => {
-  for (const pattern of RETIRED) {
-    it(`no live surface claims: ${pattern}`, () => {
-      const hits = grep(pattern).filter((line) => {
-        const path = line.slice(0, line.indexOf(':')) // PATH ONLY — never the content
-        return !EXEMPT.some((e) => path.includes(e))
-      })
-      expect(hits, `\n${hits.join('\n')}\n`).toEqual([])
-    })
-  }
-})
-
 describe('the product carries no trace of a history the adopter lacks', () => {
   for (const pattern of RETIRED_IN_PRODUCT) {
     it(`absent from the installed surfaces: ${pattern}`, () => {
@@ -540,7 +463,7 @@ const SAMPLES: Record<string, string> = {
 }
 
 describe('the gate can see what it bans', () => {
-  for (const pattern of [...RETIRED, ...RETIRED_IN_PRODUCT, ...RETIRED_IN_DOCTRINE]) {
+  for (const pattern of [...RETIRED_IN_PRODUCT, ...RETIRED_IN_DOCTRINE]) {
     it(`matches a real instance: ${pattern}`, () => {
       const sample = SAMPLES[pattern]
       expect(sample, `no sample for pattern ${pattern} — add one`).toBeDefined()
