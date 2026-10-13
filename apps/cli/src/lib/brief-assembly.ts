@@ -17,6 +17,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   buildConsumersOf,
+  boundaryPinnedFiles,
   checkDispatchReadiness,
   checkIssueRationale,
   checkPremisesHold,
@@ -32,6 +33,7 @@ import {
   parseIssueSurface,
   parseIssueTestPlan,
   parseRationaleFields,
+  surfaceEntryResolves,
   type PackageManifest,
   renderBrief,
   trancheLabel,
@@ -848,8 +850,9 @@ export async function assembleAndRenderBrief(
   // no longer what §4's file list is built from (see below): a directory-
   // level glob is never a file-level change set.
   const globs = surfaceGlobsOverride ?? surface.in
+  const pinnedFiles = boundaryPinnedFiles(issueBody)
   for (const glob of globs) {
-    if (expandGlob(glob).length === 0) {
+    if (!surfaceEntryResolves(glob, (entry) => expandGlob(entry).length > 0, pinnedFiles)) {
       return { ok: false, missing: [`--surfaces glob "${glob}" matched no tracked file.`] }
     }
   }
@@ -1157,8 +1160,9 @@ export async function assembleAndRenderBriefForIssue(
   const rationale = parseRationaleFields(issueBody)
 
   const globs = surface.in
+  const pinnedFiles = boundaryPinnedFiles(issueBody)
   for (const glob of globs) {
-    if (expandGlob(glob).length === 0) {
+    if (!surfaceEntryResolves(glob, (entry) => expandGlob(entry).length > 0, pinnedFiles)) {
       return { ok: false, missing: [`--surfaces glob "${glob}" matched no tracked file.`] }
     }
   }

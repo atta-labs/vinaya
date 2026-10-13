@@ -375,12 +375,23 @@ export function globCoversPath(glob: string, path: string): boolean {
  * does not yet exist (a directory not yet created) is a legitimate
  * exclusion, not a defect.
  */
+export function surfaceEntryResolves(
+  entry: string,
+  resolvesToFile: (glob: string) => boolean,
+  pinnedFiles: readonly string[]
+): boolean {
+  if (resolvesToFile(entry)) return true
+  const directory = entry.replace(/\/\*\*?$/, '').replace(/\/+$/, '')
+  return pinnedFiles.some((path) => path.startsWith(`${directory}/`))
+}
+
 export function checkSurfaceGlobsResolve(body: string, resolvesToFile: (glob: string) => boolean): IssueSectionResult {
   const surface = parseIssueSurface(body)
   if (!surface.ok) return { status: 'pass', errors: [] }
+  const pinnedFiles = boundaryPinnedFiles(body)
   const errors: string[] = []
   for (const glob of surface.value.in) {
-    if (!resolvesToFile(glob)) {
+    if (!surfaceEntryResolves(glob, resolvesToFile, pinnedFiles)) {
       errors.push(
         `issue-validation Surface: \`${glob}\` in \`## Surface\`'s \`in:\` list matches no tracked file — a Surface that cannot resolve cannot render a brief's file list.`
       )
