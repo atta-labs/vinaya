@@ -242,10 +242,16 @@ function lineAt(content: string, index: number): number {
 }
 
 /** `#NNN`-shaped — a PR/Issue number cited bare, resolvable only inside this repo's own tracker. */
-export const FORGE_NUMBER_PATTERN = /#[0-9]{2,4}/g
+import { rulesForGroup } from './prose-rules'
+
+const readerRules = rulesForGroup('reader-resolvable')
+const readerPattern = (id: string, scope = 'prose'): RegExp =>
+  readerRules.find((rule) => rule.id === id)?.patterns[scope] as RegExp
+
+export const FORGE_NUMBER_PATTERN = readerPattern('forge-number')
 
 /** `example-tranche-vN`-shaped — an internal tranche slug ending `-vN`. */
-export const TRANCHE_SLUG_VN_PATTERN = /[a-z][a-z-]+-v[0-9]/g
+export const TRANCHE_SLUG_VN_PATTERN = readerPattern('tranche-slug')
 
 /**
  * `task 4`/`tasks 12`/`task #4`-shaped — a task's number out of a plan, which
@@ -263,7 +269,7 @@ export const TRANCHE_SLUG_VN_PATTERN = /[a-z][a-z-]+-v[0-9]/g
  * citation itself — the caller reports group 2, so the boundary character
  * never leaks into a finding's message.
  */
-export const TASK_NUMBER_PATTERN = /(^|[^a-z0-9-])(tasks?[ \t]+#?[0-9]+)/gi
+export const TASK_NUMBER_PATTERN = readerPattern('task-number')
 
 /**
  * Builds the legacy-slug pattern from the real archived-tranche filenames
@@ -493,10 +499,10 @@ export function checkUndefinedVocabulary(
  * (`x-vN`) is still exactly the kind of internal citation a reader outside
  * this repo cannot resolve.
  */
-export const SOURCE_COMMENT_TRANCHE_SLUG_PATTERN = /[a-z0-9]+(?:-[a-z0-9]+)*-v[0-9]+/g
+export const SOURCE_COMMENT_TRANCHE_SLUG_PATTERN = readerPattern('source-comment-tranche-slug', 'comment')
 
 /** `#NNN`-shaped, source-comment class — no upper digit-count bound (unlike `FORGE_NUMBER_PATTERN`'s `{2,4}`), since a forge's issue/PR numbering has no fixed ceiling. */
-export const SOURCE_COMMENT_FORGE_NUMBER_PATTERN = /#[0-9]{2,}/g
+export const SOURCE_COMMENT_FORGE_NUMBER_PATTERN = readerPattern('source-comment-forge-number', 'comment')
 
 /**
  * The inverse of `stripNonProse`'s `.ts`/`.tsx` half: keeps ONLY the text

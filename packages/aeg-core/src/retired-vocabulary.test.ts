@@ -394,31 +394,17 @@ function trackedFiles(scope: string[]): string[] {
 
 function grep(pattern: string, scope: string[] = SCOPE): string[] {
   const files = trackedFiles(scope)
-  // Zero qualifying tracked files is a legitimate "nothing to scan" — never
-  // invoke `grep` with no file arguments, which reads stdin instead and
-  // hangs rather than returning.
   if (files.length === 0) return []
-  try {
-    const out = execFileSync(
-      'grep',
-      ['-nE', pattern, ...files],
-      // maxBuffer is defense in depth, not the fix — the tracked-file list
-      // itself is what keeps this bounded now. 20MB is generous headroom
-      // past the largest observed full-repo sweep (~250KB) without masking
-      // a genuine future blowup by just raising the ceiling indefinitely.
-      { cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 }
-    )
-    return out.split('\n').filter(Boolean)
-  } catch (error) {
-    // grep's contract: exit 1 means "no matches" — every other outcome
-    // (a bad pattern, ENOBUFS from an unbounded scope) is a real failure. A
-    // bare `catch { return [] }` could not tell those apart: it turned the
-    // exact ENOBUFS case above into a silent, incorrect "clean repo" instead
-    // of a loud test failure. That is not hypothetical — it is what widening
-    // PRODUCT to ['.'] did to this suite before this bound existed.
-    if ((error as { status?: number }).status === 1) return []
-    throw error
+  const expression = new RegExp(pattern)
+  const hits: string[] = []
+  for (const file of files) {
+    const lines = readFileSync(join(REPO_ROOT, file), 'utf8').split('\n')
+    for (let index = 0; index < lines.length; index++) {
+      if (expression.test(lines[index] ?? '')) hits.push(`${file}:${index + 1}:${lines[index]}`)
+      expression.lastIndex = 0
+    }
   }
+  return hits
 }
 
 /**
@@ -432,12 +418,7 @@ function grep(pattern: string, scope: string[] = SCOPE): string[] {
  * broken rather than reporting a clean repo.
  */
 function matches(pattern: string, sample: string): boolean {
-  try {
-    execFileSync('grep', ['-E', pattern], { input: sample, encoding: 'utf8' })
-    return true
-  } catch {
-    return false
-  }
+  return new RegExp(pattern).test(sample)
 }
 
 describe('retired vocabulary stays retired', () => {
@@ -495,7 +476,7 @@ describe('the plan-on-disk layout stays retired in the doctrine', () => {
   })
 })
 
-describe('grep() distinguishes "no matches" from a real failure', () => {
+describe('the JavaScript matcher distinguishes no matches from an invalid pattern', () => {
   // The exact regression this task exists to prevent: a bare `catch { return
   // [] }` cannot tell grep's real "nothing found" (exit 1) apart from a
   // genuine failure (bad scope, ENOBUFS) — it silently reported both as a
@@ -506,10 +487,6 @@ describe('grep() distinguishes "no matches" from a real failure', () => {
   })
 
   it('rethrows for a malformed pattern (grep exits 2) — a real failure, not "no matches"', () => {
-    // Unbalanced bracket expression: grep exits 2 with a stderr message, never
-    // 1. A missing scope path is NOT usable for this on this platform — BSD
-    // grep silently returns exit 1 for a nonexistent directory too, identical
-    // to "no matches" — so a malformed pattern is the reliable non-1 case.
     expect(() => grep('[', ['aeg-root'])).toThrow()
   })
 })

@@ -451,6 +451,8 @@ export {
   scanRetiredVocabulary
 } from './retired-vocabulary'
 export type { VocabFinding, VocabSourceFile } from './retired-vocabulary'
+export { DEFAULT_PROSE_RULES, rulesForGroup } from './prose-rules'
+export type { DefaultProseRule, ProseRuleSeverity } from './prose-rules'
 export { checkLocalAnchorCoverage } from './local-anchor-coverage'
 export type {
   AnchorCoverageFinding,
