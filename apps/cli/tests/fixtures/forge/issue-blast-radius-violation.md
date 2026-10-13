@@ -1,5 +1,10 @@
 ## Task Issue — Planner rationale
 
+## Surface
+
+in: packages/ui/**
+out: —
+
 **Boundary** — Restyle the shared `packages/ui/Button.tsx` component used by every consuming app.
 
 **Sizing** — One task; a component edit plus its test.

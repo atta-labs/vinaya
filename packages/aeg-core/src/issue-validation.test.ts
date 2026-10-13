@@ -414,6 +414,9 @@ const REGISTRY = [
   { name: 'vada', path: 'apps/vada-ai' }
 ]
 
+/** An Issue numbered below the brief-sections cutover: the blast-radius rule still reads its prose, not `## Surface`. */
+const PRE_CUTOVER = BRIEF_SECTIONS_SINCE_ISSUE - 1
+
 /**
  * A minimally-valid rationale, parameterised on the fields the content checks
  * read. It carries BOTH shapes every live Issue does: the `Project(s) + blast
@@ -662,7 +665,7 @@ describe('checkProjectsRegistered', () => {
 describe('checkBlastRadiusScope (A)', () => {
   it('fails a single-project task whose Boundary edits a shared package it does not own', () => {
     const body = rationale({ boundary: 'Restyle the shared TopBar (`packages/ui/topbar/index.tsx`).' })
-    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY)
+    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER)
     expect(r.status).toBe('fail')
     expect(r.errors[0]).toMatch(/packages\/ui/)
   })
@@ -672,7 +675,7 @@ describe('checkBlastRadiusScope (A)', () => {
       boundary: 'Restyle the shared TopBar (`packages/ui/topbar/index.tsx`).',
       projects: 'vinaya, vada'
     })
-    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY).status).toBe('pass')
+    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER).status).toBe('pass')
   })
 
   it('passes on an explicit blast-radius-ack: line', () => {
@@ -680,7 +683,7 @@ describe('checkBlastRadiusScope (A)', () => {
       boundary: 'Restyle the shared TopBar (`packages/ui/topbar/index.tsx`).',
       extra: '\n**blast-radius-ack:** every consumer keeps the existing fallback path.\n'
     })
-    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY).status).toBe('pass')
+    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER).status).toBe('pass')
   })
 
   it('passes a single-project task editing the package that IS its own project (no under-declaration)', () => {
@@ -688,12 +691,12 @@ describe('checkBlastRadiusScope (A)', () => {
       boundary: 'Add a check to `packages/aeg-core/src/issue-validation.ts`.',
       projects: 'aeg-core'
     })
-    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY).status).toBe('pass')
+    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER).status).toBe('pass')
   })
 
   it('does not count a cited document as a touched domain', () => {
     const body = rationale({ boundary: 'Resolve the registry row in `.vinaya/projects.md`.' })
-    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY).status).toBe('pass')
+    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER).status).toBe('pass')
   })
 
   it('does not count a shared path named outside Boundary / blast radius (an import, a trap)', () => {
@@ -701,7 +704,7 @@ describe('checkBlastRadiusScope (A)', () => {
       boundary: 'Add a CLI flag in `apps/vinaya/cli`.',
       traps: 'The CLI imports `packages/aeg-core` unchanged — do not edit it.'
     })
-    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY).status).toBe('pass')
+    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER).status).toBe('pass')
   })
 
   it('is dormant when no collision-domain list is available', () => {
@@ -728,7 +731,7 @@ describe('checkBlastRadiusScope (A)', () => {
     expect(projectsFromBody(body)).toEqual(['vinaya'])
     // And with the real declaration visible, the real reach is refused: a task
     // on `vinaya` (apps/vinaya) editing `packages/aeg-core`, no ack line.
-    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY)
+    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER)
     expect(r.status).toBe('fail')
     expect(r.errors[0]).toMatch(/packages\/aeg-core/)
     expect(r.errors[0]).toMatch(/\(vinaya\)/)
@@ -740,14 +743,14 @@ describe('checkBlastRadiusScope (A)', () => {
     expect(projectsFromBody(body)).toEqual(['aeg-core', 'vinaya'])
     // `aeg-core` owns `packages/aeg-core`, so the reach is declared exactly —
     // this pass never depended on the bypass, and still does not.
-    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY).status).toBe('pass')
+    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER).status).toBe('pass')
   })
 
   it('#863 with `aeg-core` unregistered — an unregistered name no longer buys the bypass', () => {
     // Same real body, registry as the only variable: two declared names, one of
     // which resolves to no row. Raw-token counting made that `> 1` and passed;
     // one registry-validated name is one review lens, so it must not.
-    const r = checkBlastRadiusScope(realBody(863), [], SHARED, [{ name: 'vinaya', path: 'apps/vinaya' }])
+    const r = checkBlastRadiusScope(realBody(863), [], SHARED, [{ name: 'vinaya', path: 'apps/vinaya' }], PRE_CUTOVER)
     expect(r.status).toBe('fail')
     expect(r.errors[0]).toMatch(/packages\/aeg-core/)
     expect(r.errors[0]).toMatch(/Not counted: aeg-core/)
@@ -759,7 +762,7 @@ describe('checkBlastRadiusScope (A)', () => {
       projects: 'vinaya, vada'
     })
     expect(projectsFromBody(body)).toEqual(['vinaya', 'vada'])
-    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY).status).toBe('pass')
+    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER).status).toBe('pass')
   })
 
   it('the same body fails once the second name is fiction — one real lens is one lens', () => {
@@ -767,7 +770,7 @@ describe('checkBlastRadiusScope (A)', () => {
       boundary: 'Restyle the shared TopBar (`packages/ui/topbar/index.tsx`).',
       projects: 'vinaya, aeg-types'
     })
-    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY)
+    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER)
     expect(r.status).toBe('fail')
     expect(r.errors[0]).toMatch(/Not counted: aeg-types/)
   })
@@ -1305,7 +1308,7 @@ describe('code-blindness — every content check reuses the single stripCode (PR
     ].join(shape.eol)
     const body = `${rationale({ boundary: 'Add a CLI flag in `apps/vinaya/cli`.' })}\n${quoted}\n`
     expect(checkNoBriefContent(body).status).toBe('pass')
-    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY).status).toBe('pass')
+    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER).status).toBe('pass')
   })
 })
 
@@ -2375,9 +2378,25 @@ describe('checkBlastRadiusScope (O4) — structural mode at/above the brief-sect
     expect(r.errors[0]).toMatch(/packages\/ui/)
   })
 
-  it('falls back to the prose scan on a null issueNumber (not yet created), unchanged', () => {
-    const body = rationale({ boundary: 'Restyle the shared TopBar (`packages/ui/topbar/index.tsx`).' })
-    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, null)
+  it('judges a new Issue (no number yet) from `## Surface` exactly as one numbered above the cutover', () => {
+    // `issue create` has no number: the Surface judgement must refuse the
+    // same body there that `issue edit` and the dispatch gate refuse.
+    const body = '## Surface\n\nin: packages/ui/**\nout: —\n\n**Project:** vinaya\n'
+    const created = checkBlastRadiusScope(body, [], SHARED, REGISTRY, null)
+    const numbered = checkBlastRadiusScope(body, [], SHARED, REGISTRY, BRIEF_SECTIONS_SINCE_ISSUE + 1)
+    expect(created.status).toBe('fail')
+    expect(created.errors[0]).toMatch(/packages\/ui/)
+    expect(created).toEqual(numbered)
+    const acked = `${body}\n**blast-radius-ack:** every consumer keeps the existing fallback path.\n`
+    expect(checkBlastRadiusScope(acked, [], SHARED, REGISTRY, null).status).toBe('pass')
+    expect(checkBlastRadiusScope(acked, [], SHARED, REGISTRY, BRIEF_SECTIONS_SINCE_ISSUE + 1).status).toBe('pass')
+  })
+
+  it('leaves an Issue numbered below the cutover on the prose scan — the same Surface body passes there', () => {
+    const body = '## Surface\n\nin: packages/ui/**\nout: —\n\n**Project:** vinaya\n'
+    expect(checkBlastRadiusScope(body, [], SHARED, REGISTRY, PRE_CUTOVER).status).toBe('pass')
+    const prose = rationale({ boundary: 'Restyle the shared TopBar (`packages/ui/topbar/index.tsx`).' })
+    const r = checkBlastRadiusScope(prose, [], SHARED, REGISTRY, PRE_CUTOVER)
     expect(r.status).toBe('fail')
     expect(r.errors[0]).toMatch(/packages\/ui/)
   })

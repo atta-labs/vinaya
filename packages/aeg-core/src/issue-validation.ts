@@ -1805,11 +1805,11 @@ const BLAST_RADIUS_ACK_RE = /(?:\*\*)?blast-radius-ack(?:\*\*)?\s*[:—–-]/i
  * an absent key → `null` → NO cutover, so `## Surface` decides from Issue 1,
  * O1); it defaults to `BRIEF_SECTIONS_SINCE_ISSUE` only for a caller that does
  * not resolve config.
- * `issueNumber` follows the same fail-closed posture as
- * `checkIssueObjectives`/`checkIssueBriefSections`: `null` (not yet known,
- * e.g. `issue create`) is NOT treated as "at or above the cutover" — it
- * falls back to the prose scan, since a not-yet-created Issue's own
- * `## Surface` cannot yet be trusted to be the mandatory kind.
+ * `issueNumber` follows the same posture as every other cutover-gated rule
+ * here: `null` (not yet known, e.g. `issue create`) is treated as newer than
+ * every cutover, so a new Issue's `## Surface` is judged at creation exactly
+ * as it is on `issue edit` and at dispatch. Only a number below the cutover
+ * keeps the prose scan.
  */
 export function checkBlastRadiusScope(
   body: string,
@@ -1820,7 +1820,7 @@ export function checkBlastRadiusScope(
   sinceBriefSections: number | null = BRIEF_SECTIONS_SINCE_ISSUE
 ): IssueSectionResult {
   if (sharedPackages.length === 0) return { status: 'pass', errors: [] }
-  const decideFromSurface = issueNumber !== null && (sinceBriefSections === null || issueNumber >= sinceBriefSections)
+  const decideFromSurface = issueNumber === null || sinceBriefSections === null || issueNumber >= sinceBriefSections
   let named: string[]
   if (decideFromSurface) {
     const surface = parseIssueSurface(body)
