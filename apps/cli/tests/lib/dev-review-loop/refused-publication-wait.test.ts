@@ -1,7 +1,8 @@
 /**
  * A Developer turn that ends with the head unchanged because a driver tool
  * refused its publication goes straight back to the loop's next decision, naming
- * the refusal — never the full head-change wait. A turn with no refusal keeps it.
+ * the refusal — never the full head-change wait. A turn with no publication
+ * attempt also skips it because only the driver can move the head.
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
@@ -82,13 +83,14 @@ describe('devReviewLoop — a refused publication skips the head-change wait', (
     expect(pollSleeps()).toBeLessThanOrEqual(laterTurns)
   })
 
-  it('O2: a turn with no refused publication keeps the full head-change wait and its no-push handling', async () => {
+  it('O2: a turn with no publication attempt reads the head once and keeps its no-push handling', async () => {
     const world = makeWorld({ gate: 'red', worktreeExists: true, surface: { in: ['apps/cli'], out: ['packages'] } })
     const { deps, pollSleeps } = redGateDeps(world, 'idle')
     const result = await runLoopInProcess(world, { task: world.task, agent: 'claude' }, deps)
 
     expect(result.finalDecision.type).toBe('pause')
     expect((result.finalDecision as { detail: string }).detail).not.toMatch(/publication refused/)
-    expect(pollSleeps()).toBeGreaterThanOrEqual(POLL_ATTEMPTS)
+    const laterTurns = (world.dispatchCountByRole.developer ?? 1) - 1
+    expect(pollSleeps()).toBeLessThanOrEqual(laterTurns)
   })
 })
