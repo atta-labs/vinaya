@@ -62,7 +62,9 @@
       ],
       "severity": "error"
     },
-    "specGrandfather": {}
+    "specGrandfather": {
+      "apps/cli/specs/dev-review-evaluation-program.md": 45
+    }
   },
   "briefSchema": {
     "pr": {
