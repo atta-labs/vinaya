@@ -3539,6 +3539,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * skip a wait for a push that cannot come.
      */
     let turnPublicationRefusal: string | null = null
+    /** Whether the current Developer dispatch called any driver publication tool. */
+    let turnPublicationAttempted = false
     /**
      * O1/O2: the protected-path hashes taken right before a dispatch
      * (`snapshotTurnConfinement`, below) — compared again once that SAME
@@ -3919,6 +3921,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // creating records `null`, and the head check is then inactive.
       turnPreHead = devWorktreeDir ? d.readWorktreeHead(devWorktreeDir) : null
       turnPublicationRefusal = null
+      turnPublicationAttempted = false
       const priorBase = publicationExpectedBase
       await resolvePublicationBase(turnPreHead)
       if (publicationExpectedBase !== priorBase) persistCurrentLoopState(currentPhase ?? 'dispatch_developer')
@@ -4254,6 +4257,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       } catch {
         return null
       }
+      const rerun = await rerunFailedChecksForHead(head, roundNum, 'a tooling_unavailable report')
+      if (rerun === null) return null
+      return { runIds: rerun.runIds, ciConclusion: rerun.gate.ciConclusion, failingChecks: rerun.gate.failingChecks }
+    }
+
+    /** Rerun every failed workflow on one head, then wait for that head's gate once. */
+    async function rerunFailedChecksForHead(
+      head: string,
+      roundNum: number,
+      reason: string
+    ): Promise<{ runIds: number[]; gate: Awaited<ReturnType<typeof waitForGreenGate>> } | null> {
       const rerunIds: number[] = []
       for (const runId of d.fetchFailedCheckWorkflowRunIds(head)) {
         try {
@@ -4267,10 +4281,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
       if (rerunIds.length === 0) return null
       console.error(
-        `vinaya dev-review-loop: reran the failed jobs of workflow run ${rerunIds.join(', ')} for a tooling_unavailable report in round ${roundNum}`
+        `vinaya dev-review-loop: reran the failed jobs of workflow run ${rerunIds.join(', ')} for ${reason} in round ${roundNum}`
       )
       const gate = await waitForGreenGate(d.now())
-      return { runIds: rerunIds, ciConclusion: gate.ciConclusion, failingChecks: gate.failingChecks }
+      return { runIds: rerunIds, gate }
     }
 
     /**
@@ -4833,6 +4847,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           ...(d.fetchDocumentationDeps ? { deps: d.fetchDocumentationDeps } : {})
         }),
         onPublicationAttempt: (result) => {
+          turnPublicationAttempted = true
           turnPublicationRefusal = result.ok ? null : `${result.error.check}: ${result.error.output}`
         }
       }
@@ -6729,6 +6744,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // where it's genuinely resolved — the mergeability re-reads at the
           // `dispatch_reviewers`/`publish` sites, below.
           const conflictFiles = pendingConflictFiles
+          let gateAfterUnchangedHeadRerun: Awaited<ReturnType<typeof waitForGreenGate>> | null = null
           if (!firstPass) {
             // O2: findings citation only makes sense on the genuine
             // review-findings path — not a conflict retry, a ruling resume,
@@ -6805,7 +6821,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                       const h = d.resolveHead(branch)
                       return h !== headBeforeDispatch ? h : null
                     },
-                    refusedPublication !== null ? 1 : d.gatePollMaxAttempts,
+                    refusedPublication !== null || !turnPublicationAttempted ? 1 : d.gatePollMaxAttempts,
                     d.gatePollIntervalMs,
                     d.sleep,
                     'devReviewLoop: head-change wait timed out'
@@ -6924,6 +6940,30 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               }
 
               if (!resolvedByUnpushedResume) {
+                // The forge, not the turn result, decides whether an unchanged
+                // red head has something actionable to rerun. This shares the
+                // tooling-report's once-per-round budget. A refusal or an
+                // unresolved conflict keeps its existing, named stall path.
+                if (
+                  isGateRedRetry &&
+                  conflictFiles === null &&
+                  refusedPublication === null &&
+                  !toolingRerunRounds.has(round)
+                ) {
+                  const rerun = await rerunFailedChecksForHead(
+                    headBeforeDispatch,
+                    round,
+                    'an unchanged Developer turn on a red head'
+                  )
+                  if (rerun !== null) {
+                    toolingRerunRounds.add(round)
+                    gateAfterUnchangedHeadRerun = rerun.gate
+                    resolvedByUnpushedResume = true
+                  }
+                }
+              }
+
+              if (!resolvedByUnpushedResume) {
                 // The developer returned without pushing — not a fresh gate
                 // read (the head never moved), so this feeds the DRIVER's own
                 // bounded stall counter instead of `fetchCiConclusion` again.
@@ -7012,7 +7052,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
           pendingConflictFiles = null
 
-          const gate = await waitForGreenGate(roundStartMs)
+          const gate = gateAfterUnchangedHeadRerun ?? (await waitForGreenGate(roundStartMs))
           // The dispatch gate's own premise re-assertion,
           // re-run against the PR's live body at this exact head — a stale
           // `Premise:` pin (a symbol the head deleted since the brief was
