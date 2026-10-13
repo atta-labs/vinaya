@@ -6,6 +6,7 @@ import {
   type AmendDepsDeps,
   type AmendDepsFlags,
   appliesTaskIssueGate,
+  blastRadiusErrorsForWrite,
   edgesEqual,
   formatLeftoverPrint,
   type LeftoverFacts,
@@ -21,6 +22,7 @@ import {
   taskIdFromTitle,
   validateAmendFlags
 } from './open-issue'
+import { BRIEF_SECTIONS_SINCE_ISSUE } from '../src/issue-validation'
 
 describe('appliesTaskIssueGate (task-run-v1 21, #541, round 2 review SECURITY HIGH)', () => {
   it('applies on a vinaya/tranche:* label alone, even with a body carrying no task-shaped content', () => {
@@ -671,5 +673,29 @@ describe('readSharedPackages', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('blastRadiusErrorsForWrite', () => {
+  const shared = ['packages/ui']
+  const registry = [{ name: 'vinaya', path: 'apps/vinaya' }]
+  const surfaceBody = '## Surface\n\nin: packages/ui/**\nout: —\n\n**Project:** vinaya\n'
+
+  it('judges a create (no Issue ref) from `## Surface`', () => {
+    const errors = blastRadiusErrorsForWrite(surfaceBody, [], shared, registry, null)
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toMatch(/packages\/ui/)
+  })
+
+  it('judges an edit above the cutover from `## Surface`, the same as a create', () => {
+    const ref = String(BRIEF_SECTIONS_SINCE_ISSUE + 1)
+    expect(blastRadiusErrorsForWrite(surfaceBody, [], shared, registry, ref)).toEqual(
+      blastRadiusErrorsForWrite(surfaceBody, [], shared, registry, null)
+    )
+  })
+
+  it('keeps an edit of an Issue numbered below the cutover on the prose scan', () => {
+    const ref = `https://github.com/o/r/issues/${BRIEF_SECTIONS_SINCE_ISSUE - 1}`
+    expect(blastRadiusErrorsForWrite(surfaceBody, [], shared, registry, ref)).toEqual([])
   })
 })
