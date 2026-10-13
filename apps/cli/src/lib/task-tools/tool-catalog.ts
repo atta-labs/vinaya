@@ -38,14 +38,12 @@ export const TOOL_ERROR_FIELDS_SCHEMA = {
 const detail = {
   type: 'object',
   properties: {
-    errorClass: { type: 'string', enum: TOOL_ERROR_CLASSES },
-    retryDisposition: { type: 'string', enum: TOOL_RETRY_DISPOSITIONS },
-    effectState: { type: 'string', enum: TOOL_EFFECT_STATES },
+    ...TOOL_ERROR_FIELDS_SCHEMA.properties,
     check: { type: 'string' },
     output: { type: 'string' },
     fix: { type: 'string' }
   },
-  required: ['errorClass', 'retryDisposition', 'effectState', 'check', 'output', 'fix'],
+  required: [...TOOL_ERROR_FIELDS_SCHEMA.required, 'check', 'output', 'fix'],
   additionalProperties: false
 } as const
 export const TOOL_REFUSAL_SCHEMA = detail
@@ -66,6 +64,7 @@ const objectSchema = (properties: Record<string, unknown>, required = Object.key
 })
 const str = { type: 'string' } as const
 const nullableString = { anyOf: [str, { type: 'null' }] } as const
+const nullableBoolean = { anyOf: [{ type: 'boolean' }, { type: 'null' }] } as const
 const annotations = (
   readOnlyHint: boolean,
   destructiveHint: boolean,
@@ -80,7 +79,13 @@ export interface AgentToolCatalogEntry {
   purpose: string
   realisticUsageExamples: readonly { input: Record<string, unknown>; outcome: string }[]
   approvalRequirement: string
-  limits: { inputTokens: number; outputTokens: number; inputBytes: number; outputBytes: number }
+  limits: {
+    inputTokens: number | null
+    outputTokens: number | null
+    inputBytes: number | null
+    outputBytes: number | null
+    behavior: string
+  }
   selectionBoundary: { whenToUse: string; whenNotToUse: string; neighboringTools: readonly string[] }
   inputSchema: Record<string, unknown>
   successOutputSchema: Record<string, unknown>
@@ -112,12 +117,19 @@ const entry = (value: Entry): AgentToolCatalogEntry => ({
 })
 const common = {
   approvalRequirement: 'No interactive approval; the controller enforces the task grant and all policy gates.',
-  limits: { inputTokens: 8192, outputTokens: 32768, inputBytes: 65536, outputBytes: 1048576 },
+  limits: {
+    inputTokens: null,
+    outputTokens: null,
+    inputBytes: null,
+    outputBytes: null,
+    behavior: 'No tool-level token or byte limit is enforced by the current MCP server.'
+  },
   timeoutAndCancellation:
-    'The controller applies a bounded timeout; cancellation returns a typed error and does not imply rollback.',
+    'The current MCP server applies no per-call timeout and ignores cancellation notifications; handlers may impose their own operation-specific bounds.',
   redaction: [
-    'Secrets, credentials, machine-local identifiers, session tokens, and raw reasoning are removed from results and telemetry.'
-  ]
+    'No catalog-layer redaction is applied; each handler owns any sanitization or bounding documented by its contract.'
+  ],
+  telemetryEvents: ['none: the current server emits no catalog-specific telemetry events']
 } as const
 
 export const AGENT_TOOL_CATALOG: readonly AgentToolCatalogEntry[] = [
@@ -142,7 +154,6 @@ export const AGENT_TOOL_CATALOG: readonly AgentToolCatalogEntry[] = [
       'Effectful and not blindly replayable; reconcile the remote head before retrying an uncertain result.',
     preconditions: ['Cleanly stageable task worktree on the dispatched branch.'],
     verifiedPostconditions: ['Returned head is the pushed task-branch head and publication gates passed.'],
-    telemetryEvents: ['tool.called', 'publication.committed', 'tool.refused', 'tool.failed'],
     annotations: annotations(false, true, false, true)
   }),
   entry({
@@ -166,7 +177,6 @@ export const AGENT_TOOL_CATALOG: readonly AgentToolCatalogEntry[] = [
     idempotencyAndReplay: 'Create-once effect; reconcile by task branch before retrying an uncertain result.',
     preconditions: ['Task branch is published and no task pull request exists.'],
     verifiedPostconditions: ['The returned pull request exists for the task branch with the validated body.'],
-    telemetryEvents: ['tool.called', 'pull_request.opened', 'tool.refused', 'tool.failed'],
     annotations: annotations(false, true, false, true)
   }),
   entry({
@@ -187,7 +197,6 @@ export const AGENT_TOOL_CATALOG: readonly AgentToolCatalogEntry[] = [
     idempotencyAndReplay: 'Idempotent for the same body; replay produces the same text.',
     preconditions: ['The task pull request exists and the body passes validation.'],
     verifiedPostconditions: ['The forge read-back matches the validated body.'],
-    telemetryEvents: ['tool.called', 'pull_request.body_updated', 'tool.refused', 'tool.failed'],
     annotations: annotations(false, true, true, true)
   }),
   entry({
@@ -206,7 +215,6 @@ export const AGENT_TOOL_CATALOG: readonly AgentToolCatalogEntry[] = [
     idempotencyAndReplay: 'Idempotent while head and check results are unchanged; re-run after either changes.',
     preconditions: ['A task pull request exists for the current published head.'],
     verifiedPostconditions: ['Evidence names the returned head and records the checks just run.'],
-    telemetryEvents: ['tool.called', 'evidence.refreshed', 'tool.refused', 'tool.failed'],
     annotations: annotations(false, true, true, true)
   }),
   entry({
@@ -226,8 +234,54 @@ export const AGENT_TOOL_CATALOG: readonly AgentToolCatalogEntry[] = [
       prNumber: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
       state: nullableString,
       head: nullableString,
-      checks: {},
-      reviews: {},
+      checks: {
+        anyOf: [
+          { type: 'null' },
+          {
+            type: 'array',
+            items: objectSchema(
+              {
+                __typename: str,
+                completedAt: nullableString,
+                conclusion: nullableString,
+                context: nullableString,
+                detailsUrl: nullableString,
+                name: nullableString,
+                startedAt: nullableString,
+                state: nullableString,
+                status: nullableString,
+                targetUrl: nullableString,
+                workflowName: nullableString
+              },
+              ['__typename']
+            )
+          }
+        ]
+      },
+      reviews: {
+        anyOf: [
+          { type: 'null' },
+          {
+            type: 'array',
+            items: objectSchema(
+              {
+                author: {
+                  anyOf: [{ type: 'null' }, objectSchema({ login: str }, ['login'])]
+                },
+                authorAssociation: nullableString,
+                body: str,
+                commit: nullableString,
+                createdAt: nullableString,
+                id: str,
+                includesCreatedEdit: nullableBoolean,
+                state: str,
+                submittedAt: nullableString
+              },
+              ['author', 'body', 'id', 'state']
+            )
+          }
+        ]
+      },
       body: nullableString,
       failedChecks: {
         type: 'array',
@@ -238,7 +292,9 @@ export const AGENT_TOOL_CATALOG: readonly AgentToolCatalogEntry[] = [
     idempotencyAndReplay: 'Read-only; replay is safe but may observe newer forge state.',
     preconditions: ['The dispatched task identity is available.'],
     verifiedPostconditions: ['Facts are read from the task pull request and failed log text is sanitized.'],
-    telemetryEvents: ['tool.called', 'pull_request.read', 'tool.refused', 'tool.failed'],
+    redaction: [
+      'Failed-check log tails are sanitized and bounded; pull-request body, checks, and reviews are returned as forge data.'
+    ],
     annotations: annotations(true, false, true, true)
   }),
   entry({
@@ -258,7 +314,6 @@ export const AGENT_TOOL_CATALOG: readonly AgentToolCatalogEntry[] = [
       'Repeatable observation, but it executes repository code and may differ as the worktree changes.',
     preconditions: ['The task worktree and check registry are available.'],
     verifiedPostconditions: ['The result reports the exit status and bounded output of vinaya check --all.'],
-    telemetryEvents: ['tool.called', 'checks.completed', 'tool.refused', 'tool.failed'],
     annotations: annotations(false, false, true, false)
   }),
   entry({
@@ -271,7 +326,16 @@ export const AGENT_TOOL_CATALOG: readonly AgentToolCatalogEntry[] = [
       }
     ],
     ...common,
-    limits: { inputTokens: 1024, outputTokens: 32768, inputBytes: 4096, outputBytes: 5242880 },
+    limits: {
+      inputTokens: null,
+      outputTokens: null,
+      inputBytes: null,
+      outputBytes: null,
+      behavior:
+        'No token or serialized-result byte limit is enforced; the handler limits the fetched body to 5 MiB, each returned text page to 100,000 characters, and URLs to 2,048 characters.'
+    },
+    timeoutAndCancellation:
+      'The fetch handler has a 30-second whole-operation timeout; the MCP server ignores cancellation notifications.',
     selectionBoundary: {
       whenToUse: 'Use for every required public URL source in the brief.',
       whenNotToUse: 'Do not use for arbitrary browsing, private sources, credentials, or non-HTTPS URLs.',
@@ -286,7 +350,9 @@ export const AGENT_TOOL_CATALOG: readonly AgentToolCatalogEntry[] = [
     verifiedPostconditions: [
       'Returned bytes passed address, TLS, status, content-type and size checks; receipt status is explicit.'
     ],
-    telemetryEvents: ['tool.called', 'documentation.fetched', 'documentation.receipted', 'tool.refused', 'tool.failed'],
+    redaction: [
+      'The public documentation response is returned as untrusted text without content redaction; requests carry no credentials.'
+    ],
     annotations: annotations(true, false, true, true)
   }),
   entry({
@@ -317,7 +383,6 @@ export const AGENT_TOOL_CATALOG: readonly AgentToolCatalogEntry[] = [
     idempotencyAndReplay: 'Read-only and replay-safe for a pinned manifest digest.',
     preconditions: ['Planned only: sourceId belongs to the run manifest and has pinned content.'],
     verifiedPostconditions: ['Content, final URL, and digest all come from the same controller-pinned manifest entry.'],
-    telemetryEvents: ['tool.called', 'source.read', 'tool.refused', 'tool.failed'],
     annotations: annotations(true, false, true, false)
   })
 ] as const

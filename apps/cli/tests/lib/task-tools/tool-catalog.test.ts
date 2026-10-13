@@ -4,7 +4,10 @@ import {
   AGENT_TOOL_CATALOG,
   DEV_TOOL_CATALOG,
   describeTool,
-  serveTool
+  serveTool,
+  TOOL_ERROR_FIELDS_SCHEMA,
+  TOOL_INFRASTRUCTURE_ERROR_SCHEMA,
+  TOOL_REFUSAL_SCHEMA
 } from '../../../src/lib/task-tools/tool-catalog.js'
 import { createDevToolsMcpServer, type DevToolContext } from '../../../src/lib/task-tools/dev-tools-server.js'
 
@@ -32,13 +35,18 @@ const required = [
 ] as const
 
 function assertStrict(schema: unknown): void {
-  if (typeof schema !== 'object' || schema === null) return
+  expect(typeof schema).toBe('object')
+  expect(schema).not.toBeNull()
   const value = schema as Record<string, unknown>
   if (value.type === 'object') expect(value.additionalProperties).toBe(false)
-  for (const child of Object.values(value)) {
-    if (Array.isArray(child)) child.forEach(assertStrict)
-    else assertStrict(child)
-  }
+  expect(
+    'type' in value || 'anyOf' in value || 'oneOf' in value || 'allOf' in value || '$ref' in value || 'const' in value
+  ).toBe(true)
+  if (typeof value.properties === 'object' && value.properties !== null)
+    Object.values(value.properties).forEach(assertStrict)
+  if (value.items !== undefined) assertStrict(value.items)
+  for (const keyword of ['anyOf', 'oneOf', 'allOf'] as const)
+    if (Array.isArray(value[keyword])) value[keyword].forEach(assertStrict)
 }
 
 describe('canonical agent tool catalog', () => {
@@ -61,7 +69,55 @@ describe('canonical agent tool catalog', () => {
       expect(
         validatesJsonSchema(tool.inputSchema, { ...tool.realisticUsageExamples[0]?.input, unexpected: true })
       ).toBe(false)
+      expect(validatesJsonSchema(tool.successOutputSchema, { unexpected: true })).toBe(false)
     }
+  })
+
+  it('shares one definition of the three independent error axes', () => {
+    const fields = TOOL_ERROR_FIELDS_SCHEMA.properties
+    const refusal = TOOL_REFUSAL_SCHEMA.properties
+    for (const key of TOOL_ERROR_FIELDS_SCHEMA.required) expect(refusal[key]).toBe(fields[key])
+    expect(TOOL_INFRASTRUCTURE_ERROR_SCHEMA).toBe(TOOL_REFUSAL_SCHEMA)
+    for (const tool of AGENT_TOOL_CATALOG) {
+      expect(tool.refusalSchema).toBe(TOOL_REFUSAL_SCHEMA)
+      expect(tool.infrastructureErrorSchema).toBe(TOOL_INFRASTRUCTURE_ERROR_SCHEMA)
+    }
+  })
+
+  it('states unenforced limits and cancellation behavior without promising them', () => {
+    for (const tool of AGENT_TOOL_CATALOG.filter((entry) => entry.name !== 'fetch_documentation')) {
+      expect(tool.limits.inputTokens).toBeNull()
+      expect(tool.limits.outputTokens).toBeNull()
+      expect(tool.limits.inputBytes).toBeNull()
+      expect(tool.limits.outputBytes).toBeNull()
+      expect(tool.limits.behavior).toContain('No tool-level')
+      expect(tool.timeoutAndCancellation).toContain('ignores cancellation notifications')
+    }
+    const fetch = AGENT_TOOL_CATALOG.find((tool) => tool.name === 'fetch_documentation')
+    expect(fetch?.limits.behavior).toContain('5 MiB')
+    expect(fetch?.timeoutAndCancellation).toContain('30-second')
+  })
+
+  it('refuses unknown properties inside read_pull_request checks and reviews', () => {
+    const schema = AGENT_TOOL_CATALOG.find((tool) => tool.name === 'read_pull_request')?.successOutputSchema
+    expect(schema).toBeDefined()
+    const base = {
+      prNumber: 42,
+      state: 'OPEN',
+      head: 'abc123',
+      checks: [],
+      reviews: [],
+      body: 'report',
+      failedChecks: []
+    }
+    expect(validatesJsonSchema(schema, base)).toBe(true)
+    expect(validatesJsonSchema(schema, { ...base, checks: [{ __typename: 'CheckRun', surprise: true }] })).toBe(false)
+    expect(
+      validatesJsonSchema(schema, {
+        ...base,
+        reviews: [{ author: { login: 'reviewer', surprise: true }, body: '', id: 'R1', state: 'APPROVED' }]
+      })
+    ).toBe(false)
   })
 
   it('validates every realistic example against its tool input schema', () => {
