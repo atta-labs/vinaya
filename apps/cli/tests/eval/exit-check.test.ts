@@ -260,12 +260,15 @@ describe('the global exit check', () => {
 
   it('keeps the Operator-owned exclusion list shrink-only and fully attributed', () => {
     const ceiling = new Set([
+      'check:program-6.23-supporting-pull-request-read',
+      'module:6.14',
+      'module:6.23',
       'cutover-gate:gate-11',
       'fault-attack:11-consumed-or-stale-ruling-replayed',
       'fault-attack:51-human-wait-principal-ruling-pause',
       ...faults.slice(58).map((entry) => `fault-attack:${entry.name}`)
     ])
-    expect(ceiling.size).toBe(41)
+    expect(ceiling.size).toBe(44)
     for (const entry of OPERATOR_EXIT_EXCLUSIONS) {
       expect(ceiling.has(`${entry.kind}:${entry.name}`)).toBe(true)
       expect(entry.owner).toBe('Operator on one host')

@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import { TASK_TOOL_NAMES } from '@attalabs/aeg-core'
 import { DEV_TOOL_NAMES } from '../../../src/lib/task-tools/dev-tools-server'
 import type { ComponentKind } from '../../../src/lib/dev-review-eval/registry'
+import { OPERATOR_EXIT_EXCLUSIONS } from '../../../src/lib/dev-review-eval/exit-check'
 
 export const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..')
 
@@ -36,20 +37,8 @@ export interface UniverseMember {
   source: MemberSource
 }
 
-export interface ContractUniverseExclusion {
-  check: string
-  owner: 'Operator on one host'
-  reason: string
-}
-
 /** Shrink-only checks temporarily owned by the Operator project. */
-export const CONTRACT_UNIVERSE_EXCLUSIONS: readonly ContractUniverseExclusion[] = [
-  {
-    check: 'program-6.23-supporting-pull-request-read',
-    owner: 'Operator on one host',
-    reason: 'Revision 14 replaced this wording with the nine-tool Operator contract owned by this project.'
-  }
-]
+export const CONTRACT_UNIVERSE_EXCLUSIONS = OPERATOR_EXIT_EXCLUSIONS.filter((entry) => entry.kind === 'check')
 
 /** The text and typed lists the universes are derived from; a test may substitute any of them. */
 export interface ContractSources {
@@ -197,7 +186,7 @@ export function deriveContractUniverses(sources: ContractSources): Record<Contra
   }
   const legacyOperatorWording = 'supporting pull-request read'
   const operatorWordingCheck = 'program-6.23-supporting-pull-request-read'
-  const operatorWordingExcluded = CONTRACT_UNIVERSE_EXCLUSIONS.some((entry) => entry.check === operatorWordingCheck)
+  const operatorWordingExcluded = CONTRACT_UNIVERSE_EXCLUSIONS.some((entry) => entry.name === operatorWordingCheck)
   if (operator.body.includes(legacyOperatorWording)) {
     if (operatorWordingExcluded) {
       throw new Error(`the ${operatorWordingCheck} exclusion is covered and must be removed`)

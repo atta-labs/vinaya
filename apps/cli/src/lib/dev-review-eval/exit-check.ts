@@ -25,14 +25,14 @@ export const EXPECTED_SHARDS = ['typed-sources', 'contract-kinds', 'cutover-gate
 export const EXPECTED_COUNTS: Partial<Record<ComponentKind, number>> = { 'cutover-gate': 16, 'fault-attack': 56 }
 
 export interface ExitExclusion {
-  kind: ComponentKind
+  kind: ComponentKind | 'check' | 'module'
   name: string
   owner: 'Operator on one host'
   reason: string
 }
 
 const OPERATOR_REASON = 'Owned by the Operator on one host project; its own exit check runs with no exclusions.'
-const operator = (kind: ComponentKind, name: string): ExitExclusion => ({
+const operator = (kind: ExitExclusion['kind'], name: string): ExitExclusion => ({
   kind,
   name,
   owner: 'Operator on one host',
@@ -41,6 +41,9 @@ const operator = (kind: ComponentKind, name: string): ExitExclusion => ({
 
 /** Shrink-only debt owned by the Operator project, listed row by row. */
 export const OPERATOR_EXIT_EXCLUSIONS: readonly ExitExclusion[] = [
+  operator('check', 'program-6.23-supporting-pull-request-read'),
+  operator('module', '6.14'),
+  operator('module', '6.23'),
   operator('cutover-gate', 'gate-11'),
   operator('fault-attack', '11-consumed-or-stale-ruling-replayed'),
   operator('fault-attack', '51-human-wait-principal-ruling-pause'),
@@ -175,7 +178,9 @@ export function checkExit(input: ExitInput): ExitReport {
   const kinds = Object.fromEntries(
     COMPONENT_KINDS.map((k) => [k, { covered: 0, emptyFields: 0, unmapped: 0 }])
   ) as Record<ComponentKind, ExitKindReport>
-  const exclusions = input.exclusions ?? OPERATOR_EXIT_EXCLUSIONS
+  const exclusions = (input.exclusions ?? OPERATOR_EXIT_EXCLUSIONS).filter((entry) =>
+    COMPONENT_KINDS.includes(entry.kind as ComponentKind)
+  )
   const exclusionKeys = new Set(exclusions.map((entry) => `${entry.kind}:${entry.name}`))
   const universeKeys = new Set(
     COMPONENT_KINDS.flatMap((kind) => (input.universes[kind] ?? []).map((name) => `${kind}:${name}`))

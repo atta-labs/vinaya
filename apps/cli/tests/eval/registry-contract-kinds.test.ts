@@ -233,9 +233,10 @@ describe('the universe derivation follows its sources', () => {
   it('keeps the Operator-owned wording-check exclusion shrink-only and rejects it once covered', () => {
     expect(CONTRACT_UNIVERSE_EXCLUSIONS).toEqual([
       {
-        check: 'program-6.23-supporting-pull-request-read',
+        kind: 'check',
+        name: 'program-6.23-supporting-pull-request-read',
         owner: 'Operator on one host',
-        reason: 'Revision 14 replaced this wording with the nine-tool Operator contract owned by this project.'
+        reason: 'Owned by the Operator on one host project; its own exit check runs with no exclusions.'
       }
     ])
     const program = sources.program.replace(
