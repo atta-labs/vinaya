@@ -1606,6 +1606,22 @@ describe('parseIssueSurface', () => {
 })
 
 describe('checkSurfaceGlobsResolve (O1)', () => {
+  it('passes for a new directory when the Boundary pins a file inside it', () => {
+    const body =
+      '**Boundary** — Pinned files: `decisions/first.md`. Out: nothing.\n\n## Surface\n\nin: decisions\nout: —\n'
+    expect(checkSurfaceGlobsResolve(body, () => false).status).toBe('pass')
+  })
+
+  it('fails for a new directory with no pinned file inside it', () => {
+    const body = '**Boundary** — Pinned files: `docs/guide.md`. Out: nothing.\n\n## Surface\n\nin: decisions\nout: —\n'
+    expect(checkSurfaceGlobsResolve(body, () => false).status).toBe('fail')
+  })
+
+  it('does not count a file named only in the Boundary Out clause as pinned', () => {
+    const body = '**Boundary** — In: the change. Out: `decisions/first.md`.\n\n## Surface\n\nin: decisions\nout: —\n'
+    expect(checkSurfaceGlobsResolve(body, () => false).status).toBe('fail')
+  })
+
   it('passes when every `in:` glob resolves', () => {
     const body = '## Surface\n\nin: packages/aeg-core/src\nout: —\n'
     const r = checkSurfaceGlobsResolve(body, () => true)

@@ -302,6 +302,7 @@ export {
   checkRationaleSurfaceCoverage,
   checkSurfaceExcludesBoundDoc,
   checkSurfaceGlobsResolve,
+  surfaceEntryResolves,
   checkSurfaceOverlap,
   checkTrancheLabelPresence,
   checkTestPlanDeveloperRunnable,

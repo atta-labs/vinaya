@@ -17,6 +17,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   buildConsumersOf,
+  boundaryPinnedFiles,
   checkDispatchReadiness,
   checkIssueRationale,
   checkPremisesHold,
@@ -32,6 +33,7 @@ import {
   parseIssueSurface,
   parseIssueTestPlan,
   parseRationaleFields,
+  surfaceEntryResolves,
   type PackageManifest,
   renderBrief,
   trancheLabel,
@@ -842,14 +844,15 @@ export async function assembleAndRenderBrief(
   const surface: IssueSurface = surfaceResult.ok ? surfaceResult.value : { in: [], out: [] }
   const rationale = parseRationaleFields(issueBody)
 
-  // Every declared Surface glob must still resolve to at least one real
-  // tracked file — a sanity check on the Issue's own `## Surface` `in:`
-  // list, catching a typo'd/empty directory — but the MATCHES themselves are
-  // no longer what §4's file list is built from (see below): a directory-
-  // level glob is never a file-level change set.
+  // Every declared Surface glob must resolve through a tracked file or a
+  // Boundary-pinned descendant. This catches a typo'd/empty directory while
+  // allowing a task to create a pinned new directory. The matches themselves
+  // are not what §4's file list is built from (see below): a directory-level
+  // glob is never a file-level change set.
   const globs = surfaceGlobsOverride ?? surface.in
+  const pinnedFiles = boundaryPinnedFiles(issueBody)
   for (const glob of globs) {
-    if (expandGlob(glob).length === 0) {
+    if (!surfaceEntryResolves(glob, (entry) => expandGlob(entry).length > 0, pinnedFiles)) {
       return { ok: false, missing: [`--surfaces glob "${glob}" matched no tracked file.`] }
     }
   }
@@ -1157,8 +1160,9 @@ export async function assembleAndRenderBriefForIssue(
   const rationale = parseRationaleFields(issueBody)
 
   const globs = surface.in
+  const pinnedFiles = boundaryPinnedFiles(issueBody)
   for (const glob of globs) {
-    if (expandGlob(glob).length === 0) {
+    if (!surfaceEntryResolves(glob, (entry) => expandGlob(entry).length > 0, pinnedFiles)) {
       return { ok: false, missing: [`--surfaces glob "${glob}" matched no tracked file.`] }
     }
   }

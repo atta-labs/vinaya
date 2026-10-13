@@ -356,14 +356,13 @@ export function globCoversPath(glob: string, path: string): boolean {
 
 /**
  * **O1 — a declared Surface glob must resolve.** Every `## Surface` `in:`
- * glob must match at least one real tracked file, or a Surface that cannot
- * render a file list is caught at authoring time instead of at dispatch
- * (`brief-assembly.ts`'s own render-time sanity check, which currently
- * catches the identical defect too late). `resolvesToFile` is injected —
- * this module stays pure, no `git`/`fs` — and the caller
+ * glob must either match a real tracked file or contain a file pinned by the
+ * Boundary. The latter permits a task to create a new directory while still
+ * refusing a typo'd or otherwise empty Surface entry. `resolvesToFile` is
+ * injected — this module stays pure, no `git`/`fs` — and the caller
  * (`forge-write.ts`) passes the SAME `expandGlob` predicate
- * `brief-assembly.ts` already uses to render, so the gate and the renderer
- * can never disagree about whether a glob resolves.
+ * `brief-assembly.ts` uses alongside `boundaryPinnedFiles`, so the gate and
+ * both render paths share this resolution rule.
  *
  * A backtick-wrapped glob (`` `packages/foo/**` ``) is not stripped or
  * specially refused here: the literal backticks are part of the string
@@ -375,12 +374,23 @@ export function globCoversPath(glob: string, path: string): boolean {
  * does not yet exist (a directory not yet created) is a legitimate
  * exclusion, not a defect.
  */
+export function surfaceEntryResolves(
+  entry: string,
+  resolvesToFile: (glob: string) => boolean,
+  pinnedFiles: readonly string[]
+): boolean {
+  if (resolvesToFile(entry)) return true
+  const directory = entry.replace(/\/\*\*?$/, '').replace(/\/+$/, '')
+  return pinnedFiles.some((path) => path.startsWith(`${directory}/`))
+}
+
 export function checkSurfaceGlobsResolve(body: string, resolvesToFile: (glob: string) => boolean): IssueSectionResult {
   const surface = parseIssueSurface(body)
   if (!surface.ok) return { status: 'pass', errors: [] }
+  const pinnedFiles = boundaryPinnedFiles(body)
   const errors: string[] = []
   for (const glob of surface.value.in) {
-    if (!resolvesToFile(glob)) {
+    if (!surfaceEntryResolves(glob, resolvesToFile, pinnedFiles)) {
       errors.push(
         `issue-validation Surface: \`${glob}\` in \`## Surface\`'s \`in:\` list matches no tracked file — a Surface that cannot resolve cannot render a brief's file list.`
       )

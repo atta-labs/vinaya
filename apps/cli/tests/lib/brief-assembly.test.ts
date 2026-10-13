@@ -464,6 +464,48 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
     })
   })
 
+  it('renders when a Surface entry names a new directory pinned by the Boundary', () => {
+    const body = [
+      '**Project:** cli',
+      '',
+      '## Objectives',
+      '',
+      'O1. The fixture renders a pinned new directory.',
+      '',
+      '## Documentation',
+      '',
+      'None.',
+      '',
+      '## Surface',
+      '',
+      'in: src, decisions',
+      'out: —',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — proves a pinned new directory resolves.',
+      '',
+      '## Test plan',
+      '',
+      'Test Plan: unit-tests-only',
+      '',
+      '## Stop conditions',
+      '',
+      '- None.',
+      '',
+      RATIONALE.replace(
+        "`src/fixture.ts`, the fixture's own committed source file",
+        "`src/fixture.ts`, the fixture's own committed source file, and `decisions/first.md`, a new file"
+      )
+    ].join('\n')
+
+    return assembleAndRenderBriefForIssue(DRAFT_ISSUE_SENTINEL, {
+      title: '[fixture] pinned new directory',
+      body,
+      labels: []
+    }).then((result) => expect(result.ok, JSON.stringify(result)).toBe(true))
+  })
+
   it('refuses, naming the missing section, when the override body has no `## Test plan`', () => {
     const body = [
       '## Objectives',
