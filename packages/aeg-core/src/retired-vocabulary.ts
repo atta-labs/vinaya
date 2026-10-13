@@ -39,108 +39,26 @@ export type VocabFinding = {
   message: string
 }
 
-/**
- * The plan-on-disk layout the forge-native cutover retired: a plan is a
- * Milestone plus labeled Issues now, so a doctrine page naming the topology
- * file, its directory, or the per-project state directory as something a
- * reader writes or reads today is describing a mechanism that is gone.
- */
-export const PLAN_ON_DISK_PATTERNS: readonly string[] = ['[Tt]opology files?', 'aeg-root/tranches/', 'aeg-project/']
+import {
+  PLAN_ON_DISK_PATTERNS,
+  RETIRED_GLOBAL_EXEMPTIONS,
+  RETIRED_PATTERN_EXEMPTIONS,
+  rulesForGroup,
+  TRANCHE_MODEL_FILE
+} from './prose-rules'
+
+const retiredRules = rulesForGroup('retired-vocabulary')
+
+export { PLAN_ON_DISK_PATTERNS, TRANCHE_MODEL_FILE }
 
 /** The retired mechanisms this scan bans as claims of current-ness — see the module header for what is deliberately NOT here. */
-export const RETIRED_PATTERNS: readonly string[] = [
-  // the deleted decision-id format
-  String.raw`\bD-[0-9]{3}\b`,
-  'D-(###|NNN|nnn|xxx)',
-  // the retired record as a live, writable, required artifact, every
-  // inflection but never "decision logic"
-  'decision (entry|logged)',
-  'decision-log entry',
-  'decision log entry',
-  'decision log(s|ged|ging)?([^a-z]|$)',
-  'decision-log',
-  'decision entr',
-  'decisions? (are |is )?logged',
-  'log entries',
-  String.raw`decisions\.md`,
-  'decisions-legacy',
-  'CONTRADICTION',
-  'assumes Tier 3',
-  // the lock
-  'Lock: ?YES',
-  'Lock: ?NO',
-  'lock approvals?',
-  'approves locks',
-  'Conforms to lock',
-  'Challenges lock',
-  // checks deleted with the machinery
-  'checkDecisionNumbersFresh',
-  // the role that no longer exists
-  String.raw`roles/team-leader\.md`,
-  // the wreckage a citation strip leaves when it deletes the contents of a
-  // parenthetical and not the punctuation around it — the shape is banned,
-  // not one instance of it. `()` is deliberately absent: it is an ordinary
-  // function call, and banning it would make any TypeScript source unusable.
-  String.raw`\(,`,
-  String.raw`,\)`,
-  String.raw`\(\.\)`,
-  ...PLAN_ON_DISK_PATTERNS
-]
-
-/** The doctrine page that records the plan-on-disk layout's retirement — see `PATTERN_EXEMPT`. */
-export const TRANCHE_MODEL_FILE = '/tranche-model.md'
+export const RETIRED_PATTERNS: readonly string[] = retiredRules.map((rule) => rule.patterns.repository as string)
 
 /** Paths where a retired-vocabulary mention is legitimate: frozen archives and historical records. Substring match, same as the vitest suite's own `EXEMPT`. */
-export const RETIRED_EXEMPT_SUBSTRINGS: readonly string[] = [
-  'docs/decisions-legacy.md',
-  'apps/herald-ai/docs/',
-  'apps/vada-ai/docs/',
-  'aeg-root/tranches/completed/',
-  'packages/aeg-core/src/docs/published-prose',
-  'packages/aeg-core/src/retired-vocabulary.test.ts',
-  'packages/aeg-core/src/retired-vocabulary.ts',
-  '/fixtures/',
-  '/node_modules/',
-  '/.next/',
-  '/.turbo/'
-]
+export const RETIRED_EXEMPT_SUBSTRINGS: readonly string[] = RETIRED_GLOBAL_EXEMPTIONS
 
-/**
- * Per-pattern exemptions on top of `RETIRED_EXEMPT_SUBSTRINGS`, for the
- * handful of patterns with a real, load-bearing false-positive shape (a
- * live doc that legitimately discusses the retired concept by name, or a
- * same-shaped live feature). Copied verbatim from `retired-vocabulary.test.ts`'s
- * `PATTERN_EXEMPT` — including entries for `apps/herald-ai`/`apps/vada-ai`
- * paths this repo does not carry, since a nonexistent path costs nothing to
- * keep and this module's whole point is not re-deriving the list.
- */
-export const PATTERN_EXEMPT: Readonly<Record<string, readonly string[]>> = {
-  [String.raw`\bD-[0-9]{3}\b`]: ['./CLAUDE.md'],
-  [String.raw`decisions\.md`]: [
-    'docs-index.md',
-    'apps/vada-ai/specs/legacy/README.md',
-    'apps/vada-ai/specs/vada-product-spec.md',
-    'apps/vada-ai/web/CLAUDE.md',
-    'apps/vada-ai/CLAUDE.md'
-  ],
-  'decisions-legacy': [
-    'packages/aeg-core/src/file-classify.ts',
-    'packages/aeg-core/src/file-classify.test.ts',
-    'packages/aeg-core/src/pr-tier.test.ts',
-    'docs-index.md',
-    '.claude/skills/database/SKILL.md',
-    '.claude/skills/vada-architecture/SKILL.md',
-    'apps/vada-ai/specs/vada-byok-principles.md',
-    'apps/vada-ai/web/CLAUDE.md',
-    'apps/vada-ai/CLAUDE.md'
-  ],
-  CONTRADICTION: ['apps/vada-ai/specs/vada-reviewers-spec.md'],
-  // The tranche model's own retirement section is the one place whose job is
-  // to say these existed and what replaced them. Exempted by file, for these
-  // three patterns only — every other retired class still binds that file,
-  // and its other sections carry none of the three.
-  ...Object.fromEntries(PLAN_ON_DISK_PATTERNS.map((pattern) => [pattern, [TRANCHE_MODEL_FILE]]))
-}
+/** Per-pattern exemptions on top of `RETIRED_EXEMPT_SUBSTRINGS`; the data lives in the shared rule module. */
+export const PATTERN_EXEMPT: Readonly<Record<string, readonly string[]>> = RETIRED_PATTERN_EXEMPTIONS
 
 function lineNumbers(content: string, pattern: RegExp): number[] {
   const out: number[] = []

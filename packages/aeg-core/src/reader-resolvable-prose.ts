@@ -242,10 +242,19 @@ function lineAt(content: string, index: number): number {
 }
 
 /** `#NNN`-shaped — a PR/Issue number cited bare, resolvable only inside this repo's own tracker. */
-export const FORGE_NUMBER_PATTERN = /#[0-9]{2,4}/g
+import { proseSeverity, rulesForGroup } from './prose-rules'
+
+const readerRules = rulesForGroup('reader-resolvable')
+const readerPattern = (id: string, scope = 'prose'): RegExp => {
+  const pattern = readerRules.find((rule) => rule.id === id)?.patterns[scope]
+  if (!(pattern instanceof RegExp)) throw new Error(`default prose rule ${id} has no ${scope} pattern`)
+  return pattern
+}
+
+export const FORGE_NUMBER_PATTERN = readerPattern('forge-number')
 
 /** `example-tranche-vN`-shaped — an internal tranche slug ending `-vN`. */
-export const TRANCHE_SLUG_VN_PATTERN = /[a-z][a-z-]+-v[0-9]/g
+export const TRANCHE_SLUG_VN_PATTERN = readerPattern('tranche-slug')
 
 /**
  * `task 4`/`tasks 12`/`task #4`-shaped — a task's number out of a plan, which
@@ -263,7 +272,7 @@ export const TRANCHE_SLUG_VN_PATTERN = /[a-z][a-z-]+-v[0-9]/g
  * citation itself — the caller reports group 2, so the boundary character
  * never leaks into a finding's message.
  */
-export const TASK_NUMBER_PATTERN = /(^|[^a-z0-9-])(tasks?[ \t]+#?[0-9]+)/gi
+export const TASK_NUMBER_PATTERN = readerPattern('task-number')
 
 /**
  * Builds the legacy-slug pattern from the real archived-tranche filenames
@@ -327,14 +336,16 @@ export function checkUnresolvableReferences(
   // patterns have none (report the whole match), the boundary-checked
   // legacy-slug pattern reports its group 2 so the boundary chars around it
   // never leak into the finding's message.
-  const patterns: { pattern: RegExp; what: string; group?: number }[] = [
-    { pattern: FORGE_NUMBER_PATTERN, what: 'a forge number' },
-    { pattern: TRANCHE_SLUG_VN_PATTERN, what: 'an internal tranche slug' },
-    ...(legacyPattern ? [{ pattern: legacyPattern, what: 'an internal tranche slug', group: 2 }] : [])
+  const patterns: { pattern: RegExp; what: string; rule: string; group?: number }[] = [
+    { pattern: FORGE_NUMBER_PATTERN, what: 'a forge number', rule: 'forge-number' },
+    { pattern: TRANCHE_SLUG_VN_PATTERN, what: 'an internal tranche slug', rule: 'tranche-slug' },
+    ...(legacyPattern
+      ? [{ pattern: legacyPattern, what: 'an internal tranche slug', rule: 'legacy-batch-name', group: 2 }]
+      : [])
   ]
 
-  const productPatterns: { pattern: RegExp; what: string; group?: number }[] = [
-    { pattern: TRANCHE_SLUG_VN_PATTERN, what: 'an internal tranche slug in product code' }
+  const productPatterns: { pattern: RegExp; what: string; rule: string; group?: number }[] = [
+    { pattern: TRANCHE_SLUG_VN_PATTERN, what: 'an internal tranche slug in product code', rule: 'tranche-slug' }
   ]
 
   // A spec carries the doctrine-page patterns AND the task-number one: a
@@ -343,9 +354,9 @@ export function checkUnresolvableReferences(
   // The doctrine pages themselves are deliberately left out of it — their own
   // report-only sweep names a much larger standing backlog, and a rule that
   // blocks belongs where it can be satisfied file by file.
-  const specPatterns: { pattern: RegExp; what: string; group?: number }[] = [
+  const specPatterns: { pattern: RegExp; what: string; rule: string; group?: number }[] = [
     ...patterns,
-    { pattern: TASK_NUMBER_PATTERN, what: 'a task number', group: 2 }
+    { pattern: TASK_NUMBER_PATTERN, what: 'a task number', rule: 'task-number', group: 2 }
   ]
 
   for (const file of files) {
@@ -362,7 +373,6 @@ export function checkUnresolvableReferences(
     // source. A path listed with a number is not skipped: its findings are
     // counted below and reported only once they exceed that number.
     if (cls === 'spec' && grandfatheredWhole.has(file.path)) continue
-    const blocking = cls === 'product' || cls === 'spec'
     const scrubbed =
       cls === 'product' ? stripNonProseForProduct(file.path, file.content) : stripNonProse(file.path, file.content)
     // A spec is checked with the SAME rules a doctrine page is — the full
@@ -370,7 +380,8 @@ export function checkUnresolvableReferences(
     // task-number rule that applies to this class alone.
     const patternsToRun = cls === 'product' ? productPatterns : cls === 'spec' ? specPatterns : patterns
     const fileFindings: ProseFinding[] = []
-    for (const { pattern, what, group } of patternsToRun) {
+    for (const { pattern, what, rule, group } of patternsToRun) {
+      const blocking = proseSeverity(rule, cls) === 'error'
       pattern.lastIndex = 0
       let match: RegExpExecArray | null = pattern.exec(scrubbed)
       while (match !== null) {
@@ -478,7 +489,7 @@ export function checkUndefinedVocabulary(
         file: file.path,
         line,
         message: `uses coined term "${term}" without defining it inline or linking the glossary`,
-        blocking: false
+        blocking: proseSeverity('coined-term', cls) === 'error'
       })
     }
   }
@@ -493,10 +504,10 @@ export function checkUndefinedVocabulary(
  * (`x-vN`) is still exactly the kind of internal citation a reader outside
  * this repo cannot resolve.
  */
-export const SOURCE_COMMENT_TRANCHE_SLUG_PATTERN = /[a-z0-9]+(?:-[a-z0-9]+)*-v[0-9]+/g
+export const SOURCE_COMMENT_TRANCHE_SLUG_PATTERN = readerPattern('source-comment-tranche-slug', 'comment')
 
 /** `#NNN`-shaped, source-comment class — no upper digit-count bound (unlike `FORGE_NUMBER_PATTERN`'s `{2,4}`), since a forge's issue/PR numbering has no fixed ceiling. */
-export const SOURCE_COMMENT_FORGE_NUMBER_PATTERN = /#[0-9]{2,}/g
+export const SOURCE_COMMENT_FORGE_NUMBER_PATTERN = readerPattern('source-comment-forge-number', 'comment')
 
 /**
  * The inverse of `stripNonProse`'s `.ts`/`.tsx` half: keeps ONLY the text
@@ -631,16 +642,24 @@ export function checkSourceComments(
 ): ProseFinding[] {
   const findings: ProseFinding[] = []
   const allowed = new Set(allowlist)
-  const patterns: { pattern: RegExp; what: string }[] = [
-    { pattern: SOURCE_COMMENT_TRANCHE_SLUG_PATTERN, what: 'a tranche-slug citation' },
-    { pattern: SOURCE_COMMENT_FORGE_NUMBER_PATTERN, what: 'a forge-number citation' }
+  const patterns: { pattern: RegExp; what: string; rule: string }[] = [
+    {
+      pattern: SOURCE_COMMENT_TRANCHE_SLUG_PATTERN,
+      what: 'a tranche-slug citation',
+      rule: 'source-comment-tranche-slug'
+    },
+    {
+      pattern: SOURCE_COMMENT_FORGE_NUMBER_PATTERN,
+      what: 'a forge-number citation',
+      rule: 'source-comment-forge-number'
+    }
   ]
 
   for (const file of files) {
     if (!file.path.endsWith('.ts')) continue
     if (allowed.has(file.path)) continue
     const comments = extractComments(file.path, file.content)
-    for (const { pattern, what } of patterns) {
+    for (const { pattern, what, rule } of patterns) {
       pattern.lastIndex = 0
       let match: RegExpExecArray | null = pattern.exec(comments)
       while (match !== null) {
@@ -648,7 +667,7 @@ export function checkSourceComments(
           file: file.path,
           line: lineAt(comments, match.index),
           message: `comment cites ${what} ("${match[0]}") a reader outside this repo's tracker cannot resolve`,
-          blocking: false
+          blocking: proseSeverity(rule, 'source-comment') === 'error'
         })
         match = pattern.exec(comments)
       }

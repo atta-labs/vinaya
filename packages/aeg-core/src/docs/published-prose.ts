@@ -44,6 +44,7 @@
  */
 
 import { findHeadingLine, findTable } from '../markdown-table'
+import { rulesForGroup } from '../prose-rules'
 import { isSurfacedDoc } from './surfaced-manifest'
 import type { DocFrontmatter } from './types'
 
@@ -73,11 +74,7 @@ export const CONTRACT_BLOCKS = [
  * text before scanning, longest first, so a repo-internal-path rule can never
  * claim the branch convention.
  */
-export const ALLOWED_MECHANICS: readonly string[] = [
-  '.worktrees/task/<tranche>/<n>',
-  'task/<tranche>/<n>',
-  '.worktrees/'
-]
+export const ALLOWED_MECHANICS: readonly string[] = rulesForGroup('published-prose')[0]?.exemptions ?? []
 
 export type PublishedProseEntry = {
   /** Path relative to `aeg-root/`, e.g. `roles/developer.md`. */
@@ -96,33 +93,11 @@ type ProseRule = { id: string; what: string; pattern: RegExp }
  * English word ("Project:", the PR-body field) from being read as the deleted
  * `project:*` label family.
  */
-const PROSE_RULES: ProseRule[] = [
-  { id: 'decision-id', what: 'a decision id', pattern: /\bD-\d{3,}\b/ },
-  { id: 'section-ref', what: 'a section reference', pattern: /§/ },
-  { id: 'forge-number', what: 'a forge number', pattern: /#\d+/ },
-  { id: 'retired-name', what: 'the retired public name', pattern: /\bAEG\b/ },
-  { id: 'tranche-slug', what: 'a tranche slug', pattern: /\b[a-z][a-z0-9]*(?:-[a-z0-9]+)+-v\d+\b/ },
-  {
-    id: 'label-vocabulary',
-    what: 'forge label vocabulary',
-    // Every entry here is CUMULATIVE — a retired namespace stays banned after
-    // the objects carrying it are gone, because a published page naming it is
-    // just as unreadable to a stranger as one naming the current grammar (see
-    // the module header). `aeg:` is retired and still listed for that reason,
-    // and `iteration:` joins it: the rename to `tranche:` ADDS an alternative,
-    // it does not substitute one. Substituting is how a rename silently
-    // narrows this gate — the forge still carried `vinaya/iteration:*` labels
-    // when the rename landed, and a page naming one would have passed.
-    pattern: /(?:vinaya\/)?\b(?:tranche|iteration|tier|needs|waiver|project|aeg):(?![/\s]|$)/
-  },
-  { id: 'internal-path', what: 'a repo-internal path', pattern: /\b(?:packages|apps|aeg-root|tools|scripts)\// },
-  { id: 'internal-path', what: 'a repo-internal path', pattern: /\.(?:claude|husky|github)\// },
-  {
-    id: 'internal-path',
-    what: 'a repo-internal file',
-    pattern: /(?:^|[\s(`"'[])[\w.-]+(?:\/[\w.-]+)*\.(?:ts|tsx|js|jsx|mjs|cjs|sh|ya?ml|json|md)\b/
-  }
-]
+const PROSE_RULES: ProseRule[] = rulesForGroup('published-prose').map((rule) => ({
+  id: rule.id,
+  what: rule.message,
+  pattern: rule.patterns.published as RegExp
+}))
 
 /** The doc kinds this check governs, and the block set each answers with. */
 function blocksFor(relPath: string): readonly string[] | null {
