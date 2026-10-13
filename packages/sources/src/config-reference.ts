@@ -391,7 +391,8 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     semantics: [
       "De-hardcodes the two prose/vocabulary core checks — `reader-resolvable-prose` and `retired-vocabulary` — behind adopter configuration, so both can run for real in an adopter repo instead of only inside this monorepo's own dev loop. Read fresh on every `vinaya check` run (not at generation time), so an edit takes effect on the very next run with no `vinaya upgrade` needed.",
       "Every field is optional; unset entirely, both checks behave exactly as they did when this key did not exist — this repo's own prior hardcoded doctrine layout.",
-      "Both checks are report-only for the classes these fields configure — a finding prints as a `warning`, and the check's own exit code stays `0` for them — except `reader-resolvable-prose`'s two blocking classes, which fail with `severity: 'error'` and a non-zero exit: a tranche-slug citation in product code (a fixed `PRODUCT_SLUG_SCOPE`, not configurable by this key), and any citation in a spec-class file (`specPaths` below, whose defaults need no configuration at all; `specGrandfather` is its only exemption)."
+      'The writing rules themselves are one rule set run by two checks: `reader-resolvable-prose` runs its reader-resolvable group and `retired-vocabulary` runs its retired group. `rules` below configures that set; `vinaya check --plan` prints which rules each check runs.',
+      "Both checks are report-only for the classes these fields configure — a finding prints as a `warning`, and the check's own exit code stays `0` for them — except `reader-resolvable-prose`'s two blocking classes, which fail with `severity: 'error'` and a non-zero exit: a tranche-slug citation in product code (`productPaths` below, `PRODUCT_SLUG_SCOPE` by default), and any citation in a spec-class file (`specPaths` below, whose defaults need no configuration at all; `specGrandfather` is its only exemption)."
     ],
     example: `{
   "proseGates": {
@@ -500,6 +501,87 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
       "The array form exempts each listed file entirely, from every rule the class runs, the task-number one included, and the check prints one warning per entry saying so — a file on it can gain any number of citations and still pass. Either form covers a file the defaults brought in (a root spec, a decision record) exactly as it covers one under an app's own `specs/**`."
     ],
     example: `{ "specGrandfather": { "apps/cli/specs/loop.md": 130 } }`
+  },
+  {
+    key: 'proseGates.productPaths',
+    type: 'string[] (optional)',
+    semantics: [
+      "Repository-relative files or folders that make up `reader-resolvable-prose`'s product class — the class where an internal tranche slug blocks outright, in comments and prose alike. Unset, the class reads this repository's own default set (`PRODUCT_SLUG_SCOPE`: the CLI source, the workflows folder, `.vinaya`, and two package READMEs).",
+      'Setting it replaces that default set; it never adds to it. A folder entry is swept for `.ts`, `.tsx`, `.yml` and `.md` files. An entry that leaves the repository — absolute, or climbing through `..` — is refused when the configuration loads.'
+    ],
+    example: `{ "productPaths": ["src", "README.md"] }`
+  },
+  {
+    key: 'proseGates.published',
+    type: 'object (optional)',
+    semantics: [
+      "The published pass — the documentation gate's check that a published page carries no token a stranger cannot resolve. `allow` is its one setting; its rules are not configured through `proseGates.rules`."
+    ],
+    example: `{ "published": { "allow": [".worktrees/task/<tranche>/<n>", "task/<tranche>/<n>"] } }`
+  },
+  {
+    key: 'proseGates.published.allow',
+    type: 'string[] (optional)',
+    semantics: [
+      'Literal text masked out of published prose before any rule reads it — the protocol mechanics a reader is meant to learn, such as the task branch convention. Masked longest first, so a shorter literal never cuts a longer one apart.',
+      'Unset, the shipped list applies: the task worktree path, the task branch name and the worktrees folder. Setting it replaces that list rather than adding to it, so a repository that wants the shipped entries too lists them.'
+    ],
+    example: `{ "allow": [".worktrees/task/<tranche>/<n>", "task/<tranche>/<n>", ".worktrees/"] }`
+  },
+  {
+    key: 'proseGates.rules',
+    type: 'object (optional)',
+    semantics: [
+      'The writing rules both prose checks run, configured by the repository: `exempt` (paths no rule reads), `defaults` (switch a shipped rule off or retune it) and `custom` (rules the repository writes itself). Read at check-run time, so an edit takes effect on the next `vinaya check` with no reinstall.',
+      'Each rule belongs to exactly one check by its scopes. `reader-resolvable-prose` runs every rule whose scopes are `ships` (the doctrine tree), `reader-facing` (the configured reader-facing pages), `product` (`productPaths`), `spec` (the spec class) or `source-comment` (the source-comment class); `retired-vocabulary` runs every rule whose scope is `repository` (the doctrine tree, line by line). Replacing either check with a no-op turns off exactly its rules.',
+      'With none of it set, every finding is identical to before. The whole key is validated when the configuration loads, and every refusal names the key it refuses — a malformed rule refuses the run, never falls back to no rule.'
+    ],
+    example: `{
+  "proseGates": {
+    "rules": {
+      "exempt": ["docs/archive"],
+      "defaults": {
+        "coined-term": "off",
+        "tranche-slug": { "scopes": ["spec", "product"], "severity": { "spec": "warning" } }
+      },
+      "custom": [
+        { "id": "acme/leverage", "pattern": "leverage", "flags": "i", "means": "say 'use' instead", "scopes": ["ships", "spec"] }
+      ]
+    }
+  }
+}`
+  },
+  {
+    key: 'proseGates.rules.exempt',
+    type: 'string[] (optional)',
+    semantics: [
+      'Repository-relative files or folders no rule reads, in either check. A folder entry covers everything under it; a trailing slash or a leading `./` is accepted. An entry that leaves the repository is refused.'
+    ],
+    example: `{ "exempt": ["docs/archive", "CHANGELOG.md"] }`
+  },
+  {
+    key: 'proseGates.rules.defaults',
+    type: 'Record<default rule id, "off" | { scopes?, severity?, exempt? }> (optional)',
+    semantics: [
+      'Per shipped rule, by its id (`vinaya check --plan` lists them): `"off"` stops the rule entirely; an object retunes it. `scopes` replaces where the rule reads — any scope of its own check for a pattern rule; a built-in rule (`legacy-batch-name`, `coined-term`) may only narrow its own scopes. `severity` is `"error"`, `"warning"`, or a map from scope to one of them, merged over the rule\'s shipped severities. `exempt` adds paths this one rule does not read.',
+      "A default's pattern and message are fixed: naming `pattern`, `patterns`, `flags` or `means` is refused — write a custom rule instead. An unknown id is refused, and so are the published pass's own rules, which this key does not configure.",
+      "`proseGates.sourceComments.severity` stays the default severity of the `source-comment` scope; a rule's own `severity` for that scope overrides it."
+    ],
+    example: `{ "defaults": { "forge-number": "off", "task-number": { "severity": "warning", "exempt": ["SPEC.md"] } } }`
+  },
+  {
+    key: 'proseGates.rules.custom',
+    type: 'CustomRule[] (optional)',
+    semantics: [
+      'Rules a repository writes for itself. Each takes `id` (its own — a default id is refused), `pattern` or a per-scope `patterns` map (or both: the map wins for the scopes it names), optional `flags` (only `i` and `u`), `means` (the message a finding prints), `scopes` (at least one, all belonging to one check), optional `severity` (as for a default) and optional `exempt`.',
+      'A finding prints the rule\'s id, the file and line, the matched text and `means`, e.g. `SPEC.md:3: acme/leverage: say "use" ("Leverage")`. With no `severity`, a rule warns in every scope except `repository`, where it blocks like the rest of `retired-vocabulary`, and `source-comment`, where it follows `proseGates.sourceComments.severity`.',
+      'Refused at load, naming the key: a pattern that does not compile; a rule with no `means` or no scope; an unknown scope, severity or flag; a `patterns` map naming a scope the rule does not cover, or leaving one of its scopes with no pattern; an exempt path outside the repository; a pattern longer than 200 characters; and a pattern whose star height is above one as the `safe-regex2` library decides it. The last two limits hold only for configured patterns — two shipped defaults fail the star-height test and still run, so a repository that copies one into a custom rule is refused, and the message says so.'
+    ],
+    example: `{
+  "custom": [
+    { "id": "acme/todo", "patterns": { "spec": "TODO" }, "means": "unfinished prose", "scopes": ["spec"], "severity": "error" }
+  ]
+}`
   },
   {
     key: 'dispatch',

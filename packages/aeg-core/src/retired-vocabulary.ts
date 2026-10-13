@@ -37,13 +37,21 @@ export type VocabFinding = {
   line: number
   pattern: string
   message: string
+  /** The id of the rule that matched. */
+  rule: string
+  /** Whether the rule's severity for the `repository` scope is `error`. */
+  blocking: boolean
 }
 
 import {
+  DEFAULT_PROSE_RULE_SET,
   PLAN_ON_DISK_PATTERNS,
+  type ProseRuleSet,
   RETIRED_GLOBAL_EXEMPTIONS,
   RETIRED_PATTERN_EXEMPTIONS,
+  ruleReads,
   rulesForGroup,
+  rulesOfGroup,
   TRANCHE_MODEL_FILE
 } from './prose-rules'
 
@@ -60,6 +68,11 @@ export const RETIRED_EXEMPT_SUBSTRINGS: readonly string[] = RETIRED_GLOBAL_EXEMP
 /** Per-pattern exemptions on top of `RETIRED_EXEMPT_SUBSTRINGS`; the data lives in the shared rule module. */
 export const PATTERN_EXEMPT: Readonly<Record<string, readonly string[]>> = RETIRED_PATTERN_EXEMPTIONS
 
+/** Each retired default's pattern text as shipped, by id — what a finding quotes and `PATTERN_EXEMPT` is keyed by. */
+const DEFAULT_PATTERN_OF: ReadonlyMap<string, string> = new Map(
+  retiredRules.map((rule) => [rule.id, rule.patterns.repository as string])
+)
+
 function lineNumbers(content: string, pattern: RegExp): number[] {
   const out: number[] = []
   const lines = content.split('\n')
@@ -70,26 +83,38 @@ function lineNumbers(content: string, pattern: RegExp): number[] {
 }
 
 /**
- * Sweeps `files` for `RETIRED_PATTERNS`, skipping any file whose path
- * contains a `RETIRED_EXEMPT_SUBSTRINGS` entry, or that pattern's own
- * `PATTERN_EXEMPT` entry. Matching is per-line, case-sensitive — the same
- * semantics `grep -E` (with no `-i`) gives the vitest suite this was
- * extracted from.
+ * Sweeps `files` for the retired group of `rules` — `RETIRED_PATTERNS` when
+ * nothing is configured. A default skips any file whose path contains one
+ * of its `RETIRED_EXEMPT_SUBSTRINGS` entries, or that pattern's own
+ * `PATTERN_EXEMPT` entry; every rule also skips the paths
+ * `proseGates.rules` exempts. Matching is per-line — case-sensitive for a
+ * default, the same semantics `grep -E` (with no `-i`) gives the vitest
+ * suite this was extracted from; a custom rule carries its own flags.
  */
-export function scanRetiredVocabulary(files: readonly VocabSourceFile[]): VocabFinding[] {
+export function scanRetiredVocabulary(
+  files: readonly VocabSourceFile[],
+  rules: ProseRuleSet = DEFAULT_PROSE_RULE_SET
+): VocabFinding[] {
   const findings: VocabFinding[] = []
+  const retired = rulesOfGroup(rules, 'retired-vocabulary')
   for (const file of files) {
-    if (RETIRED_EXEMPT_SUBSTRINGS.some((e) => file.path.includes(e))) continue
-    for (const pattern of RETIRED_PATTERNS) {
-      const patternExempt = PATTERN_EXEMPT[pattern] ?? []
-      if (patternExempt.some((e) => file.path.includes(e))) continue
-      const re = new RegExp(pattern)
+    for (const rule of retired) {
+      if (rule.substringExempt.some((e) => file.path.includes(e))) continue
+      if (!ruleReads(rules, rule, file.path)) continue
+      const re = rule.patternFor('repository')
+      if (!re) continue
+      const pattern = rule.custom ? re.source : (DEFAULT_PATTERN_OF.get(rule.id) ?? re.source)
+      if (!rule.custom && (PATTERN_EXEMPT[pattern] ?? []).some((e) => file.path.includes(e))) continue
       for (const line of lineNumbers(file.content, re)) {
         findings.push({
           file: file.path,
           line,
           pattern,
-          message: `claims a retired AEG mechanism is still live (matches /${pattern}/)`
+          message: rule.custom
+            ? `${rule.id}: ${rule.message} (matches /${pattern}/)`
+            : `claims a retired AEG mechanism is still live (matches /${pattern}/)`,
+          rule: rule.id,
+          blocking: rule.severity.repository === 'error'
         })
       }
     }

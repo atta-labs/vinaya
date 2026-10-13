@@ -18,6 +18,7 @@ import { DEFAULT_REVIEW_POLICY, PRINCIPAL_ALLOWLIST } from '@attalabs/aeg-core'
 import {
   isCanonicalHookBlockPath,
   lintEnvDeclarations,
+  loadConfigChecked as loadConfigCheckedStatic,
   loadTrustAnchorConfig,
   loadTrustAnchorConfigOrThrow,
   readRepoCiSetup,
@@ -1450,5 +1451,162 @@ describe('loadTrustAnchorConfigOrThrow (issue #945) — a failed read is distinc
     const config = loadTrustAnchorConfigOrThrow(() => b64({ principals: ['someone'] }))
     expect(config).not.toBeNull()
     expect(config?.reviewPolicy).toBeUndefined()
+  })
+})
+
+describe('proseGates.rules, productPaths and published.allow', () => {
+  /** Every refusal for `rules`, as `<key>: <message>` lines relative to the config root. */
+  function refusals(rules: unknown): string[] {
+    const parsed = VinayaConfigSchema.safeParse({ proseGates: { rules } })
+    return parsed.success ? [] : parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`)
+  }
+  const rule = (extra: Record<string, unknown>) => ({
+    custom: [{ id: 'acme/x', means: 'm', scopes: ['spec'], ...extra }]
+  })
+
+  it('accepts a full configuration and leaves every new key optional', () => {
+    expect(VinayaConfigSchema.safeParse({ proseGates: {} }).success).toBe(true)
+    const parsed = VinayaConfigSchema.safeParse({
+      proseGates: {
+        productPaths: ['src', 'README.md'],
+        published: { allow: ['task/<tranche>/<n>'] },
+        rules: {
+          exempt: ['docs/archive/'],
+          defaults: {
+            'coined-term': 'off',
+            'tranche-slug': { scopes: ['spec', 'product'], severity: { spec: 'warning' }, exempt: ['CHANGELOG.md'] },
+            'retired-vocabulary-1': { severity: 'warning' }
+          },
+          custom: [
+            { id: 'acme/leverage', pattern: 'leverage', flags: 'iu', means: 'say "use"', scopes: ['ships', 'spec'] },
+            { id: 'acme/todo', patterns: { repository: 'TODO' }, means: 'unfinished', scopes: ['repository'] }
+          ]
+        }
+      }
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  it('refuses an unknown default id, naming it', () => {
+    expect(refusals({ defaults: { 'no-such-rule': 'off' } })).toEqual([
+      expect.stringContaining('proseGates.rules.defaults.no-such-rule: unknown default rule id "no-such-rule"')
+    ])
+  })
+
+  it("refuses overriding a default's pattern or message", () => {
+    expect(refusals({ defaults: { 'forge-number': { pattern: '#', means: 'x' } } })).toEqual([
+      expect.stringContaining("proseGates.rules.defaults.forge-number.pattern: a default rule's pattern is fixed"),
+      expect.stringContaining("proseGates.rules.defaults.forge-number.means: a default rule's means is fixed")
+    ])
+  })
+
+  it('refuses a custom id equal to a default id', () => {
+    for (const id of ['forge-number', 'retired-vocabulary-3', 'internal-path']) {
+      expect(refusals({ custom: [{ id, pattern: 'x', means: 'm', scopes: ['spec'] }] })).toEqual([
+        expect.stringContaining(`proseGates.rules.custom.0.id: "${id}" is a default rule id`)
+      ])
+    }
+  })
+
+  it('refuses a pattern that does not compile', () => {
+    expect(refusals(rule({ pattern: '(unclosed' }))).toEqual([
+      expect.stringContaining('proseGates.rules.custom.0.pattern: does not compile')
+    ])
+  })
+
+  it('refuses a rule with no message or no scope', () => {
+    expect(refusals({ custom: [{ id: 'acme/x', pattern: 'x', scopes: ['spec'] }] })).toEqual([
+      'proseGates.rules.custom.0.means: a custom rule needs a message (`means`)'
+    ])
+    expect(refusals({ custom: [{ id: 'acme/x', pattern: 'x', means: 'm' }] })).toEqual([
+      'proseGates.rules.custom.0.scopes: a custom rule needs at least one scope (`scopes`)'
+    ])
+    expect(refusals({ custom: [{ id: 'acme/x', pattern: 'x', means: 'm', scopes: [] }] })).toEqual([
+      'proseGates.rules.custom.0.scopes: must name at least one scope'
+    ])
+  })
+
+  it('refuses an unknown scope, severity or flag — only i and u are flags', () => {
+    expect(refusals(rule({ pattern: 'x', scopes: ['everywhere'] }))).toEqual([
+      expect.stringContaining('proseGates.rules.custom.0.scopes.0: unknown scope "everywhere"')
+    ])
+    expect(refusals(rule({ pattern: 'x', severity: 'fatal' }))).toEqual([
+      expect.stringContaining('proseGates.rules.custom.0.severity: unknown severity "fatal"')
+    ])
+    expect(refusals(rule({ pattern: 'x', severity: { spec: 'loud' } }))).toEqual([
+      expect.stringContaining('proseGates.rules.custom.0.severity.spec: unknown severity "loud"')
+    ])
+    expect(refusals({ defaults: { 'task-number': { scopes: ['nowhere'] } } })).toEqual([
+      expect.stringContaining('proseGates.rules.defaults.task-number.scopes.0: unknown scope "nowhere"')
+    ])
+    for (const flags of ['g', 'm', 's', 'y', 'ig']) {
+      expect(refusals(rule({ pattern: 'x', flags }))).toEqual([
+        expect.stringContaining('proseGates.rules.custom.0.flags: unknown flag')
+      ])
+    }
+    expect(refusals(rule({ pattern: 'x', flags: 'iu' }))).toEqual([])
+  })
+
+  it('refuses a patterns map naming a scope the rule does not cover', () => {
+    expect(refusals(rule({ patterns: { spec: 'x', product: 'y' } }))).toEqual([
+      'proseGates.rules.custom.0.patterns.product: names scope "product", which this rule\'s scopes do not cover'
+    ])
+  })
+
+  it('refuses an exempt path outside the repository, wherever it is set', () => {
+    expect(refusals({ exempt: ['../elsewhere'] })).toEqual([
+      'proseGates.rules.exempt.0: must stay inside the repository — no `..` segment'
+    ])
+    expect(refusals({ defaults: { 'forge-number': { exempt: ['/etc'] } } })).toEqual([
+      'proseGates.rules.defaults.forge-number.exempt.0: must be a repository-relative path, not an absolute one'
+    ])
+    expect(refusals(rule({ pattern: 'x', exempt: ['docs/../../x'] }))).toEqual([
+      'proseGates.rules.custom.0.exempt.0: must stay inside the repository — no `..` segment'
+    ])
+    expect(VinayaConfigSchema.safeParse({ proseGates: { productPaths: ['/abs'] } }).success).toBe(false)
+  })
+
+  it('refuses a configured pattern longer than 200 characters', () => {
+    expect(refusals(rule({ pattern: 'a'.repeat(200) }))).toEqual([])
+    expect(refusals(rule({ pattern: 'a'.repeat(201) }))).toEqual([
+      'proseGates.rules.custom.0.pattern: is 201 characters, over the 200-character limit for a configured pattern'
+    ])
+    expect(refusals(rule({ patterns: { spec: 'a'.repeat(201) } }))).toEqual([
+      expect.stringContaining('proseGates.rules.custom.0.patterns.spec: is 201 characters')
+    ])
+  })
+
+  it('refuses a configured pattern with star height above one, including one copied from a shipped default', () => {
+    expect(refusals(rule({ pattern: '(a+)+$' }))).toEqual([
+      expect.stringContaining('proseGates.rules.custom.0.pattern: has star height above one')
+    ])
+    // The shipped source-comment tranche-slug pattern: it runs as a default,
+    // and is refused as a custom rule, with the message saying why.
+    const copied = refusals(rule({ pattern: '[a-z0-9]+(?:-[a-z0-9]+)*-v[0-9]+' }))
+    expect(copied).toHaveLength(1)
+    expect(copied[0]).toContain('The shipped defaults are not held to this limit')
+    // A long but linear pattern is never refused for its repetition count.
+    expect(refusals(rule({ pattern: Array.from({ length: 30 }, () => 'a+').join('-') }))).toEqual([])
+  })
+
+  it('loadConfigChecked surfaces a refused rule instead of a silent fallback', () => {
+    const dir = join(tmpdir(), `vinaya-prose-rules-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    mkdirSync(dir, { recursive: true })
+    const cwd = process.cwd()
+    try {
+      writeFileSync(
+        join(dir, 'vinaya.config.json'),
+        JSON.stringify({
+          proseGates: { rules: { custom: [{ id: 'acme/x', pattern: '(', means: 'm', scopes: ['spec'] }] } }
+        })
+      )
+      process.chdir(dir)
+      const result = loadConfigCheckedStatic()
+      expect(result.ok).toBe(false)
+      if (!result.ok) expect(result.error).toContain('proseGates.rules.custom.0.pattern: does not compile')
+    } finally {
+      process.chdir(cwd)
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

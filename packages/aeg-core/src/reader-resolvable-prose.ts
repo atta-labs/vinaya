@@ -44,11 +44,13 @@ export type ProseFinding = {
   line: number
   message: string
   blocking: boolean
+  /** The id of the rule that matched. */
+  rule: string
 }
 
 /**
- * Path prefixes under which a tranche-slug citation in product code is a
- * blocking finding — copied verbatim (aeg-root dropped) from the scope list
+ * The default of `proseGates.productPaths`: path prefixes under which a
+ * tranche-slug citation in product code is a blocking finding — copied verbatim (aeg-root dropped) from the scope list
  * `retired-vocabulary.test.ts`'s `PATTERN_SCOPE[TRANCHE_SLUG_VN_PATTERN]` used
  * to grep directly; that suite no longer greps these paths itself
  * (`prose-product-scope.test.ts` pins this list against drift instead).
@@ -66,8 +68,8 @@ function isUnderOrEqual(path: string, prefix: string): boolean {
   return path === prefix || path.startsWith(`${prefix}/`)
 }
 
-function isProductScopeFile(path: string): boolean {
-  return PRODUCT_SLUG_SCOPE.some((prefix) => isUnderOrEqual(path, prefix))
+function isProductScopeFile(path: string, productPaths: readonly string[]): boolean {
+  return productPaths.some((prefix) => isUnderOrEqual(path, normalizeRepoPath(prefix)))
 }
 
 /**
@@ -112,11 +114,7 @@ export const DEFAULT_SPEC_PATHS: readonly string[] = ['SPEC.md', 'CONTEXT.md', '
  * spelling.
  */
 export function normalizeSpecPath(entry: string): string {
-  let out = entry.replace(/\\/g, '/')
-  while (out.startsWith('./')) out = out.slice(2)
-  out = out.replace(/\/{2,}/g, '/')
-  while (out.endsWith('/')) out = out.slice(0, -1)
-  return out
+  return normalizeRepoPath(entry)
 }
 
 /**
@@ -169,13 +167,17 @@ function isClaudeMdFile(path: string): boolean {
  * root context document and decision records read. A caller adding
  * configured paths passes the defaults alongside them; this parameter is the
  * whole set, never a delta.
+ *
+ * `productPaths` is the product class's file set — `PRODUCT_SLUG_SCOPE`
+ * unless `proseGates.productPaths` replaces it.
  */
 export function classifyProseFile(
   path: string,
   readerFacingPrefix: string,
   readerFacingSuffix: string,
   shipsPrefix: string = SHIPS_PREFIX,
-  specPaths: readonly string[] = DEFAULT_SPEC_PATHS
+  specPaths: readonly string[] = DEFAULT_SPEC_PATHS,
+  productPaths: readonly string[] = PRODUCT_SLUG_SCOPE
 ): ProseFileClass | null {
   if (path.startsWith(shipsPrefix)) {
     return path.startsWith(shipsArchivePrefix(shipsPrefix)) ? 'internal' : 'ships'
@@ -185,7 +187,7 @@ export function classifyProseFile(
   }
   if (isClaudeMdFile(path)) return 'internal'
   if (isSpecFile(path, specPaths)) return 'spec'
-  if (isProductScopeFile(path)) return 'product'
+  if (isProductScopeFile(path, productPaths)) return 'product'
   return null
 }
 
@@ -242,7 +244,15 @@ function lineAt(content: string, index: number): number {
 }
 
 /** `#NNN`-shaped — a PR/Issue number cited bare, resolvable only inside this repo's own tracker. */
-import { proseSeverity, rulesForGroup } from './prose-rules'
+import {
+  DEFAULT_PROSE_RULE_SET,
+  normalizeRepoPath,
+  type ProseRuleSet,
+  type ResolvedProseRule,
+  ruleReads,
+  rulesForGroup,
+  rulesInScope
+} from './prose-rules'
 
 const readerRules = rulesForGroup('reader-resolvable')
 const readerPattern = (id: string, scope = 'prose'): RegExp => {
@@ -317,6 +327,55 @@ export function specGrandfatherPaths(specGrandfather: SpecGrandfather): string[]
   return Array.isArray(specGrandfather) ? [...specGrandfather] : Object.keys(specGrandfather)
 }
 
+/**
+ * Options every sweep below accepts as its last parameter. `rules` is the
+ * resolved rule set (`resolveProseRules`) — the shipped defaults unless the
+ * repository configured `proseGates.rules`; `productPaths` replaces
+ * `PRODUCT_SLUG_SCOPE` as the product class's file set.
+ */
+export type ProseSweepOptions = {
+  rules?: ProseRuleSet
+  productPaths?: readonly string[]
+}
+
+/** The file classes the reference sweep reads, each the scope of the same name. */
+const REFERENCE_CLASSES: ReadonlySet<ProseFileClass> = new Set(['ships', 'reader-facing', 'product', 'spec'])
+
+/** The reference rules for one file class, in run order: every pattern rule whose scopes name the class, plus the built-in legacy-slug rule. */
+function referenceRulesFor(set: ProseRuleSet, cls: ProseFileClass): readonly ResolvedProseRule[] {
+  return rulesInScope(set, cls).filter((rule) => rule.group === 'reader-resolvable' && rule.id !== 'coined-term')
+}
+
+/**
+ * Every match of `pattern` in `text`, with the cited text and its offset. A
+ * configured pattern that matches the empty string advances past it and
+ * reports nothing, so a careless rule can never loop forever.
+ */
+function citations(pattern: RegExp, text: string, group?: number): { cited: string; index: number }[] {
+  const out: { cited: string; index: number }[] = []
+  const re = pattern.global ? pattern : new RegExp(pattern.source, `${pattern.flags}g`)
+  re.lastIndex = 0
+  let match: RegExpExecArray | null = re.exec(text)
+  while (match !== null) {
+    if (match[0] === '') {
+      re.lastIndex++
+    } else {
+      const cited = group !== undefined ? (match[group] ?? match[0]) : match[0]
+      // The cited text's own offset, not the whole match's — see the line
+      // computation in `checkUnresolvableReferences`.
+      out.push({ cited, index: match.index + match[0].indexOf(cited) })
+    }
+    match = re.exec(text)
+  }
+  re.lastIndex = 0
+  return out
+}
+
+/** A custom rule's finding text: its own id, the matched text, and its message. */
+function customMessage(rule: ResolvedProseRule, cited: string): string {
+  return `${rule.id}: ${rule.message} ("${cited}")`
+}
+
 export function checkUnresolvableReferences(
   files: readonly ProseSourceFile[],
   readerFacingPrefix: string,
@@ -324,45 +383,37 @@ export function checkUnresolvableReferences(
   legacySlugs: readonly string[] = [],
   shipsPrefix: string = SHIPS_PREFIX,
   specGrandfather: SpecGrandfather = [],
-  specPaths: readonly string[] = DEFAULT_SPEC_PATHS
+  specPaths: readonly string[] = DEFAULT_SPEC_PATHS,
+  options: ProseSweepOptions = {}
 ): ProseFinding[] {
+  const set = options.rules ?? DEFAULT_PROSE_RULE_SET
+  const productPaths = options.productPaths ?? PRODUCT_SLUG_SCOPE
   const findings: ProseFinding[] = []
   const legacyPattern = legacySlugPattern(legacySlugs)
   const grandfatheredWhole = new Set(Array.isArray(specGrandfather) ? (specGrandfather as readonly string[]) : [])
   const limits = new Map<string, number>(
     Array.isArray(specGrandfather) ? [] : Object.entries(specGrandfather as Readonly<Record<string, number>>)
   )
-  // `group` names the capture holding the actual cited text — the plain
-  // patterns have none (report the whole match), the boundary-checked
-  // legacy-slug pattern reports its group 2 so the boundary chars around it
-  // never leak into the finding's message.
-  const patterns: { pattern: RegExp; what: string; rule: string; group?: number }[] = [
-    { pattern: FORGE_NUMBER_PATTERN, what: 'a forge number', rule: 'forge-number' },
-    { pattern: TRANCHE_SLUG_VN_PATTERN, what: 'an internal tranche slug', rule: 'tranche-slug' },
-    ...(legacyPattern
-      ? [{ pattern: legacyPattern, what: 'an internal tranche slug', rule: 'legacy-batch-name', group: 2 }]
-      : [])
-  ]
 
-  const productPatterns: { pattern: RegExp; what: string; rule: string; group?: number }[] = [
-    { pattern: TRANCHE_SLUG_VN_PATTERN, what: 'an internal tranche slug in product code', rule: 'tranche-slug' }
-  ]
-
-  // A spec carries the doctrine-page patterns AND the task-number one: a
-  // durable document that copies a plan's task numbers goes stale the moment
-  // the plan is renumbered, which is the failure this class was widened for.
-  // The doctrine pages themselves are deliberately left out of it — their own
+  // Which rules run in which class is the rule set's `scopes`: by default a
+  // doctrine page and a reader-facing page carry the forge-number,
+  // tranche-slug and legacy-slug rules; product code carries the
+  // tranche-slug rule alone; a spec carries all of those plus the
+  // task-number rule, since a durable document that copies a plan's task
+  // numbers goes stale the moment the plan is renumbered. The doctrine pages
+  // are deliberately left out of the task-number rule — their own
   // report-only sweep names a much larger standing backlog, and a rule that
   // blocks belongs where it can be satisfied file by file.
-  const specPatterns: { pattern: RegExp; what: string; rule: string; group?: number }[] = [
-    ...patterns,
-    { pattern: TASK_NUMBER_PATTERN, what: 'a task number', rule: 'task-number', group: 2 }
-  ]
-
   for (const file of files) {
-    const cls = classifyProseFile(file.path, readerFacingPrefix, readerFacingSuffix, shipsPrefix, specPaths)
-    if (!cls || cls === 'internal') continue
-    if (cls !== 'product' && cls !== 'spec' && !SWEPT_CLASSES.has(cls)) continue
+    const cls = classifyProseFile(
+      file.path,
+      readerFacingPrefix,
+      readerFacingSuffix,
+      shipsPrefix,
+      specPaths,
+      productPaths
+    )
+    if (!cls || !REFERENCE_CLASSES.has(cls)) continue
     // A spec explicitly listed by path is grandfathered stock (already
     // failing when this sweep was extended to specs) and is skipped
     // entirely, not merely down-graded: the list shrinks as each spec's
@@ -375,33 +426,29 @@ export function checkUnresolvableReferences(
     if (cls === 'spec' && grandfatheredWhole.has(file.path)) continue
     const scrubbed =
       cls === 'product' ? stripNonProseForProduct(file.path, file.content) : stripNonProse(file.path, file.content)
-    // A spec is checked with the SAME rules a doctrine page is — the full
-    // reference pattern set, never the narrower product-code list — plus the
-    // task-number rule that applies to this class alone.
-    const patternsToRun = cls === 'product' ? productPatterns : cls === 'spec' ? specPatterns : patterns
     const fileFindings: ProseFinding[] = []
-    for (const { pattern, what, rule, group } of patternsToRun) {
-      const blocking = proseSeverity(rule, cls) === 'error'
-      pattern.lastIndex = 0
-      let match: RegExpExecArray | null = pattern.exec(scrubbed)
-      while (match !== null) {
-        const cited = group !== undefined ? (match[group] ?? match[0]) : match[0]
+    for (const rule of referenceRulesFor(set, cls)) {
+      if (!ruleReads(set, rule, file.path)) continue
+      const pattern = !rule.custom && rule.id === 'legacy-batch-name' ? legacyPattern : rule.patternFor(cls)
+      if (!pattern) continue
+      const blocking = rule.severity[cls] === 'error'
+      // A product-code finding names its class in its own message.
+      const what = cls === 'product' ? `${rule.message} in product code` : rule.message
+      for (const { cited, index } of citations(pattern, scrubbed, rule.custom ? undefined : rule.reportGroup)) {
         // The line is the CITED text's own line, not the whole match's. A
         // boundary-checked pattern consumes the character before the
         // citation, and where that character is the newline ending the
         // previous line — a citation that opens a line — the match begins on
         // the previous line and a finding sent the reader there instead.
-        // `indexOf` is exact for both shapes in use: the leading boundary is
-        // one character that can never itself start the cited text, and an
-        // empty boundary (start of file) resolves to offset zero.
-        const citedIndex = match.index + match[0].indexOf(cited)
         fileFindings.push({
           file: file.path,
-          line: lineAt(scrubbed, citedIndex),
-          message: `references ${what} ("${cited}") a reader outside this repo's tracker cannot resolve`,
-          blocking
+          line: lineAt(scrubbed, index),
+          message: rule.custom
+            ? customMessage(rule, cited)
+            : `references ${what} ("${cited}") a reader outside this repo's tracker cannot resolve`,
+          blocking,
+          rule: rule.id
         })
-        match = pattern.exec(scrubbed)
       }
     }
     const limit = cls === 'spec' ? limits.get(file.path) : undefined
@@ -472,13 +519,27 @@ export function checkUndefinedVocabulary(
   glossaryTerms: readonly string[],
   readerFacingPrefix: string,
   readerFacingSuffix: string,
-  shipsPrefix: string = SHIPS_PREFIX
+  shipsPrefix: string = SHIPS_PREFIX,
+  options: ProseSweepOptions = {}
 ): ProseFinding[] {
   const findings: ProseFinding[] = []
+  const set = options.rules ?? DEFAULT_PROSE_RULE_SET
+  // The built-in coined-term rule: switched off, it is absent from the set;
+  // narrowed, it reads only the classes its scopes still name.
+  const rule = set.rules.find((r) => !r.custom && r.id === 'coined-term')
+  if (!rule) return findings
 
   for (const file of files) {
-    const cls = classifyProseFile(file.path, readerFacingPrefix, readerFacingSuffix, shipsPrefix)
-    if (!cls || !SWEPT_CLASSES.has(cls)) continue
+    const cls = classifyProseFile(
+      file.path,
+      readerFacingPrefix,
+      readerFacingSuffix,
+      shipsPrefix,
+      DEFAULT_SPEC_PATHS,
+      options.productPaths
+    )
+    if (!cls || !SWEPT_CLASSES.has(cls) || !rule.scopes.includes(cls)) continue
+    if (!ruleReads(set, rule, file.path)) continue
     const scrubbed = stripNonProse(file.path, file.content)
 
     for (const term of glossaryTerms) {
@@ -489,7 +550,8 @@ export function checkUndefinedVocabulary(
         file: file.path,
         line,
         message: `uses coined term "${term}" without defining it inline or linking the glossary`,
-        blocking: proseSeverity('coined-term', cls) === 'error'
+        blocking: rule.severity[cls] === 'error',
+        rule: rule.id
       })
     }
   }
@@ -638,38 +700,32 @@ export function extractComments(path: string, content: string): string {
  */
 export function checkSourceComments(
   files: readonly ProseSourceFile[],
-  allowlist: readonly string[] = []
+  allowlist: readonly string[] = [],
+  options: ProseSweepOptions = {}
 ): ProseFinding[] {
   const findings: ProseFinding[] = []
   const allowed = new Set(allowlist)
-  const patterns: { pattern: RegExp; what: string; rule: string }[] = [
-    {
-      pattern: SOURCE_COMMENT_TRANCHE_SLUG_PATTERN,
-      what: 'a tranche-slug citation',
-      rule: 'source-comment-tranche-slug'
-    },
-    {
-      pattern: SOURCE_COMMENT_FORGE_NUMBER_PATTERN,
-      what: 'a forge-number citation',
-      rule: 'source-comment-forge-number'
-    }
-  ]
+  const set = options.rules ?? DEFAULT_PROSE_RULE_SET
+  const rules = rulesInScope(set, 'source-comment').filter((rule) => rule.group === 'reader-resolvable')
 
   for (const file of files) {
     if (!file.path.endsWith('.ts')) continue
     if (allowed.has(file.path)) continue
     const comments = extractComments(file.path, file.content)
-    for (const { pattern, what, rule } of patterns) {
-      pattern.lastIndex = 0
-      let match: RegExpExecArray | null = pattern.exec(comments)
-      while (match !== null) {
+    for (const rule of rules) {
+      if (!ruleReads(set, rule, file.path)) continue
+      const pattern = rule.patternFor('source-comment')
+      if (!pattern) continue
+      for (const { cited, index } of citations(pattern, comments)) {
         findings.push({
           file: file.path,
-          line: lineAt(comments, match.index),
-          message: `comment cites ${what} ("${match[0]}") a reader outside this repo's tracker cannot resolve`,
-          blocking: proseSeverity(rule, 'source-comment') === 'error'
+          line: lineAt(comments, index),
+          message: rule.custom
+            ? customMessage(rule, cited)
+            : `comment cites ${rule.message} ("${cited}") a reader outside this repo's tracker cannot resolve`,
+          blocking: rule.severity['source-comment'] === 'error',
+          rule: rule.id
         })
-        match = pattern.exec(comments)
       }
     }
   }
@@ -685,7 +741,8 @@ export function checkReaderResolvableProse(
   legacySlugs: readonly string[] = [],
   shipsPrefix: string = SHIPS_PREFIX,
   specGrandfather: SpecGrandfather = [],
-  specPaths: readonly string[] = DEFAULT_SPEC_PATHS
+  specPaths: readonly string[] = DEFAULT_SPEC_PATHS,
+  options: ProseSweepOptions = {}
 ): ProseFinding[] {
   return [
     ...checkUnresolvableReferences(
@@ -695,9 +752,10 @@ export function checkReaderResolvableProse(
       legacySlugs,
       shipsPrefix,
       specGrandfather,
-      specPaths
+      specPaths,
+      options
     ),
-    ...checkUndefinedVocabulary(files, glossaryTerms, readerFacingPrefix, readerFacingSuffix, shipsPrefix)
+    ...checkUndefinedVocabulary(files, glossaryTerms, readerFacingPrefix, readerFacingSuffix, shipsPrefix, options)
   ]
 }
 

@@ -72,7 +72,8 @@ export const CONTRACT_BLOCKS = [
 /**
  * Protocol facts that must survive every readability rule. Masked out of the
  * text before scanning, longest first, so a repo-internal-path rule can never
- * claim the branch convention.
+ * claim the branch convention. The default of `proseGates.published.allow`;
+ * a configured list replaces it.
  */
 export const ALLOWED_MECHANICS: readonly string[] = rulesForGroup('published-prose')[0]?.exemptions ?? []
 
@@ -171,9 +172,12 @@ export function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length
 }
 
-function maskAllowedMechanics(text: string): string {
+function maskAllowedMechanics(text: string, allow: readonly string[]): string {
   let masked = text
-  for (const literal of ALLOWED_MECHANICS) {
+  // Longest first, whatever order the list was written in, so a shorter
+  // literal can never cut a longer one apart before it is masked.
+  const ordered = [...allow].sort((a, b) => b.length - a.length)
+  for (const literal of ordered) {
     masked = masked.split(literal).join(' ')
   }
   return masked
@@ -218,16 +222,25 @@ export function enforcementPublishedText(content: string): string[] {
  * never sees it. A whole published page was unguarded on that technicality;
  * `actions.test.ts` closes it by running this over every entry.
  */
-export function readabilityErrors(where: string, texts: string[]): string[] {
+export function readabilityErrors(
+  where: string,
+  texts: string[],
+  allow: readonly string[] = ALLOWED_MECHANICS
+): string[] {
   const errors: string[] = []
-  checkReadability(where, texts, errors)
+  checkReadability(where, texts, errors, allow)
   return errors
 }
 
-function checkReadability(where: string, texts: string[], errors: string[]): void {
+function checkReadability(
+  where: string,
+  texts: string[],
+  errors: string[],
+  allow: readonly string[] = ALLOWED_MECHANICS
+): void {
   const seen = new Set<string>()
   for (const raw of texts) {
-    const text = maskAllowedMechanics(raw)
+    const text = maskAllowedMechanics(raw, allow)
     for (const rule of PROSE_RULES) {
       const match = text.match(rule.pattern)
       if (!match) continue
@@ -275,11 +288,13 @@ function checkStructure(relPath: string, body: string, blocks: readonly string[]
  * Runs both checks over the published set only. `entries` may hold every doc
  * under `aeg-root/`; `surfacedPaths` (the model-backed allowlist) is what
  * narrows it, so this check can never publish-check a doc the site does not
- * publish, nor miss one it does.
+ * publish, nor miss one it does. `allow` is `proseGates.published.allow`
+ * when a repository configures it.
  */
 export function evaluatePublishedProse(
   entries: PublishedProseEntry[],
-  surfacedPaths: ReadonlySet<string> = new Set()
+  surfacedPaths: ReadonlySet<string> = new Set(),
+  allow: readonly string[] = ALLOWED_MECHANICS
 ): PublishedProseResult {
   const errors: string[] = []
   const notes: string[] = []
@@ -291,17 +306,17 @@ export function evaluatePublishedProse(
     // entry, `description` is the page metadata. Checking only the body left
     // both unguarded — a citation in a title reaches a reader exactly as
     // surely as one in a paragraph.
-    checkReadability(entry.relPath, [entry.frontmatter.title ?? '', entry.frontmatter.description ?? ''], errors)
+    checkReadability(entry.relPath, [entry.frontmatter.title ?? '', entry.frontmatter.description ?? ''], errors, allow)
 
     const blocks = blocksFor(entry.relPath)
     if (blocks) {
       checkStructure(entry.relPath, entry.body, blocks, errors)
       const short = extractShortVersion(entry.body)
-      if (short !== null) checkReadability(entry.relPath, [short], errors)
+      if (short !== null) checkReadability(entry.relPath, [short], errors, allow)
       continue
     }
     if (entry.relPath === 'enforcement.md') {
-      checkReadability(entry.relPath, enforcementPublishedText(entry.body), errors)
+      checkReadability(entry.relPath, enforcementPublishedText(entry.body), errors, allow)
     }
   }
 

@@ -205,3 +205,275 @@ export const rulesForGroup = (group: DefaultProseRule['group']): readonly Defaul
 
 export const proseSeverity = (id: string, scope: string): ProseRuleSeverity | undefined =>
   DEFAULT_PROSE_RULES.find((rule) => rule.id === id)?.severity[scope]
+
+/**
+ * The scopes a repository's own configuration may name, and the check that
+ * reads each one. `reader-resolvable-prose` runs every rule whose scopes fall
+ * in the first set; `retired-vocabulary` runs every rule whose scopes fall in
+ * the second. `published` is absent on purpose: the published pass belongs
+ * to the documentation gate, and `proseGates.published.allow` is its only
+ * setting.
+ */
+export const RESOLVABLE_SCOPES = ['ships', 'reader-facing', 'product', 'spec', 'source-comment'] as const
+export const RETIRED_SCOPES = ['repository'] as const
+export const CONFIGURABLE_PROSE_SCOPES: readonly string[] = [...RESOLVABLE_SCOPES, ...RETIRED_SCOPES]
+
+/** The two rule groups a configured rule can join — one per prose check. */
+export type ProseCheckGroup = 'reader-resolvable' | 'retired-vocabulary'
+
+/** The group whose check reads `scope`, or `undefined` for a scope no configured rule may name. */
+export function groupOfScope(scope: string): ProseCheckGroup | undefined {
+  if ((RESOLVABLE_SCOPES as readonly string[]).includes(scope)) return 'reader-resolvable'
+  if ((RETIRED_SCOPES as readonly string[]).includes(scope)) return 'retired-vocabulary'
+  return undefined
+}
+
+/** The regular-expression flags a configured rule may carry. */
+export const CONFIGURED_PROSE_FLAGS: readonly string[] = ['i', 'u']
+
+/** The longest pattern a repository may configure. The shipped defaults are not held to it. */
+export const CONFIGURED_PATTERN_MAX_LENGTH = 200
+
+/** The defaults `proseGates.rules.defaults` may address: every rule one of the two prose checks runs. */
+export const CONFIGURABLE_DEFAULT_RULES: readonly DefaultProseRule[] = DEFAULT_PROSE_RULES.filter(
+  (rule): rule is DefaultProseRule & { group: ProseCheckGroup } => rule.group !== 'published-prose'
+)
+
+/**
+ * The scopes a default rule may be moved to. A built-in rule computes its
+ * own matches for the scopes it ships with, so it may only narrow them; a
+ * pattern rule may take any scope its own check reads.
+ */
+export function allowedScopesFor(rule: DefaultProseRule): readonly string[] {
+  if (rule.builtIn) return rule.scopes
+  return rule.group === 'retired-vocabulary' ? RETIRED_SCOPES : RESOLVABLE_SCOPES
+}
+
+export type ProseRuleSeveritySetting = ProseRuleSeverity | Readonly<Record<string, ProseRuleSeverity>>
+
+/** `proseGates.rules.defaults.<id>` — switch a default off, or retune its scopes, severity or exemptions. Its pattern and message are never configurable. */
+export type ProseRuleOverride =
+  | 'off'
+  | {
+      scopes?: readonly string[]
+      severity?: ProseRuleSeveritySetting
+      exempt?: readonly string[]
+    }
+
+/** `proseGates.rules.custom[]` — a rule a repository writes for itself. */
+export type CustomProseRule = {
+  id: string
+  pattern?: string
+  patterns?: Readonly<Record<string, string>>
+  flags?: string
+  means: string
+  scopes: readonly string[]
+  severity?: ProseRuleSeveritySetting
+  exempt?: readonly string[]
+}
+
+/** `proseGates.rules`. */
+export type ProseRulesConfig = {
+  exempt?: readonly string[]
+  defaults?: Readonly<Record<string, ProseRuleOverride>>
+  custom?: readonly CustomProseRule[]
+}
+
+/** One rule as a check runs it: a default with its configuration applied, or a custom rule. */
+export type ResolvedProseRule = {
+  id: string
+  group: ProseCheckGroup
+  custom: boolean
+  builtIn: boolean
+  scopes: readonly string[]
+  /** The default's message, or the custom rule's `means`. */
+  message: string
+  severity: Readonly<Record<string, ProseRuleSeverity>>
+  /** Configured path exemptions: repository-relative files or folders this rule does not read. */
+  exempt: readonly string[]
+  /** The default's own substring exemptions (the retired group's archives and history), unchanged. */
+  substringExempt: readonly string[]
+  /** The capture holding the cited text, when the pattern carries boundary characters around it. */
+  reportGroup?: number
+  /** The pattern for one scope, or `null` when the rule has none there. */
+  patternFor: (scope: string) => RegExp | null
+}
+
+export type ProseRuleSet = {
+  rules: readonly ResolvedProseRule[]
+  /** `proseGates.rules.exempt` — paths no rule reads. */
+  exempt: readonly string[]
+  /** Absolute repository root, stripped from an absolute file path before an exemption is compared. */
+  repoRoot?: string
+}
+
+/** One repository path in a single spelling: forward slashes, no leading `./`, no doubled or trailing slash. */
+export function normalizeRepoPath(entry: string): string {
+  let out = entry.replace(/\\/g, '/')
+  while (out.startsWith('./')) out = out.slice(2)
+  out = out.replace(/\/{2,}/g, '/')
+  while (out.endsWith('/')) out = out.slice(0, -1)
+  return out
+}
+
+/** Whether a configured exemption list covers `path` — the path itself, or anything under a listed folder. */
+export function isConfiguredExempt(path: string, exempt: readonly string[], repoRoot?: string): boolean {
+  if (exempt.length === 0) return false
+  const root = repoRoot === undefined ? undefined : normalizeRepoPath(repoRoot)
+  let rel = normalizeRepoPath(path)
+  if (root && rel.startsWith(`${root}/`)) rel = rel.slice(root.length + 1)
+  return exempt.some((entry) => {
+    const e = normalizeRepoPath(entry)
+    return rel === e || rel.startsWith(`${e}/`)
+  })
+}
+
+/** Whether `rule` reads `path` at all under `set`'s exemptions. */
+export function ruleReads(set: ProseRuleSet, rule: ResolvedProseRule, path: string): boolean {
+  return !isConfiguredExempt(path, set.exempt, set.repoRoot) && !isConfiguredExempt(path, rule.exempt, set.repoRoot)
+}
+
+/** The order the reader-resolvable rules have always run in, so an unconfigured run reports findings in the same order. */
+const RESOLVABLE_RUN_ORDER = [
+  'forge-number',
+  'tranche-slug',
+  'legacy-batch-name',
+  'task-number',
+  'source-comment-tranche-slug',
+  'source-comment-forge-number',
+  'coined-term'
+]
+
+const REPORT_GROUPS: Readonly<Record<string, number>> = { 'task-number': 2, 'legacy-batch-name': 2 }
+
+/** A scope's severity when nothing names one: the source-comment scope follows `proseGates.sourceComments.severity`, the retired check blocks, every other scope warns. */
+function scopeDefaultSeverity(scope: string, sourceCommentSeverity: ProseRuleSeverity | undefined): ProseRuleSeverity {
+  if (scope === 'source-comment') return sourceCommentSeverity ?? 'warning'
+  if (scope === 'repository') return 'error'
+  return 'warning'
+}
+
+function applySeverity(
+  scopes: readonly string[],
+  base: Readonly<Record<string, ProseRuleSeverity>>,
+  setting: ProseRuleSeveritySetting | undefined
+): Record<string, ProseRuleSeverity> {
+  const out: Record<string, ProseRuleSeverity> = {}
+  for (const scope of scopes) {
+    const configured = typeof setting === 'string' ? setting : setting?.[scope]
+    const value = configured ?? base[scope]
+    if (value !== undefined) out[scope] = value
+  }
+  return out
+}
+
+function defaultPatternFor(rule: DefaultProseRule): (scope: string) => RegExp | null {
+  const cache = new Map<string, RegExp | null>()
+  return (scope) => {
+    if (cache.has(scope)) return cache.get(scope) ?? null
+    const own =
+      rule.patterns[scope] ??
+      (scope === 'source-comment' ? rule.patterns.comment : rule.patterns.prose) ??
+      Object.values(rule.patterns)[0]
+    const compiled = own === undefined ? null : own instanceof RegExp ? own : new RegExp(own)
+    cache.set(scope, compiled)
+    return compiled
+  }
+}
+
+function customPatternFor(rule: CustomProseRule, global: boolean): (scope: string) => RegExp | null {
+  const cache = new Map<string, RegExp | null>()
+  return (scope) => {
+    if (cache.has(scope)) return cache.get(scope) ?? null
+    const source = rule.patterns?.[scope] ?? rule.pattern
+    const compiled = source === undefined ? null : new RegExp(source, `${rule.flags ?? ''}${global ? 'g' : ''}`)
+    cache.set(scope, compiled)
+    return compiled
+  }
+}
+
+/**
+ * The rule set the two prose checks run: every default the two checks own,
+ * with `config.defaults` applied (an `"off"` default is dropped), followed by
+ * `config.custom` in the order written. With no configuration this is the
+ * defaults exactly as shipped, so an unconfigured run reports what it always
+ * did. Validation is the configuration loader's job; this function trusts
+ * its input.
+ */
+export function resolveProseRules(
+  config: ProseRulesConfig | undefined = undefined,
+  options: { sourceCommentSeverity?: ProseRuleSeverity; repoRoot?: string } = {}
+): ProseRuleSet {
+  const rules: ResolvedProseRule[] = []
+  const defaults = config?.defaults ?? {}
+  for (const rule of CONFIGURABLE_DEFAULT_RULES) {
+    const override = defaults[rule.id]
+    if (override === 'off') continue
+    const group = rule.group as ProseCheckGroup
+    const scopes = override?.scopes ?? rule.scopes
+    const base: Record<string, ProseRuleSeverity> = {}
+    for (const scope of scopes) {
+      base[scope] =
+        scope === 'source-comment'
+          ? (options.sourceCommentSeverity ?? rule.severity[scope] ?? 'warning')
+          : (rule.severity[scope] ?? scopeDefaultSeverity(scope, options.sourceCommentSeverity))
+    }
+    rules.push({
+      id: rule.id,
+      group,
+      custom: false,
+      builtIn: rule.builtIn === true,
+      scopes,
+      message: rule.message,
+      severity: applySeverity(scopes, base, override?.severity),
+      exempt: override?.exempt ?? [],
+      substringExempt: rule.exemptions,
+      reportGroup: REPORT_GROUPS[rule.id],
+      patternFor: defaultPatternFor(rule)
+    })
+  }
+  for (const rule of config?.custom ?? []) {
+    const group = groupOfScope(rule.scopes[0] ?? '') ?? 'reader-resolvable'
+    const base: Record<string, ProseRuleSeverity> = {}
+    for (const scope of rule.scopes) base[scope] = scopeDefaultSeverity(scope, options.sourceCommentSeverity)
+    rules.push({
+      id: rule.id,
+      group,
+      custom: true,
+      builtIn: false,
+      scopes: rule.scopes,
+      message: rule.means,
+      severity: applySeverity(rule.scopes, base, rule.severity),
+      exempt: rule.exempt ?? [],
+      substringExempt: [],
+      patternFor: customPatternFor(rule, group === 'reader-resolvable')
+    })
+  }
+  const order = (rule: ResolvedProseRule): number => {
+    const at = RESOLVABLE_RUN_ORDER.indexOf(rule.id)
+    return rule.custom || at === -1 ? RESOLVABLE_RUN_ORDER.length : at
+  }
+  const resolvable = rules.filter((rule) => rule.group === 'reader-resolvable')
+  const sorted = resolvable
+    .map((rule, index) => ({ rule, index }))
+    .sort((a, b) => order(a.rule) - order(b.rule) || a.index - b.index)
+    .map(({ rule }) => rule)
+  return {
+    rules: [...sorted, ...rules.filter((rule) => rule.group === 'retired-vocabulary')],
+    exempt: config?.exempt ?? [],
+    repoRoot: options.repoRoot
+  }
+}
+
+/** The rules one check runs, in run order. */
+export function rulesOfGroup(set: ProseRuleSet, group: ProseCheckGroup): readonly ResolvedProseRule[] {
+  return set.rules.filter((rule) => rule.group === group)
+}
+
+/** The rules one check runs in one scope, in run order. */
+export function rulesInScope(set: ProseRuleSet, scope: string): readonly ResolvedProseRule[] {
+  return set.rules.filter((rule) => rule.scopes.includes(scope))
+}
+
+/** The rule set with nothing configured — what both checks run by default. */
+export const DEFAULT_PROSE_RULE_SET: ProseRuleSet = resolveProseRules()

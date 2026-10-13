@@ -39,7 +39,7 @@
  * one would fail every open PR that already carries some of this backlog,
  * and the report-only period is what lets that backlog surface and get
  * cleaned up before the gate turns strict. The `product` class — a
- * tranche-slug citation under `PRODUCT_SLUG_SCOPE` (CLI source, the CLI and
+ * tranche-slug citation under `proseGates.productPaths` (default `PRODUCT_SLUG_SCOPE`: CLI source, the CLI and
  * sources READMEs, the workflows, `.vinaya`) — is the one exception: its
  * finding is `blocking: true`, prints as `severity: 'error'`, and this run
  * exits `1` if any reportable finding is blocking. It runs at the pre-push
@@ -70,17 +70,26 @@ import {
   normalizeSpecPath,
   parseGlossaryTerms,
   PRODUCT_SLUG_SCOPE,
+  type ProseFinding,
   type ProseSourceFile,
+  resolveProseRules,
+  rulesOfGroup,
   specGrandfatherPaths
 } from '@attalabs/aeg-core'
 import { hasDoctrineEntry, resolveDoctrineRoot } from '../../commands/doctrine.js'
-import { loadConfig } from '../../lib/config'
+import { loadConfigChecked } from '../../lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { findingsInThisDiff, repoRoot } from '../../lib/diff-evidence'
 
 const CHECK_NAME = 'reader-resolvable-prose'
 
-const proseGates = loadConfig()?.proseGates
+/**
+ * Loaded with its validation surfaced, never swallowed: a malformed
+ * `proseGates.rules` entry refuses the run (`main()` below) instead of
+ * silently meaning "the defaults, no custom rule".
+ */
+const CONFIG = loadConfigChecked()
+const proseGates = CONFIG.ok ? CONFIG.config?.proseGates : undefined
 
 /**
  * `<doctrineRoot>/**` when `proseGates.doctrineRoot` is unset.
@@ -151,6 +160,9 @@ const SOURCE_COMMENTS_SEVERITY: 'warning' | 'error' = proseGates?.sourceComments
 
 /** Exact repo-relative spec paths skipped entirely by the spec class (below) — a default path as readily as a per-product one — same "declared, not silent" discipline every other exemption list in this file already uses. */
 const SPEC_GRANDFATHER = proseGates?.specGrandfather ?? []
+
+/** The product class's file set: `proseGates.productPaths`, or `PRODUCT_SLUG_SCOPE` when unset. */
+const PRODUCT_PATHS: readonly string[] = proseGates?.productPaths ?? PRODUCT_SLUG_SCOPE
 
 /**
  * The spec class's whole file set beyond `apps/<app>/specs/**`: the
@@ -245,17 +257,17 @@ function readAll(paths: string[]): ProseSourceFile[] {
 const PRODUCT_SCOPE_EXTENSIONS = new Set(['.ts', '.tsx', '.yml', '.md'])
 
 /**
- * Every file under (or equal to) each `PRODUCT_SLUG_SCOPE` prefix, filtered
+ * Every file under (or equal to) each `PRODUCT_PATHS` prefix, filtered
  * to `.ts`/`.tsx`/`.yml`/`.md`, using the same directory skips `collect`
  * already applies. Returned repo-relative to `root` — `classifyProseFile`'s
- * `product` match is a literal-prefix compare against `PRODUCT_SLUG_SCOPE`'s
+ * `product` match is a literal-prefix compare against `PRODUCT_PATHS`'s
  * own repo-relative strings, so these paths must stay in that coordinate
  * system even where `shipsPaths` above may be absolute (`DOCTRINE_ROOT`
  * resolves via `repoRoot()` on this repo).
  */
 function collectProductScopeFiles(root: string): string[] {
   const out: string[] = []
-  for (const prefix of PRODUCT_SLUG_SCOPE) {
+  for (const prefix of PRODUCT_PATHS) {
     const abs = join(root, prefix)
     let isDir: boolean
     try {
@@ -354,10 +366,10 @@ function collectSpecFiles(root: string, specPaths: readonly string[]): string[] 
 }
 
 /**
- * The source-comment class's file set — entirely config-driven, unlike the
- * fixed `PRODUCT_SLUG_SCOPE` above. Each `proseGates.sourceComments.globs`
+ * The source-comment class's file set — entirely config-driven, with no
+ * default set the way the product class has. Each `proseGates.sourceComments.globs`
  * entry is a repo-relative directory (or file) root, swept recursively for
- * `.ts` files the same way `collectProductScopeFiles` sweeps its own fixed
+ * `.ts` files the same way `collectProductScopeFiles` sweeps its own
  * list — "globs" names the config field (matching the brief's own
  * vocabulary for it), not a shell glob syntax this function implements.
  */
@@ -413,7 +425,27 @@ function legacySlugs(legacySlugDir: string): { slugs: string[]; dormant: boolean
   }
 }
 
+/** The recovery prompt for a custom rule's finding — the rule is the repository's own, so it names where the rule lives. */
+const CUSTOM_RULE_RECOVERY =
+  "This text matches one of this repository's own writing rules (proseGates.rules.custom in vinaya.config.json); " +
+  'the finding names the rule and what it means. Rewrite the text so it no longer matches, or, where the rule ' +
+  "should not read this file, add the path to that rule's exempt list."
+
 function main(): void {
+  if (!CONFIG.ok) {
+    console.log(`${CHECK_NAME}: configuration refused — sweep did not run.`)
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `${CONFIG.path}: ${CONFIG.error}`,
+      agent_recovery_prompt:
+        'Fix the vinaya.config.json keys named above; every refused key is named with the reason. This check does ' +
+        'not fall back to its defaults while the configuration is malformed.'
+    })
+    process.exit(2)
+  }
+
   // Genuinely unresolvable — no `aeg-root` found relative to the repo under
   // check (`repoRoot()/aeg-root`), and no bundled copy found relative to this
   // package's own install either. Report this as its OWN distinct outcome:
@@ -449,6 +481,16 @@ function main(): void {
       : []
 
   const productRoot = repoRoot() ?? process.cwd()
+  const rules = resolveProseRules(proseGates?.rules, {
+    sourceCommentSeverity: SOURCE_COMMENTS_SEVERITY,
+    repoRoot: productRoot
+  })
+  const customIds = new Set(
+    rulesOfGroup(rules, 'reader-resolvable')
+      .filter((rule) => rule.custom)
+      .map((rule) => rule.id)
+  )
+  const isCustom = (finding: ProseFinding): boolean => customIds.has(finding.rule)
   const productRelPaths = collectProductScopeFiles(productRoot)
   const productFiles = readProductFiles(productRoot, productRelPaths)
 
@@ -476,7 +518,8 @@ function main(): void {
     slugs,
     shipsPrefix,
     SPEC_GRANDFATHER,
-    SPEC_PATHS
+    SPEC_PATHS,
+    { rules, productPaths: PRODUCT_PATHS }
   )
 
   // `resolveChangedFiles()` returns absolute paths, resolved against the
@@ -529,7 +572,7 @@ function main(): void {
     }
   }
 
-  const sourceCommentFindings = checkSourceComments(sourceCommentFiles, SOURCE_COMMENTS_ALLOWLIST)
+  const sourceCommentFindings = checkSourceComments(sourceCommentFiles, SOURCE_COMMENTS_ALLOWLIST, { rules })
   const reportableSourceComments = findingsInThisDiff(sourceCommentFindings)
 
   // stdout only — this check's stderr is the CheckError JSON channel
@@ -542,6 +585,7 @@ function main(): void {
       `product class ran (${productRelPaths.length} file(s) swept); ` +
       `spec class ran (${specRelPaths.length} file(s) swept, ${specGrandfatherPaths(SPEC_GRANDFATHER).length} grandfathered); ` +
       `source-comment class ${SOURCE_COMMENTS_GLOBS.length === 0 ? 'dormant — proseGates.sourceComments.globs not set' : `ran (${sourceCommentRelPaths.length} file(s) swept, severity: ${SOURCE_COMMENTS_SEVERITY})`}; ` +
+      `${rulesOfGroup(rules, 'reader-resolvable').length} rule(s) (${customIds.size} custom); ` +
       `${findings.length + sourceCommentFindings.length} finding(s) swept, ${reportable.length + reportableSourceComments.length} in this diff`
   )
 
@@ -555,35 +599,40 @@ function main(): void {
       message: `${finding.file}:${finding.line}: ${finding.message}`,
       file: finding.file,
       line: finding.line,
-      agent_recovery_prompt: finding.message.includes('coined term')
-        ? 'This page uses AEG/Vinaya-internal vocabulary a first-time reader cannot resolve. Either define the term ' +
-          'inline (the same "Term — one-sentence definition" shape the glossary uses) at its first use on this page, ' +
-          'or link to the glossary. Do not simply delete the word if the sentence needs it.'
-        : // A product-code finding names itself in its own message; every
-          // other blocking finding is a spec-class one. Keyed on the message
-          // rather than on the path, since a spec-class file is no longer
-          // always under a `specs/` folder — a root spec, a root context
-          // document and a decision record are all read by default now.
-          finding.blocking && !finding.message.includes('in product code')
-          ? 'This spec cites a tranche, a task number, an Issue/PR number, or names a document outside this ' +
-            'repository as its authority — a reader with no forge to resolve it against (a fork, an export, someone ' +
-            'reading this spec after the Issue is closed) gets nothing from the citation, and a copied task number ' +
-            'goes stale the moment the plan is renumbered. Rewrite the sentence to state the fact ' +
-            'plainly instead. If this spec is pre-existing backlog, list its path in ' +
-            '`proseGates.specGrandfather` with its current finding count rather than fixing it as a drive-by in an ' +
-            'unrelated PR — a listed file that gains a citation exceeds its count and fails.'
-          : finding.blocking
-            ? 'This product-code file cites an internal tranche slug a reader outside this repo cannot resolve ' +
-              '(the reader-resolvable-prose product class). Remove the citation or rewrite the comment/doc to state ' +
-              'the fact plainly instead of pointing at the tranche that did it. This finding blocks the push and CI.'
-            : 'This doctrine or page cites a forge number or an internal tranche slug the reader has no tracker to ' +
-              'resolve. Rewrite the sentence to state the fact plainly instead of pointing at the citation — say ' +
-              'what was learned/decided, not where it was logged.'
+      agent_recovery_prompt: isCustom(finding)
+        ? CUSTOM_RULE_RECOVERY
+        : finding.message.includes('coined term')
+          ? 'This page uses AEG/Vinaya-internal vocabulary a first-time reader cannot resolve. Either define the term ' +
+            'inline (the same "Term — one-sentence definition" shape the glossary uses) at its first use on this page, ' +
+            'or link to the glossary. Do not simply delete the word if the sentence needs it.'
+          : // A product-code finding names itself in its own message; every
+            // other blocking finding is a spec-class one. Keyed on the message
+            // rather than on the path, since a spec-class file is no longer
+            // always under a `specs/` folder — a root spec, a root context
+            // document and a decision record are all read by default now.
+            finding.blocking && !finding.message.includes('in product code')
+            ? 'This spec cites a tranche, a task number, an Issue/PR number, or names a document outside this ' +
+              'repository as its authority — a reader with no forge to resolve it against (a fork, an export, someone ' +
+              'reading this spec after the Issue is closed) gets nothing from the citation, and a copied task number ' +
+              'goes stale the moment the plan is renumbered. Rewrite the sentence to state the fact ' +
+              'plainly instead. If this spec is pre-existing backlog, list its path in ' +
+              '`proseGates.specGrandfather` with its current finding count rather than fixing it as a drive-by in an ' +
+              'unrelated PR — a listed file that gains a citation exceeds its count and fails.'
+            : finding.blocking
+              ? 'This product-code file cites an internal tranche slug a reader outside this repo cannot resolve ' +
+                '(the reader-resolvable-prose product class). Remove the citation or rewrite the comment/doc to state ' +
+                'the fact plainly instead of pointing at the tranche that did it. This finding blocks the push and CI.'
+              : 'This doctrine or page cites a forge number or an internal tranche slug the reader has no tracker to ' +
+                'resolve. Rewrite the sentence to state the fact plainly instead of pointing at the citation — say ' +
+                'what was learned/decided, not where it was logged.'
     })
   }
 
   for (const finding of reportableSourceComments) {
-    const blocking = SOURCE_COMMENTS_SEVERITY === 'error'
+    // The finding's own severity: `proseGates.sourceComments.severity` is
+    // the scope's default, and a rule's own `severity` for the scope
+    // overrides it.
+    const blocking = finding.blocking
     if (blocking) hasBlocking = true
     emitCheckError({
       schema: CHECK_SCHEMA_VERSION,
@@ -592,10 +641,11 @@ function main(): void {
       message: `${finding.file}:${finding.line}: ${finding.message}`,
       file: finding.file,
       line: finding.line,
-      agent_recovery_prompt:
-        'This source comment cites a tranche name or a forge number a reader outside this repo cannot resolve. ' +
-        'Rewrite the comment to state the fact it pointed at, or, for a comment that deliberately pins historical ' +
-        'content (a test fixture), add its file path to proseGates.sourceComments.allowlist in vinaya.config.json.'
+      agent_recovery_prompt: isCustom(finding)
+        ? CUSTOM_RULE_RECOVERY
+        : 'This source comment cites a tranche name or a forge number a reader outside this repo cannot resolve. ' +
+          'Rewrite the comment to state the fact it pointed at, or, for a comment that deliberately pins historical ' +
+          'content (a test fixture), add its file path to proseGates.sourceComments.allowlist in vinaya.config.json.'
     })
   }
 
