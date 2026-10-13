@@ -37,7 +37,15 @@ const digest = (): string =>
         DEFAULT_PROSE_RULES.map((rule) => ({
           ...rule,
           patterns: Object.fromEntries(
-            Object.entries(rule.patterns).map(([scope, p]) => [scope, String(p).replaceAll('\\/', '/')])
+            Object.entries(rule.patterns).map(([scope, pattern]) => [
+              scope,
+              pattern instanceof RegExp
+                ? {
+                    source: pattern.source.replaceAll('\\/', '/').replaceAll('\\u00A7', '§'),
+                    flags: pattern.flags
+                  }
+                : pattern
+            ])
           )
         }))
       )
@@ -46,6 +54,6 @@ const digest = (): string =>
 
 describe('default prose rules content', () => {
   it('pins every pattern text, flag, message, severity and exemption', () => {
-    expect(digest()).toBe('4aa13c3ec7a1c2f2a5dbb12e9e5b3fd4c2a9c83f38f9bdef96f23f35f575227f')
+    expect(digest()).toBe('e3aeac69a291567a8fae8efcfc8f7bde288e14f6dd188f15c5802eb84c7135e1')
   })
 })
