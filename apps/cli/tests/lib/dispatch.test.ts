@@ -36,6 +36,7 @@ import { readdirSync, statSync } from 'node:fs'
 import {
   AGENT_VENDOR_NAMES,
   DEFAULT_TIMEOUT_MS,
+  DEFAULT_REVIEWER_TIMEOUT_MS,
   identifyVendorFromModelShape,
   parseClaudeModel,
   parseClaudeResumeId,
@@ -51,6 +52,7 @@ import {
   MAX_TEE_BYTES,
   openOutputTee,
   timeoutWarningLeadMs,
+  resolveDispatchTimeoutMs,
   colourAgentLine,
   colourEnabled,
   colourLoopLine,
@@ -860,6 +862,38 @@ describe('dispatchRole — present but not executable', () => {
 })
 
 describe('dispatchRole — timeout ceiling', () => {
+  it('uses reviewerTimeoutMs for reviewers while a Developer keeps timeoutMs', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    writeFakeBinary(binDir, 'claude', '#!/bin/sh\ncat > /dev/null\nexec sleep 2\n')
+    writeFileSync(
+      join(cwd, 'vinaya.config.json'),
+      JSON.stringify({ dispatch: { timeoutMs: 5000, reviewerTimeoutMs: 1000, killGraceMs: 100 } })
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    const reviewer = runDispatch(['code-reviewer', '--agent', 'claude', '--prompt-file', promptFile], cwd, home, path)
+    expect(reviewer.status).toBe(1)
+    expect(
+      (outboxLines(home, 'none') as Array<Record<string, unknown>>).some(
+        (line) => line.event === 'dispatch_failed' && line.reason === 'timeout'
+      )
+    ).toBe(true)
+
+    const developer = runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile], cwd, home, path)
+    expect(developer.status).toBe(0)
+  }, 10_000)
+
+  it('defaults both reviewer roles to twenty minutes without changing the Developer default', () => {
+    expect(DEFAULT_REVIEWER_TIMEOUT_MS).toBe(1_200_000)
+    expect(resolveDispatchTimeoutMs('code-reviewer', undefined)).toBe(DEFAULT_REVIEWER_TIMEOUT_MS)
+    expect(resolveDispatchTimeoutMs('security', undefined)).toBe(DEFAULT_REVIEWER_TIMEOUT_MS)
+    expect(resolveDispatchTimeoutMs('developer', undefined)).toBe(DEFAULT_TIMEOUT_MS)
+  })
+
   it('SIGTERMs a child that ignores it, then SIGKILLs after the grace window, and the pid is actually gone', () => {
     // `killGraceMs` (task-run-v1 20, O2): the escalation this test proves —
     // SIGTERM ignored, SIGKILL follows once the grace window elapses — does

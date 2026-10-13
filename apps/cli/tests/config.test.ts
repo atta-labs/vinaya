@@ -104,6 +104,12 @@ describe('config', () => {
     expect(result?.tokens?.collect).toBe('node scripts/collect-usage.js')
   })
 
+  it('accepts a positive integer dispatch.reviewerTimeoutMs', () => {
+    expect(VinayaConfigSchema.safeParse({ dispatch: { reviewerTimeoutMs: 1_200_000 } }).success).toBe(true)
+    expect(VinayaConfigSchema.safeParse({ dispatch: { reviewerTimeoutMs: 0 } }).success).toBe(false)
+    expect(VinayaConfigSchema.safeParse({ dispatch: { reviewerTimeoutMs: 1.5 } }).success).toBe(false)
+  })
+
   it('resolvePrincipalAllowlist falls back to PRINCIPAL_ALLOWLIST when no config sets principals (every existing install unaffected)', () => {
     expect(resolvePrincipalAllowlist(null)).toEqual(PRINCIPAL_ALLOWLIST)
     expect(resolvePrincipalAllowlist({})).toEqual(PRINCIPAL_ALLOWLIST)
