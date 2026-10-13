@@ -199,6 +199,84 @@
       "migrationGate": "§14: both backends execute its suites (mechanical-gates.l1@1, mechanical-gates.l2@1, mechanical-gates.l3@1); on its deterministic suites the Engine backend passes every mandatory case and every standalone failure is named by a registered expected defect, comparison evidence only; its suites run in the regression floor or the live schedule on both backends until cutover and on the Engine backend afterwards; each of its §13 rows satisfies its declared cutover outcome. Recommended order: step 2, pure policy."
     },
     {
+      "id": "tool:canonical_catalog",
+      "kind": "tool",
+      "module": "6.6",
+      "source": {
+        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "revision": 17,
+        "section": "4.0 Tool-contract components"
+      },
+      "contract": "The provider-neutral canonical catalog carries every required contract field for all seven Developer tools and the planned reviewer source read, and the Developer server renders every served definition from it alone.",
+      "owner": "vinaya-policy",
+      "officialBasis": "MCP — Tools, for discovery schemas and annotations; Anthropic — Writing tools for agents, for naming, selection boundaries, examples and evaluation.",
+      "suite": ["tool-catalog.l4@1", "tool-catalog.l5@1"],
+      "tasks": {
+        "positive": {
+          "present": "Every catalog entry is complete, every realistic example validates, and the live Developer listing equals the seven catalog-rendered definitions."
+        },
+        "negative": {
+          "present": "The planned `read_source` entry remains in the canonical catalog but absent from every live role listing."
+        },
+        "refusal": {
+          "present": "An input or output object with an unknown property is refused by its strict schema, including nested check and review objects."
+        },
+        "recovery": {
+          "present": "A catalog entry missing or contradicting one required field is corrected at the single catalog source and the served listing changes with it."
+        },
+        "adversarial": {
+          "present": "An annotation that suggests broader authority remains discovery metadata and cannot grant a call or bypass dispatch authorization."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Catalog completeness, strict-schema, example-validation and served-equality assertions; a repository search proving annotations have no authorization consumer."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic L4 cases pass 100%; held-out tool selection meets the §10 absolute floor of at least 0.95 per tool on both adapters.",
+      "cadence": ["every-affected-change", "scheduled-live"],
+      "migrationGate": "§14: both backends execute tool-catalog.l4@1 and tool-catalog.l5@1; the Engine backend passes every deterministic catalog case and meets the held-out selection floor before cutover. Recommended order: step 5, adapters."
+    },
+    {
+      "id": "tool:shared_error_model",
+      "kind": "tool",
+      "module": "6.6",
+      "source": {
+        "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
+        "revision": 17,
+        "section": "4.0 Tool-contract components"
+      },
+      "contract": "One shared strict schema defines errorClass, retryDisposition and effectState independently and is composed into every refusal and infrastructure-error schema in the canonical catalog.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision; MCP — Tools, for structured tool results and execution errors.",
+      "suite": ["tool-catalog.l4@1"],
+      "tasks": {
+        "positive": {
+          "present": "Every refusal and infrastructure-error schema uses the same definitions of all three independent axes."
+        },
+        "negative": {
+          "present": "Changing one axis definition changes every composed error schema without a second definition to update."
+        },
+        "refusal": {
+          "present": "An error missing an axis, carrying an unknown enum value, or adding an unknown property is refused by the strict schema."
+        },
+        "recovery": {
+          "present": "A retry follows retryDisposition while effect reconciliation follows effectState, so neither is inferred from errorClass."
+        },
+        "adversarial": {
+          "present": "A policy refusal marked retryable or an uncertain effect presented as not started cannot collapse the independent axes or authorize a blind replay."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Object-identity and schema-validation assertions prove one shared axis definition, complete strict errors, and independent enum values."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: both backends pass 100% of every shared-error schema and recovery case.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14: both backends execute tool-catalog.l4@1 and pass every error-axis, strictness, recovery and replay case before cutover. Recommended order: step 2, pure policy."
+    },
+    {
       "id": "tool:fetch_documentation",
       "kind": "tool",
       "module": "6.6",

@@ -138,6 +138,7 @@ const CONTROLLER_PUBLICATIONS = [
 export function deriveContractUniverses(sources: ContractSources): Record<ContractKind, UniverseMember[]> {
   const grants = sectionBody(sources.contracts, '3. ')
   const liveTools = sectionBody(sources.contracts, '4.1 ')
+  const toolContracts = sectionBody(sources.contracts, '4.0 ')
   const plannedTool = sectionBody(sources.contracts, '4.2 ')
   const gates = sectionBody(sources.contracts, '7. ')
   const boundaries = sectionBody(sources.isolation, '1. The six boundaries')
@@ -196,6 +197,10 @@ export function deriveContractUniverses(sources: ContractSources): Record<Contra
   }
 
   const tools = [
+    ...tableRows(toolContracts.body).map((row) => ({
+      name: (row[0] as string).replace(/`/g, ''),
+      source: at(CONTRACTS_DOC, toolContracts)
+    })),
     ...sources.devTools.map((name) => ({ name, source: at(CONTRACTS_DOC, liveTools) })),
     { name: planned, source: at(CONTRACTS_DOC, plannedTool) },
     ...sources.taskTools.map((name) => ({ name, source: at(PROGRAM_DOC, operator) }))

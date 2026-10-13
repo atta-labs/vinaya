@@ -281,6 +281,8 @@ export function validatesJsonSchema(schema: unknown, value: unknown): boolean {
   if (Array.isArray(node.anyOf)) return node.anyOf.some((variant) => validatesJsonSchema(variant, value))
   if ('const' in node && value !== node.const) return false
   if (Array.isArray(node.enum) && !node.enum.includes(value)) return false
+  if (node.type === 'null') return value === null
+  if (node.type === 'boolean') return typeof value === 'boolean'
   if (node.type === 'object') {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
     const object = value as Record<string, unknown>

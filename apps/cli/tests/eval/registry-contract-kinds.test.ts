@@ -87,9 +87,25 @@ describe('the contract-kinds shard', () => {
     }
   })
 
+  it('makes the canonical catalog and shared error model independently mandatory', () => {
+    for (const id of ['tool:canonical_catalog', 'tool:shared_error_model']) {
+      const shardContent = clone(rawShard)
+      shardContent.components = shardContent.components.filter((row) => row.id !== id)
+      const report = check(shardContent)
+      expect(report.complete).toBe(false)
+      expect(report.missing).toContainEqual({ kind: 'tool', name: id.slice('tool:'.length) })
+    }
+  })
+
   it('derives each universe from its source, not from a hand list', () => {
     expect(UNIVERSES.role).toEqual(['developer', 'code-reviewer', 'security-reviewer', 'operator', 'controller'])
-    expect(UNIVERSES.tool).toEqual([...sources.devTools, 'read_source', ...sources.taskTools])
+    expect(UNIVERSES.tool).toEqual([
+      'canonical_catalog',
+      'shared_error_model',
+      ...sources.devTools,
+      'read_source',
+      ...sources.taskTools
+    ])
     expect(UNIVERSES.adapter).toEqual([...sources.adapters])
     expect(UNIVERSES['isolation-boundary']).toHaveLength(6)
     expect(UNIVERSES.gate).toHaveLength(9)
