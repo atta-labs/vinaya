@@ -26,7 +26,7 @@ describe('developer-review evaluation program mirror', () => {
       'https://linear.app/attalabs/document/tech-spec-developer-review-evaluation-program-768283062392'
     )
     expect(manifest.sourceDocumentId).toBe('535a4392-b658-4c92-835a-4b8f2d2830d4')
-    expect(manifest.revision).toBe(11)
+    expect(manifest.revision).toBe(14)
   })
 
   it('accounts for every named source document', () => {
@@ -53,7 +53,7 @@ describe('developer-review evaluation program mirror', () => {
   })
 
   it('accounts for every byte through the ordered source chunks', () => {
-    expect(manifest.chunks.map(({ commentId }) => commentId)).toEqual([6110694355, 6110694709])
+    expect(manifest.chunks.map(({ commentId }) => commentId)).toEqual([6128511645, 6128511984])
     expect(manifest.chunks.reduce((sum, chunk) => sum + chunk.bytes, 0)).toBe(manifest.totalBytes)
 
     let offset = 0

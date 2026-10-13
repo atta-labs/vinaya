@@ -36,6 +36,21 @@ export interface UniverseMember {
   source: MemberSource
 }
 
+export interface ContractUniverseExclusion {
+  check: string
+  owner: 'Operator on one host'
+  reason: string
+}
+
+/** Shrink-only checks temporarily owned by the Operator project. */
+export const CONTRACT_UNIVERSE_EXCLUSIONS: readonly ContractUniverseExclusion[] = [
+  {
+    check: 'program-6.23-supporting-pull-request-read',
+    owner: 'Operator on one host',
+    reason: 'Revision 14 replaced this wording with the nine-tool Operator contract owned by this project.'
+  }
+]
+
 /** The text and typed lists the universes are derived from; a test may substitute any of them. */
 export interface ContractSources {
   contracts: string
@@ -180,7 +195,16 @@ export function deriveContractUniverses(sources: ContractSources): Record<Contra
   if (operatorCount !== numberWord(sources.taskTools.length - prRead.length) || prRead.length !== 1) {
     throw new Error(`§3 grants the Operator "${operatorGrant}"; TASK_TOOL_NAMES is ${sources.taskTools.join(', ')}`)
   }
-  if (!operator.body.includes('supporting pull-request read')) throw new Error('§6.23 names no pull-request read')
+  const legacyOperatorWording = 'supporting pull-request read'
+  const operatorWordingCheck = 'program-6.23-supporting-pull-request-read'
+  const operatorWordingExcluded = CONTRACT_UNIVERSE_EXCLUSIONS.some((entry) => entry.check === operatorWordingCheck)
+  if (operator.body.includes(legacyOperatorWording)) {
+    if (operatorWordingExcluded) {
+      throw new Error(`the ${operatorWordingCheck} exclusion is covered and must be removed`)
+    }
+  } else if (!operatorWordingExcluded) {
+    throw new Error('§6.23 names no supporting pull-request read and its exclusion is absent')
+  }
 
   const tools = [
     ...sources.devTools.map((name) => ({ name, source: at(CONTRACTS_DOC, liveTools) })),
