@@ -643,9 +643,11 @@ export const VinayaConfigSchema = z.object({
   // above. Additive-only; absent entirely for a single-project repo.
   projects: z.array(ProjectEntrySchema).optional(),
   // `vinaya dispatch <role> --agent <vendor>` (`apps/cli/src/lib/dispatch.ts`).
-  // `timeoutMs` is the wall-time ceiling
-  // before `dispatchRole` sends `SIGTERM` (then `SIGKILL`) to the child;
-  // absent defaults to four hours (`DEFAULT_TIMEOUT_MS` in `dispatch.ts`).
+  // `timeoutMs` is the Developer wall-time ceiling before `dispatchRole`
+  // sends `SIGTERM` (then `SIGKILL`) to the child; absent defaults to four
+  // hours (`DEFAULT_TIMEOUT_MS` in `dispatch.ts`). `reviewerTimeoutMs` is the
+  // corresponding ceiling for code-reviewer and security dispatches; absent
+  // defaults to twenty minutes (`DEFAULT_REVIEWER_TIMEOUT_MS`).
   // `agent` is a default vendor the CLI's own `--agent` flag overrides, for a
   // repo that always dispatches the same vendor.
   //
@@ -667,6 +669,7 @@ export const VinayaConfigSchema = z.object({
   dispatch: z
     .object({
       timeoutMs: z.number().int().positive().optional(),
+      reviewerTimeoutMs: z.number().int().positive().optional(),
       killGraceMs: z.number().int().positive().optional(),
       agent: z.enum(['claude', 'codex', 'gemini']).optional()
     })

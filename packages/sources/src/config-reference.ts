@@ -505,11 +505,12 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'dispatch',
     type: 'object (optional)',
     semantics: [
-      '`vinaya dispatch <role> --agent claude|codex|gemini` (`apps/cli/src/lib/dispatch.ts`) settings: the wall-time ceiling before the headless child is signaled, and a default vendor for repos that always dispatch the same one.'
+      '`vinaya dispatch <role> --agent claude|codex|gemini` (`apps/cli/src/lib/dispatch.ts`) settings: role-scoped wall-time ceilings before the headless child is signaled, and a default vendor for repos that always dispatch the same one.'
     ],
     example: `{
   "dispatch": {
     "timeoutMs": 3600000,
+    "reviewerTimeoutMs": 1200000,
     "agent": "claude"
   }
 }`
@@ -518,9 +519,17 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'dispatch.timeoutMs',
     type: 'number (optional, positive integer)',
     semantics: [
-      'The wall-time ceiling for one dispatched agent process. Absent defaults to one hour (3600000ms). When it elapses, `dispatchRole` sends `SIGTERM`, then `SIGKILL` after a fixed grace window if the child has not exited.'
+      'The wall-time ceiling for a Developer dispatch. Absent defaults to four hours (14400000ms). When it elapses, `dispatchRole` sends `SIGTERM`, then `SIGKILL` after the configured grace window if the child has not exited.'
     ],
     example: `{ "dispatch": { "timeoutMs": 1800000 } }`
+  },
+  {
+    key: 'dispatch.reviewerTimeoutMs',
+    type: 'number (optional, positive integer)',
+    semantics: [
+      'The wall-time ceiling for code-reviewer and security dispatches, regardless of agent vendor. Absent defaults to twenty minutes (1200000ms). When it elapses, `dispatchRole` uses the same SIGTERM-then-SIGKILL escalation as every other dispatch.'
+    ],
+    example: `{ "dispatch": { "reviewerTimeoutMs": 900000 } }`
   },
   {
     key: 'dispatch.agent',

@@ -513,6 +513,18 @@ export function addCodexWritableDirs(
  */
 export const DEFAULT_TIMEOUT_MS = 14_400_000
 
+/** Twenty minutes — the default ceiling for the two review roles. */
+export const DEFAULT_REVIEWER_TIMEOUT_MS = 1_200_000
+
+type DispatchTimeoutConfig = { timeoutMs?: number; reviewerTimeoutMs?: number } | undefined
+
+/** Selects a ceiling by role, independently of the agent vendor running it. */
+export function resolveDispatchTimeoutMs(role: Role, config: DispatchTimeoutConfig): number {
+  return role === 'code-reviewer' || role === 'security'
+    ? (config?.reviewerTimeoutMs ?? DEFAULT_REVIEWER_TIMEOUT_MS)
+    : (config?.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+}
+
 /**
  * Default grace window between `SIGTERM` and `SIGKILL` once the ceiling
  * fires — overridable via `dispatch.killGraceMs` (`VinayaConfigSchema`) so a
@@ -4991,8 +5003,9 @@ export async function dispatchRole(
     await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatched')
   }
 
-  const timeoutMs = loadConfig()?.dispatch?.timeoutMs ?? DEFAULT_TIMEOUT_MS
-  const killGraceMs = loadConfig()?.dispatch?.killGraceMs ?? SIGKILL_GRACE_MS
+  const dispatchConfig = loadConfig()?.dispatch
+  const timeoutMs = resolveDispatchTimeoutMs(role, dispatchConfig)
+  const killGraceMs = dispatchConfig?.killGraceMs ?? SIGKILL_GRACE_MS
 
   return new Promise<DispatchHandle>((resolve) => {
     // O1/O2 (task 4): Codex is no longer wrapped in `sandbox-exec -f <profile>
