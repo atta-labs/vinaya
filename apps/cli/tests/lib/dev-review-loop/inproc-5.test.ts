@@ -2058,3 +2058,80 @@ describe('devReviewLoop — a tooling_unavailable report on a red check is rerun
     expect(events).toEqual([])
   })
 })
+
+describe('devReviewLoop — an unchanged Developer turn reruns the red head once per round', () => {
+  it('reruns the failed workflow and reaches reviewers without a second Developer dispatch', async () => {
+    const world = makeWorld({ worktreeExists: true, developerPushed: true, prOpened: true })
+    world.gate = 'red'
+    const reruns: number[] = []
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex' },
+      {
+        fetchFailedCheckWorkflowRunIds: () => [4242],
+        rerunFailedWorkflowJobs: (runId) => {
+          reruns.push(runId)
+          world.gate = 'green'
+        }
+      }
+    )
+    expect(result.finalDecision.type).toBe('publish')
+    expect(reruns).toEqual([4242])
+    expect(world.dispatchCountByRole.developer).toBe(1)
+    expect(world.dispatches.filter((dispatch) => dispatch.role === 'code-reviewer')).toHaveLength(1)
+    expect(world.dispatches.filter((dispatch) => dispatch.role === 'security')).toHaveLength(1)
+  })
+
+  it('does not rerun again when the second unchanged turn in the round is still red', async () => {
+    const world = makeWorld({ worktreeExists: true, developerPushed: true, prOpened: true })
+    world.gate = 'red'
+    const reruns: number[] = []
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex' },
+      {
+        fetchFailedCheckWorkflowRunIds: () => [4242],
+        rerunFailedWorkflowJobs: (runId) => reruns.push(runId)
+      }
+    )
+    expect(result.finalDecision.type).toBe('pause')
+    expect(reruns).toEqual([4242])
+    expect(world.dispatchCountByRole.developer).toBeGreaterThanOrEqual(2)
+  })
+
+  it('reads the head once after a turn that made no publication attempt', async () => {
+    const world = makeWorld({ worktreeExists: true, developerPushed: true, prOpened: true })
+    world.gate = 'red'
+    const base = makeInProcessDeps(world)
+    const readsBetweenDeveloperTurns: number[] = []
+    let readsAfterTurn = 0
+    let recording = false
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex' },
+      {
+        ...base,
+        dispatchRole: async (role, agent, prompt, opts) => {
+          if (role === 'developer' && recording) {
+            readsBetweenDeveloperTurns.push(readsAfterTurn)
+            readsAfterTurn = 0
+            recording = false
+          }
+          const handle = await base.dispatchRole!(role, agent, prompt, opts)
+          if (role === 'developer') recording = true
+          return handle
+        },
+        resolveHead: (branch) => {
+          if (recording) readsAfterTurn += 1
+          return base.resolveHead!(branch)
+        },
+        gatePollMaxAttempts: 20,
+        fetchFailedCheckWorkflowRunIds: () => []
+      }
+    )
+    expect(result.finalDecision.type).toBe('pause')
+    // Two surrounding bookkeeping reads are fixed; only one is the
+    // head-change poll despite a deliberately large poll budget.
+    expect(readsBetweenDeveloperTurns[0]).toBe(3)
+  })
+})
