@@ -316,6 +316,9 @@ const EXEMPT = [
   // legitimately names every retired term as pattern data, the same
   // self-reference reason this file exempts itself, one line up.
   'packages/aeg-core/src/retired-vocabulary.ts',
+  // The shared rule module holds every retired pattern as data.
+  'packages/aeg-core/src/prose-rules.ts',
+  'packages/aeg-core/src/prose-rules.test.ts',
   // The task 7 CheckSpec adapter bin, and its own pure-evaluator test —
   // same self-reference reason: both legitimately name every retired term
   // as pattern data or a matching sample.
