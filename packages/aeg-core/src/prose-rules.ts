@@ -27,7 +27,11 @@ export const RETIRED_GLOBAL_EXEMPTIONS = [
   '/.turbo/'
 ] as const
 
-const retiredPatternExemptions: Readonly<Record<string, readonly string[]>> = {
+export const PLAN_ON_DISK_PATTERNS: readonly string[] = ['[Tt]opology files?', 'aeg-root/tranches/', 'aeg-project/']
+
+export const TRANCHE_MODEL_FILE = '/tranche-model.md'
+
+export const RETIRED_PATTERN_EXEMPTIONS: Readonly<Record<string, readonly string[]>> = {
   [String.raw`\bD-[0-9]{3}\b`]: ['./CLAUDE.md'],
   [String.raw`decisions\.md`]: [
     'docs-index.md',
@@ -48,9 +52,7 @@ const retiredPatternExemptions: Readonly<Record<string, readonly string[]>> = {
     'apps/vada-ai/CLAUDE.md'
   ],
   CONTRADICTION: ['apps/vada-ai/specs/vada-reviewers-spec.md'],
-  '[Tt]opology files?': ['/tranche-model.md'],
-  'aeg-root/tranches/': ['/tranche-model.md'],
-  'aeg-project/': ['/tranche-model.md']
+  ...Object.fromEntries(PLAN_ON_DISK_PATTERNS.map((pattern) => [pattern, [TRANCHE_MODEL_FILE]]))
 }
 
 const retiredPatterns = [
@@ -186,7 +188,7 @@ export const DEFAULT_PROSE_RULES: readonly DefaultProseRule[] = [
     message: 'retired vocabulary',
     severity: { repository: 'error' as const },
     exemptions: RETIRED_GLOBAL_EXEMPTIONS,
-    patternExemptions: retiredPatternExemptions
+    patternExemptions: RETIRED_PATTERN_EXEMPTIONS
   })),
   ...published.map(([id, message, pattern]) => ({
     id,
@@ -202,3 +204,6 @@ export const DEFAULT_PROSE_RULES: readonly DefaultProseRule[] = [
 
 export const rulesForGroup = (group: DefaultProseRule['group']): readonly DefaultProseRule[] =>
   DEFAULT_PROSE_RULES.filter((rule) => rule.group === group)
+
+export const proseSeverity = (id: string, scope: string): ProseRuleSeverity | undefined =>
+  DEFAULT_PROSE_RULES.find((rule) => rule.id === id)?.severity[scope]

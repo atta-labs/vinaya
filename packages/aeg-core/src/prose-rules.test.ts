@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_PROSE_RULES } from './prose-rules'
 
@@ -26,5 +27,23 @@ describe('default prose rules are complete', () => {
     expect(DEFAULT_PROSE_RULES.map((rule) => [rule.group, rule.id, Object.keys(rule.patterns).length])).toEqual(
       EXPECTED_RULES
     )
+  })
+})
+
+const digest = (): string =>
+  createHash('sha256')
+    .update(
+      JSON.stringify(
+        DEFAULT_PROSE_RULES.map((rule) => ({
+          ...rule,
+          patterns: Object.fromEntries(Object.entries(rule.patterns).map(([scope, p]) => [scope, String(p)]))
+        }))
+      )
+    )
+    .digest('hex')
+
+describe('default prose rules content', () => {
+  it('pins every pattern text, flag, message, severity and exemption', () => {
+    expect(digest()).toBe('6c4c9a58f4d5f73560bb103610112484daf473489cbcce475b7bdb5a578f86cc')
   })
 })
