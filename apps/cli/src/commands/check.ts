@@ -13,7 +13,7 @@ import {
 import { CHECK_EXCLUDE_ENV, defaultParallelism, runChecks } from '../checks/runner'
 import { type ConfigLoadResult, configPath, loadConfigChecked } from '../lib/config'
 import { printJson } from '../lib/envelope'
-import { buildProseRulesPlan, type ProseRulesPlan, renderProseRulesPlan } from '../lib/prose-rules-plan'
+import { type ProseRulesPlan, proseRulesPlanSection } from '../lib/prose-rules-plan'
 import { buildRolePlan, type RolePlan } from '../roles/plan'
 import type { RoleResolutionState } from '../roles/resolver'
 
@@ -309,18 +309,14 @@ export async function checkCommand(args: string[]): Promise<void> {
     )
     // Which writing rules each prose check runs, from the same rule set the
     // checks resolve; unavailable when the configuration did not load.
-    const proseRules: ProseRulesPlan = configResult.ok
-      ? buildProseRulesPlan(
-          new Map(result.resolved.map((entry) => [entry.name, entry.state])),
-          configResult.config?.proseGates?.rules
-        )
-      : { available: false, reason: 'the configuration did not load' }
+    const proseRules = proseRulesPlanSection(
+      new Map(result.resolved.map((entry) => [entry.name, entry.state])),
+      configResult.ok ? configResult.config?.proseGates?.rules : null
+    )
     if (jsonOutput) {
-      process.stdout.write(`${JSON.stringify(renderPlanJson(result, rolePlan, proseRules), null, 2)}\n`)
+      process.stdout.write(`${JSON.stringify(renderPlanJson(result, rolePlan, proseRules.plan), null, 2)}\n`)
     } else {
-      process.stdout.write(
-        `${renderPlanTable(result)}\n\n${renderRolesTable(rolePlan)}\n\n${renderProseRulesPlan(proseRules)}\n`
-      )
+      process.stdout.write(`${renderPlanTable(result)}\n\n${renderRolesTable(rolePlan)}\n\n${proseRules.text}\n`)
     }
     const roleFailureCount = rolePlan.available ? rolePlan.failures.length : 0
     process.exitCode = result.failures.length > 0 || roleFailureCount > 0 ? 1 : 0
@@ -462,5 +458,5 @@ export function isRunFailed(outcomes: CheckOutcome[], specs: CheckSpec[]): boole
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  check: { date: '2026-09-05', callsToday: 3, retiresVia: 'runChecks' }
+  check: { date: '2026-09-05', callsToday: 4, retiresVia: 'runChecks' }
 }

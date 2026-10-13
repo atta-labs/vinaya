@@ -67,3 +67,18 @@ export function renderProseRulesPlan(plan: ProseRulesPlan): string {
   }
   return lines.join('\n')
 }
+
+/**
+ * The whole `--plan` section in one call: the plan for `--plan --json` and its
+ * rendered text. `rulesConfig` is `null` when the configuration did not load.
+ */
+export function proseRulesPlanSection(
+  states: ReadonlyMap<string, string>,
+  rulesConfig: ProseRulesConfig | undefined | null
+): { plan: ProseRulesPlan; text: string } {
+  const plan: ProseRulesPlan =
+    rulesConfig === null
+      ? { available: false, reason: 'the configuration did not load' }
+      : buildProseRulesPlan(states, rulesConfig)
+  return { plan, text: renderProseRulesPlan(plan) }
+}
