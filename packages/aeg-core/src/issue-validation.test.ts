@@ -17,6 +17,7 @@ import {
   checkIssueRationale,
   checkIntroducedCommandsCovered,
   checkIntroducedConfigKeysCovered,
+  checkPinnedFileChecksDecided,
   checkPinnedFileImportersCovered,
   decidePinnedFileImporters,
   surfaceForcedSet,
@@ -3336,6 +3337,7 @@ describe('surfaceForcedSet', () => {
     const b = body('packages/aeg-core/src', '`packages/aeg-core/src/gate.ts`')
     expect(surfaceForcedSet(b, importers, tracked)).toEqual({
       importers: decidePinnedFileImporters(b, importers),
+      checks: [],
       ciShards: null,
       loopInvariantMap: null
     })
@@ -3970,5 +3972,42 @@ describe('checkDocumentationPathsExist — an in-repository Documentation source
     )
     expect(checkDocumentationPathsExist(doc('None — no normative source.'), readFile).status).toBe('pass')
     expect(reads).toEqual([])
+  })
+})
+
+describe('checkPinnedFileChecksDecided', () => {
+  const body = (decisions: string) =>
+    issueBody({
+      boundary: `In: the spec. Pinned files: \`apps/cli/specs/mirror.md\`. Out: nothing else. ${decisions}`,
+      objectives: ['O1. The spec states the rule.'],
+      partLines: ['Part 1 (O1) — the spec states the rule.'],
+      in: 'apps/cli/specs',
+      out: 'apps/log-server'
+    })
+  const covering = [
+    {
+      file: 'apps/cli/specs/mirror.md',
+      checks: [{ check: 'reader-resolvable-prose', covers: 'proseGates specification class' }],
+      unresolved: ['secret-scan']
+    }
+  ]
+
+  it('is dormant when no check covers a pinned file', () => {
+    expect(checkPinnedFileChecksDecided(body(''), []).status).toBe('pass')
+    expect(checkPinnedFileChecksDecided(body(''), [{ file: 'a.md', checks: [], unresolved: ['x'] }]).status).toBe(
+      'pass'
+    )
+  })
+
+  it('refuses a pinned specification with no decision for the reader-resolvable-prose check', () => {
+    const result = checkPinnedFileChecksDecided(body('Checks: `reader-resolvable-prose`, `doc-claims`.'), covering)
+    expect(result.status).toBe('fail')
+    expect(result.errors.join('\n')).toContain('`reader-resolvable-prose`')
+    expect(result.errors.join('\n')).toContain('apps/cli/specs/mirror.md')
+  })
+
+  it('passes once the check carries a decision naming how the change satisfies it', () => {
+    const decided = body('`reader-resolvable-prose`: the new prose cites no Issue number and no tranche name.')
+    expect(checkPinnedFileChecksDecided(decided, covering).status).toBe('pass')
   })
 })

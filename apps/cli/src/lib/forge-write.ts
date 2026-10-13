@@ -57,7 +57,13 @@ import {
   checkObjectivesRespectBoundary,
   checkPartsCiteDefinedObjectives,
   checkPartsCoverageAndSequence,
+  checkPinnedFileChecksDecided,
   checkPinnedFileImportersCovered,
+  classifyProseFile,
+  DEFAULT_SPEC_PATHS,
+  globToRegex,
+  normalizeSpecPath,
+  type PinnedFileChecks,
   checkNewTestFilesCoverShards,
   checkNewLoopFilesCoverInvariantMap,
   checkDocumentationReadable,
@@ -1400,8 +1406,49 @@ function packageImporters(root: string, pinned: string, target: string): string[
   return [...importers]
 }
 
+/** A line that is only a comment — `//`, a block comment's opening, body or closing. */
+function isCommentLine(line: string): boolean {
+  return /^\s*(?:\/\/|\/\*|\*)/.test(line)
+}
+
+/** Does a path-like string literal name `pinned` — as its repository path, or as a path relative to the reader's own directory? */
+function literalNamesFile(literal: string, reader: string, pinned: string): boolean {
+  if (literal === pinned || literal.endsWith(`/${pinned}`)) return true
+  if (!literal.startsWith('.')) return false
+  const dir = reader.includes('/') ? reader.slice(0, reader.lastIndexOf('/')) : ''
+  return normalizeRelative(`${dir}/${literal}`) === pinned
+}
+
 /**
- * Every tracked source file that imports one of the Boundary's pinned files.
+ * Tracked source and test files that name `pinned` as a string — a
+ * `readFileSync` or `join` of its repository path, or of a path relative to the
+ * reader's own directory — which no import specifier would show. A match in a
+ * comment line, or in a file under a `fixtures` directory, is not a reader.
+ */
+function pathStringReaders(root: string, pinned: string): string[] {
+  const base = pinned.split('/').pop() as string
+  const hits = git(['-C', root, 'grep', '-nF', base, '--', ...IMPORT_SEARCH_PATHSPEC])
+  const readers = new Set<string>()
+  for (const hit of hits === '' ? [] : hits.split('\n')) {
+    const cut = hit.indexOf(':')
+    const lineStart = hit.indexOf(':', cut + 1)
+    if (cut === -1 || lineStart === -1) continue
+    const reader = hit.slice(0, cut)
+    const text = hit.slice(lineStart + 1)
+    if (reader === pinned || reader.split('/').includes('fixtures') || isCommentLine(text)) continue
+    for (const m of text.matchAll(/(['"`])([^'"`\n]*)\1/g)) {
+      if (literalNamesFile(m[2] as string, reader, pinned)) {
+        readers.add(reader)
+        break
+      }
+    }
+  }
+  return [...readers]
+}
+
+/**
+ * Every tracked source file that imports one of the Boundary's pinned files,
+ * or names its repository path as a string (`pathStringReaders`).
  *
  * Resolution is path-exact, never basename-exact: `git grep` prefilters the
  * lines whose specifier ENDS in the pinned module's own basename, then each of
@@ -1425,7 +1472,7 @@ export function readPinnedFileImporters(body: string, root: string = repoRoot())
   if (!root) return []
   return boundaryPinnedFiles(body).map((file) => {
     const extension = IMPORTABLE_EXTENSIONS.find((e) => file.endsWith(e))
-    if (extension === undefined) return { file, importers: [] }
+    if (extension === undefined) return { file, importers: pathStringReaders(root, file).sort() }
     const base = escapeForExtendedRegex((file.split('/').pop() as string).slice(0, -extension.length))
     const suffixes = IMPORTABLE_EXTENSIONS.map((e) => escapeForExtendedRegex(e)).join('|')
     const pattern = `['"][^'"]*/${base}(${suffixes})?['"]`
@@ -1442,7 +1489,44 @@ export function readPinnedFileImporters(body: string, root: string = repoRoot())
       if (resolvedSpecifiers(importer, text).includes(target)) importers.add(importer)
     }
     for (const importer of packageImporters(root, file, file.slice(0, -extension.length))) importers.add(importer)
+    for (const reader of pathStringReaders(root, file)) importers.add(reader)
     return { file, importers: [...importers].sort() }
+  })
+}
+
+/**
+ * The registered checks whose declared file scope covers each pinned file,
+ * read from what the configuration and the check sources already declare: a
+ * check's `include` globs, and the reader-resolvable-prose check's own
+ * `proseGates` — its specification class and its source-comment globs. A
+ * check declaring no scope is listed as unresolved, never guessed.
+ */
+export function readPinnedFileChecks(body: string): PinnedFileChecks[] {
+  const config = loadConfig()
+  const specPaths = [...DEFAULT_SPEC_PATHS, ...(config?.proseGates?.specPaths ?? [])].map(normalizeSpecPath)
+  const sourceComments = config?.proseGates?.sourceComments
+  const registry = resolvedRegistry()
+  const unresolved = registry.filter((c) => !c.include || c.include.length === 0).map((c) => c.name)
+  return boundaryPinnedFiles(body).map((file) => {
+    const checks: PinnedFileChecks['checks'] = []
+    for (const spec of registry) {
+      const glob = (spec.include ?? []).find((g) => globToRegex(g).test(file))
+      if (glob !== undefined) checks.push({ check: spec.name, covers: glob })
+    }
+    if (!checks.some((c) => c.check === 'reader-resolvable-prose')) {
+      // The sentinel prefix matches no path, so only the specification class can classify the file.
+      if (classifyProseFile(file, '\0', '\0', '\0', specPaths) === 'spec') {
+        checks.push({ check: 'reader-resolvable-prose', covers: 'proseGates specification class' })
+      } else {
+        const glob = file.endsWith('.ts')
+          ? (sourceComments?.globs ?? []).find((g) => file === g || file.startsWith(`${g.replace(/\/+$/, '')}/`))
+          : undefined
+        if (glob !== undefined && !(sourceComments?.allowlist ?? []).includes(file)) {
+          checks.push({ check: 'reader-resolvable-prose', covers: `proseGates.sourceComments.globs ${glob}` })
+        }
+      }
+    }
+    return { file, checks, unresolved }
   })
 }
 
@@ -1458,7 +1542,7 @@ export function readSurfaceForcedSet(
   root: string = repoRoot(),
   tracked: string[] = listTrackedFiles()
 ): SurfaceForcedSet | null {
-  return surfaceForcedSet(body, readPinnedFileImporters(body, root), tracked)
+  return surfaceForcedSet(body, readPinnedFileImporters(body, root), tracked, readPinnedFileChecks(body))
 }
 
 /**
@@ -1476,6 +1560,18 @@ export function renderSurfaceForcedSet(set: SurfaceForcedSet): string {
       else if (d.state === 'disclaimed') lines.push(`  disclaimed  ${d.importer} (Boundary Out: ${d.by})`)
       else lines.push(`  uncovered   ${d.importer} (add ${d.fix} to in:, or name it in the Boundary's Out: clause)`)
     }
+  }
+  for (const { file, checks, unresolved } of set.checks) {
+    if (checks.length === 0 && unresolved.length === 0) continue
+    lines.push(`${file} — ${checks.length} covering check(s)`)
+    for (const c of checks) {
+      lines.push(
+        c.decided
+          ? `  decided     ${c.check} (scope ${c.covers})`
+          : `  undecided   ${c.check} (scope ${c.covers}) — add a line naming it in backticks, a colon, and how the change satisfies it`
+      )
+    }
+    if (unresolved.length > 0) lines.push(`  not resolvable (no declared scope): ${unresolved.join(', ')}`)
   }
   if (set.ciShards !== null) {
     const { newFiles, companion, fix } = set.ciShards
@@ -1592,6 +1688,8 @@ const ISSUE_CONTENT_RECOVERY = {
     "Add the named directory globs to `## Surface`'s `in:` list so this task can write both the configuration schema and its reference row, or drop the key from the Objectives and Parts. Then re-run `{cmd}`.",
   pinnedFileImporters:
     "Add the named directory glob to `## Surface`'s `in:` list so the call site can be updated, or name the importer (or its directory) in the Boundary's `Out:` clause to exclude it deliberately. Then re-run `{cmd}`.",
+  pinnedFileChecks:
+    'Add a line for each named check, in backticks followed by a colon and how the change satisfies it. Then re-run `{cmd}`.',
   newTestFilesCoverShards:
     "Add the named CI shard directory glob to `## Surface`'s `in:` list so the new test file can be listed in a shard, or pin an existing test file instead. Then re-run `{cmd}`.",
   newLoopFilesCoverInvariantMap:
@@ -1666,6 +1764,8 @@ export type IssueContentInput = {
   configReference: ConfigReferenceFacts
   /** Each Boundary-pinned file's tracked importers (`readPinnedFileImporters`) — empty ⇒ dormant. */
   pinnedFileImporters: PinnedFileImporters[]
+  /** Each Boundary-pinned file's covering checks (`readPinnedFileChecks`) — absent or empty ⇒ dormant. */
+  pinnedFileChecks?: PinnedFileChecks[]
   /** Does the tracked tree already carry this literal token? (`tokenExistsInTree`) — separates a token this Issue introduces from one it merely quotes. */
   existsInTree: (token: string) => boolean
   /** Every tracked file (`listTrackedFiles`) — what separates a new pinned file from an existing one; absent or empty ⇒ the new-file rules are dormant. */
@@ -1742,6 +1842,7 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
       'introducedConfigKeys'
     ],
     [checkPinnedFileImportersCovered(input.body, input.pinnedFileImporters).errors, 'pinnedFileImporters'],
+    [checkPinnedFileChecksDecided(input.body, input.pinnedFileChecks ?? []).errors, 'pinnedFileChecks'],
     [checkNewTestFilesCoverShards(input.body, input.trackedFiles ?? []).errors, 'newTestFilesCoverShards'],
     [checkNewLoopFilesCoverInvariantMap(input.body, input.trackedFiles ?? []).errors, 'newLoopFilesCoverInvariantMap'],
     [checkTestPlanDeveloperRunnable(input.body, input.commandReference).errors, 'testPlanDeveloperRunnable'],
@@ -2767,6 +2868,7 @@ export async function collectTaskIssueErrors(
       commandReference: readCommandReference(),
       configReference: readConfigReference(),
       pinnedFileImporters: readPinnedFileImporters(body),
+      pinnedFileChecks: readPinnedFileChecks(body),
       existsInTree: tokenExistsInTree(),
       trackedFiles: allTrackedFiles,
       probeDocumentation: probeDocumentationUrl

@@ -55,7 +55,7 @@ O2. [SECOND OBJECTIVE — numbered contiguously from O1, one line per objective,
 
 **Suggested agent-class** — [AGENT CLASS — high, mid or fast, with a one-line reason tied to this task's real difficulty.]
 
-**Stop-and-escalate** — [STOP-AND-ESCALATE — the conditions under which the executing agent stops and escalates rather than improvises, e.g. "if making X work requires changing shared contract Y, escalate severity:strategy".]
+**Stop-and-escalate** — [STOP-AND-ESCALATE — the conditions under which the executing agent stops and escalates rather than improvises, e.g. "if making X work requires changing shared contract Y, escalate severity:strategy". A contradiction with the Boundary is a stop condition only when the fix needs a path outside the Surface, a protected administrative path the Surface does not cover, or a change of the task's objectives — never for a file inside the Surface.]
 
 **Docs to keep coherent** — [DOCS — each spec, skill or doc this task will make incoherent, by its repository path, derived from reading them; for a surface no doc covers, the `no-doc-surface` sentinel followed by the reason.]
 

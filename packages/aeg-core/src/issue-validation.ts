@@ -3351,6 +3351,60 @@ export function checkPinnedFileImportersCovered(body: string, importers: PinnedF
   }
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }
+/** One registered check whose declared file scope covers a pinned file, and the scope entry that does. */
+export type PinnedFileCheck = { check: string; covers: string }
+
+/** A pinned file, the checks whose declared scope covers it, and the checks that declare no scope (so no scope can be resolved for them). */
+export type PinnedFileChecks = { file: string; checks: PinnedFileCheck[]; unresolved: string[] }
+
+/** A pinned file's covering check and whether the Issue carries a decision for it. */
+export type PinnedCheckDecision = { check: string; covers: string; decided: boolean }
+
+/** One pinned file and the decision state of each check that covers it. */
+export type PinnedFileCheckDecisions = { file: string; checks: PinnedCheckDecision[]; unresolved: string[] }
+
+/**
+ * Does the body carry a decision for `check`? A decision names the check in
+ * backticks and follows it with `:` or a dash and a sentence saying how the
+ * change satisfies it. A bare mention in a list of names is not a decision.
+ */
+function hasCheckDecision(body: string, check: string): boolean {
+  const escaped = check.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`\`${escaped}\`\\s*(?::|—|–|-)\\s*\\S+(?:\\s+\\S+){2,}`).test(body)
+}
+
+/** Decides, for every pinned file, whether each check covering it carries a decision in the body. */
+export function decidePinnedFileChecks(body: string, pinned: PinnedFileChecks[]): PinnedFileCheckDecisions[] {
+  return pinned.map(({ file, checks, unresolved }) => ({
+    file,
+    unresolved,
+    checks: checks.map((c) => ({ ...c, decided: hasCheckDecision(body, c.check) }))
+  }))
+}
+
+/**
+ * **Every check whose declared scope covers a pinned file has a decision in
+ * the Issue.** A check that fires at push on a file the Issue pins pauses the
+ * task there unless the Planner already decided how the change satisfies it;
+ * the report lists the covering checks, and this refuses the Issue until each
+ * carries a decision naming the check and how the change satisfies it. A
+ * check that declares no scope is reported as not resolvable and never
+ * refused. Dormant when `## Surface` does not parse or no pinned file has a
+ * covering check.
+ */
+export function checkPinnedFileChecksDecided(body: string, pinned: PinnedFileChecks[]): IssueSectionResult {
+  if (pinned.length === 0 || !parseIssueSurface(body).ok) return { status: 'pass', errors: [] }
+  const errors: string[] = []
+  for (const { file, checks } of decidePinnedFileChecks(body, pinned)) {
+    const undecided = checks.filter((c) => !c.decided)
+    if (undecided.length === 0) continue
+    errors.push(
+      `issue-validation Surface/checks: the Boundary pins \`${file}\`, and ${undecided.length === 1 ? 'the check' : 'the checks'} ${undecided.map((c) => `\`${c.check}\` (scope \`${c.covers}\`)`).join(', ')} cover${undecided.length === 1 ? 's' : ''} it with no decision in the Issue. For each, add a line naming the check in backticks, then a colon and how the change satisfies it (for example \`${undecided[0]?.check}\`: <how the change satisfies it>). \`vinaya issue surface --body-file <path>\` lists every covering check.`
+    )
+  }
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
 /** The CI shard directory a new CLI test file must be listed in, and one file in it for the Surface-coverage test. */
 const CI_SHARD_DIR = 'apps/cli/tests/ci-shards'
 const CI_SHARD_PROBE = `${CI_SHARD_DIR}/shard-1.txt`
@@ -3443,6 +3497,8 @@ export type SurfaceForcedSet = {
   ciShards: { newFiles: string[]; companion: ForcedCompanion; fix: string } | null
   /** The loop invariant map requirement, present only when a pinned loop file is new. */
   loopInvariantMap: { newFiles: string[]; companions: ForcedCompanion[]; fix: string[] } | null
+  /** Every check whose declared scope covers a pinned file, with whether the Issue decides it — the write gate's own reading. */
+  checks: PinnedFileCheckDecisions[]
 }
 
 /**
@@ -3457,7 +3513,8 @@ export type SurfaceForcedSet = {
 export function surfaceForcedSet(
   body: string,
   importers: PinnedFileImporters[],
-  tracked: string[]
+  tracked: string[],
+  checks: PinnedFileChecks[] = []
 ): SurfaceForcedSet | null {
   const surface = parseIssueSurface(body)
   const decided = decidePinnedFileImporters(body, importers)
@@ -3472,6 +3529,7 @@ export function surfaceForcedSet(
   const loopCompanions = [LOOP_INVARIANT_FIXTURE, LOOP_INVARIANT_SPEC].map(reached)
   return {
     importers: decided,
+    checks: decidePinnedFileChecks(body, checks),
     ciShards:
       newTests.length === 0 ? null : { newFiles: newTests, companion: reached(CI_SHARD_PROBE), fix: CI_SHARD_DIR },
     loopInvariantMap:
