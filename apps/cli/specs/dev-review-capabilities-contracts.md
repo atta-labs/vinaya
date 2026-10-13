@@ -66,6 +66,13 @@ MCP annotations (read-only, destructive, idempotent, open-world) are discovery h
 
 ## 4. Canonical tool catalog
 
+### 4.0 Tool-contract components
+
+| Component | Contract |
+| -- | -- |
+| `canonical_catalog` | The provider-neutral catalog is the sole definition of every agent-facing tool and the source of each served Developer tool definition. |
+| `shared_error_model` | One shared schema defines the three independent error axes used by every refusal and infrastructure-error schema. |
+
 ### 4.1 Live tools (Developer)
 
 | Tool | Purpose | Read or write | Selection boundary |
