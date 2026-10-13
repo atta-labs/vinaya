@@ -204,6 +204,8 @@ Escalate with the appropriate severity — under the review loop, a `needs_rulin
 - `severity: strategy` — brief assumes approach A but the codebase has gone a different direction
 - `severity: product` — the brief would require a Type 1 decision not specified in the brief
 
+**What "contradicts the code irreconcilably" means.** The brief contradicts the code irreconcilably only when the fix needs a path outside the Surface, a protected administrative path the Surface does not cover, or a change of the task's objectives. A file inside the Surface that the Boundary did not pin is not a contradiction: you change it, list it in the pull request's Decisions, and do not pause. A Boundary that names a pinned file is a statement of what the Planner expected to change, not a fence around the rest of the Surface.
+
 The brief's stop conditions tell you when to STOP and ask. Honor them. If the stop conditions say "STOP if you discover X" and you discover X, you stop. You do not improvise a workaround.
 
 **Refusing or escalating before you have ever pushed, working manually.** An entry-gate refusal, or a stop condition hit before your first commit, happens before a branch or pull request exists — the task Issue is the only place to say so. Post it there as a comment with `<!-- aeg:developer:stop -->` as its own first line, followed by your reason; the loop reads a principal-authored stop comment and ends the run at once. Once a PR exists, escalate there. Under the review loop the turn result carries the same refusal.
@@ -215,7 +217,7 @@ The brief's stop conditions tell you when to STOP and ask. Honor them. If the st
 Every brief includes stop conditions. Honor them unconditionally. Common reasons to STOP:
 
 - Pre-flight checks fail (dirty tree, wrong branch, worktree could not be created cleanly, missing tools, missing reference files)
-- Brief contradicts the current state of the codebase in a way you cannot resolve without external information
+- Brief contradicts the current state of the codebase irreconcilably, as defined under "Pushback when the brief is wrong", in a way you cannot resolve without external information
 - A test still fails after genuine diagnosis — but a failing test is yours to fix, in the code or the test. CI on the pull request's head is the authority for a test that fails only inside your sandbox, so a sandbox-only failure is not a block; return `blocked` with reason `test_failure` only when the same test also fails on `origin/main` in a clean checkout
 - Any destructive action (force push, file deletion, database mutation) not explicitly authorized by the brief
 - You discover a decision that should be Type 1 (irreversible) but the brief doesn't mention it

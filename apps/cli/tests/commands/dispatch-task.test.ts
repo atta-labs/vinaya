@@ -64,6 +64,9 @@ None — no externally-normative source governs this task.
 
 **Boundary** — In: \`apps/cli/src/lib/dispatch.ts\`, a stand-in real file (issue-657, O3: the render now refuses when the Surface resolves to a tracked file but the Boundary names none of them). Out: everything else, including every importer of it outside \`apps/cli/src/lib\`, named as \`apps/cli/src/commands\` and \`apps/cli/tests\`.
 
+- \`reader-resolvable-prose\`: the fixture edits no source comments, so it satisfies this check.
+- \`doc-claims\`: the fixture adds no documented claim, so it satisfies this check.
+
 **Sizing** — n/a, synthetic fixture.
 
 **Project(s) + blast radius** — \`Project: cli\`. No shared-primitive fan-out.

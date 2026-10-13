@@ -682,6 +682,15 @@ exit 1
     // files, so the Boundary must name one.
     '**Boundary** \u2014 In: `aeg-root/templates/brief-template.md`, the fixture\u2019s own committed doctrine file. Out: nothing.',
     '',
+    ...[
+      'reader-resolvable-prose',
+      'retired-vocabulary',
+      'doctrine-portability',
+      'doctrine-no-procedures',
+      'doc-claims',
+      'workspace-escape'
+    ].map((c) => `- \`${c}\`: the fixture edits no prose, so it satisfies this check.`),
+    '',
     '**Sizing** \u2014 n/a, test fixture.',
     '',
     '**Project(s) + blast radius** \u2014 `Project: cli`. No shared-primitive fan-out.',

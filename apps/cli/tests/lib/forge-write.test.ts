@@ -667,6 +667,16 @@ describe('an unmerged Depends-on folds into the write gate as informational, nev
     // blocker, not a premise-pins one.
     "**Boundary** — In: `aeg-root/templates/brief-template.md`, the fixture's own committed doctrine file. Out: nothing.",
     '',
+    // Every check whose scope covers the pinned doctrine file carries a decision.
+    ...[
+      'reader-resolvable-prose',
+      'retired-vocabulary',
+      'doctrine-portability',
+      'doctrine-no-procedures',
+      'doc-claims',
+      'workspace-escape'
+    ].map((c) => `- \`${c}\`: the fixture edits no prose, so it satisfies this check.`),
+    '',
     '**Sizing** — n/a, test fixture.',
     '',
     '**Project(s) + blast radius** — `Project: cli`. No shared-primitive fan-out.',
@@ -1466,6 +1476,20 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
     write('apps/cli/src/commands/deep.ts', "export const FLAGS = ['--deeper']\n")
     // A dotted token this tree already spells out — code that exists, never a key a task introduces.
     write('apps/cli/src/lib/settings.ts', 'export const retries = settings.retries\n')
+    // Readers that name a pinned file by path string, which no import specifier shows.
+    write('apps/cli/specs/mirror.md', '# mirror\n')
+    write(
+      'apps/cli/src/lib/mirror-read.ts',
+      "const text = readFileSync(join(root, 'apps/cli/specs/mirror.md'), 'utf8')\n"
+    )
+    write(
+      'apps/cli/src/lib/mirror-relative.ts',
+      "const text = readFileSync(join(__dirname, '../../specs/mirror.md'), 'utf8')\n"
+    )
+    write('apps/cli/src/lib/mirror-comment.ts', '// see apps/cli/specs/mirror.md\nexport const x = 1\n')
+    write('apps/cli/src/lib/mirror-other.ts', "const text = readFileSync(join(root, 'docs/specs/mirror.md'), 'utf8')\n")
+    write('apps/cli/src/lib/mirror-prose.ts', "export const NOTE = 'Reads `apps/cli/specs/mirror.md` when present'\n")
+    write('apps/cli/tests/fixtures/mirror-fixture.ts', "export const f = 'apps/cli/specs/mirror.md'\n")
     execFileSync('git', ['add', '-A'], { cwd: fixture })
     execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-qm', 'fixture'], { cwd: fixture })
   })
@@ -1515,6 +1539,15 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
   it('finds no importer for a pinned file that is not an importable module', () => {
     expect(readPinnedFileImporters(bodyPinning('apps/cli/specs/gate.md'), fixture)).toEqual([
       { file: 'apps/cli/specs/gate.md', importers: [] }
+    ])
+  })
+
+  it('counts a file that reads a pinned specification by path string, and ignores comments, fixtures and other paths', () => {
+    expect(readPinnedFileImporters(bodyPinning('apps/cli/specs/mirror.md'), fixture)).toEqual([
+      {
+        file: 'apps/cli/specs/mirror.md',
+        importers: ['apps/cli/src/lib/mirror-read.ts', 'apps/cli/src/lib/mirror-relative.ts']
+      }
     ])
   })
 
