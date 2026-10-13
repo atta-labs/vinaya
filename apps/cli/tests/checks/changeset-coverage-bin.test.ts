@@ -195,6 +195,28 @@ describe('check-changeset-coverage (bin) — empty changeset waiver', () => {
     expect(exitCode).toBe(0)
     expect(parseFindings(stderr)).toHaveLength(0)
   })
+
+  it('accepts a staged repair changeset after the shipped change was already committed', async () => {
+    const root = newRoot('staged-repair-changeset')
+    initRepo(root)
+    scaffoldFixedGroup(root)
+    git(root, ['add', '.'])
+    git(root, ['commit', '-q', '-m', 'Chore: initial scaffold'])
+    git(root, ['checkout', '-q', '-b', 'fix/some-change'])
+    writeFileSync(join(root, 'packages', 'pkg-a', 'src', 'index.ts'), 'export const a = 1\n')
+    git(root, ['add', '.'])
+    git(root, ['commit', '-q', '-m', 'Fix(pkg-a): add a'])
+
+    writeFileSync(join(root, '.changeset', 'repair.md'), '---\n---\n')
+    git(root, ['add', '.changeset/repair.md'])
+    const { exitCode, stderr } = await runBin(root, {
+      VINAYA_COMMIT_HOOK: '1',
+      GIT_INDEX_FILE: join(root, '.git', 'index')
+    })
+
+    expect(exitCode).toBe(0)
+    expect(parseFindings(stderr)).toHaveLength(0)
+  })
 })
 
 /** Wires a real `origin` remote whose `refs/remotes/origin/HEAD` resolves to `defaultBranchName` — the same derivation `check-main-branch-refusal.ts`'s own `defaultBranch()` reads, so `root`'s current branch can genuinely equal it. */

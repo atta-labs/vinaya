@@ -721,11 +721,12 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       run: bin('check-reader-resolvable-prose'),
       scope: 'full',
       timeoutMs: 30_000,
-      // Deliberately empty, not omitted: audited and confirmed to
-      // need none — reads only local files (`vinaya.config.json`'s
-      // `proseGates` key via `loadConfig()`, plus the doctrine/reader-facing
-      // trees it names), no forge call, no PR content.
-      env: {},
+      // Reads local files plus the shared diff helper. The hook variables
+      // let that helper add staged evidence only during pre-commit.
+      env: {
+        GIT_INDEX_FILE: { optional: true },
+        VINAYA_COMMIT_HOOK: { optional: true }
+      },
       // An `include` declaration on a `scope: 'full'` entry
       // is currently pinning/documentation only (`runner.ts`'s `shouldSkip`
       // returns early for any non-`'diff'` scope, before ever consulting
@@ -755,8 +756,11 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       run: bin('check-retired-vocabulary'),
       scope: 'full',
       timeoutMs: 30_000,
-      // Same reasoning as `reader-resolvable-prose` above — local files only.
-      env: {},
+      // Same shared-diff hook declarations as `reader-resolvable-prose`.
+      env: {
+        GIT_INDEX_FILE: { optional: true },
+        VINAYA_COMMIT_HOOK: { optional: true }
+      },
       // See `reader-resolvable-prose`'s identical `include` comment above.
       include: ['aeg-root/**/*.md']
     },
@@ -768,11 +772,15 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       run: bin('check-doctrine-portability'),
       scope: 'full',
       timeoutMs: 30_000,
-      // Local-only: `git ls-tree`/`git show` read the already-fetched local
-      // repository, never the network — no forge call, no PR content.
+      // Local-only: `git ls-tree`/`git show` and the shared diff helper read
+      // the already-fetched local repository, never the network.
       // BASE_SHA overrides the `origin/main` baseline ref, same declaration
       // as `doc-coverage`/`no-disk-state`/`evidence-fresh` above.
-      env: { BASE_SHA: { optional: true } },
+      env: {
+        BASE_SHA: { optional: true },
+        GIT_INDEX_FILE: { optional: true },
+        VINAYA_COMMIT_HOOK: { optional: true }
+      },
       // See `reader-resolvable-prose`'s identical `include` comment above.
       include: ['aeg-root/**/*.md']
     },
@@ -814,10 +822,12 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       run: bin('check-exec-bits'),
       scope: 'diff',
       timeoutMs: 30_000,
-      // Local-only: `git ls-files -s` and a first-line read, never the
-      // network, `gh`, or a PR-scoped fact — same shape as
-      // `workspace-escape` below, and for the same reason.
-      env: {}
+      // Local-only: `git ls-files -s`, a first-line read, and the shared diff
+      // helper; the hook variables admit staged evidence only at pre-commit.
+      env: {
+        GIT_INDEX_FILE: { optional: true },
+        VINAYA_COMMIT_HOOK: { optional: true }
+      }
     },
     0
   ],
@@ -834,9 +844,12 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       run: bin('check-ci-shard-coverage'),
       scope: 'diff',
       timeoutMs: 15_000,
-      // Local-only: `git diff --cached`/`git show :<path>`, never the
-      // network — same shape as `exec-bits` above.
-      env: {}
+      // Local-only: `git diff --cached`/`git show :<path>` plus the shared
+      // diff helper, never the network.
+      env: {
+        GIT_INDEX_FILE: { optional: true },
+        VINAYA_COMMIT_HOOK: { optional: true }
+      }
     },
     0
   ],
@@ -846,9 +859,12 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       run: bin('check-workspace-escape'),
       scope: 'full',
       timeoutMs: 30_000,
-      // Local-only: walks the working tree with `node:fs`, never the
-      // network, `gh`, or a PR-scoped fact — no forge call, no PR content.
-      env: {},
+      // Local-only: walks the working tree and consults the shared diff
+      // helper; the hook variables admit staged evidence only at pre-commit.
+      env: {
+        GIT_INDEX_FILE: { optional: true },
+        VINAYA_COMMIT_HOOK: { optional: true }
+      },
       // See `reader-resolvable-prose`'s identical `include` comment above —
       // named here per the Issue's own list even though this sweep's real
       // domain is `apps`/`packages`, not `aeg-root`; harmless either way
@@ -864,10 +880,12 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       scope: 'diff',
       timeoutMs: 15_000,
       // Local-only: `.changeset/config.json`, every fixed-group member's own
-      // `package.json`, and the diff itself all come from the already-local
-      // working tree and `git` — no forge call, no PR content. Blocking on a
-      // finding (see the bin's own module doc).
-      env: {}
+      // `package.json`, and the shared diff all come from the already-local
+      // working tree and `git`. Blocking on a finding (see the bin's doc).
+      env: {
+        GIT_INDEX_FILE: { optional: true },
+        VINAYA_COMMIT_HOOK: { optional: true }
+      }
     },
     0
   ],
