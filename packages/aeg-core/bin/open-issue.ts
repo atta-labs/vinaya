@@ -793,6 +793,25 @@ export function appliesTaskIssueGate(labels: string[], body: string | null): boo
   return isTaskIssueLabelSet(labels) || (body !== null && isTaskIssueBodyShaped(body))
 }
 
+/**
+ * The blast-radius rule for one write, given the Issue ref an `edit` names
+ * (`null` on `create`). An edit passes the Issue's own number, so an Issue
+ * numbered below the brief-sections cutover keeps the prose scan; a create has
+ * no number yet and is judged from `## Surface`, exactly as `apps/cli`'s
+ * `validateIssueContent` judges it. Pulled out so that number reaching the
+ * rule is unit-testable without a real `gh` call.
+ */
+export function blastRadiusErrorsForWrite(
+  body: string,
+  labels: string[],
+  sharedPackages: string[],
+  projectPaths: ProjectPath[],
+  issueRef: string | null
+): string[] {
+  const issueNumber = issueRef === null ? null : parseIssueNumberFromRef(issueRef)
+  return checkBlastRadiusScope(body, labels, sharedPackages, projectPaths, issueNumber).errors
+}
+
 export function main(): void {
   const argv = process.argv.slice(2)
   const validateOnly = argv.includes('--validate-only')
@@ -937,7 +956,7 @@ export function main(): void {
     // part of this SAME write).
     const issueNumber = isEdit ? parseIssueNumberFromRef(ghArgs[0] as string) : null
     const contentErrors = [
-      ...checkBlastRadiusScope(body, labels, sharedPackages, projectPaths).errors,
+      ...blastRadiusErrorsForWrite(body, labels, sharedPackages, projectPaths, isEdit ? (ghArgs[0] as string) : null),
       ...checkProjectsRegistered(
         body,
         labels,
