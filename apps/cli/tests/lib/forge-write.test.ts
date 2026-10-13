@@ -1488,6 +1488,7 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
     )
     write('apps/cli/src/lib/mirror-comment.ts', '// see apps/cli/specs/mirror.md\nexport const x = 1\n')
     write('apps/cli/src/lib/mirror-other.ts', "const text = readFileSync(join(root, 'docs/specs/mirror.md'), 'utf8')\n")
+    write('apps/cli/src/lib/mirror-prose.ts', "export const NOTE = 'Reads `apps/cli/specs/mirror.md` when present'\n")
     write('apps/cli/tests/fixtures/mirror-fixture.ts', "export const f = 'apps/cli/specs/mirror.md'\n")
     execFileSync('git', ['add', '-A'], { cwd: fixture })
     execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-qm', 'fixture'], { cwd: fixture })

@@ -1436,8 +1436,9 @@ function pathStringReaders(root: string, pinned: string): string[] {
     const reader = hit.slice(0, cut)
     const text = hit.slice(lineStart + 1)
     if (reader === pinned || reader.split('/').includes('fixtures') || isCommentLine(text)) continue
-    for (const m of text.matchAll(/(['"`])([^'"`\n]*)\1/g)) {
-      if (literalNamesFile(m[2] as string, reader, pinned)) {
+    // Whole literals, each consumed in one piece, so a backtick inside a quoted sentence never opens a literal of its own.
+    for (const m of text.matchAll(/'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"|`((?:[^`\\\n]|\\.)*)`/g)) {
+      if (literalNamesFile((m[1] ?? m[2] ?? m[3]) as string, reader, pinned)) {
         readers.add(reader)
         break
       }
