@@ -142,7 +142,7 @@ Each row cites the section that states its component: an evaluation-program sect
 
 ## Global exit check
 
-`apps/cli/src/lib/dev-review-eval/exit-check.ts` holds `checkExit`, a pure function over the aggregated registry rows and the universes the caller derives. This check, and only this check, claims the evaluation foundation's zero-uncovered exit; each shard's own check (`checkShardCompleteness`) proves completeness for its kinds alone. `apps/cli/tests/eval/exit-check.test.ts` runs it in continuous integration, assembling the universes from each shard's own universe module; the CLI does not import it.
+`apps/cli/src/lib/dev-review-eval/exit-check.ts` holds `checkExit`, a pure function over the aggregated registry rows and the universes the caller derives. This check, and only this check, claims the evaluation foundation's zero-uncovered exit; each shard's own check (`checkShardCompleteness`) proves completeness for its kinds alone. `apps/cli/tests/eval/exit-check.test.ts` runs it in continuous integration, assembling the universes from each shard's own universe module; the CLI does not import it. Its explicit, row-by-row exclusion list contains only revision-14 rows owned by the **Operator on one host** project. That project owns emptying the list, and its own exit check runs with no exclusions.
 
 It reports, by kind, the components covered, the empty fields and the unmapped components, and passes only when every one of these holds:
 
@@ -151,10 +151,11 @@ It reports, by kind, the components covered, the empty fields and the unmapped c
 - no required field is empty, absent or a placeholder;
 - every component names a live catalog module, in `module` or `additionalModules`;
 - every non-excluded catalog module is named by a component, or carries `"scope": "system"`; the excluded module (`6.19`) stays excluded;
-- the cutover gates number seventeen and the fault-and-attack rows fifty-eight, each matching the mirror's table;
+- after the Operator-owned exclusions, the cutover gates number sixteen and the fault-and-attack rows fifty-six, each matching the mirror's table;
+- every exclusion still names a mirror row, and no excluded row already has a registry row whose complete table payload matches the mirror; the test pins a 41-row ceiling so the list can shrink but cannot grow;
 - the empty-field and unmapped counts are both zero.
 
-A failure names its cause: `shard_absent`, `kind_missing`, `duplicate_id`, `empty_field`, `no_module`, `module_unnamed`, `universe_missing`, `universe_extra` or `count_mismatch`. The test plants each gap on a copy of the real data and edits no shard.
+A failure names its cause: `shard_absent`, `kind_missing`, `duplicate_id`, `empty_field`, `no_module`, `module_unnamed`, `universe_missing`, `universe_extra`, `count_mismatch`, `exclusion_stale` or `exclusion_covered`. The test plants each gap on a copy of the real data and edits no shard.
 
 ## Trial staging
 

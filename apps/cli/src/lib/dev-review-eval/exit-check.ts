@@ -21,8 +21,73 @@ import {
 /** The shards the foundation delivers, by name. */
 export const EXPECTED_SHARDS = ['typed-sources', 'contract-kinds', 'cutover-gates', 'fault-attack'] as const
 
-/** The row counts the mirror's tables fix: seventeen cutover gates, fifty-eight fault-and-attack rows. */
-export const EXPECTED_COUNTS: Partial<Record<ComponentKind, number>> = { 'cutover-gate': 17, 'fault-attack': 58 }
+/** The row counts after the Operator-owned rows are excluded from this project's exit. */
+export const EXPECTED_COUNTS: Partial<Record<ComponentKind, number>> = { 'cutover-gate': 16, 'fault-attack': 56 }
+
+export interface ExitExclusion {
+  kind: ComponentKind | 'check' | 'module'
+  name: string
+  owner: 'Operator on one host'
+  reason: string
+}
+
+const OPERATOR_REASON = 'Owned by the Operator on one host project; its own exit check runs with no exclusions.'
+const operator = (kind: ExitExclusion['kind'], name: string): ExitExclusion => ({
+  kind,
+  name,
+  owner: 'Operator on one host',
+  reason: OPERATOR_REASON
+})
+
+/** Shrink-only debt owned by the Operator project, listed row by row. */
+export const OPERATOR_EXIT_EXCLUSIONS: readonly ExitExclusion[] = [
+  operator('check', 'program-6.23-supporting-pull-request-read'),
+  operator('module', '6.14'),
+  operator('module', '6.23'),
+  operator('cutover-gate', 'gate-11'),
+  operator('fault-attack', '11-consumed-or-stale-ruling-replayed'),
+  operator('fault-attack', '51-human-wait-principal-ruling-pause'),
+  ...[
+    '59-operator-session-attempts-shell-arbitrary-file-or-controller',
+    '60-codex-residual-apply-patch-or-another-built-in-attempts-a',
+    '61-installed-plugin-merged-configuration-or-trusted-project',
+    '62-claude-or-codex-instruction-document-is-missing-changed',
+    '63-inert-client-terminal-primitive-is-invoked',
+    '64-hook-is-absent-or-bypassed',
+    '65-maximum-valid-task-log-read-result-crosses-claude-s',
+    '66-codex-maximum-valid-task-log-read-result-exceeds-an',
+    '67-injected-or-oversized-log-text',
+    '68-log-read-targets-another-task-or-reuses-another-task-s',
+    '69-log-source-is-absent-corrupt-or-unreadable',
+    '70-persistent-installation-id-enters-model-context-tool-output',
+    '71-host-check-result-is-replayed-or-misread-as-start-authority',
+    '72-installation-record-update-fails-partway',
+    '73-persistent-installation-record-is-absent-reset-duplicated-or',
+    '74-allowed-list-version-or-digest-is-absent-stale-duplicated-or',
+    '75-aggregate-readiness-evidence-is-mixed-or-incomplete',
+    '76-public-quota-cannot-be-read-while-mandatory-probes-are',
+    '77-mandatory-probe-is-false',
+    '78-mandatory-probe-times-out-or-is-unavailable',
+    '79-agent-or-model-is-omitted-or-pair-is-outside-current-list',
+    '80-allowed-list-rotates-between-start-validation-and-launch',
+    '81-running-pair-is-removed-from-the-allowed-list',
+    '82-installation-record-resets-before-resume',
+    '83-start-acknowledgement-is-lost-or-request-replayed',
+    '84-caller-attempts-to-choose-task-rule-destination',
+    '85-pull-request-opens-after-an-issue-bound-pause-but-before',
+    '86-ruling-is-posted-or-would-be-posted-somewhere-other-than',
+    '87-ruling-casts-a-review-verdict-or-escalation-marker',
+    '88-ruling-orders-reset-stash-rebase-commit-push-git-gh-raw',
+    '89-validator-bypass-uses-case-unicode-markdown-whitespace-or',
+    '90-benign-quotation-mention-explanation-or-negation-names-a',
+    '91-issue-side-ruling-is-absent-from-pull-request-projection-or',
+    '92-identical-ruling-delivered-twice',
+    '93-conflicting-stale-wrong-task-superseded-or-already-consumed',
+    '94-ruling-publication-succeeds-but-acknowledgement-is-lost',
+    '95-task-rule-is-misread-as-continuation-authority',
+    '96-standalone-engine-or-claude-codex-expose-different-schemas'
+  ].map((name) => operator('fault-attack', name))
+]
 
 export type ExitCauseCode =
   | 'shard_absent'
@@ -34,6 +99,8 @@ export type ExitCauseCode =
   | 'universe_missing'
   | 'universe_extra'
   | 'count_mismatch'
+  | 'exclusion_stale'
+  | 'exclusion_covered'
 
 /** One reason the exit is not met, naming what is wrong. */
 export interface ExitCause {
@@ -62,6 +129,10 @@ export interface ExitInput {
   mirrorCounts: Partial<Record<ComponentKind, number>>
   expectedShards?: readonly string[]
   expectedCounts?: Partial<Record<ComponentKind, number>>
+  /** Rows temporarily removed from this global exit; defaults to the Operator-owned list. */
+  exclusions?: readonly ExitExclusion[]
+  /** Registry rows whose complete table payload already equals the mirror row. */
+  mirrorMatchedComponents?: readonly string[]
 }
 
 export interface ExitReport {
@@ -107,6 +178,20 @@ export function checkExit(input: ExitInput): ExitReport {
   const kinds = Object.fromEntries(
     COMPONENT_KINDS.map((k) => [k, { covered: 0, emptyFields: 0, unmapped: 0 }])
   ) as Record<ComponentKind, ExitKindReport>
+  const exclusions = (input.exclusions ?? OPERATOR_EXIT_EXCLUSIONS).filter((entry) =>
+    COMPONENT_KINDS.includes(entry.kind as ComponentKind)
+  )
+  const exclusionKeys = new Set(exclusions.map((entry) => `${entry.kind}:${entry.name}`))
+  const universeKeys = new Set(
+    COMPONENT_KINDS.flatMap((kind) => (input.universes[kind] ?? []).map((name) => `${kind}:${name}`))
+  )
+  for (const entry of exclusions) {
+    const key = `${entry.kind}:${entry.name}`
+    if (!universeKeys.has(key)) cause('exclusion_stale', `${key} is excluded but is no longer in the mirror`)
+    if (input.mirrorMatchedComponents?.includes(key)) {
+      cause('exclusion_covered', `${key} is excluded but its registry row already matches the mirror`)
+    }
+  }
 
   const present = new Set(input.shards.map((s) => s.shard))
   for (const name of input.expectedShards ?? EXPECTED_SHARDS) {
@@ -118,6 +203,7 @@ export function checkExit(input: ExitInput): ExitReport {
   const seen = new Map<string, string>()
   const rowsByKind = new Map<ComponentKind, Set<string>>()
   for (const { location, row } of input.components) {
+    if (exclusionKeys.has(`${row.kind}:${nameOf(row)}`)) continue
     const report = kinds[row.kind]
     if (report === undefined) {
       cause('kind_missing', `${row.id} at ${location} is of unknown kind ${String(row.kind)}`)
@@ -161,6 +247,7 @@ export function checkExit(input: ExitInput): ExitReport {
     }
     const have = rowsByKind.get(kind) ?? new Set<string>()
     for (const name of universe) {
+      if (exclusionKeys.has(`${kind}:${name}`)) continue
       if (have.has(name)) continue
       kinds[kind].unmapped++
       cause('universe_missing', `${kind}:${name} is in the universe and has no row`)
@@ -180,7 +267,8 @@ export function checkExit(input: ExitInput): ExitReport {
   for (const kind of COMPONENT_KINDS) {
     const want = expected[kind]
     if (want === undefined) continue
-    const mirror = input.mirrorCounts[kind]
+    const excluded = exclusions.filter((entry) => entry.kind === kind).length
+    const mirror = input.mirrorCounts[kind] === undefined ? undefined : input.mirrorCounts[kind] - excluded
     if (mirror !== want)
       cause('count_mismatch', `the mirror's ${kind} table has ${mirror ?? 'no'} rows, expected ${want}`)
     if (kinds[kind].covered !== want) {

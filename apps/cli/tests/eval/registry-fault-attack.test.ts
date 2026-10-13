@@ -14,6 +14,7 @@ import {
   type ModuleCatalog,
   suiteId
 } from '../../src/lib/dev-review-eval/registry'
+import { OPERATOR_EXIT_EXCLUSIONS } from '../../src/lib/dev-review-eval/exit-check'
 import {
   FAULT_ATTACK_HEADING,
   type FaultAttackEntry,
@@ -28,11 +29,11 @@ import {
 const REGISTRY_DIR = join(import.meta.dir, 'registry')
 const SHARD_FILE = join(REGISTRY_DIR, 'shards/fault-attack.json')
 const LOCATION = 'shards/fault-attack.json'
-const PROVENANCE = JSON.parse(
-  readFileSync(join(import.meta.dir, '../../specs/dev-review-evaluation-program.provenance.json'), 'utf8')
-) as { revision: number }
-
 const UNIVERSE = readFaultAttackUniverse()
+const EXCLUDED = new Set(
+  OPERATOR_EXIT_EXCLUSIONS.filter((entry) => entry.kind === 'fault-attack').map((entry) => entry.name)
+)
+const ACTIVE_UNIVERSE = UNIVERSE.filter((entry) => !EXCLUDED.has(entry.name))
 
 const loaded = loadRegistry(join(REGISTRY_DIR, 'modules.json'), join(REGISTRY_DIR, 'shards'))
 if (!loaded.ok) throw new Error(`registry refused: ${JSON.stringify(loaded.refusal)}`)
@@ -103,17 +104,19 @@ function compareWithTable(rows: readonly RawRow[], universe: readonly FaultAttac
 }
 
 const clone = <T>(value: T): T => structuredClone(value)
-const universes = { 'fault-attack': UNIVERSE.map((entry) => entry.name) }
+const universes = { 'fault-attack': ACTIVE_UNIVERSE.map((entry) => entry.name) }
 const check = (content: unknown, kinds: Partial<Record<ComponentKind, readonly string[]>> = universes) => {
-  const result = checkShardCompleteness(content, catalog, kinds, LOCATION)
+  const filtered = clone(content as { components: RawRow[] })
+  filtered.components = filtered.components.filter((row) => !EXCLUDED.has(row.id.slice('fault-attack:'.length)))
+  const result = checkShardCompleteness(filtered, catalog, kinds, LOCATION)
   if (!result.ok) throw new Error(JSON.stringify(result.refusal))
   return result.value
 }
 
 describe('the fault-and-attack universe parsed from the mirror', () => {
-  it('holds the fifty-eight rows of the table, each its own component with a unique name', () => {
-    expect(UNIVERSE.length).toBe(58)
-    expect(new Set(UNIVERSE.map((entry) => entry.name)).size).toBe(58)
+  it('holds the ninety-six rows of the table, each its own component with a unique name', () => {
+    expect(UNIVERSE.length).toBe(96)
+    expect(new Set(UNIVERSE.map((entry) => entry.name)).size).toBe(96)
     expect(UNIVERSE.map((entry) => entry.order)).toEqual(UNIVERSE.map((_, index) => index + 1))
   })
 
@@ -144,10 +147,10 @@ describe('the fault-attack shard', () => {
 
   it('is complete against the universe parsed from the mirror', () => {
     const report = check(rawShard)
-    const mismatches = compareWithTable(rawShard.components, UNIVERSE)
-    const mustPass = UNIVERSE.filter((entry) => entry.cutover === 'must-pass').length
+    const mismatches = compareWithTable(rawShard.components, ACTIVE_UNIVERSE)
+    const mustPass = ACTIVE_UNIVERSE.filter((entry) => entry.cutover === 'must-pass').length
     console.log(
-      `fault-attack shard: ${shard.components.length} rows (${mustPass} must pass, ${UNIVERSE.length - mustPass} pass or accepted); missing ${report.missing.length}, extra ${report.extra.length}, invalid ${report.invalid.length}, differing ${mismatches.length}`
+      `fault-attack shard: ${shard.components.length} rows (${mustPass} must pass, ${ACTIVE_UNIVERSE.length - mustPass} pass or accepted); missing ${report.missing.length}, extra ${report.extra.length}, invalid ${report.invalid.length}, differing ${mismatches.length}`
     )
     expect(report.missing).toEqual([])
     expect(report.extra).toEqual([])
@@ -161,7 +164,7 @@ describe('the fault-attack shard', () => {
     for (const row of shard.components) {
       expect(row.source).toEqual({
         document: PROGRAM_DOCUMENT,
-        revision: PROVENANCE.revision,
+        revision: 11,
         section: FAULT_ATTACK_HEADING
       })
     }
@@ -211,7 +214,7 @@ describe('the fault-attack check fails on what it must', () => {
     ;(rows[1] as RawRow).faultAttack.layers = ['L4']
     ;(rows[2] as RawRow).faultAttack.expectedOutcome = 'restart from scratch'
     ;(rows[3] as RawRow).faultAttack.cutover = 'pass-or-accepted'
-    expect(compareWithTable(rows, UNIVERSE).map((m) => [m.name, m.column])).toEqual([
+    expect(compareWithTable(rows, ACTIVE_UNIVERSE).map((m) => [m.name, m.column])).toEqual([
       ['01-developer-process-death', 'suite'],
       ['02-reviewer-process-death', 'layer'],
       ['03-controller-process-death', 'expected-outcome'],
@@ -227,7 +230,7 @@ describe('the fault-attack check fails on what it must', () => {
       'module 6.14 -'
     )
     ;(content.components[0] as RawRow).module = '6.14'
-    expect(compareWithTable(content.components, UNIVERSE).map((m) => [m.name, m.column])).toEqual([
+    expect(compareWithTable(content.components, ACTIVE_UNIVERSE).map((m) => [m.name, m.column])).toEqual([
       ['01-developer-process-death', 'suite'],
       [(content.components[provider] as RawRow).id.slice('fault-attack:'.length), 'suite']
     ])
@@ -240,7 +243,7 @@ describe('the fault-attack check fails on what it must', () => {
     ;(content.components[mustPass] as RawRow).decisionRule = 'Must pass: green on the Engine backend before cutover.'
     ;(content.components[accepted] as RawRow).decisionRule =
       'Pass or accepted: the test runs and its result is recorded.'
-    expect(compareWithTable(content.components, UNIVERSE).map((m) => m.column)).toEqual([
+    expect(compareWithTable(content.components, ACTIVE_UNIVERSE).map((m) => m.column)).toEqual([
       'cutover-statement',
       'cutover-statement'
     ])

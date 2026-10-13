@@ -10,6 +10,7 @@ import {
   checkExit,
   EXPECTED_COUNTS,
   EXPECTED_SHARDS,
+  OPERATOR_EXIT_EXCLUSIONS,
   type ExitCauseCode,
   type ExitInput
 } from '../../src/lib/dev-review-eval/exit-check'
@@ -55,10 +56,57 @@ const mirrorCounts: Partial<Record<ComponentKind, number>> = {
   'fault-attack': faults.length
 }
 
+const mirrorMatchedComponents = registry.components.flatMap(({ row }) => {
+  if (row.kind === 'cutover-gate') {
+    const mirror = gates.find((entry) => entry.name === row.id.slice('cutover-gate:'.length))
+    const actual = (row as unknown as { cutoverGate?: (typeof gates)[number] }).cutoverGate
+    if (
+      mirror !== undefined &&
+      actual !== undefined &&
+      JSON.stringify({
+        number: actual.number,
+        title: actual.title,
+        evidence: actual.evidence,
+        modules: actual.modules,
+        layers: actual.layers
+      }) ===
+        JSON.stringify({
+          number: mirror.number,
+          title: mirror.title,
+          evidence: mirror.evidence,
+          modules: mirror.modules,
+          layers: mirror.layers
+        })
+    )
+      return [row.id]
+  }
+  if (row.kind === 'fault-attack') {
+    const mirror = faults.find((entry) => entry.name === row.id.slice('fault-attack:'.length))
+    const actual = (row as unknown as { faultAttack?: Omit<(typeof faults)[number], 'name'> }).faultAttack
+    if (
+      mirror !== undefined &&
+      actual !== undefined &&
+      JSON.stringify(actual) ===
+        JSON.stringify({
+          order: mirror.order,
+          title: mirror.title,
+          modules: mirror.modules,
+          layerCell: mirror.layerCell,
+          layers: mirror.layers,
+          expectedOutcome: mirror.expectedOutcome,
+          cutover: mirror.cutover
+        })
+    )
+      return [row.id]
+  }
+  return []
+})
+
 const real = (): ExitInput => ({
   ...structuredClone({ catalog: registry.catalog, shards: registry.shards, components: registry.components }),
   universes: structuredClone(universes),
-  mirrorCounts: { ...mirrorCounts }
+  mirrorCounts: { ...mirrorCounts },
+  mirrorMatchedComponents: [...mirrorMatchedComponents]
 })
 
 const causesOf = (input: ExitInput): ExitCauseCode[] => [...new Set(checkExit(input).causes.map((c) => c.code))]
@@ -71,11 +119,15 @@ describe('the global exit check', () => {
     expect(report.emptyFields).toBe(0)
     expect(report.unmapped).toBe(0)
     for (const kind of COMPONENT_KINDS) {
-      expect({ kind, covered: report.kinds[kind].covered }).toEqual({ kind, covered: universes[kind]?.length ?? -1 })
+      const excluded = OPERATOR_EXIT_EXCLUSIONS.filter((entry) => entry.kind === kind).length
+      expect({ kind, covered: report.kinds[kind].covered }).toEqual({
+        kind,
+        covered: (universes[kind]?.length ?? -1) - excluded
+      })
       expect(report.kinds[kind].covered).toBeGreaterThan(0)
     }
-    expect(report.kinds['cutover-gate'].covered).toBe(17)
-    expect(report.kinds['fault-attack'].covered).toBe(58)
+    expect(report.kinds['cutover-gate'].covered).toBe(16)
+    expect(report.kinds['fault-attack'].covered).toBe(56)
     expect(registry.shards.map((s) => s.shard).sort()).toEqual([...EXPECTED_SHARDS].sort())
     console.log(
       COMPONENT_KINDS.map((k) => `${k}: ${report.kinds[k].covered}`).join(', '),
@@ -195,14 +247,50 @@ describe('the global exit check', () => {
   })
 
   it('fails when a count differs from the mirror’s tables', () => {
-    expect(EXPECTED_COUNTS).toEqual({ 'cutover-gate': 17, 'fault-attack': 58 })
+    expect(EXPECTED_COUNTS).toEqual({ 'cutover-gate': 16, 'fault-attack': 56 })
     const rows = real()
     rows.components = rows.components.filter((c) => c.row.id !== 'cutover-gate:gate-17')
-    rows.universes['cutover-gate'] = (universes['cutover-gate'] as string[]).slice(0, 16)
+    rows.universes['cutover-gate'] = (universes['cutover-gate'] as string[]).filter((name) => name !== 'gate-17')
     expect(causesOf(rows)).toContain('count_mismatch')
-    expect(checkExit(rows).causes.some((c) => c.code === 'count_mismatch' && c.detail.includes('16 rows'))).toBe(true)
+    expect(checkExit(rows).causes.some((c) => c.code === 'count_mismatch' && c.detail.includes('15 rows'))).toBe(true)
     const mirror = real()
-    mirror.mirrorCounts['fault-attack'] = 57
+    mirror.mirrorCounts['fault-attack'] = 95
     expect(causesOf(mirror)).toEqual(['count_mismatch'])
+  })
+
+  it('keeps the Operator-owned exclusion list shrink-only and fully attributed', () => {
+    const ceiling = new Set([
+      'check:program-6.23-supporting-pull-request-read',
+      'module:6.14',
+      'module:6.23',
+      'cutover-gate:gate-11',
+      'fault-attack:11-consumed-or-stale-ruling-replayed',
+      'fault-attack:51-human-wait-principal-ruling-pause',
+      ...faults.slice(58).map((entry) => `fault-attack:${entry.name}`)
+    ])
+    expect(ceiling.size).toBe(44)
+    for (const entry of OPERATOR_EXIT_EXCLUSIONS) {
+      expect(ceiling.has(`${entry.kind}:${entry.name}`)).toBe(true)
+      expect(entry.owner).toBe('Operator on one host')
+      expect(entry.reason).toContain('Operator on one host')
+    }
+  })
+
+  it('fails for a stale exclusion or one whose registry row now matches the mirror', () => {
+    const stale = real()
+    stale.exclusions = [
+      ...OPERATOR_EXIT_EXCLUSIONS,
+      {
+        kind: 'fault-attack',
+        name: 'not-in-the-mirror',
+        owner: 'Operator on one host',
+        reason: 'Owned by the Operator on one host project.'
+      }
+    ]
+    expect(causesOf(stale)).toContain('exclusion_stale')
+
+    const covered = real()
+    covered.mirrorMatchedComponents = [...(covered.mirrorMatchedComponents ?? []), 'cutover-gate:gate-11']
+    expect(causesOf(covered)).toContain('exclusion_covered')
   })
 })

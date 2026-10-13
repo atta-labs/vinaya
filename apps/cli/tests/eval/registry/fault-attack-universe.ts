@@ -30,7 +30,7 @@ export interface FaultAttackEntry {
   /** `<order, two digits>-<title slug>`: stable while the row keeps its place and wording. */
   name: string
   title: string
-  /** The catalog modules the Suite column names, in its order; the first owns the row. */
+  /** The catalog modules the Suite column names; Operator-owned additions name their external suite instead. */
   modules: string[]
   /** The Layer column's cell as written. */
   layerCell: string
@@ -78,20 +78,26 @@ export function parseFaultAttackTable(program: string): FaultAttackEntry[] {
     .slice(start, end < 0 ? undefined : end)
     .split('\n')
     .filter((line) => line.startsWith('|'))
-  const [header, rule, ...rows] = lines
+  const [header, rule, ...tail] = lines
   if (header === undefined || rule === undefined) throw new Error('the fault-and-attack section holds no table')
   const columns = cells(header)
   const expected = ['Fault or attack', 'Suite', 'Layer', 'Expected typed outcome', 'Cutover']
   if (JSON.stringify(columns) !== JSON.stringify(expected)) {
     throw new Error(`the fault-and-attack table's columns changed: ${JSON.stringify(columns)}`)
   }
+  // Revision 14 appends the Operator-owned rows under a subsection whose
+  // table deliberately starts with a separator, not another header. Treat it
+  // as a continuation of the canonical table.
+  const rows = tail.filter((line) => !cells(line).every((cell) => /^-+$/.test(cell.replaceAll(' ', ''))))
   return rows.map((line, index) => {
     const [title, suite, layer, outcome, cutover] = cells(line) as [string, string, string, string, string]
     const order = index + 1
     const modules = [...suite.matchAll(/§(6\.[0-9]+)/g)].map((match) => match[1] as string)
     const layers = parseLayers(layer)
     if (!(cutover in CUTOVER_OUTCOMES)) throw new Error(`row ${order} has an unknown cutover outcome: ${cutover}`)
-    if (modules.length === 0 || layers.length === 0) throw new Error(`row ${order} names no module or no layer`)
+    if (layers.length === 0 || (modules.length === 0 && order <= 58)) {
+      throw new Error(`row ${order} names no module or no layer`)
+    }
     return {
       order,
       name: `${String(order).padStart(2, '0')}-${slug(title)}`,

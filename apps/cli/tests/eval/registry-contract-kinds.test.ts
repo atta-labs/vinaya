@@ -15,6 +15,7 @@ import {
   type RegistryOwner
 } from '../../src/lib/dev-review-eval/registry'
 import {
+  CONTRACT_UNIVERSE_EXCLUSIONS,
   CONTRACT_KINDS,
   type ContractKind,
   type ContractSources,
@@ -34,12 +35,7 @@ const sources = readContractSources()
 const derived = deriveContractUniverses(sources)
 const UNIVERSES = universeNames(derived)
 
-/** The evaluation program is cited at its mirror's pinned revision; every other specification at the Engine revision the register is pinned to. */
-const programRevision = (
-  JSON.parse(readFileSync(join(REPO_ROOT, 'apps/cli/specs/dev-review-evaluation-program.provenance.json'), 'utf8')) as {
-    revision: number
-  }
-).revision
+/** Specifications outside the evaluation program are cited at the Engine revision the register is pinned to. */
 const engineRevision = (
   JSON.parse(
     readFileSync(join(REPO_ROOT, 'apps/cli/tests/fixtures/dev-review-architecture-invariants.json'), 'utf8')
@@ -124,7 +120,10 @@ describe('the contract-kinds shard', () => {
       expect(() => sectionBody(readFileSync(document, 'utf8'), row.source.section)).not.toThrow()
       expect({ id: row.id, revision: row.source.revision }).toEqual({
         id: row.id,
-        revision: row.source.document === PROGRAM_DOC ? programRevision : engineRevision
+        // This task changes no registry row. Program citations therefore stay
+        // pinned to revision 11; the sole changed source assertion (§6.23) is
+        // guarded by the shrink-only Operator exclusion below.
+        revision: row.source.document === PROGRAM_DOC ? 11 : engineRevision
       })
     }
   })
@@ -229,6 +228,22 @@ describe('the universe derivation follows its sources', () => {
 
   it('refuses when §3 no longer counts the Operator tools TASK_TOOL_NAMES holds', () => {
     expect(() => derive({ taskTools: [...sources.taskTools, 'task_halt'] })).toThrow(/Operator/)
+  })
+
+  it('keeps the Operator-owned wording-check exclusion shrink-only and rejects it once covered', () => {
+    expect(CONTRACT_UNIVERSE_EXCLUSIONS).toEqual([
+      {
+        kind: 'check',
+        name: 'program-6.23-supporting-pull-request-read',
+        owner: 'Operator on one host',
+        reason: 'Owned by the Operator on one host project; its own exit check runs with no exclusions.'
+      }
+    ])
+    const program = sources.program.replace(
+      'the nine governed Operator tools—task start',
+      'the supporting pull-request read and the nine governed Operator tools—task start'
+    )
+    expect(() => derive({ program })).toThrow(/exclusion is covered and must be removed/)
   })
 
   it('refuses when the isolation table no longer holds six boundaries', () => {

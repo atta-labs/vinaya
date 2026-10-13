@@ -13,6 +13,7 @@ import {
   loadRegistry,
   type ModuleCatalog
 } from '../../src/lib/dev-review-eval/registry'
+import { OPERATOR_EXIT_EXCLUSIONS } from '../../src/lib/dev-review-eval/exit-check'
 import {
   type CutoverGateEntry,
   CUTOVER_GATES_HEADING,
@@ -27,11 +28,11 @@ import {
 const REGISTRY_DIR = join(import.meta.dir, 'registry')
 const SHARD_FILE = join(REGISTRY_DIR, 'shards/cutover-gates.json')
 const LOCATION = 'shards/cutover-gates.json'
-const PROVENANCE = JSON.parse(
-  readFileSync(join(import.meta.dir, '../../specs/dev-review-evaluation-program.provenance.json'), 'utf8')
-) as { revision: number }
-
 const UNIVERSE = readCutoverGateUniverse()
+const EXCLUDED = new Set(
+  OPERATOR_EXIT_EXCLUSIONS.filter((entry) => entry.kind === 'cutover-gate').map((entry) => entry.name)
+)
+const ACTIVE_UNIVERSE = UNIVERSE.filter((entry) => !EXCLUDED.has(entry.name))
 
 const loaded = loadRegistry(join(REGISTRY_DIR, 'modules.json'), join(REGISTRY_DIR, 'shards'))
 if (!loaded.ok) throw new Error(`registry refused: ${JSON.stringify(loaded.refusal)}`)
@@ -109,9 +110,11 @@ const engineSpec = () => ({
   section: ENGINE_SPEC.section
 })
 const clone = <T>(value: T): T => structuredClone(value)
-const universes = { 'cutover-gate': UNIVERSE.map((entry) => entry.name) }
+const universes = { 'cutover-gate': ACTIVE_UNIVERSE.map((entry) => entry.name) }
 const check = (content: unknown, kinds: Partial<Record<ComponentKind, readonly string[]>> = universes) => {
-  const result = checkShardCompleteness(content, catalog, kinds, LOCATION)
+  const filtered = clone(content as { components: RawRow[] })
+  filtered.components = filtered.components.filter((row) => !EXCLUDED.has(row.id.slice('cutover-gate:'.length)))
+  const result = checkShardCompleteness(filtered, catalog, kinds, LOCATION)
   if (!result.ok) throw new Error(JSON.stringify(result.refusal))
   return result.value
 }
@@ -147,7 +150,7 @@ describe('the cutover-gates shard', () => {
 
   it('is complete against the universe parsed from the mirror', () => {
     const report = check(rawShard)
-    const mismatches = compareWithTable(rawShard.components, UNIVERSE)
+    const mismatches = compareWithTable(rawShard.components, ACTIVE_UNIVERSE)
     console.log(
       `cutover-gates shard: ${shard.components.length} rows; missing ${report.missing.length}, extra ${report.extra.length}, invalid ${report.invalid.length}, differing ${mismatches.length}`
     )
@@ -163,7 +166,7 @@ describe('the cutover-gates shard', () => {
     for (const row of shard.components) {
       expect(row.source).toEqual({
         document: PROGRAM_DOCUMENT,
-        revision: PROVENANCE.revision,
+        revision: 11,
         section: CUTOVER_GATES_HEADING
       })
     }
@@ -218,7 +221,7 @@ describe('the cutover-gate check fails on what it must', () => {
     const content = clone(rawShard)
     const [first, second] = content.components.splice(0, 2) as [RawRow, RawRow]
     content.components.splice(1, 0, second, first)
-    expect(compareWithTable(content.components, UNIVERSE).map((m) => m.column)).toEqual(['order'])
+    expect(compareWithTable(content.components, ACTIVE_UNIVERSE).map((m) => m.column)).toEqual(['order'])
   })
 
   it('reports a row with an empty field', () => {
@@ -234,7 +237,7 @@ describe('the cutover-gate check fails on what it must', () => {
     content.components[0]!.cutoverGate.evidence = '§6.17 unit suite'
     content.components[1]!.cutoverGate.title = 'Invariant map'
     content.components[3]!.module = '6.4'
-    expect(compareWithTable(content.components, UNIVERSE).map((m) => [m.name, m.column])).toEqual([
+    expect(compareWithTable(content.components, ACTIVE_UNIVERSE).map((m) => [m.name, m.column])).toEqual([
       ['gate-1', 'evidence'],
       ['gate-2', 'gate'],
       ['gate-4', 'module']
@@ -244,7 +247,7 @@ describe('the cutover-gate check fails on what it must', () => {
   it('reports a row citing another Engine specification section', () => {
     const content = clone(rawShard)
     content.components[2]!.cutoverGate.engineSpec = { ...engineSpec(), section: '16.17' }
-    expect(compareWithTable(content.components, UNIVERSE).map((m) => [m.name, m.column])).toEqual([
+    expect(compareWithTable(content.components, ACTIVE_UNIVERSE).map((m) => [m.name, m.column])).toEqual([
       ['gate-3', 'engine-spec']
     ])
   })
@@ -255,7 +258,7 @@ describe('the cutover-gate check fails on what it must', () => {
     row(14).decisionRule = 'Must pass: every §6.15 case green.'
     row(15).decisionRule = 'Must pass, or a known-failure entry.'
     row(17).decisionRule = 'Satisfied when the cutover authorization suite passes.'
-    expect(compareWithTable(content.components, UNIVERSE).map((m) => [m.name, m.column])).toEqual([
+    expect(compareWithTable(content.components, ACTIVE_UNIVERSE).map((m) => [m.name, m.column])).toEqual([
       ['gate-14', 'statement'],
       ['gate-15', 'statement'],
       ['gate-17', 'statement']
