@@ -36,7 +36,9 @@ const digest = (): string =>
       JSON.stringify(
         DEFAULT_PROSE_RULES.map((rule) => ({
           ...rule,
-          patterns: Object.fromEntries(Object.entries(rule.patterns).map(([scope, p]) => [scope, String(p)]))
+          patterns: Object.fromEntries(
+            Object.entries(rule.patterns).map(([scope, p]) => [scope, String(p).replaceAll('\\/', '/')])
+          )
         }))
       )
     )
@@ -44,6 +46,6 @@ const digest = (): string =>
 
 describe('default prose rules content', () => {
   it('pins every pattern text, flag, message, severity and exemption', () => {
-    expect(digest()).toBe('6c4c9a58f4d5f73560bb103610112484daf473489cbcce475b7bdb5a578f86cc')
+    expect(digest()).toBe('4aa13c3ec7a1c2f2a5dbb12e9e5b3fd4c2a9c83f38f9bdef96f23f35f575227f')
   })
 })
