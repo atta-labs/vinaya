@@ -17,16 +17,36 @@ import { parseChangedLineRanges } from '../commands/review-post'
 
 /** `null` when the file has no diff against `ref`, or when git cannot answer. */
 export function fileDiffAgainst(ref: string, path: string): string | null {
-  let out: string
+  let committed: string
   try {
-    out = execFileSync('git', ['diff', `${ref}...HEAD`, '--', path], {
+    committed = execFileSync('git', ['diff', `${ref}...HEAD`, '--', path], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
     }).trim()
   } catch {
     return null
   }
+  const staged = stagedDiff(['--', path])
+  if (staged === null) return null
+  const out = [committed, staged].filter(Boolean).join('\n')
   return out === '' ? null : out
+}
+
+function readsStagedDiff(): boolean {
+  return process.env.VINAYA_COMMIT_HOOK === '1' && Boolean(process.env.GIT_INDEX_FILE)
+}
+
+/** Empty string when staged evidence is not applicable; null when git cannot answer. */
+function stagedDiff(args: string[]): string | null {
+  if (!readsStagedDiff()) return ''
+  try {
+    return execFileSync('git', ['diff', '--cached', ...args], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+  } catch {
+    return null
+  }
 }
 
 function revParse(ref: string): string | null {
@@ -101,6 +121,17 @@ function changedFiles(base: string): string[] | null {
         .filter(Boolean)
 }
 
+function stagedChangedFiles(): string[] | null {
+  const out = stagedDiff(['--name-only'])
+  if (out === null) return null
+  return out === ''
+    ? []
+    : out
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean)
+}
+
 /**
  * The full changed-file list for the PR's diff, as ABSOLUTE paths — `null`
  * when no diff could be established at all, `[]` when one was established
@@ -161,7 +192,10 @@ export function resolveDiff(base = process.env.BASE_SHA || 'origin/main'): {
     if (resolved === null || resolved === head) continue
     const relPaths = changedFiles(ref)
     if (relPaths === null) continue // this ref resolved, but its diff didn't — try the next candidate
-    return { base: ref, root, files: relPaths.map((p) => join(root, p)) }
+    const stagedPaths = stagedChangedFiles()
+    if (stagedPaths === null) return null
+    const paths = [...new Set([...relPaths, ...stagedPaths])]
+    return { base: ref, root, files: paths.map((p) => join(root, p)) }
   }
   return null
 }

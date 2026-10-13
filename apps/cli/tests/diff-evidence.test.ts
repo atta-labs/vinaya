@@ -3,7 +3,8 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { resolveChangedFiles } from '../src/lib/diff-evidence'
+import { changedLineRanges, resolveChangedFiles } from '../src/lib/diff-evidence'
+import { coreCheckRegistry } from '../src/checks/registry'
 
 // Code review, PR #290:
 //   BLOCKER — resolveChangedFiles() fell open on a shallow-clone/orphan-
@@ -126,6 +127,89 @@ describe('resolveChangedFiles — the normal case', () => {
       expect(resolveChangedFiles('main')).toEqual([])
     } finally {
       process.chdir(cwd)
+    }
+  })
+})
+
+describe('resolveChangedFiles — pre-commit staged evidence', () => {
+  it('unions staged paths and line ranges with the committed branch diff only under the hook marker', () => {
+    const root = newRoot('staged-union')
+    initRepo(root)
+    writeFileSync(join(root, 'committed.md'), 'base\n')
+    writeFileSync(join(root, 'staged.md'), 'base\n')
+    git(root, ['add', '.'])
+    git(root, ['commit', '-q', '-m', 'Chore: initial'])
+    git(root, ['checkout', '-q', '-b', 'feature'])
+    writeFileSync(join(root, 'committed.md'), 'base\ncommitted\n')
+    git(root, ['add', 'committed.md'])
+    git(root, ['commit', '-q', '-m', 'Fix: committed change'])
+    writeFileSync(join(root, 'staged.md'), 'base\nstaged\n')
+    git(root, ['add', 'staged.md'])
+
+    const cwd = process.cwd()
+    const oldMarker = process.env.VINAYA_COMMIT_HOOK
+    const oldIndex = process.env.GIT_INDEX_FILE
+    try {
+      process.chdir(root)
+      process.env.VINAYA_COMMIT_HOOK = '1'
+      process.env.GIT_INDEX_FILE = join(root, '.git', 'index')
+      expect(resolveChangedFiles('main')).toEqual([join(root, 'committed.md'), join(root, 'staged.md')])
+      expect(changedLineRanges('main', 'staged.md')).not.toBeNull()
+
+      delete process.env.VINAYA_COMMIT_HOOK
+      expect(resolveChangedFiles('main')).toEqual([join(root, 'committed.md')])
+      expect(changedLineRanges('main', 'staged.md')).toBeNull()
+    } finally {
+      process.chdir(cwd)
+      if (oldMarker === undefined) delete process.env.VINAYA_COMMIT_HOOK
+      else process.env.VINAYA_COMMIT_HOOK = oldMarker
+      if (oldIndex === undefined) delete process.env.GIT_INDEX_FILE
+      else process.env.GIT_INDEX_FILE = oldIndex
+    }
+  })
+
+  it('declares both hook variables on every shared-diff consumer', () => {
+    const names = [
+      'changeset-coverage',
+      'ci-shard-coverage',
+      'exec-bits',
+      'doctrine-portability',
+      'retired-vocabulary',
+      'reader-resolvable-prose',
+      'workspace-escape'
+    ]
+    for (const name of names) {
+      const spec = coreCheckRegistry().find((candidate) => candidate.name === name)
+      expect(spec?.env?.GIT_INDEX_FILE).toEqual({ optional: true })
+      expect(spec?.env?.VINAYA_COMMIT_HOOK).toEqual({ optional: true })
+    }
+  })
+
+  it('returns null when a marked pre-commit staged diff cannot be read', () => {
+    const root = newRoot('unreadable-index')
+    initRepo(root)
+    writeFileSync(join(root, 'a.md'), 'base\n')
+    git(root, ['add', '.'])
+    git(root, ['commit', '-q', '-m', 'Chore: initial'])
+    git(root, ['checkout', '-q', '-b', 'feature'])
+    git(root, ['commit', '-q', '--allow-empty', '-m', 'Chore: distinct head'])
+    const badIndex = join(root, 'bad-index')
+    writeFileSync(badIndex, 'not a git index')
+
+    const cwd = process.cwd()
+    const oldMarker = process.env.VINAYA_COMMIT_HOOK
+    const oldIndex = process.env.GIT_INDEX_FILE
+    try {
+      process.chdir(root)
+      process.env.VINAYA_COMMIT_HOOK = '1'
+      process.env.GIT_INDEX_FILE = badIndex
+      expect(resolveChangedFiles('main')).toBeNull()
+    } finally {
+      process.chdir(cwd)
+      if (oldMarker === undefined) delete process.env.VINAYA_COMMIT_HOOK
+      else process.env.VINAYA_COMMIT_HOOK = oldMarker
+      if (oldIndex === undefined) delete process.env.GIT_INDEX_FILE
+      else process.env.GIT_INDEX_FILE = oldIndex
     }
   })
 })
