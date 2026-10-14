@@ -31,15 +31,25 @@ artifacts as built and packed at Atta commit
 boundary is fixed. Every runtime row records it, cites Atta source pinned at
 that commit with a line anchor, and concludes `fit` or a named gap.
 
-At that commit every runtime capability the workflow needs fits: Flow and
-Plan compilation, the external-consumer packaging proof, the injected node
+The repository's packed-consumer test exercises a separate artifact set: the
+engine, LangGraph adapter, agents and models tarballs vendored under
+`apps/cli/tests/fixtures/atta-engine/`, whose README records the Atta commit
+they were packed from and the digest each copy must match. With those
+tarballs the packed graph builder accepts a caller-supplied executor, and the
+test verifies that seam with a steps-shaped Flow. Public start and resume do
+not yet accept that executor, so the complete run-control proof remains an
+Atta Engine-owned gap under cutover gate 16. The Engine run-control boundary
+registry row names the current packed-consumer test and the public
+start/resume test that replaces it when the runtime delivers that seam.
+
+The capabilities already established by the matrix remain fit: Flow and
+Plan compilation, the external-consumer packaging proof, the injected graph
 executor, fan-out and join, checkpoint-backed continuation, halt and resume
 without replay, a typed paused outcome for human input, the live event
 stream, cancellation of a live child, typed run outcomes, refusal of an
 undeclared role or action, the subscription-login invocation seam, and
-redaction of observed and persisted output. None is a gap, so no Atta
-capability is escalated. The limitations that come with each are recorded
-on its row and are obligations Vinaya keeps, not gaps:
+redaction of observed and persisted output. Their limitations remain caller
+obligations except for the gate-16 gap just named:
 
 - **Legs of one run are serialised by the caller.** The runtime cannot stop
   two concurrent resumes of one run; Vinaya's one-driver-per-task lock is

@@ -942,7 +942,7 @@
       "suite": ["engine-boundary.l3@1"],
       "tasks": {
         "positive": {
-          "present": "Install the packed Engine artifacts into an isolated consumer; start a run with Vinaya's injected executor through the public start; halt, inspect, resume through the public resume, cancel."
+          "present": "Current partial proof: packed-runtime-consumer.test.ts installs the vendored artifacts, compiles a steps-shaped Flow through public exports and proves the packed graph builder accepts the consumer's injected executor. Gate-16 completion test: packed-runtime-public-run-control.test.ts starts with that executor through public start, then halts, inspects, resumes through public resume and cancels."
         },
         "negative": {
           "present": "Lifecycle events and checkpoint transitions compared with the same Flow run under the default executor show no difference."
@@ -951,7 +951,7 @@
           "present": "An import check refuses any Engine-path reference outside the public packed exports, or any drive of the graph outside public run control."
         },
         "recovery": {
-          "present": "Resume through the public resume continues from the same checkpoint as under the default executor."
+          "present": "When Atta Engine delivers caller-supplied executor support on public start and resume, packed-runtime-public-run-control.test.ts verifies public resume continues from the same checkpoint as under the default executor."
         },
         "adversarial": {
           "notApplicable": "§6.17 is a consumption boundary; no adversarial input applies."

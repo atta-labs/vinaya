@@ -261,6 +261,11 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     ],
     trigger: 'tree-shape'
   },
+  {
+    test: 'apps/cli/tests/conformance/packed-runtime-not-shipped.test.ts',
+    roots: ['apps/cli/src/'],
+    trigger: 'content'
+  },
   { test: 'apps/cli/tests/platform-independence.test.ts', roots: ['apps/cli/tests/'], trigger: 'content' },
   { test: 'apps/cli/tests/process-fixture-coverage.test.ts', roots: ['apps/cli/tests/'], trigger: 'process-start' },
   { test: 'apps/cli/scripts/bundle-doctrine.test.ts', roots: ['.'], trigger: 'content' },

@@ -55,11 +55,21 @@
     "zod": "3.25.76"
   },
   "devDependencies": {
+    "@atta/adapter-langgraph": "file:tests/fixtures/atta-engine/atta-adapter-langgraph-0.0.1.tgz",
+    "@atta/agents": "file:tests/fixtures/atta-engine/atta-agents-0.1.0.tgz",
+    "@atta/engine": "file:tests/fixtures/atta-engine/atta-engine-0.0.1.tgz",
+    "@atta/models": "file:tests/fixtures/atta-engine/atta-models-0.1.0.tgz",
     "@attalabs/aeg-core": "workspace:*",
     "@attalabs/aeg-forge-state": "workspace:*",
     "@atta/typescript-config": "workspace:*",
     "@attalabs/vinaya-sources": "workspace:*",
     "@types/bun": "latest",
+    "@types/react": "^19.0.0",
     "typescript": "^5.5.0"
+  },
+  "overrides": {
+    "@atta/agents": "file:tests/fixtures/atta-engine/atta-agents-0.1.0.tgz",
+    "@atta/engine": "file:tests/fixtures/atta-engine/atta-engine-0.0.1.tgz",
+    "@atta/models": "file:tests/fixtures/atta-engine/atta-models-0.1.0.tgz"
   }
 }
