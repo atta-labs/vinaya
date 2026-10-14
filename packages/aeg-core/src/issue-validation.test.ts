@@ -2502,8 +2502,39 @@ describe('parseIssueTestPlan', () => {
     expect(r.value).toEqual({
       kind: 'commands',
       lines: ['bun test apps/cli/tests/lib/dev-review-loop.test.ts → 0 fail'],
-      principal: ['Verify in a real browser.']
+      principal: ['Verify in a real browser.'],
+      live: []
     })
+  })
+
+  it('parses `[live]` items beside the command list and `[principal]` items, one code span removed', () => {
+    const body = [
+      '## Test plan',
+      '',
+      '```',
+      'bun test apps/cli/tests/lib/dev-review-loop.test.ts → 0 fail',
+      '```',
+      '',
+      '- [ ] **[principal]** Verify in a real browser.',
+      '- **[live]** `VINAYA_LIVE_CONFORMANCE=1 bun test apps/cli/tests/sandbox-conformance/claude.test.ts`',
+      '- **[live]** echo codex',
+      ''
+    ].join('\n')
+    const r = parseIssueTestPlan(body)
+    expect(r.ok).toBe(true)
+    if (!r.ok || r.value.kind !== 'commands') return
+    expect(r.value.live).toEqual([
+      'VINAYA_LIVE_CONFORMANCE=1 bun test apps/cli/tests/sandbox-conformance/claude.test.ts',
+      'echo codex'
+    ])
+    expect(r.value.principal).toEqual(['Verify in a real browser.'])
+  })
+
+  it('accepts a plan whose only item is a `[live]` line', () => {
+    const r = parseIssueTestPlan('## Test plan\n\n- **[live]** `bun test apps/cli/tests/x.test.ts`\n')
+    expect(r.ok).toBe(true)
+    if (!r.ok || r.value.kind !== 'commands') return
+    expect(r.value).toEqual({ kind: 'commands', lines: [], principal: [], live: ['bun test apps/cli/tests/x.test.ts'] })
   })
 
   it('refuses both the sentinel and a fence together — same exclusivity rule as the PR body', () => {

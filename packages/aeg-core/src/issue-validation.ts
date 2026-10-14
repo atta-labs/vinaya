@@ -294,7 +294,16 @@ function splitGlobList(raw: string): string[] {
 
 export type IssueSurface = { in: string[]; out: string[] }
 export type IssuePart = { n: number; objectiveIds: number[]; text: string }
-export type IssueTestPlan = { kind: 'unit-tests-only' } | { kind: 'commands'; lines: string[]; principal: string[] }
+/**
+ * A `## Test plan`'s three kinds of check: `lines`, the fenced commands the
+ * Developer runs; `principal`, the items only a person can judge; and
+ * `live`, the commands that need real signed-in agent sessions and that the
+ * review loop runs itself, on its own host, only on a head both reviewers
+ * approved.
+ */
+export type IssueTestPlan =
+  | { kind: 'unit-tests-only' }
+  | { kind: 'commands'; lines: string[]; principal: string[]; live: string[] }
 
 type ParsedIssueSection<T> = { ok: true; value: T } | { ok: false; errors: string[] }
 
@@ -591,6 +600,8 @@ export function checkPartsCiteDefinedObjectives(body: string): IssueSectionResul
 }
 
 const ISSUE_PRINCIPAL_LINE_RE = /^-\s*\[[ xX]\]\s*\*{2}\[principal\]\*{2}(.*)$/gim
+/** `- **[live]** <command>` — never a checkbox: a machine judges it, so there is no box for anyone to tick. */
+const ISSUE_LIVE_LINE_RE = /^-\s*\*{2}\[live\]\*{2}(.*)$/gim
 const UNIT_TESTS_ONLY_SENTINEL_RE = /(?:\*\*)?Test plan(?:\*\*)?\s*:\s*(?:\*\*)?\s*unit-tests-only/i
 
 /**
@@ -667,10 +678,33 @@ function isWholeSuiteTestPlanLine(line: string): boolean {
   return false
 }
 
+/** A `[live]` item's command: the item's text, one enclosing code span removed. */
+function liveCommand(text: string): string {
+  const trimmed = text.trim()
+  const span = /^(`+)(.+)\1$/.exec(trimmed)
+  return span ? (span[2] as string).trim() : trimmed
+}
+
+function liveItemsIn(region: string): string[] {
+  return [...region.matchAll(ISSUE_LIVE_LINE_RE)].map((m) => liveCommand(m[1] ?? '')).filter(Boolean)
+}
+
+/**
+ * The `[live]` commands of a body's Test plan section — an Issue's
+ * `## Test plan` or a rendered brief's `## 9. Test Plan` — in order, `[]`
+ * when it has none. Reads those items alone, so the review loop's live check
+ * never depends on how the rest of the plan parses.
+ */
+export function parseLiveTestPlanItems(body: string): string[] {
+  const located = locateTestPlanSection(body)
+  return located.found ? liveItemsIn(located.section) : []
+}
+
 /**
  * `## Test plan` — reuses `checkTestPlan`/`extractFencedBlocks`
  * (`brief-validation.ts`) rather than a second parser: the `unit-tests-only`
- * sentinel, or a fenced command list plus optional `**[principal]**` items.
+ * sentinel, or a fenced command list plus optional `**[principal]**` and
+ * `**[live]**` items.
  * The two forms are mutually exclusive, same rule `checkTestPlanExclusivity`
  * applies to a PR body's Test Plan.
  */
@@ -714,15 +748,16 @@ export function parseIssueTestPlan(body: string): ParsedIssueSection<IssueTestPl
   }
 
   const principal = [...region.matchAll(ISSUE_PRINCIPAL_LINE_RE)].map((m) => (m[1] ?? '').trim()).filter(Boolean)
-  if (lines.length === 0 && principal.length === 0) {
+  const live = liveItemsIn(region)
+  if (lines.length === 0 && principal.length === 0 && live.length === 0) {
     return {
       ok: false,
       errors: [
-        '`## Test plan` carries neither the `unit-tests-only` sentinel, a fenced command list, nor a `**[principal]**` item.'
+        '`## Test plan` carries neither the `unit-tests-only` sentinel, a fenced command list, a `**[principal]**` item, nor a `**[live]**` item.'
       ]
     }
   }
-  return { ok: true, value: { kind: 'commands', lines, principal } }
+  return { ok: true, value: { kind: 'commands', lines, principal, live } }
 }
 
 /**
@@ -2586,7 +2621,7 @@ export function checkObjectivesRespectBoundary(body: string): IssueSectionResult
 
   const testPlan = parseIssueTestPlan(body)
   if (testPlan.ok && testPlan.value.kind === 'commands') {
-    for (const line of [...testPlan.value.lines, ...testPlan.value.principal]) {
+    for (const line of [...testPlan.value.lines, ...testPlan.value.principal, ...testPlan.value.live]) {
       for (const path of namedPathsInCommandLine(line)) {
         const excluder = excludes(path)
         if (excluder) {

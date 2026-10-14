@@ -106,6 +106,9 @@ On any failure: STOP and report.
 ```
 
 - [ ] **[principal]** [auth-gated / vendor-key / visual check — what the Principal does and what they should observe]
+- **[live]** `[<command that needs real signed-in agent sessions, e.g. a live conformance test switched on by an environment variable>]`
+
+[Each kind has one use. A command line is one the Developer runs in its sandbox. A `[live]` line is a command a machine can judge by its exit code but that needs real signed-in agent sessions, so it is skipped in the Developer's runs, the push hook and CI: the review loop runs it on its own host only once both reviewers have approved the head, because it runs the pull request's own code outside any sandbox; a non-zero exit sends the Developer back as a new round, and the next head is reviewed before its line runs again. Where the host has no subscription sign-in for a vendor the line names, the loop records the line unverified on the pull request and the merge gate holds it like an unticked `[principal]` item. A `[principal]` item is what only a person can judge — a visual check, a judgment call. Never list a `[live]` line in CI.]
 
 [Pure-logic tasks with no runtime surface in §4 declare the `unit-tests-only` sentinel on the Test Plan field instead of a command list — one form or the other, never both.]
 

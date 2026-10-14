@@ -65,6 +65,10 @@ import {
   assessRound,
   beyondSurfacePaths,
   briefHash as briefHashOf,
+  carryLiveRecord,
+  parseLiveTestPlanItems,
+  readLiveRecord,
+  withLiveRecord,
   buildReviewInputManifest,
   compareManifest,
   concludedLoopRefusal,
@@ -315,6 +319,20 @@ import {
   driverDevBridgeInvocation
 } from './task-tools/dev-tools-registration.js'
 import { fetchLoopHistory } from './dev-review-loop/journal-history.js'
+import {
+  LIVE_RUN_TIMEOUT_MS,
+  type LiveCheckoutPreparer,
+  type LiveFailure,
+  type LiveRunner,
+  liveVendorsNamed,
+  livePassedAtHead,
+  prepareRealLiveCheckout,
+  renderLiveWithdrawal,
+  runLiveChecks,
+  runRealLiveCommand,
+  vendorSignedIn,
+  withdrawApprovedRound
+} from './dev-review-loop/live-check.js'
 import {
   acquireDriverLockAtomic,
   bindPauseToPullRequest,
@@ -886,6 +904,14 @@ export type LoopDeps = {
     worktreePath: string,
     env?: Record<string, string>
   ) => Promise<{ passed: boolean; output: string }>
+  /** The live check's runner: one `[live]` Test plan command, run from this driver's own process and environment in the task worktree, stopped at the time bound (`live-check.ts`). Injected so a test runs no real command. */
+  runLiveCommand: LiveRunner
+  /** Whether this host holds a subscription sign-in for a vendor a `[live]` line names — reads where the login is kept, never calls the vendor. Injected so a test needs no real login. */
+  liveVendorSignedIn: (vendor: AgentVendor) => boolean
+  /** How long one `[live]` command may run before it reads as a red gate. */
+  liveRunTimeoutMs: number
+  /** Prepares the clean checkout of the approved head a live run uses — never the Developer's worktree (`live-check.ts`). Injected so a test creates no worktree. */
+  prepareLiveCheckout: LiveCheckoutPreparer
 }
 
 function defaultRepoRoot(): string {
@@ -2414,6 +2440,10 @@ function defaultDeps(): LoopDeps {
     refreshPrEvidence: defaultRefreshPrEvidence,
     readPrView: defaultReadPrView,
     runWorktreeChecks: defaultRunWorktreeChecks,
+    runLiveCommand: runRealLiveCommand,
+    liveVendorSignedIn: (vendor) => vendorSignedIn(vendor),
+    liveRunTimeoutMs: LIVE_RUN_TIMEOUT_MS,
+    prepareLiveCheckout: (repoRoot, head) => prepareRealLiveCheckout(repoRoot, head),
     fetchDeveloperStop,
     fetchMergeableState,
     fetchConflictingFiles,
@@ -5037,7 +5067,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             task,
             branch,
             title,
-            body: await withBeyondSurfaceRecord(withDeveloperModelsLine(body, modelRuns())),
+            // A record of `[live]` runs is the driver's alone: none exists before the pull request does.
+            body: carryLiveRecord(await withBeyondSurfaceRecord(withDeveloperModelsLine(body, modelRuns())), null),
             round: roundNum,
             agent: dispatchAgent,
             repo
@@ -5072,9 +5103,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               )
             }
           }
+          // The `AEG:LIVE` record is the driver's: the live body's record is
+          // carried over, so an agent edit to it never survives. A live body
+          // that cannot be read keeps none — the next live run writes it.
+          let currentBody: string | null
+          try {
+            currentBody = d.fetchPrBody(prNumber)
+          } catch {
+            currentBody = null
+          }
           await d.updatePrBody({
             prNumber,
-            body: await withBeyondSurfaceRecord(withDeveloperModelsLine(body, modelRuns())),
+            body: carryLiveRecord(
+              await withBeyondSurfaceRecord(withDeveloperModelsLine(body, modelRuns())),
+              currentBody
+            ),
             repo
           })
           return { ok: true, result: { prNumber } }
@@ -5916,6 +5959,88 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
     }
 
+    /**
+     * The live check (`apps/cli/specs/loop.md`, "The live check"): once both
+     * reviewers have approved `head` and before the task concludes, every
+     * `[live]` line of the frozen brief's Test Plan runs here — from this
+     * driver's own process, never the Developer's sandbox — in a fresh
+     * checkout of `head` this driver prepares (`prepareLiveCheckout`), never
+     * the Developer's worktree, each bounded by `liveRunTimeoutMs`. A line runs the
+     * pull request's own code with this host's sign-ins in reach, so it never
+     * runs on a head no reviewer approved. Returns the lines that failed (a
+     * non-zero exit or a timeout), which the caller sends back as a new round;
+     * `[]` when the brief names none, the record already shows each passed at
+     * `head`, or every line passed or could not run here.
+     *
+     * A line naming a vendor this host holds no subscription sign-in for is
+     * not run and not failed: it is recorded unverified, which the merge gate
+     * holds like an unticked `[principal]` item. Every outcome is written to
+     * the pull request's `AEG:LIVE` record, keyed by `head`, so a later head
+     * runs every line again. A brief or body that cannot be read leaves the
+     * round as it was before this check existed; a record that cannot be
+     * written is logged, and the next run writes it.
+     */
+    async function runLiveGate(head: string): Promise<LiveFailure[]> {
+      let commands: string[]
+      try {
+        commands = parseLiveTestPlanItems(d.fetchFrozenBrief(task))
+      } catch (err) {
+        appendRoleLine(
+          loopLogPath,
+          'dev-review-loop',
+          `live_check_skipped: the frozen brief could not be read (${err instanceof Error ? err.message : String(err)})`
+        )
+        return []
+      }
+      if (commands.length === 0) return []
+      let body: string | null
+      try {
+        body = d.fetchPrBody(prNumber)
+      } catch {
+        body = null
+      }
+      const previous = body === null ? [] : readLiveRecord(body)
+      if (livePassedAtHead(commands, head, previous)) return []
+      // A checkout is prepared only when some line can run here; a host
+      // signed in to none of the vendors the lines name records them all
+      // unverified without one.
+      const anyRunnable = commands.some((command) => liveVendorsNamed(command).every(d.liveVendorSignedIn))
+      const checkout = anyRunnable ? await d.prepareLiveCheckout(root, head) : null
+      let result: Awaited<ReturnType<typeof runLiveChecks>>
+      try {
+        result = await runLiveChecks({
+          commands,
+          head,
+          cwd: checkout !== null && 'cwd' in checkout ? checkout.cwd : root,
+          previous,
+          cannotRun:
+            checkout !== null && 'error' in checkout
+              ? `the review loop could not prepare a clean checkout of this head (${checkout.error})`
+              : null,
+          signedIn: d.liveVendorSignedIn,
+          run: d.runLiveCommand,
+          timeoutMs: d.liveRunTimeoutMs
+        })
+      } finally {
+        if (checkout !== null && 'dispose' in checkout) checkout.dispose()
+      }
+      for (const entry of result.entries) {
+        appendRoleLine(loopLogPath, 'dev-review-loop', `live_check: ${entry.outcome} at ${head}: ${entry.command}`)
+      }
+      try {
+        const current = d.fetchPrBody(prNumber)
+        const next = withLiveRecord(current, result.entries)
+        if (next !== current) await d.updatePrBody({ prNumber, body: next, repo })
+      } catch (err) {
+        appendRoleLine(
+          loopLogPath,
+          'dev-review-loop',
+          `live_record_update_failed: ${err instanceof Error ? err.message : String(err)}`
+        )
+      }
+      return result.failures
+    }
+
     /** O4/O5/O7: the forge's own mergeable state, polled off `UNKNOWN` within the existing gate poll budget — never read as clean and never as conflicting. A budget exhaustion is treated as `CONFLICTING`, never as clean: this gates a reviewer dispatch or a publish, and silently proceeding on an unresolved answer is the one failure mode O4/O5 exist to prevent. */
     async function pollMergeableState(prNumber: number): Promise<MergeableState> {
       return await pollUntil(
@@ -6098,6 +6223,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // it, even though function declarations themselves hoist.
     let firstPass = !resumeFrom || resumeHeadAlreadyMoved
     let pendingCompletionEvents: DevReviewLoopEventInput[] = []
+    /** The head whose `[live]` lines this run already ran right after its approval — the publish step runs them only for a carried verdict. */
+    let liveCheckedHead: string | null = null
 
     /**
      * O8 (round 2 review, BLOCKER): re-read the base branch's head and
@@ -7978,7 +8105,41 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               if (decision.type === 'pause' && decision.reason === 'max_rounds' && patchCarryNote !== null) {
                 decision = { ...decision, detail: `${decision.detail ?? ''} — ${patchCarryNote}`.trim() }
               }
-              const routed = routeCompletionEvents(result.events, decision.type)
+              // The live check runs here, on the head both reviewers just
+              // approved and before the round's events are logged — never
+              // earlier, since a `[live]` line runs the pull request's own
+              // code with this host's sign-ins in reach. A failed line
+              // withdraws the approval: the held verdicts are discarded, the
+              // round ends `changes_requested` in the log rather than green,
+              // and the Developer is sent back as a new round, exactly as a
+              // blocking finding does, so the next head is reviewed before its
+              // lines run. At the round cap the loop pauses `max_rounds`.
+              let roundEvents = result.events
+              if (decision.type === 'publish') {
+                const liveFailures = await runLiveGate(head)
+                liveCheckedHead = head
+                if (liveFailures.length > 0) {
+                  const atCap = round >= config.maxRounds
+                  const withdrawn = withdrawApprovedRound(result.events, state, atCap)
+                  roundEvents = withdrawn.events
+                  state = withdrawn.state
+                  discardHeldVerdicts(root, task, round)
+                  heldResultIdentity = null
+                  const failedLines = liveFailures.map((f) => `\`${f.command}\` (${f.detail})`).join(', ')
+                  if (atCap) {
+                    decision = {
+                      type: 'pause',
+                      reason: 'max_rounds',
+                      detail: `max rounds: ${config.maxRounds} — both reviewers approved ${head}, but its \`[live]\` line(s) failed: ${failedLines}`
+                    }
+                  } else {
+                    lastReviewContext = renderLiveWithdrawal(head, liveFailures)
+                    lastHandoffFindings = []
+                    decision = { type: 'dispatch_developer' }
+                  }
+                }
+              }
+              const routed = routeCompletionEvents(roundEvents, decision.type)
               pendingCompletionEvents = routed.toDeferUntilPublish
               await logEvents(routed.toLogNow)
               if (decision.type === 'dispatch_developer') round += 1
@@ -7986,6 +8147,45 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             }
           } else {
             persistCurrentLoopState(decision.type, decision.type === 'pause' ? decision.reason : undefined)
+          }
+        }
+
+        if (decision.type === 'publish') {
+          // A held clean verdict carried to this run (above) was approved by
+          // an earlier run, which may have stopped before its live check: the
+          // lines run here before it is published. The round's events were
+          // logged by that run, so a failure here records nothing new in the
+          // log beyond the role line; the approval is still withdrawn.
+          const approvedHead = lastDispatchedManifest?.headSha ?? d.resolveHead(branch)
+          const liveFailures = liveCheckedHead === approvedHead ? [] : await runLiveGate(approvedHead)
+          if (liveFailures.length > 0) {
+            discardHeldVerdicts(root, task, round)
+            pendingCompletionEvents = []
+            heldResultIdentity = null
+            if (round >= config.maxRounds) {
+              await logEvents(
+                driverDecidedPauseEvents(
+                  config.loopId,
+                  state,
+                  round,
+                  computeStats(approvedHead, roundStartMs),
+                  'max_rounds'
+                )
+              )
+              decision = {
+                type: 'pause',
+                reason: 'max_rounds',
+                detail: `max rounds: ${config.maxRounds} — both reviewers approved ${approvedHead}, but its \`[live]\` line(s) failed: ${liveFailures.map((f) => `\`${f.command}\` (${f.detail})`).join(', ')}`
+              }
+              persistCurrentLoopState(decision.type, decision.reason)
+            } else {
+              lastReviewContext = renderLiveWithdrawal(approvedHead, liveFailures)
+              lastHandoffFindings = []
+              round += 1
+              decision = { type: 'dispatch_developer' }
+              persistCurrentLoopState(decision.type)
+              continue
+            }
           }
         }
 

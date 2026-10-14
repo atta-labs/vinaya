@@ -39,7 +39,7 @@
  *     **Tier:** 1
  *     <!-- AEG:TIER:END -->
  *
- * Deliberately minimal: seven field names, one shape. This is a delimiting
+ * Deliberately minimal: eight field names, one shape. This is a delimiting
  * convention, not a metadata DSL; resist adding structure to it.
  *
  * `EVIDENCE` (fix/pr-report-emitter) differs from the other five in one way:
@@ -60,6 +60,8 @@ import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
  * — token use is recorded as the Vinaya log's own `usage` event — so nothing
  * writes or reads that anchor any more. An older body that still carries the
  * pair keeps it: no reader here resolves it, and no writer touches it.
+ * `LIVE` is the driver's own record of its `[live]` Test plan runs
+ * (`live-record.ts`), never hand-typed either; the Test Plan gate reads it.
  */
 export const ANCHOR_FIELDS = [
   'CLOSES',
@@ -68,7 +70,8 @@ export const ANCHOR_FIELDS = [
   'PREMISE',
   'TEST-PLAN',
   'EVIDENCE',
-  'BEYOND-SURFACE'
+  'BEYOND-SURFACE',
+  'LIVE'
 ] as const
 
 export type AnchorField = (typeof ANCHOR_FIELDS)[number]

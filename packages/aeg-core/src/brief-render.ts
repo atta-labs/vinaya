@@ -255,8 +255,9 @@ export type BriefFacts = {
   /**
    * The Issue's `## Test plan` section (`issue-validation.ts`'s
    * `parseIssueTestPlan`), copied into §9 verbatim. `{ kind: 'commands',
-   * lines: [], principal: [] }` is the absent-section sentinel — a real
-   * `commands` plan always carries at least one line or one principal item.
+   * lines: [], principal: [], live: [] }` is the absent-section sentinel — a
+   * real `commands` plan always carries at least one line, one principal item
+   * or one live item.
    */
   testPlan: IssueTestPlan
   /**
@@ -874,6 +875,14 @@ function safeFence(lines: string[]): string {
   return '`'.repeat(Math.max(3, longest + 1))
 }
 
+/** A `[live]` command as a code span one backtick longer than any run inside it, padded when it starts or ends with a backtick — `parseIssueTestPlan` strips exactly this span back off. */
+function liveCodeSpan(cmd: string): string {
+  const longest = Math.max(0, ...(cmd.match(/`+/g) ?? []).map((run) => run.length))
+  const ticks = '`'.repeat(longest + 1)
+  const pad = cmd.startsWith('`') || cmd.endsWith('`') ? ' ' : ''
+  return `${ticks}${pad}${cmd}${pad}${ticks}`
+}
+
 /**
  * §9 — copied from the Issue's own `## Test plan` section (`facts.testPlan`),
  * never re-derived from the surface file list. `renderBrief`'s missing-fact
@@ -893,14 +902,18 @@ function renderSection9(facts: BriefFacts): string {
   }
 
   const principalLines = facts.testPlan.principal.map((p) => `- [ ] **[principal]** ${p}`)
+  // A `[live]` item is never a checkbox: the review loop runs it and records
+  // the outcome on the pull request, so there is no box for anyone to tick.
+  const liveLines = facts.testPlan.live.map((cmd) => `- **[live]** ${liveCodeSpan(cmd)}`)
   const fence = safeFence(facts.testPlan.lines)
+  const items = [...principalLines, ...liveLines]
   return [
     '## 9. Test Plan',
     '',
     fence,
     ...facts.testPlan.lines,
     fence,
-    ...(principalLines.length > 0 ? ['', ...principalLines] : [])
+    ...(items.length > 0 ? ['', ...items] : [])
   ].join('\n')
 }
 
@@ -1017,7 +1030,8 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
   if (
     facts.testPlan.kind === 'commands' &&
     facts.testPlan.lines.length === 0 &&
-    facts.testPlan.principal.length === 0
+    facts.testPlan.principal.length === 0 &&
+    facts.testPlan.live.length === 0
   ) {
     missing.push(`Test plan (Issue has no \`## Test plan\` section — ${cutoverNote})`)
   }

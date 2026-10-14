@@ -304,13 +304,13 @@ when a row here differs, is missing, or names a count it does not compute.
 
 | Count | Value |
 | -- | -- |
-| invariants | 163 |
-| invariants classified product-guarantee | 81 |
+| invariants | 164 |
+| invariants classified product-guarantee | 82 |
 | invariants classified implementation-accident | 10 |
 | invariants classified named-defect | 52 |
 | invariants classified advisory | 7 |
 | invariants classified principal-ruling-required | 13 |
-| invariants in product scope | 138 |
+| invariants in product scope | 139 |
 | invariants in reference-process scope | 10 |
 | invariants in implementation scope | 15 |
 | defects | 52 |

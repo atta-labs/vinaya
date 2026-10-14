@@ -135,7 +135,7 @@ function fixtureFacts(): BriefFacts {
     objectives: [{ id: 'O1', text: 'A fixture objective.' }],
     surface: { in: ['apps/cli/src'], out: [] },
     parts: [{ n: 1, objectiveIds: [1], text: 'Change the fixture file.' }],
-    testPlan: { kind: 'commands', lines: ['bun apps/cli/src/index.ts check --all → exits 0'], principal: [] },
+    testPlan: { kind: 'commands', lines: ['bun apps/cli/src/index.ts check --all → exits 0'], principal: [], live: [] },
     stopConditions: ['If a second file is needed, stop and escalate.'],
     documentation: { kind: 'none' },
     premises: [],

@@ -124,7 +124,7 @@ function testPlanRegion(prBody: string): string {
 /**
  * Test Plan — pass iff the body contains the `Test Plan: unit-tests-only`
  * sentinel (bolded or not — see `TEST_PLAN_UNIT_TESTS_ONLY_RE`), OR at least one
- * `**[agent]**`/`**[principal]**`-tagged checklist line. Presence-only: does not
+ * `**[agent]**`/`**[principal]**`-tagged checklist line, OR a `**[live]**` item. Presence-only: does not
  * judge whether tags are correctly assigned or whether `unit-tests-only` is
  * justified by the surface map.
  */
@@ -144,7 +144,7 @@ export function checkTestPlan(prBody: string): BriefSectionResult {
   const located = locateTestPlanSection(prBody)
   const region = located.found ? located.section : prBody
   if (TEST_PLAN_UNIT_TESTS_ONLY_RE.test(region)) return { status: 'pass', errors: [] }
-  if (/\*\*\[(?:agent|principal)\]\*\*/.test(region)) return { status: 'pass', errors: [] }
+  if (/\*\*\[(?:agent|principal|live)\]\*\*/.test(region)) return { status: 'pass', errors: [] }
   // Fenced-block detection only counts when the section was genuinely
   // LOCATED, never on the whole-body fallback: `testPlanRegion`'s fallback
   // exists so the sentinel/tag checks above still work on a body with no
@@ -158,7 +158,7 @@ export function checkTestPlan(prBody: string): BriefSectionResult {
   return {
     status: 'fail',
     errors: [
-      'brief-validation Test Plan: no Test Plan section found — expected `Test Plan: unit-tests-only`, a fenced `[agent]` command list, or at least one `**[agent]**`/`**[principal]**`-tagged checklist item.'
+      'brief-validation Test Plan: no Test Plan section found — expected `Test Plan: unit-tests-only`, a fenced `[agent]` command list, or at least one `**[agent]**`/`**[principal]**`/`**[live]**`-tagged item.'
     ]
   }
 }

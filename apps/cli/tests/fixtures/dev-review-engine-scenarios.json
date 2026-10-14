@@ -14,7 +14,7 @@
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop.ts",
-        "sha256": "9578b2cade432de9a0088e682ae98fcc03f70d29075368d60011e2b006de35b6"
+        "sha256": "1d9f07fd840c057e53288460be8899b42bd294912dc2f38a2cb6407cc3a758df"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/developer-dispatch.ts",
@@ -31,6 +31,10 @@
       {
         "path": "apps/cli/src/lib/dev-review-loop/journal-history.ts",
         "sha256": "470d410283697c990b6f52a7a82396f76b18b5bb8c361a8ed0a4ee593d522b46"
+      },
+      {
+        "path": "apps/cli/src/lib/dev-review-loop/live-check.ts",
+        "sha256": "839a10ea252cc39a24028e74bb562c23388dd3dd8e4603671701b74aac372468"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts",
@@ -942,6 +946,10 @@
     {
       "id": "INV-163",
       "node": "dispatch_developer"
+    },
+    {
+      "id": "INV-164",
+      "node": "publish_ready_for_merge"
     }
   ]
 }
