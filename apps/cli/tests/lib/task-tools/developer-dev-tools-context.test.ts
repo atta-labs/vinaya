@@ -64,7 +64,13 @@ describe('publishChanges gates', () => {
     )
     const res = await ctx.publishChanges('not a conventional header')
     expect(res.ok).toBe(false)
-    if (!res.ok) expect(res.error.check).toBe('commit-header')
+    if (!res.ok)
+      expect(res.error).toMatchObject({
+        check: 'commit-header',
+        errorClass: 'policy_refusal',
+        retryDisposition: 'same_attempt',
+        effectState: 'not_started'
+      })
     expect(committed).toBe(false)
   })
   it('refuses when a publication precondition fails, before any commit', async () => {
@@ -80,7 +86,13 @@ describe('publishChanges gates', () => {
     )
     const res = await ctx.publishChanges('Fix(cli): a valid header')
     expect(res.ok).toBe(false)
-    if (!res.ok) expect(res.error.check).toBe('publication-preconditions')
+    if (!res.ok)
+      expect(res.error).toMatchObject({
+        check: 'publication-preconditions',
+        errorClass: 'policy_refusal',
+        retryDisposition: 'same_attempt',
+        effectState: 'not_started'
+      })
     expect(committed).toBe(false)
   })
   it('commits and pushes when the header and preconditions pass', async () => {
@@ -107,7 +119,13 @@ describe('publishChanges gates', () => {
     )
     const res = await ctx.publishChanges('Fix(cli): a valid header')
     expect(res.ok).toBe(false)
-    if (!res.ok) expect(res.error.check).toBe('pre-push-hook')
+    if (!res.ok)
+      expect(res.error).toMatchObject({
+        check: 'pre-push-hook',
+        errorClass: 'policy_refusal',
+        retryDisposition: 'same_attempt',
+        effectState: 'not_committed'
+      })
   })
   it('never throws — a rejected commit closure becomes a refusal', async () => {
     const ctx = createDeveloperDevToolContext(
@@ -120,7 +138,12 @@ describe('publishChanges gates', () => {
     const res = await ctx.publishChanges('Fix(cli): a valid header')
     expect(res.ok).toBe(false)
     if (!res.ok) {
-      expect(res.error.check).toBe('publish_changes')
+      expect(res.error).toMatchObject({
+        check: 'publish_changes',
+        errorClass: 'internal',
+        retryDisposition: 'new_attempt',
+        effectState: 'uncertain'
+      })
       expect(res.error.output).toContain('git exploded')
     }
   })
@@ -155,14 +178,44 @@ describe('PR-body gate', () => {
     )
     const res = await ctx.openPullRequest('title', 'bad body')
     expect(res.ok).toBe(false)
-    if (!res.ok) expect(res.error.check).toBe('pr-body-gate')
+    if (!res.ok)
+      expect(res.error).toMatchObject({
+        check: 'pr-body-gate',
+        errorClass: 'policy_refusal',
+        retryDisposition: 'same_attempt',
+        effectState: 'not_started'
+      })
     expect(opened).toBe(false)
   })
   it('update_pull_request_body refuses a body the gate rejects, before writing', async () => {
     const ctx = createDeveloperDevToolContext(deps({ validatePrBody: () => ({ ok: false, reason: 'bad' }) }))
     const res = await ctx.updatePullRequestBody('bad body')
     expect(res.ok).toBe(false)
-    if (!res.ok) expect(res.error.check).toBe('pr-body-gate')
+    if (!res.ok)
+      expect(res.error).toMatchObject({
+        check: 'pr-body-gate',
+        errorClass: 'policy_refusal',
+        retryDisposition: 'same_attempt',
+        effectState: 'not_started'
+      })
+  })
+  it('classifies an unconfirmed remote PR creation as uncertain', async () => {
+    const ctx = createDeveloperDevToolContext(
+      deps({
+        openPullRequest: async () => {
+          throw new Error('forge response was lost')
+        }
+      })
+    )
+    const res = await ctx.openPullRequest('title', 'good body')
+    expect(res.ok).toBe(false)
+    if (!res.ok)
+      expect(res.error).toMatchObject({
+        check: 'open_pull_request',
+        errorClass: 'internal',
+        retryDisposition: 'new_attempt',
+        effectState: 'uncertain'
+      })
   })
   it('passes a valid body through to open/update', async () => {
     const ctx = createDeveloperDevToolContext(deps())

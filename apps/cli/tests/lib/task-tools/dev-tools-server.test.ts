@@ -158,7 +158,14 @@ describe('dev-tools server — success and refusal both land on the agent', () =
     })
     const parsed = await call(server(context), 'run_checks')
     expect(parsed.result.isError).toBe(true)
-    expect(parsed.result.structuredContent.error.message).toContain('check runner crashed')
+    expect(parsed.result.structuredContent.error).toMatchObject({
+      errorClass: 'internal',
+      retryDisposition: 'new_attempt',
+      effectState: 'uncertain',
+      check: 'tool-execution'
+    })
+    expect(parsed.result.structuredContent.error.output).toContain('check runner crashed')
+    expect(parsed.result.structuredContent.error.fix).toContain('reconcile')
   })
 })
 

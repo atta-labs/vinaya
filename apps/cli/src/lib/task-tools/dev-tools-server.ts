@@ -206,48 +206,62 @@ export async function dispatchDevTool(
     return validationRefusal(`${name} arguments do not match its strict catalog input schema.`)
   }
   let outcome: DevToolResult<unknown>
-  switch (name) {
-    case PUBLISH_CHANGES_TOOL: {
-      const header = readString(args, 'header')
-      if (header === null) return validationRefusal('publish_changes requires a non-empty `header` string.')
-      outcome = await context.publishChanges(header)
-      break
+  try {
+    switch (name) {
+      case PUBLISH_CHANGES_TOOL: {
+        const header = readString(args, 'header')
+        if (header === null) return validationRefusal('publish_changes requires a non-empty `header` string.')
+        outcome = await context.publishChanges(header)
+        break
+      }
+      case OPEN_PULL_REQUEST_TOOL: {
+        const title = readString(args, 'title')
+        const body = readString(args, 'body')
+        if (title === null) return validationRefusal('open_pull_request requires a non-empty `title` string.')
+        if (body === null) return validationRefusal('open_pull_request requires a non-empty `body` string.')
+        outcome = await context.openPullRequest(title, body)
+        break
+      }
+      case UPDATE_PULL_REQUEST_BODY_TOOL: {
+        const body = readString(args, 'body')
+        if (body === null) return validationRefusal('update_pull_request_body requires a non-empty `body` string.')
+        outcome = await context.updatePullRequestBody(body)
+        break
+      }
+      case REFRESH_EVIDENCE_TOOL:
+        outcome = await context.refreshEvidence()
+        break
+      case READ_PULL_REQUEST_TOOL:
+        outcome = await context.readPullRequest()
+        break
+      case RUN_CHECKS_TOOL:
+        outcome = await context.runChecks()
+        break
+      case FETCH_DOCUMENTATION_TOOL: {
+        const parsed = parseFetchDocumentationInput(args)
+        if (!parsed.ok) return parsed
+        outcome = await context.fetchDocumentation(parsed.input)
+        break
+      }
+      default:
+        return refusal(
+          'unknown-tool',
+          `no such dev tool: ${JSON.stringify(name)}`,
+          `Call one of: ${DEV_TOOL_NAMES.join(', ')}.`
+        )
     }
-    case OPEN_PULL_REQUEST_TOOL: {
-      const title = readString(args, 'title')
-      const body = readString(args, 'body')
-      if (title === null) return validationRefusal('open_pull_request requires a non-empty `title` string.')
-      if (body === null) return validationRefusal('open_pull_request requires a non-empty `body` string.')
-      outcome = await context.openPullRequest(title, body)
-      break
-    }
-    case UPDATE_PULL_REQUEST_BODY_TOOL: {
-      const body = readString(args, 'body')
-      if (body === null) return validationRefusal('update_pull_request_body requires a non-empty `body` string.')
-      outcome = await context.updatePullRequestBody(body)
-      break
-    }
-    case REFRESH_EVIDENCE_TOOL:
-      outcome = await context.refreshEvidence()
-      break
-    case READ_PULL_REQUEST_TOOL:
-      outcome = await context.readPullRequest()
-      break
-    case RUN_CHECKS_TOOL:
-      outcome = await context.runChecks()
-      break
-    case FETCH_DOCUMENTATION_TOOL: {
-      const parsed = parseFetchDocumentationInput(args)
-      if (!parsed.ok) return parsed
-      outcome = await context.fetchDocumentation(parsed.input)
-      break
-    }
-    default:
-      return refusal(
-        'unknown-tool',
-        `no such dev tool: ${JSON.stringify(name)}`,
-        `Call one of: ${DEV_TOOL_NAMES.join(', ')}.`
+  } catch (err) {
+    return {
+      ok: false,
+      error: devToolError(
+        'internal',
+        'new_attempt',
+        'uncertain',
+        'tool-execution',
+        err instanceof Error ? err.message : String(err),
+        `Inspect the driver log and reconcile any possible ${name} effect before retrying.`
       )
+    }
   }
   if (outcome.ok && !validatesJsonSchema(catalog.successOutputSchema, outcome.result)) {
     return {
