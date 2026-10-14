@@ -49,7 +49,7 @@ export function isToolGranted(role: string, tool: string): boolean {
 }
 
 /**
- * The live catalog entries a dispatch of `role` is served, in catalog order:
+ * The live tools a dispatch of `role` is served, in catalog order:
  * the role's grant intersected with the tools the driver has a handler for.
  */
 export function servedTools(role: GrantedRole): typeof DEV_TOOL_CATALOG {
