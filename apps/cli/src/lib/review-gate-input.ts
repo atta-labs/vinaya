@@ -33,6 +33,8 @@ import { execFileSync } from 'node:child_process'
 import {
   briefHash,
   checkReviewGate,
+  extractCodeReviewVerdict,
+  extractSecurityReviewVerdict,
   extractIssue,
   isIssueNotFoundError,
   isWaiverLabelActorVerified,
@@ -390,6 +392,18 @@ export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssemb
   })
 
   const comments = pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
+  const trustedBodies = comments
+    .filter(
+      (comment) =>
+        comment.author !== null && principalAllowlist.some((p) => p.toLowerCase() === comment.author?.toLowerCase())
+    )
+    .map((comment) => comment.body)
+  const codeManifest = extractCodeReviewVerdict(trustedBodies)
+  const securityManifest = extractSecurityReviewVerdict(trustedBodies)
+  const pauseBoundRuling =
+    JSON.stringify(codeManifest.pauseBoundRuling) === JSON.stringify(securityManifest.pauseBoundRuling)
+      ? (codeManifest.pauseBoundRuling ?? null)
+      : null
 
   // The Objectives cutover comes from the SAME default-branch trust anchor as
   // `principals`/`reviewPolicy` above, never the PR's own checkout, so a PR
@@ -409,7 +423,7 @@ export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssemb
     ok: true,
     input: {
       manifestVersion: 2,
-      pauseBoundRuling: null,
+      pauseBoundRuling,
       comments,
       labels,
       waiverLabelActor,

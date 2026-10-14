@@ -75,10 +75,12 @@ type RepoRef = { owner: string; repo: string }
 
 /** Mirrors `envelope.ts`'s `HeaderInput.inputVersions` — read once per sink instance, applied to every line it logs. */
 export type LogSinkInputVersions = {
+  manifestVersion?: 2 | null
   objectivesVersion?: string | null
   briefHash?: string | null
   rulingOrdinal?: number | null
   policyDigest?: string | null
+  pauseBoundRuling?: { rulingId: string; pauseId: string; contentDigest: string } | null
 }
 
 /**

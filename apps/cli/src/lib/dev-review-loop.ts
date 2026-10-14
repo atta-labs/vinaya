@@ -2819,20 +2819,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         : escalationPr === null
           ? `issue-${closesTask}-${d.fetchNewestIssueRulingOrdinal(closesTask)}`
           : `${resumePr}-${d.fetchNewestRulingOrdinal(resumePr)}`
-    if (
-      !bareAutomaticResume &&
-      !resumeAuthenticatedFrom.includes('-infrastructure-retry') &&
-      !resumeAuthenticatedFrom.endsWith('-host-repaired')
-    ) {
-      const rulingText = rulings.at(-1)
-      if (rulingText) {
-        pauseBoundRuling = {
-          rulingId: resumeAuthenticatedFrom,
-          pauseId: resumeEscalationId,
-          contentDigest: createHash('sha256').update(rulingText).digest('hex')
-        }
-      }
-    }
     let attachAfterReplayedResolution = false
     try {
       resolveEscalation(
@@ -2913,6 +2899,24 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           throw new Error(`devReviewLoop --resume: ${concludedRefusal}`)
         }
         attachAfterReplayedResolution = true
+      }
+    }
+    // Bind the resumed run to the resolution that was actually consumed,
+    // including replay attachment after a driver crash. A newer forge ruling
+    // must never replace the ruling that authenticated this pause.
+    const consumedResolution = readResolutionRecord(closesTask, resumeEscalationId)
+    if (consumedResolution?.decision === 'resume' && consumedResolution.authenticatedBy !== 'driver-self') {
+      const ordinal = Number.parseInt(consumedResolution.authenticatedFrom.match(/-(\d+)$/)?.[1] ?? '', 10)
+      const rulingText = Number.isInteger(ordinal) && ordinal > 0 ? rulings[ordinal - 1] : undefined
+      if (!rulingText) {
+        throw new Error(
+          `devReviewLoop --resume: resolution ${resumeEscalationId} authenticates from ${consumedResolution.authenticatedFrom}, but that exact Principal ruling text could not be resolved.`
+        )
+      }
+      pauseBoundRuling = {
+        rulingId: consumedResolution.authenticatedFrom,
+        pauseId: consumedResolution.escalationId,
+        contentDigest: createHash('sha256').update(rulingText).digest('hex')
       }
     }
     if (agentSwitched) {
@@ -4094,35 +4098,44 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         appendSourceDeliveryReceipt(documentationReceiptsPathForTask(), receipt)
       }
       const sourcesBlock = requiredSourcesPromptBlock(sourceManifest)
+      const packetHead = d.readWorktreeHead(worktreePathForBranch()) ?? d.gitRevParseOriginMain()
+      const packetBase = await d.gitMergeBase(packetHead)
+      const packetObjectives = d.resolveIssueObjectives(task)
+      const packetRulings = prNumber > 0 ? d.fetchRulings(prNumber) : d.fetchIssueRulingsAfterBrief(task)
+      const retainedPacket = buildDeveloperFullPacket({
+        brief: d.fetchFrozenBrief(task) ?? promptText,
+        briefDigest: briefHashOf(d.fetchFrozenBrief(task)),
+        objectives: packetObjectives.objectives.map((o) => `${o.id}: ${o.text}`).join('\n'),
+        objectivesVersion: packetObjectives.version ?? 'none',
+        rulings: packetRulings,
+        rulingOrdinal: prNumber > 0 ? d.fetchNewestRulingOrdinal(prNumber) : packetRulings.length,
+        policyDigest: policyDigestOf(policy),
+        baseSha: packetBase,
+        headSha: packetHead,
+        preparedSources: sourceManifest.sources.map((source) => ({
+          ref: `source:${source.sourceId}`,
+          version: source.contentDigest ?? source.snapshotRef ?? 'unavailable'
+        })),
+        capabilities: ['Execute only this frozen brief on the task branch.', publishingInstructionLine()],
+        toolCatalog: [
+          'fetch_documentation',
+          'run_checks',
+          'publish_changes',
+          'open_pull_request',
+          'update_pull_request_body',
+          'refresh_evidence',
+          'read_pull_request'
+        ],
+        expectedResult: 'DeveloperTurnResult schema version 1',
+        budgets: [`review rounds: ${policy.maxRounds}`, `task minutes: ${policy.maxTaskMinutes}`],
+        stopConditions: ['Honor every stop condition in the frozen brief.']
+      })
       const packet = opts.skipResumeContext
-        ? buildDeveloperFullPacket({
-            brief: promptText,
-            briefDigest: briefHashOf(d.fetchFrozenBrief(task)),
-            objectives: d
-              .resolveIssueObjectives(task)
-              .objectives.map((o) => `${o.id}: ${o.text}`)
-              .join('\n'),
-            rulings: prNumber > 0 ? d.fetchRulings(prNumber) : d.fetchIssueRulingsAfterBrief(task),
-            baseSha: prNumber > 0 ? ((await d.gitMergeBase(d.resolveHead(branch))) ?? 'unresolved') : 'unpublished',
-            headSha: prNumber > 0 ? d.resolveHead(branch) : 'unpublished',
-            preparedSources: sourceManifest.sources.map((source) => source.sourceId),
-            capabilities: ['Execute only this frozen brief on the task branch.', publishingInstructionLine()],
-            toolCatalog: [
-              'fetch_documentation',
-              'run_checks',
-              'publish_changes',
-              'open_pull_request',
-              'update_pull_request_body',
-              'refresh_evidence',
-              'read_pull_request'
-            ],
-            expectedResult: 'DeveloperTurnResult schema version 1',
-            budgets: [`review rounds: ${policy.maxRounds}`, `task minutes: ${policy.maxTaskMinutes}`],
-            stopConditions: ['Honor every stop condition in the frozen brief.']
-          })
+        ? retainedPacket
         : buildDeveloperDeltaPacket({
-            previousSessionId: devResumeId ?? 'fresh-session',
-            changedFacts: [{ ref: 'head', version: `sha:${prNumber > 0 ? d.resolveHead(branch) : 'unpublished'}` }],
+            retainedPacket,
+            previousSessionId: devResumeId ?? `controller-task-${task}-round-${roundNum}`,
+            changedFacts: [{ ref: 'head', version: `sha:${packetHead}` }],
             unresolvedFindings: turnResultKnownFindingIds.map((id) => ({
               id,
               description: 'unresolved controller finding'
@@ -5707,10 +5720,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             promptFile,
             roleLogPath: loopLogPath,
             inputVersions: {
+              manifestVersion: facts.manifest.manifestVersion ?? 2,
               objectivesVersion: facts.manifest.objectivesVersion,
               briefHash: facts.manifest.briefHash,
               rulingOrdinal: facts.manifest.rulingOrdinal,
-              policyDigest: facts.manifest.policyDigest
+              policyDigest: facts.manifest.policyDigest,
+              pauseBoundRuling: facts.manifest.pauseBoundRuling ?? null
             },
             ...(scratchDir ? { cwd: scratchDir } : {}),
             // O1/O3: a Reviewer dispatched
@@ -5842,10 +5857,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               promptFile,
               roleLogPath: loopLogPath,
               inputVersions: {
+                manifestVersion: facts.manifest.manifestVersion ?? 2,
                 objectivesVersion: facts.manifest.objectivesVersion,
                 briefHash: facts.manifest.briefHash,
                 rulingOrdinal: facts.manifest.rulingOrdinal,
-                policyDigest: facts.manifest.policyDigest
+                policyDigest: facts.manifest.policyDigest,
+                pauseBoundRuling: facts.manifest.pauseBoundRuling ?? null
               },
               ...(scratchDir ? { cwd: scratchDir } : {}),
               // O1/O3: a Reviewer

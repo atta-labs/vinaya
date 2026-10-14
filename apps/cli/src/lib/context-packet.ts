@@ -50,10 +50,13 @@ export type DeveloperFullPacketFacts = {
   brief: string
   briefDigest: string
   objectives: string
+  objectivesVersion: string
   rulings: readonly string[]
+  rulingOrdinal: number
+  policyDigest: string
   baseSha: string
   headSha: string
-  preparedSources: readonly string[]
+  preparedSources: readonly EvidenceEntry[]
   capabilities: readonly string[]
   toolCatalog: readonly string[]
   expectedResult: string
@@ -71,7 +74,10 @@ export function buildDeveloperFullPacket(facts: DeveloperFullPacketFacts): Conte
       { ref: 'brief', version: `hash:${facts.briefDigest}` },
       { ref: 'base', version: `sha:${facts.baseSha}` },
       { ref: 'head', version: `sha:${facts.headSha}` },
-      ...facts.preparedSources.map((source) => ({ ref: `source:${source}`, version: `prepared:${facts.briefDigest}` }))
+      { ref: 'objectives', version: facts.objectivesVersion },
+      { ref: 'ruling', version: `ordinal:${facts.rulingOrdinal}` },
+      { ref: 'policy', version: `digest:${facts.policyDigest}` },
+      ...facts.preparedSources.map((source) => ({ ...source }))
     ],
     context: [
       '## Frozen brief',
@@ -89,6 +95,7 @@ export function buildDeveloperFullPacket(facts: DeveloperFullPacketFacts): Conte
 }
 
 export type DeveloperDeltaPacketFacts = {
+  retainedPacket: ContextPacket
   previousSessionId: string
   changedFacts: readonly EvidenceEntry[]
   unresolvedFindings: readonly { id: string; description: string }[]
@@ -99,10 +106,11 @@ export type DeveloperDeltaPacketFacts = {
 /** Build a later-round/resume packet solely from durable records and evidence references. */
 export function buildDeveloperDeltaPacket(facts: DeveloperDeltaPacketFacts): ContextPacket {
   return {
-    packetVersion: 'v1',
-    role: 'developer',
-    constraints: [...facts.constraints],
+    packetVersion: facts.retainedPacket.packetVersion,
+    role: facts.retainedPacket.role,
+    constraints: [...facts.retainedPacket.constraints, ...facts.constraints],
     evidenceIndex: [
+      ...facts.retainedPacket.evidenceIndex.map((entry) => ({ ...entry })),
       { ref: 'prior-session', version: `id:${facts.previousSessionId}` },
       ...facts.changedFacts.map((entry) => ({ ...entry })),
       ...facts.unresolvedFindings.map((finding) => ({
