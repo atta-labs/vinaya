@@ -718,7 +718,7 @@ describe('checkDocumentationSourcesReadable', () => {
     )
     expect(result).toMatchObject({ ready: false, retryable: true, source: 'https://example.com/slow' })
     if (result.ready) throw new Error('expected an unreadable documentation result')
-    expect(result.failure).toContain('invalid_input/same_attempt/not_started')
+    expect(result.failure).toContain('timeout/new_attempt/not_started')
     expect(result.output).toContain('no complete response within 30000ms')
     expect(result.output).toContain('retryable')
   })
