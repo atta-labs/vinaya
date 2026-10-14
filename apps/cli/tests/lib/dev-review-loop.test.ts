@@ -222,7 +222,8 @@ PROMPT="$(cat)"
 WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
+    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/reviewer-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
+    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -230,7 +231,8 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
+    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/security-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
+    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -1989,7 +1991,8 @@ PROMPT="$(cat)"
 WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
+    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/reviewer-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
+    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     if [ -f "$HOME/.escalated-once" ]; then
       : > "$WD/findings.txt"
@@ -2003,7 +2006,8 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
+    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/security-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
+    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -2555,7 +2559,8 @@ PROMPT="$(cat)"
 WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
+    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/reviewer-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
+    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -2814,7 +2819,8 @@ PROMPT="$(cat)"
 WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
+    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/reviewer-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
+    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -2823,9 +2829,11 @@ case "$VINAYA_ROLE" in
     ;;
   security)
     ATTEMPT=$(cat "$HOME/.security-invocations" 2>/dev/null | wc -l | tr -d ' ')
-    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
+    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/security-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
+    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     if [ "$ATTEMPT" != "0" ]; then
-      WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work-retry1"
+      WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/security-work-retry1[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
+      [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work-retry1"
     fi
     mkdir -p "$WD"
     printf 'this is not a valid finding line at all, token=ghp_abcdefghijklmnopqrstuvwxyz012345\\n' > "$WD/findings.txt"
@@ -3357,7 +3365,8 @@ PROMPT="$(cat)"
 WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
+    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/reviewer-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
+    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -3365,7 +3374,8 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
+    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/security-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
+    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -3445,7 +3455,8 @@ PROMPT="$(cat)"
 WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
+    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/reviewer-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
+    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     if [ ! -f "$HOME/.escalated-once" ]; then
       touch "$HOME/.escalated-once" 2>/dev/null
@@ -3465,7 +3476,8 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"rev-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
+    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/security-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
+    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"

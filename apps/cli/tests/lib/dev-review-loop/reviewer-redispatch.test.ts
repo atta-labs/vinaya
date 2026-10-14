@@ -10,7 +10,7 @@
  * runs. See `dev-review-loop-harness.ts` for the in-process world.
  */
 
-import { existsSync, readFileSync, realpathSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
 import {
@@ -21,7 +21,6 @@ import {
 } from '../../../src/lib/dev-review-loop/reviewer-dispatch.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
 import { addCodexWritableDirs, buildWriteAccessScope } from '../../../src/lib/dispatch.js'
-import { ensureRunDir } from '../../../src/lib/run-paths.js'
 import { resolveClaudeConfinement } from '../../../src/lib/worker-boundary.js'
 import {
   CLEAN_SECURITY,
@@ -35,6 +34,11 @@ import {
 
 afterEach(cleanupWorlds)
 
+/** Creates a directory the way the driver does — owner-only — without importing the driver's path module. */
+function makeOwnerOnlyDir(dir: string): void {
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+}
+
 const EARLIER_FAIL = {
   findings: 'HIGH|apps/cli/src/lib/example.ts:12|a secret is logged in plain text.\n',
   report: 'CONFIG_SCAN: clean\nSECRETS: none found — atta-labs/secret-scan passed\nFINDING_IDS: F1\n',
@@ -47,7 +51,7 @@ function seedEarlierSecurityDispatch(
   files: { findings: string; report: string; objectives: string }
 ): string {
   const dir = join(roundDir(world, 1), 'security-work')
-  ensureRunDir(dir, world.runtimeDir)
+  makeOwnerOnlyDir(dir)
   writeFileSync(join(dir, 'findings.txt'), files.findings)
   writeFileSync(join(dir, 'report.txt'), files.report)
   writeFileSync(join(dir, 'objectives.txt'), files.objectives)
@@ -149,9 +153,9 @@ describe('freshReviewerWorkDir / missingReviewerArtifacts', () => {
     const world = makeWorld()
     const first = freshReviewerWorkDir(world.runtimeDir, world.task, 1, 'reviewer')
     expect(first).toBe(reviewerWorkDir(world.runtimeDir, world.task, 1, 'reviewer'))
-    ensureRunDir(first, world.runtimeDir)
+    makeOwnerOnlyDir(first)
     const second = freshReviewerWorkDir(world.runtimeDir, world.task, 1, 'reviewer')
-    ensureRunDir(second, world.runtimeDir)
+    makeOwnerOnlyDir(second)
     const third = freshReviewerWorkDir(world.runtimeDir, world.task, 1, 'reviewer')
     expect(second).toBe(`${first}-redispatch1`)
     expect(third).toBe(`${first}-redispatch2`)
@@ -162,7 +166,7 @@ describe('freshReviewerWorkDir / missingReviewerArtifacts', () => {
   it('counts a file older than the dispatch as missing, never as its output', () => {
     const world = makeWorld()
     const dir = freshReviewerWorkDir(world.runtimeDir, world.task, 1, 'security')
-    ensureRunDir(dir, world.runtimeDir)
+    makeOwnerOnlyDir(dir)
     const floor = reviewerOutputFloorMs(dir)
     writeFileSync(join(dir, 'findings.txt'), '')
     writeFileSync(join(dir, 'report.txt'), CLEAN_SECURITY.report)
