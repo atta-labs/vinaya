@@ -1753,7 +1753,12 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
     const refused = await ctx.publishChanges('Fix(cli): remove leaked credential')
     expect(refused.ok).toBe(false)
     if (!refused.ok) {
-      expect(refused.error.check).toBe('credential-scan')
+      expect(refused.error).toMatchObject({
+        check: 'credential-scan',
+        errorClass: 'policy_refusal',
+        retryDisposition: 'same_attempt',
+        effectState: 'not_started'
+      })
       expect(refused.error.output).not.toContain(secret)
     }
     expect(world.commits).toHaveLength(commitsBefore)
@@ -1773,11 +1778,23 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
     const commitsBefore = world.commits.length
     const header = await ctx.publishChanges(`Fix(cli): ${secret}`)
     expect(header.ok).toBe(false)
-    if (!header.ok) expect(header.error.check).toBe('credential-scan')
+    if (!header.ok)
+      expect(header.error).toMatchObject({
+        check: 'credential-scan',
+        errorClass: 'policy_refusal',
+        retryDisposition: 'same_attempt',
+        effectState: 'not_started'
+      })
     expect(world.commits).toHaveLength(commitsBefore)
     const title = await ctx.openPullRequest(secret, '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n')
     expect(title.ok).toBe(false)
-    if (!title.ok) expect(title.error.check).toBe('credential-scan')
+    if (!title.ok)
+      expect(title.error).toMatchObject({
+        check: 'credential-scan',
+        errorClass: 'policy_refusal',
+        retryDisposition: 'same_attempt',
+        effectState: 'not_started'
+      })
     expect(world.prOpens).toHaveLength(1)
   })
 

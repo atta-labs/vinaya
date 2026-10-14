@@ -915,7 +915,9 @@ export async function checkDocumentationSourcesReadable(
     let retryable = false
     if (!fetched.ok) {
       failure = `${fetched.error.errorClass}/${fetched.error.retryDisposition}/${fetched.error.effectState}: ${fetched.error.output}`
-      retryable = fetched.error.retryDisposition === 'same_attempt' || fetched.error.retryDisposition === 'new_attempt'
+      retryable =
+        (fetched.error.errorClass === 'timeout' || fetched.error.errorClass === 'dependency_unavailable') &&
+        (fetched.error.retryDisposition === 'same_attempt' || fetched.error.retryDisposition === 'new_attempt')
     } else {
       const doc = fetched.document
       const requestedHost = hostOf(doc.requestedUrl)

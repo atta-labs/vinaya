@@ -731,6 +731,17 @@ describe('checkDocumentationSourcesReadable', () => {
     expect(result).toMatchObject({ ready: false, retryable: true, source: 'https://example.com/flaky' })
   })
 
+  it('treats invalid frozen-source input as a Planner correction, not a retryable reachability failure', async () => {
+    const result = await checkDocumentationSourcesReadable(
+      briefWith('http://example.com/not-https'),
+      depsFor(() => page('x'.repeat(1500)))
+    )
+    expect(result).toMatchObject({ ready: false, retryable: false, source: 'http://example.com/not-https' })
+    expect(result.output).toContain('invalid_input/same_attempt/not_started')
+    expect(result.output).toContain('needs the Planner to correct the task')
+    expect(result.output).not.toContain('retryable:')
+  })
+
   it('refuses an error status as a Planner correction', async () => {
     const result = await checkDocumentationSourcesReadable(
       briefWith('https://example.com/gone'),

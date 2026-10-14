@@ -147,6 +147,24 @@ describe('publishChanges gates', () => {
       expect(res.error.output).toContain('git exploded')
     }
   })
+  it('classifies a publication-precondition read exception before effects start', async () => {
+    const ctx = createDeveloperDevToolContext(
+      deps({
+        readPublicationCheckInput: () => {
+          throw new Error('worktree facts unavailable')
+        }
+      })
+    )
+    const res = await ctx.publishChanges('Fix(cli): a valid header')
+    expect(res.ok).toBe(false)
+    if (!res.ok)
+      expect(res.error).toMatchObject({
+        check: 'publish_changes',
+        errorClass: 'internal',
+        retryDisposition: 'new_attempt',
+        effectState: 'not_started'
+      })
+  })
 })
 
 describe('PR-body gate', () => {
@@ -215,6 +233,24 @@ describe('PR-body gate', () => {
         errorClass: 'internal',
         retryDisposition: 'new_attempt',
         effectState: 'uncertain'
+      })
+  })
+  it('classifies a PR-body gate exception before the remote effect starts', async () => {
+    const ctx = createDeveloperDevToolContext(
+      deps({
+        validatePrBody: () => {
+          throw new Error('body gate unavailable')
+        }
+      })
+    )
+    const res = await ctx.openPullRequest('title', 'good body')
+    expect(res.ok).toBe(false)
+    if (!res.ok)
+      expect(res.error).toMatchObject({
+        check: 'open_pull_request',
+        errorClass: 'internal',
+        retryDisposition: 'new_attempt',
+        effectState: 'not_started'
       })
   })
   it('passes a valid body through to open/update', async () => {

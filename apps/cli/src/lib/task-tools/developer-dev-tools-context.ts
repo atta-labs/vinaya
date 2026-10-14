@@ -72,7 +72,11 @@ function refuse<T>(check: string, output: string, fix: string): DevToolResult<T>
  * rejected promise becomes a structured refusal on the error channel, so the
  * driver returns it to the agent instead of pausing the loop.
  */
-async function guard<T>(check: string, run: () => Promise<DevToolResult<T>>): Promise<DevToolResult<T>> {
+async function guard<T>(
+  check: string,
+  effectState: 'not_started' | 'uncertain',
+  run: () => Promise<DevToolResult<T>>
+): Promise<DevToolResult<T>> {
   try {
     return await run()
   } catch (err) {
@@ -82,7 +86,7 @@ async function guard<T>(check: string, run: () => Promise<DevToolResult<T>>): Pr
       error: devToolError(
         'internal',
         'new_attempt',
-        'uncertain',
+        effectState,
         check,
         message,
         `The ${check} step threw: reconcile any possible effect in the driver log before retrying.`
@@ -99,62 +103,72 @@ async function guard<T>(check: string, run: () => Promise<DevToolResult<T>>): Pr
  */
 export function createDeveloperDevToolContext(deps: DeveloperDevToolDeps): DevToolContext {
   const publication = async <T>(check: string, run: () => Promise<DevToolResult<T>>): Promise<DevToolResult<T>> => {
-    const result = await guard(check, run)
+    const result = await run()
     deps.onPublicationAttempt?.(result)
     return result
   }
+  const gate = <T>(check: string, run: () => Promise<DevToolResult<T>>): Promise<DevToolResult<T>> =>
+    guard(check, 'not_started', run)
+  const effect = <T>(check: string, run: () => Promise<DevToolResult<T>>): Promise<DevToolResult<T>> =>
+    guard(check, 'uncertain', run)
   return {
     publishChanges: (header) =>
-      publication('publish_changes', async () => {
-        const validated = validateCommitHeader(header)
-        if (!validated.ok) {
-          return refuse(
-            'commit-header',
-            validated.reason,
-            'Rewrite the header as a single `Type(scope): Description` line.'
-          )
-        }
-        const preconditions = checkPublicationPreconditions(await deps.readPublicationCheckInput())
-        if (!preconditions.ok) {
-          return refuse(
-            'publication-preconditions',
-            preconditions.reason,
-            'Resolve the precondition named above before publishing.'
-          )
-        }
-        // The protected-path and pre-push gates run inside this closure. A
-        // path beyond the Surface is published and named back to the
-        // Developer; the driver records it in the pull request body.
-        const pushed = await deps.commitAndPush(validated.header)
-        if (!pushed.ok) return pushed
-        return {
-          ok: true,
-          result: { ...pushed.result, beyondSurface: preconditions.beyondSurface.map((entry) => entry.path) }
-        }
-      }),
+      publication('publish_changes', () =>
+        gate('publish_changes', async () => {
+          const validated = validateCommitHeader(header)
+          if (!validated.ok) {
+            return refuse(
+              'commit-header',
+              validated.reason,
+              'Rewrite the header as a single `Type(scope): Description` line.'
+            )
+          }
+          const preconditions = checkPublicationPreconditions(await deps.readPublicationCheckInput())
+          if (!preconditions.ok) {
+            return refuse(
+              'publication-preconditions',
+              preconditions.reason,
+              'Resolve the precondition named above before publishing.'
+            )
+          }
+          // The protected-path and pre-push gates run inside this closure. A
+          // path beyond the Surface is published and named back to the
+          // Developer; the driver records it in the pull request body.
+          const pushed = await effect('publish_changes', () => deps.commitAndPush(validated.header))
+          if (!pushed.ok) return pushed
+          return {
+            ok: true,
+            result: { ...pushed.result, beyondSurface: preconditions.beyondSurface.map((entry) => entry.path) }
+          }
+        })
+      ),
     openPullRequest: (title, body) =>
-      publication('open_pull_request', async () => {
-        const validated = await deps.validatePrBody(body, title)
-        if (!validated.ok) {
-          return refuse('pr-body-gate', validated.reason, 'Fix the PR body to satisfy the body gate, then reopen.')
-        }
-        return deps.openPullRequest(title, body)
-      }),
+      publication('open_pull_request', () =>
+        gate('open_pull_request', async () => {
+          const validated = await deps.validatePrBody(body, title)
+          if (!validated.ok) {
+            return refuse('pr-body-gate', validated.reason, 'Fix the PR body to satisfy the body gate, then reopen.')
+          }
+          return effect('open_pull_request', () => deps.openPullRequest(title, body))
+        })
+      ),
     updatePullRequestBody: (body) =>
-      publication('update_pull_request_body', async () => {
-        const validated = await deps.validatePrBody(body)
-        if (!validated.ok) {
-          return refuse(
-            'pr-body-gate',
-            validated.reason,
-            'Fix the PR body to satisfy the body gate, then update again.'
-          )
-        }
-        return deps.updatePullRequestBody(body)
-      }),
-    refreshEvidence: () => guard('refresh_evidence', deps.refreshEvidence),
-    readPullRequest: () => guard('read_pull_request', deps.readPullRequest),
-    runChecks: () => guard('run_checks', deps.runChecks),
+      publication('update_pull_request_body', () =>
+        gate('update_pull_request_body', async () => {
+          const validated = await deps.validatePrBody(body)
+          if (!validated.ok) {
+            return refuse(
+              'pr-body-gate',
+              validated.reason,
+              'Fix the PR body to satisfy the body gate, then update again.'
+            )
+          }
+          return effect('update_pull_request_body', () => deps.updatePullRequestBody(body))
+        })
+      ),
+    refreshEvidence: () => effect('refresh_evidence', deps.refreshEvidence),
+    readPullRequest: () => effect('read_pull_request', deps.readPullRequest),
+    runChecks: () => effect('run_checks', deps.runChecks),
     fetchDocumentation: (input) => {
       const fetchDocumentation = deps.fetchDocumentation
       if (!fetchDocumentation) {
@@ -166,7 +180,7 @@ export function createDeveloperDevToolContext(deps: DeveloperDevToolDeps): DevTo
           )
         )
       }
-      return guard('fetch_documentation', () => fetchDocumentation(input))
+      return effect('fetch_documentation', () => fetchDocumentation(input))
     }
   }
 }
