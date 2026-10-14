@@ -20,7 +20,12 @@ import {
   reviewerWorkDir
 } from '../../../src/lib/dev-review-loop/reviewer-dispatch.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
-import { addCodexWritableDirs, buildWriteAccessScope } from '../../../src/lib/dispatch.js'
+import {
+  addCodexWritableDirs,
+  buildWriteAccessScope,
+  claudeConfinementRequest,
+  type DispatchOpts
+} from '../../../src/lib/dispatch.js'
 import { resolveClaudeConfinement } from '../../../src/lib/worker-boundary.js'
 import {
   CLEAN_SECURITY,
@@ -59,18 +64,25 @@ function seedEarlierSecurityDispatch(
 }
 
 /** Records the output directory each security dispatch was granted, in dispatch order. */
-function recordSecurityDirs(world: LoopWorld): { dirs: string[]; prompts: string[]; deps: Partial<LoopDeps> } {
+function recordSecurityDirs(world: LoopWorld): {
+  dirs: string[]
+  prompts: string[]
+  options: DispatchOpts[]
+  deps: Partial<LoopDeps>
+} {
   const base = makeInProcessDeps(world)
   const dirs: string[] = []
   const prompts: string[] = []
+  const options: DispatchOpts[] = []
   const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
     if (role === 'security') {
       dirs.push(opts.extraWritableDirs?.[0] ?? '')
       prompts.push(prompt)
+      options.push(opts)
     }
     return base.dispatchRole!(role, agent, prompt, opts)
   }
-  return { dirs, prompts, deps: { dispatchRole } }
+  return { dirs, prompts, options, deps: { dispatchRole } }
 }
 
 describe('a re-dispatched reviewer never reads an earlier dispatch’s output', () => {
@@ -112,7 +124,7 @@ describe('a re-dispatched reviewer never reads an earlier dispatch’s output', 
   it('the re-dispatched reviewer’s output directory is the one its prompt names, and inside its sandbox’s writable set', async () => {
     const world = makeWorld()
     seedEarlierSecurityDispatch(world, EARLIER_FAIL)
-    const { dirs, prompts, deps } = recordSecurityDirs(world)
+    const { dirs, prompts, options, deps } = recordSecurityDirs(world)
 
     await runLoopInProcess(world, { task: world.task, agent: 'claude' }, deps)
 
@@ -120,30 +132,28 @@ describe('a re-dispatched reviewer never reads an earlier dispatch’s output', 
     expect(existsSync(workDir)).toBe(true)
     expect(prompts[0]).toContain(join(workDir, 'findings.txt'))
     const realDir = realpathSync(workDir)
+    const dispatched = options[0]!
+    expect(dispatched.unattended).toBe(true)
 
-    // Claude: the sandbox block `dispatch.ts` builds from this dispatch's own
-    // `extraWritableDirs`, and the write-access hook's file grant.
-    const confinement = resolveClaudeConfinement(
-      {
-        role: 'security',
-        agent: 'claude',
-        worktreeDir: world.repoRoot,
-        scratchDir: world.runtimeDir,
-        allowedHosts: [],
-        extraWritableDirs: dirs
-      },
-      { platform: 'darwin', linuxTools: { available: true, missing: [] } as never, developerDir: null }
-    )
+    // Claude: the confinement request `dispatchRole` builds from the options
+    // the loop actually handed this dispatch (`claudeConfinementRequest`),
+    // resolved the way `dispatchRole` resolves it.
+    const request = claudeConfinementRequest('security', 'claude', dispatched, world.runtimeDir)
+    const confinement = resolveClaudeConfinement(request, {
+      platform: 'darwin',
+      linuxTools: { available: true, missing: [] } as never,
+      developerDir: null
+    })
     if (!confinement.ok || !confinement.confined) throw new Error('expected a confined Claude sandbox')
     expect(confinement.settings.sandbox.filesystem.allowWrite).toContain(realDir)
-    const scope = buildWriteAccessScope('security', world.repoRoot, dirs)
+    const scope = buildWriteAccessScope('security', world.repoRoot, dispatched.extraWritableDirs ?? [])
     expect(scope).toEqual({
       kind: 'exact-files',
       paths: ['findings.txt', 'report.txt', 'objectives.txt'].map((f) => join(realDir, f))
     })
 
     // Codex: the same directory as a writable root.
-    const codexArgs = addCodexWritableDirs(['exec', '--json'], dirs, false)
+    const codexArgs = addCodexWritableDirs(['exec', '--json'], dispatched.extraWritableDirs ?? [], false)
     expect(codexArgs).toEqual(['exec', '--add-dir', realDir, '--json'])
   })
 })
