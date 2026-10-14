@@ -46,7 +46,7 @@
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts",
-        "sha256": "88f72fe76f191cd47dadfeb38e2604e61f35ed52d4c70c265fac08ff74aa7677"
+        "sha256": "d88e95cd10e3d39626784e873c026c897680b0fed4763b4448317f16905aef52"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/reviewer-isolation.ts",
