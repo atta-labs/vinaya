@@ -2907,7 +2907,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     const consumedResolution = readResolutionRecord(closesTask, resumeEscalationId)
     if (consumedResolution?.decision === 'resume' && consumedResolution.authenticatedBy !== 'driver-self') {
       const ordinal = Number.parseInt(consumedResolution.authenticatedFrom.match(/-(\d+)$/)?.[1] ?? '', 10)
-      const rulingText = Number.isInteger(ordinal) && ordinal > 0 ? rulings[ordinal - 1] : undefined
+      // Some forge adapters return only the newest ruling body while the
+      // authenticated marker retains its absolute ordinal. A singleton is
+      // therefore that exact authenticated ruling; with multiple bodies the
+      // absolute ordinal selects the matching comment.
+      const rulingText =
+        rulings.length === 1 ? rulings[0] : Number.isInteger(ordinal) && ordinal > 0 ? rulings[ordinal - 1] : undefined
       if (!rulingText) {
         throw new Error(
           `devReviewLoop --resume: resolution ${resumeEscalationId} authenticates from ${consumedResolution.authenticatedFrom}, but that exact Principal ruling text could not be resolved.`
