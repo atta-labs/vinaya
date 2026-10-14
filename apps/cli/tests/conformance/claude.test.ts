@@ -3,6 +3,7 @@ import type { VendoredVinaya } from '../../src/lib/self-host.js'
 import { claudeMcpJsonConfig } from '../../src/lib/task-tools/adapters.js'
 import { TASK_TOOLS_MCP_SERVER_NAME } from '../../src/lib/task-tools/server.js'
 import { ABS_BIN, defineConformanceSuite } from './harness.js'
+import { defineLiveGrantCases } from './role-grants-live.js'
 
 /**
  * The Claude runtime half of Part 2 (O2) — nine scenarios, shared verbatim
@@ -26,3 +27,6 @@ describe('Claude adapter — registers the shared task-tools server', () => {
 
 const claudeServer = claudeMcpJsonConfig(SELF_HOST).mcpServers[TASK_TOOLS_MCP_SERVER_NAME]!
 defineConformanceSuite('claude', { command: claudeServer.command, args: claudeServer.args })
+
+// Live, opt-in: each role's session sees exactly its granted driver-run tools (`role-grants-live.ts`).
+defineLiveGrantCases('claude')

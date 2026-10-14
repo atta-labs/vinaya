@@ -140,6 +140,7 @@ import { repoRoot } from './diff-evidence.js'
 import {
   type BridgeInvocation,
   claudeDevToolsArgs,
+  claudeDevToolsStartFailure,
   codexDevToolsConfigToml,
   devToolsMcpConfigFileBody
 } from './task-tools/dev-tools-registration.js'
@@ -1540,8 +1541,10 @@ const MACHINE_STATE_DENY_RULES: readonly string[] = [
  * reset, `rm -rf`, and `MACHINE_STATE_DENY_RULES` — none of which any
  * doctrine command needs.
  *
- * `code-reviewer`/`security` get read-only git commands and no `gh` at all
- * (task 2, O2) — the driver now stages the pull request's own body, its diff
+ * `code-reviewer`/`security` get no allow rule at all: no `gh`, and no git
+ * command either, because the staged read-only checkout they review carries no
+ * version-control metadata, so a read-only git command there has nothing to
+ * read. The driver stages the pull request's own body, its diff
  * against its base, and the prior round's findings as files inside the
  * reviewer's own read-only checkout (`reviewer-dispatch.ts`'s
  * `candidateInputPieces`/`reviewer-isolation.ts`'s
@@ -1623,14 +1626,8 @@ export function buildRolePermissions(role: Role): RolePermissions {
   }
   if (role === 'code-reviewer' || role === 'security') {
     return {
-      allow: [
-        'Bash(git diff:*)',
-        'Bash(git log:*)',
-        'Bash(git show:*)',
-        'Bash(git grep:*)',
-        'Bash(git status:*)',
-        'Bash(git fetch:*)'
-      ],
+      // No git allow: the staged checkout has no version-control metadata.
+      allow: [],
       deny: [
         'Bash(git push:*)',
         'Bash(git commit:*)',
@@ -4940,8 +4937,9 @@ export async function dispatchRole(
   // is never read. Written into this dispatch's own Claude scratch (minted for
   // every unattended Claude start, confined or not), which the sandbox grants
   // read access to — the SAME place the O1 proof wrote it and proved reachable
-  // from inside the sandbox on macOS. All six tools are exposed (no
-  // `--allowedTools` narrowing: the Developer uses the full set).
+  // from inside the sandbox on macOS. No `--allowedTools` narrowing: the
+  // driver-run server itself lists and accepts only the dispatched role's
+  // granted tools (`task-tools/role-grants.ts`).
   const devToolsClaudeArgs =
     agent === 'claude' && devToolsBridge !== null && claudeScratchDir !== null
       ? (() => {
@@ -5152,6 +5150,11 @@ export async function dispatchRole(
     // pushes past `stdoutBuf`'s head-only cap — so a Developer dispatch also
     // keeps the stream's tail, the same size, for the adapter to read.
     let stdoutTail = ''
+    // Set when a Claude session's own init event reports the dev-tools server
+    // failed or skipped (`claudeDevToolsStartFailure`): the driver then ends
+    // the session and the dispatch fails as `startup-failed`, the same way a
+    // Codex start fails on its `required` server.
+    let devToolsStartFailure: string | null = null
 
     // `'exit'` (below) can fire before the LAST already-in-flight `'data'`
     // chunk from the DIRECT child is delivered — the OS process-exit
@@ -5209,6 +5212,16 @@ export async function dispatchRole(
       renderCarry = lines.pop() ?? ''
       for (const line of lines) {
         if (line.trim().length === 0) continue
+        if (devToolsClaudeArgs.length > 0 && devToolsStartFailure === null) {
+          const failure = claudeDevToolsStartFailure(line)
+          if (failure !== null) {
+            devToolsStartFailure = failure
+            writeLifecycle(
+              `[vinaya dispatch ${effectId}] ${role} via ${agent}: ${failure} — ending the session, which cannot reach its tools`
+            )
+            child.kill('SIGTERM')
+          }
+        }
         // O1: bind the vendor session id onto the launch record the MOMENT the
         // stream first reports it — not only at exit — so an attempt the
         // driver's own death interrupts mid-turn still carries a resumable
@@ -5561,7 +5574,7 @@ export async function dispatchRole(
       // output before any other non-zero classification: a limit is a wait
       // for a reset, never a crash.
       const usageLimit = detectUsageLimit(agent, stdoutBuf, code, Date.now())
-      if (code !== 0 || usageLimit !== null) {
+      if (code !== 0 || usageLimit !== null || devToolsStartFailure !== null) {
         const priorSize = sizeOfSafe(outboxPath)
         log({
           kind: 'dispatch',
@@ -5619,12 +5632,14 @@ export async function dispatchRole(
         const failureReason: DispatchFailureReason =
           usageLimit !== null
             ? 'usage-limit'
-            : neverBoundSession
-              ? 'unbound'
-              : sawVendorConnectionRetry(stdoutBuf)
-                ? 'connection-failed'
-                : 'crash'
-        if (neverBoundSession && usageLimit === null) {
+            : devToolsStartFailure !== null
+              ? 'startup-failed'
+              : neverBoundSession
+                ? 'unbound'
+                : sawVendorConnectionRetry(stdoutBuf)
+                  ? 'connection-failed'
+                  : 'crash'
+        if (neverBoundSession && usageLimit === null && devToolsStartFailure === null) {
           writeLifecycle(
             `[vinaya dispatch ${effectId}] ${role} via ${agent}: exited (code ${code}) without ever producing a working vendor session — failing now as 'unbound'`
           )

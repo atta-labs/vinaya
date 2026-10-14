@@ -172,7 +172,7 @@ describe('O1: a seventh dev tool both agents call through the dev-tools server',
       runChecks: async () => ({ ok: true, result: { passed: true, output: '' } }),
       fetchDocumentation: tool(network, receiptsPath)
     })
-    const server = createDevToolsMcpServer({ serverVersion: '0.0.0-test', context })
+    const server = createDevToolsMcpServer({ serverVersion: '0.0.0-test', context, role: 'developer' })
     const line = JSON.stringify({
       jsonrpc: '2.0',
       id: 1,
@@ -201,7 +201,7 @@ describe('O1: a seventh dev tool both agents call through the dev-tools server',
       }),
       runChecks: async () => ({ ok: true, result: { passed: true, output: '' } })
     })
-    const server = createDevToolsMcpServer({ serverVersion: '0.0.0-test', context })
+    const server = createDevToolsMcpServer({ serverVersion: '0.0.0-test', context, role: 'developer' })
     for (const args of [{}, { url: 'https://x.example.com', offset: -1 }]) {
       const line = JSON.stringify({
         jsonrpc: '2.0',

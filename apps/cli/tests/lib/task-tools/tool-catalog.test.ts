@@ -224,7 +224,7 @@ describe('canonical agent tool catalog', () => {
       runChecks: unavailable,
       fetchDocumentation: unavailable
     } as unknown as DevToolContext
-    const server = createDevToolsMcpServer({ serverVersion: 'test', context })
+    const server = createDevToolsMcpServer({ serverVersion: 'test', context, role: 'developer' })
     const response = JSON.parse(
       (await server.handleLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }))) as string
     )

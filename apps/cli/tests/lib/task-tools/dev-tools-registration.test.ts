@@ -3,8 +3,10 @@ import {
   CODEX_DEV_TOOLS_APPROVAL_MODE,
   claudeDevToolName,
   claudeDevToolsArgs,
+  claudeDevToolsStartFailure,
   codexDevToolsConfigToml,
   codexDevToolsMcpTable,
+  DEV_TOOLS_TOOL_TIMEOUT_SEC,
   devToolsMcpConfig,
   devToolsMcpConfigFileBody
 } from '../../../src/lib/task-tools/dev-tools-registration.js'
@@ -27,7 +29,16 @@ describe('devToolsMcpConfig (Claude)', () => {
     const cfg = devToolsMcpConfig(BRIDGE)
     expect(Object.keys(cfg.mcpServers)).toEqual([DEV_TOOLS_MCP_SERVER_NAME])
     const entry = cfg.mcpServers[DEV_TOOLS_MCP_SERVER_NAME]
-    expect(entry).toEqual({ type: 'stdio', command: BRIDGE.command, args: BRIDGE.args })
+    expect(entry).toEqual({
+      type: 'stdio',
+      command: BRIDGE.command,
+      args: BRIDGE.args,
+      timeout: DEV_TOOLS_TOOL_TIMEOUT_SEC * 1000
+    })
+  })
+  it('declares a per-call timeout, in milliseconds, long enough for a gated publication', () => {
+    expect(DEV_TOOLS_TOOL_TIMEOUT_SEC).toBe(1800)
+    expect(devToolsMcpConfig(BRIDGE).mcpServers[DEV_TOOLS_MCP_SERVER_NAME]?.timeout).toBe(1_800_000)
   })
   it('the file body is the JSON config with a trailing newline', () => {
     const body = devToolsMcpConfigFileBody(BRIDGE)
@@ -50,6 +61,46 @@ describe('claudeDevToolsArgs', () => {
       '--allowedTools',
       `mcp__${DEV_TOOLS_MCP_SERVER_NAME}__run_checks,mcp__${DEV_TOOLS_MCP_SERVER_NAME}__read_pull_request`
     ])
+  })
+})
+
+describe('claudeDevToolsStartFailure', () => {
+  const init = (fields: Record<string, unknown>): string =>
+    JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', ...fields })
+
+  it('names a server the init event reports failed', () => {
+    const line = init({ mcp_servers: [{ name: DEV_TOOLS_MCP_SERVER_NAME, status: 'failed', source: 'dynamic' }] })
+    expect(claudeDevToolsStartFailure(line)).toContain('failed to start')
+  })
+  it('names a server the init event reports skipped, quoting Claude Code’s message', () => {
+    const line = init({
+      mcp_servers: [],
+      mcp_server_errors: [{ name: DEV_TOOLS_MCP_SERVER_NAME, type: 'url_missing_type', message: 'Skipped — bad entry' }]
+    })
+    expect(claudeDevToolsStartFailure(line)).toContain('Skipped — bad entry')
+  })
+  it('names a server the init event lists nowhere', () => {
+    expect(claudeDevToolsStartFailure(init({ mcp_servers: [], mcp_server_errors: null }))).toContain('not loaded')
+  })
+  it('accepts a connected or still-pending server', () => {
+    for (const status of ['connected', 'pending']) {
+      const line = init({ mcp_servers: [{ name: DEV_TOOLS_MCP_SERVER_NAME, status }] })
+      expect(claudeDevToolsStartFailure(line)).toBeNull()
+    }
+  })
+  it('ignores every line that is not the init event', () => {
+    expect(claudeDevToolsStartFailure('not json')).toBeNull()
+    expect(claudeDevToolsStartFailure(JSON.stringify({ type: 'assistant', message: {} }))).toBeNull()
+    expect(claudeDevToolsStartFailure(JSON.stringify({ type: 'system', subtype: 'api_retry' }))).toBeNull()
+  })
+  it('ignores another server’s failure', () => {
+    const line = init({
+      mcp_servers: [
+        { name: 'other', status: 'failed' },
+        { name: DEV_TOOLS_MCP_SERVER_NAME, status: 'connected' }
+      ]
+    })
+    expect(claudeDevToolsStartFailure(line)).toBeNull()
   })
 })
 
@@ -80,6 +131,9 @@ describe('codexDevToolsMcpTable', () => {
   it('allows long-running pushes with hooks to complete', () => {
     expect(codexDevToolsMcpTable(BRIDGE)).toContain('tool_timeout_sec = 1800')
   })
+  it('marks the server required, so Codex refuses to start without it', () => {
+    expect(codexDevToolsMcpTable(BRIDGE)).toContain('required = true')
+  })
 })
 
 describe('codexDevToolsConfigToml', () => {
@@ -87,6 +141,15 @@ describe('codexDevToolsConfigToml', () => {
     const toml = codexDevToolsConfigToml(BRIDGE, 'sandbox_mode = "workspace-write"')
     expect(toml.startsWith('sandbox_mode = "workspace-write"')).toBe(true)
     expect(toml).toContain(`[mcp_servers.${DEV_TOOLS_MCP_SERVER_NAME}]`)
+  })
+  it('the staged config.toml parses to a required server with the publication timeout', () => {
+    const parsed = Bun.TOML.parse(codexDevToolsConfigToml(BRIDGE, 'sandbox_mode = "workspace-write"')) as {
+      mcp_servers: Record<string, Record<string, unknown>>
+    }
+    const server = parsed.mcp_servers[DEV_TOOLS_MCP_SERVER_NAME]
+    expect(server?.required).toBe(true)
+    expect(server?.tool_timeout_sec).toBe(DEV_TOOLS_TOOL_TIMEOUT_SEC)
+    expect(server?.command).toBe(BRIDGE.command)
   })
   it('is the table alone when there is no sandbox config', () => {
     const toml = codexDevToolsConfigToml(BRIDGE, null)

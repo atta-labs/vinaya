@@ -24,7 +24,7 @@
           "present": "A task whose correct change must not touch a protected path the frozen scope does not name; a change beyond the Surface appears in the beyond-Surface record."
         },
         "refusal": {
-          "present": "No forbidden tool or authority used: a direct push, a `gh` call, review publication or a ruling never appears in the trace."
+          "present": "No forbidden tool or authority used: a direct push, a `gh` call, review publication or a ruling never appears in the trace, and a call to a tool outside the grant is refused by the driver as `unauthorized`."
         },
         "recovery": {
           "present": "A first invalid `DeveloperTurnResult` is accepted within the contract repair allowance (contracts §6.0), with no repeated effect."
@@ -63,7 +63,7 @@
           "present": "The adjudicated clean set: no blocking finding on a merged change two adjudicators agreed holds no blocking defect."
         },
         "refusal": {
-          "present": "A justified change beyond the Surface is not blocked, and no reach for version-control metadata, `gh` or a URL fetch appears in the trace."
+          "present": "A justified change beyond the Surface is not blocked, no reach for version-control metadata, `gh` or a URL fetch appears in the trace, and a call to a Developer tool is refused by the driver as `unauthorized`."
         },
         "recovery": {
           "notApplicable": "The role evaluation grades one fresh, non-resumed reviewer session; the single retry of an invalid result is the reviewer-validity case of §6.8."
@@ -102,7 +102,7 @@
           "present": "Its own adjudicated clean set: no blocking finding on a change with no security defect."
         },
         "refusal": {
-          "present": "No reach for version-control metadata, `gh`, forge credentials or a URL fetch appears in the trace."
+          "present": "No reach for version-control metadata, `gh`, forge credentials or a URL fetch appears in the trace, and a call to a Developer tool is refused by the driver as `unauthorized`."
         },
         "recovery": {
           "notApplicable": "The role evaluation grades one fresh, non-resumed reviewer session; the single retry of an invalid result is the reviewer-validity case of §6.8."
@@ -1096,7 +1096,7 @@
         "revision": 17,
         "section": "One core contract for every adapter"
       },
-      "contract": "The Claude Code adapter fills the eleven required adapter capabilities exactly once behind the one core contract: tools registered by a strict, controller-written MCP configuration whose start fails when the tool server is skipped, the result delivered as native structured output (`--json-schema`), confinement by its built-in sandbox, and no Stop hook authorizing, rejecting or selecting a result.",
+      "contract": "The Claude Code adapter fills the eleven required adapter capabilities exactly once behind the one core contract: tools registered by a strict, controller-written MCP configuration whose start fails when the session's init event reports the tool server skipped or failed, a declared per-server tool timeout covering a gated publication, the result delivered as native structured output (`--json-schema`), confinement by its built-in sandbox, and no Stop hook authorizing, rejecting or selecting a result.",
       "owner": "adapter",
       "officialBasis": "Claude Code — CLI reference (`--json-schema`, `--mcp-config`, `--strict-mcp-config`), Headless mode and Hooks, as the capability matrix records them.",
       "suite": ["developer-invocation.l4@1", "developer-invocation.l7@1"],
@@ -1108,7 +1108,7 @@
           "present": "Malformed model output never crosses the adapter boundary; a schema-valid but semantically invalid result is rejected."
         },
         "refusal": {
-          "present": "A tool server reported skipped, or a sandbox that cannot start, refuses the run before any turn."
+          "present": "A tool server the init event reports skipped or failed ends the session as a startup failure, and a sandbox that cannot start refuses the run, before any turn."
         },
         "recovery": {
           "present": "A first result failing a completion precondition is rejected, the same session resumed once, and only a second valid result accepted."
@@ -1136,7 +1136,7 @@
         "revision": 17,
         "section": "One core contract for every adapter"
       },
-      "contract": "The Codex adapter fills the eleven required adapter capabilities exactly once behind the one core contract: the tool server registered as required in the staged configuration home, the result delivered as native structured output (`--output-schema`) on first and resumed sessions, and confinement by `workspace-write` with its network proxy; its cancellation semantics stay the named gap GAP-ADP-01 until a primary Codex source covers them.",
+      "contract": "The Codex adapter fills the eleven required adapter capabilities exactly once behind the one core contract: the tool server registered as required in the staged configuration home with a tool timeout covering a gated publication, the result delivered as native structured output (`--output-schema`) on first and resumed sessions, and confinement by `workspace-write` with its network proxy; its cancellation semantics stay the named gap GAP-ADP-01 until a primary Codex source covers them.",
       "owner": "adapter",
       "officialBasis": "OpenAI Codex — Non-interactive mode (`--output-schema`) and MCP configuration, as the capability matrix records them.",
       "suite": ["developer-invocation.l4@1", "developer-invocation.l7@1"],
@@ -1148,7 +1148,7 @@
           "present": "Malformed model output never crosses the adapter boundary; a schema-valid but semantically invalid result is rejected."
         },
         "refusal": {
-          "present": "A missing sandbox, proxy or staged `CODEX_HOME` refuses the run before any turn."
+          "present": "A missing sandbox, proxy or staged `CODEX_HOME` refuses the run, and a required tool server that cannot initialize stops Codex, before any turn."
         },
         "recovery": {
           "present": "A first result failing a completion precondition is rejected, the same session resumed once, and only a second valid result accepted."
@@ -1265,7 +1265,7 @@
           "present": "A concurrent sibling reviewer's legitimate same-round writes produce no false attribution."
         },
         "refusal": {
-          "present": "Any forge write or `git push` from a reviewer is denied."
+          "present": "Any forge write or `git push` from a reviewer is denied, no git or `gh` command is allowed in its staged checkout, and a call to a Developer tool is refused by the driver."
         },
         "recovery": {
           "notApplicable": "A reviewer is dispatched fresh every round and never resumed; a failed reviewer is a no-review outcome of §6.8."

@@ -1753,7 +1753,9 @@ async function defaultStartDevTools(input: {
   const host = await startDevToolsHost({
     socketPath: input.socketPath,
     serverVersion: ownVersion(),
-    context: input.context
+    context: input.context,
+    // Only a Developer turn is served this host; its grant is the seven Developer tools.
+    role: 'developer'
   })
   return { bridge: driverDevBridgeInvocation(host.socketPath), close: () => host.close() }
 }

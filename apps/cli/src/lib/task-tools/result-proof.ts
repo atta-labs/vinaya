@@ -820,7 +820,8 @@ export async function resultProofCommand(args: string[]): Promise<void> {
   const host = await startDevToolsHost({
     socketPath: devToolsSocketPath(`result-proof:${randomUUID()}`),
     serverVersion: ownVersion(),
-    context: proofContext(recorded)
+    context: proofContext(recorded),
+    role: 'developer'
   })
   const out = (line = ''): void => {
     process.stdout.write(`${line}\n`)
