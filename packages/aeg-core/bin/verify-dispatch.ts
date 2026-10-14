@@ -681,52 +681,91 @@ function otherActiveTrancheSlugs(excludeSlug: string, repo: RepoRef): string[] {
 }
 
 /**
- * One entry per project named in `projects`: the first active, all-Issues-closed
- * prior tranche found, or a null-slug pass-through when none is found.
+ * A candidate tranche's open Issues, or `null` when the query failed — a
+ * failed `gh` call is never an empty answer.
  */
-async function resolvePriorTrancheArchival(
+function listOpenTrancheIssues(slug: string, repo: RepoRef): Array<{ number: number }> | null {
+  // Not routed through `ghIssueListByAnyLabel`: that helper is internal to
+  // `@attalabs/aeg-forge-state`'s `gh.ts` (not exported) and issues a
+  // `--state all` query with the full Issue JSON, where this site wants
+  // open Issues and their numbers only.
+  return shJson<Array<{ number: number }>>('gh', [
+    'issue',
+    'list',
+    '-R',
+    `${repo.owner}/${repo.repo}`,
+    '--label',
+    trancheLabel(slug),
+    '--state',
+    'open',
+    '--json',
+    'number',
+    '--limit',
+    '100'
+  ])
+}
+
+/** The forge reads `resolvePriorTrancheArchival` makes — injectable so a test can fail one. */
+export type PriorTrancheArchivalDeps = {
+  activeTrancheSlugs: (excludeSlug: string, repo: RepoRef) => string[]
+  deriveTranche: (slug: string, repo: RepoRef) => Promise<Tranche>
+  openIssues: (slug: string, repo: RepoRef) => Array<{ number: number }> | null
+}
+
+const defaultPriorTrancheArchivalDeps: PriorTrancheArchivalDeps = {
+  activeTrancheSlugs: otherActiveTrancheSlugs,
+  deriveTranche: (slug, repo) => deriveTrancheFromForge(repo.owner, repo.repo, slug),
+  openIssues: listOpenTrancheIssues
+}
+
+/**
+ * The prior-tranche archival facts, and whether any of them could not be
+ * read. `facts` holds one entry per project whose answer is known: the first
+ * active, all-Issues-closed prior tranche found, or a null-slug pass-through
+ * when none is found. A project whose open-Issues query failed for a
+ * candidate tranche has no entry — its fact is unknown, so it never reads as
+ * an unarchived prior tranche — and `infraFailure` names the failed read as a
+ * `severity:infra` blocker instead.
+ */
+export async function resolvePriorTrancheArchival(
   projects: string[],
   excludeSlug: string,
-  repo: RepoRef
-): Promise<DispatchPriorTrancheFact[]> {
-  const candidates = otherActiveTrancheSlugs(excludeSlug, repo)
+  repo: RepoRef,
+  deps: PriorTrancheArchivalDeps = defaultPriorTrancheArchivalDeps
+): Promise<{ facts: DispatchPriorTrancheFact[]; infraFailure: string | null }> {
+  const candidates = deps.activeTrancheSlugs(excludeSlug, repo)
   const facts: DispatchPriorTrancheFact[] = []
+  const unreadable: string[] = []
 
   for (const project of projects) {
     let found: DispatchPriorTrancheFact | null = null
+    let unknown = false
     for (const slug of candidates) {
-      const candidateTranche = await deriveTrancheFromForge(repo.owner, repo.repo, slug)
+      const candidateTranche = await deps.deriveTranche(slug, repo)
       const touchesProject = candidateTranche.tasks.some((t) => t.projects.includes(project))
       if (!touchesProject) continue
 
-      // Not routed through `ghIssueListByAnyLabel`: that helper is internal to
-      // `@attalabs/aeg-forge-state`'s `gh.ts` (not exported) and issues a
-      // `--state all` query with the full Issue JSON, where this site wants
-      // open Issues and their numbers only.
-      const openIssues =
-        shJson<Array<{ number: number }>>('gh', [
-          'issue',
-          'list',
-          '-R',
-          `${repo.owner}/${repo.repo}`,
-          '--label',
-          trancheLabel(slug),
-          '--state',
-          'open',
-          '--json',
-          'number',
-          '--limit',
-          '100'
-        ]) ?? []
+      const openIssues = deps.openIssues(slug, repo)
+      if (openIssues === null) {
+        unknown = true
+        unreadable.push(`\`${slug}\` (project \`${project}\`)`)
+        break
+      }
       if (openIssues.length === 0) {
         found = { project, priorTrancheSlug: slug, archived: false }
         break
       }
     }
-    facts.push(found ?? { project, priorTrancheSlug: null, archived: false })
+    if (!unknown) facts.push(found ?? { project, priorTrancheSlug: null, archived: false })
   }
 
-  return facts
+  return {
+    facts,
+    infraFailure:
+      unreadable.length === 0
+        ? null
+        : `verify-dispatch severity:infra — could not read the open Issues of tranche ${unreadable.join(', ')}; whether a prior tranche is archived is unknown.`
+  }
 }
 
 // ---- leftover detection -------------------------------------------------------
@@ -1257,7 +1296,7 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
   }
   const priorTask = resolvePriorTask(tranche as Tranche, taskId, branchPrs, provenanceByIssue, repo)
 
-  const priorTrancheArchival = await resolvePriorTrancheArchival(task.projects, trancheSlug, repo)
+  const archival = await resolvePriorTrancheArchival(task.projects, trancheSlug, repo)
 
   const gateResult = checkDispatchReadiness({
     trancheSlug,
@@ -1270,7 +1309,7 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
     dependsOn,
     conflictsWith,
     priorTask,
-    priorTrancheArchival
+    priorTrancheArchival: archival.facts
   })
 
   // A bare edge id is ambiguous once this Issue's Milestone
@@ -1297,6 +1336,7 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
   console.log(`\nverify-dispatch: ${trancheSlug} task ${taskId}\n`)
   console.log(`dispatch-readiness: ${gateResult.ready ? 'READY' : 'NOT READY'}`)
   for (const b of gateResult.blockers) console.log(`  ✗ ${b}`)
+  if (archival.infraFailure) console.log(`  ✗ ${archival.infraFailure}`)
   if (ambiguousEdge) console.log(`  ✗ ${ambiguousEdge}`)
 
   console.log(
@@ -1316,8 +1356,10 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
     if (raw.diagnostic) console.log(`    ↳ ${raw.diagnostic}`)
   }
 
+  // An archival fact that could not be read fails the gate as infrastructure.
+  const gateReady = gateResult.ready && archival.infraFailure === null
   const overallReady =
-    gateResult.ready && !leftoverBlocksDispatch(leftover.verdict, { existingWork: EXISTING_WORK }) && !ambiguousEdge
+    gateReady && !leftoverBlocksDispatch(leftover.verdict, { existingWork: EXISTING_WORK }) && !ambiguousEdge
   console.log(`\nverify-dispatch: ${overallReady ? 'READY TO DISPATCH' : 'NOT READY'}`)
   process.exit(overallReady ? 0 : 1)
 }

@@ -690,6 +690,7 @@ export {
   parseSummaryConfidenceRows,
   PUBLISHED_MARKER_LINE,
   reconstructRounds,
+  recordDeveloperAttempt,
   renderPhaseBreakdown,
   renderPublishedMarker,
   renderTaskBudgetDetail,
