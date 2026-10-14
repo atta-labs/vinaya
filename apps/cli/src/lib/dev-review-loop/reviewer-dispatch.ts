@@ -96,6 +96,47 @@ export type ReviewerPromptFacts = {
    * dispatch's pre-task shape.
    */
   configScan?: SecurityScanOutcome
+  /**
+   * The round's required sources and the Developer's citations of them,
+   * rendered into both reviewers' prompts (`requiredSourcePieces`).
+   * `undefined`, or a manifest with no sources, adds nothing — the prompt of
+   * a task whose brief names no required source.
+   */
+  requiredSources?: ReviewerSourceFacts
+}
+
+/**
+ * What the reviewers are told about the round's required sources: the
+ * identity of the manifest the Developer was given, each source's identity
+ * and pinned digest — readable in full through `read_source` — and the
+ * Developer's own `sourceUses`, which are claims to check, never evidence.
+ */
+export type ReviewerSourceFacts = {
+  /** The digest of the required-source manifest the round's Developer was given. */
+  manifestDigest: string
+  sources: readonly { sourceId: string; governs: string; digest: string | null; finalUrl: string | null }[]
+  /** The `sourceUses` of the round's newest accepted `completed` turn result; `null` when it has none. */
+  citations: readonly { source: string; use: string }[] | null
+}
+
+/** The reviewers' source facts from a prepared manifest and the Developer's citations. */
+export function reviewerSourceFacts(
+  manifest: {
+    digest: string
+    sources: readonly { sourceId: string; governs: string; contentDigest: string | null; finalUrl?: string }[]
+  },
+  citations: readonly { source: string; use: string }[] | null
+): ReviewerSourceFacts {
+  return {
+    manifestDigest: manifest.digest,
+    sources: manifest.sources.map((s) => ({
+      sourceId: s.sourceId,
+      governs: s.governs,
+      digest: s.contentDigest,
+      finalUrl: s.finalUrl ?? null
+    })),
+    citations
+  }
 }
 
 /**
@@ -286,6 +327,61 @@ export function candidateInputPieces(paths: ReviewerCandidateInputPaths | null):
     driverPiece('\nPRIOR ROUND FINDINGS: '),
     factPiece(paths.priorFindings)
   ]
+}
+
+/**
+ * The round's required sources, for both reviewers: the manifest identity,
+ * each source's identity and pinned digest, and the Developer's citations
+ * of them. A citation is the Developer's own text, so it is a `fact` piece
+ * labelled as the Developer's claim; the driver's own wording says what a
+ * receipt does and does not prove, so a delivered but irrelevant citation is
+ * the reviewer's to reject. Empty when the round has no required source.
+ */
+export function requiredSourcePieces(sources: ReviewerSourceFacts | undefined): readonly ReviewerPromptPiece[] {
+  if (sources === undefined || sources.sources.length === 0) return []
+  const pieces: ReviewerPromptPiece[] = [
+    driverPiece('\n\nREQUIRED SOURCES (controller manifest '),
+    factPiece(sources.manifestDigest),
+    driverPiece(
+      '): read any of them with the `read_source` tool by its identity below; it serves exactly the content the controller pinned for the Developer, at the digest shown, never a fresh fetch.'
+    )
+  ]
+  for (const source of sources.sources) {
+    pieces.push(
+      driverPiece('\n- '),
+      factPiece(source.sourceId),
+      driverPiece(' — governs: '),
+      factPiece(source.governs),
+      driverPiece(' — pinned: '),
+      factPiece(source.digest ?? '(no pinned content)'),
+      ...(source.finalUrl !== null && source.finalUrl !== source.sourceId
+        ? [driverPiece(' — served from: '), factPiece(source.finalUrl)]
+        : [])
+    )
+  }
+  pieces.push(
+    driverPiece(
+      "\nDEVELOPER'S SOURCE CITATIONS (the `sourceUses` of the round's accepted turn result — the Developer's own claims):"
+    )
+  )
+  if (sources.citations === null || sources.citations.length === 0) {
+    pieces.push(driverPiece('\n(none recorded)'))
+  } else {
+    for (const citation of sources.citations) {
+      pieces.push(
+        driverPiece('\n- '),
+        factPiece(citation.source),
+        driverPiece(' — informed: '),
+        factPiece(citation.use)
+      )
+    }
+  }
+  pieces.push(
+    driverPiece(
+      '\nThe controller accepted these citations only because each source has a delivery receipt; a receipt proves the source was delivered, never that it was used correctly. A change that contradicts a required source, or a citation the source does not support, is a finding like any other, at the severity its effect warrants.'
+    )
+  )
+  return pieces
 }
 
 /**
@@ -1306,6 +1402,7 @@ export function renderReviewerDispatchPrompt(
     ...buildReviewerPromptPieces(facts),
     ...blockingSeverityPieces(role, facts.policy),
     ...candidateInputPieces(candidateInputPaths),
+    ...requiredSourcePieces(facts.requiredSources),
     ...roleDoctrinePieces(role, roleDoctrine),
     ...scanPieces
   ]

@@ -106,9 +106,9 @@ describe('servedTools — granted and live', () => {
   it('serves the Developer every Developer tool', () => {
     expect(servedTools('developer').map((t) => t.name)).toEqual([...DEV_TOOL_NAMES])
   })
-  it('serves a reviewer nothing until read_source has a handler', () => {
-    expect(servedTools('code-reviewer')).toEqual([])
-    expect(servedTools('security')).toEqual([])
+  it('serves each reviewer read_source and nothing else', () => {
+    expect(servedTools('code-reviewer').map((t) => t.name)).toEqual(['read_source'])
+    expect(servedTools('security').map((t) => t.name)).toEqual(['read_source'])
   })
   it('serves the controller nothing', () => {
     expect(servedTools('controller')).toEqual([])
@@ -118,8 +118,8 @@ describe('servedTools — granted and live', () => {
 describe('the driver-run server serves each role only its grant', () => {
   it('tools/list names exactly the role’s served tools', async () => {
     expect(await listed('developer')).toEqual([...DEV_TOOL_NAMES])
-    expect(await listed('code-reviewer')).toEqual([])
-    expect(await listed('security')).toEqual([])
+    expect(await listed('code-reviewer')).toEqual(['read_source'])
+    expect(await listed('security')).toEqual(['read_source'])
     expect(await listed('controller')).toEqual([])
   })
 
@@ -155,20 +155,26 @@ describe('the driver-run server serves each role only its grant', () => {
     expect(calls).toEqual(['run_checks'])
   })
 
-  it('a granted but unserved tool refuses as unknown, never reaching a handler', async () => {
+  it('a reviewer’s read_source on a context with no source reader refuses as unavailable, reaching no Developer handler', async () => {
     const calls: string[] = []
     const result = await dispatchDevTool(recordingContext(calls), 'code-reviewer', 'read_source', {
       sourceId: 's',
       offset: 0
     })
     expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.error.check).toBe('unknown-tool')
+    if (!result.ok) expect(result.error.check).toBe('read-source-unavailable')
     expect(calls).toEqual([])
+  })
+
+  it('the Developer is refused read_source before any handler runs', async () => {
+    const result = await dispatchDevTool(recordingContext([]), 'developer', 'read_source', { sourceId: 's' })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toMatchObject({ errorClass: 'unauthorized', check: 'role-grant' })
   })
 })
 
 describe('the host enforces the grant over its real socket', () => {
-  it('a reviewer host lists nothing and refuses publish_changes without running it', async () => {
+  it('a reviewer host lists read_source only and refuses publish_changes without running it', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'role-grants-host-'))
     const calls: string[] = []
     const host = await startDevToolsHost({
@@ -188,7 +194,7 @@ describe('the host enforces the grant over its real socket', () => {
         }
       ])
       if (list === undefined || publish === undefined) throw new Error('the host answered fewer messages than sent')
-      expect(list.result.tools).toEqual([])
+      expect((list.result.tools as Array<{ name: string }>).map((t) => t.name)).toEqual(['read_source'])
       expect(publish.result.isError).toBe(true)
       expect((publish.result.structuredContent as { error: Record<string, unknown> }).error).toMatchObject({
         errorClass: 'unauthorized',

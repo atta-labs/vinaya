@@ -203,6 +203,8 @@ import {
   renderReviewerDispatchPrompt,
   runtimeDir,
   type ReviewerPromptFacts,
+  type ReviewerSourceFacts,
+  reviewerSourceFacts,
   ReviewerInfrastructureFailure,
   ReviewerReportParseFailure,
   reviewerOutputFloorMs,
@@ -265,6 +267,7 @@ import {
   readTurnResultRecords,
   reportedChecksFromRecords,
   schemaValidTurnResult,
+  sourceUsesFromRecords,
   turnResultCorrectionPrompt,
   turnResultInstruction,
   type TurnResultControllerContext,
@@ -278,7 +281,14 @@ import { fastForwardedOntoDefaultTip } from './dev-review-loop/developer-publica
 import { postForgeEffectOnce, publishRound, unboundFields } from './dev-review-loop/publication.js'
 import { patchIdAt } from './patch-id.js'
 import { createDeveloperDevToolContext, type DeveloperDevToolDeps } from './task-tools/developer-dev-tools-context.js'
-import { devToolError, type DevPullRequestView, type DevToolContext } from './task-tools/dev-tools-server.js'
+import {
+  devToolError,
+  type DevPullRequestView,
+  type DevToolContext,
+  reviewerDevToolContext
+} from './task-tools/dev-tools-server.js'
+import { createReadSourceTool } from './task-tools/read-source.js'
+import type { GrantedRole } from './task-tools/role-grants.js'
 import { type FailedCheckLog, readFailedCheckLogs, readJobLogTail } from './task-tools/pr-facts.js'
 import { startDevToolsHost } from './task-tools/dev-tools-host.js'
 import { createFetchDocumentationTool, type FetchDocumentationDeps } from './task-tools/fetch-documentation.js'
@@ -292,6 +302,7 @@ import {
   sourceStoreDir
 } from './source-manifest.js'
 import {
+  gitObjectReader,
   prepareSources,
   RequiredSourcesUnavailable,
   realSourceProviderDeps,
@@ -848,6 +859,8 @@ export type LoopDeps = {
   startDevTools: (input: {
     socketPath: string
     context: DevToolContext
+    /** The dispatched role whose grant the host serves; absent, the Developer's. */
+    role?: GrantedRole
   }) => Promise<{ bridge: BridgeInvocation; close: () => Promise<void> }>
   /** The `fetch_documentation` tool's name resolution and transport; absent, the real resolver and pinned TLS connection. Injected so a test fakes the network. */
   fetchDocumentationDeps?: FetchDocumentationDeps
@@ -1776,13 +1789,14 @@ function defaultOpenTaskPullRequest(input: {
 async function defaultStartDevTools(input: {
   socketPath: string
   context: DevToolContext
+  role?: GrantedRole
 }): Promise<{ bridge: BridgeInvocation; close: () => Promise<void> }> {
   const host = await startDevToolsHost({
     socketPath: input.socketPath,
     serverVersion: ownVersion(),
     context: input.context,
-    // Only a Developer turn is served this host; its grant is the seven Developer tools.
-    role: 'developer'
+    // A Developer turn is served its seven tools; a reviewer turn only `read_source`.
+    role: input.role ?? 'developer'
   })
   return { bridge: driverDevBridgeInvocation(host.socketPath), close: () => host.close() }
 }
@@ -4656,6 +4670,49 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     /**
+     * What both reviewers of `roundNum` are told about its required sources:
+     * the manifest the round's Developer was given — this process's own, or
+     * the one in the store when a fresh process attached to the round — and
+     * the citations of the round's newest accepted `completed` turn result.
+     * Nothing when there is no manifest or it names no source.
+     */
+    function roundReviewerSources(roundNum: number): { requiredSources?: ReviewerSourceFacts } {
+      const manifest = preparedSourcesByRound.get(roundNum) ?? readRequiredSourceManifest(sourceStoreForTask())
+      if (manifest === null || manifest.sources.length === 0) return {}
+      return {
+        requiredSources: reviewerSourceFacts(
+          manifest,
+          sourceUsesFromRecords(readTurnResultRecords(root, task, roundNum))
+        )
+      }
+    }
+
+    /**
+     * Starts one reviewer's own tool server — `read_source` over the manifest
+     * its prompt names, served for that reviewer's role only — and returns
+     * the bridge its session registers. `null` when the round has no
+     * required source: that reviewer is dispatched with no tool server, as
+     * before. Each role gets its own socket, since both reviewers run at once.
+     */
+    async function startReviewerSourceTools(
+      dispatchRoleName: 'code-reviewer' | 'security',
+      sources: ReviewerSourceFacts | undefined
+    ): Promise<{ bridge: BridgeInvocation; close: () => Promise<void> } | null> {
+      if (sources === undefined || sources.sources.length === 0) return null
+      const worktree = existsSync(worktreePathForBranch()) ? worktreePathForBranch() : process.cwd()
+      const readSource = createReadSourceTool({
+        storeDir: sourceStoreForTask(),
+        manifestDigest: sources.manifestDigest,
+        readObject: d.readSourceObject ?? gitObjectReader(worktree)
+      })
+      return d.startDevTools({
+        socketPath: devToolsSocketPath(`${repo ? `${repo.owner}/${repo.repo}` : 'local'}:${task}:${dispatchRoleName}`),
+        context: reviewerDevToolContext(readSource),
+        role: dispatchRoleName
+      })
+    }
+
+    /**
      * Prepares the round's required sources — once per round in this driver
      * process, so every round and every resume (a fresh process) prepares
      * them again, and a re-ask inside one round reuses the round's manifest.
@@ -5542,31 +5599,39 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // from a cached copy, the same discipline `dispatchReviewer`'s own
       // attempt loop already applies.
       snapshotTurnConfinement(dispatchRoleName, roundNum)
-      const handle = await withPromptFile(prompt, (promptFile) =>
-        d.dispatchRole(dispatchRoleName, dispatchAgent, prompt, {
-          task: task,
-          round: roundNum,
-          promptFile,
-          roleLogPath: loopLogPath,
-          inputVersions: {
-            objectivesVersion: facts.manifest.objectivesVersion,
-            briefHash: facts.manifest.briefHash,
-            rulingOrdinal: facts.manifest.rulingOrdinal,
-            policyDigest: facts.manifest.policyDigest
-          },
-          ...(scratchDir ? { cwd: scratchDir } : {}),
-          // O1/O3: a Reviewer dispatched
-          // by this driver is unattended the same way the Developer is.
-          unattended: true,
-          // Round 6 fix, live-reproduced: a confined reviewer writes
-          // findings.txt/report.txt/objectives.txt into workDir — see
-          // `extraWritableDirs`'s own doc comment (dispatch.ts).
-          // The absolute directory, never one relative to a root: this sits
-          // under the configurable runtime directory, which need not be
-          // under the Vinaya home at all.
-          extraWritableDirs: [workDir]
-        })
-      )
+      const sourceTools = await startReviewerSourceTools(dispatchRoleName, facts.requiredSources)
+      let handle: DispatchHandle
+      try {
+        handle = await withPromptFile(prompt, (promptFile) =>
+          d.dispatchRole(dispatchRoleName, dispatchAgent, prompt, {
+            task: task,
+            round: roundNum,
+            promptFile,
+            roleLogPath: loopLogPath,
+            inputVersions: {
+              objectivesVersion: facts.manifest.objectivesVersion,
+              briefHash: facts.manifest.briefHash,
+              rulingOrdinal: facts.manifest.rulingOrdinal,
+              policyDigest: facts.manifest.policyDigest
+            },
+            ...(scratchDir ? { cwd: scratchDir } : {}),
+            // O1/O3: a Reviewer dispatched
+            // by this driver is unattended the same way the Developer is.
+            unattended: true,
+            // Round 6 fix, live-reproduced: a confined reviewer writes
+            // findings.txt/report.txt/objectives.txt into workDir — see
+            // `extraWritableDirs`'s own doc comment (dispatch.ts).
+            // The absolute directory, never one relative to a root: this sits
+            // under the configurable runtime directory, which need not be
+            // under the Vinaya home at all.
+            extraWritableDirs: [workDir],
+            // The reviewer's one tool, `read_source`, when the round has required sources.
+            ...(sourceTools ? { devToolsBridge: sourceTools.bridge } : {})
+          })
+        )
+      } finally {
+        await sourceTools?.close()
+      }
       await assertDispatchOrEscalate(
         handle,
         dispatchAgent,
@@ -5669,32 +5734,40 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // check compares against — taken right before this dispatch, never
         // from a cached copy (Traps to avoid).
         snapshotTurnConfinement(dispatchRoleName, roundNum)
-        const handle = await withPromptFile(prompt, (promptFile) =>
-          d.dispatchRole(dispatchRoleName, dispatchAgent, prompt, {
-            task: task,
-            round: roundNum,
-            promptFile,
-            roleLogPath: loopLogPath,
-            inputVersions: {
-              objectivesVersion: facts.manifest.objectivesVersion,
-              briefHash: facts.manifest.briefHash,
-              rulingOrdinal: facts.manifest.rulingOrdinal,
-              policyDigest: facts.manifest.policyDigest
-            },
-            ...(scratchDir ? { cwd: scratchDir } : {}),
-            // O1/O3: a Reviewer
-            // dispatched by this driver is unattended the same way the
-            // Developer is.
-            unattended: true,
-            // Round 6 fix, live-reproduced: a confined reviewer writes
-            // findings.txt/report.txt/objectives.txt into workDir — see
-            // `extraWritableDirs`'s own doc comment (dispatch.ts).
-            // The absolute directory, never one relative to a root: this
-            // sits under the configurable runtime directory, which need not
-            // be under the Vinaya home at all.
-            extraWritableDirs: [workDir]
-          })
-        )
+        const sourceTools = await startReviewerSourceTools(dispatchRoleName, facts.requiredSources)
+        let handle: DispatchHandle
+        try {
+          handle = await withPromptFile(prompt, (promptFile) =>
+            d.dispatchRole(dispatchRoleName, dispatchAgent, prompt, {
+              task: task,
+              round: roundNum,
+              promptFile,
+              roleLogPath: loopLogPath,
+              inputVersions: {
+                objectivesVersion: facts.manifest.objectivesVersion,
+                briefHash: facts.manifest.briefHash,
+                rulingOrdinal: facts.manifest.rulingOrdinal,
+                policyDigest: facts.manifest.policyDigest
+              },
+              ...(scratchDir ? { cwd: scratchDir } : {}),
+              // O1/O3: a Reviewer
+              // dispatched by this driver is unattended the same way the
+              // Developer is.
+              unattended: true,
+              // Round 6 fix, live-reproduced: a confined reviewer writes
+              // findings.txt/report.txt/objectives.txt into workDir — see
+              // `extraWritableDirs`'s own doc comment (dispatch.ts).
+              // The absolute directory, never one relative to a root: this
+              // sits under the configurable runtime directory, which need not
+              // be under the Vinaya home at all.
+              extraWritableDirs: [workDir],
+              // The reviewer's one tool, `read_source`, when the round has required sources.
+              ...(sourceTools ? { devToolsBridge: sourceTools.bridge } : {})
+            })
+          )
+        } finally {
+          await sourceTools?.close()
+        }
         await assertDispatchOrEscalate(
           handle,
           dispatchAgent,
@@ -7515,7 +7588,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             revision,
             manifest,
             policy,
-            deferralContext
+            deferralContext,
+            ...roundReviewerSources(round)
           }
 
           // O1: the parent persists this round's manifest to the control store

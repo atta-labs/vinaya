@@ -365,12 +365,13 @@ export type DispatchOpts = {
    * dispatch — a `dev-bridge --socket <path>` relay the agent's own MCP client
    * spawns inside its sandbox, which pipes to the server the driver hosts
    * outside it (`task-tools/dev-tools-host.ts`). Set only by the review loop,
-   * only for the `developer` role, and only once the driver has started the
-   * host for this turn. When present, this call registers the server through
+   * once the driver has started the host for this turn: for the `developer`
+   * role every turn, and for a reviewer role when the round has required
+   * sources, whose host serves only `read_source`. When present, this call registers the server through
    * the vendor's OWN per-dispatch channel — Claude via `--strict-mcp-config
    * --mcp-config <file>` (so the worktree's committed `.mcp.json` is never
    * loaded), Codex via a `[mcp_servers.<name>]` table in the staged
-   * `config.toml` — and nothing else. Omitted by every other caller and role,
+   * `config.toml` — and nothing else. Omitted by every other caller and dispatch,
    * which registers no dev-tools server and changes no argv.
    */
   devToolsBridge?: { command: string; args: readonly string[] }
@@ -1291,7 +1292,7 @@ export function codexDocumentationStopHookScript(
  * them: a `WebFetch` or `curl` the agent's own hooks logged, and any file a
  * worker could write, are never read here, so a fabricated receipt has no
  * effect. The controller requires a counted delivery behind every required
- * URL source a `completed` result reports.
+ * source a `completed` result reports, a repository source included.
  */
 export function deliveredDocumentation(dir: string | null, runId: string, storeDir: string): DeliveredDocumentation {
   const manifest = readRequiredSourceManifest(storeDir)

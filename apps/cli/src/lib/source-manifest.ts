@@ -59,6 +59,8 @@ export type PreparedSource = {
   sourceId: string
   /** `https://…` for a page; `repository:<path>` for a repository source. */
   canonicalUri: string
+  /** The address a page's pinned content was served from, after redirects; absent for a repository source. */
+  finalUrl?: string
   /** The source exactly as the brief's `## Documentation` line names it. */
   requirementText: string
   /** The mechanism the brief says this source governs. */
