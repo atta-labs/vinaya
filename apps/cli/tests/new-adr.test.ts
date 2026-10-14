@@ -4,7 +4,13 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DECISION_RECORD_CITATION_ID, resolveProseRules } from '@attalabs/aeg-core'
-import { indexWithRecord, kebabTitle, nextDecisionRecordNumber, renderDecisionRecord } from '../src/commands/new-adr'
+import {
+  indexWithRecord,
+  kebabTitle,
+  nextDecisionRecordNumber,
+  renderDecisionRecord
+} from '../src/lib/decision-records'
+import { spawnBudgetedAsync, stripVinayaEnv } from './lib/process-fixture'
 
 const CLI_ENTRY = join(import.meta.dir, '..', 'src', 'index.ts')
 const TEMPLATE = join(import.meta.dir, '..', '..', '..', 'aeg-root', 'templates', 'decision-record-template.md')
@@ -27,9 +33,8 @@ function repo(config: unknown): string {
 }
 
 async function newAdr(cwd: string, ...title: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
-  const proc = Bun.spawn(['bun', CLI_ENTRY, 'new', 'adr', ...title], { cwd, stdout: 'pipe', stderr: 'pipe' })
-  const code = await proc.exited
-  return { code, stdout: await new Response(proc.stdout).text(), stderr: await new Response(proc.stderr).text() }
+  const result = await spawnBudgetedAsync(['bun', CLI_ENTRY, 'new', 'adr', ...title], { cwd, env: stripVinayaEnv() })
+  return { code: result.status, stdout: result.stdout, stderr: result.stderr }
 }
 
 describe('vinaya new adr', () => {
