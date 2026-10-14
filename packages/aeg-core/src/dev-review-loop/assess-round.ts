@@ -37,8 +37,9 @@
  *   stop a loop that is repeating itself rather than converging: the same
  *   BLOCKING finding — same reviewer role, same file, same description — still open in
  *   two consecutive reviewed rounds (`condition: 'repeat_finding'`), and two
- *   consecutive attempts ending on the same mechanical failure
- *   (`condition: 'repeat_failure'`). Neither revives `no_progress`: a round
+ *   consecutive attempts ending on the same mechanical failure, with a
+ *   finished Developer attempt between them (`condition: 'repeat_failure'`).
+ *   Neither revives `no_progress`: a round
  *   that resolves nothing but raises only new findings still continues, and
  *   a round whose repeated finding is non-blocking continues too. Both name
  *   what repeated in the pause's own `detail`.
@@ -468,15 +469,36 @@ const VOLATILE_TOKENS: readonly { pattern: RegExp; replacement: string }[] = [
  * the previous attempt's. Shared by both observation kinds that can carry a
  * mechanical failure, so a repeat means the same thing whether or not the
  * attempt produced a head.
+ *
+ * A matching signature is a repeat only when a Developer attempt finished
+ * since the previous failure was recorded (`recordDeveloperAttempt`). The
+ * same red gate read again after a retry that never reached the Developer —
+ * a dispatch that failed on infrastructure, then resumed — is the same
+ * attempt's failure read twice, and sends the Developer instead of pausing.
  */
 function matchFailure(
   state: LoopState,
   reported: string | undefined
-): { failure: { signature: string; message: string } | null; repeat: boolean } {
+): { failure: NonNullable<LoopState['lastFailure']> | null; repeat: boolean } {
   const message = reported?.trim() ?? ''
   const signature = message === '' ? '' : normalizeFailureSignature(message)
   if (signature === '') return { failure: null, repeat: false }
-  return { failure: { signature, message }, repeat: state.lastFailure?.signature === signature }
+  return {
+    failure: { signature, message, developerAttemptedSince: false },
+    repeat: state.lastFailure?.signature === signature && state.lastFailure.developerAttemptedSince === true
+  }
+}
+
+/**
+ * Records that a Developer attempt finished: the failure the loop last
+ * recorded now has an attempt after it, so the same failure read again is a
+ * second attempt's. The driver calls this when a Developer turn returns; a
+ * dispatch that failed before reaching the Developer never calls it. A state
+ * with no recorded failure is returned unchanged.
+ */
+export function recordDeveloperAttempt(state: LoopState): LoopState {
+  if (state.lastFailure === null || state.lastFailure.developerAttemptedSince === true) return state
+  return { ...state, lastFailure: { ...state.lastFailure, developerAttemptedSince: true } }
 }
 
 /**

@@ -20,6 +20,8 @@
  */
 
 import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, spyOn } from 'bun:test'
 import {
   type DriverWatchDeps,
@@ -40,6 +42,7 @@ import {
   assertDispatchOrEscalate,
   DispatchUsageLimit,
   describeUsageLimitPause,
+  MAX_INFRASTRUCTURE_RETRIES,
   rateLimitPauseDetail,
   spendsInfrastructureRetry,
   usageLimitPauseDetail
@@ -48,6 +51,7 @@ import { renderNoPushStopComment, renderPauseComment } from '../../../src/lib/de
 import type { DispatchHandle, UsageLimit } from '../../../src/lib/dispatch.js'
 import {
   cleanupWorlds,
+  controlDir,
   makeInProcessDeps,
   makeWorld,
   runDriverLoopInProcess,
@@ -794,5 +798,221 @@ describe('an agent usage limit — a stop condition with a reset, never a crash'
       expect(h.sleeps).toEqual([])
       expect(h.resumeInputs).toEqual([])
     }
+  })
+})
+
+/** The line `gh` prints when it never reached GitHub — a connection failure, no response received. */
+const GH_UNREACHABLE = 'error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com'
+
+function loopStateBudgets(world: LoopWorld): { infrastructureRetries: number } {
+  return (
+    JSON.parse(readFileSync(join(controlDir(world), 'loop-state.json'), 'utf8')) as {
+      budgets: { infrastructureRetries: number }
+    }
+  ).budgets
+}
+
+/** A red gate on one failing check whose log tail never changes, until the Developer's `greenFrom`-th turn. */
+function redUntilDeveloperTurn(world: LoopWorld, greenFrom: number): Partial<LoopDeps> {
+  const red = () => (world.dispatchCountByRole.developer ?? 0) < greenFrom
+  return {
+    fetchCiConclusion: () => (red() ? 'red' : 'green'),
+    fetchFailingCheckRuns: () => (red() ? ([{ id: 101, name: 'Vinaya CI', conclusion: 'failure' }] as never) : []),
+    readFailedCheckLogTail: () => '(fail) loop > the same test every time',
+    resolveHead: () => String(world.dispatchCountByRole.developer ?? 0).repeat(40)
+  }
+}
+
+describe('the repeat rule needs a finished Developer attempt between two red gates', () => {
+  it('red gate, dispatch infrastructure failure, self-retry: the same red gate dispatches the Developer instead of pausing', async () => {
+    const world = makeWorld({ gate: 'red' })
+    let readinessChecks = 0
+    let polls = 0
+    const result = await runDriverLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        ...redUntilDeveloperTurn(world, 2),
+        // The send-back after the first red gate fails before it reaches the
+        // Developer; every other dispatch is ready.
+        checkTaskDispatchReadiness: () => {
+          readinessChecks += 1
+          return readinessChecks === 2
+            ? { ready: false, output: 'severity:infra — the forge read timed out' }
+            : { ready: true, output: 'ready' }
+        }
+      },
+      {
+        sleep: async () => {
+          // A loop paused for a ruling would wait forever here; end it instead.
+          if (++polls > 200) world.prState = 'CLOSED'
+          await new Promise((r) => setTimeout(r, 1))
+        }
+      }
+    )
+
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    expect(world.dispatchCountByRole.developer).toBe(2)
+    expect(world.postedComments.some((c) => c.marker === '<!-- aeg:loop:paused:repeat_failure -->')).toBe(false)
+  })
+})
+
+describe('the driver records a finished Developer attempt in the persisted repeat memory', () => {
+  function pauseOnDispatch(failingCheck: number) {
+    const world = makeWorld({ gate: 'red' })
+    let readinessChecks = 0
+    const deps: Partial<LoopDeps> = {
+      ...redUntilDeveloperTurn(world, 99),
+      checkTaskDispatchReadiness: () => {
+        readinessChecks += 1
+        return readinessChecks === failingCheck
+          ? { ready: false, output: 'severity:infra — the forge read timed out' }
+          : { ready: true, output: 'ready' }
+      }
+    }
+    return { world, deps }
+  }
+
+  function persistedLastFailure(world: LoopWorld): { developerAttemptedSince?: boolean } | null {
+    return (
+      JSON.parse(readFileSync(join(controlDir(world), 'loop-state.json'), 'utf8')) as {
+        repeatMemory: { lastFailure: { developerAttemptedSince?: boolean } | null }
+      }
+    ).repeatMemory.lastFailure
+  }
+
+  it('a send-back whose dispatch failed before the Developer leaves the red gate with no attempt after it', async () => {
+    const { world, deps } = pauseOnDispatch(2)
+    const result = await runLoopInProcess(world, { task: world.task, agent: 'claude' }, deps)
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+    expect(world.dispatchCountByRole.developer).toBe(1)
+    expect(persistedLastFailure(world)?.developerAttemptedSince).toBe(false)
+  })
+
+  it('a send-back the Developer finished records the attempt, so the next red gate is a repeat', async () => {
+    const { world, deps } = pauseOnDispatch(3)
+    const result = await runLoopInProcess(world, { task: world.task, agent: 'claude' }, deps)
+
+    // The second red gate, after a finished attempt, is the repeat stop.
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'repeat_failure' })
+    expect(world.dispatchCountByRole.developer).toBe(2)
+    expect(persistedLastFailure(world)?.developerAttemptedSince).toBe(true)
+  })
+})
+
+describe('a connection failure to GitHub waits for the connection without spending the retry budget', () => {
+  it(`continues the round after more than MAX_INFRASTRUCTURE_RETRIES (${MAX_INFRASTRUCTURE_RETRIES}) connection failures, the budget unspent`, async () => {
+    const world = makeWorld({ gate: 'red' })
+    const unreachableDispatches = MAX_INFRASTRUCTURE_RETRIES + 2
+    let readinessChecks = 0
+    let reachabilityChecks = 0
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        ...redUntilDeveloperTurn(world, 2),
+        checkTaskDispatchReadiness: () => {
+          readinessChecks += 1
+          if (readinessChecks > 1 && readinessChecks <= 1 + unreachableDispatches) throw new Error(GH_UNREACHABLE)
+          return { ready: true, output: 'ready' }
+        },
+        // Unreachable on the first check of every wait, reachable on the second.
+        isGitHubReachable: async () => ++reachabilityChecks % 2 === 0
+      }
+    )
+
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    expect(readinessChecks).toBe(2 + unreachableDispatches)
+    expect(reachabilityChecks).toBe(2 * unreachableDispatches)
+    expect(world.dispatchCountByRole.developer).toBe(2)
+    expect(loopStateBudgets(world).infrastructureRetries).toBe(0)
+  })
+
+  it('a malformed response GitHub did send still pauses and spends a retry', async () => {
+    const world = makeWorld({ gate: 'red' })
+    let readinessChecks = 0
+    let reachabilityChecks = 0
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        ...redUntilDeveloperTurn(world, 2),
+        checkTaskDispatchReadiness: () => {
+          readinessChecks += 1
+          if (readinessChecks === 2) throw new Error("invalid character '<' looking for beginning of value")
+          return { ready: true, output: 'ready' }
+        },
+        isGitHubReachable: async () => {
+          reachabilityChecks += 1
+          return true
+        }
+      }
+    )
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+    expect(reachabilityChecks).toBe(0)
+    expect(loopStateBudgets(world).infrastructureRetries).toBe(1)
+  })
+})
+
+describe('watchPauseThenResume — a failed bare retry is retried within the infrastructure budget', () => {
+  function infraHarness(heldRetries: number, attempts: Array<Error | null>) {
+    const detail = 'an uncaught error ended round 1’s own processing: boom'
+    const h = rateLimitHarness(detail, [])
+    const held = { ...heldRateLimitPause(detail), infrastructureRetries: heldRetries }
+    const written: number[] = []
+    const resumeInputs: number[] = []
+    let polls = 0
+    h.watch.readPauseState = () => held
+    h.watch.writePauseState = (_root, state) => {
+      written.push(state.infrastructureRetries ?? -1)
+      held.infrastructureRetries = state.infrastructureRetries ?? 0
+    }
+    h.watch.devReviewLoop = async (input) => {
+      if (!('resumePr' in input)) return rateLimitPauseResult(detail)
+      resumeInputs.push(input.resumePr)
+      const next = attempts.shift()
+      if (next) throw next
+      return { finalDecision: { type: 'publish' }, prNumber: 7, task: 1129 }
+    }
+    const sleep = h.watch.sleep!
+    h.watch.sleep = async (ms) => {
+      await sleep(ms)
+      // Once the watcher only polls for a ruling, end the run by closing the PR.
+      if (ms === 1 && ++polls > 3) h.closed.value = true
+    }
+    return { h, written, resumeInputs }
+  }
+
+  it('a first bare retry that throws a connection error waits the back-off again, retries and resumes, spending nothing', async () => {
+    const { h, written, resumeInputs } = infraHarness(1, [new Error(GH_UNREACHABLE)])
+    const result = await runDriverLoop({ task: 1129, agent: 'claude' }, {}, h.watch)
+
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    expect(resumeInputs).toEqual([7, 7])
+    expect(h.sleeps.filter((ms) => ms === 60_000)).toHaveLength(2)
+    expect(written).toEqual([])
+  })
+
+  it('a failed bare retry that GitHub answered spends one retry on the pause record and is retried', async () => {
+    const { h, written, resumeInputs } = infraHarness(1, [new Error('HTTP 502: Bad Gateway')])
+    const result = await runDriverLoop({ task: 1129, agent: 'claude' }, {}, h.watch)
+
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    expect(resumeInputs).toEqual([7, 7])
+    expect(written).toEqual([2])
+  })
+
+  it('a watcher at the retry bound falls back to watching for a ruling', async () => {
+    const { h, written, resumeInputs } = infraHarness(MAX_INFRASTRUCTURE_RETRIES - 1, [
+      new Error('HTTP 502: Bad Gateway')
+    ])
+    const result = await runDriverLoop({ task: 1129, agent: 'claude' }, {}, h.watch)
+
+    expect(result.finalDecision).toEqual({ type: 'ended', reason: 'closed' })
+    expect(resumeInputs).toEqual([7])
+    expect(written).toEqual([MAX_INFRASTRUCTURE_RETRIES])
+    expect(h.sleeps.filter((ms) => ms === 60_000)).toHaveLength(1)
   })
 })

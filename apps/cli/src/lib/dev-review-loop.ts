@@ -80,6 +80,7 @@ import {
   nextRoundNumber,
   parseIssueSurface,
   policyDigest as policyDigestOf,
+  recordDeveloperAttempt,
   type Confidence,
   type Decision,
   type DevReviewLoopEventInput,
@@ -227,6 +228,9 @@ import {
   driverCrashEvents,
   driverDecidedPauseEvents,
   errorClassOf,
+  GitHubKeptAnswering,
+  GITHUB_REACHABILITY_INTERVAL_MS,
+  isGitHubConnectionFailure,
   isGitHubRateLimitError,
   isRateLimitPauseDetail,
   isUsageLimitPauseDetail,
@@ -234,6 +238,7 @@ import {
   usageLimitResetFromDetail,
   usageLimitWaitMs,
   DispatchUsageLimit,
+  MAX_ANSWERED_CONNECTION_RETRIES,
   MAX_AUTOMATIC_RATE_LIMIT_RESUMES,
   MAX_CONSECUTIVE_RATE_LIMIT_WAITS,
   MAX_GATE_STALLED_TURNS,
@@ -612,6 +617,14 @@ export type LoopDeps = {
    * fixture that does not stub it waits the fixed fallback.
    */
   readRateLimitReset?: () => Promise<number | null>
+  /**
+   * Whether this host can reach GitHub at all right now — `true` once any
+   * response comes back, whatever it says; `false` only for a connection
+   * failure (`isGitHubConnectionFailure`). Read while the loop waits out a
+   * connection failure. Optional: a fixture that does not stub it reads as
+   * reachable.
+   */
+  isGitHubReachable?: () => Promise<boolean>
   /**
    * O1 (driver liveness): starts the driver's liveness heartbeat — a repeating timer
    * that fires `cb` every `intervalMs` while the process is alive, returning
@@ -2132,6 +2145,16 @@ async function defaultReadRateLimitReset(): Promise<number | null> {
   }
 }
 
+/** One `gh api rate_limit` read (it spends no limit): any answer, even a refusal, means GitHub is reachable. */
+async function defaultIsGitHubReachable(): Promise<boolean> {
+  try {
+    await gh(['api', 'rate_limit', '--jq', '.rate.limit'])
+    return true
+  } catch (err) {
+    return !isGitHubConnectionFailure(err)
+  }
+}
+
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -2333,6 +2356,7 @@ function defaultDeps(): LoopDeps {
     sleep: defaultSleep,
     now: () => Date.now(),
     readRateLimitReset: defaultReadRateLimitReset,
+    isGitHubReachable: defaultIsGitHubReachable,
     setHeartbeat: defaultSetHeartbeat,
     // O3: env-overridable the same way the gate poll
     // budget already is (`gatePollEnvOverride`'s own doc comment) — a real
@@ -2980,6 +3004,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   let roleDispatchesInPass = 0
   let rateLimitWaits = 0
   let roundAtLastWait = -1
+  // A connection failure to GitHub waits in place too (`absorbGitHubOutage`):
+  // these count only the re-runs GitHub answered the first check for.
+  let answeredConnectionRetries = 0
+  let roundAtLastConnectionRetry = -1
   const realDispatchRoleForCount = d.dispatchRole
   d.dispatchRole = ((...args: Parameters<typeof realDispatchRoleForCount>) => {
     roleDispatchesInPass += 1
@@ -4159,6 +4187,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           devDispatchHistory.recordSuccess(roundNum)
           if (handle.resumeId) devResumeId = handle.resumeId
           agentSwitched = false
+          // A Developer attempt finished: the failure the loop last recorded
+          // now has an attempt after it, so reading it again is a repeat.
+          // Persisted at once, so a resume after a later crash keeps it.
+          const attempted = recordDeveloperAttempt(state)
+          if (attempted !== state) {
+            state = attempted
+            persistCurrentLoopState(currentPhase ?? 'dispatch_developer')
+          }
         }
         return handle
       } finally {
@@ -6626,7 +6662,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // re-enters the loop on the SAME state (`decision`, `round` are this
       // closure's own); only `MAX_CONSECUTIVE_RATE_LIMIT_WAITS` waits in a row
       // with no round progress between them fall through to the outer
-      // handler's pause. Every other error goes there at once.
+      // handler's pause. A connection failure to GitHub waits, unbounded,
+      // until GitHub is reachable again and re-enters the same way. Every
+      // other error goes there at once.
       let loopResult: LoopResult
       while (true) {
         try {
@@ -6639,7 +6677,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // wait in place instead (`withRateLimitWait`); anything else that
           // lands after a dispatch pauses as it did before this wait existed.
           if (roleDispatchesInPass > 0) throw loopErr
-          await absorbRateLimit(loopErr)
+          if (isGitHubConnectionFailure(loopErr)) await absorbGitHubOutage(loopErr)
+          else await absorbRateLimit(loopErr)
         }
       }
       recordDriverExited(loopResult.finalDecision.type === 'publish' ? 'finished' : 'paused')
@@ -6828,6 +6867,42 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const reset = d.readRateLimitReset ? await d.readRateLimitReset() : null
       await d.sleep(rateLimitWaitMs(reset, d.now()))
       rateLimitWaits += 1
+    }
+
+    /**
+     * Waits out one connection failure to GitHub: checks reachability every
+     * `GITHUB_REACHABILITY_INTERVAL_MS`, for as long as it takes, and returns
+     * once GitHub answers, so the round re-runs the step that failed. It
+     * spends no infrastructure retry and asks for no ruling. A step that
+     * keeps failing while GitHub answered the very first check is the step's
+     * own failure: past `MAX_ANSWERED_CONNECTION_RETRIES` such re-runs in one
+     * round it throws `GitHubKeptAnswering`, an ordinary infrastructure pause.
+     */
+    async function absorbGitHubOutage(err: unknown): Promise<void> {
+      if (round !== roundAtLastConnectionRetry) answeredConnectionRetries = 0
+      roundAtLastConnectionRetry = round
+      const intervalMs = gatePollEnvOverride(
+        'VINAYA_DEV_REVIEW_LOOP_REACHABILITY_POLL_MS',
+        GITHUB_REACHABILITY_INTERVAL_MS
+      )
+      appendDriverLine(
+        loopLogPath,
+        `GitHub could not be reached in round ${round} (${(err instanceof Error ? err.message : String(err)).split('\n')[0]}) — waiting for the connection, checking every ${Math.round(intervalMs / 1000)}s`,
+        'round'
+      )
+      let unreachableChecks = 0
+      while (true) {
+        await d.sleep(intervalMs)
+        if (d.isGitHubReachable === undefined || (await d.isGitHubReachable())) break
+        unreachableChecks += 1
+      }
+      if (unreachableChecks === 0) {
+        if (answeredConnectionRetries >= MAX_ANSWERED_CONNECTION_RETRIES) throw new GitHubKeptAnswering(err)
+        answeredConnectionRetries += 1
+      } else {
+        answeredConnectionRetries = 0
+      }
+      appendDriverLine(loopLogPath, `GitHub is reachable again — continuing round ${round}`, 'round')
     }
 
     /** One read, retried in place across a rate-limit wait — for the reads that follow a role dispatch, where re-entering the round would dispatch it again. */
@@ -8254,10 +8329,13 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
  * pauses need no ruling at all (the same bare-resume allowance `--resume`
  * already grants them — "Pause and `--resume`", `apps/cli/specs/loop.md`)
  * — they retry after one bounded backoff wait instead of watching for a
- * ruling; a bare retry that itself fails (the driver's own bare-resume
- * budget, `MAX_INFRASTRUCTURE_RETRIES`, already exhausted) falls back to
- * watching for a real ruling from that point on, rather than hammering the
- * same failing bare attempt every poll tick forever.
+ * ruling. A bare retry that itself fails spends one unit of the task's
+ * infrastructure-retry budget — the same count the pause record carries,
+ * written back to it — and, while that count stays under
+ * `MAX_INFRASTRUCTURE_RETRIES`, waits the backoff again and retries; a
+ * connection failure to GitHub spends nothing and simply retries after the
+ * backoff. Only at the bound does it fall back to watching for a real ruling,
+ * rather than hammering the same failing bare attempt every poll tick forever.
  *
  * A pause recorded before any pull request existed (`prNumber <= 0`) has
  * no pull request to poll or read a ruling off. One that asks a Principal
@@ -8317,6 +8395,8 @@ export type DriverWatchDeps = {
   fetchPrState: typeof fetchPrState
   fetchNewestRulingOrdinal: typeof fetchNewestRulingOrdinal
   readPauseState: typeof readPauseState
+  /** Writes back the pause record's infrastructure-retry count after a failed bare retry spends one. */
+  writePauseState: typeof writePauseState
   readResolutionRecord: typeof readResolutionRecord
   /**
    * issue-711 O4 (code review round 1, BLOCKER; round 2, MAJOR/security
@@ -8371,6 +8451,7 @@ function defaultDriverWatchDeps(): DriverWatchDeps {
     fetchPrState,
     fetchNewestRulingOrdinal,
     readPauseState,
+    writePauseState,
     readResolutionRecord,
     clearDriverLock,
     gitRevParseOriginMain: defaultGitRevParseOriginMain,
@@ -8470,6 +8551,32 @@ function watchReadOrFallback<T>(label: string, read: () => T, fallback: T): T {
 }
 
 /**
+ * Writes a failed bare retry's spent count back to the pause record it
+ * belongs to, so `--resume`'s own bound check (which floors on the record)
+ * and every later resume count it. Best-effort, like the watch loop's reads:
+ * a failed write is reported and the in-memory count still bounds this
+ * watcher. A record that has since moved on to another pause is left alone.
+ */
+function recordWatcherInfrastructureRetry(
+  w: DriverWatchDeps,
+  task: number,
+  escalationId: string | null,
+  infrastructureRetries: number
+): void {
+  try {
+    const current = w.readPauseState(w.runtimeDir(), task)
+    if (current === null || (current.escalationId ?? null) !== escalationId) return
+    w.writePauseState(w.runtimeDir(), { ...current, infrastructureRetries })
+  } catch (err) {
+    process.stderr.write(
+      `vinaya dev-review-loop: watcher could not record a spent infrastructure retry for task ${task} — ${
+        err instanceof Error ? err.message : String(err)
+      }; still watching.\n`
+    )
+  }
+}
+
+/**
  * One pause's own watch cycle: polls until the pull request is genuinely
  * done (merged/closed/cancelled) or a resume attempt against it returns a
  * fresh `LoopResult` — `runDriverLoop`'s own doc comment names the three
@@ -8537,12 +8644,15 @@ async function watchPauseThenResume(
   // already accounted for.
   let baselineOrdinal = watchReadOrFallback('newest ruling ordinal', () => w.fetchNewestRulingOrdinal(prNumber), 0)
   let backoffDone = !isBoundedRetry
-  // Set once a bare (no-ruling) retry itself fails — the driver's own
-  // bare-resume budget is almost certainly exhausted at that point
-  // (`devReviewLoop`'s own `--resume` entry says so in its thrown message),
-  // so this pause falls back to watching for a real ruling from here on,
-  // rather than re-attempting the same failing bare call every poll tick
-  // forever.
+  // The task's infrastructure retries spent so far — the count the pause
+  // record carries. A failed bare retry of an `infrastructure`/`stale_driver`
+  // pause spends one more (`spendsInfrastructureRetry`) and is written back.
+  let infrastructureRetriesSpent = held?.infrastructureRetries ?? 0
+  // Set once a bare (no-ruling) retry can no longer be made: the task's
+  // infrastructure retries reached `MAX_INFRASTRUCTURE_RETRIES`, a rate- or
+  // usage-limit resume failed, or the resolution was already consumed. This
+  // pause then falls back to watching for a real ruling from here on, rather
+  // than re-attempting the same failing bare call every poll tick forever.
   let bareRetryExhausted = false
   // Set once a resume attempt was refused as already consumed: from then on
   // the run may be anywhere (a later round, a newer pause an operator's own
@@ -8557,6 +8667,7 @@ async function watchPauseThenResume(
     escalationId = current.escalationId
     agent = current.agent
     model = current.model
+    infrastructureRetriesSpent = current.infrastructureRetries ?? 0
     bareRetryExhausted = false
     isBoundedRetry = current.reason === 'infrastructure' || current.reason === 'stale_driver'
     classifyRateLimitPause(current)
@@ -8637,7 +8748,21 @@ async function watchPauseThenResume(
         )
         return { kind: 'result', result }
       } catch (err) {
-        if (readyForBareRetry && !readyForRuling) bareRetryExhausted = true
+        if (readyForBareRetry && !readyForRuling && !(err instanceof ReplayedResolutionError)) {
+          if (isRateLimitPause || isUsageLimitPause) {
+            bareRetryExhausted = true
+          } else {
+            // A failed bare retry of an infrastructure hiccup is one more
+            // hiccup: it spends the same budget the pause record carries,
+            // and is retried after the backoff while that budget lasts.
+            if (spendsInfrastructureRetry(err)) {
+              infrastructureRetriesSpent += 1
+              recordWatcherInfrastructureRetry(w, task, escalationId, infrastructureRetriesSpent)
+            }
+            if (infrastructureRetriesSpent < MAX_INFRASTRUCTURE_RETRIES) backoffDone = false
+            else bareRetryExhausted = true
+          }
+        }
         if (err instanceof ReplayedResolutionError) {
           // This pause's resolution was already consumed — by an operator's
           // own `--resume`, or by an earlier attempt of this very watcher.

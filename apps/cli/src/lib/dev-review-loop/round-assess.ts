@@ -163,16 +163,131 @@ export class DispatchSandboxRefused extends Error {
  * and demand a Principal ruling for a failure a `claude`/`codex`/`gemini`
  * login fixes. Keyed on the sign-in cause alone, never on "a pause that
  * came through this code path", so every other infrastructure loop keeps
- * its bound.
+ * its bound. A connection failure to GitHub (`isGitHubConnectionFailure`)
+ * spends none either: no retry fixes a host that cannot reach GitHub, and
+ * the loop waits for the connection to return instead.
  */
 export function spendsInfrastructureRetry(err: unknown): boolean {
   return (
     !(err instanceof DispatchSignInRefused) &&
     !(err instanceof DispatchUsageLimit) &&
     !(err instanceof DispatchSandboxRefused) &&
-    !isGitHubRateLimitError(err)
+    !isGitHubRateLimitError(err) &&
+    !isGitHubConnectionFailure(err)
   )
 }
+
+/**
+ * The error codes a request carries when no response came back at all: the
+ * name did not resolve, the connection was refused, reset or never opened,
+ * or it timed out. Node's own codes, undici's, and Bun's fetch names.
+ */
+const NO_RESPONSE_CODES = new Set([
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ECONNABORTED',
+  'ETIMEDOUT',
+  'ENETUNREACH',
+  'ENETDOWN',
+  'EHOSTUNREACH',
+  'EHOSTDOWN',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_SOCKET',
+  'ConnectionRefused',
+  'ConnectionClosed',
+  'FailedToOpenSocket'
+])
+
+/** What a transport failure's own cause says when no response came back — the tail of a Go `url.Error` (`gh`) or of git's `unable to access` line. */
+const NO_RESPONSE_CAUSE =
+  /dial tcp|i\/o timeout|connection refused|connection reset|no such host|network is unreachable|TLS handshake timeout|Client\.Timeout exceeded|server misbehaving|^EOF$|could not resolve host|failed to connect|couldn't connect to server|connection timed out|operation timed out|resolving timed out/i
+
+const GITHUB_HOST = /github/i
+
+/**
+ * The host a single stderr line says the request never reached, read only
+ * from the line's own structured cause — `gh`'s DNS report (`error
+ * connecting to <host>`), a Go `url.Error` (`<Method> "<url>": <cause>`), or
+ * git's `fatal: unable to access '<url>': <cause>` — and `null` for any other
+ * line, however it is worded.
+ */
+function unreachedHostOfLine(line: string): string | null {
+  const ghDns = /^error connecting to (\S+)$/.exec(line)
+  if (ghDns) return ghDns[1] as string
+  const urlError =
+    /^(?:Get|Post|Put|Patch|Delete|Head) "(https?:\/\/[^"]+)": (.+)$/.exec(line) ??
+    /^fatal: unable to access '(https?:\/\/[^']+)': (.+)$/.exec(line)
+  if (!urlError || !NO_RESPONSE_CAUSE.test((urlError[2] as string).trim())) return null
+  try {
+    return new URL(urlError[1] as string).hostname
+  } catch {
+    return null
+  }
+}
+
+/**
+ * A step that kept failing to connect to GitHub while GitHub answered the
+ * loop's own reachability check each time — so the host CAN reach GitHub, and
+ * the failure is the step's own. It pauses as an ordinary infrastructure
+ * failure and spends the budget like one.
+ */
+export class GitHubKeptAnswering extends Error {
+  constructor(original: unknown) {
+    super(
+      `GitHub answered the reachability check, but this step's request kept failing: ${
+        original instanceof Error ? original.message : String(original)
+      }`
+    )
+    this.name = 'GitHubKeptAnswering'
+  }
+}
+
+/**
+ * Is this error a connection failure to GitHub — the host could not reach
+ * GitHub at all, so no response came back? Decided from the error's own
+ * cause, never from its message as a whole: a system error code on the error
+ * or anywhere on its `cause` chain naming a GitHub host, or a captured
+ * `gh`/git stderr line whose transport cause says no response arrived. A
+ * response GitHub did send — a server error, a malformed body, a refusal —
+ * carries none of these, and is not one. `GitHubKeptAnswering` is never one:
+ * GitHub answered the loop's reachability check while the step kept failing.
+ */
+export function isGitHubConnectionFailure(err: unknown): boolean {
+  let current: unknown = err
+  for (let depth = 0; depth < 5 && current instanceof Error; depth += 1) {
+    if (current instanceof GitHubKeptAnswering) return false
+    const fields = current as {
+      code?: unknown
+      hostname?: unknown
+      host?: unknown
+      path?: unknown
+      url?: unknown
+      stderr?: unknown
+    }
+    if (typeof fields.code === 'string' && NO_RESPONSE_CODES.has(fields.code)) {
+      const where = [fields.hostname, fields.host, fields.path, fields.url].find((v) => typeof v === 'string')
+      if (typeof where === 'string' && GITHUB_HOST.test(where)) return true
+    }
+    // A `gh` failure reaches the loop either as the process error, with its
+    // stderr captured, or as `gh()`'s own error, whose message IS that stderr
+    // (`pr-report-engine.ts`). Each line is read for its own cause alone.
+    const stderr = fields.stderr === undefined ? '' : String(fields.stderr)
+    for (const line of `${stderr}\n${current.message}`.split('\n')) {
+      const host = unreachedHostOfLine(line.trim())
+      if (host !== null && GITHUB_HOST.test(host)) return true
+    }
+    current = (current as { cause?: unknown }).cause
+  }
+  return false
+}
+
+/** How often the loop checks whether GitHub is reachable again while it waits out a connection failure. */
+export const GITHUB_REACHABILITY_INTERVAL_MS = 30_000
+
+/** How many times in a row one round re-runs a step that failed to connect while GitHub answered the very first reachability check, before it pauses. */
+export const MAX_ANSWERED_CONNECTION_RETRIES = 2
 
 /** The rate-limit wording GitHub's REST and GraphQL APIs use, primary and secondary — nothing that merely mentions GitHub matches. */
 const GITHUB_RATE_LIMIT_WORDING = /api rate limit (?:already )?exceeded|secondary rate limit|rate limit exceeded/i
@@ -470,7 +585,10 @@ export type LoopStateSnapshot = {
   heldResult: RoundHeadIdentity | null
   deliveredFindings: RoundHeadIdentity | null
   /** The loop's two repeat detectors, so a re-exec or an attach continues counting rather than starting over — see `LoopStateRecordSchema.repeatMemory`. */
-  repeatMemory: { blockingFindings: string[]; lastFailure: { signature: string; message: string } | null }
+  repeatMemory: {
+    blockingFindings: string[]
+    lastFailure: { signature: string; message: string; developerAttemptedSince?: boolean } | null
+  }
   publicationExpectedBase: string | null
   /** When the loop first started on this task, ISO-8601 — written by the first driver to persist state for it and carried forward unchanged by every later one, so the task's wall-clock budget measures from one fixed instant across restarts. */
   taskStartedAt: string

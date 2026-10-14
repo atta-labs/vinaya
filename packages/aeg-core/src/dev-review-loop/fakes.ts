@@ -6,7 +6,7 @@
  * process, a file, or the forge.
  */
 
-import { assessRound } from './assess-round'
+import { assessRound, recordDeveloperAttempt } from './assess-round'
 import type {
   Confidence,
   Decision,
@@ -104,6 +104,11 @@ export function notMetVerdict(role: 'reviewer' | 'security', objectiveIds: strin
  * time grows between observations. Omitted, no clock is passed at all, which
  * is exactly a caller that cannot measure the task's first start: the time
  * budget is then never armed and every existing scenario behaves as before.
+ *
+ * A `dispatch_developer` decision is followed by a finished Developer attempt
+ * before the next step, recorded with `recordDeveloperAttempt` exactly as the
+ * driver records one. A scenario whose dispatch never reaches the Developer
+ * calls `assessRound` directly instead.
  */
 export function runScenario(
   initial: LoopState,
@@ -115,7 +120,7 @@ export function runScenario(
   const decisions: Decision[] = []
   for (const [index, step] of steps.entries()) {
     const result = assessRound(state, step, clockAt?.(index))
-    state = result.state
+    state = result.decision.type === 'dispatch_developer' ? recordDeveloperAttempt(result.state) : result.state
     events.push(...result.events)
     decisions.push(result.decision)
   }

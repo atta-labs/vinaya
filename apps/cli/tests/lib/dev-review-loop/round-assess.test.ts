@@ -15,6 +15,8 @@ import {
   DevReviewLoopResumeError,
   DispatchSandboxRefused,
   DispatchSignInRefused,
+  GitHubKeptAnswering,
+  isGitHubConnectionFailure,
   isGitHubRateLimitError,
   isRateLimitPauseDetail,
   RATE_LIMIT_FALLBACK_WAIT_MS,
@@ -160,5 +162,78 @@ describe('GitHub rate-limit classification', () => {
     expect(isRateLimitPauseDetail(rateLimitPauseDetail(2))).toBe(true)
     expect(rateLimitPauseDetail(2)).toContain('No ruling is needed')
     expect(isRateLimitPauseDetail('an uncaught error ended round 1')).toBe(false)
+  })
+})
+
+describe('isGitHubConnectionFailure — no response from GitHub, read from the error’s own cause', () => {
+  const withStderr = (message: string, stderr: string) => Object.assign(new Error(message), { stderr })
+
+  it('gh’s own report that it could not connect is one', () => {
+    const err = new Error(
+      'error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com'
+    )
+    expect(isGitHubConnectionFailure(err)).toBe(true)
+    expect(spendsInfrastructureRetry(err)).toBe(false)
+  })
+
+  it('a transport error on a GitHub URL in captured stderr is one', () => {
+    for (const cause of [
+      'dial tcp 140.82.112.6:443: connect: connection refused',
+      'dial tcp: lookup api.github.com: no such host',
+      'net/http: TLS handshake timeout',
+      'context deadline exceeded (Client.Timeout exceeded while awaiting headers)'
+    ]) {
+      const err = withStderr('Command failed: gh api graphql', `Post "https://api.github.com/graphql": ${cause}\n`)
+      expect(isGitHubConnectionFailure(err)).toBe(true)
+    }
+  })
+
+  it('git’s unable-to-access line for github.com is one', () => {
+    const err = withStderr(
+      'Command failed: git fetch origin',
+      "fatal: unable to access 'https://github.com/atta-labs/vinaya.git/': Could not resolve host: github.com\n"
+    )
+    expect(isGitHubConnectionFailure(err)).toBe(true)
+  })
+
+  it('a no-response system error code naming a GitHub host, on the error or its cause, is one', () => {
+    const cause = Object.assign(new Error('getaddrinfo ENOTFOUND api.github.com'), {
+      code: 'ENOTFOUND',
+      hostname: 'api.github.com'
+    })
+    expect(isGitHubConnectionFailure(new TypeError('fetch failed', { cause }))).toBe(true)
+  })
+
+  it('a response GitHub sent — a server error, a malformed body — is not one, and keeps its budget', () => {
+    for (const err of [
+      new Error('HTTP 502: Bad Gateway (https://api.github.com/graphql)'),
+      new Error("invalid character '<' looking for beginning of value"),
+      withStderr('Command failed: gh pr view', 'GraphQL: Could not resolve to a PullRequest with the number of 7.')
+    ]) {
+      expect(isGitHubConnectionFailure(err)).toBe(false)
+      expect(spendsInfrastructureRetry(err)).toBe(true)
+    }
+  })
+
+  it('a message that merely mentions a connection is not one: only a line’s structured cause counts', () => {
+    expect(isGitHubConnectionFailure(new Error('the round ended: connection refused while reading github.com'))).toBe(
+      false
+    )
+  })
+
+  it('a connection failure to another host is not one', () => {
+    const cause = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED', hostname: 'example.com' })
+    expect(isGitHubConnectionFailure(new TypeError('fetch failed', { cause }))).toBe(false)
+    const err = withStderr(
+      'Command failed',
+      'Get "https://example.com/doc": dial tcp: lookup example.com: no such host'
+    )
+    expect(isGitHubConnectionFailure(err)).toBe(false)
+  })
+
+  it('a step that kept failing while GitHub answered is not one, and spends the budget', () => {
+    const err = new GitHubKeptAnswering(new Error('error connecting to api.github.com'))
+    expect(isGitHubConnectionFailure(err)).toBe(false)
+    expect(spendsInfrastructureRetry(err)).toBe(true)
   })
 })
