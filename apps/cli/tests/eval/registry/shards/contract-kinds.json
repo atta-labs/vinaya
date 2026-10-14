@@ -308,7 +308,7 @@
       },
       "grader": {
         "kinds": ["code"],
-        "detail": "Trace predicate on tool name and arguments, plus an outcome check on the resulting state."
+        "detail": "Code: `tool-selection-trace`, a trace predicate on tool name and arguments, and `tool-selection-state`, an outcome check on the scripted world's resulting state (`apps/cli/tests/eval/tool-selection-suite.ts`)."
       },
       "backends": ["standalone", "engine"],
       "decisionRule": "§10 absolute-floor live suite: ≥ 0.95 per tool on the held-out split, both adapters, no margin; the deterministic L4 regression subset passes 100%.",
@@ -347,7 +347,7 @@
       },
       "grader": {
         "kinds": ["code"],
-        "detail": "Trace predicate on tool name and arguments, plus an outcome check on the resulting state."
+        "detail": "Code: `tool-selection-trace`, a trace predicate on tool name and arguments, and `tool-selection-state`, an outcome check on the scripted world's resulting state (`apps/cli/tests/eval/tool-selection-suite.ts`)."
       },
       "backends": ["standalone", "engine"],
       "decisionRule": "§10 absolute-floor live suite: ≥ 0.95 per tool on the held-out split, both adapters, no margin; the deterministic L4 regression subset passes 100%.",
@@ -386,7 +386,7 @@
       },
       "grader": {
         "kinds": ["code"],
-        "detail": "Trace predicate on tool name and arguments, plus an outcome check on the resulting state."
+        "detail": "Code: `tool-selection-trace`, a trace predicate on tool name and arguments, and `tool-selection-state`, an outcome check on the scripted world's resulting state (`apps/cli/tests/eval/tool-selection-suite.ts`)."
       },
       "backends": ["standalone", "engine"],
       "decisionRule": "§10 absolute-floor live suite: ≥ 0.95 per tool on the held-out split, both adapters, no margin; the deterministic L4 regression subset passes 100%.",
@@ -425,7 +425,7 @@
       },
       "grader": {
         "kinds": ["code"],
-        "detail": "Trace predicate on tool name and arguments, plus an outcome check on the resulting state."
+        "detail": "Code: `tool-selection-trace`, a trace predicate on tool name and arguments, and `tool-selection-state`, an outcome check on the scripted world's resulting state (`apps/cli/tests/eval/tool-selection-suite.ts`)."
       },
       "backends": ["standalone", "engine"],
       "decisionRule": "§10 absolute-floor live suite: ≥ 0.95 per tool on the held-out split, both adapters, no margin; the deterministic L4 regression subset passes 100%.",
@@ -464,7 +464,7 @@
       },
       "grader": {
         "kinds": ["code"],
-        "detail": "Trace predicate on tool name and arguments, plus an outcome check on the resulting state."
+        "detail": "Code: `tool-selection-trace`, a trace predicate on tool name and arguments, and `tool-selection-state`, an outcome check on the scripted world's resulting state (`apps/cli/tests/eval/tool-selection-suite.ts`)."
       },
       "backends": ["standalone", "engine"],
       "decisionRule": "§10 absolute-floor live suite: ≥ 0.95 per tool on the held-out split, both adapters, no margin; the deterministic L4 regression subset passes 100%.",
@@ -503,7 +503,7 @@
       },
       "grader": {
         "kinds": ["code"],
-        "detail": "Trace predicate on tool name and arguments, plus an outcome check on the resulting state."
+        "detail": "Code: `tool-selection-trace`, a trace predicate on tool name and arguments, and `tool-selection-state`, an outcome check on the scripted world's resulting state (`apps/cli/tests/eval/tool-selection-suite.ts`)."
       },
       "backends": ["standalone", "engine"],
       "decisionRule": "§10 absolute-floor live suite: ≥ 0.95 per tool on the held-out split, both adapters, no margin; the deterministic L4 regression subset passes 100%.",
@@ -542,7 +542,7 @@
       },
       "grader": {
         "kinds": ["code"],
-        "detail": "Trace predicate on tool name and arguments, plus an outcome check on the resulting state."
+        "detail": "Code: `tool-selection-trace`, a trace predicate on tool name and arguments, and `tool-selection-state`, an outcome check on the scripted world's resulting state (`apps/cli/tests/eval/tool-selection-suite.ts`)."
       },
       "backends": ["standalone", "engine"],
       "decisionRule": "§10 absolute-floor live suite: ≥ 0.95 per tool on the held-out split, both adapters, no margin; the deterministic L4 regression subset passes 100%.",
@@ -581,7 +581,7 @@
       },
       "grader": {
         "kinds": ["code"],
-        "detail": "Trace predicate on tool name and arguments; the served content hashed against the manifest entry's pinned digest; the page size checked against the catalog limit."
+        "detail": "Code: `tool-selection-trace`, a trace predicate on tool name and arguments, and `tool-selection-state`, an outcome check on the scripted world's resulting state (`apps/cli/tests/eval/tool-selection-suite.ts`); the served content hashed against the manifest entry's pinned digest; the page size checked against the catalog limit."
       },
       "backends": ["standalone", "engine"],
       "decisionRule": "§10 absolute-floor live suite: ≥ 0.95 per tool on the held-out split, both adapters, no margin; the deterministic L4 regression subset passes 100%.",

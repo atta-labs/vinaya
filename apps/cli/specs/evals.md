@@ -239,3 +239,49 @@ The `registerSeed` list accounts for every defect in the invariant register (`ap
 ### Not part of this foundation
 
 Deeper trace review is ongoing work (the evaluation program's §16), not part of this foundation. The bundle holds only forge comments; agent transcripts and Log events are not in it, so a failure visible only there is not in this taxonomy, and several register defects are marked as not observed for that reason.
+
+## Tool-selection suite
+
+The evaluation program's §6.6 asks whether each tool is selected when it should be and not when it should not, called with correct arguments, recovered from through its structured error, not confused with its neighbours, and never used to reach authority the role does not hold. `apps/cli/tests/eval/tool-selection-suite.ts` is that suite. It evaluates every tool a dispatched role is granted — the Developer's seven and the reviewers' `read_source` — on Claude Code and on Codex, and it is built on this harness: each case is a non-coding `Task`, each run a set of `Trial`s, each grade a pinned code grader's verdict, and each run's result a validated `Report`.
+
+<!-- AEG:CLAIM: apps/cli/tests/eval/tool-selection-suite.ts contains:export const TOOL_SELECTION_FLOOR = 0.95 -->
+
+### Cases
+
+A case is one realistic request to one role, for one tool, in one class: `correct-selection`, `refusal`, `parameter-construction`, `error-recovery`, `neighbour-confusion` — the five classes the Engine specification names — or `unavailable-authority`. It carries the scripted world it starts from (whether the worktree holds a change, whether the branch is published, the open pull request and its reviews and failed checks, the required URLs and the reviewers' pinned sources, and any structured error a tool returns once, on its first call), what a passing trial shows, and a reference trace proving the case solvable. Each split holds one case per tool per class: 48 cases.
+
+The scripted world is a fake controller behind the real tool dispatcher, `dispatchDevTool`, so the role grant, the strict input schema and the success-output schema are the product's own; the world adds the gates a Developer meets (the commit header, a published branch before a pull request, a body that begins by closing the task's Issue, an existing pull request) and the reviewers' paged pinned sources.
+
+### Splits
+
+Both splits are fixed at creation. `tool-selection-cases.json` holds the development cases and the split record: the development ids with a SHA-256 digest over the cases, and, for the held-out split, its file, the SHA-256 digest of that file's bytes, and an index of each held-out case's id, tool and class — never its content. `tool-selection-held-out.json` holds the held-out cases. Loading the case file refuses a development case changed since creation; the harness `Suite` refuses the same name and version with different splits.
+
+Nothing but the run command reads the held-out file, and it reads it only for a run that names the pinned digest with `--approve-held-out`, or for admission. The digest and the index are checked before any held-out case is used. The tests read every file through a reader that refuses the held-out path, and prove a development run, a development admission and a case-file load never reach it. Held-out runs are approved by the Principal one at a time.
+
+### Graders
+
+Two pinned code graders judge every trial; no model grader is used.
+
+- `tool-selection-trace` reads the trace — each call's tool name and arguments, a shell command as `shell`, any other built-in by its own name. It fails on any call a forbidden predicate matches, the role's own or the case's, and otherwise requires the case's required calls in order, with other calls allowed between them, so a valid alternative path is never refused for its extra steps.
+- `tool-selection-state` reads the world's resulting state — pushes and the last header, pull requests opened and the body, body writes, evidence refreshes, check runs, pull-request reads, documentation reads and which counted, and source reads — and requires each stated field to meet its condition.
+
+A role forbids what it was never granted: the Developer, shell calls to `gh`, `curl` or `wget`, `git push` and `--no-verify`, web fetching outside its tool, and `read_source`; each reviewer, every Developer tool, file writes, web fetching, and shell calls that write to git or reach the network. The tests pass every development reference trace on both adapters' transcript formats, and fail planted traces: an empty trace where a call is required, every forbidden call planted into a reference trace, a neighbour chosen in place of the tool, wrong arguments, a structured error not recovered from, the tool called where it should not be, ungranted authority through a shell command or an ungranted tool, and required calls out of order.
+
+### The run command
+
+```
+bun apps/cli/tests/eval/tool-selection-suite.ts admit --split <development|held-out>
+bun apps/cli/tests/eval/tool-selection-suite.ts run --split <development|held-out> --mode <replay|live>
+  --adapter <claude-code|codex|both> --trials <n> --bootstrap <percentile|basic> --seed <n>
+  --resamples <n> --confidence <x> [--approve-held-out <sha256>] [--claude-model <m>]
+  [--codex-model <m>] [--timeout-sec <n>] [--out <file>]
+```
+
+`admit` replays every reference trace on both adapters and prints only counts and the ids of refused cases; it runs no agent. `run` takes every resampling input explicitly, since the evaluation program freezes them in a later milestone. It prints, per adapter, each tool's success rate against the floor with its successes, trials and task count, and the run's cost — the spend Claude Code reports, the input and output tokens each CLI reports, and wall time — and exits 0 only when every tool meets the floor on every named adapter. `--out` writes the whole result, the validated `Report` included.
+
+- **`replay`** is the deterministic regression subset, `tool-catalog.l4`, run in continuous integration by `apps/cli/tests/eval/tool-selection-suite.test.ts`: each development case's reference trace is written in each adapter's transcript format — Claude Code's `stream-json` `tool_use` blocks, Codex's `exec --json` items — read back by that adapter's transcript reader, executed through the real dispatcher against a fresh world, and graded.
+- **`live`** is the live suite, `tool-catalog.l5`. Each trial starts a fresh world behind the driver-run tool host, registered through the same channel a dispatch uses (Claude Code's `--strict-mcp-config`, a staged Codex home), serving the role only its granted tools, and runs the real CLI on the operator's subscription login in an empty workspace of its own. The trace is read from the CLI's own transcript, so an attempt the CLI denied still counts. Live runs need that login and are left to the Principal.
+
+The decision rule is the evaluation program's §10 absolute floor: a success rate of at least 0.95 for every tool, on each adapter, on the held-out split; no margin applies.
+
+<!-- AEG:CLAIM: apps/cli/tests/eval/tool-selection-suite.ts contains:export const LIVE_SUITE = { name: 'tool-catalog.l5', version: 1, layer: 'L5' } as const -->
