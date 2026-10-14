@@ -1840,6 +1840,83 @@ export function failureSignaturePart(run: { name: string; detail?: string }, log
   return evidence === '' ? check : `${check}: ${evidence}`.slice(0, MAX_FAILURE_EVIDENCE_CHARS)
 }
 
+const CHECK_STRING_FIELDS = [
+  'completedAt',
+  'conclusion',
+  'context',
+  'detailsUrl',
+  'name',
+  'startedAt',
+  'state',
+  'status',
+  'targetUrl',
+  'workflowName'
+] as const
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function nullableStringField(value: unknown): string | null {
+  return typeof value === 'string' ? value : null
+}
+
+/**
+ * `gh pr view`'s `statusCheckRollup`, projected onto exactly the fields the
+ * `read_pull_request` catalog schema declares: every other forge field is
+ * dropped, a non-string field becomes `null`, and an entry without a
+ * `__typename` is not a check node and is skipped.
+ */
+export function projectPrChecks(raw: unknown): DevPullRequestView['checks'] {
+  if (!Array.isArray(raw)) return null
+  const checks: NonNullable<DevPullRequestView['checks']> = []
+  for (const node of raw) {
+    if (!isRecord(node) || typeof node.__typename !== 'string') continue
+    const check: NonNullable<DevPullRequestView['checks']>[number] = {
+      __typename: node.__typename
+    }
+    for (const field of CHECK_STRING_FIELDS) {
+      if (field in node) check[field] = nullableStringField(node[field])
+    }
+    checks.push(check)
+  }
+  return checks
+}
+
+/**
+ * `gh pr view`'s `reviews`, projected onto exactly the fields the
+ * `read_pull_request` catalog schema declares: forge-only fields such as
+ * `reactionGroups` are dropped, `commit` is GitHub's `{ oid }` flattened to its
+ * oid, and an entry missing a required string (`id`, `body`, `state`) is skipped.
+ */
+export function projectPrReviews(raw: unknown): DevPullRequestView['reviews'] {
+  if (!Array.isArray(raw)) return null
+  const reviews: NonNullable<DevPullRequestView['reviews']> = []
+  for (const node of raw) {
+    if (!isRecord(node)) continue
+    const { id, body, state } = node
+    if (typeof id !== 'string' || typeof body !== 'string' || typeof state !== 'string') continue
+    const author = isRecord(node.author) && typeof node.author.login === 'string' ? { login: node.author.login } : null
+    const review: NonNullable<DevPullRequestView['reviews']>[number] = {
+      author,
+      body,
+      id,
+      state
+    }
+    if ('authorAssociation' in node) review.authorAssociation = nullableStringField(node.authorAssociation)
+    if ('commit' in node) {
+      review.commit = isRecord(node.commit) ? nullableStringField(node.commit.oid) : nullableStringField(node.commit)
+    }
+    if ('createdAt' in node) review.createdAt = nullableStringField(node.createdAt)
+    if ('includesCreatedEdit' in node) {
+      review.includesCreatedEdit = typeof node.includesCreatedEdit === 'boolean' ? node.includesCreatedEdit : null
+    }
+    if ('submittedAt' in node) review.submittedAt = nullableStringField(node.submittedAt)
+    reviews.push(review)
+  }
+  return reviews
+}
+
 /** O2/O3: the loop's view of the PR for the `read_pull_request` tool — `gh pr view --json`, a null-filled view when none is open, plus each failed check's log tail on its head. */
 async function defaultReadPrView(input: {
   branch: string
@@ -1871,8 +1948,8 @@ async function defaultReadPrView(input: {
       prNumber: typeof j.number === 'number' ? j.number : null,
       state: typeof j.state === 'string' ? j.state : null,
       head,
-      checks: (j.statusCheckRollup ?? null) as DevPullRequestView['checks'],
-      reviews: (j.reviews ?? null) as DevPullRequestView['reviews'],
+      checks: projectPrChecks(j.statusCheckRollup),
+      reviews: projectPrReviews(j.reviews),
       body: typeof j.body === 'string' ? j.body : null,
       failedChecks: head === null ? [] : failedCheckLogsOnHead(head)
     }
