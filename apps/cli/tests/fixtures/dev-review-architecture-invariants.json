@@ -130,6 +130,16 @@
         "path": "apps/cli/tests/lib/dev-review-loop/pre-pr-pause-continuation.test.ts",
         "kind": "test",
         "reason": "Landed with Issue #1165: a pause recorded before the task's pull request existed is bound to the one opened since and continued by `task run` or by the watching driver itself, driven in-process through a real round 2."
+      },
+      {
+        "path": "apps/cli/src/lib/dev-review-loop/live-check.ts",
+        "kind": "implementation",
+        "reason": "The live check: a task's `[live]` Test plan lines, run by the loop on its own host between a green gate and reviewer dispatch, with the subscription sign-in check that decides whether the host can run a line; loop.md's \"The live check\" section describes it."
+      },
+      {
+        "path": "apps/cli/tests/lib/dev-review-loop/live-check.test.ts",
+        "kind": "test",
+        "reason": "Drives the live check in-process: a failed line sends the Developer back with no reviewer dispatched, a passed line is recorded with its head, a host with no sign-in records the line unverified and leaves the merge gate red, and a plan with none runs as before."
       }
     ]
   },
@@ -3407,6 +3417,28 @@
       ],
       "loopSpec": ["Infrastructure failures and driver-decided pauses"],
       "reason": "A confinement capability that fails on first use is a capability refusal, not a transient (revision 17 section 16.15): the host cannot change by itself, so a retry only spends the budget before anyone is asked. Section 16.11 makes it an Operator-remediation pause, resumed once the host is repaired, with no ruling.",
+      "scope": "product"
+    },
+    {
+      "id": "INV-164",
+      "behavior": "Once the gate reads green and before reviewers are dispatched, the driver runs each `[live]` Test plan line of the frozen brief on its own host, bounded in time; a non-zero exit or a timeout is a red gate that sends the Developer back with the line's output tail and dispatches no reviewer for that head, a line naming a vendor with no subscription sign-in on the host is recorded unverified and held by the merge gate like an unticked principal item, and a plan with no such line runs the round unchanged.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["developer-failure"],
+      "sources": [
+        {
+          "path": "apps/cli/src/lib/dev-review-loop/live-check.ts",
+          "symbol": "runLiveChecks"
+        },
+        {
+          "path": "apps/cli/src/lib/dev-review-loop/live-check.ts",
+          "symbol": "vendorSignedIn"
+        }
+      ],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/live-check.test.ts"],
+      "loopSpec": ["The live check"],
+      "reason": "A check that needs real signed-in agent sessions is machine-judgeable but skipped in the Developer's sandbox, the push hook and CI; running it inside the round catches its failure before review rather than after the Principal runs it.",
       "scope": "product"
     }
   ],
