@@ -71,7 +71,7 @@ Principal → Planner → Developer → Reviewer (code + security) → merge, pl
 ## 9. Tiers, decisions, ratification (the governance layer)
 
 - **Tiers**: Tier 0 trivial · Tier 1 implementation · Tier 3 project/roadmap. No Tier 2. When in doubt, Tier 3.
-- **Decisions** are recorded in the change that makes them — the pull-request body is the durable record. Historical entries sit in a frozen archive outside the harness; nothing reads it and no new entries are added.
+- **Decisions** follow `state-machine.md` Section 6, "Recording why."
 - **Ratification windows**: 1–2 daily; the Principal resolves Type 1s, Tier 3 merges, `severity:product` escalations.
 - **verify-docs** (`packages/aeg-core/bin/verify-docs.ts`; in this repo it runs at authoring time — `open-pr.ts` / `bun run verify-docs --pr` — with its CI counterparts the `brief-shape`/`doc-coverage` checks in `.github/workflows/vinaya-checks.yml`; in the attalabs reference implementation it is a step of that repo's consolidated gate job) is a real blocking gate: changed specs need a `Status:` block, Tier 1+ code needs a doc change, Tier 3 states its reasoning in the pull request.
 

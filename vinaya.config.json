@@ -64,7 +64,21 @@
     },
     "specGrandfather": {
       "apps/cli/specs/dev-review-evaluation-program.md": 46
+    },
+    "rules": {
+      "custom": [
+        {
+          "id": "decision-id-everywhere",
+          "pattern": "\\bD-[0-9]{2,4}\\b",
+          "means": "state the decision in plain words instead of citing a decision identifier",
+          "scopes": ["spec", "source-comment"],
+          "severity": "error"
+        }
+      ]
     }
+  },
+  "decisionRecords": {
+    "path": "docs/adr"
   },
   "briefSchema": {
     "pr": {

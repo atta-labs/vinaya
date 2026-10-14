@@ -130,7 +130,7 @@ Read the pull requests merged during this tranche for decisions that were record
 
 For each: list it explicitly in your output as `PENDING RATIFICATION — requires Principal action at next ratification window.` Do NOT mark them ratified yourself — ratification is a Principal act. You surface; they decide.
 
-If a Tier 3 task merged with its reasoning recorded nowhere — not in its pull request, not in the spec it governs — flag as `DANGLING — Tier 3 task N has no durable record of why.`
+Follow `state-machine.md` Section 6, "Recording why": list each merged Tier 3 change that added no decision record. This is a report and blocks nothing.
 
 ### 7. Update `docs-index.md`
 

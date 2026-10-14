@@ -214,14 +214,9 @@ Most specs are `draft` — no deliberate ratification pass has been done. Future
 
 ## Section 6: Recording why
 
-The harness requires no standing record of decisions. A change's reasoning lives in the pull
-request that makes it — frozen at merge, dated, attributed, and read by both
-the reviewer and the close-out. A rule that still binds belongs in the spec
-for the surface it governs, where a doc-ownership binding keeps it current.
+A change's reasoning lives in the pull request that makes it. A repository may also keep decision records: one short, numbered file per architecturally significant decision, in the folder its configuration names. When it does, the Planner reads them before planning and stops for the Principal before reversing one; the change that makes a significant decision adds its record; the Tranche Archivist lists merged Tier 3 changes that added none; and specifications, doctrine and code state each rule in plain words, never citing a record. A record, once accepted, changes only to name the record that supersedes it.
 
-A team that wants a standing record of past choices is free to keep one in
-whatever form suits it. Nothing here reads it, requires it, numbers it, or
-checks its shape.
+A decision is significant when it concerns structure, a quality attribute such as security or reliability, a dependency, an interface, or a tool or process, and at least two real options existed or no standard settled the choice.
 
 ## Section 7: Escalation Paths
 
