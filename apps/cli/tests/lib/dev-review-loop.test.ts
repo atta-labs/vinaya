@@ -3468,11 +3468,13 @@ case "$VINAYA_ROLE" in
     if [ ! -f "$HOME/.round1-reviewed" ]; then
       touch "$HOME/.round1-reviewed" 2>/dev/null
       printf '%s\\n' 'BLOCKER|smoke.ts:1|deliberate round-1 blocker to force round 2' > "$WD/findings.txt"
+      IDS='FINDING_IDS: F1\\n'
     else
       : > "$WD/findings.txt"
+      IDS=''
     fi
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    printf "BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n$IDS" > "$WD/report.txt"
     echo '{"session_id":"rev-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
