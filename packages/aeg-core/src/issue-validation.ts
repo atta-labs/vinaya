@@ -3668,6 +3668,73 @@ export function checkDocumentationReadable(
   return { status: errors.length > 0 ? 'fail' : 'pass', errors, warnings }
 }
 
+/** A source carrying a URL scheme (`https://`, `file://`, …) is never read as a repository path. */
+const DOCUMENTATION_SOURCE_SCHEME_RE = /[a-z][a-z0-9+.-]*:\/\//i
+
+/** A repository-path source's path: its first inline code span when it has one, else the whole source, with a `#fragment` dropped. */
+function documentationSourcePath(source: string): string {
+  const span = /`([^`]+)`/.exec(source)
+  return (span ? (span[1] as string) : source).trim().replace(/#.*$/, '')
+}
+
+/**
+ * Where a required source is read from, decided from its `## Documentation`
+ * text alone: a public `https://` or `http://` page, a path in this
+ * repository, or neither. A source with any other scheme, an absolute path,
+ * or a path climbing out of the repository (`..`) names nothing the
+ * controller can prepare, so it is `unresolvable` with the reason spelled out.
+ */
+export type RequiredSourceLocator =
+  | { kind: 'url'; url: string }
+  | { kind: 'repository'; path: string }
+  | { kind: 'unresolvable'; detail: string }
+
+export function classifyDocumentationSource(source: string): RequiredSourceLocator {
+  const trimmed = source.trim()
+  if (/^https?:\/\//i.test(trimmed)) return { kind: 'url', url: trimmed }
+  if (DOCUMENTATION_SOURCE_SCHEME_RE.test(trimmed)) {
+    return {
+      kind: 'unresolvable',
+      detail: `\`${trimmed}\` carries a scheme that is neither a web page nor a repository path`
+    }
+  }
+  const path = documentationSourcePath(trimmed)
+  if (path.length === 0) return { kind: 'unresolvable', detail: 'the source names no page and no repository path' }
+  if (path.startsWith('/') || path.split('/').includes('..')) {
+    return { kind: 'unresolvable', detail: `\`${path}\` is not a path inside this repository` }
+  }
+  return { kind: 'repository', path: path.replace(/^\.\//, '') }
+}
+
+/**
+ * Why a required source could not be prepared before the Developer's turn —
+ * the typed reason a `missing_source` pause carries for each one.
+ *
+ * - `login_required` — the page asked for credentials (HTTP 401, 403 or 407)
+ *   or redirected to a sign-in page; a private document is never read.
+ * - `other_host` — the page answered from a different host than the one the
+ *   task names, so what would be read is not the named source.
+ * - `not_a_document` — the answer was an error status, too little text to be
+ *   the document, or a body whose end was never declared.
+ * - `fetch_refused` — the fetch itself was refused: not https, a non-public
+ *   address, a disallowed content type, an oversized body, too many redirects.
+ * - `unreachable` — a timeout or a dropped connection, still failing after
+ *   the provider's bounded retries.
+ * - `missing_in_repository` — the repository path does not exist at the
+ *   frozen base revision.
+ * - `unresolvable` — the source names neither a page nor a repository path.
+ */
+export const REQUIRED_SOURCE_MISSING_REASONS = [
+  'login_required',
+  'other_host',
+  'not_a_document',
+  'fetch_refused',
+  'unreachable',
+  'missing_in_repository',
+  'unresolvable'
+] as const
+export type RequiredSourceMissingReason = (typeof REQUIRED_SOURCE_MISSING_REASONS)[number]
+
 /**
  * **An in-repository Documentation source exists in the checkout.** A source
  * carrying a URL scheme belongs to `checkDocumentationReadable` and is never
@@ -3685,9 +3752,8 @@ export function checkDocumentationPathsExist(
   if (!documentation.ok || documentation.value.kind === 'none') return { status: 'pass', errors: [] }
   const errors: string[] = []
   for (const { source } of documentation.value.sources) {
-    if (/[a-z][a-z0-9+.-]*:\/\//i.test(source)) continue
-    const span = /`([^`]+)`/.exec(source)
-    const path = (span ? (span[1] as string) : source).trim().replace(/#.*$/, '')
+    if (DOCUMENTATION_SOURCE_SCHEME_RE.test(source)) continue
+    const path = documentationSourcePath(source)
     if (path.length === 0) continue
     if (readFile(path) === null) {
       errors.push(

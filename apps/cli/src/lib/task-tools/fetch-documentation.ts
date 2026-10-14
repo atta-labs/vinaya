@@ -44,18 +44,27 @@
  * type and returned at least
  * `DOCUMENTATION_READ_MIN_SIZE` bytes (an HTML page: characters of visible
  * text, see `visibleTextSize`) — the same minimum the `WebFetch` read
- * check uses. Only then does the driver append a receipt, keyed by the
- * source's identity (its normalized URL), to a receipts file in the task's
- * hooks area, which the after-turn confinement check protects. Both agents'
- * Stop hooks read that file.
+ * check uses. Only then does the driver record the delivery against the
+ * run's required-source manifest (`source-manifest.ts`): the receipt names
+ * the manifest entry by normalized source identity, the digest the
+ * controller pinned and the digest delivered, and what
+ * `SOURCE_REVISION_POLICY` decided when the two differ. Receipts go to the
+ * controller-owned source store, outside every worker's writable roots;
+ * completion reads that store and nothing else, and both agents' Stop hooks
+ * read it only to stop asking for a source already delivered.
  */
 
-import { createHash } from 'node:crypto'
 import { lookup } from 'node:dns/promises'
-import { appendFileSync, mkdirSync } from 'node:fs'
 import { isIP } from 'node:net'
-import { dirname, join } from 'node:path'
 import tls from 'node:tls'
+import {
+  appendSourceDeliveryReceipt,
+  decideDeliveredRevision,
+  manifestEntryFor,
+  type RequiredSourceManifest,
+  type SourceDeliveryReceipt,
+  sha256Digest
+} from '../source-manifest.js'
 import type { DevToolRefusal, DevToolResult } from './dev-tools-server.js'
 
 /** The tool's name on the dev-tools server. */
@@ -98,14 +107,6 @@ export const DOCUMENTATION_TEXT_CONTENT_TYPES: readonly string[] = [
   'application/json'
 ]
 
-/** The receipts file's name inside a task's hooks area. */
-export const DOCUMENTATION_RECEIPTS_FILE = 'documentation-receipts.jsonl'
-
-/** The receipts file for a task, given that task's hooks area (`<runtimeDir>/tasks-execution/<task>/hooks`). */
-export function documentationReceiptsPath(hooksDir: string): string {
-  return join(hooksDir, DOCUMENTATION_RECEIPTS_FILE)
-}
-
 /** Why a fetch was refused — the `check` a refusal names. */
 export type FetchDocumentationRefusalReason =
   | 'tool-input'
@@ -135,20 +136,6 @@ export type FetchDocumentationInput = {
   offset?: number
 }
 
-/** One recorded read — what the driver appends to the receipts file. */
-export type DocumentationReceipt = {
-  /** The source's identity: the requested URL, normalized (no fragment, no trailing slash). The Stop hooks match a required source by this. */
-  source: string
-  requestedUrl: string
-  finalUrl: string
-  status: number
-  contentType: string
-  size: number
-  sha256: string
-  recordedAt: string
-  tool: typeof FETCH_DOCUMENTATION_TOOL
-}
-
 /** What a successful call returns. */
 export type FetchDocumentationResult = {
   /** Fixed wording: the page text below is untrusted web content. */
@@ -161,8 +148,20 @@ export type FetchDocumentationResult = {
   /** The whole response body's size in bytes. */
   size: number
   sha256: string
-  /** Whether a read receipt was recorded, and when not, why. */
-  receipt: { recorded: true } | { recorded: false; reason: string }
+  /**
+   * Whether a delivery receipt was recorded, and when not, why. A recorded
+   * receipt names the manifest entry it was matched to (`sourceId`), whether
+   * the delivered revision matched the pinned one, and what the revision
+   * policy decided — a `refused` delivery does not count.
+   */
+  receipt:
+    | {
+        recorded: true
+        sourceId: string
+        revision: SourceDeliveryReceipt['revision']
+        decision: SourceDeliveryReceipt['decision']
+      }
+    | { recorded: false; reason: string }
   offset: number
   /** The offset to pass to read on, or `null` when this page reached the end. */
   nextOffset: number | null
@@ -666,6 +665,8 @@ export type FetchedDocument = {
   framed: boolean
   status: number
   contentType: string
+  /** The page's own revision marker — its `ETag`, else its `Last-Modified` — or `null` when it sent neither. */
+  revision?: string | null
   body: Uint8Array
 }
 
@@ -756,6 +757,7 @@ export async function fetchDocumentationPage(
         framed: response.framed,
         status: response.status,
         contentType,
+        revision: response.headers.etag ?? response.headers['last-modified'] ?? null,
         body: response.body
       }
     }
@@ -802,30 +804,42 @@ export function visibleTextSize(html: string): number {
     .trim().length
 }
 
-/** The receipt for a page that counts as a read. */
-export function receiptFor(document: FetchedDocument, now: Date): DocumentationReceipt {
+/**
+ * The delivery receipt for a page that counts as a read, recorded against
+ * `manifest`: keyed by the requested URL's normalized identity, carrying the
+ * pinned and delivered digests and the revision policy's decision. With no
+ * manifest (a dispatch the loop did not prepare), the receipt is `unpinned`.
+ */
+export function receiptFor(
+  document: FetchedDocument,
+  now: Date,
+  manifest: RequiredSourceManifest | null
+): SourceDeliveryReceipt {
+  const sourceId = documentationSourceId(document.requestedUrl)
+  const deliveredDigest = sha256Digest(document.body)
   return {
-    source: documentationSourceId(document.requestedUrl),
+    schemaVersion: 1,
+    sourceId,
+    source: sourceId,
+    round: manifest?.round ?? 0,
+    recordedAt: now.toISOString(),
+    mode: 'retrieval_tool',
+    recordedBy: FETCH_DOCUMENTATION_TOOL,
+    ...decideDeliveredRevision(manifestEntryFor(manifest, sourceId), deliveredDigest),
+    deliveredDigest,
     requestedUrl: document.requestedUrl,
     finalUrl: document.finalUrl,
     status: document.status,
     contentType: document.contentType,
-    size: document.body.length,
-    sha256: createHash('sha256').update(document.body).digest('hex'),
-    recordedAt: now.toISOString(),
-    tool: FETCH_DOCUMENTATION_TOOL
+    size: document.body.length
   }
 }
 
-/** Appends one receipt line, creating the hooks area owner-only when it is missing. */
-export function appendDocumentationReceipt(receiptsPath: string, receipt: DocumentationReceipt): void {
-  mkdirSync(dirname(receiptsPath), { recursive: true, mode: 0o700 })
-  appendFileSync(receiptsPath, `${JSON.stringify(receipt)}\n`, { mode: 0o600 })
-}
-
 export type FetchDocumentationToolOptions = {
-  /** Where receipts are appended — `documentationReceiptsPath(<task hooks area>)`, a path the after-turn confinement check protects. */
+  /** Where receipts are appended — the task's controller-owned source store (`sourceReceiptsPath`), outside every worker's writable roots. */
   receiptsPath: string
+  /** The run's current required-source manifest, read at each call; absent or `null` records every counted read as `unpinned`. */
+  manifest?: () => RequiredSourceManifest | null
   deps?: FetchDocumentationDeps
 }
 
@@ -852,15 +866,26 @@ export function createFetchDocumentationTool(
       const fetched = await fetchDocumentationPage(input.url, deps)
       if (!fetched.ok) return fetched
       const document = fetched.document
-      const receipt = receiptFor(document, deps.now())
+      const manifest = options.manifest?.() ?? null
+      const receipt = receiptFor(document, deps.now(), manifest)
       const notCounted = whyNotCountedAsRead(document)
       let recorded: FetchDocumentationResult['receipt']
       if (notCounted !== null) {
         recorded = { recorded: false, reason: notCounted }
+      } else if (manifest !== null && manifestEntryFor(manifest, receipt.sourceId) === null) {
+        recorded = {
+          recorded: false,
+          reason: `${receipt.sourceId} is not a required source in this run's manifest, so no delivery is recorded for it`
+        }
       } else {
         try {
-          appendDocumentationReceipt(options.receiptsPath, receipt)
-          recorded = { recorded: true }
+          appendSourceDeliveryReceipt(options.receiptsPath, receipt)
+          recorded = {
+            recorded: true,
+            sourceId: receipt.sourceId,
+            revision: receipt.revision,
+            decision: receipt.decision
+          }
         } catch (err) {
           recorded = {
             recorded: false,
@@ -880,8 +905,8 @@ export function createFetchDocumentationTool(
           finalUrl: document.finalUrl,
           status: document.status,
           contentType: document.contentType,
-          size: receipt.size,
-          sha256: receipt.sha256,
+          size: document.body.length,
+          sha256: receipt.deliveredDigest.replace(/^sha256:/, ''),
           receipt: recorded,
           offset,
           nextOffset: end < text.length ? end : null,

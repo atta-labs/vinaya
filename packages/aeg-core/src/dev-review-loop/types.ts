@@ -239,6 +239,15 @@ export type Observations =
  * probe's own error. It is outside the automatic-recovery set and spends no
  * infrastructure retry; once the host is repaired, the ordinary start
  * continues the task from it, recording the pause's resolution once.
+ *
+ * `'missing_source'`: a required source the frozen brief names could not be
+ * prepared before the Developer's turn — a page behind a login, a page that
+ * answered from another host or with no document, a repository path absent
+ * at the frozen base, or a source naming neither — so the turn never starts
+ * and the run never continues on model memory in its place. Driver-decided
+ * by the controller's source provider; `detail` names each unavailable
+ * source with its typed reason (`RequiredSourceMissingReason`). Addressed to
+ * the Planner, whose correction of the task's sources is what resolves it.
  */
 export type PauseReason =
   | 'escalation'
@@ -257,6 +266,7 @@ export type PauseReason =
   | 'brief_superseded'
   | 'policy_changed'
   | 'sandbox_refused'
+  | 'missing_source'
 
 export type Decision =
   | { type: 'dispatch_developer'; reason?: 'confidence' }

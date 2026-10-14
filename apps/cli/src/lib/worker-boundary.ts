@@ -31,10 +31,10 @@ import {
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path'
 import type { Role } from '@attalabs/aeg-core'
 import { devToolsSocketRoot } from './task-tools/dev-tools-registration.js'
-import { documentationReceiptsPath } from './task-tools/fetch-documentation.js'
+import { sourceReceiptsPath, sourceStoreDir } from './source-manifest.js'
 import { isReviewerScratchName } from './dev-review-loop/reviewer-isolation.js'
 
 /** The same allowlist discipline `apps/cli/src/checks/runner.ts`'s `buildCheckEnv` already applies to a custom check's child — named here again, deliberately, rather than imported: `checks/runner.ts` sits outside this task's surface (`apps/cli/src/checks` is explicitly named `out:` in the dispatched brief), and this list is small enough that naming it twice costs less than reaching across that boundary. `apps/cli/specs/isolation.md` §2 documents this precedent as the pattern this module extends to the Worker/Reviewer dispatch path. */
@@ -958,6 +958,14 @@ export type ConfinementRequest = {
    * it. Absent or empty adds nothing.
    */
   readonly extraWritableDirs?: readonly string[]
+  /**
+   * Controller-owned directories no command of this dispatch may write — the
+   * task's required-source store among them. Claude's sandbox names them in
+   * `filesystem.denyWrite`, which holds inside any wider write grant; Codex
+   * has no write-deny list, so the dispatch instead refuses when one of its
+   * writable roots would reach them (`controllerStoreReachableBy`).
+   */
+  readonly controllerOwnedDirs?: readonly string[]
 }
 
 export type ClaudeSandboxSettings = {
@@ -975,6 +983,8 @@ export type ClaudeSandboxSettings = {
       readonly denyRead: string[]
       readonly allowRead: string[]
       readonly allowWrite: string[]
+      /** Present only when the request names controller-owned directories. */
+      readonly denyWrite?: string[]
     }
     readonly credentials: {
       readonly files: ReadonlyArray<{ readonly path: string; readonly mode: 'deny' }>
@@ -1151,7 +1161,10 @@ export function buildClaudeSandboxSettings(
           scratchDir,
           resolveBunInstallCacheDir(),
           ...(request.extraWritableDirs ?? []).map(real)
-        ]
+        ],
+        ...((request.controllerOwnedDirs ?? []).length > 0
+          ? { denyWrite: (request.controllerOwnedDirs ?? []).map(real) }
+          : {})
       },
       credentials: { files: claudeCredentialDenyFiles(realHome) }
     },
@@ -2046,6 +2059,44 @@ function sourceReceiptPaths(hooksDir: string): ProtectedPathEntry[] {
   return entries
 }
 
+/** `path` resolved through its nearest existing ancestor, so a directory not created yet still compares by its real location. */
+function realThroughAncestor(path: string): string {
+  let probe = resolvePath(path)
+  const rest: string[] = []
+  for (;;) {
+    try {
+      return join(realpathSync(probe), ...rest.reverse())
+    } catch {
+      const parent = dirname(probe)
+      if (parent === probe) return resolvePath(path)
+      rest.push(basename(probe))
+      probe = parent
+    }
+  }
+}
+
+function within(child: string, parent: string): boolean {
+  return child === parent || child.startsWith(parent.endsWith(sep) ? parent : `${parent}${sep}`)
+}
+
+/**
+ * The first of `writableRoots` that would let a worker write into
+ * `controllerDir` — a root that contains it, or one inside it — or `null`
+ * when none does. Both sides are compared by real path, so a symlinked
+ * alias neither hides a reach nor invents one. A dispatch that gets a
+ * non-null answer for the task's required-source store refuses before
+ * spawning: the store's guarantee is that no worker can write it at all,
+ * not that a write would be noticed afterwards.
+ */
+export function controllerStoreReachableBy(controllerDir: string, writableRoots: readonly string[]): string | null {
+  const store = realThroughAncestor(controllerDir)
+  for (const root of writableRoots) {
+    const real = realThroughAncestor(root)
+    if (within(store, real) || within(real, store)) return root
+  }
+  return null
+}
+
 /**
  * The concrete, per-turn protected-path list O1 names: the control store
  * (effect records live inside it — `effectDir`/`effectPath`,
@@ -2077,7 +2128,9 @@ export function protectedPathsForTurn(input: {
     // Listed whether or not it exists yet: the driver's `fetch_documentation`
     // tool creates it mid-turn, and that write is attributed to the driver by
     // tool-call boundary (`startTurnWriteAttribution`), never to the worker.
-    { path: documentationReceiptsPath(join(taskDir, 'hooks')), kind: 'file' },
+    // It lives inside the control store, outside every worker's writable
+    // roots, so this entry is a second line behind prevention, not the line.
+    { path: sourceReceiptsPath(sourceStoreDir(input.runtimeDir, input.task)), kind: 'file' },
     ...otherRolesProtectedPaths(input)
   ]
   if (input.vinayaConfigPath !== null) entries.push({ path: input.vinayaConfigPath, kind: 'file' })

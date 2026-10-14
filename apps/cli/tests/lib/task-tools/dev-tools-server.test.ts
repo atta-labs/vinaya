@@ -46,7 +46,7 @@ function okContext(overrides: Partial<DevToolContext> = {}): DevToolContext {
         contentType: 'text/html',
         size: 2000,
         sha256: 'ab',
-        receipt: { recorded: true },
+        receipt: { recorded: true, sourceId: input.url, revision: 'match', decision: 'counted' },
         offset: 0,
         nextOffset: null,
         text: 'page'

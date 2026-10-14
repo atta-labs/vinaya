@@ -28,7 +28,13 @@ export const FETCH_DOCUMENTATION_SUCCESS_SCHEMA = {
     sha256: { type: 'string' },
     receipt: {
       type: 'object',
-      properties: { recorded: { type: 'boolean' }, reason: { type: 'string' } },
+      properties: {
+        recorded: { type: 'boolean' },
+        reason: { type: 'string' },
+        sourceId: { type: 'string' },
+        revision: { type: 'string', enum: ['match', 'mismatch', 'unpinned'] },
+        decision: { type: 'string', enum: ['counted', 'refused'] }
+      },
       required: ['recorded'],
       additionalProperties: false
     },
@@ -397,7 +403,8 @@ export const AGENT_TOOL_CATALOG: readonly AgentToolCatalogEntry[] = [
       'Read-only network request; replay is safe and receipts deduplicate by normalized source identity.',
     preconditions: ['URL is a required public source and the per-dispatch call budget remains.'],
     verifiedPostconditions: [
-      'Returned bytes passed address, TLS, status, content-type and size checks; receipt status is explicit.'
+      'Returned bytes passed address, TLS, status, content-type and size checks; receipt status is explicit.',
+      'A recorded delivery names its manifest entry by normalized source identity; a revision other than the pinned one is recorded as a mismatch and decided by the revision policy.'
     ],
     redaction: [
       'The public documentation response is returned as untrusted text without content redaction; requests carry no credentials.'

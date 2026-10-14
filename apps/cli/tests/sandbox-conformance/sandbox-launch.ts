@@ -25,11 +25,19 @@
  * Each agent gets its own fresh linked worktree of `HEAD` under
  * `.worktrees/`, as a dispatched Developer does: the driver creates it, the
  * Developer's first command (`bun install`) runs inside the sandbox.
+ *
+ * Each session also holds a task's controller-owned required-source store —
+ * a manifest and a receipts file, written by the suite as the driver writes
+ * them — under a throwaway runtime directory in the home directory, where
+ * the default runtime directory lives. Claude's settings name it in
+ * `denyWrite`, as the driver's do for a Developer; Codex is given no grant
+ * for it. The suite proves neither sandbox can create, change or delete a
+ * file there.
  */
 
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   addCodexWritableDirs,
@@ -47,6 +55,7 @@ import {
   resolveGitCommonDir,
   stageCodexPolicyHome
 } from '../../src/lib/worker-boundary.js'
+import { sourceManifestPath, sourceReceiptsPath, sourceStoreDir } from '../../src/lib/source-manifest.js'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture.js'
 import { isSuiteInput, REPO_ROOT } from './command-sources.js'
 
@@ -65,6 +74,8 @@ export type CommandResult = { exitCode: number; output: string }
 export type SandboxSession = {
   readonly agent: Agent
   readonly worktreeDir: string
+  /** The task's controller-owned required-source store, holding a manifest and a receipts file the worker must not touch. */
+  readonly sourceStore: string
   run(command: string, env: Record<string, string>): Promise<CommandResult>
   /** The same command in the same worktree with no sandbox around it — the control that tells a sandbox denial from a command that fails anywhere. */
   runOutside(command: string, env: Record<string, string>): Promise<CommandResult>
@@ -137,8 +148,32 @@ function withAbsoluteBun(command: string): string {
   return command.replace(/^bun(?=\s)/, JSON.stringify(process.execPath))
 }
 
-function request(agent: Agent, worktreeDir: string, scratchDir: string): ConfinementRequest {
-  return { role: 'developer', agent, worktreeDir, scratchDir, allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS }
+function request(
+  agent: Agent,
+  worktreeDir: string,
+  scratchDir: string,
+  controllerOwnedDirs: readonly string[] = []
+): ConfinementRequest {
+  return {
+    role: 'developer',
+    agent,
+    worktreeDir,
+    scratchDir,
+    allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS,
+    ...(controllerOwnedDirs.length > 0 ? { controllerOwnedDirs } : {})
+  }
+}
+
+/** A throwaway runtime directory in the home directory, holding task 1's source store with a manifest and a receipts file in it. */
+function controllerSourceStore(): { runtimeDir: string; store: string } {
+  const runtimeDir = realpathSync(mkdtempSync(join(homedir(), '.vinaya-conformance-runtime-')))
+  const store = sourceStoreDir(runtimeDir, 1)
+  mkdirSync(store, { recursive: true, mode: 0o700 })
+  writeFileSync(sourceManifestPath(store), '{"schemaVersion":1,"sources":[]}\n', { mode: 0o600 })
+  writeFileSync(sourceReceiptsPath(store), '{"sourceId":"https://example.com/a","decision":"counted"}\n', {
+    mode: 0o600
+  })
+  return { runtimeDir, store }
 }
 
 async function runIn(
@@ -171,7 +206,8 @@ function claudeSession(): SandboxSession {
   const worktreeDir = createWorktree('claude')
   const scratchDir = realpathSync(mkdtempSync(join(claudeScratchRoot(), 'vinaya-claude-sandbox-')))
   const settingsDir = mkdtempSync(join(tmpdir(), 'vinaya-conformance-srt-'))
-  const resolution = resolveClaudeConfinement(request('claude', worktreeDir, scratchDir))
+  const { runtimeDir, store } = controllerSourceStore()
+  const resolution = resolveClaudeConfinement(request('claude', worktreeDir, scratchDir, [store]))
   if (!resolution.confined) {
     throw new Error(`Claude's sandbox cannot run on this host: ${resolution.warning}`)
   }
@@ -182,7 +218,9 @@ function claudeSession(): SandboxSession {
     Object.keys(filesystem).sort(),
     Object.keys(credentials).sort()
   ])
-  if (shipped !== JSON.stringify([['allowedDomains'], ['allowRead', 'allowWrite', 'denyRead'], ['files']])) {
+  if (
+    shipped !== JSON.stringify([['allowedDomains'], ['allowRead', 'allowWrite', 'denyRead', 'denyWrite'], ['files']])
+  ) {
     throw new Error(`resolveClaudeConfinement emits settings the conformance file does not carry: ${shipped}`)
   }
   // O2: Claude Code enforces `sandbox.credentials.files` (deny) by denying
@@ -200,13 +238,14 @@ function claudeSession(): SandboxSession {
         denyRead: [...filesystem.denyRead, ...credentialDenyRead],
         allowRead: filesystem.allowRead,
         allowWrite: filesystem.allowWrite,
-        denyWrite: []
+        denyWrite: filesystem.denyWrite ?? []
       }
     })
   )
   return {
     agent: 'claude',
     worktreeDir,
+    sourceStore: store,
     runOutside: (command, env) => runOutsideSandbox(worktreeDir, command, env),
     // Keep the same routing decision the driver uses. Its exclusion list is
     // empty, so bare and chained Bash commands both stay sandboxed.
@@ -241,6 +280,7 @@ function claudeSession(): SandboxSession {
       removeWorktree(worktreeDir)
       rmSync(scratchDir, { recursive: true, force: true })
       rmSync(settingsDir, { recursive: true, force: true })
+      rmSync(runtimeDir, { recursive: true, force: true })
     }
   }
 }
@@ -249,6 +289,7 @@ function codexSession(): SandboxSession {
   const worktreeDir = createWorktree('codex')
   const scratchDir = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-codex-sandbox-')))
   const stageRoot = mkdtempSync(join(tmpdir(), 'vinaya-conformance-codex-'))
+  const { runtimeDir, store } = controllerSourceStore()
   const resolution = resolveCodexConfinement(request('codex', worktreeDir, scratchDir))
   if (!resolution.ok) throw new Error(`Codex's sandbox cannot run on this host: ${resolution.reason}`)
   const operatorHome = join(stageRoot, 'operator-home')
@@ -283,6 +324,7 @@ function codexSession(): SandboxSession {
   return {
     agent: 'codex',
     worktreeDir,
+    sourceStore: store,
     runOutside: (command, env) => runOutsideSandbox(worktreeDir, command, env),
     run: (command, env) =>
       runIn(
@@ -295,6 +337,7 @@ function codexSession(): SandboxSession {
       removeWorktree(worktreeDir)
       rmSync(scratchDir, { recursive: true, force: true })
       rmSync(stageRoot, { recursive: true, force: true })
+      rmSync(runtimeDir, { recursive: true, force: true })
     }
   }
 }

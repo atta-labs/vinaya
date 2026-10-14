@@ -53,6 +53,8 @@ export const SUITE_INPUTS: readonly string[] = [
   'apps/cli/src/lib/dispatch.ts',
   'apps/cli/src/lib/worker-boundary.ts',
   'apps/cli/src/lib/task-tools/dev-tools-registration.ts',
+  // Where the task's required-source store lives, which both sandboxes must not write.
+  'apps/cli/src/lib/source-manifest.ts',
   // The brief renderer and the types it is built from.
   'packages/aeg-core/src/',
   'packages/aeg-types/src/',

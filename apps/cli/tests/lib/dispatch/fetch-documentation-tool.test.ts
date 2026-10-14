@@ -1,7 +1,8 @@
 /**
  * The driver-run `fetch_documentation` dev tool: a public https page fetched
- * from the driver, outside any sandbox, with the read recorded by the driver
- * and accepted by both agents' Documentation Stop hooks.
+ * from the driver, outside any sandbox, with its delivery recorded by the
+ * driver against the run's required-source manifest, in the controller-owned
+ * source store, and accepted by both agents' Documentation Stop hooks.
  *
  * The network is faked at the module's two seams — name resolution and one
  * request to one validated address — so every check the tool runs (scheme,
@@ -28,7 +29,6 @@ import {
   buildRequest,
   createFetchDocumentationTool,
   DOCUMENTATION_READ_MIN_SIZE,
-  documentationReceiptsPath,
   documentationSourceId,
   FETCH_DOCUMENTATION_CALL_BUDGET,
   FETCH_DOCUMENTATION_MAX_BYTES,
@@ -46,6 +46,14 @@ import {
   UNTRUSTED_PAGE_NOTICE
 } from '../../../src/lib/task-tools/fetch-documentation.js'
 import { describeTool } from '../../../src/lib/task-tools/tool-catalog.js'
+import {
+  manifestDigest,
+  type PreparedSource,
+  type RequiredSourceManifest,
+  sha256Digest,
+  sourceReceiptsPath,
+  sourceStoreDir
+} from '../../../src/lib/source-manifest.js'
 import {
   buildCodexSandboxConfigToml,
   DOCUMENTATION_HOSTS,
@@ -115,8 +123,45 @@ function fakeNetwork(opts: {
   return { deps, requests, lookups }
 }
 
-function tool(network: ReturnType<typeof fakeNetwork>, receiptsPath: string) {
-  return createFetchDocumentationTool({ receiptsPath, deps: network.deps })
+function tool(
+  network: ReturnType<typeof fakeNetwork>,
+  receiptsPath: string,
+  manifest: RequiredSourceManifest | null = null
+) {
+  return createFetchDocumentationTool({ receiptsPath, deps: network.deps, manifest: () => manifest })
+}
+
+/** A one-entry manifest for `url`, pinned to `digest` under `freshnessPolicy`. */
+function manifestFor(
+  url: string,
+  digest: string,
+  freshnessPolicy: PreparedSource['freshnessPolicy']
+): RequiredSourceManifest {
+  const body = {
+    schemaVersion: 1 as const,
+    round: 1,
+    base: null,
+    briefDigest: sha256Digest('brief'),
+    preparedAt: '2026-10-06T00:00:00.000Z',
+    sources: [
+      {
+        sourceId: documentationSourceId(url),
+        canonicalUri: documentationSourceId(url),
+        requirementText: url,
+        governs: 'hooks',
+        objectiveIds: [],
+        retrievedAt: '2026-10-06T00:00:00.000Z',
+        versionOrRevision: null,
+        contentDigest: digest,
+        mediaType: 'text/html',
+        deliveryMode: 'retrieval_tool' as const,
+        snapshotRef: null,
+        freshnessPolicy,
+        trustClassification: 'public_web_untrusted' as const
+      }
+    ]
+  }
+  return { ...body, digest: manifestDigest(body) }
 }
 
 function receipts(path: string): Record<string, unknown>[] {
@@ -182,7 +227,12 @@ describe('O1: a seventh dev tool both agents call through the dev-tools server',
     const parsed = JSON.parse((await server.handleLine(line)) as string)
     expect(parsed.result.isError).toBe(false)
     expect(parsed.result.structuredContent.text).toContain('# Hooks')
-    expect(parsed.result.structuredContent.receipt).toEqual({ recorded: true })
+    expect(parsed.result.structuredContent.receipt).toEqual({
+      recorded: true,
+      sourceId: 'https://docs.example.com/hooks.md',
+      revision: 'unpinned',
+      decision: 'counted'
+    })
   })
 
   it('a malformed argument is a tool-input refusal', async () => {
@@ -559,15 +609,17 @@ describe('O2: the driver records a receipt only for a counted read', () => {
     expect(result.ok).toBe(true)
     const [receipt] = receipts(receiptsPath)
     expect(receipt).toMatchObject({
+      sourceId: 'https://developers.openai.com/codex/hooks',
       source: 'https://developers.openai.com/codex/hooks',
       requestedUrl: 'https://developers.openai.com/codex/hooks/#tool-coverage',
       finalUrl: 'https://learn.chatgpt.com/docs/hooks.md',
       status: 200,
       contentType: 'text/markdown',
       size: new TextEncoder().encode(PAGE).length,
-      tool: FETCH_DOCUMENTATION_TOOL
+      mode: 'retrieval_tool',
+      recordedBy: FETCH_DOCUMENTATION_TOOL
     })
-    expect(receipt?.sha256).toMatch(/^[0-9a-f]{64}$/)
+    expect(receipt?.deliveredDigest).toMatch(/^sha256:[0-9a-f]{64}$/)
   })
 
   it.each([
@@ -583,6 +635,81 @@ describe('O2: the driver records a receipt only for a counted read', () => {
     if (!result.ok) throw new Error(result.error.output)
     expect(result.result.receipt).toMatchObject({ recorded: false })
     expect(JSON.stringify(result.result.receipt)).toContain(reason)
+    expect(receipts(receiptsPath)).toEqual([])
+  })
+})
+
+describe('deliveries are recorded against the required-source manifest by normalized identity', () => {
+  const URL_A = 'https://docs.example.com/a'
+  const network = () =>
+    fakeNetwork({
+      dns: { 'docs.example.com': [[PUBLIC_V4]] },
+      routes: {
+        'https://docs.example.com/a': { status: 200, headers: html, body: PAGE },
+        'https://docs.example.com/elsewhere': { status: 200, headers: html, body: PAGE }
+      }
+    })
+  const pageDigest = sha256Digest(new TextEncoder().encode(PAGE))
+
+  it('a fetch of the pinned revision is a counted match, keyed by the manifest identity', async () => {
+    const receiptsPath = join(tempDir('fetch-doc-'), 'receipts.jsonl')
+    const result = await tool(
+      network(),
+      receiptsPath,
+      manifestFor(URL_A, pageDigest, 'volatile')
+    )({
+      url: `${URL_A}#section`
+    })
+    if (!result.ok) throw new Error(result.error.output)
+    expect(result.result.receipt).toEqual({ recorded: true, sourceId: URL_A, revision: 'match', decision: 'counted' })
+    expect(receipts(receiptsPath)[0]).toMatchObject({ sourceId: URL_A, pinnedDigest: pageDigest, revision: 'match' })
+  })
+
+  it('a different revision of a volatile source is visible as a mismatch and still counts', async () => {
+    const receiptsPath = join(tempDir('fetch-doc-'), 'receipts.jsonl')
+    const result = await tool(
+      network(),
+      receiptsPath,
+      manifestFor(URL_A, sha256Digest('older page'), 'volatile')
+    )({
+      url: URL_A
+    })
+    if (!result.ok) throw new Error(result.error.output)
+    expect(result.result.receipt).toMatchObject({ recorded: true, revision: 'mismatch', decision: 'counted' })
+    expect(receipts(receiptsPath)[0]).toMatchObject({
+      pinnedDigest: sha256Digest('older page'),
+      deliveredDigest: pageDigest,
+      revision: 'mismatch'
+    })
+  })
+
+  it('a different revision of a pinned source is recorded and refused', async () => {
+    const receiptsPath = join(tempDir('fetch-doc-'), 'receipts.jsonl')
+    const result = await tool(
+      network(),
+      receiptsPath,
+      manifestFor(URL_A, sha256Digest('pinned page'), 'pinned')
+    )({
+      url: URL_A
+    })
+    if (!result.ok) throw new Error(result.error.output)
+    expect(result.result.receipt).toMatchObject({ recorded: true, revision: 'mismatch', decision: 'refused' })
+    expect(receipts(receiptsPath)[0]).toMatchObject({ decision: 'refused' })
+  })
+
+  it('a page the manifest does not name is returned but records no delivery', async () => {
+    const receiptsPath = join(tempDir('fetch-doc-'), 'receipts.jsonl')
+    const result = await tool(
+      network(),
+      receiptsPath,
+      manifestFor(URL_A, pageDigest, 'volatile')
+    )({
+      url: 'https://docs.example.com/elsewhere'
+    })
+    if (!result.ok) throw new Error(result.error.output)
+    expect(result.result.text).toContain('# Hooks')
+    expect(result.result.receipt).toMatchObject({ recorded: false })
+    expect(JSON.stringify(result.result.receipt)).toContain('not a required source')
     expect(receipts(receiptsPath)).toEqual([])
   })
 })
@@ -604,10 +731,16 @@ describe('O3: both agents’ Stop hooks accept the driver’s receipts', () => {
       encoding: 'utf8'
     })
 
-  function writeReceipt(hooks: string): void {
+  /** The controller store of the task whose hooks area is `hooks`: `<task>/control/sources`. */
+  function storeOf(hooks: string): string {
+    return join(dirname(hooks), 'control', 'sources')
+  }
+
+  function writeReceipt(hooks: string, decision: 'counted' | 'refused' = 'counted'): void {
+    mkdirSync(storeOf(hooks), { recursive: true })
     writeFileSync(
-      documentationReceiptsPath(hooks),
-      `${JSON.stringify({ source: documentationSourceId(SOURCE), finalUrl: SOURCE, tool: FETCH_DOCUMENTATION_TOOL })}\n`
+      sourceReceiptsPath(storeOf(hooks)),
+      `${JSON.stringify({ sourceId: documentationSourceId(SOURCE), source: documentationSourceId(SOURCE), decision })}\n`
     )
   }
 
@@ -624,8 +757,24 @@ describe('O3: both agents’ Stop hooks accept the driver’s receipts', () => {
     const blocked = runStop(script)
     expect(blocked.status).toBe(2)
     expect(blocked.stderr).toContain(FETCH_DOCUMENTATION_TOOL)
+    writeReceipt(hooks, 'refused')
+    expect(runStop(script).status).toBe(2)
     writeReceipt(hooks)
     expect(runStop(script).status).toBe(0)
+  })
+
+  it('a receipt in the old hooks-area location clears neither hook', () => {
+    const hooks = hooksArea()
+    const dir = join(hooks, 'developer')
+    mkdirSync(dir)
+    writeFileSync(
+      join(dir, `documentation-sources-${RUN_ID}.json`),
+      JSON.stringify([{ source: SOURCE, mechanism: 'hooks', objectiveIds: [] }])
+    )
+    const script = join(dir, 'stop.mjs')
+    writeFileSync(script, documentationStopHookScript(dir))
+    writeFileSync(join(hooks, 'documentation-receipts.jsonl'), `${JSON.stringify({ source: SOURCE })}\n`)
+    expect(runStop(script).status).toBe(2)
   })
 
   it('Codex: the receipt satisfies the Stop hook with no curl at all', () => {
@@ -660,17 +809,16 @@ describe('O3: both agents’ Stop hooks accept the driver’s receipts', () => {
 })
 
 describe('O5: the driver’s own documentation writes are never the Developer’s', () => {
-  function taskRuntime(): { root: string; hooks: string } {
+  function taskRuntime(): { root: string; hooks: string; receiptsPath: string } {
     const root = tempDir('fetch-doc-runtime-')
     const hooks = join(root, 'tasks-execution', '7', 'hooks')
     mkdirSync(hooks, { recursive: true })
     mkdirSync(taskControlDir(root, 7), { recursive: true })
-    return { root, hooks }
+    return { root, hooks, receiptsPath: sourceReceiptsPath(sourceStoreDir(root, 7)) }
   }
 
   it('a receipt the tool writes inside its driver tool call is attributed to the driver', async () => {
-    const { root, hooks } = taskRuntime()
-    const receiptsPath = documentationReceiptsPath(hooks)
+    const { root, receiptsPath } = taskRuntime()
     const entries = protectedPathsForTurn({
       runtimeDir: root,
       task: 7,
@@ -693,8 +841,7 @@ describe('O5: the driver’s own documentation writes are never the Developer’
   })
 
   it('a receipt written outside any tool call is reported as the worker’s', async () => {
-    const { root, hooks } = taskRuntime()
-    const receiptsPath = documentationReceiptsPath(hooks)
+    const { root, receiptsPath } = taskRuntime()
     const entries = protectedPathsForTurn({
       runtimeDir: root,
       task: 7,
@@ -703,12 +850,14 @@ describe('O5: the driver’s own documentation writes are never the Developer’
       vinayaConfigPath: null
     })
     const attribution = startTurnWriteAttribution(entries, [taskControlDir(root, 7), receiptsPath])
+    mkdirSync(dirname(receiptsPath), { recursive: true })
     writeFileSync(receiptsPath, '{"source":"https://forged.example.com"}\n')
-    expect(attribution.changedPaths()).toEqual([receiptsPath])
+    expect(attribution.changedPaths()).toContain(receiptsPath)
   })
 
   it('the loop serves the tool through the driver: its receipt raises no after-turn reask', async () => {
     const world = makeWorld({ worktreeExists: true })
+    world.frozenBrief = `${world.frozenBrief}\n## Documentation\n\n- https://docs.example.com/a — the mechanism it governs\n`
     const publishing = developerPublishesViaToolsDeps(world)
     const network = fakeNetwork({
       dns: { 'docs.example.com': [[PUBLIC_V4]] },
@@ -729,8 +878,12 @@ describe('O5: the driver’s own documentation writes are never the Developer’
         }
       }
     )
-    expect(fetched).toMatchObject({ ok: true, result: { receipt: { recorded: true } } })
-    expect(receipts(documentationReceiptsPath(join(dirname(controlDir(world)), 'hooks')))).toHaveLength(1)
+    expect(fetched).toMatchObject({
+      ok: true,
+      result: { receipt: { recorded: true, revision: 'match', decision: 'counted' } }
+    })
+    const recorded = receipts(sourceReceiptsPath(join(controlDir(world), 'sources')))
+    expect(recorded.filter((r) => r.recordedBy === FETCH_DOCUMENTATION_TOOL)).toHaveLength(1)
     const reasks = world.dispatches.filter((d) =>
       (d.prompt ?? '').includes('protected path(s) changed during this turn')
     )
