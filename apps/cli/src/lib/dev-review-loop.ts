@@ -4883,7 +4883,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           turnPublicationAttempted = true
           turnPublicationRefusal = result.ok
             ? null
-            : `${result.error.errorClass}/${result.error.retryDisposition}/${result.error.effectState}: ${result.error.output}`
+            : `${result.error.errorClass}/${result.error.retryDisposition}/${result.error.effectState}: ${result.error.check}: ${result.error.output}`
         }
       }
       return createDeveloperDevToolContext(deps)
