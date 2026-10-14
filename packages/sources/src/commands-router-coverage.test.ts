@@ -72,6 +72,7 @@ describe('router -> COMMANDS coverage', () => {
         'new check',
         'new noop-check',
         'new role',
+        'new adr',
         'brief render',
         'pr create',
         'pr edit',

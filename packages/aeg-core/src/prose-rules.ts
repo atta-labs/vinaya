@@ -397,12 +397,14 @@ function customPatternFor(rule: CustomProseRule, global: boolean): (scope: strin
  * with `config.defaults` applied (an `"off"` default is dropped), followed by
  * `config.custom` in the order written. With no configuration this is the
  * defaults exactly as shipped, so an unconfigured run reports what it always
- * did. Validation is the configuration loader's job; this function trusts
- * its input.
+ * did. `options.decisionRecordsPath` — `decisionRecords.path` — adds the
+ * decision-record citation rule after the custom rules; absent, the rule is
+ * not in the set at all. Validation is the configuration loader's job; this
+ * function trusts its input.
  */
 export function resolveProseRules(
   config: ProseRulesConfig | undefined = undefined,
-  options: { sourceCommentSeverity?: ProseRuleSeverity; repoRoot?: string } = {}
+  options: { sourceCommentSeverity?: ProseRuleSeverity; repoRoot?: string; decisionRecordsPath?: string } = {}
 ): ProseRuleSet {
   const rules: ResolvedProseRule[] = []
   const defaults = config?.defaults ?? {}
@@ -449,6 +451,7 @@ export function resolveProseRules(
       patternFor: customPatternFor(rule, group === 'reader-resolvable')
     })
   }
+  if (options.decisionRecordsPath !== undefined) rules.push(decisionRecordCitationRule(options.decisionRecordsPath))
   const order = (rule: ResolvedProseRule): number => {
     const at = RESOLVABLE_RUN_ORDER.indexOf(rule.id)
     return rule.custom || at === -1 ? RESOLVABLE_RUN_ORDER.length : at
@@ -477,3 +480,53 @@ export function rulesInScope(set: ProseRuleSet, scope: string): readonly Resolve
 
 /** The rule set with nothing configured — what both checks run by default. */
 export const DEFAULT_PROSE_RULE_SET: ProseRuleSet = resolveProseRules()
+
+/** The id of the rule `decisionRecords.path` switches on. */
+export const DECISION_RECORD_CITATION_ID = 'decision-record-citation'
+
+/** Where the decision-record citation rule reads: the doctrine pages, the specs, product code and source comments — and the published pass, which runs it separately. */
+export const DECISION_RECORD_CITATION_SCOPES: readonly string[] = ['ships', 'product', 'spec', 'source-comment']
+
+/** The message a decision-record citation finding prints. */
+export const DECISION_RECORD_CITATION_MESSAGE = 'a decision-record number'
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * The decision-record citation pattern for the folder `decisionRecordsPath`:
+ * `ADR` followed by a number (`ADR-7`, `ADR 0007`, `ADR7`), or a path to a
+ * numbered file in that folder (`docs/adr/0007-retire-locks.md`). A record's
+ * number means nothing to a reader without the folder in front of them, so
+ * text outside the folder states the decision instead of citing it.
+ */
+export function decisionRecordCitationPattern(decisionRecordsPath: string): RegExp {
+  const folder = escapeRegExp(normalizeRepoPath(decisionRecordsPath))
+  return new RegExp(String.raw`\bADR[- ]?[0-9]+\b|(?<![A-Za-z0-9_-])${folder}/[0-9]+[A-Za-z0-9._-]*`, 'g')
+}
+
+/**
+ * The decision-record citation rule, resolved for one folder. It exists only
+ * while `decisionRecords.path` is set — `resolveProseRules` adds it when its
+ * `decisionRecordsPath` option is given and never otherwise — and it never
+ * reads the folder itself, so a record may name the record it supersedes.
+ */
+export function decisionRecordCitationRule(decisionRecordsPath: string): ResolvedProseRule {
+  const folder = normalizeRepoPath(decisionRecordsPath)
+  const pattern = decisionRecordCitationPattern(folder)
+  const severity: Record<string, ProseRuleSeverity> = {}
+  for (const scope of DECISION_RECORD_CITATION_SCOPES) severity[scope] = 'error'
+  return {
+    id: DECISION_RECORD_CITATION_ID,
+    group: 'reader-resolvable',
+    custom: false,
+    builtIn: false,
+    scopes: DECISION_RECORD_CITATION_SCOPES,
+    message: DECISION_RECORD_CITATION_MESSAGE,
+    severity,
+    exempt: [folder],
+    substringExempt: [],
+    patternFor: () => pattern
+  }
+}

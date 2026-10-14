@@ -311,7 +311,8 @@ export async function checkCommand(args: string[]): Promise<void> {
     // checks resolve; unavailable when the configuration did not load.
     const proseRules = proseRulesPlanSection(
       new Map(result.resolved.map((entry) => [entry.name, entry.state])),
-      configResult.ok ? configResult.config?.proseGates?.rules : null
+      configResult.ok ? configResult.config?.proseGates?.rules : null,
+      configResult.ok ? configResult.config?.decisionRecords?.path : undefined
     )
     if (jsonOutput) {
       process.stdout.write(`${JSON.stringify(renderPlanJson(result, rolePlan, proseRules.plan), null, 2)}\n`)

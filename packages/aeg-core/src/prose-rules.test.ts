@@ -233,3 +233,56 @@ describe('proseGates.published.allow', () => {
     expect(evaluatePublishedProse([], new Set(), []).errors).toEqual([])
   })
 })
+
+describe('decision-record-citation', () => {
+  const files = [
+    { path: 'aeg-root/roles/x.md', content: 'As ADR-7 decided, the loop retries.\n' },
+    { path: 'SPEC.md', content: 'Intro.\nSee [the record](records/0003-retire-locks.md).\n' },
+    { path: 'records/0004-new.md', content: 'Supersedes ADR 3 and records/0003-retire-locks.md.\n' },
+    { path: 'apps/cli/src/x.ts', content: '// keeps ADR-12 alive\nexport const x = 1\n' }
+  ]
+  const specPaths = ['SPEC.md', 'records']
+  const sweep = (set = resolveProseRules()) =>
+    checkUnresolvableReferences(files, '/none/', '/none.tsx', [], 'aeg-root/', [], specPaths, {
+      rules: set,
+      productPaths: ['apps/cli/src']
+    }).filter((f) => f.rule === 'decision-record-citation')
+
+  it('is absent with no decision-record folder configured', () => {
+    expect(resolveProseRules().rules.map((rule) => rule.id)).not.toContain('decision-record-citation')
+    expect(sweep()).toEqual([])
+    expect(checkSourceComments(files).filter((f) => f.rule === 'decision-record-citation')).toEqual([])
+    const page = [{ relPath: 'enforcement.md', frontmatter: { surfaced: true }, body: 'Per ADR-2.' }]
+    expect(evaluatePublishedProse(page, new Set(['enforcement.md'])).errors.join('\n')).not.toContain(
+      'decision-record number'
+    )
+  })
+
+  it('blocks a numbered citation in the doctrine, specs and product code, but never inside the folder', () => {
+    const set = resolveProseRules(undefined, { decisionRecordsPath: './records/' })
+    expect(sweep(set).map((f) => [f.file, f.line, f.blocking])).toEqual([
+      ['aeg-root/roles/x.md', 1, true],
+      ['SPEC.md', 2, true],
+      ['apps/cli/src/x.ts', 1, true]
+    ])
+    const comments = checkSourceComments(files, [], { rules: set }).filter((f) => f.rule === 'decision-record-citation')
+    expect(comments.map((f) => [f.file, f.blocking])).toEqual([['apps/cli/src/x.ts', true]])
+  })
+
+  it('runs in the published pass only while the folder is configured', () => {
+    expect(readabilityErrors('p', ['Per ADR 2, we ship.'], [], { decisionRecordsPath: 'records' })).toEqual([
+      'C7: published text in "p" contains a decision-record number a reader cannot resolve: "ADR 2"'
+    ])
+    expect(readabilityErrors('p', ['Per ADR 2, we ship.'], [])).toEqual([])
+  })
+
+  it('reads plain words and unnumbered files as prose, not citations', () => {
+    const set = resolveProseRules(undefined, { decisionRecordsPath: 'records' })
+    const plain = [{ path: 'SPEC.md', content: 'We keep ADRs in records/README.md; see ADRS.\n' }]
+    expect(
+      checkUnresolvableReferences(plain, '/none/', '/none.tsx', [], 'aeg-root/', [], specPaths, { rules: set }).filter(
+        (f) => f.rule === 'decision-record-citation'
+      )
+    ).toEqual([])
+  })
+})

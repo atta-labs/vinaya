@@ -35,7 +35,7 @@ does not configure it.
 | `ships` | Every markdown page under the doctrine root, except its archive. |
 | `reader-facing` | The reader-facing pages, when `proseGates.readerFacingPrefix` and `proseGates.readerFacingSuffix` are both set. |
 | `product` | The product class: `proseGates.productPaths`, or the shipped default set when unset. |
-| `spec` | The spec class: a root `SPEC.md`, a root `CONTEXT.md`, every `.md` under `docs/adr/`, every `apps/<app>/specs/**/*.md`, and `proseGates.specPaths`. |
+| `spec` | The spec class: a root `SPEC.md`, a root `CONTEXT.md`, every `.md` under `docs/adr/`, every `apps/<app>/specs/**/*.md`, `proseGates.specPaths`, and the `decisionRecords.path` folder when it is set. |
 | `source-comment` | Comments in the `.ts` files under `proseGates.sourceComments.globs`. |
 | `repository` | Every swept file under the doctrine root, line by line. |
 
@@ -112,6 +112,39 @@ replaces that list.
 With none of `proseGates.rules`, `proseGates.productPaths` and
 `proseGates.published.allow` set, every finding is identical to the findings
 before these keys existed.
+
+## Decision records
+
+Decision records are opt-in. `decisionRecords.path` in `vinaya.config.json`
+names a folder, relative to the repository root, that holds them; with the
+key absent, every check, command and finding behaves exactly as before it
+existed. The loader refuses, naming the key, a path that leaves the
+repository, names the repository root itself, or sits inside the doctrine
+tree (`proseGates.doctrineRoot`, or `aeg-root` when that is unset).
+
+With the key set, three things change:
+
+- The folder joins the `spec` scope. A file there is read once, even when
+  the folder is also the default `docs/adr`.
+- The default rule `decision-record-citation` runs. It blocks `ADR`
+  followed by a number, and any path to a numbered file in the folder, in
+  the `ships`, `spec`, `product` and `source-comment` scopes and in the
+  published pass. The folder itself is exempt, so a record may name the
+  record it supersedes; every other page states the decision instead of
+  citing its number. The rule exists only while the key is set:
+  `proseGates.rules.defaults` does not address it, and a custom rule may not
+  take its id. `vinaya check --plan` lists it among the rules
+  `reader-resolvable-prose` runs.
+- `vinaya new adr <title>` writes the next numbered record,
+  `NNNN-<kebab-title>.md`, into the folder from the shipped decision-record
+  template, with status Proposed and today's date, and adds a row for it to
+  the folder's `README.md` index page, creating that page on the first
+  record. Numbers start at `0001` and are one past the highest number any
+  file in the folder or any row of the index carries, so a number is never
+  reused. With the key absent, the command refuses and names the key.
+
+The template carries a title, a status, a date, and the sections Context,
+Decision, Considered options, Consequences and Where it is applied.
 
 ## Validation
 

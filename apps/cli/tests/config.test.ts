@@ -1610,3 +1610,72 @@ describe('proseGates.rules, productPaths and published.allow', () => {
     }
   })
 })
+
+describe('decisionRecords.path', () => {
+  function refusals(config: unknown): string[] {
+    const parsed = VinayaConfigSchema.safeParse(config)
+    return parsed.success ? [] : parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`)
+  }
+
+  it('is optional, and a folder inside the repository loads', () => {
+    expect(refusals({})).toEqual([])
+    expect(refusals({ decisionRecords: { path: 'docs/adr' } })).toEqual([])
+    expect(refusals({ decisionRecords: { path: './docs/decisions/' } })).toEqual([])
+  })
+
+  it('refuses a path outside the repository, naming the key', () => {
+    expect(refusals({ decisionRecords: { path: '/etc/adr' } })).toEqual([
+      'decisionRecords.path: must be a repository-relative path, not an absolute one'
+    ])
+    expect(refusals({ decisionRecords: { path: 'docs/../../adr' } })).toEqual([
+      'decisionRecords.path: must stay inside the repository — no `..` segment'
+    ])
+    expect(refusals({ decisionRecords: { path: './' } })[0]).toContain(
+      'decisionRecords.path: must name a folder, not the repository root'
+    )
+  })
+
+  it('refuses a path inside the doctrine tree, the default one or a configured one', () => {
+    expect(refusals({ decisionRecords: { path: 'aeg-root/adr' } })[0]).toContain(
+      'decisionRecords.path: must be outside the doctrine tree "aeg-root"'
+    )
+    expect(refusals({ decisionRecords: { path: 'aeg-root' } })).toHaveLength(1)
+    expect(
+      refusals({ proseGates: { doctrineRoot: 'doctrine' }, decisionRecords: { path: 'doctrine/records' } })[0]
+    ).toContain('must be outside the doctrine tree "doctrine"')
+    // Only the configured tree is the doctrine tree once one is configured.
+    expect(refusals({ proseGates: { doctrineRoot: 'doctrine' }, decisionRecords: { path: 'aeg-root-notes' } })).toEqual(
+      []
+    )
+  })
+
+  it('refuses an unknown key under decisionRecords', () => {
+    expect(refusals({ decisionRecords: { path: 'docs/adr', folder: 'x' } })[0]).toContain('decisionRecords')
+  })
+
+  it('reserves the decision-record-citation id from custom rules', () => {
+    expect(
+      refusals({
+        proseGates: {
+          rules: { custom: [{ id: 'decision-record-citation', pattern: 'x', means: 'm', scopes: ['spec'] }] }
+        }
+      })[0]
+    ).toContain('"decision-record-citation" is a default rule id')
+  })
+
+  it('loadConfigChecked surfaces the refusal', () => {
+    const dir = join(tmpdir(), `vinaya-decision-records-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    mkdirSync(dir, { recursive: true })
+    const cwd = process.cwd()
+    try {
+      writeFileSync(join(dir, 'vinaya.config.json'), JSON.stringify({ decisionRecords: { path: '../adr' } }))
+      process.chdir(dir)
+      const result = loadConfigCheckedStatic()
+      expect(result.ok).toBe(false)
+      if (!result.ok) expect(result.error).toContain('decisionRecords.path:')
+    } finally {
+      process.chdir(cwd)
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

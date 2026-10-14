@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { CONFIG_REFERENCE } from '@attalabs/vinaya-sources'
-import { VinayaConfigSchema } from '../../src/lib/config'
+import { VinayaConfigShape } from '../../src/lib/config'
 
 /**
  * Key-presence coupling test: every `VinayaConfigSchema` top-level key, and
@@ -11,13 +11,13 @@ import { VinayaConfigSchema } from '../../src/lib/config'
  *
  * `CheckEntrySchema` itself is not exported (config.ts's real schema surface
  * is out of this task's scope) — its keys are recovered by pure Zod
- * introspection off the public `VinayaConfigSchema.shape.checks` field
+ * introspection off the public `VinayaConfigShape.checks` field
  * (`ZodOptional<ZodRecord<ZodString, ZodEffects<ZodObject<...>>>>`), never by
  * restructuring the schema for this test.
  */
 
 function checkEntryKeys(): string[] {
-  const checksField = VinayaConfigSchema.shape.checks
+  const checksField = VinayaConfigShape.checks
   const record = checksField.unwrap()
   const valueSchema = record.valueSchema
   const object = 'innerType' in valueSchema ? valueSchema.innerType() : valueSchema
@@ -26,7 +26,7 @@ function checkEntryKeys(): string[] {
 
 describe('config-reference coverage', () => {
   it('every VinayaConfigSchema top-level key has a CONFIG_REFERENCE row', () => {
-    const topLevelKeys = Object.keys(VinayaConfigSchema.shape)
+    const topLevelKeys = Object.keys(VinayaConfigShape)
     expect(topLevelKeys.length).toBeGreaterThan(0)
     for (const key of topLevelKeys) {
       const found = CONFIG_REFERENCE.some((field) => field.key === key)

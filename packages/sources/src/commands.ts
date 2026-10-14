@@ -144,6 +144,16 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'new adr',
+    needs: [],
+    description: 'Write the next numbered decision record into the folder decisionRecords.path names',
+    details: [
+      "`vinaya new adr <title>` writes `<decisionRecords.path>/NNNN-<kebab-title>.md` from the shipped decision-record template (`vinaya doctrine --template decision-record`), with status Proposed and today's date, and adds a row for it to the folder's `README.md` index page, creating that page on the first record. Numbers start at `0001` and are one past the highest number any file in the folder or any row of the index carries, so a number is never reused, even after its file is removed.",
+      'Refuses, naming the key, while `decisionRecords.path` is unset: decision records are opt-in. The same key switches on the `decision-record-citation` writing rule — see `decisionRecords.path` in the configuration reference.'
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'brief render',
     needs: ['forge', 'default-branch'],
     description: 'Emit the twelve-section brief skeleton from the forge and the tree, every derivable section filled',

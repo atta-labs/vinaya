@@ -28,4 +28,4 @@ export {
   SHORT_VERSION_MIN_WORDS,
   WHAT_YOU_CHECK_HEADING
 } from './published-prose'
-export type { PublishedProseEntry, PublishedProseResult } from './published-prose'
+export type { PublishedProseEntry, PublishedProseOptions, PublishedProseResult } from './published-prose'

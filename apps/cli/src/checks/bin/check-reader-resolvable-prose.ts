@@ -66,6 +66,7 @@ import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
   checkReaderResolvableProse,
   checkSourceComments,
+  DECISION_RECORD_CITATION_ID,
   DEFAULT_SPEC_PATHS,
   normalizeSpecPath,
   parseGlossaryTerms,
@@ -165,10 +166,20 @@ const SPEC_GRANDFATHER = proseGates?.specGrandfather ?? []
 const PRODUCT_PATHS: readonly string[] = proseGates?.productPaths ?? PRODUCT_SLUG_SCOPE
 
 /**
+ * `decisionRecords.path`, when set: the repository's decision-record folder.
+ * It joins the spec class below, and switches on the decision-record
+ * citation rule, which reads every scope but the folder itself.
+ */
+const DECISION_RECORDS_PATH = CONFIG.ok ? CONFIG.config?.decisionRecords?.path : undefined
+const DECISION_RECORDS_PATHS: readonly string[] = DECISION_RECORDS_PATH === undefined ? [] : [DECISION_RECORDS_PATH]
+
+/**
  * The spec class's whole file set beyond `apps/<app>/specs/**`: the
  * defaults every repository gets (`DEFAULT_SPEC_PATHS` — a root spec, a root
  * context document, the decision records under `docs/adr/`) plus whatever
- * `proseGates.specPaths` adds. Configured entries ADD to the defaults rather
+ * `proseGates.specPaths` adds, plus the `decisionRecords.path` folder. Each
+ * entry appears once, so a decision-record folder that is also the default
+ * `docs/adr` is read once. Configured entries ADD to the defaults rather
  * than replacing them, so a repository naming one extra document does not
  * silently stop reading its own root spec; an entry naming a path that does
  * not exist contributes nothing, the same dormancy `collect` already applies
@@ -177,7 +188,11 @@ const PRODUCT_PATHS: readonly string[] = proseGates?.productPaths ?? PRODUCT_SLU
  * walks and the classifier matches — unnormalized the two disagreed, and such
  * an entry was swept but never classified, checking nothing at all.
  */
-const SPEC_PATHS = [...DEFAULT_SPEC_PATHS, ...(proseGates?.specPaths ?? [])].map(normalizeSpecPath)
+const SPEC_PATHS = [
+  ...new Set(
+    [...DEFAULT_SPEC_PATHS, ...(proseGates?.specPaths ?? []), ...DECISION_RECORDS_PATHS].map(normalizeSpecPath)
+  )
+]
 
 /**
  * `path`'s location relative to `root`, in the normalized spelling the
@@ -431,6 +446,12 @@ const CUSTOM_RULE_RECOVERY =
   'the finding names the rule and what it means. Rewrite the text so it no longer matches, or, where the rule ' +
   "should not read this file, add the path to that rule's exempt list."
 
+const DECISION_RECORD_RECOVERY =
+  'This text cites a decision record by its number (decision-record-citation, on while decisionRecords.path is ' +
+  'set in vinaya.config.json). A number tells a reader nothing without the folder in front of them: state the ' +
+  'decision itself in this sentence instead. Only a record inside the decision-record folder may name another ' +
+  'record, such as the one it supersedes.'
+
 function main(): void {
   if (!CONFIG.ok) {
     console.log(`${CHECK_NAME}: configuration refused — sweep did not run.`)
@@ -483,7 +504,8 @@ function main(): void {
   const productRoot = repoRoot() ?? process.cwd()
   const rules = resolveProseRules(proseGates?.rules, {
     sourceCommentSeverity: SOURCE_COMMENTS_SEVERITY,
-    repoRoot: productRoot
+    repoRoot: productRoot,
+    decisionRecordsPath: DECISION_RECORDS_PATH
   })
   const customIds = new Set(
     rulesOfGroup(rules, 'reader-resolvable')
@@ -601,30 +623,32 @@ function main(): void {
       line: finding.line,
       agent_recovery_prompt: isCustom(finding)
         ? CUSTOM_RULE_RECOVERY
-        : finding.message.includes('coined term')
-          ? 'This page uses AEG/Vinaya-internal vocabulary a first-time reader cannot resolve. Either define the term ' +
-            'inline (the same "Term — one-sentence definition" shape the glossary uses) at its first use on this page, ' +
-            'or link to the glossary. Do not simply delete the word if the sentence needs it.'
-          : // A product-code finding names itself in its own message; every
-            // other blocking finding is a spec-class one. Keyed on the message
-            // rather than on the path, since a spec-class file is no longer
-            // always under a `specs/` folder — a root spec, a root context
-            // document and a decision record are all read by default now.
-            finding.blocking && !finding.message.includes('in product code')
-            ? 'This spec cites a tranche, a task number, an Issue/PR number, or names a document outside this ' +
-              'repository as its authority — a reader with no forge to resolve it against (a fork, an export, someone ' +
-              'reading this spec after the Issue is closed) gets nothing from the citation, and a copied task number ' +
-              'goes stale the moment the plan is renumbered. Rewrite the sentence to state the fact ' +
-              'plainly instead. If this spec is pre-existing backlog, list its path in ' +
-              '`proseGates.specGrandfather` with its current finding count rather than fixing it as a drive-by in an ' +
-              'unrelated PR — a listed file that gains a citation exceeds its count and fails.'
-            : finding.blocking
-              ? 'This product-code file cites an internal tranche slug a reader outside this repo cannot resolve ' +
-                '(the reader-resolvable-prose product class). Remove the citation or rewrite the comment/doc to state ' +
-                'the fact plainly instead of pointing at the tranche that did it. This finding blocks the push and CI.'
-              : 'This doctrine or page cites a forge number or an internal tranche slug the reader has no tracker to ' +
-                'resolve. Rewrite the sentence to state the fact plainly instead of pointing at the citation — say ' +
-                'what was learned/decided, not where it was logged.'
+        : finding.rule === DECISION_RECORD_CITATION_ID
+          ? DECISION_RECORD_RECOVERY
+          : finding.message.includes('coined term')
+            ? 'This page uses AEG/Vinaya-internal vocabulary a first-time reader cannot resolve. Either define the term ' +
+              'inline (the same "Term — one-sentence definition" shape the glossary uses) at its first use on this page, ' +
+              'or link to the glossary. Do not simply delete the word if the sentence needs it.'
+            : // A product-code finding names itself in its own message; every
+              // other blocking finding is a spec-class one. Keyed on the message
+              // rather than on the path, since a spec-class file is no longer
+              // always under a `specs/` folder — a root spec, a root context
+              // document and a decision record are all read by default now.
+              finding.blocking && !finding.message.includes('in product code')
+              ? 'This spec cites a tranche, a task number, an Issue/PR number, or names a document outside this ' +
+                'repository as its authority — a reader with no forge to resolve it against (a fork, an export, someone ' +
+                'reading this spec after the Issue is closed) gets nothing from the citation, and a copied task number ' +
+                'goes stale the moment the plan is renumbered. Rewrite the sentence to state the fact ' +
+                'plainly instead. If this spec is pre-existing backlog, list its path in ' +
+                '`proseGates.specGrandfather` with its current finding count rather than fixing it as a drive-by in an ' +
+                'unrelated PR — a listed file that gains a citation exceeds its count and fails.'
+              : finding.blocking
+                ? 'This product-code file cites an internal tranche slug a reader outside this repo cannot resolve ' +
+                  '(the reader-resolvable-prose product class). Remove the citation or rewrite the comment/doc to state ' +
+                  'the fact plainly instead of pointing at the tranche that did it. This finding blocks the push and CI.'
+                : 'This doctrine or page cites a forge number or an internal tranche slug the reader has no tracker to ' +
+                  'resolve. Rewrite the sentence to state the fact plainly instead of pointing at the citation — say ' +
+                  'what was learned/decided, not where it was logged.'
     })
   }
 
@@ -643,9 +667,11 @@ function main(): void {
       line: finding.line,
       agent_recovery_prompt: isCustom(finding)
         ? CUSTOM_RULE_RECOVERY
-        : 'This source comment cites a tranche name or a forge number a reader outside this repo cannot resolve. ' +
-          'Rewrite the comment to state the fact it pointed at, or, for a comment that deliberately pins historical ' +
-          'content (a test fixture), add its file path to proseGates.sourceComments.allowlist in vinaya.config.json.'
+        : finding.rule === DECISION_RECORD_CITATION_ID
+          ? DECISION_RECORD_RECOVERY
+          : 'This source comment cites a tranche name or a forge number a reader outside this repo cannot resolve. ' +
+            'Rewrite the comment to state the fact it pointed at, or, for a comment that deliberately pins historical ' +
+            'content (a test fixture), add its file path to proseGates.sourceComments.allowlist in vinaya.config.json.'
     })
   }
 

@@ -584,6 +584,24 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
 }`
   },
   {
+    key: 'decisionRecords',
+    type: 'object (optional)',
+    semantics: [
+      'Opt-in decision records: one short file per decision, numbered in order, kept in a folder of this repository. Its one setting is `path`. Absent — the default — every check, command and finding behaves exactly as if the key did not exist.'
+    ],
+    example: `{ "decisionRecords": { "path": "docs/adr" } }`
+  },
+  {
+    key: 'decisionRecords.path',
+    type: 'string (optional)',
+    semantics: [
+      'The folder, relative to the repository root, that holds the decision records. Refused at load, naming this key, when it leaves the repository (absolute, or climbing through `..`), names the repository root itself, or sits inside the doctrine tree (`proseGates.doctrineRoot`, or `aeg-root` when that is unset).',
+      "Set, it does three things. `vinaya new adr <title>` writes the next numbered record into the folder and indexes it. The folder joins the writing rules' `spec` scope, each file read once even when the folder is also the default `docs/adr`. And the `decision-record-citation` rule runs: it blocks `ADR` followed by a number, and any path to a numbered file in the folder, in the doctrine pages, the specs, product code, source comments and the published pass. The folder itself is exempt, so a record may name the record it supersedes.",
+      'The rule exists only while this key is set, so `proseGates.rules.defaults` does not address it, and a custom rule may not take its id.'
+    ],
+    example: `{ "path": "docs/adr" }`
+  },
+  {
     key: 'dispatch',
     type: 'object (optional)',
     semantics: [

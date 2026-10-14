@@ -30,6 +30,7 @@ import {
 } from './commands/milestone.js'
 import { newCheckCommand } from './commands/new-check.js'
 import { newNoopCheckCommand } from './commands/new-noop-check.js'
+import { newAdrCommand } from './commands/new-adr.js'
 import { newRoleCommand } from './commands/new-role.js'
 import { prCreateCommand, prEditCommand } from './commands/pr.js'
 import { prRuleCommand } from './commands/pr-rule.js'
@@ -206,8 +207,12 @@ try {
         newNoopCheckCommand(rest)
       } else if (subcommand === 'role') {
         newRoleCommand(rest)
+      } else if (subcommand === 'adr') {
+        newAdrCommand(rest)
       } else {
-        console.error(`Unknown 'new' subcommand: ${subcommand ?? '(none)'} (expected 'check', 'noop-check', or 'role')`)
+        console.error(
+          `Unknown 'new' subcommand: ${subcommand ?? '(none)'} (expected 'check', 'noop-check', 'role', or 'adr')`
+        )
         process.exit(2)
       }
       break
