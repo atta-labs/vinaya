@@ -102,6 +102,11 @@
         "reason": "Proves a Developer turn whose last publication attempt a driver tool refused skips the head-change wait and names the refusal, while a turn with no refusal keeps the full wait."
       },
       {
+        "path": "apps/cli/tests/lib/dev-review-loop/reviewer-redispatch.test.ts",
+        "kind": "test",
+        "reason": "Proves a reviewer dispatched again in a round already reviewed writes into a fresh output directory inside its sandbox's writable set, so an earlier dispatch's findings and report are never read as its verdict."
+      },
+      {
         "path": "apps/cli/tests/lib/dev-review-loop/push-hook-refusal-output.test.ts",
         "kind": "test",
         "reason": "Drives a real git push through a real failing pre-push hook and proves the refusal is classified as a hook refusal carrying the failing test names, while any other push failure carries the git exit and its own bounded output."
@@ -1266,7 +1271,8 @@
       ],
       "tests": [
         "apps/cli/tests/lib/dev-review-loop/reviewer-isolation.test.ts",
-        "apps/cli/tests/lib/dev-review-loop/inproc-4.test.ts"
+        "apps/cli/tests/lib/dev-review-loop/inproc-4.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/reviewer-redispatch.test.ts"
       ],
       "loopSpec": ["Reviewer isolation \u2014 one immutable candidate, isolated scratch space"],
       "reason": "The driver chooses the paths; the worker cannot.",

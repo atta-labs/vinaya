@@ -143,8 +143,9 @@ configured directory, laid out by task and by round:
                       settings that wire them
   output/             raw agent output, and this driver's own `driver.log`
   rounds/<n>/         that round's held verdicts (`reviewer.md`,
-                      `security.md`), each role's work directory, its
-                      read-only `candidate` and per-role scratch copies, and
+                      `security.md`), each review dispatch's own work
+                      directory, its read-only `candidate` and per-role
+                      scratch copies, and
                       `developer/` — the staged dispatch-readiness verdict
                       and the driver's own turn-result records
 ```
@@ -582,6 +583,11 @@ A `mechanical_failure` observation that is NOT a repeat changes nothing but the 
 ### Infrastructure failures and driver-decided pauses
 
 A review role's dispatch is retried once, into a genuinely fresh work directory (never the failed attempt's own), if its directory is still missing a required artifact after the first attempt; a second miss on the same role, and a red-gate developer turn that produces no push `MAX_GATE_STALLED_TURNS` times in a row on one head — a turn whose stall the driver could not NAME, since a named one that repeats is the repeat-failure stop above — are both `pause{reason:'infrastructure'}` — the driver's own two "the loop's own mechanics stalled, not a review verdict" exits, distinguished from each other only by the pause's `detail` text (the role and missing artifact(s), or the head and the failing check-run(s)).
+
+**Each review dispatch has its own output directory.** The directory a reviewer's prompt names for `findings.txt`, `objectives.txt` and `report.txt` holds no file from an earlier dispatch: the round's first dispatch of a role uses `rounds/<n>/<role>-work` (`-retry<k>` for a later attempt), and a later dispatch of the same round — after a Principal ruling, a resume, or any other re-run of a round already reviewed — gets the first free `-redispatch<k>` sibling of that path (`freshReviewerWorkDir`), created by the driver before the dispatch starts. The earlier dispatch's files stay where they are, never deleted, and are never read as the new dispatch's verdict. A file whose modification time is older than the directory's own, read right after the driver created it (`reviewerOutputFloorMs`), counts as missing, so a stale or absent output is the not-delivered path above — the one fresh retry, then `pause{reason:'infrastructure'}` — never a verdict. The directory is writable inside the reviewer's sandbox on every dispatch: the driver passes it as `extraWritableDirs`, which Claude's sandbox lists in `filesystem.allowWrite` and Codex receives as a writable root, beside the write-access hook's grant of the three files.
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts contains:const next = `${base}-redispatch${k}` -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts contains:return notBeforeMs === undefined || statSync(path).mtimeMs >= notBeforeMs -->
+<!-- AEG:CLAIM: apps/cli/src/lib/worker-boundary.ts contains:...(request.extraWritableDirs ?? []).map(real) -->
 
 **A sign-in refusal pauses, but spends no retry budget.** `authentication-failed` — the vendor refusing the dispatch because nobody is signed in on this host — is the one dispatch failure that says nothing about the task, the round, or the worker: no session was ever started, so nothing was lost and there is nothing to diagnose beyond signing in again. `assertDispatchOrEscalate` raises it as its own `DispatchSignInRefused`, checked ahead of the resumed-round stop-and-escalate (a vendor that cannot sign in refuses identically on the first round and the tenth, so a credential failure is never read as "this session worked last round and broke now"), and the outer handler turns it into the same `pause{reason:'infrastructure'}` every thrown driver-path failure becomes — but with a detail that says the developer could not sign in, and WITHOUT charging `MAX_INFRASTRUCTURE_RETRIES`. That budget bounds how often a task may be resumed past a recoverable hiccup with no genuine round in between; a host with no credentials never produced a round for it to bound, and counting the refusal would demand a Principal ruling for something a vendor login fixes. The exclusion is keyed on the cause (`spendsInfrastructureRetry`) — a sign-in refusal, an agent's usage limit, a GitHub rate limit or a connection failure to GitHub (below) — never on "a pause that came through this code path", so every other infrastructure loop keeps its bound intact.
 

@@ -191,6 +191,7 @@ import {
   buildRoundDeferralContext,
   buildVerdictFromReport,
   discardHeldVerdicts,
+  freshReviewerWorkDir,
   hasObjectivesFacts,
   type HeldCleanVerdict,
   latestHeldCleanVerdict,
@@ -204,7 +205,7 @@ import {
   type ReviewerPromptFacts,
   ReviewerInfrastructureFailure,
   ReviewerReportParseFailure,
-  reviewerWorkDir,
+  reviewerOutputFloorMs,
   type RoundVerdictParse,
   type SecurityScanOutcome,
   type SecurityScanRun,
@@ -5476,8 +5477,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     ): Promise<{ verdict: RoundVerdictParse; findingsUncitable: boolean }> {
       const hasObjectives = hasObjectivesFacts(facts)
       const dispatchRoleName = role === 'reviewer' ? ('code-reviewer' as const) : ('security' as const)
-      const workDir = reviewerWorkDir(root, task, roundNum, role, 3)
+      // A directory no earlier dispatch wrote into (`freshReviewerWorkDir`),
+      // and the floor its files' modification times must reach to count as
+      // this dispatch's own output.
+      const workDir = freshReviewerWorkDir(root, task, roundNum, role, 3)
       ensureRunDir(workDir, root)
+      const outputFloorMs = reviewerOutputFloorMs(workDir)
       const prompt = citeFindingIdsPrompt(workDir)
       // O2/O3: a fresh scratch copy for this resend attempt — never
       // the first attempt's own, matching this function's own fresh-dispatch
@@ -5535,7 +5540,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           handle.durationMs
         )
       }
-      if (missingReviewerArtifacts(workDir, hasObjectives).length > 0) {
+      if (missingReviewerArtifacts(workDir, hasObjectives, outputFloorMs).length > 0) {
         return { verdict: firstVerdict, findingsUncitable: true }
       }
       try {
@@ -5592,8 +5597,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // and timing it against the whole round.
       let lastHandle: DispatchHandle | null = null
       for (let attempt = 1; attempt <= 2; attempt++) {
-        const workDir = reviewerWorkDir(root, task, roundNum, role, attempt)
+        // A directory no earlier dispatch wrote into: a re-dispatch of a
+        // round already reviewed (after a ruling, a resume, any re-run)
+        // never reads the earlier dispatch's files as its own verdict
+        // (`freshReviewerWorkDir`). `outputFloorMs` is the modification time
+        // a file must reach to count as this dispatch's own output.
+        const workDir = freshReviewerWorkDir(root, task, roundNum, role, attempt)
         ensureRunDir(workDir, root)
+        const outputFloorMs = reviewerOutputFloorMs(workDir)
         // O1/O2: a fresh, writable copy of this round's shared,
         // read-only candidate (built once, below, before both roles
         // dispatch) — never the candidate itself, never the sibling role's
@@ -5658,7 +5669,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             handle.durationMs
           )
         }
-        const missing = missingReviewerArtifacts(workDir, hasObjectives)
+        const missing = missingReviewerArtifacts(workDir, hasObjectives, outputFloorMs)
         if (missing.length > 0) {
           lastMissing = missing
           lastParseFailure = null

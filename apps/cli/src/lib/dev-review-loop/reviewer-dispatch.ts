@@ -11,7 +11,7 @@
  * below under the same path it always had.
  */
 
-import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -654,6 +654,46 @@ export function reviewerWorkDir(
 }
 
 /**
+ * The output directory ONE reviewer dispatch is told to write into — never a
+ * directory an earlier dispatch already used. The round's first dispatch of
+ * each attempt gets `reviewerWorkDir`'s own path, unchanged; a later dispatch
+ * of the same round, role and attempt (a re-run after a Principal ruling, a
+ * resume, or any re-dispatch of a round already reviewed) gets the first
+ * free `-redispatch<k>` sibling of it instead. The earlier dispatch's files
+ * are left where they are, never deleted, so a reviewer process that might
+ * still be writing them never loses a file under its feet, and the loop
+ * never reads one of them as this dispatch's verdict. The caller creates the
+ * returned directory (`ensureRunDir`) before the dispatch starts; the driver
+ * lock makes the existence check and that creation one step, since no
+ * second driver dispatches this task's reviewers at the same time.
+ */
+export function freshReviewerWorkDir(
+  root: string,
+  task: number,
+  round: number,
+  role: 'reviewer' | 'security',
+  attempt = 1
+): string {
+  const base = reviewerWorkDir(root, task, round, role, attempt)
+  if (!existsSync(base)) return base
+  for (let k = 1; ; k++) {
+    const next = `${base}-redispatch${k}`
+    if (!existsSync(next)) return next
+  }
+}
+
+/**
+ * The earliest modification time, in milliseconds, a file this dispatch wrote
+ * into `workDir` can carry: the directory's own modification time read right
+ * after the driver created it, before the dispatch starts. Read off the
+ * filesystem's own clock, never the driver's, so a file the reviewer writes
+ * afterwards is never judged older than its own dispatch by clock skew.
+ */
+export function reviewerOutputFloorMs(workDir: string): number {
+  return statSync(workDir).mtimeMs
+}
+
+/**
  * O1/O3: `findings.txt` and `report.txt` are always required; `objectives.txt`
  * is required only when the task carries objectives (`hasObjectives`) AND the
  * report is a real verdict rather than an escalation — `buildVerdictFromReport`
@@ -667,13 +707,21 @@ export function reviewerWorkDir(
  * failure — checked by existence here, never by a `readFileSync(...) ?? ''`
  * default that would make a missing file indistinguishable from an empty one).
  */
-export function missingReviewerArtifacts(workDir: string, hasObjectives: boolean): string[] {
+export function missingReviewerArtifacts(workDir: string, hasObjectives: boolean, notBeforeMs?: number): string[] {
+  // A file older than this dispatch (`notBeforeMs`, `reviewerOutputFloorMs`)
+  // was not written by it, so it counts as missing — the review was not
+  // delivered — never as this dispatch's verdict.
+  const delivered = (file: string): boolean => {
+    const path = join(workDir, file)
+    if (!existsSync(path)) return false
+    return notBeforeMs === undefined || statSync(path).mtimeMs >= notBeforeMs
+  }
   const missing: string[] = []
-  const reportRaw = readIfExists(join(workDir, 'report.txt'))
+  const reportRaw = delivered('report.txt') ? readIfExists(join(workDir, 'report.txt')) : null
   if (reportRaw === null) missing.push('report.txt')
-  if (!existsSync(join(workDir, 'findings.txt'))) missing.push('findings.txt')
+  if (!delivered('findings.txt')) missing.push('findings.txt')
   const isEscalation = reportRaw !== null && parseReport(reportRaw).ESCALATE !== undefined
-  if (hasObjectives && !isEscalation && !existsSync(join(workDir, 'objectives.txt'))) missing.push('objectives.txt')
+  if (hasObjectives && !isEscalation && !delivered('objectives.txt')) missing.push('objectives.txt')
   return missing
 }
 

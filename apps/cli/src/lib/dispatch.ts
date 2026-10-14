@@ -4411,7 +4411,11 @@ export async function dispatchRole(
           agent,
           worktreeDir: opts.cwd ?? repoRoot() ?? process.cwd(),
           scratchDir: claudeScratchDir,
-          allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS
+          allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS,
+          // A reviewer's own output directory: writable by the sandbox's
+          // commands too, not only by the file tools the write-access hook
+          // grants — Codex receives the same directories (`addCodexWritableDirs`).
+          extraWritableDirs: opts.extraWritableDirs ?? []
         })
       : null
   if (claudeConfinement !== null && !claudeConfinement.confined) {

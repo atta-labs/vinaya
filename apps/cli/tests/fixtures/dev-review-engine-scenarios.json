@@ -14,7 +14,7 @@
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop.ts",
-        "sha256": "fcbfcce770d5b2b36f38fed0a8231d9f653c6073a15136d4fb7a5ffab97c6e1e"
+        "sha256": "df17c35ec110f5b9c4f9718149f1441225fba2515ab2a4916884fc0205b0d4ae"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/developer-dispatch.ts",
@@ -42,7 +42,7 @@
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts",
-        "sha256": "2772c92dec172a3d7f8942066cfd6c01016fbf112f502b5ebd30d8985a27c704"
+        "sha256": "7f06a126a624e187acfb15a7c673dd9860f1de0513bcaf4f27f67a175e3c9a06"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/reviewer-isolation.ts",
