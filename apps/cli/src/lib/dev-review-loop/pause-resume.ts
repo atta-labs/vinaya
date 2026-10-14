@@ -1011,6 +1011,15 @@ export const PAUSE_REASON_PROFILE: Record<
       "Have the host's owner apply the remedy in `attemptedRecovery` for the error in `detail` — a host change, outside the Operator's tools.",
       'Then start the task again with `vinaya task run` on that host: no ruling is needed, and the pause is resolved once as it continues. Through the Operator’s tools, `task_resume` continues it against a Principal ruling posted where the pause comment went.'
     ]
+  },
+  missing_source: {
+    requestedAuthority: 'planner',
+    attemptedRecovery:
+      'the controller retried each transient fetch failure within its declared bound before pausing; a source behind a login, on another host, missing at the frozen base or naming nothing preparable is never retried and is never replaced by model memory. `detail` names each unavailable source and its typed reason.',
+    nextActions: [
+      'Correct the task’s `## Documentation` section — cite a public page or an in-repository spec in place of a private or unreadable source — or restore the missing repository path.',
+      'Then resume: the controller prepares every required source again before the next Developer turn.'
+    ]
   }
 }
 

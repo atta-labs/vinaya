@@ -311,12 +311,11 @@ describe('the driver-run dispatch-readiness gate', () => {
     expect(staged).toBe(gateOutput)
   })
 
-  it('an unreadable required source refuses the Developer turn: no developer dispatch, a decided pause(infrastructure) naming the source, the failure staged', async () => {
+  it('an unreadable required source pauses the run as missing_source before any developer dispatch, naming the source and its typed reason', async () => {
     const world = makeWorld()
     world.frozenBrief = `${world.frozenBrief}\n## Documentation\n\n- https://example.com/spec — the mechanism it governs\n`
-    const gateOutput = '$ bun verify-dispatch.ts --issue 1\nREADY'
     const result = await runLoopInProcess(world, undefined, {
-      checkTaskDispatchReadiness: (_branch) => ({ ready: true, output: gateOutput }),
+      checkTaskDispatchReadiness: (_branch) => ({ ready: true, output: 'READY' }),
       fetchDocumentationDeps: {
         resolve: async () => [{ address: '93.184.216.34', family: 4 }],
         request: async () => ({
@@ -330,13 +329,81 @@ describe('the driver-run dispatch-readiness gate', () => {
     })
 
     expect(world.dispatches.filter((d) => d.role === 'developer')).toHaveLength(0)
-    expect(result.finalDecision.type).toBe('pause')
-    expect((result.finalDecision as { reason?: string }).reason).toBe('infrastructure')
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'missing_source' })
     const detail = readPauseState(world.runtimeDir, world.task)?.detail ?? ''
-    expect(detail).toContain('documentation sources gate failed')
     expect(detail).toContain('https://example.com/spec')
-    const staged = readFileSync(join(developerDir(world, 1), 'dispatch-readiness.txt'), 'utf8')
-    expect(staged).toContain(gateOutput)
-    expect(staged).toContain('cannot be read')
+    expect(detail).toContain('not_a_document')
+    const manifest = JSON.parse(
+      readFileSync(join(ipTaskRunDir(world), 'control', 'sources', 'manifest.json'), 'utf8')
+    ) as { sources: { deliveryMode: string; unavailable?: { reason: string } }[] }
+    expect(manifest.sources[0]).toMatchObject({
+      deliveryMode: 'unavailable',
+      unavailable: { reason: 'not_a_document' }
+    })
+  })
+
+  it('a private source behind a login pauses as login_required — never read as the document', async () => {
+    const world = makeWorld()
+    world.frozenBrief = `${world.frozenBrief}\n## Documentation\n\n- https://example.com/private — the mechanism it governs\n`
+    const page = new TextEncoder().encode(`<html><body>${'Please sign in to continue. '.repeat(100)}</body></html>`)
+    const result = await runLoopInProcess(world, undefined, {
+      checkTaskDispatchReadiness: (_branch) => ({ ready: true, output: 'READY' }),
+      fetchDocumentationDeps: {
+        resolve: async () => [{ address: '93.184.216.34', family: 4 }],
+        request: async () => ({ status: 401, headers: { 'content-type': 'text/html' }, body: page, framed: true }),
+        now: () => new Date()
+      }
+    })
+
+    expect(world.dispatches.filter((d) => d.role === 'developer')).toHaveLength(0)
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'missing_source' })
+    expect(readPauseState(world.runtimeDir, world.task)?.detail ?? '').toContain('login_required')
+  })
+})
+
+describe('the required-source manifest rides every Developer dispatch', () => {
+  it('round 1 and round 2 prompts each lead with the controller manifest; repository sources are recorded as injected', async () => {
+    const world = makeWorld({
+      roleOutcomes: {
+        1: {
+          reviewer: {
+            findings: 'BLOCKER|smoke.ts:1|deliberate round-1 blocker',
+            report: 'BRIEF_CONFORMANCE: yes\nSPEC_CONFORMANCE: yes\nSCOPE: small\nTESTS: pass\nDOCS: n/a\n',
+            objectives: 'O1|MET|done.\n',
+            sessionId: 'rev-session-1'
+          }
+        }
+      }
+    })
+    world.frozenBrief = `${world.frozenBrief}\n## Documentation\n\n- apps/cli/specs/loop.md — the loop it governs\n\n## 2. Context\n\n- **Revision:** rendered at \`abcdef1\` — fixture\n`
+    const pinnedAt: string[] = []
+    const result = await runLoopInProcess(world, undefined, {
+      readSourceObject: (revision, path) => {
+        pinnedAt.push(`${revision}:${path}`)
+        return { type: 'blob', id: 'b'.repeat(40), content: new TextEncoder().encode('# Loop\n') }
+      }
+    })
+
+    expect(result.finalDecision.type).toBe('publish')
+    const prompts = world.dispatches
+      .filter((d) => d.role === 'developer')
+      .map((d) => ({ round: d.round, prompt: d.prompt ?? '' }))
+    expect(prompts.map((p) => p.round)).toEqual(expect.arrayContaining([1, 2]))
+    for (const { prompt } of prompts) {
+      expect(prompt.startsWith('Required sources (controller manifest sha256:')).toBe(true)
+      expect(prompt).toContain('`apps/cli/specs/loop.md`')
+      expect(prompt).toContain(`git:blob:${'b'.repeat(40)}`)
+    }
+    expect(pinnedAt.every((p) => p === 'abcdef1:apps/cli/specs/loop.md')).toBe(true)
+    expect(new Set(pinnedAt).size).toBe(1)
+    const receipts = readFileSync(join(ipTaskRunDir(world), 'control', 'sources', 'receipts.jsonl'), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { round: number; mode: string; recordedBy: string })
+    expect(receipts.filter((r) => r.mode === 'injected' && r.recordedBy === 'controller').map((r) => r.round)).toEqual(
+      expect.arrayContaining([1, 2])
+    )
+    const manifest = JSON.parse(readFileSync(join(ipTaskRunDir(world), 'control', 'sources', 'manifest.json'), 'utf8'))
+    expect(manifest.round).toBe(2)
   })
 })

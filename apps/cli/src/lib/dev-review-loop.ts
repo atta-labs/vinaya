@@ -44,7 +44,7 @@
 import { randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { guardedSpawnSync } from './driver-tool-guard.js'
-import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
@@ -97,7 +97,8 @@ import {
   type RoundStats,
   type TaskClock,
   type VerdictObservation,
-  withBeyondSurfaceBlock
+  withBeyondSurfaceBlock,
+  extractSourceRevision
 } from '@attalabs/aeg-core'
 import {
   AGENT_VENDOR_NAMES,
@@ -151,7 +152,6 @@ import {
   sh
 } from './dev-review-loop/gate-reading.js'
 import {
-  checkDocumentationSourcesReadable,
   checkTaskDispatchReadiness,
   createTaskWorktree,
   createTaskWorktreeFromRemote,
@@ -281,11 +281,22 @@ import { createDeveloperDevToolContext, type DeveloperDevToolDeps } from './task
 import { devToolError, type DevPullRequestView, type DevToolContext } from './task-tools/dev-tools-server.js'
 import { type FailedCheckLog, readFailedCheckLogs, readJobLogTail } from './task-tools/pr-facts.js'
 import { startDevToolsHost } from './task-tools/dev-tools-host.js'
+import { createFetchDocumentationTool, type FetchDocumentationDeps } from './task-tools/fetch-documentation.js'
 import {
-  createFetchDocumentationTool,
-  documentationReceiptsPath,
-  type FetchDocumentationDeps
-} from './task-tools/fetch-documentation.js'
+  appendSourceDeliveryReceipt,
+  injectedDeliveryReceipts,
+  readRequiredSourceManifest,
+  type RequiredSourceManifest,
+  requiredSourcesPromptBlock,
+  sourceReceiptsPath,
+  sourceStoreDir
+} from './source-manifest.js'
+import {
+  prepareSources,
+  RequiredSourcesUnavailable,
+  realSourceProviderDeps,
+  type SourceProviderDeps
+} from './source-provider.js'
 import { ownVersion } from './artifacts.js'
 import {
   type BridgeInvocation,
@@ -840,6 +851,8 @@ export type LoopDeps = {
   }) => Promise<{ bridge: BridgeInvocation; close: () => Promise<void> }>
   /** The `fetch_documentation` tool's name resolution and transport; absent, the real resolver and pinned TLS connection. Injected so a test fakes the network. */
   fetchDocumentationDeps?: FetchDocumentationDeps
+  /** The source provider's git object reader for repository sources; absent, `git` in the task worktree. Injected so a test needs no repository. */
+  readSourceObject?: SourceProviderDeps['readObject']
   /** O2/O3: replace the open PR's body — the `update_pull_request_body` tool's forge side effect (`gh pr edit`). Injected so the harness fakes it. */
   updatePrBody: (input: {
     prNumber: number
@@ -3677,6 +3690,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * that case).
      */
     const turnConfinementByRole = new Map<Role, TurnWriteAttribution>()
+    /** Each round's prepared required-source manifest, prepared once per round by this driver process (`prepareRoundSources`). */
+    const preparedSourcesByRound = new Map<number, RequiredSourceManifest>()
 
     /**
      * O11: the task Issue, branch, worktree path,
@@ -4008,16 +4023,28 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         `Developer starting round ${roundNum} with ${dispatchModel ?? dispatchAgent}`,
         'round'
       )
+      // The round's required sources are prepared, and the repository ones
+      // recorded as injected, by the controller before every dispatch — the
+      // first prompt, every later round, every resume and every re-ask —
+      // and before this turn's protected-path snapshot, so the controller's
+      // own writes to its source store are never read as the worker's.
+      const sourceManifest = await prepareRoundSources(roundNum)
+      for (const receipt of injectedDeliveryReceipts(sourceManifest, new Date(d.now()).toISOString())) {
+        appendSourceDeliveryReceipt(documentationReceiptsPathForTask(), receipt)
+      }
+      const sourcesBlock = requiredSourcesPromptBlock(sourceManifest)
       // O4: no bare-forge-command rule rides the prompt any longer — the
       // Developer holds no `gh`/`git push` credential and publishes only
       // through the driver-run tools, so there is no excluded command to run
       // on its own line. The brief stays the prompt's contiguous suffix.
       // O1: every prompt but round 1's (whose preamble carries it ahead of the
       // brief, which stays the prompt's contiguous suffix) ends with what the
-      // turn ends with — its structured turn result.
+      // turn ends with — its structured turn result. The required-source
+      // block leads every prompt, so it never splits the brief.
       const fullPrompt = opts.skipResumeContext
-        ? promptText
+        ? [sourcesBlock, promptText].filter((part): part is string => part !== null).join('\n\n')
         : [
+            sourcesBlock,
             resumeContextBlock(),
             agentSwitched ? await switchedAgentContextBlock(promptText) : null,
             promptText,
@@ -4078,21 +4105,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       if (!dispatchReadiness.ready) {
         throw new Error(
           `dispatch-readiness gate failed for branch '${branch}' — staged at ${dispatchReadinessPath}:\n${dispatchReadiness.output}`
-        )
-      }
-      // A required source the driver cannot read never starts a turn: the
-      // Developer would build without it and the miss would surface only at
-      // the end. Same fetch the documentation tool performs, outside the sandbox.
-      const documentationReadable = await checkDocumentationSourcesReadable(
-        d.fetchFrozenBrief(task),
-        d.fetchDocumentationDeps
-      )
-      if (documentationReadable.output !== '') {
-        appendFileSync(dispatchReadinessPath, `\n\n${documentationReadable.output}\n`)
-      }
-      if (!documentationReadable.ready) {
-        throw new Error(
-          `documentation sources gate failed for branch '${branch}' (${documentationReadable.retryable ? 'retryable' : 'needs the Planner to correct the task'}) — source ${documentationReadable.source}: ${documentationReadable.failure}`
         )
       }
       // O3: resolved fresh per dispatch, the same "never cached across a
@@ -4633,9 +4645,43 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
     }
 
-    /** This task's documentation receipts file — written only by the driver's `fetch_documentation` tool, read by both agents' Stop hooks. */
+    /** This task's controller-owned source store — the required-source manifest, its snapshots and every delivery receipt, under `control/`. */
+    function sourceStoreForTask(): string {
+      return sourceStoreDir(root, task)
+    }
+
+    /** This task's delivery receipts — written only by the controller and its `fetch_documentation` tool; completion reads nothing else. */
     function documentationReceiptsPathForTask(): string {
-      return documentationReceiptsPath(runPath(root, task, { area: 'hooks' }))
+      return sourceReceiptsPath(sourceStoreForTask())
+    }
+
+    /**
+     * Prepares the round's required sources — once per round in this driver
+     * process, so every round and every resume (a fresh process) prepares
+     * them again, and a re-ask inside one round reuses the round's manifest.
+     * Repository sources are pinned at the frozen brief's own base revision,
+     * falling back to the worktree's head when the brief names none. Throws
+     * `RequiredSourcesUnavailable` when any required source is unavailable,
+     * which the loop turns into a `missing_source` pause: the turn never
+     * starts on model memory in its place.
+     */
+    async function prepareRoundSources(roundNum: number): Promise<RequiredSourceManifest> {
+      const cached = preparedSourcesByRound.get(roundNum)
+      if (cached !== undefined) return cached
+      const brief = d.fetchFrozenBrief(task)
+      const worktree = existsSync(worktreePathForBranch()) ? worktreePathForBranch() : null
+      const base = extractSourceRevision(brief) ?? (worktree !== null ? d.readWorktreeHead(worktree) : null)
+      const deps = realSourceProviderDeps(worktree ?? process.cwd(), d.fetchDocumentationDeps)
+      const prepared = await prepareSources({
+        brief,
+        round: roundNum,
+        base,
+        storeDir: sourceStoreForTask(),
+        deps: d.readSourceObject ? { ...deps, readObject: d.readSourceObject } : deps
+      })
+      if (prepared.unavailable.length > 0) throw new RequiredSourcesUnavailable(prepared.unavailable)
+      preparedSourcesByRound.set(roundNum, prepared.manifest)
+      return prepared.manifest
     }
 
     function buildDeveloperDevToolContext(roundNum: number): DevToolContext {
@@ -5003,6 +5049,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         },
         fetchDocumentation: createFetchDocumentationTool({
           receiptsPath: documentationReceiptsPathForTask(),
+          manifest: () => readRequiredSourceManifest(sourceStoreForTask()),
           ...(d.fetchDocumentationDeps ? { deps: d.fetchDocumentationDeps } : {})
         }),
         onPublicationAttempt: (result) => {
@@ -6730,7 +6777,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // A sandbox the host cannot run is a decided pause too, addressed to
       // the Operator — never an infrastructure crash the watcher retries.
       const sandboxRefusal = err instanceof DispatchSandboxRefused ? err : null
-      if (turnResultPause === null && sandboxRefusal === null) recordDriverExited('error', { error: err })
+      // A required source the controller could not prepare is a decided
+      // pause too, addressed to the Planner — never an infrastructure crash,
+      // and never a turn continued on model memory.
+      const missingSources = err instanceof RequiredSourcesUnavailable ? err : null
+      const decidedPause = turnResultPause !== null || sandboxRefusal !== null || missingSources !== null
+      if (!decidedPause) recordDriverExited('error', { error: err })
       let head = 'unknown'
       try {
         head = d.resolveHead(branch)
@@ -6738,14 +6790,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // Left as 'unknown' — the schema only requires a string.
       }
       let decidedPauseEvents: DevReviewLoopEventInput[] | null = null
-      if (turnResultPause !== null || sandboxRefusal !== null) {
+      if (decidedPause) {
         try {
           decidedPauseEvents = driverDecidedPauseEvents(
             config.loopId,
             state,
             round,
             computeStats(head, roundStartMs),
-            turnResultPause?.reasonCode ?? 'sandbox_refused'
+            turnResultPause?.reasonCode ?? (missingSources !== null ? 'missing_source' : 'sandbox_refused')
           )
         } catch {
           decidedPauseEvents = null
@@ -6765,19 +6817,23 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // that an unnamed error ended the round.
       decision = {
         type: 'pause',
-        reason: turnResultPause?.pauseReason ?? (sandboxRefusal !== null ? 'sandbox_refused' : 'infrastructure'),
+        reason:
+          turnResultPause?.pauseReason ??
+          (sandboxRefusal !== null ? 'sandbox_refused' : missingSources !== null ? 'missing_source' : 'infrastructure'),
         detail:
           turnResultPause !== null
             ? turnResultPause.message
             : sandboxRefusal !== null
               ? sandboxRefusal.message
-              : err instanceof DispatchSignInRefused
-                ? err.message
-                : err instanceof DispatchUsageLimit
-                  ? usageLimitPauseDetail(err.limit, d.now())
-                  : isGitHubRateLimitError(err)
-                    ? `${rateLimitPauseDetail(round === roundAtLastWait ? rateLimitWaits : 0)} (round ${round}: ${err instanceof Error ? err.message : String(err)})`
-                    : `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
+              : missingSources !== null
+                ? missingSources.message
+                : err instanceof DispatchSignInRefused
+                  ? err.message
+                  : err instanceof DispatchUsageLimit
+                    ? usageLimitPauseDetail(err.limit, d.now())
+                    : isGitHubRateLimitError(err)
+                      ? `${rateLimitPauseDetail(round === roundAtLastWait ? rateLimitWaits : 0)} (round ${round}: ${err instanceof Error ? err.message : String(err)})`
+                      : `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
       }
       // A host-repair pause ends this driver and frees the lock, so the
       // ordinary start can continue the task once the host is repaired.
@@ -6792,7 +6848,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // produced a round for that bound to bound, so no number of sign-in
       // pauses should ever demand a Principal ruling to resume past; a
       // rate limit is a wait for the reset, not a recoverable-hiccup retry.
-      if (turnResultPause !== null || sandboxRefusal !== null) recordDriverExited('paused')
+      if (decidedPause) recordDriverExited('paused')
       else if (spendsInfrastructureRetry(err)) infrastructureRetries += 1
       persistCurrentLoopState('pause', decision.reason)
       // This bookkeeping is best-effort, never a second chance for the

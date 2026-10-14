@@ -30,8 +30,9 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
+import { sourceManifestPath, sourceReceiptsPath } from '../../src/lib/source-manifest.js'
 import { devToolsSocketRoot } from '../../src/lib/task-tools/dev-tools-registration.js'
 import { listingRevealsSocket, reachDriverSocketUnderOptIn } from '../lib/dispatch/driver-socket-reach.js'
 import { commandsTheTextsName, DOCTRINE_SOURCES, isSuiteInput, REPO_ROOT } from './command-sources.js'
@@ -305,7 +306,46 @@ describe.skipIf(!LIVE || process.platform !== 'linux')('driver socket boundary w
   }, 60_000)
 })
 
+/** Each write a worker could attempt on the required-source store: forge a receipt, rewrite or delete the manifest, plant a new file. */
+const SOURCE_STORE_WRITES = [
+  'printf \'{"sourceId":"https://forged.example.com","decision":"counted"}\\n\' >> "$STORE/receipts.jsonl"',
+  'printf forged > "$STORE/manifest.json"',
+  'rm -f "$STORE/manifest.json" "$STORE/receipts.jsonl"',
+  'touch "$STORE/fabricated-receipts.jsonl"',
+  'mv "$STORE/receipts.jsonl" "$STORE/moved.jsonl"'
+]
+
 for (const agent of AGENTS) {
+  describe.skipIf(!LIVE)(`required-source store — ${agent}'s sandbox cannot write it`, () => {
+    let session: SandboxSession | undefined
+    beforeAll(() => {
+      session = openSandboxSession(agent)
+    })
+    afterAll(() => session?.dispose())
+
+    for (const write of SOURCE_STORE_WRITES) {
+      it(
+        `leaves the store untouched: ${write}`,
+        async () => {
+          const s = session as SandboxSession
+          const store = s.sourceStore
+          const before = {
+            names: readdirSync(store).sort(),
+            manifest: readFileSync(sourceManifestPath(store), 'utf8'),
+            receipts: readFileSync(sourceReceiptsPath(store), 'utf8')
+          }
+          const result = await s.run(write, { STORE: store })
+          console.info(`[${agent}] source store write: exit ${result.exitCode} — ${write}`)
+          expect(readdirSync(store).sort()).toEqual(before.names)
+          expect(readFileSync(sourceManifestPath(store), 'utf8')).toBe(before.manifest)
+          expect(readFileSync(sourceReceiptsPath(store), 'utf8')).toBe(before.receipts)
+          expect(result.exitCode).not.toBe(0)
+        },
+        COMMAND_BUDGET_MS + 60_000
+      )
+    }
+  })
+
   describe.skipIf(!LIVE)(`sandbox conformance — ${agent}'s sandbox`, () => {
     const branch = sourceBranch()
     const platform = process.platform

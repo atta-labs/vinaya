@@ -82,11 +82,15 @@ import { execFileSync, spawn } from 'node:child_process'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { homedir, hostname as osHostname, tmpdir } from 'node:os'
 import { parseIssueDocumentation, redact, summarizeTranscript } from '@attalabs/aeg-core'
+import { DOCUMENTATION_READ_MIN_SIZE, FETCH_DOCUMENTATION_TOOL } from './task-tools/fetch-documentation.js'
 import {
-  DOCUMENTATION_READ_MIN_SIZE,
-  documentationReceiptsPath,
-  FETCH_DOCUMENTATION_TOOL
-} from './task-tools/fetch-documentation.js'
+  countedSourceIds,
+  readRequiredSourceManifest,
+  readSourceDeliveryReceipts,
+  SOURCE_STORE_DIRNAME,
+  sourceReceiptsPath,
+  sourceStoreDir
+} from './source-manifest.js'
 import type { IssueDocumentationSource, Role, RoleAttemptOutcome, TranscriptSummary } from '@attalabs/aeg-core'
 import { createLogSink, drainLogSpool, resolveLogAppendPath } from './log-sink.js'
 import { appendRoleLine } from './loop-log.js'
@@ -103,6 +107,7 @@ import {
 } from './dev-review-loop/turn-result.js'
 import { loadConfig } from './config.js'
 import {
+  RUN_AREA_DIRNAMES,
   runPath,
   RUNTIME_DIR_ENV_KEY,
   runtimeDirForRepo,
@@ -116,6 +121,7 @@ import {
   CLAUDE_KEYCHAIN_SERVICE,
   CLAUDE_SANDBOX_ALLOWED_DOMAINS,
   agentConfigProtectedSubpaths,
+  controllerStoreReachableBy,
   buildCodexHooksMarketplace,
   buildWorkerEnv,
   hasSubscriptionLogin,
@@ -1033,6 +1039,30 @@ function documentationSourcesFromPrompt(role: Role, prompt: string): IssueDocume
 }
 
 /**
+ * The required sources a `developer` dispatch carries: the controller's
+ * prepared manifest for this task when one exists — so every round and every
+ * resume carries the same sources, whatever its prompt says — else the
+ * prompt's own `## Documentation` section, for a dispatch no loop prepared.
+ */
+function requiredDocumentationSources(role: Role, prompt: string, storeDir: string): IssueDocumentationSource[] {
+  if (role !== 'developer') return []
+  const manifest = readRequiredSourceManifest(storeDir)
+  if (manifest !== null && manifest.sources.length > 0) {
+    return manifest.sources.map((s) => ({
+      source: s.requirementText,
+      mechanism: s.governs,
+      objectiveIds: s.objectiveIds
+    }))
+  }
+  return documentationSourcesFromPrompt(role, prompt)
+}
+
+/** The receipts file of the task whose folder is `taskDir` — its controller-owned source store, inside `control/`. */
+function taskSourceReceiptsPath(taskDir: string): string {
+  return sourceReceiptsPath(join(taskDir, RUN_AREA_DIRNAMES.control, SOURCE_STORE_DIRNAME))
+}
+
+/**
  * The smallest response, in bytes, the Documentation read-gate counts as a read: a login page, an error page or an empty shell falls below it. Owned by `fetch-documentation.ts`, so the `WebFetch` check and the driver's read receipt apply one value.
  */
 export { DOCUMENTATION_READ_MIN_SIZE }
@@ -1041,11 +1071,12 @@ export { DOCUMENTATION_READ_MIN_SIZE }
 const FETCH_DOCUMENTATION_TOOL_FOR_CLAUDE = `mcp__vinaya-dev-tools__${FETCH_DOCUMENTATION_TOOL}`
 
 /**
- * The stand-alone hook-script source that reads the driver's documentation
- * read receipts (`fetch-documentation.ts`) and returns the set of source
- * identities they record. Only the driver's `fetch_documentation` tool writes
- * that file, from outside every sandbox, so a receipt there is a read the
- * driver itself observed. Same normalization as the hooks' own `normalize`.
+ * The stand-alone hook-script source that reads the controller's delivery
+ * receipts (`source-manifest.ts`) and returns the set of source identities
+ * delivered and not refused. Only the controller writes that file, in the
+ * task's source store outside every sandbox. The hook reads it only so it
+ * stops asking for a source already delivered — no completion decision
+ * reads the hook. Same normalization as the hooks' own `normalize`.
  */
 function receiptSourcesSnippet(receiptsPath: string): string {
   return [
@@ -1053,7 +1084,7 @@ function receiptSourcesSnippet(receiptsPath: string): string {
     '    try {',
     `      for (const line of fs.readFileSync(${JSON.stringify(receiptsPath)}, 'utf8').split('\\n')) {`,
     '        if (!line) continue;',
-    "        try { const r = JSON.parse(line); if (r && typeof r.source === 'string') receiptSources.add(normalize(r.source)); } catch {}",
+    "        try { const r = JSON.parse(line); if (r && typeof r.source === 'string' && r.decision !== 'refused') receiptSources.add(normalize(r.source)); } catch {}",
     '      }',
     '    } catch {}'
   ].join('\n')
@@ -1153,7 +1184,7 @@ function codexDocumentationLogHookScript(dir: string): string {
  */
 export function documentationStopHookScript(
   dir: string,
-  receiptsPath: string = documentationReceiptsPath(dirname(dir))
+  receiptsPath: string = taskSourceReceiptsPath(dirname(dirname(dir)))
 ): string {
   return [
     "const fs = require('fs');",
@@ -1218,7 +1249,7 @@ export function documentationStopHookScript(
 
 export function codexDocumentationStopHookScript(
   dir: string,
-  receiptsPath: string = documentationReceiptsPath(dirname(dirname(dir)))
+  receiptsPath: string = taskSourceReceiptsPath(dirname(dirname(dirname(dir))))
 ): string {
   return [
     "const fs = require('fs');",
@@ -1251,87 +1282,41 @@ export function codexDocumentationStopHookScript(
 }
 
 /**
- * The Documentation a Developer dispatch delivered, and the reads its gate
- * counts, read back after the turn by the driver from the same files the
- * read gate grades and by the same rules — the per-run manifest
- * (`documentation-sources-<runId>.json`) in `dir`, the driver's own
- * `fetch_documentation` receipts, and the hook-recorded fetches: on Claude a
- * `WebFetch` counts only when it succeeded, stayed on the source's host and
- * returned at least `DOCUMENTATION_READ_MIN_SIZE` bytes; on Codex the logger
- * records only a successful `curl -L <URL>`. The controller requires a counted
- * read behind every required URL source a `completed` result reports.
+ * The Documentation a Developer dispatch was given, and the deliveries the
+ * controller recorded — read back after the turn by the driver from the
+ * task's controller-owned source store (`storeDir`) and nothing else. The
+ * sources are the prepared manifest's; a dispatch no loop prepared falls back
+ * to the per-run sources file the dispatch itself wrote in `dir`. The counted
+ * deliveries are the store's receipts whose revision policy did not refuse
+ * them: a `WebFetch` or `curl` the agent's own hooks logged, and any file a
+ * worker could write, are never read here, so a fabricated receipt has no
+ * effect. The controller requires a counted delivery behind every required
+ * URL source a `completed` result reports.
  */
-export function deliveredDocumentation(
-  agent: AgentVendor,
-  dir: string,
-  runId: string,
-  receiptsPath: string
-): DeliveredDocumentation {
-  let manifest: unknown = []
-  try {
-    manifest = JSON.parse(readFileSync(join(dir, `documentation-sources-${runId}.json`), 'utf8'))
-  } catch {
-    manifest = []
-  }
-  const sources = Array.isArray(manifest)
-    ? manifest
-        .map((m) => (m && typeof m === 'object' ? (m as { source?: unknown }).source : null))
-        .filter((m): m is string => typeof m === 'string')
-    : []
-  const counted = new Set<string>()
-  try {
-    for (const line of readFileSync(receiptsPath, 'utf8').split('\n')) {
-      if (!line) continue
-      try {
-        const r = JSON.parse(line) as { source?: unknown }
-        if (typeof r.source === 'string') counted.add(normalizeSourceIdentity(r.source))
-      } catch {
-        // not a receipt line
-      }
-    }
-  } catch {
-    // no receipts yet
-  }
-  const hostOf = (u: string): string | null => {
+export function deliveredDocumentation(dir: string | null, runId: string, storeDir: string): DeliveredDocumentation {
+  const manifest = readRequiredSourceManifest(storeDir)
+  let sources: string[] = []
+  if (manifest !== null && manifest.sources.length > 0) {
+    sources = manifest.sources.map((s) => s.requirementText)
+  } else if (dir !== null) {
+    let fallback: unknown = []
     try {
-      return new URL(u.trim()).host.toLowerCase()
+      fallback = JSON.parse(readFileSync(join(dir, `documentation-sources-${runId}.json`), 'utf8'))
     } catch {
-      return null
+      fallback = []
     }
+    sources = Array.isArray(fallback)
+      ? fallback
+          .map((m) => (m && typeof m === 'object' ? (m as { source?: unknown }).source : null))
+          .filter((m): m is string => typeof m === 'string')
+      : []
   }
-  let entries: Record<string, unknown>[] = []
-  try {
-    entries = readFileSync(join(dir, `documentation-log-${runId}.jsonl`), 'utf8')
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => {
-        try {
-          return JSON.parse(line) as Record<string, unknown>
-        } catch {
-          return null
-        }
-      })
-      .filter((x): x is Record<string, unknown> => x !== null && typeof x.url === 'string')
-  } catch {
-    entries = []
+  return {
+    sources,
+    countedReads: countedSourceIds(readSourceDeliveryReceipts(sourceReceiptsPath(storeDir))).map(
+      normalizeSourceIdentity
+    )
   }
-  for (const source of sources) {
-    if (!isDocumentationUrl(source)) continue
-    const identity = normalizeSourceIdentity(source)
-    const mine = entries.filter((x) => normalizeSourceIdentity(String(x.url)) === identity)
-    const countsAsRead = (x: Record<string, unknown>): boolean =>
-      agent === 'codex' ||
-      (typeof x.status === 'number' &&
-        x.status >= 200 &&
-        x.status <= 299 &&
-        typeof x.finalUrl === 'string' &&
-        hostOf(x.finalUrl) !== null &&
-        hostOf(x.finalUrl) === hostOf(source) &&
-        typeof x.size === 'number' &&
-        x.size >= DOCUMENTATION_READ_MIN_SIZE)
-    if (mine.some(countsAsRead)) counted.add(identity)
-  }
-  return { sources, countedReads: [...counted] }
 }
 
 function writeCodexDispatchHooks(
@@ -1354,16 +1339,21 @@ function writeCodexDispatchHooks(
 /**
  * Writes the Codex Documentation read-gate's files into `dir`
  * (`<task hooks area>/<role>/codex`) and returns the `hooks.json` path. The
- * Stop hook reads the driver's read receipts from the task hooks area, two
- * levels up.
+ * Stop hook reads the controller's delivery receipts from the task's source
+ * store (`control/sources/`), only to stop asking for a delivered source.
  */
-export function writeCodexHookFiles(dir: string, runId: string, documentation: IssueDocumentationSource[]): string {
+export function writeCodexHookFiles(
+  dir: string,
+  runId: string,
+  documentation: IssueDocumentationSource[],
+  receiptsPath: string = taskSourceReceiptsPath(dirname(dirname(dirname(dir))))
+): string {
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   chmodSync(dir, 0o700)
   const logScript = join(dir, 'documentation-log.mjs')
   const stopScript = join(dir, 'documentation-stop.mjs')
   writeFileSync(logScript, codexDocumentationLogHookScript(dir), { mode: 0o600 })
-  writeFileSync(stopScript, codexDocumentationStopHookScript(dir), { mode: 0o600 })
+  writeFileSync(stopScript, codexDocumentationStopHookScript(dir, receiptsPath), { mode: 0o600 })
   // Written only when this prompt names sources, as the Claude settings
   // do. A loop's dispatches share one run id, so rewriting the manifest as
   // `[]` on a later prompt with no Documentation section changed a file the
@@ -3925,7 +3915,8 @@ export function claudeConfinementRequest(
   role: Role,
   agent: AgentVendor,
   opts: Pick<DispatchOpts, 'cwd' | 'extraWritableDirs'>,
-  scratchDir: string
+  scratchDir: string,
+  controllerOwnedDirs: readonly string[] = []
 ): ConfinementRequest {
   return {
     role,
@@ -3933,7 +3924,8 @@ export function claudeConfinementRequest(
     worktreeDir: opts.cwd ?? repoRoot() ?? process.cwd(),
     scratchDir,
     allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS,
-    extraWritableDirs: opts.extraWritableDirs ?? []
+    extraWritableDirs: opts.extraWritableDirs ?? [],
+    ...(controllerOwnedDirs.length > 0 ? { controllerOwnedDirs } : {})
   }
 }
 
@@ -4429,9 +4421,16 @@ export async function dispatchRole(
     agent === 'claude' && opts.unattended === true
       ? realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-claude-sandbox-')))
       : null
+  // The task's required-source store — the manifest and every delivery
+  // receipt — is controller-owned: a Developer's sandbox never writes it.
+  // Claude's sandbox names it in `denyWrite`; for both agents the dispatch
+  // refuses below when a writable root would reach it.
+  const sourceStore = sourceStoreDir(runtimeDirForRepo(repo), scopeOf(opts.task, opts.pr))
   const claudeConfinement =
     agent === 'claude' && opts.unattended === true && claudeScratchDir !== null
-      ? resolveClaudeConfinement(claudeConfinementRequest(role, agent, opts, claudeScratchDir))
+      ? resolveClaudeConfinement(
+          claudeConfinementRequest(role, agent, opts, claudeScratchDir, role === 'developer' ? [sourceStore] : [])
+        )
       : null
   if (claudeConfinement !== null && !claudeConfinement.confined) {
     // O5: named in the run's own output (`writeLifecycle`, which mirrors to
@@ -4504,7 +4503,7 @@ export async function dispatchRole(
   // so the SAME final `spawnArgs` (baseArgs plus `--settings`)
   // is what an unattended start's boundary resolution wraps below, rather
   // than wrapping a pre-settings argv and reconciling the two later.
-  const documentationSources = documentationSourcesFromPrompt(role, prompt)
+  const documentationSources = requiredDocumentationSources(role, prompt, sourceStore)
   const codexDocumentationGuidance =
     agent === 'codex' && documentationSources.some((source) => isDocumentationUrl(source.source))
       ? `\n\nCodex documentation receipt: read every URL in \`## Documentation\` with the dev-tools \`${FETCH_DOCUMENTATION_TOOL}\` tool before ending this turn — the driver fetches the page outside your sandbox and records the read. \`curl -L <URL>\` in a Bash tool call also counts when the host is reachable from the sandbox; a \`curl\` your sandbox blocks never means the source cannot be opened — read it with \`${FETCH_DOCUMENTATION_TOOL}\`. Built-in web search is not a receipt route for this dispatch.\n`
@@ -4561,7 +4560,7 @@ export async function dispatchRole(
           knownFindingIds: opts.turnResultKnownFindingIds ?? [],
           requiredSources:
             manifestDir !== null
-              ? deliveredDocumentation(agent, manifestDir, runId, join(manifestDir, 'no-receipts')).sources
+              ? deliveredDocumentation(manifestDir, runId, sourceStore).sources
               : documentationSources.map((source) => source.source)
         })
       : null
@@ -4694,6 +4693,37 @@ export async function dispatchRole(
     : codexConfinement !== null && !codexConfinement.ok
       ? codexConfinement.reason
       : codexHomeFailureReason
+  // Every root a confined Developer's commands may write — Claude's
+  // `allowWrite` plus the linked worktree's git common dir Claude's sandbox
+  // grants on its own, or Codex's primary workspace plus its added roots and
+  // `/tmp`, which Codex's workspace-write mode leaves writable unless its
+  // `exclude_slash_tmp` is set (its `$TMPDIR` is the scratch directory).
+  const workerWritableRoots: string[] =
+    claudeConfinement?.confined === true
+      ? [
+          ...claudeConfinement.settings.sandbox.filesystem.allowWrite,
+          ...(opts.cwd !== undefined ? [resolveGitCommonDir(opts.cwd)].filter((d): d is string => d !== null) : [])
+        ]
+      : codexRequireIsolation && codexConfinement?.ok === true && codexUnattendedFailureReason === null
+        ? [
+            '/tmp',
+            opts.cwd ?? process.cwd(),
+            ...(opts.extraWritableDirs ?? []),
+            ...(codexScratchDir !== null ? [codexScratchDir] : []),
+            ...(codexGitCommonDir !== null ? [codexGitCommonDir] : []),
+            ...(codexBunCacheDir !== null ? [codexBunCacheDir] : []),
+            ...(opts.developerFiles ?? []).map((file) => dirname(file))
+          ]
+        : []
+  const sourceStoreWritableRoot =
+    role === 'developer' && opts.unattended === true
+      ? controllerStoreReachableBy(sourceStore, workerWritableRoots)
+      : null
+  const sourceStoreReachError =
+    sourceStoreWritableRoot === null
+      ? null
+      : `the task's required-source store ${sourceStore} is inside the worker's writable root ${sourceStoreWritableRoot}, ` +
+        'so a worker could forge or erase its receipts; move the runtime directory outside every writable root'
   // The first lifecycle line this role's dispatch writes —
   // every earlier `writeLifecycle` call in this function sits behind an
   // early-return refusal branch (binary not resolvable, non-Claude
@@ -4850,7 +4880,12 @@ export async function dispatchRole(
     claudeSettingsPath: dispatchSettingsPath,
     codexHooksPath
   })
-  if (agentControlsError === null && !unconfinedClaude && codexUnattendedFailureReason === null) {
+  if (
+    agentControlsError === null &&
+    !unconfinedClaude &&
+    codexUnattendedFailureReason === null &&
+    sourceStoreReachError === null
+  ) {
     const probeCwd = opts.cwd ?? process.cwd()
     const plan: SandboxProbePlan | null =
       agent === 'claude' && claudeConfinement?.confined === true && dispatchSettingsPath !== null
@@ -4906,10 +4941,11 @@ export async function dispatchRole(
     codexUnattendedFailureReason !== null ||
     unconfinedClaude ||
     sandboxProbeError !== null ||
-    agentControlsError !== null
+    agentControlsError !== null ||
+    sourceStoreReachError !== null
   ) {
     const failureReason: DispatchFailureReason =
-      unconfinedClaude || sandboxProbeError !== null || agentControlsError !== null
+      unconfinedClaude || sandboxProbeError !== null || agentControlsError !== null || sourceStoreReachError !== null
         ? 'refused'
         : codexBoundaryFailureReason(agent, codexUnattendedFailureReason!)
     const durationMs = Date.now() - start
@@ -4929,12 +4965,14 @@ export async function dispatchRole(
     writeLifecycle(
       unconfinedClaude
         ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended Claude requires a confined worker sandbox while driver-run dev-tools are available; ${claudeConfinement?.warning ?? 'confinement unavailable'}`
-        : agentControlsError !== null
-          ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — a required enforcement control is inactive, so the agent was not started:\n${agentControlsError}`
-          : sandboxProbeError !== null
-            ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — ${agent}'s sandbox could not run a probe command on this host, so the agent was not started: ${sandboxProbeError}`
-            : `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires Codex's own sandbox ` +
-              `and network proxy plus this task's staged CODEX_HOME, which are unavailable: ${codexUnattendedFailureReason}`
+        : sourceStoreReachError !== null && codexUnattendedFailureReason === null
+          ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — ${sourceStoreReachError}`
+          : agentControlsError !== null
+            ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — a required enforcement control is inactive, so the agent was not started:\n${agentControlsError}`
+            : sandboxProbeError !== null
+              ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — ${agent}'s sandbox could not run a probe command on this host, so the agent was not started: ${sandboxProbeError}`
+              : `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires Codex's own sandbox ` +
+                `and network proxy plus this task's staged CODEX_HOME, which are unavailable: ${codexUnattendedFailureReason}`
     )
     // O1: never leak the scratch directory minted for Codex's own
     // confinement (above) on this early refusal.
@@ -4957,7 +4995,7 @@ export async function dispatchRole(
     // The probe's refusal travels typed, beside the shared `'refused'`
     // reason, only when it is the cause the refusal line above names.
     const sandboxProbeRefusal =
-      !unconfinedClaude && agentControlsError === null && sandboxProbeError !== null
+      !unconfinedClaude && sourceStoreReachError === null && agentControlsError === null && sandboxProbeError !== null
         ? { sandboxProbeRefusal: { agent, error: sandboxProbeError } }
         : {}
     return {
@@ -5361,19 +5399,9 @@ export async function dispatchRole(
       if (role !== 'developer') return {}
       const documentation =
         agent === 'claude' && dispatchSettingsPath !== null
-          ? deliveredDocumentation(
-              agent,
-              dirname(dispatchSettingsPath),
-              runId,
-              documentationReceiptsPath(dirname(dirname(dispatchSettingsPath)))
-            )
+          ? deliveredDocumentation(dirname(dispatchSettingsPath), runId, sourceStore)
           : agent === 'codex' && codexHooksPath !== null
-            ? deliveredDocumentation(
-                agent,
-                dirname(codexHooksPath),
-                runId,
-                documentationReceiptsPath(dirname(dirname(dirname(codexHooksPath))))
-              )
+            ? deliveredDocumentation(dirname(codexHooksPath), runId, sourceStore)
             : { sources: [], countedReads: [] }
       if (turnResultAdapter === null) return { turnOutput: { adapter: null, raw: null, event: null }, documentation }
       const read =

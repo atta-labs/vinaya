@@ -343,41 +343,51 @@ describe('the adapter reads the CLI’s own structured output (O1)', () => {
   })
 })
 
-describe('deliveredDocumentation — the read gate’s counted-read rule, read by the driver (O6)', () => {
-  function hooksDir(): { dir: string; receipts: string } {
+describe('deliveredDocumentation — read from the controller-owned source store alone', () => {
+  function setup(): { dir: string; store: string } {
     const root = tempDir()
     const dir = join(root, 'developer')
+    const store = join(root, 'control', 'sources')
     mkdirSync(dir, { recursive: true })
+    mkdirSync(store, { recursive: true })
     writeFileSync(join(dir, 'documentation-sources-run.json'), JSON.stringify([{ source: SOURCE, mechanism: 'm' }]))
-    return { dir, receipts: join(root, 'documentation-receipts.jsonl') }
+    return { dir, store }
   }
+  const receipt = (fields: Record<string, unknown>) =>
+    `${JSON.stringify({ sourceId: SOURCE, source: SOURCE, decision: 'counted', ...fields })}\n`
 
-  it('counts a driver read receipt', () => {
-    const { dir, receipts } = hooksDir()
-    writeFileSync(receipts, `${JSON.stringify({ source: `${SOURCE}/` })}\n`)
-    expect(deliveredDocumentation('claude', dir, 'run', receipts)).toEqual({
-      sources: [SOURCE],
-      countedReads: [SOURCE]
-    })
+  it('counts a controller delivery receipt', () => {
+    const { dir, store } = setup()
+    writeFileSync(join(store, 'receipts.jsonl'), receipt({}))
+    expect(deliveredDocumentation(dir, 'run', store)).toEqual({ sources: [SOURCE], countedReads: [SOURCE] })
   })
 
-  it('counts a Claude WebFetch only when it succeeded on the source’s host with real content', () => {
-    const { dir, receipts } = hooksDir()
-    const log = join(dir, 'documentation-log-run.jsonl')
+  it('never counts a delivery the revision policy refused', () => {
+    const { dir, store } = setup()
+    writeFileSync(join(store, 'receipts.jsonl'), receipt({ revision: 'mismatch', decision: 'refused' }))
+    expect(deliveredDocumentation(dir, 'run', store).countedReads).toEqual([])
+  })
+
+  it('reads no hook log: a WebFetch or curl the agent’s own hooks recorded is not a delivery', () => {
+    const { dir, store } = setup()
     writeFileSync(
-      log,
-      `${JSON.stringify({ url: SOURCE, finalUrl: 'https://login.example.com/', status: 200, size: 5000 })}\n`
+      join(dir, 'documentation-log-run.jsonl'),
+      `${JSON.stringify({ url: SOURCE, finalUrl: SOURCE, status: 200, size: 5000 })}\n${JSON.stringify({ url: SOURCE, tool: 'Bash/curl' })}\n`
     )
-    expect(deliveredDocumentation('claude', dir, 'run', receipts).countedReads).toEqual([])
-    writeFileSync(log, `${JSON.stringify({ url: SOURCE, finalUrl: SOURCE, status: 200, size: 5000 })}\n`)
-    expect(deliveredDocumentation('claude', dir, 'run', receipts).countedReads).toEqual([SOURCE])
+    expect(deliveredDocumentation(dir, 'run', store).countedReads).toEqual([])
   })
 
-  it('counts the Codex curl logger’s entry, and delivers nothing when no manifest was written', () => {
-    const { dir, receipts } = hooksDir()
-    writeFileSync(join(dir, 'documentation-log-run.jsonl'), `${JSON.stringify({ url: SOURCE, tool: 'Bash/curl' })}\n`)
-    expect(deliveredDocumentation('codex', dir, 'run', receipts).countedReads).toEqual([SOURCE])
-    expect(deliveredDocumentation('codex', dir, 'other-run', receipts).sources).toEqual([])
+  it('reads no receipt outside the store, wherever a worker could have written one', () => {
+    const { dir, store } = setup()
+    writeFileSync(join(dir, 'receipts.jsonl'), receipt({}))
+    writeFileSync(join(dir, '..', 'documentation-receipts.jsonl'), receipt({}))
+    expect(deliveredDocumentation(dir, 'run', store).countedReads).toEqual([])
+  })
+
+  it('falls back to the dispatch’s own sources file only when no manifest was prepared', () => {
+    const { dir, store } = setup()
+    expect(deliveredDocumentation(dir, 'other-run', store).sources).toEqual([])
+    expect(deliveredDocumentation(null, 'run', store).sources).toEqual([])
   })
 })
 
