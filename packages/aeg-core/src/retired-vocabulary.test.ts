@@ -183,8 +183,9 @@ const PATTERN_EXEMPT: Record<string, string[]> = {
   ],
   '(^|[^-_a-zA-Z0-9])decisions\\.md': [
     // `engine/design-decisions.md` is Vāda's own live, current design-decisions
-    // doc — not the retired global `decisions.md`. The bare-substring pattern
-    // can't distinguish the two; these are the citing files (task-729 sweep).
+    // doc — not the retired global `decisions.md`. The pattern now skips a
+    // hyphenated name like that one; these files stay listed because they
+    // may also name the retired file bare (task-729 sweep).
     'docs-index.md',
     'apps/vada-ai/specs/legacy/README.md',
     'apps/vada-ai/specs/vada-product-spec.md',
