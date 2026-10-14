@@ -37,7 +37,16 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
  * nothing to exempt. A genuine binary asset landing later should be added to
  * EXEMPT with a reason, which is a deliberate act rather than a silent one.
  */
-const EXEMPT: readonly string[] = []
+const EXEMPT: Readonly<Record<string, string>> = {
+  'apps/cli/tests/fixtures/atta-engine/atta-adapter-langgraph-0.0.1.tgz':
+    'versioned packed dependency used to prove the external-consumer boundary',
+  'apps/cli/tests/fixtures/atta-engine/atta-agents-0.1.0.tgz':
+    'versioned packed dependency used to prove the external-consumer boundary',
+  'apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz':
+    'versioned packed dependency used to prove the external-consumer boundary',
+  'apps/cli/tests/fixtures/atta-engine/atta-models-0.1.0.tgz':
+    'versioned packed dependency used to prove the external-consumer boundary'
+}
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
 
@@ -82,7 +91,7 @@ describe('no tracked file is binary to git', () => {
   it('finds no NUL byte in any tracked file', () => {
     const offenders: string[] = []
     for (const rel of trackedFiles()) {
-      if (EXEMPT.includes(rel)) continue
+      if (rel in EXEMPT) continue
       const abs = join(REPO_ROOT, rel)
       // A tracked path can be absent from the worktree (sparse checkout), or be
       // a submodule gitlink, which `ls-files` reports as an ordinary entry.
@@ -124,7 +133,7 @@ describe('no tracked file is binary to git', () => {
   })
 
   it('finds no tracked file marked binary in .gitattributes', () => {
-    const files = trackedFiles().filter((rel) => !EXEMPT.includes(rel))
+    const files = trackedFiles().filter((rel) => !(rel in EXEMPT))
     const offenders = gitattributesBinaryOffenders(files)
     expect(
       offenders,
