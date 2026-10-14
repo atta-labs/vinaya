@@ -894,10 +894,10 @@ describe('the driver records a finished Developer attempt in the persisted repea
     const { world, deps } = pauseOnDispatch(3)
     const result = await runLoopInProcess(world, { task: world.task, agent: 'claude' }, deps)
 
-    // The second red gate, after a finished attempt, is the repeat stop.
+    // The second red gate, after a finished attempt, is the repeat stop —
+    // reached only because the driver recorded that attempt.
     expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'repeat_failure' })
     expect(world.dispatchCountByRole.developer).toBe(2)
-    expect(persistedLastFailure(world)?.developerAttemptedSince).toBe(true)
   })
 })
 

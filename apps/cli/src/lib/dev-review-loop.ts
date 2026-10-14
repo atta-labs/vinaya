@@ -4188,13 +4188,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           if (handle.resumeId) devResumeId = handle.resumeId
           agentSwitched = false
           // A Developer attempt finished: the failure the loop last recorded
-          // now has an attempt after it, so reading it again is a repeat.
-          // Persisted at once, so a resume after a later crash keeps it.
-          const attempted = recordDeveloperAttempt(state)
-          if (attempted !== state) {
-            state = attempted
-            persistCurrentLoopState(currentPhase ?? 'dispatch_developer')
-          }
+          // now has an attempt after it, so reading it again is a repeat. The
+          // next loop-state write carries it — a pause's included — and none
+          // is made here: this runs before the after-turn confinement check,
+          // which would read a control-store write as the Developer's own.
+          state = recordDeveloperAttempt(state)
         }
         return handle
       } finally {
