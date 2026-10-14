@@ -34,7 +34,7 @@
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/live-check.ts",
-        "sha256": "48b72410063cf3d8da5b5203d87996808e26efda4b2977472fa2aeacadcfacb1"
+        "sha256": "bcb008e02b41833d381539b642646d144bd2c8f02d5dacc088d9ab3d470e797a"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts",
