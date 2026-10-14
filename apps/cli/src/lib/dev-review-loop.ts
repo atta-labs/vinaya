@@ -2816,7 +2816,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // round/head from this stale record.
         const existingLock = readDriverLock(root, closesTask)
         const driverIsLive = existingLock !== null && isDriverPidAlive(existingLock.pid)
-        if (driverIsLive || err.existing?.decision !== 'resume') {
+        // The live driver may be this very run: a watching driver whose bare
+        // retry of an infrastructure hiccup consumed the resolution, then
+        // failed before its round began (GitHub unreachable, say). Its next
+        // retry is the same driver following its own consumed resolution,
+        // under its own lock token, still inside the retry bound — never a
+        // second driver, so it attaches instead of being refused as a replay.
+        const ownBareRetry =
+          bareAutomaticResume &&
+          !hostRepairResume &&
+          input.retainDriverLock !== undefined &&
+          existingLock?.token === input.retainDriverLock &&
+          err.existing?.authenticatedBy === 'driver-self'
+        if ((driverIsLive && !ownBareRetry) || err.existing?.decision !== 'resume') {
           throw new Error(`devReviewLoop --resume: ${err.message}`)
         }
         const concludedRefusal = concludedLoopRefusal(d.fetchLoopHistory(resumePr))

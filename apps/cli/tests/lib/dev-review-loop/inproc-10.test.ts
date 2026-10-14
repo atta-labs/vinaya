@@ -857,6 +857,52 @@ describe('the repeat rule needs a finished Developer attempt between two red gat
   })
 })
 
+describe('the watching driver resumes after its own bare retry failed past the consumed resolution', () => {
+  it('a bare retry that consumed its resolution and then lost GitHub is retried after the back-off and resumes', async () => {
+    // Round 1's red gate stalls into an infrastructure pause; the watcher's
+    // first bare retry consumes the pause's resolution, then its first read
+    // of the branch cannot reach GitHub. The second retry follows its own
+    // consumed resolution and runs on to publish.
+    const world = makeWorld({ gate: 'red' })
+    const base = makeInProcessDeps(world)
+    let backoffs = 0
+    let failNextHeadRead = false
+    let headReadFailures = 0
+    const result = await runDriverLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        resolveHead: (branch) => {
+          if (failNextHeadRead) {
+            failNextHeadRead = false
+            headReadFailures += 1
+            throw Object.assign(new Error('Command failed: git ls-remote'), {
+              stderr: "fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host: github.com"
+            })
+          }
+          return base.resolveHead!(branch)
+        }
+      },
+      {
+        infrastructureBackoffMs: 5,
+        sleep: async (ms) => {
+          if (ms === 5) {
+            backoffs += 1
+            world.gate = 'green'
+            if (backoffs === 1) failNextHeadRead = true
+          }
+          await new Promise((r) => setTimeout(r, 1))
+        }
+      }
+    )
+
+    expect(headReadFailures).toBe(1)
+    expect(backoffs).toBe(2)
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    expect(world.rulings).toHaveLength(0)
+  })
+})
+
 describe('the driver records a finished Developer attempt in the persisted repeat memory', () => {
   function pauseOnDispatch(failingCheck: number) {
     const world = makeWorld({ gate: 'red' })

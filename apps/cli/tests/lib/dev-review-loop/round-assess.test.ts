@@ -196,6 +196,28 @@ describe('isGitHubConnectionFailure — no response from GitHub, read from the e
     expect(isGitHubConnectionFailure(err)).toBe(true)
   })
 
+  it('an SSH remote that cannot resolve or reach github.com is one', () => {
+    for (const line of [
+      'ssh: Could not resolve hostname github.com: Temporary failure in name resolution',
+      'ssh: connect to host github.com port 22: Network is unreachable',
+      'ssh: connect to host github.com port 22: Connection timed out'
+    ]) {
+      const err = withStderr(
+        'Command failed: git ls-remote origin',
+        `${line}\nfatal: Could not read from remote repository.`
+      )
+      expect(isGitHubConnectionFailure(err)).toBe(true)
+      expect(spendsInfrastructureRetry(err)).toBe(false)
+    }
+    // A host other than GitHub, or an SSH refusal GitHub sent, is not one.
+    expect(
+      isGitHubConnectionFailure(
+        withStderr('x', 'ssh: Could not resolve hostname gitlab.example: Name or service not known')
+      )
+    ).toBe(false)
+    expect(isGitHubConnectionFailure(withStderr('x', 'git@github.com: Permission denied (publickey).'))).toBe(false)
+  })
+
   it('a no-response system error code naming a GitHub host, on the error or its cause, is one', () => {
     const cause = Object.assign(new Error('getaddrinfo ENOTFOUND api.github.com'), {
       code: 'ENOTFOUND',

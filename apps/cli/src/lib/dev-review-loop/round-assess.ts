@@ -202,20 +202,27 @@ const NO_RESPONSE_CODES = new Set([
 
 /** What a transport failure's own cause says when no response came back — the tail of a Go `url.Error` (`gh`) or of git's `unable to access` line. */
 const NO_RESPONSE_CAUSE =
-  /dial tcp|i\/o timeout|connection refused|connection reset|no such host|network is unreachable|TLS handshake timeout|Client\.Timeout exceeded|server misbehaving|^EOF$|could not resolve host|failed to connect|couldn't connect to server|connection timed out|operation timed out|resolving timed out/i
+  /dial tcp|i\/o timeout|connection refused|connection reset|no such host|network is unreachable|TLS handshake timeout|Client\.Timeout exceeded|server misbehaving|^EOF$|could not resolve host|failed to connect|couldn't connect to server|connection timed out|no route to host|operation timed out|resolving timed out/i
 
 const GITHUB_HOST = /github/i
 
 /**
  * The host a single stderr line says the request never reached, read only
  * from the line's own structured cause — `gh`'s DNS report (`error
- * connecting to <host>`), a Go `url.Error` (`<Method> "<url>": <cause>`), or
- * git's `fatal: unable to access '<url>': <cause>` — and `null` for any other
+ * connecting to <host>`), a Go `url.Error` (`<Method> "<url>": <cause>`),
+ * git's `fatal: unable to access '<url>': <cause>`, or an SSH remote's
+ * `ssh: Could not resolve hostname <host>:` / `ssh: connect to host <host>
+ * port <n>: <cause>` — and `null` for any other
  * line, however it is worded.
  */
 function unreachedHostOfLine(line: string): string | null {
   const ghDns = /^error connecting to (\S+)$/.exec(line)
   if (ghDns) return ghDns[1] as string
+  // An SSH remote: `ssh` names the host it could not resolve or connect to.
+  const sshDns = /^ssh: Could not resolve hostname ([^:\s]+):/.exec(line)
+  if (sshDns) return sshDns[1] as string
+  const sshConnect = /^ssh: connect to host (\S+) port \d+: (.+)$/.exec(line)
+  if (sshConnect) return NO_RESPONSE_CAUSE.test((sshConnect[2] as string).trim()) ? (sshConnect[1] as string) : null
   const urlError =
     /^(?:Get|Post|Put|Patch|Delete|Head) "(https?:\/\/[^"]+)": (.+)$/.exec(line) ??
     /^fatal: unable to access '(https?:\/\/[^']+)': (.+)$/.exec(line)
