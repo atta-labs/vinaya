@@ -8,7 +8,7 @@
 
 Significant decisions shape a repository long after the change that introduced them has merged. Pull requests preserve change-specific reasoning, but a new contributor also needs a small, discoverable account of the forces, alternatives and consequences behind the architecture that remains.
 
-Michael Nygard's 2011 article, [Documenting Architecture Decisions](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions), proposes short records that capture one decision's context, decision, status and consequences. [AWS Prescriptive Guidance](https://docs.aws.amazon.com/prescriptive-guidance/latest/architectural-decision-records/adr-process.html) treats accepted records as immutable and replaces a reversed choice through supersession. [Google Cloud's guidance](https://docs.cloud.google.com/architecture/architecture-decision-records) recommends records for decisions with material architectural or cross-cutting consequences and for choices among meaningful alternatives.
+Michael Nygard's 2011 article, [Documenting Architecture Decisions](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions), proposes short records that capture one decision's context, decision, status and consequences. [AWS Prescriptive Guidance](https://docs.aws.amazon.com/prescriptive-guidance/latest/architectural-decision-records/adr-process.html) treats accepted records as immutable and replaces a reversed choice through supersession. [Google Cloud's guidance](https://docs.cloud.google.com/architecture/architecture-decision-records) recommends a record when no existing standard or solution settles a technical question, or when two or more engineering options were weighed.
 
 ## Decision
 
