@@ -5004,6 +5004,26 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         : `Principal ruling on this pause:\n\n${rulings.map((r, i) => `${i + 1}. ${r}`).join('\n')}\n`
     }
 
+    /**
+     * A pause raised before any pull request keeps the Developer's unpublished
+     * work in the task worktree. The continuation's first prompt names that
+     * work, read from the driver's own view of the worktree, so the fresh
+     * Developer continues and publishes it instead of failing the brief's
+     * clean-status pre-flight on it. `null` when the worktree is missing or
+     * holds nothing unpublished.
+     */
+    function keptWorkNote(): string | null {
+      const dir = worktreePathForBranch()
+      if (!existsSync(dir)) return null
+      const kept = d.readUnpushedWorkDetail(dir)
+      if (kept.dirtyFiles.length === 0 && kept.aheadCount === 0) return null
+      return [
+        `Kept work: this task's worktree holds work left unpublished by an earlier pause, kept as it is by the driver — dirty file(s): ${kept.dirtyFiles.length > 0 ? kept.dirtyFiles.join(', ') : 'none'}; ${kept.aheadCount} commit(s) ahead of the remote.`,
+        "It is this task's own earlier work. Continue it and publish it through `publish_changes`; do not discard it, and do not refuse the task because of it.",
+        'Pre-flight item 1 ("Clean status") accepts exactly this kept work: any other uncommitted change still fails it.'
+      ].join(' ')
+    }
+
     function pushAndOpenPrompt(): string {
       return [
         'Your previous turn left no commit on this branch yet, and no open pull request.',
@@ -6215,6 +6235,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               developerDoctrine ? renderDeveloperDoctrineBlock(developerDoctrine) : null,
               `When your work is ready, ${publishingInstructionLine()}`,
               issueRulingsBlock(),
+              keptWorkNote(),
               turnResultInstruction(round),
               brief
             ]

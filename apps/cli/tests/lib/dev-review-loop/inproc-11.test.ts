@@ -271,3 +271,45 @@ describe('devReviewLoop — issue-711 F1: a max_rounds pause right after a genui
     expect(world.dispatchCountByRole['code-reviewer']).toBe(1)
   })
 })
+
+describe('devReviewLoop — a continuation picks up the work an earlier pause kept', () => {
+  /** The first Developer prompt of a fresh round-1 start; the kept work is cleared once that turn runs, as a turn that published it would leave it. */
+  async function firstDeveloperPrompt(world: LoopWorld): Promise<string> {
+    world.developerTurnOutput = () => {
+      world.worktreeDirty = []
+      world.worktreeAhead = 0
+      return undefined
+    }
+    await runLoopInProcess(world)
+    const first = world.dispatches.find((d) => d.role === 'developer')
+    expect(first).toBeDefined()
+    return first?.prompt ?? ''
+  }
+
+  it('names the kept dirty files and commit count, as this task own work to publish, with the pre-flight exception', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    world.worktreeDirty = ['apps/cli/src/lib/x.ts', 'apps/cli/tests/lib/x.test.ts']
+    world.worktreeAhead = 2
+
+    const prompt = await firstDeveloperPrompt(world)
+
+    expect(prompt).toContain(
+      'dirty file(s): apps/cli/src/lib/x.ts, apps/cli/tests/lib/x.test.ts; 2 commit(s) ahead of the remote'
+    )
+    expect(prompt).toContain("It is this task's own earlier work.")
+    expect(prompt).toContain('publish it through `publish_changes`')
+    expect(prompt).toContain('Pre-flight item 1 ("Clean status") accepts exactly this kept work')
+    // Outside the frozen brief: the brief stays the prompt's byte-for-byte suffix.
+    expect(prompt.endsWith(world.frozenBrief)).toBe(true)
+    expect(prompt.indexOf('Kept work:')).toBeLessThan(prompt.indexOf(world.frozenBrief))
+  })
+
+  it('gives no kept-work note when the branch worktree is clean', async () => {
+    const world = makeWorld({ worktreeExists: true })
+
+    const prompt = await firstDeveloperPrompt(world)
+
+    expect(prompt).not.toContain('Kept work:')
+    expect(prompt).not.toContain('accepts exactly this kept work')
+  })
+})
