@@ -33,9 +33,10 @@ export type ProseRulesPlan =
  */
 export function buildProseRulesPlan(
   states: ReadonlyMap<string, string>,
-  rulesConfig: ProseRulesConfig | undefined
+  rulesConfig: ProseRulesConfig | undefined,
+  decisionRecordsPath?: string
 ): ProseRulesPlan {
-  const set = resolveProseRules(rulesConfig)
+  const set = resolveProseRules(rulesConfig, { decisionRecordsPath })
   const checks: Record<string, ProseRulesPlanEntry> = {}
   for (const [name, group] of Object.entries(PROSE_CHECK_GROUPS)) {
     const state = states.get(name)
@@ -71,14 +72,17 @@ export function renderProseRulesPlan(plan: ProseRulesPlan): string {
 /**
  * The whole `--plan` section in one call: the plan for `--plan --json` and its
  * rendered text. `rulesConfig` is `null` when the configuration did not load.
+ * `decisionRecordsPath` is `decisionRecords.path`; set, the plan lists the
+ * decision-record citation rule among the rules `reader-resolvable-prose` runs.
  */
 export function proseRulesPlanSection(
   states: ReadonlyMap<string, string>,
-  rulesConfig: ProseRulesConfig | undefined | null
+  rulesConfig: ProseRulesConfig | undefined | null,
+  decisionRecordsPath?: string
 ): { plan: ProseRulesPlan; text: string } {
   const plan: ProseRulesPlan =
     rulesConfig === null
       ? { available: false, reason: 'the configuration did not load' }
-      : buildProseRulesPlan(states, rulesConfig)
+      : buildProseRulesPlan(states, rulesConfig, decisionRecordsPath)
   return { plan, text: renderProseRulesPlan(plan) }
 }

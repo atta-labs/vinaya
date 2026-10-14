@@ -4,6 +4,7 @@ import {
   CONFIGURABLE_PROSE_SCOPES,
   CONFIGURED_PATTERN_MAX_LENGTH,
   CONFIGURED_PROSE_FLAGS,
+  DECISION_RECORD_CITATION_ID,
   DEFAULT_PROSE_RULES,
   groupOfScope,
   type ProseRulesConfig
@@ -38,7 +39,9 @@ const OVERRIDE_KEYS = ['scopes', 'severity', 'exempt']
 const FIXED_DEFAULT_KEYS = ['pattern', 'patterns', 'flags', 'means', 'message', 'id']
 const CUSTOM_KEYS = ['id', 'pattern', 'patterns', 'flags', 'means', 'scopes', 'severity', 'exempt']
 
-const DEFAULT_IDS = new Set(DEFAULT_PROSE_RULES.map((rule) => rule.id))
+// The decision-record citation rule is a default too, though it exists only
+// while `decisionRecords.path` is set, so a custom rule may not take its id.
+const DEFAULT_IDS = new Set([...DEFAULT_PROSE_RULES.map((rule) => rule.id), DECISION_RECORD_CITATION_ID])
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

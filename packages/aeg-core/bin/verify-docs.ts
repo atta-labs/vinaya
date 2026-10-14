@@ -383,6 +383,23 @@ function configuredPublishedAllow(): readonly string[] | undefined {
 }
 
 /**
+ * `decisionRecords.path` from this repository's `vinaya.config.json`, or
+ * `undefined` when the file or the key is absent — and then the
+ * decision-record citation rule does not run in the published pass. The
+ * CLI's configuration loader validates the key; this gate only reads it.
+ */
+function configuredDecisionRecordsPath(): string | undefined {
+  const path = join(REPO_ROOT, 'vinaya.config.json')
+  if (!existsSync(path)) return undefined
+  try {
+    const value = JSON.parse(readFileSync(path, 'utf8'))?.decisionRecords?.path
+    return typeof value === 'string' && value.length > 0 ? value : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * C7 — published-prose. The doctrine files under `aeg-root/` whose paths are
  * in `only` (PR mode: this diff's own changed files; full mode: every one) are
  * parsed and handed to the pure check together with the same model-backed
@@ -408,7 +425,9 @@ function runC7(only?: ReadonlySet<string>): void {
   })
 
   const surfacedPaths = modelBackedDocPaths(deriveDiagramModel(loadDoctrine(), null, null))
-  const result = evaluatePublishedProse(entries, surfacedPaths, configuredPublishedAllow())
+  const result = evaluatePublishedProse(entries, surfacedPaths, configuredPublishedAllow(), {
+    decisionRecordsPath: configuredDecisionRecordsPath()
+  })
   for (const e of result.errors) errors.push(e)
   for (const n of result.notes) notes.push(n)
 }

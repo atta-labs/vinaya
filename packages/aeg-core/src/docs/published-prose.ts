@@ -44,7 +44,12 @@
  */
 
 import { findHeadingLine, findTable } from '../markdown-table'
-import { rulesForGroup } from '../prose-rules'
+import {
+  DECISION_RECORD_CITATION_ID,
+  DECISION_RECORD_CITATION_MESSAGE,
+  decisionRecordCitationPattern,
+  rulesForGroup
+} from '../prose-rules'
 import { isSurfacedDoc } from './surfaced-manifest'
 import type { DocFrontmatter } from './types'
 
@@ -86,6 +91,9 @@ export type PublishedProseEntry = {
 
 export type PublishedProseResult = { errors: string[]; notes: string[] }
 
+/** `decisionRecordsPath` is `decisionRecords.path`; absent, the decision-record citation rule does not run. */
+export type PublishedProseOptions = { decisionRecordsPath?: string }
+
 type ProseRule = { id: string; what: string; pattern: RegExp }
 
 /**
@@ -99,6 +107,23 @@ const PROSE_RULES: ProseRule[] = rulesForGroup('published-prose').map((rule) => 
   what: rule.message,
   pattern: rule.patterns.published as RegExp
 }))
+
+/**
+ * The rules the published pass runs: the shipped ones, plus the
+ * decision-record citation rule while `decisionRecords.path` is set — and
+ * only then.
+ */
+function publishedRules(decisionRecordsPath: string | undefined): ProseRule[] {
+  if (decisionRecordsPath === undefined) return PROSE_RULES
+  return [
+    ...PROSE_RULES,
+    {
+      id: DECISION_RECORD_CITATION_ID,
+      what: DECISION_RECORD_CITATION_MESSAGE,
+      pattern: decisionRecordCitationPattern(decisionRecordsPath)
+    }
+  ]
+}
 
 /** The doc kinds this check governs, and the block set each answers with. */
 function blocksFor(relPath: string): readonly string[] | null {
@@ -225,10 +250,11 @@ export function enforcementPublishedText(content: string): string[] {
 export function readabilityErrors(
   where: string,
   texts: string[],
-  allow: readonly string[] = ALLOWED_MECHANICS
+  allow: readonly string[] = ALLOWED_MECHANICS,
+  options: PublishedProseOptions = {}
 ): string[] {
   const errors: string[] = []
-  checkReadability(where, texts, errors, allow)
+  checkReadability(where, texts, errors, allow, publishedRules(options.decisionRecordsPath))
   return errors
 }
 
@@ -236,12 +262,13 @@ function checkReadability(
   where: string,
   texts: string[],
   errors: string[],
-  allow: readonly string[] = ALLOWED_MECHANICS
+  allow: readonly string[] = ALLOWED_MECHANICS,
+  rules: readonly ProseRule[] = PROSE_RULES
 ): void {
   const seen = new Set<string>()
   for (const raw of texts) {
     const text = maskAllowedMechanics(raw, allow)
-    for (const rule of PROSE_RULES) {
+    for (const rule of rules) {
       const match = text.match(rule.pattern)
       if (!match) continue
       const token = (match[0] ?? '').trim()
@@ -294,10 +321,12 @@ function checkStructure(relPath: string, body: string, blocks: readonly string[]
 export function evaluatePublishedProse(
   entries: PublishedProseEntry[],
   surfacedPaths: ReadonlySet<string> = new Set(),
-  allow: readonly string[] = ALLOWED_MECHANICS
+  allow: readonly string[] = ALLOWED_MECHANICS,
+  options: PublishedProseOptions = {}
 ): PublishedProseResult {
   const errors: string[] = []
   const notes: string[] = []
+  const rules = publishedRules(options.decisionRecordsPath)
 
   const surfaced = entries.filter((e) => isSurfacedDoc(e.relPath, e.frontmatter, surfacedPaths))
 
@@ -306,17 +335,23 @@ export function evaluatePublishedProse(
     // entry, `description` is the page metadata. Checking only the body left
     // both unguarded — a citation in a title reaches a reader exactly as
     // surely as one in a paragraph.
-    checkReadability(entry.relPath, [entry.frontmatter.title ?? '', entry.frontmatter.description ?? ''], errors, allow)
+    checkReadability(
+      entry.relPath,
+      [entry.frontmatter.title ?? '', entry.frontmatter.description ?? ''],
+      errors,
+      allow,
+      rules
+    )
 
     const blocks = blocksFor(entry.relPath)
     if (blocks) {
       checkStructure(entry.relPath, entry.body, blocks, errors)
       const short = extractShortVersion(entry.body)
-      if (short !== null) checkReadability(entry.relPath, [short], errors, allow)
+      if (short !== null) checkReadability(entry.relPath, [short], errors, allow, rules)
       continue
     }
     if (entry.relPath === 'enforcement.md') {
-      checkReadability(entry.relPath, enforcementPublishedText(entry.body), errors, allow)
+      checkReadability(entry.relPath, enforcementPublishedText(entry.body), errors, allow, rules)
     }
   }
 

@@ -50,6 +50,7 @@ tests/lib/log-webhook-drain.test.ts
 tests/lib/pr-report-engine.test.ts
 tests/lib/remote-base.test.ts
 tests/lib/test-selector.test.ts
+tests/new-adr.test.ts
 tests/ops.test.ts
 tests/package-root.test.ts
 tests/registry-write.test.ts

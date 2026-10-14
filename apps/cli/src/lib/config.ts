@@ -13,6 +13,7 @@ import {
   type GateCutovers,
   isKnownSeverity,
   NO_GATE_CUTOVERS,
+  normalizeSpecPath,
   PRINCIPAL_ALLOWLIST,
   type ReviewPolicy,
   SECURITY_SEVERITY_ORDER
@@ -21,7 +22,12 @@ import { CustomEventDeclarationsSchema } from '@attalabs/aeg-core/log'
 import { AGENT_VENDORS, type AgentVendor } from './agent-vendors.js'
 import { CLAUDE_COMMAND_PATH } from './claude-command-emitter.js'
 import { GEMINI_COMMAND_PATH } from './gemini-command-emitter.js'
-import { ProseRulesSchema, PublishedProseSchema, RepoRelativePathSchema } from './prose-rules-config.js'
+import {
+  outsideRepositoryReason,
+  ProseRulesSchema,
+  PublishedProseSchema,
+  RepoRelativePathSchema
+} from './prose-rules-config.js'
 
 // Rings is the only schema surface this task ships — declarative
 // booleans, no conditional logic. Ring 0 (git hooks) and the
@@ -431,7 +437,7 @@ export function parseTokensCollectDeclaration(value: string): TokensCollectDecla
   return { interpreter, script }
 }
 
-export const VinayaConfigSchema = z.object({
+const VinayaConfigObjectSchema = z.object({
   rings: z
     .object({
       ring1_forgeWriteInterception: z.boolean(),
@@ -908,8 +914,56 @@ export const VinayaConfigSchema = z.object({
     .refine((v) => v.readHeaders === undefined || v.url !== undefined, {
       message: 'logs: readHeaders requires url'
     })
+    .optional(),
+  // Opt-in decision records. `path` is the folder, relative to the
+  // repository root, that holds them: `vinaya new adr <title>` writes the
+  // next numbered record there and indexes it, the folder joins the writing
+  // rules' `spec` scope, and the `decision-record-citation` rule — which runs
+  // only while this key is set — bans citing a record by number anywhere
+  // outside the folder. Absent, none of that happens. A path outside the
+  // repository, or inside the doctrine tree, is refused by the
+  // `superRefine` below, naming this key.
+  decisionRecords: z
+    .object({
+      path: RepoRelativePathSchema
+    })
+    .strict()
     .optional()
 })
+
+/**
+ * Why `decisionRecords.path` is refused, or `null` when it names a folder
+ * inside the repository and outside the doctrine tree. The doctrine tree is
+ * `proseGates.doctrineRoot`, or `aeg-root` when that is unset: decision
+ * records are the repository's own, never part of the doctrine it ships.
+ */
+export function decisionRecordsPathIssue(path: string, doctrineRoot: string | undefined): string | null {
+  const reason = outsideRepositoryReason(path)
+  if (reason) return reason
+  const folder = normalizeSpecPath(path)
+  if (folder === '' || folder === '.') return 'must name a folder, not the repository root'
+  const root = normalizeSpecPath(doctrineRoot ?? 'aeg-root')
+  if (folder === root || folder.startsWith(`${root}/`)) {
+    return `must be outside the doctrine tree "${root}" — decision records belong to this repository, not to the doctrine it ships`
+  }
+  return null
+}
+
+/**
+ * The configuration schema. One rule spans two keys and so lives here
+ * rather than on a field: `decisionRecords.path` may not sit inside the
+ * doctrine tree `proseGates.doctrineRoot` names.
+ */
+export const VinayaConfigSchema = VinayaConfigObjectSchema.superRefine((config, ctx) => {
+  const path = config.decisionRecords?.path
+  // A path outside the repository is already refused by the field's own schema.
+  if (path === undefined || outsideRepositoryReason(path)) return
+  const issue = decisionRecordsPathIssue(path, config.proseGates?.doctrineRoot)
+  if (issue) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['decisionRecords', 'path'], message: issue })
+})
+
+/** Every top-level key of the configuration, for introspection. */
+export const VinayaConfigShape = VinayaConfigObjectSchema.shape
 
 export type VinayaConfig = z.infer<typeof VinayaConfigSchema>
 
