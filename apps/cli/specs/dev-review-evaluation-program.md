@@ -242,7 +242,7 @@ The entries below define each module's contract, tasks, grader, rule and layers.
 ### 6.17 Engine run-control boundary (Engine gates 1 and 16)
 
 * **Proves:** the Engine is consumed as a packed external dependency, and Vinaya's executor runs through Atta Engine's **public** start and resume with the same checkpoint, halt, inspection, cancellation and live-event behaviour as the default executor.
-* **Tasks:** install the packed Engine artifacts into an isolated consumer; start a run with Vinaya's injected executor through the public start; halt, inspect, resume through the public resume, cancel; compare lifecycle events and checkpoint transitions with the same Flow run under the default executor.
+* **Tasks:** today, `packed-runtime-consumer.test.ts` installs the vendored packed artifacts, compiles a steps-shaped Flow through public exports and proves the graph builder accepts its injected executor. Once Atta Engine delivers gate 16, replace that partial proof with `packed-runtime-public-run-control.test.ts`: start a run with Vinaya's injected executor through the public start; halt, inspect, resume through the public resume, cancel; compare lifecycle events and checkpoint transitions with the same Flow run under the default executor.
 * **Grader:** code; plus an import check that the Engine path references only public packed exports and never drives the graph outside public run control.
 * **Rule:** 100%. Expected to fail until Atta Engine delivers gate 16. The gap is recorded in the capability matrix as an external cutover dependency owned by Atta Engine, not in the standalone defect register, so it never enters the gate-3 defect disposition. **Layers:** L3.
 

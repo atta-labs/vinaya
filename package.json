@@ -27,5 +27,10 @@
     "@changesets/cli": "^3.0.0",
     "turbo": "^2.4.0",
     "typescript": "^5.7.0"
+  },
+  "overrides": {
+    "@atta/agents": "file:apps/cli/tests/fixtures/atta-engine/atta-agents-0.1.0.tgz",
+    "@atta/engine": "file:apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz",
+    "@atta/models": "file:apps/cli/tests/fixtures/atta-engine/atta-models-0.1.0.tgz"
   }
 }
