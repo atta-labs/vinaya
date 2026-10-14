@@ -36,12 +36,15 @@ import {
   developerTurnResultJsonSchema
 } from '../../../src/lib/developer-turn-result.js'
 import { deliveredDocumentation } from '../../../src/lib/dispatch.js'
+import type { DevToolContext } from '../../../src/lib/task-tools/dev-tools-server.js'
 import {
   cleanupWorlds,
   completedTurnOutput,
   developerDir,
+  makeInProcessDeps,
   makeWorld,
   outboxLines,
+  taskRunDir,
   roundDir,
   runLoopInProcess,
   type LoopWorld,
@@ -138,11 +141,60 @@ describe('judgeTurnOutput — the controller accepts a result (O3)', () => {
     )
     expect(
       failuresOf(output(completed), context({ documentation: { sources: [SOURCE], countedReads: [] } })).join()
-    ).toContain('has no counted read')
+    ).toContain('has no delivery receipt the controller recorded')
     // The receipt's identity is normalized: a trailing slash or fragment still counts.
     expect(
       failuresOf(output(completed), context({ documentation: { sources: [SOURCE], countedReads: [`${SOURCE}/#x`] } }))
     ).toEqual([])
+  })
+
+  it('requires a controller receipt behind a repository source too, not only a URL (O4)', () => {
+    const REPO_SOURCE = 'apps/cli/specs/loop.md'
+    const both = {
+      ...completed,
+      sourceUses: [
+        { source: SOURCE, use: 'chose the --json-schema flag' },
+        { source: REPO_SOURCE, use: 'followed the acceptance rule' }
+      ]
+    }
+    const documentation = (countedReads: string[]) => ({
+      documentation: { sources: [SOURCE, REPO_SOURCE], countedReads }
+    })
+    expect(failuresOf(output(both), context(documentation([SOURCE]))).join()).toContain(
+      `sourceUses: ${REPO_SOURCE} has no delivery receipt the controller recorded`
+    )
+    expect(failuresOf(output(both), context(documentation([SOURCE, REPO_SOURCE])))).toEqual([])
+  })
+
+  it('rejects a completed result whose only backing is a receipt a worker wrote, and accepts it behind the controller’s (O4)', () => {
+    const root = tempDir()
+    const hooks = join(root, 'hooks', 'developer')
+    const store = join(root, 'control', 'sources')
+    mkdirSync(hooks, { recursive: true })
+    mkdirSync(store, { recursive: true })
+    writeFileSync(join(hooks, 'documentation-sources-run.json'), JSON.stringify([{ source: SOURCE, mechanism: 'm' }]))
+    const forged = `${JSON.stringify({ sourceId: SOURCE, source: SOURCE, decision: 'counted', recordedBy: 'fetch_documentation' })}\n`
+    // A worker can write its own hooks area and worktree; neither is read.
+    writeFileSync(join(hooks, 'receipts.jsonl'), forged)
+    writeFileSync(join(root, 'receipts.jsonl'), forged)
+    const fromWorker = deliveredDocumentation(hooks, 'run', store)
+    expect(failuresOf(output(completed), context({ documentation: fromWorker })).join()).toContain(
+      'has no delivery receipt the controller recorded'
+    )
+    writeFileSync(join(store, 'receipts.jsonl'), forged)
+    expect(
+      failuresOf(output(completed), context({ documentation: deliveredDocumentation(hooks, 'run', store) }))
+    ).toEqual([])
+  })
+
+  it('never satisfies completion with a citation of a source the manifest does not name (O4)', () => {
+    const undelivered = { ...completed, sourceUses: [{ source: 'https://example.com/elsewhere', use: 'y' }] }
+    const failures = failuresOf(
+      output(undelivered),
+      context({ documentation: { sources: [SOURCE], countedReads: [SOURCE, 'https://example.com/elsewhere'] } })
+    )
+    expect(failures.join()).toContain('https://example.com/elsewhere is not a required source of this brief')
+    expect(failures.join()).toContain(`no use reported for required source ${JSON.stringify(SOURCE)}`)
   })
 
   it('checks every reported source against the delivered manifest', () => {
@@ -586,6 +638,82 @@ describe('devReviewLoop — the Developer turn result in a real round (O1–O4)'
           : undefined
     })
     await runLoopInProcess(world)
+  })
+})
+
+describe('devReviewLoop — reviewers read the round’s pinned sources and see its citations (O1, O3, O5)', () => {
+  const SPEC = 'apps/cli/specs/loop.md'
+  const PINNED = '# Loop\n\nThe acceptance rule.\n'
+
+  it('serves each reviewer read_source over the manifest the Developer was given, and names its citations', async () => {
+    const citing: DeveloperTurnOutput = {
+      adapter: 'claude --json-schema',
+      event: 'result (subtype success) .structured_output',
+      raw: {
+        turnResult: {
+          schemaVersion: 1,
+          status: 'completed',
+          summary: 'done',
+          confidence: 90,
+          confidenceExplanation: 'the tests pass',
+          addressedFindingIds: [],
+          sourceUses: [{ source: SPEC, use: 'followed the acceptance rule' }],
+          reportedChecks: null
+        }
+      }
+    }
+    const world = makeWorld({ developerTurnOutput: () => citing })
+    world.frozenBrief = `${world.frozenBrief}\n## Documentation\n\n- ${SPEC} — the loop it governs\n\n## 2. Context\n\n- **Revision:** rendered at \`abcdef1\` — fixture\n`
+    const store = join(taskRunDir(world), 'control', 'sources')
+    const base = makeInProcessDeps(world)
+    const hosts: Array<{ role: string | undefined; context: DevToolContext }> = []
+    const result = await runLoopInProcess(world, undefined, {
+      readSourceObject: () => ({ type: 'blob', id: 'b'.repeat(40), content: new TextEncoder().encode(PINNED) }),
+      startDevTools: async (input) => {
+        hosts.push({ role: input.role, context: input.context })
+        return base.startDevTools!(input)
+      },
+      // The Developer's documentation is read back from the controller's own
+      // store, exactly as the production dispatch reads it after a turn.
+      dispatchRole: async (role, agent, prompt, opts) => {
+        const handle = await base.dispatchRole!(role, agent, prompt, opts)
+        return role === 'developer' ? { ...handle, documentation: deliveredDocumentation(null, 'run', store) } : handle
+      }
+    })
+    expect(result.finalDecision.type).toBe('publish')
+    expect(recordsOnDisk(world, 1).map((r) => r.outcome)).toEqual(['accepted'])
+
+    const reviewerHosts = hosts.filter((h) => h.role === 'code-reviewer' || h.role === 'security')
+    expect(reviewerHosts.map((h) => h.role).sort()).toEqual(['code-reviewer', 'security'])
+    const manifest = JSON.parse(readFileSync(join(store, 'manifest.json'), 'utf8')) as { digest: string }
+    for (const host of reviewerHosts) {
+      const read = await host.context.readSource?.({ sourceId: SPEC })
+      expect(read).toMatchObject({ ok: true, result: { content: PINNED, manifestDigest: manifest.digest } })
+    }
+
+    const reviewerPrompts = world.dispatches.filter((d) => d.role !== 'developer').map((d) => d.prompt ?? '')
+    expect(reviewerPrompts.length).toBeGreaterThanOrEqual(2)
+    for (const prompt of reviewerPrompts) {
+      expect(prompt).toContain(`REQUIRED SOURCES (controller manifest ${manifest.digest})`)
+      expect(prompt).toContain(`- ${SPEC} — governs: the loop it governs`)
+      expect(prompt).toContain('followed the acceptance rule')
+    }
+  })
+
+  it('starts no reviewer tool server for a round with no required source', async () => {
+    const world = makeWorld()
+    const base = makeInProcessDeps(world)
+    const roles: Array<string | undefined> = []
+    await runLoopInProcess(world, undefined, {
+      startDevTools: async (input) => {
+        roles.push(input.role)
+        return base.startDevTools!(input)
+      }
+    })
+    expect(roles.filter((role) => role === 'code-reviewer' || role === 'security')).toEqual([])
+    for (const d of world.dispatches.filter((x) => x.role !== 'developer')) {
+      expect(d.prompt ?? '').not.toContain('REQUIRED SOURCES')
+    }
   })
 })
 

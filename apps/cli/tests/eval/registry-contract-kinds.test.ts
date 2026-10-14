@@ -151,10 +151,11 @@ describe('the contract-kinds shard', () => {
     }
   })
 
-  it('says the reviewers’ source read is planned, not live', () => {
+  it('describes the reviewers’ source read as live, with no planned-only case left', () => {
     const row = shard.components.find((c) => c.id === 'tool:read_source')
-    expect(row?.contract.startsWith('Planned, not live')).toBe(true)
-    expect(row?.source.section.startsWith('4.2 Planned tool')).toBe(true)
+    expect(row?.contract).not.toContain('Planned')
+    expect(JSON.stringify(row?.tasks)).not.toContain('Planned:')
+    expect(row?.source.section.startsWith('4.2 ')).toBe(true)
   })
 })
 

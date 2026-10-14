@@ -32,6 +32,9 @@
  * Every dispatch is served for one role (`role-grants.ts`): `tools/list`
  * names only that role's granted tools, and a call to any other tool is
  * refused `unauthorized` / `never` / `not_started` before its handler runs.
+ * The same server, started for a code or security reviewer, serves that
+ * reviewer's one tool, `read_source` (`read-source.ts`): the content the
+ * controller pinned for a required source, never a URL fetch.
  *
  * A tool never pauses the loop: a gate that fails comes back as a structured
  * REFUSAL (`DevToolRefusal` — the failing check, its output, and the fix),
@@ -42,7 +45,7 @@
 import { createMcpServerCore, MCP_PROTOCOL_VERSION, type McpServerCore } from './mcp-protocol.js'
 import { DEV_TOOLS_MCP_SERVER_NAME } from './dev-tools-names.js'
 import type { FailedCheckLog } from './pr-facts.js'
-import { DEV_TOOL_CATALOG, DEV_TOOL_NAMES, serveTool } from './tool-catalog.js'
+import { AGENT_TOOL_CATALOG, DEV_TOOL_CATALOG, DEV_TOOL_NAMES, serveTool } from './tool-catalog.js'
 import { type GrantedRole, isToolGranted, ROLE_TOOL_GRANTS, servedTools } from './role-grants.js'
 import { validatesJsonSchema } from './result-proof.js'
 import {
@@ -51,6 +54,7 @@ import {
   type FetchDocumentationResult,
   parseFetchDocumentationInput
 } from './fetch-documentation.js'
+import { parseReadSourceInput, READ_SOURCE_TOOL, type ReadSourceInput, type ReadSourceResult } from './read-source.js'
 
 export { DEV_TOOLS_MCP_SERVER_NAME }
 
@@ -63,7 +67,7 @@ export const UPDATE_PULL_REQUEST_BODY_TOOL = 'update_pull_request_body'
 export const REFRESH_EVIDENCE_TOOL = 'refresh_evidence'
 export const READ_PULL_REQUEST_TOOL = 'read_pull_request'
 export const RUN_CHECKS_TOOL = 'run_checks'
-export { FETCH_DOCUMENTATION_TOOL }
+export { FETCH_DOCUMENTATION_TOOL, READ_SOURCE_TOOL }
 
 export { DEV_TOOL_CATALOG, DEV_TOOL_NAMES }
 
@@ -159,6 +163,8 @@ export type DevToolContext = {
   runChecks: () => Promise<DevToolResult<{ passed: boolean; output: string }>>
   /** Fetch one public https documentation page from the driver and record the read when it counts (`fetch-documentation.ts`). */
   fetchDocumentation: (input: FetchDocumentationInput) => Promise<DevToolResult<FetchDocumentationResult>>
+  /** A reviewer's read of one pinned required source (`read-source.ts`); absent on a Developer's context, and refused as unavailable when called without it. */
+  readSource?: (input: ReadSourceInput) => Promise<DevToolResult<ReadSourceResult>>
 }
 
 export function isDevToolName(name: string): name is DevToolName {
@@ -218,7 +224,7 @@ export async function dispatchDevTool(
       )
     }
   }
-  const catalog = DEV_TOOL_CATALOG.find((tool) => tool.name === name)
+  const catalog = AGENT_TOOL_CATALOG.find((tool) => tool.name === name)
   if (!catalog)
     return refusal(
       'unknown-tool',
@@ -266,6 +272,25 @@ export async function dispatchDevTool(
         outcome = await context.fetchDocumentation(parsed.input)
         break
       }
+      case READ_SOURCE_TOOL: {
+        const parsed = parseReadSourceInput(args)
+        if (!parsed.ok) return parsed
+        if (!context.readSource) {
+          return {
+            ok: false,
+            error: devToolError(
+              'dependency_unavailable',
+              'never',
+              'not_started',
+              'read-source-unavailable',
+              'this dispatch serves no pinned required sources',
+              'Judge without the source and say in your report that it could not be read.'
+            )
+          }
+        }
+        outcome = await context.readSource(parsed.input)
+        break
+      }
       default:
         return refusal(
           'unknown-tool',
@@ -300,6 +325,37 @@ export async function dispatchDevTool(
     }
   }
   return outcome
+}
+
+/**
+ * The context a reviewer's server runs on: its one handler, `read_source`.
+ * Every Developer method refuses as well, though the role grant already
+ * refuses those calls before any handler is reached.
+ */
+export function reviewerDevToolContext(
+  readSource: (input: ReadSourceInput) => Promise<DevToolResult<ReadSourceResult>>
+): DevToolContext {
+  const notGranted = async (): Promise<{ ok: false; error: DevToolRefusal }> => ({
+    ok: false,
+    error: devToolError(
+      'unauthorized',
+      'never',
+      'not_started',
+      'role-grant',
+      'a reviewer is granted read_source only',
+      'Call read_source, or finish the turn.'
+    )
+  })
+  return {
+    publishChanges: notGranted,
+    openPullRequest: notGranted,
+    updatePullRequestBody: notGranted,
+    refreshEvidence: notGranted,
+    readPullRequest: notGranted,
+    runChecks: notGranted,
+    fetchDocumentation: notGranted,
+    readSource
+  }
 }
 
 export type CreateDevToolsMcpServerOptions = {

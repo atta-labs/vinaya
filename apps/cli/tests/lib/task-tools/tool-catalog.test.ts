@@ -51,7 +51,7 @@ function assertStrict(schema: unknown): void {
 }
 
 describe('canonical agent tool catalog', () => {
-  it('carries every contract field for all seven Developer tools and planned read_source', () => {
+  it('carries every contract field for all seven Developer tools and the reviewers’ read_source', () => {
     expect(AGENT_TOOL_CATALOG).toHaveLength(8)
     expect(DEV_TOOL_CATALOG).toHaveLength(7)
     expect(AGENT_TOOL_CATALOG.at(-1)?.name).toBe('read_source')
@@ -86,7 +86,9 @@ describe('canonical agent tool catalog', () => {
   })
 
   it('states unenforced limits and cancellation behavior without promising them', () => {
-    for (const tool of AGENT_TOOL_CATALOG.filter((entry) => entry.name !== 'fetch_documentation')) {
+    for (const tool of AGENT_TOOL_CATALOG.filter(
+      (entry) => entry.name !== 'fetch_documentation' && entry.name !== 'read_source'
+    )) {
       expect(tool.limits.inputTokens).toBeNull()
       expect(tool.limits.outputTokens).toBeNull()
       expect(tool.limits.inputBytes).toBeNull()
@@ -97,6 +99,9 @@ describe('canonical agent tool catalog', () => {
     const fetch = AGENT_TOOL_CATALOG.find((tool) => tool.name === 'fetch_documentation')
     expect(fetch?.limits.behavior).toContain('5 MiB')
     expect(fetch?.timeoutAndCancellation).toContain('30-second')
+    const readSource = AGENT_TOOL_CATALOG.find((tool) => tool.name === 'read_source')
+    expect(readSource?.limits.outputBytes).toBe(48_000)
+    expect(readSource?.limits.behavior).toContain('48,000 bytes')
   })
 
   it('refuses unknown properties inside read_pull_request checks and reviews', () => {
@@ -212,7 +217,7 @@ describe('canonical agent tool catalog', () => {
         expect(validatesJsonSchema(tool.inputSchema, example.input)).toBe(true)
   })
 
-  it('renders the served listing from catalog fields alone and does not serve read_source', async () => {
+  it('renders the Developer’s served listing from catalog fields alone, without the reviewers’ read_source', async () => {
     const unavailable = async () =>
       ({ ok: false, error: { check: 'unused', output: 'unused', fix: 'unused' } }) as const
     const context = {

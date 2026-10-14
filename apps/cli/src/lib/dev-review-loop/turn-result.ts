@@ -12,8 +12,8 @@
  *    is shape-checked against the schema the provider was given, then judged
  *    against this turn's own context: finding ids from this handoff only, the
  *    fields the round and status allow, a ruling request naming a permissible
- *    decision, and a `sourceUses` entry — backed by a counted read — for every
- *    required Documentation source the dispatch delivered.
+ *    decision, and on `completed` a `sourceUses` entry for every required
+ *    source, each backed by a delivery receipt the controller itself recorded.
  *  - **Records** — every attempt is written once, never rewritten
  *    (`turn-result-<attempt>.json` in the round's Developer folder, outside
  *    the agent's sandbox), bound to the run, round, head and an attempt
@@ -177,13 +177,17 @@ export type DeveloperTurnOutput = {
 }
 
 /**
- * The Documentation sources the dispatch delivered to the session (its
- * per-run manifest) and the ones its read gate counted as read — the driver's
- * own read receipts from `fetch_documentation`, plus the hook-recorded fetches
- * the gate grades. Both normalized (`normalizeSourceIdentity`).
+ * The required sources the dispatch was given (its manifest) and the ones
+ * the controller recorded as delivered: the source identities of the
+ * unrefused receipts in the controller-owned source store — the injections
+ * the controller recorded and the reads its `fetch_documentation` tool
+ * recorded — and nothing else. A fetch the agent's own hooks logged, or any
+ * file a worker can write, is never one of them (`deliveredDocumentation`,
+ * `dispatch.ts`).
  */
 export type DeliveredDocumentation = {
   sources: readonly string[]
+  /** The normalized identities (`normalizeSourceIdentity`) with a counted controller receipt. */
   countedReads: readonly string[]
 }
 
@@ -205,10 +209,6 @@ export const PERMISSIBLE_RULING_DECISIONS = [
 /** The same identity the read gate and the receipts use: trimmed, no fragment, no trailing slash. */
 export function normalizeSourceIdentity(source: string): string {
   return source.trim().split('#')[0]!.replace(/\/+$/, '')
-}
-
-function isUrlSource(source: string): boolean {
-  return /^https?:\/\//i.test(source.trim())
 }
 
 /** Is this a C0 control character (newlines included) or DEL? */
@@ -287,9 +287,11 @@ export function judgeTurnOutput(
     const identity = normalizeSourceIdentity(use.source)
     if (!delivered.has(identity)) {
       failures.push(`sourceUses: ${use.source} is not a required source of this brief`)
-    } else if (result.status === 'completed' && isUrlSource(use.source) && !counted.has(identity)) {
+    } else if (result.status === 'completed' && !counted.has(identity)) {
+      // Every required source, a repository one included: a citation counts
+      // only behind a receipt the controller recorded, never the agent's word.
       failures.push(
-        `sourceUses: ${use.source} has no counted read — read it with the fetch_documentation tool before reporting its use`
+        `sourceUses: ${use.source} has no delivery receipt the controller recorded — a page counts once read with the fetch_documentation tool; a citation of a source never delivered is not accepted`
       )
     }
   }
@@ -431,6 +433,12 @@ export function addressedFindingIdsFromRecords(records: readonly TurnResultRecor
     for (const id of result.addressedFindingIds) if (!ids.includes(id)) ids.push(id)
   }
   return ids
+}
+
+/** The newest accepted `completed` result's own `sourceUses` — the citations the reviewers are shown; `null` when there is none. */
+export function sourceUsesFromRecords(records: readonly TurnResultRecord[]): { source: string; use: string }[] | null {
+  const completed = acceptedCompleted(records)
+  return completed[completed.length - 1]?.sourceUses ?? null
 }
 
 /** The newest accepted `completed` result's own `reportedChecks` — agent-reported context, `[]` when none. */

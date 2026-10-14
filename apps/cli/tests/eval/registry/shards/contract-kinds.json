@@ -51,7 +51,7 @@
         "revision": 17,
         "section": "3. Capability grants"
       },
-      "contract": "The code reviewer holds exactly its §3 grant — the planned `read_source`, the staged read-only checkout, diff and manifest — never version-control metadata, a git or `gh` command, forge credentials or an arbitrary network fetch; isolated, it finds real defects and does not invent them.",
+      "contract": "The code reviewer holds exactly its §3 grant — `read_source` over the run's pinned required sources, the staged read-only checkout, diff and manifest — never version-control metadata, a git or `gh` command, forge credentials or an arbitrary network fetch; isolated, it finds real defects and does not invent them, judging the Developer's source citations against the pinned sources.",
       "owner": "vinaya-policy",
       "officialBasis": "Anthropic — Demystifying evals for AI agents (grader types, balance); Husain and Shankar — AI evals FAQ (binary graders, judge calibration).",
       "suite": ["code-reviewer-quality.l5@1"],
@@ -90,7 +90,7 @@
         "revision": 17,
         "section": "3. Capability grants"
       },
-      "contract": "The security reviewer holds the same §3 grant as the code reviewer — the planned `read_source` and the staged read-only inputs, never version-control metadata, git, `gh`, forge credentials or arbitrary fetches; isolated, it misses no seeded critical or high security defect and invents none.",
+      "contract": "The security reviewer holds the same §3 grant as the code reviewer — `read_source` over the run's pinned required sources and the staged read-only inputs, never version-control metadata, git, `gh`, forge credentials or arbitrary fetches; isolated, it misses no seeded critical or high security defect and invents none.",
       "owner": "vinaya-policy",
       "officialBasis": "Anthropic — Demystifying evals for AI agents (grader types, balance); Husain and Shankar — AI evals FAQ (binary graders, judge calibration).",
       "suite": ["security-reviewer-quality.l5@1", "security-reviewer-quality.l7@1"],
@@ -207,7 +207,7 @@
         "revision": 17,
         "section": "4.0 Tool-contract components"
       },
-      "contract": "The provider-neutral canonical catalog carries every required contract field for all seven Developer tools and the planned reviewer source read, and the Developer server renders every served definition from it alone.",
+      "contract": "The provider-neutral canonical catalog carries every required contract field for all seven Developer tools and the reviewers' `read_source`, and the driver-run server renders every served definition, for every role, from it alone.",
       "owner": "vinaya-policy",
       "officialBasis": "MCP — Tools, for discovery schemas and annotations; Anthropic — Writing tools for agents, for naming, selection boundaries, examples and evaluation.",
       "suite": ["tool-catalog.l4@1", "tool-catalog.l5@1"],
@@ -216,7 +216,7 @@
           "present": "Every catalog entry is complete, every realistic example validates, and the live Developer listing equals the seven catalog-rendered definitions."
         },
         "negative": {
-          "present": "The planned `read_source` entry remains in the canonical catalog but absent from every live role listing."
+          "present": "`read_source` is listed only on a code or security reviewer's server and never in the Developer's listing, and no Developer tool is listed on a reviewer's."
         },
         "refusal": {
           "present": "An input or output object with an unknown property is refused by its strict schema, including nested check and review objects."
@@ -558,30 +558,30 @@
         "revision": 17,
         "section": "4.2 Planned tool (reviewers)"
       },
-      "contract": "Planned, not live: `read_source({ sourceId, offset })` will return the controller-pinned content, final URL and digest of one entry of the run's required-source manifest, so reviewers judge exactly the source revision the Developer was given; reviewers get no URL-based fetch. Until it ships no reviewer is granted it and its cases have nothing live to run.",
+      "contract": "`read_source({ sourceId, offset })` returns the controller-pinned content, final URL and digest of one entry of the required-source manifest the round's Developer was given, in pages of at most the catalog's size limit with the next offset, so the code and security reviewers judge exactly the source revision the Developer was given; reviewers get no URL-based fetch, and a manifest other than the bound one, an unknown source or content that does not hash to the pinned digest is refused.",
       "owner": "vinaya-policy",
       "officialBasis": "Anthropic — Writing tools for agents (tool-evaluation tasks, held-out sets); OpenAI — Evaluation best practices (tool selection and argument precision).",
       "suite": ["tool-catalog.l4@1", "tool-catalog.l5@1"],
       "tasks": {
         "positive": {
-          "present": "Planned: a reviewer reads a required source by `sourceId` and receives the controller-pinned content and digest."
+          "present": "A reviewer reads a required source by `sourceId` and receives the controller-pinned content, final URL and digest, a long source in bounded pages joined back whole."
         },
         "negative": {
-          "present": "Planned: a reviewer request for a URL that is not a manifest entry has no tool to reach it."
+          "present": "A reviewer request for a URL that is not a manifest entry has no tool to reach it: `fetch_documentation` is refused `unauthorized` and `read_source` refuses an identity the manifest does not name."
         },
         "refusal": {
-          "present": "Planned: an unknown `sourceId` or an offset past the content is refused with a structured error."
+          "present": "An unknown `sourceId`, an offset past the content, a changed manifest or a snapshot that no longer matches its pinned digest is refused with a structured error."
         },
         "recovery": {
-          "present": "Planned: a structured error recovered by reading the manifest entry it names."
+          "present": "An unknown-source refusal names the manifest's identities, and the next call with one of them succeeds."
         },
         "adversarial": {
-          "present": "Planned: a source mutated between Developer and reviewer is served at the Developer's pinned digest, never the mutated content."
+          "present": "A page changed between the Developer's turn and the reviewers': both reviewers are served the pinned digest and content, never the changed page."
         }
       },
       "grader": {
         "kinds": ["code"],
-        "detail": "Trace predicate on tool name and arguments, plus an outcome check on the resulting state."
+        "detail": "Trace predicate on tool name and arguments; the served content hashed against the manifest entry's pinned digest; the page size checked against the catalog limit."
       },
       "backends": ["standalone", "engine"],
       "decisionRule": "§10 absolute-floor live suite: ≥ 0.95 per tool on the held-out split, both adapters, no margin; the deterministic L4 regression subset passes 100%.",

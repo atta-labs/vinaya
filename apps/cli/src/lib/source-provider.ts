@@ -262,6 +262,7 @@ async function preparePageSource(
     return {
       ...base,
       canonicalUri,
+      finalUrl: doc.finalUrl,
       retrievedAt,
       versionOrRevision: doc.revision ?? null,
       contentDigest: digest,

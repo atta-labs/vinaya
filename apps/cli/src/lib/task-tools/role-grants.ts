@@ -12,7 +12,7 @@
  * launch, and are not granted through this table.
  */
 
-import { DEV_TOOL_CATALOG } from './tool-catalog.js'
+import { AGENT_TOOL_CATALOG } from './tool-catalog.js'
 
 /** The roles the driver dispatches against this table. The controller is listed so its empty grant is explicit, not implied. */
 export const GRANTED_ROLES = ['developer', 'code-reviewer', 'security', 'controller'] as const
@@ -20,9 +20,9 @@ export const GRANTED_ROLES = ['developer', 'code-reviewer', 'security', 'control
 export type GrantedRole = (typeof GRANTED_ROLES)[number]
 
 /**
- * Per role, every tool it may call. A reviewer's `read_source` is granted
- * here but is still a planned catalog entry with no handler, so no server
- * lists or runs it until it exists (`servedTools`).
+ * Per role, every tool it may call: the Developer its seven tools, each
+ * reviewer only `read_source` — the pinned required sources, never a URL
+ * fetch or a Developer tool.
  */
 export const ROLE_TOOL_GRANTS: Readonly<Record<GrantedRole, readonly string[]>> = {
   developer: [
@@ -48,10 +48,7 @@ export function isToolGranted(role: string, tool: string): boolean {
   return isGrantedRole(role) && ROLE_TOOL_GRANTS[role].includes(tool)
 }
 
-/**
- * The live tools a dispatch of `role` is served, in catalog order:
- * the role's grant intersected with the tools the driver has a handler for.
- */
-export function servedTools(role: GrantedRole): typeof DEV_TOOL_CATALOG {
-  return DEV_TOOL_CATALOG.filter((tool) => isToolGranted(role, tool.name))
+/** The tools a dispatch of `role` is served, in catalog order: the catalog entries its grant names. */
+export function servedTools(role: GrantedRole): typeof AGENT_TOOL_CATALOG {
+  return AGENT_TOOL_CATALOG.filter((tool) => isToolGranted(role, tool.name))
 }

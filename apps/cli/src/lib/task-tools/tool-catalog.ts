@@ -1,5 +1,6 @@
 /** Provider-neutral contracts for every agent-facing Developer and reviewer tool. */
 import { FETCH_DOCUMENTATION_TOOL } from './fetch-documentation.js'
+import { READ_SOURCE_PAGE_BYTES, READ_SOURCE_TOOL } from './read-source.js'
 
 export const FETCH_DOCUMENTATION_INPUT_SCHEMA = {
   type: 'object',
@@ -412,38 +413,64 @@ export const AGENT_TOOL_CATALOG: readonly AgentToolCatalogEntry[] = [
     annotations: annotations(true, false, true, true)
   }),
   entry({
-    name: 'read_source',
-    purpose: 'Read controller-pinned content for one required-source manifest entry.',
+    name: READ_SOURCE_TOOL,
+    purpose:
+      'Read the controller-pinned content, final URL and digest of one required-source manifest entry, in bounded pages.',
     realisticUsageExamples: [
       {
-        input: { sourceId: 'capabilities-contract', offset: 0 },
-        outcome: 'Returns the pinned content page and recorded digest.'
+        input: { sourceId: 'apps/cli/specs/dev-review-capabilities-contracts.md' },
+        outcome: 'Returns the first page of the pinned content with its digest and the offset to read on.'
+      },
+      {
+        input: { sourceId: 'https://code.claude.com/docs/en/hooks', offset: 48000 },
+        outcome: 'Returns the next page of the pinned snapshot, never a fresh fetch of the page.'
       }
     ],
     ...common,
+    limits: {
+      inputTokens: null,
+      outputTokens: null,
+      inputBytes: null,
+      outputBytes: READ_SOURCE_PAGE_BYTES,
+      behavior: `Each response carries at most ${READ_SOURCE_PAGE_BYTES.toLocaleString('en-US')} bytes of content (about 12,000 tokens) and the offset of the next page; no token limit is measured.`
+    },
     selectionBoundary: {
-      whenToUse: 'Reviewer-only planned capability for reading the exact source revision supplied to the Developer.',
-      whenNotToUse:
-        'Not served yet; never use it for URL fetching, repository files, history, or arbitrary network access.',
+      whenToUse:
+        'Use, as a code or security reviewer, to read a required source listed in your prompt at exactly the revision the Developer was given.',
+      whenNotToUse: 'Never use it for URL fetching, repository files outside the manifest, history, or network access.',
       neighboringTools: ['fetch_documentation']
     },
-    inputSchema: objectSchema({ sourceId: { type: 'string', minLength: 1 }, offset: { type: 'integer', minimum: 0 } }),
+    inputSchema: objectSchema({ sourceId: { type: 'string', minLength: 1 }, offset: { type: 'integer', minimum: 0 } }, [
+      'sourceId'
+    ]),
     successOutputSchema: objectSchema({
+      notice: str,
       sourceId: str,
-      content: str,
-      finalUrl: nullableString,
+      manifestDigest: str,
       digest: str,
-      nextOffset: { anyOf: [{ type: 'integer', minimum: 0 }, { type: 'null' }] }
+      finalUrl: nullableString,
+      snapshotRef: str,
+      length: { type: 'integer', minimum: 0 },
+      offset: { type: 'integer', minimum: 0 },
+      nextOffset: { anyOf: [{ type: 'integer', minimum: 0 }, { type: 'null' }] },
+      content: str
     }),
     requiredAuthority: 'Reviewer grant to the run required-source manifest only.',
-    idempotencyAndReplay: 'Read-only and replay-safe for a pinned manifest digest.',
-    preconditions: ['Planned only: sourceId belongs to the run manifest and has pinned content.'],
-    verifiedPostconditions: ['Content, final URL, and digest all come from the same controller-pinned manifest entry.'],
+    idempotencyAndReplay:
+      'Read-only and replay-safe: the same manifest digest, source and offset return the same page.',
+    preconditions: [
+      'The store still holds the manifest the dispatch was bound to, and sourceId is one of its prepared entries.'
+    ],
+    verifiedPostconditions: [
+      'Content, final URL, and digest all come from the same controller-pinned manifest entry, and the whole content hashes to that digest.'
+    ],
+    redaction: ['None: the content is the pinned source as prepared, returned with a fixed untrusted-content notice.'],
     annotations: annotations(true, false, true, false)
   })
 ] as const
 
-export const DEV_TOOL_CATALOG = AGENT_TOOL_CATALOG.filter((tool) => tool.name !== 'read_source')
+/** The seven Developer tools (§4.1) — every catalog entry but the reviewers' `read_source`. */
+export const DEV_TOOL_CATALOG = AGENT_TOOL_CATALOG.filter((tool) => tool.name !== READ_SOURCE_TOOL)
 export const DEV_TOOL_NAMES = DEV_TOOL_CATALOG.map((tool) => tool.name) as readonly string[]
 export const describeTool = (tool: AgentToolCatalogEntry): string =>
   `${tool.purpose} Use when: ${tool.selectionBoundary.whenToUse} Do not use when: ${tool.selectionBoundary.whenNotToUse}`
