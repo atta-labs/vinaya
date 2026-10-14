@@ -17,7 +17,7 @@
 const SEGMENT = /^[A-Za-z0-9._-]+$/
 
 export type Route = {
-  kind: 'ingest' | 'read' | 'stats' | 'rejected' | 'live'
+  kind: 'ingest' | 'read' | 'stats' | 'rejected' | 'replay' | 'live'
   owner: string
   repo: string
 }
@@ -72,7 +72,9 @@ export function repoName(route: Pick<Route, 'owner' | 'repo'>): string {
 }
 
 /**
- * `/v1/repos/<owner>/<repo>/<events|stats|rejected|live>`. A malformed repository
+ * `/v1/repos/<owner>/<repo>/<events|stats|rejected|live>`. `POST` on `rejected`
+ * is the replay, a write — it takes the ingest token, as `POST` on `events`
+ * does (`worker.ts`). A malformed repository
  * segment is `400`, an unknown path `404`, a known path with the wrong method
  * `405`.
  */
@@ -97,6 +99,7 @@ export function parseRoute(url: URL, method: string): RouteResult {
   }
   if (tail === 'rejected') {
     if (method === 'GET') return { ok: true, route: { kind: 'rejected', owner, repo } }
+    if (method === 'POST') return { ok: true, route: { kind: 'replay', owner, repo } }
     return { ok: false, status: 405 }
   }
   if (tail === 'live') {

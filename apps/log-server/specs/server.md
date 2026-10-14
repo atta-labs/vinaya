@@ -80,14 +80,16 @@ One ingest is one SQLite transaction: a request answered `200` has every one of 
 
 **Rows are never deleted, and the counts in § 5 depend on it.** Nothing here removes a row, which is what lets `seq` be a plain rowid rather than an AUTOINCREMENT column — and, for the same reason, lets the stats route read `MAX(rowid)` as the exact count of each table. `COUNT(*)` would be a scan: at the measured volume before the storage cap is reached (roughly four months), that is millions of row reads for one stats call, against a daily read allowance of five million. Any future change that deletes rows has to replace those two `MAX(rowid)` reads with real counters to keep stats calls bounded.
 
+**The rule holds under replay.** Replaying rejected rows (§ 5, "Replay") only inserts into `events`: a replayed row stays in `rejected`, neither deleted nor updated, and no row in either table is renumbered, so both `MAX(rowid)` counts stay exact. The rejected count is the number of lines ever refused on arrival, not the number still unrecovered.
+
 ## 5. The wire contract
 
 Every route lives under `/v1/repos/<owner>/<repo>/`. `<owner>` and `<repo>` match `[A-Za-z0-9._-]+`; anything else is `400`. An unknown path is `404`, a wrong method `405`.
 
 Two tokens, both Worker secrets, never in the repository:
 
-- **`INGEST_TOKEN`** — write-only. Accepted on the ingest route only. This is the value CI holds as `VINAYA_LOG_TOKEN`.
-- **`READ_TOKEN`** — read-only. Accepted on the read, stats, rejected and live routes only.
+- **`INGEST_TOKEN`** — write-only. Accepted on the ingest route and the rejected route's replay (`POST`) only. This is the value CI holds as `VINAYA_LOG_TOKEN`.
+- **`READ_TOKEN`** — read-only. Accepted on the read, stats, rejected (`GET`) and live routes only.
 
 Each token is compared in constant time — both values are hashed and the fixed-width digests compared byte by byte, so neither a token's length nor the position of its first wrong byte is observable in the time taken. Presenting one token on the other's route is `401`, the same as no token. A token is never logged and never echoed in a response. A route whose secret is not configured at all answers `500`, never `200`: an unset secret must not become a token that matches the empty string.
 
@@ -141,7 +143,9 @@ GET /v1/repos/<owner>/<repo>/stats
 authorization: Bearer <READ_TOKEN>
 ```
 
-`{"repo":"<owner>/<repo>","events":n,"rejected":n,"bytes":n,"oldest_ts":"…","newest_ts":"…","last_seq":n}` — `repo` is the object's own lower-cased name, `bytes` is the Durable Object's own database size, and `oldest_ts`/`newest_ts` are the `meta.ts` of the first and last events in arrival order (`null` when the log is empty). Counts come from `MAX(rowid)`, for the reason § 4 gives.
+`{"repo":"<owner>/<repo>","events":n,"rejected":n,"bytes":n,"oldest_ts":"…","newest_ts":"…","last_seq":n,"schema_digest":"sha256:…"}` — `repo` is the object's own lower-cased name, `bytes` is the Durable Object's own database size, and `oldest_ts`/`newest_ts` are the `meta.ts` of the first and last events in arrival order (`null` when the log is empty). Counts come from `MAX(rowid)`, for the reason § 4 gives.
+
+`schema_digest` names the event validator this deployment bundled: `logEventSchemaDigest` from `@attalabs/aeg-core`'s log module, the SHA-256 of a canonical description built by walking the validator's own structure — every object's accepted keys, sorted, every union member, literal, enum value and string or number bound — never a hand-maintained constant, a version number or the source text. The same validator gives the same digest in any process; validators that accept a different key give different ones. The CLI computes its own with the same function and compares the two (`apps/cli/specs/log.md`, the self-test and doctor's `[logs]` finding), so a server left on an older schema — one that rejects or stores verbatim what senders now consider valid — is visible before its rejected count is. A refinement's predicate is opaque code the walk cannot read; only its presence is described.
 
 ### Rejected
 
@@ -155,6 +159,17 @@ Why lines were refused, so lost events can be diagnosed. `{"repo":"<owner>/<repo
 `reasons` counts the newest `window` (`1000`) rejected rows by reason, most frequent first; a repository with fewer rows counts them all. `sample` is the newest line in that window for the reason, with the time the server received it: the line is redacted with the same `redact` the sink applies, then cut to its first 512 bytes (redaction first, so a cut never splits a secret into something the patterns miss), so the sender of a refused line can be identified without reading the full record. `sample.line` is `null` when the stored line is. `recent` is the newest twenty rejected rows, newest first, each with the reason and the line as stored — already truncated to the first 64 KiB (§ 4), and possibly `null`. Both come from a read of the table's tail, never a scan of all of it, for the read-budget reason § 4 gives. Nothing beyond what the `rejected` table holds is returned, and the stats route's `rejected` count is unchanged.
 
 The reason values are `invalid:<why>` (the line failed the schema's validation; `<why>` is the validator's own reason), `too_large:<bytes>` (the line was over 1 MiB) and `no_identity` (the line carried no `event_id`). `reasons` groups every `too_large:<bytes>` as `too_large`, because the size would otherwise make each oversized line its own group; `recent` shows the full stored value.
+
+### Replay
+
+```
+POST /v1/repos/<owner>/<repo>/rejected
+authorization: Bearer <INGEST_TOKEN>
+```
+
+Runs the newest `window` (`1000`) rejected rows — read by `id` descending exactly as the rejected report reads them, a bounded read of the table's tail — back through the same per-line decision ingest makes (§ 3), oldest first, for the day a redeploy brings the server's validator level with its senders'. A row whose line validates now is inserted into `events` as an ordinary event, identified by its `event_id` like any other and keeping the time the server first received it; a line already stored — by an earlier replay, or resent by its sender after the redeploy — is counted a duplicate and inserted nowhere; a line that still fails, or a row with no line kept, stays where it is. No row in either table is deleted, updated or renumbered (§ 4). One replay is one transaction, and its new events reach live viewers only after it commits, exactly as an ingest's do. The request body is not read.
+
+`200` with `{"replayed":n,"duplicates":n,"still_rejected":n,"last_seq":n}`. The route takes the ingest token: the read token, a wrong token and no token are all `401`, exactly as on the ingest route.
 
 ### Live
 

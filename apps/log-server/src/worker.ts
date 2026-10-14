@@ -75,9 +75,11 @@ export default {
       return refuse(parsed.status, error)
     }
 
-    // Write-only on ingest, read-only everywhere else: presenting one token on
-    // the other's route is refused exactly like presenting none (spec § 5).
-    const expected = parsed.route.kind === 'ingest' ? env.INGEST_TOKEN : env.READ_TOKEN
+    // Write-only on ingest and on the replay of rejected rows, read-only
+    // everywhere else: presenting one token on the other's route is refused
+    // exactly like presenting none (spec § 5).
+    const writes = parsed.route.kind === 'ingest' || parsed.route.kind === 'replay'
+    const expected = writes ? env.INGEST_TOKEN : env.READ_TOKEN
     if (typeof expected !== 'string' || expected.length === 0) {
       // An unset secret must never authorize anything — an empty expected
       // token would otherwise match an empty presented one.

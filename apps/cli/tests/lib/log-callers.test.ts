@@ -61,8 +61,9 @@ const FUTURE_CALLER_ALLOWLIST = new Set<string>([])
  * What it imports is the PURE decision function, BOTH of the sink's deadlines
  * (the per-event one and the longer once-per-process destination-read one it
  * bounds the anchor read by), the pure `describeFolderFallback` renderer so its
- * `[logs]` finding names a folder fallback in the sink's own words, and a
- * type — never `log()`, and never a sink instance: doctor produces no event, it
+ * `[logs]` finding names a folder fallback in the sink's own words, the pure
+ * `logsCredentialMissing` check so it reads the server's schema digest only
+ * when this host holds the read credential, and a type — never `log()`, and never a sink instance: doctor produces no event, it
  * only asks where one would go. That narrower claim is asserted below rather
  * than assumed, so this entry cannot quietly widen into a second producer.
  */
@@ -136,6 +137,7 @@ const DOCTOR_SINK_IMPORTS = [
   'LOG_DESTINATION_ANCHOR_DEADLINE_MS',
   'ResolvedLogDestination',
   'describeFolderFallback',
+  'logsCredentialMissing',
   'readFolderFallbackState',
   'resolveLogDestinationFrom',
   'withDeadline'

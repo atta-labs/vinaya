@@ -1427,6 +1427,98 @@ describe('vinaya doctor — the log destination works (Issue #793)', () => {
     expect(report.healthy).toBe(true)
   })
 
+  describe("the server's event-schema digest", () => {
+    const LOCAL = 'sha256:local'
+    const server = {
+      resolveLogDestination: async () => ({
+        destination: { kind: 'server' as const, url: SERVER, headers: { authorization: 'Bearer real-token' } },
+        credentialVars: ['VINAYA_LOG_TOKEN']
+      }),
+      probeLogServer: async () => ({ kind: 'accepted' as const, status: 200 }),
+      localSchemaDigest: () => LOCAL
+    }
+
+    it('is ok, naming the digest, when the server reports this CLI’s own', async () => {
+      await runInit(['--yes'], initDeps())
+      const report = await runDoctorJson({
+        ...server,
+        readLogServerDigest: async () => ({ kind: 'read', digest: LOCAL })
+      })
+      const finding = logFinding(report.findings)
+      expect(finding.severity).toBe('ok')
+      expect(finding.message).toContain(`event schema (${LOCAL})`)
+      expect(report.healthy).toBe(true)
+    })
+
+    it('warns, naming the redeploy command, when the server reports a different digest', async () => {
+      await runInit(['--yes'], initDeps())
+      const report = await runDoctorJson({
+        ...server,
+        readLogServerDigest: async () => ({ kind: 'read', digest: 'sha256:older' })
+      })
+      const finding = logFinding(report.findings)
+      expect(finding.severity).toBe('warn')
+      expect(finding.message).toContain('sha256:older')
+      expect(finding.message).toContain(LOCAL)
+      expect(finding.message).toContain('bunx wrangler deploy')
+    })
+
+    it('warns when the server reports no digest at all', async () => {
+      await runInit(['--yes'], initDeps())
+      const report = await runDoctorJson({
+        ...server,
+        readLogServerDigest: async () => ({ kind: 'read', digest: null })
+      })
+      const finding = logFinding(report.findings)
+      expect(finding.severity).toBe('warn')
+      expect(finding.message).toContain('reports no event-schema digest')
+      expect(finding.message).toContain('bunx wrangler deploy')
+    })
+
+    it('says the digest was not checked when this host holds no read credential', async () => {
+      await runInit(['--yes'], initDeps())
+      let asked = 0
+      const report = await runDoctorJson({
+        ...server,
+        readLogServerDigest: async () => {
+          asked++
+          return { kind: 'no-read-credential' }
+        }
+      })
+      const finding = logFinding(report.findings)
+      expect(asked).toBe(1)
+      expect(finding.severity).toBe('ok')
+      expect(finding.message).toContain('digest was not checked')
+      expect(finding.message).toContain('no read credential')
+      expect(report.healthy).toBe(true)
+    })
+
+    it('says the digest was not checked, without a mismatch, when the stats route did not answer', async () => {
+      await runInit(['--yes'], initDeps())
+      const report = await runDoctorJson({
+        ...server,
+        readLogServerDigest: async () => ({ kind: 'unread', detail: 'the stats route answered HTTP 401' })
+      })
+      const finding = logFinding(report.findings)
+      expect(finding.severity).toBe('ok')
+      expect(finding.message).toContain('digest was not checked: the stats route answered HTTP 401')
+    })
+
+    it('never asks for the digest when the ingest probe failed', async () => {
+      await runInit(['--yes'], initDeps())
+      let asked = 0
+      await runDoctorJson({
+        ...server,
+        probeLogServer: async () => ({ kind: 'credential-rejected', status: 401 }),
+        readLogServerDigest: async () => {
+          asked++
+          return { kind: 'read', digest: LOCAL }
+        }
+      })
+      expect(asked).toBe(0)
+    })
+  })
+
   it('reports a rejected credential as an error naming the variable to fix, never its value', async () => {
     await runInit(['--yes'], initDeps())
     const report = await runDoctorJson({

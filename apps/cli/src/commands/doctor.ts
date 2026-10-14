@@ -61,6 +61,7 @@ import {
   type LogsDestination,
   readRepoCiSetup,
   resolveAgentVendors,
+  resolveLogsHeaderValues,
   resolveLogsSetting,
   type VinayaConfig,
   VinayaConfigSchema,
@@ -72,11 +73,14 @@ import {
   type FolderFallbackRecord,
   LOG_CONTEXT_LOOKUP_DEADLINE_MS,
   LOG_DESTINATION_ANCHOR_DEADLINE_MS,
+  logsCredentialMissing,
   readFolderFallbackState,
   type ResolvedLogDestination,
   resolveLogDestinationFrom,
   withDeadline
 } from '../lib/log-sink.js'
+import { localSchemaDigest, schemaDigestFromStats, schemaDigestMismatch } from '../lib/log-schema-digest.js'
+import { statsUrlFrom } from '../lib/log-sync-server-source.js'
 import { isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from '../lib/run-paths.js'
 import {
   branchProtectionConfigured,
@@ -120,6 +124,10 @@ export type DoctorDeps = {
   resolveLogDestination: () => Promise<LogDestinationTarget>
   /** Does the destination accept this machine's credential — answered without storing an event. */
   probeLogServer: (url: string, headers: Record<string, string> | undefined) => Promise<LogServerProbe>
+  /** The destination server's event-schema digest, read from its stats route with this host's read credential — or why it was not read. Optional and injected like the fallback reader below; an omitted entry reports the digest as not checked, so a fixture never reaches the network for it. */
+  readLogServerDigest?: (url: string) => Promise<LogServerDigestRead>
+  /** This CLI's own event-schema digest. Omitted, `localSchemaDigest` — the log package's own. */
+  localSchemaDigest?: () => string
   /** O3: the last time an unattended run fell back to the local folder although a server was configured — read from the machine-local state file the sink records it in, so the cause survives a launch path that keeps no standard error. `null` when none is recorded. Optional and injected so the check is provable with a fixture; an omitted entry falls back to the real per-repository reader, so every existing `DoctorDeps` constructor keeps compiling unchanged. */
   readLastLogFallback?: () => Promise<FolderFallbackRecord | null>
   /** The host facts and runner the dispatch's own sandbox probe uses. Omitted, no probe runs and no finding is reported: only `realDeps` reads the real host, so a test fixture never starts an agent. */
@@ -286,6 +294,36 @@ export async function probeLogDestinationServer(
   }
 }
 
+/**
+ * The destination's `schema_digest`, read from its stats route — only when
+ * this host holds the read credential (`logs.readHeaders`, every `${VAR}` it
+ * references set). The stats route takes the read token alone, and a host that
+ * holds only the ingest credential is the common case: it is never sent a
+ * request it cannot authenticate, and the finding says the digest went
+ * unchecked instead. A refusal or a network failure is `unread`, never a
+ * mismatch — the answer that would decide it never arrived.
+ *
+ * Exported so a per-call-site proof can invoke this exact wiring.
+ */
+export async function readLogServerDigestReal(url: string): Promise<LogServerDigestRead> {
+  const raw = loadConfig()?.logs?.readHeaders
+  if (raw === undefined || logsCredentialMissing(raw, process.env)) return { kind: 'no-read-credential' }
+  try {
+    const response = await fetch(statsUrlFrom(url), {
+      method: 'GET',
+      headers: { ...(resolveLogsHeaderValues(raw, process.env) ?? {}) },
+      signal: AbortSignal.timeout(LOG_DESTINATION_PROBE_TIMEOUT_MS)
+    })
+    if (response.status < 200 || response.status >= 300) {
+      await response.body?.cancel().catch(() => {})
+      return { kind: 'unread', detail: `the stats route answered HTTP ${response.status}` }
+    }
+    return { kind: 'read', digest: schemaDigestFromStats(await response.json()) }
+  } catch (err) {
+    return { kind: 'unread', detail: firstLine(err) }
+  }
+}
+
 /** Exported so a per-call-site hardening proof can invoke this exact wiring, not a reimplementation of it. */
 export function realDeps(): DoctorDeps {
   return {
@@ -301,6 +339,8 @@ export function realDeps(): DoctorDeps {
     resolveLogDestination: resolveLogDestinationForDoctor,
     probeLogServer: probeLogDestinationServer,
     readLastLogFallback: readLastLogFallbackReal,
+    readLogServerDigest: readLogServerDigestReal,
+    localSchemaDigest,
     agentSandboxProbe: {
       confinementPlatform: realConfinementPlatformDeps,
       claudeBinary: () => executableOnPath('claude'),
@@ -1282,6 +1322,18 @@ export type LogServerProbe =
   | { kind: 'unreachable'; detail: string }
 
 /**
+ * The destination's event-schema digest as this host could read it: `read`
+ * (`digest` is `null` when the stats response carries none), `unread` (the
+ * read credential is held but the stats route did not answer with a body),
+ * or `no-read-credential` (the host holds no read credential, so nothing was
+ * asked).
+ */
+export type LogServerDigestRead =
+  | { kind: 'read'; digest: string | null }
+  | { kind: 'unread'; detail: string }
+  | { kind: 'no-read-credential' }
+
+/**
  * The destination this machine's events go to, resolved through the log
  * sink's own decision, plus the environment variables its credential is
  * referenced from — the one thing the resolved value cannot carry, because
@@ -1510,13 +1562,25 @@ async function diagnoseLogDestination(deps: DoctorDeps): Promise<Finding[]> {
       )
     ])
   }
-  return withSource([
-    ok(
-      'logs',
-      `the log server at ${where} is reachable and accepts this machine's credential ` +
-        `(HTTP ${probe.status}). Nothing was stored by this check — the probe carries no event.`
-    )
-  ])
+  const accepted =
+    `the log server at ${where} is reachable and accepts this machine's credential ` +
+    `(HTTP ${probe.status}). Nothing was stored by this check — the probe carries no event.`
+  const digest = deps.readLogServerDigest ? await deps.readLogServerDigest(destination.url) : null
+  if (digest === null || digest.kind === 'no-read-credential') {
+    return withSource([
+      ok(
+        'logs',
+        `${accepted} Its event-schema digest was not checked: this host holds no read credential ` +
+          '(`logs.readHeaders`) for the stats route.'
+      )
+    ])
+  }
+  if (digest.kind === 'unread') {
+    return withSource([ok('logs', `${accepted} Its event-schema digest was not checked: ${clean(digest.detail)}.`)])
+  }
+  const mismatch = schemaDigestMismatch(where, digest.digest, (deps.localSchemaDigest ?? localSchemaDigest)())
+  if (mismatch !== null) return withSource([warn('logs', `${accepted} But ${mismatch}`)])
+  return withSource([ok('logs', `${accepted} It validates with this CLI's event schema (${digest.digest}).`)])
 }
 
 /**
@@ -1702,5 +1766,5 @@ export async function doctorCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  doctor: { date: '2026-09-05', callsToday: 21, retiresVia: 'sharedCommandShell' }
+  doctor: { date: '2026-09-05', callsToday: 22, retiresVia: 'sharedCommandShell' }
 }
