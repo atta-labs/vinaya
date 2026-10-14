@@ -14,7 +14,7 @@
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop.ts",
-        "sha256": "6f1380c8423f4d66eb4389c6bfdfa57832f8e6adc4cdf0309de5bd3fe6292ef4"
+        "sha256": "eaa6150b227ddcf0a46dfc154b8ac7585d0f02ceff48102b2374ead0b26eb12b"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/developer-dispatch.ts",
@@ -34,7 +34,7 @@
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/live-check.ts",
-        "sha256": "bcb008e02b41833d381539b642646d144bd2c8f02d5dacc088d9ab3d470e797a"
+        "sha256": "4c2205b648c0cccaccecb9269d27cb70e93a68e9a8fe0de3f8d67cc9c633398b"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts",
@@ -949,7 +949,7 @@
     },
     {
       "id": "INV-164",
-      "node": "run_mechanical_gates"
+      "node": "publish_ready_for_merge"
     }
   ]
 }

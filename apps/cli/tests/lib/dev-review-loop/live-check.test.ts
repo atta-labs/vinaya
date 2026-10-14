@@ -1,7 +1,8 @@
 /**
  * The live check: a task's `[live]` Test plan lines run by the review loop
- * itself, on its own host, after the round's gate is green and before
- * reviewers are dispatched. A failed line is a red gate; a host with no
+ * itself, on its own host, only on a head both reviewers approved and before
+ * the task concludes. A failed line sends the Developer back as a new round,
+ * whose head is reviewed again before its lines run; a host with no
  * subscription sign-in for a vendor the line names records it unverified,
  * which the merge gate holds like an unticked `[principal]` item; a plan with
  * no `[live]` line runs the round exactly as before.
@@ -22,6 +23,7 @@ import {
   vendorSignedIn
 } from '../../../src/lib/dev-review-loop/live-check.js'
 import {
+  CLEAN_REVIEWER,
   cleanupWorlds,
   type LoopWorld,
   makeInProcessDeps,
@@ -50,7 +52,8 @@ function briefWith(live: string[]): string {
   ].join('\n')
 }
 
-type RunCall = { command: string; cwd: string; timeoutMs: number }
+/** One live run, with the head the branch stood at and how many reviewer dispatches had already run when it started. */
+type RunCall = { command: string; cwd: string; timeoutMs: number; head: string; reviewersBefore: number }
 
 /** Deps whose live runner answers from `answer` and records every call. */
 function liveDeps(
@@ -70,7 +73,7 @@ function liveDeps(
       return base.dispatchRole!(role, agent, prompt, dOpts)
     },
     runLiveCommand: async (command, cwd, timeoutMs) => {
-      const call = { command, cwd, timeoutMs }
+      const call = { command, cwd, timeoutMs, head: world.head, reviewersBefore: reviewerDispatches(world) }
       calls.push(call)
       return answer(call, calls.length)
     },
@@ -85,11 +88,39 @@ function reviewerDispatches(world: LoopWorld): number {
 }
 
 describe('the live check inside the round', () => {
-  it('a failing `[live]` line sends the Developer back with its output tail and dispatches no reviewer for that head; the next head re-runs it', async () => {
+  it('runs no `[live]` line on a head before both reviewers approve it', async () => {
+    const headB = 'b'.repeat(40)
+    const world = makeWorld({
+      frozenBrief: briefWith([LIVE]),
+      roleOutcomes: { 1: { reviewer: { ...CLEAN_REVIEWER, findings: 'BLOCKER|apps/cli/src/a.ts:5|a defect\n' } } }
+    })
+    const headA = world.head
+    const { deps, calls } = liveDeps(world, () => ({ exitCode: 0, timedOut: false, output: ' 2 pass\n 0 fail\n' }), {
+      onDeveloper: (n) => {
+        if (n === 2) {
+          world.head = headB
+          world.worktreeHead = headB
+        }
+      }
+    })
+
+    const result = await runLoopInProcess(world, undefined, deps)
+
+    // Round 1's head was reviewed and not approved: its line never ran.
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.head).toBe(headB)
+    expect(calls.some((c) => c.head === headA)).toBe(false)
+    // Both rounds' reviewers had run before the one run started, and none after it.
+    expect(calls[0]?.reviewersBefore).toBe(reviewerDispatches(world))
+    expect(calls[0]?.reviewersBefore).toBeGreaterThanOrEqual(4)
+    expect(world.prBodyUpdates.some((b) => readLiveRecord(b).some((l) => l.head === headA))).toBe(false)
+    expect(result.finalDecision.type).toBe('publish')
+  })
+
+  it('a failing `[live]` line on an approved head sends the Developer back as a new round, and the next head is reviewed before its lines run', async () => {
     const world = makeWorld({ frozenBrief: briefWith([LIVE]) })
     const headA = world.head
     const headD = 'd'.repeat(40)
-    let reviewersBeforeSecondDeveloper = -1
     const { deps, calls, developerPrompts } = liveDeps(
       world,
       (_call, n) =>
@@ -99,7 +130,6 @@ describe('the live check inside the round', () => {
       {
         onDeveloper: (n) => {
           if (n === 2) {
-            reviewersBeforeSecondDeveloper = reviewerDispatches(world)
             world.head = headD
             world.worktreeHead = headD
           }
@@ -109,38 +139,42 @@ describe('the live check inside the round', () => {
 
     const result = await runLoopInProcess(world, undefined, deps)
 
-    // The failed run sent the Developer back before any reviewer started.
-    expect(reviewersBeforeSecondDeveloper).toBe(0)
-    const retry = developerPrompts[1] as string
-    expect(retry).toContain("the review loop's live check is red")
-    expect(retry).toContain(`[live] \`${LIVE}\` (exit \`1\`)`)
-    expect(retry).toContain('(fail) live > claude answers the prompt')
-    expect(retry).toMatch(/untrusted output/)
-    // The run used the loop's own worktree path at the round's head, bounded.
-    expect(calls.map((c) => c.command)).toEqual([LIVE, LIVE])
+    // Head A ran only after both reviewers approved it; head D only after
+    // its own round's two reviewers approved it.
+    expect(calls.map((c) => [c.command, c.head, c.reviewersBefore])).toEqual([
+      [LIVE, headA, 2],
+      [LIVE, headD, 4]
+    ])
     expect(calls[0]?.cwd).toMatch(/\.worktrees\//)
     expect(calls[0]?.timeoutMs).toBe(1_000)
+    // The failure came back as a new round, with the line's output tail.
+    expect(world.dispatches.filter((d) => d.role === 'developer').map((d) => d.round)).toEqual([1, 2])
+    const retry = developerPrompts[1] as string
+    expect(retry).toContain(`Both reviewers approved head ${headA}, but the review loop's live check failed on it`)
+    expect(retry).toContain(`\`${LIVE}\` (exit \`1\`)`)
+    expect(retry).toContain('(fail) live > claude answers the prompt')
+    expect(retry).toMatch(/untrusted output/)
+    // The approval of head A was withdrawn: nothing was published for it.
+    expect(world.publishedRounds).toEqual([2])
     // The failure was recorded at its head before the later head passed.
     const failedRecord = world.prBodyUpdates.find((b) => readLiveRecord(b).some((l) => l.outcome === 'failed'))
     expect(readLiveRecord(failedRecord as string)).toEqual([
       expect.objectContaining({ command: LIVE, outcome: 'failed', head: headA, ticked: false })
     ])
-    // The later head re-ran it, it passed, and review proceeded to publish.
     expect(readLiveRecord(world.prBody)).toEqual([
       expect.objectContaining({ command: LIVE, outcome: 'passed', head: headD, ticked: true })
     ])
-    expect(reviewerDispatches(world)).toBeGreaterThan(0)
     expect(result.finalDecision.type).toBe('publish')
   })
 
-  it('a passing `[live]` line lets review proceed and is recorded with its head, command and pass count', async () => {
+  it('a passing `[live]` line lets the task conclude and is recorded with its head, command and pass count', async () => {
     const world = makeWorld({ frozenBrief: briefWith([LIVE]) })
     const { deps, calls } = liveDeps(world, () => ({ exitCode: 0, timedOut: false, output: ' 7 pass\n 0 fail\n' }))
 
     const result = await runLoopInProcess(world, undefined, deps)
 
     expect(calls).toHaveLength(1)
-    expect(reviewerDispatches(world)).toBeGreaterThan(0)
+    expect(calls[0]?.reviewersBefore).toBe(2)
     expect(result.finalDecision.type).toBe('publish')
     expect(world.prBody).toContain(`- [x] **[live]** \`${LIVE}\` — passed at \`${world.head}\`, \`7\` passing`)
     expect(buildPrincipalTestPlanWaitErrors(world.prBody, world.branch)).toEqual([])
@@ -148,7 +182,7 @@ describe('the live check inside the round', () => {
     expect(evaluateTestPlanGate(withPlan, world.branch).verdict).toBe('pass')
   })
 
-  it('a host without a signed-in vendor runs nothing, records the line unverified, lets review proceed and leaves the merge gate red', async () => {
+  it('a host without a signed-in vendor runs nothing, records the line unverified, lets the task conclude and leaves the merge gate red', async () => {
     const world = makeWorld({ frozenBrief: briefWith([LIVE]) })
     const { deps, calls } = liveDeps(world, () => ({ exitCode: 0, timedOut: false, output: '' }), {
       signedIn: (vendor) => vendor !== 'claude'

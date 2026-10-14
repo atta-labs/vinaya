@@ -5172,7 +5172,7 @@
         "revision": 17,
         "section": "One entry per observed behavior"
       },
-      "contract": "Once the gate reads green and before reviewers are dispatched, the driver runs each `[live]` Test plan line of the frozen brief on its own host, bounded in time; a non-zero exit or a timeout is a red gate that sends the Developer back with the line's output tail and dispatches no reviewer for that head, a line naming a vendor with no subscription sign-in on the host is recorded unverified and held by the merge gate like an unticked principal item, and a plan with no such line runs the round unchanged.",
+      "contract": "Only once both reviewers approve a head, and before the task concludes, the driver runs each `[live]` Test plan line of the frozen brief on its own host, bounded in time, and never on a head no reviewer approved; a non-zero exit or a timeout withdraws the approval and sends the Developer back as a new round with the line's output tail, whose head is reviewed again before its lines run, a line naming a vendor with no subscription sign-in on the host is recorded unverified and held by the merge gate like an unticked principal item, and a plan with no such line runs the round unchanged.",
       "owner": "vinaya-policy",
       "officialBasis": "Vinaya product decision; LangGraph — Test (principle 12) for its L3 graph conformance: a fresh checkpointer per test, nodes alone, sections by partial execution.",
       "suite": ["assessment.l1@1", "assessment.l2@1", "assessment.l3@1"],

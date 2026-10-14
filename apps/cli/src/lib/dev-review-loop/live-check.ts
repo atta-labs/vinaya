@@ -1,10 +1,10 @@
 /**
  * The live check — a task's `[live]` Test plan lines, run by the review loop
- * itself between a green gate and reviewer dispatch (`apps/cli/specs/loop.md`,
- * "The live check"). A `[live]` line needs real signed-in agent sessions, so it
- * is skipped in the Developer's sandbox, the push hook and CI; the loop runs it
- * from its own process, with its own environment, in the task worktree at the
- * round's head, bounded in time.
+ * itself on a head both reviewers approved, before the task concludes
+ * (`apps/cli/specs/loop.md`, "The live check"). A `[live]` line needs real
+ * signed-in agent sessions, so it is skipped in the Developer's sandbox, the
+ * push hook and CI; the loop runs it from its own process, with an allowlisted
+ * environment, in the task worktree at the approved head, bounded in time.
  *
  * Before running a line the loop checks that this host can: every agent vendor
  * the line names has a subscription sign-in here. That check reads only where
