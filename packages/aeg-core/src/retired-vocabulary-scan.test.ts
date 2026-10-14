@@ -27,7 +27,7 @@ describe('scanRetiredVocabulary', () => {
       'decision entr': 'add a decision entry',
       'decisions? (are |is )?logged': 'why decisions are logged',
       'log entries': 'Type 1 decisions without log entries',
-      'decisions\\.md': 'log it to decisions.md',
+      '(^|[^-_a-zA-Z0-9])decisions\\.md': 'log it to decisions.md',
       'decisions-legacy': 'a task updates docs/decisions-legacy.md',
       CONTRADICTION: 'open a ## CONTRADICTION — <topic> entry',
       'assumes Tier 3': 'verify-docs assumes Tier 3 when no tier is declared',
@@ -61,6 +61,13 @@ describe('scanRetiredVocabulary', () => {
   it('never matches "decision logic" — ordinary English stays legal', () => {
     const findings = scanRetiredVocabulary([
       { path: 'aeg-root/some-doc.md', content: 'all decision logic lives in the evaluator' }
+    ])
+    expect(findings).toEqual([])
+  })
+
+  it('never matches a decision record whose file name ends in "-decisions.md"', () => {
+    const findings = scanRetiredVocabulary([
+      { path: 'aeg-root/some-doc.md', content: '| [0001](0001-record-architecture-decisions.md) | Accepted |' }
     ])
     expect(findings).toEqual([])
   })

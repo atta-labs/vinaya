@@ -181,10 +181,11 @@ const PATTERN_EXEMPT: Record<string, string[]> = {
     // citation like the ~300 others the same sweep stripped.
     './CLAUDE.md'
   ],
-  'decisions\\.md': [
+  '(^|[^-_a-zA-Z0-9])decisions\\.md': [
     // `engine/design-decisions.md` is Vāda's own live, current design-decisions
-    // doc — not the retired global `decisions.md`. The bare-substring pattern
-    // can't distinguish the two; these are the citing files (task-729 sweep).
+    // doc — not the retired global `decisions.md`. The pattern now skips a
+    // hyphenated name like that one; these files stay listed because they
+    // may also name the retired file bare (task-729 sweep).
     'docs-index.md',
     'apps/vada-ai/specs/legacy/README.md',
     'apps/vada-ai/specs/vada-product-spec.md',
@@ -429,7 +430,7 @@ const SAMPLES: Record<string, string> = {
   'decision entr': 'add a decision entry',
   'decisions? (are |is )?logged': 'why decisions are logged',
   'log entries': 'Type 1 decisions without log entries',
-  'decisions\\.md': 'log it to decisions.md',
+  '(^|[^-_a-zA-Z0-9])decisions\\.md': 'log it to decisions.md',
   'decisions-legacy': 'a task updates docs/decisions-legacy.md',
   CONTRADICTION: 'open a ## CONTRADICTION — <topic> entry',
   'assumes Tier 3': 'verify-docs assumes Tier 3 when no tier is declared',
