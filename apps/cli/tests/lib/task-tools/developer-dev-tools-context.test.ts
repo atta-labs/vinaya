@@ -4,6 +4,7 @@ import {
   createDeveloperDevToolContext
 } from '../../../src/lib/task-tools/developer-dev-tools-context.js'
 import type { PublicationCheckInput } from '../../../src/lib/dev-review-loop/developer-publication.js'
+import { devToolError } from '../../../src/lib/task-tools/dev-tools-server.js'
 
 /**
  * The production gate-backed `DevToolContext` (O3): each tool runs the gates in
@@ -93,7 +94,14 @@ describe('publishChanges gates', () => {
       deps({
         commitAndPush: async () => ({
           ok: false,
-          error: { check: 'pre-push-hook', output: 'hook said no', fix: 'fix it' }
+          error: devToolError(
+            'policy_refusal',
+            'same_attempt',
+            'not_committed',
+            'pre-push-hook',
+            'hook said no',
+            'fix it'
+          )
         })
       })
     )

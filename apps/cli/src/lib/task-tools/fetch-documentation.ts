@@ -179,7 +179,17 @@ function refuse(
   output: string,
   fix: string
 ): { ok: false; error: DevToolRefusal } {
-  return { ok: false, error: { check, output, fix } }
+  return {
+    ok: false,
+    error: {
+      errorClass: 'invalid_input',
+      retryDisposition: 'same_attempt',
+      effectState: 'not_started',
+      check,
+      output,
+      fix
+    }
+  }
 }
 
 /** Validates the tool's raw arguments. */

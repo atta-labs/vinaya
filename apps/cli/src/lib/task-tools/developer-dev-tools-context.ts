@@ -26,7 +26,7 @@ import {
   type PublicationCheckInput,
   validateCommitHeader
 } from '../dev-review-loop/developer-publication.js'
-import type { DevPullRequestView, DevToolRefusal, DevToolResult } from './dev-tools-server.js'
+import { devToolError, type DevPullRequestView, type DevToolResult } from './dev-tools-server.js'
 import type { DevToolContext } from './dev-tools-server.js'
 import type { FetchDocumentationInput, FetchDocumentationResult } from './fetch-documentation.js'
 
@@ -63,7 +63,7 @@ export type DeveloperDevToolDeps = {
 
 /** A structured refusal, as a failed `DevToolResult`. */
 function refuse<T>(check: string, output: string, fix: string): DevToolResult<T> {
-  const error: DevToolRefusal = { check, output, fix }
+  const error = devToolError('policy_refusal', 'same_attempt', 'not_started', check, output, fix)
   return { ok: false, error }
 }
 
@@ -77,7 +77,17 @@ async function guard<T>(check: string, run: () => Promise<DevToolResult<T>>): Pr
     return await run()
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    return refuse<T>(check, message, `The ${check} step threw: investigate the driver log and retry.`)
+    return {
+      ok: false,
+      error: devToolError(
+        'internal',
+        'new_attempt',
+        'uncertain',
+        check,
+        message,
+        `The ${check} step threw: reconcile any possible effect in the driver log before retrying.`
+      )
+    }
   }
 }
 

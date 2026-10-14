@@ -39,6 +39,7 @@ import { createMcpServerCore, MCP_PROTOCOL_VERSION, type McpServerCore } from '.
 import { DEV_TOOLS_MCP_SERVER_NAME } from './dev-tools-names.js'
 import type { FailedCheckLog } from './pr-facts.js'
 import { DEV_TOOL_CATALOG, DEV_TOOL_NAMES, serveTool } from './tool-catalog.js'
+import { validatesJsonSchema } from './result-proof.js'
 import {
   FETCH_DOCUMENTATION_TOOL,
   type FetchDocumentationInput,
@@ -70,6 +71,17 @@ export type DevToolName = (typeof DEV_TOOL_NAMES)[number]
  * loop on one.
  */
 export type DevToolRefusal = {
+  errorClass:
+    | 'invalid_input'
+    | 'unauthorized'
+    | 'policy_refusal'
+    | 'conflict'
+    | 'dependency_unavailable'
+    | 'timeout'
+    | 'cancelled'
+    | 'internal'
+  retryDisposition: 'never' | 'same_attempt' | 'new_attempt' | 'after_reset' | 'human_decision'
+  effectState: 'not_started' | 'not_committed' | 'committed' | 'uncertain'
   /** The failing gate — e.g. `commit-header`, `publication-preconditions`, `pre-push-hook`, `pr-body-gate`. */
   check: string
   /** What the gate printed — the hook's own stderr, the check's own failure text. */
@@ -86,8 +98,30 @@ export type DevPullRequestView = {
   prNumber: number | null
   state: string | null
   head: string | null
-  checks: unknown
-  reviews: unknown
+  checks: null | Array<{
+    __typename: string
+    completedAt?: string | null
+    conclusion?: string | null
+    context?: string | null
+    detailsUrl?: string | null
+    name?: string | null
+    startedAt?: string | null
+    state?: string | null
+    status?: string | null
+    targetUrl?: string | null
+    workflowName?: string | null
+  }>
+  reviews: null | Array<{
+    author: { login: string } | null
+    authorAssociation?: string | null
+    body: string
+    commit?: string | null
+    createdAt?: string | null
+    id: string
+    includesCreatedEdit?: boolean | null
+    state: string
+    submittedAt?: string | null
+  }>
   body: string | null
   /**
    * Every failed mechanical check run on `head`, each with the sanitized tail
@@ -126,8 +160,19 @@ export function isDevToolName(name: string): name is DevToolName {
   return (DEV_TOOL_NAMES as readonly string[]).includes(name)
 }
 
+export function devToolError(
+  errorClass: DevToolRefusal['errorClass'],
+  retryDisposition: DevToolRefusal['retryDisposition'],
+  effectState: DevToolRefusal['effectState'],
+  check: string,
+  output: string,
+  fix: string
+): DevToolRefusal {
+  return { errorClass, retryDisposition, effectState, check, output, fix }
+}
+
 function refusal(check: string, output: string, fix: string): { ok: false; error: DevToolRefusal } {
-  return { ok: false, error: { check, output, fix } }
+  return { ok: false, error: devToolError('invalid_input', 'same_attempt', 'not_started', check, output, fix) }
 }
 
 function validationRefusal(message: string): { ok: false; error: DevToolRefusal } {
@@ -150,34 +195,52 @@ export async function dispatchDevTool(
   name: string,
   args: unknown
 ): Promise<DevToolResult<unknown>> {
+  const catalog = DEV_TOOL_CATALOG.find((tool) => tool.name === name)
+  if (!catalog)
+    return refusal(
+      'unknown-tool',
+      `no such dev tool: ${JSON.stringify(name)}`,
+      `Call one of: ${DEV_TOOL_NAMES.join(', ')}.`
+    )
+  if (!validatesJsonSchema(catalog.inputSchema, args)) {
+    return validationRefusal(`${name} arguments do not match its strict catalog input schema.`)
+  }
+  let outcome: DevToolResult<unknown>
   switch (name) {
     case PUBLISH_CHANGES_TOOL: {
       const header = readString(args, 'header')
       if (header === null) return validationRefusal('publish_changes requires a non-empty `header` string.')
-      return context.publishChanges(header)
+      outcome = await context.publishChanges(header)
+      break
     }
     case OPEN_PULL_REQUEST_TOOL: {
       const title = readString(args, 'title')
       const body = readString(args, 'body')
       if (title === null) return validationRefusal('open_pull_request requires a non-empty `title` string.')
       if (body === null) return validationRefusal('open_pull_request requires a non-empty `body` string.')
-      return context.openPullRequest(title, body)
+      outcome = await context.openPullRequest(title, body)
+      break
     }
     case UPDATE_PULL_REQUEST_BODY_TOOL: {
       const body = readString(args, 'body')
       if (body === null) return validationRefusal('update_pull_request_body requires a non-empty `body` string.')
-      return context.updatePullRequestBody(body)
+      outcome = await context.updatePullRequestBody(body)
+      break
     }
     case REFRESH_EVIDENCE_TOOL:
-      return context.refreshEvidence()
+      outcome = await context.refreshEvidence()
+      break
     case READ_PULL_REQUEST_TOOL:
-      return context.readPullRequest()
+      outcome = await context.readPullRequest()
+      break
     case RUN_CHECKS_TOOL:
-      return context.runChecks()
+      outcome = await context.runChecks()
+      break
     case FETCH_DOCUMENTATION_TOOL: {
       const parsed = parseFetchDocumentationInput(args)
       if (!parsed.ok) return parsed
-      return context.fetchDocumentation(parsed.input)
+      outcome = await context.fetchDocumentation(parsed.input)
+      break
     }
     default:
       return refusal(
@@ -186,6 +249,20 @@ export async function dispatchDevTool(
         `Call one of: ${DEV_TOOL_NAMES.join(', ')}.`
       )
   }
+  if (outcome.ok && !validatesJsonSchema(catalog.successOutputSchema, outcome.result)) {
+    return {
+      ok: false,
+      error: devToolError(
+        'internal',
+        'new_attempt',
+        'uncertain',
+        'tool-output',
+        `${name} returned a success value outside its catalog schema.`,
+        'Inspect the driver implementation and reconcile any possible effect before retrying.'
+      )
+    }
+  }
+  return outcome
 }
 
 export type CreateDevToolsMcpServerOptions = {
