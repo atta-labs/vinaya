@@ -139,8 +139,10 @@ export function claudeDevToolsArgs(mcpConfigPath: string, allowedTools?: readonl
  * `mcp_servers` with its `status`, and each entry Claude Code skipped in
  * `mcp_server_errors` with a `message`. The server counts as not loaded when
  * its status is `failed`, when an error names it, or when the event lists it
- * nowhere. A `pending` status is a server still connecting in the background,
- * not a failure. Both reported shapes were observed with Claude Code 2.1.296:
+ * nowhere. The dispatch starts Claude with `CLAUDE_DEV_TOOLS_ENV`, so the
+ * init event carries a settled status; a `pending` status that still appears
+ * is a server Claude Code's own connect wait has not finished, and is not
+ * treated as a failure, so a slow bridge is never ended on a guess. Both reported shapes were observed with Claude Code 2.1.296:
  * an unrunnable bridge command reports `status: "failed"`, and an entry Claude
  * Code cannot parse is absent from `mcp_servers` with a `mcp_server_errors`
  * entry.
@@ -170,6 +172,38 @@ export function claudeDevToolsStartFailure(line: string): string | null {
     return `Claude Code reported the ${DEV_TOOLS_MCP_SERVER_NAME} MCP server failed to start`
   }
   return null
+}
+
+/**
+ * The environment a Claude session carrying the dev-tools registration is
+ * started with. `MCP_CONNECTION_NONBLOCKING=0` makes Claude Code wait for its
+ * MCP servers before the session starts, instead of connecting them in the
+ * background, so the `system/init` event `claudeDevToolsStartFailure` reads
+ * reports the server's settled status rather than `pending`.
+ */
+export const CLAUDE_DEV_TOOLS_ENV: Readonly<Record<string, string>> = { MCP_CONNECTION_NONBLOCKING: '0' }
+
+/**
+ * Watches a Claude session's stream-json lines for the dev-tools start
+ * failure and calls `onFailure` once, with the reason, on the first line that
+ * reports it. Returns the per-line callback and a reader for the recorded
+ * reason (`null` while the server is healthy or not yet reported).
+ */
+export function watchClaudeDevToolsStart(onFailure: (reason: string) => void): {
+  onLine: (line: string) => void
+  failure: () => string | null
+} {
+  let failure: string | null = null
+  return {
+    onLine: (line) => {
+      if (failure !== null) return
+      const reason = claudeDevToolsStartFailure(line)
+      if (reason === null) return
+      failure = reason
+      onFailure(reason)
+    },
+    failure: () => failure
+  }
 }
 
 /** The fully-qualified name Claude exposes an MCP tool under: `mcp__<server>__<tool>`. */

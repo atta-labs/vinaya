@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import {
+  CLAUDE_DEV_TOOLS_ENV,
   CODEX_DEV_TOOLS_APPROVAL_MODE,
   claudeDevToolName,
   claudeDevToolsArgs,
@@ -8,7 +9,8 @@ import {
   codexDevToolsMcpTable,
   DEV_TOOLS_TOOL_TIMEOUT_SEC,
   devToolsMcpConfig,
-  devToolsMcpConfigFileBody
+  devToolsMcpConfigFileBody,
+  watchClaudeDevToolsStart
 } from '../../../src/lib/task-tools/dev-tools-registration.js'
 import { DEV_TOOLS_MCP_SERVER_NAME } from '../../../src/lib/task-tools/dev-tools-server.js'
 
@@ -101,6 +103,36 @@ describe('claudeDevToolsStartFailure', () => {
       ]
     })
     expect(claudeDevToolsStartFailure(line)).toBeNull()
+  })
+})
+
+describe('watchClaudeDevToolsStart', () => {
+  const init = (status: string): string =>
+    JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      mcp_servers: [{ name: DEV_TOOLS_MCP_SERVER_NAME, status }]
+    })
+
+  it('ends the session once, on the first line reporting the server failed', () => {
+    const ended: string[] = []
+    const watch = watchClaudeDevToolsStart((reason) => ended.push(reason))
+    watch.onLine('{"type":"assistant"}')
+    expect(watch.failure()).toBeNull()
+    watch.onLine(init('failed'))
+    watch.onLine(init('failed'))
+    expect(ended).toHaveLength(1)
+    expect(watch.failure()).toContain('failed to start')
+  })
+  it('never ends a session whose server connected', () => {
+    const ended: string[] = []
+    const watch = watchClaudeDevToolsStart((reason) => ended.push(reason))
+    watch.onLine(init('connected'))
+    expect(ended).toEqual([])
+    expect(watch.failure()).toBeNull()
+  })
+  it('starts Claude waiting for its MCP servers, so the init event carries a settled status', () => {
+    expect(CLAUDE_DEV_TOOLS_ENV).toEqual({ MCP_CONNECTION_NONBLOCKING: '0' })
   })
 })
 

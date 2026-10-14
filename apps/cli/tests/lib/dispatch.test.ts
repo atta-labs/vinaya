@@ -64,6 +64,7 @@ import {
   getProcessSnapshot,
   matchesCapturedIdentity,
   buildRolePermissions,
+  exitFailureReason,
   buildCodexExecpolicyRules,
   buildWriteAccessScope,
   writeAccessHookScript,
@@ -3846,6 +3847,22 @@ describe('buildRolePermissions — Issue #865, O1/O2/O3: machine-state commands 
         expect(perms.deny).toContain(rule)
       }
     }
+  })
+})
+
+describe('exitFailureReason — how a failed child exit is classified', () => {
+  const base = { usageLimit: false, devToolsStartFailed: false, neverBoundSession: false, connectionRetry: false }
+  it('a dev-tools start failure is startup-failed, even when the ended session never bound', () => {
+    expect(exitFailureReason({ ...base, devToolsStartFailed: true, neverBoundSession: true })).toBe('startup-failed')
+    expect(exitFailureReason({ ...base, devToolsStartFailed: true, connectionRetry: true })).toBe('startup-failed')
+  })
+  it('a usage limit still outranks a dev-tools start failure', () => {
+    expect(exitFailureReason({ ...base, usageLimit: true, devToolsStartFailed: true })).toBe('usage-limit')
+  })
+  it('keeps the other classifications in their order', () => {
+    expect(exitFailureReason({ ...base, neverBoundSession: true, connectionRetry: true })).toBe('unbound')
+    expect(exitFailureReason({ ...base, connectionRetry: true })).toBe('connection-failed')
+    expect(exitFailureReason(base)).toBe('crash')
   })
 })
 

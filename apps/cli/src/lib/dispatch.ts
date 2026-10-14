@@ -139,10 +139,11 @@ import { agentControlsRefusal } from './enforcement-controls.js'
 import { repoRoot } from './diff-evidence.js'
 import {
   type BridgeInvocation,
+  CLAUDE_DEV_TOOLS_ENV,
   claudeDevToolsArgs,
-  claudeDevToolsStartFailure,
   codexDevToolsConfigToml,
-  devToolsMcpConfigFileBody
+  devToolsMcpConfigFileBody,
+  watchClaudeDevToolsStart
 } from './task-tools/dev-tools-registration.js'
 
 /**
@@ -2525,6 +2526,26 @@ export function parseGeminiUsageUnits(_stdout: string): UsageObservation {
  * vendor-agnostic: Codex/Gemini never emit this shape, so it is always
  * `false` for them, never a guess about a vendor's own unconfirmed output.
  */
+/**
+ * Why a dispatch whose child exited non-zero (or was ended by the driver)
+ * failed, in precedence order: a usage limit is a wait, a dev-tools start
+ * failure the driver detected is `startup-failed` even though the session
+ * it ended may never have bound, then an unbound session, a connection
+ * retry, and otherwise a crash.
+ */
+export function exitFailureReason(input: {
+  usageLimit: boolean
+  devToolsStartFailed: boolean
+  neverBoundSession: boolean
+  connectionRetry: boolean
+}): DispatchFailureReason {
+  if (input.usageLimit) return 'usage-limit'
+  if (input.devToolsStartFailed) return 'startup-failed'
+  if (input.neverBoundSession) return 'unbound'
+  if (input.connectionRetry) return 'connection-failed'
+  return 'crash'
+}
+
 export function sawVendorConnectionRetry(stdout: string): boolean {
   for (const line of stdout.split('\n')) {
     if (!line.includes('"api_retry"')) continue
@@ -5092,6 +5113,8 @@ export async function dispatchRole(
             buildWorkerEnv(process.env, {
               ...attribution,
               ...confinedClaudeEnvExtras(claudeConfinement.scratchDir, claudeConfinement.pathOverride),
+              // A settled dev-tools status in the init event (`CLAUDE_DEV_TOOLS_ENV`).
+              ...(devToolsClaudeArgs.length > 0 ? CLAUDE_DEV_TOOLS_ENV : {}),
               // O6: spool this confined dispatch's log events into its granted
               // scratch; the driver delivers them after the turn (`finish()`).
               ...(logSpoolDir !== null ? { VINAYA_LOG_SPOOL_DIR: logSpoolDir } : {})
@@ -5107,7 +5130,8 @@ export async function dispatchRole(
               // policy applied. Omitted (child keeps the inherited/operator
               // home) when nothing was staged — a non-Codex dispatch, or no
               // re-homable login.
-              ...(codexHomeDir ? { CODEX_HOME: codexHomeDir } : {})
+              ...(codexHomeDir ? { CODEX_HOME: codexHomeDir } : {}),
+              ...(devToolsClaudeArgs.length > 0 ? CLAUDE_DEV_TOOLS_ENV : {})
             }
     })
 
@@ -5154,7 +5178,12 @@ export async function dispatchRole(
     // failed or skipped (`claudeDevToolsStartFailure`): the driver then ends
     // the session and the dispatch fails as `startup-failed`, the same way a
     // Codex start fails on its `required` server.
-    let devToolsStartFailure: string | null = null
+    const devToolsStart = watchClaudeDevToolsStart((failure) => {
+      writeLifecycle(
+        `[vinaya dispatch ${effectId}] ${role} via ${agent}: ${failure} — ending the session, which cannot reach its tools`
+      )
+      child.kill('SIGTERM')
+    })
 
     // `'exit'` (below) can fire before the LAST already-in-flight `'data'`
     // chunk from the DIRECT child is delivered — the OS process-exit
@@ -5212,16 +5241,7 @@ export async function dispatchRole(
       renderCarry = lines.pop() ?? ''
       for (const line of lines) {
         if (line.trim().length === 0) continue
-        if (devToolsClaudeArgs.length > 0 && devToolsStartFailure === null) {
-          const failure = claudeDevToolsStartFailure(line)
-          if (failure !== null) {
-            devToolsStartFailure = failure
-            writeLifecycle(
-              `[vinaya dispatch ${effectId}] ${role} via ${agent}: ${failure} — ending the session, which cannot reach its tools`
-            )
-            child.kill('SIGTERM')
-          }
-        }
+        if (devToolsClaudeArgs.length > 0) devToolsStart.onLine(line)
         // O1: bind the vendor session id onto the launch record the MOMENT the
         // stream first reports it — not only at exit — so an attempt the
         // driver's own death interrupts mid-turn still carries a resumable
@@ -5574,6 +5594,7 @@ export async function dispatchRole(
       // output before any other non-zero classification: a limit is a wait
       // for a reset, never a crash.
       const usageLimit = detectUsageLimit(agent, stdoutBuf, code, Date.now())
+      const devToolsStartFailure = devToolsStart.failure()
       if (code !== 0 || usageLimit !== null || devToolsStartFailure !== null) {
         const priorSize = sizeOfSafe(outboxPath)
         log({
@@ -5629,16 +5650,12 @@ export async function dispatchRole(
         //
         // O2: same `'connection-failed'`
         // classification as the timeout branch above.
-        const failureReason: DispatchFailureReason =
-          usageLimit !== null
-            ? 'usage-limit'
-            : devToolsStartFailure !== null
-              ? 'startup-failed'
-              : neverBoundSession
-                ? 'unbound'
-                : sawVendorConnectionRetry(stdoutBuf)
-                  ? 'connection-failed'
-                  : 'crash'
+        const failureReason = exitFailureReason({
+          usageLimit: usageLimit !== null,
+          devToolsStartFailed: devToolsStartFailure !== null,
+          neverBoundSession,
+          connectionRetry: sawVendorConnectionRetry(stdoutBuf)
+        })
         if (neverBoundSession && usageLimit === null && devToolsStartFailure === null) {
           writeLifecycle(
             `[vinaya dispatch ${effectId}] ${role} via ${agent}: exited (code ${code}) without ever producing a working vendor session — failing now as 'unbound'`
