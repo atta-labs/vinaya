@@ -21,6 +21,7 @@
  * digit sits inside a code span, so the body's bare-digit rule never sees one.
  */
 
+import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
 import { anchoredRegion, anchoredRegionBounds } from './anchored-region'
 import { locateTestPlanSection } from './test-plan-section'
 
@@ -74,8 +75,33 @@ export type LiveRecordLine = {
   head: string
 }
 
-/** Every checkbox line inside the body's `AEG:LIVE` block — `[]` when the body carries none. */
+/** Every `AEG:LIVE` start or end marker outside code, by position — the driver writes exactly one of each. */
+function liveMarkers(body: string): { start: number; end: number }[] {
+  const masked = maskCode(body)
+  return [...masked.matchAll(/<!--\s*AEG:LIVE:(?:START|END)\s*-->/g)].map((m) => ({
+    start: m.index as number,
+    end: (m.index as number) + m[0].length
+  }))
+}
+
+/** The line read back from a body whose `AEG:LIVE` markers are not exactly one pair: unticked, so the merge gate holds and no run is skipped. */
+const AMBIGUOUS_RECORD_LINE: LiveRecordLine = {
+  line: "- [ ] **[live]** the pull request body carries more than one `AEG:LIVE` marker pair, so the driver's record cannot be told apart",
+  ticked: false,
+  command: '',
+  outcome: 'failed',
+  head: ''
+}
+
+/**
+ * Every checkbox line inside the body's `AEG:LIVE` block — `[]` when the body
+ * carries none. Fails closed: a body with any marker beyond the driver's one
+ * pair reads as a single unticked line, never as the first pair's lines.
+ */
 export function readLiveRecord(body: string): LiveRecordLine[] {
+  const markers = liveMarkers(body).length
+  if (markers === 0) return []
+  if (markers !== 2) return [AMBIGUOUS_RECORD_LINE]
   const region = anchoredRegion(body, 'LIVE')
   if (region === null) return []
   const lines: LiveRecordLine[] = []
@@ -124,17 +150,26 @@ function insertAt(body: string, at: number, block: string): string {
  * never does: with no record on `current`, any block on `next` is removed.
  */
 export function carryLiveRecord(next: string, current: string | null): string {
-  const kept = current === null ? null : anchoredRegionBounds(current, 'LIVE')
-  const existing = anchoredRegionBounds(next, 'LIVE')
-  if (kept === null) {
-    if (existing === null) return next
-    const before = next.slice(0, existing.outerStart).replace(/\s*$/, '')
-    const after = next.slice(existing.outerEnd).replace(/^\s*/, '')
-    return after.length > 0 ? `${before}\n\n${after}` : `${before}\n`
+  const stripped = withoutAgentLiveRecord(next)
+  const kept = current === null || liveMarkers(current).length !== 2 ? null : anchoredRegionBounds(current, 'LIVE')
+  if (kept === null) return stripped
+  return withLiveRecordBlockText(stripped, (current as string).slice(kept.outerStart, kept.outerEnd))
+}
+
+/**
+ * `body` with every `AEG:LIVE` pair an agent wrote removed, contents and all,
+ * then every leftover lone marker removed — so no number of forged pairs, and
+ * no stray marker pairing with the driver's own, survives.
+ */
+function withoutAgentLiveRecord(body: string): string {
+  let out = body
+  for (let pair = anchoredRegionBounds(out, 'LIVE'); pair !== null; pair = anchoredRegionBounds(out, 'LIVE')) {
+    const before = out.slice(0, pair.outerStart).replace(/\s*$/, '')
+    const after = out.slice(pair.outerEnd).replace(/^\s*/, '')
+    out = after.length > 0 ? `${before}\n\n${after}` : `${before}\n`
   }
-  const block = (current as string).slice(kept.outerStart, kept.outerEnd)
-  if (existing) return next.slice(0, existing.outerStart) + block + next.slice(existing.outerEnd)
-  return withLiveRecordBlockText(next, block)
+  for (const marker of liveMarkers(out).reverse()) out = out.slice(0, marker.start) + out.slice(marker.end)
+  return out
 }
 
 function withLiveRecordBlockText(body: string, block: string): string {

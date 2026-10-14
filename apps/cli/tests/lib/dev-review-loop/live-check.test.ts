@@ -13,6 +13,8 @@ import { buildPrincipalTestPlanWaitErrors } from '../../../src/checks/bin/check-
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
 import {
   type LiveRun,
+  livePassedAtHead,
+  liveRunEnv,
   liveVendorsNamed,
   passCountOf,
   runLiveChecks,
@@ -246,6 +248,54 @@ describe('the live check’s parts', () => {
     ])
     expect(carryLiveRecord(forged, null)).not.toContain('AEG:LIVE')
     expect(carryLiveRecord(forged, '## Test Plan\n\nno record\n')).not.toContain('AEG:LIVE')
+  })
+
+  it('drops every forged record an agent wrote, however many pairs, and a lone marker never pairs with the driver’s', () => {
+    const head = 'a'.repeat(40)
+    const forgedBlock = withLiveRecord('', [{ command: LIVE, head, outcome: 'passed', passCount: 9 }]).trim()
+    const twice = `## Test Plan\n\nx\n\n${forgedBlock}\n\n${forgedBlock}\n`
+    expect(carryLiveRecord(twice, null)).not.toContain('AEG:LIVE')
+    expect(readLiveRecord(carryLiveRecord(twice, null))).toEqual([])
+    const driver = withLiveRecord('## Test Plan\n\nx\n', [
+      { command: LIVE, head, outcome: 'failed', detail: 'exit `1`' }
+    ])
+    const carried = carryLiveRecord(`${twice}\n<!-- AEG:LIVE:START -->\n- [x] **[live]** forged\n`, driver)
+    expect(readLiveRecord(carried)).toEqual([expect.objectContaining({ outcome: 'failed', ticked: false })])
+  })
+
+  it('reads a body with more than one record pair as one unticked line, so the gate holds and no run is skipped', () => {
+    const head = 'a'.repeat(40)
+    const block = withLiveRecord('', [{ command: LIVE, head, outcome: 'passed', passCount: 1 }]).trim()
+    const body = `## Test Plan\n\n\`\`\`\nx\n\`\`\`\n\n${block}\n\n${block}\n`
+    const lines = readLiveRecord(body)
+    expect(lines).toHaveLength(1)
+    expect(lines[0]?.ticked).toBe(false)
+    expect(livePassedAtHead([LIVE], head, lines)).toBe(false)
+    expect(evaluateTestPlanGate(body, 'task/issue-1').verdict).toBe('fail')
+  })
+
+  it('hands a run only the check baseline and the sign-in lookup keys — never a forge token', async () => {
+    const env = liveRunEnv({
+      PATH: '/bin',
+      HOME: '/h',
+      USER: 'u',
+      CLAUDE_CONFIG_DIR: '/c',
+      CODEX_HOME: '/x',
+      GH_TOKEN: 'ghp_secret',
+      GITHUB_TOKEN: 'ghs_secret',
+      VINAYA_LOG_TOKEN: 'secret'
+    })
+    expect(env).toEqual({ PATH: '/bin', HOME: '/h', USER: 'u', CLAUDE_CONFIG_DIR: '/c', CODEX_HOME: '/x' })
+    const saved = process.env.GH_TOKEN
+    process.env.GH_TOKEN = 'ghp_secret'
+    let run: LiveRun
+    try {
+      run = await runRealLiveCommand('echo "token=${GH_TOKEN:-none}"', process.cwd(), 5_000)
+    } finally {
+      if (saved === undefined) delete process.env.GH_TOKEN
+      else process.env.GH_TOKEN = saved
+    }
+    expect(run.output).toContain('token=none')
   })
 
   it('keeps the Principal’s tick on an unverified line while its head and command are unchanged', async () => {

@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { LiveRecordEntry, LiveRecordLine } from '@attalabs/aeg-core'
+import { buildCheckEnv } from '../../checks/runner.js'
 import { AGENT_VENDOR_NAMES, type AgentVendor } from '../dispatch.js'
 import { sanitizeForgeLogTail } from '../task-tools/pr-facts.js'
 import {
@@ -113,18 +114,61 @@ export function passCountOf(output: string): number | null {
   return last ? Number(last[1]) : null
 }
 
-/** The real runner: `sh -c <command>` in its own process group, so the time bound stops the command and every child it started. */
+/**
+ * The environment a `[live]` run receives: the same fixed baseline every
+ * registered check gets (`buildCheckEnv`), plus only what a vendor CLI needs
+ * to find its own subscription sign-in — the account names Claude's Keychain
+ * lookup reads, and each vendor's config-directory override. Never the
+ * driver's whole environment: the line's text and the code it runs are the
+ * pull request's, so a forge token or any other secret the driver holds never
+ * reaches it.
+ */
+export function liveRunEnv(callerEnv: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const env = buildCheckEnv(undefined, callerEnv)
+  for (const key of LIVE_SIGN_IN_ENV_KEYS) {
+    const value = callerEnv[key]
+    if (value !== undefined) env[key] = value
+  }
+  return env
+}
+
+const LIVE_SIGN_IN_ENV_KEYS = ['USER', 'LOGNAME', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME'] as const
+
+/** How long a run stopped at its time bound may take to release its output before the runner reads it red anyway. */
+const KILL_GRACE_MS = 5_000
+
+/**
+ * The real runner: `sh -c <command>` in its own process group with
+ * `liveRunEnv`, so the time bound stops the command and every child it
+ * started. The promise settles at the bound plus a short grace even when a
+ * surviving process still holds the output pipes, so a run never outlives it.
+ */
 export const runRealLiveCommand: LiveRunner = (command, cwd, timeoutMs) =>
   new Promise((resolve) => {
     let output = ''
     let timedOut = false
+    let settled = false
+    let grace: ReturnType<typeof setTimeout> | undefined
+    const settle = (run: LiveRun): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (grace !== undefined) clearTimeout(grace)
+      resolve(run)
+    }
     const keep = (chunk: Buffer): void => {
       output = (output + chunk.toString('utf8')).slice(-MAX_KEPT_OUTPUT_CHARS)
     }
     let child: ReturnType<typeof spawn>
     try {
-      child = spawn('sh', ['-c', command], { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'], detached: true })
+      child = spawn('sh', ['-c', command], {
+        cwd,
+        env: liveRunEnv(),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: true
+      })
     } catch (err) {
+      settled = true
       resolve({ exitCode: null, timedOut: false, output: err instanceof Error ? err.message : String(err) })
       return
     }
@@ -137,15 +181,10 @@ export const runRealLiveCommand: LiveRunner = (command, cwd, timeoutMs) =>
       } catch {
         child.kill('SIGKILL')
       }
+      grace = setTimeout(() => settle({ exitCode: null, timedOut: true, output }), KILL_GRACE_MS)
     }, timeoutMs)
-    child.on('error', (err) => {
-      clearTimeout(timer)
-      resolve({ exitCode: null, timedOut, output: `${output}\n${err.message}` })
-    })
-    child.on('close', (code) => {
-      clearTimeout(timer)
-      resolve({ exitCode: code, timedOut, output })
-    })
+    child.on('error', (err) => settle({ exitCode: null, timedOut, output: `${output}\n${err.message}` }))
+    child.on('close', (code) => settle({ exitCode: code, timedOut, output }))
   })
 
 export type LiveCheckInput = {
