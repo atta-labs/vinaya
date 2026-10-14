@@ -41,7 +41,7 @@
  * so no existing import elsewhere in this codebase needed to change.
  */
 
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { guardedSpawnSync } from './driver-tool-guard.js'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -49,6 +49,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import { configPath, loadTrustAnchorConfig, resolveSecurityScanCommand } from './config.js'
+import { buildDeveloperDeltaPacket, buildDeveloperFullPacket, renderContextPacket } from './context-packet.js'
 import {
   addedDiffLines,
   agentOwnConfigSubpaths,
@@ -2663,6 +2664,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   let resumeHeadAlreadyMoved = false
   /** True when `--resume` continues a pause raised before the pull request existed and bound to it since: its ruling is on the task Issue (`escalationPrOf`), so the next Developer dispatch on the pull request is handed the Issue's rulings after the frozen brief. */
   let issueRulingsOwed = false
+  /** The Principal ruling that authenticated the pause this run resumed. */
+  let pauseBoundRuling: import('@attalabs/aeg-core').PauseBoundRuling | null = null
 
   if ('resumePr' in input) {
     const resumePr = input.resumePr
@@ -2816,6 +2819,20 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         : escalationPr === null
           ? `issue-${closesTask}-${d.fetchNewestIssueRulingOrdinal(closesTask)}`
           : `${resumePr}-${d.fetchNewestRulingOrdinal(resumePr)}`
+    if (
+      !bareAutomaticResume &&
+      !resumeAuthenticatedFrom.includes('-infrastructure-retry') &&
+      !resumeAuthenticatedFrom.endsWith('-host-repaired')
+    ) {
+      const rulingText = rulings.at(-1)
+      if (rulingText) {
+        pauseBoundRuling = {
+          rulingId: resumeAuthenticatedFrom,
+          pauseId: resumeEscalationId,
+          contentDigest: createHash('sha256').update(rulingText).digest('hex')
+        }
+      }
+    }
     let attachAfterReplayedResolution = false
     try {
       resolveEscalation(
@@ -4077,6 +4094,43 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         appendSourceDeliveryReceipt(documentationReceiptsPathForTask(), receipt)
       }
       const sourcesBlock = requiredSourcesPromptBlock(sourceManifest)
+      const packet = opts.skipResumeContext
+        ? buildDeveloperFullPacket({
+            brief: promptText,
+            briefDigest: briefHashOf(d.fetchFrozenBrief(task)),
+            objectives: d
+              .resolveIssueObjectives(task)
+              .objectives.map((o) => `${o.id}: ${o.text}`)
+              .join('\n'),
+            rulings: prNumber > 0 ? d.fetchRulings(prNumber) : d.fetchIssueRulingsAfterBrief(task),
+            baseSha: prNumber > 0 ? ((await d.gitMergeBase(d.resolveHead(branch))) ?? 'unresolved') : 'unpublished',
+            headSha: prNumber > 0 ? d.resolveHead(branch) : 'unpublished',
+            preparedSources: sourceManifest.sources.map((source) => source.sourceId),
+            capabilities: ['Execute only this frozen brief on the task branch.', publishingInstructionLine()],
+            toolCatalog: [
+              'fetch_documentation',
+              'run_checks',
+              'publish_changes',
+              'open_pull_request',
+              'update_pull_request_body',
+              'refresh_evidence',
+              'read_pull_request'
+            ],
+            expectedResult: 'DeveloperTurnResult schema version 1',
+            budgets: [`review rounds: ${policy.maxRounds}`, `task minutes: ${policy.maxTaskMinutes}`],
+            stopConditions: ['Honor every stop condition in the frozen brief.']
+          })
+        : buildDeveloperDeltaPacket({
+            previousSessionId: devResumeId ?? 'fresh-session',
+            changedFacts: [{ ref: 'head', version: `sha:${prNumber > 0 ? d.resolveHead(branch) : 'unpublished'}` }],
+            unresolvedFindings: turnResultKnownFindingIds.map((id) => ({
+              id,
+              description: 'unresolved controller finding'
+            })),
+            gateOutput: lastFailingChecks.map((check) => ({ reference: check, summary: 'failing on the prior head' })),
+            constraints: ['Continue the same frozen brief on the same task branch.', publishingInstructionLine()]
+          })
+      const packetBlock = renderContextPacket(packet)
       // O4: no bare-forge-command rule rides the prompt any longer — the
       // Developer holds no `gh`/`git push` credential and publishes only
       // through the driver-run tools, so there is no excluded command to run
@@ -4086,9 +4140,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // turn ends with — its structured turn result. The required-source
       // block leads every prompt, so it never splits the brief.
       const fullPrompt = opts.skipResumeContext
-        ? [sourcesBlock, promptText].filter((part): part is string => part !== null).join('\n\n')
+        ? [sourcesBlock, packetBlock, promptText].filter((part): part is string => part !== null).join('\n\n')
         : [
             sourcesBlock,
+            packetBlock,
             resumeContextBlock(),
             agentSwitched ? await switchedAgentContextBlock(promptText) : null,
             promptText,
@@ -6871,6 +6926,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               briefContent: d.fetchFrozenBrief(task),
               objectivesVersion: reassessedObjectives.version,
               rulingOrdinal: d.fetchNewestRulingOrdinal(prNumber),
+              pauseBoundRuling,
               policy
             })
             const carryBinding = compareManifest(
@@ -7680,6 +7736,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             briefContent: briefContentAtDispatch,
             objectivesVersion: resolvedObjectives.version,
             rulingOrdinal,
+            pauseBoundRuling,
             policy
           })
           lastDispatchedManifest = manifest
@@ -8006,6 +8063,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               briefContent: reassessedBriefContent,
               objectivesVersion: reassessedObjectives.version,
               rulingOrdinal: reassessedRulingOrdinal,
+              pauseBoundRuling,
               policy
             })
             const binding = compareManifest(manifestAsEchoed(facts.manifest), currentManifest)
@@ -8274,6 +8332,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 briefContent: d.fetchFrozenBrief(task),
                 objectivesVersion: d.resolveIssueObjectives(task).version,
                 rulingOrdinal: d.fetchNewestRulingOrdinal(prNumber),
+                pauseBoundRuling,
                 policy
               }),
             // O1: the backlog Issue this round's deferred findings were just

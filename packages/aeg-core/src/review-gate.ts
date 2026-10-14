@@ -108,6 +108,7 @@ export type ReviewGateComment = {
 }
 
 export type ReviewGateInput = {
+  manifestVersion?: 2
   /** Every comment on the PR, with its author. */
   comments: ReviewGateComment[]
   /** Every label currently applied to the PR. */
@@ -194,6 +195,8 @@ export type ReviewGateInput = {
    * unconditional skip, since a ruling's existence is never ambiguous.
    */
   rulingOrdinal: number
+  /** Ruling that authenticated the resumed pause preceding this review round. */
+  pauseBoundRuling?: import('./review-input-manifest').PauseBoundRuling | null
   /**
    * Which severities block is repository policy — resolved by the caller from the DEFAULT BRANCH's
    * `vinaya.config.json` (`resolveReviewPolicy(loadTrustAnchorConfig())`),
@@ -394,27 +397,33 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   // brief string) since the caller already resolved `briefHash` itself and
   // this module stays pure — no hashing of forge content here.
   const currentManifest: ReviewInputManifest = {
+    ...(input.manifestVersion === undefined ? {} : { manifestVersion: input.manifestVersion }),
     headSha: input.headSha,
     baseSha: input.baseSha ?? null,
     briefHash: input.briefHash ?? null,
     objectivesVersion: input.objectivesVersion,
     rulingOrdinal: input.rulingOrdinal,
+    pauseBoundRuling: input.pauseBoundRuling ?? null,
     policyDigest: computePolicyDigest(policy)
   }
   const codeReviewEchoed: EchoedManifest = {
+    manifestVersion: codeReview.manifestVersion,
     headSha: codeReview.headSha,
     baseSha: codeReview.baseSha,
     briefHash: codeReview.briefHash,
     objectivesVersion: codeReview.objectivesVersion,
     rulingOrdinal: codeReview.rulingOrdinal,
+    pauseBoundRuling: codeReview.pauseBoundRuling,
     policyDigest: codeReview.policyDigest
   }
   const securityEchoed: EchoedManifest = {
+    manifestVersion: security.manifestVersion,
     headSha: security.headSha,
     baseSha: security.baseSha,
     briefHash: security.briefHash,
     objectivesVersion: security.objectivesVersion,
     rulingOrdinal: security.rulingOrdinal,
+    pauseBoundRuling: security.pauseBoundRuling,
     policyDigest: security.policyDigest
   }
   const codeReviewBinding = compareManifest(codeReviewEchoed, currentManifest, input.patchIdOf)

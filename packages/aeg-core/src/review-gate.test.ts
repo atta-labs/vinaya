@@ -291,6 +291,35 @@ describe('checkReviewGate', () => {
   })
 })
 
+describe('checkReviewGate — extended manifest binding', () => {
+  const ruling = { rulingId: '1391-1', pauseId: 'pause-1', contentDigest: 'a'.repeat(64) }
+  const marker = `${ruling.rulingId}|${ruling.pauseId}|${ruling.contentDigest}`
+  const comment = (verdict: 'APPROVE' | 'PASS', version = 2, pause = marker) =>
+    principal(
+      `VERDICT: ${verdict}\n\nJudged head: ${HEAD_SHA}\n\nRuling ordinal: 0\n\nBrief hash: (none)\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}\n\nJudged base: (none)\n\nManifest version: ${version}\n\nPause-bound ruling: ${pause}`
+    )
+  const input = {
+    labels: [] as string[],
+    waiverLabelActor: null,
+    headSha: HEAD_SHA,
+    objectivesVersion: null,
+    rulingOrdinal: 0,
+    manifestVersion: 2 as const,
+    pauseBoundRuling: ruling
+  }
+
+  it('passes when both verdicts echo every extended slot', () => {
+    expect(checkReviewGate({ ...input, comments: [comment('APPROVE'), comment('PASS')] }).verdict).toBe('pass')
+  })
+
+  it('refuses an unknown version and a mismatched pause binding through the real gate', () => {
+    expect(checkReviewGate({ ...input, comments: [comment('APPROVE', 99), comment('PASS')] }).verdict).toBe('fail')
+    expect(checkReviewGate({ ...input, comments: [comment('APPROVE', 2, '(none)'), comment('PASS')] }).verdict).toBe(
+      'fail'
+    )
+  })
+})
+
 describe('checkReviewGate — base identity binding (#555, O1/O3)', () => {
   const BASE_A = 'f'.repeat(40)
   const BASE_B = 'e'.repeat(40)

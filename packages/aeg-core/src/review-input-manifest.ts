@@ -186,13 +186,13 @@ export type EchoedManifest = {
 /** `manifest`'s own fields, reshaped as an `EchoedManifest` — for a same-process comparison (the loop's pre-hold self-check) where the "echo" is simply the in-memory manifest a verdict was rendered from, never a round-trip through the rendered text. */
 export function manifestAsEchoed(manifest: ReviewInputManifest): EchoedManifest {
   return {
-    manifestVersion: manifest.manifestVersion ?? 2,
+    ...(manifest.manifestVersion === undefined ? {} : { manifestVersion: manifest.manifestVersion }),
     headSha: manifest.headSha,
     baseSha: manifest.baseSha,
     briefHash: manifest.briefHash,
     objectivesVersion: manifest.objectivesVersion,
     rulingOrdinal: manifest.rulingOrdinal,
-    pauseBoundRuling: manifest.pauseBoundRuling ?? null,
+    ...(manifest.manifestVersion === undefined ? {} : { pauseBoundRuling: manifest.pauseBoundRuling ?? null }),
     policyDigest: manifest.policyDigest
   }
 }
@@ -396,9 +396,14 @@ export function compareManifest(
   const briefHashBound = isBoundToBriefHash(echoed, current.briefHash)
   const objectivesVersion = isBoundToObjectives(echoed, current.objectivesVersion)
   const rulingOrdinal = isBoundToRulings(echoed, current.rulingOrdinal)
-  const manifestVersion = (echoed.manifestVersion ?? 2) === (current.manifestVersion ?? 2)
-  const pauseBoundRuling =
-    JSON.stringify(echoed.pauseBoundRuling ?? null) === JSON.stringify(current.pauseBoundRuling ?? null)
+  const legacyCurrent = current.manifestVersion === undefined
+  const manifestVersion = legacyCurrent
+    ? echoed.manifestVersion === undefined || echoed.manifestVersion === null
+    : echoed.manifestVersion === current.manifestVersion
+  const pauseBoundRuling = legacyCurrent
+    ? true
+    : Object.hasOwn(echoed, 'pauseBoundRuling') &&
+      JSON.stringify(echoed.pauseBoundRuling) === JSON.stringify(current.pauseBoundRuling)
   const policyDigestBound = isBoundToPolicy(echoed, current.policyDigest)
   return {
     bound:

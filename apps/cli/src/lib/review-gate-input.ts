@@ -408,6 +408,8 @@ export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssemb
   return {
     ok: true,
     input: {
+      manifestVersion: 2,
+      pauseBoundRuling: null,
       comments,
       labels,
       waiverLabelActor,
