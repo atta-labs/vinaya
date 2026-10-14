@@ -36,6 +36,7 @@ export {
 } from './fixtures'
 export type { ExecutionName, FactSheet, FixtureExecution, FixtureLine, FixtureValidity } from './fixtures'
 export { redact } from './redact'
+export { describeSchema, logEventSchemaDigest, schemaDigest } from './schema-digest'
 export {
   classifyStoredLine,
   createFixtureStore,

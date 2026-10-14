@@ -4,9 +4,12 @@ import {
   LOG_SELFTEST_OPERATION,
   type LogSelftestDeps,
   logSelftestCommand,
+  realLogSelftestDeps,
   runLogSelftest,
   type SelftestReadPage
 } from '../../src/commands/log-selftest.js'
+import { schemaDigestFromStats } from '../../src/lib/log-schema-digest.js'
+import { logEventSchemaDigest } from '@attalabs/aeg-core/log'
 
 // The self-test is proved against injected seams, not a live server: every
 // FAIL reason and the one PASS are a decision over `resolveDestination` /
@@ -16,6 +19,7 @@ import {
 
 const SECRET = 'super-secret-token-value-abc123'
 const NONCE = 'nonce-fixed-1'
+const DIGEST = 'sha256:aaaa'
 
 /** A page holding one event whose id is `NONCE` — what a healthy read-back returns. */
 function pageWithEvent(): SelftestReadPage {
@@ -42,7 +46,8 @@ function deps(overrides: Partial<LogSelftestDeps> = {}): { deps: LogSelftestDeps
     }),
     readReadHeaders: () => ({ authorization: 'Bearer ${VINAYA_LOG_READ_TOKEN}' }),
     resolveHeaders: () => ({ authorization: `Bearer ${SECRET}` }),
-    readLastSeq: async () => ({ kind: 'accepted', status: 200, lastSeq: 5 }),
+    readLastSeq: async () => ({ kind: 'accepted', status: 200, lastSeq: 5, schemaDigest: DIGEST }),
+    localSchemaDigest: () => DIGEST,
     post: async () => ({ kind: 'accepted', status: 200 }),
     read: async () => pageWithEvent(),
     buildLine: () => `{"meta":{"event_id":"${NONCE}"}}\n`,
@@ -208,11 +213,61 @@ describe('vinaya log selftest — each FAIL names the one reason that stopped it
   })
 })
 
+describe('vinaya log selftest — a server behind the validator fails before anything is sent', () => {
+  it('FAILs naming the redeploy command when the server reports a different digest, sending nothing', async () => {
+    let posts = 0
+    const { deps: d } = deps({
+      readLastSeq: async () => ({ kind: 'accepted', status: 200, lastSeq: 5, schemaDigest: 'sha256:bbbb' }),
+      post: async () => {
+        posts++
+        return { kind: 'accepted', status: 200 }
+      }
+    })
+    const result = await runLogSelftest(d)
+    expect(result.pass).toBe(false)
+    if (!result.pass) {
+      expect(result.reason).toContain('sha256:bbbb')
+      expect(result.reason).toContain(DIGEST)
+      expect(result.reason).toContain('bunx wrangler deploy')
+    }
+    expect(posts).toBe(0)
+  })
+
+  it('FAILs naming the redeploy command when the server reports no digest at all', async () => {
+    const { deps: d } = deps({
+      readLastSeq: async () => ({ kind: 'accepted', status: 200, lastSeq: 5, schemaDigest: null })
+    })
+    const result = await runLogSelftest(d)
+    expect(result.pass).toBe(false)
+    if (!result.pass) {
+      expect(result.reason).toContain('reports no event-schema digest')
+      expect(result.reason).toContain('bunx wrangler deploy')
+    }
+  })
+
+  it('PASSes, printing the digest, when the server reports this CLI’s own digest', async () => {
+    const { deps: d, out } = deps()
+    expect(await logSelftestCommand([], d)).toBe(0)
+    expect(out.join('')).toContain(DIGEST)
+  })
+
+  it('reads the digest off the stats body, and only a non-empty string counts', () => {
+    expect(schemaDigestFromStats({ last_seq: 1, schema_digest: DIGEST })).toBe(DIGEST)
+    expect(schemaDigestFromStats({ last_seq: 1 })).toBeNull()
+    expect(schemaDigestFromStats({ schema_digest: '' })).toBeNull()
+    expect(schemaDigestFromStats(null)).toBeNull()
+  })
+
+  it('compares against the digest the log package computes', () => {
+    expect(realLogSelftestDeps().localSchemaDigest()).toBe(logEventSchemaDigest())
+  })
+})
+
 describe('vinaya log selftest — read-back pages until it finds the event (Traps)', () => {
   it('walks `after=` forward across pages until the event appears', async () => {
     const seen: number[] = []
     const { deps: d } = deps({
-      readLastSeq: async () => ({ kind: 'accepted', status: 200, lastSeq: 0 }),
+      readLastSeq: async () => ({ kind: 'accepted', status: 200, lastSeq: 0, schemaDigest: DIGEST }),
       read: async (_url, _headers, after) => {
         seen.push(after)
         // Two empty-but-advancing pages, then the event on the third.
@@ -229,7 +284,7 @@ describe('vinaya log selftest — read-back pages until it finds the event (Trap
     let calls = 0
     const { deps: d } = deps({
       maxPages: 3,
-      readLastSeq: async () => ({ kind: 'accepted', status: 200, lastSeq: 0 }),
+      readLastSeq: async () => ({ kind: 'accepted', status: 200, lastSeq: 0, schemaDigest: DIGEST }),
       read: async (_url, _headers, after) => {
         calls++
         return { kind: 'accepted', status: 200, nextAfter: after + 1, events: [] }

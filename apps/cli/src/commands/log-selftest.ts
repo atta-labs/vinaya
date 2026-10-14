@@ -13,6 +13,12 @@
 // from real telemetry; the read-back matches the event's own `event_id`, a
 // nonce this command mints and threads through `buildHeader` so the stored
 // line carries it verbatim.
+//
+// Before it sends, it compares the server's `schema_digest` (its stats route)
+// with this CLI's own: a server deployed from a different event schema refuses
+// or stores verbatim lines this CLI considers valid, which a round-trip of one
+// event can pass right over, so a differing or absent digest fails with the
+// redeploy command.
 
 import { randomUUID } from 'node:crypto'
 import { hostname as osHostname, homedir } from 'node:os'
@@ -28,6 +34,7 @@ import {
   resolveUnattendedLogDestination,
   resolveUnattendedServerSetting
 } from '../lib/log-sink.js'
+import { localSchemaDigest, schemaDigestFromStats, schemaDigestMismatch } from '../lib/log-schema-digest.js'
 import { packageRoot } from '../lib/package-root.js'
 
 /** The fixed marker every self-test event carries, so a reader can exclude it from real telemetry (Traps). */
@@ -57,11 +64,13 @@ export type LogSelftestDeps = {
   readReadHeaders: () => Record<string, string> | undefined
   /** Substitutes `${VAR}` references in a header map — `resolveLogsHeaderValues`. */
   resolveHeaders: (headers: Record<string, string> | undefined) => Record<string, string> | undefined
-  /** The last stored `seq` before the send, so the read-back pages forward from there. */
+  /** The stats route before the send: the last stored `seq`, so the read-back pages forward from there, and the server's `schema_digest` (`null` when it reports none). */
   readLastSeq: (
     url: string,
     headers: Record<string, string> | undefined
-  ) => Promise<SelftestHttp & { lastSeq?: number }>
+  ) => Promise<SelftestHttp & { lastSeq?: number; schemaDigest?: string | null }>
+  /** This CLI's own event-schema digest — `localSchemaDigest`. */
+  localSchemaDigest: () => string
   /** POSTs the one marked ndjson line to the ingest route. */
   post: (url: string, headers: Record<string, string> | undefined, body: string) => Promise<SelftestHttp>
   /** Reads one page of events after `after` from the read route. */
@@ -156,7 +165,7 @@ export function realLogSelftestDeps(): LogSelftestDeps {
         }
         const body = (await response.json()) as { last_seq?: unknown }
         const lastSeq = typeof body.last_seq === 'number' ? body.last_seq : 0
-        return { kind: 'accepted', status: response.status, lastSeq }
+        return { kind: 'accepted', status: response.status, lastSeq, schemaDigest: schemaDigestFromStats(body) }
       } catch (err) {
         return { kind: 'network', detail: firstLine(err) }
       }
@@ -214,6 +223,7 @@ export function realLogSelftestDeps(): LogSelftestDeps {
         return { kind: 'network', detail: firstLine(err) }
       }
     },
+    localSchemaDigest,
     buildLine: (eventId) => buildSelftestLine(eventId, null, new Date(), randomUUID()),
     env: process.env,
     newNonce: () => randomUUID(),
@@ -315,6 +325,8 @@ export async function runLogSelftest(deps: LogSelftestDeps): Promise<SelftestRes
   if (before.kind === 'network') {
     return { pass: false, reason: `the log server ${destination.url} could not be reached (${before.detail}).` }
   }
+  const mismatch = schemaDigestMismatch(destination.url, before.schemaDigest ?? null, deps.localSchemaDigest())
+  if (mismatch !== null) return { pass: false, reason: mismatch }
   const baseline = before.lastSeq ?? 0
 
   const nonce = deps.newNonce()
@@ -369,7 +381,10 @@ export async function logSelftestCommand(
     return 1
   }
   if (result.pass) {
-    deps.stdout('PASS: log delivery works — one test event was sent to the server and read back by its id.\n')
+    deps.stdout(
+      'PASS: log delivery works — one test event was sent to the server and read back by its id, and the server ' +
+        `validates with this CLI's event schema (${deps.localSchemaDigest()}).\n`
+    )
     return 0
   }
   deps.stderr(`FAIL: ${result.reason}\n`)
@@ -384,11 +399,13 @@ import type { SurfaceExemption } from '../lib/surface-exemption'
 // / `resolveUnattendedServerSetting`), checks the credential
 // (`logsCredentialMissing`), renders a fallback reason
 // (`describeFolderFallback`), and reads the read credential from config
-// (`loadConfig`/`resolveLogsHeaderValues`). There is no single lib function
+// (`loadConfig`/`resolveLogsHeaderValues`), and compares the server's
+// event-schema digest with its own (`schemaDigestFromStats` /
+// `schemaDigestMismatch`). There is no single lib function
 // that both resolves the destination AND round-trips one event through it, and
 // inventing a façade to satisfy the one-call rule would only hide the wiring a
 // reader needs to see. The retirement target is a future `log-delivery.ts`
 // that owns "prove and deliver for this repo" behind one call.
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'log selftest': { date: '2026-10-01', callsToday: 8, retiresVia: 'logDeliveryChokepoint' }
+  'log selftest': { date: '2026-10-01', callsToday: 10, retiresVia: 'logDeliveryChokepoint' }
 }

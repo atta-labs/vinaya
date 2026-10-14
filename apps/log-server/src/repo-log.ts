@@ -17,12 +17,12 @@
  */
 
 import { DurableObject } from 'cloudflare:workers'
-import { classifyStoredLine, recordIdentity, redact } from '@attalabs/aeg-core/log'
+import { classifyStoredLine, logEventSchemaDigest, recordIdentity, redact } from '@attalabs/aeg-core/log'
 import { LIVE_SUBPROTOCOL, parseRoute, repoName, type Route } from './route'
 
 export interface Env {
   REPO_LOG: DurableObjectNamespace<RepoLog>
-  /** Write-only bearer token, accepted on the ingest route alone. A Worker secret, never in the repository. */
+  /** Write-only bearer token, accepted on the ingest route and the rejected route's replay alone. A Worker secret, never in the repository. */
   INGEST_TOKEN: string
   /** Read-only bearer token, accepted on the read, stats, rejected and live routes alone. A Worker secret, never in the repository. */
   READ_TOKEN: string
@@ -47,6 +47,13 @@ export const REJECTED_GROUP_WINDOW = 1000
 export const REJECTED_RECENT_MAX = 20
 /** The most bytes of a rejected line a reason's `sample` carries (spec § 5, "Rejected"). */
 export const REJECTED_SAMPLE_BYTES = 512
+
+/**
+ * One line's outcome on its way into `events` — the same decision for a line
+ * an ingest received and for a rejected row a replay re-reads, so the two can
+ * never classify the same bytes differently.
+ */
+type LineOutcome = { kind: 'stored'; message: string } | { kind: 'duplicate' } | { kind: 'rejected'; reason: string }
 
 /** The read route's default and maximum page size (spec § 5). */
 export const READ_LIMIT_MAX = 1000
@@ -196,6 +203,8 @@ export class RepoLog extends DurableObject<Env> {
         return this.stats(parsed.route)
       case 'rejected':
         return this.rejectedReport(parsed.route)
+      case 'replay':
+        return this.replayRejected()
       case 'live':
         return this.live(url)
     }
@@ -245,64 +254,16 @@ export class RepoLog extends DurableObject<Env> {
       stored = []
 
       for (const raw of lines) {
-        const size = byteLength(raw)
-        if (size > MAX_LINE_BYTES) {
-          this.recordRejected(receivedAt, `too_large:${size}`, raw)
+        const outcome = this.storeLine(raw, receivedAt)
+        if (outcome.kind === 'rejected') {
+          this.recordRejected(receivedAt, outcome.reason, raw)
           rejected += 1
-          continue
-        }
-
-        const record = classifyStoredLine(raw, NO_HOME)
-        if (record.status === 'invalid') {
-          this.recordRejected(receivedAt, `invalid:${record.reason}`, raw)
-          rejected += 1
-          continue
-        }
-
-        // Spec § 3: an event's identity is `recordIdentity`'s answer for the
-        // object being stored — `event_id` for a `schema: 2` line, the
-        // `run_id`/`seq` pair for a `schema: 1` one. A validated line is
-        // identified from the validated event itself, so the stored row and
-        // its identity can never be read off two different objects; a line
-        // whose schema version this build does not know has only its raw
-        // form, and `classifyStoredLine` already read the same function over
-        // it.
-        const identity = record.status === 'ok' ? recordIdentity(record.event) : record.identity
-        if (identity === null) {
-          this.recordRejected(receivedAt, 'no_identity', raw)
-          rejected += 1
-          continue
-        }
-
-        // `ok` stores the re-redacted line the read boundary produced;
-        // `unknown_version` stores the line verbatim — a newer sender talking
-        // to an older server loses nothing, and a line this build cannot
-        // validate is also one it must not rewrite.
-        const line = record.status === 'ok' ? record.postLine : record.raw
-        const ts = record.status === 'ok' ? record.event.meta.ts : timestampOf(raw)
-
-        // `RETURNING seq` yields a row only when the insert actually stored
-        // one, so a resend of an already-stored identity is counted as a
-        // duplicate rather than mistaken for a new event.
-        const inserted = this.sql
-          .exec(
-            `INSERT OR IGNORE INTO events (event_id, status, ts, received_at, line)
-             VALUES (?, ?, ?, ?, ?) RETURNING seq`,
-            identity,
-            record.status,
-            ts,
-            receivedAt,
-            line
-          )
-          .toArray()
-
-        const row = inserted[0] as { seq: number } | undefined
-        if (row === undefined) {
+        } else if (outcome.kind === 'duplicate') {
           duplicates += 1
-          continue
+        } else {
+          accepted += 1
+          stored.push(outcome.message)
         }
-        accepted += 1
-        stored.push(envelope(Number(row.seq), record.status, line))
       }
     })
 
@@ -312,6 +273,121 @@ export class RepoLog extends DurableObject<Env> {
     this.broadcast(stored)
 
     return Response.json({ accepted, duplicates, rejected, last_seq: this.lastSeq() })
+  }
+
+  /**
+   * Classify one line and, when it has an identity, insert it into `events`
+   * (spec § 3). Never writes `rejected`: a caller decides what a refused line
+   * becomes — an ingest records it, a replay leaves the row it came from
+   * exactly as it is. Runs inside the caller's transaction.
+   */
+  private storeLine(raw: string, receivedAt: number): LineOutcome {
+    const size = byteLength(raw)
+    if (size > MAX_LINE_BYTES) return { kind: 'rejected', reason: `too_large:${size}` }
+
+    const record = classifyStoredLine(raw, NO_HOME)
+    if (record.status === 'invalid') return { kind: 'rejected', reason: `invalid:${record.reason}` }
+
+    // Spec § 3: an event's identity is `recordIdentity`'s answer for the
+    // object being stored — `event_id` for a `schema: 2` line, the
+    // `run_id`/`seq` pair for a `schema: 1` one. A validated line is
+    // identified from the validated event itself, so the stored row and
+    // its identity can never be read off two different objects; a line
+    // whose schema version this build does not know has only its raw
+    // form, and `classifyStoredLine` already read the same function over
+    // it.
+    const identity = record.status === 'ok' ? recordIdentity(record.event) : record.identity
+    if (identity === null) return { kind: 'rejected', reason: 'no_identity' }
+
+    // `ok` stores the re-redacted line the read boundary produced;
+    // `unknown_version` stores the line verbatim — a newer sender talking
+    // to an older server loses nothing, and a line this build cannot
+    // validate is also one it must not rewrite.
+    const line = record.status === 'ok' ? record.postLine : record.raw
+    const ts = record.status === 'ok' ? record.event.meta.ts : timestampOf(raw)
+
+    // `RETURNING seq` yields a row only when the insert actually stored
+    // one, so a resend of an already-stored identity is counted as a
+    // duplicate rather than mistaken for a new event.
+    const inserted = this.sql
+      .exec(
+        `INSERT OR IGNORE INTO events (event_id, status, ts, received_at, line)
+         VALUES (?, ?, ?, ?, ?) RETURNING seq`,
+        identity,
+        record.status,
+        ts,
+        receivedAt,
+        line
+      )
+      .toArray()
+
+    const row = inserted[0] as { seq: number } | undefined
+    if (row === undefined) return { kind: 'duplicate' }
+    return { kind: 'stored', message: envelope(Number(row.seq), record.status, line) }
+  }
+
+  /**
+   * Re-run the newest `REJECTED_GROUP_WINDOW` rejected rows through the same
+   * per-line decision ingest makes (spec § 5, "Replay"), for the day the
+   * server's validator catches up with a sender's: a row whose line validates
+   * now becomes an ordinary event, identified by its `event_id` like any
+   * other, so a line stored already — by an earlier replay, or resent by its
+   * sender after the redeploy — is a duplicate and inserts nothing.
+   *
+   * **Nothing in `rejected` is deleted or updated, and no row is
+   * renumbered.** § 4's never-delete rule is what lets the stats route read
+   * both counts as `MAX(rowid)`; a replayed row stays as the record of what
+   * was refused and when, and a second replay finds its event already stored.
+   * The window is read by `id` descending exactly as the rejected report
+   * reads it — a bounded read of the table's tail, never a scan — and walked
+   * oldest first, so the replayed events keep the order they arrived in. Each
+   * keeps the time the server first received it.
+   *
+   * One replay is one transaction, and its new rows reach live viewers only
+   * after it commits, exactly as an ingest's do.
+   */
+  private replayRejected(): Response {
+    let replayed = 0
+    let duplicates = 0
+    let stillRejected = 0
+    let stored: string[] = []
+
+    this.ctx.storage.transactionSync(() => {
+      replayed = 0
+      duplicates = 0
+      stillRejected = 0
+      stored = []
+
+      const rows = this.sql
+        .exec<{ id: number; received_at: number; line: string | null }>(
+          'SELECT id, received_at, line FROM rejected ORDER BY id DESC LIMIT ?',
+          REJECTED_GROUP_WINDOW
+        )
+        .toArray()
+        .reverse()
+
+      for (const row of rows) {
+        // A row with no line kept, or one cut to its first 64 KiB, cannot be
+        // the event it was: the first fails here, the second fails to parse.
+        if (row.line === null) {
+          stillRejected += 1
+          continue
+        }
+        const outcome = this.storeLine(row.line, Number(row.received_at))
+        if (outcome.kind === 'rejected') {
+          stillRejected += 1
+        } else if (outcome.kind === 'duplicate') {
+          duplicates += 1
+        } else {
+          replayed += 1
+          stored.push(outcome.message)
+        }
+      }
+    })
+
+    this.broadcast(stored)
+
+    return Response.json({ replayed, duplicates, still_rejected: stillRejected, last_seq: this.lastSeq() })
   }
 
   private recordRejected(receivedAt: number, reason: string, raw: string): void {
@@ -369,6 +445,10 @@ export class RepoLog extends DurableObject<Env> {
    * read allowance of five million. A later change that deletes rows (the
    * archiving § 2 names as the planned answer to the storage ceiling) has to
    * replace this with real counters in the same change.
+   *
+   * `schema_digest` is the structural digest of the event validator this
+   * build bundled (`logEventSchemaDigest`), the value the CLI compares with
+   * its own to see a server deployed from a different schema.
    */
   private stats(route: Route): Response {
     const lastSeq = this.lastSeq()
@@ -383,7 +463,8 @@ export class RepoLog extends DurableObject<Env> {
       bytes: this.sql.databaseSize,
       oldest_ts: oldest?.ts ?? null,
       newest_ts: newest?.ts ?? null,
-      last_seq: lastSeq
+      last_seq: lastSeq,
+      schema_digest: logEventSchemaDigest()
     })
   }
 

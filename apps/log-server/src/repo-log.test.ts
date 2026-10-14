@@ -14,6 +14,7 @@
  */
 
 import { env, runInDurableObject, SELF } from 'cloudflare:test'
+import { logEventSchemaDigest } from '@attalabs/aeg-core/log'
 import { describe, expect, it } from 'vitest'
 import type { Env, RepoLog } from './repo-log'
 
@@ -332,6 +333,13 @@ describe('stats make the storage ceiling visible before it is reached', () => {
     expect(body.bytes).toBeGreaterThan(0)
   })
 
+  it('carries the digest of the event validator the server bundled', async () => {
+    const repo = freshRepo()
+    const body = (await (await stats(repo)).json()) as Record<string, unknown>
+    expect(body.schema_digest).toBe(logEventSchemaDigest())
+    expect(body.schema_digest).toMatch(/^sha256:[0-9a-f]{64}$/)
+  })
+
   it('reports an empty log without inventing a time range', async () => {
     const repo = freshRepo()
     const body = (await (await stats(repo)).json()) as Record<string, unknown>
@@ -406,6 +414,84 @@ describe('the rejected route shows why lines were refused', () => {
   it('reports an empty table as empty', async () => {
     const repo = freshRepo()
     expect(await (await rejected(repo)).json()).toEqual({ repo, window: 1000, reasons: [], recent: [] })
+  })
+})
+
+async function replay(repo: string, token: string | null = INGEST): Promise<Response> {
+  const headers: Record<string, string> = token === null ? {} : { authorization: `Bearer ${token}` }
+  return await SELF.fetch(url(repo, 'rejected'), { method: 'POST', headers })
+}
+
+/**
+ * Put rows straight into a repository's `rejected` table, as an older build of
+ * the validator would have left them: the server under test bundles today's
+ * validator, so a line it accepts today can only reach `rejected` this way.
+ */
+async function seedRejected(repo: string, lines: (string | null)[]): Promise<void> {
+  const namespace = repoLogs()
+  await runInDurableObject(namespace.get(namespace.idFromName(repo)), (_instance, state) => {
+    for (const seeded of lines) {
+      state.storage.sql.exec(
+        'INSERT INTO rejected (received_at, reason, line) VALUES (?, ?, ?)',
+        1_700_000_000_000,
+        'invalid:Unrecognized key(s) in object',
+        seeded
+      )
+    }
+  })
+}
+
+type ReplayReport = { replayed: number; duplicates: number; still_rejected: number; last_seq: number }
+
+describe('a rejected row is replayed once the validator accepts its line', () => {
+  it('stores a now-valid row once, by its event_id, and counts it a duplicate on a second replay', async () => {
+    const repo = freshRepo()
+    await post(repo, line(repo, 1))
+    await seedRejected(repo, [line(repo, 2), 'still not json'])
+    const before = (await (await stats(repo)).json()) as Record<string, unknown>
+    expect(before.rejected).toBe(2)
+
+    const first = await replay(repo)
+    expect(first.status).toBe(200)
+    expect((await first.json()) as ReplayReport).toEqual({ replayed: 1, duplicates: 0, still_rejected: 1, last_seq: 2 })
+
+    const rows = await pageLines(await read(repo))
+    expect(rows.map((row) => [row.seq, row.event.meta.event_id])).toEqual([
+      [1, 'e-1'],
+      [2, 'e-2']
+    ])
+
+    const second = (await (await replay(repo)).json()) as ReplayReport
+    expect(second).toEqual({ replayed: 0, duplicates: 1, still_rejected: 1, last_seq: 2 })
+    expect((await pageLines(await read(repo))).length).toBe(2)
+
+    const after = (await (await stats(repo)).json()) as Record<string, unknown>
+    expect(after.rejected).toBe(2)
+    expect(after.events).toBe(2)
+    const report = (await (await rejected(repo)).json()) as RejectedReport
+    expect(report.recent.map((r) => r.line)).toEqual(['still not json', line(repo, 2)])
+  })
+
+  it('counts a row an ingest already stored as a duplicate, never a second event', async () => {
+    const repo = freshRepo()
+    await post(repo, line(repo, 1))
+    await seedRejected(repo, [line(repo, 1), null])
+
+    expect((await (await replay(repo)).json()) as ReplayReport).toEqual({
+      replayed: 0,
+      duplicates: 1,
+      still_rejected: 1,
+      last_seq: 1
+    })
+  })
+
+  it('refuses the read token and no token, exactly as ingest does', async () => {
+    const repo = freshRepo()
+    await seedRejected(repo, [line(repo, 1)])
+    expect((await replay(repo, READ)).status).toBe(401)
+    expect((await replay(repo, null)).status).toBe(401)
+    expect((await replay(repo, 'not-the-token')).status).toBe(401)
+    expect(((await (await stats(repo)).json()) as Record<string, unknown>).events).toBe(0)
   })
 })
 
