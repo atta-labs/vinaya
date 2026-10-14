@@ -38,14 +38,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
  * EXEMPT with a reason, which is a deliberate act rather than a silent one.
  */
 const EXEMPT: Readonly<Record<string, string>> = {
-  'apps/cli/tests/fixtures/atta-engine/atta-adapter-langgraph-0.0.1.tgz':
-    'versioned packed dependency used to prove the external-consumer boundary',
-  'apps/cli/tests/fixtures/atta-engine/atta-agents-0.1.0.tgz':
-    'versioned packed dependency used to prove the external-consumer boundary',
-  'apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz':
-    'versioned packed dependency used to prove the external-consumer boundary',
-  'apps/cli/tests/fixtures/atta-engine/atta-models-0.1.0.tgz':
-    'versioned packed dependency used to prove the external-consumer boundary'
+  'apps/cli/tests/fixtures/atta-engine/atta-adapter-langgraph-0.0.1.tgz': 'packed test-only runtime tarball',
+  'apps/cli/tests/fixtures/atta-engine/atta-agents-0.1.0.tgz': 'packed test-only runtime tarball',
+  'apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz': 'packed test-only runtime tarball',
+  'apps/cli/tests/fixtures/atta-engine/atta-models-0.1.0.tgz': 'packed test-only runtime tarball'
 }
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
