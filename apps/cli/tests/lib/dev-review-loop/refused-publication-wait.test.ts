@@ -77,7 +77,7 @@ describe('devReviewLoop — a refused publication skips the head-change wait', (
 
     expect(result.finalDecision.type).toBe('pause')
     expect((result.finalDecision as { detail: string }).detail).toMatch(
-      /publication refused: publication-preconditions/
+      /publication refused: policy_refusal\/same_attempt\/not_started: publication-preconditions/
     )
     const laterTurns = (world.dispatchCountByRole.developer ?? 1) - 1
     expect(pollSleeps()).toBeLessThanOrEqual(laterTurns)

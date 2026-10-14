@@ -355,7 +355,21 @@ describe('O4: refusals, each naming its reason', () => {
 
   it('never connects for a refused address', async () => {
     const network = fakeNetwork({ dns: { 'intranet.example.com': [[{ address: '10.0.0.1', family: 4 }]] }, routes: {} })
-    await tool(network, join(tempDir('fetch-doc-'), 'r.jsonl'))({ url: 'https://intranet.example.com/' })
+    const result = await tool(
+      network,
+      join(tempDir('fetch-doc-'), 'r.jsonl')
+    )({
+      url: 'https://intranet.example.com/'
+    })
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        check: 'private-address',
+        errorClass: 'policy_refusal',
+        retryDisposition: 'never',
+        effectState: 'not_started'
+      }
+    })
     expect(network.requests).toEqual([])
   })
 
@@ -471,7 +485,15 @@ describe('bounds on what one dispatch can send through the driver', () => {
     const result = await createFetchDocumentationTool({ receiptsPath: join(tempDir('fetch-doc-'), 'r.jsonl'), deps })({
       url: 'https://slow.example.com/a'
     })
-    expect(result).toMatchObject({ ok: false, error: { check: 'timeout' } })
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        check: 'timeout',
+        errorClass: 'timeout',
+        retryDisposition: 'new_attempt',
+        effectState: 'not_started'
+      }
+    })
   })
 })
 

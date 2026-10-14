@@ -10,6 +10,7 @@ import {
   TOOL_REFUSAL_SCHEMA
 } from '../../../src/lib/task-tools/tool-catalog.js'
 import { createDevToolsMcpServer, type DevToolContext } from '../../../src/lib/task-tools/dev-tools-server.js'
+import { projectPrChecks, projectPrReviews } from '../../../src/lib/dev-review-loop.js'
 
 const required = [
   'name',
@@ -118,6 +119,91 @@ describe('canonical agent tool catalog', () => {
         reviews: [{ author: { login: 'reviewer', surprise: true }, body: '', id: 'R1', state: 'APPROVED' }]
       })
     ).toBe(false)
+  })
+
+  it('projects GitHub pull-request checks and reviews onto the read_pull_request schema', () => {
+    const schema = AGENT_TOOL_CATALOG.find((tool) => tool.name === 'read_pull_request')?.successOutputSchema
+    const checks = projectPrChecks([
+      {
+        __typename: 'CheckRun',
+        completedAt: '2026-10-14T00:00:00Z',
+        conclusion: 'FAILURE',
+        detailsUrl: 'https://github.com/o/r/actions/runs/1/job/2',
+        name: 'check',
+        startedAt: '2026-10-14T00:00:00Z',
+        status: 'COMPLETED',
+        workflowName: 'CI',
+        checkSuite: { id: 'CS1' }
+      },
+      {
+        __typename: 'StatusContext',
+        context: 'ci/legacy',
+        state: 'SUCCESS',
+        targetUrl: null,
+        isRequired: true
+      },
+      { name: 'no typename' },
+      'junk'
+    ])
+    const reviews = projectPrReviews([
+      {
+        id: 'PRR_1',
+        author: { login: 'reviewer', name: 'Reviewer' },
+        authorAssociation: 'MEMBER',
+        body: 'looks good',
+        submittedAt: '2026-10-14T00:00:00Z',
+        includesCreatedEdit: false,
+        reactionGroups: [],
+        state: 'APPROVED',
+        commit: { oid: 'abc123' }
+      },
+      { id: 'PRR_2', author: null, body: '', state: 'COMMENTED' },
+      { id: 'PRR_3', body: 'missing state' }
+    ])
+    expect(checks).toEqual([
+      {
+        __typename: 'CheckRun',
+        completedAt: '2026-10-14T00:00:00Z',
+        conclusion: 'FAILURE',
+        detailsUrl: 'https://github.com/o/r/actions/runs/1/job/2',
+        name: 'check',
+        startedAt: '2026-10-14T00:00:00Z',
+        status: 'COMPLETED',
+        workflowName: 'CI'
+      },
+      {
+        __typename: 'StatusContext',
+        context: 'ci/legacy',
+        state: 'SUCCESS',
+        targetUrl: null
+      }
+    ])
+    expect(reviews).toEqual([
+      {
+        author: { login: 'reviewer' },
+        authorAssociation: 'MEMBER',
+        body: 'looks good',
+        commit: 'abc123',
+        id: 'PRR_1',
+        includesCreatedEdit: false,
+        state: 'APPROVED',
+        submittedAt: '2026-10-14T00:00:00Z'
+      },
+      { author: null, body: '', id: 'PRR_2', state: 'COMMENTED' }
+    ])
+    expect(projectPrChecks(null)).toBeNull()
+    expect(projectPrReviews(undefined)).toBeNull()
+    expect(
+      validatesJsonSchema(schema, {
+        prNumber: 42,
+        state: 'OPEN',
+        head: 'abc123',
+        checks,
+        reviews,
+        body: 'report',
+        failedChecks: []
+      })
+    ).toBe(true)
   })
 
   it('validates every realistic example against its tool input schema', () => {

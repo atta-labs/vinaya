@@ -881,9 +881,6 @@ export type DocumentationReadability =
   | { ready: true; output: string }
   | { ready: false; retryable: boolean; source: string; failure: string; output: string }
 
-/** The refusals a later attempt may clear: the source did not answer in time, or the network dropped. */
-const RETRYABLE_SOURCE_FAILURES: ReadonlySet<string> = new Set(['timeout', 'connection-failed', 'dns-failure'])
-
 function hostOf(url: string): string | null {
   try {
     return new URL(url).hostname.toLowerCase()
@@ -917,8 +914,10 @@ export async function checkDocumentationSourcesReadable(
     let failure: string | null = null
     let retryable = false
     if (!fetched.ok) {
-      failure = `${fetched.error.check}: ${fetched.error.output}`
-      retryable = RETRYABLE_SOURCE_FAILURES.has(fetched.error.check)
+      failure = `${fetched.error.errorClass}/${fetched.error.retryDisposition}/${fetched.error.effectState}: ${fetched.error.output}`
+      retryable =
+        (fetched.error.errorClass === 'timeout' || fetched.error.errorClass === 'dependency_unavailable') &&
+        (fetched.error.retryDisposition === 'same_attempt' || fetched.error.retryDisposition === 'new_attempt')
     } else {
       const doc = fetched.document
       const requestedHost = hostOf(doc.requestedUrl)

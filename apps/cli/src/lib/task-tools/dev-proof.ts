@@ -46,7 +46,7 @@ import {
   stageCodexPolicyHome
 } from '../worker-boundary.js'
 import { startDevToolsHost } from './dev-tools-host.js'
-import { DEV_TOOLS_MCP_SERVER_NAME, type DevToolContext } from './dev-tools-server.js'
+import { DEV_TOOLS_MCP_SERVER_NAME, type DevToolContext, type DevToolResult } from './dev-tools-server.js'
 import {
   type BridgeInvocation,
   claudeDevToolName,
@@ -56,6 +56,7 @@ import {
   devToolsMcpConfigFileBody,
   driverDevBridgeInvocation
 } from './dev-tools-registration.js'
+import { devToolError } from './dev-tools-server.js'
 
 /** The one allowlisted tool the proof session may call — a read-only check, no publish, no forge write. */
 const PROOF_TOOL = 'run_checks'
@@ -95,13 +96,16 @@ type RecordedCall = { tool: string; args: unknown; result: unknown }
  */
 export function proofContext(recorded: RecordedCall[]): DevToolContext {
   const stamp = `dev-proof: answered in driver pid ${process.pid}`
-  const deny = (tool: string): { ok: false; error: { check: string; output: string; fix: string } } => ({
+  const deny = (tool: string): DevToolResult<never> => ({
     ok: false,
-    error: {
-      check: 'dev-proof-scope',
-      output: `${tool} is out of scope for the O1 proof — only ${PROOF_TOOL} is allowed.`,
-      fix: `Call ${PROOF_TOOL}.`
-    }
+    error: devToolError(
+      'unauthorized',
+      'never',
+      'not_started',
+      'dev-proof-scope',
+      `${tool} is out of scope for the O1 proof — only ${PROOF_TOOL} is allowed.`,
+      `Call ${PROOF_TOOL}.`
+    )
   })
   return {
     publishChanges: async () => deny('publish_changes'),

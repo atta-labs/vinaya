@@ -10,6 +10,7 @@ import {
   createDevToolsMcpServer,
   DEV_TOOL_NAMES,
   DEV_TOOLS_MCP_SERVER_NAME,
+  devToolError,
   dispatchDevTool,
   type DevToolContext
 } from '../../../src/lib/task-tools/dev-tools-server.js'
@@ -98,11 +99,14 @@ describe('dev-tools server — success and refusal both land on the agent', () =
     const context = okContext({
       publishChanges: async () => ({
         ok: false,
-        error: {
-          check: 'pre-push-hook',
-          output: 'aeg-core: 1 fail',
-          fix: 'Fix the failing test, then publish_changes again.'
-        }
+        error: devToolError(
+          'policy_refusal',
+          'same_attempt',
+          'not_committed',
+          'pre-push-hook',
+          'aeg-core: 1 fail',
+          'Fix the failing test, then publish_changes again.'
+        )
       })
     })
     const parsed = await call(server(context), 'publish_changes', { header: 'Fix: x' })
@@ -116,6 +120,28 @@ describe('dev-tools server — success and refusal both land on the agent', () =
     const parsed = await call(server(okContext()), 'publish_changes', {})
     expect(parsed.result.isError).toBe(true)
     expect(parsed.result.structuredContent.error.check).toBe('tool-input')
+    expect(parsed.result.structuredContent.error).toMatchObject({
+      errorClass: 'invalid_input',
+      retryDisposition: 'same_attempt',
+      effectState: 'not_started'
+    })
+  })
+
+  it('re-validates strict catalog arguments at execution time', async () => {
+    const parsed = await call(server(okContext()), 'run_checks', { advertisedOnly: true })
+    expect(parsed.result.isError).toBe(true)
+    expect(parsed.result.structuredContent.error).toMatchObject({
+      errorClass: 'invalid_input',
+      retryDisposition: 'same_attempt',
+      effectState: 'not_started'
+    })
+  })
+
+  it('refuses a success value outside the catalog output schema', async () => {
+    const context = okContext({ runChecks: async () => ({ ok: true, result: { passed: true } as never }) })
+    const parsed = await call(server(context), 'run_checks')
+    expect(parsed.result.isError).toBe(true)
+    expect(parsed.result.structuredContent.error).toMatchObject({ errorClass: 'internal', effectState: 'uncertain' })
   })
 
   it('an unknown tool name refuses, listing the real tools', async () => {
@@ -132,7 +158,14 @@ describe('dev-tools server — success and refusal both land on the agent', () =
     })
     const parsed = await call(server(context), 'run_checks')
     expect(parsed.result.isError).toBe(true)
-    expect(parsed.result.structuredContent.error.message).toContain('check runner crashed')
+    expect(parsed.result.structuredContent.error).toMatchObject({
+      errorClass: 'internal',
+      retryDisposition: 'new_attempt',
+      effectState: 'uncertain',
+      check: 'tool-execution'
+    })
+    expect(parsed.result.structuredContent.error.output).toContain('check runner crashed')
+    expect(parsed.result.structuredContent.error.fix).toContain('reconcile')
   })
 })
 

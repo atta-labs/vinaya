@@ -272,7 +272,7 @@ import { fastForwardedOntoDefaultTip } from './dev-review-loop/developer-publica
 import { postForgeEffectOnce, publishRound, unboundFields } from './dev-review-loop/publication.js'
 import { patchIdAt } from './patch-id.js'
 import { createDeveloperDevToolContext, type DeveloperDevToolDeps } from './task-tools/developer-dev-tools-context.js'
-import type { DevPullRequestView, DevToolContext } from './task-tools/dev-tools-server.js'
+import { devToolError, type DevPullRequestView, type DevToolContext } from './task-tools/dev-tools-server.js'
 import { type FailedCheckLog, readFailedCheckLogs, readJobLogTail } from './task-tools/pr-facts.js'
 import { startDevToolsHost } from './task-tools/dev-tools-host.js'
 import {
@@ -1840,6 +1840,83 @@ export function failureSignaturePart(run: { name: string; detail?: string }, log
   return evidence === '' ? check : `${check}: ${evidence}`.slice(0, MAX_FAILURE_EVIDENCE_CHARS)
 }
 
+const CHECK_STRING_FIELDS = [
+  'completedAt',
+  'conclusion',
+  'context',
+  'detailsUrl',
+  'name',
+  'startedAt',
+  'state',
+  'status',
+  'targetUrl',
+  'workflowName'
+] as const
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function nullableStringField(value: unknown): string | null {
+  return typeof value === 'string' ? value : null
+}
+
+/**
+ * `gh pr view`'s `statusCheckRollup`, projected onto exactly the fields the
+ * `read_pull_request` catalog schema declares: every other forge field is
+ * dropped, a non-string field becomes `null`, and an entry without a
+ * `__typename` is not a check node and is skipped.
+ */
+export function projectPrChecks(raw: unknown): DevPullRequestView['checks'] {
+  if (!Array.isArray(raw)) return null
+  const checks: NonNullable<DevPullRequestView['checks']> = []
+  for (const node of raw) {
+    if (!isRecord(node) || typeof node.__typename !== 'string') continue
+    const check: NonNullable<DevPullRequestView['checks']>[number] = {
+      __typename: node.__typename
+    }
+    for (const field of CHECK_STRING_FIELDS) {
+      if (field in node) check[field] = nullableStringField(node[field])
+    }
+    checks.push(check)
+  }
+  return checks
+}
+
+/**
+ * `gh pr view`'s `reviews`, projected onto exactly the fields the
+ * `read_pull_request` catalog schema declares: forge-only fields such as
+ * `reactionGroups` are dropped, `commit` is GitHub's `{ oid }` flattened to its
+ * oid, and an entry missing a required string (`id`, `body`, `state`) is skipped.
+ */
+export function projectPrReviews(raw: unknown): DevPullRequestView['reviews'] {
+  if (!Array.isArray(raw)) return null
+  const reviews: NonNullable<DevPullRequestView['reviews']> = []
+  for (const node of raw) {
+    if (!isRecord(node)) continue
+    const { id, body, state } = node
+    if (typeof id !== 'string' || typeof body !== 'string' || typeof state !== 'string') continue
+    const author = isRecord(node.author) && typeof node.author.login === 'string' ? { login: node.author.login } : null
+    const review: NonNullable<DevPullRequestView['reviews']>[number] = {
+      author,
+      body,
+      id,
+      state
+    }
+    if ('authorAssociation' in node) review.authorAssociation = nullableStringField(node.authorAssociation)
+    if ('commit' in node) {
+      review.commit = isRecord(node.commit) ? nullableStringField(node.commit.oid) : nullableStringField(node.commit)
+    }
+    if ('createdAt' in node) review.createdAt = nullableStringField(node.createdAt)
+    if ('includesCreatedEdit' in node) {
+      review.includesCreatedEdit = typeof node.includesCreatedEdit === 'boolean' ? node.includesCreatedEdit : null
+    }
+    if ('submittedAt' in node) review.submittedAt = nullableStringField(node.submittedAt)
+    reviews.push(review)
+  }
+  return reviews
+}
+
 /** O2/O3: the loop's view of the PR for the `read_pull_request` tool — `gh pr view --json`, a null-filled view when none is open, plus each failed check's log tail on its head. */
 async function defaultReadPrView(input: {
   branch: string
@@ -1871,8 +1948,8 @@ async function defaultReadPrView(input: {
       prNumber: typeof j.number === 'number' ? j.number : null,
       state: typeof j.state === 'string' ? j.state : null,
       head,
-      checks: j.statusCheckRollup ?? null,
-      reviews: j.reviews ?? null,
+      checks: projectPrChecks(j.statusCheckRollup),
+      reviews: projectPrReviews(j.reviews),
       body: typeof j.body === 'string' ? j.body : null,
       failedChecks: head === null ? [] : failedCheckLogsOnHead(head)
     }
@@ -4626,11 +4703,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           if (headerCredentials.length > 0) {
             return {
               ok: false,
-              error: {
-                check: 'credential-scan',
-                output: `recognized credential pattern(s) in commit header: ${headerCredentials.map((finding) => finding.pattern).join(', ')}`,
-                fix: 'Remove the credential-shaped value from the commit header.'
-              }
+              error: devToolError(
+                'policy_refusal',
+                'same_attempt',
+                'not_started',
+                'credential-scan',
+                `recognized credential pattern(s) in commit header: ${headerCredentials.map((finding) => finding.pattern).join(', ')}`,
+                'Remove the credential-shaped value from the commit header.'
+              )
             }
           }
           const remoteHeadBefore = safeRemoteHead()
@@ -4639,33 +4719,42 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           if (scanBase === null) {
             return {
               ok: false,
-              error: {
-                check: 'credential-scan',
-                output: 'the branch base could not be resolved before publication',
-                fix: 'Restore the branch base and call publish_changes again.'
-              }
+              error: devToolError(
+                'dependency_unavailable',
+                'same_attempt',
+                'not_started',
+                'credential-scan',
+                'the branch base could not be resolved before publication',
+                'Restore the branch base and call publish_changes again.'
+              )
             }
           }
           const diff = d.gitWorktreeDiffText(worktree, scanBase)
           if (diff === null) {
             return {
               ok: false,
-              error: {
-                check: 'credential-scan',
-                output: 'the added diff lines could not be read before publication',
-                fix: 'Restore a readable worktree and call publish_changes again.'
-              }
+              error: devToolError(
+                'dependency_unavailable',
+                'same_attempt',
+                'not_started',
+                'credential-scan',
+                'the added diff lines could not be read before publication',
+                'Restore a readable worktree and call publish_changes again.'
+              )
             }
           }
           const credentials = findCredentialPatterns(addedDiffLines(diff), 'the added worktree diff')
           if (credentials.length > 0) {
             return {
               ok: false,
-              error: {
-                check: 'credential-scan',
-                output: `recognized credential pattern(s): ${credentials.map((finding) => finding.pattern).join(', ')}`,
-                fix: 'Remove the credential-shaped addition before publishing.'
-              }
+              error: devToolError(
+                'policy_refusal',
+                'same_attempt',
+                'not_started',
+                'credential-scan',
+                `recognized credential pattern(s): ${credentials.map((finding) => finding.pattern).join(', ')}`,
+                'Remove the credential-shaped addition before publishing.'
+              )
             }
           }
           const unpushed = d.readUnpushedWorkDetail(worktree)
@@ -4674,11 +4763,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             if (!committed.ok) {
               return {
                 ok: false,
-                error: {
-                  check: committed.check,
-                  output: committed.output,
-                  fix: 'Fix what the commit hook refused, then call publish_changes again.'
-                }
+                error: devToolError(
+                  'policy_refusal',
+                  'same_attempt',
+                  'not_started',
+                  committed.check,
+                  committed.output,
+                  'Fix what the commit hook refused, then call publish_changes again.'
+                )
               }
             }
           }
@@ -4708,11 +4800,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               lastPushRefusal = push.refusal
               return {
                 ok: false,
-                error: {
-                  check: 'pre-push-hook',
-                  output: push.refusal,
-                  fix: 'Fix what the pre-push hook refused, then call publish_changes again.'
-                }
+                error: devToolError(
+                  'policy_refusal',
+                  'same_attempt',
+                  'not_committed',
+                  'pre-push-hook',
+                  push.refusal,
+                  'Fix what the pre-push hook refused, then call publish_changes again.'
+                )
               }
             }
             lastPushRefusal = null
@@ -4762,22 +4857,28 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           if (titleCredentials.length > 0) {
             return {
               ok: false,
-              error: {
-                check: 'credential-scan',
-                output: `recognized credential pattern(s) in PR title: ${titleCredentials.map((finding) => finding.pattern).join(', ')}`,
-                fix: 'Remove the credential-shaped value from the PR title.'
-              }
+              error: devToolError(
+                'policy_refusal',
+                'same_attempt',
+                'not_started',
+                'credential-scan',
+                `recognized credential pattern(s) in PR title: ${titleCredentials.map((finding) => finding.pattern).join(', ')}`,
+                'Remove the credential-shaped value from the PR title.'
+              )
             }
           }
           const existingPr = prNumberNow()
           if (existingPr !== null) {
             return {
               ok: false,
-              error: {
-                check: 'pr-exists',
-                output: `pull request ${existingPr} is already open for branch ${branch}`,
-                fix: 'Use update_pull_request_body to replace its body.'
-              }
+              error: devToolError(
+                'conflict',
+                'same_attempt',
+                'not_started',
+                'pr-exists',
+                `pull request ${existingPr} is already open for branch ${branch}`,
+                'Use update_pull_request_body to replace its body.'
+              )
             }
           }
           const prNumber = d.openTaskPullRequest({
@@ -4792,11 +4893,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           if (prNumber === null) {
             return {
               ok: false,
-              error: {
-                check: 'pr-open',
-                output: 'the pull-request open could not be confirmed',
-                fix: 'Check the forge and call open_pull_request again.'
-              }
+              error: devToolError(
+                'internal',
+                'new_attempt',
+                'uncertain',
+                'pr-open',
+                'the pull-request open could not be confirmed',
+                'Reconcile the forge state before calling open_pull_request again.'
+              )
             }
           }
           return { ok: true, result: { prNumber } }
@@ -4806,11 +4910,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           if (prNumber === null) {
             return {
               ok: false,
-              error: {
-                check: 'no-open-pr',
-                output: `no open pull request for branch ${branch}`,
-                fix: 'Open the pull request with open_pull_request first.'
-              }
+              error: devToolError(
+                'dependency_unavailable',
+                'same_attempt',
+                'not_started',
+                'no-open-pr',
+                `no open pull request for branch ${branch}`,
+                'Open the pull request with open_pull_request first.'
+              )
             }
           }
           await d.updatePrBody({
@@ -4825,11 +4932,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           if (prNumber === null) {
             return {
               ok: false,
-              error: {
-                check: 'no-open-pr',
-                output: `no open pull request for branch ${branch}`,
-                fix: 'Open the pull request with open_pull_request first.'
-              }
+              error: devToolError(
+                'dependency_unavailable',
+                'same_attempt',
+                'not_started',
+                'no-open-pr',
+                `no open pull request for branch ${branch}`,
+                'Open the pull request with open_pull_request first.'
+              )
             }
           }
           const result = await d.refreshPrEvidence({ worktreePath: worktree, prNumber, round: roundNum, repo })
@@ -4848,7 +4958,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         }),
         onPublicationAttempt: (result) => {
           turnPublicationAttempted = true
-          turnPublicationRefusal = result.ok ? null : `${result.error.check}: ${result.error.output}`
+          turnPublicationRefusal = result.ok
+            ? null
+            : `${result.error.errorClass}/${result.error.retryDisposition}/${result.error.effectState}: ${result.error.check}: ${result.error.output}`
         }
       }
       return createDeveloperDevToolContext(deps)

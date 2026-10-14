@@ -174,12 +174,48 @@ export const UNTRUSTED_PAGE_NOTICE =
 
 // --- input ------------------------------------------------------------------
 
+type FetchDocumentationClassification = Pick<DevToolRefusal, 'errorClass' | 'retryDisposition' | 'effectState'>
+
+function classificationFor(reason: FetchDocumentationRefusalReason): FetchDocumentationClassification {
+  if (reason === 'timeout')
+    return { errorClass: 'timeout', retryDisposition: 'new_attempt', effectState: 'not_started' }
+  if (
+    reason === 'dns-failure' ||
+    reason === 'tls-identity' ||
+    reason === 'connection-failed' ||
+    reason === 'malformed-response'
+  ) {
+    return { errorClass: 'dependency_unavailable', retryDisposition: 'new_attempt', effectState: 'not_started' }
+  }
+  if (reason === 'private-address') {
+    return { errorClass: 'policy_refusal', retryDisposition: 'never', effectState: 'not_started' }
+  }
+  if (
+    reason === 'call-budget' ||
+    reason === 'redirect-not-https' ||
+    reason === 'redirect-without-location' ||
+    reason === 'too-many-redirects' ||
+    reason === 'disallowed-content-type' ||
+    reason === 'too-large'
+  ) {
+    return {
+      errorClass: 'policy_refusal',
+      retryDisposition: reason === 'call-budget' ? 'new_attempt' : 'never',
+      effectState: 'not_started'
+    }
+  }
+  return { errorClass: 'invalid_input', retryDisposition: 'same_attempt', effectState: 'not_started' }
+}
+
 function refuse(
   check: FetchDocumentationRefusalReason,
   output: string,
   fix: string
 ): { ok: false; error: DevToolRefusal } {
-  return { ok: false, error: { check, output, fix } }
+  return {
+    ok: false,
+    error: { ...classificationFor(check), check, output, fix }
+  }
 }
 
 /** Validates the tool's raw arguments. */
