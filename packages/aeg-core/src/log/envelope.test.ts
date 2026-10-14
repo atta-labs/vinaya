@@ -121,6 +121,8 @@ describe('buildHeader', () => {
   })
 
   it('fills input_versions from an explicit inputVersions override', () => {
+    // The ruling object is one atomic version pin: identity, originating
+    // pause, and content digest travel together or remain explicitly null.
     const { meta } = buildHeader({
       ...baseInput,
       inputVersions: {
