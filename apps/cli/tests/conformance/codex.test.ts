@@ -3,6 +3,7 @@ import type { VendoredVinaya } from '../../src/lib/self-host.js'
 import { codexMcpServersToml } from '../../src/lib/task-tools/adapters.js'
 import { TASK_TOOLS_MCP_SERVER_NAME } from '../../src/lib/task-tools/server.js'
 import { ABS_BIN, defineConformanceSuite } from './harness.js'
+import { defineLiveGrantCases } from './role-grants-live.js'
 
 /**
  * The Codex runtime half of Part 2 (O2) — nine scenarios, shared verbatim
@@ -41,3 +42,6 @@ describe('Codex adapter — registers the shared task-tools server', () => {
 const codexToml = codexMcpServersToml(SELF_HOST)
 const codexInvocation = parseCodexServerInvocation(codexToml, TASK_TOOLS_MCP_SERVER_NAME)
 defineConformanceSuite('codex', codexInvocation)
+
+// Live, opt-in: each role's session sees exactly its granted driver-run tools (`role-grants-live.ts`).
+defineLiveGrantCases('codex')

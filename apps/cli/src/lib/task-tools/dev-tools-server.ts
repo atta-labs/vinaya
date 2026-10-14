@@ -29,6 +29,10 @@
  * this module stays a thin validate-and-dispatch layer the harness can drive
  * with faked callbacks while the driver wires the real ones.
  *
+ * Every dispatch is served for one role (`role-grants.ts`): `tools/list`
+ * names only that role's granted tools, and a call to any other tool is
+ * refused `unauthorized` / `never` / `not_started` before its handler runs.
+ *
  * A tool never pauses the loop: a gate that fails comes back as a structured
  * REFUSAL (`DevToolRefusal` — the failing check, its output, and the fix),
  * reflected into MCP `isError: true` so the agent reads it and tries again,
@@ -39,6 +43,7 @@ import { createMcpServerCore, MCP_PROTOCOL_VERSION, type McpServerCore } from '.
 import { DEV_TOOLS_MCP_SERVER_NAME } from './dev-tools-names.js'
 import type { FailedCheckLog } from './pr-facts.js'
 import { DEV_TOOL_CATALOG, DEV_TOOL_NAMES, serveTool } from './tool-catalog.js'
+import { type GrantedRole, isToolGranted, ROLE_TOOL_GRANTS, servedTools } from './role-grants.js'
 import { validatesJsonSchema } from './result-proof.js'
 import {
   FETCH_DOCUMENTATION_TOOL,
@@ -186,15 +191,33 @@ function readString(args: unknown, key: string): string | null {
 }
 
 /**
- * Dispatches one dev-tool call to its `DevToolContext` method, validating the
- * arguments first. Returns the driver-side `DevToolResult` (success or
- * refusal); the protocol core reflects a refusal into `isError: true`.
+ * Dispatches one dev-tool call to its `DevToolContext` method, refusing a tool
+ * `role` is not granted and then validating the arguments. Returns the
+ * driver-side `DevToolResult` (success or refusal); the protocol core reflects
+ * a refusal into `isError: true`.
  */
 export async function dispatchDevTool(
   context: DevToolContext,
+  role: GrantedRole,
   name: string,
   args: unknown
 ): Promise<DevToolResult<unknown>> {
+  if (!isToolGranted(role, name)) {
+    const granted = ROLE_TOOL_GRANTS[role]
+    return {
+      ok: false,
+      error: devToolError(
+        'unauthorized',
+        'never',
+        'not_started',
+        'role-grant',
+        `the ${role} role is not granted ${JSON.stringify(name)}.`,
+        granted.length > 0
+          ? `Call only a tool this role is granted: ${granted.join(', ')}.`
+          : 'This role is granted no tools; finish the turn without calling one.'
+      )
+    }
+  }
   const catalog = DEV_TOOL_CATALOG.find((tool) => tool.name === name)
   if (!catalog)
     return refusal(
@@ -282,19 +305,22 @@ export async function dispatchDevTool(
 export type CreateDevToolsMcpServerOptions = {
   serverVersion: string
   context: DevToolContext
+  /** The dispatched role whose grant decides what is listed and what may be called. */
+  role: GrantedRole
 }
 
 /**
  * Builds the dev-tools server over the shared protocol core and a driver-side
- * `DevToolContext`. The driver hosts the returned `serve` on a unix socket; a
- * fixture drives `handleLine` directly with a faked context.
+ * `DevToolContext`, listing and accepting only `role`'s granted tools. The
+ * driver hosts the returned `serve` on a unix socket; a fixture drives
+ * `handleLine` directly with a faked context.
  */
 export function createDevToolsMcpServer(opts: CreateDevToolsMcpServerOptions): McpServerCore {
   return createMcpServerCore({
     protocolVersion: MCP_PROTOCOL_VERSION,
     serverName: DEV_TOOLS_MCP_SERVER_NAME,
     serverVersion: opts.serverVersion,
-    listTools: () => DEV_TOOL_CATALOG.map(serveTool),
-    callTool: (name, args) => dispatchDevTool(opts.context, name, args)
+    listTools: () => servedTools(opts.role).map(serveTool),
+    callTool: (name, args) => dispatchDevTool(opts.context, opts.role, name, args)
   })
 }

@@ -64,6 +64,8 @@ Parity is at the capability-contract level. Claude Code and Codex Developers rec
 
 MCP annotations (read-only, destructive, idempotent, open-world) are discovery hints for clients. They never grant or deny anything; authorization stays with the controller.
 
+The callable-tools column is one table in code, `ROLE_TOOL_GRANTS` in `apps/cli/src/lib/task-tools/role-grants.ts`; the Operator's tools are a separate server and are not in it. The driver-run tool server is started for one role, lists only that role's granted tools, and refuses any other call with `unauthorized`, `never`, `not_started` before a handler runs.
+
 ## 4. Canonical tool catalog
 
 ### 4.0 Tool-contract components

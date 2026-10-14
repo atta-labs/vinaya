@@ -469,7 +469,8 @@ export async function devToolsProofCommand(args: string[]): Promise<void> {
   const host = await startDevToolsHost({
     socketPath,
     serverVersion: ownVersion(),
-    context: proofContext(recorded)
+    context: proofContext(recorded),
+    role: 'developer'
   })
 
   const confinement = resolveProofConfinement(agent, 'developer', cwd, scratchDir)

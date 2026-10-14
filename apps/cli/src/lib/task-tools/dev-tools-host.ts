@@ -21,6 +21,7 @@ import { chmodSync, mkdirSync, rmSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { devToolsSocketRoot } from './dev-tools-registration.js'
 import { createDevToolsMcpServer, type DevToolContext } from './dev-tools-server.js'
+import type { GrantedRole } from './role-grants.js'
 
 export type DevToolsHost = {
   /** The unix-socket path the bridge connects to — write this into the per-dispatch MCP registration. */
@@ -33,6 +34,8 @@ export type StartDevToolsHostOptions = {
   socketPath: string
   serverVersion: string
   context: DevToolContext
+  /** The dispatched role; the host serves only the tools `role-grants.ts` grants it. */
+  role: GrantedRole
 }
 
 /**
@@ -57,7 +60,11 @@ export async function startDevToolsHost(opts: StartDevToolsHostOptions): Promise
     // A missing or unremovable stale socket is handled by listen() itself below.
   }
 
-  const server = createDevToolsMcpServer({ serverVersion: opts.serverVersion, context: opts.context })
+  const server = createDevToolsMcpServer({
+    serverVersion: opts.serverVersion,
+    context: opts.context,
+    role: opts.role
+  })
 
   const connections = new Set<net.Socket>()
   const netServer = net.createServer((socket) => {

@@ -57,7 +57,7 @@ function okContext(overrides: Partial<DevToolContext> = {}): DevToolContext {
 }
 
 function server(context: DevToolContext) {
-  return createDevToolsMcpServer({ serverVersion: '0.0.0-test', context })
+  return createDevToolsMcpServer({ serverVersion: '0.0.0-test', context, role: 'developer' })
 }
 
 async function call(srv: ReturnType<typeof server>, name: string, args: unknown = {}) {
@@ -144,10 +144,16 @@ describe('dev-tools server — success and refusal both land on the agent', () =
     expect(parsed.result.structuredContent.error).toMatchObject({ errorClass: 'internal', effectState: 'uncertain' })
   })
 
-  it('an unknown tool name refuses, listing the real tools', async () => {
+  it('a tool outside the Developer grant refuses unauthorized, listing the granted tools', async () => {
     const parsed = await call(server(okContext()), 'merge_pull_request')
     expect(parsed.result.isError).toBe(true)
-    expect(parsed.result.structuredContent.error.check).toBe('unknown-tool')
+    expect(parsed.result.structuredContent.error).toMatchObject({
+      errorClass: 'unauthorized',
+      retryDisposition: 'never',
+      effectState: 'not_started',
+      check: 'role-grant'
+    })
+    expect(parsed.result.structuredContent.error.fix).toContain('publish_changes')
   })
 
   it('a handler that throws becomes an infrastructure error, never an uncaught rejection', async () => {
@@ -183,7 +189,7 @@ describe('dispatchDevTool — direct dispatch of each tool', () => {
               : name === 'fetch_documentation'
                 ? { url: 'https://example.com/docs' }
                 : {}
-      const result = await dispatchDevTool(context, name, args)
+      const result = await dispatchDevTool(context, 'developer', name, args)
       expect(result.ok).toBe(true)
     }
   })
@@ -193,7 +199,12 @@ describe('dev-tools host — a real unix socket is the driver transport', () => 
   it('answers initialize and a tool call over a socket connection', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dev-tools-host-'))
     const socketPath = join(dir, 'driver.sock')
-    const host = await startDevToolsHost({ socketPath, serverVersion: '0.0.0-test', context: okContext() })
+    const host = await startDevToolsHost({
+      socketPath,
+      serverVersion: '0.0.0-test',
+      context: okContext(),
+      role: 'developer'
+    })
     try {
       const responses = await driveOverSocket(socketPath, [
         { jsonrpc: '2.0', id: 1, method: 'initialize' },
@@ -215,7 +226,12 @@ describe('dev-tools host — a real unix socket is the driver transport', () => 
     const socketDir = dirname(socketPath)
     // A clean slate so the host itself, not a prior run, creates the directory.
     rmSync(socketDir, { recursive: true, force: true })
-    const host = await startDevToolsHost({ socketPath, serverVersion: '0.0.0-test', context: okContext() })
+    const host = await startDevToolsHost({
+      socketPath,
+      serverVersion: '0.0.0-test',
+      context: okContext(),
+      role: 'developer'
+    })
     try {
       expect(statSync(socketDir).mode & 0o777).toBe(0o700)
       expect(statSync(socketPath).mode & 0o777).toBe(0o600)
