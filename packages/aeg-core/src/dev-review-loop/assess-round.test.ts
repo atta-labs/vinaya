@@ -10,7 +10,9 @@ import {
   runScenario
 } from './fakes'
 import {
+  assessRound,
   normalizeFailureSignature,
+  recordDeveloperAttempt,
   renderPhaseBreakdown,
   renderTaskBudgetDetail,
   taskBudgetExceeded
@@ -808,7 +810,8 @@ describe('assessRound — the same mechanical failure twice pauses the loop', ()
 
     expect(state.lastFailure).toEqual({
       signature: normalizeFailureSignature(failure),
-      message: failure
+      message: failure,
+      developerAttemptedSince: true
     })
     expect(decisions.at(-1)).toEqual({ type: 'dispatch_developer' })
   })
@@ -821,6 +824,52 @@ describe('assessRound — the same mechanical failure twice pauses the loop', ()
     expect(record?.countsBySeverity).toEqual({})
     expect(record?.notReviewed).toBe('checks_red')
     expect(record?.outcome).toBe('stopped')
+  })
+})
+
+describe('assessRound — a repeat needs a finished Developer attempt between the two failures', () => {
+  const failure = 'failing check-run(s): Vinaya CI; FAIL apps/cli/tests/loop.test.ts'
+
+  it('a red gate read again after an infrastructure retry that never reached the Developer dispatches the Developer', () => {
+    // Red gate: the Developer is sent back.
+    const first = assessRound(freshState(), fakeGate(1, false, { failure }))
+    expect(first.decision).toEqual({ type: 'dispatch_developer' })
+    expect(first.state.lastFailure?.developerAttemptedSince).toBe(false)
+    // That dispatch fails on infrastructure before the Developer is reached,
+    // and the loop retries itself: no attempt is recorded, and the same red
+    // gate is read again.
+    const second = assessRound(first.state, fakeGate(1, false, { failure }))
+    expect(second.decision).toEqual({ type: 'dispatch_developer' })
+    expect(second.events.some((e) => e.event === 'stop_condition_met')).toBe(false)
+    expect(second.state.rounds.at(-1)?.outcome).toBe('changes_requested')
+  })
+
+  it('two red gates with the same failure and one finished Developer attempt between them still pause', () => {
+    const first = assessRound(freshState(), fakeGate(1, false, { failure }))
+    const attempted = recordDeveloperAttempt(first.state)
+    expect(attempted.lastFailure?.developerAttemptedSince).toBe(true)
+    const second = assessRound(attempted, fakeGate(1, false, { failure }))
+    expect(second.decision).toEqual({ type: 'pause', reason: 'repeat_failure', detail: failure })
+  })
+
+  it('an attempt recorded after the retry restores the rule: retry, attempt, same red gate pauses', () => {
+    const first = assessRound(freshState(), fakeGate(1, false, { failure }))
+    const reread = assessRound(first.state, fakeGate(1, false, { failure }))
+    const third = assessRound(recordDeveloperAttempt(reread.state), fakeGate(1, false, { failure }))
+    expect(third.decision).toMatchObject({ type: 'pause', reason: 'repeat_failure' })
+  })
+
+  it('a failure recorded before the attempt field existed reads as no attempt recorded', () => {
+    const legacy = {
+      ...freshState(),
+      lastFailure: { signature: normalizeFailureSignature(failure), message: failure }
+    }
+    expect(assessRound(legacy, fakeGate(1, false, { failure })).decision).toEqual({ type: 'dispatch_developer' })
+  })
+
+  it('recording an attempt with no failure recorded changes nothing', () => {
+    const state = freshState()
+    expect(recordDeveloperAttempt(state)).toBe(state)
   })
 })
 

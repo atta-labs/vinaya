@@ -50,7 +50,8 @@ const {
   currentFindingCounts,
   fetchBacklogIssuePrsBatch,
   resolveDependsOn,
-  resolvePremiseBriefText
+  resolvePremiseBriefText,
+  resolvePriorTrancheArchival
 } = await import('./verify-dispatch')
 const { checkDispatchReadiness } = await import('../src/dispatch-gate')
 
@@ -821,5 +822,60 @@ describe('backlog dependency reads (issue-1147)', () => {
     expect((await run('OPEN'))[0]).toMatchObject({ merged: false })
     expect((await run('OPEN'))[0]?.readFailed).toBeUndefined()
     expect((await run('MERGED'))[0]).toMatchObject({ merged: true })
+  })
+})
+
+describe('resolvePriorTrancheArchival — a failed open-Issues query is unknown, never "no open Issues"', () => {
+  const REPO = { owner: 'atta-labs', repo: 'vinaya' }
+  const deps = (openIssues: () => Array<{ number: number }> | null) => ({
+    activeTrancheSlugs: () => ['prior-tranche-v1'],
+    deriveTranche: async () => ({ tasks: [{ projects: ['cli'] }] }) as never,
+    openIssues
+  })
+  const gate = (facts: unknown[]) =>
+    checkDispatchReadiness({
+      trancheSlug: 'x',
+      task: { id: '1', issue: 9, dependsOn: [], conflictsWith: [], projects: ['cli'] } as never,
+      issue: { number: 9, state: 'open' } as never,
+      issueRationalePass: true,
+      dependsOn: [],
+      conflictsWith: [],
+      priorTask: null,
+      priorTrancheArchival: facts
+    } as never)
+
+  it('a failing open-Issues query yields the infrastructure failure and no archival block', async () => {
+    const result = await resolvePriorTrancheArchival(
+      ['cli'],
+      'x',
+      REPO,
+      deps(() => null)
+    )
+    expect(result.infraFailure).toContain('severity:infra')
+    expect(result.infraFailure).toContain('prior-tranche-v1')
+    expect(result.facts).toEqual([])
+    expect(gate(result.facts).blockers.some((b) => b.includes('prior-tranche-archival'))).toBe(false)
+  })
+
+  it('an empty successful answer still yields the archival block', async () => {
+    const result = await resolvePriorTrancheArchival(
+      ['cli'],
+      'x',
+      REPO,
+      deps(() => [])
+    )
+    expect(result.infraFailure).toBeNull()
+    expect(result.facts).toEqual([{ project: 'cli', priorTrancheSlug: 'prior-tranche-v1', archived: false }])
+    expect(gate(result.facts).blockers.some((b) => b.includes('prior-tranche-archival'))).toBe(true)
+  })
+
+  it('a prior tranche with open Issues is no block and no failure', async () => {
+    const result = await resolvePriorTrancheArchival(
+      ['cli'],
+      'x',
+      REPO,
+      deps(() => [{ number: 12 }])
+    )
+    expect(result).toEqual({ facts: [{ project: 'cli', priorTrancheSlug: null, archived: false }], infraFailure: null })
   })
 })

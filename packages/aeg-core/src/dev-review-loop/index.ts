@@ -1,4 +1,10 @@
-export { assessRound, renderPhaseBreakdown, renderTaskBudgetDetail, taskBudgetExceeded } from './assess-round'
+export {
+  assessRound,
+  recordDeveloperAttempt,
+  renderPhaseBreakdown,
+  renderTaskBudgetDetail,
+  taskBudgetExceeded
+} from './assess-round'
 export { parseSummaryConfidenceRows, renderPublishedMarker } from './render-summary'
 export type { SummaryConfidenceRow } from './render-summary'
 export { initialLoopState } from './types'

@@ -201,7 +201,7 @@ export type Observations =
  * carries the repeated key(s) in the pause's own `detail`.
  *
  * `'repeat_failure'`: two consecutive attempts ended on the same mechanical
- * failure — a refused push, a premise re-check mismatch, a forge or network
+ * failure, with a finished Developer attempt between them — a refused push, a premise re-check mismatch, a forge or network
  * error, a failed pre-push test — matched by the normalised signature
  * `normalizeFailureSignature` derives (`assess-round.ts`), never by raw
  * string equality: the volatile parts of such a message (timestamps,
@@ -425,8 +425,13 @@ export type LoopState = {
    * (what two attempts are matched on) and the `message` as reported (what
    * the pause names). `null` whenever the last attempt reached a green gate,
    * or failed with no reported cause: either breaks the repeat chain.
+   * `developerAttemptedSince` is `true` once a Developer attempt finished
+   * after this failure was recorded (`recordDeveloperAttempt`): only then is
+   * the same failure read again a second attempt's failure rather than the
+   * same attempt's read twice. Absent — a record written before this field
+   * existed — reads as no attempt recorded.
    */
-  lastFailure: { signature: string; message: string } | null
+  lastFailure: { signature: string; message: string; developerAttemptedSince?: boolean } | null
   /** Running sums for `journal_finalized` — updated once per concluded round, never recomputed from `rounds` (which carries counts only, not diff stats). */
   totalWallMs: number
   totalFilesChanged: number

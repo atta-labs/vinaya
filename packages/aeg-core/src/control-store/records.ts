@@ -216,12 +216,16 @@ export const LoopStateRecordSchema = z
      * the developer at a finding or a failure that had in fact already
      * repeated, the exact outcome the two repeat stops exist to prevent.
      * Optional: a record written before this field existed still parses, and
-     * reads back as no memory rather than as a corrupt record.
+     * reads back as no memory rather than as a corrupt record. The same holds
+     * for `lastFailure.developerAttemptedSince`: absent reads as no Developer
+     * attempt recorded since that failure.
      */
     repeatMemory: z
       .object({
         blockingFindings: z.array(z.string()),
-        lastFailure: z.object({ signature: z.string(), message: z.string() }).nullable()
+        lastFailure: z
+          .object({ signature: z.string(), message: z.string(), developerAttemptedSince: z.boolean().optional() })
+          .nullable()
       })
       .strict()
       .optional(),
