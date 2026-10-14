@@ -65,6 +65,10 @@ import {
   assessRound,
   beyondSurfacePaths,
   briefHash as briefHashOf,
+  carryLiveRecord,
+  parseLiveTestPlanItems,
+  readLiveRecord,
+  withLiveRecord,
   buildReviewInputManifest,
   compareManifest,
   concludedLoopRefusal,
@@ -315,6 +319,16 @@ import {
   driverDevBridgeInvocation
 } from './task-tools/dev-tools-registration.js'
 import { fetchLoopHistory } from './dev-review-loop/journal-history.js'
+import {
+  LIVE_RUN_TIMEOUT_MS,
+  type LiveFailure,
+  type LiveRunner,
+  livePassedAtHead,
+  renderLiveFailure,
+  runLiveChecks,
+  runRealLiveCommand,
+  vendorSignedIn
+} from './dev-review-loop/live-check.js'
 import {
   acquireDriverLockAtomic,
   bindPauseToPullRequest,
@@ -886,6 +900,12 @@ export type LoopDeps = {
     worktreePath: string,
     env?: Record<string, string>
   ) => Promise<{ passed: boolean; output: string }>
+  /** The live check's runner: one `[live]` Test plan command, run from this driver's own process and environment in the task worktree, stopped at the time bound (`live-check.ts`). Injected so a test runs no real command. */
+  runLiveCommand: LiveRunner
+  /** Whether this host holds a subscription sign-in for a vendor a `[live]` line names — reads where the login is kept, never calls the vendor. Injected so a test needs no real login. */
+  liveVendorSignedIn: (vendor: AgentVendor) => boolean
+  /** How long one `[live]` command may run before it reads as a red gate. */
+  liveRunTimeoutMs: number
 }
 
 function defaultRepoRoot(): string {
@@ -2414,6 +2434,9 @@ function defaultDeps(): LoopDeps {
     refreshPrEvidence: defaultRefreshPrEvidence,
     readPrView: defaultReadPrView,
     runWorktreeChecks: defaultRunWorktreeChecks,
+    runLiveCommand: runRealLiveCommand,
+    liveVendorSignedIn: (vendor) => vendorSignedIn(vendor),
+    liveRunTimeoutMs: LIVE_RUN_TIMEOUT_MS,
     fetchDeveloperStop,
     fetchMergeableState,
     fetchConflictingFiles,
@@ -3624,6 +3647,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     /** O3: the last red gate's failing check-run names, for the next gate-red dispatch prompt and, if it stalls, the pause detail. */
     let lastFailingChecks: string[] = []
     let lastFailureLogs: FailedCheckLog[] = []
+    /** The `[live]` Test plan lines that failed at the last gate (`runLiveGate`), each with its output tail — sent back in the same red-gate retry as a failed CI check. */
+    let lastLiveFailures: LiveFailure[] = []
     /** O2: true iff the current `dispatch_developer` decision came from a red gate (never inferred from `decision` itself — see this branch's own comment, below). Reset to `false` by every genuine `gate` observation. */
     let pendingGateRedRetry = false
     /** O2: consecutive gate-red developer turns that produced no push on one head — reset to 0 by every genuine `gate` observation. Seeded from the control store, never hardcoded to `0`, so a kill mid-stall-episode resumes the SAME count rather than a fresh budget. */
@@ -5037,7 +5062,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             task,
             branch,
             title,
-            body: await withBeyondSurfaceRecord(withDeveloperModelsLine(body, modelRuns())),
+            // A record of `[live]` runs is the driver's alone: none exists before the pull request does.
+            body: carryLiveRecord(await withBeyondSurfaceRecord(withDeveloperModelsLine(body, modelRuns())), null),
             round: roundNum,
             agent: dispatchAgent,
             repo
@@ -5072,9 +5098,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               )
             }
           }
+          // The `AEG:LIVE` record is the driver's: the live body's record is
+          // carried over, so an agent edit to it never survives. A live body
+          // that cannot be read keeps none — the next live run writes it.
+          let currentBody: string | null
+          try {
+            currentBody = d.fetchPrBody(prNumber)
+          } catch {
+            currentBody = null
+          }
           await d.updatePrBody({
             prNumber,
-            body: await withBeyondSurfaceRecord(withDeveloperModelsLine(body, modelRuns())),
+            body: carryLiveRecord(
+              await withBeyondSurfaceRecord(withDeveloperModelsLine(body, modelRuns())),
+              currentBody
+            ),
             repo
           })
           return { ok: true, result: { prNumber } }
@@ -5914,6 +5952,74 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           d.readFailedCheckLogTail
         )
       }
+    }
+
+    /**
+     * The live check (`apps/cli/specs/loop.md`, "The live check"): after the
+     * gate reads green and before reviewers are dispatched, every `[live]`
+     * line of the frozen brief's Test Plan runs here — from this driver's own
+     * process and environment, never the Developer's sandbox — in the task
+     * worktree at `head`, each bounded by `liveRunTimeoutMs`. Returns the
+     * lines that failed (a non-zero exit or a timeout), which the caller reads
+     * as a red gate; `[]` when the brief names none, the record already shows
+     * each passed at `head`, or every line passed or could not run here.
+     *
+     * A line naming a vendor this host holds no subscription sign-in for is
+     * not run and not failed: it is recorded unverified, which the merge gate
+     * holds like an unticked `[principal]` item. Every outcome is written to
+     * the pull request's `AEG:LIVE` record, keyed by `head`, so a later head
+     * runs every line again. A brief or body that cannot be read leaves the
+     * round as it was before this check existed; a record that cannot be
+     * written is logged, and the next run writes it.
+     */
+    async function runLiveGate(head: string): Promise<LiveFailure[]> {
+      let commands: string[]
+      try {
+        commands = parseLiveTestPlanItems(d.fetchFrozenBrief(task))
+      } catch (err) {
+        appendRoleLine(
+          loopLogPath,
+          'dev-review-loop',
+          `live_check_skipped: the frozen brief could not be read (${err instanceof Error ? err.message : String(err)})`
+        )
+        return []
+      }
+      if (commands.length === 0) return []
+      let body: string | null
+      try {
+        body = d.fetchPrBody(prNumber)
+      } catch {
+        body = null
+      }
+      const previous = body === null ? [] : readLiveRecord(body)
+      if (livePassedAtHead(commands, head, previous)) return []
+      const worktree = worktreePathForBranch()
+      const worktreeHead = d.readWorktreeHead(worktree)
+      const result = await runLiveChecks({
+        commands,
+        head,
+        cwd: worktree,
+        previous,
+        cannotRun: worktreeHead === head ? null : "the review loop's task worktree is not at this head",
+        signedIn: d.liveVendorSignedIn,
+        run: d.runLiveCommand,
+        timeoutMs: d.liveRunTimeoutMs
+      })
+      for (const entry of result.entries) {
+        appendRoleLine(loopLogPath, 'dev-review-loop', `live_check: ${entry.outcome} at ${head}: ${entry.command}`)
+      }
+      try {
+        const current = d.fetchPrBody(prNumber)
+        const next = withLiveRecord(current, result.entries)
+        if (next !== current) await d.updatePrBody({ prNumber, body: next, repo })
+      } catch (err) {
+        appendRoleLine(
+          loopLogPath,
+          'dev-review-loop',
+          `live_record_update_failed: ${err instanceof Error ? err.message : String(err)}`
+        )
+      }
+      return result.failures
     }
 
     /** O4/O5/O7: the forge's own mergeable state, polled off `UNKNOWN` within the existing gate poll budget — never read as clean and never as conflicting. A budget exhaustion is treated as `CONFLICTING`, never as clean: this gates a reviewer dispatch or a publish, and silently proceeding on an unresolved answer is the one failure mode O4/O5 exist to prevent. */
@@ -7131,10 +7237,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                   ? `Principal ruling on this pause:\n\n${lastReviewContext}\n`
                   : isGateRedRetry
                     ? [
-                        `CI is red on the last head. Failing check-run(s): ${
-                          lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
-                        }. Fix the failing check(s).`,
-                        ...lastFailureLogs.map(renderFailedCheckLog)
+                        // A `[live]` line runs only once CI is green, so a
+                        // live failure is never a red CI check.
+                        lastLiveFailures.length > 0
+                          ? `CI is green on the last head, but the review loop's live check is red: ${lastFailingChecks.join(', ')}. The loop ran each \`[live]\` Test Plan line on its own host, with real signed-in agent sessions; fix what fails.`
+                          : `CI is red on the last head. Failing check-run(s): ${
+                              lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
+                            }. Fix the failing check(s).`,
+                        ...lastFailureLogs.map(renderFailedCheckLog),
+                        ...lastLiveFailures.map(renderLiveFailure)
                       ].join('\n\n')
                     : // `isGateRedRetry` is false here only when this dispatch came from
                       // `assessVerdicts`' review-findings fallback, which requires
@@ -7430,9 +7541,20 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           const premiseResult: PremiseReassertResult | null = checkPremiseAtHead(prNumber)
           const premiseFailed = premiseResult !== null && !premiseResult.pass
           const premiseFailureLines = premiseResult !== null ? premiseResult.errors.map((e) => e.message) : []
-          const gateGreen = gate.green && !premiseFailed
-          lastFailingChecks = [...gate.failingChecks, ...premiseFailureLines]
+          // The live check runs only on a gate that is otherwise green — a
+          // red CI or a stale premise already sends the Developer back, and
+          // its `[live]` lines run on the head that answers it. A failed
+          // line turns this gate red exactly as a failed CI check does, so no
+          // reviewer is dispatched for this head.
+          const liveFailures = gate.green && !premiseFailed ? await runLiveGate(gate.stats.head) : []
+          const gateGreen = gate.green && !premiseFailed && liveFailures.length === 0
+          lastFailingChecks = [
+            ...gate.failingChecks,
+            ...premiseFailureLines,
+            ...liveFailures.map((f) => `[live] \`${f.command}\` (${f.detail})`)
+          ]
           lastFailureLogs = gate.failureLogs
+          lastLiveFailures = liveFailures
           pendingGateRedRetry = !gateGreen
           if (mechanicalRetryRecoverySurvivesOneReset) {
             mechanicalRetryRecoverySurvivesOneReset = false
@@ -7441,10 +7563,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
           unpushedResumeAttempted = false
           const confidence = round >= 2 && gateGreen ? roundConfidence(round) : undefined
-          const failureParts = gate.failingRuns.map((run) => {
-            const log = gate.failureLogs.find((entry) => entry.runId === run.id) ?? null
-            return failureSignaturePart(run, log?.logTail ?? null)
-          })
+          const failureParts = [
+            ...gate.failingRuns.map((run) => {
+              const log = gate.failureLogs.find((entry) => entry.runId === run.id) ?? null
+              return failureSignaturePart(run, log?.logTail ?? null)
+            }),
+            ...liveFailures.map((f) => failureSignaturePart({ name: `[live] ${f.command}` }, f.tail))
+          ]
           const failure =
             gateGreen || (failureParts.length === 0 && premiseFailureLines.length === 0)
               ? undefined

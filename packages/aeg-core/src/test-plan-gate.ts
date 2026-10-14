@@ -20,8 +20,14 @@
  *     grandfathered by `brief-shape`'s own rollout) is never graded here —
  *     see the module doc comment above.
  *   - All `[principal]` boxes ticked (or none exist at all) → `pass`.
+ *
+ * The driver's `AEG:LIVE` record (`live-record.ts`) is graded alongside: each
+ * unticked `[live]` line — a run that failed, or one the loop's host could not
+ * verify — counts as an unticked `[principal]` box, and stops the
+ * no-section and `unit-tests-only` passes above from applying.
  */
 
+import { readLiveRecord } from './live-record'
 import { locateTestPlanSection } from './test-plan-section'
 import { parseTaskBranchIdentity } from './task-branch-identity'
 
@@ -43,8 +49,14 @@ export function evaluateTestPlanGate(body: string, branch: string): TestPlanGate
   }
 
   const located = locateTestPlanSection(body)
+  // The driver's `AEG:LIVE` record (`live-record.ts`): an unticked line — a
+  // `[live]` run that failed, or one the loop's host could not verify — holds
+  // the merge exactly as an unticked `[principal]` box does, wherever in the
+  // body the record sits and whatever the Test Plan section says.
+  const liveLines = readLiveRecord(body).map((entry) => entry.line)
+  const liveUnticked = liveLines.some((line) => /^[-*]\s+\[\s\]/.test(line))
 
-  if (!located.found) {
+  if (!located.found && !liveUnticked) {
     if (parseTaskBranchIdentity(branch) !== null) {
       return {
         verdict: 'fail',
@@ -65,9 +77,9 @@ export function evaluateTestPlanGate(body: string, branch: string): TestPlanGate
     }
   }
 
-  const section = located.section
+  const section = located.found ? located.section : ''
 
-  if (/unit-tests-only/i.test(section)) {
+  if (/unit-tests-only/i.test(section) && !liveUnticked) {
     return {
       verdict: 'pass',
       messages: ['Test Plan: unit-tests-only — pure-logic brief, CI unit-tests are the proof.', 'PASS.']
@@ -78,10 +90,13 @@ export function evaluateTestPlanGate(body: string, branch: string): TestPlanGate
   // An older body may still carry them (grandfathered by `brief-shape`'s
   // own rollout); this gate simply does not look at that tag at all any
   // more, ticked or not.
-  const checkboxLines = section
-    .split('\n')
-    .map((line) => line.trimStart())
-    .filter((line) => /^[-*]\s+\[[ xX]\]\s*\*{0,2}\[principal\]\*{0,2}/i.test(line))
+  const checkboxLines = [
+    ...section
+      .split('\n')
+      .map((line) => line.trimStart())
+      .filter((line) => /^[-*]\s+\[[ xX]\]\s*\*{0,2}\[principal\]\*{0,2}/i.test(line)),
+    ...liveLines
+  ]
 
   if (checkboxLines.length === 0) {
     return {
@@ -105,6 +120,11 @@ export function evaluateTestPlanGate(body: string, branch: string): TestPlanGate
       '',
       'Per aeg-root/roles/developer.md (Verification), a PR is not mergeable while any [principal] Test Plan box is unticked.',
       'The Principal runs the item in a real signed-in browser and ticks the box.',
+      ...(liveUnticked
+        ? [
+            'An unticked [live] line is a live run that failed or that the review loop could not verify on its host: a later head re-runs it, or the Principal runs it and ticks the box.'
+          ]
+        : []),
       'Note: editing the PR body does not retrigger most workflows. If your PR body changes do not surface here, push an empty commit to re-run.'
     )
     return { verdict: 'fail', messages }

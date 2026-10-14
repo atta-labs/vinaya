@@ -68,7 +68,8 @@ function baseFacts(overrides: Partial<BriefFacts> = {}): BriefFacts {
     testPlan: {
       kind: 'commands',
       lines: ['bunx turbo test --affected --force → summary line ends "0 fail"'],
-      principal: []
+      principal: [],
+      live: []
     },
     stopConditions: ['If the fixture ever needs a second file, STOP and escalate severity: execution.'],
     documentation: { kind: 'sources', sources: [] },
@@ -542,13 +543,54 @@ describe('renderBrief', () => {
   it('§9 emits a `[principal]` box when the Issue Test plan names one', () => {
     const result = renderBrief(
       baseFacts({
-        testPlan: { kind: 'commands', lines: ['bun test → 0 fail'], principal: ['Verify in a real browser.'] }
+        testPlan: { kind: 'commands', lines: ['bun test → 0 fail'], principal: ['Verify in a real browser.'], live: [] }
       }),
       TEMPLATE
     )
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.brief).toContain('- [ ] **[principal]** Verify in a real browser.')
+  })
+
+  it('§9 emits each `[live]` item as an unboxed line after the `[principal]` boxes, and the Issue parser reads it back', () => {
+    const live = 'VINAYA_LIVE_CONFORMANCE=1 bun test apps/cli/tests/sandbox-conformance/claude.test.ts'
+    const result = renderBrief(
+      baseFacts({
+        testPlan: {
+          kind: 'commands',
+          lines: ['bun test src/brief-render.test.ts → 0 fail'],
+          principal: ['Verify in a real browser.'],
+          live: [live, 'echo `codex` live']
+        }
+      }),
+      TEMPLATE
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const section9 = result.brief.slice(result.brief.indexOf('## 9. Test Plan'))
+    expect(section9).toContain(`- **[live]** \`${live}\``)
+    expect(section9).not.toContain('- [ ] **[live]**')
+    expect(section9.indexOf('**[principal]**')).toBeLessThan(section9.indexOf('**[live]**'))
+    const reparsed = parseIssueTestPlan(section9.replace('## 9. Test Plan', '## Test plan'))
+    expect(reparsed.ok).toBe(true)
+    if (!reparsed.ok || reparsed.value.kind !== 'commands') return
+    expect(reparsed.value.live).toEqual([live, 'echo `codex` live'])
+    expect(reparsed.value.principal).toEqual(['Verify in a real browser.'])
+  })
+
+  it('§9 renders a plan with no `[live]` item exactly as before — no live line at all', () => {
+    const result = renderBrief(baseFacts(), TEMPLATE)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.brief).not.toContain('[live]')
+  })
+
+  it('renders a plan whose only item is a `[live]` line — a Test plan, never a missing one', () => {
+    const result = renderBrief(
+      baseFacts({ testPlan: { kind: 'commands', lines: [], principal: [], live: ['bun test x.test.ts'] } }),
+      ''
+    )
+    expect(result.ok).toBe(true)
   })
 
   it('§9 widens its fence rather than let embedded backticks in Issue-sourced lines break out of it (security review finding)', () => {
@@ -562,7 +604,8 @@ describe('renderBrief', () => {
         testPlan: {
           kind: 'commands',
           lines: ['bun test → 0 fail', '```', 'echo injected, now unfenced', '```'],
-          principal: []
+          principal: [],
+          live: []
         }
       }),
       ''
@@ -582,7 +625,7 @@ describe('renderBrief', () => {
   })
 
   it('refuses and names Test plan when the Issue Test plan section is unparseable', () => {
-    const result = renderBrief(baseFacts({ testPlan: { kind: 'commands', lines: [], principal: [] } }), '')
+    const result = renderBrief(baseFacts({ testPlan: { kind: 'commands', lines: [], principal: [], live: [] } }), '')
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.missing.join(' ')).toMatch(/Test plan/)

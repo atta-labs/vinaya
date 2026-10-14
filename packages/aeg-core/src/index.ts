@@ -329,7 +329,8 @@ export {
   parseIssuePremises,
   parseIssueStopConditions,
   parseIssueSurface,
-  parseIssueTestPlan
+  parseIssueTestPlan,
+  parseLiveTestPlanItems
 } from './issue-validation'
 export type {
   CommandReferenceEntry,
@@ -627,6 +628,15 @@ export { decideIssueAssignment } from './issue-assignment'
 export type { IssueAssignmentDecision, IssueAssignmentInput } from './issue-assignment'
 export { locateTestPlanSection } from './test-plan-section'
 export type { TestPlanSection } from './test-plan-section'
+export {
+  carryLiveRecord,
+  type LiveRecordEntry,
+  type LiveRecordLine,
+  readLiveRecord,
+  renderLiveRecordBlock,
+  renderLiveRecordLine,
+  withLiveRecord
+} from './live-record'
 export { evaluateTestPlanGate } from './test-plan-gate'
 export type { TestPlanGateResult, TestPlanGateVerdict } from './test-plan-gate'
 export {
