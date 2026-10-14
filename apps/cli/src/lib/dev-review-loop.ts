@@ -6929,9 +6929,24 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               pauseBoundRuling,
               policy
             })
+            // A held record written before manifest v2 has no protocol or
+            // pause-ruling slots. Preserve that record's legacy comparison
+            // mode for recovery only; newly rendered v2 verdicts still must
+            // echo both slots through the merge gate.
+            const compatibleCurrentManifest: ReviewInputManifest =
+              heldClean.manifest.manifestVersion === undefined
+                ? {
+                    headSha: currentManifestForCarry.headSha,
+                    baseSha: currentManifestForCarry.baseSha,
+                    briefHash: currentManifestForCarry.briefHash,
+                    objectivesVersion: currentManifestForCarry.objectivesVersion,
+                    rulingOrdinal: currentManifestForCarry.rulingOrdinal,
+                    policyDigest: currentManifestForCarry.policyDigest
+                  }
+                : currentManifestForCarry
             const carryBinding = compareManifest(
               manifestAsEchoed(heldClean.manifest),
-              currentManifestForCarry,
+              compatibleCurrentManifest,
               d.patchIdOf
             )
             if (carryBinding.bound) {

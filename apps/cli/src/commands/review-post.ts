@@ -490,11 +490,13 @@ export function renderCodeReviewComment(input: CodeReviewInput): string {
   // lines above out of the exact read windows their extractors pin. Worst
   // case (objectives present) it lands on line 13, inside `firstThirteenLines`.
   lines.push(`Judged base: ${input.baseSha ?? '(none)'}`, '')
-  lines.push(`Manifest version: ${input.manifestVersion ?? 2}`, '')
-  lines.push(
-    `Pause-bound ruling: ${input.pauseBoundRuling ? `${input.pauseBoundRuling.rulingId}|${input.pauseBoundRuling.pauseId}|${input.pauseBoundRuling.contentDigest}` : '(none)'}`,
-    ''
-  )
+  if (input.manifestVersion !== undefined) {
+    lines.push(`Manifest version: ${input.manifestVersion}`, '')
+    lines.push(
+      `Pause-bound ruling: ${input.pauseBoundRuling ? `${input.pauseBoundRuling.rulingId}|${input.pauseBoundRuling.pauseId}|${input.pauseBoundRuling.contentDigest}` : '(none)'}`,
+      ''
+    )
+  }
   if (input.scopeEvidence !== null) {
     // AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
     // Directly below the verdict block, per `reviewer.md`'s own evidence
@@ -662,11 +664,13 @@ export function renderSecurityComment(input: SecurityInput): string {
   // `Judged base:` last of the head lines — see the identical
   // note in `renderCodeReviewComment`.
   lines.push(`Judged base: ${input.baseSha ?? '(none)'}`, '')
-  lines.push(`Manifest version: ${input.manifestVersion ?? 2}`, '')
-  lines.push(
-    `Pause-bound ruling: ${input.pauseBoundRuling ? `${input.pauseBoundRuling.rulingId}|${input.pauseBoundRuling.pauseId}|${input.pauseBoundRuling.contentDigest}` : '(none)'}`,
-    ''
-  )
+  if (input.manifestVersion !== undefined) {
+    lines.push(`Manifest version: ${input.manifestVersion}`, '')
+    lines.push(
+      `Pause-bound ruling: ${input.pauseBoundRuling ? `${input.pauseBoundRuling.rulingId}|${input.pauseBoundRuling.pauseId}|${input.pauseBoundRuling.contentDigest}` : '(none)'}`,
+      ''
+    )
+  }
   lines.push('FINDINGS (ordered by severity):', renderFindingsSection(sorted), '')
   if (input.objectiveResults !== null) {
     lines.push(renderObjectivesBlock(input.objectiveResults), '')
