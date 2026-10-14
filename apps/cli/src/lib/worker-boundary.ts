@@ -82,7 +82,8 @@ export function hasSubscriptionLogin(agent: string): boolean {
 }
 
 const CODEX_AUTH_FILE_NAME = 'auth.json'
-const CODEX_KEYCHAIN_SERVICE = 'Codex Auth'
+/** The macOS Keychain service name Codex keeps its cached session under. */
+export const CODEX_KEYCHAIN_SERVICE = 'Codex Auth'
 
 /** The macOS Keychain service name Claude Code keeps its subscription login under — the entry `claude` itself reads and writes, in place of `.credentials.json`, on a Mac. */
 export const CLAUDE_KEYCHAIN_SERVICE = 'Claude Code-credentials'
@@ -99,7 +100,8 @@ function accessTokenFromCodexAuth(raw: string | null): string | null {
   }
 }
 
-function codexKeychainAccount(codexHome: string): string {
+/** The Keychain account Codex files a `CODEX_HOME`'s session under. */
+export function codexKeychainAccount(codexHome: string): string {
   let canonical = codexHome
   try {
     canonical = realpathSync(codexHome)

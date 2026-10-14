@@ -1,8 +1,8 @@
 /**
  * The pull request's record of its `[live]` Test plan lines — the commands
  * that need real signed-in agent sessions, which the review loop runs on its
- * own host between a green gate and review (`apps/cli/specs/loop.md`, "The
- * live check"). Pure: a body in, a body or the record's lines out.
+ * own host only on a head both reviewers approved (`apps/cli/specs/loop.md`,
+ * "The live check"). Pure: a body in, a body or the record's lines out.
  *
  * The record is an `AEG:LIVE` anchored region the driver owns, like
  * `AEG:BEYOND-SURFACE`: rewritten by the driver after each live run, and

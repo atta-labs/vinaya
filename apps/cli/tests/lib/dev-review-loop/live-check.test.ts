@@ -8,8 +8,19 @@
  * no `[live]` line runs the round exactly as before.
  */
 
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { carryLiveRecord, evaluateTestPlanGate, readLiveRecord, withLiveRecord } from '@attalabs/aeg-core'
+import {
+  type DevReviewLoopEventInput,
+  type LoopState,
+  carryLiveRecord,
+  evaluateTestPlanGate,
+  readLiveRecord,
+  withLiveRecord
+} from '@attalabs/aeg-core'
 import { buildPrincipalTestPlanWaitErrors } from '../../../src/checks/bin/check-principal-test-plan-wait.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
 import {
@@ -18,7 +29,9 @@ import {
   liveRunEnv,
   liveVendorsNamed,
   passCountOf,
+  prepareRealLiveCheckout,
   runLiveChecks,
+  withdrawApprovedRound,
   runRealLiveCommand,
   vendorSignedIn
 } from '../../../src/lib/dev-review-loop/live-check.js'
@@ -28,6 +41,7 @@ import {
   type LoopWorld,
   makeInProcessDeps,
   makeWorld,
+  outboxLines,
   runLoopInProcess
 } from '../dev-review-loop-harness.js'
 
@@ -60,9 +74,15 @@ function liveDeps(
   world: LoopWorld,
   answer: (call: RunCall, n: number) => LiveRun,
   opts: { signedIn?: (vendor: string) => boolean; onDeveloper?: (n: number) => void } = {}
-): { deps: Partial<LoopDeps>; calls: RunCall[]; developerPrompts: string[] } {
+): {
+  deps: Partial<LoopDeps>
+  calls: RunCall[]
+  developerPrompts: string[]
+  checkouts: { head: string; disposed: boolean }[]
+} {
   const base = makeInProcessDeps(world)
   const calls: RunCall[] = []
+  const checkouts: { head: string; disposed: boolean }[] = []
   const developerPrompts: string[] = []
   const deps: Partial<LoopDeps> = {
     dispatchRole: async (role, agent, prompt, dOpts) => {
@@ -78,9 +98,19 @@ function liveDeps(
       return answer(call, calls.length)
     },
     liveVendorSignedIn: opts.signedIn ?? (() => true),
-    liveRunTimeoutMs: 1_000
+    liveRunTimeoutMs: 1_000,
+    prepareLiveCheckout: async (_root, head) => {
+      const checkout = { head, disposed: false }
+      checkouts.push(checkout)
+      return {
+        cwd: `/live-checkout/${head}`,
+        dispose: () => {
+          checkout.disposed = true
+        }
+      }
+    }
   }
-  return { deps, calls, developerPrompts }
+  return { deps, calls, developerPrompts, checkouts }
 }
 
 function reviewerDispatches(world: LoopWorld): number {
@@ -121,7 +151,7 @@ describe('the live check inside the round', () => {
     const world = makeWorld({ frozenBrief: briefWith([LIVE]) })
     const headA = world.head
     const headD = 'd'.repeat(40)
-    const { deps, calls, developerPrompts } = liveDeps(
+    const { deps, calls, developerPrompts, checkouts } = liveDeps(
       world,
       (_call, n) =>
         n === 1
@@ -145,8 +175,25 @@ describe('the live check inside the round', () => {
       [LIVE, headA, 2],
       [LIVE, headD, 4]
     ])
-    expect(calls[0]?.cwd).toMatch(/\.worktrees\//)
+    // Each ran in a fresh checkout of its approved head, never the
+    // Developer's worktree, and each checkout was removed after its run.
+    expect(calls.map((c) => c.cwd)).toEqual([`/live-checkout/${headA}`, `/live-checkout/${headD}`])
+    expect(checkouts).toEqual([
+      { head: headA, disposed: true },
+      { head: headD, disposed: true }
+    ])
     expect(calls[0]?.timeoutMs).toBe(1_000)
+    // The log records round 1 as changes requested, never green: the
+    // approval was withdrawn, so its green stop is not logged.
+    const loop = outboxLines(world) as Array<{ event?: string; round?: number; condition?: string; outcome?: string }>
+    expect(loop.filter((l) => l.event === 'stop_condition_met').map((l) => [l.round, l.condition])).toEqual([
+      [2, 'green']
+    ])
+    expect(loop.filter((l) => l.event === 'round_ended').map((l) => [l.round, l.outcome])).toEqual([
+      [1, 'changes_requested'],
+      [2, 'green']
+    ])
+    expect(loop.filter((l) => l.event === 'journal_finalized')).toHaveLength(1)
     // The failure came back as a new round, with the line's output tail.
     expect(world.dispatches.filter((d) => d.role === 'developer').map((d) => d.round)).toEqual([1, 2])
     const retry = developerPrompts[1] as string
@@ -220,29 +267,121 @@ describe('the live check inside the round', () => {
 })
 
 describe('the live check’s parts', () => {
+  it('withdraws an approved round in the log: never green, finalised only at the round cap', () => {
+    const env = { kind: 'dev_review_loop' as const, payload: {}, loop_id: 'L' }
+    const events = [
+      { ...env, event: 'verdicts_read', round: 3 },
+      { ...env, event: 'stop_condition_met', round: 3, condition: 'green' },
+      { ...env, event: 'round_ended', round: 3, head: 'h', outcome: 'green' },
+      { ...env, event: 'journal_finalized', rounds: 3, time_to_green_ms: 9, result: 'merged_ready' }
+    ] as unknown as DevReviewLoopEventInput[]
+    const state = { rounds: [{ round: 3, outcome: 'green' }] } as unknown as LoopState
+    const below = withdrawApprovedRound(events, state, false)
+    expect(below.events.map((e) => [(e as { event: string }).event, (e as { outcome?: string }).outcome])).toEqual([
+      ['verdicts_read', undefined],
+      ['round_ended', 'changes_requested']
+    ])
+    expect(below.state.rounds.at(-1)?.outcome).toBe('changes_requested')
+    const cap = withdrawApprovedRound(events, state, true)
+    expect(cap.events.map((e) => (e as { event: string }).event)).toEqual([
+      'verdicts_read',
+      'stop_condition_met',
+      'paused',
+      'round_ended',
+      'journal_finalized'
+    ])
+    expect(cap.events[1] as unknown).toEqual({ ...env, event: 'stop_condition_met', round: 3, condition: 'max_rounds' })
+    expect(cap.events[4]).toMatchObject({ result: 'stopped', time_to_green_ms: null })
+    expect(cap.state.rounds.at(-1)?.outcome).toBe('stopped')
+  })
+
   it('names each vendor a line names, as a whole word', () => {
     expect(liveVendorsNamed(LIVE)).toEqual(['claude'])
     expect(liveVendorsNamed('CODEX=1 run claude and codex')).toEqual(['claude', 'codex'])
     expect(liveVendorsNamed('claudette codexes')).toEqual([])
   })
 
-  it('reads a sign-in only from where the vendor keeps it — no vendor call', () => {
-    const files: Record<string, string> = {
-      '/h/.claude/.credentials.json': JSON.stringify({ claudeAiOauth: { accessToken: 'x' } }),
-      '/h/.codex/auth.json': JSON.stringify({ tokens: { access_token: 'y' } })
-    }
+  it('asks only whether a login exists where the vendor keeps it — never reads it, never calls a vendor', () => {
+    const files = new Set(['/h/.claude/.credentials.json', '/h/.codex/auth.json'])
     const sources = {
       env: {},
       home: '/h',
-      readFile: (path: string) => files[path] ?? null,
-      readClaudeKeychain: () => null
+      fileExists: (path: string) => files.has(path),
+      keychainHas: () => false
     }
     expect(vendorSignedIn('claude', sources)).toBe(true)
     expect(vendorSignedIn('codex', sources)).toBe(true)
     expect(vendorSignedIn('gemini', sources)).toBe(false)
-    const empty = { ...sources, readFile: () => null }
+    const empty = { ...sources, fileExists: () => false }
     expect(vendorSignedIn('claude', empty)).toBe(false)
     expect(vendorSignedIn('codex', empty)).toBe(false)
+    // A Keychain entry counts; its service names the vendor's own login.
+    const services: string[] = []
+    const keychain = {
+      ...empty,
+      keychainHas: (service: string) => {
+        services.push(service)
+        return true
+      }
+    }
+    expect(vendorSignedIn('claude', keychain)).toBe(true)
+    expect(vendorSignedIn('codex', keychain)).toBe(true)
+    expect(services).toEqual(['Claude Code-credentials', 'Codex Auth'])
+    // A config-directory override moves where it looks, as it moves the run.
+    const moved = {
+      ...empty,
+      env: { CODEX_HOME: '/x', CLAUDE_CONFIG_DIR: '/c' },
+      fileExists: (p: string) => p === '/x/auth.json' || p === '/c/.credentials.json'
+    }
+    expect(vendorSignedIn('codex', moved)).toBe(true)
+    expect(vendorSignedIn('claude', moved)).toBe(true)
+  })
+
+  it('never counts a Codex token held only in the driver’s environment, which a run is not handed', () => {
+    const sources = {
+      env: { CODEX_ACCESS_TOKEN: 'tok' },
+      home: '/h',
+      fileExists: () => false,
+      keychainHas: () => false
+    }
+    expect(vendorSignedIn('codex', sources)).toBe(false)
+    expect(liveRunEnv({ PATH: '/bin', CODEX_ACCESS_TOKEN: 'tok' })).toEqual({ PATH: '/bin' })
+  })
+
+  it('prepares a fresh checkout of the head that carries none of the Developer’s ignored files, and removes it', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'live-checkout-test-'))
+    try {
+      const git = (...args: string[]): string =>
+        execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
+          encoding: 'utf8'
+        }).trim()
+      git('init', '-q')
+      writeFileSync(join(repo, '.gitignore'), 'node_modules/\n')
+      writeFileSync(join(repo, 'tracked.txt'), 'reviewed\n')
+      git('add', '.')
+      git('commit', '-q', '-m', 'head')
+      const head = git('rev-parse', 'HEAD')
+      // What a Developer's sandbox could leave behind in its own worktree.
+      execFileSync('mkdir', ['-p', join(repo, 'node_modules')])
+      writeFileSync(join(repo, 'node_modules', 'planted.js'), 'steal()\n')
+      writeFileSync(join(repo, 'untracked.txt'), 'x\n')
+
+      const checkout = await prepareRealLiveCheckout(repo, head, { install: ['true'] })
+      if (!('cwd' in checkout)) throw new Error(`no checkout: ${checkout.error}`)
+      expect(checkout.cwd.startsWith(repo)).toBe(false)
+      expect(existsSync(join(checkout.cwd, 'tracked.txt'))).toBe(true)
+      expect(existsSync(join(checkout.cwd, 'node_modules', 'planted.js'))).toBe(false)
+      expect(existsSync(join(checkout.cwd, 'untracked.txt'))).toBe(false)
+      checkout.dispose()
+      expect(existsSync(checkout.cwd)).toBe(false)
+      expect(git('worktree', 'list').split('\n')).toHaveLength(1)
+
+      const failed = await prepareRealLiveCheckout(repo, 'f'.repeat(40), { install: ['true'] })
+      expect('error' in failed).toBe(true)
+      expect(git('worktree', 'list').split('\n')).toHaveLength(1)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
   })
 
   it('reads the pass count off a Bun or Vitest summary, or none', () => {

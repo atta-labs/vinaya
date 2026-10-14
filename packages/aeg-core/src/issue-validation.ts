@@ -298,7 +298,8 @@ export type IssuePart = { n: number; objectiveIds: number[]; text: string }
  * A `## Test plan`'s three kinds of check: `lines`, the fenced commands the
  * Developer runs; `principal`, the items only a person can judge; and
  * `live`, the commands that need real signed-in agent sessions and that the
- * review loop runs itself, on its own host, between a green gate and review.
+ * review loop runs itself, on its own host, only on a head both reviewers
+ * approved.
  */
 export type IssueTestPlan =
   | { kind: 'unit-tests-only' }
