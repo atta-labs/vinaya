@@ -121,8 +121,28 @@ describe('compareManifest', () => {
       briefHash: true,
       objectivesVersion: true,
       rulingOrdinal: true,
+      pauseBoundRuling: true,
+      manifestVersion: true,
       policyDigest: true
     })
+  })
+
+  it('refuses a verdict whose pause-bound Principal ruling differs', () => {
+    const current = manifest({
+      manifestVersion: 2,
+      pauseBoundRuling: { rulingId: '601-2', pauseId: 'pause-1', contentDigest: 'a'.repeat(64) }
+    })
+    const echoed = manifestAsEchoed(current)
+    echoed.pauseBoundRuling = { rulingId: '601-2', pauseId: 'pause-1', contentDigest: 'b'.repeat(64) }
+    expect(compareManifest(echoed, current).bound).toBe(false)
+    expect(compareManifest(echoed, current).pauseBoundRuling).toBe(false)
+  })
+
+  it('refuses an unknown manifest protocol version', () => {
+    const current = manifest({ manifestVersion: 2 })
+    const echoed = { ...manifestAsEchoed(current), manifestVersion: 99 }
+    expect(compareManifest(echoed, current).bound).toBe(false)
+    expect(compareManifest(echoed, current).manifestVersion).toBe(false)
   })
 
   it('head: binds by patch identity when the sha differs but patchIdOf agrees', () => {

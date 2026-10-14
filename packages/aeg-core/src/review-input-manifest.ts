@@ -45,6 +45,13 @@
 import { createHash } from 'node:crypto'
 import type { ReviewPolicy } from './review-policy'
 
+/** The authenticated Principal ruling that resumed the pause preceding a round. */
+export type PauseBoundRuling = {
+  rulingId: string
+  pauseId: string
+  contentDigest: string
+}
+
 /**
  * `sha256` of the frozen brief's own text as it appears posted, below its
  * header lines — moved here from `apps/cli/src/lib/dispatch-task.ts` (one
@@ -101,6 +108,8 @@ export function policyDigest(policy: ReviewPolicy): string {
  * either configured or defaulted.
  */
 export type ReviewInputManifest = {
+  /** Closed protocol version. Readers must refuse values other than 2. */
+  manifestVersion?: 2
   /** The candidate identity — the round's judged head (O1: "base and candidate identity"). */
   headSha: string
   /**
@@ -115,6 +124,8 @@ export type ReviewInputManifest = {
   briefHash: string | null
   objectivesVersion: string | null
   rulingOrdinal: number
+  /** `null` explicitly means this round did not follow a ruling-resolved pause. */
+  pauseBoundRuling?: PauseBoundRuling | null
   policyDigest: string
 }
 
@@ -126,17 +137,20 @@ export type ReviewInputManifestFacts = {
   briefContent: string | null
   objectivesVersion: string | null
   rulingOrdinal: number
+  pauseBoundRuling?: PauseBoundRuling | null
   policy: ReviewPolicy
 }
 
 /** The one builder — every call site that used to compute these facts as separate, ad hoc values now builds this instead. */
 export function buildReviewInputManifest(facts: ReviewInputManifestFacts): ReviewInputManifest {
   return {
+    manifestVersion: 2,
     headSha: facts.headSha,
     baseSha: facts.baseSha,
     briefHash: facts.briefContent === null ? null : briefHash(facts.briefContent),
     objectivesVersion: facts.objectivesVersion,
     rulingOrdinal: facts.rulingOrdinal,
+    pauseBoundRuling: facts.pauseBoundRuling ?? null,
     policyDigest: policyDigest(facts.policy)
   }
 }
@@ -158,23 +172,27 @@ export function buildReviewInputManifest(facts: ReviewInputManifestFacts): Revie
  * fact anywhere.
  */
 export type EchoedManifest = {
+  manifestVersion?: number | null
   headSha: string | null
   /** `null` when no `Judged base:` line was found (O1) — pre-cutover legacy stock, or a stripped line. */
   baseSha: string | null
   briefHash: string | null
   objectivesVersion: string | null
   rulingOrdinal: number | null
+  pauseBoundRuling?: PauseBoundRuling | null
   policyDigest: string | null
 }
 
 /** `manifest`'s own fields, reshaped as an `EchoedManifest` — for a same-process comparison (the loop's pre-hold self-check) where the "echo" is simply the in-memory manifest a verdict was rendered from, never a round-trip through the rendered text. */
 export function manifestAsEchoed(manifest: ReviewInputManifest): EchoedManifest {
   return {
+    manifestVersion: manifest.manifestVersion ?? 2,
     headSha: manifest.headSha,
     baseSha: manifest.baseSha,
     briefHash: manifest.briefHash,
     objectivesVersion: manifest.objectivesVersion,
     rulingOrdinal: manifest.rulingOrdinal,
+    pauseBoundRuling: manifest.pauseBoundRuling ?? null,
     policyDigest: manifest.policyDigest
   }
 }
@@ -329,6 +347,8 @@ export type ManifestBindingResult = {
   briefHash: boolean
   objectivesVersion: boolean
   rulingOrdinal: boolean
+  pauseBoundRuling: boolean
+  manifestVersion: boolean
   policyDigest: boolean
 }
 
@@ -376,14 +396,27 @@ export function compareManifest(
   const briefHashBound = isBoundToBriefHash(echoed, current.briefHash)
   const objectivesVersion = isBoundToObjectives(echoed, current.objectivesVersion)
   const rulingOrdinal = isBoundToRulings(echoed, current.rulingOrdinal)
+  const manifestVersion = (echoed.manifestVersion ?? 2) === (current.manifestVersion ?? 2)
+  const pauseBoundRuling =
+    JSON.stringify(echoed.pauseBoundRuling ?? null) === JSON.stringify(current.pauseBoundRuling ?? null)
   const policyDigestBound = isBoundToPolicy(echoed, current.policyDigest)
   return {
-    bound: head && base && briefHashBound && objectivesVersion && rulingOrdinal && policyDigestBound,
+    bound:
+      head &&
+      base &&
+      briefHashBound &&
+      objectivesVersion &&
+      rulingOrdinal &&
+      pauseBoundRuling &&
+      manifestVersion &&
+      policyDigestBound,
     head,
     base,
     briefHash: briefHashBound,
     objectivesVersion,
     rulingOrdinal,
+    pauseBoundRuling,
+    manifestVersion,
     policyDigest: policyDigestBound
   }
 }

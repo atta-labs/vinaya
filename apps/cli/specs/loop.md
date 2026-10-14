@@ -2,6 +2,25 @@
 
 Status: draft
 
+The frozen review-input manifest is protocol version 2. In addition to base,
+head, brief hash, objectives version, ruling ordinal, and policy digest, it
+carries `pauseBoundRuling`: either `null` when the round did not follow a
+ruling-resolved pause, or the ruling identity, the resolved pause identity,
+and a SHA-256 digest of that ruling's text. The binding is read from the
+consumed resolution for that pause, never inferred from the newest Issue or
+pull-request ruling. A self-recovery resolution therefore produces `null`.
+Every verdict binding compares this slot, and an unknown manifest protocol
+version is stale input rather than a shape to guess through.
+
+The Developer's first invocation is a full context packet: frozen brief and
+digest, objectives and rulings, base and head, prepared sources, capability
+grant and tool catalog, terminal-result contract, budgets, and stop
+conditions. Later rounds and resumed invocations receive delta packets built
+from durable control records and evidence references. Those deltas identify
+changed authoritative facts, unresolved findings by controller identity,
+relevant gate evidence, and the prior provider-session identity; conversation
+memory is never their only source.
+
 `vinaya dev-review-loop --task <n> --agent <claude|codex|gemini>` (`apps/cli/src/commands/dev-review-loop.ts`, `devReviewLoopCommand`) runs the developer/reviewer round loop for one task Issue, unattended, until it publishes or pauses. The full design is the Linear "Tech spec — Developer Review Loop" (rev 4); this file is the durable, in-repo reference for the state machine, the driver, publication and pause — not a restatement of the whole spec.
 
 Developer tool calls are validated again at execution against the strict catalog input schema. A successful result is likewise checked against its catalog output schema. Refusals and infrastructure failures report the independent `errorClass`, `retryDisposition`, and `effectState` fields together with readable gate output and a concrete fix. These outcomes are observations only: they never pause or advance the workflow themselves; the loop reads their fields and makes that decision.

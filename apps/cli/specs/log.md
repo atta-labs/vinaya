@@ -2,6 +2,13 @@
 
 Status: draft
 
+Log schema 3 accepts both review-manifest protocol generations already stored:
+legacy events may omit `manifest_version` and `pause_bound_ruling`; new events
+write manifest version 2 and an explicit nullable pause-bound ruling object
+(`rulingId`, `pauseId`, `contentDigest`). Any present manifest version other
+than 2 is rejected. This compatibility is a reader rule, not permission for a
+new producer to omit the version or ruling slot.
+
 One `log(e)`, one sink: each typed event is delivered live to the configured destination, and a local retry queue holds events only while a server is unreachable. The full design is the Linear "Tech spec — The Vinaya Log"; this file is the durable, in-repo reference for what has shipped — the schema, the header, and the append — not a restatement of the whole spec.
 
 ## The envelope: `schema: 1`, `2` and `3`

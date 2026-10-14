@@ -149,6 +149,18 @@ export const ManifestRecordSchema = z
     objectivesVersion: z.string().min(1).nullable(),
     /** Rulings — the newest principal ruling ordinal at dispatch (`0` when none). */
     rulingOrdinal: epochNumber,
+    /** Review-manifest protocol version; unknown values are corrupt. */
+    manifestVersion: z.literal(2).optional(),
+    /** Principal ruling bound to the resumed pause, or explicit null. */
+    pauseBoundRuling: z
+      .object({
+        rulingId: z.string().min(1),
+        pauseId: z.string().min(1),
+        contentDigest: z.string().min(1)
+      })
+      .strict()
+      .nullable()
+      .optional(),
     /** Policy identity — the complete effective review policy's digest. */
     policyDigest: z.string().min(1),
     recordedAt: isoTimestamp

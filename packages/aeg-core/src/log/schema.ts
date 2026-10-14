@@ -126,9 +126,15 @@ const LineageSchema = z
 /** Mirrors `review-input-manifest.ts`'s own field set (`briefHash`, `objectivesVersion`, `rulingOrdinal`, `policyDigest`) — the "input versions" O1 asks the envelope to carry, snake_cased to match every other envelope field. Independent of `subject.objectives_version` (kept, unchanged, for backward compatibility); a producer may set either, both, or neither. */
 const InputVersionsSchema = z
   .object({
+    manifest_version: z.literal(2).nullable().optional(),
     objectives_version: z.string().nullable(),
     brief_hash: z.string().nullable(),
     ruling_ordinal: z.number().int().nullable(),
+    pause_bound_ruling: z
+      .object({ rulingId: z.string().min(1), pauseId: z.string().min(1), contentDigest: z.string().min(1) })
+      .strict()
+      .nullable()
+      .optional(),
     policy_digest: z.string().nullable()
   })
   .strict()

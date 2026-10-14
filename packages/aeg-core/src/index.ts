@@ -256,6 +256,7 @@ export {
 export type {
   EchoedManifest,
   ManifestBindingResult,
+  PauseBoundRuling,
   ReviewInputManifest,
   ReviewInputManifestFacts
 } from './review-input-manifest'

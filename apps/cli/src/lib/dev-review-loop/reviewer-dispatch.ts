@@ -532,6 +532,8 @@ export function buildManifestRecord(manifest: ReviewInputManifest, identity: Man
     briefHash: manifest.briefHash,
     objectivesVersion: manifest.objectivesVersion,
     rulingOrdinal: manifest.rulingOrdinal,
+    manifestVersion: manifest.manifestVersion ?? 2,
+    pauseBoundRuling: manifest.pauseBoundRuling ?? null,
     policyDigest: manifest.policyDigest,
     recordedAt: identity.recordedAt
   }
