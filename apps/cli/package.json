@@ -51,6 +51,7 @@
   },
   "dependencies": {
     "gray-matter": "^4.0.3",
+    "safe-regex2": "5.1.1",
     "zod": "3.25.76"
   },
   "devDependencies": {

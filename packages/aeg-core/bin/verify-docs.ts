@@ -366,6 +366,23 @@ function runC6(): void {
 }
 
 /**
+ * `proseGates.published.allow` from this repository's `vinaya.config.json`,
+ * or `undefined` (the shipped list) when the file or the key is absent. The
+ * CLI's configuration loader validates the key; this gate only reads it,
+ * and a list it cannot read as strings is the shipped one.
+ */
+function configuredPublishedAllow(): readonly string[] | undefined {
+  const path = join(REPO_ROOT, 'vinaya.config.json')
+  if (!existsSync(path)) return undefined
+  try {
+    const allow = JSON.parse(readFileSync(path, 'utf8'))?.proseGates?.published?.allow
+    return Array.isArray(allow) && allow.every((entry) => typeof entry === 'string') ? allow : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * C7 — published-prose. The doctrine files under `aeg-root/` whose paths are
  * in `only` (PR mode: this diff's own changed files; full mode: every one) are
  * parsed and handed to the pure check together with the same model-backed
@@ -391,7 +408,7 @@ function runC7(only?: ReadonlySet<string>): void {
   })
 
   const surfacedPaths = modelBackedDocPaths(deriveDiagramModel(loadDoctrine(), null, null))
-  const result = evaluatePublishedProse(entries, surfacedPaths)
+  const result = evaluatePublishedProse(entries, surfacedPaths, configuredPublishedAllow())
   for (const e of result.errors) errors.push(e)
   for (const n of result.notes) notes.push(n)
 }

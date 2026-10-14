@@ -21,6 +21,7 @@ import { CustomEventDeclarationsSchema } from '@attalabs/aeg-core/log'
 import { AGENT_VENDORS, type AgentVendor } from './agent-vendors.js'
 import { CLAUDE_COMMAND_PATH } from './claude-command-emitter.js'
 import { GEMINI_COMMAND_PATH } from './gemini-command-emitter.js'
+import { ProseRulesSchema, PublishedProseSchema, RepoRelativePathSchema } from './prose-rules-config.js'
 
 // Rings is the only schema surface this task ships — declarative
 // booleans, no conditional logic. Ring 0 (git hooks) and the
@@ -624,19 +625,22 @@ export const VinayaConfigSchema = z.object({
       // repository does not own and quote its text in a finding. A trailing
       // slash or a leading `./` is accepted and normalized, since both spell
       // a path this repository does own.
-      specPaths: z
-        .array(
-          z
-            .string()
-            .min(1)
-            .refine((entry) => !entry.startsWith('/') && !/^[A-Za-z]:/.test(entry), {
-              message: 'must be a repository-relative path, not an absolute one'
-            })
-            .refine((entry) => !entry.split(/[\\/]/).includes('..'), {
-              message: 'must stay inside the repository — no `..` segment'
-            })
-        )
-        .optional()
+      specPaths: z.array(RepoRelativePathSchema).optional(),
+      // The product class's file set — repository-relative files or folders
+      // under which a tranche-slug citation in product code blocks. Replaces
+      // `PRODUCT_SLUG_SCOPE` (this repository's CLI source, workflows,
+      // `.vinaya` and the two package READMEs) when set; never added to it.
+      productPaths: z.array(RepoRelativePathSchema).optional(),
+      // The published pass (the documentation gate's C7) — see
+      // `PublishedProseSchema`.
+      published: PublishedProseSchema.optional(),
+      // The writing rules both prose checks run: `exempt` (paths no rule
+      // reads), `defaults` (per default rule id, `"off"` or a partial
+      // override of scopes, severity or exempt) and `custom` (rules a
+      // repository writes itself). Validated in full at load, every refusal
+      // naming its key — see `prose-rules-config.ts`. Read at check-run time
+      // like every key here, so an edit takes effect on the next run.
+      rules: ProseRulesSchema.optional()
     })
     .optional(),
   // Config-native project metadata — see the `ProjectEntrySchema` comment

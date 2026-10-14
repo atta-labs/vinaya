@@ -436,7 +436,13 @@ export {
   stripNonProse,
   TASK_NUMBER_PATTERN
 } from './reader-resolvable-prose'
-export type { ProseFileClass, ProseFinding, ProseSourceFile, SpecGrandfather } from './reader-resolvable-prose'
+export type {
+  ProseFileClass,
+  ProseFinding,
+  ProseSourceFile,
+  ProseSweepOptions,
+  SpecGrandfather
+} from './reader-resolvable-prose'
 export {
   checkQuotedCommandStaleness,
   evaluateCitedQuotes,
@@ -451,8 +457,32 @@ export {
   scanRetiredVocabulary
 } from './retired-vocabulary'
 export type { VocabFinding, VocabSourceFile } from './retired-vocabulary'
-export { DEFAULT_PROSE_RULES, rulesForGroup } from './prose-rules'
-export type { DefaultProseRule, ProseRuleSeverity } from './prose-rules'
+export {
+  allowedScopesFor,
+  CONFIGURABLE_DEFAULT_RULES,
+  CONFIGURABLE_PROSE_SCOPES,
+  CONFIGURED_PATTERN_MAX_LENGTH,
+  CONFIGURED_PROSE_FLAGS,
+  DEFAULT_PROSE_RULE_SET,
+  DEFAULT_PROSE_RULES,
+  groupOfScope,
+  RESOLVABLE_SCOPES,
+  RETIRED_SCOPES,
+  resolveProseRules,
+  rulesForGroup,
+  rulesOfGroup
+} from './prose-rules'
+export type {
+  CustomProseRule,
+  DefaultProseRule,
+  ProseCheckGroup,
+  ProseRuleOverride,
+  ProseRuleSet,
+  ProseRuleSeverity,
+  ProseRuleSeveritySetting,
+  ProseRulesConfig,
+  ResolvedProseRule
+} from './prose-rules'
 export { checkLocalAnchorCoverage } from './local-anchor-coverage'
 export type {
   AnchorCoverageFinding,

@@ -879,7 +879,7 @@ describe('reader-resolvable-prose: the spec class checks a root spec, context an
     }
   })
 
-  it('a specPaths entry reaching outside the repository is refused by the schema, so the class reads only its defaults', () => {
+  it('a specPaths entry reaching outside the repository is refused by the schema, so the class reads nothing outside it', () => {
     const root = fixtureWithConfig('spec-defaults-escaping-entry', {
       proseGates: { specPaths: ['../outside'] }
     })
@@ -896,10 +896,12 @@ describe('reader-resolvable-prose: the spec class checks a root spec, context an
       )
       commitAll(root, 'Chore: configure a spec path outside the repository')
 
+      // The bin itself refuses a configuration that fails validation — it
+      // neither reads the escaping entry nor falls back to its defaults.
       const { exitCode, stderr } = runReaderBin(root)
-      expect(exitCode).toBe(0)
+      expect(exitCode).toBe(2)
+      expect(stderr).toContain('proseGates.specPaths.0')
       expect(stderr).not.toContain('notes.md')
-      expect(stderr).not.toContain('outside')
 
       const validated = Bun.spawnSync(['bun', INDEX_TS, 'check', 'reader-resolvable-prose'], {
         cwd: root,
@@ -950,6 +952,161 @@ describe('reader-resolvable-prose: the spec class checks a root spec, context an
       expect(exitCode).toBe(1)
       expect(stderr).toContain('design/architecture.md')
       expect(stderr).toContain('SPEC.md')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+// A repository's own writing rules: `proseGates.rules` read by both prose
+// checks at run time, each check running only its own group.
+describe('proseGates.rules — configured writing rules, end to end', () => {
+  const LEVERAGE = {
+    id: 'acme/leverage',
+    pattern: 'leverage',
+    flags: 'i',
+    means: 'say "use" instead',
+    scopes: ['spec']
+  }
+  const WIDGET = {
+    id: 'acme/widget',
+    pattern: 'legacy widget',
+    means: 'the retired product name',
+    scopes: ['repository']
+  }
+
+  // The doctrine tree sits under its own configured root, not `aeg-root/`:
+  // `check --plan` resolves roles from a repository's `aeg-root/` when one
+  // exists, and this fixture carries no complete doctrine.
+  function rulesFixture(name: string, rules: unknown, checks: Record<string, unknown> = {}): string {
+    const root = initFixture(name)
+    mkdirSync(join(root, 'doctrine', 'roles'), { recursive: true })
+    writeFileSync(join(root, 'doctrine', 'glossary.md'), '## Glossary\n')
+    writeFileSync(join(root, 'doctrine', 'roles', 'x.md'), '# X\n\nThe legacy widget still ships.\n')
+    writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nWe Leverage the cache.\nShipped in #123.\n')
+    writeConfig(root, rules, checks)
+    execFileSync('git', ['add', '-A'], { cwd: root })
+    execFileSync('git', ['commit', '-q', '-m', 'Chore: add fixture'], { cwd: root })
+    return root
+  }
+
+  function writeConfig(root: string, rules: unknown, checks: Record<string, unknown> = {}): void {
+    writeFileSync(
+      join(root, 'vinaya.config.json'),
+      JSON.stringify({ checks, proseGates: { doctrineRoot: 'doctrine', rules } }, null, 2)
+    )
+  }
+
+  function run(root: string, args: string[]) {
+    const result = Bun.spawnSync(['bun', INDEX_TS, ...args], { cwd: root, env: { ...process.env, PR_BODY: undefined } })
+    return { code: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() }
+  }
+
+  function runBin(root: string, bin: string) {
+    const result = Bun.spawnSync(['bun', bin], { cwd: root, env: { ...process.env, PR_BODY: undefined } })
+    return { code: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() }
+  }
+
+  it('a custom rule added only in configuration prints its id, the file and line, the matched text and its message', () => {
+    const root = rulesFixture('rules-custom', { custom: [LEVERAGE] })
+    try {
+      const out = runBin(root, READER_BIN)
+      expect(out.stderr).toContain('SPEC.md:3: acme/leverage: say \\"use\\" instead (\\"Leverage\\")')
+      // Its group alone: the retired check never prints a reader-resolvable rule.
+      expect(runBin(root, RETIRED_BIN).stderr).not.toContain('acme/leverage')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a default switched off yields no finding, and a retune takes effect on the next run with no reinstall', () => {
+    const root = rulesFixture('rules-defaults', {})
+    try {
+      const before = runBin(root, READER_BIN)
+      expect(before.code).toBe(1)
+      expect(before.stderr).toContain('references a forge number (\\"#123\\")')
+
+      writeConfig(root, { defaults: { 'forge-number': { severity: 'warning' } } })
+      const softened = runBin(root, READER_BIN)
+      expect(softened.code).toBe(0)
+      expect(softened.stderr).toContain('"severity":"warning","message":"SPEC.md:4: references a forge number')
+
+      writeConfig(root, { defaults: { 'forge-number': 'off' } })
+      const off = runBin(root, READER_BIN)
+      expect(off.code).toBe(0)
+      expect(off.stderr).not.toContain('forge number')
+
+      writeConfig(root, { exempt: ['SPEC.md'] })
+      expect(runBin(root, READER_BIN).stderr).not.toContain('SPEC.md')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('retired-vocabulary runs a custom repository rule, and reader-resolvable-prose never prints it', () => {
+    const root = rulesFixture('rules-retired', { custom: [WIDGET] })
+    try {
+      const out = runBin(root, RETIRED_BIN)
+      expect(out.code).toBe(1)
+      expect(out.stderr).toContain('acme/widget: the retired product name (matches /legacy widget/)')
+      expect(runBin(root, READER_BIN).stderr).not.toContain('acme/widget')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('replacing a check with a no-op turns off exactly its group', () => {
+    const root = rulesFixture(
+      'rules-noop',
+      { custom: [LEVERAGE, WIDGET] },
+      {
+        'reader-resolvable-prose': { run: './noop.sh', scope: 'full' }
+      }
+    )
+    try {
+      writeFileSync(join(root, 'noop.sh'), '#!/bin/sh\nexit 0\n')
+      execFileSync('chmod', ['+x', join(root, 'noop.sh')])
+      const replaced = run(root, ['check', 'reader-resolvable-prose'])
+      expect(replaced.stdout + replaced.stderr).not.toContain('acme/leverage')
+      const retired = run(root, ['check', 'retired-vocabulary'])
+      expect(retired.stdout + retired.stderr).toContain('acme/widget')
+
+      const plan = run(root, ['check', '--plan', '--json'])
+      const proseRules = JSON.parse(plan.stdout).proseRules
+      expect(proseRules.checks['reader-resolvable-prose']).toEqual({
+        group: 'reader-resolvable',
+        runs: false,
+        rules: []
+      })
+      expect(proseRules.checks['retired-vocabulary'].runs).toBe(true)
+      expect(proseRules.checks['retired-vocabulary'].rules.map((r: { id: string }) => r.id)).toContain('acme/widget')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('check --plan prints which rules each prose check runs', () => {
+    const root = rulesFixture('rules-plan', { defaults: { 'coined-term': 'off' }, custom: [LEVERAGE] })
+    try {
+      const plan = run(root, ['check', '--plan'])
+      expect(plan.stdout).toContain('reader-resolvable-prose (reader-resolvable group,')
+      expect(plan.stdout).toContain('  acme/leverage [custom] — spec')
+      expect(plan.stdout).toContain('  forge-number — ships, reader-facing, spec')
+      expect(plan.stdout).not.toContain('  coined-term')
+      expect(plan.stdout).toContain('retired-vocabulary (retired-vocabulary group, 28 rule(s)):')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a malformed rule refuses the check, naming the key, instead of falling back to no rule', () => {
+    const root = rulesFixture('rules-malformed', { custom: [{ ...LEVERAGE, pattern: '(' }] })
+    try {
+      for (const bin of [READER_BIN, RETIRED_BIN]) {
+        const out = runBin(root, bin)
+        expect(out.code).toBe(2)
+        expect(out.stderr).toContain('proseGates.rules.custom.0.pattern: does not compile')
+      }
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

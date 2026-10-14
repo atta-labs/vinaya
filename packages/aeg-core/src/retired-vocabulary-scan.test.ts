@@ -89,7 +89,9 @@ describe('scanRetiredVocabulary', () => {
         file: 'aeg-root/glossary.md',
         line: 3,
         pattern: 'approves locks',
-        message: expect.stringContaining('retired AEG mechanism')
+        message: expect.stringContaining('retired AEG mechanism'),
+        rule: 'retired-vocabulary-18',
+        blocking: true
       }
     ])
   })

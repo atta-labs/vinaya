@@ -49,13 +49,21 @@
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { scanRetiredVocabulary, type VocabSourceFile } from '@attalabs/aeg-core'
+import { resolveProseRules, rulesOfGroup, scanRetiredVocabulary, type VocabSourceFile } from '@attalabs/aeg-core'
 import { hasDoctrineEntry, resolveDoctrineRoot } from '../../commands/doctrine.js'
-import { loadConfig } from '../../lib/config'
+import { loadConfigChecked } from '../../lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { findingsInThisDiff, repoRoot } from '../../lib/diff-evidence'
 
 const CHECK_NAME = 'retired-vocabulary'
+
+/**
+ * Loaded with its validation surfaced, never swallowed — the same discipline
+ * `reader-resolvable-prose` follows: a malformed `proseGates.rules` entry
+ * refuses the run instead of silently meaning "the defaults only".
+ */
+const CONFIG = loadConfigChecked()
+const proseGates = CONFIG.ok ? CONFIG.config?.proseGates : undefined
 
 /**
  * Same default, same config key, and same fix as `reader-resolvable-prose`
@@ -72,7 +80,7 @@ const CHECK_NAME = 'retired-vocabulary'
  * never silently as a clean zero-finding pass.
  */
 function resolveCheckDoctrineRoot(): string | null {
-  const configured = loadConfig()?.proseGates?.doctrineRoot
+  const configured = proseGates?.doctrineRoot
   if (configured !== undefined) return configured
   const root = repoRoot()
   if (root !== null) {
@@ -120,6 +128,20 @@ function readAll(paths: string[]): VocabSourceFile[] {
 }
 
 function main(): void {
+  if (!CONFIG.ok) {
+    console.log(`${CHECK_NAME}: configuration refused — sweep did not run.`)
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `${CONFIG.path}: ${CONFIG.error}`,
+      agent_recovery_prompt:
+        'Fix the vinaya.config.json keys named above; every refused key is named with the reason. This check does ' +
+        'not fall back to its defaults while the configuration is malformed.'
+    })
+    process.exit(2)
+  }
+
   // Genuinely unresolvable — see `check-reader-resolvable-prose.ts`'s
   // identical guard for the full reasoning. A non-{0,1} exit code (never
   // the `1` a reportable finding below exits with) makes the runner mark
@@ -144,7 +166,13 @@ function main(): void {
 
   const paths = collect(DOCTRINE_ROOT)
   const files = readAll(paths)
-  const findings = scanRetiredVocabulary(files)
+  // Only the retired group: the reader-resolvable group is
+  // `reader-resolvable-prose`'s, and running it here too would print each of
+  // its findings twice.
+  const rules = resolveProseRules(proseGates?.rules, { repoRoot: repoRoot() ?? process.cwd() })
+  const retiredRules = rulesOfGroup(rules, 'retired-vocabulary')
+  const customIds = new Set(retiredRules.filter((rule) => rule.custom).map((rule) => rule.id))
+  const findings = scanRetiredVocabulary(files, rules)
   // Same absolute-path comparison (`resolveChangedFiles()` resolves against
   // the real repo root, never an assumed `process.cwd()`) AND same
   // `null`-means-unfiltered handling `check-reader-resolvable-prose.ts`
@@ -173,25 +201,30 @@ function main(): void {
   // the runner treat this human-readable summary as malformed output and
   // report `status: 'error'` regardless of exit code.
   console.log(
-    `${CHECK_NAME}: doctrine root "${DOCTRINE_ROOT}"; ${paths.length} file(s) swept; ${findings.length} finding(s), ${reportable.length} in this diff`
+    `${CHECK_NAME}: doctrine root "${DOCTRINE_ROOT}"; ${paths.length} file(s) swept; ${retiredRules.length} rule(s) (${customIds.size} custom); ${findings.length} finding(s), ${reportable.length} in this diff`
   )
 
+  let hasBlocking = false
   for (const finding of reportable) {
+    if (finding.blocking) hasBlocking = true
     emitCheckError({
       schema: CHECK_SCHEMA_VERSION,
       check: CHECK_NAME,
-      severity: 'error',
+      severity: finding.blocking ? 'error' : 'warning',
       message: `${finding.file}:${finding.line}: ${finding.message}`,
       file: finding.file,
       line: finding.line,
-      agent_recovery_prompt:
-        'This doctrine page claims a mechanism AEG itself retired is still live (a decision-log entry, the lock, ' +
-        'the `team-leader` role, the tranche topology file, …). Rewrite it to describe the CURRENT mechanism, or remove the claim — never ' +
-        'describe a retired concept as something a reader can still do today.'
+      agent_recovery_prompt: customIds.has(finding.rule)
+        ? "This text matches one of this repository's own writing rules (proseGates.rules.custom in " +
+          'vinaya.config.json); the finding names the rule and what it means. Rewrite the text so it no longer ' +
+          "matches, or, where the rule should not read this file, add the path to that rule's exempt list."
+        : 'This doctrine page claims a mechanism AEG itself retired is still live (a decision-log entry, the lock, ' +
+          'the `team-leader` role, the tranche topology file, …). Rewrite it to describe the CURRENT mechanism, or remove the claim — never ' +
+          'describe a retired concept as something a reader can still do today.'
     })
   }
 
-  process.exit(reportable.length > 0 ? 1 : 0)
+  process.exit(hasBlocking ? 1 : 0)
 }
 
 main()
