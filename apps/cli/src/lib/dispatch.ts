@@ -133,6 +133,7 @@ import {
   stageCodexPolicyHome,
   type ClaudeSandboxSettings,
   type ConfinementPlatformDeps,
+  type ConfinementRequest,
   type SandboxProbeResult
 } from './worker-boundary.js'
 import { agentControlsRefusal } from './enforcement-controls.js'
@@ -3913,6 +3914,30 @@ export type HostSandboxProbeOutcome =
   | { readonly kind: 'probed'; readonly result: SandboxProbeResult; readonly unixSocketFilterOff: boolean }
 
 /**
+ * The confinement request an unattended Claude dispatch hands to
+ * `resolveClaudeConfinement` — built from the same options `dispatchRole`
+ * receives. A reviewer's own output directory (`extraWritableDirs`) rides
+ * along, so the sandbox's commands can write it too, not only the file
+ * tools the write-access hook grants; Codex receives the same directories
+ * (`addCodexWritableDirs`).
+ */
+export function claudeConfinementRequest(
+  role: Role,
+  agent: AgentVendor,
+  opts: Pick<DispatchOpts, 'cwd' | 'extraWritableDirs'>,
+  scratchDir: string
+): ConfinementRequest {
+  return {
+    role,
+    agent,
+    worktreeDir: opts.cwd ?? repoRoot() ?? process.cwd(),
+    scratchDir,
+    allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS,
+    extraWritableDirs: opts.extraWritableDirs ?? []
+  }
+}
+
+/**
  * The dispatch's own pre-spawn Claude sandbox probe, run outside any dispatch:
  * the same confinement resolution, the same settings writer and the same
  * probe environment, against a throwaway directory under the OS temp
@@ -4406,13 +4431,7 @@ export async function dispatchRole(
       : null
   const claudeConfinement =
     agent === 'claude' && opts.unattended === true && claudeScratchDir !== null
-      ? resolveClaudeConfinement({
-          role,
-          agent,
-          worktreeDir: opts.cwd ?? repoRoot() ?? process.cwd(),
-          scratchDir: claudeScratchDir,
-          allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS
-        })
+      ? resolveClaudeConfinement(claudeConfinementRequest(role, agent, opts, claudeScratchDir))
       : null
   if (claudeConfinement !== null && !claudeConfinement.confined) {
     // O5: named in the run's own output (`writeLifecycle`, which mirrors to

@@ -950,6 +950,14 @@ export type ConfinementRequest = {
   readonly worktreeDir: string
   readonly scratchDir: string
   readonly allowedHosts: readonly string[]
+  /**
+   * Directories outside the worktree this dispatch was told to write into —
+   * a reviewer's own output directory (`dispatch.ts`'s `extraWritableDirs`).
+   * Granted to the sandbox's commands as well as to its file tools, so the
+   * directory the reviewer's prompt names is writable whichever tool writes
+   * it. Absent or empty adds nothing.
+   */
+  readonly extraWritableDirs?: readonly string[]
 }
 
 export type ClaudeSandboxSettings = {
@@ -1053,9 +1061,10 @@ function claudeCredentialDenyFiles(realHome: string): ReadonlyArray<{ path: stri
  *   except the dedicated driver-tool socket root, which `denyRead` hides
  *   even when Unix-socket seccomp is unavailable. `allowRead` stays empty.
  * - **Writes** are granted on the worktree, this dispatch's own scratch
- *   directory, and — round 4 Principal ruling, below — bun's own resolved
- *   install cache (`resolveBunInstallCacheDir`), never a fourth path and
- *   never the real `HOME`. `filesystem.allowWrite` no longer also names the worktree's own git
+ *   directory, — round 4 Principal ruling, below — bun's own resolved
+ *   install cache (`resolveBunInstallCacheDir`), and the output directories
+ *   the caller names in `request.extraWritableDirs` (a reviewer's own work
+ *   directory), never another path and never the real `HOME`. `filesystem.allowWrite` no longer also names the worktree's own git
  *   common dir: for a LINKED worktree (every Developer/Reviewer worktree
  *   this module confines), Claude Code's sandbox already "allows writes to
  *   the main repository's shared `.git` directory so commands such as `git
@@ -1137,7 +1146,12 @@ export function buildClaudeSandboxSettings(
       filesystem: {
         denyRead: [devToolsSocketRoot()],
         allowRead: [],
-        allowWrite: [worktreeDir, scratchDir, resolveBunInstallCacheDir()]
+        allowWrite: [
+          worktreeDir,
+          scratchDir,
+          resolveBunInstallCacheDir(),
+          ...(request.extraWritableDirs ?? []).map(real)
+        ]
       },
       credentials: { files: claudeCredentialDenyFiles(realHome) }
     },
@@ -1909,11 +1923,11 @@ function entryKind(path: string): 'file' | 'dir' {
   }
 }
 
-/** The directory name `rounds/<n>` holds for each role — `developer` is literal; a reviewer/security round directory is named `reviewer-work`/`security-work`, with a `-retry<k>` suffix for a later attempt (`reviewerWorkDir`, `dev-review-loop/reviewer-dispatch.ts`) — so a prefix match, not an exact one, is what "belongs to this role" means for those two. */
+/** The directory name `rounds/<n>` holds for each role — `developer` is literal; a reviewer/security round directory is named `reviewer-work`/`security-work`, with a `-retry<k>` suffix for a later attempt (`reviewerWorkDir`) and a `-redispatch<k>` suffix for a later dispatch of the same round (`freshReviewerWorkDir`, both in `dev-review-loop/reviewer-dispatch.ts`) — so a prefix match, not an exact one, is what "belongs to this role" means for those two. */
 function roundEntryBelongsToRole(name: string, role: Role): boolean {
   if (role === 'developer') return name === 'developer'
   const prefix = role === 'code-reviewer' ? 'reviewer-work' : 'security-work'
-  return name === prefix || name.startsWith(`${prefix}-retry`)
+  return name === prefix || name.startsWith(`${prefix}-`)
 }
 
 /**
