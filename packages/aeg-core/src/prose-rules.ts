@@ -33,7 +33,7 @@ export const TRANCHE_MODEL_FILE = '/tranche-model.md'
 
 export const RETIRED_PATTERN_EXEMPTIONS: Readonly<Record<string, readonly string[]>> = {
   [String.raw`\bD-[0-9]{3}\b`]: ['./CLAUDE.md'],
-  [String.raw`decisions\.md`]: [
+  [String.raw`(^|[^-_a-zA-Z0-9])decisions\.md`]: [
     'docs-index.md',
     'apps/vada-ai/specs/legacy/README.md',
     'apps/vada-ai/specs/vada-product-spec.md',
@@ -66,7 +66,7 @@ const retiredPatterns = [
   'decision entr',
   'decisions? (are |is )?logged',
   'log entries',
-  String.raw`decisions\.md`,
+  String.raw`(^|[^-_a-zA-Z0-9])decisions\.md`,
   'decisions-legacy',
   'CONTRADICTION',
   'assumes Tier 3',
