@@ -5162,6 +5162,45 @@
       "decisionRule": "Deterministic: the Engine backend passes 100% of every mandatory case; a standalone failure needs a registered expected defect, recorded as comparison evidence only (§10).",
       "cadence": ["every-affected-change"],
       "migrationGate": "§14: both backends execute its suites (run-control.l2@1, run-control.l3@1, run-control.l4@1, run-control.l7@1); on its deterministic suites the Engine backend passes every mandatory case and every standalone failure is named by a registered expected defect, comparison evidence only; its suites run in the regression floor or the live schedule on both backends until cutover and on the Engine backend afterwards; each of its §13 rows satisfies its declared cutover outcome. Recommended order: step 3, runtime mechanics."
+    },
+    {
+      "id": "product-guarantee:INV-164",
+      "kind": "product-guarantee",
+      "module": "6.11",
+      "source": {
+        "document": "apps/cli/specs/dev-review-invariants.md",
+        "revision": 17,
+        "section": "One entry per observed behavior"
+      },
+      "contract": "Once the gate reads green and before reviewers are dispatched, the driver runs each `[live]` Test plan line of the frozen brief on its own host, bounded in time; a non-zero exit or a timeout is a red gate that sends the Developer back with the line's output tail and dispatches no reviewer for that head, a line naming a vendor with no subscription sign-in on the host is recorded unverified and held by the merge gate like an unticked principal item, and a plan with no such line runs the round unchanged.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision; LangGraph — Test (principle 12) for its L3 graph conformance: a fresh checkpointer per test, nodes alone, sections by partial execution.",
+      "suite": ["assessment.l1@1", "assessment.l2@1", "assessment.l3@1"],
+      "tasks": {
+        "positive": {
+          "present": "Corpus `developer-failure`: INV-164 holds, asserted on the returned decision."
+        },
+        "negative": {
+          "present": "The same scenario with the condition INV-164 governs absent: the behaviour does not occur, asserted on the returned decision (§9 balance)."
+        },
+        "refusal": {
+          "notApplicable": "INV-164 states no refusal: none of its scenarios (`developer-failure`) is a refusal scenario; its negative case covers the absent condition."
+        },
+        "recovery": {
+          "present": "Corpus `developer-failure`: after the fault, INV-164 still holds on the recovered run."
+        },
+        "adversarial": {
+          "notApplicable": "INV-164's scenarios (`developer-failure`) put no adversary-controlled input against it; adversarial coverage is the §13 fault and attack rows."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: the returned decision and the revision handoff."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: the Engine backend passes 100% of every mandatory case; a standalone failure needs a registered expected defect, recorded as comparison evidence only (§10).",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14: both backends execute its suites (assessment.l1@1, assessment.l2@1, assessment.l3@1); on its deterministic suites the Engine backend passes every mandatory case and every standalone failure is named by a registered expected defect, comparison evidence only; its suites run in the regression floor or the live schedule on both backends until cutover and on the Engine backend afterwards; each of its §13 rows satisfies its declared cutover outcome. Recommended order: step 2, pure policy."
     }
   ]
 }
