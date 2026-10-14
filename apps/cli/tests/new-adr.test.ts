@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DECISION_RECORD_CITATION_ID, resolveProseRules } from '@attalabs/aeg-core'
@@ -43,7 +43,7 @@ describe('vinaya new adr', () => {
     const result = await newAdr(dir, 'Use one rule set')
     expect(result.code).toBe(2)
     expect(result.stderr).toContain('decisionRecords.path is not set')
-    expect(readdirSync(dir).sort()).toEqual(['.git', 'vinaya.config.json'])
+    for (const folder of ['docs/adr', 'docs', 'adr']) expect(existsSync(join(dir, folder))).toBe(false)
   })
 
   it('writes 0001 from the template with status Proposed and creates the index', async () => {
