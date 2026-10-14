@@ -81,10 +81,15 @@ export function devToolsSocketPath(key: string): string {
  * relaying stdio to the driver-run host over `socketPath`. Repo-local and
  * identical whether invoked as `bun …/index.ts` or the installed `vinaya`
  * binary; the one builder both the production dispatch and the O1 proof use so
- * they register the server identically.
+ * they register the server identically. `entry` defaults to this process's own
+ * script, which is the vinaya CLI only when the CLI is what is running: under
+ * `bun test` it is the test file, so a test that stages a real session passes
+ * the CLI entry explicitly.
  */
-export function driverDevBridgeInvocation(socketPath: string): BridgeInvocation {
-  const entry = process.argv[1] ?? 'vinaya'
+export function driverDevBridgeInvocation(
+  socketPath: string,
+  entry: string = process.argv[1] ?? 'vinaya'
+): BridgeInvocation {
   return { command: process.execPath, args: [entry, 'task-tools', 'dev-bridge', '--socket', socketPath] }
 }
 

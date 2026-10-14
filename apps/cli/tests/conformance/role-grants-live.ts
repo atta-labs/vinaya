@@ -1,20 +1,19 @@
 import { describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import net from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { buildWorkerEnv } from '../../src/lib/worker-boundary.js'
-import {
-  confinedTmpEnv,
-  devBridgeInvocation,
-  resolveProofConfinement,
-  stageProofCodexHome
-} from '../../src/lib/task-tools/dev-proof.js'
+import { confinedTmpEnv, resolveProofConfinement, stageProofCodexHome } from '../../src/lib/task-tools/dev-proof.js'
 import { startDevToolsHost } from '../../src/lib/task-tools/dev-tools-host.js'
 import {
+  type BridgeInvocation,
   claudeDevToolsArgs,
   devToolsMcpConfigFileBody,
-  devToolsSocketPath
+  devToolsSocketPath,
+  driverDevBridgeInvocation
 } from '../../src/lib/task-tools/dev-tools-registration.js'
 import { DEV_TOOLS_MCP_SERVER_NAME, type DevToolContext } from '../../src/lib/task-tools/dev-tools-server.js'
 import { type GrantedRole, servedTools } from '../../src/lib/task-tools/role-grants.js'
@@ -39,6 +38,86 @@ export const LIVE_GRANT_CONFORMANCE = process.env.VINAYA_LIVE_GRANT_CONFORMANCE 
 type LiveAgent = 'claude' | 'codex'
 
 const DEVELOPER_TOOL_PROBE = 'publish_changes'
+
+/** The vinaya CLI's own entry, which the staged bridge runs: under `bun test`, `process.argv[1]` is the test file, not the CLI. */
+export const VINAYA_CLI_ENTRY = fileURLToPath(new URL('../../src/index.ts', import.meta.url))
+
+/** The bridge a live session's MCP client spawns: the dispatch's own builder, pointed at the real CLI entry. */
+export function liveBridgeInvocation(socketPath: string): BridgeInvocation {
+  return driverDevBridgeInvocation(socketPath, VINAYA_CLI_ENTRY)
+}
+
+/** Calls `onMessage` with each JSON object in a newline-delimited JSON-RPC byte stream. */
+function jsonLines(onMessage: (message: Record<string, unknown>) => void): (chunk: Buffer) => void {
+  let buffered = ''
+  return (chunk) => {
+    buffered += chunk.toString('utf8')
+    let newline = buffered.indexOf('\n')
+    while (newline !== -1) {
+      try {
+        const parsed = JSON.parse(buffered.slice(0, newline)) as unknown
+        if (typeof parsed === 'object' && parsed !== null) onMessage(parsed as Record<string, unknown>)
+      } catch {
+        // not a JSON-RPC line
+      }
+      buffered = buffered.slice(newline + 1)
+      newline = buffered.indexOf('\n')
+    }
+  }
+}
+
+/**
+ * A relay in front of the host that records whether the host answered an
+ * `initialize` request, so a case proves the server connected even for a role
+ * that is served no tools. It listens beside the host's socket, in the same
+ * owner-only directory, and forwards every byte unchanged.
+ */
+export async function startInitializeWitness(
+  hostSocketPath: string
+): Promise<{ socketPath: string; answered: () => boolean; close: () => Promise<void> }> {
+  const socketPath = join(dirname(hostSocketPath), 'w.sock')
+  let answered = false
+  const initializeIds = new Set<unknown>()
+  const sockets = new Set<net.Socket>()
+  const relay = net.createServer((client) => {
+    const host = net.connect(hostSocketPath)
+    for (const socket of [client, host]) {
+      sockets.add(socket)
+      socket.on('close', () => sockets.delete(socket))
+      socket.on('error', () => socket.destroy())
+    }
+    client.on(
+      'data',
+      jsonLines((m) => {
+        if (m.method === 'initialize') initializeIds.add(m.id)
+      })
+    )
+    host.on(
+      'data',
+      jsonLines((m) => {
+        if (initializeIds.has(m.id) && 'result' in m) answered = true
+      })
+    )
+    client.pipe(host)
+    host.pipe(client)
+  })
+  await new Promise<void>((resolve, reject) => {
+    relay.once('error', reject)
+    relay.listen(socketPath, resolve)
+  })
+  return {
+    socketPath,
+    answered: () => answered,
+    close: () =>
+      new Promise<void>((resolve) => {
+        for (const socket of sockets) socket.destroy()
+        relay.close(() => {
+          rmSync(socketPath, { force: true })
+          resolve()
+        })
+      })
+  }
+}
 
 /** One live case's ceiling, and the shorter budget its agent session is killed at, so a hung session reports its own output. */
 const LIVE_TIMEOUT_MS = 600_000
@@ -133,6 +212,14 @@ function streamEvents(stdout: string): Record<string, unknown>[] {
   return events
 }
 
+/** The dev-tools server's status as Claude's own `system/init` event reports it, or `null` when it lists none. */
+function claudeInitServerStatus(events: Record<string, unknown>[]): string | null {
+  const init = events.find((e) => e.type === 'system' && e.subtype === 'init')
+  if (!init || !Array.isArray(init.mcp_servers)) return null
+  const server = (init.mcp_servers as Record<string, unknown>[]).find((s) => s?.name === DEV_TOOLS_MCP_SERVER_NAME)
+  return typeof server?.status === 'string' ? server.status : null
+}
+
 /** The server's tools as Claude's own `system/init` event lists them, with the `mcp__<server>__` prefix removed. */
 function claudeInitServerTools(events: Record<string, unknown>[]): string[] | null {
   const init = events.find((e) => e.type === 'system' && e.subtype === 'init')
@@ -167,7 +254,14 @@ function codexSeenTools(events: Record<string, unknown>[]): string[] | null {
 async function runGrantSession(
   agent: LiveAgent,
   role: Exclude<GrantedRole, 'controller'>
-): Promise<{ calls: string[]; seen: string[] | null; initTools: string[] | null; outcome: SessionOutcome }> {
+): Promise<{
+  calls: string[]
+  seen: string[] | null
+  initTools: string[] | null
+  initStatus: string | null
+  initializeAnswered: boolean
+  outcome: SessionOutcome
+}> {
   const scratchDir = mkdtempSync(join(tmpdir(), `vinaya-grant-live-${agent}-`))
   const calls: string[] = []
   const host = await startDevToolsHost({
@@ -176,8 +270,9 @@ async function runGrantSession(
     context: recordingContext(calls),
     role
   })
+  const witness = await startInitializeWitness(host.socketPath)
   try {
-    const bridge = devBridgeInvocation(host.socketPath)
+    const bridge = liveBridgeInvocation(witness.socketPath)
     const confinement = resolveProofConfinement(agent, role, scratchDir, scratchDir)
     const schemaPath = join(scratchDir, 'seen-tools.schema.json')
     writeFileSync(schemaPath, `${JSON.stringify(SEEN_TOOLS_SCHEMA)}\n`)
@@ -233,9 +328,12 @@ async function runGrantSession(
       calls,
       seen: agent === 'claude' ? claudeSeenTools(events) : codexSeenTools(events),
       initTools: agent === 'claude' ? claudeInitServerTools(events) : null,
+      initStatus: agent === 'claude' ? claudeInitServerStatus(events) : null,
+      initializeAnswered: witness.answered(),
       outcome
     }
   } finally {
+    await witness.close()
     await host.close()
     rmSync(scratchDir, { recursive: true, force: true })
   }
@@ -251,6 +349,9 @@ export function defineLiveGrantCases(agent: LiveAgent): void {
         async () => {
           const run = await runGrantSession(agent, role)
           expect(run.outcome.exitCode, run.outcome.stderr.slice(-2000)).toBe(0)
+          // The server connected: the host answered the session's initialize, and Claude reports it connected.
+          expect(run.initializeAnswered, run.outcome.stderr.slice(-2000)).toBe(true)
+          if (agent === 'claude') expect(run.initStatus).toBe('connected')
           if (run.initTools !== null) expect([...run.initTools].sort()).toEqual([...granted].sort())
           expect(run.seen).not.toBeNull()
           expect([...(run.seen ?? [])].sort()).toEqual([...granted].sort())
