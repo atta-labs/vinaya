@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'bun:test'
-import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -19,6 +18,7 @@ import {
 } from '../../src/lib/task-tools/dev-tools-registration.js'
 import { DEV_TOOLS_MCP_SERVER_NAME, type DevToolContext } from '../../src/lib/task-tools/dev-tools-server.js'
 import { type GrantedRole, servedTools } from '../../src/lib/task-tools/role-grants.js'
+import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture.js'
 
 /**
  * Live grant conformance, shared by `claude.test.ts` and `codex.test.ts`: a
@@ -39,6 +39,10 @@ export const LIVE_GRANT_CONFORMANCE = process.env.VINAYA_LIVE_GRANT_CONFORMANCE 
 type LiveAgent = 'claude' | 'codex'
 
 const DEVELOPER_TOOL_PROBE = 'publish_changes'
+
+/** One live case's ceiling, and the shorter budget its agent session is killed at, so a hung session reports its own output. */
+const LIVE_TIMEOUT_MS = 600_000
+const SESSION_BUDGET_MS = 540_000
 
 /** The final answer each session must give: the tool names it sees from the driver-run server. */
 const SEEN_TOOLS_SCHEMA = {
@@ -106,26 +110,14 @@ function grantPrompt(): string {
 
 type SessionOutcome = { exitCode: number | null; stdout: string; stderr: string }
 
-function runSession(
-  command: string,
-  args: string[],
-  env: NodeJS.ProcessEnv,
-  cwd: string,
-  stdin: string
+/** One agent session under the shared fixture budget, with every `VINAYA_*` variable stripped from its environment. */
+async function runSession(
+  command: string[],
+  env: Record<string, string | undefined>,
+  cwd: string
 ): Promise<SessionOutcome> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
-    let stdout = ''
-    let stderr = ''
-    child.stdout.setEncoding('utf8')
-    child.stderr.setEncoding('utf8')
-    child.stdout.on('data', (c: string) => (stdout += c))
-    child.stderr.on('data', (c: string) => (stderr += c))
-    child.on('error', reject)
-    child.on('close', (exitCode) => resolve({ exitCode, stdout, stderr }))
-    child.stdin.write(stdin)
-    child.stdin.end()
-  })
+  const ran = await spawnBudgetedAsync(command, { cwd, env }, SESSION_BUDGET_MS, `${command[0]} grant session`)
+  return { exitCode: ran.status, stdout: ran.stdout, stderr: ran.stderr }
 }
 
 function streamEvents(stdout: string): Record<string, unknown>[] {
@@ -194,9 +186,10 @@ async function runGrantSession(
       const mcpConfigPath = join(scratchDir, 'dev-tools.mcp.json')
       writeFileSync(mcpConfigPath, devToolsMcpConfigFileBody(bridge))
       outcome = await runSession(
-        'claude',
         [
+          'claude',
           '-p',
+          grantPrompt(),
           '--verbose',
           '--output-format',
           'stream-json',
@@ -206,18 +199,17 @@ async function runGrantSession(
           ...(confinement.settingsPath ? ['--settings', confinement.settingsPath] : [])
         ],
         // Startup waits for the server, so the init event reports its tools rather than a pending connection.
-        buildWorkerEnv(process.env, {
+        buildWorkerEnv(stripVinayaEnv(process.env), {
           MCP_CONNECTION_NONBLOCKING: '0',
           ...confinedTmpEnv(confinement.confined, scratchDir)
         }),
-        scratchDir,
-        grantPrompt()
+        scratchDir
       )
     } else {
       const codexHome = stageProofCodexHome(bridge, scratchDir, confinement)
       outcome = await runSession(
-        'codex',
         [
+          'codex',
           'exec',
           '--sandbox',
           'workspace-write',
@@ -227,11 +219,13 @@ async function runGrantSession(
           '--json',
           '--output-schema',
           schemaPath,
-          '-'
+          grantPrompt()
         ],
-        buildWorkerEnv(process.env, { CODEX_HOME: codexHome, ...confinedTmpEnv(confinement.confined, scratchDir) }),
-        scratchDir,
-        grantPrompt()
+        buildWorkerEnv(stripVinayaEnv(process.env), {
+          CODEX_HOME: codexHome,
+          ...confinedTmpEnv(confinement.confined, scratchDir)
+        }),
+        scratchDir
       )
     }
     const events = streamEvents(outcome.stdout)
@@ -246,8 +240,6 @@ async function runGrantSession(
     rmSync(scratchDir, { recursive: true, force: true })
   }
 }
-
-const LIVE_TIMEOUT_MS = 600_000
 
 /** Registers the live grant cases for one agent; skipped unless `VINAYA_LIVE_GRANT_CONFORMANCE=1`. */
 export function defineLiveGrantCases(agent: LiveAgent): void {
