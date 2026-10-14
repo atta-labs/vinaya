@@ -48,7 +48,7 @@ export function isToolGranted(role: string, tool: string): boolean {
   return isGrantedRole(role) && ROLE_TOOL_GRANTS[role].includes(tool)
 }
 
-/** The tools a dispatch of `role` is served, in catalog order: the catalog entries its grant names. */
+/** The tools a dispatch of `role` is served, in catalog order: every catalog tool its grant names. */
 export function servedTools(role: GrantedRole): typeof AGENT_TOOL_CATALOG {
   return AGENT_TOOL_CATALOG.filter((tool) => isToolGranted(role, tool.name))
 }
