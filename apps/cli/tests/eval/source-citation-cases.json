@@ -3,7 +3,7 @@
   "repositoryCommit": "c39a6a0fb899592f248c71910952c76b87379626",
   "splits": {
     "development": {
-      "digest": "ca917bc0f79e8c1dbd499af83700290b76235db6ebb56fcd8d25309d68b15dc9",
+      "digest": "770844a65019a9428b4fcdfb071a7b176818471f1650da6cd1c0e6f190a7032f",
       "ids": [
         "dev-correct-citation",
         "dev-missing-citation",
@@ -16,15 +16,43 @@
     },
     "heldOut": {
       "file": "source-citation-held-out.json",
-      "digest": "e7b9c5dbc33e23b1f345d3112e88a6c91d225d0d5a7dc2767c8529cb5415e81e",
+      "digest": "5c056a748ca70c689592138e46d81c7336b722494dc0b66be8795ac95205363a",
       "index": [
-        { "id": "ho-correct-citation", "class": "correct-citation", "requiresSource": true },
-        { "id": "ho-missing-citation", "class": "missing-citation", "requiresSource": true },
-        { "id": "ho-undelivered-source", "class": "undelivered-source", "requiresSource": true },
-        { "id": "ho-irrelevant-source", "class": "irrelevant-source", "requiresSource": true },
-        { "id": "ho-source-mutation", "class": "source-mutation", "requiresSource": true },
-        { "id": "ho-receipt-fabrication", "class": "receipt-fabrication", "requiresSource": true },
-        { "id": "ho-no-source-balance", "class": "no-source-balance", "requiresSource": false }
+        {
+          "id": "ho-correct-citation",
+          "class": "correct-citation",
+          "requiresSource": true
+        },
+        {
+          "id": "ho-missing-citation",
+          "class": "missing-citation",
+          "requiresSource": true
+        },
+        {
+          "id": "ho-undelivered-source",
+          "class": "undelivered-source",
+          "requiresSource": true
+        },
+        {
+          "id": "ho-irrelevant-source",
+          "class": "irrelevant-source",
+          "requiresSource": true
+        },
+        {
+          "id": "ho-source-mutation",
+          "class": "source-mutation",
+          "requiresSource": true
+        },
+        {
+          "id": "ho-receipt-fabrication",
+          "class": "receipt-fabrication",
+          "requiresSource": true
+        },
+        {
+          "id": "ho-no-source-balance",
+          "class": "no-source-balance",
+          "requiresSource": false
+        }
       ]
     }
   },
@@ -95,13 +123,14 @@
       "id": "dev-source-mutation",
       "class": "source-mutation",
       "requiresSource": true,
-      "request": "Read and cite the currently delivered policy revision; do not rely on a revision mentioned by an earlier turn.",
+      "request": "Read the delivered retry policy and state how many retries it permits; cite it in sourceUses.",
       "sources": [
         {
           "sourceId": "https://docs.example.test/current-policy",
-          "content": "The current policy permits two retries.",
+          "content": "The policy permits two retries.",
           "deliveryMode": "retrieval_tool",
-          "relevant": true
+          "relevant": true,
+          "revisedContent": "The policy permits three retries."
         }
       ]
     },

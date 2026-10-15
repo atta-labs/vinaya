@@ -11,12 +11,15 @@ import { dirname, join } from 'node:path'
 import {
   developerTurnResultJsonSchema,
   parseDeveloperTurnResult,
+  semanticErrors,
   type DeveloperTurnResult
 } from '../../src/lib/developer-turn-result'
 import { passHatK } from '../../src/lib/dev-review-eval/estimators'
 import { readClaudeTurnOutput, readCodexTurnOutput } from '../../src/lib/dev-review-loop/turn-result'
 import {
   injectedDeliveryReceipts,
+  SOURCE_REVISION_POLICY,
+  decideDeliveredRevision,
   manifestDigest,
   requiredSourcesPromptBlock,
   sha256Digest,
@@ -25,6 +28,7 @@ import {
   type SourceDeliveryReceipt
 } from '../../src/lib/source-manifest'
 import { startDevToolsHost } from '../../src/lib/task-tools/dev-tools-host'
+import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server'
 import {
   CLAUDE_DEV_TOOLS_ENV,
   claudeDevToolName,
@@ -35,7 +39,7 @@ import {
   driverDevBridgeInvocation
 } from '../../src/lib/task-tools/dev-tools-registration'
 import { servedTools } from '../../src/lib/task-tools/role-grants'
-import { createWorld, usageOf, type ToolSelectionCase, type Usage } from './tool-selection-suite'
+import { createWorld, usageOf, type ToolSelectionCase, type Usage, type World } from './tool-selection-suite'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture'
 
 export const ADAPTERS = ['claude-code', 'codex'] as const
@@ -60,7 +64,10 @@ export interface SourceSpec {
   sourceId: string
   content: string
   deliveryMode: 'injected' | 'retrieval_tool'
+  /** Whether the source supports the task's decision; an irrelevant source is delivered but never required. */
   relevant: boolean
+  /** The revision a web source changes to between the first and second turn of a source-mutation case. */
+  revisedContent?: string
 }
 export interface SourceCitationCase {
   id: string
@@ -117,9 +124,18 @@ function assertCase(value: SourceCitationCase, path: string): void {
     if (source.sourceId === '' || source.content === '') throw new Error(`${path}.sources.${index} is incomplete`)
     if (source.deliveryMode !== 'injected' && source.deliveryMode !== 'retrieval_tool')
       throw new Error(`${path}.sources.${index}.deliveryMode is unknown`)
+    if (
+      source.revisedContent !== undefined &&
+      (source.deliveryMode !== 'retrieval_tool' ||
+        source.revisedContent === '' ||
+        source.revisedContent === source.content)
+    )
+      throw new Error(`${path}.sources.${index}.revisedContent must be a different revision of a fetched source`)
   }
   if (value.requiresSource !== value.sources.some((source) => source.relevant))
     throw new Error(`${path}.requiresSource disagrees with its relevant sources`)
+  if ((value.class === 'source-mutation') !== value.sources.some((source) => source.revisedContent !== undefined))
+    throw new Error(`${path}: exactly the source-mutation class revises a source between turns`)
 }
 
 const defaultRead: ReadText = (path) => readFileSync(path, 'utf8')
@@ -178,6 +194,16 @@ function preparedSource(spec: SourceSpec): PreparedSource {
   }
 }
 
+/** The sources a result must cite: the relevant ones. A delivered but irrelevant source is never required. */
+export function requiredSourcesFor(testCase: SourceCitationCase): string[] {
+  return testCase.sources.filter((source) => source.relevant).map((source) => source.sourceId)
+}
+
+/** The digest of the revision a source holds once the case's last turn starts. */
+export function currentDigest(source: SourceSpec): string {
+  return sha256Digest(source.revisedContent ?? source.content)
+}
+
 /** Builds the production controller contract, including its self-digest. */
 export function evidenceFor(testCase: SourceCitationCase): {
   manifest: RequiredSourceManifest
@@ -209,22 +235,32 @@ export function gradeSourceUse(
 ): CitationGrade {
   const reasons: string[] = []
   if (manifest.digest !== manifestDigest(manifest)) reasons.push('manifest digest does not verify')
-  const relevant = new Set(testCase.sources.filter((source) => source.relevant).map((source) => source.sourceId))
+  const relevant = new Set(requiredSourcesFor(testCase))
+  const current = new Map(testCase.sources.map((source) => [source.sourceId, currentDigest(source)]))
   const entries = new Map(manifest.sources.map((source) => [source.sourceId, source]))
   const valid = new Set<string>()
   for (const receipt of receipts) {
     const entry = entries.get(receipt.sourceId)
+    if (entry === undefined || entry.contentDigest === null) continue
     const authenticWriter = receipt.recordedBy === 'controller' || receipt.recordedBy === 'fetch_documentation'
+    // The production revision policy: a matching revision counts, and a
+    // changed revision counts only for a volatile source. Either way the
+    // receipt must deliver the revision the source holds now.
+    const revisionCounts =
+      receipt.revision === 'match'
+        ? receipt.deliveredDigest === entry.contentDigest
+        : receipt.revision === 'mismatch' &&
+          receipt.deliveredDigest !== entry.contentDigest &&
+          SOURCE_REVISION_POLICY[entry.freshnessPolicy] === 'count'
     if (
       receipt.schemaVersion === 1 &&
       receipt.source === receipt.sourceId &&
       receipt.round === manifest.round &&
       authenticWriter &&
       receipt.decision === 'counted' &&
-      receipt.revision === 'match' &&
-      entry?.contentDigest !== null &&
-      receipt.pinnedDigest === entry?.contentDigest &&
-      receipt.deliveredDigest === entry.contentDigest
+      receipt.pinnedDigest === entry.contentDigest &&
+      revisionCounts &&
+      receipt.deliveredDigest === current.get(receipt.sourceId)
     )
       valid.add(receipt.sourceId)
   }
@@ -248,7 +284,10 @@ export interface TrialObservation {
   adapter: Adapter
   taskId: string
   trial: number
-  result: DeveloperTurnResult
+  /** The accepted result, or `null` when the production parser refused what the CLI returned. */
+  result: DeveloperTurnResult | null
+  /** Why the parser refused the result; such a trial fails. */
+  refusal: string | null
   manifest: RequiredSourceManifest
   receipts: SourceDeliveryReceipt[]
   usage: Usage
@@ -274,6 +313,10 @@ export interface SourceCitationReport {
 }
 
 /** A trial succeeds only when the accepted result itself passes the source grader. */
+export function trialPasses(testCase: SourceCitationCase, row: TrialObservation): boolean {
+  return row.result !== null && gradeSourceUse(testCase, row.result, row.manifest, row.receipts).verdict === 'pass'
+}
+
 export function reportSourceCitation(
   split: SourceCitationReport['split'],
   cases: readonly SourceCitationCase[],
@@ -290,9 +333,7 @@ export function reportSourceCitation(
       const rows = own.filter((row) => row.taskId === value.id)
       return {
         taskId: value.id,
-        successes: rows.filter(
-          (row) => gradeSourceUse(value, row.result, row.manifest, row.receipts).verdict === 'pass'
-        ).length,
+        successes: rows.filter((row) => trialPasses(value, row)).length,
         trials: rows.length
       }
     })
@@ -301,7 +342,7 @@ export function reportSourceCitation(
     const balanceTrials = own.filter((row) => balancing.some((value) => value.id === row.taskId))
     const balancePasses = balanceTrials.filter((row) => {
       const value = balancing.find((entry) => entry.id === row.taskId)
-      return value !== undefined && gradeSourceUse(value, row.result, row.manifest, row.receipts).verdict === 'pass'
+      return value !== undefined && trialPasses(value, row)
     }).length
     const cost = own.reduce(
       (sum, row) => ({
@@ -342,15 +383,56 @@ async function runProcess(command: string, args: string[], cwd: string, env: Nod
   return { stdout: result.stdout, code: result.status }
 }
 
-/** Runs one real subscription-authenticated CLI with native structured output. */
-export async function liveTrial(
-  testCase: SourceCitationCase,
-  adapter: Adapter,
-  trial: number,
-  options: { claudeModel?: string; codexModel?: string; timeoutSec: number }
-): Promise<TrialObservation> {
-  const initial = evidenceFor(testCase)
-  const pages = Object.fromEntries(testCase.sources.map((source) => [source.sourceId, { text: source.content }]))
+/**
+ * A tool context that forwards every call to whichever world is current, so a
+ * source-mutation case can change a source between turns behind one host.
+ */
+function switchableContext(initial: World): { context: DevToolContext; use: (world: World) => void } {
+  let current = initial
+  const context = Object.fromEntries(
+    Object.entries(initial.context).map(([key, value]) => [
+      key,
+      typeof value === 'function'
+        ? (...args: unknown[]) =>
+            (current.context[key as keyof DevToolContext] as (...a: unknown[]) => unknown)(...args)
+        : value
+    ])
+  ) as DevToolContext
+  return { context, use: (world) => (current = world) }
+}
+
+/** The fetched-source receipts one turn's world records, decided by the production revision policy. */
+function fetchedReceipts(
+  manifest: RequiredSourceManifest,
+  world: World,
+  content: (source: SourceSpec) => string,
+  sources: readonly SourceSpec[]
+): SourceDeliveryReceipt[] {
+  const counted = world.state().countedUrls
+  return manifest.sources
+    .filter((entry) => counted.includes(entry.sourceId))
+    .map((entry): SourceDeliveryReceipt => {
+      const spec = sources.find((source) => source.sourceId === entry.sourceId) as SourceSpec
+      const deliveredDigest = sha256Digest(content(spec))
+      return {
+        schemaVersion: 1,
+        sourceId: entry.sourceId,
+        source: entry.sourceId,
+        round: manifest.round,
+        recordedAt: new Date().toISOString(),
+        mode: 'retrieval_tool',
+        recordedBy: 'fetch_documentation',
+        ...decideDeliveredRevision(entry, deliveredDigest),
+        deliveredDigest,
+        requestedUrl: entry.sourceId,
+        finalUrl: entry.finalUrl,
+        status: 200,
+        contentType: 'text/plain'
+      }
+    })
+}
+
+function worldFor(testCase: SourceCitationCase, content: (source: SourceSpec) => string): World {
   const worldCase: ToolSelectionCase = {
     id: testCase.id,
     tool: 'fetch_documentation',
@@ -361,12 +443,56 @@ export async function liveTrial(
       requiredUrls: testCase.sources
         .filter((source) => source.deliveryMode === 'retrieval_tool')
         .map((source) => source.sourceId),
-      pages
+      pages: Object.fromEntries(testCase.sources.map((source) => [source.sourceId, { text: content(source) }]))
     },
     expect: { require: [], forbid: [], state: {} },
     reference: []
   }
-  const world = createWorld(worldCase.world, 'developer')
+  return createWorld(worldCase.world, 'developer')
+}
+
+/** The prompt names only the required sources; a delivered irrelevant source is listed as context. */
+export function citationPrompt(testCase: SourceCitationCase, manifest: RequiredSourceManifest): string {
+  const required = new Set(requiredSourcesFor(testCase))
+  const context = manifest.sources.filter((source) => !required.has(source.sourceId))
+  return [
+    'You are evaluating source citation. Do not edit files or perform any other task.',
+    requiredSourcesPromptBlock({
+      ...manifest,
+      sources: manifest.sources.filter((source) => required.has(source.sourceId))
+    }) ?? 'This task has no required sources.',
+    ...(context.length === 0
+      ? []
+      : [
+          `Also delivered as context, not required: ${context
+            .map((source) =>
+              source.deliveryMode === 'injected'
+                ? `\`${source.sourceId}\` in your worktree`
+                : `\`${source.sourceId}\` via \`fetch_documentation\``
+            )
+            .join(', ')}.`
+        ]),
+    testCase.request,
+    'Return status completed, addressedFindingIds [], reportedChecks null, and sourceUses that truthfully cites only relevant delivered sources.'
+  ].join('\n\n')
+}
+
+const MUTATION_TURN =
+  'Continue the same task. A delivered source may have changed since your last turn; return your result for the revision each source holds now.'
+
+/** Runs one real subscription-authenticated CLI with native structured output. */
+export async function liveTrial(
+  testCase: SourceCitationCase,
+  adapter: Adapter,
+  trial: number,
+  options: { claudeModel?: string; codexModel?: string; timeoutSec: number }
+): Promise<TrialObservation> {
+  const initial = evidenceFor(testCase)
+  const original = (source: SourceSpec) => source.content
+  const revised = (source: SourceSpec) => source.revisedContent ?? source.content
+  const mutates = testCase.sources.some((source) => source.revisedContent !== undefined)
+  const firstWorld = worldFor(testCase, original)
+  const switchable = switchableContext(firstWorld)
   const dir = mkdtempSync(join(tmpdir(), 'source-citation-'))
   const workspace = join(dir, 'workspace')
   mkdirSync(workspace)
@@ -379,31 +505,27 @@ export async function liveTrial(
   const host = await startDevToolsHost({
     socketPath,
     serverVersion: 'source-citation-1',
-    context: world.context,
+    context: switchable.context,
     role: 'developer'
   })
   const bridge = driverDevBridgeInvocation(socketPath, CLI_ENTRY)
-  const required = initial.manifest.sources.map((source) => source.sourceId)
+  const required = requiredSourcesFor(testCase)
   const schema = developerTurnResultJsonSchema({ knownFindingIds: [], requiredSources: required })
-  const prompt = [
-    'You are evaluating source citation. Do not edit files or perform any other task.',
-    requiredSourcesPromptBlock(initial.manifest) ?? 'This task has no required sources.',
-    testCase.request,
-    'Return status completed, addressedFindingIds [], reportedChecks null, and sourceUses that truthfully cites only relevant delivered sources.'
-  ].join('\n\n')
+  const schemaPath = join(dir, 'turn.schema.json')
+  writeFileSync(schemaPath, `${JSON.stringify(schema, null, 2)}\n`)
   const started = Date.now()
-  try {
-    let stdout: string
+  const runTurn = async (prompt: string, resumeId: string | null): Promise<string> => {
     if (adapter === 'claude-code') {
       const config = join(dir, 'mcp.json')
       writeFileSync(config, devToolsMcpConfigFileBody(bridge))
       const allowed = servedTools('developer').map((tool) => claudeDevToolName(tool.name))
-      stdout = (
+      return (
         await runProcess(
           'claude',
           [
             '-p',
             prompt,
+            ...(resumeId === null ? [] : ['--resume', resumeId]),
             '--output-format',
             'stream-json',
             '--verbose',
@@ -417,8 +539,9 @@ export async function liveTrial(
           options.timeoutSec
         )
       ).stdout
-    } else {
-      const home = join(dir, 'codex-home')
+    }
+    const home = join(dir, 'codex-home')
+    if (resumeId === null) {
       mkdirSync(home)
       const sourceHome = process.env.CODEX_HOME ?? join(homedir(), '.codex')
       if (existsSync(join(sourceHome, 'auth.json')))
@@ -427,61 +550,67 @@ export async function liveTrial(
         join(home, 'config.toml'),
         codexDevToolsConfigToml(bridge, 'sandbox_mode = "read-only"\napproval_policy = "never"\n')
       )
-      const schemaPath = join(dir, 'turn.schema.json')
-      writeFileSync(schemaPath, `${JSON.stringify(schema, null, 2)}\n`)
-      stdout = (
-        await runProcess(
-          'codex',
-          [
-            'exec',
-            '--json',
-            '--skip-git-repo-check',
-            '-C',
-            workspace,
-            ...(options.codexModel ? ['--model', options.codexModel] : []),
-            '--output-schema',
-            schemaPath,
-            prompt
-          ],
-          workspace,
-          { ...stripVinayaEnv(), CODEX_HOME: home },
-          options.timeoutSec
-        )
-      ).stdout
     }
-    const read = adapter === 'claude-code' ? readClaudeTurnOutput(stdout) : readCodexTurnOutput(stdout)
-    const parsed = parseDeveloperTurnResult(read.raw, { knownFindingIds: [], requiredSources: required })
-    if (!parsed.ok) throw new Error(`${adapter} returned no valid DeveloperTurnResult: ${parsed.errors.join('; ')}`)
-    const state = world.state()
-    const fetched = initial.manifest.sources
-      .filter((source) => state.countedUrls.includes(source.sourceId) && source.contentDigest !== null)
-      .map(
-        (source): SourceDeliveryReceipt => ({
-          schemaVersion: 1,
-          sourceId: source.sourceId,
-          source: source.sourceId,
-          round: initial.manifest.round,
-          recordedAt: new Date().toISOString(),
-          mode: 'retrieval_tool',
-          recordedBy: 'fetch_documentation',
-          pinnedDigest: source.contentDigest,
-          deliveredDigest: source.contentDigest as string,
-          revision: 'match',
-          decision: 'counted',
-          requestedUrl: source.sourceId,
-          finalUrl: source.finalUrl,
-          status: 200,
-          contentType: 'text/plain'
-        })
+    const model = options.codexModel ? ['--model', options.codexModel] : []
+    return (
+      await runProcess(
+        'codex',
+        resumeId === null
+          ? [
+              'exec',
+              '--json',
+              '--skip-git-repo-check',
+              '-C',
+              workspace,
+              ...model,
+              '--output-schema',
+              schemaPath,
+              prompt
+            ]
+          : [
+              'exec',
+              'resume',
+              resumeId,
+              '--json',
+              '--skip-git-repo-check',
+              ...model,
+              '--output-schema',
+              schemaPath,
+              prompt
+            ],
+        workspace,
+        { ...stripVinayaEnv(), CODEX_HOME: home },
+        options.timeoutSec
       )
+    ).stdout
+  }
+  const readTurn = (stdout: string) =>
+    adapter === 'claude-code' ? readClaudeTurnOutput(stdout) : readCodexTurnOutput(stdout)
+  try {
+    let stdout = await runTurn(citationPrompt(testCase, initial.manifest), null)
     const lines = stdout.split('\n').filter(Boolean)
+    const receipts = [...initial.receipts, ...fetchedReceipts(initial.manifest, firstWorld, original, testCase.sources)]
+    if (mutates) {
+      // The source changes between turns; the same session continues against the new revision.
+      const sessionId = readTurn(stdout).sessionId
+      if (sessionId === null) throw new Error(`${adapter} reported no session to resume for ${testCase.id}`)
+      const secondWorld = worldFor(testCase, revised)
+      switchable.use(secondWorld)
+      stdout = await runTurn(MUTATION_TURN, sessionId)
+      lines.push(...stdout.split('\n').filter(Boolean))
+      receipts.push(...fetchedReceipts(initial.manifest, secondWorld, revised, testCase.sources))
+    }
+    const context = { knownFindingIds: [], requiredSources: required, permissibleDecisions: [] }
+    const parsed = parseDeveloperTurnResult(readTurn(stdout).raw, context)
+    const errors = parsed.ok ? semanticErrors(parsed.result, context) : parsed.errors
     return {
       adapter,
       taskId: testCase.id,
       trial,
-      result: parsed.result,
+      result: parsed.ok && errors.length === 0 ? parsed.result : null,
+      refusal: errors.length === 0 ? null : `${adapter} returned no accepted DeveloperTurnResult: ${errors.join('; ')}`,
       manifest: initial.manifest,
-      receipts: [...initial.receipts, ...fetched],
+      receipts,
       usage: usageOf(adapter, lines),
       wallMs: Date.now() - started
     }

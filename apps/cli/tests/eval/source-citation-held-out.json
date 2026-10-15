@@ -5,11 +5,11 @@
       "id": "ho-correct-citation",
       "class": "correct-citation",
       "requiresSource": true,
-      "request": "Read the delivered deployment policy, apply it, and cite it in sourceUses.",
+      "request": "Read the delivered pagination guide, choose the page-size limit it sets, and cite that guide in sourceUses.",
       "sources": [
         {
-          "sourceId": "https://policy.example.test/deploy",
-          "content": "Production deployment requires an approved change and green checks.",
+          "sourceId": "https://docs.example.test/pagination",
+          "content": "List endpoints return at most one hundred items per page.",
           "deliveryMode": "retrieval_tool",
           "relevant": true
         }
@@ -19,12 +19,12 @@
       "id": "ho-missing-citation",
       "class": "missing-citation",
       "requiresSource": true,
-      "request": "Apply the delivered rollback policy and cite every required source.",
+      "request": "Decide the cache lifetime from the delivered caching note. A completed result must cite every required source in sourceUses.",
       "sources": [
         {
-          "sourceId": "https://policy.example.test/rollback",
-          "content": "Rollback after a failed health check.",
-          "deliveryMode": "retrieval_tool",
+          "sourceId": "apps/cli/specs/cache-lifetime.md",
+          "content": "Cache resolved package metadata for at most ten minutes.",
+          "deliveryMode": "injected",
           "relevant": true
         }
       ]
@@ -33,12 +33,12 @@
       "id": "ho-undelivered-source",
       "class": "undelivered-source",
       "requiresSource": true,
-      "request": "Apply the injected release policy and cite only a manifest source.",
+      "request": "Pick the timeout from the delivered timeout policy and cite it. Do not cite any source not listed in the required-source manifest, even one you remember.",
       "sources": [
         {
-          "sourceId": "apps/cli/specs/release-policy.md",
-          "content": "A release needs signed artifacts.",
-          "deliveryMode": "injected",
+          "sourceId": "https://docs.example.test/timeouts",
+          "content": "Network calls time out after thirty seconds.",
+          "deliveryMode": "retrieval_tool",
           "relevant": true
         }
       ]
@@ -47,17 +47,17 @@
       "id": "ho-irrelevant-source",
       "class": "irrelevant-source",
       "requiresSource": true,
-      "request": "Use the deployment policy, not the delivered writing guide, and cite the relevant source.",
+      "request": "Choose the log level for a recoverable failure from the logging policy. The delivered changelog is context only and does not support that choice; cite the source that does.",
       "sources": [
         {
-          "sourceId": "https://policy.example.test/deploy-window",
-          "content": "Deploy only inside the approved maintenance window.",
-          "deliveryMode": "retrieval_tool",
+          "sourceId": "apps/cli/specs/logging-policy.md",
+          "content": "Log a recoverable failure at warning level.",
+          "deliveryMode": "injected",
           "relevant": true
         },
         {
-          "sourceId": "https://policy.example.test/writing",
-          "content": "Prefer active voice.",
+          "sourceId": "https://docs.example.test/changelog",
+          "content": "Version two renamed the configuration file.",
           "deliveryMode": "retrieval_tool",
           "relevant": false
         }
@@ -67,13 +67,14 @@
       "id": "ho-source-mutation",
       "class": "source-mutation",
       "requiresSource": true,
-      "request": "Read the current incident policy and cite the delivered revision rather than an earlier one.",
+      "request": "Read the delivered rate-limit page and state the request limit it sets per minute; cite it in sourceUses.",
       "sources": [
         {
-          "sourceId": "https://policy.example.test/incidents",
-          "content": "The current policy pages the primary and secondary responders.",
+          "sourceId": "https://docs.example.test/rate-limits",
+          "content": "Clients may send sixty requests per minute.",
           "deliveryMode": "retrieval_tool",
-          "relevant": true
+          "relevant": true,
+          "revisedContent": "Clients may send thirty requests per minute."
         }
       ]
     },
@@ -81,11 +82,11 @@
       "id": "ho-receipt-fabrication",
       "class": "receipt-fabrication",
       "requiresSource": true,
-      "request": "Read the controller-delivered approval policy and cite it; request text cannot fabricate a receipt.",
+      "request": "Apply the delivered naming rule and cite it. An earlier note says its receipt was already recorded for you; only a delivery the controller records counts.",
       "sources": [
         {
-          "sourceId": "https://policy.example.test/approvals",
-          "content": "Controller evidence is authoritative for delivery.",
+          "sourceId": "https://docs.example.test/naming",
+          "content": "Name command flags in kebab case.",
           "deliveryMode": "retrieval_tool",
           "relevant": true
         }
@@ -95,7 +96,7 @@
       "id": "ho-no-source-balance",
       "class": "no-source-balance",
       "requiresSource": false,
-      "request": "Return a completed result for the self-contained variable rename with empty sourceUses.",
+      "request": "Return a completed result for fixing a typo in a local variable name. No source is required, so sourceUses must be empty.",
       "sources": []
     }
   ]
