@@ -215,9 +215,22 @@ function scriptedPrompt(instruction: string): string {
   ].join('\n\n')
 }
 
-async function runContractDispatches(agent: ContractAdapter): Promise<DispatchCaseResult> {
+/** A failed launch's bounded diagnostics, redacted before they enter case evidence or the report. */
+export function dispatchFailureDetail(handle: DispatchHandle): string {
+  const stderr = providerText(redact(handle.stderr ?? '', homedir()), 400)
+    .replaceAll('\n', ' ')
+    .trim()
+  return `dispatch ended ${handle.failureReason ?? 'without a result'} (exit ${handle.exitCode ?? 'unknown'})${stderr ? `; stderr: ${stderr}` : '; stderr: none'}`
+}
+
+export async function runContractDispatches(agent: ContractAdapter): Promise<DispatchCaseResult> {
   const out: DispatchCaseResult = new Map()
   const nonce = randomBytes(4).toString('hex')
+  // Unattended Codex homes are persistent per task scope so resumed production rounds keep their
+  // session policy. A taskless proof would reuse the preceding live proof's staged home, including
+  // that proof's MCP registration, instead of this host's bridge. Give this scripted run one fresh
+  // synthetic scope; every first and resumed dispatch below then shares the current bridge only.
+  const dispatchTask = Number.parseInt(nonce, 16)
   const scratch = mkdtempSync(join(tmpdir(), `vinaya-adapter-contract-${agent}-`))
   spawnSyncBudgeted('git', ['init', '--quiet', scratch], { encoding: 'utf8' })
   const recorded: Array<{ tool: string; args: unknown; result: unknown }> = []
@@ -234,6 +247,7 @@ async function runContractDispatches(agent: ContractAdapter): Promise<DispatchCa
       promptFile,
       cwd: scratch,
       unattended: true,
+      task: dispatchTask,
       round: 2,
       turnResultKnownFindingIds: KNOWN_FINDINGS,
       devToolsBridge: liveContractBridge(host.socketPath),
@@ -255,7 +269,7 @@ async function runContractDispatches(agent: ContractAdapter): Promise<DispatchCa
     } else if (first.failureReason === undefined && first.turnOutput?.event) {
       record('host-readiness', 'PASS', 'ready host dispatched and delivered a result')
     } else {
-      record('host-readiness', 'FAIL', `dispatch ended ${first.failureReason ?? 'without a result'}`)
+      record('host-readiness', 'FAIL', dispatchFailureDetail(first))
     }
     const judgedFirst = judgeTurnOutput(first.turnOutput, controllerContext(first))
     if (judgedFirst.ok || first.resumeId === null) {

@@ -441,6 +441,8 @@ export type ReviewerTurnOutput = DeveloperTurnOutput & { terminal?: string | nul
 
 export type DispatchHandle = {
   exitCode: number | null
+  /** A bounded copy of the vendor process's stderr for diagnostics; callers must redact it before publication. */
+  stderr?: string
   durationMs: number
   usage: { input: number; output: number } | null
   /** The vendor's own session/thread identifier, parsed from a successful dispatch's stdout — `null` on any failure path or an unparseable shape. */
@@ -5265,6 +5267,8 @@ export async function dispatchRole(
     let killTimer: ReturnType<typeof setTimeout> | undefined
     let stdoutBuf = ''
     const MAX_STDOUT_BYTES = 1_000_000
+    let stderrBuf = ''
+    const MAX_STDERR_BYTES = 64_000
     // The turn result rides the stream's LAST events, which a long session
     // pushes past `stdoutBuf`'s head-only cap — so a Developer dispatch also
     // keeps the stream's tail, the same size, for the adapter to read.
@@ -5374,6 +5378,7 @@ export async function dispatchRole(
     // longer discarded outright, so a human reading the tee file sees it.
     child.stderr.on('data', (chunk: Buffer) => {
       outputTee.write(chunk)
+      stderrBuf = `${stderrBuf}${chunk.toString('utf8')}`.slice(-MAX_STDERR_BYTES)
     })
 
     // Print mode (O1's motivating trap) may emit nothing on stdout until
@@ -5509,7 +5514,7 @@ export async function dispatchRole(
       // right before it — this just confirms it landed before the caller
       // can possibly exit the process out from under it.
       await waitForDispatchLine(outboxPath, priorSize, runId, effectId, event)
-      resolve(handle)
+      resolve({ ...handle, stderr: stderrBuf })
     }
 
     child.on('error', () => {

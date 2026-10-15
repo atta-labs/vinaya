@@ -17,6 +17,7 @@ import {
   caseOutcome,
   LIVE_PROOF_COMMANDS,
   liveContractBridge,
+  dispatchFailureDetail,
   parseLiveArgs,
   parseProofSummary,
   renderLiveReport,
@@ -135,6 +136,20 @@ describe('declared differences', () => {
 })
 
 describe('the live command, one per adapter', () => {
+  it('reports a failed launch exit and redacted stderr', () => {
+    const detail = dispatchFailureDetail({
+      exitCode: 1,
+      stderr: `failed for ${process.env.HOME}/private`,
+      durationMs: 1,
+      usage: null,
+      resumeId: null,
+      timedOut: false,
+      failureReason: 'unbound'
+    })
+    expect(detail).toContain('dispatch ended unbound (exit 1)')
+    expect(detail).not.toContain(process.env.HOME ?? '')
+  })
+
   it('launches the tool-server bridge from the real CLI entry, never from the script that runs it', () => {
     const bridge = liveContractBridge('/tmp/vinaya-live.sock')
     expect(bridge.args).toEqual([CLI_ENTRY, 'task-tools', 'dev-bridge', '--socket', '/tmp/vinaya-live.sock'])
