@@ -2681,8 +2681,7 @@ describe('devReviewLoop — the loop maps every reviewer run to its outcome and 
       name: 'a run that ends in a provider error',
       security: { ...CLEAN_SECURITY, providerFailure: { terminal: 'turn.failed', errors: ['upstream unavailable'] } },
       reason: 'provider_error'
-    },
-    { name: 'a cancelled run', security: { ...CLEAN_SECURITY, cancelled: true }, reason: 'cancelled' }
+    }
   ]
   for (const { name, security, reason } of cases) {
     it.skipIf(process.platform === 'darwin')(
@@ -2700,6 +2699,17 @@ describe('devReviewLoop — the loop maps every reviewer run to its outcome and 
       }
     )
   }
+
+  it.skipIf(process.platform === 'darwin')(
+    'a cancelled run is a failed dispatch: an infrastructure pause before any result is read, never a verdict',
+    async () => {
+      const world = makeWorld({ roleOutcomes: { 1: { security: { ...CLEAN_SECURITY, cancelled: true } } } })
+      const result = await runLoopInProcess(world)
+      expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+      expect(existsSync(join(ipRoundDir(world, 1), 'security.md'))).toBe(false)
+      expect(world.postedComments.at(-1)!.body).not.toMatch(/^VERDICT:/m)
+    }
+  )
 
   it.skipIf(process.platform === 'darwin')(
     'a scope-unclear blocked result bound to this role, head and manifest is the round escalation, with no retry',
