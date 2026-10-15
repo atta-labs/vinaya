@@ -405,14 +405,14 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // GITHUB_TOKEN/GH_TOKEN must reach it on a CI runner, where `gh`
       // authenticates only from those, and GITHUB_REPOSITORY addresses the
       // trust-anchor read of `principals` that picks the brief's author.
-      // PR_HEAD_SHA is the pull request's own head — never the merge ref a
+      // PULL_REQUEST_HEAD_SHA is the pull request's own head — never the merge ref a
       // `pull_request` run checks out — at which each `[live]` line must
       // have passed. Absent, no record entry matches and every `[live]` line
       // reads unpassed: the check fails closed.
       env: {
         PR_BODY: { optional: true },
         BRANCH: { optional: true },
-        PR_HEAD_SHA: { optional: true },
+        PULL_REQUEST_HEAD_SHA: { optional: true },
         GITHUB_REPOSITORY: { optional: true },
         GITHUB_TOKEN: { optional: true },
         GH_TOKEN: { optional: true }

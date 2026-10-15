@@ -569,7 +569,7 @@ ${verifiedFetchPrBodyStep()}      - name: Run checks
           # The pull request's own head — never \`git rev-parse HEAD\`, which on
           # a pull_request run is the merge ref — at which \`test-plan\` demands
           # a passed \`AEG:LIVE\` entry for each \`[live]\` line of the brief.
-          PR_HEAD_SHA: \${{ github.event.pull_request.head.sha }}
+          PULL_REQUEST_HEAD_SHA: \${{ github.event.pull_request.head.sha }}
           # O3: this job's gate events deliver live to the \`logs.url\` server
           # destination the default branch's own \`vinaya.config.json\`
           # declares — never a fork PR's own working-tree copy

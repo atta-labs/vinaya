@@ -9,7 +9,7 @@
  * On a task branch it also reads the task Issue's newest frozen brief
  * (`resolveTaskFrozenBrief`, shared with `brief-shape`) for its `[live]`
  * lines (`parseLiveTestPlanItems`), and hands them to the gate with the pull
- * request's head SHA (`PR_HEAD_SHA` — the pull request's own head, never the
+ * request's head SHA (`PULL_REQUEST_HEAD_SHA` — the pull request's own head, never the
  * merge ref a `pull_request` run checks out), so each `[live]` line with no
  * passed `AEG:LIVE` entry at that head fails the check. It fails closed: a
  * brief it cannot read — any fetch error, a not-found Issue included — fails
@@ -121,7 +121,7 @@ function main(): void {
   const errors = runTestPlanCheck({
     body: process.env.PR_BODY ?? '',
     branch: process.env.BRANCH ?? '',
-    head: process.env.PR_HEAD_SHA ?? ''
+    head: process.env.PULL_REQUEST_HEAD_SHA ?? ''
   })
 
   if (errors.length > 0) {
