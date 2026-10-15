@@ -10,6 +10,7 @@ import {
   pauseBoundRulingDigest,
   policyDigest
 } from '@attalabs/aeg-core'
+import { resolveFrozenPauseBoundRuling } from '../../src/lib/review-gate-input.js'
 
 /**
  * The digest `check-review-gate.ts` resolves when no `vinaya.config.json` is
@@ -26,6 +27,63 @@ const ISSUE_OBJECTIVES_BODY = '## Objectives\n\nO1. Does the thing observably.\n
 const ISSUE_VERSION = objectivesVersion(
   (objectivesOf(ISSUE_OBJECTIVES_BODY) as { ok: true; objectives: never[] }).objectives
 )
+
+describe('resolveFrozenPauseBoundRuling — repeated newest-round attempts', () => {
+  const principal = 'daniboomerang'
+  const ruling = (ordinal: number) => {
+    const text = `Ruling ${ordinal}`
+    return {
+      binding: `1-${ordinal}|esc-${ordinal}|${pauseBoundRulingDigest(text)}`,
+      comment: { body: `<!-- aeg:principal:ruling:1-${ordinal} -->\n${text}`, author: principal }
+    }
+  }
+
+  it('takes the latest posted binding when three comments re-run the newest round', () => {
+    const rulings = [ruling(1), ruling(2), ruling(3)]
+    const comments = [
+      ...rulings.map(({ comment }) => comment),
+      ...rulings.map(({ binding }) => ({
+        body: `<!-- aeg:developer:round-4 -->\nPause-bound ruling: ${binding}`,
+        author: principal
+      }))
+    ]
+
+    const resolved = resolveFrozenPauseBoundRuling(1, comments, [principal], () => [])
+
+    expect(resolved).toEqual({
+      ok: true,
+      value: { rulingId: '1-3', pauseId: 'esc-3', contentDigest: pauseBoundRulingDigest('Ruling 3') }
+    })
+  })
+
+  it('fails closed when the latest posted newest-round comment has no binding', () => {
+    const first = ruling(1)
+    const comments = [
+      first.comment,
+      { body: `<!-- aeg:developer:round-4 -->\nPause-bound ruling: ${first.binding}`, author: principal },
+      { body: '<!-- aeg:developer:round-4 -->\nHead: abc', author: principal }
+    ]
+
+    const resolved = resolveFrozenPauseBoundRuling(1, comments, [principal], () => [])
+
+    expect(resolved.ok).toBe(false)
+  })
+
+  it('preserves the existing behavior for a single round comment', () => {
+    const only = ruling(1)
+    const comments = [
+      only.comment,
+      { body: `<!-- aeg:developer:round-4 -->\nPause-bound ruling: ${only.binding}`, author: principal }
+    ]
+
+    const resolved = resolveFrozenPauseBoundRuling(1, comments, [principal], () => [])
+
+    expect(resolved).toEqual({
+      ok: true,
+      value: { rulingId: '1-1', pauseId: 'esc-1', contentDigest: pauseBoundRulingDigest('Ruling 1') }
+    })
+  })
+})
 
 /**
  * `check-review-gate`'s `resolveObjectivesVersion` (dev-review-loop-v1 task 2,

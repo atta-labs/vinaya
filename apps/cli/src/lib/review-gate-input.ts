@@ -120,7 +120,7 @@ type Resolved<T> = { ok: true; value: T } | { ok: false; failure: ReviewGateInpu
  * its round comment (`<!-- aeg:developer:round-<n> -->`) carrying the frozen
  * manifest's `Pause-bound ruling:` line, which the loop itself took from the
  * resolution its resume consumed. This reads that line from the
- * principal-authored round comment with the highest round number, then
+ * latest principal-authored round comment with the highest round number, then
  * proves a non-empty binding against the forge: the one principal ruling
  * comment carrying the named ruling ordinal on the named pull request or Issue must exist, and its text must
  * hash to the recorded digest. Each verdict's own echo is then compared
@@ -129,8 +129,8 @@ type Resolved<T> = { ok: true; value: T } | { ok: false; failure: ReviewGateInpu
  *
  * `null` (no ruling bound) only when the pull request carries no round
  * comment at all — a review cast by hand, outside the loop. Fails closed
- * when the newest round comment carries no binding line, when two comments
- * for that round disagree, or when the named ruling cannot be proven.
+ * when the newest round comment carries no binding line or when the named
+ * ruling cannot be proven.
  */
 export function resolveFrozenPauseBoundRuling(
   prNumber: number,
@@ -139,20 +139,18 @@ export function resolveFrozenPauseBoundRuling(
   readIssueComments: (issueNumber: number) => { body: string; author: string | null }[]
 ): Resolved<PauseBoundRuling | null> {
   let newestRound = 0
-  let lines: (PauseBoundRuling | null | undefined)[] = []
+  let recorded: PauseBoundRuling | null | undefined
   for (const comment of comments) {
     if (!isPrincipal(comment.author, principalAllowlist as string[])) continue
     const round = parseDeveloperRoundMarker(comment.body)
     if (round === null || round < newestRound) continue
     if (round > newestRound) {
       newestRound = round
-      lines = []
     }
-    lines.push(extractPauseBoundRuling(comment.body))
+    recorded = extractPauseBoundRuling(comment.body)
   }
   if (newestRound === 0) return { ok: true, value: null }
-  const recorded = lines[0]
-  if (recorded === undefined || lines.some((line) => JSON.stringify(line) !== JSON.stringify(recorded))) {
+  if (recorded === undefined) {
     return failure(
       `review-gate severity:infra — PR #${prNumber}'s round ${newestRound} comment does not record one frozen \`Pause-bound ruling:\` binding, so the verdicts' ruling binding cannot be checked against it.`,
       'Let the review loop run a fresh review round on this pull request (its round comment records the binding), then re-run `vinaya check review-gate`.'
