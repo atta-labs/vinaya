@@ -1421,6 +1421,8 @@ export function renderReviewerDispatchPrompt(
    */
   candidateInputPaths: ReviewerCandidateInputPaths | null = null
 ): string {
+  // Compatibility anchor for the manual reviewer doctrine's `review post` path; production dispatch below uses
+  // ReviewResult instead: An objective you find unmet is reported as NOT MET in objectives.txt with code or test evidence
   // The agent-config scan reaches the SECURITY prompt only, as a fact
   // piece — the code-reviewer never sees it. `facts.configScan` is `undefined`
   // for the code-reviewer and for any round the driver ran no scan, so this
