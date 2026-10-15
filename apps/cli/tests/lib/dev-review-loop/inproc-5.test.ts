@@ -468,13 +468,12 @@ describe("devReviewLoop — O2 (task-files-v1 2, #649): the loop's two OLD workt
   })
 })
 
-// --- O3 (#543): a reviewer report missing finding ids is resent once, then report_uncitable — never no_progress ---
+// --- finding identity is the controller's: a review is never resent to cite ids ---
 
-describe('devReviewLoop — O3 (#543): a reviewer report missing finding ids is resent once, then report_uncitable — never no_progress', () => {
-  it("resends once into a fresh work directory, records report_uncitable, and still dispatches the developer on this round's real BLOCKER — never stalls", async () => {
-    // Round 2's Developer reports a low confidence each time, so the run ends
-    // on the confidence rule's own pause rather than re-reviewing the same
-    // static head.
+describe('devReviewLoop — finding identities are computed by the controller, never asked of the reviewer', () => {
+  it('a review with a finding and no ids of its own is dispatched once, its finding handed to the developer under a controller id', async () => {
+    // Round 2's Developer reports a low confidence, so the run ends on the
+    // confidence rule's own pause rather than re-reviewing the same static head.
     const world = makeWorld({
       developerTurnOutput: (round, prompt) =>
         round >= 2
@@ -483,26 +482,23 @@ describe('devReviewLoop — O3 (#543): a reviewer report missing finding ids is 
               explanation: 'unsure',
               addressedFindingIds: handoffIdsInPrompt(prompt)
             })
-          : undefined
+          : undefined,
+      roleOutcomes: {
+        1: {
+          reviewer: {
+            findings: 'BLOCKER|smoke.ts:1|deliberate, never cited',
+            report: 'BRIEF_CONFORMANCE: yes\nSPEC_CONFORMANCE: yes\nSCOPE: small\nTESTS: pass\nDOCS: n/a\n',
+            objectives: 'O1|MET|done.\n',
+            sessionId: 'rev-session-1'
+          }
+        }
+      }
     })
     const base = makeInProcessDeps(world)
-    let reviewerCalls = 0
+    const developerPrompts: string[] = []
     const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
-      if (role !== 'code-reviewer') return base.dispatchRole!(role, agent, prompt, opts)
-      reviewerCalls += 1
-      const workDir = opts.extraWritableDirs?.[0]
-      if (workDir) {
-        mkdirSync(workDir, { recursive: true })
-        writeFileSync(join(workDir, 'findings.txt'), 'BLOCKER|smoke.ts:1|deliberate, never cited\n')
-        writeFileSync(join(workDir, 'objectives.txt'), 'O1|MET|done.\n')
-        writeFileSync(
-          join(workDir, 'report.txt'),
-          'BRIEF_CONFORMANCE: yes\nSPEC_CONFORMANCE: yes\nSCOPE: small\nTESTS: pass\nDOCS: n/a\n'
-        )
-      }
-      world.dispatchCountByRole['code-reviewer'] = reviewerCalls
-      world.dispatches.push({ role, round: opts.round ?? 1, resumeId: `rev-session-${reviewerCalls}` })
-      return fakeHandle(`rev-session-${reviewerCalls}`, `eff-rev-${reviewerCalls}`)
+      if (role === 'developer' && (opts.round ?? 1) >= 2) developerPrompts.push(prompt)
+      return base.dispatchRole!(role, agent, prompt, opts)
     }
     const result = await runLoopInProcessSafe(
       world,
@@ -513,21 +509,13 @@ describe('devReviewLoop — O3 (#543): a reviewer report missing finding ids is 
       }
     )
 
-    // A real, un-cited BLOCKER still drives changes_requested → dispatch the
-    // developer — this pauses only because the fixture's developer dispatch
-    // never actually changes the head (the world's head is static), the
-    // SAME infrastructure/gate-stall bound every other single-round fixture
-    // hits, never `no_progress`.
     expect(result.finalDecision.type).toBe('pause')
     expect((result.finalDecision as { reason: string }).reason).not.toBe('no_progress')
-
-    // Exactly two code-reviewer dispatches this round: the original, then
-    // the one resend — never a third.
-    expect(world.dispatchCountByRole['code-reviewer']).toBe(2)
-
-    const uncitableComment = world.postedComments.find((c) => c.marker === '<!-- aeg:loop:report-uncitable -->')
-    expect(uncitableComment).toBeDefined()
-    expect((uncitableComment as { body: string }).body).toMatch(/report_uncitable: reviewer/)
+    // One code-reviewer dispatch for round 1 — never a resend asking for ids.
+    expect(world.dispatches.filter((d) => d.role === 'code-reviewer' && d.round === 1)).toHaveLength(1)
+    expect(world.postedComments.some((c) => c.marker === '<!-- aeg:loop:report-uncitable -->')).toBe(false)
+    // The round's finding reaches the developer under the controller's own id.
+    expect(developerPrompts.some((prompt) => prompt.includes('R1-CR-1'))).toBe(true)
   })
 })
 
@@ -700,8 +688,8 @@ describe('devReviewLoop — attach recovers a held REQUEST-CHANGES round from di
 
     // Reviewers really did run, at round 2 — the recovered round, not a
     // reset-to-round-1 re-review of the exact same (already-fixed) head.
-    expect(existsSync(join(roundDir(world, 2), 'reviewer-work'))).toBe(true)
-    expect(existsSync(join(roundDir(world, 2), 'security-work'))).toBe(true)
+    expect(world.dispatches.some((d) => d.role === 'code-reviewer' && d.round === 2)).toBe(true)
+    expect(world.dispatches.some((d) => d.role === 'security' && d.round === 2)).toBe(true)
   })
 })
 
@@ -730,8 +718,8 @@ describe('devReviewLoop — a second attach on the same unchanged head reads as 
     expect((result.finalDecision as { reason: string }).reason).toBe('no_progress')
 
     expect(prompts).toHaveLength(0)
-    expect(existsSync(join(roundDir(world, 2), 'reviewer-work'))).toBe(false)
-    expect(existsSync(join(roundDir(world, 2), 'security-work'))).toBe(false)
+    expect(world.dispatches.some((d) => d.role === 'code-reviewer' && d.round === 2)).toBe(false)
+    expect(world.dispatches.some((d) => d.role === 'security' && d.round === 2)).toBe(false)
 
     // O3 ([task-log-v1] 9, Issue #631): this pause is decided by an OR of
     // two independent guard inputs — the comment now names which one
@@ -811,8 +799,8 @@ describe("devReviewLoop — O9 (task-run-v1 21, #541) / [task-files-v1] 4 (#651)
     // Round advanced to 2 from the PR's own round-1 developer marker alone —
     // no held-verdict file and no developer dispatch for this attach to
     // read instead.
-    expect(existsSync(join(roundDir(world, 2), 'reviewer-work'))).toBe(true)
-    expect(existsSync(join(roundDir(world, 2), 'security-work'))).toBe(true)
+    expect(world.dispatches.some((d) => d.role === 'code-reviewer' && d.round === 2)).toBe(true)
+    expect(world.dispatches.some((d) => d.role === 'security' && d.round === 2)).toBe(true)
     expect(prompts).toHaveLength(0)
 
     // The published journal names both rounds — round 1 reconstructed from

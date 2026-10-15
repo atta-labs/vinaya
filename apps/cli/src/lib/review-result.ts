@@ -26,8 +26,8 @@
  * `parseReviewResult` is the shape check, `semanticErrors` the check against
  * the binding. `classifyReviewOutcome` turns a whole run — result or not —
  * into either a review or "no review"; only a review can ever count, and a
- * missing, malformed, stale, blocked, cancelled, context-exhausted or
- * provider-errored run is never approval.
+ * missing, malformed, stale, blocked, cancelled, context-exhausted,
+ * provider-errored or resumed run is never approval.
  */
 
 import { createHash } from 'node:crypto'
@@ -144,6 +144,14 @@ export type ReviewBinding = {
   readonly manifestDigest: string
   /** The objective ids the frozen brief carries. */
   readonly objectiveIds: readonly string[]
+  /**
+   * The run, round and attempt this dispatch belongs to. The result carries
+   * none of them: it is read from this dispatch's own process, so the
+   * controller attaches them to the accepted review itself.
+   */
+  readonly runId?: string
+  readonly round?: number
+  readonly attempt?: number
 }
 
 /** The digest the controller binds a review to: SHA-256 over the manifest's fields in a fixed key order. */
@@ -235,15 +243,19 @@ export type NoReviewReason =
   | 'context_exhausted'
   | 'provider_error'
   | 'duplicate'
+  | 'resumed'
 
 export type ReviewOutcome =
-  | { kind: 'review'; result: CompletedReview }
+  /** An accepted review, carrying the controller's own binding it was accepted under. */
+  | { kind: 'review'; result: CompletedReview; binding: ReviewBinding }
   | { kind: 'no_review'; reason: NoReviewReason; detail: string }
 
 /** What a finished reviewer run showed at the adapter boundary. */
 export type ReviewRunFacts = {
   /** The run was killed before it finished. */
   cancelled: boolean
+  /** The run continued an earlier provider session instead of starting a fresh one. */
+  resumed?: boolean
   /** The stream's own terminal outcome, when it reported one (`success`, `turn.failed`, …). */
   terminal: string | null
   /** Error text the stream or the process reported. */
@@ -265,6 +277,7 @@ const TERMINAL_FAILURE = /error|failed/i
 export function classifyReviewOutcome(facts: ReviewRunFacts, binding: ReviewBinding): ReviewOutcome {
   const noReview = (reason: NoReviewReason, detail: string): ReviewOutcome => ({ kind: 'no_review', reason, detail })
   const errorText = facts.errors.join(' | ')
+  if (facts.resumed === true) return noReview('resumed', 'a reviewer runs only on a fresh session, never a resumed one')
   if (facts.cancelled) return noReview('cancelled', 'the run was cancelled before it finished')
   if (CONTEXT_EXHAUSTED.test(errorText)) return noReview('context_exhausted', errorText)
   if (!facts.hasResult) {
@@ -279,10 +292,21 @@ export function classifyReviewOutcome(facts: ReviewRunFacts, binding: ReviewBind
     return noReview('blocked', `${parsed.result.blocker.kind}: ${parsed.result.blocker.detail}`)
   }
   const errors = semanticErrors(parsed.result, binding)
-  if (errors.length === 0) return { kind: 'review', result: parsed.result }
+  if (errors.length === 0) return { kind: 'review', result: parsed.result, binding }
   if (parsed.result.role !== binding.role) return noReview('role_mismatch', errors.join('; '))
   if (bindingErrors(parsed.result, binding).length > 0) return noReview('stale', errors.join('; '))
   return noReview('rejected', errors.join('; '))
+}
+
+/**
+ * Whether a `blocked` result asks a question only the Principal can answer.
+ * A blocked result is never a review; the controller alone decides what
+ * follows it. An unclear scope is a ruling question, so the round pauses for
+ * the Principal; every other blocker is an input or tooling failure, which a
+ * fresh dispatch may not hit again.
+ */
+export function reviewBlockerNeedsRuling(kind: (typeof REVIEW_BLOCKER_KINDS)[number]): boolean {
+  return kind === 'scope_unclear'
 }
 
 /**

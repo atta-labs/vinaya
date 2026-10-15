@@ -52,7 +52,7 @@ const ESCALATE_REVIEWER: RoleOutcome = {
   sessionId: 'rev-session-1'
 }
 
-/** Same rendering pipeline `inproc-9.test.ts`'s own `seedCleanHeldRound1` uses (`buildVerdictFromReport` in production), parametrized by round so F1's `max_rounds` test can seed one at round 4. */
+/** Same rendering pipeline `inproc-9.test.ts`'s own `seedCleanHeldRound1` uses (`buildVerdictFromReview` in production), parametrized by round so F1's `max_rounds` test can seed one at round 4. */
 function seedCleanHeldRound(world: LoopWorld, round: number, headSha: string): void {
   const parsed = objectivesOf(world.frozenBrief)
   const objectives = parsed.ok ? parsed.objectives : []
@@ -235,13 +235,7 @@ describe('devReviewLoop — issue-711 F1: a max_rounds pause right after a genui
         [ROUND]: {
           reviewer: {
             findings: 'BLOCKER|smoke.ts:1|still there at the round cap',
-            // `FINDING_IDS:` cites the one findings.txt line — a report
-            // with findings but no matching line is resent once, which
-            // would otherwise double this test's own dispatch count for a
-            // reason that has nothing to do with the round cap it exists
-            // to exercise.
-            report:
-              'BRIEF_CONFORMANCE: yes\nSPEC_CONFORMANCE: yes\nSCOPE: small\nTESTS: pass\nDOCS: n/a\nFINDING_IDS: F1\n',
+            report: 'BRIEF_CONFORMANCE: yes\nSPEC_CONFORMANCE: yes\nSCOPE: small\nTESTS: pass\nDOCS: n/a\n',
             objectives: 'O1|MET|done.\n',
             sessionId: 'rev-session-1'
           }

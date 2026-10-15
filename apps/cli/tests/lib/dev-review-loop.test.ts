@@ -194,6 +194,26 @@ function tempDir(prefix: string): string {
 const FAKE_DEVELOPER_TURN_RESULT = `IDS=$(printf '%s\\n' "$PROMPT" | grep -oE '^- R[0-9]+-(CR|SEC)-[0-9]+(:|$)' | sed -e 's/^- //' -e 's/:$//' | sort -u | sed -e 's/.*/"&"/' | paste -sd, -)
     echo '{"type":"result","subtype":"success","is_error":false,"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5},"structured_output":{"turnResult":{"schemaVersion":1,"status":"completed","summary":"fixture turn","confidence":90,"confidenceExplanation":"the fixture work is done","addressedFindingIds":['"$IDS"'],"sourceUses":[],"reportedChecks":null}}}'`
 
+/**
+ * A fake reviewer binary's whole stream: one `result` event whose
+ * `structured_output` is a ReviewResult bound to the head and manifest digest
+ * the prompt names, as a real reviewer is told to return it. `fields` are the
+ * result's own JSON fields after its bindings. It also leaves
+ * `$HOME/.fake-<role>-round-<n>`, so a test can see which rounds were reviewed.
+ */
+function fakeReviewResultShell(role: 'code-reviewer' | 'security-reviewer', session: string, fields: string): string {
+  return `HEAD_SHA="$(printf '%s\\n' "$PROMPT" | sed -n 's/.*headSha \\([0-9a-f]*\\).*/\\1/p' | tail -n 1)"
+    DIGEST="$(printf '%s\\n' "$PROMPT" | sed -n 's/.*manifestDigest \\([0-9a-f]*\\).*/\\1/p' | tail -n 1)"
+    touch "$HOME/.fake-${role}-round-$VINAYA_ROUND" 2>/dev/null
+    echo '{"type":"result","subtype":"success","session_id":"${session}","usage":{"input_tokens":8,"output_tokens":4},"structured_output":{"reviewResult":{"schemaVersion":1,"role":"${role}","headSha":"'"$HEAD_SHA"'","manifestDigest":"'"$DIGEST"'",${fields}}}}'`
+}
+
+const FAKE_OBJECTIVES_MET = '"objectiveResults":[{"id":"O1","status":"MET","evidence":"done"}]'
+const FAKE_CLEAN_CODE_REVIEW = `"status":"completed","summary":"Conforms to the brief.","findings":[],${FAKE_OBJECTIVES_MET}`
+const FAKE_CLEAN_SECURITY_REVIEW = `"status":"completed","summary":"none found — atta-labs/secret-scan passed","findings":[],${FAKE_OBJECTIVES_MET}`
+const FAKE_ESCALATED_CODE_REVIEW =
+  '"status":"blocked","summary":"needs a call nobody made.","blocker":{"kind":"scope_unclear","detail":"escalated as authority"}'
+
 function writeFakeBinary(dir: string, name: string, script: string): void {
   const p = join(dir, name)
   // A fake `claude` answers the Linux sandbox probe before doing anything else.
@@ -222,22 +242,10 @@ PROMPT="$(cat)"
 WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/reviewer-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
-    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
-    mkdir -p "$WD"
-    : > "$WD/findings.txt"
-    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
-    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ${fakeReviewResultShell('code-reviewer', 'rev-session-1', FAKE_CLEAN_CODE_REVIEW)}
     ;;
   security)
-    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/security-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
-    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
-    mkdir -p "$WD"
-    : > "$WD/findings.txt"
-    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-    printf 'CONFIG_SCAN: clean\\nSECRETS: none found — atta-labs/secret-scan passed\\n' > "$WD/report.txt"
-    echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ${fakeReviewResultShell('security-reviewer', 'sec-session-1', FAKE_CLEAN_SECURITY_REVIEW)}
     ;;
   *)
     ${FAKE_DEVELOPER_TURN_RESULT}
@@ -843,11 +851,11 @@ describe('devReviewLoop — O9 (task-run-v1 21, #541, round 2 review BLOCKER): a
       expect(r2.stdout).toMatch(/publish/)
 
       // The bug this test guards: round 2 must be a NEW round on the SAME
-      // code, never round 1 redone. `writeFakeClaude` organizes reviewer
-      // work directories by `$VINAYA_ROUND` — round 2's own directories only
-      // exist if the driver genuinely advanced past round 1's own numbering.
-      expect(existsSync(join(roundDir(home, 2), 'reviewer-work'))).toBe(true)
-      expect(existsSync(join(roundDir(home, 2), 'security-work'))).toBe(true)
+      // code, never round 1 redone. `writeFakeClaude` marks each round it
+      // reviews by `$VINAYA_ROUND` — round 2's own markers only exist if the
+      // driver genuinely advanced past round 1's own numbering.
+      expect(existsSync(join(home, '.fake-code-reviewer-round-2'))).toBe(true)
+      expect(existsSync(join(home, '.fake-security-reviewer-round-2'))).toBe(true)
 
       // The published marker — round 2's real, live computation — still
       // names round 1, reconstructed from the round-1 developer marker round 1
@@ -1991,28 +1999,15 @@ PROMPT="$(cat)"
 WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/reviewer-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
-    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
-    mkdir -p "$WD"
     if [ -f "$HOME/.escalated-once" ]; then
-      : > "$WD/findings.txt"
-      printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-      printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+      ${fakeReviewResultShell('code-reviewer', 'rev-session-1', FAKE_CLEAN_CODE_REVIEW)}
     else
       touch "$HOME/.escalated-once"
-      : > "$WD/findings.txt"
-      printf 'ESCALATE: authority\\nSUMMARY: needs a call nobody made.\\n' > "$WD/report.txt"
+      ${fakeReviewResultShell('code-reviewer', 'rev-session-1', FAKE_ESCALATED_CODE_REVIEW)}
     fi
-    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/security-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
-    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
-    mkdir -p "$WD"
-    : > "$WD/findings.txt"
-    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-    printf 'CONFIG_SCAN: clean\\nSECRETS: none found — atta-labs/secret-scan passed\\n' > "$WD/report.txt"
-    echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ${fakeReviewResultShell('security-reviewer', 'sec-session-1', FAKE_CLEAN_SECURITY_REVIEW)}
     ;;
   *)
     mkdir -p "$WORKROOT"
@@ -2559,13 +2554,7 @@ PROMPT="$(cat)"
 WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/reviewer-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
-    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
-    mkdir -p "$WD"
-    : > "$WD/findings.txt"
-    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
-    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ${fakeReviewResultShell('code-reviewer', 'rev-session-1', FAKE_CLEAN_CODE_REVIEW)}
     ;;
   security)
     echo "invocation" >> "$HOME/.security-invocations"
@@ -2582,9 +2571,9 @@ exit 0
 
 describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2)', () => {
   it.skipIf(process.platform === 'darwin')(
-    'retries once into a fresh work directory, then pauses naming the role and the missing artifacts — nothing held or published',
+    'retries once as a fresh dispatch, then pauses naming the role and the missing result — nothing held or published',
     async () => {
-      // Security writes NO artifact files, on both its attempts.
+      // Security returns NO structured result, on both its attempts.
       const world = makeWorld({ roleOutcomes: { 1: { security: { ...CLEAN_SECURITY, writesNothing: true } } } })
       const result = await runLoopInProcess(world)
       expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
@@ -2593,10 +2582,9 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
       // one fresh retry — never the same call read twice.
       expect(world.dispatchCountByRole.security).toBe(2)
 
-      // The retry used a genuinely fresh directory — the first attempt's own
-      // directory is never reused or resumed.
-      expect(existsSync(join(ipRoundDir(world, 1), 'security-work'))).toBe(true)
-      expect(existsSync(join(ipRoundDir(world, 1), 'security-work-retry1'))).toBe(true)
+      // The retry is a fresh dispatch — never a resume of the first attempt.
+      const securityDispatches = world.dispatches.filter((d) => d.role === 'security' && d.round === 1)
+      expect(securityDispatches).toHaveLength(2)
 
       // Nothing held or published for this round: no security verdict file
       // ever got written, and the round never advanced past 1. The code-review
@@ -2620,8 +2608,7 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
       const pauseComment = world.postedComments[1]!.body
       expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
       expect(pauseComment).toMatch(/security/)
-      expect(pauseComment).toMatch(/findings\.txt/)
-      expect(pauseComment).toMatch(/report\.txt/)
+      expect(pauseComment).toMatch(/no review \(missing\)/)
       expect(pauseComment).not.toMatch(/^VERDICT:/m)
 
       // O5 (review-validity-v1 task 5, `#488`; regression, PR #489 round 2,
@@ -2796,18 +2783,15 @@ describe('devReviewLoop — a superseded check-run failure never pauses a health
   )
 })
 
-// --- a findings.txt that still does not parse is infrastructure, never an
-// uncaught throw (review-validity-v1 task 8, #506, O6) ---
+// --- a result the controller rejects is infrastructure, never an uncaught
+// throw ---
 
 /**
- * Security writes a genuinely unparseable `findings.txt` line — no `|` at
- * all, so neither a severity nor a location nor a description can be read
- * off it — on BOTH the first dispatch and the retry. The prior behaviour
- * (before O6) let `parseFindingsFile`'s thrown `FindingsParseError`
- * propagate straight out of `buildVerdictFromReport` uncaught, crashing the
- * whole driver process; this scenario proves it is now caught, retried
- * once, and turned into the same `infrastructure` pause a missing artifact
- * gets — never a crash.
+ * Security returns a schema-valid ReviewResult whose objective result names
+ * an id the brief never had — a credential-shaped one — on BOTH the first
+ * dispatch and the retry. The controller rejects it as no review, retries
+ * once, and turns it into the same `infrastructure` pause a missing result
+ * gets — never a crash, and never the rejected value un-redacted in public.
  */
 function writeFakeClaudeReviewerWritesGarbageFindingsScenario(dir: string): void {
   writeFakeBinary(
@@ -2819,28 +2803,15 @@ PROMPT="$(cat)"
 WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/reviewer-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
-    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
-    mkdir -p "$WD"
-    : > "$WD/findings.txt"
-    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
-    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ${fakeReviewResultShell('code-reviewer', 'rev-session-1', FAKE_CLEAN_CODE_REVIEW)}
     ;;
   security)
-    ATTEMPT=$(cat "$HOME/.security-invocations" 2>/dev/null | wc -l | tr -d ' ')
-    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/security-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
-    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
-    if [ "$ATTEMPT" != "0" ]; then
-      WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/security-work-retry1[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
-      [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work-retry1"
-    fi
-    mkdir -p "$WD"
-    printf 'this is not a valid finding line at all, token=ghp_abcdefghijklmnopqrstuvwxyz012345\\n' > "$WD/findings.txt"
-    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-    printf 'CONFIG_SCAN: clean\\nSECRETS: none found — atta-labs/secret-scan passed\\n' > "$WD/report.txt"
+    ${fakeReviewResultShell(
+      'security-reviewer',
+      'sec-session-garbage',
+      '"status":"completed","summary":"none found — atta-labs/secret-scan passed","findings":[],"objectiveResults":[{"id":"token=ghp_abcdefghijklmnopqrstuvwxyz012345","status":"MET","evidence":"done"}]'
+    )}
     echo "invocation" >> "$HOME/.security-invocations"
-    echo '{"session_id":"sec-session-garbage","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   *)
     ${FAKE_DEVELOPER_TURN_RESULT}
@@ -2861,10 +2832,10 @@ function setUpReviewerWritesGarbageFindings(): { home: string; cwd: string; path
   return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
 }
 
-describe('devReviewLoop — a findings.txt line that still does not parse is an infrastructure pause (review-validity-v1 task 8, #506, O6)', () => {
+describe('devReviewLoop — a rejected reviewer result is an infrastructure pause', () => {
   // REAL PROCESS: the dispatch outcome line it joins against is logged by the real dispatchRole, which the in-process harness replaces
   it.skipIf(process.platform === 'darwin')(
-    'retries once into a fresh work directory, then pauses naming the file, the line, and the reviewer session id — never an uncaught throw',
+    'retries once as a fresh dispatch, then pauses naming the rejection and the reviewer session id — never an uncaught throw',
     () => {
       const { home, cwd, path } = setUpReviewerWritesGarbageFindings()
       const r = runLoop(home, cwd, path)
@@ -2887,23 +2858,22 @@ describe('devReviewLoop — a findings.txt line that still does not parse is an 
       expect(pausedFiles).toHaveLength(2)
       const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[1] as string), 'utf8')
       expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
-      // Names the file, the line (inside the parse error's own message), and
-      // the reviewer's session id — O6's three required facts.
-      expect(pauseComment).toMatch(/findings\.txt/)
-      expect(pauseComment).toMatch(/line 1/)
+      // Names the rejection, what was wrong, and the reviewer's session id.
+      expect(pauseComment).toMatch(/no review \(rejected\)/)
+      expect(pauseComment).toMatch(/unknown objective id/)
       expect(pauseComment).toMatch(/sec-session-garbage/)
       expect(pauseComment).not.toMatch(/^VERDICT:/m)
 
-      // This pause reaches `postPauseComment` from `ReviewerReportParseFailure`'s
+      // This pause reaches `postPauseComment` from `ReviewerInfrastructureFailure`'s
       // own message, never from the outer crash catch — a distinct call site
-      // that must sanitize too. The garbage line above embeds a
+      // that must sanitize too. The rejected objective id above is a
       // credential-shaped token; it must never reach the PUBLIC pause comment
       // un-redacted, even though it DOES reach the reviewer's own retry prompt
       // and the machine-local pause-state.json.
       expect(pauseComment).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz012345')
       expect(pauseComment).toContain('<redacted>')
 
-      // An invalid report is a failure observation,
+      // An invalid result is a failure observation,
       // never something indistinguishable from a clean round: no `verdicts_read`
       // was ever logged for this round (the throw happened before `assessRound`
       // saw a `verdicts` observation), but a `role_attempt` line names the
@@ -2913,11 +2883,11 @@ describe('devReviewLoop — a findings.txt line that still does not parse is an 
       // `dispatchRole`'s own per-attempt `role_attempt` lines (developer,
       // both reviewer attempts) are ALSO present now
       // — this is the additional one dev-review-loop.ts logs for the
-      // security role's own invalid report, distinguished by its outcome.
-      const failureAttempt = events.find((e) => e.kind === 'role_attempt' && e.outcome === 'incomplete') as
-        | { effect_id: string; duration_ms: number }
-        | undefined
-      expect(failureAttempt).toMatchObject({ actor: 'security', outcome: 'incomplete', usage: null })
+      // security role's own invalid result, distinguished by its outcome.
+      const failureAttempt = events.find(
+        (e) => e.kind === 'role_attempt' && e.outcome === 'infrastructure_failed' && e.actor === 'security'
+      ) as { effect_id: string; duration_ms: number } | undefined
+      expect(failureAttempt).toMatchObject({ actor: 'security', outcome: 'infrastructure_failed', usage: null })
 
       // Round 2 review, MAJOR (fixed): this failure's own `effect_id` must be
       // the SAME id the failing security attempt's own `dispatch` line(s)
@@ -3373,22 +3343,10 @@ PROMPT="$(cat)"
 WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/reviewer-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
-    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
-    mkdir -p "$WD"
-    : > "$WD/findings.txt"
-    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
-    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ${fakeReviewResultShell('code-reviewer', 'rev-session-1', FAKE_CLEAN_CODE_REVIEW)}
     ;;
   security)
-    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/security-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
-    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
-    mkdir -p "$WD"
-    : > "$WD/findings.txt"
-    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-    printf 'CONFIG_SCAN: clean\\nSECRETS: none found — atta-labs/secret-scan passed\\n' > "$WD/report.txt"
-    echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ${fakeReviewResultShell('security-reviewer', 'sec-session-1', FAKE_CLEAN_SECURITY_REVIEW)}
     ;;
   *)
     touch "$HOME/.base-moved" 2>/dev/null
@@ -3463,36 +3421,24 @@ PROMPT="$(cat)"
 WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/reviewer-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
-    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
-    mkdir -p "$WD"
     if [ ! -f "$HOME/.escalated-once" ]; then
       touch "$HOME/.escalated-once" 2>/dev/null
-      : > "$WD/findings.txt"
-      printf 'ESCALATE: authority\\nSUMMARY: needs a call nobody made.\\n' > "$WD/report.txt"
-      echo '{"session_id":"rev-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
+      ${fakeReviewResultShell('code-reviewer', `rev-session-'"$VINAYA_ROUND"'`, FAKE_ESCALATED_CODE_REVIEW)}
       exit 0
     fi
     if [ ! -f "$HOME/.round1-reviewed" ]; then
       touch "$HOME/.round1-reviewed" 2>/dev/null
-      printf '%s\\n' 'BLOCKER|smoke.ts:1|deliberate round-1 blocker to force round 2' > "$WD/findings.txt"
-      IDS='FINDING_IDS: F1\\n'
+      ${fakeReviewResultShell(
+        'code-reviewer',
+        `rev-session-'"$VINAYA_ROUND"'`,
+        `"status":"completed","summary":"One blocker.","findings":[{"severity":"BLOCKER","file":"smoke.ts","line":1,"description":"deliberate round-1 blocker to force round 2"}],${FAKE_OBJECTIVES_MET}`
+      )}
     else
-      : > "$WD/findings.txt"
-      IDS=''
+      ${fakeReviewResultShell('code-reviewer', `rev-session-'"$VINAYA_ROUND"'`, FAKE_CLEAN_CODE_REVIEW)}
     fi
-    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-    printf "BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n$IDS" > "$WD/report.txt"
-    echo '{"session_id":"rev-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$(printf '%s\\n' "$PROMPT" | grep -o "[[:alnum:]_./-]*/rounds/$VINAYA_ROUND/security-work[[:alnum:]-]*/findings.txt" | head -n 1 | sed 's#/findings.txt$##')"
-    [ -n "$WD" ] || WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
-    mkdir -p "$WD"
-    : > "$WD/findings.txt"
-    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-    printf 'CONFIG_SCAN: clean\\nSECRETS: none found — atta-labs/secret-scan passed\\n' > "$WD/report.txt"
-    echo '{"session_id":"sec-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
+    ${fakeReviewResultShell('security-reviewer', `sec-session-'"$VINAYA_ROUND"'`, FAKE_CLEAN_SECURITY_REVIEW)}
     ;;
   *)
     ${FAKE_DEVELOPER_TURN_RESULT}
@@ -4278,7 +4224,7 @@ describe('objectives version — loop and gate agree (O1)', () => {
 
 /**
  * O2's own acceptance test: a loop-published verdict — rendered by the SAME
- * `renderCodeReviewComment`/`renderSecurityComment` `buildVerdictFromReport`
+ * `renderCodeReviewComment`/`renderSecurityComment` `buildVerdictFromReview`
  * calls, now carrying a real `objectivesVersion` instead of the old
  * hardcoded `null` — is accepted by the merge gate's own `checkReviewGate`
  * evaluator when the current objectives version matches. Calling the real
@@ -4405,7 +4351,7 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
 /**
  * Which severities block is repository policy (`review-validity-v1` task 8,
  * `#506`, O2/O4): the loop's own derivation (`deriveCodeReviewVerdict`, the
- * same function `buildVerdictFromReport` calls) and the merge gate's own
+ * same function `buildVerdictFromReview` calls) and the merge gate's own
  * evaluation (`checkReviewGate`) must agree on the SAME findings under the
  * SAME policy — this repository's own configured MAJOR/HIGH.
  */
@@ -4552,7 +4498,7 @@ describe('a loop-published verdict agrees with the merge gate under policy (revi
  * The ruling-ordinal mirror of the objectives-version acceptance test above
  * (review-validity-v1 task 3, `#477`, O1/O2): a loop-published verdict —
  * rendered by the same `renderCodeReviewComment`/`renderSecurityComment`
- * `buildVerdictFromReport` calls, now carrying a real `rulingOrdinal`
+ * `buildVerdictFromReview` calls, now carrying a real `rulingOrdinal`
  * instead of the field not existing at all — is accepted by the merge
  * gate's own `checkReviewGate` evaluator when the current newest ruling
  * ordinal matches, and refused, naming the newer ruling, when it doesn't.

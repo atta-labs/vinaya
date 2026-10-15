@@ -10,7 +10,6 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
-import { reviewerWorkDir } from '../../../src/lib/dev-review-loop/reviewer-dispatch'
 import { execFileSync } from 'node:child_process'
 import {
   chmodSync,
@@ -26,7 +25,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   buildReviewerCandidate,
   buildReviewerScratch,
@@ -272,7 +271,7 @@ describe('buildReviewerScratch — O2, a fresh writable copy per reviewer, deriv
     const candidate = buildReviewerCandidate(root, 9001, 1, src) as string
     const attempt1 = buildReviewerScratch(root, 9001, 1, 'reviewer', 1, candidate) as string
     writeFileSync(join(attempt1, 'stray-from-attempt-1.txt'), 'left behind by a crashed attempt\n')
-    // Attempt 2 gets its OWN directory (`reviewerWorkDir`'s own `-retry1` convention)...
+    // Attempt 2 gets its OWN directory (the `-retry1` suffix)...
     const attempt2 = buildReviewerScratch(root, 9001, 1, 'reviewer', 2, candidate) as string
     expect(attempt2).not.toBe(attempt1)
     expect(existsSync(join(attempt2, 'stray-from-attempt-1.txt'))).toBe(false)
@@ -412,16 +411,12 @@ describe('cleanupReviewerIsolationForRound — O3, removed once the round conclu
     const candidate2 = buildReviewerCandidate(root, 9001, 2, src) as string
     buildReviewerScratch(root, 9001, 2, 'reviewer', 1, candidate2)
 
-    // A same-named artifact this module never owns — the pre-existing
-    // findings/report work directory — must survive cleanup untouched.
-    // `reviewerWorkDir` itself, not a hand-built path: round 2 review (MAJOR)
-    // found this fixture still at the pre-move `dev-review-loop/9001/...`
-    // location, OUTSIDE the `rounds/<n>/` folder cleanup now scans — so the
-    // "an artifact this module never owns must survive" assertion could no
-    // longer fail, at exactly the commit that rewrote the name regex from
-    // round-qualified names to a bare alternation whose immediate sibling is
-    // this very directory.
-    const workDir = reviewerWorkDir(root, 9001, 1, 'reviewer')
+    // A same-named artifact this module never owns — a `reviewer-work`
+    // result directory an older round folder can still hold — must survive
+    // cleanup untouched. Inside `rounds/<n>/`, the folder cleanup scans, so
+    // the "an artifact this module never owns must survive" assertion can
+    // fail: it is the immediate sibling of the names cleanup removes.
+    const workDir = join(dirname(reviewerScratchDir(root, 9001, 1, 'reviewer', 1)), 'reviewer-work')
     mkdirSync(workDir, { recursive: true })
     writeFileSync(join(workDir, 'findings.txt'), '')
 
@@ -453,14 +448,9 @@ describe('cleanupAllReviewerIsolationArtifacts — O3, restart and cancellation 
     const candidate2 = buildReviewerCandidate(root, 9001, 2, src) as string
     buildReviewerScratch(root, 9001, 2, 'security', 1, candidate2)
 
-    // `reviewerWorkDir` itself, not a hand-built path: round 2 review (MAJOR)
-    // found this fixture still at the pre-move `dev-review-loop/9001/...`
-    // location, OUTSIDE the `rounds/<n>/` folder cleanup now scans — so the
-    // "an artifact this module never owns must survive" assertion could no
-    // longer fail, at exactly the commit that rewrote the name regex from
-    // round-qualified names to a bare alternation whose immediate sibling is
-    // this very directory.
-    const workDir = reviewerWorkDir(root, 9001, 1, 'reviewer')
+    // Inside `rounds/<n>/`, beside the names cleanup removes — see the
+    // round-scoped cleanup test above.
+    const workDir = join(dirname(reviewerScratchDir(root, 9001, 1, 'reviewer', 1)), 'reviewer-work')
     mkdirSync(workDir, { recursive: true })
 
     cleanupAllReviewerIsolationArtifacts(root, 9001)

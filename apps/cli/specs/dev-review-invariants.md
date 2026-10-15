@@ -314,8 +314,8 @@ when a row here differs, is missing, or names a count it does not compute.
 | invariants in reference-process scope | 10 |
 | invariants in implementation scope | 15 |
 | defects | 52 |
-| defects open | 40 |
-| defects fixed | 12 |
+| defects open | 38 |
+| defects fixed | 14 |
 | defects in product scope | 41 |
 | defects in reference-process scope | 8 |
 | defects in implementation scope | 3 |

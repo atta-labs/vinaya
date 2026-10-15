@@ -121,7 +121,13 @@ import {
   terminateLaunchedChildOnShutdown as realTerminateLaunchedChildOnShutdown
 } from './dispatch.js'
 import { authenticateWorkerInvocation, requestEffect, scopeTarget } from './broker.js'
-import { classifyReviewOutcome, manifestDigest as reviewManifestDigest } from './review-result.js'
+import {
+  classifyReviewOutcome,
+  manifestDigest as reviewManifestDigest,
+  type ReviewBinding,
+  type ReviewResult,
+  reviewBlockerNeedsRuling
+} from './review-result.js'
 import {
   type DeferredFindingEntry,
   type DeferredFindingsIssueRef,
@@ -198,14 +204,11 @@ import {
 import {
   buildPriorRoundFindingsText,
   buildRoundDeferralContext,
-  buildVerdictFromReport,
+  buildVerdictFromReview,
   discardHeldVerdicts,
-  freshReviewerWorkDir,
-  hasObjectivesFacts,
   type HeldCleanVerdict,
   latestHeldCleanVerdict,
   latestHeldRequestChanges,
-  missingReviewerArtifacts,
   persistManifestRecord,
   decideSecurityScan,
   readIfExists,
@@ -215,8 +218,7 @@ import {
   type ReviewerSourceFacts,
   reviewerSourceFacts,
   ReviewerInfrastructureFailure,
-  ReviewerReportParseFailure,
-  reviewerOutputFloorMs,
+  ReviewerResultRejected,
   type RoundVerdictParse,
   type SecurityScanOutcome,
   type SecurityScanRun,
@@ -429,7 +431,7 @@ export {
   runtimeDir,
   renderReviewerPrompt,
   ReviewerInfrastructureFailure,
-  ReviewerReportParseFailure,
+  ReviewerResultRejected,
   writeHeldVerdict
 } from './dev-review-loop/reviewer-dispatch.js'
 export type { ReviewerPromptFacts } from './dev-review-loop/reviewer-dispatch.js'
@@ -764,8 +766,7 @@ export type LoopDeps = {
    * issue-709, O2 — the loop's four forge-WRITE operations, injected so the
    * whole driver can run in-process against an in-memory world with no real
    * `gh`: the marked-comment poster (`postForgeEffectOnce`'s own poster
-   * closures — the round marker, the unpushed-work-resume note, the
-   * report-uncitable note), the two pause-comment posters (on the PR, and on
+   * closures — the round marker and the unpushed-work-resume note), the two pause-comment posters (on the PR, and on
    * the Issue before a PR exists), and `publishRound`'s post-then-re-fetch
    * publication. Every production default is the real implementation
    * unchanged, so this changes nothing about a real run; a test's fake
@@ -3960,12 +3961,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * O1/O2: thrown when a Reviewer/security turn's own after-dispatch
      * confinement check (`checkTurnConfinement`) finds a changed protected
      * path or a recognized credential pattern — caught by the SAME generic
-     * handler `ReviewerInfrastructureFailure`/`ReviewerReportParseFailure`
+     * handler `ReviewerInfrastructureFailure`/`ReviewerResultRejected`
      * already are (`role`/`attemptEffectId`/`attemptDurationMs` match their
      * shape on purpose), which already knows how to record a failed attempt
      * and pause the round. This round's verdict is never trusted when this
-     * is thrown — it is thrown before `missingReviewerArtifacts`/
-     * `buildVerdictFromReport` ever run.
+     * is thrown — it is thrown before the dispatch's structured result is
+     * ever classified or `buildVerdictFromReview` ever runs.
      */
     class ReviewerConfinementViolation extends Error {
       constructor(
@@ -5680,12 +5681,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     /**
-     * O1/O2: a dispatch whose work directory is still missing a required
-     * artifact is an infrastructure outcome, never a clean verdict — retried
-     * once with a fresh dispatch into a fresh work directory (`attempt` 2,
-     * never the first attempt's own directory); a second miss throws
-     * `ReviewerInfrastructureFailure`, which the caller turns into a pause
-     * rather than a held or published verdict for this round.
+     * O1/O2: each attempt is a fresh, non-resumed dispatch whose one native
+     * structured ReviewResult the controller binds to this run, round,
+     * attempt, role, judged head and review-input-manifest digest
+     * (`classifyReviewOutcome`). Anything but an accepted review is no review,
+     * never a clean verdict: retried once with a fresh dispatch (`attempt` 2,
+     * its own scratch copy); a second no-review throws
+     * `ReviewerInfrastructureFailure` (or the last `ReviewerResultRejected`),
+     * which the caller turns into a pause rather than a held or published
+     * verdict for this round. The one exception is a `blocked` result whose
+     * blocker only the Principal can settle (`reviewBlockerNeedsRuling`): the
+     * controller records it as this role's escalation at once, never retried.
      *
      * Deliberately does NOT call `writeHeldVerdict` itself (a round-1 review
      * BLOCKER finding): both roles run inside one `Promise.all` in
@@ -5697,149 +5703,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * after `Promise.all` itself resolves — i.e. only once it knows neither
      * role failed.
      */
-    /** `report.txt`'s `FINDING_IDS:` line — one id per `findings.txt` line, in order, comma-separated. `true` when there is nothing to cite (an empty findings list) or the line's ids exactly cover the findings, one each, no duplicates. */
-    function findingIdsCited(workDir: string, findingCount: number): boolean {
-      if (findingCount === 0) return true
-      const raw = readIfExists(join(workDir, 'report.txt')) ?? ''
-      const line = raw.split('\n').find((l) => l.trim().toUpperCase().startsWith('FINDING_IDS:'))
-      if (!line) return false
-      const ids = line
-        .slice(line.indexOf(':') + 1)
-        .split(',')
-        .map((id) => id.trim())
-        .filter((id) => id.length > 0)
-      return ids.length === findingCount && new Set(ids).size === ids.length
-    }
-
-    function citeFindingIdsPrompt(workDir: string): string {
-      return [
-        "Your last report.txt did not cite finding ids: findings.txt has finding(s), but report.txt's `FINDING_IDS:` line is missing, or does not carry exactly one id per findings.txt line.",
-        `Rewrite findings.txt and report.txt (same grammar as before) at ${join(workDir, 'findings.txt')} and ${join(workDir, 'report.txt')} — this time including a \`FINDING_IDS:\` line in report.txt, one id per findings.txt line, in the same order, comma-separated (e.g. \`F1,F2,F3\`) — so this round's findings are comparable to the next round's.`
-      ].join('\n\n')
-    }
-
-    /**
-     * A round's own findings must carry reviewer-cited ids to be
-     * comparable across rounds at all (`assessRound`'s own `reappearance`
-     * derivation compares finding ids between rounds, and a fresh
-     * `findings.txt` each round has no other stable identity to compare on).
-     * A report missing them is sent back ONCE with `CITE_FINDING_IDS_PROMPT`,
-     * into a fresh work directory (`attempt` 3 — never overwriting either of
-     * `dispatchReviewer`'s own two attempts) — a FRESH dispatch, deliberately
-     * never `--resume`: this file's own module doc states, as a load-bearing
-     * invariant, that a reviewer session is never resumed (only the
-     * developer's is); "the same reviewer session" in this task's own
-     * wording is read as "the same round's reviewer work, redone," matching
-     * the fresh-dispatch shape `dispatchReviewer`'s own missing-artifact/
-     * parse-failure retries already use. Still uncitable after that resend
-     * is `report_uncitable`: the round proceeds on `verdict`'s severities —
-     * whichever attempt actually produced a parseable verdict — never
-     * treated as though no report came back at all.
-     */
-    async function resendForFindingIds(
-      role: 'reviewer' | 'security',
-      roundNum: number,
-      facts: ReviewerPromptFacts,
-      firstVerdict: RoundVerdictParse,
-      candidateDir: string | null
-    ): Promise<{ verdict: RoundVerdictParse; findingsUncitable: boolean }> {
-      const hasObjectives = hasObjectivesFacts(facts)
-      const dispatchRoleName = role === 'reviewer' ? ('code-reviewer' as const) : ('security' as const)
-      // A directory no earlier dispatch wrote into (`freshReviewerWorkDir`),
-      // and the floor its files' modification times must reach to count as
-      // this dispatch's own output.
-      const workDir = freshReviewerWorkDir(root, task, roundNum, role, 3)
-      ensureRunDir(workDir, root)
-      const outputFloorMs = reviewerOutputFloorMs(workDir)
-      const prompt = citeFindingIdsPrompt(workDir)
-      // O2/O3: a fresh scratch copy for this resend attempt — never
-      // the first attempt's own, matching this function's own fresh-dispatch
-      // invariant. `null` when no candidate was built this round (a fresh
-      // attach with no local worktree yet) — `d.dispatchRole` then gets no
-      // `cwd` override, exactly as before this task.
-      const scratchDir = candidateDir ? buildReviewerScratch(root, task, roundNum, role, 3, candidateDir) : null
-      // O1/O2: the protected-path snapshot this resend's own after-dispatch
-      // check compares against — taken right before this dispatch, never
-      // from a cached copy, the same discipline `dispatchReviewer`'s own
-      // attempt loop already applies.
-      snapshotTurnConfinement(dispatchRoleName, roundNum)
-      const sourceTools = await startReviewerSourceTools(dispatchRoleName, facts.requiredSources)
-      let handle: DispatchHandle
-      try {
-        handle = await withPromptFile(prompt, (promptFile) =>
-          d.dispatchRole(dispatchRoleName, dispatchAgent, prompt, {
-            task: task,
-            round: roundNum,
-            promptFile,
-            roleLogPath: loopLogPath,
-            inputVersions: {
-              manifestVersion: facts.manifest.manifestVersion ?? 2,
-              objectivesVersion: facts.manifest.objectivesVersion,
-              briefHash: facts.manifest.briefHash,
-              rulingOrdinal: facts.manifest.rulingOrdinal,
-              policyDigest: facts.manifest.policyDigest,
-              pauseBoundRuling: facts.manifest.pauseBoundRuling ?? null
-            },
-            ...(scratchDir ? { cwd: scratchDir } : {}),
-            // O1/O3: a Reviewer dispatched
-            // by this driver is unattended the same way the Developer is.
-            unattended: true,
-            // Round 6 fix, live-reproduced: a confined reviewer writes
-            // findings.txt/report.txt/objectives.txt into workDir — see
-            // `extraWritableDirs`'s own doc comment (dispatch.ts).
-            // The absolute directory, never one relative to a root: this sits
-            // under the configurable runtime directory, which need not be
-            // under the Vinaya home at all.
-            extraWritableDirs: [workDir],
-            // The reviewer's one tool, `read_source`, when the round has required sources.
-            ...(sourceTools ? { devToolsBridge: sourceTools.bridge } : {})
-          })
-        )
-      } finally {
-        await sourceTools?.close()
-      }
-      await assertDispatchOrEscalate(
-        handle,
-        dispatchAgent,
-        false,
-        false,
-        role === 'reviewer' ? 'the reviewer' : 'the security reviewer'
-      )
-      // O1/O2: never trust this resend's own hand-off files once a protected
-      // path changed or a recognized credential pattern appeared — thrown
-      // before `missingReviewerArtifacts`/`buildVerdictFromReport` ever read
-      // them, the same invariant `dispatchReviewer`'s own attempt loop holds.
-      const confinement = checkTurnConfinement(dispatchRoleName, reviewerScanTexts(handle))
-      if (confinement.changedPaths.length > 0 || confinement.credentialFindings.length > 0) {
-        throw new ReviewerConfinementViolation(
-          role,
-          describeTurnConfinementViolation(confinement),
-          handle.effectId ?? null,
-          handle.durationMs
-        )
-      }
-      if (missingReviewerArtifacts(workDir, hasObjectives, outputFloorMs).length > 0) {
-        return { verdict: firstVerdict, findingsUncitable: true }
-      }
-      try {
-        const verdict = buildVerdictFromReport(
-          role,
-          workDir,
-          dispatchAgent,
-          task,
-          handle,
-          facts.manifest,
-          policy,
-          facts.resolvedObjectives,
-          facts.deferralContext ?? {}
-        )
-        return { verdict, findingsUncitable: !findingIdsCited(workDir, verdict.observation.findings.length) }
-      } catch (err) {
-        if (!(err instanceof ReviewerReportParseFailure)) throw err
-        return { verdict: firstVerdict, findingsUncitable: true }
-      }
-    }
-
     async function dispatchReviewer(
       role: 'reviewer' | 'security',
       roundNum: number,
@@ -5854,8 +5717,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
        * naming three files that do not exist in the scratch copy.
        */
       candidateInputsReady: boolean
-    ): Promise<{ verdict: RoundVerdictParse; findingsUncitable: boolean }> {
-      const hasObjectives = hasObjectivesFacts(facts)
+    ): Promise<{ verdict: RoundVerdictParse }> {
       const dispatchRoleName = role === 'reviewer' ? ('code-reviewer' as const) : ('security' as const)
       // O1/O2: resolved once per role, before the attempt loop — the doctrine
       // does not change between a failed first attempt and its fresh retry.
@@ -5867,35 +5729,26 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       } catch {
         roleDoctrine = null
       }
-      let lastMissing: string[] = []
-      let lastParseFailure: ReviewerReportParseFailure | null = null
+      const lastMissing: string[] = []
+      let lastRejection: ReviewerResultRejected | null = null
       // Round 2 review, MAJOR: captured so a `ReviewerInfrastructureFailure`
       // thrown after the loop can carry the LAST attempt's own real
       // effect_id/durationMs, rather than the caller inventing a fresh id
       // and timing it against the whole round.
       let lastHandle: DispatchHandle | null = null
       for (let attempt = 1; attempt <= 2; attempt++) {
-        // A directory no earlier dispatch wrote into: a re-dispatch of a
-        // round already reviewed (after a ruling, a resume, any re-run)
-        // never reads the earlier dispatch's files as its own verdict
-        // (`freshReviewerWorkDir`). `outputFloorMs` is the modification time
-        // a file must reach to count as this dispatch's own output.
-        const workDir = freshReviewerWorkDir(root, task, roundNum, role, attempt)
-        ensureRunDir(workDir, root)
-        const outputFloorMs = reviewerOutputFloorMs(workDir)
         // O1/O2: a fresh, writable copy of this round's shared,
         // read-only candidate (built once, below, before both roles
         // dispatch) — never the candidate itself, never the sibling role's
-        // own copy, and never a prior attempt's own (fresh per attempt,
-        // same invariant `reviewerWorkDir`'s own `attempt` suffix already
-        // holds for `findings.txt`/`report.txt`). `null` when no candidate
-        // was built this round — `cwd` is then omitted, exactly as every
-        // dispatch before this task. Built BEFORE the prompt (O1): the
-        // prompt names the staged inputs' paths INSIDE this attempt's own
-        // scratch copy, which only exists once this call returns.
+        // own copy, and never a prior attempt's own (fresh per attempt).
+        // `null` when no candidate was built this round — `cwd` is then
+        // omitted, exactly as every dispatch before this task. Built BEFORE
+        // the prompt (O1): the prompt names the staged inputs' paths INSIDE
+        // this attempt's own scratch copy, which only exists once this call
+        // returns.
         const scratchDir = candidateDir ? buildReviewerScratch(root, task, roundNum, role, attempt, candidateDir) : null
         const candidateInputPaths = scratchDir && candidateInputsReady ? reviewerCandidateInputPaths(scratchDir) : null
-        const prompt = renderReviewerDispatchPrompt(role, facts, workDir, roleDoctrine, candidateInputPaths)
+        const prompt = renderReviewerDispatchPrompt(role, facts, roleDoctrine, candidateInputPaths)
         // O1/O2: the protected-path snapshot this attempt's own after-dispatch
         // check compares against — taken right before this dispatch, never
         // from a cached copy (Traps to avoid).
@@ -5920,15 +5773,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               ...(scratchDir ? { cwd: scratchDir } : {}),
               // O1/O3: a Reviewer
               // dispatched by this driver is unattended the same way the
-              // Developer is.
+              // Developer is. No `resumeId`, ever: a reviewer runs on a fresh
+              // session, and `dispatchRole` refuses one that asks to resume.
               unattended: true,
-              // Round 6 fix, live-reproduced: a confined reviewer writes
-              // findings.txt/report.txt/objectives.txt into workDir — see
-              // `extraWritableDirs`'s own doc comment (dispatch.ts).
-              // The absolute directory, never one relative to a root: this
-              // sits under the configurable runtime directory, which need not
-              // be under the Vinaya home at all.
-              extraWritableDirs: [workDir],
               // The reviewer's one tool, `read_source`, when the round has required sources.
               ...(sourceTools ? { devToolsBridge: sourceTools.bridge } : {})
             })
@@ -5944,10 +5791,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           role === 'reviewer' ? 'the reviewer' : 'the security reviewer'
         )
         lastHandle = handle
-        // O1/O2: never trust this attempt's own hand-off files once a
+        // O1/O2: never trust this attempt's structured result once a
         // protected path changed or a recognized credential pattern
-        // appeared — thrown before `missingReviewerArtifacts` or
-        // `buildVerdictFromReport` ever reads them.
+        // appeared — thrown before the result is ever classified.
         const confinement = checkTurnConfinement(dispatchRoleName, reviewerScanTexts(handle))
         if (confinement.changedPaths.length > 0 || confinement.credentialFindings.length > 0) {
           throw new ReviewerConfinementViolation(
@@ -5957,11 +5803,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             handle.durationMs
           )
         }
-        const binding = {
-          role: dispatchRoleName === 'security' ? ('security-reviewer' as const) : ('code-reviewer' as const),
+        // The controller's own binding: nothing in it is read from the agent.
+        const binding: ReviewBinding = {
+          role: dispatchRoleName === 'security' ? 'security-reviewer' : 'code-reviewer',
           headSha: facts.manifest.headSha,
           manifestDigest: reviewManifestDigest(facts.manifest),
-          objectiveIds: facts.resolvedObjectives.map((objective) => objective.id)
+          objectiveIds: facts.resolvedObjectives.map((objective) => objective.id),
+          runId,
+          round: roundNum,
+          attempt
         }
         const output = handle.reviewOutput
         const outcome = classifyReviewOutcome(
@@ -5974,36 +5824,57 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           },
           binding
         )
-        if (outcome.kind === 'no_review') {
-          lastMissing = [`structured ReviewResult (${outcome.reason}: ${outcome.detail})`]
-          lastParseFailure = null
-          continue
+        let accepted: ReviewResult
+        if (outcome.kind === 'review') {
+          accepted = outcome.result
+        } else {
+          const raw = output?.raw as { reviewResult?: ReviewResult } | undefined
+          const blocked = outcome.reason === 'blocked' ? raw?.reviewResult : undefined
+          if (blocked?.status !== 'blocked' || !reviewBlockerNeedsRuling(blocked.blocker.kind)) {
+            appendRoleLine(
+              loopLogPath,
+              'dev-review-loop',
+              `review_not_accepted: round=${roundNum} attempt=${attempt} role=${role} reason=${outcome.reason}`
+            )
+            lastMissing.push(
+              `attempt ${attempt} (session ${handle.resumeId ?? '(unknown)'}): no review (${outcome.reason}) — ${outcome.detail}`
+            )
+            lastRejection = null
+            continue
+          }
+          // A blocked result is still no review; the controller decides its
+          // blocker needs the Principal, so the role's round outcome is an
+          // escalation — bound to this round the same way a review is.
+          accepted = blocked
         }
-        // O6: the SAME one-fresh-retry treatment a missing artifact gets —
-        // a findings.txt/objectives.txt that exists but still does not
-        // parse is retried once, into a fresh work directory, before it
-        // becomes a pause.
+        appendRoleLine(
+          loopLogPath,
+          'dev-review-loop',
+          `review_bound: round=${roundNum} attempt=${attempt} role=${role} status=${accepted.status} head=${binding.headSha} manifest=${binding.manifestDigest}`
+        )
+        // O6: the SAME one-fresh-retry treatment a missing result gets — a
+        // result that breaks a rule every review is held to is retried once,
+        // as a fresh dispatch, before it becomes a pause.
         try {
-          const verdict = buildVerdictFromReport(
+          const verdict = buildVerdictFromReview(
             role,
-            workDir,
+            accepted,
             dispatchAgent,
             task,
             handle,
             facts.manifest,
             policy,
             facts.resolvedObjectives,
-            facts.deferralContext ?? {},
-            outcome.result
+            facts.deferralContext ?? {}
           )
-          return { verdict, findingsUncitable: false }
+          return { verdict }
         } catch (err) {
-          if (!(err instanceof ReviewerReportParseFailure)) throw err
-          lastParseFailure = err
-          lastMissing = []
+          if (!(err instanceof ReviewerResultRejected)) throw err
+          lastRejection = err
+          lastMissing.push(`attempt ${attempt}: no review (rejected) — ${err.message}`)
         }
       }
-      if (lastParseFailure) throw lastParseFailure
+      if (lastRejection) throw lastRejection
       throw new ReviewerInfrastructureFailure(
         role,
         lastMissing,
@@ -7953,12 +7824,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // finding: the driver used to build this `pause` decision by hand
           // and skip the log entirely). No verdict is held or published for
           // this round, and the round number does not advance.
-          let verdicts:
-            | [
-                { verdict: RoundVerdictParse; findingsUncitable: boolean },
-                { verdict: RoundVerdictParse; findingsUncitable: boolean }
-              ]
-            | null = null
+          let verdicts: [{ verdict: RoundVerdictParse }, { verdict: RoundVerdictParse }] | null = null
           /** Set when one reviewer role failed while its sibling finished: names the sibling's kept verdict for the pause detail. */
           let keptSiblingNote: string | null = null
           // O1: ONE shared, read-only candidate for this round,
@@ -8117,11 +7983,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           } catch (err) {
             if (
               !(err instanceof ReviewerInfrastructureFailure) &&
-              !(err instanceof ReviewerReportParseFailure) &&
+              !(err instanceof ReviewerResultRejected) &&
               !(err instanceof ReviewerConfinementViolation)
             )
               throw err
-            // An invalid report is a failure
+            // An invalid result is a failure
             // observation, never something a reader could mistake for a
             // clean, empty `verdicts_read` — this role never reached one, so
             // its own `role_attempt` line is the only durable record of the
@@ -8132,8 +7998,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // `dispatch`/`role_attempt`/`usage` lines `dispatchRole` already
             // logged for that same attempt, and the whole round's elapsed
             // time is not this attempt's own duration) — carried on the
-            // thrown error by `buildVerdictFromReport`'s own `handle`
-            // parameter (`ReviewerReportParseFailure`) or the last dispatch
+            // thrown error by `buildVerdictFromReview`'s own `handle`
+            // parameter (`ReviewerResultRejected`) or the last dispatch
             // attempt in `dispatchReviewer`'s retry loop
             // (`ReviewerInfrastructureFailure`). `null` only in the
             // structurally unreachable case where no attempt ever produced
@@ -8248,26 +8114,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               persistDeveloperHandoff({
                 findings: lastHandoffFindings.map((finding) => ({ id: finding.id, description: finding.line }))
               })
-
-              // Recorded once per round, so a Principal reading
-              // the PR sees WHICH role's ids the driver could not trust —
-              // never silent just because the round still proceeded.
-              const uncitableRoles = [
-                reviewer.findingsUncitable ? 'reviewer' : null,
-                security.findingsUncitable ? 'security' : null
-              ].filter((r): r is string => r !== null)
-              if (uncitableRoles.length > 0) {
-                await withRateLimitWait(() =>
-                  postForgeEffectOnce(root, task, `report-uncitable-${round}`, () =>
-                    d.postMarkedComment(
-                      'pr',
-                      String(prNumber),
-                      '<!-- aeg:loop:report-uncitable -->',
-                      `report_uncitable: ${uncitableRoles.join(', ')} still carried findings with no citable \`FINDING_IDS:\` after one resend this round. Proceeding on this round's severities — never counted toward \`no_progress\`.`
-                    )
-                  )
-                )
-              }
 
               const roundVerdicts = [reviewer.verdict.observation, security.verdict.observation]
               // O1: capture this round's deferred findings WITH the reviewer

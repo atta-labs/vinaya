@@ -51,8 +51,7 @@ export function renderPauseBoundRuling(binding: PauseBoundRuling | null): string
  * `reportedChecks` — labelled as the agent's own account, context and never
  * evidence. When the caller passes the frozen manifest's ruling slot, a
  * `Pause-bound ruling:` line follows `Head:`. An empty `findingIds` list — round 1's first review — omits the
- * `FINDING_IDS:` line entirely, the same "nothing to cite" convention the
- * reviewer's own `FINDING_IDS:` grammar uses for an empty findings list.
+ * `FINDING_IDS:` line entirely: there is nothing to cite.
  */
 export function renderDeveloperRoundComment(
   head: string,

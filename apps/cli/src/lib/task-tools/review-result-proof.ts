@@ -20,17 +20,24 @@
  * security-reviewer role.
  *
  * The cases: both reviewers running CONCURRENTLY against one manifest, each
- * accepted result attributed to its own role; then, one live dispatch each, a
- * role mismatch, a wrong head, a wrong manifest digest, an objective id outside
- * the brief, a severity outside the role's scale (both roles), a finding with
- * no file, a finding with no line (accepted), a `blocked` result, malformed
- * output, no result at all, a cancelled run, a provider error and context
- * exhaustion. Everything but the concurrent pair and the no-line case must end
- * as NO REVIEW, never approval.
+ * accepted result attributed to its own role (round 1); an attempt to RESUME
+ * the round-1 code-reviewer session — refused by the production dispatcher
+ * before any spawn (`isReviewerResume`), and, run live anyway, a result the
+ * controller records as no review; a real ROUND 2 — a new head and a new
+ * manifest, both reviewers again concurrent on fresh sessions, each accepted
+ * against round 2's binding while each round-1 result offered against it is
+ * stale; then, one live dispatch each, a role mismatch, a wrong head, a wrong
+ * manifest digest, an objective id outside the brief, a severity outside the
+ * role's scale (both roles), a finding with no file, a finding with no line
+ * (accepted), a `blocked` result, malformed output, no result at all, a
+ * cancelled run, a provider error and context exhaustion. Everything but the
+ * two concurrent pairs and the no-line case must end as NO REVIEW, never
+ * approval.
  *
- * It prints, for every case, whether a schema-valid result reached the driver
- * and what the controller made of it. It never writes the forge, never touches
- * the loop's reviewer dispatch or its result files, and designs no fallback: a
+ * The live run needs both vendors' subscription logins on the host, so it is
+ * run by a person, never inside a dispatched agent's sandbox. It prints, for
+ * every case, whether a schema-valid result reached the driver and what the
+ * controller made of it. It never writes the forge and designs no fallback: a
  * failing case is reported as observed.
  */
 
@@ -38,9 +45,16 @@ import { execFileSync } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir, userInfo } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { buildReviewInputManifest, DEFAULT_REVIEW_POLICY, type Role } from '@attalabs/aeg-core'
-import { buildCodexExecpolicyRules, vendorSessionArgs, writeDispatchSettingsAt } from '../dispatch.js'
+import {
+  buildCodexExecpolicyRules,
+  isReviewerResume,
+  REVIEWER_RESUME_REFUSED_REASON,
+  vendorResumeArgs,
+  vendorSessionArgs,
+  writeDispatchSettingsAt
+} from '../dispatch.js'
 import {
   type CompletedReview,
   classifyReviewOutcome,
@@ -107,6 +121,39 @@ export type StagedReview = {
   manifestDigest: string
 }
 
+/** Runs git in the staged candidate, with no hook, no user config and a throwaway identity. */
+function stagedGit(dir: string, ...args: string[]): string {
+  return execFileSync(
+    'git',
+    ['-c', 'core.hooksPath=/dev/null', '-c', 'user.name=proof', '-c', 'user.email=proof@example.invalid', ...args],
+    { cwd: dir, encoding: 'utf8', env: { PATH: process.env.PATH ?? '', HOME: dirname(dir) } }
+  ).trim()
+}
+
+/** Writes `review-input/` for the candidate's current head: the manifest (with its digest) and the diff from `baseSha`. */
+function writeReviewInputs(dir: string, baseSha: string, rulingOrdinal: number): StagedReview {
+  const headSha = stagedGit(dir, 'rev-parse', 'HEAD')
+  const diff = stagedGit(dir, 'diff', baseSha, headSha)
+  const manifest = buildReviewInputManifest({
+    headSha,
+    baseSha,
+    briefContent: 'proof brief',
+    objectivesVersion: 'staged-objectives',
+    rulingOrdinal,
+    policy: DEFAULT_REVIEW_POLICY
+  })
+  const digest = manifestDigest(manifest)
+  const inputs = join(dir, 'review-input')
+  mkdirSync(inputs, { recursive: true })
+  writeFileSync(join(inputs, 'manifest.json'), `${JSON.stringify({ ...manifest, manifestDigest: digest }, null, 2)}\n`)
+  writeFileSync(join(inputs, 'diff.patch'), `${diff}\n`)
+  writeFileSync(
+    join(inputs, 'objectives.txt'),
+    'O1 greet trims its argument.\nO2 the module has no import-time side effect.\n'
+  )
+  return { dir, headSha, baseSha, manifestDigest: digest }
+}
+
 /**
  * Builds the throwaway candidate: a two-commit repository whose diff is the
  * review subject, plus `review-input/` — the manifest (from the same builder
@@ -115,43 +162,34 @@ export type StagedReview = {
 export function stageReviewInputs(root: string): StagedReview {
   const dir = join(root, 'candidate')
   mkdirSync(join(dir, 'src'), { recursive: true })
-  const git = (...args: string[]): string =>
-    execFileSync(
-      'git',
-      ['-c', 'core.hooksPath=/dev/null', '-c', 'user.name=proof', '-c', 'user.email=proof@example.invalid', ...args],
-      { cwd: dir, encoding: 'utf8', env: { PATH: process.env.PATH ?? '', HOME: root } }
-    ).trim()
-  git('init', '--quiet')
+  stagedGit(dir, 'init', '--quiet')
   writeFileSync(join(dir, STAGED_FILE), 'export function greet(name: string): string {\n  return "Hello " + name\n}\n')
-  git('add', '.')
-  git('commit', '--quiet', '-m', 'base')
-  const baseSha = git('rev-parse', 'HEAD')
+  stagedGit(dir, 'add', '.')
+  stagedGit(dir, 'commit', '--quiet', '-m', 'base')
+  const baseSha = stagedGit(dir, 'rev-parse', 'HEAD')
   writeFileSync(
     join(dir, STAGED_FILE),
     'export function greet(name: string): string {\n  return "Hello " + name.trim()\n}\n\nexport const DEFAULT = greet(undefined as unknown as string)\n'
   )
-  git('add', '.')
-  git('commit', '--quiet', '-m', 'head')
-  const headSha = git('rev-parse', 'HEAD')
-  const diff = git('diff', baseSha, headSha)
-  const manifest = buildReviewInputManifest({
-    headSha,
-    baseSha,
-    briefContent: 'proof brief',
-    objectivesVersion: 'staged-objectives',
-    rulingOrdinal: 0,
-    policy: DEFAULT_REVIEW_POLICY
-  })
-  const digest = manifestDigest(manifest)
-  const inputs = join(dir, 'review-input')
-  mkdirSync(inputs)
-  writeFileSync(join(inputs, 'manifest.json'), `${JSON.stringify({ ...manifest, manifestDigest: digest }, null, 2)}\n`)
-  writeFileSync(join(inputs, 'diff.patch'), `${diff}\n`)
+  stagedGit(dir, 'add', STAGED_FILE)
+  stagedGit(dir, 'commit', '--quiet', '-m', 'head')
+  return writeReviewInputs(dir, baseSha, 0)
+}
+
+/**
+ * Advances the candidate to round 2 the way a Developer's answer to round 1
+ * would: one more commit on the same base, so round 2 has a head and a
+ * review-input manifest round 1 never saw. Round 1's results are stale
+ * against it.
+ */
+export function stageRoundTwo(staged: StagedReview): StagedReview {
   writeFileSync(
-    join(inputs, 'objectives.txt'),
-    'O1 greet trims its argument.\nO2 the module has no import-time side effect.\n'
+    join(staged.dir, STAGED_FILE),
+    'export function greet(name: string): string {\n  return "Hello " + name.trim()\n}\n'
   )
-  return { dir, headSha, baseSha, manifestDigest: digest }
+  stagedGit(staged.dir, 'add', STAGED_FILE)
+  stagedGit(staged.dir, 'commit', '--quiet', '-m', 'round 2')
+  return writeReviewInputs(staged.dir, staged.baseSha, 0)
 }
 
 export function bindingFor(role: ReviewerRole, staged: StagedReview): ReviewBinding {
@@ -397,7 +435,8 @@ export function concurrentPrompt(role: ReviewerRole, nonce: string): string {
 
 type ReviewerLaunchPlan = {
   sandbox: string
-  launch: (schema: Record<string, unknown> | null, model: string | undefined) => Launch
+  /** `resumeId` continues that provider session — only the resume case does, to show what the controller makes of it. */
+  launch: (schema: Record<string, unknown> | null, model: string | undefined, resumeId?: string) => Launch
 }
 
 /** One reviewer launch plan: its own scratch, settings/CODEX_HOME and sandbox, read-only grants, and the one structured-output flag. */
@@ -424,7 +463,6 @@ function planReviewerLaunch(
       loopRole,
       candidateDir,
       [],
-      [],
       confined
     )
     if (settingsPath === null) throw new Error('the dispatch settings file could not be written')
@@ -432,9 +470,11 @@ function planReviewerLaunch(
       sandbox: confined
         ? "ON — Claude Code's own sandbox, in the dispatch settings file"
         : `OFF (disclosed) — ${confinement.ok && !confinement.confined ? confinement.warning : 'unavailable'}`,
-      launch: (schema, model) => ({
+      launch: (schema, model, resumeId) => ({
         args: [
-          ...vendorSessionArgs('claude', model),
+          ...(resumeId === undefined
+            ? vendorSessionArgs('claude', model)
+            : vendorResumeArgs('claude', resumeId, model)),
           '--tools',
           'Read,Glob,Grep',
           '--settings',
@@ -464,9 +504,10 @@ function planReviewerLaunch(
   let schemaCount = 0
   return {
     sandbox: confinement.confined ? `ON — ${confinement.detail}` : `OFF (disclosed) — ${confinement.detail}`,
-    launch: (schema, model) => {
+    launch: (schema, model, resumeId) => {
       // The dispatch's own argv, unchanged: the staged policy home confines the run, and its read-only shell reads work.
-      const args = vendorSessionArgs('codex', model)
+      const args =
+        resumeId === undefined ? vendorSessionArgs('codex', model) : vendorResumeArgs('codex', resumeId, model)
       let schemaPath: string | null = null
       if (schema !== null) {
         schemaPath = join(scratchDir, `review-result-${schemaCount++}.schema.json`)
@@ -507,9 +548,10 @@ async function runReviewer(
   proofCase: Pick<ReviewProofCase, 'schemaRole' | 'schemaMode' | 'prompt' | 'model' | 'cancelAfterMs'>,
   candidateDir: string,
   binding: ReviewBinding,
-  shownArgs: (args: string[]) => void
+  shownArgs: (args: string[]) => void,
+  resumeId?: string
 ): Promise<CaseRun> {
-  const launch = plan.launch(schemaFor(proofCase), proofCase.model)
+  const launch = plan.launch(schemaFor(proofCase), proofCase.model, resumeId)
   shownArgs(launch.args.map((a) => (a.startsWith('{') ? '<schema>' : a)))
   const ran = await runChild(agent, launch, proofCase.prompt, candidateDir, proofCase.cancelAfterMs)
   const read = agent === 'claude' ? readClaudeTurnOutput(ran.stdout) : readCodexTurnOutput(ran.stdout)
@@ -518,7 +560,14 @@ async function runReviewer(
   const stderrTail = ran.stderr.trim().split('\n').slice(-3).join(' | ')
   if (read.event === null && errors.length === 0 && stderrTail.length > 0 && ran.exitCode !== 0) errors.push(stderrTail)
   const outcome = classifyReviewOutcome(
-    { cancelled, terminal: read.terminal, errors, hasResult: read.event !== null, raw: read.raw },
+    {
+      cancelled,
+      resumed: resumeId !== undefined,
+      terminal: read.terminal,
+      errors,
+      hasResult: read.event !== null,
+      raw: read.raw
+    },
     binding
   )
   return {
@@ -636,76 +685,156 @@ export async function reviewResultProofCommand(args: string[]): Promise<void> {
       return earlier === undefined ? null : `provider session ${id} was already used by case "${earlier}" — not fresh`
     }
 
-    // --- both reviewers, concurrently, against one manifest ---
-    out('\n--- case: concurrent reviewers, one manifest (O1 O2 O6) ---')
-    const shown: Record<string, string[]> = {}
-    const pair = await Promise.all(
-      REVIEWER_ROLES.map((role) =>
-        runWithCapacityRetry(out, () =>
-          runReviewer(
-            agent,
-            plans[role],
-            { schemaRole: role, prompt: concurrentPrompt(role, nonce) },
-            staged.dir,
-            bindingFor(role, staged),
-            (a) => {
-              shown[role] = a
-            }
+    /** Both reviewers, concurrently, against one manifest: each accepted, attributed to its own role, on a fresh session. */
+    const reviewRound = async (label: string, review: StagedReview, roundNonce: string) => {
+      out(`\n--- case: ${label} (O1 O2 O3) ---`)
+      const shown: Record<string, string[]> = {}
+      const pair = await Promise.all(
+        REVIEWER_ROLES.map((role) =>
+          runWithCapacityRetry(out, () =>
+            runReviewer(
+              agent,
+              plans[role],
+              { schemaRole: role, prompt: concurrentPrompt(role, roundNonce) },
+              review.dir,
+              bindingFor(role, review),
+              (a) => {
+                shown[role] = a
+              }
+            )
           )
         )
       )
-    )
-    const round = new RoundReviews()
-    let pairPass = true
-    const pairInconclusive = pair.some((run) => run.inconclusive)
-    for (const [i, role] of REVIEWER_ROLES.entries()) {
-      const run = pair[i] as CaseRun & { inconclusive: boolean }
-      out(`\n  [${role}] invocation: ${agent} ${(shown[role] ?? []).join(' ')}`)
-      describeOutcome(out, run)
-      const judged = judgeReviewCase(
-        {
-          kind: 'review',
-          summary: `${role}-${nonce}`,
-          check: (r) => (r.role === role ? null : `result names ${r.role}`)
-        },
-        run.outcome,
-        run.read
-      )
-      const recorded = round.offer(role, run.outcome)
-      if (recorded.kind !== 'review') {
-        judged.pass = false
-        judged.why.push('FAIL: the round did not record this review')
+      const round = new RoundReviews()
+      let pass = true
+      const inconclusive = pair.some((run) => run.inconclusive)
+      const sessionIds: Partial<Record<ReviewerRole, string>> = {}
+      for (const [i, role] of REVIEWER_ROLES.entries()) {
+        const run = pair[i] as CaseRun & { inconclusive: boolean }
+        if (run.read.sessionId !== null) sessionIds[role] = run.read.sessionId
+        out(`\n  [${role}] invocation: ${agent} ${(shown[role] ?? []).join(' ')}`)
+        describeOutcome(out, run)
+        const judged = judgeReviewCase(
+          {
+            kind: 'review',
+            summary: `${role}-${roundNonce}`,
+            check: (r) => (r.role === role ? null : `result names ${r.role}`)
+          },
+          run.outcome,
+          run.read
+        )
+        const recorded = round.offer(role, run.outcome)
+        if (recorded.kind !== 'review') {
+          judged.pass = false
+          judged.why.push('FAIL: the round did not record this review')
+        }
+        const reused = noteSession(`${label} ${role}`, run)
+        if (reused) {
+          judged.pass = false
+          judged.why.push(`FAIL: ${reused}`)
+        } else judged.why.push('fresh provider session')
+        for (const line of judged.why) out(`  ${line}`)
+        if (!judged.pass) pass = false
       }
-      const reused = noteSession(`concurrent ${role}`, run)
-      if (reused) {
+      const first = round.get('code-reviewer')
+      if (first !== undefined) {
+        const second = round.offer('code-reviewer', {
+          kind: 'review',
+          result: first,
+          binding: bindingFor('code-reviewer', review)
+        })
+        const refused = second.kind === 'no_review' && second.reason === 'duplicate'
+        out(`  a second result for code-reviewer this round: ${refused ? 'refused (duplicate)' : 'ACCEPTED'}`)
+        if (!refused) pass = false
+      }
+      if (round.size !== REVIEWER_ROLES.length) pass = false
+      out(`  reviews accepted this round: ${round.size} of ${REVIEWER_ROLES.length}, one per role`)
+      out(`verdict: ${inconclusive ? 'INCONCLUSIVE (provider capacity)' : pass ? 'PASS' : 'FAIL'}`)
+      record(
+        label,
+        pass,
+        `accepted ${round.size} of ${REVIEWER_ROLES.length}${inconclusive ? '; a reviewer hit provider capacity twice' : ''}`,
+        inconclusive
+      )
+      return { round, sessionIds }
+    }
+
+    // --- round 1: both reviewers, concurrently, against one manifest ---
+    const roundOne = await reviewRound('round 1: concurrent reviewers, one manifest', staged, `r1-${nonce}`)
+
+    // --- a resume of the round-1 code-reviewer session ---
+    out('\n--- case: resume a reviewer session (O3) ---')
+    const resumedSession = roundOne.sessionIds['code-reviewer']
+    if (resumedSession === undefined) {
+      out('FAIL: the round-1 code-reviewer reported no provider session to resume')
+      record('resume a reviewer session', false, 'no round-1 session to resume')
+    } else {
+      const refused = isReviewerResume(LOOP_ROLE['code-reviewer'], resumedSession)
+      out(
+        `production dispatcher: ${refused ? `refused before any spawn — ${REVIEWER_RESUME_REFUSED_REASON}` : 'NOT refused'}`
+      )
+      // Run anyway, outside the dispatcher, to show the controller never
+      // accepts what a resumed session returns either.
+      const run = await runReviewer(
+        agent,
+        plans['code-reviewer'],
+        { schemaRole: 'code-reviewer', prompt: concurrentPrompt('code-reviewer', `resumed-${nonce}`) },
+        staged.dir,
+        bindingFor('code-reviewer', staged),
+        (a) => out(`invocation (bypassing the dispatcher): ${agent} ${a.join(' ')}`),
+        resumedSession
+      )
+      describeOutcome(out, run)
+      const judged = judgeReviewCase({ kind: 'no_review', reasons: ['resumed'] }, run.outcome, run.read)
+      if (!refused) {
         judged.pass = false
-        judged.why.push(`FAIL: ${reused}`)
-      } else judged.why.push('fresh provider session')
+        judged.why.push('FAIL: the production dispatcher would have resumed a reviewer session')
+      }
+      if (run.read.event === null) {
+        judged.pass = false
+        judged.why.push('FAIL: the resumed session delivered no structured result, so this run proves nothing about it')
+      } else judged.why.push('the resumed session delivered a structured result; the controller refused it')
       for (const line of judged.why) out(`  ${line}`)
-      if (!judged.pass) pairPass = false
+      out(`verdict: ${judged.pass ? 'PASS' : 'FAIL'}`)
+      record(
+        'resume a reviewer session',
+        judged.pass,
+        refused ? 'refused before spawn; resumed result not accepted' : 'NOT refused'
+      )
     }
-    const first = round.get('code-reviewer')
-    if (first !== undefined) {
-      const second = round.offer('code-reviewer', { kind: 'review', result: first })
-      const refused = second.kind === 'no_review' && second.reason === 'duplicate'
-      out(`  a second result for code-reviewer this round: ${refused ? 'refused (duplicate)' : 'ACCEPTED'}`)
-      if (!refused) pairPass = false
+
+    // --- round 2: a new head and manifest; fresh sessions; round 1 is stale ---
+    const roundTwoStaged = stageRoundTwo(staged)
+    out(`\nround 2 staged: head ${roundTwoStaged.headSha}, manifest digest ${roundTwoStaged.manifestDigest}`)
+    await reviewRound('round 2: concurrent reviewers, new head and manifest', roundTwoStaged, `r2-${nonce}`)
+    out('\n--- case: a round-1 result offered in round 2 (O2) ---')
+    let stalePass = true
+    for (const role of REVIEWER_ROLES) {
+      const earlier = roundOne.round.get(role)
+      if (earlier === undefined) {
+        out(`  [${role}] FAIL: round 1 accepted no result to offer`)
+        stalePass = false
+        continue
+      }
+      const outcome = classifyReviewOutcome(
+        { cancelled: false, terminal: 'success', errors: [], hasResult: true, raw: { reviewResult: earlier } },
+        bindingFor(role, roundTwoStaged)
+      )
+      const stale = outcome.kind === 'no_review' && outcome.reason === 'stale'
+      out(
+        `  [${role}] ${stale ? 'recorded as no review (stale)' : `FAIL: ${outcome.kind === 'review' ? 'accepted' : outcome.reason}`}`
+      )
+      if (!stale) stalePass = false
     }
-    if (round.size !== REVIEWER_ROLES.length) pairPass = false
-    out(`  reviews accepted this round: ${round.size} of ${REVIEWER_ROLES.length}, one per role`)
-    out(`verdict: ${pairInconclusive ? 'INCONCLUSIVE (provider capacity)' : pairPass ? 'PASS' : 'FAIL'}`)
-    record(
-      'concurrent reviewers, one manifest',
-      pairPass,
-      `accepted ${round.size} of ${REVIEWER_ROLES.length}${pairInconclusive ? '; a reviewer hit provider capacity twice' : ''}`,
-      pairInconclusive
-    )
+    out(`verdict: ${stalePass ? 'PASS' : 'FAIL'}`)
+    record('round-1 results offered in round 2', stalePass, stalePass ? 'both stale' : 'not refused as stale')
+    const current = roundTwoStaged
 
     // --- adversarial and failure cases, each a fresh session ---
     for (const proofCase of adversarialCases(nonce)) {
       out(`\n--- case: ${proofCase.name} (${proofCase.objectives}; role ${proofCase.role}) ---`)
       const run = await runWithCapacityRetry(out, () =>
-        runReviewer(agent, plans[proofCase.role], proofCase, staged.dir, bindingFor(proofCase.role, staged), (a) =>
+        runReviewer(agent, plans[proofCase.role], proofCase, current.dir, bindingFor(proofCase.role, current), (a) =>
           out(`invocation: ${agent} ${a.join(' ')}`)
         )
       )

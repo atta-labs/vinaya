@@ -2,4 +2,4 @@
 '@attalabs/vinaya': patch
 ---
 
-Collect production code and security reviews through each provider's native structured-output channel and reject unbound or invalid reviewer results.
+Production code and security reviewers return one structured ReviewResult through each CLI's native structured output (Claude Code `--json-schema`, Codex `--output-schema`) on fresh sessions; the controller binds it to run, round, attempt, role, head and the review-input manifest, refuses a reviewer resume, and no longer writes or reads the three reviewer result files.

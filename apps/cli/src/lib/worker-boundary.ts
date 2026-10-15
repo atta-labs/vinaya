@@ -1938,7 +1938,7 @@ function entryKind(path: string): 'file' | 'dir' {
   }
 }
 
-/** The directory name `rounds/<n>` holds for each role — `developer` is literal; a reviewer/security round directory is named `reviewer-work`/`security-work`, with a `-retry<k>` suffix for a later attempt (`reviewerWorkDir`) and a `-redispatch<k>` suffix for a later dispatch of the same round (`freshReviewerWorkDir`, both in `dev-review-loop/reviewer-dispatch.ts`) — so a prefix match, not an exact one, is what "belongs to this role" means for those two. */
+/** The directory name `rounds/<n>` holds for each role — `developer` is literal; a reviewer/security round directory is named `reviewer-work`/`security-work`, with a `-retry<k>` or `-redispatch<k>` suffix — the result directories reviewers wrote before they returned their review as structured output, still attributed to their role when an older round folder carries one — so a prefix match, not an exact one, is what "belongs to this role" means for those two. */
 function roundEntryBelongsToRole(name: string, role: Role): boolean {
   if (role === 'developer') return name === 'developer'
   const prefix = role === 'code-reviewer' ? 'reviewer-work' : 'security-work'

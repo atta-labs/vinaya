@@ -45,7 +45,6 @@ import {
   makeWorld,
   outboxLines,
   taskRunDir,
-  roundDir,
   runLoopInProcess,
   type LoopWorld,
   handoffIdsInPrompt,
@@ -557,7 +556,7 @@ describe('devReviewLoop — the Developer turn result in a real round (O1–O4)'
     expect((result.finalDecision as { detail: string }).detail).toContain('rejected twice in round 2')
     expect(recordsOnDisk(world, 2).map((r) => r.outcome)).toEqual(['rejected', 'rejected'])
     expect(developerPrompts(world, 2)).toHaveLength(2)
-    expect(existsSync(join(roundDir(world, 2), 'reviewer-work'))).toBe(false)
+    expect(world.dispatches.some((d) => d.role === 'code-reviewer' && d.round === 2)).toBe(false)
     expect(outboxLines(world).some((l) => l.event === 'gate_result_read' && l.round === 2)).toBe(false)
   })
 
