@@ -135,6 +135,8 @@ export type AdapterContractCase = {
   /** The module-registry suites (`apps/cli/tests/eval/registry/modules.json`) this case executes. */
   suites: readonly string[]
   live: readonly LiveBinding[]
+  /** Why the live report must not promote this controller-owned deterministic observation to PASS. */
+  deterministicOnlyReason?: string
   differences: Partial<Record<ContractAdapter, DeclaredDifference>>
 }
 
@@ -192,7 +194,9 @@ export const ADAPTER_CONTRACT_CASES: readonly AdapterContractCase[] = [
       'Every error class of the shared error model reaches the agent as a readable tool result carrying its class, retry disposition and effect state, never as a transport failure.',
     sessions: DEV_SESSIONS,
     suites: ['developer-invocation.l4@1'],
-    live: [DEV_PROOF],
+    live: [],
+    deterministicOnlyReason:
+      'The deterministic driver delivers every error class through the real tool server and verifies its retryDisposition and effectState; the live dev-proof verdict does not identify those deliveries.',
     differences: {}
   },
   {
@@ -258,7 +262,9 @@ export const ADAPTER_CONTRACT_CASES: readonly AdapterContractCase[] = [
     contract: 'A second invalid result pauses the run with a typed reason; no review starts and nothing is published.',
     sessions: DEV_SESSIONS,
     suites: ['developer-result.l4@1'],
-    live: [CONTRACT_DISPATCH('second-failure-pause')],
+    live: [],
+    deterministicOnlyReason:
+      'The deterministic driver records two rejected attempts and observes the real controller pause after its one bounded same-session resumption; a live model cannot be required to repeat invalid output.',
     differences: {}
   },
   {
@@ -333,6 +339,8 @@ export const ADAPTER_CONTRACT_CASES: readonly AdapterContractCase[] = [
     sessions: ['fresh'],
     suites: ['reviewer-validity.l4@1'],
     live: [],
+    deterministicOnlyReason:
+      'The deterministic driver inspects the reviewer grant directly; no live proof currently reports this case.',
     differences: {}
   },
   {
@@ -416,6 +424,8 @@ export const ADAPTER_CONTRACT_CASES: readonly AdapterContractCase[] = [
     sessions: DEV_SESSIONS,
     suites: ['role-context.l4@1'],
     live: [],
+    deterministicOnlyReason:
+      "The deterministic driver hashes the rendered brief and each vendor's loaded repository instruction path; no live proof exposes those loaded bytes by digest.",
     differences: {
       claude: {
         matrixRow: 'AD-CC-11',
@@ -440,6 +450,8 @@ export const ADAPTER_CONTRACT_CASES: readonly AdapterContractCase[] = [
     sessions: ['fresh'],
     suites: ['role-context.l4@1'],
     live: [],
+    deterministicOnlyReason:
+      "The deterministic driver binds each fresh reviewer's prompt and result to the staged manifest digest; no live proof exposes the loaded prompt by digest.",
     differences: {}
   },
   {

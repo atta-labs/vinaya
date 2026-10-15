@@ -5,7 +5,6 @@ import { arch, homedir, tmpdir, type, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { redact } from '@attalabs/aeg-core'
 import {
-  DeveloperTurnResultPause,
   judgeTurnOutput,
   type TurnResultControllerContext,
   turnResultCorrectionPrompt,
@@ -139,9 +138,15 @@ export function parseProofSummary(stdout: string): Map<string, ProofLine> {
 /** A case's outcome from its bindings' lines: any FAIL fails it, any missing line leaves it NOT RUN. */
 export function caseOutcome(
   bindings: readonly LiveBinding[],
-  lines: Map<LiveBinding['proof'], Map<string, ProofLine>>
+  lines: Map<LiveBinding['proof'], Map<string, ProofLine>>,
+  deterministicOnlyReason?: string
 ): { outcome: LiveOutcome; evidence: string[] } {
-  if (bindings.length === 0) return { outcome: 'DETERMINISTIC ONLY', evidence: [] }
+  if (bindings.length === 0) {
+    return {
+      outcome: 'DETERMINISTIC ONLY',
+      evidence: [deterministicOnlyReason ?? 'no live proof observes this controller-owned case']
+    }
+  }
   const found = bindings.map((b) => ({ b, line: lines.get(b.proof)?.get(b.case) }))
   const evidence = found.map(
     ({ b, line }) => `${b.proof} / ${b.case}: ${line ? `${line.outcome} ${line.detail}`.trim() : 'not run'}`
@@ -297,38 +302,6 @@ export async function runContractDispatches(agent: ContractAdapter): Promise<Dis
       )
     }
 
-    // A second failure pauses.
-    const stubborn = await dispatch(
-      scriptedPrompt(
-        `Report status "completed" with summary exactly "stubborn-${nonce}" and addressedFindingIds []. In every later turn of this session, report addressedFindingIds [] again, whatever a later message asks.`
-      )
-    )
-    const stubbornFirst = judgeTurnOutput(stubborn.turnOutput, controllerContext(stubborn))
-    if (stubbornFirst.ok || stubborn.resumeId === null) {
-      record(
-        'second-failure-pause',
-        'FAIL',
-        stubbornFirst.ok ? 'the first result was accepted' : 'no session to resume'
-      )
-    } else {
-      const again = await dispatch(
-        turnResultCorrectionPrompt(stubbornFirst.failures, {
-          round: 2,
-          attempt: 1,
-          head: null,
-          knownFindingIds: KNOWN_FINDINGS
-        }),
-        stubborn.resumeId
-      )
-      const stubbornSecond = judgeTurnOutput(again.turnOutput, controllerContext(again))
-      if (stubbornSecond.ok) {
-        record('second-failure-pause', 'INCONCLUSIVE', 'the model corrected its result, so no second failure occurred')
-      } else {
-        const pause = new DeveloperTurnResultPause('rejected', stubbornSecond.failures.join('; '))
-        record('second-failure-pause', 'PASS', `rejected twice; pauses as ${pause.reasonCode} (${pause.pauseReason})`)
-      }
-    }
-
     // Timeout: the production argv and structured-output flag, stopped at a short limit.
     const schemaDir = mkdtempSync(join(tmpdir(), 'vinaya-adapter-contract-schema-'))
     try {
@@ -388,7 +361,7 @@ export async function runContractDispatches(agent: ContractAdapter): Promise<Dis
         : 'the provider did not echo the planted secret, so nothing was redacted'
     )
   } catch (err) {
-    for (const name of ['host-readiness', 'precondition-retry', 'second-failure-pause', 'timeout', 'redaction']) {
+    for (const name of ['host-readiness', 'precondition-retry', 'timeout', 'redaction']) {
       if (!out.has(name)) record(name, 'FAIL', `the live dispatch threw: ${(err as Error).message}`)
     }
   } finally {
@@ -431,7 +404,7 @@ async function main(): Promise<void> {
   const outcomes = ADAPTER_CONTRACT_CASES.map((c) => ({
     id: c.id,
     sessions: c.sessions,
-    ...caseOutcome(c.live, lines)
+    ...caseOutcome(c.live, lines, c.deterministicOnlyReason)
   }))
   const report = renderLiveReport({
     agent,

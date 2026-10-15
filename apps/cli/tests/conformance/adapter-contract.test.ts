@@ -206,7 +206,16 @@ describe('the live command, one per adapter', () => {
       ).outcome
     ).toBe('FAIL')
     expect(caseOutcome([{ proof: 'result-proof', case: 'resumed session' }], lines).outcome).toBe('NOT RUN')
-    expect(caseOutcome([], lines).outcome).toBe('DETERMINISTIC ONLY')
+    expect(caseOutcome([], lines, 'real controller proof only')).toEqual({
+      outcome: 'DETERMINISTIC ONLY',
+      evidence: ['real controller proof only']
+    })
+  })
+
+  it('explains every case that the live report marks deterministic only', () => {
+    expect(
+      ADAPTER_CONTRACT_CASES.filter((c) => c.live.length === 0 && !c.deterministicOnlyReason).map((c) => c.id)
+    ).toEqual([])
   })
 
   it("writes a report naming the CLI version, every case's outcome and the adapter's declared differences, redacted", () => {
