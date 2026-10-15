@@ -6102,21 +6102,29 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * not run and not failed: it is recorded unverified, which the merge gate
      * holds like an unticked `[principal]` item. Every outcome is written to
      * the pull request's `AEG:LIVE` record, keyed by `head`, so a later head
-     * runs every line again. A brief or body that cannot be read leaves the
-     * round as it was before this check existed; a record that cannot be
-     * written is logged, and the next run writes it.
+     * runs every line again.
+     *
+     * The check fails closed. `brief` is the frozen brief the caller already
+     * read this round (`withRateLimitWait`) — this check makes no forge read
+     * of its own for it, so a read that fails throws at the caller, and a
+     * brief whose `[live]` lines cannot be learned throws here: either way
+     * the round ends as an infrastructure failure and is retried, never
+     * concluded as a pass or a skip. A pull request body that cannot be read
+     * holds no earlier entry, so every line runs again; a record that cannot
+     * be written is logged, and the next run writes it.
      */
-    async function runLiveGate(head: string): Promise<LiveFailure[]> {
+    async function runLiveGate(head: string, brief: string): Promise<LiveFailure[]> {
       let commands: string[]
       try {
-        commands = parseLiveTestPlanItems(d.fetchFrozenBrief(task))
+        commands = parseLiveTestPlanItems(brief)
       } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err)
         appendRoleLine(
           loopLogPath,
           'dev-review-loop',
-          `live_check_skipped: the frozen brief could not be read (${err instanceof Error ? err.message : String(err)})`
+          `live_check_failed_closed: the frozen brief's [live] lines could not be read (${reason})`
         )
-        return []
+        throw new Error(`the live check could not read the frozen brief's [live] lines at ${head}: ${reason}`)
       }
       if (commands.length === 0) return []
       let body: string | null
@@ -6356,6 +6364,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     let pendingCompletionEvents: DevReviewLoopEventInput[] = []
     /** The head whose `[live]` lines this run already ran right after its approval — the publish step runs them only for a carried verdict. */
     let liveCheckedHead: string | null = null
+    /** The frozen brief this run last read (`withRateLimitWait`) for the head it approved — what the live check reads its `[live]` lines from. */
+    let approvedBriefContent: string | null = null
 
     /**
      * O8 (round 2 review, BLOCKER): re-read the base branch's head and
@@ -6996,10 +7006,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // Unresolvable base — the comparison below fails closed on `null`.
             }
             const reassessedObjectives = d.resolveIssueObjectives(task)
+            const carryBriefContent = await withRateLimitWait(() => d.fetchFrozenBrief(task))
             const currentManifestForCarry: ReviewInputManifest = buildReviewInputManifest({
               headSha: currentHeadForCarry,
               baseSha: carryBaseSha,
-              briefContent: d.fetchFrozenBrief(task),
+              briefContent: carryBriefContent,
               objectivesVersion: reassessedObjectives.version,
               rulingOrdinal: d.fetchNewestRulingOrdinal(prNumber),
               pauseBoundRuling,
@@ -7060,6 +7071,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               }
               round = heldClean.round
               lastDispatchedManifest = heldClean.manifest
+              approvedBriefContent = carryBriefContent
               heldResultIdentity = { round: heldClean.round, head: heldClean.head }
               decision = { type: 'publish' }
             } else {
@@ -8300,7 +8312,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // lines run. At the round cap the loop pauses `max_rounds`.
               let roundEvents = result.events
               if (decision.type === 'publish') {
-                const liveFailures = await runLiveGate(head)
+                approvedBriefContent = reassessedBriefContent
+                const liveFailures = await runLiveGate(head, reassessedBriefContent)
                 liveCheckedHead = head
                 if (liveFailures.length > 0) {
                   const atCap = round >= config.maxRounds
@@ -8342,7 +8355,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // logged by that run, so a failure here records nothing new in the
           // log beyond the role line; the approval is still withdrawn.
           const approvedHead = lastDispatchedManifest?.headSha ?? d.resolveHead(branch)
-          const liveFailures = liveCheckedHead === approvedHead ? [] : await runLiveGate(approvedHead)
+          if (liveCheckedHead !== approvedHead && approvedBriefContent === null) {
+            throw new Error(`the live check has no frozen brief read for the approved head ${approvedHead}`)
+          }
+          const liveFailures =
+            liveCheckedHead === approvedHead || approvedBriefContent === null
+              ? []
+              : await runLiveGate(approvedHead, approvedBriefContent)
           if (liveFailures.length > 0) {
             discardHeldVerdicts(root, task, round)
             pendingCompletionEvents = []
