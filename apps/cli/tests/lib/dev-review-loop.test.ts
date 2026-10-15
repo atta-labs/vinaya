@@ -3022,6 +3022,10 @@ if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
   echo '{"id":1,"name":"Vinaya CI","status":"completed","conclusion":"failure"}'
   exit 0
 fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  echo '{"comments":[]}'
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
   echo "fake gh: refusing issue comment (log flush not under test)" >&2
   exit 1
@@ -3086,6 +3090,10 @@ if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
   BODY_FILE="$5"
   cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
   echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  echo '{"comments":[]}'
   exit 0
 fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
