@@ -441,7 +441,15 @@ for (const agent of AGENTS) {
       // Commands write (installs, caches), so a worker never shares its worktree; each installs once before its first command, as the serial run's first command did.
       allDone = Promise.all(
         sessions.map(async (session) => {
-          await session.run(INSTALL, {}).catch(() => undefined)
+          let install = await session.run(INSTALL, {}).catch(() => null)
+          if (install === null || install.exitCode !== 0) {
+            // Concurrent cold installs can briefly contend on Bun's shared
+            // package cache. The setup install is not itself the command
+            // under test (the explicit `bun-install` entry is), so give this
+            // prerequisite one clean retry instead of silently running a
+            // worker against an incomplete dependency tree.
+            install = await session.run(INSTALL, {}).catch(() => null)
+          }
           for (let entry = queue.shift(); entry !== undefined; entry = queue.shift()) {
             const done = settle.get(entry.id)
             try {

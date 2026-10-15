@@ -1,0 +1,11 @@
+{
+  "files": {
+    "packages/aeg-core/.turbo/turbo-typecheck.log": {
+      "size": 15,
+      "mtime_nanos": 1792024740572786903,
+      "mode": 420,
+      "is_dir": false
+    }
+  },
+  "order": ["packages/aeg-core/.turbo/turbo-typecheck.log"]
+}
