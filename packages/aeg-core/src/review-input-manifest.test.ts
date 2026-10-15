@@ -316,7 +316,7 @@ describe('pauseBoundRulingFromResolution — the slot comes from the consumed re
     const comments = [ruling(42, 3, 'newer ruling')]
     expect(() =>
       pauseBoundRulingFromResolution(resolution, (id) => principalRulingTextById(comments, allowlist, id))
-    ).toThrow('no single principal ruling comment carries that exact marker')
+    ).toThrow('no single principal ruling comment carries that ruling identity')
   })
 
   it('refuses an identity two principal comments both carry', () => {

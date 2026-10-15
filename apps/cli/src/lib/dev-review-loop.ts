@@ -491,7 +491,7 @@ export type LoopDeps = {
   /** A failed check run's own job-log tail, sanitized and size-capped — the Operator's PR read's own reader (`readJobLogTail`), so a red-CI retry and `read_pull_request` can show the Developer what failed. Injected so the harness fakes it. */
   readFailedCheckLogTail: (jobId: number) => string | null
   fetchRulings: typeof fetchRulings
-  /** The text of the one principal ruling carrying exactly a resolution's `authenticatedFrom` marker — what the pause-bound ruling slot's digest is taken over. */
+  /** The text of the one principal ruling a resolution's `authenticatedFrom` names (its pull request or Issue, and its ordinal) — what the pause-bound ruling slot's digest is taken over. */
   fetchRulingText: typeof fetchRulingText
   fetchNewestRulingOrdinal: typeof fetchNewestRulingOrdinal
   /** O2: the GitHub login that authored the newest principal ruling — a resolution record's `authenticatedBy`. */
@@ -2930,7 +2930,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // including replay attachment after a driver crash. A newer forge ruling
     // must never replace the ruling that authenticated this pause.
     // The slot is read from that consumed resolution alone; the digest is
-    // taken over the one ruling comment carrying exactly its marker, and a
+    // taken over the one ruling comment that identity names, and a
     // ruling that cannot be found refuses the resume rather than binding
     // another ruling's text to the consumed identity.
     try {

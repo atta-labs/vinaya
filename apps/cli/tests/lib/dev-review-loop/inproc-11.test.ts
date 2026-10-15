@@ -218,7 +218,7 @@ describe("devReviewLoop — the pause-bound ruling is read by the consumed resol
     markDriverLockDead(world)
 
     await expect(runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude' })).rejects.toThrow(
-      'no single principal ruling comment carries that exact marker'
+      'no single principal ruling comment carries that ruling identity'
     )
   })
 })

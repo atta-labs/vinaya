@@ -122,7 +122,7 @@ type Resolved<T> = { ok: true; value: T } | { ok: false; failure: ReviewGateInpu
  * resolution its resume consumed. This reads that line from the
  * principal-authored round comment with the highest round number, then
  * proves a non-empty binding against the forge: the one principal ruling
- * comment carrying exactly the named marker must exist, and its text must
+ * comment carrying the named ruling ordinal on the named pull request or Issue must exist, and its text must
  * hash to the recorded digest. Each verdict's own echo is then compared
  * against the value returned here, so two verdicts agreeing on a binding
  * other than the frozen one both fail.
@@ -180,7 +180,7 @@ export function resolveFrozenPauseBoundRuling(
   const text = principalRulingTextById(rulingComments, principalAllowlist, recorded.rulingId)
   if (text === null || pauseBoundRulingDigest(text) !== recorded.contentDigest) {
     return failure(
-      `review-gate severity:infra — PR #${prNumber}'s round ${newestRound} comment binds ruling \`${recorded.rulingId}\`, but ${text === null ? 'no single principal ruling comment carries that exact marker' : "that ruling's text does not hash to the recorded content digest"}.`,
+      `review-gate severity:infra — PR #${prNumber}'s round ${newestRound} comment binds ruling \`${recorded.rulingId}\`, but ${text === null ? 'no single principal ruling comment carries that ruling identity' : "that ruling's text does not hash to the recorded content digest"}.`,
       'A Principal ruling comment must never be edited or deleted once a round binds it; restore it, or let the review loop run a fresh round, then re-run `vinaya check review-gate`.'
     )
   }

@@ -109,12 +109,15 @@ export function parseRulingIdentity(rulingId: string): { target: 'pr' | 'issue';
 }
 
 /**
- * The text of the ONE principal-authored ruling whose marker is exactly the
- * one `rulingId` names — the comment body after its marker line, trimmed, the
- * same text every ruling reader hands a Developer. Never chosen by position,
- * by newest ordinal, or by being the only ruling present: `null` when no
- * principal comment carries that exact marker, or when more than one does
- * (an ambiguous identity is not an identity).
+ * The text of the ONE principal-authored ruling a ruling identity names — the
+ * comment body after its marker line, trimmed, the same text every ruling
+ * reader hands a Developer. The caller passes the comments of the pull
+ * request or Issue the identity names; the identity's ordinal is matched
+ * against each marker's ordinal, exactly the number the resume read when it
+ * minted that identity (`newestPrincipalRulingOrdinal` reads the ordinal
+ * alone). Never chosen by position, by newest ordinal, or by being the only
+ * ruling present: `null` when no principal comment carries that ordinal, or
+ * when more than one does (an ambiguous identity is not an identity).
  */
 export function principalRulingTextById(
   comments: readonly RulingComment[],
@@ -123,10 +126,11 @@ export function principalRulingTextById(
 ): string | null {
   const identity = parseRulingIdentity(rulingId)
   if (identity === null) return null
-  const marker = principalRulingMarker(identity.ref, identity.ordinal)
-  const matches = comments.filter(
-    (c) => isPrincipal(c.author, allowlist as string[]) && (c.body.split('\n')[0] ?? '').trim() === marker
-  )
+  const matches = comments.filter((c) => {
+    if (!isPrincipal(c.author, allowlist as string[])) return false
+    const m = RULING_MARKER_ORDINAL.exec((c.body.split('\n')[0] ?? '').trim())
+    return m !== null && Number.parseInt(m[1] as string, 10) === identity.ordinal
+  })
   if (matches.length !== 1) return null
   const body = (matches[0] as RulingComment).body
   const idx = body.indexOf('\n')

@@ -10,10 +10,12 @@ and a SHA-256 digest of that ruling's text. The binding is read from the
 consumed resolution for that pause alone (`pauseBoundRulingFromResolution`,
 `@attalabs/aeg-core`): its `escalationId` is the pause identity, its
 `authenticatedFrom` the ruling identity, and the digest is taken over the
-text of the one principal ruling comment whose marker is exactly that
-identity (`principalRulingTextById`) — never the newest ruling, never a
+text of the one principal ruling comment that identity names
+(`principalRulingTextById`): on the pull request or Issue the identity names,
+the comment whose marker carries the identity's ordinal — the same number the
+resume read when it minted the identity. Never the newest ruling, never a
 ruling chosen by comment position, and never a lone ruling accepted because
-it is the only one. A resume whose consumed ruling marker cannot be found,
+it is the only one. A resume whose consumed ruling ordinal cannot be found,
 or is carried by two comments, is refused. A self-recovery resolution, or
 one whose `authenticatedFrom` names no ruling marker, produces `null`.
 Every verdict binding compares this slot, and an unknown manifest protocol

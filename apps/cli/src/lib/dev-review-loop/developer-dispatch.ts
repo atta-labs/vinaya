@@ -263,11 +263,11 @@ export function fetchRulings(prNumber: number): string[] {
 }
 
 /**
- * The text of the one principal ruling whose marker is exactly `rulingId`'s
+ * The text of the one principal ruling `rulingId` names — its ordinal
  * (`<pr>-<k>` or `issue-<n>-<k>`), read from the pull request or Issue that
  * identity names — never another ruling chosen by position, by newest
  * ordinal, or by being the only one present. `null` when no principal
- * comment, or more than one, carries that marker, or when `rulingId` names no
+ * comment, or more than one, carries that ordinal, or when `rulingId` names no
  * ruling at all.
  */
 export function fetchRulingText(rulingId: string): string | null {

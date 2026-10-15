@@ -70,7 +70,7 @@ export type ConsumedResolution = {
  * The pause-bound ruling slot for a run resumed from `resolution`, read from
  * that consumed resolution alone: its `escalationId` is the pause identity,
  * its `authenticatedFrom` the ruling identity, and the digest is taken over
- * the text of the one ruling comment carrying exactly that identity's marker
+ * the text of the one ruling comment that identity names — its ordinal, on the pull request or Issue it names
  * (`readRulingText`, which must never fall back to another ruling). `null`
  * when the resolution carries no ruling — no resolution, a cancel, a
  * self-recovery (`'driver-self'`), or an identity that names no ruling
@@ -88,7 +88,7 @@ export function pauseBoundRulingFromResolution(
   const text = readRulingText(resolution.authenticatedFrom)
   if (text === null) {
     throw new Error(
-      `resolution ${resolution.escalationId} authenticates from ruling ${resolution.authenticatedFrom}, but no single principal ruling comment carries that exact marker.`
+      `resolution ${resolution.escalationId} authenticates from ruling ${resolution.authenticatedFrom}, but no single principal ruling comment carries that ruling identity.`
     )
   }
   return {
