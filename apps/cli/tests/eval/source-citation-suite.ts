@@ -6,7 +6,7 @@
 import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import {
   developerTurnResultJsonSchema,
@@ -370,6 +370,11 @@ export async function liveTrial(
   const dir = mkdtempSync(join(tmpdir(), 'source-citation-'))
   const workspace = join(dir, 'workspace')
   mkdirSync(workspace)
+  for (const source of testCase.sources.filter((entry) => entry.deliveryMode === 'injected')) {
+    const path = join(workspace, source.sourceId)
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, source.content)
+  }
   const socketPath = devToolsSocketPath(`source-citation:${adapter}:${testCase.id}:${trial}`)
   const host = await startDevToolsHost({
     socketPath,
