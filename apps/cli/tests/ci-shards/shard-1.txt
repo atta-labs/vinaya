@@ -88,3 +88,4 @@ tests/eval/registry-typed-sources.test.ts
 tests/lib/documentation-probe.test.ts
 tests/lib/task-tools/tool-catalog.test.ts
 tests/lib/source-provider.test.ts
+tests/lib/dev-review-loop/stall-current-head.test.ts

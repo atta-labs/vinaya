@@ -140,6 +140,11 @@
         "path": "apps/cli/tests/lib/dev-review-loop/live-check.test.ts",
         "kind": "test",
         "reason": "Drives the live check in-process: no line runs on a head before both reviewers approve it, a failed line on an approved head sends the Developer back as a new round whose head is reviewed again, a passed line is recorded with its head, a host with no sign-in records the line unverified and leaves the merge gate red, and a plan with none runs as before."
+      },
+      {
+        "path": "apps/cli/tests/lib/dev-review-loop/stall-current-head.test.ts",
+        "kind": "test",
+        "reason": "Proves an unchanged Developer turn after a rerun of failed checks is judged against the head's CI as it reads now: a head the rerun turned green reaches the reviewers without another Developer turn, a stall names only check-runs still failing on that head, and a check still red is named and pauses on its second identical attempt."
       }
     ]
   },
@@ -369,7 +374,8 @@
       ],
       "tests": [
         "packages/aeg-core/src/dev-review-loop/assess-round.test.ts",
-        "apps/cli/tests/lib/dev-review-loop/inproc-4.test.ts"
+        "apps/cli/tests/lib/dev-review-loop/inproc-4.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/stall-current-head.test.ts"
       ],
       "loopSpec": ["The exits"],
       "reason": "Spec and code match exactly.",

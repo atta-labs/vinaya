@@ -5925,7 +5925,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       return reassertPrBodyPremise(body)
     }
 
-    async function waitForGreenGate(roundStartMs: number): Promise<{
+    async function waitForGreenGate(
+      roundStartMs: number,
+      head: string = d.resolveHead(branch)
+    ): Promise<{
       green: boolean
       stats: RoundStats
       ciConclusion: 'green' | 'red' | 'pending'
@@ -5934,7 +5937,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       failingRuns: FailingCheckRun[]
       failureLogs: FailedCheckLog[]
     }> {
-      const head = d.resolveHead(branch)
       const conclusion = await pollUntil(
         () => {
           const c = d.fetchCiConclusion(head)
@@ -7450,10 +7452,40 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 }
               }
 
+              // The head never moved, but its CI may have: a rerun this
+              // round — for a tooling report inside the turn, or any new
+              // attempt the forge ran since — can have turned a failed check
+              // green. So the head the developer left is read afresh, never
+              // the conclusion read before the turn: green, with no premise
+              // failing, proceeds to review exactly like a head that moved,
+              // and is no stalled turn; otherwise the stall below is named
+              // only by what fails on this head now. A refusal or an
+              // unresolved conflict keeps its own named stall.
+              let failingAtStall: string[] = []
+              if (
+                !resolvedByUnpushedResume &&
+                isGateRedRetry &&
+                conflictFiles === null &&
+                refusedPublication === null
+              ) {
+                const gateAtStall = await waitForGreenGate(roundStartMs, headBeforeDispatch)
+                const premiseAtStall = checkPremiseAtHead(prNumber)
+                const premiseLinesAtStall =
+                  premiseAtStall !== null && !premiseAtStall.pass ? premiseAtStall.errors.map((e) => e.message) : []
+                if (gateAtStall.green && premiseLinesAtStall.length === 0) {
+                  gateAfterUnchangedHeadRerun = gateAtStall
+                  resolvedByUnpushedResume = true
+                } else {
+                  failingAtStall = [...gateAtStall.failingChecks, ...premiseLinesAtStall]
+                  lastFailingChecks = failingAtStall
+                  lastFailureLogs = gateAtStall.failureLogs
+                }
+              }
+
               if (!resolvedByUnpushedResume) {
-                // The developer returned without pushing — not a fresh gate
-                // read (the head never moved), so this feeds the DRIVER's own
-                // bounded stall counter instead of `fetchCiConclusion` again.
+                // The developer returned without pushing on a head that is
+                // still not green — this feeds the DRIVER's own bounded stall
+                // counter.
                 gateStalledStreak += 1
                 // Persisted the moment it
                 // increments, not only once a pause eventually fires — a
@@ -7465,9 +7497,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 // A conflict is a named failure whether or not the file list
                 // could be read — the conflict itself is the cause, and its
                 // text is unchanged from before this stop existed. A red-gate
-                // stall is named only by the check-runs the developer was sent
-                // back for; with none of those, this stall has no named cause
-                // at all.
+                // stall is named only by the check-runs failing on this head
+                // at this read — a check whose newest attempt passed is never
+                // named; with none failing, this stall has no named cause at
+                // all.
                 const namedFailure =
                   refusedPublication !== null
                     ? `publication refused: ${refusedPublication}`
@@ -7475,14 +7508,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                       ? `conflict never resolved (file(s): ${
                           conflictFiles.length > 0 ? conflictFiles.join(', ') : '(unknown)'
                         })`
-                      : lastFailingChecks.length > 0
-                        ? `failing check-run(s): ${lastFailingChecks.join(', ')}`
+                      : failingAtStall.length > 0
+                        ? `failing check-run(s): ${failingAtStall.join(', ')}`
                         : null
                 const detail = `head ${headBeforeDispatch} unchanged after dispatch; ${
                   namedFailure ?? 'no named failure for this head — the developer pushed nothing for the gate to judge'
                 }`
                 // A stall the driver CAN name — the conflicting files, or the
-                // check-runs the developer was sent back for — is a mechanical
+                // check-runs still failing on this head — is a mechanical
                 // failure like any other, and the assessment decides whether
                 // this is the second attempt to end on it. A stall it cannot
                 // name is not reported: an unnamed failure is not evidence of
