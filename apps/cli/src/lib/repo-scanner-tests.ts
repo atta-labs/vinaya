@@ -248,6 +248,17 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     ],
     trigger: 'listed-files'
   },
+  {
+    test: 'apps/cli/tests/conformance/adapter-contract.test.ts',
+    roots: [
+      'apps/cli/specs/dev-review-engine-capability-matrix.md',
+      'apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json',
+      'apps/cli/tests/eval/registry/modules.json',
+      'AGENTS.md',
+      'CLAUDE.md'
+    ],
+    trigger: 'listed-files'
+  },
   { test: 'apps/cli/tests/ci-shards.test.ts', roots: ['apps/cli/'], trigger: 'tree-shape' },
   {
     test: 'apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts',
