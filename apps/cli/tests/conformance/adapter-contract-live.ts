@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { arch, homedir, tmpdir, type } from 'node:os'
 import { join } from 'node:path'
 import { redact } from '@attalabs/aeg-core'
 import {
@@ -394,7 +394,7 @@ async function main(): Promise<void> {
   const report = renderLiveReport({
     agent,
     version: cliVersion(agent),
-    host: `${process.platform} ${process.arch}`,
+    host: `${type()} ${arch()}`,
     startedAt,
     outcomes
   })
