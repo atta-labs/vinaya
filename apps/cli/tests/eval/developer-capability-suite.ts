@@ -338,13 +338,14 @@ export interface ChangeSplit {
 /** Splits the merged change into its test side and its solution, pinning each file by its blob at the reference commit. */
 export function splitChange(git: Git, baseCommit: string, referenceCommit: string): ChangeSplit {
   const out: ChangeSplit = { hiddenTests: { files: [], deleted: [] }, referenceSolution: { files: [], deleted: [] } }
-  const lines = git(['diff', '--no-renames', '--name-status', '-z', baseCommit, referenceCommit]).split('\0')
-  for (let i = 0; i + 1 < lines.length; i += 2) {
-    const status = lines[i] as string
-    const path = lines[i + 1] as string
+  // One raw diff names every changed path with its blob id at the reference commit.
+  const fields = git(['diff', '--raw', '--no-abbrev', '--no-renames', '-z', baseCommit, referenceCommit]).split('\0')
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    const [, , , blob, status] = (fields[i] as string).split(' ')
+    const path = fields[i + 1] as string
     const side = isTestPath(path) ? out.hiddenTests : out.referenceSolution
     if (status === 'D') side.deleted.push(path)
-    else side.files.push({ path, blob: git(['rev-parse', `${referenceCommit}:${path}`]).trim() })
+    else side.files.push({ path, blob: blob as string })
   }
   return out
 }
