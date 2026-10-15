@@ -1108,7 +1108,7 @@ export async function reconstruct(options: ReconstructOptions): Promise<CaseFile
   const development = admitted.filter((c) => !isHeldOut(c.pullRequest))
   const heldOut = admitted.filter((c) => isHeldOut(c.pullRequest))
   // The held-out digest pins the bytes as committed, so the file is formatted first.
-  writeFormattedJson(HELD_OUT_PATH, { schemaVersion: 1, cases: heldOut } satisfies HeldOutFile)
+  await writeFormattedJson(HELD_OUT_PATH, { schemaVersion: 1, cases: heldOut } satisfies HeldOutFile)
   const heldOutText = readFileSync(HELD_OUT_PATH, 'utf8')
   const file: CaseFile = {
     schemaVersion: 1,
@@ -1139,20 +1139,21 @@ export async function reconstruct(options: ReconstructOptions): Promise<CaseFile
     },
     cases: development
   }
-  writeFormattedJson(CASES_PATH, file)
+  await writeFormattedJson(CASES_PATH, file)
   return file
 }
 
 /** Writes `value` as JSON in the repository's own format, as its commit hook would leave it. */
-function writeFormattedJson(path: string, value: unknown): void {
+async function writeFormattedJson(path: string, value: unknown): Promise<void> {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`)
   const biome = join(REPO_ROOT, 'node_modules', '.bin', 'biome')
-  const formatted = Bun.spawnSync([biome, 'format', '--write', path], {
-    cwd: REPO_ROOT,
-    stdout: 'pipe',
-    stderr: 'pipe'
-  })
-  if (formatted.exitCode !== 0) throw new Error(`biome could not format ${path}: ${formatted.stderr.toString()}`)
+  const formatted = await spawnBudgetedAsync(
+    [biome, 'format', '--write', path],
+    { cwd: REPO_ROOT, env: stripVinayaEnv() },
+    60_000,
+    'biome format'
+  )
+  if (formatted.status !== 0) throw new Error(`biome could not format ${path}: ${formatted.stderr}`)
 }
 
 /** The suite report: what was examined, admitted and dropped, and each split's size. */
