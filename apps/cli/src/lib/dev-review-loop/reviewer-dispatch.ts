@@ -56,6 +56,7 @@ import {
   SECRET_SCAN_CHECK
 } from '../../commands/review-post.js'
 import type { AgentVendor, DispatchHandle } from '../dispatch.js'
+import { manifestDigest as reviewManifestDigest, type CompletedReview } from '../review-result.js'
 import { isStagedPrBodyFile, type ReviewerCandidateInputPaths } from './reviewer-isolation.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
 
@@ -1119,12 +1120,18 @@ export function buildVerdictFromReport(
    * blocks as before, exactly round 1's behaviour and the fallback for a
    * round whose previous head could not be recovered.
    */
-  deferralContext: FindingDeferralContext = {}
+  deferralContext: FindingDeferralContext = {},
+  structuredResult: CompletedReview | null = null
 ): RoundVerdictParse {
   const headSha = manifest.headSha
   const objectivesVersionAtDispatch = manifest.objectivesVersion
   const rulingOrdinalAtDispatch = manifest.rulingOrdinal
-  const reportRaw = readIfExists(join(workDir, 'report.txt')) ?? ''
+  const reportRaw =
+    structuredResult === null
+      ? (readIfExists(join(workDir, 'report.txt')) ?? '')
+      : role === 'reviewer'
+        ? `BRIEF_CONFORMANCE: ${structuredResult.summary}\nSPEC_CONFORMANCE: ${structuredResult.summary}\nSCOPE: ${structuredResult.summary}\nTESTS: ${structuredResult.summary}\nDOCS: ${structuredResult.summary}`
+        : `CONFIG_SCAN: ${structuredResult.summary}\nSECRETS: none found — ${SECRET_SCAN_CHECK} passed`
   const report = parseReport(reportRaw)
   const sessionId = handle.resumeId ?? '(unknown)'
   const tokensIn = handle.usage ? String(handle.usage.input) : '—'
@@ -1161,7 +1168,15 @@ export function buildVerdictFromReport(
     return { observation: { role, verdict: 'ESCALATE', objectives: [], findings: [] }, rendered }
   }
 
-  const findingsRaw = readIfExists(join(workDir, 'findings.txt')) ?? ''
+  const findingsRaw =
+    structuredResult === null
+      ? (readIfExists(join(workDir, 'findings.txt')) ?? '')
+      : structuredResult.findings
+          .map(
+            (finding) =>
+              `${finding.severity}|${finding.file}:${finding.line ?? 1}|${finding.description ?? structuredResult.summary}`
+          )
+          .join('\n')
   const allowedSeverities = role === 'reviewer' ? CODE_REVIEW_SEVERITY_ORDER : SECURITY_SEVERITY_ORDER
   // O6: a line that still does not parse — tolerant of a qualified status
   // and a `|` in a description, but still not a valid line — is an
@@ -1185,7 +1200,12 @@ export function buildVerdictFromReport(
     throw err
   }
 
-  const objectivesRaw = readIfExists(join(workDir, 'objectives.txt'))
+  const objectivesRaw =
+    structuredResult === null
+      ? readIfExists(join(workDir, 'objectives.txt'))
+      : structuredResult.objectiveResults
+          .map((objective) => `${objective.id}|${objective.status}|${objective.evidence}`)
+          .join('\n')
   let objectiveResults: ObjectiveResult[]
   try {
     objectiveResults = objectivesRaw?.trim() ? parseObjectivesFile(objectivesRaw) : []
@@ -1430,35 +1450,9 @@ export function renderReviewerDispatchPrompt(
   const instructions = [
     roleLine,
     'Review the PR at the HEAD above against the OBJECTIVES and RULINGS above.',
-    `Write your findings to ${join(workDir, 'findings.txt')}, one per line: SEVERITY|file:line|description`,
-    role === 'reviewer'
-      ? '(severities: BLOCKER, MAJOR, MINOR — leave the file empty if there are none).'
-      : '(severities: CRITICAL, HIGH, MEDIUM, LOW — leave the file empty if there are none).',
-    '`|` never appears in a description — write the finding without one, even inside a quoted or piped example.',
-    // Named so a reviewer never under-reports a body/comment/
-    // role-file finding's real severity to pre-empt this — the cap is
-    // applied by the policy evaluator, not something to guess around.
-    'A finding whose own location is the PR body, a comment, or a role file is capped to MINOR before it counts toward the threshold, regardless of the severity you assign it — write its real severity anyway.',
-    ...(hasObjectivesFacts(facts)
-      ? [
-          `Write one line per objective listed above to ${join(workDir, 'objectives.txt')}: O<n>|MET|<evidence> or O<n>|NOT MET|<evidence> — the status is read by its bare leading word (MET or NOT MET); write nothing else before it on that field.`,
-          "NOT MET means you verified the objective is not met — never a decline. An objective outside your own lens is MET, citing the other reviewer's evidence or verifying it yourself directly — never NOT MET with an out-of-scope note.",
-          'An objective you find unmet is reported as NOT MET in objectives.txt with code or test evidence — never only as a finding on the pull request body, which is capped to MINOR and never decides an objective.'
-        ]
-      : []),
-    `Write a short report to ${join(workDir, 'report.txt')} as one \`KEY: value\` line per field:`,
-    role === 'reviewer' ? '  BRIEF_CONFORMANCE, SPEC_CONFORMANCE, SCOPE, TESTS, DOCS' : '  CONFIG_SCAN, SECRETS',
-    // A round's own findings are compared to the NEXT round's by
-    // id — never by writing order, which is not stable across two separate
-    // dispatches. Skipped only when findings.txt is empty (nothing to cite).
-    '  If findings.txt is non-empty, also write `FINDING_IDS: <id>,<id>,...` — one id per findings.txt line, in the SAME order, e.g. `F1,F2,F3`. A report with findings but no matching `FINDING_IDS:` line is sent back once for this alone.',
-    ...(role === 'security'
-      ? [
-          `\`SECRETS:\` is required — never leave it blank or omit it. The secret scan is the required \`${SECRET_SCAN_CHECK}\` CI check, running inside the \`vinaya check --all --diff-only\` CI job — you hold no GitHub credential and must never call \`gh\` to inspect it; judge it from the CI line above instead (\`CI: green\` means that job, and so this scan, passed) plus your own read of the diff. Write \`SECRETS: none found — ${SECRET_SCAN_CHECK} passed\` only when CI above is green, with any note from your own read of the diff on the lines below it; if CI is red or pending, say so on the line instead. Your own read of the diff for a credential the scanner's rules cannot see still applies.`,
-          '`CONFIG_SCAN:` — when an AGENT-CONFIG SCAN block appears above, base this line on it plus your own read of the agent-config diff; the driver already ran the scanner outside its own trust, so never run `npx`, install a package, or run a scanner yourself. When that block says the scan was not applicable, not configured, or could not run, write exactly that on the line and judge the config on your own read.'
-        ]
-      : []),
-    'To escalate instead of casting a verdict, write only `ESCALATE: authority|strategy|product` and `SUMMARY: <text>` to report.txt.'
+    `End with exactly one native structured ReviewResult. Use role ${role === 'reviewer' ? 'code-reviewer' : 'security-reviewer'}, headSha ${facts.manifest.headSha}, and manifestDigest ${reviewManifestDigest(facts.manifest)}.`,
+    'Return status completed with findings, one result for every objective, and a summary; or status blocked with a typed blocker and summary. Do not write result files.',
+    'Finding identities are controller-owned: do not invent or return finding ids. A blocked result is no review, never approval.'
   ].join('\n')
   return `${base}\n\n${instructions}`
 }

@@ -205,6 +205,8 @@ Controller-owned and deterministic, normative in `dev-review-engine-state-machin
 
 Code and security reviewers deliver ReviewResult through the same native structured final output, on fresh, isolated, non-resumed sessions, two running concurrently against the identical review-input manifest.
 
+The standalone review loop adopts this reviewer result transport before the Engine transition so both provider backends can be evaluated against one contract. The transition is therefore amended to treat native ReviewResult delivery, controller binding, and retirement of the three reviewer result files as already-live prerequisites rather than Engine-cutover work.
+
 A live proof on Claude Code 2.1.291 showed that a Stop-hook block does not prevent a schema-constrained result from being returned, so no Stop hook authorizes, rejects, stores or selects a terminal result on any adapter. A Stop hook may remain for diagnostics. Claude Code's bare scripted mode is excluded because it skips subscription login.
 
 ## 9. Conformance

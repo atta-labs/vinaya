@@ -121,6 +121,7 @@ import {
   terminateLaunchedChildOnShutdown as realTerminateLaunchedChildOnShutdown
 } from './dispatch.js'
 import { authenticateWorkerInvocation, requestEffect, scopeTarget } from './broker.js'
+import { classifyReviewOutcome, manifestDigest as reviewManifestDigest } from './review-result.js'
 import {
   type DeferredFindingEntry,
   type DeferredFindingsIssueRef,
@@ -5956,9 +5957,25 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             handle.durationMs
           )
         }
-        const missing = missingReviewerArtifacts(workDir, hasObjectives, outputFloorMs)
-        if (missing.length > 0) {
-          lastMissing = missing
+        const binding = {
+          role: dispatchRoleName === 'security' ? ('security-reviewer' as const) : ('code-reviewer' as const),
+          headSha: facts.manifest.headSha,
+          manifestDigest: reviewManifestDigest(facts.manifest),
+          objectiveIds: facts.resolvedObjectives.map((objective) => objective.id)
+        }
+        const output = handle.reviewOutput
+        const outcome = classifyReviewOutcome(
+          {
+            cancelled: handle.failureReason === 'signal',
+            terminal: output?.event ?? null,
+            errors: handle.failureReason ? [handle.failureReason] : [],
+            hasResult: output !== undefined && output.raw !== null,
+            raw: output?.raw
+          },
+          binding
+        )
+        if (outcome.kind === 'no_review') {
+          lastMissing = [`structured ReviewResult (${outcome.reason}: ${outcome.detail})`]
           lastParseFailure = null
           continue
         }
@@ -5976,12 +5993,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             facts.manifest,
             policy,
             facts.resolvedObjectives,
-            facts.deferralContext ?? {}
+            facts.deferralContext ?? {},
+            outcome.result
           )
-          if (findingIdsCited(workDir, verdict.observation.findings.length)) {
-            return { verdict, findingsUncitable: false }
-          }
-          return await resendForFindingIds(role, roundNum, facts, verdict, candidateDir)
+          return { verdict, findingsUncitable: false }
         } catch (err) {
           if (!(err instanceof ReviewerReportParseFailure)) throw err
           lastParseFailure = err

@@ -458,15 +458,16 @@ describe('renderReviewerDispatchPrompt — carries the role doctrine as a fact',
     expect(prompt).toContain('## What you check')
     expect(prompt).toContain('1. Does the code match the brief?')
     // The doctrine sits before the dispatch's own output instructions.
-    expect(prompt.indexOf('YOUR ROLE DOCTRINE')).toBeLessThan(prompt.indexOf('Write your findings to'))
+    expect(prompt.indexOf('YOUR ROLE DOCTRINE')).toBeLessThan(
+      prompt.indexOf('End with exactly one native structured ReviewResult')
+    )
   })
 
-  it('tells both roles an unmet objective goes to objectives.txt with code or test evidence, never only a body finding', () => {
+  it('tells both roles to return objective results in the structured result', () => {
     for (const role of ['reviewer', 'security'] as const) {
       const prompt = renderReviewerDispatchPrompt(role, FACTS, '/tmp/work', null)
-      expect(prompt).toContain(
-        'An objective you find unmet is reported as NOT MET in objectives.txt with code or test evidence — never only as a finding on the pull request body'
-      )
+      expect(prompt).toContain('Return status completed with findings, one result for every objective, and a summary')
+      expect(prompt).toContain('Do not write result files')
     }
   })
 
@@ -622,7 +623,7 @@ describe('candidateInputPieces / renderReviewerDispatchPrompt — the driver-sta
 
   it("the security prompt's SECRETS instruction reads the CI line above, never gh pr checks", () => {
     const prompt = renderReviewerDispatchPrompt('security', FACTS, '/tmp/work')
-    expect(prompt).toContain('must never call `gh`')
+    expect(prompt).toContain('native structured ReviewResult')
     expect(prompt).not.toContain('gh pr checks')
   })
 })

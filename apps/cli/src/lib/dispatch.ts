@@ -97,6 +97,7 @@ import { appendRoleLine } from './loop-log.js'
 import { createAgentStreamRenderer } from './agent-stream.js'
 import { formatAgentDetails, formatAgentLine, type AgentLineMark } from './agent-line.js'
 import { developerTurnResultJsonSchema } from './developer-turn-result.js'
+import { reviewResultJsonSchema, type ReviewerRole } from './review-result.js'
 import {
   type DeliveredDocumentation,
   type DeveloperTurnOutput,
@@ -471,6 +472,8 @@ export type DispatchHandle = {
    * structured output. Unvalidated: only the loop's controller accepts it.
    */
   turnOutput?: DeveloperTurnOutput
+  /** A reviewer's native structured final output, unvalidated until the loop binds it to the round. */
+  reviewOutput?: DeveloperTurnOutput
   /** A Developer dispatch's delivered Documentation manifest and the reads its gate counted (`deliveredDocumentation`). */
   documentation?: DeliveredDocumentation
 }
@@ -4567,6 +4570,9 @@ export async function dispatchRole(
               : documentationSources.map((source) => source.source)
         })
       : null
+  const reviewerRole: ReviewerRole | null =
+    role === 'code-reviewer' ? 'code-reviewer' : role === 'security' ? 'security-reviewer' : null
+  const reviewerTurnSchema = reviewerRole === null ? null : reviewResultJsonSchema(reviewerRole)
   // O1/O2: the machine-state deny floor a Claude dispatch carries
   // as `permissions.deny`, translated into Codex's execpolicy `.rules` grammar
   // for the SAME role. In-memory here (no I/O, so no dispatch-time failure to
@@ -5038,7 +5044,7 @@ export async function dispatchRole(
   // the path. Gemini has no native structured output; its Developer turn
   // delivers none (`turnOutput.adapter: null`) and the loop pauses on it.
   const turnResultAdapter: TurnResultAdapter | null =
-    role !== 'developer'
+    role !== 'developer' && reviewerRole === null
       ? null
       : agent === 'claude'
         ? 'claude --json-schema'
@@ -5050,12 +5056,16 @@ export async function dispatchRole(
       ? realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-turn-result-')))
       : null
   const turnResultArgs = (args: string[]): string[] => {
+    const outputSchema = developerTurnSchema ?? reviewerTurnSchema
     if (turnResultAdapter === 'claude --json-schema') {
-      return [...args, '--json-schema', JSON.stringify(developerTurnSchema)]
+      return [...args, '--json-schema', JSON.stringify(outputSchema)]
     }
     if (turnSchemaDir !== null) {
-      const schemaPath = join(turnSchemaDir, 'developer-turn-result.schema.json')
-      writeFileSync(schemaPath, `${JSON.stringify(developerTurnSchema, null, 2)}\n`, { mode: 0o600 })
+      const schemaPath = join(
+        turnSchemaDir,
+        role === 'developer' ? 'developer-turn-result.schema.json' : 'review-result.schema.json'
+      )
+      writeFileSync(schemaPath, `${JSON.stringify(outputSchema, null, 2)}\n`, { mode: 0o600 })
       // Codex's argv ends with `-` (read the prompt from stdin): the flag goes before it.
       return args[args.length - 1] === '-'
         ? [...args.slice(0, -1), '--output-schema', schemaPath, '-']
@@ -5412,6 +5422,15 @@ export async function dispatchRole(
           ? readClaudeTurnOutput(stdoutTail)
           : readCodexTurnOutput(stdoutTail)
       return { turnOutput: { adapter: turnResultAdapter, raw: read.raw, event: read.event }, documentation }
+    }
+
+    function reviewerTurnFacts(): Pick<DispatchHandle, 'reviewOutput'> {
+      if (reviewerRole === null || turnResultAdapter === null) return {}
+      const read =
+        turnResultAdapter === 'claude --json-schema'
+          ? readClaudeTurnOutput(stdoutTail)
+          : readCodexTurnOutput(stdoutTail)
+      return { reviewOutput: { adapter: turnResultAdapter, raw: read.raw, event: read.event } }
     }
 
     async function finish(handle: DispatchHandle, event: string, priorSize: number): Promise<void> {
@@ -5794,7 +5813,16 @@ export async function dispatchRole(
         duration_ms: durationMs
       })
       void finish(
-        { exitCode: code, durationMs, usage, resumeId, timedOut: false, effectId, ...developerTurnFacts() },
+        {
+          exitCode: code,
+          durationMs,
+          usage,
+          resumeId,
+          timedOut: false,
+          effectId,
+          ...developerTurnFacts(),
+          ...reviewerTurnFacts()
+        },
         'outcome_received',
         priorSize
       )

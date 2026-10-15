@@ -447,7 +447,12 @@ function writeRoleArtifacts(workDir: string, outcome: RoleOutcome): void {
   if (outcome.objectives !== null) writeFileSync(join(workDir, 'objectives.txt'), outcome.objectives)
 }
 
-function handle(resumeId: string | null, effectId: string, turnOutput?: DeveloperTurnOutput): DispatchHandle {
+function handle(
+  resumeId: string | null,
+  effectId: string,
+  turnOutput?: DeveloperTurnOutput,
+  reviewOutput?: DeveloperTurnOutput
+): DispatchHandle {
   return {
     exitCode: 0,
     durationMs: 1,
@@ -455,7 +460,54 @@ function handle(resumeId: string | null, effectId: string, turnOutput?: Develope
     resumeId,
     timedOut: false,
     effectId,
-    ...(turnOutput !== undefined ? { turnOutput } : {})
+    ...(turnOutput !== undefined ? { turnOutput } : {}),
+    ...(reviewOutput !== undefined ? { reviewOutput } : {})
+  }
+}
+
+function fakeReviewOutput(role: 'reviewer' | 'security', outcome: RoleOutcome, prompt: string): DeveloperTurnOutput {
+  if (outcome.writesNothing) return { adapter: 'claude --json-schema', event: null, raw: null }
+  const headSha = prompt.match(/headSha ([0-9a-f]+)/)?.[1] ?? ''
+  const manifestDigest = prompt.match(/manifestDigest ([0-9a-f]+)/)?.[1] ?? ''
+  const findings = outcome.findings.trim()
+    ? outcome.findings
+        .trim()
+        .split('\n')
+        .map((line) => {
+          const [severity = '', location = '', ...description] = line.split('|')
+          const match = location.match(/^(.*?)(?::(\d+))?$/)
+          return {
+            severity,
+            file: match?.[1] ?? '',
+            line: match?.[2] ? Number(match[2]) : null,
+            description: description.join('|') || null
+          }
+        })
+    : []
+  const objectiveResults = outcome.objectives?.trim()
+    ? outcome.objectives
+        .trim()
+        .split('\n')
+        .map((line) => {
+          const [id = '', status = '', ...evidence] = line.split('|')
+          return { id, status, evidence: evidence.join('|') }
+        })
+    : []
+  return {
+    adapter: 'claude --json-schema',
+    event: 'result (subtype success) .structured_output',
+    raw: {
+      reviewResult: {
+        schemaVersion: 1,
+        status: 'completed',
+        role: role === 'reviewer' ? 'code-reviewer' : 'security-reviewer',
+        headSha,
+        manifestDigest,
+        summary: outcome.report.trim() || 'fixture review',
+        findings,
+        objectiveResults
+      }
+    }
   }
 }
 
@@ -556,9 +608,13 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       const reviewRole = role === 'code-reviewer' ? 'reviewer' : 'security'
       const attempt = world.dispatches.filter((d) => d.role === role && d.round === round).length + 1
       const outcome = roleOutcomeFor(world, reviewRole, round, attempt)
-      if (workDir && !outcome.writesNothing) writeRoleArtifacts(workDir, outcome)
       world.dispatches.push({ role, round, resumeId: outcome.sessionId, prompt })
-      return handle(outcome.sessionId, `eff-${reviewRole}-${++dispatchSeq}`)
+      return handle(
+        outcome.sessionId,
+        `eff-${reviewRole}-${++dispatchSeq}`,
+        undefined,
+        fakeReviewOutput(reviewRole, outcome, prompt)
+      )
     },
     // issue #945: the policy read is injected here to the built-in defaults, so
     // an in-process run neither reaches the real `gh api` trust-anchor read (a
