@@ -649,7 +649,7 @@ export {
   withLiveRecord
 } from './live-record'
 export { evaluateTestPlanGate } from './test-plan-gate'
-export type { TestPlanGateResult, TestPlanGateVerdict } from './test-plan-gate'
+export type { LiveGateInputs, TestPlanGateResult, TestPlanGateVerdict } from './test-plan-gate'
 export {
   AEG_BLOCKED_LABEL,
   buildBranchName,

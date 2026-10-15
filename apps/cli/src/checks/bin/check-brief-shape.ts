@@ -29,20 +29,14 @@ import {
   type PackageManifest,
   objectivesOf,
   partitionBriefErrorsByRollout,
-  readTierFromPrBody,
-  resolveNewestFrozenBrief
+  readTierFromPrBody
 } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { isForgeReadOversize, readIssueBody, readIssueComments } from '../../lib/forge-read'
+import { resolveTaskFrozenBrief } from '../frozen-brief'
+import { readIssueBody, readIssueComments } from '../../lib/forge-read'
 import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolvePrincipalAllowlist } from '../../lib/config'
 
 const CHECK_NAME = 'brief-shape'
-
-type IssueCommentsJson = { comments: Array<{ body: string; author?: { login?: string } | null }> }
-
-function fetchIssueComments(issueNumber: number): IssueCommentsJson {
-  return { comments: readIssueComments(issueNumber, `Issue #${issueNumber}`) }
-}
 
 type GradedBodyResolution = { ok: true; body: string } | { ok: false; message: string }
 
@@ -54,45 +48,27 @@ type GradedBodyResolution = { ok: true; body: string } | { ok: false; message: s
  * `fix/*`) branch is unchanged: its brief, if any, is still authored
  * directly into the PR body.
  *
- * Resolved through `@attalabs/aeg-core`'s `resolveNewestFrozenBrief`
- * — the same single resolver the review
- * loop uses, so a supersession is picked up here too rather than this
- * check grading a stale, since-corrected version.
+ * Resolved through `resolveTaskFrozenBrief` (`../frozen-brief`), which
+ * `test-plan` shares, so a supersession is picked up here too rather than
+ * this check grading a stale, since-corrected version.
  */
 function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResolution {
   if (!taskBranch) return { ok: true, body: prBody }
 
-  const { issue } = extractIssue(prBody)
-  if (issue === null) {
-    return { ok: false, message: 'not dispatched — no `Closes #N` in the PR body to resolve the task Issue.' }
-  }
-
-  let json: IssueCommentsJson
-  try {
-    json = fetchIssueComments(issue)
-  } catch (err) {
-    // Same treatment `resolveObjectivesApplicability` already gives an
-    // unresolvable Issue number just below (a fixture's placeholder
-    // `Closes #NNN`, a deleted Issue): additive exemption, never a new
-    // hard-failure mode for a resource nothing required before this task.
-    // A DIFFERENT fetch failure (network, auth, rate-limit) still hard-fails.
-    if (isIssueNotFoundError(err)) {
-      return { ok: true, body: prBody }
-    }
-    if (isForgeReadOversize(err)) return { ok: false, message: err.message }
-    return {
-      ok: false,
-      message: `could not fetch Issue #${issue}'s comments (\`gh issue view\`) to grade the dispatched brief: ${err instanceof Error ? err.message : String(err)}`
-    }
-  }
-  const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
-  const comments = json.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
-  const resolved = resolveNewestFrozenBrief(comments, allowlist)
-  if (!resolved) {
-    return { ok: false, message: `not dispatched — no \`aeg:brief:v<k>\` comment on Issue #${issue}.` }
-  }
-
-  return { ok: true, body: resolved.content }
+  const resolved = resolveTaskFrozenBrief(
+    prBody,
+    (issue) => readIssueComments(issue, `Issue #${issue}`),
+    () => resolvePrincipalAllowlist(loadTrustAnchorConfig()),
+    'grade the dispatched brief'
+  )
+  if (resolved.ok) return { ok: true, body: resolved.content }
+  // Same treatment `resolveObjectivesApplicability` already gives an
+  // unresolvable Issue number just below (a fixture's placeholder
+  // `Closes #NNN`, a deleted Issue): additive exemption, never a new
+  // hard-failure mode for a resource nothing required before this task.
+  // A DIFFERENT fetch failure (network, auth, rate-limit) still hard-fails.
+  if (resolved.notFound) return { ok: true, body: prBody }
+  return { ok: false, message: resolved.message }
 }
 
 /** Immediate child directory names of `dir` — `deriveWorkspaceMemberDirs`'s injected filesystem access. Missing/unreadable `dir` degrades to `[]`, never throws. */

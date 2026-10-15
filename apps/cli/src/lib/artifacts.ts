@@ -566,6 +566,10 @@ ${verifiedFetchPrBodyStep()}      - name: Run checks
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: \${{ github.event.pull_request.number }}
           BRANCH: \${{ github.head_ref }}
+          # The pull request's own head — never \`git rev-parse HEAD\`, which on
+          # a pull_request run is the merge ref — at which \`test-plan\` demands
+          # a passed \`AEG:LIVE\` entry for each \`[live]\` line of the brief.
+          PULL_REQUEST_HEAD_SHA: \${{ github.event.pull_request.head.sha }}
           # O3: this job's gate events deliver live to the \`logs.url\` server
           # destination the default branch's own \`vinaya.config.json\`
           # declares — never a fork PR's own working-tree copy
@@ -864,6 +868,8 @@ ${verifiedFetchPrBodyStep()}      - name: Body checks
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # The task Issue's frozen brief, read for its \`[live]\` lines.
+      issues: read
       pull-requests: read
     steps:
       - uses: actions/checkout@v4
@@ -879,6 +885,12 @@ ${vinayaSetupSteps(selfHost, 'trusted')}      # PR_BODY is what makes this check
       # \`process.env.PR_BODY\` only, never fetches it itself. Fetched live from
       # the forge, same reasoning as the sibling job's identical step above.
 ${verifiedFetchPrBodyStep()}      - name: Principal Test Plan wait
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          BRANCH: \${{ github.head_ref }}
+          # The pull request's own head, at which each \`[live]\` line of the
+          # task's frozen brief must have passed for the merge to go through.
+          PULL_REQUEST_HEAD_SHA: \${{ github.event.pull_request.head.sha }}
         run: ${vinayaRun(selfHost, 'check principal-test-plan-wait')}
 `
 }

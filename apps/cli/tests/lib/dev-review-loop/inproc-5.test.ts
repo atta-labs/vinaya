@@ -1816,7 +1816,7 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
     expect(world.runChecksCalls).toBeGreaterThanOrEqual(1)
   })
 
-  it('run_checks hands check --all the pull request body, number and branch, as CI does', async () => {
+  it('run_checks hands check --all the pull request body, number, branch and head, as CI does', async () => {
     const world = makeWorld({ worktreeExists: true })
     await runLoopInProcess(world, { task: world.task, agent: 'codex' }, developerPublishesViaToolsDeps(world))
     world.prOpened = true
@@ -1826,7 +1826,8 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
     expect(world.runChecksEnv).toEqual({
       BRANCH: world.branch,
       PR_NUMBER: String(world.prNumber),
-      PR_BODY: world.prBody
+      PR_BODY: world.prBody,
+      PULL_REQUEST_HEAD_SHA: world.head
     })
   })
 
