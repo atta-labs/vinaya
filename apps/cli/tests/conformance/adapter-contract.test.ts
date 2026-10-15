@@ -13,11 +13,14 @@ import {
   sessionRuleViolations
 } from './adapter-contract.js'
 import {
+  CLI_ENTRY,
   caseOutcome,
   LIVE_PROOF_COMMANDS,
+  liveContractBridge,
   parseLiveArgs,
   parseProofSummary,
-  renderLiveReport
+  renderLiveReport,
+  timeoutCaseEnv
 } from './adapter-contract-live.js'
 
 /**
@@ -132,6 +135,20 @@ describe('declared differences', () => {
 })
 
 describe('the live command, one per adapter', () => {
+  it('launches the tool-server bridge from the real CLI entry, never from the script that runs it', () => {
+    const bridge = liveContractBridge('/tmp/vinaya-live.sock')
+    expect(bridge.args).toEqual([CLI_ENTRY, 'task-tools', 'dev-bridge', '--socket', '/tmp/vinaya-live.sock'])
+    expect(CLI_ENTRY.endsWith(join('apps', 'cli', 'src', 'index.ts'))).toBe(true)
+    expect(bridge.args).not.toContain(process.argv[1])
+  })
+
+  it('hands the timeout case only the worker allowlist and the account names, not the parent environment', () => {
+    const env = timeoutCaseEnv({ HOME: '/h', PATH: '/bin', USER: 'u', GH_TOKEN: 'secret', VINAYA_ROLE: 'developer' })
+    expect(env.GH_TOKEN).toBeUndefined()
+    expect(env.VINAYA_ROLE).toBeUndefined()
+    expect(env).toMatchObject({ HOME: '/h', PATH: '/bin', USER: 'u', LOGNAME: 'u' })
+  })
+
   it('takes one adapter and an optional report path, and refuses anything else', () => {
     expect(parseLiveArgs(['--agent', 'codex'])).toEqual({ agent: 'codex', report: null })
     expect(parseLiveArgs(['--agent', 'claude', '--report', '/tmp/r.md'])).toEqual({

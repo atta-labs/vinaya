@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { arch, homedir, tmpdir, type } from 'node:os'
+import { arch, homedir, tmpdir, type, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { redact } from '@attalabs/aeg-core'
 import {
@@ -19,10 +19,21 @@ import {
   vendorSessionArgs
 } from '../../src/lib/dispatch.js'
 import { ownVersion } from '../../src/lib/own-version.js'
-import { devBridgeInvocation, proofContext } from '../../src/lib/task-tools/dev-proof.js'
+import { proofContext } from '../../src/lib/task-tools/dev-proof.js'
 import { startDevToolsHost } from '../../src/lib/task-tools/dev-tools-host.js'
-import { devToolsSocketPath } from '../../src/lib/task-tools/dev-tools-registration.js'
-import { beforeStdinMarker, cliVersion, providerText, runChild } from '../../src/lib/task-tools/result-proof.js'
+import {
+  type BridgeInvocation,
+  devToolsSocketPath,
+  driverDevBridgeInvocation
+} from '../../src/lib/task-tools/dev-tools-registration.js'
+import {
+  accountEnv,
+  beforeStdinMarker,
+  cliVersion,
+  providerText,
+  runChild
+} from '../../src/lib/task-tools/result-proof.js'
+import { buildWorkerEnv } from '../../src/lib/worker-boundary.js'
 import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture.js'
 import {
   ADAPTER_CONTRACT_CASES,
@@ -70,7 +81,24 @@ export type LiveOutcome = 'PASS' | 'FAIL' | 'INCONCLUSIVE' | 'NOT RUN' | 'DETERM
 type ProofLine = { outcome: 'PASS' | 'FAIL' | 'INCONCLUSIVE'; detail: string }
 
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..')
-const CLI_ENTRY = join(REPO_ROOT, 'apps', 'cli', 'src', 'index.ts')
+export const CLI_ENTRY = join(REPO_ROOT, 'apps', 'cli', 'src', 'index.ts')
+
+/**
+ * The tool-server bridge a live session's MCP client spawns, launched from the real CLI entry. The
+ * dispatch's own builder defaults the entry to the running script, which here is this file, not the
+ * CLI: the bridge would then never start and every Developer dispatch would fail at start.
+ */
+export function liveContractBridge(socketPath: string): BridgeInvocation {
+  return driverDevBridgeInvocation(socketPath, CLI_ENTRY)
+}
+
+/** The timeout case's child environment: the worker allowlist plus the account names the vendor's login reads. */
+export function timeoutCaseEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return buildWorkerEnv(
+    source,
+    accountEnv(source, () => userInfo().username)
+  )
+}
 
 export function parseLiveArgs(
   args: readonly string[]
@@ -208,7 +236,7 @@ async function runContractDispatches(agent: ContractAdapter): Promise<DispatchCa
       unattended: true,
       round: 2,
       turnResultKnownFindingIds: KNOWN_FINDINGS,
-      devToolsBridge: devBridgeInvocation(host.socketPath),
+      devToolsBridge: liveContractBridge(host.socketPath),
       ...(resumeId ? { resumeId } : {})
     })
   }
@@ -299,7 +327,7 @@ async function runContractDispatches(agent: ContractAdapter): Promise<DispatchCa
           : beforeStdinMarker(vendorSessionArgs('codex'), ['--output-schema', schemaPath])
       const ran = await runChild(
         agent,
-        { args, env: process.env },
+        { args, env: timeoutCaseEnv(process.env) },
         scriptedPrompt('Before reporting, count slowly from one to two hundred, one number per line.'),
         scratch,
         undefined,
