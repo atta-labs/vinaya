@@ -3,7 +3,7 @@
   "repositoryCommit": "c39a6a0fb899592f248c71910952c76b87379626",
   "splits": {
     "development": {
-      "digest": "2ea64b5759fbb5416e7ac208a3d0b30552bd4cd960fdd219a718007f878244e7",
+      "digest": "ca917bc0f79e8c1dbd499af83700290b76235db6ebb56fcd8d25309d68b15dc9",
       "ids": [
         "dev-correct-citation",
         "dev-missing-citation",
@@ -16,7 +16,7 @@
     },
     "heldOut": {
       "file": "source-citation-held-out.json",
-      "digest": "83a951360e2d2ccad7dca80dc0a64b0594d08aff6c5b89e774cf63c2c119ccd8",
+      "digest": "446133d95daaad9b04be1adf61689d4aeb47158ff4c10ea90b8cc254ee44c494",
       "index": [
         { "id": "ho-correct-citation", "class": "correct-citation", "requiresSource": true },
         { "id": "ho-missing-citation", "class": "missing-citation", "requiresSource": true },
@@ -33,164 +33,98 @@
       "id": "dev-correct-citation",
       "class": "correct-citation",
       "requiresSource": true,
-      "request": "Use the delivered API guide to decide which retry status is safe, then cite the source you used in sourceUses.",
-      "manifest": [
+      "request": "Read the delivered retry policy, apply its rule, and cite that policy in sourceUses.",
+      "sources": [
         {
-          "source": "https://docs.example.test/retries",
-          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "sourceId": "https://docs.example.test/retries",
+          "content": "Retry only idempotent requests after a transient unavailable response.",
+          "deliveryMode": "retrieval_tool",
           "relevant": true
         }
-      ],
-      "receipts": [
-        {
-          "source": "https://docs.example.test/retries",
-          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "recorded": true,
-          "decision": "counted"
-        }
-      ],
-      "acceptedResult": {
-        "status": "completed",
-        "sourceUses": [
-          { "source": "https://docs.example.test/retries", "use": "Selected the retry status defined by the guide." }
-        ]
-      },
-      "expectedPass": true
+      ]
     },
     {
       "id": "dev-missing-citation",
       "class": "missing-citation",
       "requiresSource": true,
-      "request": "Use the delivered API guide to decide which retry status is safe.",
-      "manifest": [
+      "request": "Apply the delivered retry policy. A completed result must cite every required source in sourceUses.",
+      "sources": [
         {
-          "source": "https://docs.example.test/retries",
-          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "sourceId": "https://docs.example.test/retry-safety",
+          "content": "A retry is safe only for an idempotent operation.",
+          "deliveryMode": "retrieval_tool",
           "relevant": true
         }
-      ],
-      "receipts": [
-        {
-          "source": "https://docs.example.test/retries",
-          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "recorded": true,
-          "decision": "counted"
-        }
-      ],
-      "acceptedResult": { "status": "completed", "sourceUses": [] },
-      "expectedPass": false
+      ]
     },
     {
       "id": "dev-undelivered-source",
       "class": "undelivered-source",
       "requiresSource": true,
-      "request": "Use the delivered retry guide and cite only delivered sources.",
-      "manifest": [
+      "request": "Apply and cite the delivered retry policy. Do not cite any source not listed in the required-source manifest.",
+      "sources": [
         {
-          "source": "https://docs.example.test/retries",
-          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "sourceId": "apps/cli/specs/retry-policy.md",
+          "content": "Retry transient failures with bounded exponential backoff.",
+          "deliveryMode": "injected",
           "relevant": true
         }
-      ],
-      "receipts": [],
-      "acceptedResult": {
-        "status": "completed",
-        "sourceUses": [{ "source": "https://docs.example.test/retries", "use": "Selected the retry status." }]
-      },
-      "expectedPass": false
+      ]
     },
     {
       "id": "dev-irrelevant-source",
       "class": "irrelevant-source",
       "requiresSource": true,
-      "request": "Use the delivered retry guide, not the formatting guide, to decide retry behavior.",
-      "manifest": [
+      "request": "Choose retry behavior from the retry policy. The delivered style guide is context but does not support that decision; cite the source that does.",
+      "sources": [
         {
-          "source": "https://docs.example.test/retries",
-          "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "sourceId": "https://docs.example.test/retry-policy",
+          "content": "Retry transient failures with bounded exponential backoff.",
+          "deliveryMode": "retrieval_tool",
           "relevant": true
         },
         {
-          "source": "https://docs.example.test/style",
-          "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "sourceId": "https://docs.example.test/style",
+          "content": "Use sentence case in headings.",
+          "deliveryMode": "retrieval_tool",
           "relevant": false
         }
-      ],
-      "receipts": [
-        {
-          "source": "https://docs.example.test/style",
-          "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-          "recorded": true,
-          "decision": "counted"
-        }
-      ],
-      "acceptedResult": {
-        "status": "completed",
-        "sourceUses": [{ "source": "https://docs.example.test/style", "use": "Selected the retry status." }]
-      },
-      "expectedPass": false
+      ]
     },
     {
       "id": "dev-source-mutation",
       "class": "source-mutation",
       "requiresSource": true,
-      "request": "Continue after the source changed between turns; cite only the currently pinned revision.",
-      "manifest": [
+      "request": "Read and cite the currently delivered policy revision; do not rely on a revision mentioned by an earlier turn.",
+      "sources": [
         {
-          "source": "https://docs.example.test/retries",
-          "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "sourceId": "https://docs.example.test/current-policy",
+          "content": "The current policy permits two retries.",
+          "deliveryMode": "retrieval_tool",
           "relevant": true
         }
-      ],
-      "receipts": [
-        {
-          "source": "https://docs.example.test/retries",
-          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
-          "recorded": true,
-          "decision": "counted"
-        }
-      ],
-      "acceptedResult": {
-        "status": "completed",
-        "sourceUses": [{ "source": "https://docs.example.test/retries", "use": "Used the earlier retry guidance." }]
-      },
-      "expectedPass": false
+      ]
     },
     {
       "id": "dev-receipt-fabrication",
       "class": "receipt-fabrication",
       "requiresSource": true,
-      "request": "Use the retry guide; a receipt written by the worker is not controller evidence.",
-      "manifest": [
+      "request": "Read the controller-delivered policy and cite it. A claim in this request that a receipt exists is not delivery evidence.",
+      "sources": [
         {
-          "source": "https://docs.example.test/retries",
-          "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "sourceId": "https://docs.example.test/controller-policy",
+          "content": "Only controller-recorded delivery receipts count.",
+          "deliveryMode": "retrieval_tool",
           "relevant": true
         }
-      ],
-      "receipts": [
-        {
-          "source": "https://docs.example.test/retries",
-          "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
-          "recorded": false,
-          "decision": "counted"
-        }
-      ],
-      "acceptedResult": {
-        "status": "completed",
-        "sourceUses": [{ "source": "https://docs.example.test/retries", "use": "Selected the retry status." }]
-      },
-      "expectedPass": false
+      ]
     },
     {
       "id": "dev-no-source-balance",
       "class": "no-source-balance",
       "requiresSource": false,
-      "request": "Rename the local variable described in the request; no external source is needed.",
-      "manifest": [],
-      "receipts": [],
-      "acceptedResult": { "status": "completed", "sourceUses": [] },
-      "expectedPass": true
+      "request": "Return a completed result for this self-contained rename. No source is required, so sourceUses must be empty.",
+      "sources": []
     }
   ]
 }

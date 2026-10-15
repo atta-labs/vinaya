@@ -281,22 +281,23 @@ bun apps/cli/tests/eval/tool-selection-suite.ts run --split <development|held-ou
 
 - **`replay`** is the deterministic regression subset, `tool-catalog.l4`, run in continuous integration by `apps/cli/tests/eval/tool-selection-suite.test.ts`: each development case's reference trace is written in each adapter's transcript format — Claude Code's `stream-json` `tool_use` blocks, Codex's `exec --json` items — read back by that adapter's transcript reader, executed through the real dispatcher against a fresh world, and graded.
 
+- **`live`** is the live suite, `tool-catalog.l5`. Each trial starts a fresh world behind the driver-run tool host, registered through the same channel a dispatch uses (Claude Code's `--strict-mcp-config`, a staged Codex home), serving the role only its granted tools, and runs the real CLI on the operator's subscription login in an empty workspace of its own. The trace is read from the CLI's own transcript, so an attempt the CLI denied still counts. Live runs need that login and are left to the Principal.
+
+The decision rule is the evaluation program's §10 absolute floor: a success rate of at least 0.95 for every tool, on each adapter, on the held-out split; no margin applies.
+
+<!-- AEG:CLAIM: apps/cli/tests/eval/tool-selection-suite.ts contains:export const LIVE_SUITE = { name: 'tool-catalog.l5', version: 1, layer: 'L5' } as const -->
+
 ## Source-citation suite
 
-The source-citation cases of `source-delivery.l5@1` check an accepted Developer result against controller-owned delivery evidence. Its code grader requires every cited source identity to occur in the run's manifest, have a counted controller receipt at the manifest's current SHA-256 digest, and be relevant to the task. It therefore detects a missing citation, an undelivered citation, an irrelevant delivered citation, a source changed between turns, and a worker-fabricated receipt. Source-free balancing tasks must leave `sourceUses` empty.
+The source-citation cases of `source-delivery.l5@1` run real Claude Code and Codex sessions with native structured Developer results. The driver-run tool host delivers the case's sources, and the code grader consumes the production `RequiredSourceManifest` and `SourceDeliveryReceipt` contracts. It verifies the manifest's self-digest plus each receipt's controller provenance, round, pinned and delivered digests, revision decision and source identity before matching the accepted result's `sourceUses`. It therefore detects a missing citation, an undelivered citation, an irrelevant delivered citation, a source changed between turns, and a worker-fabricated receipt. Source-free balancing tasks must leave `sourceUses` empty.
 
 <!-- AEG:CLAIM: apps/cli/tests/eval/source-citation-suite.ts contains:export const SOURCE_CITATION_FLOOR = 0.95 -->
 The decision rule is an absolute source-requiring-task floor of at least 0.95 pass^3 on each adapter, with every balancing trial correct. Reports name each adapter, task count, trial count, pass rate and reported spend, tokens and wall time.
 
 `source-citation-cases.json` contains the development cases and a split record that pins both splits by digest. The record exposes only the held-out index; held-out content lives in `source-citation-held-out.json`. Development loading never opens that file. A held-out run must present the pinned digest before the file is opened, and the bytes and public index are then verified before any case runs. Prompt, tool-description and grader development uses only the development split.
 
-The deterministic continuous-integration subset runs the planted controller-evidence cases through the code grader on both adapter identities. An approved held-out run uses:
+The deterministic continuous-integration subset plants each evidence failure directly into the production contracts and proves the grader rejects it; it does not launch or impersonate either adapter. An approved live run launches the selected real CLI for every case and trial, records its reported usage and wall time, and uses:
 
 ```text
-bun apps/cli/tests/eval/source-citation-suite.ts run --split held-out --approve-held-out <sha256>
+bun apps/cli/tests/eval/source-citation-suite.ts run --split held-out --approve-held-out <sha256> --adapter <claude-code|codex|both> --trials <n> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>]
 ```
-- **`live`** is the live suite, `tool-catalog.l5`. Each trial starts a fresh world behind the driver-run tool host, registered through the same channel a dispatch uses (Claude Code's `--strict-mcp-config`, a staged Codex home), serving the role only its granted tools, and runs the real CLI on the operator's subscription login in an empty workspace of its own. The trace is read from the CLI's own transcript, so an attempt the CLI denied still counts. Live runs need that login and are left to the Principal.
-
-The decision rule is the evaluation program's §10 absolute floor: a success rate of at least 0.95 for every tool, on each adapter, on the held-out split; no margin applies.
-
-<!-- AEG:CLAIM: apps/cli/tests/eval/tool-selection-suite.ts contains:export const LIVE_SUITE = { name: 'tool-catalog.l5', version: 1, layer: 'L5' } as const -->

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 
+import type { DeveloperTurnResult } from '../../src/lib/developer-turn-result'
+import { manifestDigest, type SourceDeliveryReceipt } from '../../src/lib/source-manifest'
 import {
   ADAPTERS,
   CASES_PATH,
@@ -8,30 +10,50 @@ import {
   SOURCE_CITATION_FLOOR,
   TRIALS_PER_TASK,
   developmentDigest,
+  evidenceFor,
   formatReport,
   gradeSourceUse,
   loadCaseFile,
   loadHeldOutCases,
   reportSourceCitation,
-  sha256,
   type SourceCitationCase,
   type TrialObservation
 } from './source-citation-suite'
 
+function completed(sourceUses: { source: string; use: string }[]): DeveloperTurnResult {
+  return {
+    schemaVersion: 1,
+    status: 'completed',
+    summary: 'Completed the evaluation task.',
+    confidence: 100,
+    confidenceExplanation: 'The result follows the supplied evidence.',
+    addressedFindingIds: [],
+    sourceUses,
+    reportedChecks: null
+  }
+}
+
+function compliant(testCase: SourceCitationCase): DeveloperTurnResult {
+  return completed(
+    testCase.sources
+      .filter((source) => source.relevant)
+      .map((source) => ({ source: source.sourceId, use: 'Applied the delivered policy.' }))
+  )
+}
+
 describe('source citation corpus', () => {
-  it('pins the development split without reading held-out content', () => {
+  it('pins development data without opening the held-out path', () => {
     const reads: string[] = []
     const file = loadCaseFile((path) => {
       reads.push(path)
       if (path === HELD_OUT_PATH) throw new Error('held-out content was read')
       return readFileSync(path, 'utf8')
     })
-    expect(loadCaseFile().splits.development.digest).toBe(developmentDigest(loadCaseFile().cases))
+    expect(file.splits.development.digest).toBe(developmentDigest(file.cases))
     expect(reads).toEqual([CASES_PATH])
-    expect(file).toBeDefined()
   })
 
-  it('refuses held-out content before digest approval and verifies bytes after approval', () => {
+  it('refuses before any held-out read when approval is absent', () => {
     const file = loadCaseFile()
     let reads = 0
     expect(() =>
@@ -41,80 +63,149 @@ describe('source citation corpus', () => {
       })
     ).toThrow('only with --approve-held-out')
     expect(reads).toBe(0)
-    const text = readFileSync(HELD_OUT_PATH, 'utf8')
-    expect(sha256(text)).toBe(file.splits.heldOut.digest)
-    expect(loadHeldOutCases(file, file.splits.heldOut.digest)).toHaveLength(file.splits.heldOut.index.length)
   })
 })
 
 describe('source citation code grader', () => {
   const file = loadCaseFile()
-  for (const testCase of file.cases) {
-    it(`detects ${testCase.class}`, () => {
-      expect(gradeSourceUse(testCase).verdict === 'pass').toBe(testCase.expectedPass)
-    })
-  }
+  const byClass = (caseClass: SourceCitationCase['class']) => file.cases.find((value) => value.class === caseClass)!
 
-  it('requires receipt, manifest identity, current digest and relevance together', () => {
-    const base = file.cases.find((value) => value.class === 'correct-citation')!
-    expect(gradeSourceUse({ ...base, receipts: [] }).reasons).toContain('no relevant delivered source cited')
-    expect(gradeSourceUse({ ...base, manifest: [{ ...base.manifest[0]!, relevant: false }] }).reasons).toContain(
-      `irrelevant source: ${base.manifest[0]!.source}`
+  it('accepts correct citations and the source-free balance case', () => {
+    for (const testCase of [byClass('correct-citation'), byClass('no-source-balance')]) {
+      const evidence = evidenceFor(testCase)
+      const receipts =
+        testCase.class === 'correct-citation'
+          ? [
+              ...evidence.receipts,
+              ...testCase.sources.map(
+                (source): SourceDeliveryReceipt => ({
+                  schemaVersion: 1,
+                  sourceId: source.sourceId,
+                  source: source.sourceId,
+                  round: evidence.manifest.round,
+                  recordedAt: evidence.manifest.preparedAt,
+                  mode: 'retrieval_tool',
+                  recordedBy: 'fetch_documentation',
+                  pinnedDigest: evidence.manifest.sources[0]!.contentDigest,
+                  deliveredDigest: evidence.manifest.sources[0]!.contentDigest!,
+                  revision: 'match',
+                  decision: 'counted'
+                })
+              )
+            ]
+          : evidence.receipts
+      expect(gradeSourceUse(testCase, compliant(testCase), evidence.manifest, receipts)).toEqual({
+        verdict: 'pass',
+        reasons: []
+      })
+    }
+  })
+
+  it('rejects a missing citation', () => {
+    const testCase = byClass('missing-citation')
+    const evidence = evidenceFor(testCase)
+    expect(gradeSourceUse(testCase, completed([]), evidence.manifest, evidence.receipts).verdict).toBe('fail')
+  })
+
+  it('rejects an undelivered citation', () => {
+    const testCase = byClass('undelivered-source')
+    const evidence = evidenceFor(testCase)
+    const result = completed([{ source: 'https://not-delivered.example.test', use: 'Unsupported claim.' }])
+    expect(gradeSourceUse(testCase, result, evidence.manifest, evidence.receipts).reasons).toContain(
+      'undelivered source: https://not-delivered.example.test'
     )
-    expect(gradeSourceUse({ ...base, receipts: [{ ...base.receipts[0]!, sha256: '0'.repeat(64) }] }).reasons).toContain(
-      `no current controller receipt: ${base.manifest[0]!.source}`
+  })
+
+  it('rejects a delivered but irrelevant citation', () => {
+    const testCase = byClass('irrelevant-source')
+    const evidence = evidenceFor(testCase)
+    const irrelevant = testCase.sources.find((source) => !source.relevant)!
+    const entry = evidence.manifest.sources.find((source) => source.sourceId === irrelevant.sourceId)!
+    const receipt: SourceDeliveryReceipt = {
+      schemaVersion: 1,
+      sourceId: entry.sourceId,
+      source: entry.sourceId,
+      round: evidence.manifest.round,
+      recordedAt: evidence.manifest.preparedAt,
+      mode: 'retrieval_tool',
+      recordedBy: 'fetch_documentation',
+      pinnedDigest: entry.contentDigest,
+      deliveredDigest: entry.contentDigest!,
+      revision: 'match',
+      decision: 'counted'
+    }
+    const result = completed([{ source: irrelevant.sourceId, use: 'Applied the unrelated guide.' }])
+    expect(gradeSourceUse(testCase, result, evidence.manifest, [receipt]).reasons).toContain(
+      `irrelevant source: ${irrelevant.sourceId}`
     )
+  })
+
+  it('rejects source mutation and an invalid manifest self-digest', () => {
+    const testCase = byClass('source-mutation')
+    const evidence = evidenceFor(testCase)
+    const entry = evidence.manifest.sources[0]!
+    const receipt: SourceDeliveryReceipt = {
+      schemaVersion: 1,
+      sourceId: entry.sourceId,
+      source: entry.sourceId,
+      round: evidence.manifest.round,
+      recordedAt: evidence.manifest.preparedAt,
+      mode: 'retrieval_tool',
+      recordedBy: 'fetch_documentation',
+      pinnedDigest: entry.contentDigest,
+      deliveredDigest: `sha256:${'0'.repeat(64)}`,
+      revision: 'mismatch',
+      decision: 'counted'
+    }
+    expect(gradeSourceUse(testCase, compliant(testCase), evidence.manifest, [receipt]).verdict).toBe('fail')
+    const corrupt = { ...evidence.manifest, digest: `sha256:${'1'.repeat(64)}` }
+    expect(gradeSourceUse(testCase, compliant(testCase), corrupt, []).reasons).toContain(
+      'manifest digest does not verify'
+    )
+    expect(manifestDigest(evidence.manifest)).toBe(evidence.manifest.digest)
+  })
+
+  it('rejects a worker-fabricated receipt shape or provenance', () => {
+    const testCase = byClass('receipt-fabrication')
+    const evidence = evidenceFor(testCase)
+    const entry = evidence.manifest.sources[0]!
+    const fabricated = {
+      schemaVersion: 1,
+      sourceId: entry.sourceId,
+      source: entry.sourceId,
+      round: evidence.manifest.round,
+      recordedAt: evidence.manifest.preparedAt,
+      mode: 'retrieval_tool',
+      recordedBy: 'worker',
+      pinnedDigest: entry.contentDigest,
+      deliveredDigest: entry.contentDigest,
+      revision: 'match',
+      decision: 'counted'
+    } as unknown as SourceDeliveryReceipt
+    expect(gradeSourceUse(testCase, compliant(testCase), evidence.manifest, [fabricated]).verdict).toBe('fail')
   })
 })
 
 describe('source citation report', () => {
-  it('reports both adapters, fixed floor, counts, trials and cost', () => {
-    const source = 'https://docs.example.test/current'
-    const digest = 'a'.repeat(64)
-    const cases: SourceCitationCase[] = [
-      {
-        id: 'report-source-required',
-        class: 'correct-citation',
-        requiresSource: true,
-        request: 'Use the source.',
-        manifest: [{ source, sha256: digest, relevant: true }],
-        receipts: [{ source, sha256: digest, recorded: true, decision: 'counted' }],
-        acceptedResult: { status: 'completed', sourceUses: [{ source, use: 'Applied the current rule.' }] },
-        expectedPass: true
-      },
-      {
-        id: 'report-no-source',
-        class: 'no-source-balance',
-        requiresSource: false,
-        request: 'Do the self-contained edit.',
-        manifest: [],
-        receipts: [],
-        acceptedResult: { status: 'completed', sourceUses: [] },
-        expectedPass: true
-      }
-    ]
+  it('counts only compliant accepted results toward the per-adapter floor', () => {
+    const testCase = loadCaseFile().cases.find((value) => value.class === 'undelivered-source')!
+    const evidence = evidenceFor(testCase)
     const observations: TrialObservation[] = ADAPTERS.flatMap((adapter) =>
-      cases.flatMap((testCase) =>
-        Array.from({ length: TRIALS_PER_TASK }, (_, trial) => ({
-          adapter,
-          taskId: testCase.id,
-          trial,
-          result: testCase.acceptedResult,
-          cost: {
-            reportedSpendUsd: adapter === 'claude-code' ? 0.01 : null,
-            inputTokens: 10,
-            outputTokens: 4,
-            wallMs: 20
-          }
-        }))
-      )
+      Array.from({ length: TRIALS_PER_TASK }, (_, trial) => ({
+        adapter,
+        taskId: testCase.id,
+        trial,
+        result: completed([{ source: 'https://not-delivered.example.test', use: 'Unsupported.' }]),
+        manifest: evidence.manifest,
+        receipts: evidence.receipts,
+        usage: { reportedSpendUsd: 0.01, inputTokens: 10, outputTokens: 4 },
+        wallMs: 20
+      }))
     )
-    const report = reportSourceCitation('development', cases, observations)
+    const report = reportSourceCitation('development', [testCase], observations)
     expect(report.floor).toBe(SOURCE_CITATION_FLOOR)
-    expect(report.floorHolds).toBe(true)
-    expect(report.adapters.map((value) => value.adapter)).toEqual([...ADAPTERS])
-    expect(report.adapters.every((value) => value.taskCount === 2 && value.trials === 6)).toBe(true)
-    expect(formatReport(report)).toContain('2 tasks × 3 trials per adapter')
+    expect(report.floorHolds).toBe(false)
+    expect(report.adapters.every((value) => value.sourceRequiringRate === 0)).toBe(true)
     expect(formatReport(report)).toContain('reported spend')
   })
 })

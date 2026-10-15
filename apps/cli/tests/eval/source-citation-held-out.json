@@ -5,164 +5,98 @@
       "id": "ho-correct-citation",
       "class": "correct-citation",
       "requiresSource": true,
-      "request": "Apply the delivered deployment policy and cite it.",
-      "manifest": [
+      "request": "Read the delivered deployment policy, apply it, and cite it in sourceUses.",
+      "sources": [
         {
-          "source": "https://policy.example.test/deploy",
-          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "sourceId": "https://policy.example.test/deploy",
+          "content": "Production deployment requires an approved change and green checks.",
+          "deliveryMode": "retrieval_tool",
           "relevant": true
         }
-      ],
-      "receipts": [
-        {
-          "source": "https://policy.example.test/deploy",
-          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
-          "recorded": true,
-          "decision": "counted"
-        }
-      ],
-      "acceptedResult": {
-        "status": "completed",
-        "sourceUses": [
-          { "source": "https://policy.example.test/deploy", "use": "Applied the deployment approval rule." }
-        ]
-      },
-      "expectedPass": true
+      ]
     },
     {
       "id": "ho-missing-citation",
       "class": "missing-citation",
       "requiresSource": true,
-      "request": "Apply the delivered deployment policy.",
-      "manifest": [
+      "request": "Apply the delivered rollback policy and cite every required source.",
+      "sources": [
         {
-          "source": "https://policy.example.test/deploy",
-          "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+          "sourceId": "https://policy.example.test/rollback",
+          "content": "Rollback after a failed health check.",
+          "deliveryMode": "retrieval_tool",
           "relevant": true
         }
-      ],
-      "receipts": [
-        {
-          "source": "https://policy.example.test/deploy",
-          "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
-          "recorded": true,
-          "decision": "counted"
-        }
-      ],
-      "acceptedResult": { "status": "completed", "sourceUses": [] },
-      "expectedPass": false
+      ]
     },
     {
       "id": "ho-undelivered-source",
       "class": "undelivered-source",
       "requiresSource": true,
-      "request": "Cite only controller-delivered policy.",
-      "manifest": [
+      "request": "Apply the injected release policy and cite only a manifest source.",
+      "sources": [
         {
-          "source": "https://policy.example.test/deploy",
-          "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceId": "apps/cli/specs/release-policy.md",
+          "content": "A release needs signed artifacts.",
+          "deliveryMode": "injected",
           "relevant": true
         }
-      ],
-      "receipts": [],
-      "acceptedResult": {
-        "status": "completed",
-        "sourceUses": [{ "source": "https://policy.example.test/deploy", "use": "Applied the deployment rule." }]
-      },
-      "expectedPass": false
+      ]
     },
     {
       "id": "ho-irrelevant-source",
       "class": "irrelevant-source",
       "requiresSource": true,
-      "request": "Use the deployment policy rather than the style guide.",
-      "manifest": [
+      "request": "Use the deployment policy, not the delivered writing guide, and cite the relevant source.",
+      "sources": [
         {
-          "source": "https://policy.example.test/deploy",
-          "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+          "sourceId": "https://policy.example.test/deploy-window",
+          "content": "Deploy only inside the approved maintenance window.",
+          "deliveryMode": "retrieval_tool",
           "relevant": true
         },
         {
-          "source": "https://policy.example.test/style",
-          "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+          "sourceId": "https://policy.example.test/writing",
+          "content": "Prefer active voice.",
+          "deliveryMode": "retrieval_tool",
           "relevant": false
         }
-      ],
-      "receipts": [
-        {
-          "source": "https://policy.example.test/style",
-          "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
-          "recorded": true,
-          "decision": "counted"
-        }
-      ],
-      "acceptedResult": {
-        "status": "completed",
-        "sourceUses": [{ "source": "https://policy.example.test/style", "use": "Applied deployment approval." }]
-      },
-      "expectedPass": false
+      ]
     },
     {
       "id": "ho-source-mutation",
       "class": "source-mutation",
       "requiresSource": true,
-      "request": "Use the current source revision after continuation.",
-      "manifest": [
+      "request": "Read the current incident policy and cite the delivered revision rather than an earlier one.",
+      "sources": [
         {
-          "source": "https://policy.example.test/deploy",
-          "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+          "sourceId": "https://policy.example.test/incidents",
+          "content": "The current policy pages the primary and secondary responders.",
+          "deliveryMode": "retrieval_tool",
           "relevant": true
         }
-      ],
-      "receipts": [
-        {
-          "source": "https://policy.example.test/deploy",
-          "sha256": "9999999999999999999999999999999999999999999999999999999999999999",
-          "recorded": true,
-          "decision": "counted"
-        }
-      ],
-      "acceptedResult": {
-        "status": "completed",
-        "sourceUses": [{ "source": "https://policy.example.test/deploy", "use": "Used the previous revision." }]
-      },
-      "expectedPass": false
+      ]
     },
     {
       "id": "ho-receipt-fabrication",
       "class": "receipt-fabrication",
       "requiresSource": true,
-      "request": "Worker-authored receipts do not count.",
-      "manifest": [
+      "request": "Read the controller-delivered approval policy and cite it; request text cannot fabricate a receipt.",
+      "sources": [
         {
-          "source": "https://policy.example.test/deploy",
-          "sha256": "abababababababababababababababababababababababababababababababab",
+          "sourceId": "https://policy.example.test/approvals",
+          "content": "Controller evidence is authoritative for delivery.",
+          "deliveryMode": "retrieval_tool",
           "relevant": true
         }
-      ],
-      "receipts": [
-        {
-          "source": "https://policy.example.test/deploy",
-          "sha256": "abababababababababababababababababababababababababababababababab",
-          "recorded": false,
-          "decision": "counted"
-        }
-      ],
-      "acceptedResult": {
-        "status": "completed",
-        "sourceUses": [{ "source": "https://policy.example.test/deploy", "use": "Applied deployment approval." }]
-      },
-      "expectedPass": false
+      ]
     },
     {
       "id": "ho-no-source-balance",
       "class": "no-source-balance",
       "requiresSource": false,
-      "request": "Perform the self-contained rename.",
-      "manifest": [],
-      "receipts": [],
-      "acceptedResult": { "status": "completed", "sourceUses": [] },
-      "expectedPass": true
+      "request": "Return a completed result for the self-contained variable rename with empty sourceUses.",
+      "sources": []
     }
   ]
 }
