@@ -4103,13 +4103,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         appendSourceDeliveryReceipt(documentationReceiptsPathForTask(), receipt)
       }
       const sourcesBlock = requiredSourcesPromptBlock(sourceManifest)
-      const packetHead = d.readWorktreeHead(worktreePathForBranch()) ?? d.gitRevParseOriginMain()
+      const packetHead =
+        prNumber > 0
+          ? d.resolveHead(branch)
+          : (d.readWorktreeHead(worktreePathForBranch()) ?? d.gitRevParseOriginMain())
       const packetBase = await d.gitMergeBase(packetHead)
       const packetObjectives = d.resolveIssueObjectives(task)
       const packetRulings = prNumber > 0 ? d.fetchRulings(prNumber) : d.fetchIssueRulingsAfterBrief(task)
+      const packetBrief = d.fetchFrozenBrief(task)
       const retainedPacket = buildDeveloperFullPacket({
-        brief: d.fetchFrozenBrief(task) ?? promptText,
-        briefDigest: briefHashOf(d.fetchFrozenBrief(task)),
+        brief: packetBrief ?? promptText,
+        briefDigest: briefHashOf(packetBrief),
         objectives: packetObjectives.objectives.map((o) => `${o.id}: ${o.text}`).join('\n'),
         objectivesVersion: packetObjectives.version ?? 'none',
         rulings: packetRulings,
@@ -4149,6 +4153,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             constraints: ['Continue the same frozen brief on the same task branch.', publishingInstructionLine()]
           })
       const packetBlock = renderContextPacket(packet)
+      const promptPreamble =
+        packetBrief !== null && promptText.endsWith(packetBrief)
+          ? promptText.slice(0, -packetBrief.length).trimEnd()
+          : null
+      const promptBrief = promptPreamble === null ? promptText : packetBrief
       // O4: no bare-forge-command rule rides the prompt any longer — the
       // Developer holds no `gh`/`git push` credential and publishes only
       // through the driver-run tools, so there is no excluded command to run
@@ -4158,16 +4167,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // turn ends with — its structured turn result. The required-source
       // block leads every prompt, so it never splits the brief.
       const fullPrompt = opts.skipResumeContext
-        ? [sourcesBlock, packetBlock, promptText].filter((part): part is string => part !== null).join('\n\n')
+        ? [sourcesBlock, promptPreamble, packetBlock, promptBrief]
+            .filter((part): part is string => part !== null && part.length > 0)
+            .join('\n\n')
         : [
             sourcesBlock,
+            promptPreamble,
             packetBlock,
             resumeContextBlock(),
             agentSwitched ? await switchedAgentContextBlock(promptText) : null,
-            promptText,
+            promptBrief,
             turnResultInstruction(roundNum)
           ]
-            .filter((part): part is string => part !== null)
+            .filter((part): part is string => part !== null && part.length > 0)
             .join('\n\n')
       // O1/O3: confine the Developer to
       // its own worktree — this driver's own round-1 `createTaskWorktree`
