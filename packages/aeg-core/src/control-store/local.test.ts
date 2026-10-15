@@ -10,6 +10,7 @@ import {
   InvalidEffectKeyError,
   InvalidEscalationIdError,
   InvalidRunIdError,
+  isAtOrBelowTrustedRoot,
   isTrustedDirStat,
   listStartedEffectKeys,
   markEffectUncertain,
@@ -18,12 +19,15 @@ import {
   readEffect,
   readEscalation,
   readInput,
+  readTrustedOverflowUid,
   readLoopState,
   readResolution,
   readRun,
   readTransitions,
   readManifest,
+  segmentTrustedOverflowUid,
   StaleEpochWriteError,
+  uidMapLeavesRootUnmapped,
   writeEffect,
   writeEscalation,
   writeInput,
@@ -517,6 +521,85 @@ describe('isTrustedDirStat', () => {
 
   it('trusts any owner or mode when the platform reports no uid at all (e.g. Windows)', () => {
     expect(isTrustedDirStat({ uid: 1000, mode: 0o777 }, undefined)).toBe(true)
+  })
+})
+
+describe('the overflow uid inside a root-unmapping Linux user namespace', () => {
+  const OVERFLOW = 65534
+  const OWN = 1000
+  const SANDBOX_MAP = '1000 0 1\n'
+  const IDENTITY_MAP = '         0          0 4294967295\n'
+  // `trustedRoot` = `/tmp/vinaya-world/runtime`: three segments, so index 2
+  // is `trustedRoot` itself, index 3 is below it, and indexes 0 and 1
+  // (`/tmp`, `/tmp/vinaya-world`) sit strictly above it.
+  const ROOT_SEGMENTS = 3
+
+  function fakeProc(files: Record<string, string>): (path: string) => string {
+    return (path) => {
+      const body = files[path]
+      if (body === undefined) throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' })
+      return body
+    }
+  }
+
+  function overflowUnder(uidMap: string): number | undefined {
+    return readTrustedOverflowUid(
+      fakeProc({ '/proc/self/uid_map': uidMap, '/proc/sys/kernel/overflowuid': `${OVERFLOW}\n` })
+    )
+  }
+
+  function trustedAt(index: number, stat: { uid: number; mode: number }, uidMap: string): boolean {
+    return isTrustedDirStat(stat, OWN, segmentTrustedOverflowUid(index, ROOT_SEGMENTS, overflowUnder(uidMap)))
+  }
+
+  it('reads the measured sandbox map `1000 0 1` as root-unmapped, and a map whose inside range covers 0 as mapped', () => {
+    expect(uidMapLeavesRootUnmapped(SANDBOX_MAP)).toBe(true)
+    expect(uidMapLeavesRootUnmapped(IDENTITY_MAP)).toBe(false)
+    expect(uidMapLeavesRootUnmapped('0 100000 65536\n')).toBe(false)
+    expect(uidMapLeavesRootUnmapped('1000 1000 1\n0 0 1\n')).toBe(false)
+    expect(uidMapLeavesRootUnmapped('')).toBe(false)
+    expect(uidMapLeavesRootUnmapped('not a map\n')).toBe(false)
+    expect(overflowUnder(SANDBOX_MAP)).toBe(OVERFLOW)
+    expect(overflowUnder(IDENTITY_MAP)).toBeUndefined()
+  })
+
+  it('trusts an overflow-uid-owned sticky `1777` directory above `trustedRoot` under the sandbox map, and refuses it under the identity map', () => {
+    const tmp = { uid: OVERFLOW, mode: 0o1777 }
+    expect(isAtOrBelowTrustedRoot(0, ROOT_SEGMENTS)).toBe(false)
+    expect(trustedAt(0, tmp, SANDBOX_MAP)).toBe(true)
+    expect(trustedAt(1, tmp, SANDBOX_MAP)).toBe(true)
+    expect(trustedAt(0, tmp, IDENTITY_MAP)).toBe(false)
+    expect(trustedAt(1, tmp, IDENTITY_MAP)).toBe(false)
+  })
+
+  it('refuses an overflow-uid-owned directory at or below `trustedRoot` under either map — a co-tenant plant reads as the same uid', () => {
+    const plant = { uid: OVERFLOW, mode: 0o700 }
+    expect(isAtOrBelowTrustedRoot(2, ROOT_SEGMENTS)).toBe(true)
+    for (const map of [SANDBOX_MAP, IDENTITY_MAP]) {
+      expect(trustedAt(2, plant, map)).toBe(false)
+      expect(trustedAt(3, plant, map)).toBe(false)
+      expect(trustedAt(2, { uid: OVERFLOW, mode: 0o1777 }, map)).toBe(false)
+    }
+  })
+
+  it('refuses an overflow-uid-owned world-writable directory without the sticky bit under either map', () => {
+    for (const map of [SANDBOX_MAP, IDENTITY_MAP]) {
+      expect(trustedAt(0, { uid: OVERFLOW, mode: 0o777 }, map)).toBe(false)
+    }
+  })
+
+  it("falls back to today's rule when either `/proc` file cannot be read", () => {
+    const noMap = fakeProc({ '/proc/sys/kernel/overflowuid': `${OVERFLOW}\n` })
+    const noOverflow = fakeProc({ '/proc/self/uid_map': SANDBOX_MAP })
+    for (const read of [noMap, noOverflow, fakeProc({})]) {
+      const overflow = readTrustedOverflowUid(read)
+      expect(overflow).toBeUndefined()
+      expect(
+        isTrustedDirStat({ uid: OVERFLOW, mode: 0o1777 }, OWN, segmentTrustedOverflowUid(0, ROOT_SEGMENTS, overflow))
+      ).toBe(false)
+      expect(isTrustedDirStat({ uid: 0, mode: 0o1777 }, OWN, overflow)).toBe(true)
+      expect(isTrustedDirStat({ uid: OWN, mode: 0o700 }, OWN, overflow)).toBe(true)
+    }
   })
 })
 
