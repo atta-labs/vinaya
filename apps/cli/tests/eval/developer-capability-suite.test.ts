@@ -21,6 +21,9 @@ import {
   type DeveloperCapabilityCase,
   type DeveloperTrialObservation,
   DROP_REASONS,
+  digestSetOf,
+  digestsFor,
+  digestsIn,
   developerForbidden,
   developmentDigest,
   developmentTasks,
@@ -36,9 +39,12 @@ import {
   loadCaseFile,
   loadHeldOutCases,
   MINIMUM_CASES,
+  outcomeKey,
+  outcomesOf,
   readJunit,
   referenceSolutionDigest,
   suiteFor,
+  testDigest,
   testIdsOf,
   verifyCaseAgainstHistory
 } from './developer-capability-suite'
@@ -82,7 +88,15 @@ describe('developer capability corpus', () => {
       expect(verifyCaseAgainstHistory(git, c)).toEqual([])
       expect(c.hiddenTests.files.every((f) => isTestPath(f.path))).toBe(true)
       expect(c.referenceSolution.files.some((f) => isTestPath(f.path))).toBe(false)
+      expect(c.passToPassFiles.every((f) => isTestPath(f.path))).toBe(true)
     }
+  })
+
+  it('draws pass-to-pass from the existing suite beyond the withheld test files', () => {
+    const beyond = file.cases.filter((c) => c.passToPassFiles.length > 0)
+    expect(beyond.length).toBeGreaterThan(file.cases.length / 2)
+    for (const c of beyond)
+      for (const { path } of c.passToPassFiles) expect(digestsFor(c.passToPass, path).length).toBeGreaterThan(0)
   })
 
   it('refuses a development case changed since creation', () => {
@@ -237,13 +251,21 @@ function completed(c: DeveloperCapabilityCase): DeveloperTurnResult {
   }
 }
 
+/** Every outcome key the case's fail-to-pass and pass-to-pass lists name. */
+function expectedKeys(c: DeveloperCapabilityCase): string[] {
+  return [
+    ...testIdsOf(c.failToPass).map(({ file, name }) => outcomeKey(file, testDigest(name))),
+    ...c.passToPass.flatMap(({ file, digests }) => digestsIn(digests).map((d) => outcomeKey(file, d)))
+  ]
+}
+
 /** What the merged change itself would produce as a trial: the reference solution, published and recorded correctly. */
 function referenceObservation(c: DeveloperCapabilityCase): DeveloperTrialObservation {
   const changedPaths = [...c.referenceSolution.files.map((f) => f.path), ...c.referenceSolution.deleted]
   const manifest = manifestFor(c)
   return {
     caseId: c.id,
-    testResults: [...testIdsOf(c.failToPass), ...testIdsOf(c.passToPass)].map((id) => ({ ...id, outcome: 'pass' })),
+    testOutcomes: Object.fromEntries(expectedKeys(c).map((key) => [key, 'pass' as const])),
     changedPaths,
     pullRequestBody: `Closes #${c.issue}\n\n## Scope\n\n${renderBeyondSurfaceBlock(beyondScope(c, changedPaths))}\n`,
     manifest,
@@ -293,21 +315,39 @@ describe('the developer capability grader', () => {
 
   it('rejects a fail-to-pass test that fails, and one that never ran', () => {
     const o = referenceObservation(planted)
-    const [first, second] = o.testResults
-    expect(failed(planted, { ...o, testResults: [{ ...first!, outcome: 'fail' }, ...o.testResults.slice(1)] })).toEqual(
-      ['tests-pass']
-    )
-    expect(failed(planted, { ...o, testResults: [second!, ...o.testResults.slice(2)] })).toEqual(['tests-pass'])
+    const [first] = testIdsOf(planted.failToPass)
+    const key = outcomeKey(first!.file, testDigest(first!.name))
+    expect(failed(planted, { ...o, testOutcomes: { ...o.testOutcomes, [key]: 'fail' } })).toEqual(['tests-pass'])
+    const { [key]: _gone, ...rest } = o.testOutcomes
+    expect(failed(planted, { ...o, testOutcomes: rest })).toEqual(['tests-pass'])
   })
 
   it('rejects a pass-to-pass test that breaks', () => {
-    const c = cases.find((value) => testIdsOf(value.passToPass).length > 0) as DeveloperCapabilityCase
+    // An existing test file beyond the hidden ones: the trial broke the existing suite.
+    const c = cases.find((value) => value.passToPassFiles.length > 0) as DeveloperCapabilityCase
     const o = referenceObservation(c)
-    const [p2p] = testIdsOf(c.passToPass)
-    const testResults = o.testResults.map((r) =>
-      r.file === p2p!.file && r.name === p2p!.name ? { ...r, outcome: 'fail' as const } : r
-    )
-    expect(failed(c, { ...o, testResults })).toEqual(['tests-pass'])
+    const file = c.passToPassFiles[0]!.path
+    const key = outcomeKey(file, digestsFor(c.passToPass, file)[0]!)
+    expect(failed(c, { ...o, testOutcomes: { ...o.testOutcomes, [key]: 'fail' } })).toEqual(['tests-pass'])
+    const grade = gradeDeveloperTrial(c, { ...o, testOutcomes: { ...o.testOutcomes, [key]: 'skip' } }, FORBIDDEN)
+    expect(grade.criteria['tests-pass']).toEqual({
+      verdict: 'fail',
+      reason: `pass-to-pass ${file}: 1 of ${digestsFor(c.passToPass, file).length} tests did not pass`
+    })
+  })
+
+  it('keys a runner’s results by file and name digest', () => {
+    const results = [
+      { file: 'a.test.ts', name: 'D > t', outcome: 'pass' as const },
+      { file: 'a.test.ts', name: 'D > u', outcome: 'fail' as const }
+    ]
+    expect(outcomesOf(results)).toEqual({
+      [outcomeKey('a.test.ts', testDigest('D > t'))]: 'pass',
+      [outcomeKey('a.test.ts', testDigest('D > u'))]: 'fail'
+    })
+    expect(digestSetOf({ 'a.test.ts': ['D > u', 'D > t', 'D > t'], 'b.test.ts': [] })).toEqual([
+      { digests: [testDigest('D > t'), testDigest('D > u')].sort().join(''), file: 'a.test.ts' }
+    ])
   })
 
   it('rejects a protected administrative path and an agent configuration path the frozen scope does not name', () => {

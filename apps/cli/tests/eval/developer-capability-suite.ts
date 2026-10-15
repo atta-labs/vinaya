@@ -50,6 +50,7 @@ import {
 import { documentationSourceId } from '../../src/lib/task-tools/fetch-documentation'
 import { ROLE_TOOL_GRANTS } from '../../src/lib/task-tools/role-grants'
 import { AGENT_TOOL_CATALOG } from '../../src/lib/task-tools/tool-catalog'
+import { selectAffectedTestFiles } from '../../src/lib/test-selector'
 import { agentOwnConfigSubpaths } from '../../src/lib/worker-boundary'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture'
 import {
@@ -100,6 +101,56 @@ export function testSetOf(ids: readonly TestId[]): TestSet {
   return set
 }
 
+/** The characters of a test name's digest: the leading hexadecimal characters of the SHA-256 of the name. */
+export const TEST_DIGEST_LENGTH = 12
+
+/** A test's name, digested; pass-to-pass lists names this way to keep its thousands of names small. */
+export function testDigest(name: string): string {
+  return sha256(name).slice(0, TEST_DIGEST_LENGTH)
+}
+
+/**
+ * One file's tests, their names digested, sorted and concatenated into one
+ * string. The digests come before the file, so no line of the case file
+ * puts a path beside a run of hexadecimal characters.
+ */
+export interface DigestedFile {
+  digests: string
+  file: string
+}
+
+/** Tests grouped by file, by name digest. */
+export type DigestSet = DigestedFile[]
+
+export function digestSetOf(set: TestSet): DigestSet {
+  return Object.entries(set)
+    .filter(([, names]) => names.length > 0)
+    .map(([file, names]) => ({ digests: [...new Set(names.map(testDigest))].sort().join(''), file }))
+}
+
+export function digestsIn(value: string): string[] {
+  return value.match(new RegExp(`.{${TEST_DIGEST_LENGTH}}`, 'g')) ?? []
+}
+
+/** The digests `set` holds for `file`. */
+export function digestsFor(set: DigestSet, file: string): string[] {
+  return digestsIn(set.find((entry) => entry.file === file)?.digests ?? '')
+}
+
+/** One test's outcome in a run, keyed by its file and name digest. */
+export type TestOutcomes = Record<string, TestOutcome>
+
+export function outcomeKey(file: string, digest: string): string {
+  return `${file}\0${digest}`
+}
+
+/** What the grading copy's run reported, keyed for the grader. */
+export function outcomesOf(results: readonly TestResult[]): TestOutcomes {
+  const out: TestOutcomes = {}
+  for (const r of results) out[outcomeKey(r.file, testDigest(r.name))] = r.outcome
+  return out
+}
+
 /** One file of a commit, pinned by its git blob id. */
 export interface PinnedFile {
   path: string
@@ -132,8 +183,14 @@ export interface DeveloperCapabilityCase {
   referenceSolution: { commit: string; files: PinnedFile[]; deleted: string[]; digest: string }
   /** Tests that fail (or do not load) on the base commit with the hidden tests written in, and pass on the reference commit. */
   failToPass: TestSet
-  /** Tests in the files the hidden tests touch that pass on both. */
-  passToPass: TestSet
+  /**
+   * Tests that pass on both, by name digest: those in the hidden test files,
+   * and those in the existing test files the repository's affected-test
+   * selection picks for the merged change.
+   */
+  passToPass: DigestSet
+  /** The existing test files pass-to-pass draws on beyond the hidden ones, pinned by their blob on the base commit and written into the grading copy at that revision. */
+  passToPassFiles: PinnedFile[]
 }
 
 export const DROP_REASONS = [
@@ -234,13 +291,26 @@ export function checkCase(c: DeveloperCapabilityCase, path: string): void {
   if (solution.commit !== c.referenceCommit) refuse(`${path}.referenceSolution.commit`, 'is the reference commit')
   if (solution.files.length + solution.deleted.length === 0) refuse(`${path}.referenceSolution`, 'changes something')
   if (referenceSolutionDigest(solution) !== solution.digest) refuse(`${path}.referenceSolution.digest`, 'is stale')
-  for (const file of [...c.hiddenTests.files, ...solution.files])
+  for (const file of [...c.hiddenTests.files, ...solution.files, ...c.passToPassFiles])
     if (!COMMIT.test(file.blob)) refuse(`${path}`, `${file.path} is not pinned by a blob id`)
   checkTestSet(c.failToPass, `${path}.failToPass`)
-  checkTestSet(c.passToPass, `${path}.passToPass`)
+  for (const [i, { digests }] of c.passToPass.entries()) {
+    if (!new RegExp(`^(?:[a-f0-9]{${TEST_DIGEST_LENGTH}})+$`).test(digests))
+      refuse(`${path}.passToPass[${i}]`, 'is a run of test-name digests')
+    if (new Set(digestsIn(digests)).size !== digestsIn(digests).length)
+      refuse(`${path}.passToPass[${i}]`, 'repeats a test')
+  }
+  if (new Set(c.passToPass.map((entry) => entry.file)).size !== c.passToPass.length)
+    refuse(`${path}.passToPass`, 'repeats a file')
+  const hidden = new Set(c.hiddenTests.files.map((f) => f.path))
+  const existing = new Set(c.passToPassFiles.map((f) => f.path))
+  if (c.passToPassFiles.some((f) => hidden.has(f.path))) refuse(`${path}.passToPassFiles`, 'repeats a hidden test file')
+  for (const file of Object.keys(c.failToPass))
+    if (!hidden.has(file)) refuse(`${path}.failToPass`, `${file} is not a hidden test file`)
+  for (const { file } of c.passToPass)
+    if (!hidden.has(file) && !existing.has(file)) refuse(`${path}.passToPass`, `${file} is not a pinned test file`)
   if (testIdsOf(c.failToPass).length === 0) refuse(`${path}.failToPass`, 'holds at least one test')
-  const failing = new Set(testIdsOf(c.failToPass).map(testKey))
-  if (testIdsOf(c.passToPass).some((id) => failing.has(testKey(id))))
+  if (testIdsOf(c.failToPass).some(({ file, name }) => digestsFor(c.passToPass, file).includes(testDigest(name))))
     refuse(`${path}`, 'a test is both fail-to-pass and pass-to-pass')
 }
 
@@ -362,9 +432,22 @@ export function verifyCaseAgainstHistory(git: Git, c: DeveloperCapabilityCase): 
   const { commit: _commit, digest: _digest, ...solution } = c.referenceSolution
   if (canonicalJson(split.referenceSolution) !== canonicalJson(solution))
     problems.push('reference solution differs from the merged change')
-  const testFiles = new Set(c.hiddenTests.files.map((f) => f.path))
-  for (const file of [...Object.keys(c.failToPass), ...Object.keys(c.passToPass)])
-    if (!testFiles.has(file)) problems.push(`${file} is not a withheld test file`)
+  // An existing pass-to-pass file is the same blob before and after the merged change.
+  const blobsAt = (commit: string) =>
+    new Map(
+      git(['ls-tree', '-r', '-z', commit])
+        .split('\0')
+        .filter(Boolean)
+        .map((entry) => {
+          const [meta, path] = entry.split('\t') as [string, string]
+          return [path, meta.split(' ')[2] as string]
+        })
+    )
+  const before = blobsAt(c.baseCommit)
+  const after = blobsAt(c.referenceCommit)
+  for (const file of c.passToPassFiles)
+    if (before.get(file.path) !== file.blob || after.get(file.path) !== file.blob)
+      problems.push(`${file.path} is not unchanged at its pinned blob`)
   return problems
 }
 
@@ -534,12 +617,50 @@ export async function runTests(checkout: string, files: readonly string[], budge
     // bun writes no report when no test case ran at all — every file failed to
     // load — and says so in its summary: nothing passed. Anything else is a
     // runner failure.
-    if (existsSync(report)) results.push(...readJunit(readFileSync(report, 'utf8'), root === '.' ? '' : root))
-    else if (!/^\s*0 pass$/m.test(`${run.stdout}\n${run.stderr}`))
+    if (existsSync(report)) {
+      const prefix = root === '.' ? '' : root
+      // A runner names a file relative to the package, or now and then to the
+      // repository root already; either way the id is the repository path.
+      for (const result of readJunit(readFileSync(report, 'utf8'), prefix)) {
+        const raw = prefix === '' ? result.file : result.file.slice(prefix.length + 1)
+        const named = !existsSync(join(checkout, result.file)) && existsSync(join(checkout, raw))
+        results.push(named ? { ...result, file: raw } : result)
+      }
+    } else if (!/^\s*0 pass$/m.test(`${run.stdout}\n${run.stderr}`))
       throw new Error(`the test runner wrote no report in ${root}`)
     rmSync(dirname(report), { recursive: true, force: true })
   }
   return results
+}
+
+/** The longest one existing test file may run while pass-to-pass is reconstructed. */
+export const RELATED_FILE_BUDGET_MS = 180_000
+
+/**
+ * Runs `files` together within `budgetMs`; when that run overruns, runs each
+ * file in a runner of its own within `fileBudgetMs`, so a file that never
+ * finishes reports no test — none of its tests can enter a list — and the
+ * rest still run.
+ */
+export async function runRelatedTests(
+  checkout: string,
+  files: readonly string[],
+  budgetMs: number,
+  fileBudgetMs: number
+): Promise<TestResult[]> {
+  try {
+    return await runTests(checkout, files, budgetMs)
+  } catch {
+    const results: TestResult[] = []
+    for (const file of files) {
+      try {
+        results.push(...(await runTests(checkout, [file], fileBudgetMs)))
+      } catch {
+        // No result: the file's tests are left out of both lists.
+      }
+    }
+    return results
+  }
 }
 
 /**
@@ -583,8 +704,8 @@ export interface PerformedEffect {
 /** What a trial produced, recorded by the controller and the grading copy — never what the agent said happened. */
 export interface DeveloperTrialObservation {
   caseId: string
-  /** Every test run in the grading copy: the hidden tests written onto the trial's branch. */
-  testResults: TestResult[]
+  /** Every test run in the grading copy — the hidden tests and the pass-to-pass files written onto the trial's branch — keyed by `outcomesOf`. */
+  testOutcomes: TestOutcomes
   /** Every path the task branch changes against the base commit. */
   changedPaths: string[]
   /** The pull request body the driver wrote, holding the beyond-Surface record; `null` when no pull request was opened. */
@@ -629,17 +750,16 @@ function verdictOf(reasons: readonly string[]): GraderVerdict {
 }
 
 /** Every fail-to-pass and pass-to-pass test passes in the grading copy. */
-export function gradeTests(c: DeveloperCapabilityCase, results: readonly TestResult[]): GraderVerdict {
-  const outcome = new Map(results.map((r) => [testKey(r), r.outcome]))
+export function gradeTests(c: DeveloperCapabilityCase, outcomes: TestOutcomes): GraderVerdict {
   const reasons: string[] = []
-  for (const [list, ids] of [
-    ['fail-to-pass', c.failToPass],
-    ['pass-to-pass', c.passToPass]
-  ] as const) {
-    for (const id of testIdsOf(ids)) {
-      const got = outcome.get(testKey(id))
-      if (got !== 'pass') reasons.push(`${list} ${id.file} › ${id.name}: ${got ?? 'not run'}`)
-    }
+  for (const { file, name } of testIdsOf(c.failToPass)) {
+    const got = outcomes[outcomeKey(file, testDigest(name))]
+    if (got !== 'pass') reasons.push(`fail-to-pass ${file} › ${name}: ${got ?? 'not run'}`)
+  }
+  for (const { file, digests } of c.passToPass) {
+    const all = digestsIn(digests)
+    const missed = all.filter((digest) => outcomes[outcomeKey(file, digest)] !== 'pass')
+    if (missed.length > 0) reasons.push(`pass-to-pass ${file}: ${missed.length} of ${all.length} tests did not pass`)
   }
   return verdictOf(reasons)
 }
@@ -851,7 +971,7 @@ export function gradeDeveloperTrial(
   if (o.caseId !== c.id) throw new Error(`observation is for ${o.caseId}, not ${c.id}`)
   const accepted = acceptedResult(c, o.turnResults)
   const criteria: Record<Criterion, GraderVerdict> = {
-    'tests-pass': gradeTests(c, o.testResults),
+    'tests-pass': gradeTests(c, o.testOutcomes),
     'protected-paths': gradeProtectedPaths(c.scope, o.changedPaths),
     'beyond-surface-record': gradeBeyondSurfaceRecord(c, o.changedPaths, o.pullRequestBody),
     'sources-cited': gradeSources(c, o.manifest, o.receipts, accepted?.result ?? null),
@@ -863,7 +983,7 @@ export function gradeDeveloperTrial(
 }
 
 const GRADER_LOGIC: Record<Criterion, readonly ((...args: never[]) => unknown)[]> = {
-  'tests-pass': [gradeTests, testKey],
+  'tests-pass': [gradeTests, testDigest, digestsIn, outcomeKey],
   'protected-paths': [gradeProtectedPaths, brokerRefusedPaths, scopeNames],
   'beyond-surface-record': [gradeBeyondSurfaceRecord, beyondScope],
   'sources-cited': [gradeSources, acceptedResult],
@@ -881,7 +1001,7 @@ export const GRADERS: readonly CodeGraderIdentity[] = CRITERIA.map((criterion) =
 
 /** A case as a harness Task: a coding task whose reference solution is the merged change. */
 export function toTask(c: DeveloperCapabilityCase): Task {
-  const hidden = sha256(canonicalJson(c.hiddenTests))
+  const hidden = sha256(canonicalJson({ hiddenTests: c.hiddenTests, passToPassFiles: c.passToPassFiles }))
   const scope = sha256(canonicalJson({ scope: c.scope, requiredSources: c.requiredSources }))
   const briefDigest = c.brief.digest.slice('sha256:'.length)
   const expected = sha256(canonicalJson({ failToPass: c.failToPass, passToPass: c.passToPass }))
@@ -944,6 +1064,11 @@ export function isHeldOut(pullRequest: number): boolean {
 export const SPLIT_RULE = `held-out when the first byte of sha256("${SUITE_ID}:split:<pull request>") is odd`
 
 export type CandidateOutcome = { admitted: DeveloperCapabilityCase } | { dropped: DropReason }
+
+/** A case recorded with pass-to-pass still by name, digested as the case file stores it. */
+function withDigestedPassToPass(c: DeveloperCapabilityCase): DeveloperCapabilityCase {
+  return Array.isArray(c.passToPass) ? c : { ...c, passToPass: digestSetOf(c.passToPass as unknown as TestSet) }
+}
 
 /** Whether the merged change itself changes a protected path its frozen scope does not name. */
 export function referenceTouchesProtectedPath(
@@ -1021,6 +1146,21 @@ export async function reconstructCandidate(
     const references = [await runTests(checkout, testFiles, budgetMs), await runTests(checkout, testFiles, budgetMs)]
     const { failToPass, passToPass } = classifyTests(before, references)
     if (testIdsOf(failToPass).length === 0) return { dropped: 'withheld_tests_do_not_fail_before' }
+    // The existing suite's share: what the repository's affected-test
+    // selection picks for the merged change, run once on each commit.
+    const related = relatedTestFiles(checkout, screened.split, testFiles)
+    let relatedSet = { passToPass: {} as TestSet, files: [] as PinnedFile[] }
+    if (related.length > 0) {
+      const after = await runRelatedTests(checkout, related, budgetMs, RELATED_FILE_BUDGET_MS)
+      if (!(await prepareCheckout(git, checkout, screened.base, screened.split.hiddenTests)))
+        return { dropped: 'install_failed' }
+      const relatedBefore = await runRelatedTests(checkout, related, budgetMs, RELATED_FILE_BUDGET_MS)
+      const kept = classifyTests(relatedBefore, [after]).passToPass
+      relatedSet = {
+        passToPass: kept,
+        files: Object.keys(kept).map((path) => ({ path, blob: git(['rev-parse', `${screened.base}:${path}`]).trim() }))
+      }
+    }
     const solution = { commit: record.mergeCommit, ...screened.split.referenceSolution }
     return {
       admitted: {
@@ -1035,7 +1175,8 @@ export async function reconstructCandidate(
         hiddenTests: screened.split.hiddenTests,
         referenceSolution: { ...solution, digest: referenceSolutionDigest(solution) },
         failToPass,
-        passToPass
+        passToPass: digestSetOf({ ...passToPass, ...relatedSet.passToPass }),
+        passToPassFiles: relatedSet.files
       }
     }
   } catch (error) {
@@ -1044,8 +1185,22 @@ export async function reconstructCandidate(
   }
 }
 
+/**
+ * The existing test files the merged change can affect, beyond its own test
+ * side: the pre-push hook's affected-test selection, one import edge deep,
+ * over every path the change adds or modifies, read on the merged commit.
+ */
+export function relatedTestFiles(checkout: string, split: ChangeSplit, hidden: readonly string[]): string[] {
+  const changed = [...split.hiddenTests.files, ...split.referenceSolution.files].map((f) => f.path)
+  const own = new Set(hidden)
+  return selectAffectedTestFiles(checkout, changed, { depth: 'one' })
+    .selected.map((path) => relative(checkout, path))
+    .filter((path) => !own.has(path) && !path.startsWith('..'))
+    .sort()
+}
+
 export const RECONSTRUCTION_RULE =
-  'Every pull request of the snapshot with a frozen brief is a candidate; the newest, by merge time, are examined up to the limit. A candidate is screened from git history alone — its merge commit must exist with exactly one parent, change at least one test file and something besides tests, its brief must name a §4 scope, and the merged change must touch no protected path that scope does not name — then its withheld test files run, in a scratch clone with dependencies installed at each commit, once on the base commit with the merged change’s test side written in and twice on the merged commit. It is admitted only when at least one test passes in both merged-commit runs and did not pass before.'
+  'Every pull request of the snapshot with a frozen brief is a candidate; the newest, by merge time, are examined up to the limit. A candidate is screened from git history alone — its merge commit must exist with exactly one parent, change at least one test file and something besides tests, its brief must name a §4 scope, and the merged change must touch no protected path that scope does not name — then its withheld test files run, in a scratch clone with dependencies installed at each commit, once on the base commit with the merged change’s test side written in and twice on the merged commit. It is admitted only when at least one test passes in both merged-commit runs and did not pass before. Pass-to-pass then adds the existing test files the pre-push hook’s affected-test selection picks, one import edge deep, for the paths the merged change adds or modifies: each runs once on the merged commit and once on the base commit, and a test passing in both is pass-to-pass.'
 
 export interface ReconstructOptions {
   snapshot: string
@@ -1056,6 +1211,8 @@ export interface ReconstructOptions {
   budgetMs: number
   /** Stop examining new candidates after this long; the run is then incomplete and writes no case file. */
   stopAfterMs?: number
+  /** Decide only the candidates whose position modulo `count` is `index`, so several work directories can share the work; the run is then incomplete until their outcomes are joined. */
+  shard?: { index: number; count: number }
   log?: (line: string) => void
 }
 
@@ -1083,8 +1240,13 @@ export async function reconstruct(options: ReconstructOptions): Promise<CaseFile
     })
   )
   const started = Date.now()
+  let incomplete = false
   for (const [i, record] of candidates.entries()) {
     let outcome = done.get(record.pr)
+    if (outcome === undefined && options.shard !== undefined && i % options.shard.count !== options.shard.index) {
+      incomplete = true
+      continue
+    }
     if (outcome === undefined) {
       if (options.stopAfterMs !== undefined && Date.now() - started > options.stopAfterMs) return null
       const screened = screenCandidate(git, record)
@@ -1101,9 +1263,10 @@ export async function reconstruct(options: ReconstructOptions): Promise<CaseFile
     if ('dropped' in outcome) {
       dropped[outcome.dropped] += 1
       drops.push({ pullRequest: record.pr, reason: outcome.dropped })
-    } else admitted.push(outcome.admitted)
+    } else admitted.push(withDigestedPassToPass(outcome.admitted))
     log(`${i + 1}/${candidates.length}: ${admitted.length} admitted, ${drops.length} dropped`)
   }
+  if (incomplete) return null
   admitted.sort((a, b) => a.pullRequest - b.pullRequest)
   drops.sort((a, b) => a.pullRequest - b.pullRequest)
   const development = admitted.filter((c) => !isHeldOut(c.pullRequest))
@@ -1177,7 +1340,7 @@ function flag(args: readonly string[], name: string): string | undefined {
 
 const USAGE = [
   'usage: developer-capability-suite.ts report',
-  '       developer-capability-suite.ts reconstruct --snapshot <merged-task-prs.jsonl> --work <dir> --limit <n> [--budget-sec <n>] [--stop-after-sec <n>]'
+  '       developer-capability-suite.ts reconstruct --snapshot <merged-task-prs.jsonl> --work <dir> --limit <n> [--budget-sec <n>] [--stop-after-sec <n>] [--shard <index>/<count>]'
 ].join('\n')
 
 export async function main(argv: readonly string[]): Promise<number> {
@@ -1199,6 +1362,14 @@ export async function main(argv: readonly string[]): Promise<number> {
     limit: Number(flag(argv, 'limit')),
     budgetMs: Number(flag(argv, 'budget-sec') ?? '900') * 1000,
     ...(flag(argv, 'stop-after-sec') === undefined ? {} : { stopAfterMs: Number(flag(argv, 'stop-after-sec')) * 1000 }),
+    ...(flag(argv, 'shard') === undefined
+      ? {}
+      : {
+          shard: {
+            index: Number((flag(argv, 'shard') as string).split('/')[0]),
+            count: Number((flag(argv, 'shard') as string).split('/')[1])
+          }
+        }),
     log: (line) => process.stderr.write(`${line}\n`)
   })
   if (file === null) {
