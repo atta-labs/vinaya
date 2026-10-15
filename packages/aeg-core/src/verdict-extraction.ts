@@ -206,6 +206,21 @@ const PAUSE_BOUND_RULING_PATTERN =
   /^[ \t]*(?:\*{1,3}|_{1,3})?Pause-bound ruling:\s*(?:(\S+)\|(\S+)\|([0-9a-f]{64})|\(none\))\s*$/im
 
 /**
+ * The `Pause-bound ruling:` line of a driver-rendered comment — a verdict's
+ * echo, or the round comment the driver posts from the frozen manifest before
+ * any reviewer runs. `undefined` when the comment carries no such line;
+ * `null` for an explicit `(none)`; otherwise the ruling identity, pause
+ * identity and content digest.
+ */
+export function extractPauseBoundRuling(
+  comment: string
+): import('./review-input-manifest').PauseBoundRuling | null | undefined {
+  const m = comment.match(PAUSE_BOUND_RULING_PATTERN)
+  if (!m) return undefined
+  return m[1] ? { rulingId: m[1], pauseId: m[2] as string, contentDigest: m[3] as string } : null
+}
+
+/**
  * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string {
  * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult {
@@ -472,7 +487,7 @@ function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: 
   }
 
   const versionMatch = latest.match(MANIFEST_VERSION_PATTERN)
-  const rulingMatch = latest.match(PAUSE_BOUND_RULING_PATTERN)
+  const pauseBoundRuling = extractPauseBoundRuling(latest)
   return {
     value: (m[1] as string).toUpperCase().replace(/[_-]/g, ' '),
     headSha: extractHeadSha(latest),
@@ -482,13 +497,7 @@ function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: 
     policyDigest: extractPolicyDigest(latest),
     baseSha: extractBaseSha(latest),
     ...(versionMatch ? { manifestVersion: Number.parseInt(versionMatch[1] as string, 10) } : {}),
-    ...(rulingMatch
-      ? {
-          pauseBoundRuling: rulingMatch[1]
-            ? { rulingId: rulingMatch[1], pauseId: rulingMatch[2] as string, contentDigest: rulingMatch[3] as string }
-            : null
-        }
-      : {}),
+    ...(pauseBoundRuling === undefined ? {} : { pauseBoundRuling }),
     findingSeverities: extractFindingSeverities(latest),
     danglingNote: null
   }

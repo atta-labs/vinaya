@@ -90,3 +90,45 @@ export function newestPrincipalRulingAuthor(
   }
   return bestAuthor
 }
+
+/**
+ * Where a ruling identity points. A resolution record names the ruling that
+ * authenticated it as `<pr>-<k>` for a ruling on a pull request, or
+ * `issue-<n>-<k>` for a ruling on the task Issue; either way the ruling
+ * comment itself carries the marker `<ref>-<k>`. Any other value — a
+ * self-recovery tag, or a superseding-brief reference — names no ruling, and
+ * reads `null`.
+ */
+export function parseRulingIdentity(rulingId: string): { target: 'pr' | 'issue'; ref: number; ordinal: number } | null {
+  const m = /^(issue-)?(\d+)-(\d+)$/.exec(rulingId)
+  if (!m) return null
+  const ref = Number.parseInt(m[2] as string, 10)
+  const ordinal = Number.parseInt(m[3] as string, 10)
+  if (ref <= 0 || ordinal <= 0) return null
+  return { target: m[1] ? 'issue' : 'pr', ref, ordinal }
+}
+
+/**
+ * The text of the ONE principal-authored ruling whose marker is exactly the
+ * one `rulingId` names — the comment body after its marker line, trimmed, the
+ * same text every ruling reader hands a Developer. Never chosen by position,
+ * by newest ordinal, or by being the only ruling present: `null` when no
+ * principal comment carries that exact marker, or when more than one does
+ * (an ambiguous identity is not an identity).
+ */
+export function principalRulingTextById(
+  comments: readonly RulingComment[],
+  allowlist: readonly string[],
+  rulingId: string
+): string | null {
+  const identity = parseRulingIdentity(rulingId)
+  if (identity === null) return null
+  const marker = principalRulingMarker(identity.ref, identity.ordinal)
+  const matches = comments.filter(
+    (c) => isPrincipal(c.author, allowlist as string[]) && (c.body.split('\n')[0] ?? '').trim() === marker
+  )
+  if (matches.length !== 1) return null
+  const body = (matches[0] as RulingComment).body
+  const idx = body.indexOf('\n')
+  return idx === -1 ? '' : body.slice(idx + 1).trim()
+}

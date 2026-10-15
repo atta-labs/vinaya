@@ -21,6 +21,7 @@ import {
   type LoopState,
   type LoopStateRecord,
   type ParsedRecord,
+  type PauseBoundRuling,
   type RoundHeadIdentity,
   type RoundStats
 } from '@attalabs/aeg-core'
@@ -35,6 +36,11 @@ export function developerRoundMarker(roundNum: number): string {
   return `<!-- aeg:developer:round-${roundNum} -->`
 }
 
+/** The `Pause-bound ruling:` value every driver-rendered comment carries: `<ruling>|<pause>|<digest>`, or `(none)`. */
+export function renderPauseBoundRuling(binding: PauseBoundRuling | null): string {
+  return binding ? `${binding.rulingId}|${binding.pauseId}|${binding.contentDigest}` : '(none)'
+}
+
 /**
  * The BODY half of the round marker comment the driver posts in the
  * Developer's place — `postMarkedComment` prepends
@@ -43,16 +49,22 @@ export function developerRoundMarker(roundNum: number): string {
  * cite) a `FINDING_IDS:` line carrying the round's accepted turn results'
  * `addressedFindingIds`, then (only when the Developer reported any) its
  * `reportedChecks` — labelled as the agent's own account, context and never
- * evidence. An empty `findingIds` list — round 1's first review — omits the
+ * evidence. When the caller passes the frozen manifest's ruling slot, a
+ * `Pause-bound ruling:` line follows `Head:`. An empty `findingIds` list — round 1's first review — omits the
  * `FINDING_IDS:` line entirely, the same "nothing to cite" convention the
  * reviewer's own `FINDING_IDS:` grammar uses for an empty findings list.
  */
 export function renderDeveloperRoundComment(
   head: string,
   findingIds: readonly string[],
-  reportedChecks: readonly { command: string; outcome: 'pass' | 'fail' }[] = []
+  reportedChecks: readonly { command: string; outcome: 'pass' | 'fail' }[] = [],
+  pauseBoundRuling?: PauseBoundRuling | null
 ): string {
   const lines = [`Head: ${head}`]
+  // The frozen manifest's ruling slot, recorded before any reviewer runs: the
+  // review gate compares each verdict's echo against this line, never against
+  // the verdicts themselves (`resolveFrozenPauseBoundRuling`).
+  if (pauseBoundRuling !== undefined) lines.push(`Pause-bound ruling: ${renderPauseBoundRuling(pauseBoundRuling)}`)
   if (findingIds.length > 0) lines.push(`FINDING_IDS: ${findingIds.join(',')}`)
   if (reportedChecks.length > 0) {
     lines.push('', 'Checks the Developer reports running (agent-reported context, not evidence):')
@@ -576,6 +588,12 @@ export const MAX_INFRASTRUCTURE_RETRIES = 5
 
 // --- authoritative loop-state recovery -------------------------------------
 
+/** The durable facts a Developer continuation packet is built from — `LoopStateRecordSchema.developerHandoff`. */
+export type DeveloperHandoff = {
+  findings: { id: string; description: string }[]
+  failingChecks: string[]
+}
+
 /**
  * The snapshot `persistLoopState` writes and `loadLoopState`/
  * `recoverLoopState` (`pause-resume.ts`) read back — phase, round, budgets,
@@ -597,6 +615,8 @@ export type LoopStateSnapshot = {
     lastFailure: { signature: string; message: string; developerAttemptedSince?: boolean } | null
   }
   publicationExpectedBase: string | null
+  /** The newest review's unresolved findings and the newest gate read's failing checks — see `LoopStateRecordSchema.developerHandoff`. */
+  developerHandoff?: DeveloperHandoff
   /** When the loop first started on this task, ISO-8601 — written by the first driver to persist state for it and carried forward unchanged by every later one, so the task's wall-clock budget measures from one fixed instant across restarts. */
   taskStartedAt: string
   /** Milliseconds recorded against each phase so far, including the phase this write is entering — accumulated across restarts, and narration only (the budget is decided on elapsed time). */
@@ -623,6 +643,7 @@ export function persistLoopState(task: number, snapshot: LoopStateSnapshot, now:
       deliveredFindings: snapshot.deliveredFindings,
       repeatMemory: snapshot.repeatMemory,
       publicationExpectedBase: snapshot.publicationExpectedBase,
+      ...(snapshot.developerHandoff ? { developerHandoff: snapshot.developerHandoff } : {}),
       taskStartedAt: snapshot.taskStartedAt,
       phaseMs: snapshot.phaseMs,
       recordedAt: now().toISOString()

@@ -482,6 +482,14 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
     problems.push(
       `the newest code-review verdict was cast against review policy digest ${codeReview.policyDigest ?? 'none'}, this repository's current policy digest is ${currentManifest.policyDigest}`
     )
+  } else if (!codeReviewBinding.manifestVersion) {
+    problems.push(
+      `the newest code-review verdict echoes manifest version ${codeReview.manifestVersion ?? 'none'}, the frozen review-input manifest is version ${currentManifest.manifestVersion ?? 'unversioned'}`
+    )
+  } else if (!codeReviewBinding.pauseBoundRuling) {
+    problems.push(
+      `the newest code-review verdict echoes pauseBoundRuling ${renderBinding(codeReview.pauseBoundRuling)}, the frozen review-input manifest binds ${renderBinding(currentManifest.pauseBoundRuling)}`
+    )
   }
   if (!securityTextClean) {
     problems.push(`security-review verdict is not a clean PASS (found: ${security.value})`)
@@ -513,6 +521,14 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
     problems.push(
       `the newest security-review verdict was cast against review policy digest ${security.policyDigest ?? 'none'}, this repository's current policy digest is ${currentManifest.policyDigest}`
     )
+  } else if (!securityBinding.manifestVersion) {
+    problems.push(
+      `the newest security-review verdict echoes manifest version ${security.manifestVersion ?? 'none'}, the frozen review-input manifest is version ${currentManifest.manifestVersion ?? 'unversioned'}`
+    )
+  } else if (!securityBinding.pauseBoundRuling) {
+    problems.push(
+      `the newest security-review verdict echoes pauseBoundRuling ${renderBinding(security.pauseBoundRuling)}, the frozen review-input manifest binds ${renderBinding(currentManifest.pauseBoundRuling)}`
+    )
   }
   const ignoredNote =
     ignoredCount > 0
@@ -524,6 +540,12 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
     reason: `${problems.join('; ')}. A principal can apply an actor-verified \`${WAIVER_LABEL_REVIEW}\` label to skip this requirement, or post the missing/clean verdict comment(s).${ignoredNote}${deferredNote}`,
     waived: false
   }
+}
+
+/** A ruling binding as the gate's failure text names it: `<ruling>|<pause>|<digest>`, `(none)`, or `(absent)` when no slot was echoed at all. */
+function renderBinding(binding: import('./review-input-manifest').PauseBoundRuling | null | undefined): string {
+  if (binding === undefined) return '(absent)'
+  return binding === null ? '(none)' : `${binding.rulingId}|${binding.pauseId}|${binding.contentDigest}`
 }
 
 /**

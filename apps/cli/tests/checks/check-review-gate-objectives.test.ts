@@ -3,7 +3,13 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { DEFAULT_REVIEW_POLICY, objectivesOf, objectivesVersion, policyDigest } from '@attalabs/aeg-core'
+import {
+  DEFAULT_REVIEW_POLICY,
+  objectivesOf,
+  objectivesVersion,
+  pauseBoundRulingDigest,
+  policyDigest
+} from '@attalabs/aeg-core'
 
 /**
  * The digest `check-review-gate.ts` resolves when no `vinaya.config.json` is
@@ -440,5 +446,80 @@ process.exit(1)
     })
 
     expect(exitCode).toBe(0)
+  })
+
+  /**
+   * The ruling slot is checked against the binding the loop's round comment
+   * recorded from the consumed resolution before any reviewer ran, never
+   * against the verdicts' own echoes: two verdicts agreeing on a wrong
+   * binding both fail.
+   */
+  function pauseBoundFixture(sha: string, echoed: string) {
+    const rulingText = 'Ruling — resume, one more round.'
+    const digest = pauseBoundRulingDigest(rulingText)
+    const frozen = `1-1|esc-1|${digest}`
+    const verdict = (label: string) =>
+      `VERDICT: ${label}\n\nJudged head: ${sha}\n\nRuling ordinal: 1\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}\n\nJudged base: ${sha}\n\nManifest version: 2\n\nPause-bound ruling: ${echoed}`
+    return {
+      frozen,
+      prView: {
+        number: 1,
+        comments: [
+          { body: `<!-- aeg:principal:ruling:1-1 -->\n${rulingText}\n`, author: { login: 'daniboomerang' } },
+          {
+            body: `<!-- aeg:developer:round-2 -->\nHead: ${sha}\nPause-bound ruling: ${frozen}`,
+            author: { login: 'daniboomerang' }
+          },
+          { body: verdict('APPROVE'), author: { login: 'daniboomerang' } },
+          { body: verdict('PASS'), author: { login: 'daniboomerang' } }
+        ],
+        labels: [],
+        headRefName: 'work',
+        headRefOid: sha,
+        baseRefName: 'main',
+        body: ''
+      }
+    }
+  }
+
+  it('fails when both verdicts agree on a ruling binding other than the one the round comment froze', async () => {
+    const { dir: d, sha } = setupRepo()
+    dir = d
+    const ghDir = writeGhStub(d)
+    const { prView } = pauseBoundFixture(sha, '(none)')
+
+    const { exitCode, stderr } = await run(d, ghDir, { STUB_PR_VIEW_JSON: JSON.stringify(prView) })
+
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain('pauseBoundRuling')
+  })
+
+  it('passes when both verdicts echo the ruling binding the round comment froze', async () => {
+    const { dir: d, sha } = setupRepo()
+    dir = d
+    const ghDir = writeGhStub(d)
+    const { prView } = pauseBoundFixture(sha, pauseBoundFixture(sha, '').frozen)
+
+    const { exitCode } = await run(d, ghDir, { STUB_PR_VIEW_JSON: JSON.stringify(prView) })
+
+    expect(exitCode).toBe(0)
+  })
+
+  it('fails closed when the frozen ruling binding does not match the ruling text on the forge', async () => {
+    const { dir: d, sha } = setupRepo()
+    dir = d
+    const ghDir = writeGhStub(d)
+    const { prView, frozen } = pauseBoundFixture(sha, '')
+    const echoed = pauseBoundFixture(sha, frozen).prView
+    echoed.comments[0] = {
+      body: '<!-- aeg:principal:ruling:1-1 -->\nAn edited ruling.\n',
+      author: { login: 'daniboomerang' }
+    }
+    void prView
+
+    const { exitCode, stderr } = await run(d, ghDir, { STUB_PR_VIEW_JSON: JSON.stringify(echoed) })
+
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain('does not hash to the recorded content digest')
   })
 })

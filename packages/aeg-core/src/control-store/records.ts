@@ -241,6 +241,22 @@ export const LoopStateRecordSchema = z
       })
       .strict()
       .optional(),
+    /**
+     * What the next Developer packet is built from, so a restarted or
+     * re-exec'd driver builds the same packet the one before it would have:
+     * the newest review's unresolved findings, each with the controller-
+     * computed id the Developer cites and the finding line it was handed, and
+     * the checks that failed on the newest gate read. Overwritten as each
+     * changes. Optional: a record written before this field existed reads
+     * back as nothing handed over.
+     */
+    developerHandoff: z
+      .object({
+        findings: z.array(z.object({ id: z.string().min(1), description: z.string().min(1) }).strict()),
+        failingChecks: z.array(z.string().min(1))
+      })
+      .strict()
+      .optional(),
     /** The original or deliberately advanced task-branch base used by publication checks. */
     publicationExpectedBase: z
       .string()

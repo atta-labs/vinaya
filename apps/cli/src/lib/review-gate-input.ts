@@ -33,14 +33,19 @@ import { execFileSync } from 'node:child_process'
 import {
   briefHash,
   checkReviewGate,
-  extractCodeReviewVerdict,
-  extractSecurityReviewVerdict,
   extractIssue,
+  extractPauseBoundRuling,
   isIssueNotFoundError,
+  isPrincipal,
   isWaiverLabelActorVerified,
   newestPrincipalRulingOrdinal,
   objectivesOf,
   objectivesVersion,
+  parseDeveloperRoundMarker,
+  parseRulingIdentity,
+  pauseBoundRulingDigest,
+  principalRulingTextById,
+  type PauseBoundRuling,
   resolveNewestFrozenBrief,
   resolveObjectivesSource,
   WAIVER_LABEL_REVIEW,
@@ -108,6 +113,79 @@ function fetchIssueCommentsForBrief(issueNumber: number): { body: string; author
 }
 
 type Resolved<T> = { ok: true; value: T } | { ok: false; failure: ReviewGateInputFailure }
+
+/**
+ * The pause-bound ruling the newest review round was frozen with — never read
+ * from the verdicts being judged. Before any reviewer runs, the loop posts
+ * its round comment (`<!-- aeg:developer:round-<n> -->`) carrying the frozen
+ * manifest's `Pause-bound ruling:` line, which the loop itself took from the
+ * resolution its resume consumed. This reads that line from the
+ * principal-authored round comment with the highest round number, then
+ * proves a non-empty binding against the forge: the one principal ruling
+ * comment carrying exactly the named marker must exist, and its text must
+ * hash to the recorded digest. Each verdict's own echo is then compared
+ * against the value returned here, so two verdicts agreeing on a binding
+ * other than the frozen one both fail.
+ *
+ * `null` (no ruling bound) only when the pull request carries no round
+ * comment at all — a review cast by hand, outside the loop. Fails closed
+ * when the newest round comment carries no binding line, when two comments
+ * for that round disagree, or when the named ruling cannot be proven.
+ */
+export function resolveFrozenPauseBoundRuling(
+  prNumber: number,
+  comments: readonly { body: string; author: string | null }[],
+  principalAllowlist: readonly string[],
+  readIssueComments: (issueNumber: number) => { body: string; author: string | null }[]
+): Resolved<PauseBoundRuling | null> {
+  let newestRound = 0
+  let lines: (PauseBoundRuling | null | undefined)[] = []
+  for (const comment of comments) {
+    if (!isPrincipal(comment.author, principalAllowlist as string[])) continue
+    const round = parseDeveloperRoundMarker(comment.body)
+    if (round === null || round < newestRound) continue
+    if (round > newestRound) {
+      newestRound = round
+      lines = []
+    }
+    lines.push(extractPauseBoundRuling(comment.body))
+  }
+  if (newestRound === 0) return { ok: true, value: null }
+  const recorded = lines[0]
+  if (recorded === undefined || lines.some((line) => JSON.stringify(line) !== JSON.stringify(recorded))) {
+    return failure(
+      `review-gate severity:infra — PR #${prNumber}'s round ${newestRound} comment does not record one frozen \`Pause-bound ruling:\` binding, so the verdicts' ruling binding cannot be checked against it.`,
+      'Let the review loop run a fresh review round on this pull request (its round comment records the binding), then re-run `vinaya check review-gate`.'
+    )
+  }
+  if (recorded === null) return { ok: true, value: null }
+  const identity = parseRulingIdentity(recorded.rulingId)
+  if (identity === null) {
+    return failure(
+      `review-gate severity:infra — PR #${prNumber}'s round ${newestRound} comment binds ruling \`${recorded.rulingId}\`, which names no ruling marker.`,
+      'Let the review loop run a fresh review round on this pull request, then re-run `vinaya check review-gate`.'
+    )
+  }
+  let rulingComments: readonly { body: string; author: string | null }[] = comments
+  if (identity.target === 'issue') {
+    try {
+      rulingComments = readIssueComments(identity.ref)
+    } catch (err) {
+      return failure(
+        `review-gate severity:infra — could not fetch Issue #${identity.ref}'s comments to prove ruling \`${recorded.rulingId}\`: ${(err as Error).message}`,
+        'Confirm `gh auth status` passes and the Issue exists, then re-run `vinaya check review-gate`.'
+      )
+    }
+  }
+  const text = principalRulingTextById(rulingComments, principalAllowlist, recorded.rulingId)
+  if (text === null || pauseBoundRulingDigest(text) !== recorded.contentDigest) {
+    return failure(
+      `review-gate severity:infra — PR #${prNumber}'s round ${newestRound} comment binds ruling \`${recorded.rulingId}\`, but ${text === null ? 'no single principal ruling comment carries that exact marker' : "that ruling's text does not hash to the recorded content digest"}.`,
+      'A Principal ruling comment must never be edited or deleted once a round binds it; restore it, or let the review loop run a fresh round, then re-run `vinaya check review-gate`.'
+    )
+  }
+  return { ok: true, value: recorded }
+}
 
 /**
  * The frozen brief's own hash this PR is judged against — `null` in
@@ -392,18 +470,10 @@ export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssemb
   })
 
   const comments = pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
-  const trustedBodies = comments
-    .filter(
-      (comment) =>
-        comment.author !== null && principalAllowlist.some((p) => p.toLowerCase() === comment.author?.toLowerCase())
-    )
-    .map((comment) => comment.body)
-  const codeManifest = extractCodeReviewVerdict(trustedBodies)
-  const securityManifest = extractSecurityReviewVerdict(trustedBodies)
-  const pauseBoundRuling =
-    JSON.stringify(codeManifest.pauseBoundRuling) === JSON.stringify(securityManifest.pauseBoundRuling)
-      ? (codeManifest.pauseBoundRuling ?? null)
-      : null
+  const resolvedPauseBoundRuling = waived
+    ? ({ ok: true, value: null } as const)
+    : resolveFrozenPauseBoundRuling(prNumber, comments, principalAllowlist, fetchIssueCommentsForBrief)
+  if (!resolvedPauseBoundRuling.ok) return resolvedPauseBoundRuling
 
   // The Objectives cutover comes from the SAME default-branch trust anchor as
   // `principals`/`reviewPolicy` above, never the PR's own checkout, so a PR
@@ -423,7 +493,7 @@ export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssemb
     ok: true,
     input: {
       manifestVersion: 2,
-      pauseBoundRuling,
+      pauseBoundRuling: resolvedPauseBoundRuling.value,
       comments,
       labels,
       waiverLabelActor,

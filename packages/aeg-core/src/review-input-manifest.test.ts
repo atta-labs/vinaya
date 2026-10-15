@@ -4,11 +4,14 @@ import {
   buildReviewInputManifest,
   compareManifest,
   manifestAsEchoed,
+  pauseBoundRulingDigest,
+  pauseBoundRulingFromResolution,
   policyDigest,
   type EchoedManifest,
   type ReviewInputManifest
 } from './review-input-manifest'
 import { DEFAULT_REVIEW_POLICY } from './review-policy'
+import { principalRulingTextById } from './ruling-ordinal'
 
 const HEAD = 'a'.repeat(40)
 const BASE = 'f'.repeat(40)
@@ -287,5 +290,66 @@ describe('compareManifest', () => {
       })
     })
     expect(compareManifest(echoed, current).policyDigest).toBe(false)
+  })
+})
+
+describe('pauseBoundRulingFromResolution — the slot comes from the consumed resolution alone', () => {
+  const allowlist = ['principal']
+  const ruling = (ref: number, k: number, text: string) => ({
+    body: `<!-- aeg:principal:ruling:${ref}-${k} -->\n${text}\n`,
+    author: 'principal'
+  })
+  const resolution = {
+    escalationId: 'esc-7',
+    decision: 'resume' as const,
+    authenticatedBy: 'principal',
+    authenticatedFrom: '42-2'
+  }
+
+  it('digests the ruling carrying exactly the consumed marker, whatever the comment order', () => {
+    const comments = [ruling(42, 3, 'third'), ruling(42, 2, 'second'), ruling(42, 1, 'first')]
+    const slot = pauseBoundRulingFromResolution(resolution, (id) => principalRulingTextById(comments, allowlist, id))
+    expect(slot).toEqual({ rulingId: '42-2', pauseId: 'esc-7', contentDigest: pauseBoundRulingDigest('second') })
+  })
+
+  it('refuses rather than binding a lone newer ruling to the consumed identity', () => {
+    const comments = [ruling(42, 3, 'newer ruling')]
+    expect(() =>
+      pauseBoundRulingFromResolution(resolution, (id) => principalRulingTextById(comments, allowlist, id))
+    ).toThrow('no single principal ruling comment carries that exact marker')
+  })
+
+  it('refuses an identity two principal comments both carry', () => {
+    const comments = [ruling(42, 2, 'one'), ruling(42, 2, 'two')]
+    expect(principalRulingTextById(comments, allowlist, '42-2')).toBeNull()
+  })
+
+  it('ignores a matching marker from a non-principal author', () => {
+    const comments = [{ ...ruling(42, 2, 'forged'), author: 'someone-else' }]
+    expect(principalRulingTextById(comments, allowlist, '42-2')).toBeNull()
+  })
+
+  it('reads an Issue ruling identity against the Issue marker', () => {
+    expect(principalRulingTextById([ruling(9, 1, 'issue ruling')], allowlist, 'issue-9-1')).toBe('issue ruling')
+  })
+
+  it('is explicitly empty for a self-recovery or a resolution that names no ruling', () => {
+    const read = () => {
+      throw new Error('no ruling should be read')
+    }
+    expect(pauseBoundRulingFromResolution(null, read)).toBeNull()
+    expect(
+      pauseBoundRulingFromResolution(
+        { ...resolution, authenticatedBy: 'driver-self', authenticatedFrom: '42-infrastructure-retry' },
+        read
+      )
+    ).toBeNull()
+    expect(
+      pauseBoundRulingFromResolution(
+        { ...resolution, authenticatedFrom: 'widen-surface:https://example.test/c/1' },
+        read
+      )
+    ).toBeNull()
+    expect(pauseBoundRulingFromResolution({ ...resolution, decision: 'cancel' }, read)).toBeNull()
   })
 })

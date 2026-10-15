@@ -44,12 +44,58 @@
 
 import { createHash } from 'node:crypto'
 import type { ReviewPolicy } from './review-policy'
+import { parseRulingIdentity } from './ruling-ordinal'
 
 /** The authenticated Principal ruling that resumed the pause preceding a round. */
 export type PauseBoundRuling = {
   rulingId: string
   pauseId: string
   contentDigest: string
+}
+
+/** SHA-256 of a ruling's text — its comment body after the marker line, trimmed. */
+export function pauseBoundRulingDigest(rulingText: string): string {
+  return createHash('sha256').update(rulingText).digest('hex')
+}
+
+/** The fields of a consumed resolution record the ruling binding reads. */
+export type ConsumedResolution = {
+  escalationId: string
+  decision: 'resume' | 'cancel'
+  authenticatedBy: string
+  authenticatedFrom: string
+}
+
+/**
+ * The pause-bound ruling slot for a run resumed from `resolution`, read from
+ * that consumed resolution alone: its `escalationId` is the pause identity,
+ * its `authenticatedFrom` the ruling identity, and the digest is taken over
+ * the text of the one ruling comment carrying exactly that identity's marker
+ * (`readRulingText`, which must never fall back to another ruling). `null`
+ * when the resolution carries no ruling — no resolution, a cancel, a
+ * self-recovery (`'driver-self'`), or an identity that names no ruling
+ * marker. Throws when the identity names a ruling whose text cannot be read,
+ * rather than binding some other ruling's text to it.
+ */
+export function pauseBoundRulingFromResolution(
+  resolution: ConsumedResolution | null,
+  readRulingText: (rulingId: string) => string | null
+): PauseBoundRuling | null {
+  if (resolution === null || resolution.decision !== 'resume' || resolution.authenticatedBy === 'driver-self') {
+    return null
+  }
+  if (parseRulingIdentity(resolution.authenticatedFrom) === null) return null
+  const text = readRulingText(resolution.authenticatedFrom)
+  if (text === null) {
+    throw new Error(
+      `resolution ${resolution.escalationId} authenticates from ruling ${resolution.authenticatedFrom}, but no single principal ruling comment carries that exact marker.`
+    )
+  }
+  return {
+    rulingId: resolution.authenticatedFrom,
+    pauseId: resolution.escalationId,
+    contentDigest: pauseBoundRulingDigest(text)
+  }
 }
 
 /**

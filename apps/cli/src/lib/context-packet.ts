@@ -96,7 +96,8 @@ export function buildDeveloperFullPacket(facts: DeveloperFullPacketFacts): Conte
 
 export type DeveloperDeltaPacketFacts = {
   retainedPacket: ContextPacket
-  previousSessionId: string
+  /** The bound provider session the continuation resumes, or `null` when none was recorded. */
+  previousSessionId: string | null
   changedFacts: readonly EvidenceEntry[]
   unresolvedFindings: readonly { id: string; description: string }[]
   gateOutput: readonly { reference: string; summary: string }[]
@@ -111,7 +112,7 @@ export function buildDeveloperDeltaPacket(facts: DeveloperDeltaPacketFacts): Con
     constraints: [...facts.retainedPacket.constraints, ...facts.constraints],
     evidenceIndex: [
       ...facts.retainedPacket.evidenceIndex.map((entry) => ({ ...entry })),
-      { ref: 'prior-session', version: `id:${facts.previousSessionId}` },
+      { ref: 'prior-session', version: facts.previousSessionId === null ? 'none' : `id:${facts.previousSessionId}` },
       ...facts.changedFacts.map((entry) => ({ ...entry })),
       ...facts.unresolvedFindings.map((finding) => ({
         ref: `finding:${finding.id}`,

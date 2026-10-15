@@ -41,7 +41,7 @@
  * so no existing import elsewhere in this codebase needed to change.
  */
 
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { guardedSpawnSync } from './driver-tool-guard.js'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -83,6 +83,7 @@ import {
   globCoversPath,
   manifestAsEchoed,
   nextRoundNumber,
+  pauseBoundRulingFromResolution,
   parseIssueSurface,
   policyDigest as policyDigestOf,
   recordDeveloperAttempt,
@@ -93,6 +94,7 @@ import {
   type LoopConfig,
   type LoopState,
   type Observations,
+  type PauseBoundRuling,
   type PauseReason,
   type ReconstructedJournal,
   type ReviewInputManifest,
@@ -175,6 +177,7 @@ import {
   fetchNewestRulingOrdinal,
   fetchPrBody,
   fetchRulings,
+  fetchRulingText,
   fetchSourceRevision,
   findOpenPrForBranch,
   LaunchContinuityLost,
@@ -260,7 +263,8 @@ import {
   routeCompletionEvents,
   sizeOfSafe,
   spendsInfrastructureRetry,
-  waitForOwnLoopLine
+  waitForOwnLoopLine,
+  type DeveloperHandoff
 } from './dev-review-loop/round-assess.js'
 import {
   addressedFindingIdsFromRecords,
@@ -487,6 +491,8 @@ export type LoopDeps = {
   /** A failed check run's own job-log tail, sanitized and size-capped — the Operator's PR read's own reader (`readJobLogTail`), so a red-CI retry and `read_pull_request` can show the Developer what failed. Injected so the harness fakes it. */
   readFailedCheckLogTail: (jobId: number) => string | null
   fetchRulings: typeof fetchRulings
+  /** The text of the one principal ruling carrying exactly a resolution's `authenticatedFrom` marker — what the pause-bound ruling slot's digest is taken over. */
+  fetchRulingText: typeof fetchRulingText
   fetchNewestRulingOrdinal: typeof fetchNewestRulingOrdinal
   /** O2: the GitHub login that authored the newest principal ruling — a resolution record's `authenticatedBy`. */
   fetchNewestRulingAuthor: typeof fetchNewestRulingAuthor
@@ -1519,6 +1525,24 @@ export function handoffFindings(
   return out
 }
 
+/**
+ * The unresolved findings and gate output a Developer continuation packet
+ * carries, read from the recovered `loop_state` record and nothing else — an
+ * absent, corrupt, or pre-handoff record hands over nothing rather than
+ * whatever this process happens to remember.
+ */
+export function developerContinuationFacts(recovered: ReturnType<typeof recoverLoopState>): {
+  unresolvedFindings: { id: string; description: string }[]
+  gateOutput: { reference: string; summary: string }[]
+} {
+  const handoff = recovered.status === 'ok' ? recovered.value.developerHandoff : null
+  return {
+    unresolvedFindings: handoff?.findings.map((finding) => ({ ...finding })) ?? [],
+    gateOutput:
+      handoff?.failingChecks.map((check) => ({ reference: check, summary: 'failed on the newest gate read' })) ?? []
+  }
+}
+
 class PublicationRefusalPause extends Error {
   constructor(
     readonly check: string,
@@ -2363,6 +2387,7 @@ function defaultDeps(): LoopDeps {
     rerunFailedWorkflowJobs,
     readFailedCheckLogTail: (jobId) => readJobLogTail(jobId),
     fetchRulings,
+    fetchRulingText,
     fetchNewestRulingOrdinal,
     fetchNewestRulingAuthor,
     fetchNewestIssueRulingOrdinal,
@@ -2904,25 +2929,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // Bind the resumed run to the resolution that was actually consumed,
     // including replay attachment after a driver crash. A newer forge ruling
     // must never replace the ruling that authenticated this pause.
-    const consumedResolution = readResolutionRecord(closesTask, resumeEscalationId)
-    if (consumedResolution?.decision === 'resume' && consumedResolution.authenticatedBy !== 'driver-self') {
-      const ordinal = Number.parseInt(consumedResolution.authenticatedFrom.match(/-(\d+)$/)?.[1] ?? '', 10)
-      // Some forge adapters return only the newest ruling body while the
-      // authenticated marker retains its absolute ordinal. A singleton is
-      // therefore that exact authenticated ruling; with multiple bodies the
-      // absolute ordinal selects the matching comment.
-      const rulingText =
-        rulings.length === 1 ? rulings[0] : Number.isInteger(ordinal) && ordinal > 0 ? rulings[ordinal - 1] : undefined
-      if (!rulingText) {
-        throw new Error(
-          `devReviewLoop --resume: resolution ${resumeEscalationId} authenticates from ${consumedResolution.authenticatedFrom}, but that exact Principal ruling text could not be resolved.`
-        )
-      }
-      pauseBoundRuling = {
-        rulingId: consumedResolution.authenticatedFrom,
-        pauseId: consumedResolution.escalationId,
-        contentDigest: createHash('sha256').update(rulingText).digest('hex')
-      }
+    // The slot is read from that consumed resolution alone; the digest is
+    // taken over the one ruling comment carrying exactly its marker, and a
+    // ruling that cannot be found refuses the resume rather than binding
+    // another ruling's text to the consumed identity.
+    try {
+      pauseBoundRuling = pauseBoundRulingFromResolution(
+        readResolutionRecord(closesTask, resumeEscalationId),
+        d.fetchRulingText
+      )
+    } catch (err) {
+      throw new Error(`devReviewLoop --resume: ${err instanceof Error ? err.message : String(err)}`)
     }
     if (agentSwitched) {
       // The resume is accepted: the held record names the agent that runs
@@ -3458,6 +3475,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     /** O3: the round+head whose findings have already been delivered to the developer once — recovered so a later attach never redelivers the same pair, even when the local `round-<k>-attach-redelivered` marker file this same identity backs up is itself lost. */
     let deliveredFindingsIdentity: RoundHeadIdentity | null =
       recoveredLoopState.status === 'ok' ? recoveredLoopState.value.deliveredFindings : null
+    /**
+     * The newest review's unresolved findings and the newest gate read's
+     * failing checks, carried in the `loop_state` record so every Developer
+     * continuation packet is read back from that record rather than from this
+     * process's memory. Seeded from the record, so a restarted driver carries
+     * the same handoff forward instead of overwriting it with nothing.
+     */
+    let developerHandoff: DeveloperHandoff =
+      recoveredLoopState.status === 'ok' && recoveredLoopState.value.developerHandoff !== null
+        ? recoveredLoopState.value.developerHandoff
+        : { findings: [], failingChecks: [] }
 
     /**
      * When the loop FIRST started on this task, as the durable control records
@@ -3566,12 +3594,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // developer at a finding or a failure that had already repeated.
         repeatMemory: { blockingFindings: state.lastBlockingFindings, lastFailure: state.lastFailure },
         publicationExpectedBase,
+        developerHandoff,
         // The task's own clock, carried forward unchanged (`taskStartedAt`) and
         // accumulated (`phaseMs`), so the next driver to take this task over
         // measures the same budget from the same instant.
         taskStartedAt,
         phaseMs: taskClock().byPhaseMs
       })
+    }
+    /** Records a changed Developer handoff in the `loop_state` record at once, under the phase already current. */
+    function persistDeveloperHandoff(next: Partial<DeveloperHandoff>): void {
+      developerHandoff = { ...developerHandoff, ...next }
+      persistCurrentLoopState(currentPhase ?? 'dispatch_developer')
     }
     let devResumeId: string | null = null
     // Ruling 986-1: the developer dispatch-success history — "has any dispatch
@@ -4139,17 +4173,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         budgets: [`review rounds: ${policy.maxRounds}`, `task minutes: ${policy.maxTaskMinutes}`],
         stopConditions: ['Honor every stop condition in the frozen brief.']
       })
+      // A continuation is built from the durable records alone: the
+      // unresolved findings and failing checks from the `loop_state` record,
+      // and the prior session from the bound resume record (`devResumeId`),
+      // so a restarted driver builds the same packet. Nothing recorded reads
+      // as nothing recorded, never as invented text.
       const packet = opts.skipResumeContext
         ? retainedPacket
         : buildDeveloperDeltaPacket({
             retainedPacket,
-            previousSessionId: devResumeId ?? `controller-task-${task}-round-${roundNum}`,
+            previousSessionId: devResumeId,
             changedFacts: [{ ref: 'head', version: `sha:${packetHead}` }],
-            unresolvedFindings: turnResultKnownFindingIds.map((id) => ({
-              id,
-              description: 'unresolved controller finding'
-            })),
-            gateOutput: lastFailingChecks.map((check) => ({ reference: check, summary: 'failing on the prior head' })),
+            ...developerContinuationFacts(recoverLoopState(task)),
             constraints: ['Continue the same frozen brief on the same task branch.', publishingInstructionLine()]
           })
       const packetBlock = renderContextPacket(packet)
@@ -6155,7 +6190,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     /** O2: the round marker comment the driver now posts in the Developer's place (`renderDeveloperRoundComment`) — idempotent per round+head, the same `postForgeEffectOnce` discipline every other driver-posted comment in this file already uses. */
-    async function postDeveloperRoundComment(roundNum: number, head: string): Promise<void> {
+    async function postDeveloperRoundComment(
+      roundNum: number,
+      head: string,
+      frozenPauseBoundRuling: PauseBoundRuling | null
+    ): Promise<void> {
       const records = readTurnResultRecords(root, task, roundNum)
       await withRateLimitWait(() =>
         postForgeEffectOnce(root, task, `developer-round-comment-${roundNum}-${head}`, () =>
@@ -6166,7 +6205,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             renderDeveloperRoundComment(
               head,
               addressedFindingIdsFromRecords(records),
-              reportedChecksFromRecords(records)
+              reportedChecksFromRecords(records),
+              frozenPauseBoundRuling
             )
           )
         )
@@ -7664,6 +7704,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           const premiseFailureLines = premiseResult !== null ? premiseResult.errors.map((e) => e.message) : []
           const gateGreen = gate.green && !premiseFailed
           lastFailingChecks = [...gate.failingChecks, ...premiseFailureLines]
+          persistDeveloperHandoff({ failingChecks: lastFailingChecks.filter((check) => check.length > 0) })
           lastFailureLogs = gate.failureLogs
           pendingGateRedRetry = !gateGreen
           if (mechanicalRetryRecoverySurvivesOneReset) {
@@ -7852,7 +7893,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // BEFORE the reviewer dispatch below, never after: a reviewer
           // reading the PR mid-round sees the round marker comment already
           // there, exactly as it would have if the Developer had posted it.
-          await postDeveloperRoundComment(round, head)
+          await postDeveloperRoundComment(round, head, manifest.pauseBoundRuling ?? null)
 
           // O5: an infrastructure outcome from either role (after its own
           // one-retry inside `dispatchReviewer`) is a driver-decided pause —
@@ -8156,6 +8197,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               heldResultIdentity = { round, head }
               lastReviewContext = `${reviewer.verdict.rendered}\n\n---\n\n${security.verdict.rendered}`
               lastHandoffFindings = handoffFindings(round, reviewer.verdict.observation, security.verdict.observation)
+              persistDeveloperHandoff({
+                findings: lastHandoffFindings.map((finding) => ({ id: finding.id, description: finding.line }))
+              })
 
               // Recorded once per round, so a Principal reading
               // the PR sees WHICH role's ids the driver could not trust —
@@ -8242,6 +8286,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                   } else {
                     lastReviewContext = renderLiveWithdrawal(head, liveFailures)
                     lastHandoffFindings = []
+                    persistDeveloperHandoff({ findings: [] })
                     decision = { type: 'dispatch_developer' }
                   }
                 }
@@ -8288,6 +8333,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             } else {
               lastReviewContext = renderLiveWithdrawal(approvedHead, liveFailures)
               lastHandoffFindings = []
+              persistDeveloperHandoff({ findings: [] })
               round += 1
               decision = { type: 'dispatch_developer' }
               persistCurrentLoopState(decision.type)
