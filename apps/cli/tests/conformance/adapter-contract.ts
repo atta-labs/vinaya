@@ -987,8 +987,25 @@ const DEVELOPER_CHECKS: Record<string, Check> = {
 
   'error-classes': async (_adapter, session) => {
     const crossed: Record<string, DevToolRefusal | null> = {}
+    const suppliedAxes = new Map(
+      TOOL_ERROR_CLASSES.map((errorClass, index) => [
+        errorClass,
+        {
+          retryDisposition: TOOL_RETRY_DISPOSITIONS[index % TOOL_RETRY_DISPOSITIONS.length]!,
+          effectState: TOOL_EFFECT_STATES[index % TOOL_EFFECT_STATES.length]!
+        }
+      ])
+    )
     for (const errorClass of TOOL_ERROR_CLASSES) {
-      const refusal = devToolError(errorClass, 'never', 'not_started', 'conformance', `${errorClass} refusal`, 'none')
+      const supplied = suppliedAxes.get(errorClass)!
+      const refusal = devToolError(
+        errorClass,
+        supplied.retryDisposition,
+        supplied.effectState,
+        'conformance',
+        `${errorClass} refusal`,
+        'none'
+      )
       const result = await callTool(
         'developer',
         'run_checks',
@@ -998,16 +1015,17 @@ const DEVELOPER_CHECKS: Record<string, Check> = {
       crossed[errorClass] = result.isError ? result.error : null
     }
     const missing = TOOL_ERROR_CLASSES.filter((c) => crossed[c]?.errorClass !== c)
-    const malformedAxes = Object.values(crossed).filter(
-      (e) =>
-        e === null ||
-        !(TOOL_RETRY_DISPOSITIONS as readonly string[]).includes(e.retryDisposition) ||
-        !(TOOL_EFFECT_STATES as readonly string[]).includes(e.effectState)
-    )
+    const changedAxes = TOOL_ERROR_CLASSES.filter((errorClass) => {
+      const delivered = crossed[errorClass]
+      const supplied = suppliedAxes.get(errorClass)!
+      return (
+        delivered?.retryDisposition !== supplied.retryDisposition || delivered?.effectState !== supplied.effectState
+      )
+    })
     const ungranted = await callTool('developer', 'read_source', { sourceId: REQUIRED_SOURCE })
     return verdict({ session, classes: Object.keys(crossed), ungranted: ungranted.error }, [
       missing.length > 0 && `error classes that did not reach the agent intact: ${missing.join()}`,
-      malformedAxes.length > 0 && 'a refusal lost its retry disposition or effect state',
+      changedAxes.length > 0 && `refusals whose supplied retry/effect axes changed: ${changedAxes.join()}`,
       ungranted.error?.errorClass !== 'unauthorized' && 'an ungranted tool was not refused as unauthorized'
     ])
   },
@@ -1135,6 +1153,8 @@ const DEVELOPER_CHECKS: Record<string, Check> = {
       }
     }))
     const records = turnRecords(run.world, round)
+    const dispatches = developerDispatches(run, round)
+    const correction = dispatches[1]
     const decision = run.result.finalDecision as { type: string; reason?: string; detail?: string }
     const reviewedAfter = run.dispatches.some((d) => d.role !== 'developer' && d.round === round)
     return verdict({ decision, records: records.map((r) => r.outcome) }, [
@@ -1145,6 +1165,10 @@ const DEVELOPER_CHECKS: Record<string, Check> = {
       !(decision.detail ?? '').includes(`rejected twice in round ${round}`) &&
         'the pause detail names no second rejection',
       records.map((r) => r.outcome).join() !== 'rejected,rejected' && 'the round did not record two rejections',
+      dispatches.length !== 2 && `the round dispatched the Developer ${dispatches.length} times`,
+      correction !== undefined &&
+        correction.requestedResume !== dispatches[0]?.sessionId &&
+        'the second dispatch did not resume the first dispatch session',
       reviewedAfter && 'a reviewer started after the second rejection',
       run.world.publishedRounds.includes(round) && 'the round was published'
     ])

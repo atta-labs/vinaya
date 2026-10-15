@@ -214,9 +214,10 @@ from the live proofs that observe it — `vinaya task-tools result-proof`,
 `review-result-proof` and `dev-proof`, run as they are — and from the
 command's own dispatches through the production dispatcher for the cases no
 proof observes. A case no live proof observes reads `DETERMINISTIC ONLY` in
-the report: today the reviewer's tool listing and role context delivery. A
-failing live case is reported as failing; none is ever registered as a known
-failure.
+the report: today `error-classes`, `second-failure-pause`,
+`reviewer-catalog-listing`, `role-context-developer`, and
+`role-context-reviewer`. A failing live case is reported as failing; none is
+ever registered as a known failure.
 
 **Declared differences.** Where the adapters meet a case differently, the
 difference is declared in the capability matrix
