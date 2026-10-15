@@ -16,7 +16,7 @@
     },
     "heldOut": {
       "file": "source-citation-held-out.json",
-      "digest": "446133d95daaad9b04be1adf61689d4aeb47158ff4c10ea90b8cc254ee44c494",
+      "digest": "e7b9c5dbc33e23b1f345d3112e88a6c91d225d0d5a7dc2767c8529cb5415e81e",
       "index": [
         { "id": "ho-correct-citation", "class": "correct-citation", "requiresSource": true },
         { "id": "ho-missing-citation", "class": "missing-citation", "requiresSource": true },

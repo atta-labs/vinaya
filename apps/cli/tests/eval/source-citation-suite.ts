@@ -3,7 +3,6 @@
  * corpus and its public held-out index. Only an explicitly approved live run
  * opens the held-out file.
  */
-import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
@@ -37,6 +36,7 @@ import {
 } from '../../src/lib/task-tools/dev-tools-registration'
 import { servedTools } from '../../src/lib/task-tools/role-grants'
 import { createWorld, usageOf, type ToolSelectionCase, type Usage } from './tool-selection-suite'
+import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture'
 
 export const ADAPTERS = ['claude-code', 'codex'] as const
 export type Adapter = (typeof ADAPTERS)[number]
@@ -337,19 +337,9 @@ export function reportSourceCitation(
   }
 }
 
-function runProcess(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, timeoutSec: number) {
-  return new Promise<{ stdout: string; code: number | null }>((resolve) => {
-    const child = spawn(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
-    let stdout = ''
-    child.stdout.on('data', (chunk) => {
-      stdout += String(chunk)
-    })
-    const timer = setTimeout(() => child.kill('SIGTERM'), timeoutSec * 1000)
-    child.on('close', (code) => {
-      clearTimeout(timer)
-      resolve({ stdout, code })
-    })
-  })
+async function runProcess(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, timeoutSec: number) {
+  const result = await spawnBudgetedAsync([command, ...args], { cwd, env }, timeoutSec * 1000, command)
+  return { stdout: result.stdout, code: result.status }
 }
 
 /** Runs one real subscription-authenticated CLI with native structured output. */
@@ -418,7 +408,7 @@ export async function liveTrial(
             JSON.stringify(schema)
           ],
           workspace,
-          { ...process.env, ...CLAUDE_DEV_TOOLS_ENV },
+          { ...stripVinayaEnv(), ...CLAUDE_DEV_TOOLS_ENV },
           options.timeoutSec
         )
       ).stdout
@@ -449,7 +439,7 @@ export async function liveTrial(
             prompt
           ],
           workspace,
-          { ...process.env, CODEX_HOME: home },
+          { ...stripVinayaEnv(), CODEX_HOME: home },
           options.timeoutSec
         )
       ).stdout
