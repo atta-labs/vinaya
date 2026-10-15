@@ -1,5 +1,13 @@
-import { extractIssue, isIssueNotFoundError, resolveNewestFrozenBrief } from '@attalabs/aeg-core'
-import { isForgeReadOversize } from '../lib/forge-read'
+import {
+  extractIssue,
+  isIssueNotFoundError,
+  isTaskBranch,
+  type LiveGateInputs,
+  parseLiveTestPlanItems,
+  resolveNewestFrozenBrief
+} from '@attalabs/aeg-core'
+import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../lib/config'
+import { isForgeReadOversize, readIssueComments } from '../lib/forge-read'
 
 /** One task Issue comment, as the CI-side checks read it. */
 export type IssueComment = { body: string; author?: { login?: string } | null }
@@ -54,4 +62,48 @@ export function resolveTaskFrozenBrief(
     return { ok: false, notFound: false, message: `not dispatched — no \`aeg:brief:v<k>\` comment on Issue #${issue}.` }
   }
   return { ok: true, content: resolved.content }
+}
+
+/** What a Test Plan check reads: the PR body, its branch, and the pull request's head SHA (`PULL_REQUEST_HEAD_SHA`). */
+export type LiveCheckInputs = { body: string; branch: string; head: string }
+
+/** The forge reads behind the frozen-brief resolution — injected so a test can make one throw. */
+export type LiveCheckDeps = {
+  fetchIssueComments: (issue: number) => IssueComment[]
+  principalAllowlist: () => readonly string[]
+}
+
+export const defaultLiveCheckDeps: LiveCheckDeps = {
+  fetchIssueComments: (issue) => readIssueComments(issue, `Issue #${issue}`),
+  principalAllowlist: () => resolvePrincipalAllowlist(loadTrustAnchorConfig())
+}
+
+/**
+ * The `[live]` inputs a Test Plan check hands `evaluateTestPlanGate`, or why
+ * they cannot be learned. `live` is `undefined` — the body is graded alone,
+ * as before — on a non-task branch, and on a task branch with no body and no
+ * pull request head (a local run before any pull request exists). A task
+ * branch with a pull request head but no body, or whose frozen brief cannot
+ * be resolved — any fetch error, a not-found Issue included — fails: the
+ * lines the merge must wait for are then unknown.
+ */
+export function resolveLiveCheckInputs(
+  inputs: LiveCheckInputs,
+  deps: LiveCheckDeps = defaultLiveCheckDeps
+): { ok: true; live: LiveGateInputs | undefined } | { ok: false; message: string } {
+  const { body, branch, head } = inputs
+  if (!isTaskBranch(branch)) return { ok: true, live: undefined }
+  if (!body) {
+    return head
+      ? { ok: false, message: `no pull request body was supplied for the pull request at \`${head}\`.` }
+      : { ok: true, live: undefined }
+  }
+  const brief = resolveTaskFrozenBrief(
+    body,
+    deps.fetchIssueComments,
+    deps.principalAllowlist,
+    "learn its frozen brief's `[live]` lines"
+  )
+  if (!brief.ok) return { ok: false, message: brief.message }
+  return { ok: true, live: { liveCommands: parseLiveTestPlanItems(brief.content), head } }
 }

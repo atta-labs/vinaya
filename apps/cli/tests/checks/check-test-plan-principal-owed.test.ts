@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { renderLiveRecordBlock } from '@attalabs/aeg-core'
-import {
-  buildTestPlanCheckErrors,
-  runTestPlanCheck,
-  type TestPlanCheckDeps
-} from '../../src/checks/bin/check-test-plan'
+import { buildTestPlanCheckErrors, runTestPlanCheck } from '../../src/checks/bin/check-test-plan'
+import type { LiveCheckDeps as TestPlanCheckDeps } from '../../src/checks/frozen-brief'
 
 describe('buildTestPlanCheckErrors (review-validity-v1 11, O1)', () => {
   it('a pass result produces no errors', () => {
@@ -106,6 +103,13 @@ describe("runTestPlanCheck — the frozen brief's [live] lines, failing closed",
     const errors = runTestPlanCheck({ body: unticked, branch: TASK_BRANCH, head: HEAD }, depsReturning([PLAIN_BRIEF]))
     expect(errors.length).toBeGreaterThan(0)
     for (const e of errors) expect(e.pending).toBe(true)
+  })
+
+  it('a pull request head with no body fails closed; a local run with neither grades as before', () => {
+    const errors = runTestPlanCheck({ body: '', branch: TASK_BRANCH, head: HEAD }, throwing('must not be called'))
+    expect(errors.length).toBe(1)
+    expect(errors[0]?.pending).toBeUndefined()
+    expect(runTestPlanCheck({ body: '', branch: TASK_BRANCH, head: '' }, throwing('must not be called'))).toEqual([])
   })
 
   it('a non-task branch never reads the forge', () => {

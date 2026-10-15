@@ -405,10 +405,14 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // GITHUB_TOKEN/GH_TOKEN must reach it on a CI runner, where `gh`
       // authenticates only from those, and GITHUB_REPOSITORY addresses the
       // trust-anchor read of `principals` that picks the brief's author.
-      // PULL_REQUEST_HEAD_SHA is the pull request's own head — never the merge ref a
-      // `pull_request` run checks out — at which each `[live]` line must
-      // have passed. Absent, no record entry matches and every `[live]` line
-      // reads unpassed: the check fails closed.
+      // PULL_REQUEST_HEAD_SHA is the pull request's own head — never the
+      // merge ref a `pull_request` run checks out — at which each `[live]`
+      // line must have passed. Absent, no record entry matches and every
+      // `[live]` line reads unpassed. That red is `pending` here, so this
+      // check's own line goes red while `--all`'s exit stays green
+      // (`principalOwed`); the merge hold is `principal-test-plan-wait`'s,
+      // which grades the same inputs. The loop's `run_checks` supplies the
+      // pull request's head (`worktreeCheckEnv`).
       env: {
         PR_BODY: { optional: true },
         BRANCH: { optional: true },
@@ -456,12 +460,17 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // `apps/cli/src/lib/forge-write.ts`), so the per-round Evidence splice
       // goes through while the box is still unticked and the Principal's tick
       // then finds a fresh block rather than the template placeholder.
-      // `process.env.PR_BODY ?? ''` / `process.env.BRANCH ?? ''` — both
-      // plain absence-tolerant fall-throughs, same shape as `test-plan`'s
-      // identical declaration above.
+      // The same inputs as `test-plan`'s declaration above, for the same
+      // reason: on a task branch the bin reads the frozen brief's `[live]`
+      // lines and holds the merge on each with no passed entry at
+      // PULL_REQUEST_HEAD_SHA, and a brief it cannot read holds it too.
       env: {
         PR_BODY: { optional: true },
-        BRANCH: { optional: true }
+        BRANCH: { optional: true },
+        PULL_REQUEST_HEAD_SHA: { optional: true },
+        GITHUB_REPOSITORY: { optional: true },
+        GITHUB_TOKEN: { optional: true },
+        GH_TOKEN: { optional: true }
       }
     },
     // requiresOpenPr AND ownWorkflow — CI/PR-only twice over, same as

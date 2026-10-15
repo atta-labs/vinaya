@@ -2054,7 +2054,8 @@ async function defaultReadPrView(input: {
 
 /**
  * The environment CI's check job gives `vinaya check --all` on a pull request:
- * the branch, and — once the pull request exists — its number and live body.
+ * the branch, and — once the pull request exists — its number, live body and
+ * head (the head `test-plan` grades the `[live]` lines at).
  * The PR-body checks (`closes-n`, `brief-shape`, `evidence-fresh`, …) read
  * them from the environment; without them they judge an empty body and fail
  * a body the forge shows is correct.
@@ -2063,11 +2064,13 @@ export function worktreeCheckEnv(input: {
   branch: string
   prNumber: number | null
   body: string | null
+  head?: string | null
 }): Record<string, string> {
   const env: Record<string, string> = { BRANCH: input.branch }
   if (input.prNumber === null) return env
   env.PR_NUMBER = String(input.prNumber)
   if (input.body !== null) env.PR_BODY = input.body
+  if (input.head) env.PULL_REQUEST_HEAD_SHA = input.head
   return env
 }
 
@@ -5264,7 +5267,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         readPullRequest: async () => ({ ok: true, result: await d.readPrView({ branch, repo }) }),
         runChecks: async () => {
           const pr = await d.readPrView({ branch, repo })
-          const env = worktreeCheckEnv({ branch, prNumber: pr.prNumber, body: pr.body })
+          const env = worktreeCheckEnv({ branch, prNumber: pr.prNumber, body: pr.body, head: pr.head })
           return { ok: true, result: await d.runWorktreeChecks(worktree, env) }
         },
         fetchDocumentation: createFetchDocumentationTool({

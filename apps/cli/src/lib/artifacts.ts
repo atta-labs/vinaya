@@ -868,6 +868,8 @@ ${verifiedFetchPrBodyStep()}      - name: Body checks
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # The task Issue's frozen brief, read for its \`[live]\` lines.
+      issues: read
       pull-requests: read
     steps:
       - uses: actions/checkout@v4
@@ -883,6 +885,12 @@ ${vinayaSetupSteps(selfHost, 'trusted')}      # PR_BODY is what makes this check
       # \`process.env.PR_BODY\` only, never fetches it itself. Fetched live from
       # the forge, same reasoning as the sibling job's identical step above.
 ${verifiedFetchPrBodyStep()}      - name: Principal Test Plan wait
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          BRANCH: \${{ github.head_ref }}
+          # The pull request's own head, at which each \`[live]\` line of the
+          # task's frozen brief must have passed for the merge to go through.
+          PULL_REQUEST_HEAD_SHA: \${{ github.event.pull_request.head.sha }}
         run: ${vinayaRun(selfHost, 'check principal-test-plan-wait')}
 `
 }

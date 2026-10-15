@@ -187,12 +187,11 @@ describe('registry env declarations', () => {
       join('lib', 'review-gate-input.ts'),
       join('checks', 'bin', 'check-doc-coverage.ts'),
       join('checks', 'bin', 'check-doc-coverage-push.ts'),
-      join('checks', 'bin', 'check-body-bare-digits.ts')
-      // `test-plan` (task 12, #387) no longer resolves principals at all: it
-      // grades `[principal]` boxes from the body alone, and the `[agent]`
-      // half it used to count a Developer round comment for is now a fenced
-      // command list `vinaya pr report` grades against AEG:EVIDENCE — no
-      // comment fetch, no allowlist, left in this bin at all.
+      join('checks', 'bin', 'check-body-bare-digits.ts'),
+      // `test-plan` and `principal-test-plan-wait` resolve principals, through
+      // this shared module, to pick the task Issue's frozen brief for its
+      // `[live]` lines.
+      join('checks', 'frozen-brief.ts')
     ]
     for (const name of sources) {
       const src = readSource(name)
