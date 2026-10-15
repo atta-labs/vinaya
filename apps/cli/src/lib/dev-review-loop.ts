@@ -49,6 +49,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import { configPath, loadTrustAnchorConfig, resolveSecurityScanCommand } from './config.js'
+import { buildDeveloperDeltaPacket, buildDeveloperFullPacket, renderContextPacket } from './context-packet.js'
 import {
   addedDiffLines,
   agentOwnConfigSubpaths,
@@ -82,6 +83,7 @@ import {
   globCoversPath,
   manifestAsEchoed,
   nextRoundNumber,
+  pauseBoundRulingFromResolution,
   parseIssueSurface,
   policyDigest as policyDigestOf,
   recordDeveloperAttempt,
@@ -92,6 +94,7 @@ import {
   type LoopConfig,
   type LoopState,
   type Observations,
+  type PauseBoundRuling,
   type PauseReason,
   type ReconstructedJournal,
   type ReviewInputManifest,
@@ -174,6 +177,7 @@ import {
   fetchNewestRulingOrdinal,
   fetchPrBody,
   fetchRulings,
+  fetchRulingText,
   fetchSourceRevision,
   findOpenPrForBranch,
   LaunchContinuityLost,
@@ -259,7 +263,8 @@ import {
   routeCompletionEvents,
   sizeOfSafe,
   spendsInfrastructureRetry,
-  waitForOwnLoopLine
+  waitForOwnLoopLine,
+  type DeveloperHandoff
 } from './dev-review-loop/round-assess.js'
 import {
   addressedFindingIdsFromRecords,
@@ -486,6 +491,8 @@ export type LoopDeps = {
   /** A failed check run's own job-log tail, sanitized and size-capped — the Operator's PR read's own reader (`readJobLogTail`), so a red-CI retry and `read_pull_request` can show the Developer what failed. Injected so the harness fakes it. */
   readFailedCheckLogTail: (jobId: number) => string | null
   fetchRulings: typeof fetchRulings
+  /** The text of the one principal ruling a resolution's `authenticatedFrom` names (its pull request or Issue, and its ordinal) — what the pause-bound ruling slot's digest is taken over. */
+  fetchRulingText: typeof fetchRulingText
   fetchNewestRulingOrdinal: typeof fetchNewestRulingOrdinal
   /** O2: the GitHub login that authored the newest principal ruling — a resolution record's `authenticatedBy`. */
   fetchNewestRulingAuthor: typeof fetchNewestRulingAuthor
@@ -1518,6 +1525,24 @@ export function handoffFindings(
   return out
 }
 
+/**
+ * The unresolved findings and gate output a Developer continuation packet
+ * carries, read from the recovered `loop_state` record and nothing else — an
+ * absent, corrupt, or pre-handoff record hands over nothing rather than
+ * whatever this process happens to remember.
+ */
+export function developerContinuationFacts(recovered: ReturnType<typeof recoverLoopState>): {
+  unresolvedFindings: { id: string; description: string }[]
+  gateOutput: { reference: string; summary: string }[]
+} {
+  const handoff = recovered.status === 'ok' ? recovered.value.developerHandoff : null
+  return {
+    unresolvedFindings: handoff?.findings.map((finding) => ({ ...finding })) ?? [],
+    gateOutput:
+      handoff?.failingChecks.map((check) => ({ reference: check, summary: 'failed on the newest gate read' })) ?? []
+  }
+}
+
 class PublicationRefusalPause extends Error {
   constructor(
     readonly check: string,
@@ -2362,6 +2387,7 @@ function defaultDeps(): LoopDeps {
     rerunFailedWorkflowJobs,
     readFailedCheckLogTail: (jobId) => readJobLogTail(jobId),
     fetchRulings,
+    fetchRulingText,
     fetchNewestRulingOrdinal,
     fetchNewestRulingAuthor,
     fetchNewestIssueRulingOrdinal,
@@ -2663,6 +2689,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   let resumeHeadAlreadyMoved = false
   /** True when `--resume` continues a pause raised before the pull request existed and bound to it since: its ruling is on the task Issue (`escalationPrOf`), so the next Developer dispatch on the pull request is handed the Issue's rulings after the frozen brief. */
   let issueRulingsOwed = false
+  /** The Principal ruling that authenticated the pause this run resumed. */
+  let pauseBoundRuling: import('@attalabs/aeg-core').PauseBoundRuling | null = null
 
   if ('resumePr' in input) {
     const resumePr = input.resumePr
@@ -2897,6 +2925,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         }
         attachAfterReplayedResolution = true
       }
+    }
+    // Bind the resumed run to the resolution that was actually consumed,
+    // including replay attachment after a driver crash. A newer forge ruling
+    // must never replace the ruling that authenticated this pause.
+    // The slot is read from that consumed resolution alone; the digest is
+    // taken over the one ruling comment that identity names, and a
+    // ruling that cannot be found refuses the resume rather than binding
+    // another ruling's text to the consumed identity.
+    try {
+      pauseBoundRuling = pauseBoundRulingFromResolution(
+        readResolutionRecord(closesTask, resumeEscalationId),
+        d.fetchRulingText
+      )
+    } catch (err) {
+      throw new Error(`devReviewLoop --resume: ${err instanceof Error ? err.message : String(err)}`)
     }
     if (agentSwitched) {
       // The resume is accepted: the held record names the agent that runs
@@ -3432,6 +3475,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     /** O3: the round+head whose findings have already been delivered to the developer once — recovered so a later attach never redelivers the same pair, even when the local `round-<k>-attach-redelivered` marker file this same identity backs up is itself lost. */
     let deliveredFindingsIdentity: RoundHeadIdentity | null =
       recoveredLoopState.status === 'ok' ? recoveredLoopState.value.deliveredFindings : null
+    /**
+     * The newest review's unresolved findings and the newest gate read's
+     * failing checks, carried in the `loop_state` record so every Developer
+     * continuation packet is read back from that record rather than from this
+     * process's memory. Seeded from the record, so a restarted driver carries
+     * the same handoff forward instead of overwriting it with nothing.
+     */
+    let developerHandoff: DeveloperHandoff =
+      recoveredLoopState.status === 'ok' && recoveredLoopState.value.developerHandoff !== null
+        ? recoveredLoopState.value.developerHandoff
+        : { findings: [], failingChecks: [] }
 
     /**
      * When the loop FIRST started on this task, as the durable control records
@@ -3540,12 +3594,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // developer at a finding or a failure that had already repeated.
         repeatMemory: { blockingFindings: state.lastBlockingFindings, lastFailure: state.lastFailure },
         publicationExpectedBase,
+        developerHandoff,
         // The task's own clock, carried forward unchanged (`taskStartedAt`) and
         // accumulated (`phaseMs`), so the next driver to take this task over
         // measures the same budget from the same instant.
         taskStartedAt,
         phaseMs: taskClock().byPhaseMs
       })
+    }
+    /** Records a changed Developer handoff in the `loop_state` record at once, under the phase already current. */
+    function persistDeveloperHandoff(next: Partial<DeveloperHandoff>): void {
+      developerHandoff = { ...developerHandoff, ...next }
+      persistCurrentLoopState(currentPhase ?? 'dispatch_developer')
     }
     let devResumeId: string | null = null
     // Ruling 986-1: the developer dispatch-success history — "has any dispatch
@@ -4077,6 +4137,62 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         appendSourceDeliveryReceipt(documentationReceiptsPathForTask(), receipt)
       }
       const sourcesBlock = requiredSourcesPromptBlock(sourceManifest)
+      const packetHead =
+        prNumber > 0
+          ? d.resolveHead(branch)
+          : (d.readWorktreeHead(worktreePathForBranch()) ?? d.gitRevParseOriginMain())
+      const packetBase = await d.gitMergeBase(packetHead)
+      const packetObjectives = d.resolveIssueObjectives(task)
+      const packetRulings = prNumber > 0 ? d.fetchRulings(prNumber) : d.fetchIssueRulingsAfterBrief(task)
+      const packetBrief = d.fetchFrozenBrief(task)
+      const retainedPacket = buildDeveloperFullPacket({
+        brief: packetBrief ?? promptText,
+        briefDigest: briefHashOf(packetBrief),
+        objectives: packetObjectives.objectives.map((o) => `${o.id}: ${o.text}`).join('\n'),
+        objectivesVersion: packetObjectives.version ?? 'none',
+        rulings: packetRulings,
+        rulingOrdinal: prNumber > 0 ? d.fetchNewestRulingOrdinal(prNumber) : packetRulings.length,
+        policyDigest: policyDigestOf(policy),
+        baseSha: packetBase,
+        headSha: packetHead,
+        preparedSources: sourceManifest.sources.map((source) => ({
+          ref: `source:${source.sourceId}`,
+          version: source.contentDigest ?? source.snapshotRef ?? 'unavailable'
+        })),
+        capabilities: ['Execute only this frozen brief on the task branch.', publishingInstructionLine()],
+        toolCatalog: [
+          'fetch_documentation',
+          'run_checks',
+          'publish_changes',
+          'open_pull_request',
+          'update_pull_request_body',
+          'refresh_evidence',
+          'read_pull_request'
+        ],
+        expectedResult: 'DeveloperTurnResult schema version 1',
+        budgets: [`review rounds: ${policy.maxRounds}`, `task minutes: ${policy.maxTaskMinutes}`],
+        stopConditions: ['Honor every stop condition in the frozen brief.']
+      })
+      // A continuation is built from the durable records alone: the
+      // unresolved findings and failing checks from the `loop_state` record,
+      // and the prior session from the bound resume record (`devResumeId`),
+      // so a restarted driver builds the same packet. Nothing recorded reads
+      // as nothing recorded, never as invented text.
+      const packet = opts.skipResumeContext
+        ? retainedPacket
+        : buildDeveloperDeltaPacket({
+            retainedPacket,
+            previousSessionId: devResumeId,
+            changedFacts: [{ ref: 'head', version: `sha:${packetHead}` }],
+            ...developerContinuationFacts(recoverLoopState(task)),
+            constraints: ['Continue the same frozen brief on the same task branch.', publishingInstructionLine()]
+          })
+      const packetBlock = renderContextPacket(packet)
+      const promptPreamble =
+        packetBrief !== null && promptText.endsWith(packetBrief)
+          ? promptText.slice(0, -packetBrief.length).trimEnd()
+          : null
+      const promptBrief = promptPreamble === null ? promptText : packetBrief
       // O4: no bare-forge-command rule rides the prompt any longer — the
       // Developer holds no `gh`/`git push` credential and publishes only
       // through the driver-run tools, so there is no excluded command to run
@@ -4086,15 +4202,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // turn ends with — its structured turn result. The required-source
       // block leads every prompt, so it never splits the brief.
       const fullPrompt = opts.skipResumeContext
-        ? [sourcesBlock, promptText].filter((part): part is string => part !== null).join('\n\n')
+        ? [sourcesBlock, promptPreamble, packetBlock, promptBrief]
+            .filter((part): part is string => part !== null && part.length > 0)
+            .join('\n\n')
         : [
             sourcesBlock,
+            promptPreamble,
+            packetBlock,
             resumeContextBlock(),
             agentSwitched ? await switchedAgentContextBlock(promptText) : null,
-            promptText,
+            promptBrief,
             turnResultInstruction(roundNum)
           ]
-            .filter((part): part is string => part !== null)
+            .filter((part): part is string => part !== null && part.length > 0)
             .join('\n\n')
       // O1/O3: confine the Developer to
       // its own worktree — this driver's own round-1 `createTaskWorktree`
@@ -5652,10 +5772,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             promptFile,
             roleLogPath: loopLogPath,
             inputVersions: {
+              manifestVersion: facts.manifest.manifestVersion ?? 2,
               objectivesVersion: facts.manifest.objectivesVersion,
               briefHash: facts.manifest.briefHash,
               rulingOrdinal: facts.manifest.rulingOrdinal,
-              policyDigest: facts.manifest.policyDigest
+              policyDigest: facts.manifest.policyDigest,
+              pauseBoundRuling: facts.manifest.pauseBoundRuling ?? null
             },
             ...(scratchDir ? { cwd: scratchDir } : {}),
             // O1/O3: a Reviewer dispatched
@@ -5787,10 +5909,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               promptFile,
               roleLogPath: loopLogPath,
               inputVersions: {
+                manifestVersion: facts.manifest.manifestVersion ?? 2,
                 objectivesVersion: facts.manifest.objectivesVersion,
                 briefHash: facts.manifest.briefHash,
                 rulingOrdinal: facts.manifest.rulingOrdinal,
-                policyDigest: facts.manifest.policyDigest
+                policyDigest: facts.manifest.policyDigest,
+                pauseBoundRuling: facts.manifest.pauseBoundRuling ?? null
               },
               ...(scratchDir ? { cwd: scratchDir } : {}),
               // O1/O3: a Reviewer
@@ -6068,7 +6192,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     /** O2: the round marker comment the driver now posts in the Developer's place (`renderDeveloperRoundComment`) — idempotent per round+head, the same `postForgeEffectOnce` discipline every other driver-posted comment in this file already uses. */
-    async function postDeveloperRoundComment(roundNum: number, head: string): Promise<void> {
+    async function postDeveloperRoundComment(
+      roundNum: number,
+      head: string,
+      frozenPauseBoundRuling: PauseBoundRuling | null
+    ): Promise<void> {
       const records = readTurnResultRecords(root, task, roundNum)
       await withRateLimitWait(() =>
         postForgeEffectOnce(root, task, `developer-round-comment-${roundNum}-${head}`, () =>
@@ -6079,7 +6207,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             renderDeveloperRoundComment(
               head,
               addressedFindingIdsFromRecords(records),
-              reportedChecksFromRecords(records)
+              reportedChecksFromRecords(records),
+              frozenPauseBoundRuling
             )
           )
         )
@@ -6873,11 +7002,27 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               briefContent: d.fetchFrozenBrief(task),
               objectivesVersion: reassessedObjectives.version,
               rulingOrdinal: d.fetchNewestRulingOrdinal(prNumber),
+              pauseBoundRuling,
               policy
             })
+            // A held record written before manifest v2 has no protocol or
+            // pause-ruling slots. Preserve that record's legacy comparison
+            // mode for recovery only; newly rendered v2 verdicts still must
+            // echo both slots through the merge gate.
+            const compatibleCurrentManifest: ReviewInputManifest =
+              heldClean.manifest.manifestVersion === undefined
+                ? {
+                    headSha: currentManifestForCarry.headSha,
+                    baseSha: currentManifestForCarry.baseSha,
+                    briefHash: currentManifestForCarry.briefHash,
+                    objectivesVersion: currentManifestForCarry.objectivesVersion,
+                    rulingOrdinal: currentManifestForCarry.rulingOrdinal,
+                    policyDigest: currentManifestForCarry.policyDigest
+                  }
+                : currentManifestForCarry
             const carryBinding = compareManifest(
               manifestAsEchoed(heldClean.manifest),
-              currentManifestForCarry,
+              compatibleCurrentManifest,
               d.patchIdOf
             )
             if (carryBinding.bound) {
@@ -7592,6 +7737,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           const premiseFailureLines = premiseResult !== null ? premiseResult.errors.map((e) => e.message) : []
           const gateGreen = gate.green && !premiseFailed
           lastFailingChecks = [...gate.failingChecks, ...premiseFailureLines]
+          persistDeveloperHandoff({ failingChecks: lastFailingChecks.filter((check) => check.length > 0) })
           lastFailureLogs = gate.failureLogs
           pendingGateRedRetry = !gateGreen
           if (mechanicalRetryRecoverySurvivesOneReset) {
@@ -7713,6 +7859,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             briefContent: briefContentAtDispatch,
             objectivesVersion: resolvedObjectives.version,
             rulingOrdinal,
+            pauseBoundRuling,
             policy
           })
           lastDispatchedManifest = manifest
@@ -7779,7 +7926,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // BEFORE the reviewer dispatch below, never after: a reviewer
           // reading the PR mid-round sees the round marker comment already
           // there, exactly as it would have if the Developer had posted it.
-          await postDeveloperRoundComment(round, head)
+          await postDeveloperRoundComment(round, head, manifest.pauseBoundRuling ?? null)
 
           // O5: an infrastructure outcome from either role (after its own
           // one-retry inside `dispatchReviewer`) is a driver-decided pause —
@@ -8039,6 +8186,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               briefContent: reassessedBriefContent,
               objectivesVersion: reassessedObjectives.version,
               rulingOrdinal: reassessedRulingOrdinal,
+              pauseBoundRuling,
               policy
             })
             const binding = compareManifest(manifestAsEchoed(facts.manifest), currentManifest)
@@ -8082,6 +8230,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               heldResultIdentity = { round, head }
               lastReviewContext = `${reviewer.verdict.rendered}\n\n---\n\n${security.verdict.rendered}`
               lastHandoffFindings = handoffFindings(round, reviewer.verdict.observation, security.verdict.observation)
+              persistDeveloperHandoff({
+                findings: lastHandoffFindings.map((finding) => ({ id: finding.id, description: finding.line }))
+              })
 
               // Recorded once per round, so a Principal reading
               // the PR sees WHICH role's ids the driver could not trust —
@@ -8168,6 +8319,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                   } else {
                     lastReviewContext = renderLiveWithdrawal(head, liveFailures)
                     lastHandoffFindings = []
+                    persistDeveloperHandoff({ findings: [] })
                     decision = { type: 'dispatch_developer' }
                   }
                 }
@@ -8214,6 +8366,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             } else {
               lastReviewContext = renderLiveWithdrawal(approvedHead, liveFailures)
               lastHandoffFindings = []
+              persistDeveloperHandoff({ findings: [] })
               round += 1
               decision = { type: 'dispatch_developer' }
               persistCurrentLoopState(decision.type)
@@ -8307,6 +8460,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 briefContent: d.fetchFrozenBrief(task),
                 objectivesVersion: d.resolveIssueObjectives(task).version,
                 rulingOrdinal: d.fetchNewestRulingOrdinal(prNumber),
+                pauseBoundRuling,
                 policy
               }),
             // O1: the backlog Issue this round's deferred findings were just

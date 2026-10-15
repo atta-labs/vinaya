@@ -149,6 +149,18 @@ export const ManifestRecordSchema = z
     objectivesVersion: z.string().min(1).nullable(),
     /** Rulings — the newest principal ruling ordinal at dispatch (`0` when none). */
     rulingOrdinal: epochNumber,
+    /** Review-manifest protocol version; unknown values are corrupt. */
+    manifestVersion: z.literal(2).optional(),
+    /** Principal ruling bound to the resumed pause, or explicit null. */
+    pauseBoundRuling: z
+      .object({
+        rulingId: z.string().min(1),
+        pauseId: z.string().min(1),
+        contentDigest: z.string().min(1)
+      })
+      .strict()
+      .nullable()
+      .optional(),
     /** Policy identity — the complete effective review policy's digest. */
     policyDigest: z.string().min(1),
     recordedAt: isoTimestamp
@@ -226,6 +238,22 @@ export const LoopStateRecordSchema = z
         lastFailure: z
           .object({ signature: z.string(), message: z.string(), developerAttemptedSince: z.boolean().optional() })
           .nullable()
+      })
+      .strict()
+      .optional(),
+    /**
+     * What the next Developer packet is built from, so a restarted or
+     * re-exec'd driver builds the same packet the one before it would have:
+     * the newest review's unresolved findings, each with the controller-
+     * computed id the Developer cites and the finding line it was handed, and
+     * the checks that failed on the newest gate read. Overwritten as each
+     * changes. Optional: a record written before this field existed reads
+     * back as nothing handed over.
+     */
+    developerHandoff: z
+      .object({
+        findings: z.array(z.object({ id: z.string().min(1), description: z.string().min(1) }).strict()),
+        failingChecks: z.array(z.string().min(1))
       })
       .strict()
       .optional(),

@@ -90,3 +90,49 @@ export function newestPrincipalRulingAuthor(
   }
   return bestAuthor
 }
+
+/**
+ * Where a ruling identity points. A resolution record names the ruling that
+ * authenticated it as `<pr>-<k>` for a ruling on a pull request, or
+ * `issue-<n>-<k>` for a ruling on the task Issue; either way the ruling
+ * comment itself carries the marker `<ref>-<k>`. Any other value — a
+ * self-recovery tag, or a superseding-brief reference — names no ruling, and
+ * reads `null`.
+ */
+export function parseRulingIdentity(rulingId: string): { target: 'pr' | 'issue'; ref: number; ordinal: number } | null {
+  const m = /^(issue-)?(\d+)-(\d+)$/.exec(rulingId)
+  if (!m) return null
+  const ref = Number.parseInt(m[2] as string, 10)
+  const ordinal = Number.parseInt(m[3] as string, 10)
+  if (ref <= 0 || ordinal <= 0) return null
+  return { target: m[1] ? 'issue' : 'pr', ref, ordinal }
+}
+
+/**
+ * The text of the ONE principal-authored ruling a ruling identity names — the
+ * comment body after its marker line, trimmed, the same text every ruling
+ * reader hands a Developer. The caller passes the comments of the pull
+ * request or Issue the identity names; the identity's ordinal is matched
+ * against each marker's ordinal, exactly the number the resume read when it
+ * minted that identity (`newestPrincipalRulingOrdinal` reads the ordinal
+ * alone). Never chosen by position, by newest ordinal, or by being the only
+ * ruling present: `null` when no principal comment carries that ordinal, or
+ * when more than one does (an ambiguous identity is not an identity).
+ */
+export function principalRulingTextById(
+  comments: readonly RulingComment[],
+  allowlist: readonly string[],
+  rulingId: string
+): string | null {
+  const identity = parseRulingIdentity(rulingId)
+  if (identity === null) return null
+  const matches = comments.filter((c) => {
+    if (!isPrincipal(c.author, allowlist as string[])) return false
+    const m = RULING_MARKER_ORDINAL.exec((c.body.split('\n')[0] ?? '').trim())
+    return m !== null && Number.parseInt(m[1] as string, 10) === identity.ordinal
+  })
+  if (matches.length !== 1) return null
+  const body = (matches[0] as RulingComment).body
+  const idx = body.indexOf('\n')
+  return idx === -1 ? '' : body.slice(idx + 1).trim()
+}

@@ -18,6 +18,8 @@ import {
   issueBranchName,
   newestPrincipalRulingAuthor,
   newestPrincipalRulingOrdinal,
+  parseRulingIdentity,
+  principalRulingTextById,
   normalizeOutcome,
   type NormalizedOutcome,
   type Objective,
@@ -258,6 +260,32 @@ export function fetchRulings(prNumber: number): string[] {
     )
   }
   return filterPrincipalRulings(markerComments(out), principalAllowlist())
+}
+
+/**
+ * The text of the one principal ruling `rulingId` names — its ordinal
+ * (`<pr>-<k>` or `issue-<n>-<k>`), read from the pull request or Issue that
+ * identity names — never another ruling chosen by position, by newest
+ * ordinal, or by being the only one present. `null` when no principal
+ * comment, or more than one, carries that ordinal, or when `rulingId` names no
+ * ruling at all.
+ */
+export function fetchRulingText(rulingId: string): string | null {
+  const identity = parseRulingIdentity(rulingId)
+  if (identity === null) return null
+  let comments: MarkerComment[]
+  if (identity.target === 'issue') {
+    comments = fetchIssueComments(identity.ref, 'fetchRulingText')
+  } else {
+    try {
+      comments = markerComments(sh('gh', ['pr', 'view', String(identity.ref), '--json', 'comments']))
+    } catch (err) {
+      throw new Error(
+        `fetchRulingText: could not fetch PR #${identity.ref}'s comments: ${err instanceof Error ? err.message : String(err)}`
+      )
+    }
+  }
+  return principalRulingTextById(comments, principalAllowlist(), rulingId)
 }
 
 /**

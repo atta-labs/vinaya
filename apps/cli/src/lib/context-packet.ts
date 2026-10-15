@@ -45,6 +45,90 @@ export type ContextPacket = {
   context: string[]
 }
 
+/** Controller-owned inputs for a Developer's first invocation. */
+export type DeveloperFullPacketFacts = {
+  brief: string
+  briefDigest: string
+  objectives: string
+  objectivesVersion: string
+  rulings: readonly string[]
+  rulingOrdinal: number
+  policyDigest: string
+  baseSha: string
+  headSha: string
+  preparedSources: readonly EvidenceEntry[]
+  capabilities: readonly string[]
+  toolCatalog: readonly string[]
+  expectedResult: string
+  budgets: readonly string[]
+  stopConditions: readonly string[]
+}
+
+/** Build the complete, controller-owned round-one Developer packet. */
+export function buildDeveloperFullPacket(facts: DeveloperFullPacketFacts): ContextPacket {
+  return {
+    packetVersion: 'v1',
+    role: 'developer',
+    constraints: [...facts.capabilities, ...facts.stopConditions, `Return exactly ${facts.expectedResult}.`],
+    evidenceIndex: [
+      { ref: 'brief', version: `hash:${facts.briefDigest}` },
+      { ref: 'base', version: `sha:${facts.baseSha}` },
+      { ref: 'head', version: `sha:${facts.headSha}` },
+      { ref: 'objectives', version: facts.objectivesVersion },
+      { ref: 'ruling', version: `ordinal:${facts.rulingOrdinal}` },
+      { ref: 'policy', version: `digest:${facts.policyDigest}` },
+      ...facts.preparedSources.map((source) => ({ ...source }))
+    ],
+    context: [
+      '## Frozen brief',
+      facts.brief,
+      '## Objectives',
+      facts.objectives || '(none)',
+      '## Principal rulings',
+      facts.rulings.length > 0 ? facts.rulings.join('\n\n') : '(none)',
+      '## Tool catalog',
+      facts.toolCatalog.join('\n'),
+      '## Budgets',
+      facts.budgets.join('\n')
+    ]
+  }
+}
+
+export type DeveloperDeltaPacketFacts = {
+  retainedPacket: ContextPacket
+  /** The bound provider session the continuation resumes, or `null` when none was recorded. */
+  previousSessionId: string | null
+  changedFacts: readonly EvidenceEntry[]
+  unresolvedFindings: readonly { id: string; description: string }[]
+  gateOutput: readonly { reference: string; summary: string }[]
+  constraints: readonly string[]
+}
+
+/** Build a later-round/resume packet solely from durable records and evidence references. */
+export function buildDeveloperDeltaPacket(facts: DeveloperDeltaPacketFacts): ContextPacket {
+  return {
+    packetVersion: facts.retainedPacket.packetVersion,
+    role: facts.retainedPacket.role,
+    constraints: [...facts.retainedPacket.constraints, ...facts.constraints],
+    evidenceIndex: [
+      ...facts.retainedPacket.evidenceIndex.map((entry) => ({ ...entry })),
+      { ref: 'prior-session', version: facts.previousSessionId === null ? 'none' : `id:${facts.previousSessionId}` },
+      ...facts.changedFacts.map((entry) => ({ ...entry })),
+      ...facts.unresolvedFindings.map((finding) => ({
+        ref: `finding:${finding.id}`,
+        version: `controller:${finding.id}`
+      })),
+      ...facts.gateOutput.map((gate) => ({ ref: `gate:${gate.reference}`, version: `evidence:${gate.reference}` }))
+    ],
+    context: [
+      '## Unresolved findings',
+      ...facts.unresolvedFindings.map((finding) => `${finding.id}: ${finding.description}`),
+      '## Relevant gate output',
+      ...facts.gateOutput.map((gate) => `${gate.reference}: ${gate.summary}`)
+    ]
+  }
+}
+
 export type PacketIssueKind = 'missing-constraints' | 'missing-evidence' | 'unpinned-evidence' | 'malformed-header'
 
 export type PacketIssue = { kind: PacketIssueKind; message: string }

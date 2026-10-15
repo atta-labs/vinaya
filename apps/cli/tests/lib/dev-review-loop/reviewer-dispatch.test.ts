@@ -302,6 +302,8 @@ describe('buildManifestRecord / persistManifestRecord — the parent-built store
       briefHash: 'b'.repeat(64),
       objectivesVersion: 'c'.repeat(64),
       rulingOrdinal: 2,
+      manifestVersion: 2,
+      pauseBoundRuling: null,
       policyDigest: 'd'.repeat(64),
       recordedAt: '2026-09-14T00:00:00.000Z'
     })

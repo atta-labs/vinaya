@@ -149,11 +149,13 @@ export type ReviewBinding = {
 /** The digest the controller binds a review to: SHA-256 over the manifest's fields in a fixed key order. */
 export function manifestDigest(manifest: ReviewInputManifest): string {
   const ordered = {
+    manifestVersion: manifest.manifestVersion ?? 2,
     headSha: manifest.headSha,
     baseSha: manifest.baseSha,
     briefHash: manifest.briefHash,
     objectivesVersion: manifest.objectivesVersion,
     rulingOrdinal: manifest.rulingOrdinal,
+    pauseBoundRuling: manifest.pauseBoundRuling ?? null,
     policyDigest: manifest.policyDigest
   }
   return createHash('sha256').update(JSON.stringify(ordered)).digest('hex')

@@ -224,6 +224,7 @@ export {
 export type { MergedPrFacts } from './archive-task'
 export {
   extractCodeReviewVerdict,
+  extractPauseBoundRuling,
   extractSecurityReviewVerdict,
   parseFindingState,
   VERDICT_MARKER_SOURCE
@@ -237,7 +238,13 @@ export {
   isReviewGateExemptBranch
 } from './review-gate'
 export type { ReviewGateComment, ReviewGateInput, ReviewGateResult, ReviewGateVerdict } from './review-gate'
-export { newestPrincipalRulingAuthor, newestPrincipalRulingOrdinal, principalRulingMarker } from './ruling-ordinal'
+export {
+  newestPrincipalRulingAuthor,
+  newestPrincipalRulingOrdinal,
+  parseRulingIdentity,
+  principalRulingMarker,
+  principalRulingTextById
+} from './ruling-ordinal'
 export type { RulingComment } from './ruling-ordinal'
 export {
   briefHash,
@@ -251,11 +258,15 @@ export {
   isBoundToPolicy,
   isBoundToRulings,
   manifestAsEchoed,
+  pauseBoundRulingDigest,
+  pauseBoundRulingFromResolution,
   policyDigest
 } from './review-input-manifest'
 export type {
+  ConsumedResolution,
   EchoedManifest,
   ManifestBindingResult,
+  PauseBoundRuling,
   ReviewInputManifest,
   ReviewInputManifestFacts
 } from './review-input-manifest'

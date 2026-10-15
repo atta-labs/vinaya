@@ -198,6 +198,31 @@ describe('devReviewLoop — issue-711 F1: the patch-carry check runs on the --re
   })
 })
 
+describe("devReviewLoop — the pause-bound ruling is read by the consumed resolution's exact marker", () => {
+  it('refuses a --resume whose consumed ruling marker is absent, even when another single ruling body is present', async () => {
+    const HELD_HEAD = sha('a')
+    const world = makeWorld({
+      developerPushed: true,
+      head: HELD_HEAD,
+      roleOutcomes: { 1: { reviewer: ESCALATE_REVIEWER } }
+    })
+    seedRuling(world)
+    const paused = await runLoopInProcess(world)
+    expect(paused.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+
+    // The resume consumes ruling `<pr>-1`, but the only ruling comment the
+    // forge still shows is a different one: its text must never be bound to
+    // the consumed identity.
+    world.rulingsById = { [`${world.prNumber}-2`]: 'A different ruling.' }
+    world.head = sha('c')
+    markDriverLockDead(world)
+
+    await expect(runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude' })).rejects.toThrow(
+      'no single principal ruling comment carries that ruling identity'
+    )
+  })
+})
+
 describe('devReviewLoop — issue-711 F1: a max_rounds pause right after a genuinely failed patch-carry check names the comparison it made', () => {
   it('appends the patch-carry note to the max_rounds detail', async () => {
     const HELD_HEAD = sha('a')

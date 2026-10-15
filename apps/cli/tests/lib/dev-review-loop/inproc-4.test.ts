@@ -268,6 +268,50 @@ describe('devReviewLoop — a red gate the developer never fixes pauses, bounded
   })
 })
 
+describe('devReviewLoop — a Developer continuation packet is built from the durable loop record', () => {
+  it('a restarted driver hands over the unresolved findings and failing checks its loop_state record carries', async () => {
+    const world = makeWorld({ gate: 'red', failingCheckRuns: [failingCheckRun(1, 'Vinaya CI')] })
+    // A previous driver recorded this handoff and then died: nothing about
+    // it survives in this process except the control-store record.
+    mkdirSync(controlDir(world), { recursive: true })
+    writeFileSync(
+      join(controlDir(world), 'loop-state.json'),
+      JSON.stringify({
+        version: 1,
+        kind: 'loop_state',
+        task: world.task,
+        round: 1,
+        phase: 'dispatch_developer',
+        pauseReason: null,
+        budgets: { mechanicalRetries: 0, reviewRounds: 1, infrastructureRetries: 0 },
+        heldResult: null,
+        deliveredFindings: null,
+        developerHandoff: {
+          findings: [{ id: 'R1-CR-7', description: '[MAJOR] src/a.ts:3' }],
+          failingChecks: []
+        },
+        recordedAt: new Date().toISOString()
+      }),
+      'utf8'
+    )
+    const base = makeInProcessDeps(world)
+    const devPrompts: string[] = []
+    const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
+      if (role === 'developer') devPrompts.push(prompt)
+      return base.dispatchRole!(role, agent, prompt, opts)
+    }
+
+    await runLoopInProcess(world, { task: world.task, agent: 'claude' }, { dispatchRole })
+
+    const continuation = devPrompts[1]!
+    expect(continuation).toContain('finding:R1-CR-7')
+    expect(continuation).toContain('R1-CR-7: [MAJOR] src/a.ts:3')
+    expect(continuation).toMatch(/gate:Vinaya CI/)
+    expect(continuation).not.toContain('unresolved controller finding')
+    expect(continuation).not.toMatch(/controller-task-\d+-round-/)
+  })
+})
+
 describe("devReviewLoop — O2 (`[task-operator-v1]`/Issue #662): a developer dispatch classified 'connection-failed' is waited-and-re-dispatched, never an immediate decided stop", () => {
   it('recovers on the second attempt: the SAME session resumes, the round completes and publishes, and one recovered infrastructure_retry event is logged', async () => {
     const world = makeWorld()

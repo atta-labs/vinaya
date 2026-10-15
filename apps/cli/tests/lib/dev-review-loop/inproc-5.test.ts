@@ -2149,6 +2149,8 @@ describe('devReviewLoop — an unchanged Developer turn reruns the red head once
     expect(result.finalDecision.type).toBe('pause')
     // Two surrounding bookkeeping reads are fixed; only one is the
     // head-change poll despite a deliberately large poll budget.
-    expect(readsBetweenDeveloperTurns[0]).toBe(3)
+    // The delta context packet pins the current head as durable evidence,
+    // adding one controller read before the existing head-change poll.
+    expect(readsBetweenDeveloperTurns[0]).toBe(4)
   })
 })

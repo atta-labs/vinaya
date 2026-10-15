@@ -2,6 +2,8 @@ import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  buildDeveloperDeltaPacket,
+  buildDeveloperFullPacket,
   classifyOperatorRequest,
   compactPacket,
   type ContextPacket,
@@ -10,6 +12,56 @@ import {
   renderContextPacket,
   validateContextPacket
 } from '../../src/lib/context-packet.js'
+
+describe('Developer invocation packets', () => {
+  it('builds a complete first-turn packet with frozen authority and evidence', () => {
+    const packet = buildDeveloperFullPacket({
+      brief: 'Implement the frozen brief.',
+      briefDigest: 'brief-digest',
+      objectives: 'O1: bind the ruling',
+      objectivesVersion: 'objectives-v1',
+      rulings: ['Principal: proceed'],
+      rulingOrdinal: 1,
+      policyDigest: 'policy-v1',
+      baseSha: 'base',
+      headSha: 'head',
+      preparedSources: [{ ref: 'source:spec', version: 'sha256:source' }],
+      capabilities: ['Edit the task worktree.'],
+      toolCatalog: ['publish_changes'],
+      expectedResult: 'DeveloperTurnResult v1',
+      budgets: ['one task'],
+      stopConditions: ['Stop on a failed preflight.']
+    })
+    expect(validateContextPacket(packet)).toEqual([])
+    expect(packet.evidenceIndex).toContainEqual({ ref: 'brief', version: 'hash:brief-digest' })
+    expect(packet.context.join('\n')).toContain('Principal: proceed')
+    expect(packet.context.join('\n')).toContain('publish_changes')
+  })
+
+  it('builds a continuation from durable identities and gate references', () => {
+    const retainedPacket: ContextPacket = {
+      packetVersion: 'v1',
+      role: 'developer',
+      constraints: ['Execute the frozen brief.'],
+      evidenceIndex: [{ ref: 'brief', version: 'hash:brief-digest' }],
+      context: []
+    }
+    const packet = buildDeveloperDeltaPacket({
+      retainedPacket,
+      previousSessionId: 'session-1',
+      changedFacts: [{ ref: 'head', version: 'sha:new-head' }],
+      unresolvedFindings: [{ id: 'R1-CR-1', description: 'Bind the ruling.' }],
+      gateOutput: [{ reference: 'test-1', summary: 'failed on the prior head' }],
+      constraints: ['Continue the frozen brief.']
+    })
+    expect(validateContextPacket(packet)).toEqual([])
+    expect(packet.evidenceIndex).toContainEqual({ ref: 'prior-session', version: 'id:session-1' })
+    expect(packet.evidenceIndex).toContainEqual({ ref: 'brief', version: 'hash:brief-digest' })
+    expect(packet.constraints).toContain('Execute the frozen brief.')
+    expect(packet.evidenceIndex).toContainEqual({ ref: 'finding:R1-CR-1', version: 'controller:R1-CR-1' })
+    expect(packet.context.join('\n')).toContain('failed on the prior head')
+  })
+})
 
 /**
  * O3 fixtures — bounded context packets keep their authoritative constraints

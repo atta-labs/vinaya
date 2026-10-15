@@ -772,6 +772,8 @@ export type RecoveredLoopState = {
     lastFailure: { signature: string; message: string; developerAttemptedSince?: boolean } | null
   } | null
   publicationExpectedBase: string | null
+  /** The newest review's unresolved findings and the newest gate read's failing checks — `null` for a record written before this field existed, which reads back as nothing handed over. */
+  developerHandoff: { findings: { id: string; description: string }[]; failingChecks: string[] } | null
   /** When the loop first started on this task, as the first driver to persist state for it recorded — `null` for a record written before this field existed, which sends the caller to the earliest ownership epoch instead. */
   taskStartedAt: string | null
   /** Milliseconds recorded against each phase so far — `{}` for a record written before this field existed. Narration only: the budget is decided on elapsed time. */
@@ -805,6 +807,7 @@ export function recoverLoopState(
       deliveredFindings: parsed.value.deliveredFindings,
       repeatMemory: parsed.value.repeatMemory ?? null,
       publicationExpectedBase: parsed.value.publicationExpectedBase ?? null,
+      developerHandoff: parsed.value.developerHandoff ?? null,
       taskStartedAt: parsed.value.taskStartedAt ?? null,
       phaseMs: parsed.value.phaseMs ?? {}
     }

@@ -688,7 +688,7 @@
           "notApplicable": "Where the expected outcome is a recovery, the adversarial case grades it; the row adds no separate recovery case."
         },
         "adversarial": {
-          "present": "Stale head, injected or attempted at L2, L3; the observed outcome must be: stale verdict refused; no publication."
+          "present": "Stale head, or a pause-bound ruling that is missing, mismatched or agreed on by both verdicts against the frozen round record, injected at L2 or L3; the observed outcome must be a stale-verdict refusal with no publication."
         }
       },
       "grader": {
@@ -735,7 +735,7 @@
           "notApplicable": "Where the expected outcome is a recovery, the adversarial case grades it; the row adds no separate recovery case."
         },
         "adversarial": {
-          "present": "Source mutation, injected or attempted at L2, L5; the observed outcome must be: both roles resolve the pinned digest."
+          "present": "Source mutation, or continuation authority/evidence loss across a driver restart, injected at L2 or L5; both roles retain and resolve the original pinned digests and constraints, and the Developer continuation carries the findings and failing checks of the durable loop record."
         }
       },
       "grader": {

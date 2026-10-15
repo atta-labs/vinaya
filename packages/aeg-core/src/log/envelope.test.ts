@@ -91,9 +91,11 @@ describe('buildHeader', () => {
     expect(meta.actor_id).toBeNull()
     expect(meta.lineage).toEqual({ run: null, attempt: null, parent: null })
     expect(meta.input_versions).toEqual({
+      manifest_version: null,
       objectives_version: null,
       brief_hash: null,
       ruling_ordinal: null,
+      pause_bound_ruling: null,
       policy_digest: null
     })
     expect(meta.provenance).toBe('unavailable')
@@ -119,20 +121,34 @@ describe('buildHeader', () => {
   })
 
   it('fills input_versions from an explicit inputVersions override', () => {
+    // The ruling object is one atomic version pin: identity, originating
+    // pause, and content digest travel together or remain explicitly null.
     const { meta } = buildHeader({
       ...baseInput,
       inputVersions: {
+        manifestVersion: 2,
         objectivesVersion: 'deadbeef',
         briefHash: 'sha256:abc',
         rulingOrdinal: 3,
+        pauseBoundRuling: {
+          rulingId: '1391-1',
+          pauseId: '1332-2-head',
+          contentDigest: 'sha256:ruling'
+        },
         policyDigest: 'sha256:def'
       }
     })
     if (meta.schema !== 3) throw new Error('expected schema 3')
     expect(meta.input_versions).toEqual({
+      manifest_version: 2,
       objectives_version: 'deadbeef',
       brief_hash: 'sha256:abc',
       ruling_ordinal: 3,
+      pause_bound_ruling: {
+        rulingId: '1391-1',
+        pauseId: '1332-2-head',
+        contentDigest: 'sha256:ruling'
+      },
       policy_digest: 'sha256:def'
     })
   })

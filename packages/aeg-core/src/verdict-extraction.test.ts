@@ -1018,3 +1018,20 @@ describe('Judged base: extraction (#555, O1)', () => {
     expect(extractSecurityReviewVerdict([comment]).baseSha).toBeNull()
   })
 })
+
+describe('manifest protocol and pause-bound ruling extraction', () => {
+  it('extracts the extended manifest slots from a rendered verdict', () => {
+    const ruling = `601-2|pause-1|${'a'.repeat(64)}`
+    const result = extractCodeReviewVerdict([
+      `VERDICT: APPROVE\n\nJudged head: abc1234\n\nRuling ordinal: 2\n\nManifest version: 2\n\nPause-bound ruling: ${ruling}`
+    ])
+    expect(result.manifestVersion).toBe(2)
+    expect(result.pauseBoundRuling).toEqual({ rulingId: '601-2', pauseId: 'pause-1', contentDigest: 'a'.repeat(64) })
+  })
+
+  it('preserves missing slots for a legacy verdict instead of inventing current defaults', () => {
+    const result = extractSecurityReviewVerdict(['VERDICT: PASS\n\nJudged head: abc1234'])
+    expect(result.manifestVersion).toBeUndefined()
+    expect(result.pauseBoundRuling).toBeUndefined()
+  })
+})

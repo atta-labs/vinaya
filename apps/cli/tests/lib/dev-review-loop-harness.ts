@@ -151,6 +151,13 @@ export type LoopWorld = {
   objectivesText: string
   sourceRevision: string
   rulings: string[]
+  /**
+   * Ruling texts keyed by exact ruling identity (`<pr>-<k>` / `issue-<n>-<k>`),
+   * for a fixture that pins which ruling comments exist. Absent, the newest
+   * ruling in `rulings` answers the identity naming `rulingOrdinal` and
+   * nothing else does.
+   */
+  rulingsById?: Record<string, string>
   /** The Principal rulings on the TASK ISSUE posted after its newest frozen brief — what a pre-pull-request dispatch is handed. */
   issueRulings: string[]
   rulingOrdinal: number
@@ -588,6 +595,14 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     fetchFailingCheckRuns: (_head) => world.failingCheckRuns.map((c) => ({ ...c })) as never,
     readFailedCheckLogTail: (jobId) => world.failedCheckLogTails[jobId] ?? null,
     fetchRulings: (_pr) => [...world.rulings],
+    fetchRulingText: (rulingId) => {
+      if (world.rulingsById) return world.rulingsById[rulingId] ?? null
+      const onIssue = rulingId.startsWith('issue-')
+      const ordinal = Number(rulingId.split('-').at(-1))
+      const newest = onIssue ? world.issueRulingOrdinal : world.rulingOrdinal
+      const texts = onIssue ? world.issueRulings : world.rulings
+      return ordinal === newest ? (texts.at(-1) ?? null) : null
+    },
     fetchIssueRulingsAfterBrief: (_issue) => [...world.issueRulings],
     fetchNewestRulingOrdinal: (_pr) => world.rulingOrdinal,
     fetchNewestRulingAuthor: (_pr) => world.rulingAuthor,

@@ -44,6 +44,59 @@
 
 import { createHash } from 'node:crypto'
 import type { ReviewPolicy } from './review-policy'
+import { parseRulingIdentity } from './ruling-ordinal'
+
+/** The authenticated Principal ruling that resumed the pause preceding a round. */
+export type PauseBoundRuling = {
+  rulingId: string
+  pauseId: string
+  contentDigest: string
+}
+
+/** SHA-256 of a ruling's text — its comment body after the marker line, trimmed. */
+export function pauseBoundRulingDigest(rulingText: string): string {
+  return createHash('sha256').update(rulingText).digest('hex')
+}
+
+/** The fields of a consumed resolution record the ruling binding reads. */
+export type ConsumedResolution = {
+  escalationId: string
+  decision: 'resume' | 'cancel'
+  authenticatedBy: string
+  authenticatedFrom: string
+}
+
+/**
+ * The pause-bound ruling slot for a run resumed from `resolution`, read from
+ * that consumed resolution alone: its `escalationId` is the pause identity,
+ * its `authenticatedFrom` the ruling identity, and the digest is taken over
+ * the text of the one ruling comment that identity names — its ordinal, on the pull request or Issue it names
+ * (`readRulingText`, which must never fall back to another ruling). `null`
+ * when the resolution carries no ruling — no resolution, a cancel, a
+ * self-recovery (`'driver-self'`), or an identity that names no ruling
+ * marker. Throws when the identity names a ruling whose text cannot be read,
+ * rather than binding some other ruling's text to it.
+ */
+export function pauseBoundRulingFromResolution(
+  resolution: ConsumedResolution | null,
+  readRulingText: (rulingId: string) => string | null
+): PauseBoundRuling | null {
+  if (resolution === null || resolution.decision !== 'resume' || resolution.authenticatedBy === 'driver-self') {
+    return null
+  }
+  if (parseRulingIdentity(resolution.authenticatedFrom) === null) return null
+  const text = readRulingText(resolution.authenticatedFrom)
+  if (text === null) {
+    throw new Error(
+      `resolution ${resolution.escalationId} authenticates from ruling ${resolution.authenticatedFrom}, but no single principal ruling comment carries that ruling identity.`
+    )
+  }
+  return {
+    rulingId: resolution.authenticatedFrom,
+    pauseId: resolution.escalationId,
+    contentDigest: pauseBoundRulingDigest(text)
+  }
+}
 
 /**
  * `sha256` of the frozen brief's own text as it appears posted, below its
@@ -101,6 +154,8 @@ export function policyDigest(policy: ReviewPolicy): string {
  * either configured or defaulted.
  */
 export type ReviewInputManifest = {
+  /** Closed protocol version. Readers must refuse values other than 2. */
+  manifestVersion?: 2
   /** The candidate identity — the round's judged head (O1: "base and candidate identity"). */
   headSha: string
   /**
@@ -115,6 +170,8 @@ export type ReviewInputManifest = {
   briefHash: string | null
   objectivesVersion: string | null
   rulingOrdinal: number
+  /** `null` explicitly means this round did not follow a ruling-resolved pause. */
+  pauseBoundRuling?: PauseBoundRuling | null
   policyDigest: string
 }
 
@@ -126,17 +183,20 @@ export type ReviewInputManifestFacts = {
   briefContent: string | null
   objectivesVersion: string | null
   rulingOrdinal: number
+  pauseBoundRuling?: PauseBoundRuling | null
   policy: ReviewPolicy
 }
 
 /** The one builder — every call site that used to compute these facts as separate, ad hoc values now builds this instead. */
 export function buildReviewInputManifest(facts: ReviewInputManifestFacts): ReviewInputManifest {
   return {
+    manifestVersion: 2,
     headSha: facts.headSha,
     baseSha: facts.baseSha,
     briefHash: facts.briefContent === null ? null : briefHash(facts.briefContent),
     objectivesVersion: facts.objectivesVersion,
     rulingOrdinal: facts.rulingOrdinal,
+    pauseBoundRuling: facts.pauseBoundRuling ?? null,
     policyDigest: policyDigest(facts.policy)
   }
 }
@@ -158,23 +218,27 @@ export function buildReviewInputManifest(facts: ReviewInputManifestFacts): Revie
  * fact anywhere.
  */
 export type EchoedManifest = {
+  manifestVersion?: number | null
   headSha: string | null
   /** `null` when no `Judged base:` line was found (O1) — pre-cutover legacy stock, or a stripped line. */
   baseSha: string | null
   briefHash: string | null
   objectivesVersion: string | null
   rulingOrdinal: number | null
+  pauseBoundRuling?: PauseBoundRuling | null
   policyDigest: string | null
 }
 
 /** `manifest`'s own fields, reshaped as an `EchoedManifest` — for a same-process comparison (the loop's pre-hold self-check) where the "echo" is simply the in-memory manifest a verdict was rendered from, never a round-trip through the rendered text. */
 export function manifestAsEchoed(manifest: ReviewInputManifest): EchoedManifest {
   return {
+    ...(manifest.manifestVersion === undefined ? {} : { manifestVersion: manifest.manifestVersion }),
     headSha: manifest.headSha,
     baseSha: manifest.baseSha,
     briefHash: manifest.briefHash,
     objectivesVersion: manifest.objectivesVersion,
     rulingOrdinal: manifest.rulingOrdinal,
+    ...(manifest.manifestVersion === undefined ? {} : { pauseBoundRuling: manifest.pauseBoundRuling ?? null }),
     policyDigest: manifest.policyDigest
   }
 }
@@ -329,6 +393,8 @@ export type ManifestBindingResult = {
   briefHash: boolean
   objectivesVersion: boolean
   rulingOrdinal: boolean
+  pauseBoundRuling: boolean
+  manifestVersion: boolean
   policyDigest: boolean
 }
 
@@ -376,14 +442,32 @@ export function compareManifest(
   const briefHashBound = isBoundToBriefHash(echoed, current.briefHash)
   const objectivesVersion = isBoundToObjectives(echoed, current.objectivesVersion)
   const rulingOrdinal = isBoundToRulings(echoed, current.rulingOrdinal)
+  const legacyCurrent = current.manifestVersion === undefined
+  const manifestVersion = legacyCurrent
+    ? echoed.manifestVersion === undefined || echoed.manifestVersion === null
+    : echoed.manifestVersion === current.manifestVersion
+  const pauseBoundRuling = legacyCurrent
+    ? true
+    : Object.hasOwn(echoed, 'pauseBoundRuling') &&
+      JSON.stringify(echoed.pauseBoundRuling) === JSON.stringify(current.pauseBoundRuling)
   const policyDigestBound = isBoundToPolicy(echoed, current.policyDigest)
   return {
-    bound: head && base && briefHashBound && objectivesVersion && rulingOrdinal && policyDigestBound,
+    bound:
+      head &&
+      base &&
+      briefHashBound &&
+      objectivesVersion &&
+      rulingOrdinal &&
+      pauseBoundRuling &&
+      manifestVersion &&
+      policyDigestBound,
     head,
     base,
     briefHash: briefHashBound,
     objectivesVersion,
     rulingOrdinal,
+    pauseBoundRuling,
+    manifestVersion,
     policyDigest: policyDigestBound
   }
 }

@@ -341,10 +341,12 @@ export type DispatchOpts = {
    * carry the honest all-`null` default they always did.
    */
   inputVersions?: {
+    manifestVersion?: 2 | null
     objectivesVersion?: string | null
     briefHash?: string | null
     rulingOrdinal?: number | null
     policyDigest?: string | null
+    pauseBoundRuling?: { rulingId: string; pauseId: string; contentDigest: string } | null
   }
   /**
    * O3: `true` only when the caller has already

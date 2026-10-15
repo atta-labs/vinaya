@@ -108,6 +108,7 @@ export type ReviewGateComment = {
 }
 
 export type ReviewGateInput = {
+  manifestVersion?: 2
   /** Every comment on the PR, with its author. */
   comments: ReviewGateComment[]
   /** Every label currently applied to the PR. */
@@ -194,6 +195,8 @@ export type ReviewGateInput = {
    * unconditional skip, since a ruling's existence is never ambiguous.
    */
   rulingOrdinal: number
+  /** Ruling that authenticated the resumed pause preceding this review round. */
+  pauseBoundRuling?: import('./review-input-manifest').PauseBoundRuling | null
   /**
    * Which severities block is repository policy — resolved by the caller from the DEFAULT BRANCH's
    * `vinaya.config.json` (`resolveReviewPolicy(loadTrustAnchorConfig())`),
@@ -394,27 +397,33 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   // brief string) since the caller already resolved `briefHash` itself and
   // this module stays pure — no hashing of forge content here.
   const currentManifest: ReviewInputManifest = {
+    ...(input.manifestVersion === undefined ? {} : { manifestVersion: input.manifestVersion }),
     headSha: input.headSha,
     baseSha: input.baseSha ?? null,
     briefHash: input.briefHash ?? null,
     objectivesVersion: input.objectivesVersion,
     rulingOrdinal: input.rulingOrdinal,
+    pauseBoundRuling: input.pauseBoundRuling ?? null,
     policyDigest: computePolicyDigest(policy)
   }
   const codeReviewEchoed: EchoedManifest = {
+    manifestVersion: codeReview.manifestVersion,
     headSha: codeReview.headSha,
     baseSha: codeReview.baseSha,
     briefHash: codeReview.briefHash,
     objectivesVersion: codeReview.objectivesVersion,
     rulingOrdinal: codeReview.rulingOrdinal,
+    pauseBoundRuling: codeReview.pauseBoundRuling,
     policyDigest: codeReview.policyDigest
   }
   const securityEchoed: EchoedManifest = {
+    manifestVersion: security.manifestVersion,
     headSha: security.headSha,
     baseSha: security.baseSha,
     briefHash: security.briefHash,
     objectivesVersion: security.objectivesVersion,
     rulingOrdinal: security.rulingOrdinal,
+    pauseBoundRuling: security.pauseBoundRuling,
     policyDigest: security.policyDigest
   }
   const codeReviewBinding = compareManifest(codeReviewEchoed, currentManifest, input.patchIdOf)
@@ -473,6 +482,14 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
     problems.push(
       `the newest code-review verdict was cast against review policy digest ${codeReview.policyDigest ?? 'none'}, this repository's current policy digest is ${currentManifest.policyDigest}`
     )
+  } else if (!codeReviewBinding.manifestVersion) {
+    problems.push(
+      `the newest code-review verdict echoes manifest version ${codeReview.manifestVersion ?? 'none'}, the frozen review-input manifest is version ${currentManifest.manifestVersion ?? 'unversioned'}`
+    )
+  } else if (!codeReviewBinding.pauseBoundRuling) {
+    problems.push(
+      `the newest code-review verdict echoes pauseBoundRuling ${renderBinding(codeReview.pauseBoundRuling)}, the frozen review-input manifest binds ${renderBinding(currentManifest.pauseBoundRuling)}`
+    )
   }
   if (!securityTextClean) {
     problems.push(`security-review verdict is not a clean PASS (found: ${security.value})`)
@@ -504,6 +521,14 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
     problems.push(
       `the newest security-review verdict was cast against review policy digest ${security.policyDigest ?? 'none'}, this repository's current policy digest is ${currentManifest.policyDigest}`
     )
+  } else if (!securityBinding.manifestVersion) {
+    problems.push(
+      `the newest security-review verdict echoes manifest version ${security.manifestVersion ?? 'none'}, the frozen review-input manifest is version ${currentManifest.manifestVersion ?? 'unversioned'}`
+    )
+  } else if (!securityBinding.pauseBoundRuling) {
+    problems.push(
+      `the newest security-review verdict echoes pauseBoundRuling ${renderBinding(security.pauseBoundRuling)}, the frozen review-input manifest binds ${renderBinding(currentManifest.pauseBoundRuling)}`
+    )
   }
   const ignoredNote =
     ignoredCount > 0
@@ -515,6 +540,12 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
     reason: `${problems.join('; ')}. A principal can apply an actor-verified \`${WAIVER_LABEL_REVIEW}\` label to skip this requirement, or post the missing/clean verdict comment(s).${ignoredNote}${deferredNote}`,
     waived: false
   }
+}
+
+/** A ruling binding as the gate's failure text names it: `<ruling>|<pause>|<digest>`, `(none)`, or `(absent)` when no slot was echoed at all. */
+function renderBinding(binding: import('./review-input-manifest').PauseBoundRuling | null | undefined): string {
+  if (binding === undefined) return '(absent)'
+  return binding === null ? '(none)' : `${binding.rulingId}|${binding.pauseId}|${binding.contentDigest}`
 }
 
 /**

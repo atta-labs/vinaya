@@ -114,10 +114,18 @@ The controller prepares these before an agent starts; agents never supply them.
 | Brief and its hash | Developer, reviewers | The frozen task brief |
 | Objectives and rulings | Developer, reviewers | What the task must achieve; every Principal ruling so far |
 | Required-source manifest | Developer, reviewers | Each required source by normalized identity, with the pinned content, final URL and digest once delivered. The default process populates it from the brief's documentation section; the capability knows only source identities. |
-| Review-input manifest | Reviewers | Head, brief hash, objectives version, ruling ordinal and policy digest the verdict binds to |
+| Review-input manifest | Reviewers | Protocol version, head, base, brief hash, objectives version, ruling ordinal, policy digest, and the explicit nullable Principal-ruling binding (ruling identity, resumed pause identity, content digest) the verdict binds to |
 | Diff and read-only checkout | Reviewers | The changes and the code at the reviewed head |
 | CI and scanner evidence | Reviewers | Controller-produced results for the reviewed head |
 | Prior findings | Developer, from round 2 | Each finding with its controller-computed identity |
+
+The Developer's first invocation receives these inputs as a full context
+packet together with its capability grant, tool catalog, terminal-result
+schema, budgets, and stop conditions. Later rounds and resumes receive a delta
+packet reconstructed from control records and evidence references: changed
+authoritative facts, unresolved controller-identified findings, relevant gate
+output, and the prior session identity. Provider conversation memory is never
+the sole continuation record.
 
 ## 6. Agent result contracts
 

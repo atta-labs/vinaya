@@ -105,9 +105,11 @@ export type HeaderInput = {
   provenance?: Provenance
   /** Mirrors `review-input-manifest.ts`'s field set (camelCase, matching that module); absent fields read back `null`, never invented. */
   inputVersions?: {
+    manifestVersion?: 2 | null
     objectivesVersion?: string | null
     briefHash?: string | null
     rulingOrdinal?: number | null
+    pauseBoundRuling?: { rulingId: string; pauseId: string; contentDigest: string } | null
     policyDigest?: string | null
   }
 }
@@ -155,9 +157,11 @@ export function buildHeader(input: HeaderInput): Header {
         parent: lineageFieldFromEnv(input.env.parent)
       },
       input_versions: {
+        manifest_version: input.inputVersions?.manifestVersion ?? null,
         objectives_version: input.inputVersions?.objectivesVersion ?? null,
         brief_hash: input.inputVersions?.briefHash ?? null,
         ruling_ordinal: input.inputVersions?.rulingOrdinal ?? null,
+        pause_bound_ruling: input.inputVersions?.pauseBoundRuling ?? null,
         policy_digest: input.inputVersions?.policyDigest ?? null
       },
       provenance: provenanceFor(input),
