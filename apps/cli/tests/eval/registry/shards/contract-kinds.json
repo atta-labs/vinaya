@@ -1090,7 +1090,7 @@
       "id": "adapter:claude-code",
       "kind": "adapter",
       "module": "6.3",
-      "additionalModules": ["6.21"],
+      "additionalModules": ["6.4", "6.8", "6.21", "6.22"],
       "source": {
         "document": "apps/cli/specs/dev-review-engine-capability-matrix.md",
         "revision": 17,
@@ -1102,7 +1102,7 @@
       "suite": ["developer-invocation.l4@1", "developer-invocation.l7@1"],
       "tasks": {
         "positive": {
-          "present": "The contracts §9 conformance list on first and resumed sessions: catalog listing, schema validation, each error class, result delivery, redaction."
+          "present": "The contracts §9 conformance list on first and resumed sessions: catalog listing, schema validation, each error class, result delivery, redaction; each reviewer's result on a fresh session; role instructions and the rendered brief reaching the vendor's loaded location, by digest; a ready host dispatching."
         },
         "negative": {
           "present": "Malformed model output never crosses the adapter boundary; a schema-valid but semantically invalid result is rejected."
@@ -1119,7 +1119,7 @@
       },
       "grader": {
         "kinds": ["code"],
-        "detail": "Code: one typed outcome per conformance case, run live with the real tool registration, sandbox and subscription login."
+        "detail": "Code: one typed outcome per case of the shared adapter-conformance suite (`apps/cli/tests/conformance/adapter-contract.ts`) — its deterministic subset on every change with the forge faked, and its live run with the real tool registration, sandbox and subscription login, one command per adapter."
       },
       "backends": ["standalone", "engine"],
       "decisionRule": "Deterministic: 100% per adapter; every unsupported difference declared in the capability matrix (§10).",
@@ -1130,7 +1130,7 @@
       "id": "adapter:codex",
       "kind": "adapter",
       "module": "6.3",
-      "additionalModules": ["6.21"],
+      "additionalModules": ["6.4", "6.8", "6.21", "6.22"],
       "source": {
         "document": "apps/cli/specs/dev-review-engine-capability-matrix.md",
         "revision": 17,
@@ -1142,7 +1142,7 @@
       "suite": ["developer-invocation.l4@1", "developer-invocation.l7@1"],
       "tasks": {
         "positive": {
-          "present": "The contracts §9 conformance list on first and resumed sessions: catalog listing, schema validation, each error class, result delivery, redaction."
+          "present": "The contracts §9 conformance list on first and resumed sessions: catalog listing, schema validation, each error class, result delivery, redaction; each reviewer's result on a fresh session; role instructions and the rendered brief reaching the vendor's loaded location, by digest; a ready host dispatching."
         },
         "negative": {
           "present": "Malformed model output never crosses the adapter boundary; a schema-valid but semantically invalid result is rejected."
@@ -1159,7 +1159,7 @@
       },
       "grader": {
         "kinds": ["code"],
-        "detail": "Code: one typed outcome per conformance case, run live with the real tool registration, sandbox and subscription login."
+        "detail": "Code: one typed outcome per case of the shared adapter-conformance suite (`apps/cli/tests/conformance/adapter-contract.ts`) — its deterministic subset on every change with the forge faked, and its live run with the real tool registration, sandbox and subscription login, one command per adapter."
       },
       "backends": ["standalone", "engine"],
       "decisionRule": "Deterministic: 100% per adapter; every unsupported difference declared in the capability matrix (§10).",

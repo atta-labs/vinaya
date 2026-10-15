@@ -148,6 +148,34 @@ by the section headings read from the live pages on 2026-10-06, never by a
 summary of them. Each row also traces to the invariant register's product
 guarantees and named defects it bears on, or says why it has none.
 
+## Declared differences in the adapter conformance suite
+
+<!-- AEG:CLAIM: apps/cli/tests/conformance/adapter-contract.ts contains:export const ADAPTER_CONTRACT_CASES: readonly AdapterContractCase[] = [ -->
+The shared adapter-conformance suite,
+`apps/cli/tests/conformance/adapter-contract.ts`, runs one case list on
+Claude Code and on Codex. Where the two adapters meet a case differently,
+the difference is declared here, one row per case and adapter, citing the
+matrix row that records it. **Supported** reads `no` for a difference the
+adapter does not cover: the case still runs against it, and the row's named
+gap stays open. `apps/cli/tests/conformance/adapter-contract.test.ts` keeps
+this table equal to the suite's own declarations, and the live run's report
+lists the rows for the adapter it ran.
+
+| Case | Adapter | Matrix row | Supported | Difference |
+| --- | --- | --- | --- | --- |
+| `catalog-listing` | Claude Code | `AD-CC-05` | yes | Registered by a strict, controller-written MCP configuration file; the session fails at start when its init event reports the server skipped or failed. |
+| `catalog-listing` | Codex | `AD-CX-05` | yes | Registered as a required MCP server table in the task-scoped configuration home, so a server that cannot start fails the session. |
+| `result-delivery` | Claude Code | `AD-CC-02` | yes | The schema is passed inline with `--json-schema`; the result is read only from the terminal `result` event's `structured_output`. |
+| `result-delivery` | Codex | `AD-CX-02` | yes | The schema is a file passed with `--output-schema`; the result is the final agent message, read only when the turn completes. |
+| `cancellation` | Claude Code | `AD-CC-08` | yes | The interrupted turn records no result; a resume continues from the next prompt. |
+| `cancellation` | Codex | `AD-CX-08` | no | Codex documents no interrupt semantics for `codex exec`, nor what a resumed session holds for an interrupted turn; the runtime's process termination is the only cancellation. |
+| `reviewer-resume-refused` | Claude Code | `AD-CC-04` | yes | A Claude session resumes with `-p -r <session>`; the reviewer refusal stops that argv being built. |
+| `reviewer-resume-refused` | Codex | `AD-CX-04` | yes | A Codex session resumes with `exec resume <session>`; the reviewer refusal stops that argv being built. |
+| `role-context-developer` | Claude Code | `AD-CC-11` | yes | Claude Code loads `CLAUDE.md`, which imports `AGENTS.md`; the prompt is read from standard input in print mode. |
+| `role-context-developer` | Codex | `AD-CX-11` | yes | Codex loads `AGENTS.md` itself; role context is the prompt, read from standard input after the trailing `-`, plus the task-scoped configuration home. |
+| `host-readiness` | Claude Code | `CF-CC-LINUX` | yes | The readiness probe is one short print-mode turn asked to run the probe command in the dispatch's own sandbox, retried once when no command ran. |
+| `host-readiness` | Codex | `CF-CX-LINUX` | yes | The readiness probe runs the probe command through `codex sandbox` and starts no model. |
+
 ## Running the test
 
 ```

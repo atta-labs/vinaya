@@ -165,3 +165,61 @@ the identical gap `adapters.ts`'s `CODEX_MCP_ADAPTER` already discloses
 binary on this host to run it against, live or otherwise. A Codex-runtime
 live smoke run — like the Claude live-model layer above — awaits the
 Principal's own authorized run on a host that has one.
+
+## E — Adapter conformance (layer L4)
+
+<!-- AEG:CLAIM: apps/cli/tests/conformance/adapter-contract.ts contains:export function sessionRuleViolations(cases: readonly AdapterContractCase[]): string[] { -->
+`apps/cli/tests/conformance/adapter-contract.ts` holds one case list every
+agent adapter runs unchanged — today Claude Code and Codex — against the
+contract the developer-review controller holds its agents to
+(`apps/cli/specs/dev-review-capabilities-contracts.md`, "Conformance"): tool
+catalog listing, schema validation, each error class, result delivery,
+malformed output never crossing the adapter boundary, a schema-valid but
+semantically invalid result rejected, a first result failing a completion
+precondition rejected and the same session resumed once with only the second
+valid result accepted, a second failure pausing, provider error,
+cancellation and context exhaustion producing no accepted result, timeout,
+and redaction. It adds role context delivery and host dispatch readiness
+(`apps/cli/specs/dev-review-evaluation-program.md`, modules 6.21 and 6.22).
+
+**Session rule.** A Developer case runs on a first session and on a resumed
+one. A reviewer case runs only on a fresh session; the one reviewer case on a
+resumed session is a refusal case — a reviewer resume is refused before it
+starts, and a resumed reviewer's result is no review.
+`sessionRuleViolations` refuses a case list that breaks the rule.
+
+**Deterministic subset.** `apps/cli/tests/conformance/adapter-contract.test.ts`
+runs every case on both adapters in continuous integration. Each case drives
+the real controller — the in-process loop with its forge fake, the real
+result acceptance and pause rules, the dev-tools server and catalog, the
+production vendor-stream readers, argv builders, registration writers and
+sandbox probe — with a fake agent that speaks each vendor's own stream
+format. It asserts typed outcomes and controller records, never a model's
+prose.
+
+**Live run.** One command per adapter runs the same case list on the real
+CLI with its real tool registration, sandbox and subscription login, and
+writes a Markdown report naming the CLI version, each case's outcome with its
+evidence, and each difference the capability matrix declares for that
+adapter:
+
+```
+bun apps/cli/tests/conformance/adapter-contract-live.ts --agent claude [--report <path>]
+bun apps/cli/tests/conformance/adapter-contract-live.ts --agent codex [--report <path>]
+```
+
+It needs the operator's subscription login, so it runs outside any agent
+sandbox and never in continuous integration. A case's live outcome comes
+from the live proofs that observe it — `vinaya task-tools result-proof`,
+`review-result-proof` and `dev-proof`, run as they are — and from the
+command's own dispatches through the production dispatcher for the cases no
+proof observes. A case no live proof observes reads `DETERMINISTIC ONLY` in
+the report: today the reviewer's tool listing and role context delivery. A
+failing live case is reported as failing; none is ever registered as a known
+failure.
+
+**Declared differences.** Where the adapters meet a case differently, the
+difference is declared in the capability matrix
+(`apps/cli/specs/dev-review-engine-capability-matrix.md`, "Declared
+differences in the adapter conformance suite"), and the deterministic subset
+keeps that table equal to the case list.
