@@ -188,15 +188,28 @@ function readRecord<T>(path: string, parse: (raw: string | undefined) => ParsedR
  * the co-tenant threat (a genuinely different account) this function exists
  * to catch, and group is not the bit `/tmp`'s own convention polices either.
  *
+ * **Overflow owner.** `trustedOverflowUid`, when given, is one more trusted
+ * owner — the kernel overflow uid, which every host uid a Linux user
+ * namespace leaves unmapped reads as from inside it (root's `/`, `/tmp`
+ * included). `mkdirNoSymlinks` passes it only for segments strictly above
+ * its `trustedRoot`, and only when `processTrustedOverflowUid` found root
+ * unmapped: at or below `trustedRoot` a co-tenant's directory reads as the
+ * same overflow uid, so trusting it there would accept exactly the plant this
+ * check exists to catch. The mode rule applies to it unchanged.
+ *
  * Split out from `mkdirNoSymlinks` so the foreign-owner branch — not
  * constructible as a real fixture in CI without a second local user — stays
  * unit-testable against a faked stat, the same convention
  * `metering-io-guard.test.ts`'s `isTrustedMeteringStat` suite already uses;
  * the mode branch is a real, constructible fixture (`local.test.ts`).
  */
-export function isTrustedDirStat(stat: { uid: number; mode: number }, ownUid: number | undefined): boolean {
+export function isTrustedDirStat(
+  stat: { uid: number; mode: number },
+  ownUid: number | undefined,
+  trustedOverflowUid?: number
+): boolean {
   if (typeof ownUid !== 'number') return true
-  if (stat.uid !== ownUid && stat.uid !== 0) return false
+  if (stat.uid !== ownUid && stat.uid !== 0 && stat.uid !== trustedOverflowUid) return false
   const worldWritable = (stat.mode & 0o002) !== 0
   const sticky = (stat.mode & 0o1000) !== 0
   return !worldWritable || sticky
@@ -204,6 +217,74 @@ export function isTrustedDirStat(stat: { uid: number; mode: number }, ownUid: nu
 
 function currentUid(): number | undefined {
   return typeof process.getuid === 'function' ? process.getuid() : undefined
+}
+
+/**
+ * Whether a `/proc/self/uid_map` body leaves root unmapped: every line
+ * (`inside outside count`) parses, at least one does, and no inside range
+ * `[inside, inside + count)` contains `0`. The host's identity map
+ * (`0 0 4294967295`) maps root, so it answers `false`; an empty or malformed
+ * map answers `false` too — trusting the overflow uid needs a map that
+ * positively shows root unmapped, never the absence of one.
+ */
+export function uidMapLeavesRootUnmapped(uidMap: string): boolean {
+  const lines = uidMap
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+  if (lines.length === 0) return false
+  for (const line of lines) {
+    const fields = line.split(/\s+/)
+    if (fields.length !== 3 || !fields.every((field) => /^\d+$/.test(field))) return false
+    const inside = Number(fields[0])
+    const count = Number(fields[2])
+    if (inside === 0 && count > 0) return false
+  }
+  return true
+}
+
+/**
+ * The overflow uid `isTrustedDirStat` may trust above `trustedRoot`, read
+ * through `readFile` from `/proc/self/uid_map` and
+ * `/proc/sys/kernel/overflowuid` — or `undefined`, today's rule, whenever
+ * root is mapped, either file cannot be read (no `/proc` at all on macOS),
+ * or the overflow uid does not parse.
+ */
+export function readTrustedOverflowUid(readFile: (path: string) => string): number | undefined {
+  try {
+    if (!uidMapLeavesRootUnmapped(readFile('/proc/self/uid_map'))) return undefined
+    const overflow = readFile('/proc/sys/kernel/overflowuid').trim()
+    return /^\d+$/.test(overflow) ? Number(overflow) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+let cachedTrustedOverflowUid: { value: number | undefined } | undefined
+
+/** `readTrustedOverflowUid` against the real `/proc`, read once per process — a process never changes user namespace mid-run. */
+function processTrustedOverflowUid(): number | undefined {
+  cachedTrustedOverflowUid ??= { value: readTrustedOverflowUid((path) => readFileSync(path, 'utf8')) }
+  return cachedTrustedOverflowUid.value
+}
+
+/**
+ * The walk's one zone split: segment `index` of the walked path sits at or
+ * below `trustedRoot` (whose own index is `rootSegmentCount - 1`), or
+ * strictly above it. Both the symlink rule and the overflow-owner rule in
+ * `mkdirNoSymlinks` read it.
+ */
+export function isAtOrBelowTrustedRoot(index: number, rootSegmentCount: number): boolean {
+  return index >= rootSegmentCount - 1
+}
+
+/** The overflow uid `mkdirNoSymlinks` hands `isTrustedDirStat` for one segment: never at or below `trustedRoot`. */
+export function segmentTrustedOverflowUid(
+  index: number,
+  rootSegmentCount: number,
+  trustedOverflowUid: number | undefined
+): number | undefined {
+  return isAtOrBelowTrustedRoot(index, rootSegmentCount) ? undefined : trustedOverflowUid
 }
 
 /**
@@ -260,13 +341,15 @@ export function mkdirNoSymlinks(dir: string, mode: number, trustedRoot: string):
     .filter((s) => s.length > 0)
   const segments = absolute.split(sep).filter((s) => s.length > 0)
   const ownUid = currentUid()
+  const trustedOverflowUid = typeof ownUid === 'number' ? processTrustedOverflowUid() : undefined
   let current = absolute.startsWith(sep) ? sep : ''
   segments.forEach((segment, index) => {
     current = current === '' || current === sep ? `${current}${segment}` : `${current}${sep}${segment}`
     // `trustedRoot` itself sits at index `rootSegments.length - 1` — at or
     // below it, refusal is unconditional; strictly above it, a symlink is
     // resolved and its real target trust-checked instead of refused outright.
-    const atOrBelowTrustedRoot = index >= rootSegments.length - 1
+    const atOrBelowTrustedRoot = isAtOrBelowTrustedRoot(index, rootSegments.length)
+    const overflowUid = segmentTrustedOverflowUid(index, rootSegments.length, trustedOverflowUid)
     try {
       mkdirSync(current, { mode })
     } catch (err) {
@@ -292,7 +375,7 @@ export function mkdirNoSymlinks(dir: string, mode: number, trustedRoot: string):
           `control-store: refusing to create a run directory through ${current} — it is a symlink that does not resolve to a real directory`
         )
       }
-      if (!isTrustedDirStat(real, ownUid)) {
+      if (!isTrustedDirStat(real, ownUid, overflowUid)) {
         throw new Error(
           `control-store: refusing to create a run directory through ${current} — its symlink target is owned by uid ${real.uid} with mode ${(real.mode & 0o7777).toString(8)}, neither this process's own user nor a safe shared mode`
         )
@@ -304,7 +387,7 @@ export function mkdirNoSymlinks(dir: string, mode: number, trustedRoot: string):
         `control-store: refusing to create a run directory through ${current} — it already exists and is not a real directory (a symlink or a file)`
       )
     }
-    if (!isTrustedDirStat(stat, ownUid)) {
+    if (!isTrustedDirStat(stat, ownUid, overflowUid)) {
       throw new Error(
         `control-store: refusing to create a run directory through ${current} — it already exists, owned by uid ${stat.uid} with mode ${(stat.mode & 0o7777).toString(8)}, neither this process's own user nor a safe shared mode`
       )
