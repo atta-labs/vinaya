@@ -25,9 +25,15 @@
  * unticked `[live]` line — a run that failed, or one the loop's host could not
  * verify — counts as an unticked `[principal]` box, and stops the
  * no-section and `unit-tests-only` passes above from applying.
+ *
+ * Given the frozen brief's `[live]` commands and the pull request's head
+ * (`LiveGateInputs`), the gate fails closed: each command is decided from the
+ * record's entry for it at that head, never from the record alone. A command
+ * with no ticked entry at the head — no record at all, or an entry for an
+ * older head only — counts as an unticked `[live]` line.
  */
 
-import { readLiveRecord } from './live-record'
+import { type LiveRecordLine, readLiveRecord } from './live-record'
 import { locateTestPlanSection } from './test-plan-section'
 import { parseTaskBranchIdentity } from './task-branch-identity'
 
@@ -37,7 +43,36 @@ export type TestPlanGateResult = {
   messages: string[]
 }
 
-export function evaluateTestPlanGate(body: string, branch: string): TestPlanGateResult {
+/** The frozen brief's `[live]` commands (`parseLiveTestPlanItems`) and the pull request's head SHA they must have passed at. */
+export type LiveGateInputs = {
+  liveCommands: readonly string[]
+  head: string
+}
+
+/**
+ * The record's lines as the gate grades them. Without `live`, every line the
+ * record carries. With it, each brief command is graded by its entry at
+ * `live.head` — its ticked line when it passed there (or the Principal
+ * ticked it), its unticked line when it failed or went unverified there, and
+ * an unticked line naming the head when the record holds no entry for it at
+ * that head — and the record's lines for any other command are kept as they
+ * are.
+ */
+function gradedLiveLines(record: readonly LiveRecordLine[], live: LiveGateInputs | undefined): string[] {
+  if (live === undefined) return record.map((entry) => entry.line)
+  const commands = new Set(live.liveCommands)
+  const others = record.filter((entry) => !commands.has(entry.command)).map((entry) => entry.line)
+  const graded = live.liveCommands.map((command) => {
+    const atHead = record.filter((entry) => entry.command === command && entry.head === live.head)
+    return (
+      (atHead.find((entry) => entry.ticked) ?? atHead[0])?.line ??
+      `- [ ] **[live]** \`${command}\` — no passed run recorded at \`${live.head || 'an unknown head'}\``
+    )
+  })
+  return [...others, ...graded]
+}
+
+export function evaluateTestPlanGate(body: string, branch: string, live?: LiveGateInputs): TestPlanGateResult {
   if (!body) {
     return {
       verdict: 'pass',
@@ -53,7 +88,7 @@ export function evaluateTestPlanGate(body: string, branch: string): TestPlanGate
   // `[live]` run that failed, or one the loop's host could not verify — holds
   // the merge exactly as an unticked `[principal]` box does, wherever in the
   // body the record sits and whatever the Test Plan section says.
-  const liveLines = readLiveRecord(body).map((entry) => entry.line)
+  const liveLines = gradedLiveLines(readLiveRecord(body), live)
   const liveUnticked = liveLines.some((line) => /^[-*]\s+\[\s\]/.test(line))
 
   if (!located.found && !liveUnticked) {

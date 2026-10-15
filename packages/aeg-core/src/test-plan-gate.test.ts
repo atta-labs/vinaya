@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { renderLiveRecordBlock } from './live-record'
 import { evaluateTestPlanGate } from './test-plan-gate'
 
 const TASK_BRANCH = 'task/herald-hardening-v1/2'
@@ -194,5 +195,55 @@ describe("evaluateTestPlanGate — a real PR's own body (task 12, #387)", () => 
     // never satisfy it.
     expect(LIVE).toContain('<!-- AEG:TEST-PLAN:START -->')
     expect(evaluateTestPlanGate(LIVE, OWN_BRANCH).verdict).toBe('pass')
+  })
+})
+
+describe("evaluateTestPlanGate — the brief's [live] lines at the pull request head", () => {
+  const HEAD = 'a'.repeat(40)
+  const OLDER = 'b'.repeat(40)
+  const COMMAND = 'VINAYA_LIVE=1 bun test live.test.ts'
+  const PLAN = '## 9. Test Plan\n\n- [x] **[principal]** looked at it\n'
+  const live = { liveCommands: [COMMAND], head: HEAD }
+
+  it('FAILs, pending like an unticked [principal] item, when the body carries no AEG:LIVE record', () => {
+    const result = evaluateTestPlanGate(PLAN, TASK_BRANCH, live)
+    expect(result.verdict).toBe('fail')
+    const text = result.messages.join('\n')
+    expect(text).toContain('FAIL — the following [principal] Test Plan items are unticked:')
+    expect(text).toContain(`${COMMAND}\` — no passed run recorded at \`${HEAD}`)
+  })
+
+  it('FAILs when the record holds a passed entry for an older head only', () => {
+    const body = `${PLAN}\n${renderLiveRecordBlock([{ command: COMMAND, head: OLDER, outcome: 'passed', passCount: 3 }])}\n`
+    expect(evaluateTestPlanGate(body, TASK_BRANCH, live).verdict).toBe('fail')
+  })
+
+  it('PASSes once the record holds a passed entry at the current head', () => {
+    const body = `${PLAN}\n${renderLiveRecordBlock([{ command: COMMAND, head: HEAD, outcome: 'passed', passCount: 3 }])}\n`
+    expect(evaluateTestPlanGate(body, TASK_BRANCH, live).verdict).toBe('pass')
+  })
+
+  it('keeps a failed entry at the current head as the line it grades, naming its detail', () => {
+    const body = `${PLAN}\n${renderLiveRecordBlock([
+      { command: COMMAND, head: OLDER, outcome: 'passed', passCount: 3 },
+      { command: COMMAND, head: HEAD, outcome: 'failed', detail: 'exit `1`' }
+    ])}\n`
+    const result = evaluateTestPlanGate(body, TASK_BRANCH, live)
+    expect(result.verdict).toBe('fail')
+    expect(result.messages.join('\n')).toContain('failed at')
+  })
+
+  it('FAILs a unit-tests-only plan with no section-level boxes when a [live] line has no entry at the head', () => {
+    expect(evaluateTestPlanGate('Test Plan: unit-tests-only', TASK_BRANCH, live).verdict).toBe('fail')
+  })
+
+  it('a brief with no [live] line grades exactly as with no live inputs', () => {
+    for (const body of [PLAN, 'Test Plan: unit-tests-only', '## Summary\n\nx', PR_377_SPECIMEN]) {
+      for (const branch of [TASK_BRANCH, NON_TASK_BRANCH]) {
+        expect(evaluateTestPlanGate(body, branch, { liveCommands: [], head: HEAD })).toEqual(
+          evaluateTestPlanGate(body, branch)
+        )
+      }
+    }
   })
 })

@@ -25,18 +25,23 @@
  * the PR body is edited — ticking a box re-runs it, unlike the review-gate
  * path this check replaces, where an edit triggered nothing.
  *
- * Body and branch only — `process.env.PR_BODY ?? ''` / `process.env.BRANCH
- * ?? ''`, the same absence-tolerant fall-throughs `check-test-plan.ts`
- * already uses. `BRANCH` only ever affects the structural (no-section)
- * branch of `evaluateTestPlanGate`'s result, which this check never reports
- * on, so its absence changes nothing this check emits.
+ * Reads `PR_BODY`, `BRANCH` and `PULL_REQUEST_HEAD_SHA`, the same inputs
+ * `check-test-plan.ts` reads. On a task branch it grades the task Issue's
+ * frozen brief `[live]` lines at the pull request's head
+ * (`resolveLiveCheckInputs`): each with no passed `AEG:LIVE` entry at that
+ * head is an unticked line, so the merge holds until it passes there or the
+ * Principal ticks it. Inputs that cannot be learned — a brief that cannot be
+ * read, a not-found Issue included, or a head with no body — are a blocking
+ * error: the merge holds, never passes on an unknown set of lines.
  *
- * scope: diff — reads only the PR body, never the whole repo.
+ * scope: diff — reads the PR body and the task Issue's comments, never the
+ * whole repo.
  */
 
-import { isEntryPoint } from '@attalabs/aeg-core'
+import { isEntryPoint, type LiveGateInputs } from '@attalabs/aeg-core'
 import { evaluateTestPlanGate } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '../contract'
+import { defaultLiveCheckDeps, type LiveCheckDeps, type LiveCheckInputs, resolveLiveCheckInputs } from '../frozen-brief'
 
 const CHECK_NAME = 'principal-test-plan-wait'
 
@@ -46,8 +51,8 @@ const CHECK_NAME = 'principal-test-plan-wait'
  * that one is `test-plan`'s to grade. Exported for direct unit coverage of
  * the split rather than only through a spawned end-to-end run.
  */
-export function buildPrincipalTestPlanWaitErrors(body: string, branch: string): CheckError[] {
-  const result = evaluateTestPlanGate(body, branch)
+export function buildPrincipalTestPlanWaitErrors(body: string, branch: string, live?: LiveGateInputs): CheckError[] {
+  const result = evaluateTestPlanGate(body, branch, live)
   if (result.verdict !== 'fail') return []
   const uncheckedLines = result.messages.filter((m) => /^\s*[-*]\s+\[\s\]/.test(m)).map((m) => m.trim())
   if (uncheckedLines.length === 0) return []
@@ -64,11 +69,37 @@ export function buildPrincipalTestPlanWaitErrors(body: string, branch: string): 
   ]
 }
 
-function main(): void {
-  const body = process.env.PR_BODY ?? ''
-  const branch = process.env.BRANCH ?? ''
+/**
+ * The check's errors for one run: a blocking (never pending) error when the
+ * `[live]` inputs cannot be learned, else `buildPrincipalTestPlanWaitErrors`
+ * graded against them.
+ */
+export function runPrincipalTestPlanWait(
+  inputs: LiveCheckInputs,
+  deps: LiveCheckDeps = defaultLiveCheckDeps
+): CheckError[] {
+  const resolved = resolveLiveCheckInputs(inputs, deps)
+  if (!resolved.ok) {
+    return [
+      {
+        schema: CHECK_SCHEMA_VERSION,
+        check: CHECK_NAME,
+        severity: 'error',
+        message: `principal-test-plan-wait: ${resolved.message} The \`[live]\` lines this pull request must have passed are unknown, so the merge holds.`,
+        agent_recovery_prompt:
+          'Check `gh auth status` and network, and that the task Issue carries its frozen `aeg:brief:v<k>` comment, then re-run `vinaya check principal-test-plan-wait`.'
+      }
+    ]
+  }
+  return buildPrincipalTestPlanWaitErrors(inputs.body, inputs.branch, resolved.live)
+}
 
-  const errors = buildPrincipalTestPlanWaitErrors(body, branch)
+function main(): void {
+  const errors = runPrincipalTestPlanWait({
+    body: process.env.PR_BODY ?? '',
+    branch: process.env.BRANCH ?? '',
+    head: process.env.PULL_REQUEST_HEAD_SHA ?? ''
+  })
 
   if (errors.length > 0) {
     for (const error of errors) emitCheckError(error)

@@ -3,24 +3,27 @@
 /**
  * Core check: test-plan. Thin adapter over `@attalabs/aeg-core`'s
  * `evaluateTestPlanGate` — mirrors `packages/aeg-core/bin/verify-test-plan.ts`'s
- * input assembly (PR_BODY/BRANCH env) exactly, emitting the check contract
- * instead of human text.
+ * input assembly (PR_BODY/BRANCH env), emitting the check contract instead
+ * of human text.
  *
- * Body and branch only, again — the comment fetch and
- * `PR_NUMBER` use this bin carried existed to count
- * Developer round comments backing a ticked `[agent]` checkbox. That
- * checkbox no longer exists: the `[agent]` half of a Test Plan is a fenced
- * command list `vinaya pr report` executes and writes into the
- * `AEG:EVIDENCE` block itself, so there is no tick left to demand evidence
- * for. `evaluateTestPlanGate` now grades `[principal]` boxes only, and grades
- * them from the body alone — see that module's own doc comment.
+ * On a task branch it also reads the task Issue's newest frozen brief
+ * (`resolveTaskFrozenBrief`, shared with `brief-shape`) for its `[live]`
+ * lines (`parseLiveTestPlanItems`), and hands them to the gate with the pull
+ * request's head SHA (`PULL_REQUEST_HEAD_SHA` — the pull request's own head, never the
+ * merge ref a `pull_request` run checks out), so each `[live]` line with no
+ * passed `AEG:LIVE` entry at that head fails the check. It fails closed: a
+ * brief it cannot read — any fetch error, a not-found Issue included — fails
+ * the check, since the lines the merge must wait for are then unknown, and
+ * so does a pull request head with no body. `principal-test-plan-wait`,
+ * the check that holds the merge, grades the same inputs.
  *
- * scope: diff — reads only the PR body, never the whole repo.
+ * scope: diff — reads the PR body and the task Issue's comments, never the
+ * whole repo.
  */
 
-import { isEntryPoint } from '@attalabs/aeg-core'
-import { evaluateTestPlanGate, type TestPlanGateResult } from '@attalabs/aeg-core'
+import { evaluateTestPlanGate, isEntryPoint, type TestPlanGateResult } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '../contract'
+import { defaultLiveCheckDeps, type LiveCheckDeps, type LiveCheckInputs, resolveLiveCheckInputs } from '../frozen-brief'
 
 const CHECK_NAME = 'test-plan'
 
@@ -61,12 +64,37 @@ export function buildTestPlanCheckErrors(result: TestPlanGateResult): CheckError
   return errors
 }
 
-function main(): void {
-  const body = process.env.PR_BODY ?? ''
-  const branch = process.env.BRANCH ?? ''
+/**
+ * The check's errors for one run, `[]` on a pass. A task branch is graded
+ * against its frozen brief's `[live]` lines at `head`
+ * (`resolveLiveCheckInputs`); inputs that cannot be learned are one blocking
+ * error — never pending, and never the exemption `brief-shape` gives a
+ * not-found Issue. Any other run is graded on the body alone, as it always
+ * was.
+ */
+export function runTestPlanCheck(inputs: LiveCheckInputs, deps: LiveCheckDeps = defaultLiveCheckDeps): CheckError[] {
+  const resolved = resolveLiveCheckInputs(inputs, deps)
+  if (!resolved.ok) {
+    return [
+      {
+        schema: CHECK_SCHEMA_VERSION,
+        check: CHECK_NAME,
+        severity: 'error',
+        message: `test-plan: ${resolved.message} The \`[live]\` lines this pull request must have passed are unknown, so the check fails closed.`,
+        agent_recovery_prompt:
+          'Check `gh auth status` and network, and that the task Issue carries its frozen `aeg:brief:v<k>` comment, then re-run `vinaya check test-plan`.'
+      }
+    ]
+  }
+  return buildTestPlanCheckErrors(evaluateTestPlanGate(inputs.body, inputs.branch, resolved.live))
+}
 
-  const result = evaluateTestPlanGate(body, branch)
-  const errors = buildTestPlanCheckErrors(result)
+function main(): void {
+  const errors = runTestPlanCheck({
+    body: process.env.PR_BODY ?? '',
+    branch: process.env.BRANCH ?? '',
+    head: process.env.PULL_REQUEST_HEAD_SHA ?? ''
+  })
 
   if (errors.length > 0) {
     for (const error of errors) emitCheckError(error)

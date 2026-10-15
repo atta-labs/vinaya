@@ -145,6 +145,11 @@
         "path": "apps/cli/tests/lib/dev-review-loop/stall-current-head.test.ts",
         "kind": "test",
         "reason": "Proves an unchanged Developer turn after a rerun of failed checks is judged against the head's CI as it reads now: a head the rerun turned green reaches the reviewers without another Developer turn, a stall names only check-runs still failing on that head, and a check still red is named and pauses on its second identical attempt."
+      },
+      {
+        "path": "apps/cli/tests/lib/dev-review-loop/live-gate-fail-closed.test.ts",
+        "kind": "test",
+        "reason": "Proves the live check fails closed: a frozen-brief read that fails once both reviewers approved leaves the task unconcluded as an infrastructure pause with nothing run and no `AEG:LIVE` record, the retry runs the line on the approved head before the task concludes, and a plan with no `[live]` line concludes as before; loop.md's \"The live check\" section describes it."
       }
     ]
   },
@@ -3442,7 +3447,10 @@
           "symbol": "vendorSignedIn"
         }
       ],
-      "tests": ["apps/cli/tests/lib/dev-review-loop/live-check.test.ts"],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/live-check.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/live-gate-fail-closed.test.ts"
+      ],
       "loopSpec": ["The live check"],
       "reason": "A check that needs real signed-in agent sessions is machine-judgeable but skipped in the Developer's sandbox, the push hook and CI; running it inside the loop catches its failure before the Principal does, and running it only on an approved head keeps unreviewed code away from the host's sign-ins.",
       "scope": "product"
