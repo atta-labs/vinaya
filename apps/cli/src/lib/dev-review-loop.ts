@@ -5820,8 +5820,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         const outcome = classifyReviewOutcome(
           {
             cancelled: handle.failureReason === 'signal',
-            terminal: output?.event ?? null,
-            errors: handle.failureReason ? [handle.failureReason] : [],
+            // The dispatcher refuses a reviewer resume before spawning, so a
+            // run that reached here started fresh; stated, not assumed.
+            resumed: false,
+            terminal: output?.terminal ?? null,
+            // The provider's own error text first — the only place an
+            // exhausted context shows — then the dispatcher's failure code.
+            errors: [...(output?.errors ?? []), ...(handle.failureReason ? [handle.failureReason] : [])],
             hasResult: output !== undefined && output.raw !== null,
             raw: output?.raw
           },
@@ -5831,9 +5836,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         if (outcome.kind === 'review') {
           accepted = outcome.result
         } else {
-          const raw = output?.raw as { reviewResult?: ReviewResult } | undefined
-          const blocked = outcome.reason === 'blocked' ? raw?.reviewResult : undefined
-          if (blocked?.status !== 'blocked' || !reviewBlockerNeedsRuling(blocked.blocker.kind)) {
+          // Only a blocked result already bound to this role, head and
+          // manifest is ever read; a crossed or stale one is no review above.
+          const blocked = outcome.blocked
+          if (blocked === undefined || !reviewBlockerNeedsRuling(blocked.blocker.kind)) {
             appendRoleLine(
               loopLogPath,
               'dev-review-loop',
@@ -5847,7 +5853,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
           // A blocked result is still no review; the controller decides its
           // blocker needs the Principal, so the role's round outcome is an
-          // escalation — bound to this round the same way a review is.
+          // escalation — accepted only after the same binding check a review
+          // passes.
           accepted = blocked
         }
         appendRoleLine(

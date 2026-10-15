@@ -2646,6 +2646,73 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
   )
 })
 
+describe('devReviewLoop — the loop maps every reviewer run to its outcome and binds blocked results too (O2)', () => {
+  const ESCALATING_SECURITY = { ...CLEAN_SECURITY, report: 'ESCALATE: scope\nSUMMARY: the scope is unclear\n' }
+  const cases: { name: string; security: typeof CLEAN_SECURITY; reason: string }[] = [
+    {
+      name: 'a completed result bound to another head',
+      security: { ...CLEAN_SECURITY, misbind: 'stale_head' },
+      reason: 'stale'
+    },
+    {
+      name: 'a completed result naming the other role',
+      security: { ...CLEAN_SECURITY, misbind: 'crossed_role' },
+      reason: 'role_mismatch'
+    },
+    {
+      name: 'a scope-unclear blocked result bound to another head',
+      security: { ...ESCALATING_SECURITY, misbind: 'stale_head' },
+      reason: 'stale'
+    },
+    {
+      name: 'a scope-unclear blocked result naming the other role',
+      security: { ...ESCALATING_SECURITY, misbind: 'crossed_role' },
+      reason: 'role_mismatch'
+    },
+    {
+      name: 'a run whose provider reports an exhausted context',
+      security: {
+        ...CLEAN_SECURITY,
+        providerFailure: { terminal: 'error_during_execution (is_error)', errors: ['Prompt is too long'] }
+      },
+      reason: 'context_exhausted'
+    },
+    {
+      name: 'a run that ends in a provider error',
+      security: { ...CLEAN_SECURITY, providerFailure: { terminal: 'turn.failed', errors: ['upstream unavailable'] } },
+      reason: 'provider_error'
+    },
+    { name: 'a cancelled run', security: { ...CLEAN_SECURITY, cancelled: true }, reason: 'cancelled' }
+  ]
+  for (const { name, security, reason } of cases) {
+    it.skipIf(process.platform === 'darwin')(
+      `${name} is no review (${reason}): one fresh retry, then an infrastructure pause — never approval or a ruling pause`,
+      async () => {
+        const world = makeWorld({ roleOutcomes: { 1: { security } } })
+        const result = await runLoopInProcess(world)
+        expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+        expect(world.dispatchCountByRole.security).toBe(2)
+        expect(existsSync(join(ipRoundDir(world, 1), 'security.md'))).toBe(false)
+        const pauseComment = world.postedComments.at(-1)!.body
+        expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+        expect(pauseComment).toContain(`no review (${reason})`)
+        expect(pauseComment).not.toMatch(/^VERDICT:/m)
+      }
+    )
+  }
+
+  it.skipIf(process.platform === 'darwin')(
+    'a scope-unclear blocked result bound to this role, head and manifest is the round escalation, with no retry',
+    async () => {
+      const world = makeWorld({ roleOutcomes: { 1: { security: ESCALATING_SECURITY } } })
+      const result = await runLoopInProcess(world)
+      expect(result.finalDecision).toMatchObject({ type: 'pause' })
+      expect(result.finalDecision).not.toMatchObject({ reason: 'infrastructure' })
+      expect(world.dispatchCountByRole.security).toBe(1)
+    }
+  )
+})
+
 /**
  * Same as `writeFakeGh`, except the mechanical check-run named `ci` answers
  * with TWO runs: an older `failure`, superseded by a newer `success` — the

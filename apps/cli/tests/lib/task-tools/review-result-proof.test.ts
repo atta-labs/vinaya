@@ -252,6 +252,17 @@ describe('outcomes: only a bound, valid review is a review (O4)', () => {
     ['stale head', facts({ raw: wrap(completed('code-reviewer', { headSha: 'd'.repeat(40) })) }), 'stale'],
     ['stale digest', facts({ raw: wrap(completed('code-reviewer', { manifestDigest: 'd'.repeat(64) })) }), 'stale'],
     ['blocked', facts({ raw: wrap(blocked('code-reviewer')) }), 'blocked'],
+    [
+      'blocked on a stale head',
+      facts({ raw: wrap({ ...blocked('code-reviewer'), headSha: 'd'.repeat(40) }) }),
+      'stale'
+    ],
+    [
+      'blocked on another manifest',
+      facts({ raw: wrap({ ...blocked('code-reviewer'), manifestDigest: 'd'.repeat(64) }) }),
+      'stale'
+    ],
+    ['blocked naming the other role', facts({ raw: wrap(blocked('security-reviewer')) }), 'role_mismatch'],
     ['cancelled', facts({ cancelled: true, hasResult: false, raw: null, terminal: null }), 'cancelled'],
     ['cancelled even with a result', facts({ cancelled: true }), 'cancelled'],
     ['resumed even with a valid result', facts({ resumed: true }), 'resumed'],
@@ -288,6 +299,12 @@ describe('outcomes: only a bound, valid review is a review (O4)', () => {
       'rejected'
     ]
   ]
+  it('hands over a blocked result only once it is bound, so the controller never reads an unbound blocker', () => {
+    const bound = classifyReviewOutcome(facts({ raw: wrap(blocked('code-reviewer')) }), cr)
+    expect(bound.kind === 'no_review' && bound.blocked?.status).toBe('blocked')
+    const crossed = classifyReviewOutcome(facts({ raw: wrap(blocked('security-reviewer')) }), cr)
+    expect(crossed.kind === 'no_review' && crossed.blocked).toBeUndefined()
+  })
   for (const [name, f, reason] of cases) {
     it(`records ${name} as no review (${reason}), never approval`, () => {
       const o = classifyReviewOutcome(f, cr)

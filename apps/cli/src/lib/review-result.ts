@@ -112,6 +112,7 @@ export const ReviewOutputSchema = z.object({ reviewResult: ReviewResultSchema })
 
 export type ReviewResult = z.infer<typeof ReviewResultSchema>
 export type CompletedReview = Extract<ReviewResult, { status: 'completed' }>
+export type BlockedReview = Extract<ReviewResult, { status: 'blocked' }>
 
 function roleOutputSchema(role: ReviewerRole) {
   return z
@@ -248,7 +249,8 @@ export type NoReviewReason =
 export type ReviewOutcome =
   /** An accepted review, carrying the controller's own binding it was accepted under. */
   | { kind: 'review'; result: CompletedReview; binding: ReviewBinding }
-  | { kind: 'no_review'; reason: NoReviewReason; detail: string }
+  /** No review. `blocked` carries the result only once it is bound to this dispatch's role, head and manifest. */
+  | { kind: 'no_review'; reason: NoReviewReason; detail: string; blocked?: BlockedReview }
 
 /** What a finished reviewer run showed at the adapter boundary. */
 export type ReviewRunFacts = {
@@ -288,13 +290,21 @@ export function classifyReviewOutcome(facts: ReviewRunFacts, binding: ReviewBind
   }
   const parsed = parseReviewResult(facts.raw)
   if (!parsed.ok) return noReview('malformed', parsed.errors.join('; '))
+  // A blocked result is held to the same binding as a completed one: one
+  // naming the other role, another head or another manifest is refused as
+  // crossed or stale before its blocker is read at all.
+  const unbound = bindingErrors(parsed.result, binding)
   if (parsed.result.status === 'blocked') {
-    return noReview('blocked', `${parsed.result.blocker.kind}: ${parsed.result.blocker.detail}`)
+    if (unbound.length === 0) {
+      const detail = `${parsed.result.blocker.kind}: ${parsed.result.blocker.detail}`
+      return { kind: 'no_review', reason: 'blocked', detail, blocked: parsed.result }
+    }
+    return noReview(parsed.result.role !== binding.role ? 'role_mismatch' : 'stale', unbound.join('; '))
   }
   const errors = semanticErrors(parsed.result, binding)
   if (errors.length === 0) return { kind: 'review', result: parsed.result, binding }
   if (parsed.result.role !== binding.role) return noReview('role_mismatch', errors.join('; '))
-  if (bindingErrors(parsed.result, binding).length > 0) return noReview('stale', errors.join('; '))
+  if (unbound.length > 0) return noReview('stale', errors.join('; '))
   return noReview('rejected', errors.join('; '))
 }
 

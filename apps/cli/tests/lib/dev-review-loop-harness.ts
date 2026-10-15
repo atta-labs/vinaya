@@ -49,7 +49,7 @@ import {
 } from '../../src/lib/dev-review-loop.js'
 import { resetDefaultLogSinkContext, resetTrustAnchorConfigMemo } from '../../src/lib/log-sink.js'
 import { resetRuntimeDirCache } from '../../src/lib/run-paths.js'
-import type { DispatchHandle } from '../../src/lib/dispatch.js'
+import type { DispatchFailureReason, DispatchHandle, ReviewerTurnOutput } from '../../src/lib/dispatch.js'
 import type { DeveloperTurnOutput } from '../../src/lib/dev-review-loop/turn-result.js'
 import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server.js'
 import {
@@ -84,6 +84,12 @@ export type RoleOutcome = {
   sessionId: string
   /** When true, the dispatch returns NO structured result at all — the "a reviewer that delivered nothing" infrastructure-pause scenario. */
   writesNothing?: boolean
+  /** Binds the returned result wrongly: to another head (`stale_head`) or to the other reviewer role (`crossed_role`). */
+  misbind?: 'stale_head' | 'crossed_role'
+  /** The run ends with no result and this provider failure: its terminal outcome and error text. */
+  providerFailure?: { terminal: string; errors: string[] }
+  /** The run is killed before it finishes (the dispatcher's `signal` failure). */
+  cancelled?: boolean
 }
 
 export const CLEAN_REVIEWER: RoleOutcome = {
@@ -444,15 +450,17 @@ function handle(
   resumeId: string | null,
   effectId: string,
   turnOutput?: DeveloperTurnOutput,
-  reviewOutput?: DeveloperTurnOutput
+  reviewOutput?: ReviewerTurnOutput,
+  failureReason?: DispatchFailureReason
 ): DispatchHandle {
   return {
-    exitCode: 0,
+    exitCode: failureReason === undefined ? 0 : null,
     durationMs: 1,
     usage: { input: 10, output: 5 },
     resumeId,
     timedOut: false,
     effectId,
+    ...(failureReason !== undefined ? { failureReason } : {}),
     ...(turnOutput !== undefined ? { turnOutput } : {}),
     ...(reviewOutput !== undefined ? { reviewOutput } : {})
   }
@@ -475,11 +483,18 @@ export function fakeReviewOutput(
   role: 'reviewer' | 'security',
   outcome: RoleOutcome,
   prompt: string
-): DeveloperTurnOutput {
-  if (outcome.writesNothing) return { adapter: 'claude --json-schema', event: null, raw: null }
-  const headSha = prompt.match(/headSha ([0-9a-f]+)/)?.[1] ?? ''
+): ReviewerTurnOutput {
+  if (outcome.writesNothing || outcome.cancelled) return { adapter: 'claude --json-schema', event: null, raw: null }
+  if (outcome.providerFailure) {
+    return { adapter: 'claude --json-schema', event: null, raw: null, ...outcome.providerFailure }
+  }
+  const promptHead = prompt.match(/headSha ([0-9a-f]+)/)?.[1] ?? ''
+  const headSha =
+    outcome.misbind === 'stale_head' ? `${promptHead.slice(0, -1)}${promptHead.endsWith('0') ? '1' : '0'}` : promptHead
   const manifestDigest = prompt.match(/manifestDigest ([0-9a-f]+)/)?.[1] ?? ''
-  const reviewerRole = role === 'reviewer' ? 'code-reviewer' : 'security-reviewer'
+  const ownRole = role === 'reviewer' ? 'code-reviewer' : 'security-reviewer'
+  const otherRole = role === 'reviewer' ? 'security-reviewer' : 'code-reviewer'
+  const reviewerRole = outcome.misbind === 'crossed_role' ? otherRole : ownRole
   const escalate = outcome.report.match(/^ESCALATE:\s*(.*)$/m)
   if (escalate) {
     const summary = outcome.report.match(/^SUMMARY:\s*(.*)$/m)?.[1]?.trim() || 'fixture escalation'
@@ -641,7 +656,8 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
         outcome.sessionId,
         `eff-${reviewRole}-${++dispatchSeq}`,
         undefined,
-        fakeReviewOutput(reviewRole, outcome, prompt)
+        fakeReviewOutput(reviewRole, outcome, prompt),
+        outcome.cancelled ? 'signal' : undefined
       )
     },
     // issue #945: the policy read is injected here to the built-in defaults, so

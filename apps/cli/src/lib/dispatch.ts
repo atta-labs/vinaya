@@ -432,6 +432,13 @@ export type UsageLimit = { agent: AgentVendor; message: string; resetAtMs: numbe
  */
 export type SandboxProbeRefusal = { agent: AgentVendor; error: string }
 
+/**
+ * A reviewer's structured output as its adapter read it, plus the stream's
+ * terminal outcome and the provider's error text (absent on a hand-built
+ * fixture handle, read as none).
+ */
+export type ReviewerTurnOutput = DeveloperTurnOutput & { terminal?: string | null; errors?: readonly string[] }
+
 export type DispatchHandle = {
   exitCode: number | null
   durationMs: number
@@ -462,8 +469,13 @@ export type DispatchHandle = {
    * structured output. Unvalidated: only the loop's controller accepts it.
    */
   turnOutput?: DeveloperTurnOutput
-  /** A reviewer's native structured final output, unvalidated until the loop binds it to the round. */
-  reviewOutput?: DeveloperTurnOutput
+  /**
+   * A reviewer's native structured final output, unvalidated until the loop
+   * binds it to the round, with the stream's own terminal outcome and the
+   * error text the provider reported — what tells a provider error or an
+   * exhausted context apart from a result that is simply missing.
+   */
+  reviewOutput?: ReviewerTurnOutput
   /** A Developer dispatch's delivered Documentation manifest and the reads its gate counted (`deliveredDocumentation`). */
   documentation?: DeliveredDocumentation
 }
@@ -5443,7 +5455,15 @@ export async function dispatchRole(
         turnResultAdapter === 'claude --json-schema'
           ? readClaudeTurnOutput(stdoutTail)
           : readCodexTurnOutput(stdoutTail)
-      return { reviewOutput: { adapter: turnResultAdapter, raw: read.raw, event: read.event } }
+      return {
+        reviewOutput: {
+          adapter: turnResultAdapter,
+          raw: read.raw,
+          event: read.event,
+          terminal: read.terminal,
+          errors: read.errors
+        }
+      }
     }
 
     async function finish(handle: DispatchHandle, event: string, priorSize: number): Promise<void> {
