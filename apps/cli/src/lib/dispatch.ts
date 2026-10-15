@@ -97,6 +97,7 @@ import { appendRoleLine } from './loop-log.js'
 import { createAgentStreamRenderer } from './agent-stream.js'
 import { formatAgentDetails, formatAgentLine, type AgentLineMark } from './agent-line.js'
 import { developerTurnResultJsonSchema } from './developer-turn-result.js'
+import { reviewResultJsonSchema, type ReviewerRole } from './review-result.js'
 import {
   type DeliveredDocumentation,
   type DeveloperTurnOutput,
@@ -294,26 +295,16 @@ export type DispatchOpts = {
    */
   unattended?: boolean
   /**
-   * Round 6 fix, live-reproduced: additional ABSOLUTE directories this
-   * dispatch's own confined child needs to READ+WRITE beyond the
-   * outbox/resume-record files every unattended dispatch already gets —
-   * `dev-review-loop.ts`'s own reviewer/security dispatch is the one caller
-   * with a need today: it tells a reviewer, via its OWN prompt text, to
-   * write `findings.txt`/`report.txt`/`objectives.txt` into
-   * `reviewerWorkDir`'s own
-   * `tasks-execution/<task>/rounds/<n>/<role>-work[-retry<n>]`
-   * directory (`reviewer-dispatch.ts`) — a path this module has no
-   * hardcoded opinion about, so the caller names it directly, the same
-   * "generic primitive, caller supplies the repo/dispatch-specific shape"
-   * posture `extraWritableFiles` already takes. Found live: with no
-   * grant here, a confined reviewer/security dispatch on the declared
-   * supported host could not write its own findings — `dev-review-loop`'s
-   * own real fixture test hung waiting for a report file no confined
-   * dispatch had permission to create. Unlike the single-file outbox/resume
-   * grant, `reviewerWorkDir`'s own path is ALREADY uniquely scoped per
-   * task/round/role/attempt by its own naming convention, so a directory-
-   * level (`subpath`) grant here — not the narrower per-file `literal` one —
-   * carries no cross-task/cross-role exposure.
+   * Additional ABSOLUTE directories this dispatch's own confined child needs
+   * to READ+WRITE beyond the outbox/resume-record files every unattended
+   * dispatch already gets — Claude's sandbox lists them in
+   * `filesystem.allowWrite` and Codex receives them as writable roots. A path
+   * this module has no hardcoded opinion about, so the caller names it
+   * directly, the same "generic primitive, caller supplies the
+   * dispatch-specific shape" posture `extraWritableFiles` already takes. A
+   * directory-level grant, so the caller must name a directory already scoped
+   * to this one dispatch. A code or security reviewer needs none: it returns
+   * its review as native structured output and writes no result file.
    */
   extraWritableDirs?: readonly string[]
   /**
@@ -441,6 +432,13 @@ export type UsageLimit = { agent: AgentVendor; message: string; resetAtMs: numbe
  */
 export type SandboxProbeRefusal = { agent: AgentVendor; error: string }
 
+/**
+ * A reviewer's structured output as its adapter read it, plus the stream's
+ * terminal outcome and the provider's error text (absent on a hand-built
+ * fixture handle, read as none).
+ */
+export type ReviewerTurnOutput = DeveloperTurnOutput & { terminal?: string | null; errors?: readonly string[] }
+
 export type DispatchHandle = {
   exitCode: number | null
   durationMs: number
@@ -471,6 +469,13 @@ export type DispatchHandle = {
    * structured output. Unvalidated: only the loop's controller accepts it.
    */
   turnOutput?: DeveloperTurnOutput
+  /**
+   * A reviewer's native structured final output, unvalidated until the loop
+   * binds it to the round, with the stream's own terminal outcome and the
+   * error text the provider reported — what tells a provider error or an
+   * exhausted context apart from a result that is simply missing.
+   */
+  reviewOutput?: ReviewerTurnOutput
   /** A Developer dispatch's delivered Documentation manifest and the reads its gate counted (`deliveredDocumentation`). */
   documentation?: DeliveredDocumentation
 }
@@ -1745,11 +1750,12 @@ export type WriteAccessScope =
  * The real grant behind O1's Write/Edit half, now that `buildRolePermissions`'s
  * own doc comment records that a `permissions.allow` path pattern never
  * actually grants one — a directory for the developer (its own worktree), or
- * the three hand-off files for a reviewer/security dispatch, each inside its
- * own `extraWritableDirs` entry. Every role outside these three (or a role
- * whose reviewer dispatch carries no `extraWritableDirs` at all) gets `null`
- * — no hook wiring, no file written, matching `buildRolePermissions`'s own
- * "no rules at all" posture for a role this task's Objectives never named.
+ * no file at all for a reviewer/security dispatch: a reviewer returns its
+ * ReviewResult as native structured output, so its `exact-files` scope is
+ * empty and every Write and Edit it attempts is denied. Every role outside
+ * these three gets `null` — no hook wiring, no file written, matching
+ * `buildRolePermissions`'s own "no rules at all" posture for a role this
+ * task's Objectives never named.
  *
  * Paths are realpath'd here, once, before they are ever written to disk or
  * compared against — the same "every substituted path must be canonicalized"
@@ -1797,7 +1803,6 @@ export type WriteAccessScope =
 export function buildWriteAccessScope(
   role: Role,
   allowedDir: string,
-  extraWritableDirs: readonly string[],
   developerFiles: readonly string[] = [],
   protectedSubpaths: readonly string[] = []
 ): WriteAccessScope | null {
@@ -1828,14 +1833,7 @@ export function buildWriteAccessScope(
       protectedSubpaths: protectedSubpaths.map(realExistingOrParent)
     }
   }
-  if (role === 'code-reviewer' || role === 'security') {
-    if (extraWritableDirs.length === 0) return null
-    const paths = extraWritableDirs.flatMap((dir) => {
-      const realDir = real(dir)
-      return ['findings.txt', 'report.txt', 'objectives.txt'].map((f) => join(realDir, f))
-    })
-    return { kind: 'exact-files', paths }
-  }
+  if (role === 'code-reviewer' || role === 'security') return { kind: 'exact-files', paths: [] }
   return null
 }
 
@@ -1844,11 +1842,10 @@ export const WRITE_OUTSIDE_WORKTREE_DENY_REASON =
 
 /**
  * `exact-files` scope's own counterpart to `WRITE_OUTSIDE_WORKTREE_DENY_REASON`
- * — a code-reviewer/security dispatch's three named hand-off files
- * (`findings.txt`/`report.txt`/`objectives.txt`), rather than a worktree.
+ * — a code-reviewer/security dispatch, which writes no file at all.
  */
 export const WRITE_OUTSIDE_HANDOFF_FILES_DENY_REASON =
-  "Dispatched sessions cannot write or edit a file outside their own hand-off files — this policy grants exactly findings.txt/report.txt/objectives.txt in the work directory this role was given and denies everything else, rather than falling through to the host's own classifier for an out-of-scope path."
+  "Dispatched reviewer sessions cannot write or edit any file — a reviewer hands off its review as its native structured result, so this policy grants no path and denies every write, rather than falling through to the host's own classifier."
 
 /**
  * O3: the `directory` scope's own deny reason for
@@ -1996,7 +1993,7 @@ export function writeAccessHookScript(dir: string): string {
  * `role` feeds `buildRolePermissions` to add this same file's third
  * enforcement block, `permissions.allow`/`deny` — see that function's own
  * doc comment for the per-role shape and the live proof behind it.
- * `role`/`allowedDir`/`extraWritableDirs` together feed `buildWriteAccessScope`
+ * `role`/`allowedDir`/`developerFiles` together feed `buildWriteAccessScope`
  * to wire a FOURTH block, the `Write|Edit` `PreToolUse` hook — see that
  * function's own doc comment for why a settings-file path pattern could not
  * carry this grant instead.
@@ -2006,8 +2003,8 @@ export function writeAccessHookScript(dir: string): string {
  * a single `settings.json` (and the hook scripts and per-run files beside
  * it) shared by EVERY role dispatched for the same task. `dev-review-loop.ts`
  * dispatches its code-reviewer and security roles CONCURRENTLY
- * (`Promise.all`), each calling this function with a DIFFERENT `role` and
- * `extraWritableDirs` — whichever call's `writeFileSync` landed last won for
+ * (`Promise.all`), each calling this function with a DIFFERENT `role` —
+ * whichever call's `writeFileSync` landed last won for
  * BOTH already-spawned `claude --settings <path>` processes, since both
  * pointed at the identical path and the vendor process reads it at its own
  * startup, not at the moment this function returns. That race could hand
@@ -2024,7 +2021,6 @@ export function writeDispatchSettings(
   scope: RunScope = 'unscoped',
   role: Role = 'developer',
   allowedDir = '.',
-  extraWritableDirs: readonly string[] = [],
   developerFiles: readonly string[] = [],
   /**
    * O1/O2: the Claude-native sandbox block `resolveClaudeConfinement`
@@ -2063,7 +2059,6 @@ export function writeDispatchSettings(
       documentation,
       role,
       allowedDir,
-      extraWritableDirs,
       developerFiles,
       confinement,
       agentConfigProtectedSubpaths
@@ -2085,7 +2080,6 @@ export function writeDispatchSettingsAt(
   documentation: IssueDocumentationSource[] = [],
   role: Role = 'developer',
   allowedDir = '.',
-  extraWritableDirs: readonly string[] = [],
   developerFiles: readonly string[] = [],
   confinement: ClaudeSandboxSettings | null = null,
   agentConfigProtectedSubpaths: readonly string[] = []
@@ -2103,13 +2097,7 @@ export function writeDispatchSettingsAt(
       const sourcesPath = join(dir, `documentation-sources-${runId}.json`)
       writeFileSync(sourcesPath, JSON.stringify(documentation), { mode: 0o600 })
     }
-    const writeAccessScope = buildWriteAccessScope(
-      role,
-      allowedDir,
-      extraWritableDirs,
-      developerFiles,
-      agentConfigProtectedSubpaths
-    )
+    const writeAccessScope = buildWriteAccessScope(role, allowedDir, developerFiles, agentConfigProtectedSubpaths)
     const writeAccessScriptPath = join(dir, 'write-access.mjs')
     const preToolUseHooks = [
       {
@@ -3909,10 +3897,9 @@ export type HostSandboxProbeOutcome =
 /**
  * The confinement request an unattended Claude dispatch hands to
  * `resolveClaudeConfinement` — built from the same options `dispatchRole`
- * receives. A reviewer's own output directory (`extraWritableDirs`) rides
- * along, so the sandbox's commands can write it too, not only the file
- * tools the write-access hook grants; Codex receives the same directories
- * (`addCodexWritableDirs`).
+ * receives. Any directory the caller names in `extraWritableDirs` rides
+ * along, so the sandbox's commands can write it too; Codex receives the same
+ * directories (`addCodexWritableDirs`).
  */
 export function claudeConfinementRequest(
   role: Role,
@@ -3964,7 +3951,6 @@ export async function probeClaudeSandboxOnHost(input: {
       [],
       'developer',
       input.repoRoot,
-      [],
       [],
       confinement.settings
     )
@@ -4086,6 +4072,15 @@ export function confinedTurboEnv(scratchDir: string): Record<string, string> {
   }
 }
 
+/** Why a reviewer dispatch that asks to resume a session is refused. */
+export const REVIEWER_RESUME_REFUSED_REASON =
+  'a code or security reviewer runs only on a fresh, non-resumed session; resuming a reviewer session, to repair its output or for any other reason, is refused'
+
+/** Whether this dispatch is a code or security reviewer asking to continue an earlier provider session. */
+export function isReviewerResume(role: Role, resumeId: string | undefined): boolean {
+  return (role === 'code-reviewer' || role === 'security') && resumeId !== undefined
+}
+
 /**
  * Starts `agent`'s headless mode for `role`, attributes the child's
  * environment, and records the dispatch through `log()`. Never throws — a
@@ -4195,6 +4190,37 @@ export async function dispatchRole(
     writeLaunchRecord(launch)
   }
   writeLaunchRecord(launch)
+
+  // A reviewer's result is valid only from a fresh session: refused before
+  // any spawn, so a resumed reviewer session can never deliver a review.
+  if (isReviewerResume(role, opts.resumeId)) {
+    const durationMs = Date.now() - start
+    const priorSize = sizeOfSafe(outboxPath)
+    log({
+      kind: 'dispatch',
+      event: 'dispatch_failed',
+      payload: {},
+      target_role: role,
+      model: resolvedModel,
+      ...roundField,
+      effect_id: effectId,
+      reason: 'refused',
+      usage: null,
+      duration_ms: durationMs
+    })
+    writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — ${REVIEWER_RESUME_REFUSED_REASON}`)
+    patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
+    await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
+    return {
+      exitCode: null,
+      durationMs,
+      usage: null,
+      resumeId: null,
+      timedOut: false,
+      failureReason: 'refused',
+      effectId
+    }
+  }
 
   // O4: refused before any spawn, by name, naming the vendor that rejected
   // it and what it accepts — never a bare rejection. Checked before the
@@ -4538,7 +4564,6 @@ export async function dispatchRole(
           scopeOf(opts.task, opts.pr),
           role,
           permissionAllowedDir,
-          opts.extraWritableDirs ?? [],
           opts.developerFiles ?? [],
           claudeConfinement?.confined === true ? claudeConfinement.settings : null,
           agentConfigProtectedSubpaths(permissionAllowedDir, agent, opts.agentConfigSurfaceCovered === true)
@@ -4567,6 +4592,9 @@ export async function dispatchRole(
               : documentationSources.map((source) => source.source)
         })
       : null
+  const reviewerRole: ReviewerRole | null =
+    role === 'code-reviewer' ? 'code-reviewer' : role === 'security' ? 'security-reviewer' : null
+  const reviewerTurnSchema = reviewerRole === null ? null : reviewResultJsonSchema(reviewerRole)
   // O1/O2: the machine-state deny floor a Claude dispatch carries
   // as `permissions.deny`, translated into Codex's execpolicy `.rules` grammar
   // for the SAME role. In-memory here (no I/O, so no dispatch-time failure to
@@ -5037,8 +5065,11 @@ export async function dispatchRole(
   // authority per adapter: no result file, no report tool, no Stop hook in
   // the path. Gemini has no native structured output; its Developer turn
   // delivers none (`turnOutput.adapter: null`) and the loop pauses on it.
+  // A code or security reviewer asks the same way for its own role's
+  // ReviewResult schema (`review-result.ts`), always on a fresh session; a
+  // Gemini reviewer delivers no result, which the loop records as no review.
   const turnResultAdapter: TurnResultAdapter | null =
-    role !== 'developer'
+    role !== 'developer' && reviewerRole === null
       ? null
       : agent === 'claude'
         ? 'claude --json-schema'
@@ -5050,12 +5081,16 @@ export async function dispatchRole(
       ? realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-turn-result-')))
       : null
   const turnResultArgs = (args: string[]): string[] => {
+    const outputSchema = developerTurnSchema ?? reviewerTurnSchema
     if (turnResultAdapter === 'claude --json-schema') {
-      return [...args, '--json-schema', JSON.stringify(developerTurnSchema)]
+      return [...args, '--json-schema', JSON.stringify(outputSchema)]
     }
     if (turnSchemaDir !== null) {
-      const schemaPath = join(turnSchemaDir, 'developer-turn-result.schema.json')
-      writeFileSync(schemaPath, `${JSON.stringify(developerTurnSchema, null, 2)}\n`, { mode: 0o600 })
+      const schemaPath = join(
+        turnSchemaDir,
+        role === 'developer' ? 'developer-turn-result.schema.json' : 'review-result.schema.json'
+      )
+      writeFileSync(schemaPath, `${JSON.stringify(outputSchema, null, 2)}\n`, { mode: 0o600 })
       // Codex's argv ends with `-` (read the prompt from stdin): the flag goes before it.
       return args[args.length - 1] === '-'
         ? [...args.slice(0, -1), '--output-schema', schemaPath, '-']
@@ -5412,6 +5447,23 @@ export async function dispatchRole(
           ? readClaudeTurnOutput(stdoutTail)
           : readCodexTurnOutput(stdoutTail)
       return { turnOutput: { adapter: turnResultAdapter, raw: read.raw, event: read.event }, documentation }
+    }
+
+    function reviewerTurnFacts(): Pick<DispatchHandle, 'reviewOutput'> {
+      if (reviewerRole === null || turnResultAdapter === null) return {}
+      const read =
+        turnResultAdapter === 'claude --json-schema'
+          ? readClaudeTurnOutput(stdoutTail)
+          : readCodexTurnOutput(stdoutTail)
+      return {
+        reviewOutput: {
+          adapter: turnResultAdapter,
+          raw: read.raw,
+          event: read.event,
+          terminal: read.terminal,
+          errors: read.errors
+        }
+      }
     }
 
     async function finish(handle: DispatchHandle, event: string, priorSize: number): Promise<void> {
@@ -5794,7 +5846,16 @@ export async function dispatchRole(
         duration_ms: durationMs
       })
       void finish(
-        { exitCode: code, durationMs, usage, resumeId, timedOut: false, effectId, ...developerTurnFacts() },
+        {
+          exitCode: code,
+          durationMs,
+          usage,
+          resumeId,
+          timedOut: false,
+          effectId,
+          ...developerTurnFacts(),
+          ...reviewerTurnFacts()
+        },
         'outcome_received',
         priorSize
       )

@@ -442,7 +442,7 @@ function writeClaudeProofSettings(
     realConfinementPlatformDeps()
   )
   const confined = confinement.ok && confinement.confined ? confinement.settings : null
-  const settingsPath = writeDispatchSettingsAt(join(scratchDir, 'hooks'), runId, [], 'developer', cwd, [], [], confined)
+  const settingsPath = writeDispatchSettingsAt(join(scratchDir, 'hooks'), runId, [], 'developer', cwd, [], confined)
   if (settingsPath === null) throw new Error('the dispatch settings file could not be written')
   const sandbox = confined
     ? "ON — Claude Code's own sandbox, in the dispatch settings file"

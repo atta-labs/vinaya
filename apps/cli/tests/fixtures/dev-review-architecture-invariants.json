@@ -104,7 +104,7 @@
       {
         "path": "apps/cli/tests/lib/dev-review-loop/reviewer-redispatch.test.ts",
         "kind": "test",
-        "reason": "Proves a reviewer dispatched again in a round already reviewed writes into a fresh output directory inside its sandbox's writable set, so an earlier dispatch's findings and report are never read as its verdict."
+        "reason": "Proves a reviewer dispatched again in a round already reviewed is a fresh session granted no result directory and no write, so files an earlier dispatch left are never read as its verdict."
       },
       {
         "path": "apps/cli/tests/lib/dev-review-loop/push-hook-refusal-output.test.ts",
@@ -541,7 +541,7 @@
         },
         {
           "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts",
-          "symbol": "buildVerdictFromReport"
+          "symbol": "buildVerdictFromReview"
         }
       ],
       "tests": [
@@ -1275,15 +1275,15 @@
     },
     {
       "id": "INV-056",
-      "behavior": "Every reviewer attempt is a fresh session with its own work directory and scratch copy; a retry never inherits a prior attempt's files.",
+      "behavior": "Every reviewer attempt is a fresh, non-resumed session with its own scratch copy; a retry never inherits a prior attempt's files or session.",
       "classification": "product-guarantee",
       "owner": "provider-adapter",
       "authority": "effect",
       "scenarios": ["reviewer-failure"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts",
-          "symbol": "reviewerWorkDir"
+          "path": "apps/cli/src/lib/dispatch.ts",
+          "symbol": "isReviewerResume"
         },
         {
           "path": "apps/cli/src/lib/dev-review-loop/reviewer-isolation.ts",
@@ -1301,20 +1301,21 @@
     },
     {
       "id": "INV-057",
-      "behavior": "A missing reviewer artifact or an unparseable report gets one fresh retry; a second miss pauses infrastructure with no verdict held and the round number unchanged \u2014 an invalid review counts as no review.",
+      "behavior": "A reviewer attempt that delivers no accepted ReviewResult \u2014 missing, malformed, stale, crossed, rejected, cancelled, context-exhausted, provider-errored or resumed \u2014 gets one fresh retry; a second miss pauses infrastructure with no verdict held and the round number unchanged \u2014 an invalid review counts as no review.",
       "classification": "product-guarantee",
       "owner": "vinaya-policy",
       "authority": "control-state",
       "scenarios": ["invalid-reviews", "reviewer-failure"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts",
-          "symbol": "missingReviewerArtifacts"
+          "path": "apps/cli/src/lib/review-result.ts",
+          "symbol": "classifyReviewOutcome"
         }
       ],
       "tests": [
         "apps/cli/tests/lib/dev-review-loop/inproc-4.test.ts",
-        "apps/cli/tests/lib/dev-review-loop/reviewer-dispatch.test.ts"
+        "apps/cli/tests/lib/dev-review-loop/reviewer-dispatch.test.ts",
+        "apps/cli/tests/lib/task-tools/review-result-proof.test.ts"
       ],
       "loopSpec": ["Infrastructure failures and driver-decided pauses"],
       "reason": "Revision 17 section 16.9: invalid output never becomes approval. The infrastructure pause after the second miss is section 16.11's automatic-recovery pause, retried within its bound.",
@@ -1322,7 +1323,7 @@
     },
     {
       "id": "INV-058",
-      "behavior": "A report whose ESCALATE class is not authority, strategy or product throws a plain Error, skipping the one-retry path every other malformed report gets.",
+      "behavior": "A reviewer has no escalation class to get wrong: it returns a typed ReviewResult, a blocked one is no review, only a blocker the Principal must settle becomes that role's escalation, and every malformed result gets the same one fresh retry.",
       "classification": "named-defect",
       "defect": "DEF-09",
       "owner": "vinaya-policy",
@@ -1331,35 +1332,35 @@
       "sources": [
         {
           "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts",
-          "symbol": "buildVerdictFromReport"
+          "symbol": "buildVerdictFromReview"
         }
       ],
-      "tests": [],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/reviewer-dispatch.test.ts"],
       "loopSpec": ["Infrastructure failures and driver-decided pauses"],
-      "reason": "Inconsistent malformed-output handling.",
+      "reason": "Malformed-output handling is one path: every invalid result is no review under the same retry.",
       "scope": "product"
     },
     {
       "id": "INV-059",
-      "behavior": "A report with findings but no matching FINDING_IDS line is resent once into a fresh directory; if still uncitable a marked report-uncitable comment is posted once and the round continues on its severities.",
+      "behavior": "A reviewer result carries no finding ids; the controller assigns each accepted finding its id and never resends a review to cite ids.",
       "classification": "product-guarantee",
       "owner": "vinaya-policy",
-      "authority": "forge",
+      "authority": "pure-policy",
       "scenarios": ["invalid-reviews"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/dev-review-loop.ts",
-          "symbol": "resendForFindingIds"
+          "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts",
+          "symbol": "buildVerdictFromReview"
         }
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
-      "loopSpec": ["A reviewer report missing finding ids is resent once, then `report_uncitable`"],
-      "reason": "The resend-once rule and the marked comment are driver-enforced.",
+      "loopSpec": ["Finding identities are the controller's"],
+      "reason": "Finding identity is the controller's, never the reviewer's; no review is resent for it.",
       "scope": "product"
     },
     {
       "id": "INV-060",
-      "behavior": "The ids a reviewer cites are validated for count and uniqueness and then discarded; findings keep positional ids (F1, F2, \u2026), which is what cross-round comparison uses.",
+      "behavior": "Findings keep positional ids (F1, F2, \u2026) the controller assigns, and only the description fingerprint carries across rounds; the contracts compute a finding's identity from role, file and description.",
       "classification": "named-defect",
       "defect": "DEF-10",
       "owner": "vinaya-policy",
@@ -1368,17 +1369,17 @@
       "sources": [
         {
           "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts",
-          "symbol": "buildVerdictFromReport"
+          "symbol": "buildVerdictFromReview"
         }
       ],
       "tests": [],
-      "loopSpec": ["A reviewer report missing finding ids is resent once, then `report_uncitable`"],
-      "reason": "The spec adds FINDING_IDS precisely because positional numbering is not a stable identity.",
+      "loopSpec": ["Finding identities are the controller's"],
+      "reason": "Positional numbering is not a stable identity across two separate dispatches.",
       "scope": "product"
     },
     {
       "id": "INV-061",
-      "behavior": "The finding-id resend is a context-free session (no head, objectives, rulings or staged inputs) and never asks for objectives.txt, so for a task with objectives it practically always ends report_uncitable.",
+      "behavior": "No finding-id resend exists: a review is never sent back to cite ids, so no context-free resend session is ever dispatched.",
       "classification": "named-defect",
       "defect": "DEF-11",
       "owner": "vinaya-policy",
@@ -1387,12 +1388,12 @@
       "sources": [
         {
           "path": "apps/cli/src/lib/dev-review-loop.ts",
-          "symbol": "citeFindingIdsPrompt"
+          "symbol": "dispatchReviewer"
         }
       ],
       "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
-      "loopSpec": ["A reviewer report missing finding ids is resent once, then `report_uncitable`"],
-      "reason": "The resend exists to let the next attempt succeed; as built it cannot.",
+      "loopSpec": ["Finding identities are the controller's"],
+      "reason": "The resend could not succeed as built; the structured result removed the need for it.",
       "scope": "product"
     },
     {
@@ -3579,29 +3580,29 @@
     },
     {
       "id": "DEF-09",
-      "summary": "An unknown ESCALATE class throws a plain Error and skips the one fresh retry.",
+      "summary": "An unknown ESCALATE class threw a plain Error and skipped the one fresh retry; reviewers now return a typed ReviewResult, and every malformed one gets the same retry.",
       "code": {
         "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts",
-        "locator": "buildVerdictFromReport"
+        "locator": "buildVerdictFromReview"
       },
       "spec": {
         "path": "apps/cli/specs/loop.md",
         "locator": "Infrastructure failures and driver-decided pauses"
       },
-      "status": "open",
+      "status": "fixed",
       "classification": "named-defect",
       "scope": "product"
     },
     {
       "id": "DEF-10",
-      "summary": "Cited FINDING_IDS are discarded; findings keep positional ids across rounds.",
+      "summary": "Findings keep positional ids across rounds; the contracts compute identity from role, file and description.",
       "code": {
         "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts",
-        "locator": "buildVerdictFromReport (id: F<n>)"
+        "locator": "buildVerdictFromReview (id: F<n>)"
       },
       "spec": {
         "path": "apps/cli/specs/loop.md",
-        "locator": "A reviewer report missing finding ids is resent once, then `report_uncitable`"
+        "locator": "Finding identities are the controller's"
       },
       "status": "open",
       "classification": "named-defect",
@@ -3609,16 +3610,16 @@
     },
     {
       "id": "DEF-11",
-      "summary": "The finding-id resend carries no context and never asks for objectives.txt.",
+      "summary": "The finding-id resend carried no context and never asked for objective results; the resend no longer exists.",
       "code": {
         "path": "apps/cli/src/lib/dev-review-loop.ts",
-        "locator": "citeFindingIdsPrompt"
+        "locator": "dispatchReviewer"
       },
       "spec": {
         "path": "apps/cli/specs/loop.md",
-        "locator": "A reviewer report missing finding ids is resent once, then `report_uncitable`"
+        "locator": "Finding identities are the controller's"
       },
-      "status": "open",
+      "status": "fixed",
       "classification": "named-defect",
       "scope": "product"
     },

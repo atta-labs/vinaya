@@ -150,7 +150,7 @@ export type PublishInput = {
   /** The round's judged head — every posted verdict is expected to bind to this, re-verified after each post. */
   expectedHead: string
   journal: Journal
-  /** Which severities block is repository policy — the SAME resolved value `buildVerdictFromReport` derived this round's held verdicts under. */
+  /** Which severities block is repository policy — the SAME resolved value `buildVerdictFromReview` derived this round's held verdicts under. */
   policy: ReviewPolicy
   /**
    * The manifest this round was dispatched against (task 5,

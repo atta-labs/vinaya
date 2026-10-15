@@ -49,7 +49,7 @@ import {
 } from '../../src/lib/dev-review-loop.js'
 import { resetDefaultLogSinkContext, resetTrustAnchorConfigMemo } from '../../src/lib/log-sink.js'
 import { resetRuntimeDirCache } from '../../src/lib/run-paths.js'
-import type { DispatchHandle } from '../../src/lib/dispatch.js'
+import type { DispatchFailureReason, DispatchHandle, ReviewerTurnOutput } from '../../src/lib/dispatch.js'
 import type { DeveloperTurnOutput } from '../../src/lib/dev-review-loop/turn-result.js'
 import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server.js'
 import {
@@ -72,18 +72,24 @@ import {
 } from '@attalabs/aeg-core'
 import { FIXTURE_REPO, isolatedConfigFixture } from './process-fixture.js'
 
-/** The role output files a fake reviewer/security dispatch writes into its work dir — the exact grammar the real reviewer binary produces. */
+/** A fake reviewer/security dispatch's outcome, in a compact line grammar `fakeReviewOutput` turns into the structured ReviewResult it returns. */
 export type RoleOutcome = {
-  /** One line per finding, or `''` for a clean review. */
+  /** One `SEVERITY|file:line|description` line per finding, or `''` for a clean review. */
   findings: string
-  /** `report.txt` body — the role's own report grammar (BRIEF_CONFORMANCE… for reviewer, CONFIG_SCAN/SECRETS for security). */
+  /** The review's summary as `KEY: value` lines; `ESCALATE: <class>` with `SUMMARY:` returns a blocked result the Principal must settle. */
   report: string
-  /** `objectives.txt` body (`O1|MET|done.` by default); pass `null` to write none (an escalation report writes no objectives file). */
+  /** One `O<n>|MET|evidence` line per objective result (`O1|MET|done.` by default); `null` for none. */
   objectives: string | null
   /** The vendor session id this dispatch reports. */
   sessionId: string
-  /** When true, the dispatch writes NO artifact files at all — the "a reviewer that wrote nothing" infrastructure-pause scenario. */
+  /** When true, the dispatch returns NO structured result at all — the "a reviewer that delivered nothing" infrastructure-pause scenario. */
   writesNothing?: boolean
+  /** Binds the returned result wrongly: to another head (`stale_head`) or to the other reviewer role (`crossed_role`). */
+  misbind?: 'stale_head' | 'crossed_role'
+  /** The run ends with no result and this provider failure: its terminal outcome and error text. */
+  providerFailure?: { terminal: string; errors: string[] }
+  /** The run is killed before it finishes (the dispatcher's `signal` failure). */
+  cancelled?: boolean
 }
 
 export const CLEAN_REVIEWER: RoleOutcome = {
@@ -187,8 +193,8 @@ export type LoopWorld = {
    * A role's value may be a single `RoleOutcome` (every attempt in the round
    * gets it, the original shape) or an array — attempt `n` (1-indexed) gets
    * `array[n - 1]`, clamped to the array's last entry once attempts exceed
-   * its length. issue-711 O6: this is what lets a fixture write a MISMATCHED
-   * `objectives.txt` on attempt 1 and a covering one on attempt 2, proving
+   * its length. issue-711 O6: this is what lets a fixture return MISMATCHED
+   * objective results on attempt 1 and covering ones on attempt 2, proving
    * the one-fresh-retry actually recovers rather than merely re-failing.
    */
   roleOutcomes: Record<
@@ -440,22 +446,113 @@ function roleOutcomeFor(world: LoopWorld, role: 'reviewer' | 'security', round: 
   return configured[Math.min(attempt, configured.length) - 1]!
 }
 
-function writeRoleArtifacts(workDir: string, outcome: RoleOutcome): void {
-  mkdirSync(workDir, { recursive: true })
-  writeFileSync(join(workDir, 'findings.txt'), outcome.findings)
-  writeFileSync(join(workDir, 'report.txt'), outcome.report)
-  if (outcome.objectives !== null) writeFileSync(join(workDir, 'objectives.txt'), outcome.objectives)
-}
-
-function handle(resumeId: string | null, effectId: string, turnOutput?: DeveloperTurnOutput): DispatchHandle {
+function handle(
+  resumeId: string | null,
+  effectId: string,
+  turnOutput?: DeveloperTurnOutput,
+  reviewOutput?: ReviewerTurnOutput,
+  failureReason?: DispatchFailureReason
+): DispatchHandle {
   return {
-    exitCode: 0,
+    exitCode: failureReason === undefined ? 0 : null,
     durationMs: 1,
     usage: { input: 10, output: 5 },
     resumeId,
     timedOut: false,
     effectId,
-    ...(turnOutput !== undefined ? { turnOutput } : {})
+    ...(failureReason !== undefined ? { failureReason } : {}),
+    ...(turnOutput !== undefined ? { turnOutput } : {}),
+    ...(reviewOutput !== undefined ? { reviewOutput } : {})
+  }
+}
+
+/** A fixture report's summary: the security report's own `SECRETS:` value when it has one (the line the summary renders as), else the whole report on one line. */
+function fakeReviewSummary(report: string): string {
+  const secrets = report.match(/^SECRETS:\s*(.*)$/m)?.[1]?.trim()
+  return secrets || report.replace(/\s+/g, ' ').trim() || 'fixture review'
+}
+
+/**
+ * The structured ReviewResult a fake reviewer returns for `outcome`, bound to
+ * the head and manifest digest its prompt names — the same values a real
+ * reviewer is told to return. A report that escalates (`ESCALATE: <class>`)
+ * returns a `blocked` result whose blocker only the Principal can settle,
+ * the one blocked result the loop records as an escalation.
+ */
+export function fakeReviewOutput(
+  role: 'reviewer' | 'security',
+  outcome: RoleOutcome,
+  prompt: string
+): ReviewerTurnOutput {
+  if (outcome.writesNothing || outcome.cancelled) return { adapter: 'claude --json-schema', event: null, raw: null }
+  if (outcome.providerFailure) {
+    return { adapter: 'claude --json-schema', event: null, raw: null, ...outcome.providerFailure }
+  }
+  const promptHead = prompt.match(/headSha ([0-9a-f]+)/)?.[1] ?? ''
+  const headSha =
+    outcome.misbind === 'stale_head' ? `${promptHead.slice(0, -1)}${promptHead.endsWith('0') ? '1' : '0'}` : promptHead
+  const manifestDigest = prompt.match(/manifestDigest ([0-9a-f]+)/)?.[1] ?? ''
+  const ownRole = role === 'reviewer' ? 'code-reviewer' : 'security-reviewer'
+  const otherRole = role === 'reviewer' ? 'security-reviewer' : 'code-reviewer'
+  const reviewerRole = outcome.misbind === 'crossed_role' ? otherRole : ownRole
+  const escalate = outcome.report.match(/^ESCALATE:\s*(.*)$/m)
+  if (escalate) {
+    const summary = outcome.report.match(/^SUMMARY:\s*(.*)$/m)?.[1]?.trim() || 'fixture escalation'
+    return {
+      adapter: 'claude --json-schema',
+      event: 'result (subtype success) .structured_output',
+      raw: {
+        reviewResult: {
+          schemaVersion: 1,
+          status: 'blocked',
+          role: reviewerRole,
+          headSha,
+          manifestDigest,
+          summary,
+          blocker: { kind: 'scope_unclear', detail: `escalated as ${escalate[1]?.trim() || 'authority'}` }
+        }
+      }
+    }
+  }
+  const findings = outcome.findings.trim()
+    ? outcome.findings
+        .trim()
+        .split('\n')
+        .map((line) => {
+          const [severity = '', location = '', ...description] = line.split('|')
+          const match = location.match(/^(.*?)(?::(\d+))?$/)
+          return {
+            severity,
+            file: match?.[1] ?? '',
+            line: match?.[2] ? Number(match[2]) : null,
+            description: description.join('|') || null
+          }
+        })
+    : []
+  const objectiveResults = outcome.objectives?.trim()
+    ? outcome.objectives
+        .trim()
+        .split('\n')
+        .map((line) => {
+          const [id = '', status = '', ...evidence] = line.split('|')
+          return { id, status, evidence: evidence.join('|') }
+        })
+    : []
+  return {
+    adapter: 'claude --json-schema',
+    event: 'result (subtype success) .structured_output',
+    raw: {
+      reviewResult: {
+        schemaVersion: 1,
+        status: 'completed',
+        role: reviewerRole,
+        headSha,
+        manifestDigest,
+        summary: fakeReviewSummary(outcome.report),
+        findings,
+        objectiveResults
+      }
+    }
   }
 }
 
@@ -548,17 +645,20 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
         world.dispatches.push({ role, round, resumeId: sessionId, prompt, cwd: opts.cwd })
         return handle(sessionId, `eff-dev-${++dispatchSeq}`, fakeDeveloperTurnOutput(world, round, prompt))
       }
-      // code-reviewer | security: write the role's artifacts into the work
-      // dir the loop granted it (`extraWritableDirs[0]` — see
-      // `dispatchReviewer` in dev-review-loop.ts).
+      // code-reviewer | security: return the role's structured ReviewResult
+      // on the dispatch handle, as a real reviewer's CLI delivers it.
       world.reviewerDispatchStarted = true
-      const workDir = opts.extraWritableDirs?.[0]
       const reviewRole = role === 'code-reviewer' ? 'reviewer' : 'security'
       const attempt = world.dispatches.filter((d) => d.role === role && d.round === round).length + 1
       const outcome = roleOutcomeFor(world, reviewRole, round, attempt)
-      if (workDir && !outcome.writesNothing) writeRoleArtifacts(workDir, outcome)
       world.dispatches.push({ role, round, resumeId: outcome.sessionId, prompt })
-      return handle(outcome.sessionId, `eff-${reviewRole}-${++dispatchSeq}`)
+      return handle(
+        outcome.sessionId,
+        `eff-${reviewRole}-${++dispatchSeq}`,
+        undefined,
+        fakeReviewOutput(reviewRole, outcome, prompt),
+        outcome.cancelled ? 'signal' : undefined
+      )
     },
     // issue #945: the policy read is injected here to the built-in defaults, so
     // an in-process run neither reaches the real `gh api` trust-anchor read (a

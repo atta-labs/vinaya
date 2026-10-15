@@ -1,9 +1,8 @@
 /**
- * `dev-review-loop`'s reviewer-dispatch-and-report-parsing concern
- * — the reviewer's own prompt,
- * the held-verdict outbox, the `findings.txt`/`objectives.txt`/`report.txt`
- * grammar, and turning a reviewer's own report into a rendered verdict via
- * `buildVerdictFromReport` (which calls `@attalabs/aeg-core`'s pure
+ * `dev-review-loop`'s reviewer-dispatch-and-verdict concern — the reviewer's
+ * own prompt, the held-verdict outbox, and turning a reviewer's accepted
+ * structured ReviewResult (`review-result.ts`) into a rendered verdict via
+ * `buildVerdictFromReview` (which calls `@attalabs/aeg-core`'s pure
  * evaluator through `deriveCodeReviewVerdict`/`deriveSecurityVerdict` —
  * which severities block is repository policy, never a literal here).
  * Moved out of `apps/cli/src/lib/dev-review-loop.ts` verbatim;
@@ -11,9 +10,8 @@
  * below under the same path it always had.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
 import {
   blockingSeverities,
   CODE_REVIEW_SEVERITY_ORDER,
@@ -38,24 +36,22 @@ import {
   writeManifest
 } from '@attalabs/aeg-core'
 import {
+  checkDocCorrectnessSearch,
   checkObjectiveIdCoverage,
   deriveCodeReviewVerdict,
   deriveSecurityVerdict,
-  type EscalationClass,
   type Finding,
   FindingsParseError,
-  isEscalationClass,
+  invalidObjectiveEvidenceReason,
   noneFoundClaimCitesScanCheck,
   type ObjectiveResult,
-  ObjectivesParseError,
-  parseFindingsFile,
-  parseObjectivesFile,
   renderCodeReviewComment,
   renderEscalationComment,
   renderSecurityComment,
   SECRET_SCAN_CHECK
 } from '../../commands/review-post.js'
 import type { AgentVendor, DispatchHandle } from '../dispatch.js'
+import { manifestDigest as reviewManifestDigest, type ReviewResult } from '../review-result.js'
 import { isStagedPrBodyFile, type ReviewerCandidateInputPaths } from './reviewer-isolation.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
 
@@ -63,7 +59,7 @@ import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from
 
 export type ReviewerPromptFacts = {
   objectives: string
-  /** The `objectives` text, parsed — `[]` exactly when `objectives` is empty. Threaded into `buildVerdictFromReport`'s own `checkObjectiveIdCoverage` call, the same coverage rule `review post` already applies. */
+  /** The `objectives` text, parsed — `[]` exactly when `objectives` is empty. Threaded into `buildVerdictFromReview`'s own `checkObjectiveIdCoverage` call, the same coverage rule `review post` already applies. */
   resolvedObjectives: readonly Objective[]
   rulings: string[]
   ciConclusion: 'green' | 'red' | 'pending'
@@ -73,7 +69,7 @@ export type ReviewerPromptFacts = {
    * The one review-input manifest — head, the frozen brief's own hash, objectives version, ruling
    * ordinal, and the effective review policy's digest, built by the driver
    * BEFORE this dispatch. The only source of `HEAD:` in the rendered prompt
-   * below and of every structural line `buildVerdictFromReport` renders —
+   * below and of every structural line `buildVerdictFromReview` renders —
    * `objectivesVersion`/`rulingOrdinal` are no longer separate fields here.
    */
   manifest: ReviewInputManifest
@@ -82,7 +78,7 @@ export type ReviewerPromptFacts = {
   /**
    * O2/O3: the round's deferral rules, built by the driver from the previous
    * round's head and the task's `## Surface` (`buildRoundDeferralContext`).
-   * Threaded to `buildVerdictFromReport`, never into the reviewer prompt —
+   * Threaded to `buildVerdictFromReview`, never into the reviewer prompt —
    * the renderer ignores it. Absent (or `{}`) leaves both rules inactive.
    */
   deferralContext?: FindingDeferralContext
@@ -588,8 +584,8 @@ export function writeHeldVerdict(
  * O1: "the prior round's findings" the driver stages for both reviewer
  * roles — the rendered REVIEWER and SECURITY verdict text `round - 1` held
  * (`heldVerdictPath`'s own files are never deleted once written, so this
- * reads the durable record, never a round's own transient `findings.txt`,
- * which a fresh attempt's directory can overwrite). Round 1, or a round
+ * reads the durable record, never a reviewer's own transient output).
+ * Round 1, or a round
  * whose own held pair was discarded (O5, a merge-conflict invalidation),
  * names that plainly rather than fabricating an empty-findings claim this
  * round's reviewer could mistake for an actual clean prior round (Traps to
@@ -734,100 +730,12 @@ export function latestHeldCleanVerdict(root: string, task: number): HeldCleanVer
 }
 
 /**
- * `attempt` 1 is the round's normal work directory (unchanged path, so an
- * existing fixture/fake that never retries keeps working unmodified);
- * `attempt` 2 is a genuinely fresh directory for O2's one retry — never the
- * same directory a failed first attempt already touched, per the loop
- * spec's collect rule (Traps to avoid: never resume a crashed reviewer).
- */
-export function reviewerWorkDir(
-  root: string,
-  task: number,
-  round: number,
-  role: 'reviewer' | 'security',
-  attempt = 1
-): string {
-  const suffix = attempt > 1 ? `-retry${attempt - 1}` : ''
-  return runPath(root, task, { area: 'round', round, file: `${role}-work${suffix}` })
-}
-
-/**
- * The output directory ONE reviewer dispatch is told to write into — never a
- * directory an earlier dispatch already used. The round's first dispatch of
- * each attempt gets `reviewerWorkDir`'s own path, unchanged; a later dispatch
- * of the same round, role and attempt (a re-run after a Principal ruling, a
- * resume, or any re-dispatch of a round already reviewed) gets the first
- * free `-redispatch<k>` sibling of it instead. The earlier dispatch's files
- * are left where they are, never deleted, so a reviewer process that might
- * still be writing them never loses a file under its feet, and the loop
- * never reads one of them as this dispatch's verdict. The caller creates the
- * returned directory (`ensureRunDir`) before the dispatch starts; the driver
- * lock makes the existence check and that creation one step, since no
- * second driver dispatches this task's reviewers at the same time.
- */
-export function freshReviewerWorkDir(
-  root: string,
-  task: number,
-  round: number,
-  role: 'reviewer' | 'security',
-  attempt = 1
-): string {
-  const base = reviewerWorkDir(root, task, round, role, attempt)
-  if (!existsSync(base)) return base
-  for (let k = 1; ; k++) {
-    const next = `${base}-redispatch${k}`
-    if (!existsSync(next)) return next
-  }
-}
-
-/**
- * The earliest modification time, in milliseconds, a file this dispatch wrote
- * into `workDir` can carry: the directory's own modification time read right
- * after the driver created it, before the dispatch starts. Read off the
- * filesystem's own clock, never the driver's, so a file the reviewer writes
- * afterwards is never judged older than its own dispatch by clock skew.
- */
-export function reviewerOutputFloorMs(workDir: string): number {
-  return statSync(workDir).mtimeMs
-}
-
-/**
- * O1/O3: `findings.txt` and `report.txt` are always required; `objectives.txt`
- * is required only when the task carries objectives (`hasObjectives`) AND the
- * report is a real verdict rather than an escalation — `buildVerdictFromReport`
- * never reads objectives (or findings) for an `ESCALATE:` report at all
- * (`objectives: []` unconditionally on that path), so a reviewer that
- * deliberately escalates instead of judging objectives has not "written
- * nothing"; requiring `objectives.txt` there would misfile a real,
- * contract-sanctioned escalation as an infrastructure failure. On a task with
- * no `## Objectives` section, `objectives.txt`'s absence is the existing,
- * sanctioned optional case (Traps to avoid: empty is clean, absent is
- * failure — checked by existence here, never by a `readFileSync(...) ?? ''`
- * default that would make a missing file indistinguishable from an empty one).
- */
-export function missingReviewerArtifacts(workDir: string, hasObjectives: boolean, notBeforeMs?: number): string[] {
-  // A file older than this dispatch (`notBeforeMs`, `reviewerOutputFloorMs`)
-  // was not written by it, so it counts as missing — the review was not
-  // delivered — never as this dispatch's verdict.
-  const delivered = (file: string): boolean => {
-    const path = join(workDir, file)
-    if (!existsSync(path)) return false
-    return notBeforeMs === undefined || statSync(path).mtimeMs >= notBeforeMs
-  }
-  const missing: string[] = []
-  const reportRaw = delivered('report.txt') ? readIfExists(join(workDir, 'report.txt')) : null
-  if (reportRaw === null) missing.push('report.txt')
-  if (!delivered('findings.txt')) missing.push('findings.txt')
-  const isEscalation = reportRaw !== null && parseReport(reportRaw).ESCALATE !== undefined
-  if (hasObjectives && !isEscalation && !delivered('objectives.txt')) missing.push('objectives.txt')
-  return missing
-}
-
-/**
- * Thrown by `dispatchReviewer` when a role's work directory is still missing
- * a required artifact after its one fresh retry — caught by the loop
- * and turned into `{ type: 'pause', reason: 'infrastructure' }`, never read
- * as a clean verdict on any path.
+ * Thrown by `dispatchReviewer` when a role delivered no review on its fresh
+ * dispatch nor on its one fresh retry — its structured ReviewResult missing,
+ * malformed, stale, crossed with another role, or the run cancelled,
+ * context-exhausted or failed at the provider — caught by the loop and
+ * turned into `{ type: 'pause', reason: 'infrastructure' }`, never read as a
+ * clean verdict on any path. `missing` names why each attempt was no review.
  */
 export class ReviewerInfrastructureFailure extends Error {
   constructor(
@@ -845,62 +753,33 @@ export class ReviewerInfrastructureFailure extends Error {
     public readonly attemptEffectId: string | null = null,
     public readonly attemptDurationMs: number | null = null
   ) {
-    super(`${role}'s work directory carried no ${missing.join(' and no ')} after a fresh dispatch and one fresh retry.`)
+    super(`${role} delivered no review after a fresh dispatch and one fresh retry: ${missing.join('; ')}.`)
   }
 }
 
 /**
- * Thrown by `buildVerdictFromReport` when `findings.txt`/`objectives.txt`
- * still does not parse — the file
- * exists (`missingReviewerArtifacts` already passed), but a line inside it
- * is malformed beyond `parseFindingsFile`/`parseObjectivesFile`'s own
- * tolerance (a status that starts with neither `MET` nor `NOT MET`, a
- * findings line with fewer than two `|` delimiters). `dispatchReviewer`
- * gives this the SAME one-fresh-retry treatment as a missing artifact; a
- * second miss propagates here and the loop turns it into `{ type: 'pause',
- * reason: 'infrastructure' }` — naming the file, the line (already inside
- * `parseError.message`), and the reviewer's session id — never an uncaught
- * throw that crashes the driver.
+ * Thrown by `buildVerdictFromReview` when a schema-valid, bound result still
+ * breaks a rule every review is held to — a `doc-correctness` finding with no
+ * repository-wide `Search:` pattern, an objective result that does not cover
+ * the brief's objectives exactly or whose evidence cannot render, or a clean
+ * secrets claim that cites no passing scan. Like any other invalid result it
+ * is no review: `dispatchReviewer` gives it the same one fresh retry, and a
+ * second rejection becomes `{ type: 'pause', reason: 'infrastructure' }` —
+ * naming the field, the reason, and the reviewer's session id — never an
+ * uncaught throw that crashes the driver.
  */
-export class ReviewerReportParseFailure extends Error {
+export class ReviewerResultRejected extends Error {
   constructor(
     public readonly role: 'reviewer' | 'security',
-    public readonly file: 'findings.txt' | 'objectives.txt' | 'report.txt',
+    public readonly field: 'findings' | 'objectiveResults' | 'summary',
     public readonly sessionId: string,
-    public readonly parseError: Error,
-    /** Round 2 review, MAJOR: this exact attempt's own `effect_id`/`durationMs`, from `buildVerdictFromReport`'s own `handle` parameter — see `ReviewerInfrastructureFailure`'s identical fields for why. */
+    public readonly reason: Error,
+    /** This exact attempt's own `effect_id`/`durationMs`, from `buildVerdictFromReview`'s own `handle` parameter — see `ReviewerInfrastructureFailure`'s identical fields for why. */
     public readonly attemptEffectId: string | null = null,
     public readonly attemptDurationMs: number | null = null
   ) {
-    super(`${role}'s ${file} did not parse (session ${sessionId}): ${parseError.message}`)
+    super(`${role}'s ReviewResult ${field} was rejected (session ${sessionId}): ${reason.message}`)
   }
-}
-// --- reviewer report grammar (this task's own design; see PR Decisions) ---
-
-/**
- * A reviewer/security dispatch is instructed to write three files to an
- * absolute, driver-chosen work directory: `findings.txt`
- * (`review-post.ts`'s existing `SEVERITY|file:line|description` grammar),
- * `objectives.txt` (existing `O<n>|MET|evidence` grammar, optional), and
- * `report.txt` — this task's own new `KEY: value` grammar for the
- * remaining prose fields `renderCodeReviewComment`/`renderSecurityComment`
- * need (brief conformance, scope, tests, docs, config scan, secrets), plus
- * an optional `ESCALATE: <class>` / `SUMMARY:` pair. Only `findings.txt`
- * and `objectives.txt` are reused grammars per the brief; `report.txt` is
- * new because neither existing parser covers free-text prose fields.
- */
-type ReviewerReport = Record<string, string>
-
-function parseReport(content: string): ReviewerReport {
-  const report: ReviewerReport = {}
-  for (const raw of content.split('\n')) {
-    const line = raw.trim()
-    if (!line) continue
-    const idx = line.indexOf(':')
-    if (idx === -1) continue
-    report[line.slice(0, idx).trim().toUpperCase()] = line.slice(idx + 1).trim()
-  }
-  return report
 }
 
 /**
@@ -1103,9 +982,29 @@ export function buildRoundDeferralContext(args: {
 
 export type RoundVerdictParse = { observation: VerdictObservation; rendered: string }
 
-export function buildVerdictFromReport(
+/** The rendered value of a report line the ReviewResult's one `summary` already covers. */
+const COVERED_BY_SUMMARY = '(covered by the review summary)'
+
+/** One structured text field, flattened to the one line a rendered verdict carries. */
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * Turns one reviewer's accepted structured ReviewResult — already
+ * schema-valid and bound to this round's role, head and review-input manifest
+ * by `classifyReviewOutcome` (`review-result.ts`) — into the round's verdict
+ * observation and rendered comment. The verdict itself is derived here, by
+ * policy, never read from the agent; finding ids are assigned here, in the
+ * result's own order. A `blocked` result reaches this only when the
+ * controller decided its blocker needs a Principal ruling
+ * (`reviewBlockerNeedsRuling`): it renders as an escalation and is never a
+ * verdict. A rule a schema cannot express breaks the result as
+ * `ReviewerResultRejected` — no review, like any other invalid result.
+ */
+export function buildVerdictFromReview(
   role: 'reviewer' | 'security',
-  workDir: string,
+  review: ReviewResult,
   agent: AgentVendor,
   taskId: number,
   handle: DispatchHandle,
@@ -1124,24 +1023,19 @@ export function buildVerdictFromReport(
   const headSha = manifest.headSha
   const objectivesVersionAtDispatch = manifest.objectivesVersion
   const rulingOrdinalAtDispatch = manifest.rulingOrdinal
-  const reportRaw = readIfExists(join(workDir, 'report.txt')) ?? ''
-  const report = parseReport(reportRaw)
   const sessionId = handle.resumeId ?? '(unknown)'
   const tokensIn = handle.usage ? String(handle.usage.input) : '—'
   const tokensOut = handle.usage ? String(handle.usage.output) : '—'
   const roleLabel = role === 'reviewer' ? ('Reviewer' as const) : ('Security' as const)
+  const rejected = (field: ReviewerResultRejected['field'], reason: string): ReviewerResultRejected =>
+    new ReviewerResultRejected(role, field, sessionId, new Error(reason), handle.effectId ?? null, handle.durationMs)
 
-  const escalateClass = report.ESCALATE
-  if (escalateClass !== undefined) {
-    if (!isEscalationClass(escalateClass)) {
-      throw new Error(
-        `devReviewLoop: ${role}'s report.txt carries \`ESCALATE: ${escalateClass}\`, not one of authority|strategy|product.`
-      )
-    }
+  if (review.status === 'blocked') {
     const rendered = renderEscalationComment({
       headSha,
-      escalationClass: escalateClass as EscalationClass,
-      summary: report.SUMMARY ?? '(no summary given)',
+      // A blocker only the Principal can settle is a question of authority over the task's scope.
+      escalationClass: 'authority',
+      summary: oneLine(`${review.blocker.kind}: ${review.blocker.detail} — ${review.summary}`),
       role: role === 'reviewer' ? 'review' : 'security',
       roleLabel,
       objectivesVersion: objectivesVersionAtDispatch,
@@ -1161,64 +1055,45 @@ export function buildVerdictFromReport(
     return { observation: { role, verdict: 'ESCALATE', objectives: [], findings: [] }, rendered }
   }
 
-  const findingsRaw = readIfExists(join(workDir, 'findings.txt')) ?? ''
-  const allowedSeverities = role === 'reviewer' ? CODE_REVIEW_SEVERITY_ORDER : SECURITY_SEVERITY_ORDER
-  // O6: a line that still does not parse — tolerant of a qualified status
-  // and a `|` in a description, but still not a valid line — is an
-  // infrastructure pause, never an uncaught throw that crashes the driver.
-  let findings: Finding[]
-  try {
-    findings = findingsRaw.trim()
-      ? parseFindingsFile(findingsRaw, allowedSeverities).map(relocateStagedPrBodyFinding)
-      : []
-  } catch (err) {
-    if (err instanceof FindingsParseError) {
-      throw new ReviewerReportParseFailure(
-        role,
-        'findings.txt',
-        sessionId,
-        err,
-        handle.effectId ?? null,
-        handle.durationMs
-      )
+  // Severity and file are already checked against this role's scale by the
+  // binding check; the rules below are the ones every review — posted by
+  // hand or dispatched — is held to.
+  const findings: Finding[] = review.findings.map((f, i) => {
+    const description = oneLine(f.description ?? '') || '(no description given)'
+    try {
+      checkDocCorrectnessSearch(description, i + 1)
+    } catch (err) {
+      if (err instanceof FindingsParseError) throw rejected('findings', err.message)
+      throw err
     }
-    throw err
-  }
+    const file = oneLine(f.file)
+    return relocateStagedPrBodyFinding({
+      severity: f.severity,
+      location: f.line === null ? file : `${file}:${f.line}`,
+      description
+    })
+  })
 
-  const objectivesRaw = readIfExists(join(workDir, 'objectives.txt'))
-  let objectiveResults: ObjectiveResult[]
-  try {
-    objectiveResults = objectivesRaw?.trim() ? parseObjectivesFile(objectivesRaw) : []
-  } catch (err) {
-    if (err instanceof ObjectivesParseError) {
-      throw new ReviewerReportParseFailure(
-        role,
-        'objectives.txt',
-        sessionId,
-        err,
-        handle.effectId ?? null,
-        handle.durationMs
-      )
-    }
-    throw err
+  let objectiveResults: ObjectiveResult[] = review.objectiveResults.map((o) => ({
+    id: o.id.trim(),
+    status: o.status,
+    evidence: oneLine(o.evidence)
+  }))
+  for (const o of objectiveResults) {
+    const invalid = /^O\d+$/.test(o.id) ? invalidObjectiveEvidenceReason(o.evidence) : 'not a well-formed objective id'
+    if (invalid !== null) throw rejected('objectiveResults', `${o.id}: ${invalid}`)
   }
   // O4: the SAME coverage rule `review post`'s own
   // `resolveObjectiveResultsForCommand` already applies to a human-posted
-  // verdict — an under-reporting reviewer (one that wrote fewer, or extra,
-  // `O<n>|...` lines than the resolved objectives list) never yields a
-  // version-bound verdict here either. Same one-fresh-retry treatment as a
-  // missing or malformed artifact (`ReviewerReportParseFailure`), never a
-  // silently-accepted partial report.
+  // verdict — an under-reporting reviewer (one that returned fewer, or extra,
+  // objective results than the resolved objectives list) never yields a
+  // version-bound verdict here either, never a silently-accepted partial review.
   if (resolvedObjectives.length > 0) {
     const coverageProblem = checkObjectiveIdCoverage(resolvedObjectives, objectiveResults)
     if (coverageProblem !== null) {
-      throw new ReviewerReportParseFailure(
-        role,
-        'objectives.txt',
-        sessionId,
-        new Error(`objectives.txt does not cover the resolved objectives list exactly: ${coverageProblem}`),
-        handle.effectId ?? null,
-        handle.durationMs
+      throw rejected(
+        'objectiveResults',
+        `the objective results do not cover the resolved objectives list exactly: ${coverageProblem}`
       )
     }
   }
@@ -1283,13 +1158,13 @@ export function buildVerdictFromReport(
     const rendered = renderCodeReviewComment({
       headSha,
       verdict,
-      briefConformance: report.BRIEF_CONFORMANCE ?? '(not reported)',
-      specConformance: report.SPEC_CONFORMANCE ?? '(not reported)',
+      briefConformance: oneLine(review.summary),
+      specConformance: COVERED_BY_SUMMARY,
       findings: blockingEligibleFindings,
-      scope: report.SCOPE ?? '(not reported)',
+      scope: COVERED_BY_SUMMARY,
       scopeEvidence: null,
-      tests: report.TESTS ?? '(not reported)',
-      docs: report.DOCS ?? '(not reported)',
+      tests: COVERED_BY_SUMMARY,
+      docs: COVERED_BY_SUMMARY,
       objectivesVersion: objectivesVersionAtDispatch,
       objectiveResults: renderedObjectiveResults,
       rulingOrdinal: rulingOrdinalAtDispatch,
@@ -1316,36 +1191,13 @@ export function buildVerdictFromReport(
     }
   }
 
-  // O3: `report.SECRETS` is required output, not an optional prose field
-  // like `CONFIG_SCAN` — unlike those, `security.md`'s own "none found" is a
-  // CLEAN self-attestation, so a missing or blank key can never fall back to
-  // it the way `CONFIG_SCAN` falls back to the honestly-absent
-  // `'(not reported)'`. Defaulting a missing key to "none found" would
-  // fabricate a clean claim for a reviewer session that crashed or forgot
-  // the line — the exact `findings.txt`/`objectives.txt` failure mode this
-  // module already turns into an infrastructure pause, extended to this key.
-  if (!report.SECRETS?.trim()) {
-    throw new ReviewerReportParseFailure(
-      role,
-      'report.txt',
-      sessionId,
-      new Error('missing required `SECRETS:` line — a security reviewer must always report one'),
-      handle.effectId ?? null,
-      handle.durationMs
-    )
-  }
-
-  // The same rule `vinaya review post` applies: a clean claim cites the
-  // required secret-scan check's result by name, never a scanner run.
-  if (!noneFoundClaimCitesScanCheck(report.SECRETS, null)) {
-    throw new ReviewerReportParseFailure(
-      role,
-      'report.txt',
-      sessionId,
-      new Error(`a \`SECRETS: none found\` line must cite a passing \`${SECRET_SCAN_CHECK}\` check result by name`),
-      handle.effectId ?? null,
-      handle.durationMs
-    )
+  // The security summary is the comment's SECRETS line — required by the
+  // schema, so never blank — under the same rule `vinaya review post`
+  // applies: a clean claim cites the required secret-scan check's result by
+  // name, never a scanner run, and a clean claim that does not is no review.
+  const secrets = oneLine(review.summary)
+  if (!noneFoundClaimCitesScanCheck(secrets, null)) {
+    throw rejected('summary', `a clean secrets claim must cite a passing \`${SECRET_SCAN_CHECK}\` check result by name`)
   }
 
   const verdict = deriveSecurityVerdict(blockingEligibleFindings, policy)
@@ -1353,8 +1205,8 @@ export function buildVerdictFromReport(
     headSha,
     verdict,
     findings: blockingEligibleFindings,
-    configScan: report.CONFIG_SCAN ?? '(not reported)',
-    secrets: report.SECRETS,
+    configScan: COVERED_BY_SUMMARY,
+    secrets,
     secretsEvidence: null,
     objectivesVersion: objectivesVersionAtDispatch,
     objectiveResults: renderedObjectiveResults,
@@ -1382,7 +1234,6 @@ export function hasObjectivesFacts(facts: ReviewerPromptFacts): boolean {
 export function renderReviewerDispatchPrompt(
   role: 'reviewer' | 'security',
   facts: ReviewerPromptFacts,
-  workDir: string,
   /**
    * O1/O2: this role's published doctrine — short version plus `## What you
    * check`, already resolved through the role plan (override-aware) by the
@@ -1430,35 +1281,30 @@ export function renderReviewerDispatchPrompt(
   const instructions = [
     roleLine,
     'Review the PR at the HEAD above against the OBJECTIVES and RULINGS above.',
-    `Write your findings to ${join(workDir, 'findings.txt')}, one per line: SEVERITY|file:line|description`,
+    `End your turn with exactly one ReviewResult as your structured output — never a file. Use role ${role === 'reviewer' ? 'code-reviewer' : 'security-reviewer'}, headSha ${facts.manifest.headSha}, and manifestDigest ${reviewManifestDigest(facts.manifest)}.`,
+    'Return status completed with findings, one result for every objective, and a summary; or status blocked with a typed blocker and summary. Do not write result files.',
     role === 'reviewer'
-      ? '(severities: BLOCKER, MAJOR, MINOR — leave the file empty if there are none).'
-      : '(severities: CRITICAL, HIGH, MEDIUM, LOW — leave the file empty if there are none).',
-    '`|` never appears in a description — write the finding without one, even inside a quoted or piped example.',
+      ? 'Each finding has a severity (BLOCKER, MAJOR or MINOR), the file, the line (null when it is about the whole file) and a description; return an empty findings list when there are none.'
+      : 'Each finding has a severity (CRITICAL, HIGH, MEDIUM or LOW), the file, the line (null when it is about the whole file) and a description; return an empty findings list when there are none.',
+    'Finding identities are controller-owned: do not invent or return finding ids.',
     // Named so a reviewer never under-reports a body/comment/
     // role-file finding's real severity to pre-empt this — the cap is
     // applied by the policy evaluator, not something to guess around.
     'A finding whose own location is the PR body, a comment, or a role file is capped to MINOR before it counts toward the threshold, regardless of the severity you assign it — write its real severity anyway.',
     ...(hasObjectivesFacts(facts)
       ? [
-          `Write one line per objective listed above to ${join(workDir, 'objectives.txt')}: O<n>|MET|<evidence> or O<n>|NOT MET|<evidence> — the status is read by its bare leading word (MET or NOT MET); write nothing else before it on that field.`,
+          'Return one objective result per objective listed above: its id (O<n>), status MET or NOT MET, and its evidence.',
           "NOT MET means you verified the objective is not met — never a decline. An objective outside your own lens is MET, citing the other reviewer's evidence or verifying it yourself directly — never NOT MET with an out-of-scope note.",
-          'An objective you find unmet is reported as NOT MET in objectives.txt with code or test evidence — never only as a finding on the pull request body, which is capped to MINOR and never decides an objective.'
+          'An objective you find unmet is reported as NOT MET in its objective result with code or test evidence — never only as a finding on the pull request body, which is capped to MINOR and never decides an objective.'
         ]
-      : []),
-    `Write a short report to ${join(workDir, 'report.txt')} as one \`KEY: value\` line per field:`,
-    role === 'reviewer' ? '  BRIEF_CONFORMANCE, SPEC_CONFORMANCE, SCOPE, TESTS, DOCS' : '  CONFIG_SCAN, SECRETS',
-    // A round's own findings are compared to the NEXT round's by
-    // id — never by writing order, which is not stable across two separate
-    // dispatches. Skipped only when findings.txt is empty (nothing to cite).
-    '  If findings.txt is non-empty, also write `FINDING_IDS: <id>,<id>,...` — one id per findings.txt line, in the SAME order, e.g. `F1,F2,F3`. A report with findings but no matching `FINDING_IDS:` line is sent back once for this alone.',
-    ...(role === 'security'
-      ? [
-          `\`SECRETS:\` is required — never leave it blank or omit it. The secret scan is the required \`${SECRET_SCAN_CHECK}\` CI check, running inside the \`vinaya check --all --diff-only\` CI job — you hold no GitHub credential and must never call \`gh\` to inspect it; judge it from the CI line above instead (\`CI: green\` means that job, and so this scan, passed) plus your own read of the diff. Write \`SECRETS: none found — ${SECRET_SCAN_CHECK} passed\` only when CI above is green, with any note from your own read of the diff on the lines below it; if CI is red or pending, say so on the line instead. Your own read of the diff for a credential the scanner's rules cannot see still applies.`,
-          '`CONFIG_SCAN:` — when an AGENT-CONFIG SCAN block appears above, base this line on it plus your own read of the agent-config diff; the driver already ran the scanner outside its own trust, so never run `npx`, install a package, or run a scanner yourself. When that block says the scan was not applicable, not configured, or could not run, write exactly that on the line and judge the config on your own read.'
-        ]
-      : []),
-    'To escalate instead of casting a verdict, write only `ESCALATE: authority|strategy|product` and `SUMMARY: <text>` to report.txt.'
+      : ['This task lists no objectives: return an empty objective results list.']),
+    ...(role === 'reviewer'
+      ? ['Your summary states, in a few sentences, brief conformance, spec conformance, scope, tests and docs.']
+      : [
+          `Your summary opens with your secrets judgement and is rendered as the comment's SECRETS line. The secret scan is the required \`${SECRET_SCAN_CHECK}\` CI check, running inside the \`vinaya check --all --diff-only\` CI job — you hold no GitHub credential and must never call \`gh\` to inspect it; judge it from the CI line above instead (\`CI: green\` means that job, and so this scan, passed) plus your own read of the diff. Open with \`none found — ${SECRET_SCAN_CHECK} passed\` only when CI above is green; if CI is red or pending, say so instead. Your own read of the diff for a credential the scanner's rules cannot see still applies.`,
+          'The summary then states your agent-config judgement — when an AGENT-CONFIG SCAN block appears above, base it on that block plus your own read of the agent-config diff; the driver already ran the scanner outside its own trust, so never run `npx`, install a package, or run a scanner yourself. When that block says the scan was not applicable, not configured, or could not run, say exactly that and judge the config on your own read.'
+        ]),
+    'If you cannot review — an input missing or unreadable, the diff unavailable, tooling unavailable, or a scope only the Principal can settle — return status blocked with that blocker kind instead of a verdict. A blocked result is no review, never approval.'
   ].join('\n')
   return `${base}\n\n${instructions}`
 }

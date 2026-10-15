@@ -46,7 +46,7 @@ const TOKENS = { model: 'claude', tokensIn: '10', tokensOut: '5', cost: '—' }
  * facts via the SAME pure functions the driver itself resolves them
  * through, so the loop's own field-complete manifest comparison agrees on
  * every field except head. Rendered by the SAME `renderCodeReviewComment`/
- * `renderSecurityComment` `buildVerdictFromReport` calls in production
+ * `renderSecurityComment` `buildVerdictFromReview` calls in production
  * (`dev-review-loop.test.ts`'s own O2 acceptance test uses the identical
  * pattern for the merge gate side of this fact).
  */

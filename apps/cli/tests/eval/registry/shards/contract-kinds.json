@@ -1096,7 +1096,7 @@
         "revision": 17,
         "section": "One core contract for every adapter"
       },
-      "contract": "The Claude Code adapter fills the eleven required adapter capabilities exactly once behind the one core contract: tools registered by a strict, controller-written MCP configuration whose start fails when the session's init event reports the tool server skipped or failed, a declared per-server tool timeout covering a gated publication, the result delivered as native structured output (`--json-schema`), confinement by its built-in sandbox, and no Stop hook authorizing, rejecting or selecting a result.",
+      "contract": "The Claude Code adapter fills the eleven required adapter capabilities exactly once behind the one core contract: tools registered by a strict, controller-written MCP configuration whose start fails when the session's init event reports the tool server skipped or failed, a declared per-server tool timeout covering a gated publication, the Developer's turn result and each reviewer's ReviewResult delivered as native structured output (`--json-schema`), a reviewer always on a fresh session, confinement by its built-in sandbox, and no Stop hook authorizing, rejecting or selecting a result.",
       "owner": "adapter",
       "officialBasis": "Claude Code — CLI reference (`--json-schema`, `--mcp-config`, `--strict-mcp-config`), Headless mode and Hooks, as the capability matrix records them.",
       "suite": ["developer-invocation.l4@1", "developer-invocation.l7@1"],
@@ -1108,7 +1108,7 @@
           "present": "Malformed model output never crosses the adapter boundary; a schema-valid but semantically invalid result is rejected."
         },
         "refusal": {
-          "present": "A tool server the init event reports skipped or failed ends the session as a startup failure, and a sandbox that cannot start refuses the run, before any turn."
+          "present": "A tool server the init event reports skipped or failed ends the session as a startup failure, a sandbox that cannot start refuses the run, and a dispatch asking to resume a reviewer session is refused, before any turn."
         },
         "recovery": {
           "present": "A first result failing a completion precondition is rejected, the same session resumed once, and only a second valid result accepted."
@@ -1136,7 +1136,7 @@
         "revision": 17,
         "section": "One core contract for every adapter"
       },
-      "contract": "The Codex adapter fills the eleven required adapter capabilities exactly once behind the one core contract: the tool server registered as required in the staged configuration home with a tool timeout covering a gated publication, the result delivered as native structured output (`--output-schema`) on first and resumed sessions, and confinement by `workspace-write` with its network proxy; its cancellation semantics stay the named gap GAP-ADP-01 until a primary Codex source covers them.",
+      "contract": "The Codex adapter fills the eleven required adapter capabilities exactly once behind the one core contract: the tool server registered as required in the staged configuration home with a tool timeout covering a gated publication, the Developer's turn result delivered as native structured output (`--output-schema`) on first and resumed sessions and each reviewer's ReviewResult the same way on a fresh session only, and confinement by `workspace-write` with its network proxy; its cancellation semantics stay the named gap GAP-ADP-01 until a primary Codex source covers them.",
       "owner": "adapter",
       "officialBasis": "OpenAI Codex — Non-interactive mode (`--output-schema`) and MCP configuration, as the capability matrix records them.",
       "suite": ["developer-invocation.l4@1", "developer-invocation.l7@1"],
@@ -1148,7 +1148,7 @@
           "present": "Malformed model output never crosses the adapter boundary; a schema-valid but semantically invalid result is rejected."
         },
         "refusal": {
-          "present": "A missing sandbox, proxy or staged `CODEX_HOME` refuses the run, and a required tool server that cannot initialize stops Codex, before any turn."
+          "present": "A missing sandbox, proxy or staged `CODEX_HOME` refuses the run, a required tool server that cannot initialize stops Codex, and a dispatch asking to resume a reviewer session is refused, before any turn."
         },
         "recovery": {
           "present": "A first result failing a completion precondition is rejected, the same session resumed once, and only a second valid result accepted."
@@ -1253,19 +1253,19 @@
         "revision": 17,
         "section": "1. The six boundaries"
       },
-      "contract": "The Reviewer is an untrusted execution surface narrower than the Worker: everything the Worker is forbidden plus any forge-write credential at all; it reads the repository at the judged head and writes only its own driver-chosen work directory.",
+      "contract": "The Reviewer is an untrusted execution surface narrower than the Worker: everything the Worker is forbidden plus any forge-write credential at all; it reads the repository at the judged head, writes nothing outside its own scratch copy of the candidate — every Write and Edit is denied — and returns its review as one native structured result on a fresh session that is never resumed.",
       "owner": "sandbox",
       "officialBasis": "Vinaya product decision; the Agent sandbox spec §8 conformance suite.",
       "suite": ["isolation.l4@1", "isolation.l7@1"],
       "tasks": {
         "positive": {
-          "present": "A reviewer reads the judged head and writes its own work directory."
+          "present": "A reviewer reads the judged head and returns its review as one structured result, writing no file."
         },
         "negative": {
           "present": "A concurrent sibling reviewer's legitimate same-round writes produce no false attribution."
         },
         "refusal": {
-          "present": "Any forge write or `git push` from a reviewer is denied, no git or `gh` command is allowed in its staged checkout, and a call to a Developer tool is refused by the driver."
+          "present": "Any forge write or `git push` from a reviewer is denied, no git or `gh` command is allowed in its staged checkout, any Write or Edit is denied, a dispatch asking to resume a reviewer session is refused before it starts, and a call to a Developer tool is refused by the driver."
         },
         "recovery": {
           "notApplicable": "A reviewer is dispatched fresh every round and never resumed; a failed reviewer is a no-review outcome of §6.8."

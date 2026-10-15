@@ -504,7 +504,7 @@ export function runtimeDirForThisRepo(): string {
  * on a child was moot; under a configurable `runtimeDir` whose documented
  * example is `/var/lib/vinaya/runs` it is not. With a `umask` of `002` a
  * no-mode `mkdirSync` produces `0775`, which would let any other local
- * account read an unpublished security `findings.txt`, replace a
+ * account read an unpublished security verdict, replace a
  * `rounds/<n>/reviewer.md` that `publishRound` later posts verbatim, or
  * plant a `driver.pid.json`. `recursive: true` applies `mode` only to
  * directories it CREATES, so which writer got there first decided the

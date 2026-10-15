@@ -18,7 +18,8 @@ import {
   roundDir as ipRoundDir,
   runLoopInProcess,
   sha,
-  defaultDeveloperTurnOutput
+  defaultDeveloperTurnOutput,
+  fakeReviewOutput
 } from '../dev-review-loop-harness.js'
 
 afterEach(cleanupWorlds)
@@ -77,13 +78,16 @@ function handle(resumeId: string | null, effectId: string): DispatchHandle {
  * the real driver then omits `cwd` from the dispatch entirely, so the
  * absence itself is the fact under test in that scenario.
  */
-function dispatchRoleCapturingReviewerCwd(world: ReturnType<typeof makeWorld>) {
+/** What each reviewer dispatch saw: the `cwd` it ran in and the candidate marker read from it (`''` when none could be read). */
+type ReviewerSight = { cwd: string; marker: string }
+
+function dispatchRoleCapturingReviewerCwd(world: ReturnType<typeof makeWorld>, seen: Record<string, ReviewerSight>) {
   let seq = 0
   return async (
     role: string,
     _agent: string,
     prompt: string,
-    opts: { round?: number; extraWritableDirs?: string[]; cwd?: string }
+    opts: { round?: number; cwd?: string }
   ): Promise<DispatchHandle> => {
     const round = opts.round ?? 1
     world.dispatchCountByRole[role] = (world.dispatchCountByRole[role] ?? 0) + 1
@@ -92,31 +96,22 @@ function dispatchRoleCapturingReviewerCwd(world: ReturnType<typeof makeWorld>) {
       world.dispatches.push({ role, round, resumeId: 'dev-session-1' })
       return { ...handle('dev-session-1', `eff-dev-${++seq}`), turnOutput: defaultDeveloperTurnOutput(prompt) }
     }
-    const workDir = opts.extraWritableDirs?.[0]
     const reviewRole = role === 'code-reviewer' ? 'reviewer' : 'security'
     const outcome = reviewRole === 'reviewer' ? CLEAN_REVIEWER : CLEAN_SECURITY
-    if (workDir) {
-      mkdirSync(workDir, { recursive: true })
-      writeFileSync(join(workDir, 'findings.txt'), outcome.findings)
-      writeFileSync(join(workDir, 'report.txt'), outcome.report)
-      writeFileSync(join(workDir, 'objectives.txt'), outcome.objectives ?? '')
-      if (opts.cwd) {
-        writeFileSync(join(workDir, 'cwd.txt'), `${opts.cwd}\n`)
-        try {
-          const marker = readFileSync(join(opts.cwd, 'candidate-marker.txt'), 'utf8')
-          writeFileSync(join(workDir, 'candidate-marker-seen.txt'), marker)
-        } catch {
-          // Same fallback the fixture's `cat ... || true` produced: the
-          // target file still exists, just empty.
-          writeFileSync(join(workDir, 'candidate-marker-seen.txt'), '')
-        }
-      } else {
-        writeFileSync(join(workDir, 'cwd.txt'), '(no cwd override)\n')
-        writeFileSync(join(workDir, 'candidate-marker-seen.txt'), '')
+    let marker = ''
+    if (opts.cwd) {
+      try {
+        marker = readFileSync(join(opts.cwd, 'candidate-marker.txt'), 'utf8')
+      } catch {
+        marker = ''
       }
     }
+    seen[reviewRole] = { cwd: opts.cwd ?? '(no cwd override)', marker }
     world.dispatches.push({ role, round, resumeId: outcome.sessionId })
-    return handle(outcome.sessionId, `eff-${reviewRole}-${++seq}`)
+    return {
+      ...handle(outcome.sessionId, `eff-${reviewRole}-${++seq}`),
+      reviewOutput: fakeReviewOutput(reviewRole, outcome, prompt)
+    }
   }
 }
 
@@ -131,15 +126,16 @@ describe('devReviewLoop — reviewers inspect one immutable candidate with isola
     mkdirSync(worktreeDir, { recursive: true })
     writeFileSync(join(worktreeDir, 'candidate-marker.txt'), 'candidate content for round 1\n')
 
+    const seen: Record<string, ReviewerSight> = {}
     const result = await runLoopInProcess(
       world,
       { task: world.task, agent: 'claude' },
-      { dispatchRole: dispatchRoleCapturingReviewerCwd(world) as never }
+      { dispatchRole: dispatchRoleCapturingReviewerCwd(world, seen) as never }
     )
     expect(result.finalDecision.type).toBe('publish')
 
-    const reviewerCwd = readFileSync(join(ipRoundDir(world, 1), 'reviewer-work', 'cwd.txt'), 'utf8').trim()
-    const securityCwd = readFileSync(join(ipRoundDir(world, 1), 'security-work', 'cwd.txt'), 'utf8').trim()
+    const reviewerCwd = seen.reviewer!.cwd
+    const securityCwd = seen.security!.cwd
 
     // O1/O2: distinct scratch directories, never the shared candidate
     // itself and never each other's.
@@ -148,12 +144,8 @@ describe('devReviewLoop — reviewers inspect one immutable candidate with isola
     expect(securityCwd).toMatch(new RegExp(`${ipRoundDir(world, 1)}/security-scratch$`))
 
     // O1: both reviewers read the identical candidate content.
-    expect(readFileSync(join(ipRoundDir(world, 1), 'reviewer-work', 'candidate-marker-seen.txt'), 'utf8')).toBe(
-      'candidate content for round 1\n'
-    )
-    expect(readFileSync(join(ipRoundDir(world, 1), 'security-work', 'candidate-marker-seen.txt'), 'utf8')).toBe(
-      'candidate content for round 1\n'
-    )
+    expect(seen.reviewer!.marker).toBe('candidate content for round 1\n')
+    expect(seen.security!.marker).toBe('candidate content for round 1\n')
 
     // O3: the round's candidate and both scratch copies are gone once the
     // round published — nothing left over for a human, or the next round,
@@ -188,10 +180,11 @@ describe('devReviewLoop — reviewers inspect one immutable candidate with isola
     mkdirSync(worktreeDir, { recursive: true })
     writeFileSync(join(worktreeDir, 'candidate-marker.txt'), 'stale local content\n')
 
+    const seen: Record<string, ReviewerSight> = {}
     const result = await runLoopInProcess(
       world,
       { task: world.task, agent: 'claude' },
-      { dispatchRole: dispatchRoleCapturingReviewerCwd(world) as never }
+      { dispatchRole: dispatchRoleCapturingReviewerCwd(world, seen) as never }
     )
     expect(result.finalDecision.type).toBe('publish')
 
@@ -201,11 +194,7 @@ describe('devReviewLoop — reviewers inspect one immutable candidate with isola
     expect(existsSync(join(ipRoundDir(world, 1), 'security-scratch'))).toBe(false)
     // Reviewers dispatched with no `cwd` override at all — never handed the
     // stale worktree's own content as a substitute.
-    const reviewerCwd = readFileSync(join(ipRoundDir(world, 1), 'reviewer-work', 'cwd.txt'), 'utf8').trim()
-    expect(reviewerCwd).not.toMatch(new RegExp(`${ipRoundDir(world, 1)}/reviewer-scratch$`))
-    // The fake dispatcher's own "read the marker, or fall back to empty"
-    // still creates its target file even when the read fails — so the
-    // assertion is an EMPTY file, never a missing one.
-    expect(readFileSync(join(ipRoundDir(world, 1), 'reviewer-work', 'candidate-marker-seen.txt'), 'utf8')).toBe('')
+    expect(seen.reviewer!.cwd).toBe('(no cwd override)')
+    expect(seen.reviewer!.marker).toBe('')
   })
 })

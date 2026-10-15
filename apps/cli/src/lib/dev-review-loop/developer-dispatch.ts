@@ -542,7 +542,7 @@ export type ObjectivesResolution = {
   version: string | null
   /** Present only when `text`/`version` came from an objectives-edit comment, not the frozen brief. */
   edit: ObjectivesEditSource | null
-  /** The parsed `id`/`text` list `text` resolves to — `[]` exactly when `text` is empty. task 4 threads this through to `buildVerdictFromReport`'s own `checkObjectiveIdCoverage` call, the same coverage rule `review post` already applies. */
+  /** The parsed `id`/`text` list `text` resolves to — `[]` exactly when `text` is empty. task 4 threads this through to `buildVerdictFromReview`'s own `checkObjectiveIdCoverage` call, the same coverage rule `review post` already applies. */
   objectives: readonly Objective[]
 }
 

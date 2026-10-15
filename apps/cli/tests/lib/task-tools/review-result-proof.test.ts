@@ -12,9 +12,11 @@ import {
   type ReviewerRole,
   type ReviewRunFacts,
   RoundReviews,
+  reviewBlockerNeedsRuling,
   reviewResultJsonSchema,
   validateReviewResult
 } from '../../../src/lib/review-result.js'
+import { isReviewerResume } from '../../../src/lib/dispatch.js'
 import {
   adversarialCases,
   bindingFor,
@@ -23,7 +25,8 @@ import {
   judgeReviewCase,
   PROOF_OBJECTIVE_IDS,
   parseReviewProofArgs,
-  stageReviewInputs
+  stageReviewInputs,
+  stageRoundTwo
 } from '../../../src/lib/task-tools/review-result-proof.js'
 import type { TurnRead } from '../../../src/lib/task-tools/result-proof.js'
 
@@ -249,8 +252,20 @@ describe('outcomes: only a bound, valid review is a review (O4)', () => {
     ['stale head', facts({ raw: wrap(completed('code-reviewer', { headSha: 'd'.repeat(40) })) }), 'stale'],
     ['stale digest', facts({ raw: wrap(completed('code-reviewer', { manifestDigest: 'd'.repeat(64) })) }), 'stale'],
     ['blocked', facts({ raw: wrap(blocked('code-reviewer')) }), 'blocked'],
+    [
+      'blocked on a stale head',
+      facts({ raw: wrap({ ...blocked('code-reviewer'), headSha: 'd'.repeat(40) }) }),
+      'stale'
+    ],
+    [
+      'blocked on another manifest',
+      facts({ raw: wrap({ ...blocked('code-reviewer'), manifestDigest: 'd'.repeat(64) }) }),
+      'stale'
+    ],
+    ['blocked naming the other role', facts({ raw: wrap(blocked('security-reviewer')) }), 'role_mismatch'],
     ['cancelled', facts({ cancelled: true, hasResult: false, raw: null, terminal: null }), 'cancelled'],
     ['cancelled even with a result', facts({ cancelled: true }), 'cancelled'],
+    ['resumed even with a valid result', facts({ resumed: true }), 'resumed'],
     [
       'context exhausted',
       facts({
@@ -284,6 +299,12 @@ describe('outcomes: only a bound, valid review is a review (O4)', () => {
       'rejected'
     ]
   ]
+  it('hands over a blocked result only once it is bound, so the controller never reads an unbound blocker', () => {
+    const bound = classifyReviewOutcome(facts({ raw: wrap(blocked('code-reviewer')) }), cr)
+    expect(bound.kind === 'no_review' && bound.blocked?.status).toBe('blocked')
+    const crossed = classifyReviewOutcome(facts({ raw: wrap(blocked('security-reviewer')) }), cr)
+    expect(crossed.kind === 'no_review' && crossed.blocked).toBeUndefined()
+  })
   for (const [name, f, reason] of cases) {
     it(`records ${name} as no review (${reason}), never approval`, () => {
       const o = classifyReviewOutcome(f, cr)
@@ -291,6 +312,22 @@ describe('outcomes: only a bound, valid review is a review (O4)', () => {
       expect(reasonOf(f)).toBe(reason)
     })
   }
+})
+
+describe('the controller binding an accepted review carries', () => {
+  it('attaches the run, round and attempt the controller supplied — none of them read from the agent', () => {
+    const bound: ReviewBinding = { ...binding('code-reviewer'), runId: 'run-1', round: 2, attempt: 1 }
+    const o = classifyReviewOutcome(facts(), bound)
+    expect(o.kind).toBe('review')
+    if (o.kind === 'review') expect(o.binding).toEqual(bound)
+  })
+
+  it('only an unclear scope is a blocker the Principal must settle; every other blocker is retried as no review', () => {
+    expect(reviewBlockerNeedsRuling('scope_unclear')).toBe(true)
+    for (const kind of ['input_missing', 'input_unreadable', 'diff_unavailable', 'tooling_unavailable'] as const) {
+      expect(reviewBlockerNeedsRuling(kind)).toBe(false)
+    }
+  })
 })
 
 describe('one accepted review per reviewer per round (O6)', () => {
@@ -320,6 +357,40 @@ describe('the proof command', () => {
     expect('error' in parseReviewProofArgs([])).toBe(true)
     expect('error' in parseReviewProofArgs(['--agent'])).toBe(true)
     expect('error' in parseReviewProofArgs(['--agent', 'gemini'])).toBe(true)
+  })
+
+  it('stages round 2 as a new head and manifest on the same base, so a round-1 result is stale against it', () => {
+    const root = mkdtempSync(join(tmpdir(), 'review-proof-test-'))
+    try {
+      const roundOne = stageReviewInputs(root)
+      const roundTwo = stageRoundTwo(roundOne)
+      expect(roundTwo.dir).toBe(roundOne.dir)
+      expect(roundTwo.baseSha).toBe(roundOne.baseSha)
+      expect(roundTwo.headSha).not.toBe(roundOne.headSha)
+      expect(roundTwo.manifestDigest).not.toBe(roundOne.manifestDigest)
+      const manifest = JSON.parse(readFileSync(join(roundTwo.dir, 'review-input', 'manifest.json'), 'utf8'))
+      expect(manifest.headSha).toBe(roundTwo.headSha)
+      expect(manifest.manifestDigest).toBe(roundTwo.manifestDigest)
+      for (const role of REVIEWER_ROLES) {
+        const roundOneResult = completed(role, {
+          headSha: roundOne.headSha,
+          manifestDigest: roundOne.manifestDigest,
+          findings: []
+        })
+        const accepted = classifyReviewOutcome(facts({ raw: wrap(roundOneResult) }), bindingFor(role, roundOne))
+        expect(accepted.kind).toBe('review')
+        const offeredLater = classifyReviewOutcome(facts({ raw: wrap(roundOneResult) }), bindingFor(role, roundTwo))
+        expect(offeredLater.kind === 'no_review' && offeredLater.reason).toBe('stale')
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('the production dispatcher treats a reviewer asking for a session as a resume it refuses', () => {
+    expect(isReviewerResume('code-reviewer', 'earlier-session')).toBe(true)
+    expect(isReviewerResume('security', 'earlier-session')).toBe(true)
+    expect(isReviewerResume('code-reviewer', undefined)).toBe(false)
   })
 
   it('stages a real diff, a manifest carrying its digest and the objectives, in a throwaway repository', () => {

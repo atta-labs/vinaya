@@ -352,17 +352,15 @@ describe('reviewer context carries the manifest identities and the Developer’s
 
   it('is rendered into both reviewers’ prompts, and says when no citation was recorded', async () => {
     const { manifest } = await prepared()
-    const work = tempDir()
     for (const role of ['reviewer', 'security'] as const) {
-      const prompt = renderReviewerDispatchPrompt(role, facts(reviewerSourceFacts(manifest, null)), work)
+      const prompt = renderReviewerDispatchPrompt(role, facts(reviewerSourceFacts(manifest, null)))
       expect(prompt).toContain(`REQUIRED SOURCES (controller manifest ${manifest.digest})`)
       expect(prompt).toContain('(none recorded)')
     }
   })
 
   it('adds nothing for a round with no required source', () => {
-    const work = tempDir()
-    expect(renderReviewerDispatchPrompt('reviewer', facts(), work)).not.toContain('REQUIRED SOURCES')
+    expect(renderReviewerDispatchPrompt('reviewer', facts())).not.toContain('REQUIRED SOURCES')
     const empty = reviewerSourceFacts({ digest: 'sha256:x', sources: [] }, null)
     expect(requiredSourcePieces(empty)).toEqual([])
   })

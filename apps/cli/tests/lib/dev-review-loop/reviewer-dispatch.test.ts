@@ -10,6 +10,7 @@ import {
   type ReviewInputManifest
 } from '@attalabs/aeg-core'
 import type { DispatchHandle } from '../../../src/lib/dispatch'
+import type { CompletedReview, ReviewResult } from '../../../src/lib/review-result'
 import { defaultRunSecurityScanSubprocess } from '../../../src/lib/dev-review-loop'
 import {
   AGENT_CONFIG_GLOBS,
@@ -17,7 +18,7 @@ import {
   buildPriorRoundFindingsText,
   buildReviewerPromptPieces,
   buildRoundDeferralContext,
-  buildVerdictFromReport,
+  buildVerdictFromReview,
   candidateInputPieces,
   capSecurityScanOutput,
   controlStoreRootFor,
@@ -33,7 +34,7 @@ import {
   persistManifestRecord,
   renderReviewerDispatchPrompt,
   renderReviewerPrompt,
-  ReviewerReportParseFailure,
+  ReviewerResultRejected,
   roleDoctrinePieces,
   SECURITY_SCAN_OUTPUT_MAX_CHARS,
   securityScanPieces,
@@ -58,20 +59,38 @@ import type {
   SecurityScanOutcome
 } from '../../../src/lib/dev-review-loop/reviewer-dispatch'
 
-// --- objective-id coverage at the driver (review-validity-v1 task 4, #478, O4) ---
+// --- the verdict built from a structured ReviewResult ---
 
-describe('buildVerdictFromReport — objective-id coverage, the same rule `review post` already applies', () => {
-  let workDir: string
+const REVIEW_HEAD = 'a'.repeat(40)
 
-  beforeEach(() => {
-    workDir = mkdtempSync(join(tmpdir(), 'vinaya-build-verdict-'))
-  })
-  afterEach(() => {
-    rmSync(workDir, { recursive: true, force: true })
-  })
+/** A `completed` ReviewResult as `classifyReviewOutcome` hands it over, for `role`. */
+function completedReview(
+  role: 'reviewer' | 'security',
+  fields: {
+    summary?: string
+    findings?: CompletedReview['findings']
+    objectiveResults?: CompletedReview['objectiveResults']
+  } = {}
+): CompletedReview {
+  return {
+    schemaVersion: 1,
+    status: 'completed',
+    role: role === 'reviewer' ? 'code-reviewer' : 'security-reviewer',
+    headSha: REVIEW_HEAD,
+    manifestDigest: 'f'.repeat(64),
+    summary:
+      fields.summary ?? (role === 'reviewer' ? 'Conforms to the brief.' : 'none found — atta-labs/secret-scan passed'),
+    findings: fields.findings ?? [],
+    objectiveResults: fields.objectiveResults ?? []
+  }
+}
 
+const met = (id: string, evidence = 'done') => ({ id, status: 'MET' as const, evidence })
+const notMet = (id: string, evidence: string) => ({ id, status: 'NOT MET' as const, evidence })
+
+describe('buildVerdictFromReview — objective-id coverage, the same rule `review post` already applies', () => {
   const MANIFEST: ReviewInputManifest = {
-    headSha: 'a'.repeat(40),
+    headSha: REVIEW_HEAD,
     baseSha: 'e'.repeat(40),
     briefHash: 'b'.repeat(64),
     objectivesVersion: 'c'.repeat(64),
@@ -92,27 +111,11 @@ describe('buildVerdictFromReport — objective-id coverage, the same rule `revie
     { id: 'O2', text: 'Do the second thing.' }
   ]
 
-  function writeArtifacts(objectivesLines: string): void {
-    writeFileSync(join(workDir, 'findings.txt'), '')
-    writeFileSync(join(workDir, 'objectives.txt'), objectivesLines)
-    writeFileSync(
-      join(workDir, 'report.txt'),
-      'BRIEF_CONFORMANCE: clean\nSPEC_CONFORMANCE: clean\nSCOPE: small\nTESTS: honest\nDOCS: n/a'
-    )
-  }
+  const build = (review: ReviewResult, objectives = RESOLVED_OBJECTIVES) =>
+    buildVerdictFromReview('reviewer', review, 'claude', 478, HANDLE, MANIFEST, DEFAULT_REVIEW_POLICY, objectives)
 
-  it('accepts an objectives.txt covering every resolved id exactly', () => {
-    writeArtifacts('O1|MET|done\nO2|MET|done')
-    const result = buildVerdictFromReport(
-      'reviewer',
-      workDir,
-      'claude',
-      478,
-      HANDLE,
-      MANIFEST,
-      DEFAULT_REVIEW_POLICY,
-      RESOLVED_OBJECTIVES
-    )
+  it('accepts objective results covering every resolved id exactly', () => {
+    const result = build(completedReview('reviewer', { objectiveResults: [met('O1'), met('O2')] }))
     expect(result.observation.verdict).toBe('APPROVE')
     expect(result.observation.objectives).toEqual([
       { id: 'O1', met: true },
@@ -120,102 +123,77 @@ describe('buildVerdictFromReport — objective-id coverage, the same rule `revie
     ])
   })
 
-  it('refuses (ReviewerReportParseFailure) when objectives.txt is missing one resolved id', () => {
-    writeArtifacts('O1|MET|done')
-    expect(() =>
-      buildVerdictFromReport(
-        'reviewer',
-        workDir,
-        'claude',
-        478,
-        HANDLE,
-        MANIFEST,
-        DEFAULT_REVIEW_POLICY,
-        RESOLVED_OBJECTIVES
-      )
-    ).toThrow(ReviewerReportParseFailure)
+  it('rejects (ReviewerResultRejected) objective results missing one resolved id', () => {
+    const review = completedReview('reviewer', { objectiveResults: [met('O1')] })
+    expect(() => build(review)).toThrow(ReviewerResultRejected)
     try {
-      buildVerdictFromReport(
-        'reviewer',
-        workDir,
-        'claude',
-        478,
-        HANDLE,
-        MANIFEST,
-        DEFAULT_REVIEW_POLICY,
-        RESOLVED_OBJECTIVES
-      )
+      build(review)
       throw new Error('expected a throw')
     } catch (err) {
-      expect(err).toBeInstanceOf(ReviewerReportParseFailure)
+      expect(err).toBeInstanceOf(ReviewerResultRejected)
+      expect((err as ReviewerResultRejected).field).toBe('objectiveResults')
       expect((err as Error).message).toContain('missing O2')
     }
   })
 
-  it('refuses when objectives.txt carries an extra id not on the resolved list', () => {
-    writeArtifacts('O1|MET|done\nO2|MET|done\nO3|MET|done')
-    expect(() =>
-      buildVerdictFromReport(
-        'reviewer',
-        workDir,
-        'claude',
-        478,
-        HANDLE,
-        MANIFEST,
-        DEFAULT_REVIEW_POLICY,
-        RESOLVED_OBJECTIVES
-      )
-    ).toThrow(ReviewerReportParseFailure)
+  it('rejects objective results carrying an extra id not on the resolved list', () => {
+    const review = completedReview('reviewer', { objectiveResults: [met('O1'), met('O2'), met('O3')] })
+    expect(() => build(review)).toThrow(ReviewerResultRejected)
   })
 
   it('skips the coverage check entirely when the task carries no objectives at all', () => {
-    writeFileSync(join(workDir, 'findings.txt'), '')
-    writeFileSync(
-      join(workDir, 'report.txt'),
-      'BRIEF_CONFORMANCE: clean\nSPEC_CONFORMANCE: clean\nSCOPE: small\nTESTS: honest\nDOCS: n/a'
-    )
-    const result = buildVerdictFromReport(
-      'reviewer',
-      workDir,
-      'claude',
-      478,
-      HANDLE,
-      MANIFEST,
-      DEFAULT_REVIEW_POLICY,
-      []
-    )
+    const result = build(completedReview('reviewer'), [])
     expect(result.observation.verdict).toBe('APPROVE')
     expect(result.observation.objectives).toEqual([])
   })
 
-  it('never runs the coverage check for an ESCALATE report', () => {
-    writeFileSync(join(workDir, 'report.txt'), 'ESCALATE: strategy\nSUMMARY: found a design gap')
-    const result = buildVerdictFromReport(
-      'reviewer',
-      workDir,
-      'claude',
-      478,
-      HANDLE,
-      MANIFEST,
-      DEFAULT_REVIEW_POLICY,
-      RESOLVED_OBJECTIVES
-    )
+  it('renders a blocked result the controller escalated as an escalation, never a verdict, with no coverage check', () => {
+    const blocked: ReviewResult = {
+      schemaVersion: 1,
+      status: 'blocked',
+      role: 'code-reviewer',
+      headSha: REVIEW_HEAD,
+      manifestDigest: 'f'.repeat(64),
+      summary: 'found a design gap',
+      blocker: { kind: 'scope_unclear', detail: 'the brief and the spec disagree' }
+    }
+    const result = build(blocked)
     expect(result.observation.verdict).toBe('ESCALATE')
+    expect(result.rendered).toContain('the brief and the spec disagree')
+  })
+
+  it('builds findings from the structured fields, a null line naming the whole file, ids assigned in order', () => {
+    const result = build(
+      completedReview('reviewer', {
+        objectiveResults: [met('O1'), met('O2')],
+        findings: [
+          { severity: 'BLOCKER', file: 'src/a.ts', line: 3, description: 'one | with a pipe' },
+          { severity: 'MINOR', file: 'src/b.ts', line: null, description: null }
+        ]
+      })
+    )
+    expect(result.observation.findings.map((f) => [f.id, f.severity, f.location, f.description])).toEqual([
+      ['F1', 'BLOCKER', 'src/a.ts:3', 'one | with a pipe'],
+      ['F2', 'MINOR', 'src/b.ts', '(no description given)']
+    ])
+    expect(result.observation.verdict).toBe('REQUEST CHANGES')
+  })
+
+  it('rejects a doc-correctness finding with no repository-wide Search: pattern', () => {
+    const review = completedReview('reviewer', {
+      objectiveResults: [met('O1'), met('O2')],
+      findings: [
+        { severity: 'MINOR', file: 'README.md', line: 1, description: 'F1 doc-correctness: the claim is false' }
+      ]
+    })
+    expect(() => build(review)).toThrow(/Search:/)
   })
 
   // --- prose never decides a round --------------------------------------------
 
   it('a NOT MET citing only "PR body:Decisions" is reclassified MET (prose note) — the round publishes', () => {
-    writeArtifacts('O1|NOT MET|PR body:Decisions\nO2|MET|done')
-    const result = buildVerdictFromReport(
-      'reviewer',
-      workDir,
-      'claude',
-      478,
-      HANDLE,
-      MANIFEST,
-      DEFAULT_REVIEW_POLICY,
-      RESOLVED_OBJECTIVES
+    const result = build(
+      completedReview('reviewer', { objectiveResults: [notMet('O1', 'PR body:Decisions'), met('O2')] })
     )
     // Reclassified MET — the round-level observation `assessRound` reads
     // shows no NOT MET at all, so this round is never `changes_requested`
@@ -231,16 +209,8 @@ describe('buildVerdictFromReport — objective-id coverage, the same rule `revie
   })
 
   it('a NOT MET citing a role file (aeg-root/roles/…) is reclassified MET (prose note) too', () => {
-    writeArtifacts('O1|NOT MET|aeg-root/roles/developer.md\nO2|MET|done')
-    const result = buildVerdictFromReport(
-      'reviewer',
-      workDir,
-      'claude',
-      478,
-      HANDLE,
-      MANIFEST,
-      DEFAULT_REVIEW_POLICY,
-      RESOLVED_OBJECTIVES
+    const result = build(
+      completedReview('reviewer', { objectiveResults: [notMet('O1', 'aeg-root/roles/developer.md'), met('O2')] })
     )
     expect(result.observation.objectives).toEqual([
       { id: 'O1', met: true },
@@ -250,16 +220,13 @@ describe('buildVerdictFromReport — objective-id coverage, the same rule `revie
   })
 
   it('a NOT MET citing a real source file (Traps to avoid: never downgrade a real location) is left NOT MET — never reclassified', () => {
-    writeArtifacts('O1|NOT MET|apps/cli/src/commands/pr-report.ts:42 never calls the new function\nO2|MET|done')
-    const result = buildVerdictFromReport(
-      'reviewer',
-      workDir,
-      'claude',
-      478,
-      HANDLE,
-      MANIFEST,
-      DEFAULT_REVIEW_POLICY,
-      RESOLVED_OBJECTIVES
+    const result = build(
+      completedReview('reviewer', {
+        objectiveResults: [
+          notMet('O1', 'apps/cli/src/commands/pr-report.ts:42 never calls the new function'),
+          met('O2')
+        ]
+      })
     )
     // `assessRound` (`@attalabs/aeg-core`) is what actually turns this
     // `met: false` into a `changes_requested` round outcome — out of this
@@ -355,20 +322,16 @@ describe('renderReviewerPrompt — the banned-framing lint checks only the text 
     'In my opinion that is not enough — I think the PR body says otherwise, and the diff clearly contradicts it.'
 
   it('renders a ruling carrying every banned phrase, verbatim, instead of ending the round', () => {
-    const prompt = renderReviewerDispatchPrompt(
-      'reviewer',
-      { ...FACTS, rulings: [RULING_WITH_EVERY_BANNED_PHRASE] },
-      '/tmp/work'
-    )
+    const prompt = renderReviewerDispatchPrompt('reviewer', { ...FACTS, rulings: [RULING_WITH_EVERY_BANNED_PHRASE] })
     expect(prompt).toContain(`1. ${RULING_WITH_EVERY_BANNED_PHRASE}`)
   })
 
   it("renders an Issue's objectives and a brief revision carrying banned words, rather than refusing them", () => {
-    const prompt = renderReviewerDispatchPrompt(
-      'security',
-      { ...FACTS, objectives: 'O1. The config scan clearly names every key.', revision: 'clearly-a-tag' },
-      '/tmp/work'
-    )
+    const prompt = renderReviewerDispatchPrompt('security', {
+      ...FACTS,
+      objectives: 'O1. The config scan clearly names every key.',
+      revision: 'clearly-a-tag'
+    })
     expect(prompt).toContain('O1. The config scan clearly names every key.')
     expect(prompt).toContain('BRIEF REVISION: clearly-a-tag')
   })
@@ -451,22 +414,27 @@ describe('renderReviewerDispatchPrompt — carries the role doctrine as a fact',
     'You judge one open pull request against the brief it came from.\n\n## What you check\n\n1. Does the code match the brief?\n2. Honest tests.'
 
   it('injects the resolved short version and "What you check" list into a reviewer prompt (O1)', () => {
-    const prompt = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work', REVIEWER_DOCTRINE)
+    const prompt = renderReviewerDispatchPrompt('reviewer', FACTS, REVIEWER_DOCTRINE)
     expect(prompt).toContain('YOUR ROLE DOCTRINE')
     expect(prompt).toContain('for the code-reviewer role')
     expect(prompt).toContain('You judge one open pull request against the brief it came from.')
     expect(prompt).toContain('## What you check')
     expect(prompt).toContain('1. Does the code match the brief?')
     // The doctrine sits before the dispatch's own output instructions.
-    expect(prompt.indexOf('YOUR ROLE DOCTRINE')).toBeLessThan(prompt.indexOf('Write your findings to'))
+    expect(prompt.indexOf('YOUR ROLE DOCTRINE')).toBeLessThan(
+      prompt.indexOf('End your turn with exactly one ReviewResult')
+    )
   })
 
-  it('tells both roles an unmet objective goes to objectives.txt with code or test evidence, never only a body finding', () => {
+  it('tells both roles an unmet objective goes in its objective result with code or test evidence, never only a body finding', () => {
     for (const role of ['reviewer', 'security'] as const) {
-      const prompt = renderReviewerDispatchPrompt(role, FACTS, '/tmp/work', null)
+      const prompt = renderReviewerDispatchPrompt(role, FACTS, null)
+      expect(prompt).toContain('Return status completed with findings, one result for every objective, and a summary')
+      expect(prompt).toContain('Do not write result files')
       expect(prompt).toContain(
-        'An objective you find unmet is reported as NOT MET in objectives.txt with code or test evidence — never only as a finding on the pull request body'
+        'An objective you find unmet is reported as NOT MET in its objective result with code or test evidence — never only as a finding on the pull request body'
       )
+      for (const file of ['findings.txt', 'objectives.txt', 'report.txt']) expect(prompt).not.toContain(file)
     }
   })
 
@@ -474,7 +442,6 @@ describe('renderReviewerDispatchPrompt — carries the role doctrine as a fact',
     const prompt = renderReviewerDispatchPrompt(
       'security',
       FACTS,
-      '/tmp/work',
       'You ask one question a correctness review does not.\n\n## What you check\n\n1. Secret / credential leakage.'
     )
     expect(prompt).toContain('for the security reviewer role')
@@ -482,8 +449,8 @@ describe('renderReviewerDispatchPrompt — carries the role doctrine as a fact',
   })
 
   it('injects no doctrine block when the doctrine is null — the pre-task shape, unchanged', () => {
-    const withNull = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work', null)
-    const withOmitted = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work')
+    const withNull = renderReviewerDispatchPrompt('reviewer', FACTS, null)
+    const withOmitted = renderReviewerDispatchPrompt('reviewer', FACTS)
     expect(withNull).not.toContain('YOUR ROLE DOCTRINE')
     expect(withNull).toBe(withOmitted)
   })
@@ -496,7 +463,7 @@ describe('renderReviewerDispatchPrompt — carries the role doctrine as a fact',
     '## What you check\n\n1. In my opinion, check that the PR body says what the brief asked.'
 
   it('renders a role doctrine carrying banned phrases, verbatim, instead of ending the round (O3)', () => {
-    const render = () => renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work', DOCTRINE_WITH_BANNED_PHRASES)
+    const render = () => renderReviewerDispatchPrompt('reviewer', FACTS, DOCTRINE_WITH_BANNED_PHRASES)
     expect(render).not.toThrow()
     const prompt = render()
     expect(prompt).toContain('The developer says it is done, and clearly it works.')
@@ -517,8 +484,8 @@ describe('renderReviewerDispatchPrompt — carries the role doctrine as a fact',
 
   it("states each role's blocking severities from the effective policy as linted driver text", () => {
     const policy = { ...DEFAULT_REVIEW_POLICY, codeReviewThreshold: 'MAJOR' as const }
-    const reviewerPrompt = renderReviewerDispatchPrompt('reviewer', { ...FACTS, policy }, '/tmp/work')
-    const securityPrompt = renderReviewerDispatchPrompt('security', { ...FACTS, policy }, '/tmp/work')
+    const reviewerPrompt = renderReviewerDispatchPrompt('reviewer', { ...FACTS, policy })
+    const securityPrompt = renderReviewerDispatchPrompt('security', { ...FACTS, policy })
     expect(reviewerPrompt).toContain('BLOCKING SEVERITIES UNDER THE EFFECTIVE REVIEW POLICY: BLOCKER, MAJOR')
     expect(securityPrompt).toContain('BLOCKING SEVERITIES UNDER THE EFFECTIVE REVIEW POLICY: CRITICAL, HIGH')
     expect(reviewerPrompt).not.toContain('take precedence')
@@ -597,8 +564,8 @@ describe('candidateInputPieces / renderReviewerDispatchPrompt — the driver-sta
   })
 
   it('O1: names the brief file as the standard to judge against, in BOTH reviewer and security prompts', () => {
-    const reviewerPrompt = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work', null, PATHS)
-    const securityPrompt = renderReviewerDispatchPrompt('security', FACTS, '/tmp/work', null, PATHS)
+    const reviewerPrompt = renderReviewerDispatchPrompt('reviewer', FACTS, null, PATHS)
+    const securityPrompt = renderReviewerDispatchPrompt('security', FACTS, null, PATHS)
     for (const prompt of [reviewerPrompt, securityPrompt]) {
       expect(prompt).toContain(PATHS.brief)
       expect(prompt).toContain('TASK BRIEF')
@@ -607,21 +574,21 @@ describe('candidateInputPieces / renderReviewerDispatchPrompt — the driver-sta
   })
 
   it('renderReviewerDispatchPrompt injects the block for either role when paths are given', () => {
-    const reviewerPrompt = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work', null, PATHS)
-    const securityPrompt = renderReviewerDispatchPrompt('security', FACTS, '/tmp/work', null, PATHS)
+    const reviewerPrompt = renderReviewerDispatchPrompt('reviewer', FACTS, null, PATHS)
+    const securityPrompt = renderReviewerDispatchPrompt('security', FACTS, null, PATHS)
     expect(reviewerPrompt).toContain(PATHS.diff)
     expect(securityPrompt).toContain(PATHS.priorFindings)
   })
 
   it('omits the block, unchanged from before this feature, when candidateInputPaths is omitted or null', () => {
-    const omitted = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work')
-    const explicitNull = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work', null, null)
+    const omitted = renderReviewerDispatchPrompt('reviewer', FACTS)
+    const explicitNull = renderReviewerDispatchPrompt('reviewer', FACTS, null, null)
     expect(omitted).not.toContain('.vinaya-reviewer-inputs')
     expect(omitted).toBe(explicitNull)
   })
 
   it("the security prompt's SECRETS instruction reads the CI line above, never gh pr checks", () => {
-    const prompt = renderReviewerDispatchPrompt('security', FACTS, '/tmp/work')
+    const prompt = renderReviewerDispatchPrompt('security', FACTS)
     expect(prompt).toContain('must never call `gh`')
     expect(prompt).not.toContain('gh pr checks')
   })
@@ -823,17 +790,9 @@ describe('deferral helpers (O2/O3)', () => {
   })
 })
 
-describe('buildVerdictFromReport — deferral context (O2/O3/O4)', () => {
-  let workDir: string
-  beforeEach(() => {
-    workDir = mkdtempSync(join(tmpdir(), 'vinaya-defer-verdict-'))
-  })
-  afterEach(() => {
-    rmSync(workDir, { recursive: true, force: true })
-  })
-
+describe('buildVerdictFromReview — deferral context (O2/O3/O4)', () => {
   const MANIFEST: ReviewInputManifest = {
-    headSha: 'a'.repeat(40),
+    headSha: REVIEW_HEAD,
     baseSha: 'e'.repeat(40),
     briefHash: 'b'.repeat(64),
     objectivesVersion: null,
@@ -854,20 +813,19 @@ describe('buildVerdictFromReport — deferral context (O2/O3/O4)', () => {
     maxTaskMinutes: 180
   } as const
 
-  function writeReviewer(): void {
-    writeFileSync(
-      join(workDir, 'findings.txt'),
-      'MAJOR|packages/aeg-core/src/x.ts:99|perf regression on unchanged code'
-    )
-    writeFileSync(
-      join(workDir, 'report.txt'),
-      'BRIEF_CONFORMANCE: clean\nSPEC_CONFORMANCE: clean\nSCOPE: small\nTESTS: honest\nDOCS: n/a\nFINDING_IDS: F1'
-    )
-  }
+  const REVIEW = completedReview('reviewer', {
+    findings: [
+      {
+        severity: 'MAJOR',
+        file: 'packages/aeg-core/src/x.ts',
+        line: 99,
+        description: 'perf regression on unchanged code'
+      }
+    ]
+  })
 
   it('an unchanged-line MAJOR is deferred: verdict APPROVE, recorded on the observation, absent from the comment', () => {
-    writeReviewer()
-    const result = buildVerdictFromReport('reviewer', workDir, 'claude', 853, HANDLE, MANIFEST, MAJOR_POLICY, [], {
+    const result = buildVerdictFromReview('reviewer', REVIEW, 'claude', 853, HANDLE, MANIFEST, MAJOR_POLICY, [], {
       changedLine: () => false
     })
     expect(result.observation.verdict).toBe('APPROVE')
@@ -885,8 +843,7 @@ describe('buildVerdictFromReport — deferral context (O2/O3/O4)', () => {
   })
 
   it('the same finding on a changed line blocks: verdict REQUEST CHANGES, present in the comment', () => {
-    writeReviewer()
-    const result = buildVerdictFromReport('reviewer', workDir, 'claude', 853, HANDLE, MANIFEST, MAJOR_POLICY, [], {
+    const result = buildVerdictFromReview('reviewer', REVIEW, 'claude', 853, HANDLE, MANIFEST, MAJOR_POLICY, [], {
       changedLine: () => true
     })
     expect(result.observation.verdict).toBe('REQUEST CHANGES')
@@ -896,22 +853,14 @@ describe('buildVerdictFromReport — deferral context (O2/O3/O4)', () => {
   })
 
   it('with no context (round 1), the finding blocks as before', () => {
-    writeReviewer()
-    const result = buildVerdictFromReport('reviewer', workDir, 'claude', 853, HANDLE, MANIFEST, MAJOR_POLICY, [])
+    const result = buildVerdictFromReview('reviewer', REVIEW, 'claude', 853, HANDLE, MANIFEST, MAJOR_POLICY, [])
     expect(result.observation.verdict).toBe('REQUEST CHANGES')
   })
 })
 
-describe('buildVerdictFromReport — the security SECRETS: line follows the same rule as review post', () => {
-  let workDir: string
-  beforeEach(() => {
-    workDir = mkdtempSync(join(tmpdir(), 'rd-secrets-'))
-    writeFileSync(join(workDir, 'findings.txt'), '')
-  })
-  afterEach(() => rmSync(workDir, { recursive: true, force: true }))
-
+describe('buildVerdictFromReview — the security summary is its SECRETS line, under the same rule as review post', () => {
   const MANIFEST: ReviewInputManifest = {
-    headSha: 'a'.repeat(40),
+    headSha: REVIEW_HEAD,
     baseSha: 'e'.repeat(40),
     briefHash: 'b'.repeat(64),
     objectivesVersion: 'c'.repeat(64),
@@ -926,18 +875,25 @@ describe('buildVerdictFromReport — the security SECRETS: line follows the same
     timedOut: false
   }
 
-  it('refuses a bare "none found" that cites no secret-scan check result', () => {
-    writeFileSync(join(workDir, 'report.txt'), 'CONFIG_SCAN: clean\nSECRETS: none found')
+  it('rejects a bare "none found" that cites no secret-scan check result', () => {
     expect(() =>
-      buildVerdictFromReport('security', workDir, 'claude', 764, HANDLE, MANIFEST, DEFAULT_REVIEW_POLICY, [])
+      buildVerdictFromReview(
+        'security',
+        completedReview('security', { summary: 'none found' }),
+        'claude',
+        764,
+        HANDLE,
+        MANIFEST,
+        DEFAULT_REVIEW_POLICY,
+        []
+      )
     ).toThrow(/atta-labs\/secret-scan/)
   })
 
   it('accepts a "none found" that cites the required check', () => {
-    writeFileSync(join(workDir, 'report.txt'), 'CONFIG_SCAN: clean\nSECRETS: none found — atta-labs/secret-scan passed')
-    const result = buildVerdictFromReport(
+    const result = buildVerdictFromReview(
       'security',
-      workDir,
+      completedReview('security', { summary: 'none found — atta-labs/secret-scan passed' }),
       'claude',
       764,
       HANDLE,
@@ -1084,7 +1040,7 @@ describe('securityScanPieces / renderReviewerDispatchPrompt — the scan reaches
 
   it("renders the scanner's output for the security pass, as a fact piece", () => {
     const scan: SecurityScanOutcome = { kind: 'ran', output: 'agentshield: 1 finding — over-broad tool grant' }
-    const prompt = renderReviewerDispatchPrompt('security', { ...FACTS, configScan: scan }, '/tmp/work')
+    const prompt = renderReviewerDispatchPrompt('security', { ...FACTS, configScan: scan })
     expect(prompt).toContain('AGENT-CONFIG SCAN')
     expect(prompt).toContain('agentshield: 1 finding — over-broad tool grant')
     // Driver-only text (the lint's subject) never carries the scanner's output.
@@ -1094,31 +1050,22 @@ describe('securityScanPieces / renderReviewerDispatchPrompt — the scan reaches
 
   it('never shows the scan to the code-reviewer', () => {
     const scan: SecurityScanOutcome = { kind: 'ran', output: 'agentshield output' }
-    const prompt = renderReviewerDispatchPrompt('reviewer', { ...FACTS, configScan: scan }, '/tmp/work')
+    const prompt = renderReviewerDispatchPrompt('reviewer', { ...FACTS, configScan: scan })
     expect(prompt).not.toContain('AGENT-CONFIG SCAN')
     expect(prompt).not.toContain('agentshield output')
   })
 
   it('tells the security pass which non-ran reason it was', () => {
-    const notConfigured = renderReviewerDispatchPrompt(
-      'security',
-      { ...FACTS, configScan: { kind: 'not_configured' } },
-      '/tmp/work'
-    )
+    const notConfigured = renderReviewerDispatchPrompt('security', { ...FACTS, configScan: { kind: 'not_configured' } })
     expect(notConfigured).toContain('no scanner is configured')
 
-    const notApplicable = renderReviewerDispatchPrompt(
-      'security',
-      { ...FACTS, configScan: { kind: 'not_applicable' } },
-      '/tmp/work'
-    )
+    const notApplicable = renderReviewerDispatchPrompt('security', { ...FACTS, configScan: { kind: 'not_applicable' } })
     expect(notApplicable).toContain('not applicable')
 
-    const failed = renderReviewerDispatchPrompt(
-      'security',
-      { ...FACTS, configScan: { kind: 'failed', reason: 'scanner timed out after 120000ms' } },
-      '/tmp/work'
-    )
+    const failed = renderReviewerDispatchPrompt('security', {
+      ...FACTS,
+      configScan: { kind: 'failed', reason: 'scanner timed out after 120000ms' }
+    })
     expect(failed).toContain('could not run')
     expect(failed).toContain('scanner timed out after 120000ms')
   })
@@ -1126,7 +1073,7 @@ describe('securityScanPieces / renderReviewerDispatchPrompt — the scan reaches
   it('an injected scan with a banned phrase in its output never ends the round', () => {
     const scan: SecurityScanOutcome = { kind: 'ran', output: 'the finding is clearly a leak — in my opinion' }
     // Would throw if the lint read the fact piece; it must not.
-    const prompt = renderReviewerDispatchPrompt('security', { ...FACTS, configScan: scan }, '/tmp/work')
+    const prompt = renderReviewerDispatchPrompt('security', { ...FACTS, configScan: scan })
     expect(prompt).toContain('the finding is clearly a leak')
   })
 })
@@ -1221,9 +1168,9 @@ describe('devReviewLoop — a confinement pause raised while the sibling reviewe
         order.push('reviewer-finished')
         return result
       }
-      // The resumed run's reviews are clean; the paused round's own
-      // finding-id resend (the code reviewer's second dispatch) is not.
-      if (role === 'code-reviewer' && calls[role] > 2) delete world.roleOutcomes[opts.round ?? 1]?.reviewer
+      // The resumed run's reviews are clean. Structured reviewer results
+      // carry no reviewer-authored finding ids, so there is no resend.
+      if (role === 'code-reviewer' && calls[role] > 1) delete world.roleOutcomes[opts.round ?? 1]?.reviewer
       order.push(`${role}-dispatched`)
       return base.dispatchRole!(role, agent, prompt, opts)
     }
@@ -1242,8 +1189,6 @@ describe('devReviewLoop — a confinement pause raised while the sibling reviewe
       'developer-dispatched',
       'security-returned',
       'reviewer-finished',
-      // the sibling's own finding-id resend, still inside the paused round
-      'code-reviewer-dispatched',
       // the resumed run: a fresh review of the same head
       'code-reviewer-dispatched',
       'security-dispatched'

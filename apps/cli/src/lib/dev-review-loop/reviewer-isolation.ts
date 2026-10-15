@@ -67,8 +67,7 @@ export function reviewerCandidateDir(root: string, task: number, round: number):
 }
 
 /**
- * `attempt` mirrors `reviewerWorkDir`'s own convention (`reviewer-dispatch.ts`):
- * attempt 1 is the round's normal scratch copy; attempt 2+ is a fresh
+ * `attempt` 1 is the round's normal scratch copy; attempt 2+ is a fresh
  * directory for a retry, never the failed attempt's own (O3, fresh-reviewer
  * semantics — never resume a crashed reviewer's own scratch).
  */

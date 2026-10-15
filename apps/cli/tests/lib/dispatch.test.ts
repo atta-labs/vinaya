@@ -73,6 +73,8 @@ import {
   codexSpawnEnvExtras,
   missingSubscriptionLoginReason,
   NO_SUBSCRIPTION_LOGIN_REASON,
+  REVIEWER_RESUME_REFUSED_REASON,
+  isReviewerResume,
   codexBoundaryFailureReason,
   confinedTurboEnv,
   developerWrittenTextFromVendorOutput,
@@ -3074,6 +3076,43 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
     expect((outcome as { model: string }).model).toBe('requested:claude-opus-5')
   })
 
+  for (const role of ['code-reviewer', 'security'] as const) {
+    it(`a ${role} dispatch that asks to resume a session is refused before any spawn — a reviewer runs only on a fresh session`, () => {
+      const home = tempDir('vinaya-dispatch-home-')
+      const cwd = tempDir('vinaya-dispatch-cwd-')
+      const binDir = tempDir('vinaya-dispatch-bin-')
+      const promptFile = join(cwd, 'prompt.txt')
+      writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+      // A binary that would prove it was spawned if it ever ran.
+      const spawnedMarker = join(cwd, 'spawned')
+      writeFakeBinary(binDir, 'claude', `#!/bin/sh\ntouch "${spawnedMarker}"\ncat > /dev/null\necho '{}'\nexit 0\n`)
+
+      const r = spawnBudgeted(
+        [INDEX, 'dispatch', role, '--agent', 'claude', '--prompt-file', promptFile, '--resume', 'earlier-session'],
+        {
+          encoding: 'utf8',
+          cwd,
+          env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` })
+        },
+        'vinaya dispatch'
+      )
+      expect(r.status).toBe(1)
+      expect(existsSync(spawnedMarker)).toBe(false)
+      expect(r.stderr).toContain(REVIEWER_RESUME_REFUSED_REASON)
+      const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
+      const dispatchLine = lines.find((l) => l.kind === 'dispatch')
+      expect(dispatchLine?.event).toBe('dispatch_failed')
+      expect((dispatchLine as { reason: string }).reason).toBe('refused')
+    })
+  }
+
+  it('isReviewerResume: only a code or security reviewer asking for a session is a reviewer resume', () => {
+    expect(isReviewerResume('code-reviewer', 'sess')).toBe(true)
+    expect(isReviewerResume('security', 'sess')).toBe(true)
+    expect(isReviewerResume('code-reviewer', undefined)).toBe(false)
+    expect(isReviewerResume('developer', 'sess')).toBe(false)
+  })
+
   it('O4: a Claude-shaped model passed to codex is refused before any spawn, naming the vendor and the mismatch', () => {
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')
@@ -3956,7 +3995,7 @@ describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/E
     const devDir = tempDir('vinaya-write-scope-dev-')
     const confidence = join(devDir, 'granted-one.txt')
     const roundResponse = join(devDir, 'granted-two.txt')
-    const scope = buildWriteAccessScope('developer', dir, [], [confidence, roundResponse])
+    const scope = buildWriteAccessScope('developer', dir, [confidence, roundResponse])
     // Resolved through the parent, exactly as `writeAccessHookScript` resolves
     // the path it compares against: on a host whose temp root is a symlink
     // (macOS `/var` → `/private/var`), a raw expectation here fails while the
@@ -3983,7 +4022,7 @@ describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/E
     // scope-build time (the Developer has not written it yet this round).
     const confidence = join(devDir, 'granted-one.txt')
 
-    const scope = buildWriteAccessScope('developer', dir, [], [confidence])
+    const scope = buildWriteAccessScope('developer', dir, [confidence])
     expect(scope).not.toBeNull()
     if (scope === null) return
     expect(scope.kind).toBe('directory')
@@ -4001,38 +4040,13 @@ describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/E
   })
 
   it('a role other than developer never gets developerFiles applied', () => {
-    const a = tempDir('vinaya-write-scope-a-')
-    const scope = buildWriteAccessScope('code-reviewer', '/unused', [a], ['/some/absolute/path'])
-    expect(scope).toEqual({
-      kind: 'exact-files',
-      paths: [
-        join(realpathSync(a), 'findings.txt'),
-        join(realpathSync(a), 'report.txt'),
-        join(realpathSync(a), 'objectives.txt')
-      ]
-    })
+    const scope = buildWriteAccessScope('code-reviewer', '/unused', ['/some/absolute/path'])
+    expect(scope).toEqual({ kind: 'exact-files', paths: [] })
   })
 
   for (const role of ['code-reviewer', 'security'] as const) {
-    it(`${role}: exact hand-off files across every extraWritableDirs entry, realpath-resolved`, () => {
-      const a = tempDir('vinaya-write-scope-a-')
-      const b = tempDir('vinaya-write-scope-b-')
-      const scope = buildWriteAccessScope(role, '/unused', [a, b])
-      expect(scope).toEqual({
-        kind: 'exact-files',
-        paths: [
-          join(realpathSync(a), 'findings.txt'),
-          join(realpathSync(a), 'report.txt'),
-          join(realpathSync(a), 'objectives.txt'),
-          join(realpathSync(b), 'findings.txt'),
-          join(realpathSync(b), 'report.txt'),
-          join(realpathSync(b), 'objectives.txt')
-        ]
-      })
-    })
-
-    it(`${role}: no extraWritableDirs at all — null, no hook to wire`, () => {
-      expect(buildWriteAccessScope(role, '/unused', [])).toBeNull()
+    it(`${role}: no file at all — a reviewer returns its review as structured output, so every write is denied`, () => {
+      expect(buildWriteAccessScope(role, '/unused')).toEqual({ kind: 'exact-files', paths: [] })
     })
   }
 
@@ -4053,7 +4067,7 @@ describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/E
   it('developer: protectedSubpaths (O3) carries the realpath-resolved agent-config paths the caller named', () => {
     const dir = tempDir('vinaya-write-scope-protected-')
     const protectedPath = join(dir, '.claude')
-    const scope = buildWriteAccessScope('developer', dir, [], [], [protectedPath])
+    const scope = buildWriteAccessScope('developer', dir, [], [protectedPath])
     expect(scope).toEqual({
       kind: 'directory',
       allowedDir: realpathSync(dir),
@@ -4096,7 +4110,6 @@ describe('writeAccessHookScript — O3 agent-configuration protectedSubpaths', (
       'developer',
       worktree,
       [],
-      [],
       agentConfigProtectedSubpaths(worktree, 'claude', false)
     )
     writeFileSync(join(scriptDir, `write-access-${runId}.json`), JSON.stringify(scope))
@@ -4119,7 +4132,6 @@ describe('writeAccessHookScript — O3 agent-configuration protectedSubpaths', (
       'developer',
       worktree,
       [],
-      [],
       agentConfigProtectedSubpaths(worktree, 'claude', true)
     )
     writeFileSync(join(scriptDir, `write-access-${runId}.json`), JSON.stringify(scope))
@@ -4136,7 +4148,6 @@ describe('writeAccessHookScript — O3 agent-configuration protectedSubpaths', (
       'developer',
       worktree,
       [],
-      [],
       agentConfigProtectedSubpaths(worktree, 'claude', false)
     )
     writeFileSync(join(scriptDir, `write-access-${runId}.json`), JSON.stringify(scope))
@@ -4151,7 +4162,6 @@ describe('writeAccessHookScript — O3 agent-configuration protectedSubpaths', (
     const scope = buildWriteAccessScope(
       'developer',
       worktree,
-      [],
       [],
       agentConfigProtectedSubpaths(worktree, 'codex', false)
     )
@@ -4346,18 +4356,12 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
   })
 
   for (const role of ['code-reviewer', 'security'] as const) {
-    it(`a ${role} dispatch's exact-files scope DENIES a Write and an Edit to a path outside its own hand-off files (round 2 BLOCKER fix) — the gap O4 left open for this scope kind, now closed the same way`, () => {
-      // Before this fix, `exact-files` scope (the Reviewer/Security's own
-      // `findings.txt`/`report.txt`/`objectives.txt` hand-off files) fell
-      // through silently outside its own allowlist — only `directory` scope
-      // (the Developer's worktree) denied explicitly (O4). That left a
-      // reviewer/security Write/Edit outside its three named files resolving
-      // through the host's own default classifier instead of this hook's own
-      // written restriction, exactly the gap O4 had just closed one role
-      // over. `extraWritableDirs` has no CLI flag (same reasoning the
-      // `developerFiles` test above gives — only `dev-review-loop.ts`'s
-      // internal call site ever supplies one), so this calls `dispatchRole`
-      // directly rather than through the `vinaya dispatch` CLI.
+    it(`a ${role} dispatch's exact-files scope DENIES every Write and Edit — a reviewer writes no file, not even a former result file`, () => {
+      // A reviewer returns its review as native structured output, so its
+      // `exact-files` scope names no path at all: every Write/Edit is denied
+      // by this hook's own written restriction, never left to the host's own
+      // default classifier. Called through `dispatchRole` directly, the way
+      // the loop dispatches a reviewer.
       const home = tempDir('vinaya-dispatch-home-')
       const cwd = tempDir('vinaya-dispatch-cwd-')
       const binDir = tempDir('vinaya-dispatch-bin-')
@@ -4379,8 +4383,7 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
           `import { dispatchRole } from ${JSON.stringify(dispatchLib)}`,
           'const opts = {',
           `  promptFile: ${JSON.stringify(promptFile)},`,
-          `  cwd: ${JSON.stringify(cwd)},`,
-          `  extraWritableDirs: [${JSON.stringify(reviewWorkDir)}]`,
+          `  cwd: ${JSON.stringify(cwd)}`,
           '}',
           `await dispatchRole(${JSON.stringify(role)}, 'claude', 'p', opts)`
         ].join('\n')
@@ -4406,29 +4409,14 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
       expect(scopeFiles).toHaveLength(1)
       const runId = (scopeFiles[0] as string).slice('write-access-'.length, -'.json'.length)
 
-      // The exact hand-off file is still ALLOWED — the existing allowed-file
-      // behavior this fix must not regress.
-      const allowedPath = join(realpathSync(reviewWorkDir), 'findings.txt')
-      const allowed = spawnBudgeted(
-        [scriptPath],
-        {
-          input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: allowedPath } }),
-          encoding: 'utf8',
-          env: { ...process.env, VINAYA_RUN_ID: runId }
-        },
-        'write-access hook'
-      )
-      expect(allowed.status).toBe(0)
-      const allowedOut = JSON.parse(allowed.stdout) as { hookSpecificOutput: { permissionDecision: string } }
-      expect(allowedOut.hookSpecificOutput.permissionDecision).toBe('allow')
-
-      // A sibling file in the SAME directory, never named by the exact-files
-      // allowlist, and a path entirely outside both the real home and the
-      // real temp root — both DENIED, for both `Write` and `Edit`.
-      const siblingPath = join(reviewWorkDir, 'not-a-handoff-file.txt')
+      // A former result file, a file in the reviewer's own scratch directory,
+      // and a path entirely outside both the real home and the real temp
+      // root — all DENIED, for both `Write` and `Edit`.
+      const formerResultPath = join(realpathSync(reviewWorkDir), 'findings.txt')
+      const scratchPath = join(realpathSync(cwd), 'notes.txt')
       const outsidePath = '/opt/vinaya-should-never-write-here/x'
       for (const toolName of ['Write', 'Edit']) {
-        for (const deniedPath of [siblingPath, outsidePath]) {
+        for (const deniedPath of [formerResultPath, scratchPath, outsidePath]) {
           const result = spawnBudgeted(
             [scriptPath],
             {
@@ -4443,7 +4431,7 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
             hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string }
           }
           expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
-          expect(out.hookSpecificOutput.permissionDecisionReason).toMatch(/hand-off/)
+          expect(out.hookSpecificOutput.permissionDecisionReason).toMatch(/structured result/)
         }
       }
     })
@@ -4640,11 +4628,14 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
     }
     expect(settings.permissions).toEqual(buildRolePermissions('code-reviewer'))
     expect(settings.permissions.allow).not.toContain('Bash(git commit:*)')
-    // No extraWritableDirs on a plain CLI dispatch (the CLI has no flag for
-    // it — only `dev-review-loop.ts`'s own internal call site ever supplies
-    // one) — `buildWriteAccessScope` returns null, so no Write|Edit hook is
-    // wired at all: never a blanket grant a Reviewer's own doctrine forbids.
-    expect(settings.hooks.PreToolUse.some((h) => h.matcher === 'Write|Edit')).toBe(false)
+    // A reviewer writes no file: its Write|Edit hook is wired with a scope
+    // that grants no path at all — never a blanket grant, never no hook.
+    expect(settings.hooks.PreToolUse.some((h) => h.matcher === 'Write|Edit')).toBe(true)
+    const scopeFile = readdirSync(dirname(settingsPath)).find((f) => f.startsWith('write-access-'))
+    expect(JSON.parse(readFileSync(join(dirname(settingsPath), scopeFile as string), 'utf8'))).toEqual({
+      kind: 'exact-files',
+      paths: []
+    })
   })
 
   it('round 2 security review, CRITICAL fix: developer and code-reviewer dispatched for the same task scope get DIFFERENT settings files, never a shared path to race on', () => {

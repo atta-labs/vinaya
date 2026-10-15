@@ -45,14 +45,14 @@ function failingCheckRun(id: number, name: string, startedAt?: string): LoopWorl
   } as unknown as LoopWorld['failingCheckRuns'][number]
 }
 
-describe('devReviewLoop — a report.txt missing SECRETS is an infrastructure pause, never a fabricated clean claim (review-validity-v1 12, #526 round 2)', () => {
-  it('retries once into a fresh work directory, then pauses naming report.txt and the reviewer session id — never a silent "none found"', async () => {
+describe('devReviewLoop — an unbacked clean secrets claim is an infrastructure pause, never a fabricated clean claim', () => {
+  it('retries once as a fresh dispatch, then pauses naming the rejected summary and the reviewer session id — never a silent "none found"', async () => {
     const world = makeWorld({
       roleOutcomes: {
         1: {
           security: {
             findings: '',
-            report: 'CONFIG_SCAN: clean\n',
+            report: 'SECRETS: none found\n',
             objectives: 'O1|MET|done.\n',
             sessionId: 'sec-session-no-secrets'
           }
@@ -66,15 +66,15 @@ describe('devReviewLoop — a report.txt missing SECRETS is an infrastructure pa
     expect(world.postedComments).toHaveLength(2)
     const pauseComment = world.postedComments[1]!.body
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
-    expect(pauseComment).toMatch(/report\.txt/)
+    expect(pauseComment).toMatch(/ReviewResult summary was rejected/)
     expect(pauseComment).toMatch(/sec-session-no-secrets/)
     expect(pauseComment).not.toMatch(/^VERDICT:/m)
     expect(pauseComment).not.toMatch(/SECRETS: none found/)
   })
 })
 
-describe('devReviewLoop — the reviewer prompt names the objectives file, and omitting it is the O1 infrastructure outcome (O3)', () => {
-  it('names objectives.txt in the prompt when the task carries objectives, and pauses as infrastructure when security omits it', async () => {
+describe('devReviewLoop — the reviewer prompt asks for one objective result per objective, and omitting them is the O1 infrastructure outcome (O3)', () => {
+  it('asks for objective results when the task carries objectives, and pauses as infrastructure when security returns none', async () => {
     const world = makeWorld({
       roleOutcomes: {
         1: {
@@ -97,12 +97,8 @@ describe('devReviewLoop — the reviewer prompt names the objectives file, and o
     const result = await runLoopInProcess(world, { task: world.task, agent: 'claude' }, { dispatchRole })
     expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
 
-    expect(reviewerPrompt).toMatch(/objectives\.txt/)
-    expect(reviewerPrompt).toMatch(/O<n>\|MET\|<evidence>/)
-    // O6: the prompt states the bare-word status rule and that `|` never
-    // appears in a description.
-    expect(reviewerPrompt).toMatch(/bare leading word/)
-    expect(reviewerPrompt).toMatch(/`\|` never appears in a description/)
+    expect(reviewerPrompt).toMatch(/Return one objective result per objective listed above/)
+    expect(reviewerPrompt).not.toMatch(/objectives\.txt/)
     expect(reviewerPrompt).toMatch(/NOT MET means you verified the objective is not met — never a decline/)
     expect(reviewerPrompt).toMatch(/never NOT MET with an out-of-scope note/)
 
@@ -111,7 +107,7 @@ describe('devReviewLoop — the reviewer prompt names the objectives file, and o
     const pauseComment = world.postedComments[1]!.body
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
     expect(pauseComment).toMatch(/security/)
-    expect(pauseComment).toMatch(/objectives\.txt/)
+    expect(pauseComment).toMatch(/ReviewResult objectiveResults was rejected/)
 
     // The code-reviewer half finishes clean well before security's own
     // retry exhausts — its held verdict must not survive on disk either.
@@ -120,7 +116,7 @@ describe('devReviewLoop — the reviewer prompt names the objectives file, and o
   })
 })
 
-describe('devReviewLoop — issue-711 O6: a reviewer whose objectives.txt does not cover the resolved list is redispatched once with the exact list, before the round pauses', () => {
+describe('devReviewLoop — issue-711 O6: a reviewer whose objective results do not cover the resolved list is redispatched once with the exact list, before the round pauses', () => {
   it('an under-reporting reviewer on attempt 1 recovers on the fresh retry — the round publishes, never pauses', async () => {
     const world = makeWorld({
       frozenBrief:
@@ -129,7 +125,7 @@ describe('devReviewLoop — issue-711 O6: a reviewer whose objectives.txt does n
         1: {
           // Attempt 1 omits O2 entirely — `checkObjectiveIdCoverage` refuses
           // it (`missing O2`); attempt 2 (the fresh retry, a genuinely new
-          // dispatch into a fresh work dir, told the SAME resolved list via
+          // dispatch, told the SAME resolved list via
           // the SAME `renderReviewerDispatchPrompt`) covers both ids.
           reviewer: [
             {
@@ -175,7 +171,7 @@ describe('devReviewLoop — issue-711 O6: a reviewer whose objectives.txt does n
     expect(world.postedComments.some((c) => /^<!-- aeg:loop:paused:/m.test(c.body))).toBe(false)
   })
 
-  it('an under-reporting reviewer that never recovers pauses as infrastructure, naming objectives.txt — never a silently-accepted partial report', async () => {
+  it('an under-reporting reviewer that never recovers pauses as infrastructure, naming its objective results — never a silently-accepted partial report', async () => {
     const world = makeWorld({
       frozenBrief:
         '<!-- aeg:brief:v1 -->\nBrief hash: deadbeef\nDo the thing.\n\n## Objectives\n\nO1. Do the thing.\nO2. Do the other thing.\n\n## Planner rationale\n\nOut of scope for facts.\n',
@@ -208,7 +204,7 @@ describe('devReviewLoop — issue-711 O6: a reviewer whose objectives.txt does n
     const pauseComment = world.postedComments[1]!.body
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
     expect(pauseComment).toMatch(/reviewer/)
-    expect(pauseComment).toMatch(/objectives\.txt/)
+    expect(pauseComment).toMatch(/objectiveResults/)
   })
 })
 
@@ -468,8 +464,8 @@ describe('devReviewLoop — control-store-v1 task 4 (#554, O3): a delivered-find
     expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'no_progress' })
 
     expect(world.dispatchCountByRole.developer).toBeUndefined()
-    expect(existsSync(join(roundDir(world, 2), 'reviewer-work'))).toBe(false)
-    expect(existsSync(join(roundDir(world, 2), 'security-work'))).toBe(false)
+    expect(world.dispatches.some((d) => d.role === 'code-reviewer' && d.round === 2)).toBe(false)
+    expect(world.dispatches.some((d) => d.role === 'security' && d.round === 2)).toBe(false)
     expect(existsSync(join(roundDir(world, 1), 'attach-redelivered'))).toBe(false)
 
     // The control store is what actually held, and the local marker never
@@ -510,9 +506,9 @@ describe('devReviewLoop — control-store-v1 task 4 (#554, O1/O3): round numberi
     // Reviewers ran at round 2 — never a reset to round 1 for want of the
     // held files or the journal this task's optional telemetry would
     // otherwise have supplied.
-    expect(existsSync(join(roundDir(world, 2), 'reviewer-work'))).toBe(true)
-    expect(existsSync(join(roundDir(world, 2), 'security-work'))).toBe(true)
-    expect(existsSync(join(roundDir(world, 1), 'reviewer-work'))).toBe(false)
+    expect(world.dispatches.some((d) => d.role === 'code-reviewer' && d.round === 2)).toBe(true)
+    expect(world.dispatches.some((d) => d.role === 'security' && d.round === 2)).toBe(true)
+    expect(world.dispatches.some((d) => d.role === 'code-reviewer' && d.round === 1)).toBe(false)
     expect(world.dispatchCountByRole.developer).toBeUndefined()
   })
 })

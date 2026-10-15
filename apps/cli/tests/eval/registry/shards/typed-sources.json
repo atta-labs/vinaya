@@ -3417,7 +3417,7 @@
         "revision": 17,
         "section": "One entry per observed behavior"
       },
-      "contract": "Every reviewer attempt is a fresh session with its own work directory and scratch copy; a retry never inherits a prior attempt's files.",
+      "contract": "Every reviewer attempt is a fresh, non-resumed session with its own scratch copy; a retry never inherits a prior attempt's files or session.",
       "owner": "adapter",
       "officialBasis": "Vinaya product decision; LangGraph — Test (principle 12) for its L3 graph conformance: a fresh checkpointer per test, nodes alone, sections by partial execution.",
       "suite": ["reviewer-validity.l1@1", "reviewer-validity.l2@1", "reviewer-validity.l3@1"],
@@ -3456,7 +3456,7 @@
         "revision": 17,
         "section": "One entry per observed behavior"
       },
-      "contract": "A missing reviewer artifact or an unparseable report gets one fresh retry; a second miss pauses infrastructure with no verdict held and the round number unchanged — an invalid review counts as no review.",
+      "contract": "A reviewer attempt that delivers no accepted ReviewResult — missing, malformed, stale, crossed, rejected, cancelled, context-exhausted, provider-errored or resumed — gets one fresh retry; a second miss pauses infrastructure with no verdict held and the round number unchanged — an invalid review counts as no review.",
       "owner": "vinaya-policy",
       "officialBasis": "Vinaya product decision; LangGraph — Test (principle 12) for its L3 graph conformance: a fresh checkpointer per test, nodes alone, sections by partial execution.",
       "suite": ["reviewer-validity.l1@1", "reviewer-validity.l2@1", "reviewer-validity.l3@1"],
@@ -3495,16 +3495,16 @@
         "revision": 17,
         "section": "One entry per observed behavior"
       },
-      "contract": "A report with findings but no matching FINDING_IDS line is resent once into a fresh directory; if still uncitable a marked report-uncitable comment is posted once and the round continues on its severities.",
+      "contract": "A reviewer result carries no finding ids; the controller assigns each accepted finding its id and never resends a review to cite ids.",
       "owner": "vinaya-policy",
       "officialBasis": "Vinaya product decision; LangGraph — Test (principle 12) for its L3 graph conformance: a fresh checkpointer per test, nodes alone, sections by partial execution.",
       "suite": ["reviewer-validity.l1@1", "reviewer-validity.l2@1", "reviewer-validity.l3@1"],
       "tasks": {
         "positive": {
-          "present": "Corpus `invalid-reviews`: INV-059 holds, asserted on the forge-fake ledger."
+          "present": "Corpus `invalid-reviews`: INV-059 holds, asserted on the returned decision."
         },
         "negative": {
-          "present": "The same scenario with the condition INV-059 governs absent: the behaviour does not occur, asserted on the forge-fake ledger (§9 balance)."
+          "present": "The same scenario with the condition INV-059 governs absent: the behaviour does not occur, asserted on the returned decision (§9 balance)."
         },
         "refusal": {
           "present": "Corpus `invalid-reviews`: on the scenario's refusal path — the run refused or paused with a typed reason — INV-059 still holds."
