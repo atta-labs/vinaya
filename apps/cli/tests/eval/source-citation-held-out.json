@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "ho-correct-citation",
+      "class": "correct-citation",
+      "requiresSource": true,
+      "request": "Apply the delivered deployment policy and cite it.",
+      "manifest": [
+        {
+          "source": "https://policy.example.test/deploy",
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "relevant": true
+        }
+      ],
+      "receipts": [
+        {
+          "source": "https://policy.example.test/deploy",
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "recorded": true,
+          "decision": "counted"
+        }
+      ],
+      "acceptedResult": {
+        "status": "completed",
+        "sourceUses": [
+          { "source": "https://policy.example.test/deploy", "use": "Applied the deployment approval rule." }
+        ]
+      },
+      "expectedPass": true
+    },
+    {
+      "id": "ho-missing-citation",
+      "class": "missing-citation",
+      "requiresSource": true,
+      "request": "Apply the delivered deployment policy.",
+      "manifest": [
+        {
+          "source": "https://policy.example.test/deploy",
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+          "relevant": true
+        }
+      ],
+      "receipts": [
+        {
+          "source": "https://policy.example.test/deploy",
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+          "recorded": true,
+          "decision": "counted"
+        }
+      ],
+      "acceptedResult": { "status": "completed", "sourceUses": [] },
+      "expectedPass": false
+    },
+    {
+      "id": "ho-undelivered-source",
+      "class": "undelivered-source",
+      "requiresSource": true,
+      "request": "Cite only controller-delivered policy.",
+      "manifest": [
+        {
+          "source": "https://policy.example.test/deploy",
+          "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "relevant": true
+        }
+      ],
+      "receipts": [],
+      "acceptedResult": {
+        "status": "completed",
+        "sourceUses": [{ "source": "https://policy.example.test/deploy", "use": "Applied the deployment rule." }]
+      },
+      "expectedPass": false
+    },
+    {
+      "id": "ho-irrelevant-source",
+      "class": "irrelevant-source",
+      "requiresSource": true,
+      "request": "Use the deployment policy rather than the style guide.",
+      "manifest": [
+        {
+          "source": "https://policy.example.test/deploy",
+          "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+          "relevant": true
+        },
+        {
+          "source": "https://policy.example.test/style",
+          "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+          "relevant": false
+        }
+      ],
+      "receipts": [
+        {
+          "source": "https://policy.example.test/style",
+          "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+          "recorded": true,
+          "decision": "counted"
+        }
+      ],
+      "acceptedResult": {
+        "status": "completed",
+        "sourceUses": [{ "source": "https://policy.example.test/style", "use": "Applied deployment approval." }]
+      },
+      "expectedPass": false
+    },
+    {
+      "id": "ho-source-mutation",
+      "class": "source-mutation",
+      "requiresSource": true,
+      "request": "Use the current source revision after continuation.",
+      "manifest": [
+        {
+          "source": "https://policy.example.test/deploy",
+          "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+          "relevant": true
+        }
+      ],
+      "receipts": [
+        {
+          "source": "https://policy.example.test/deploy",
+          "sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+          "recorded": true,
+          "decision": "counted"
+        }
+      ],
+      "acceptedResult": {
+        "status": "completed",
+        "sourceUses": [{ "source": "https://policy.example.test/deploy", "use": "Used the previous revision." }]
+      },
+      "expectedPass": false
+    },
+    {
+      "id": "ho-receipt-fabrication",
+      "class": "receipt-fabrication",
+      "requiresSource": true,
+      "request": "Worker-authored receipts do not count.",
+      "manifest": [
+        {
+          "source": "https://policy.example.test/deploy",
+          "sha256": "abababababababababababababababababababababababababababababababab",
+          "relevant": true
+        }
+      ],
+      "receipts": [
+        {
+          "source": "https://policy.example.test/deploy",
+          "sha256": "abababababababababababababababababababababababababababababababab",
+          "recorded": false,
+          "decision": "counted"
+        }
+      ],
+      "acceptedResult": {
+        "status": "completed",
+        "sourceUses": [{ "source": "https://policy.example.test/deploy", "use": "Applied deployment approval." }]
+      },
+      "expectedPass": false
+    },
+    {
+      "id": "ho-no-source-balance",
+      "class": "no-source-balance",
+      "requiresSource": false,
+      "request": "Perform the self-contained rename.",
+      "manifest": [],
+      "receipts": [],
+      "acceptedResult": { "status": "completed", "sourceUses": [] },
+      "expectedPass": true
+    }
+  ]
+}
