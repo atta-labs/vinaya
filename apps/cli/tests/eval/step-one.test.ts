@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileS
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type CloneStaging, git } from '../../src/lib/dev-review-eval/staging'
+import { spawnBudgetedAsync } from '../lib/process-fixture'
 import {
   GRADING_CODEX_PACKAGE,
   openGradingSandbox,
@@ -164,17 +165,19 @@ describe('development-only step one', () => {
       rmSync(workspace, { recursive: true, force: true })
     })
 
-    it('commits only uncommitted work, and reports the commit HEAD names either way', () => {
+    it('commits only uncommitted work, and reports the commit HEAD names either way', async () => {
       const { workspace, staging, commit } = repository()
-      const step = () =>
-        Bun.spawnSync(['/bin/sh', '-c', TRIAL_COMMIT_SCRIPT, 'commit-trial', 'Eval(developer): trial'], {
-          cwd: workspace,
-          env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: workspace }
-        }).stdout.toString()
+      const step = async () =>
+        (
+          await spawnBudgetedAsync(['/bin/sh', '-c', TRIAL_COMMIT_SCRIPT, 'commit-trial', 'Eval(developer): trial'], {
+            cwd: workspace,
+            env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: workspace }
+          })
+        ).stdout
       const agentCommit = commit('agent work')
-      expect(step()).toBe(`trial-commit ${agentCommit}\n`)
+      expect(await step()).toBe(`trial-commit ${agentCommit}\n`)
       writeFileSync(join(workspace, 'solution.ts'), 'export {}\n')
-      const output = step()
+      const output = await step()
       const committed = verifyTrialCommit(staging, output)
       expect(committed.ok).toBe(true)
       if (committed.ok) expect(committed.commit).not.toBe(agentCommit)
