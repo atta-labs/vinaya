@@ -357,3 +357,13 @@ Six pinned code graders, one per pass criterion of the evaluation program's §6.
 Result valid on first attempt, paths beyond the Surface, tool calls, tool errors, wall time, tokens and self-repair cycles are reported beside the verdict and read by no criterion. `apps/cli/tests/eval/developer-capability-suite.test.ts` proves the grader on planted cases: the reference solution of every development case passes, and each criterion rejects a planted bad result — a failing or unrun test, a protected or agent-configuration path, an unrecorded or mismatched beyond-Surface record, an undelivered, uncited or other-brief source, each forbidden call, results outside the repair allowance and a repeated effect — while extreme diagnostics leave a passing trial passing. It also checks every development case against git history.
 
 The decision rule is the evaluation program's §10 backend-comparison rule; its floor is marked *Principal* and frozen in milestone 2, and held-out runs follow its §8 order.
+
+## Reviewer-quality suites
+
+`code-reviewer-quality.l5@1` and `security-reviewer-quality.l5@1` use the harness's non-coding Task, isolated Trial, pinned code Grader, fixed Suite and validated Report contracts. Their corpus records repository commits plus patch digests rather than source copies.
+
+The code suite has five planted defect kinds, snapshot-backed historical rounds, and merged clean changes. The security suite plants credentials, path traversal, unsafe shell construction, widened permissions and injected instructions, and has a separate clean set. A clean candidate is admitted only when two distinct fresh adjudicator runs, neither exposed to the other's output or the seeding record, both report no blocking defect. A disagreement drops it; a confirmed defect moves it to history. Live admission requires the Principal's subscription-backed runs.
+
+Both development splits are content-digested at creation. Held-out content is in `reviewer-quality-held-out.json`; ordinary loading does not open it, and its sole reader requires the pinned byte digest before opening it. Development tests use only public held-out identifiers.
+
+The binary grader consumes an accepted structured `ReviewResult`. It requires a planted defect at the expected file and blocking severity, treats an unjustified beyond-Surface edit as a defect while leaving a justified one unblocked, refuses a blocking finding on a clean item, and requires one disposition for every objective. Reports include recall, false-blocking rate, objective-disposition accuracy, and whether every seeded critical or high security defect was found.

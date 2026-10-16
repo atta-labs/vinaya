@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "code-held-clean",
+      "role": "code-reviewer",
+      "set": "clean",
+      "baseCommit": "adac13e4246d030238f7738bcce56e3de86bd461",
+      "patch": {
+        "file": "apps/cli/tests/eval/registry/modules.json",
+        "digest": "1414141414141414141414141414141414141414141414141414141414141414"
+      },
+      "expected": null,
+      "objectives": ["O1"],
+      "provenance": { "pullRequest": 1306, "confirmation": "held-out merged registry change" },
+      "adjudication": {
+        "first": {
+          "runId": "code-held-a",
+          "fresh": true,
+          "sawOther": false,
+          "blockingDefect": false,
+          "confirmedDefect": false
+        },
+        "second": {
+          "runId": "code-held-b",
+          "fresh": true,
+          "sawOther": false,
+          "blockingDefect": false,
+          "confirmedDefect": false
+        }
+      }
+    },
+    {
+      "id": "security-held-clean",
+      "role": "security-reviewer",
+      "set": "clean",
+      "baseCommit": "adac13e4246d030238f7738bcce56e3de86bd461",
+      "patch": {
+        "file": "apps/cli/tests/eval/registry/modules.json",
+        "digest": "1515151515151515151515151515151515151515151515151515151515151515"
+      },
+      "expected": null,
+      "objectives": ["O1"],
+      "provenance": { "pullRequest": 1306, "confirmation": "held-out merged registry change" },
+      "adjudication": {
+        "first": {
+          "runId": "security-held-a",
+          "fresh": true,
+          "sawOther": false,
+          "blockingDefect": false,
+          "confirmedDefect": false
+        },
+        "second": {
+          "runId": "security-held-b",
+          "fresh": true,
+          "sawOther": false,
+          "blockingDefect": false,
+          "confirmedDefect": false
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,237 @@
+{
+  "schemaVersion": 1,
+  "role": "code-reviewer",
+  "split": {
+    "developmentDigest": "21ab650eb56b4c99381bec534cd715827f91fa763cb4d5ba8fe07e345ebaba00",
+    "development": [
+      "code-logic",
+      "code-contract",
+      "code-test",
+      "code-surface",
+      "code-objective",
+      "history-1307",
+      "history-1310",
+      "history-1312",
+      "history-1319",
+      "history-1320",
+      "code-clean"
+    ],
+    "heldOutFile": "reviewer-quality-held-out.json",
+    "heldOutDigest": "92fb2c6bea945bcfad3310a1ec135d31adaa31460f6ad5b098c9616d55ede94b",
+    "heldOut": ["code-held-clean"]
+  },
+  "cases": [
+    {
+      "id": "code-logic",
+      "role": "code-reviewer",
+      "set": "seeded",
+      "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+      "patch": {
+        "file": "apps/cli/src/lib/example.ts",
+        "digest": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "expected": { "file": "apps/cli/src/lib/example.ts", "severity": "MAJOR", "kind": "logic-error" },
+      "objectives": ["O1"],
+      "provenance": { "confirmation": "written description: inverted success predicate accepts a failed check" }
+    },
+    {
+      "id": "code-contract",
+      "role": "code-reviewer",
+      "set": "seeded",
+      "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+      "patch": {
+        "file": "apps/cli/src/lib/review-result.ts",
+        "digest": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "expected": { "file": "apps/cli/src/lib/review-result.ts", "severity": "MAJOR", "kind": "contract-break" },
+      "objectives": ["O1"],
+      "provenance": { "confirmation": "written description: removes the required head binding" }
+    },
+    {
+      "id": "code-test",
+      "role": "code-reviewer",
+      "set": "seeded",
+      "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+      "patch": {
+        "file": "apps/cli/src/lib/dev-review-eval/estimators.ts",
+        "digest": "3333333333333333333333333333333333333333333333333333333333333333"
+      },
+      "expected": {
+        "file": "apps/cli/src/lib/dev-review-eval/estimators.ts",
+        "severity": "MAJOR",
+        "kind": "missing-test"
+      },
+      "objectives": ["O1"],
+      "provenance": { "confirmation": "written description: new boundary branch has no behavioral test" }
+    },
+    {
+      "id": "code-surface",
+      "role": "code-reviewer",
+      "set": "seeded",
+      "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+      "patch": {
+        "file": ".github/workflows/ci.yml",
+        "digest": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "expected": {
+        "file": ".github/workflows/ci.yml",
+        "severity": "MAJOR",
+        "kind": "beyond-surface",
+        "justified": false
+      },
+      "objectives": ["O1"],
+      "provenance": { "confirmation": "written description: unrelated workflow edit is outside the frozen Surface" }
+    },
+    {
+      "id": "code-objective",
+      "role": "code-reviewer",
+      "set": "seeded",
+      "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+      "patch": {
+        "file": "apps/cli/tests/eval/example.test.ts",
+        "digest": "5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      "expected": { "file": "apps/cli/tests/eval/example.test.ts", "severity": "MAJOR", "kind": "objective-unmet" },
+      "objectives": ["O1", "O2"],
+      "provenance": {
+        "confirmation": "written description: patch proves O1 but contains no implementation or test for O2"
+      }
+    },
+    {
+      "id": "history-1307",
+      "role": "code-reviewer",
+      "set": "historical",
+      "baseCommit": "99dda33c402f434e5f8ca65170416373b30fc5d7",
+      "patch": {
+        "file": "apps/cli/specs/evals.md",
+        "digest": "6666666666666666666666666666666666666666666666666666666666666666"
+      },
+      "expected": { "file": "apps/cli/specs/evals.md", "severity": "MAJOR", "kind": "contract-break" },
+      "objectives": ["O1"],
+      "provenance": {
+        "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
+        "pullRequest": 1307,
+        "commentMarker": "aeg:principal:ruling:1307-1",
+        "confirmation": "Principal required conflict resolution preserving both specification sections after the earlier review"
+      }
+    },
+    {
+      "id": "history-1310",
+      "role": "code-reviewer",
+      "set": "historical",
+      "baseCommit": "4d4ec46c552a325b1d3337610c2a62412eb61d5c",
+      "patch": {
+        "file": "apps/cli/src/lib/dev-review-eval/staging.ts",
+        "digest": "7777777777777777777777777777777777777777777777777777777777777777"
+      },
+      "expected": { "file": "apps/cli/src/lib/dev-review-eval/staging.ts", "severity": "MAJOR", "kind": "logic-error" },
+      "objectives": ["O1"],
+      "provenance": {
+        "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
+        "pullRequest": 1310,
+        "commentMarker": "Both round-1 findings are fixed",
+        "confirmation": "later round found legacy remote metadata and unsafe staged-clone behavior missed initially"
+      }
+    },
+    {
+      "id": "history-1312",
+      "role": "code-reviewer",
+      "set": "historical",
+      "baseCommit": "99dda33c402f434e5f8ca65170416373b30fc5d7",
+      "patch": {
+        "file": "apps/cli/src/lib/dev-review-eval/registry.ts",
+        "digest": "8888888888888888888888888888888888888888888888888888888888888888"
+      },
+      "expected": {
+        "file": "apps/cli/src/lib/dev-review-eval/registry.ts",
+        "severity": "MAJOR",
+        "kind": "beyond-surface",
+        "justified": true
+      },
+      "objectives": ["O1"],
+      "provenance": {
+        "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
+        "pullRequest": 1312,
+        "commentMarker": "aeg:principal:ruling:1312-1",
+        "confirmation": "Principal overruled blocking finding R1-CR-1 and authorized the exact Surface widening"
+      }
+    },
+    {
+      "id": "history-1319",
+      "role": "code-reviewer",
+      "set": "historical",
+      "baseCommit": "fce83c9b3c1b7e69cfe46ecc42cd31c64d9630fa",
+      "patch": {
+        "file": "apps/cli/tests/eval/registry/shards/cutover-gates.json",
+        "digest": "9999999999999999999999999999999999999999999999999999999999999999"
+      },
+      "expected": {
+        "file": "apps/cli/tests/eval/registry/shards/cutover-gates.json",
+        "severity": "MAJOR",
+        "kind": "contract-break"
+      },
+      "objectives": ["O1"],
+      "provenance": {
+        "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
+        "pullRequest": 1319,
+        "commentMarker": "Round 1's MAJOR finding F1 is fixed",
+        "confirmation": "later round found every row cited the repository note instead of the Engine specification"
+      }
+    },
+    {
+      "id": "history-1320",
+      "role": "code-reviewer",
+      "set": "historical",
+      "baseCommit": "db9af5855c247122da101d8afde77f4dd906e974",
+      "patch": {
+        "file": "apps/cli/src/lib/dev-review-eval/registry.ts",
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expected": {
+        "file": "apps/cli/src/lib/dev-review-eval/registry.ts",
+        "severity": "MAJOR",
+        "kind": "beyond-surface",
+        "justified": true
+      },
+      "objectives": ["O1"],
+      "provenance": {
+        "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
+        "pullRequest": 1320,
+        "commentMarker": "aeg:principal:ruling:1320-1",
+        "confirmation": "Principal overruled the Surface block to resolve contradictory registry requirements"
+      }
+    },
+    {
+      "id": "code-clean",
+      "role": "code-reviewer",
+      "set": "clean",
+      "baseCommit": "3e33601c52c9b23c618f817c44a0e67b70c46413",
+      "patch": {
+        "file": "apps/cli/src/lib/dev-review-eval/contracts.ts",
+        "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "expected": null,
+      "objectives": ["O1"],
+      "provenance": {
+        "pullRequest": 1304,
+        "confirmation": "merged harness contracts change adjudicated from its pinned commit and patch"
+      },
+      "adjudication": {
+        "first": {
+          "runId": "code-clean-a",
+          "fresh": true,
+          "sawOther": false,
+          "blockingDefect": false,
+          "confirmedDefect": false
+        },
+        "second": {
+          "runId": "code-clean-b",
+          "fresh": true,
+          "sawOther": false,
+          "blockingDefect": false,
+          "confirmedDefect": false
+        }
+      }
+    }
+  ]
+}

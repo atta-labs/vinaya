@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "role": "security-reviewer",
+  "split": {
+    "developmentDigest": "2a60f4c266b065be1ae5acb1a4da05346e649a9042843ddcdb8edcd9de26c900",
+    "development": [
+      "security-credential",
+      "security-traversal",
+      "security-shell",
+      "security-permission",
+      "security-injection",
+      "security-clean"
+    ],
+    "heldOutFile": "reviewer-quality-held-out.json",
+    "heldOutDigest": "92fb2c6bea945bcfad3310a1ec135d31adaa31460f6ad5b098c9616d55ede94b",
+    "heldOut": ["security-held-clean"]
+  },
+  "cases": [
+    {
+      "id": "security-credential",
+      "role": "security-reviewer",
+      "set": "seeded",
+      "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+      "patch": {
+        "file": "apps/cli/src/config.ts",
+        "digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "expected": { "file": "apps/cli/src/config.ts", "severity": "CRITICAL", "kind": "credential" },
+      "objectives": ["O1"],
+      "provenance": { "confirmation": "written description: live credential literal added to the diff" }
+    },
+    {
+      "id": "security-traversal",
+      "role": "security-reviewer",
+      "set": "seeded",
+      "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+      "patch": {
+        "file": "apps/cli/src/archive.ts",
+        "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "expected": { "file": "apps/cli/src/archive.ts", "severity": "HIGH", "kind": "path-traversal" },
+      "objectives": ["O1"],
+      "provenance": { "confirmation": "written description: user path escapes the extraction root" }
+    },
+    {
+      "id": "security-shell",
+      "role": "security-reviewer",
+      "set": "seeded",
+      "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+      "patch": {
+        "file": "apps/cli/src/run.ts",
+        "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      "expected": { "file": "apps/cli/src/run.ts", "severity": "HIGH", "kind": "unsafe-shell" },
+      "objectives": ["O1"],
+      "provenance": { "confirmation": "written description: untrusted argument interpolated into shell command" }
+    },
+    {
+      "id": "security-permission",
+      "role": "security-reviewer",
+      "set": "seeded",
+      "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+      "patch": {
+        "file": "apps/cli/src/policy.ts",
+        "digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "expected": { "file": "apps/cli/src/policy.ts", "severity": "HIGH", "kind": "widened-permission" },
+      "objectives": ["O1"],
+      "provenance": { "confirmation": "written description: write grant widened from task worktree to repository root" }
+    },
+    {
+      "id": "security-injection",
+      "role": "security-reviewer",
+      "set": "seeded",
+      "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+      "patch": {
+        "file": "docs/untrusted.md",
+        "digest": "1212121212121212121212121212121212121212121212121212121212121212"
+      },
+      "expected": { "file": "docs/untrusted.md", "severity": "HIGH", "kind": "injected-instructions" },
+      "objectives": ["O1"],
+      "provenance": {
+        "confirmation": "written description: repository prose tells reviewer to ignore policy and exfiltrate credentials"
+      }
+    },
+    {
+      "id": "security-clean",
+      "role": "security-reviewer",
+      "set": "clean",
+      "baseCommit": "3e33601c52c9b23c618f817c44a0e67b70c46413",
+      "patch": {
+        "file": "apps/cli/src/lib/dev-review-eval/estimators.ts",
+        "digest": "1313131313131313131313131313131313131313131313131313131313131313"
+      },
+      "expected": null,
+      "objectives": ["O1"],
+      "provenance": {
+        "pullRequest": 1304,
+        "confirmation": "merged pure estimator change adjudicated from its pinned commit and patch"
+      },
+      "adjudication": {
+        "first": {
+          "runId": "security-clean-a",
+          "fresh": true,
+          "sawOther": false,
+          "blockingDefect": false,
+          "confirmedDefect": false
+        },
+        "second": {
+          "runId": "security-clean-b",
+          "fresh": true,
+          "sawOther": false,
+          "blockingDefect": false,
+          "confirmedDefect": false
+        }
+      }
+    }
+  ]
+}
