@@ -314,14 +314,30 @@ accepts only the standalone backend and checks both the backend and split
 before loading suite inputs. Each suite-and-adapter result records task count,
 trials and successes per task, the seeded bootstrap suite mean and interval,
 wall time, tokens, reported subscription quota use and estimated cost.
+The executable entry point loads the three pinned development corpora, stages
+each task through the harness isolation boundary, launches the production
+subscription adapter, and applies the suite's pinned grader:
+
+```text
+bun apps/cli/src/lib/dev-review-eval/step-one.ts run --split development --backend standalone --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> --developer-snapshot <merged-task-prs.jsonl> --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--out <file>]
+```
+
+The snapshot supplies the frozen Developer briefs whose committed corpus
+entries intentionally retain only digests. The command verifies each brief
+against that digest. Pricing is explicit because subscription CLIs report
+tokens but do not provide one portable cost schedule.
 
 `validateFreezeRecord` validates the later Principal-authored milestone freeze.
 It requires product-risk provenance for every Principal floor, explicit seeded
 bootstrap inputs, trials, budget, cadence, development results, and only the
-two fixed-floor held-out suite results. The whole-loop step-one run remains
-owed until a disposable sandbox repository exists, and Operator capability
-selection remains owed by the Operator on one host project. No floor or live
-measurement is selected or recorded by this implementation.
+two fixed-floor held-out suite results. Every result requires its suite, split,
+backend, adapter, task tallies, interval, time, token, quota and estimated-cost
+measurements. The whole-loop remaining-task floor separately requires its
+acceptance spend and wall-time budgets. Unknown fields and missing suite or
+adapter results are refused. The whole-loop step-one run remains owed until a
+disposable sandbox repository exists, and Operator capability selection
+remains owed by the Operator on one host project. No floor or live measurement
+is selected or recorded by this implementation.
 
 The evaluation program's §6.5 asks whether the Developer, isolated, completes real tasks correctly within its tools and authority. `apps/cli/tests/eval/developer-capability-suite.ts` is that suite, `developer-capability.l5`, built on this harness: each case is a coding `Task` whose reference solution is the merged change, and each criterion is a pinned code grader. It runs no live trial; it holds the cases, their splits and the grader a live run uses.
 

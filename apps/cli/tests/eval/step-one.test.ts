@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'bun:test'
-import { runStepOne, STEP_ONE_SUITES } from '../../src/lib/dev-review-eval/step-one'
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  PRODUCTION_STEP_ONE_RUNTIME,
+  runStepOne,
+  runStepOneCommand,
+  STEP_ONE_SUITES
+} from '../../src/lib/dev-review-eval/step-one'
 
 const options = {
   split: 'development' as const,
@@ -39,5 +47,52 @@ describe('development-only step one', () => {
     expect(heldOut).toEqual({ ok: false, refusal: { code: 'held_out_forbidden', detail: expect.any(String) } })
     expect(engine).toEqual({ ok: false, refusal: { code: 'engine_forbidden', detail: expect.any(String) } })
     expect(reads).toBe(0)
+  })
+
+  it('the executable command loads the real development corpora and dispatches every real task', async () => {
+    const loaded = await PRODUCTION_STEP_ONE_RUNTIME.loadDevelopment()
+    expect(loaded.suites.map((entry) => [entry.suite, entry.taskIds.length])).toEqual([
+      ['developer-capability.l5', 28],
+      ['code-reviewer-quality.l5', 11],
+      ['security-reviewer-quality.l5', 6]
+    ])
+    const calls: string[] = []
+    const out = join(mkdtempSync(join(tmpdir(), 'step-one-command-')), 'result.json')
+    const result = await runStepOneCommand(
+      [
+        'run',
+        '--split',
+        'development',
+        '--backend',
+        'standalone',
+        '--trials',
+        '1',
+        '--bootstrap',
+        'percentile',
+        '--seed',
+        '7',
+        '--resamples',
+        '20',
+        '--confidence',
+        '0.95',
+        '--input-cost-per-million',
+        '1',
+        '--output-cost-per-million',
+        '2',
+        '--out',
+        out
+      ],
+      {
+        loadDevelopment: async () => loaded,
+        execute: async (input) => {
+          calls.push(`${input.suite}:${input.adapter}:${input.taskId}`)
+          return { success: true, usage: { ...usage, estimatedCostUsd: 0 } }
+        }
+      }
+    )
+    expect(result.ok).toBe(true)
+    expect(calls).toHaveLength(90)
+    expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual(result)
+    if (result.ok) expect(result.value.runs.every((run) => run.usage.estimatedCostUsd > 0)).toBe(true)
   })
 })
