@@ -306,6 +306,23 @@ bun apps/cli/tests/eval/source-citation-suite.ts run --split held-out --approve-
 
 ## Developer capability suite
 
+## Development-only step-one run and freeze record
+
+`runStepOne` orchestrates the Developer capability, code reviewer quality and
+security reviewer quality development splits on both supported adapters. It
+accepts only the standalone backend and checks both the backend and split
+before loading suite inputs. Each suite-and-adapter result records task count,
+trials and successes per task, the seeded bootstrap suite mean and interval,
+wall time, tokens, reported subscription quota use and estimated cost.
+
+`validateFreezeRecord` validates the later Principal-authored milestone freeze.
+It requires product-risk provenance for every Principal floor, explicit seeded
+bootstrap inputs, trials, budget, cadence, development results, and only the
+two fixed-floor held-out suite results. The whole-loop step-one run remains
+owed until a disposable sandbox repository exists, and Operator capability
+selection remains owed by the Operator on one host project. No floor or live
+measurement is selected or recorded by this implementation.
+
 The evaluation program's §6.5 asks whether the Developer, isolated, completes real tasks correctly within its tools and authority. `apps/cli/tests/eval/developer-capability-suite.ts` is that suite, `developer-capability.l5`, built on this harness: each case is a coding `Task` whose reference solution is the merged change, and each criterion is a pinned code grader. It runs no live trial; it holds the cases, their splits and the grader a live run uses.
 
 <!-- AEG:CLAIM: apps/cli/tests/eval/developer-capability-suite.ts contains:export const SUITE = { name: 'developer-capability.l5', version: 1, layer: 'L5' } as const -->
