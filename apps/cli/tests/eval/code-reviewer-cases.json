@@ -1,0 +1,280 @@
+{
+  "schemaVersion": 1,
+  "role": "code-reviewer",
+  "split": {
+    "developmentDigest": "82bf3ab6ea49aca4fb73b57dcd446dcd4b84c1bd0fe236037597306b6a64bc8b",
+    "development": [
+      "code-logic",
+      "code-contract",
+      "code-test",
+      "code-surface",
+      "code-objective",
+      "history-441",
+      "history-445",
+      "history-1312",
+      "history-451",
+      "history-1320",
+      "code-clean"
+    ],
+    "heldOutFile": "reviewer-quality-held-out.json",
+    "heldOutDigest": "92a8e368066a4a9ef1473caba017b2cd4faa2fe32d9ac7c2003f29290edf1fc8",
+    "heldOut": ["code-held-clean"]
+  },
+  "cases": [
+    {
+      "id": "code-logic",
+      "role": "code-reviewer",
+      "set": "seeded",
+      "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+      "patch": {
+        "source": "inline",
+        "file": "apps/cli/src/lib/dev-review-eval/estimators.ts",
+        "digest": "11ed23a87f2baa6f6497627ac9e970280e3735ccaf813abe22a73c54819da6c9",
+        "unified": "diff --git a/apps/cli/src/lib/dev-review-eval/estimators.ts b/apps/cli/src/lib/dev-review-eval/estimators.ts\n--- a/apps/cli/src/lib/dev-review-eval/estimators.ts\n+++ b/apps/cli/src/lib/dev-review-eval/estimators.ts\n@@ -80,1 +80,1 @@\n-  return t.successes / t.trials\n+  return t.trials / t.successes\n"
+      },
+      "expected": {
+        "file": "apps/cli/src/lib/dev-review-eval/estimators.ts",
+        "severity": "MAJOR",
+        "kind": "logic-error"
+      },
+      "objectives": ["O1"],
+      "provenance": { "confirmation": "written description: success rate divides trials by successes" }
+    },
+    {
+      "id": "code-contract",
+      "role": "code-reviewer",
+      "set": "seeded",
+      "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+      "patch": {
+        "source": "inline",
+        "file": "apps/cli/src/lib/review-result.ts",
+        "digest": "27b22177a0576e0863c3c015b1f6a2fd116c5984b107a24a2750b964e21943a0",
+        "unified": "diff --git a/apps/cli/src/lib/review-result.ts b/apps/cli/src/lib/review-result.ts\n--- a/apps/cli/src/lib/review-result.ts\n+++ b/apps/cli/src/lib/review-result.ts\n@@ -91,1 +91,1 @@\n-  const bound = { schemaVersion, role, headSha: z.string().min(1), manifestDigest: z.string().min(1), summary }\n+  const bound = { schemaVersion, role, headSha: z.string().optional(), manifestDigest: z.string().min(1), summary }\n"
+      },
+      "expected": { "file": "apps/cli/src/lib/review-result.ts", "severity": "MAJOR", "kind": "contract-break" },
+      "objectives": ["O1"],
+      "provenance": { "confirmation": "written description: removes the required head binding" }
+    },
+    {
+      "id": "code-test",
+      "role": "code-reviewer",
+      "set": "seeded",
+      "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+      "patch": {
+        "source": "inline",
+        "file": "apps/cli/tests/eval/developer-capability-suite.ts",
+        "digest": "4840a708bdb88190639c8fdbddd35ce026eb3c3ce1aa24d496e719a406d4aebb",
+        "unified": "diff --git a/apps/cli/tests/eval/developer-capability-suite.ts b/apps/cli/tests/eval/developer-capability-suite.ts\n--- a/apps/cli/tests/eval/developer-capability-suite.ts\n+++ b/apps/cli/tests/eval/developer-capability-suite.ts\n@@ -71,1 +71,1 @@\n-export const MINIMUM_CASES = 10\n+export const MINIMUM_CASES = 9\n"
+      },
+      "expected": {
+        "file": "apps/cli/tests/eval/developer-capability-suite.ts",
+        "severity": "MAJOR",
+        "kind": "missing-test"
+      },
+      "objectives": ["O1"],
+      "provenance": { "confirmation": "written description: evaluation threshold changes without a corresponding test" }
+    },
+    {
+      "id": "code-surface",
+      "role": "code-reviewer",
+      "set": "seeded",
+      "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+      "patch": {
+        "source": "inline",
+        "file": ".github/workflows/vinaya-checks.yml",
+        "digest": "16bca073b2732963339d84355556dd8655842fb8f215100bde6092efb7c67ddf",
+        "unified": "diff --git a/.github/workflows/vinaya-checks.yml b/.github/workflows/vinaya-checks.yml\n--- a/.github/workflows/vinaya-checks.yml\n+++ b/.github/workflows/vinaya-checks.yml\n@@ -49,1 +49,1 @@\n-      contents: read\n+      contents: write\n"
+      },
+      "expected": {
+        "file": ".github/workflows/vinaya-checks.yml",
+        "severity": "MAJOR",
+        "kind": "beyond-surface",
+        "justified": false
+      },
+      "objectives": ["O1"],
+      "provenance": { "confirmation": "written description: unrelated workflow edit is outside the frozen Surface" }
+    },
+    {
+      "id": "code-objective",
+      "role": "code-reviewer",
+      "set": "seeded",
+      "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+      "patch": {
+        "source": "inline",
+        "file": "apps/cli/src/lib/dev-review-eval/contracts.ts",
+        "digest": "f5b9d191d1df3f0fd847aaedf0b1169e70c9b103f675f583f3279dc474e9b78e",
+        "unified": "diff --git a/apps/cli/src/lib/dev-review-eval/contracts.ts b/apps/cli/src/lib/dev-review-eval/contracts.ts\n--- a/apps/cli/src/lib/dev-review-eval/contracts.ts\n+++ b/apps/cli/src/lib/dev-review-eval/contracts.ts\n@@ -578,1 +578,1 @@\n-export const EVALUATION_LAYERS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7', 'L8'] as const\n+export const EVALUATION_LAYERS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7'] as const\n"
+      },
+      "expected": {
+        "file": "apps/cli/src/lib/dev-review-eval/contracts.ts",
+        "severity": "MAJOR",
+        "kind": "objective-unmet"
+      },
+      "objectives": ["O1", "O2"],
+      "provenance": {
+        "confirmation": "written description: the patch removes the required L8 evaluation layer, leaving O2 unmet"
+      }
+    },
+    {
+      "id": "history-441",
+      "role": "code-reviewer",
+      "set": "historical",
+      "baseCommit": "8825319e43cb50fbe11a2d23df019dcda516efac",
+      "patch": {
+        "source": "git",
+        "file": "apps/cli/src/lib/dispatch.ts",
+        "parentCommit": "8825319e43cb50fbe11a2d23df019dcda516efac",
+        "changedCommit": "b1692f72a3fda6fccb3c27ac2192f81e24ade2c9",
+        "digest": "274fb0a4e7e3083e3d7c5dbad596915eb4e3380e4d7059a3185a3a4c6db71a7f"
+      },
+      "expected": { "file": "apps/cli/src/lib/dispatch.ts", "severity": "MAJOR", "kind": "logic-error" },
+      "objectives": ["O1"],
+      "provenance": {
+        "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
+        "pullRequest": 441,
+        "commentMarker": "A genuine correlation race (F1, MAJOR) found round 1",
+        "confirmation": "the digest-verified reviewer snapshot records that round 1 found the shared-run-id correlation race later fixed by threading effect_id through the log and wait paths"
+      }
+    },
+    {
+      "id": "history-445",
+      "role": "code-reviewer",
+      "set": "historical",
+      "baseCommit": "831ae1baa64af094e51124e81afe1e12f391cc62",
+      "patch": {
+        "source": "git",
+        "file": "apps/cli/src/lib/dev-review-loop.ts",
+        "parentCommit": "831ae1baa64af094e51124e81afe1e12f391cc62",
+        "changedCommit": "a59344e37356e1c1def0191d0889ca59705a81da",
+        "digest": "7c8526bec57f8144e31920b18aed2cdc9dd30d042316e9e9ca3cb2cd662ec4b4"
+      },
+      "expected": { "file": "apps/cli/src/lib/dev-review-loop.ts", "severity": "BLOCKER", "kind": "objective-unmet" },
+      "objectives": ["O1"],
+      "provenance": {
+        "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
+        "pullRequest": 445,
+        "commentMarker": "Two genuine BLOCKERs found round 1",
+        "confirmation": "the final reviewer adjudication records that the initial reviewer prompt supplied the frozen brief instead of the required objectives fact"
+      }
+    },
+    {
+      "id": "history-1312",
+      "role": "code-reviewer",
+      "set": "historical",
+      "baseCommit": "9893ac9b18c9f257590a0233edcaa884fc0ff4a3",
+      "patch": {
+        "source": "git",
+        "file": "apps/cli/src/lib/dev-review-eval/registry.ts",
+        "parentCommit": "9893ac9b18c9f257590a0233edcaa884fc0ff4a3",
+        "changedCommit": "5c3dfe88f999386f2787acdf52c4b8f9ca96db30",
+        "digest": "1fa137a2211df2c398a461d5fb413f3716ff5bb2bcc2ac42d6cb7cf1301507e5"
+      },
+      "expected": {
+        "file": "apps/cli/src/lib/dev-review-eval/registry.ts",
+        "severity": "MAJOR",
+        "kind": "beyond-surface",
+        "justified": true
+      },
+      "objectives": ["O1"],
+      "provenance": {
+        "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
+        "pullRequest": 1312,
+        "commentMarker": "aeg:principal:ruling:1312-1",
+        "confirmation": "Principal overruled blocking finding R1-CR-1 and authorized the exact Surface widening"
+      }
+    },
+    {
+      "id": "history-451",
+      "role": "code-reviewer",
+      "set": "historical",
+      "baseCommit": "7e3f64cb0bb7672b1838fa36d69e2ac984f980e3",
+      "patch": {
+        "source": "git",
+        "file": "apps/cli/src/lib/agents-skills-emitter.ts",
+        "parentCommit": "7e3f64cb0bb7672b1838fa36d69e2ac984f980e3",
+        "changedCommit": "3b52274bcbc77d0de389a121e85596ec39d2d0cc",
+        "digest": "9326753014aa77d803d908a69bdb31336a4f4f394d82f9317547214e59ab6a7d"
+      },
+      "expected": {
+        "file": "apps/cli/src/lib/agents-skills-emitter.ts",
+        "severity": "BLOCKER",
+        "kind": "logic-error"
+      },
+      "objectives": ["O1"],
+      "provenance": {
+        "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
+        "pullRequest": 451,
+        "commentMarker": "Two genuine BLOCKERs found round 1",
+        "confirmation": "the final reviewer adjudication records that inferring retirement from file absence could regenerate the retired skill while its role file remained"
+      }
+    },
+    {
+      "id": "history-1320",
+      "role": "code-reviewer",
+      "set": "historical",
+      "baseCommit": "db9af5855c247122da101d8afde77f4dd906e974",
+      "patch": {
+        "source": "git",
+        "file": "apps/cli/src/lib/dev-review-eval/registry.ts",
+        "parentCommit": "db9af5855c247122da101d8afde77f4dd906e974",
+        "changedCommit": "23b378b8e7ab1f01f09a627c55c0298228b5a791",
+        "digest": "9914cad87b8db88ab38115c003bed401be96bef9c0dc5d41664754261cc0d13c"
+      },
+      "expected": {
+        "file": "apps/cli/src/lib/dev-review-eval/registry.ts",
+        "severity": "MAJOR",
+        "kind": "beyond-surface",
+        "justified": true
+      },
+      "objectives": ["O1"],
+      "provenance": {
+        "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
+        "pullRequest": 1320,
+        "commentMarker": "aeg:principal:ruling:1320-1",
+        "confirmation": "Principal overruled the Surface block to resolve contradictory registry requirements"
+      }
+    },
+    {
+      "id": "code-clean",
+      "role": "code-reviewer",
+      "set": "clean",
+      "baseCommit": "cab406d2caaf4b6b372b176681e2ff655fe383be",
+      "patch": {
+        "source": "git",
+        "file": "apps/cli/src/lib/dev-review-eval/contracts.ts",
+        "parentCommit": "cab406d2caaf4b6b372b176681e2ff655fe383be",
+        "changedCommit": "45c57228deebf1e8fcc4d4a23d19957d528185fa",
+        "digest": "b44252860e4428ac57aefb629ed2af5f9b59b684578621fe21f32c076230e8b5"
+      },
+      "expected": null,
+      "objectives": ["O1"],
+      "provenance": {
+        "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
+        "pullRequest": 1304,
+        "confirmation": "merged harness contracts change with two recorded independent adjudicator outputs"
+      },
+      "adjudication": {
+        "first": {
+          "runId": "pr-1304-code-2026-10-12t01-51-51z",
+          "reviewer": "code-reviewer",
+          "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
+          "pullRequest": 1304,
+          "createdAt": "2026-10-12T01:51:51Z",
+          "commentDigest": "90220fe47d01c05898d197a6dc315e4045bb3471dd74653671d333682eaa49fc",
+          "judgedHead": "45c57228deebf1e8fcc4d4a23d19957d528185fa",
+          "verdict": "clean"
+        },
+        "second": {
+          "runId": "pr-1304-security-2026-10-12t01-51-54z",
+          "reviewer": "security-reviewer",
+          "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
+          "pullRequest": 1304,
+          "createdAt": "2026-10-12T01:51:54Z",
+          "commentDigest": "4e7120b5d39c09a65d4dc300e74010c8884ba72a29769e07825117230c1e4b6b",
+          "judgedHead": "45c57228deebf1e8fcc4d4a23d19957d528185fa",
+          "verdict": "clean"
+        }
+      }
+    }
+  ]
+}

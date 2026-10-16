@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "code-held-clean",
+      "role": "code-reviewer",
+      "set": "clean",
+      "baseCommit": "3e33601c52c9b23c618f817c44a0e67b70c46413",
+      "patch": {
+        "source": "git",
+        "file": "apps/cli/tests/eval/registry/modules.json",
+        "parentCommit": "3e33601c52c9b23c618f817c44a0e67b70c46413",
+        "changedCommit": "801679585f8bdc8d0adaf502d5bd9b245e862ce3",
+        "digest": "8f7c48c59166ea3dce107672a4fb631bf8bc00fdba0b4a57cd61c66abfae30ed"
+      },
+      "expected": null,
+      "objectives": ["O1"],
+      "provenance": {
+        "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
+        "pullRequest": 1306,
+        "confirmation": "held-out merged registry change with two snapshot-backed independent verdicts"
+      },
+      "adjudication": {
+        "first": {
+          "runId": "pr-1306-code-2026-10-12t03-08-36z",
+          "reviewer": "code-reviewer",
+          "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
+          "pullRequest": 1306,
+          "createdAt": "2026-10-12T03:08:36Z",
+          "commentDigest": "50ba62c3d142893524a592bfa36739a050945c0b66e78fad3f2f60efa8ba09d3",
+          "judgedHead": "801679585f8bdc8d0adaf502d5bd9b245e862ce3",
+          "verdict": "clean"
+        },
+        "second": {
+          "runId": "pr-1306-security-2026-10-12t03-08-38z",
+          "reviewer": "security-reviewer",
+          "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
+          "pullRequest": 1306,
+          "createdAt": "2026-10-12T03:08:38Z",
+          "commentDigest": "a16849593b24b8be89dc086821391ec499e26bd96a7e2147a2a14869b0b4a2ff",
+          "judgedHead": "801679585f8bdc8d0adaf502d5bd9b245e862ce3",
+          "verdict": "clean"
+        }
+      }
+    },
+    {
+      "id": "security-held-clean",
+      "role": "security-reviewer",
+      "set": "clean",
+      "baseCommit": "3e33601c52c9b23c618f817c44a0e67b70c46413",
+      "patch": {
+        "source": "git",
+        "file": "apps/cli/tests/eval/registry/modules.json",
+        "parentCommit": "3e33601c52c9b23c618f817c44a0e67b70c46413",
+        "changedCommit": "801679585f8bdc8d0adaf502d5bd9b245e862ce3",
+        "digest": "8f7c48c59166ea3dce107672a4fb631bf8bc00fdba0b4a57cd61c66abfae30ed"
+      },
+      "expected": null,
+      "objectives": ["O1"],
+      "provenance": {
+        "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
+        "pullRequest": 1306,
+        "confirmation": "held-out merged registry change with two snapshot-backed independent verdicts"
+      },
+      "adjudication": {
+        "first": {
+          "runId": "pr-1306-code-2026-10-12t03-08-36z",
+          "reviewer": "code-reviewer",
+          "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
+          "pullRequest": 1306,
+          "createdAt": "2026-10-12T03:08:36Z",
+          "commentDigest": "50ba62c3d142893524a592bfa36739a050945c0b66e78fad3f2f60efa8ba09d3",
+          "judgedHead": "801679585f8bdc8d0adaf502d5bd9b245e862ce3",
+          "verdict": "clean"
+        },
+        "second": {
+          "runId": "pr-1306-security-2026-10-12t03-08-38z",
+          "reviewer": "security-reviewer",
+          "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
+          "pullRequest": 1306,
+          "createdAt": "2026-10-12T03:08:38Z",
+          "commentDigest": "a16849593b24b8be89dc086821391ec499e26bd96a7e2147a2a14869b0b4a2ff",
+          "judgedHead": "801679585f8bdc8d0adaf502d5bd9b245e862ce3",
+          "verdict": "clean"
+        }
+      }
+    }
+  ]
+}
