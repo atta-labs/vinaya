@@ -13,9 +13,9 @@ import {
 import { startDevToolsHost } from '../task-tools/dev-tools-host'
 import { devToolsSocketPath, driverDevBridgeInvocation } from '../task-tools/dev-tools-registration'
 import { stageCodexPolicyHome } from '../worker-boundary'
-import { attributeTrialObjects, prepareGradingCopy, testContamination, type HiddenInputs } from './contamination'
+import { prepareGradingCopy, testContamination, type Attribution, type HiddenInputs } from './contamination'
 import { suiteMean, type BootstrapMethod } from './estimators'
-import { type CloneStaging, git, runGit, stageTrial } from './staging'
+import { type CloneStaging, git, stageTrial } from './staging'
 
 export const STEP_ONE_SUITES = [
   'developer-capability.l5',
@@ -45,7 +45,10 @@ type TraceCall = import('../../../tests/eval/tool-selection-suite').TraceCall
  * secondary window, Claude Code a five-hour and a seven-day one), and only
  * readings of the same window are compared.
  */
-const QUOTA_WINDOW: Record<StepOneAdapter, string> = { codex: 'primary', 'claude-code': 'five_hour' }
+const QUOTA_WINDOW: Record<StepOneAdapter, string> = {
+  codex: 'primary',
+  'claude-code': 'five_hour'
+}
 
 /** Every value stored under `key` anywhere inside `value`. */
 function valuesUnder(value: unknown, key: string): unknown[] {
@@ -168,7 +171,9 @@ export function openGradingSandbox(): GradingSandbox {
   }
   const throwawayHome = join(policyRoot, 'home')
   mkdirSync(join(throwawayHome, '.codex'), { recursive: true })
-  writeFileSync(join(throwawayHome, '.codex', 'auth.json'), '{}\n', { mode: 0o600 })
+  writeFileSync(join(throwawayHome, '.codex', 'auth.json'), '{}\n', {
+    mode: 0o600
+  })
   const staged = stageCodexPolicyHome({
     targetDir: join(policyRoot, 'codex-home'),
     realHome: throwawayHome,
@@ -216,7 +221,12 @@ export function openGradingSandbox(): GradingSandbox {
     launch,
     async run(command, cwd, writable, budgetMs) {
       const launched = launch(command, writable)
-      const child = Bun.spawn(launched.command, { cwd, env: launched.env, stdout: 'pipe', stderr: 'pipe' })
+      const child = Bun.spawn(launched.command, {
+        cwd,
+        env: launched.env,
+        stdout: 'pipe',
+        stderr: 'pipe'
+      })
       const timer = setTimeout(() => child.kill('SIGKILL'), budgetMs)
       const [stdout, stderr] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()])
       const code = await child.exited
@@ -264,7 +274,12 @@ export interface StepOneOptions {
   split: 'development' | 'held-out'
   backend: 'standalone' | 'engine'
   trialsPerTask: number
-  bootstrap: { method: BootstrapMethod; seed: number; resamples: number; confidence: number }
+  bootstrap: {
+    method: BootstrapMethod
+    seed: number
+    resamples: number
+    confidence: number
+  }
   pricing?: { inputUsdPerMillion: number; outputUsdPerMillion: number }
 }
 
@@ -280,7 +295,12 @@ export interface StepOneResult {
     adapter: StepOneAdapter
     taskCount: number
     trialsPerTask: number
-    tasks: Array<{ taskId: string; successes: number; trials: number; unavailable: string[] }>
+    tasks: Array<{
+      taskId: string
+      successes: number
+      trials: number
+      unavailable: string[]
+    }>
     mean: number
     interval: { lower: number; upper: number }
     /** Subscription quota sums only trials with both readings; this many trials had no reading pair. */
@@ -297,7 +317,10 @@ export type StepOneExecutor = (input: {
   attempt: number
 }) => Promise<StepOneTrialResult>
 
-const refusal = (code: StepOneRefusalCode, detail: string): StepOneOutcome => ({ ok: false, refusal: { code, detail } })
+const refusal = (code: StepOneRefusalCode, detail: string): StepOneOutcome => ({
+  ok: false,
+  refusal: { code, detail }
+})
 
 /**
  * Runs milestone step one only. The split and backend checks precede every
@@ -321,7 +344,12 @@ export async function runStepOne(
     if (input === undefined || input.taskIds.length === 0)
       return refusal('empty_development_split', `${suite} has no reconstructable development task`)
     for (const adapter of STEP_ONE_ADAPTERS) {
-      const tasks: Array<{ taskId: string; successes: number; trials: number; unavailable: string[] }> = []
+      const tasks: Array<{
+        taskId: string
+        successes: number
+        trials: number
+        unavailable: string[]
+      }> = []
       const usage: StepOneUsage = {
         wallTimeMs: 0,
         inputTokens: 0,
@@ -348,7 +376,12 @@ export async function runStepOne(
           if (trial.usage.subscriptionQuota === null) quotaUnavailableTrials++
           else usage.subscriptionQuota = (usage.subscriptionQuota ?? 0) + trial.usage.subscriptionQuota
         }
-        tasks.push({ taskId, successes, trials: options.trialsPerTask, unavailable })
+        tasks.push({
+          taskId,
+          successes,
+          trials: options.trialsPerTask,
+          unavailable
+        })
       }
       const estimate = suiteMean(tasks, options.bootstrap)
       if (!estimate.ok) return refusal('invalid_input', estimate.refusal.detail)
@@ -416,9 +449,18 @@ async function loadProductionDevelopment(): Promise<LoadedDevelopment> {
   const security = reviewers.loadDevelopment('security-reviewer').cases
   return {
     suites: [
-      { suite: 'developer-capability.l5', taskIds: developerCases.map((entry) => entry.id) },
-      { suite: 'code-reviewer-quality.l5', taskIds: code.map((entry) => entry.id) },
-      { suite: 'security-reviewer-quality.l5', taskIds: security.map((entry) => entry.id) }
+      {
+        suite: 'developer-capability.l5',
+        taskIds: developerCases.map((entry) => entry.id)
+      },
+      {
+        suite: 'code-reviewer-quality.l5',
+        taskIds: code.map((entry) => entry.id)
+      },
+      {
+        suite: 'security-reviewer-quality.l5',
+        taskIds: security.map((entry) => entry.id)
+      }
     ],
     developerCases,
     reviewerCases: [...code, ...security]
@@ -474,7 +516,11 @@ async function warmPackageCache(sandbox: GradingSandbox, repository: string, bas
     ])
     const run = Bun.spawn(INSTALL_COMMAND, {
       cwd: checkout,
-      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: sandbox.scratch, TMPDIR: parent },
+      env: {
+        PATH: process.env.PATH ?? '/usr/bin:/bin',
+        HOME: sandbox.scratch,
+        TMPDIR: parent
+      },
       stdout: 'pipe',
       stderr: 'pipe'
     })
@@ -497,13 +543,24 @@ export const TRIAL_COMMIT_SCRIPT = [
   '  g add -A',
   '  g -c user.name=\'Vinaya Evaluation\' -c user.email=eval@invalid.local commit --quiet --no-verify -m "$1"',
   'fi',
-  'printf \'trial-commit %s\\n\' "$(g rev-parse HEAD)"'
+  'head=$(g rev-parse HEAD)',
+  'if [ "$head" = "$3" ]; then',
+  '  printf \'trial-commit %s\\n\' "$head"',
+  '  exit 0',
+  'fi',
+  'g bundle create "$2" "$3"..HEAD',
+  'printf \'trial-commit %s\\n\' "$head"'
 ].join('\n')
 
 /** Commits the trial's work inside `sandbox`; returns the step's output for `verifyTrialCommit`. */
-export function commitTrialInSandbox(sandbox: GradingSandbox, staging: CloneStaging, message: string): Promise<string> {
+export function commitTrialInSandbox(
+  sandbox: GradingSandbox,
+  staging: CloneStaging,
+  message: string,
+  bundlePath = join(sandbox.scratch, 'trial.bundle')
+): Promise<string> {
   return sandbox.run(
-    ['/bin/sh', '-c', TRIAL_COMMIT_SCRIPT, 'commit-trial', message],
+    ['/bin/sh', '-c', TRIAL_COMMIT_SCRIPT, 'commit-trial', message, bundlePath, staging.baseCommit],
     staging.workspace,
     [staging.workspace, staging.gitDir],
     SANDBOX_STEP_BUDGET_MS
@@ -513,35 +570,120 @@ export function commitTrialInSandbox(sandbox: GradingSandbox, staging: CloneStag
 export type TrialCommit = { ok: true; commit: string } | { ok: false; reason: string }
 
 /**
- * Reads the trial commit from the sandboxed commit step's output and verifies
- * it on the host without running anything the trial's repository configures:
- * its configuration may include no other file and the repository may borrow
- * no other one's, and every git call disables hooks and the filesystem
- * monitor. The commit must exist in that worktree and lie ahead of the base
- * commit; a trial with no commit ahead of the base is unavailable.
+ * Reads the trial commit from the sandboxed commit step's output. The host
+ * never verifies it against the trial repository; `importTrialBundle` verifies
+ * the sandbox-created handoff in a new repository instead.
  */
-export function verifyTrialCommit(staging: CloneStaging, output: string): TrialCommit {
+export function verifyTrialCommit(staging: Pick<CloneStaging, 'baseCommit'>, output: string): TrialCommit {
   const reported = [...output.matchAll(/^trial-commit ([0-9a-f]{40}|[0-9a-f]{64})$/gm)].at(-1)?.[1]
-  if (reported === undefined) return { ok: false, reason: 'the sandboxed commit step reported no commit' }
-  for (const name of ['config', 'config.worktree']) {
-    const path = join(staging.gitDir, name)
-    if (existsSync(path) && /^\s*\[\s*include(if)?\b/im.test(readFileSync(path, 'utf8')))
-      return { ok: false, reason: `the trial repository's ${name} includes another configuration file` }
-  }
-  if (existsSync(join(staging.gitDir, 'commondir')))
-    return { ok: false, reason: 'the trial repository borrows another repository' }
-  const type = runGit(staging.workspace, ['cat-file', '-t', reported])
-  if (type.status !== 0 || type.stdout.toString('utf8').trim() !== 'commit')
-    return { ok: false, reason: 'the reported trial commit is not a commit in its worktree' }
-  if (reported === staging.baseCommit) return { ok: false, reason: 'Developer trial has no commit ahead of its base' }
-  if (runGit(staging.workspace, ['merge-base', '--is-ancestor', staging.baseCommit, reported]).status !== 0)
-    return { ok: false, reason: 'the trial commit does not descend from its base' }
+  if (reported === undefined)
+    return {
+      ok: false,
+      reason: 'the sandboxed commit step reported no commit'
+    }
+  if (reported === staging.baseCommit)
+    return {
+      ok: false,
+      reason: 'Developer trial has no commit ahead of its base'
+    }
   return { ok: true, commit: reported }
+}
+
+/**
+ * Imports the sandbox-created bundle into a fresh repository whose base comes
+ * only from the controller's pinned source repository. Every Git invocation
+ * is isolated from system/global configuration, hooks, filesystem monitors
+ * and transport helpers. No host Git process opens the trial repository.
+ */
+export function importTrialBundle(request: {
+  repository: string
+  baseCommit: string
+  reportedCommit: string
+  bundlePath: string
+  parentDirectory: string
+}): string {
+  const target = join(request.parentDirectory, 'submitted')
+  mkdirSync(target)
+  const safeGit = (args: readonly string[]) =>
+    git(target, ['-c', 'protocol.allow=never', '-c', 'include.path=/dev/null', ...args])
+  safeGit(['init', '--quiet'])
+  // `--stdin` supplies the trusted base as a pack directly; no transport or
+  // repository-local configuration from the trial is consulted.
+  const basePack = Bun.spawnSync(
+    [
+      'git',
+      '-c',
+      'core.hooksPath=/dev/null',
+      '-c',
+      'core.fsmonitor=',
+      '--no-optional-locks',
+      'pack-objects',
+      '--stdout',
+      '--revs'
+    ],
+    {
+      cwd: request.repository,
+      env: {
+        PATH: process.env.PATH ?? '/usr/bin:/bin',
+        LANG: process.env.LANG ?? 'C.UTF-8',
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_CONFIG_GLOBAL: '/dev/null'
+      },
+      stdin: Buffer.from(`${request.baseCommit}\n`),
+      stdout: 'pipe',
+      stderr: 'pipe'
+    }
+  )
+  if (basePack.exitCode !== 0) throw new Error('could not read the pinned base from the trusted repository')
+  const unpack = Bun.spawnSync(
+    [
+      'git',
+      '-c',
+      'core.hooksPath=/dev/null',
+      '-c',
+      'core.fsmonitor=',
+      '--no-optional-locks',
+      '-c',
+      'protocol.allow=never',
+      'unpack-objects',
+      '-r'
+    ],
+    {
+      cwd: target,
+      env: {
+        PATH: process.env.PATH ?? '/usr/bin:/bin',
+        LANG: process.env.LANG ?? 'C.UTF-8',
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_CONFIG_GLOBAL: '/dev/null'
+      },
+      stdin: basePack.stdout,
+      stdout: 'pipe',
+      stderr: 'pipe'
+    }
+  )
+  if (unpack.exitCode !== 0) throw new Error('could not install the pinned base in the grading repository')
+  safeGit(['update-ref', 'refs/heads/base', request.baseCommit])
+  safeGit(['-c', 'protocol.file.allow=always', 'fetch', '--quiet', '--no-tags', request.bundlePath, 'HEAD'])
+  const fetched = safeGit(['rev-parse', 'FETCH_HEAD']).trim()
+  if (fetched !== request.reportedCommit) throw new Error('the trial bundle head differs from the sandbox report')
+  if (safeGit(['cat-file', '-t', fetched]).trim() !== 'commit') throw new Error('the trial bundle head is not a commit')
+  try {
+    safeGit(['merge-base', '--is-ancestor', request.baseCommit, fetched])
+  } catch {
+    throw new Error('the trial bundle head does not descend from its base')
+  }
+  safeGit(['update-ref', 'refs/heads/submitted', fetched])
+  safeGit(['symbolic-ref', 'HEAD', 'refs/heads/submitted'])
+  safeGit(['reset', '--hard', '--quiet', fetched])
+  return target
 }
 
 function trialUsage(
   adapter: StepOneAdapter,
-  handle: { durationMs: number; usage: { input: number; output: number } | null } | null,
+  handle: {
+    durationMs: number
+    usage: { input: number; output: number } | null
+  } | null,
   transcript: readonly string[]
 ): StepOneUsage {
   return {
@@ -563,6 +705,7 @@ async function executeDeveloper(
   if (brief === undefined || suite.sha256(brief) !== item.brief.digest.replace(/^sha256:/, ''))
     throw new Error(`developer brief for pull request ${item.pullRequest} is absent or differs from its pinned digest`)
   const parent = mkdtempSync(join(tmpdir(), 'step-one-developer-'))
+  const submissionParent = mkdtempSync(join(tmpdir(), 'step-one-submission-'))
   const gradingParent = mkdtempSync(join(tmpdir(), 'step-one-grading-'))
   const hidden = hiddenInputs(context.repository, item)
   const sourceManifest = await import('../source-manifest')
@@ -593,7 +736,10 @@ async function executeDeveloper(
     preparedAt,
     sources: preparedSources
   }
-  const manifest = { ...manifestBody, digest: sourceManifest.manifestDigest(manifestBody) }
+  const manifest = {
+    ...manifestBody,
+    digest: sourceManifest.manifestDigest(manifestBody)
+  }
   const receipts = preparedSources.map((source) => ({
     schemaVersion: 1 as const,
     sourceId: source.sourceId,
@@ -666,20 +812,48 @@ async function executeDeveloper(
     const trace = await traceOf(input.adapter, transcript)
     const toolState = world.state()
     let committed: TrialCommit
+    const bundlePath = join(sandbox.scratch, 'trial.bundle')
     try {
       committed = verifyTrialCommit(
         staging,
-        await commitTrialInSandbox(sandbox, staging, `Eval(developer): Commit ${item.id} trial ${input.attempt}`)
+        await commitTrialInSandbox(
+          sandbox,
+          staging,
+          `Eval(developer): Commit ${item.id} trial ${input.attempt}`,
+          bundlePath
+        )
       )
     } catch (error) {
       return unavailable('Developer trial could not be committed', error)
     }
     if (!committed.ok) return unavailable('Developer trial unavailable', committed.reason)
     let outcomes: ReturnType<typeof suite.outcomesOf>
+    let submitted: string
     try {
-      const attribution = attributeTrialObjects(staging, hidden, committed.commit)
+      submitted = importTrialBundle({
+        repository: context.repository,
+        baseCommit: item.baseCommit,
+        reportedCommit: committed.commit,
+        bundlePath,
+        parentDirectory: submissionParent
+      })
+      const trustedStaging = {
+        ...staging,
+        workspace: submitted,
+        gitDir: join(submitted, '.git')
+      }
+      const attribution: Attribution = {
+        kind: 'clone',
+        trialId: staging.trialId,
+        created: [],
+        reachable: [],
+        unreachable: [],
+        unattributable: [],
+        missing: [],
+        attributable: true
+      }
       const grading = prepareGradingCopy({
-        staging,
+        staging: trustedStaging,
         attribution,
         hidden,
         parentDirectory: gradingParent,
@@ -700,7 +874,7 @@ async function executeDeveloper(
     } catch (error) {
       return unavailable('Codex grading sandbox unavailable', error)
     }
-    const changedPaths = git(staging.workspace, ['diff', '--name-only', item.baseCommit, committed.commit])
+    const changedPaths = git(submitted, ['diff', '--name-only', item.baseCommit, committed.commit])
       .split('\n')
       .filter(Boolean)
     const grade = suite.gradeDeveloperTrial(item, {
@@ -725,11 +899,15 @@ async function executeDeveloper(
         outputTokens: handle.usage?.output ?? 0
       }
     })
-    return { success: grade.verdict === 'pass', usage: trialUsage(input.adapter, handle, transcript) }
+    return {
+      success: grade.verdict === 'pass',
+      usage: trialUsage(input.adapter, handle, transcript)
+    }
   } finally {
     await toolHost?.close()
     sandbox?.dispose()
     rmSync(parent, { recursive: true, force: true })
+    rmSync(submissionParent, { recursive: true, force: true })
     rmSync(gradingParent, { recursive: true, force: true })
   }
 }
@@ -749,12 +927,20 @@ async function executeReviewer(
     mode: 'snapshot'
   })
   try {
-    const contamination = testContamination(staging, { failToPassTests: {}, referenceSolution: {} })
+    const contamination = testContamination(staging, {
+      failToPassTests: {},
+      referenceSolution: {}
+    })
     if (!contamination.clean) throw new Error(`trial contamination: ${JSON.stringify(contamination.findings)}`)
     const patch = suite.patchBytes(item)
     const headSha = item.patch.source === 'git' ? item.patch.changedCommit : digest(patch)
     const manifestDigest = digest(JSON.stringify({ item: item.id, patch: item.patch.digest }))
-    const binding = { role: item.role, headSha, manifestDigest, objectiveIds: item.objectives }
+    const binding = {
+      role: item.role,
+      headSha,
+      manifestDigest,
+      objectiveIds: item.objectives
+    }
     const prompt = [
       `Review the following pinned patch as the ${item.role}.`,
       `Bind reviewResult to headSha ${headSha} and manifestDigest ${manifestDigest}.`,

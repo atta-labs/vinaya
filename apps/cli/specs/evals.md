@@ -336,15 +336,19 @@ log, or vendor token in the grading environment prevent those reads from
 leaving the host.
 
 The host only reads the result. The sandboxed commit step commits any
-uncommitted change and prints the commit `HEAD` names; a trial whose agent
-already committed its work is graded on that commit. The host takes the SHA
-from that output and verifies it with every harness git call disabling hooks
-and the filesystem monitor (`-c core.hooksPath=/dev/null -c core.fsmonitor=
---no-optional-locks`), refusing a repository whose configuration includes
-another file: it must be a commit in that worktree, ahead of the base commit.
-The grading copy is cloned from that commit the same way. A trial with no
-commit ahead of its base is unavailable. An unavailable trial's reason is
-redacted with the Log's redaction helper and truncated before it is stored.
+uncommitted change; a trial whose agent already committed its work is graded
+on that commit. In the same sandbox step it writes a `base..HEAD` Git bundle
+to scratch and prints the commit `HEAD`. The host never runs Git against the
+trial worktree or its Git directory. It creates a fresh empty grading
+repository with system and global configuration disabled, hooks and the
+filesystem monitor disabled, optional locks disabled and protocols denied;
+loads the pinned base from the controller-trusted repository; permits only the
+local-file transport needed to fetch the scratch bundle; and verifies there
+that the fetched commit equals the sandbox report and descends from the base.
+The grading copy is cloned from this fresh repository. A trial with no commit
+ahead of its base or a bundle that does not verify is unavailable. An
+unavailable trial's reason is redacted with the Log's redaction helper and
+truncated before it is stored.
 
 Subscription quota use is read per trial from the vendor's own rate-limit
 readings in that trial's stream, of one window only (Codex's primary window,

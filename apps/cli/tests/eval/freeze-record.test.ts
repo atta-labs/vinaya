@@ -12,16 +12,28 @@ const measured = (suite: string, split: 'development' | 'held-out', adapter: 'cl
   tasks: [{ taskId: `${suite}-${adapter}`, successes: 2, trials: 3 }],
   mean: 2 / 3,
   interval: { lower: 0.5, upper: 0.8 },
-  usage: { wallTimeMs: 10, inputTokens: 4, outputTokens: 2, subscriptionQuota: null, estimatedCostUsd: 0 }
+  usage: {
+    wallTimeMs: 10,
+    inputTokens: 4,
+    outputTokens: 2,
+    subscriptionQuota: null,
+    estimatedCostUsd: 0
+  }
 })
 
 // Deliberately arbitrary test-only values prove shape and provenance; they are not proposed floors or budgets.
 const complete = () => ({
   schemaVersion: 1,
   floors: {
-    developerMinimumResolvedRate: { value: 0.41, basis: 'principal-product-risk' },
+    developerMinimumResolvedRate: {
+      value: 0.41,
+      basis: 'principal-product-risk'
+    },
     codeReviewerMinimumRecall: { value: 0.42, basis: 'principal-product-risk' },
-    codeReviewerMaximumAdjudicatedFalseBlockingRate: { value: 0.43, basis: 'principal-product-risk' },
+    codeReviewerMaximumAdjudicatedFalseBlockingRate: {
+      value: 0.43,
+      basis: 'principal-product-risk'
+    },
     wholeLoopRemainingTasksPass3: {
       value: 0.44,
       basis: 'principal-product-risk',
@@ -29,10 +41,23 @@ const complete = () => ({
       maximumWallTimeMs: 12345
     }
   },
-  bootstrap: { method: 'percentile', seed: 7, resamples: 100, confidence: 0.95 },
+  bootstrap: {
+    method: 'percentile',
+    seed: 7,
+    resamples: 100,
+    confidence: 0.95
+  },
   trialsPerTask: 3,
-  liveRunBudget: { subscriptionQuota: 5, estimatedCostUsd: 10, wallTimeMs: 1000 },
-  cadence: { nightly: 'sampled role suites', weekly: 'whole loop', release: 'all live suites' },
+  liveRunBudget: {
+    subscriptionQuota: 5,
+    estimatedCostUsd: 10,
+    wallTimeMs: 1000
+  },
+  cadence: {
+    nightly: 'sampled role suites',
+    weekly: 'whole loop',
+    release: 'all live suites'
+  },
   developmentRuns: STEP_ONE_SUITES.flatMap((suite) =>
     STEP_ONE_ADAPTERS.map((adapter) => measured(suite, 'development', adapter))
   ),
@@ -49,7 +74,10 @@ const complete = () => ({
     }
   },
   owed: {
-    wholeLoopStepOne: { status: 'owed', reason: 'no disposable sandbox repository yet' },
+    wholeLoopStepOne: {
+      status: 'owed',
+      reason: 'no disposable sandbox repository yet'
+    },
     operatorCapabilitySelectionStepOne: {
       status: 'owed',
       project: 'Operator on one host',
@@ -61,11 +89,41 @@ const complete = () => ({
 describe('milestone-two freeze record', () => {
   it('accepts a complete Principal-authored record', () => expect(validateFreezeRecord(complete()).ok).toBe(true))
 
+  it('enforces the seeded estimator ranges at every boundary', () => {
+    for (const seed of [-1, 0x1_0000_0000, 1.5]) {
+      const value = complete()
+      value.bootstrap.seed = seed
+      expect(validateFreezeRecord(value)).toMatchObject({
+        ok: false,
+        refusal: { path: 'bootstrap.seed' }
+      })
+    }
+    for (const resamples of [0, -1, 1.5]) {
+      const value = complete()
+      value.bootstrap.resamples = resamples
+      expect(validateFreezeRecord(value)).toMatchObject({
+        ok: false,
+        refusal: { path: 'bootstrap.resamples' }
+      })
+    }
+    for (const confidence of [0, 1, -0.1, 1.1]) {
+      const value = complete()
+      value.bootstrap.confidence = confidence
+      expect(validateFreezeRecord(value)).toMatchObject({
+        ok: false,
+        refusal: { path: 'bootstrap.confidence' }
+      })
+    }
+  })
+
   it('refuses every missing top-level value', () => {
     for (const key of Object.keys(complete())) {
       const value = complete() as Record<string, unknown>
       delete value[key]
-      expect(validateFreezeRecord(value)).toMatchObject({ ok: false, refusal: { path: key } })
+      expect(validateFreezeRecord(value)).toMatchObject({
+        ok: false,
+        refusal: { path: key }
+      })
     }
   })
 
@@ -81,7 +139,10 @@ describe('milestone-two freeze record', () => {
       heldOut: ReturnType<typeof complete>['heldOut'] & { wholeLoop: unknown }
     }
     extra.heldOut.wholeLoop = { suite: 'whole-loop.l6', results: [] }
-    expect(validateFreezeRecord(extra)).toMatchObject({ ok: false, refusal: { path: 'heldOut.wholeLoop' } })
+    expect(validateFreezeRecord(extra)).toMatchObject({
+      ok: false,
+      refusal: { path: 'heldOut.wholeLoop' }
+    })
   })
 
   it('refuses standalone-derived floors, backend-comparison held-out results and unmarked owed runs', () => {
@@ -101,7 +162,10 @@ describe('milestone-two freeze record', () => {
 
     const whole = complete()
     whole.owed.wholeLoopStepOne.status = 'complete'
-    expect(validateFreezeRecord(whole)).toMatchObject({ ok: false, refusal: { path: 'owed.wholeLoopStepOne' } })
+    expect(validateFreezeRecord(whole)).toMatchObject({
+      ok: false,
+      refusal: { path: 'owed.wholeLoopStepOne' }
+    })
   })
 
   it('requires whole-loop acceptance spend and wall-time budgets', () => {

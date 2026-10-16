@@ -23,9 +23,18 @@ export interface MeasuredResult {
 export interface FreezeRecord {
   schemaVersion: 1
   floors: {
-    developerMinimumResolvedRate: { value: number; basis: 'principal-product-risk' }
-    codeReviewerMinimumRecall: { value: number; basis: 'principal-product-risk' }
-    codeReviewerMaximumAdjudicatedFalseBlockingRate: { value: number; basis: 'principal-product-risk' }
+    developerMinimumResolvedRate: {
+      value: number
+      basis: 'principal-product-risk'
+    }
+    codeReviewerMinimumRecall: {
+      value: number
+      basis: 'principal-product-risk'
+    }
+    codeReviewerMaximumAdjudicatedFalseBlockingRate: {
+      value: number
+      basis: 'principal-product-risk'
+    }
     wholeLoopRemainingTasksPass3: {
       value: number
       basis: 'principal-product-risk'
@@ -33,24 +42,51 @@ export interface FreezeRecord {
       maximumWallTimeMs: number
     }
   }
-  bootstrap: { method: 'percentile' | 'basic'; seed: number; resamples: number; confidence: number }
+  bootstrap: {
+    method: 'percentile' | 'basic'
+    seed: number
+    resamples: number
+    confidence: number
+  }
   trialsPerTask: number
-  liveRunBudget: { subscriptionQuota: number; estimatedCostUsd: number; wallTimeMs: number }
+  liveRunBudget: {
+    subscriptionQuota: number
+    estimatedCostUsd: number
+    wallTimeMs: number
+  }
   cadence: { nightly: string; weekly: string; release: string }
   developmentRuns: MeasuredResult[]
   heldOut: {
-    toolSelection: { suite: 'tool-catalog.l5'; floor: 0.95; results: MeasuredResult[] }
-    sourceCitation: { suite: 'source-delivery.l5'; floor: 0.95; results: MeasuredResult[] }
+    toolSelection: {
+      suite: 'tool-catalog.l5'
+      floor: 0.95
+      results: MeasuredResult[]
+    }
+    sourceCitation: {
+      suite: 'source-delivery.l5'
+      floor: 0.95
+      results: MeasuredResult[]
+    }
   }
   owed: {
-    wholeLoopStepOne: { status: 'owed'; reason: 'no disposable sandbox repository yet' }
-    operatorCapabilitySelectionStepOne: { status: 'owed'; project: 'Operator on one host'; reason: string }
+    wholeLoopStepOne: {
+      status: 'owed'
+      reason: 'no disposable sandbox repository yet'
+    }
+    operatorCapabilitySelectionStepOne: {
+      status: 'owed'
+      project: 'Operator on one host'
+      reason: string
+    }
   }
 }
 
 export type FreezeRecordValidation =
   | { ok: true; value: FreezeRecord }
-  | { ok: false; refusal: { code: 'invalid_freeze_record'; path: string; detail: string } }
+  | {
+      ok: false
+      refusal: { code: 'invalid_freeze_record'; path: string; detail: string }
+    }
 
 const fail = (path: string, detail: string): FreezeRecordValidation => ({
   ok: false,
@@ -76,7 +112,11 @@ const exact = (
 function measuredResult(
   input: unknown,
   path: string,
-  expected: { suites: readonly string[]; split: 'development' | 'held-out'; trials: number }
+  expected: {
+    suites: readonly string[]
+    split: 'development' | 'held-out'
+    trials: number
+  }
 ): FreezeRecordValidation | null {
   if (!object(input)) return fail(path, 'measured result object is required')
   const shape = exact(
@@ -191,10 +231,17 @@ export function validateFreezeRecord(input: unknown): FreezeRecordValidation {
     return fail('bootstrap.method', 'unsupported bootstrap method')
   if (
     !Number.isInteger(input.bootstrap.seed) ||
-    !Number.isInteger(input.bootstrap.resamples) ||
-    !finite(input.bootstrap.confidence)
+    (input.bootstrap.seed as number) < 0 ||
+    (input.bootstrap.seed as number) > 0xffff_ffff
   )
-    return fail('bootstrap', 'seed, resamples and confidence are required')
+    return fail('bootstrap.seed', 'unsigned 32-bit integer is required')
+  if (!Number.isInteger(input.bootstrap.resamples) || (input.bootstrap.resamples as number) < 1)
+    return fail('bootstrap.resamples', 'positive integer is required')
+  if (
+    !finite(input.bootstrap.confidence) ||
+    !((input.bootstrap.confidence as number) > 0 && (input.bootstrap.confidence as number) < 1)
+  )
+    return fail('bootstrap.confidence', 'must lie strictly between 0 and 1')
   if (!Number.isInteger(input.trialsPerTask) || (input.trialsPerTask as number) < 1)
     return fail('trialsPerTask', 'positive integer is required')
   const trials = input.trialsPerTask as number

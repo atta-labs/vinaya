@@ -6,6 +6,8 @@ import { type CloneStaging, git } from '../../src/lib/dev-review-eval/staging'
 import { spawnBudgetedAsync } from '../lib/process-fixture'
 import {
   GRADING_CODEX_PACKAGE,
+  commitTrialInSandbox,
+  importTrialBundle,
   openGradingSandbox,
   PRODUCTION_STEP_ONE_RUNTIME,
   runStepOne,
@@ -22,15 +24,29 @@ const options = {
   split: 'development' as const,
   backend: 'standalone' as const,
   trialsPerTask: 2,
-  bootstrap: { method: 'percentile' as const, seed: 7, resamples: 20, confidence: 0.95 }
+  bootstrap: {
+    method: 'percentile' as const,
+    seed: 7,
+    resamples: 20,
+    confidence: 0.95
+  }
 }
 const suites = () => STEP_ONE_SUITES.map((suite) => ({ suite, taskIds: [`${suite}-task`] }))
-const usage = { wallTimeMs: 10, inputTokens: 3, outputTokens: 2, subscriptionQuota: 0.1, estimatedCostUsd: 0.01 }
+const usage = {
+  wallTimeMs: 10,
+  inputTokens: 3,
+  outputTokens: 2,
+  subscriptionQuota: 0.1,
+  estimatedCostUsd: 0.01
+}
 
 describe('development-only step one', () => {
   it('charges a trial the increase between the before and after readings of one window only', () => {
     const claude = (type: string, utilization: number) =>
-      JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { rateLimitType: type, utilization } })
+      JSON.stringify({
+        type: 'rate_limit_event',
+        rate_limit_info: { rateLimitType: type, utilization }
+      })
     expect(
       subscriptionQuotaOf('claude-code', [
         claude('five_hour', 0.37),
@@ -40,7 +56,12 @@ describe('development-only step one', () => {
     ).toBeCloseTo(0.05)
     const codex = (primary: number, secondary: number) =>
       JSON.stringify({
-        msg: { rate_limits: { primary: { used_percent: primary }, secondary: { used_percent: secondary } } }
+        msg: {
+          rate_limits: {
+            primary: { used_percent: primary },
+            secondary: { used_percent: secondary }
+          }
+        }
       })
     // The first reading's primary window against the last reading's primary window — never primary against secondary.
     expect(subscriptionQuotaOf('codex', [codex(10, 80), codex(12, 81)])).toBe(2)
@@ -153,7 +174,11 @@ describe('development-only step one', () => {
         return git(workspace, ['rev-parse', 'HEAD']).trim()
       }
       const base = commit('base')
-      const staging = { workspace, gitDir: join(workspace, '.git'), baseCommit: base } as unknown as CloneStaging
+      const staging = {
+        workspace,
+        gitDir: join(workspace, '.git'),
+        baseCommit: base
+      } as unknown as CloneStaging
       return { workspace, staging, base, commit }
     }
 
@@ -166,13 +191,20 @@ describe('development-only step one', () => {
     })
 
     it('commits only uncommitted work, and reports the commit HEAD names either way', async () => {
-      const { workspace, staging, commit } = repository()
+      const { workspace, staging, base, commit } = repository()
+      const bundle = `${workspace}.bundle`
       const step = async () =>
         (
-          await spawnBudgetedAsync(['/bin/sh', '-c', TRIAL_COMMIT_SCRIPT, 'commit-trial', 'Eval(developer): trial'], {
-            cwd: workspace,
-            env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: workspace }
-          })
+          await spawnBudgetedAsync(
+            ['/bin/sh', '-c', TRIAL_COMMIT_SCRIPT, 'commit-trial', 'Eval(developer): trial', bundle, base],
+            {
+              cwd: workspace,
+              env: {
+                PATH: process.env.PATH ?? '/usr/bin:/bin',
+                HOME: workspace
+              }
+            }
+          )
         ).stdout
       const agentCommit = commit('agent work')
       expect(await step()).toBe(`trial-commit ${agentCommit}\n`)
@@ -182,6 +214,7 @@ describe('development-only step one', () => {
       expect(committed.ok).toBe(true)
       if (committed.ok) expect(committed.commit).not.toBe(agentCommit)
       expect(git(workspace, ['status', '--porcelain'])).toBe('')
+      rmSync(bundle, { force: true })
       rmSync(workspace, { recursive: true, force: true })
     })
 
@@ -192,25 +225,77 @@ describe('development-only step one', () => {
         reason: 'Developer trial has no commit ahead of its base'
       })
       expect(verifyTrialCommit(staging, 'nothing reported\n').ok).toBe(false)
-      expect(verifyTrialCommit(staging, `trial-commit ${'0'.repeat(40)}\n`).ok).toBe(false)
+      expect(verifyTrialCommit(staging, `trial-commit ${'0'.repeat(40)}\n`).ok).toBe(true)
       rmSync(workspace, { recursive: true, force: true })
     })
 
-    it('refuses a trial repository whose configuration includes another file, running none of its hooks', () => {
+    it('imports only a sandbox-produced bundle into a fresh repository and runs none of the trial hooks', async () => {
       const { workspace, staging, commit } = repository()
       const head = commit('agent work')
       const marker = join(workspace, 'hook-ran')
       writeFileSync(join(workspace, '.git', 'hooks', 'post-checkout'), `#!/bin/sh\ntouch ${marker}\n`, { mode: 0o755 })
       git(workspace, ['config', 'core.fsmonitor', `touch ${marker}`])
-      expect(verifyTrialCommit(staging, `trial-commit ${head}\n`)).toEqual({ ok: true, commit: head })
+      const bundle = join(workspace, 'trial.bundle')
+      const output = (
+        await spawnBudgetedAsync(
+          ['/bin/sh', '-c', TRIAL_COMMIT_SCRIPT, 'commit-trial', 'Eval(developer): trial', bundle, staging.baseCommit],
+          {
+            cwd: workspace,
+            env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: workspace }
+          }
+        )
+      ).stdout
+      expect(verifyTrialCommit(staging, output)).toEqual({
+        ok: true,
+        commit: head
+      })
+      const parent = realpathSync(mkdtempSync(join(tmpdir(), 'step-one-import-')))
+      const imported = importTrialBundle({
+        repository: workspace,
+        baseCommit: staging.baseCommit,
+        reportedCommit: head,
+        bundlePath: bundle,
+        parentDirectory: parent
+      })
+      expect(git(imported, ['rev-parse', 'HEAD']).trim()).toBe(head)
       expect(existsSync(marker)).toBe(false)
-      writeFileSync(
-        join(workspace, '.git', 'config'),
-        `${readFileSync(join(workspace, '.git', 'config'), 'utf8')}[includeIf "gitdir:/"]\n\tpath = /elsewhere\n`
-      )
-      expect(verifyTrialCommit(staging, `trial-commit ${head}\n`).ok).toBe(false)
+      rmSync(parent, { recursive: true, force: true })
       rmSync(workspace, { recursive: true, force: true })
     })
+
+    it.skipIf(Bun.which('codex') === null)(
+      'never invokes a partial-clone ssh command when the trial deletes its base object',
+      async () => {
+        const { workspace, staging, commit } = repository()
+        commit('agent work')
+        const outside = realpathSync(mkdtempSync(join(tmpdir(), 'step-one-attack-')))
+        const marker = join(outside, 'ssh-ran')
+        git(workspace, ['config', 'remote.origin.promisor', 'true'])
+        git(workspace, ['config', 'extensions.partialClone', 'origin'])
+        git(workspace, ['config', 'remote.origin.url', 'ssh://invalid/repository'])
+        git(workspace, ['config', 'core.sshCommand', `/usr/bin/touch ${marker}`])
+        const object = join(workspace, '.git', 'objects', staging.baseCommit.slice(0, 2), staging.baseCommit.slice(2))
+        rmSync(object, { force: true })
+        const sandbox = openGradingSandbox()
+        try {
+          let result: 'graded' | 'unavailable' = 'graded'
+          try {
+            const output = await commitTrialInSandbox(sandbox, staging, 'Eval(developer): attack')
+            const parsed = verifyTrialCommit(staging, output)
+            if (!parsed.ok) result = 'unavailable'
+          } catch {
+            result = 'unavailable'
+          }
+          expect(['graded', 'unavailable']).toContain(result)
+          expect(existsSync(marker)).toBe(false)
+        } finally {
+          sandbox.dispose()
+          rmSync(outside, { recursive: true, force: true })
+          rmSync(workspace, { recursive: true, force: true })
+        }
+      },
+      360_000
+    )
   })
 
   it('runs all three suites on both adapters and reports estimates and usage', async () => {
@@ -224,8 +309,19 @@ describe('development-only step one', () => {
     expect(result.value.runs).toHaveLength(6)
     expect(calls).toHaveLength(12)
     for (const run of result.value.runs) {
-      expect(run).toMatchObject({ taskCount: 1, mean: 0.5, usage: { wallTimeMs: 20, inputTokens: 6, outputTokens: 4 } })
-      expect(run.tasks).toEqual([{ taskId: `${run.suite}-task`, successes: 1, trials: 2, unavailable: [] }])
+      expect(run).toMatchObject({
+        taskCount: 1,
+        mean: 0.5,
+        usage: { wallTimeMs: 20, inputTokens: 6, outputTokens: 4 }
+      })
+      expect(run.tasks).toEqual([
+        {
+          taskId: `${run.suite}-task`,
+          successes: 1,
+          trials: 2,
+          unavailable: []
+        }
+      ])
     }
   })
 
@@ -238,8 +334,14 @@ describe('development-only step one', () => {
     const execute = async () => ({ success: true, usage })
     const heldOut = await runStepOne({ ...options, split: 'held-out' }, load, execute)
     const engine = await runStepOne({ ...options, backend: 'engine' }, load, execute)
-    expect(heldOut).toEqual({ ok: false, refusal: { code: 'held_out_forbidden', detail: expect.any(String) } })
-    expect(engine).toEqual({ ok: false, refusal: { code: 'engine_forbidden', detail: expect.any(String) } })
+    expect(heldOut).toEqual({
+      ok: false,
+      refusal: { code: 'held_out_forbidden', detail: expect.any(String) }
+    })
+    expect(engine).toEqual({
+      ok: false,
+      refusal: { code: 'engine_forbidden', detail: expect.any(String) }
+    })
     expect(reads).toBe(0)
   })
 
