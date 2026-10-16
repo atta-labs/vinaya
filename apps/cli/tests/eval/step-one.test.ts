@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   PRODUCTION_STEP_ONE_RUNTIME,
+  gradingIsolation,
   runStepOne,
   runStepOneCommand,
   STEP_ONE_SUITES,
@@ -21,10 +22,70 @@ const usage = { wallTimeMs: 10, inputTokens: 3, outputTokens: 2, subscriptionQuo
 
 describe('development-only step one', () => {
   it('reads adapter-reported quota telemetry without inventing a missing value', () => {
-    expect(subscriptionQuotaOf('claude-code', ['{"rate_limit_info":{"utilization":0.37}}'])).toBe(0.37)
-    expect(subscriptionQuotaOf('codex', ['{"rate_limits":{"primary":{"used_percent":42}}}'])).toBe(42)
+    expect(
+      subscriptionQuotaOf('claude-code', [
+        '{"rate_limit_info":{"utilization":0.37}}',
+        '{"rate_limit_info":{"utilization":0.42}}'
+      ])
+    ).toBeCloseTo(0.05)
+    expect(
+      subscriptionQuotaOf('codex', [
+        '{"rate_limits":{"primary":{"used_percent":42}}}',
+        '{"rate_limits":{"primary":{"used_percent":42}}}'
+      ])
+    ).toBe(0)
+    expect(subscriptionQuotaOf('codex', ['{"rate_limits":{"primary":{"used_percent":42}}}'])).toBeNull()
     expect(subscriptionQuotaOf('codex', ['{"type":"turn.completed"}'])).toBeNull()
   })
+
+  it('builds grading only through Codex sandbox with no network or ambient token environment', () => {
+    const root = mkdtempSync(join(tmpdir(), 'step-one-isolation-'))
+    const workspace = join(root, 'grading')
+    const scratch = join(root, 'scratch')
+    mkdirSync(workspace)
+    mkdirSync(scratch)
+    const isolated = gradingIsolation(workspace)(['bun', 'test', 'planted.test.ts'], workspace, scratch)
+    expect(isolated.command).toContain('sandbox')
+    expect(isolated.command).toContain('sandbox_workspace_write.network_access=false')
+    expect(isolated.command.join(' ')).not.toContain('sandbox-exec')
+    expect(isolated.command.join(' ')).not.toContain('bwrap')
+    expect(Object.keys(isolated.env).sort()).toEqual(['CODEX_HOME', 'HOME', 'LANG', 'PATH', 'TMPDIR'])
+    expect(Object.keys(isolated.env).some((key) => /TOKEN|FORGE|LOG|VENDOR/i.test(key))).toBe(false)
+    expect(isolated.command.join(' ')).toContain(workspace)
+    expect(isolated.command.join(' ')).toContain(scratch)
+  })
+
+  it('denies a graded test file writes outside scratch, network, and ambient tokens', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'step-one-sandbox-proof-'))
+    const workspace = join(root, 'grading')
+    const scratch = join(root, 'scratch')
+    mkdirSync(workspace)
+    mkdirSync(scratch)
+    const outside = join(root, 'outside')
+    mkdirSync(outside)
+    writeFileSync(
+      join(workspace, 'planted.test.ts'),
+      `import { expect, test } from 'bun:test'\n` +
+        `import { writeFileSync } from 'node:fs'\n` +
+        `test('boundary', async () => {\n` +
+        `  expect(() => writeFileSync(${JSON.stringify(join(outside, 'escaped'))}, 'no')).toThrow()\n` +
+        `  expect(await fetch('https://example.com').then(() => false, () => true)).toBe(true)\n` +
+        '  expect(Object.keys(process.env).some((key) => /TOKEN|FORGE|LOG|VENDOR/i.test(key))).toBe(false)\n' +
+        '})\n'
+    )
+    const isolated = gradingIsolation(workspace)(['bun', 'test', 'planted.test.ts'], workspace, scratch)
+    const codex = Bun.which('codex')
+    expect(codex).not.toBeNull()
+    const command = [codex as string, ...isolated.command.slice(3)]
+    const run = Bun.spawn(command, { cwd: workspace, env: isolated.env, stdout: 'pipe', stderr: 'pipe' })
+    const exitCode = await run.exited
+    const output = `${await new Response(run.stdout).text()}\n${await new Response(run.stderr).text()}`
+    if (/sandbox_apply: Operation not permitted/.test(output)) {
+      expect(exitCode).not.toBe(0)
+      return
+    }
+    expect(exitCode, output).toBe(0)
+  }, 120_000)
 
   it('runs all three suites on both adapters and reports estimates and usage', async () => {
     const calls: string[] = []
@@ -38,7 +99,7 @@ describe('development-only step one', () => {
     expect(calls).toHaveLength(12)
     for (const run of result.value.runs) {
       expect(run).toMatchObject({ taskCount: 1, mean: 0.5, usage: { wallTimeMs: 20, inputTokens: 6, outputTokens: 4 } })
-      expect(run.tasks).toEqual([{ taskId: `${run.suite}-task`, successes: 1, trials: 2 }])
+      expect(run.tasks).toEqual([{ taskId: `${run.suite}-task`, successes: 1, trials: 2, unavailable: [] }])
     }
   })
 

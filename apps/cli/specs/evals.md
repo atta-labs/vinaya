@@ -314,6 +314,19 @@ accepts only the standalone backend and checks both the backend and split
 before loading suite inputs. Each suite-and-adapter result records task count,
 trials and successes per task, the seeded bootstrap suite mean and interval,
 wall time, tokens, reported subscription quota use and estimated cost.
+
+Developer trials are graded only after their workspace has been committed;
+the grading copy is cloned from that commit, and a trial with no commit is
+recorded unavailable. Grading commands run through the pinned `codex sandbox`
+launcher with network disabled, a placeholder-auth policy home, an allowlisted
+environment, and writable roots limited to the grading copy and an empty
+scratch directory. If that sandbox cannot start, the trial is unavailable and
+is never graded unconfined. The vendor sandbox does not deny reads of `~/.ssh`
+or `/proc/*/environ`, matching a Developer dispatch; no network and no forge,
+log, or vendor token in the grading environment prevent those reads from
+leaving the host. Subscription quota use is the non-negative difference
+between the before and after utilization readings; equal readings consume
+zero quota, and a missing endpoint is reported as unavailable telemetry.
 The executable entry point loads the three pinned development corpora, stages
 each task through the harness isolation boundary, launches the production
 subscription adapter, and applies the suite's pinned grader:

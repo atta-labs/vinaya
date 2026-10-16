@@ -1,10 +1,17 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { dispatchRole, type AgentVendor } from '../dispatch'
+import { join } from 'node:path'
+import {
+  addCodexWritableDirs,
+  buildCodexExecpolicyRules,
+  codexSpawnEnvExtras,
+  dispatchRole,
+  type AgentVendor
+} from '../dispatch'
 import { startDevToolsHost } from '../task-tools/dev-tools-host'
 import { devToolsSocketPath, driverDevBridgeInvocation } from '../task-tools/dev-tools-registration'
+import { stageCodexPolicyHome } from '../worker-boundary'
 import { attributeTrialObjects, prepareGradingCopy, testContamination, type HiddenInputs } from './contamination'
 import { suiteMean, type BootstrapMethod } from './estimators'
 import { git, stageTrial } from './staging'
@@ -31,10 +38,10 @@ export interface StepOneUsage {
 
 type TraceCall = import('../../../tests/eval/tool-selection-suite').TraceCall
 
-/** Reads the quota utilization the subscription CLI reports; absence is explicit, never fabricated as zero. */
+/** Reports the increase between the first and last subscription-utilization readings. */
 export function subscriptionQuotaOf(adapter: StepOneAdapter, lines: readonly string[]): number | null {
   const keys = adapter === 'codex' ? ['used_percent', 'usedPercent'] : ['utilization', 'used_percent']
-  let observed: number | null = null
+  const observed: number[] = []
   const visit = (value: unknown): void => {
     if (Array.isArray(value)) {
       value.forEach(visit)
@@ -42,8 +49,7 @@ export function subscriptionQuotaOf(adapter: StepOneAdapter, lines: readonly str
     }
     if (value === null || typeof value !== 'object') return
     for (const [key, child] of Object.entries(value)) {
-      if (keys.includes(key) && typeof child === 'number' && Number.isFinite(child) && child >= 0)
-        observed = Math.max(observed ?? 0, child)
+      if (keys.includes(key) && typeof child === 'number' && Number.isFinite(child) && child >= 0) observed.push(child)
       else visit(child)
     }
   }
@@ -54,7 +60,8 @@ export function subscriptionQuotaOf(adapter: StepOneAdapter, lines: readonly str
       // Vendor stdout can contain diagnostics; only structured telemetry counts.
     }
   }
-  return observed
+  if (observed.length < 2) return null
+  return Math.max(0, (observed.at(-1) as number) - (observed[0] as number))
 }
 
 async function traceOf(adapter: StepOneAdapter, lines: readonly string[]): Promise<TraceCall[]> {
@@ -77,55 +84,47 @@ function performedEffects(
   return effects
 }
 
-function gradingIsolation(workspace: string) {
-  return (command: readonly string[], _cwd: string, reportDirectory: string) => {
-    const safeEnv: NodeJS.ProcessEnv = {
-      PATH: process.env.PATH ?? '/usr/bin:/bin',
-      HOME: workspace,
-      TMPDIR: reportDirectory,
-      LANG: process.env.LANG ?? 'C.UTF-8'
+export function gradingIsolation(workspace: string) {
+  return (command: readonly string[], cwd: string, scratch: string) => {
+    const home = join(scratch, 'home')
+    mkdirSync(join(home, '.codex'), { recursive: true })
+    writeFileSync(join(home, '.codex', 'auth.json'), '{}\n', { mode: 0o600 })
+    const staged = stageCodexPolicyHome({
+      targetDir: join(scratch, 'codex-home'),
+      realHome: home,
+      execpolicyRules: buildCodexExecpolicyRules('developer') ?? '',
+      sandboxConfigToml: 'sandbox_mode = "workspace-write"\n[sandbox_workspace_write]\nnetwork_access = false\n'
+    })
+    if (staged === null) throw new Error('grading unavailable: Codex policy home could not be staged')
+    const extras = codexSpawnEnvExtras('codex', staged.codexHome, scratch).attribution
+    const args = addCodexWritableDirs(
+      [
+        'sandbox',
+        '--config',
+        'sandbox_mode="workspace-write"',
+        '--config',
+        'sandbox_workspace_write.network_access=false'
+      ],
+      [scratch, workspace],
+      true
+    )
+    return {
+      command: [process.execPath, 'x', '@openai/codex@0.160.0', ...args, '--', ...command],
+      env: {
+        PATH: process.env.PATH ?? '/usr/bin:/bin',
+        LANG: process.env.LANG ?? 'C.UTF-8',
+        HOME: home,
+        TMPDIR: scratch,
+        CODEX_HOME: extras.CODEX_HOME as string
+      },
+      cwd
     }
-    if (process.platform === 'darwin') {
-      const quote = (value: string) => `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
-      const profile = join(reportDirectory, 'grading.sb')
-      writeFileSync(
-        profile,
-        `(version 1)\n(deny default)\n(allow process*)\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read* (subpath "/System") (subpath "/usr") (subpath "/bin") (subpath "/Library") (subpath ${quote(dirname(process.execPath))}) (subpath ${quote(workspace)}))\n(allow file-write* (subpath ${quote(workspace)}) (subpath ${quote(reportDirectory)}))\n(deny network*)\n`
-      )
-      return { command: ['/usr/bin/sandbox-exec', '-f', profile, ...command], env: safeEnv }
-    }
-    if (process.platform === 'linux') {
-      return {
-        command: [
-          'bwrap',
-          '--die-with-parent',
-          '--unshare-net',
-          '--ro-bind',
-          '/',
-          '/',
-          '--tmpfs',
-          '/home',
-          '--tmpfs',
-          '/root',
-          '--bind',
-          workspace,
-          workspace,
-          '--bind',
-          reportDirectory,
-          reportDirectory,
-          '--chdir',
-          _cwd,
-          ...command
-        ],
-        env: safeEnv
-      }
-    }
-    throw new Error(`grading confinement unavailable on ${process.platform}`)
   }
 }
 
 export interface StepOneTrialResult {
   success: boolean
+  unavailableReason?: string
   usage: StepOneUsage
 }
 
@@ -154,7 +153,7 @@ export interface StepOneResult {
     adapter: StepOneAdapter
     taskCount: number
     trialsPerTask: number
-    tasks: Array<{ taskId: string; successes: number; trials: number }>
+    tasks: Array<{ taskId: string; successes: number; trials: number; unavailable: string[] }>
     mean: number
     interval: { lower: number; upper: number }
     usage: StepOneUsage
@@ -193,7 +192,7 @@ export async function runStepOne(
     if (input === undefined || input.taskIds.length === 0)
       return refusal('empty_development_split', `${suite} has no reconstructable development task`)
     for (const adapter of STEP_ONE_ADAPTERS) {
-      const tasks: Array<{ taskId: string; successes: number; trials: number }> = []
+      const tasks: Array<{ taskId: string; successes: number; trials: number; unavailable: string[] }> = []
       const usage: StepOneUsage = {
         wallTimeMs: 0,
         inputTokens: 0,
@@ -203,9 +202,11 @@ export async function runStepOne(
       }
       for (const taskId of input.taskIds) {
         let successes = 0
+        const unavailable: string[] = []
         for (let attempt = 1; attempt <= options.trialsPerTask; attempt++) {
           const trial = await execute({ suite, adapter, taskId, attempt })
           if (trial.success) successes++
+          if (trial.unavailableReason !== undefined) unavailable.push(trial.unavailableReason)
           usage.wallTimeMs += trial.usage.wallTimeMs
           usage.inputTokens += trial.usage.inputTokens
           usage.outputTokens += trial.usage.outputTokens
@@ -219,7 +220,7 @@ export async function runStepOne(
               ? null
               : usage.subscriptionQuota + trial.usage.subscriptionQuota
         }
-        tasks.push({ taskId, successes, trials: options.trialsPerTask })
+        tasks.push({ taskId, successes, trials: options.trialsPerTask, unavailable })
       }
       const estimate = suiteMean(tasks, options.bootstrap)
       if (!estimate.ok) return refusal('invalid_input', estimate.refusal.detail)
@@ -424,6 +425,43 @@ async function executeDeveloper(
     })
     const trace = await traceOf(input.adapter, transcript)
     const toolState = world.state()
+    if (git(staging.workspace, ['status', '--porcelain']).trim() === '') {
+      return {
+        success: false,
+        unavailableReason: 'Developer trial produced no commit-worthy workspace change',
+        usage: {
+          wallTimeMs: handle.durationMs,
+          inputTokens: handle.usage?.input ?? 0,
+          outputTokens: handle.usage?.output ?? 0,
+          subscriptionQuota: subscriptionQuotaOf(input.adapter, transcript),
+          estimatedCostUsd: 0
+        }
+      }
+    }
+    try {
+      git(staging.workspace, ['add', '-A'])
+      git(staging.workspace, [
+        '-c',
+        'user.name=Vinaya Evaluation',
+        '-c',
+        'user.email=eval@invalid.local',
+        'commit',
+        '-m',
+        `Eval(developer): Commit ${item.id} trial ${input.attempt}`
+      ])
+    } catch (error) {
+      return {
+        success: false,
+        unavailableReason: `Developer trial could not be committed: ${(error as Error).message}`,
+        usage: {
+          wallTimeMs: handle.durationMs,
+          inputTokens: handle.usage?.input ?? 0,
+          outputTokens: handle.usage?.output ?? 0,
+          subscriptionQuota: subscriptionQuotaOf(input.adapter, transcript),
+          estimatedCostUsd: 0
+        }
+      }
+    }
     const attribution = attributeTrialObjects(staging, hidden)
     const grading = prepareGradingCopy({
       staging,
@@ -441,9 +479,24 @@ async function executeDeveloper(
         ...item.passToPassFiles.map((entry) => entry.path)
       ])
     ]
-    const outcomes = suite.outcomesOf(
-      await suite.runTests(grading.path, testFiles, context.timeoutMs, gradingIsolation(grading.path))
-    )
+    let outcomes: ReturnType<typeof suite.outcomesOf>
+    try {
+      outcomes = suite.outcomesOf(
+        await suite.runTests(grading.path, testFiles, context.timeoutMs, gradingIsolation(grading.path))
+      )
+    } catch (error) {
+      return {
+        success: false,
+        unavailableReason: `Codex grading sandbox unavailable: ${(error as Error).message}`,
+        usage: {
+          wallTimeMs: handle.durationMs,
+          inputTokens: handle.usage?.input ?? 0,
+          outputTokens: handle.usage?.output ?? 0,
+          subscriptionQuota: subscriptionQuotaOf(input.adapter, transcript),
+          estimatedCostUsd: 0
+        }
+      }
+    }
     const changedPaths = git(staging.workspace, ['diff', '--name-only', item.baseCommit]).split('\n').filter(Boolean)
     const grade = suite.gradeDeveloperTrial(item, {
       caseId: item.id,
