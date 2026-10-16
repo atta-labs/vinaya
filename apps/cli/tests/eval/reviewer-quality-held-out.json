@@ -5,28 +5,72 @@
       "id": "code-held-clean",
       "role": "code-reviewer",
       "set": "clean",
-      "baseCommit": "adac13e4246d030238f7738bcce56e3de86bd461",
+      "baseCommit": "3e33601c52c9b23c618f817c44a0e67b70c46413",
       "patch": {
+        "source": "git",
         "file": "apps/cli/tests/eval/registry/modules.json",
-        "digest": "1414141414141414141414141414141414141414141414141414141414141414"
+        "parentCommit": "3e33601c52c9b23c618f817c44a0e67b70c46413",
+        "changedCommit": "adac13e4246d030238f7738bcce56e3de86bd461",
+        "digest": "8f7c48c59166ea3dce107672a4fb631bf8bc00fdba0b4a57cd61c66abfae30ed"
       },
       "expected": null,
       "objectives": ["O1"],
-      "provenance": { "pullRequest": 1306, "confirmation": "held-out merged registry change" },
+      "provenance": {
+        "pullRequest": 1306,
+        "confirmation": "held-out merged registry change with recorded adjudicator outputs"
+      },
       "adjudication": {
         "first": {
           "runId": "code-held-a",
           "fresh": true,
           "sawOther": false,
-          "blockingDefect": false,
-          "confirmedDefect": false
+          "transcriptDigest": "2424242424242424242424242424242424242424242424242424242424242424",
+          "binding": {
+            "role": "code-reviewer",
+            "headSha": "adac13e4246d030238f7738bcce56e3de86bd461",
+            "manifestDigest": "2525252525252525252525252525252525252525252525252525252525252525",
+            "objectiveIds": ["O1"]
+          },
+          "output": {
+            "reviewResult": {
+              "schemaVersion": 1,
+              "status": "completed",
+              "role": "code-reviewer",
+              "headSha": "adac13e4246d030238f7738bcce56e3de86bd461",
+              "manifestDigest": "2525252525252525252525252525252525252525252525252525252525252525",
+              "summary": "No blocking defect found.",
+              "findings": [],
+              "objectiveResults": [
+                { "id": "O1", "status": "MET", "evidence": "The staged patch satisfies the objective." }
+              ]
+            }
+          }
         },
         "second": {
           "runId": "code-held-b",
           "fresh": true,
           "sawOther": false,
-          "blockingDefect": false,
-          "confirmedDefect": false
+          "transcriptDigest": "2626262626262626262626262626262626262626262626262626262626262626",
+          "binding": {
+            "role": "code-reviewer",
+            "headSha": "adac13e4246d030238f7738bcce56e3de86bd461",
+            "manifestDigest": "2727272727272727272727272727272727272727272727272727272727272727",
+            "objectiveIds": ["O1"]
+          },
+          "output": {
+            "reviewResult": {
+              "schemaVersion": 1,
+              "status": "completed",
+              "role": "code-reviewer",
+              "headSha": "adac13e4246d030238f7738bcce56e3de86bd461",
+              "manifestDigest": "2727272727272727272727272727272727272727272727272727272727272727",
+              "summary": "No blocking defect found.",
+              "findings": [],
+              "objectiveResults": [
+                { "id": "O1", "status": "MET", "evidence": "The staged patch satisfies the objective." }
+              ]
+            }
+          }
         }
       }
     },
@@ -34,28 +78,72 @@
       "id": "security-held-clean",
       "role": "security-reviewer",
       "set": "clean",
-      "baseCommit": "adac13e4246d030238f7738bcce56e3de86bd461",
+      "baseCommit": "3e33601c52c9b23c618f817c44a0e67b70c46413",
       "patch": {
+        "source": "git",
         "file": "apps/cli/tests/eval/registry/modules.json",
-        "digest": "1515151515151515151515151515151515151515151515151515151515151515"
+        "parentCommit": "3e33601c52c9b23c618f817c44a0e67b70c46413",
+        "changedCommit": "adac13e4246d030238f7738bcce56e3de86bd461",
+        "digest": "8f7c48c59166ea3dce107672a4fb631bf8bc00fdba0b4a57cd61c66abfae30ed"
       },
       "expected": null,
       "objectives": ["O1"],
-      "provenance": { "pullRequest": 1306, "confirmation": "held-out merged registry change" },
+      "provenance": {
+        "pullRequest": 1306,
+        "confirmation": "held-out merged registry change with recorded security adjudicator outputs"
+      },
       "adjudication": {
         "first": {
           "runId": "security-held-a",
           "fresh": true,
           "sawOther": false,
-          "blockingDefect": false,
-          "confirmedDefect": false
+          "transcriptDigest": "2828282828282828282828282828282828282828282828282828282828282828",
+          "binding": {
+            "role": "security-reviewer",
+            "headSha": "adac13e4246d030238f7738bcce56e3de86bd461",
+            "manifestDigest": "2929292929292929292929292929292929292929292929292929292929292929",
+            "objectiveIds": ["O1"]
+          },
+          "output": {
+            "reviewResult": {
+              "schemaVersion": 1,
+              "status": "completed",
+              "role": "security-reviewer",
+              "headSha": "adac13e4246d030238f7738bcce56e3de86bd461",
+              "manifestDigest": "2929292929292929292929292929292929292929292929292929292929292929",
+              "summary": "No blocking security defect found.",
+              "findings": [],
+              "objectiveResults": [
+                { "id": "O1", "status": "MET", "evidence": "The staged patch satisfies the objective." }
+              ]
+            }
+          }
         },
         "second": {
           "runId": "security-held-b",
           "fresh": true,
           "sawOther": false,
-          "blockingDefect": false,
-          "confirmedDefect": false
+          "transcriptDigest": "3030303030303030303030303030303030303030303030303030303030303030",
+          "binding": {
+            "role": "security-reviewer",
+            "headSha": "adac13e4246d030238f7738bcce56e3de86bd461",
+            "manifestDigest": "3131313131313131313131313131313131313131313131313131313131313131",
+            "objectiveIds": ["O1"]
+          },
+          "output": {
+            "reviewResult": {
+              "schemaVersion": 1,
+              "status": "completed",
+              "role": "security-reviewer",
+              "headSha": "adac13e4246d030238f7738bcce56e3de86bd461",
+              "manifestDigest": "3131313131313131313131313131313131313131313131313131313131313131",
+              "summary": "No blocking security defect found.",
+              "findings": [],
+              "objectiveResults": [
+                { "id": "O1", "status": "MET", "evidence": "The staged patch satisfies the objective." }
+              ]
+            }
+          }
         }
       }
     }

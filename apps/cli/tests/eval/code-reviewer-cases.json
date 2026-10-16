@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "role": "code-reviewer",
   "split": {
-    "developmentDigest": "21ab650eb56b4c99381bec534cd715827f91fa763cb4d5ba8fe07e345ebaba00",
+    "developmentDigest": "84bbdd2f747821535f9ea063532cc673c18af09edc025fdd8dde9bee9fe52f97",
     "development": [
       "code-logic",
       "code-contract",
@@ -17,7 +17,7 @@
       "code-clean"
     ],
     "heldOutFile": "reviewer-quality-held-out.json",
-    "heldOutDigest": "92fb2c6bea945bcfad3310a1ec135d31adaa31460f6ad5b098c9616d55ede94b",
+    "heldOutDigest": "d5c4ae7e5174fc0f69d6a0f753bce8a8fabdc9ec3410a6e2d8822a44490356d0",
     "heldOut": ["code-held-clean"]
   },
   "cases": [
@@ -27,8 +27,10 @@
       "set": "seeded",
       "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
       "patch": {
+        "source": "inline",
         "file": "apps/cli/src/lib/example.ts",
-        "digest": "1111111111111111111111111111111111111111111111111111111111111111"
+        "digest": "c743e1fc8a2909cb28d0bcb50979d2074bdd8775fcd7601b1130abc9c65ab452",
+        "unified": "diff --git a/apps/cli/src/lib/example.ts b/apps/cli/src/lib/example.ts\n--- a/apps/cli/src/lib/example.ts\n+++ b/apps/cli/src/lib/example.ts\n@@ -1 +1 @@\n-export const accepted = (passed: boolean) => passed\n+export const accepted = (passed: boolean) => !passed\n"
       },
       "expected": { "file": "apps/cli/src/lib/example.ts", "severity": "MAJOR", "kind": "logic-error" },
       "objectives": ["O1"],
@@ -40,8 +42,10 @@
       "set": "seeded",
       "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
       "patch": {
+        "source": "inline",
         "file": "apps/cli/src/lib/review-result.ts",
-        "digest": "2222222222222222222222222222222222222222222222222222222222222222"
+        "digest": "dbed3966db1cda204ec95066ce8820e760b450ed364f6a3243230555f74ba0ab",
+        "unified": "diff --git a/apps/cli/src/lib/review-result.ts b/apps/cli/src/lib/review-result.ts\n--- a/apps/cli/src/lib/review-result.ts\n+++ b/apps/cli/src/lib/review-result.ts\n@@ -1 +1 @@\n-const headSha = z.string().min(1)\n+const headSha = z.string().optional()\n"
       },
       "expected": { "file": "apps/cli/src/lib/review-result.ts", "severity": "MAJOR", "kind": "contract-break" },
       "objectives": ["O1"],
@@ -53,8 +57,10 @@
       "set": "seeded",
       "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
       "patch": {
+        "source": "inline",
         "file": "apps/cli/src/lib/dev-review-eval/estimators.ts",
-        "digest": "3333333333333333333333333333333333333333333333333333333333333333"
+        "digest": "24e74437124a3428c65411471265f2dea8d128ebbf4ccc13bc87378c7b9bbcab",
+        "unified": "diff --git a/apps/cli/src/lib/dev-review-eval/estimators.ts b/apps/cli/src/lib/dev-review-eval/estimators.ts\n--- a/apps/cli/src/lib/dev-review-eval/estimators.ts\n+++ b/apps/cli/src/lib/dev-review-eval/estimators.ts\n@@ -1 +1,2 @@\n export function successRate(c: number, n: number) {\n+  if (n === 0) return 1\n"
       },
       "expected": {
         "file": "apps/cli/src/lib/dev-review-eval/estimators.ts",
@@ -70,8 +76,10 @@
       "set": "seeded",
       "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
       "patch": {
+        "source": "inline",
         "file": ".github/workflows/ci.yml",
-        "digest": "4444444444444444444444444444444444444444444444444444444444444444"
+        "digest": "364066e2ed41e982e1782ff310584ae0eb1418b281bd30973eb20c421d785150",
+        "unified": "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -1 +1 @@\n-permissions: read-all\n+permissions: write-all\n"
       },
       "expected": {
         "file": ".github/workflows/ci.yml",
@@ -88,8 +96,10 @@
       "set": "seeded",
       "baseCommit": "64fe884afc36fab9c5cb2d81bcba936029991e60",
       "patch": {
+        "source": "inline",
         "file": "apps/cli/tests/eval/example.test.ts",
-        "digest": "5555555555555555555555555555555555555555555555555555555555555555"
+        "digest": "2ce35621f0aceccb9cc043c2fe121db7e2f3e81b832930ce8e1ab2246450e6b1",
+        "unified": "diff --git a/apps/cli/tests/eval/example.test.ts b/apps/cli/tests/eval/example.test.ts\nnew file mode 100644\n--- /dev/null\n+++ b/apps/cli/tests/eval/example.test.ts\n@@ -0,0 +1 @@\n+test('only O1', () => expect(true).toBe(true))\n"
       },
       "expected": { "file": "apps/cli/tests/eval/example.test.ts", "severity": "MAJOR", "kind": "objective-unmet" },
       "objectives": ["O1", "O2"],
@@ -101,10 +111,13 @@
       "id": "history-1307",
       "role": "code-reviewer",
       "set": "historical",
-      "baseCommit": "99dda33c402f434e5f8ca65170416373b30fc5d7",
+      "baseCommit": "adac13e4246d030238f7738bcce56e3de86bd461",
       "patch": {
+        "source": "git",
         "file": "apps/cli/specs/evals.md",
-        "digest": "6666666666666666666666666666666666666666666666666666666666666666"
+        "parentCommit": "adac13e4246d030238f7738bcce56e3de86bd461",
+        "changedCommit": "99dda33c402f434e5f8ca65170416373b30fc5d7",
+        "digest": "49826bfafe9eab8e5435fb73305f5d5df78a48f9b3db37b734e29940427b8186"
       },
       "expected": { "file": "apps/cli/specs/evals.md", "severity": "MAJOR", "kind": "contract-break" },
       "objectives": ["O1"],
@@ -121,8 +134,11 @@
       "set": "historical",
       "baseCommit": "4d4ec46c552a325b1d3337610c2a62412eb61d5c",
       "patch": {
+        "source": "git",
         "file": "apps/cli/src/lib/dev-review-eval/staging.ts",
-        "digest": "7777777777777777777777777777777777777777777777777777777777777777"
+        "parentCommit": "4d4ec46c552a325b1d3337610c2a62412eb61d5c",
+        "changedCommit": "9893ac9b18c9f257590a0233edcaa884fc0ff4a3",
+        "digest": "59e18847c7e62a2f29d0433d12953bfc7aab8fdc278afce6f81d16ddf6d308d1"
       },
       "expected": { "file": "apps/cli/src/lib/dev-review-eval/staging.ts", "severity": "MAJOR", "kind": "logic-error" },
       "objectives": ["O1"],
@@ -137,10 +153,13 @@
       "id": "history-1312",
       "role": "code-reviewer",
       "set": "historical",
-      "baseCommit": "99dda33c402f434e5f8ca65170416373b30fc5d7",
+      "baseCommit": "9893ac9b18c9f257590a0233edcaa884fc0ff4a3",
       "patch": {
+        "source": "git",
         "file": "apps/cli/src/lib/dev-review-eval/registry.ts",
-        "digest": "8888888888888888888888888888888888888888888888888888888888888888"
+        "parentCommit": "9893ac9b18c9f257590a0233edcaa884fc0ff4a3",
+        "changedCommit": "58e1b2d188e2dee1e1d272bba43590a39a52970c",
+        "digest": "1fa137a2211df2c398a461d5fb413f3716ff5bb2bcc2ac42d6cb7cf1301507e5"
       },
       "expected": {
         "file": "apps/cli/src/lib/dev-review-eval/registry.ts",
@@ -160,10 +179,13 @@
       "id": "history-1319",
       "role": "code-reviewer",
       "set": "historical",
-      "baseCommit": "fce83c9b3c1b7e69cfe46ecc42cd31c64d9630fa",
+      "baseCommit": "4733b6c2f3e8daab660b070fd87e3c50fb8bf2ee",
       "patch": {
+        "source": "git",
         "file": "apps/cli/tests/eval/registry/shards/cutover-gates.json",
-        "digest": "9999999999999999999999999999999999999999999999999999999999999999"
+        "parentCommit": "4733b6c2f3e8daab660b070fd87e3c50fb8bf2ee",
+        "changedCommit": "db9af5855c247122da101d8afde77f4dd906e974",
+        "digest": "73b6f134adcdb002aada7cdf07902b6440727a9f246f2f7114b9436e402168f7"
       },
       "expected": {
         "file": "apps/cli/tests/eval/registry/shards/cutover-gates.json",
@@ -184,8 +206,11 @@
       "set": "historical",
       "baseCommit": "db9af5855c247122da101d8afde77f4dd906e974",
       "patch": {
+        "source": "git",
         "file": "apps/cli/src/lib/dev-review-eval/registry.ts",
-        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        "parentCommit": "db9af5855c247122da101d8afde77f4dd906e974",
+        "changedCommit": "025c81b2d013dcaee6c6a608bb7ba0fdac5d4a3b",
+        "digest": "9914cad87b8db88ab38115c003bed401be96bef9c0dc5d41664754261cc0d13c"
       },
       "expected": {
         "file": "apps/cli/src/lib/dev-review-eval/registry.ts",
@@ -205,31 +230,72 @@
       "id": "code-clean",
       "role": "code-reviewer",
       "set": "clean",
-      "baseCommit": "3e33601c52c9b23c618f817c44a0e67b70c46413",
+      "baseCommit": "cab406d2caaf4b6b372b176681e2ff655fe383be",
       "patch": {
+        "source": "git",
         "file": "apps/cli/src/lib/dev-review-eval/contracts.ts",
-        "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        "parentCommit": "cab406d2caaf4b6b372b176681e2ff655fe383be",
+        "changedCommit": "942b06e6a988a10b2c28f20a1b6861f52b3f508f",
+        "digest": "b44252860e4428ac57aefb629ed2af5f9b59b684578621fe21f32c076230e8b5"
       },
       "expected": null,
       "objectives": ["O1"],
       "provenance": {
         "pullRequest": 1304,
-        "confirmation": "merged harness contracts change adjudicated from its pinned commit and patch"
+        "confirmation": "merged harness contracts change with two recorded independent adjudicator outputs"
       },
       "adjudication": {
         "first": {
           "runId": "code-clean-a",
           "fresh": true,
           "sawOther": false,
-          "blockingDefect": false,
-          "confirmedDefect": false
+          "transcriptDigest": "1616161616161616161616161616161616161616161616161616161616161616",
+          "binding": {
+            "role": "code-reviewer",
+            "headSha": "942b06e6a988a10b2c28f20a1b6861f52b3f508f",
+            "manifestDigest": "1717171717171717171717171717171717171717171717171717171717171717",
+            "objectiveIds": ["O1"]
+          },
+          "output": {
+            "reviewResult": {
+              "schemaVersion": 1,
+              "status": "completed",
+              "role": "code-reviewer",
+              "headSha": "942b06e6a988a10b2c28f20a1b6861f52b3f508f",
+              "manifestDigest": "1717171717171717171717171717171717171717171717171717171717171717",
+              "summary": "No blocking defect found.",
+              "findings": [],
+              "objectiveResults": [
+                { "id": "O1", "status": "MET", "evidence": "The staged patch satisfies the objective." }
+              ]
+            }
+          }
         },
         "second": {
           "runId": "code-clean-b",
           "fresh": true,
           "sawOther": false,
-          "blockingDefect": false,
-          "confirmedDefect": false
+          "transcriptDigest": "1818181818181818181818181818181818181818181818181818181818181818",
+          "binding": {
+            "role": "code-reviewer",
+            "headSha": "942b06e6a988a10b2c28f20a1b6861f52b3f508f",
+            "manifestDigest": "1919191919191919191919191919191919191919191919191919191919191919",
+            "objectiveIds": ["O1"]
+          },
+          "output": {
+            "reviewResult": {
+              "schemaVersion": 1,
+              "status": "completed",
+              "role": "code-reviewer",
+              "headSha": "942b06e6a988a10b2c28f20a1b6861f52b3f508f",
+              "manifestDigest": "1919191919191919191919191919191919191919191919191919191919191919",
+              "summary": "No blocking defect found.",
+              "findings": [],
+              "objectiveResults": [
+                { "id": "O1", "status": "MET", "evidence": "The staged patch satisfies the objective." }
+              ]
+            }
+          }
         }
       }
     }
