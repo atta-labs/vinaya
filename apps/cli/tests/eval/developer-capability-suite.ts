@@ -597,7 +597,19 @@ function runnerCommand(checkout: string, root: string, files: readonly string[],
 }
 
 /** Runs `files` (repository-relative) from their packages' own directories with their own runners, as continuous integration does. */
-export async function runTests(checkout: string, files: readonly string[], budgetMs: number): Promise<TestResult[]> {
+export async function runTests(
+  checkout: string,
+  files: readonly string[],
+  budgetMs: number,
+  isolate?: (
+    command: readonly string[],
+    cwd: string,
+    reportDirectory: string
+  ) => {
+    command: string[]
+    env: NodeJS.ProcessEnv
+  }
+): Promise<TestResult[]> {
   const byPackage = new Map<string, string[]>()
   for (const file of files) {
     if (!existsSync(join(checkout, file))) continue
@@ -608,9 +620,10 @@ export async function runTests(checkout: string, files: readonly string[], budge
   for (const [root, own] of byPackage) {
     const report = join(mkdtempSync(join(tmpdir(), 'developer-capability-junit-')), 'junit.xml')
     const command = runnerCommand(checkout, root, own, report)
+    const execution = isolate?.(command, join(checkout, root), dirname(report))
     const run = await spawnBudgetedAsync(
-      command,
-      { cwd: join(checkout, root), env: stripVinayaEnv() },
+      execution?.command ?? command,
+      { cwd: join(checkout, root), env: execution?.env ?? stripVinayaEnv() },
       budgetMs,
       'test runner'
     )

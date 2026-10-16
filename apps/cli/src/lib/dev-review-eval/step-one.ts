@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { dispatchRole, type AgentVendor } from '../dispatch'
+import { startDevToolsHost } from '../task-tools/dev-tools-host'
+import { devToolsSocketPath, driverDevBridgeInvocation } from '../task-tools/dev-tools-registration'
 import { attributeTrialObjects, prepareGradingCopy, testContamination, type HiddenInputs } from './contamination'
 import { suiteMean, type BootstrapMethod } from './estimators'
 import { git, stageTrial } from './staging'
@@ -25,6 +27,101 @@ export interface StepOneUsage {
   outputTokens: number
   subscriptionQuota: number | null
   estimatedCostUsd: number
+}
+
+type TraceCall = import('../../../tests/eval/tool-selection-suite').TraceCall
+
+/** Reads the quota utilization the subscription CLI reports; absence is explicit, never fabricated as zero. */
+export function subscriptionQuotaOf(adapter: StepOneAdapter, lines: readonly string[]): number | null {
+  const keys = adapter === 'codex' ? ['used_percent', 'usedPercent'] : ['utilization', 'used_percent']
+  let observed: number | null = null
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      value.forEach(visit)
+      return
+    }
+    if (value === null || typeof value !== 'object') return
+    for (const [key, child] of Object.entries(value)) {
+      if (keys.includes(key) && typeof child === 'number' && Number.isFinite(child) && child >= 0)
+        observed = Math.max(observed ?? 0, child)
+      else visit(child)
+    }
+  }
+  for (const line of lines) {
+    try {
+      visit(JSON.parse(line))
+    } catch {
+      // Vendor stdout can contain diagnostics; only structured telemetry counts.
+    }
+  }
+  return observed
+}
+
+async function traceOf(adapter: StepOneAdapter, lines: readonly string[]): Promise<TraceCall[]> {
+  const suite = await import('../../../tests/eval/tool-selection-suite')
+  return adapter === 'claude-code' ? suite.claudeTrace(lines) : suite.codexTrace(lines)
+}
+
+function performedEffects(
+  trace: readonly TraceCall[],
+  counts: Readonly<Record<string, number>>
+): Array<{ operation: string; key: string }> {
+  const remaining = { ...counts }
+  const effects: Array<{ operation: string; key: string }> = []
+  for (let index = trace.length - 1; index >= 0; index--) {
+    const call = trace[index]
+    if (call === undefined || (remaining[call.tool] ?? 0) < 1) continue
+    effects.unshift({ operation: call.tool, key: JSON.stringify(call.args) })
+    remaining[call.tool] = (remaining[call.tool] ?? 0) - 1
+  }
+  return effects
+}
+
+function gradingIsolation(workspace: string) {
+  return (command: readonly string[], _cwd: string, reportDirectory: string) => {
+    const safeEnv: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH ?? '/usr/bin:/bin',
+      HOME: workspace,
+      TMPDIR: reportDirectory,
+      LANG: process.env.LANG ?? 'C.UTF-8'
+    }
+    if (process.platform === 'darwin') {
+      const quote = (value: string) => `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
+      const profile = join(reportDirectory, 'grading.sb')
+      writeFileSync(
+        profile,
+        `(version 1)\n(deny default)\n(allow process*)\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read* (subpath "/System") (subpath "/usr") (subpath "/bin") (subpath "/Library") (subpath ${quote(dirname(process.execPath))}) (subpath ${quote(workspace)}))\n(allow file-write* (subpath ${quote(workspace)}) (subpath ${quote(reportDirectory)}))\n(deny network*)\n`
+      )
+      return { command: ['/usr/bin/sandbox-exec', '-f', profile, ...command], env: safeEnv }
+    }
+    if (process.platform === 'linux') {
+      return {
+        command: [
+          'bwrap',
+          '--die-with-parent',
+          '--unshare-net',
+          '--ro-bind',
+          '/',
+          '/',
+          '--tmpfs',
+          '/home',
+          '--tmpfs',
+          '/root',
+          '--bind',
+          workspace,
+          workspace,
+          '--bind',
+          reportDirectory,
+          reportDirectory,
+          '--chdir',
+          _cwd,
+          ...command
+        ],
+        env: safeEnv
+      }
+    }
+    throw new Error(`grading confinement unavailable on ${process.platform}`)
+  }
 }
 
 export interface StepOneTrialResult {
@@ -215,13 +312,16 @@ function hiddenInputs(repository: string, item: DeveloperCase): HiddenInputs {
   }
 }
 
-async function installForTrial(workspace: string): Promise<void> {
-  const run = Bun.spawn(['bun', 'install', '--frozen-lockfile', '--silent'], {
-    cwd: workspace,
-    env: { PATH: process.env.PATH ?? '', HOME: tmpdir(), TMPDIR: tmpdir() },
-    stdout: 'pipe',
-    stderr: 'pipe'
-  })
+async function installForTrial(workspace: string, untrusted = false): Promise<void> {
+  const run = Bun.spawn(
+    ['bun', 'install', '--frozen-lockfile', '--silent', ...(untrusted ? ['--ignore-scripts'] : [])],
+    {
+      cwd: workspace,
+      env: { PATH: process.env.PATH ?? '', HOME: tmpdir(), TMPDIR: tmpdir() },
+      stdout: 'pipe',
+      stderr: 'pipe'
+    }
+  )
   const code = await run.exited
   if (code !== 0) throw new Error(`trial dependency installation failed: ${await new Response(run.stderr).text()}`)
 }
@@ -295,19 +395,35 @@ async function executeDeveloper(
     mode: 'clone',
     taskBranch: `task/eval/${item.pullRequest}-${input.attempt}`
   })
+  let toolHost: Awaited<ReturnType<typeof startDevToolsHost>> | null = null
   try {
     const contamination = testContamination(staging, hidden)
     if (!contamination.clean) throw new Error(`trial contamination: ${JSON.stringify(contamination.findings)}`)
     await installForTrial(staging.workspace)
     const promptPath = join(staging.root.path, 'prompt.md')
     writeFileSync(promptPath, prompt)
+    const tools = await import('../../../tests/eval/tool-selection-suite')
+    const world = tools.createWorld({ issue: item.pullRequest }, 'developer')
+    const socketPath = devToolsSocketPath(`step-one:${item.id}:${input.adapter}:${input.attempt}`)
+    toolHost = await startDevToolsHost({
+      socketPath,
+      serverVersion: 'step-one-1',
+      context: world.context,
+      role: 'developer'
+    })
+    const devToolsBridge = driverDevBridgeInvocation(socketPath, join(import.meta.dir, '../../index.ts'))
+    const transcript: string[] = []
     const handle = await dispatchRole('developer', adapterVendor(input.adapter), prompt, {
       promptFile: promptPath,
       cwd: staging.workspace,
       unattended: true,
       ...(context.models[input.adapter] === undefined ? {} : { model: context.models[input.adapter] }),
-      turnResultKnownFindingIds: []
+      turnResultKnownFindingIds: [],
+      devToolsBridge,
+      observeStdoutLine: (line) => transcript.push(line)
     })
+    const trace = await traceOf(input.adapter, transcript)
+    const toolState = world.state()
     const attribution = attributeTrialObjects(staging, hidden)
     const grading = prepareGradingCopy({
       staging,
@@ -316,25 +432,34 @@ async function executeDeveloper(
       parentDirectory: gradingParent,
       apply: 'fail-to-pass'
     })
-    await installForTrial(grading.path)
+    // The submitted tree controls package manifests. Dependency lifecycle
+    // scripts are therefore disabled before its tests enter the OS boundary.
+    await installForTrial(grading.path, true)
     const testFiles = [
       ...new Set([
         ...item.hiddenTests.files.map((entry) => entry.path),
         ...item.passToPassFiles.map((entry) => entry.path)
       ])
     ]
-    const outcomes = suite.outcomesOf(await suite.runTests(grading.path, testFiles, context.timeoutMs))
+    const outcomes = suite.outcomesOf(
+      await suite.runTests(grading.path, testFiles, context.timeoutMs, gradingIsolation(grading.path))
+    )
     const changedPaths = git(staging.workspace, ['diff', '--name-only', item.baseCommit]).split('\n').filter(Boolean)
     const grade = suite.gradeDeveloperTrial(item, {
       caseId: item.id,
       testOutcomes: outcomes,
       changedPaths,
-      pullRequestBody: null,
+      pullRequestBody: toolState.pullRequest?.body ?? null,
       manifest,
       receipts,
-      trace: [],
+      trace,
       turnResults: [{ attempt: 1, raw: handle.turnOutput?.raw ?? null }],
-      effects: [],
+      effects: performedEffects(trace, {
+        publish_changes: toolState.pushes,
+        open_pull_request: toolState.pullRequestsOpened,
+        update_pull_request_body: toolState.bodyWrites,
+        refresh_evidence: toolState.evidenceRefreshes
+      }),
       usage: {
         toolErrors: handle.failureReason === undefined ? 0 : 1,
         wallMs: handle.durationMs,
@@ -348,11 +473,12 @@ async function executeDeveloper(
         wallTimeMs: handle.durationMs,
         inputTokens: handle.usage?.input ?? 0,
         outputTokens: handle.usage?.output ?? 0,
-        subscriptionQuota: null,
+        subscriptionQuota: subscriptionQuotaOf(input.adapter, transcript),
         estimatedCostUsd: 0
       }
     }
   } finally {
+    await toolHost?.close()
     rmSync(parent, { recursive: true, force: true })
     rmSync(gradingParent, { recursive: true, force: true })
   }
@@ -389,6 +515,7 @@ async function executeReviewer(
     ].join('\n\n')
     const promptPath = join(staging.root.path, 'prompt.md')
     writeFileSync(promptPath, prompt)
+    const transcript: string[] = []
     const handle = await dispatchRole(
       item.role === 'security-reviewer' ? 'security' : 'code-reviewer',
       adapterVendor(input.adapter),
@@ -397,7 +524,8 @@ async function executeReviewer(
         promptFile: promptPath,
         cwd: staging.workspace,
         unattended: true,
-        ...(context.models[input.adapter] === undefined ? {} : { model: context.models[input.adapter] })
+        ...(context.models[input.adapter] === undefined ? {} : { model: context.models[input.adapter] }),
+        observeStdoutLine: (line) => transcript.push(line)
       }
     )
     const grade = suite.gradeItem(item, handle.reviewOutput?.raw ?? null, binding)
@@ -407,7 +535,7 @@ async function executeReviewer(
         wallTimeMs: handle.durationMs,
         inputTokens: handle.usage?.input ?? 0,
         outputTokens: handle.usage?.output ?? 0,
-        subscriptionQuota: null,
+        subscriptionQuota: subscriptionQuotaOf(input.adapter, transcript),
         estimatedCostUsd: 0
       }
     }

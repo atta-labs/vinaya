@@ -327,6 +327,15 @@ entries intentionally retain only digests. The command verifies each brief
 against that digest. Pricing is explicit because subscription CLIs report
 tokens but do not provide one portable cost schedule.
 
+Developer trials retain the adapter's structured stdout as an observation
+stream: the adapter transcript readers recover the actual tool trace, governed
+publication calls supply effect identities and pull-request evidence, and
+vendor rate-limit telemetry supplies quota utilization when the CLI reports
+it. Missing telemetry remains `null`, never a fabricated zero. Submitted
+dependency lifecycle scripts are disabled, and hidden/pass-to-pass tests run
+with an allowlisted environment inside an OS filesystem boundary with network
+access denied; a host without the required boundary refuses the run.
+
 `validateFreezeRecord` validates the later Principal-authored milestone freeze.
 It requires product-risk provenance for every Principal floor, explicit seeded
 bootstrap inputs, trials, budget, cadence, development results, and only the

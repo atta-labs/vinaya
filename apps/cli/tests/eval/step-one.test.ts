@@ -6,7 +6,8 @@ import {
   PRODUCTION_STEP_ONE_RUNTIME,
   runStepOne,
   runStepOneCommand,
-  STEP_ONE_SUITES
+  STEP_ONE_SUITES,
+  subscriptionQuotaOf
 } from '../../src/lib/dev-review-eval/step-one'
 
 const options = {
@@ -19,6 +20,12 @@ const suites = () => STEP_ONE_SUITES.map((suite) => ({ suite, taskIds: [`${suite
 const usage = { wallTimeMs: 10, inputTokens: 3, outputTokens: 2, subscriptionQuota: 0.1, estimatedCostUsd: 0.01 }
 
 describe('development-only step one', () => {
+  it('reads adapter-reported quota telemetry without inventing a missing value', () => {
+    expect(subscriptionQuotaOf('claude-code', ['{"rate_limit_info":{"utilization":0.37}}'])).toBe(0.37)
+    expect(subscriptionQuotaOf('codex', ['{"rate_limits":{"primary":{"used_percent":42}}}'])).toBe(42)
+    expect(subscriptionQuotaOf('codex', ['{"type":"turn.completed"}'])).toBeNull()
+  })
+
   it('runs all three suites on both adapters and reports estimates and usage', async () => {
     const calls: string[] = []
     const result = await runStepOne(options, suites, async (input) => {
