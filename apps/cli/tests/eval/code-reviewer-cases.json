@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "role": "code-reviewer",
   "split": {
-    "developmentDigest": "223aed9399b46e8da907f14e9b5ede2feed4412a94a6549f5300a16e5265418d",
+    "developmentDigest": "82bf3ab6ea49aca4fb73b57dcd446dcd4b84c1bd0fe236037597306b6a64bc8b",
     "development": [
       "code-logic",
       "code-contract",
@@ -133,7 +133,7 @@
         "snapshotDigest": "38a5e600209978775b2e44b63503bfcd53e41bf167fd07c9773b7b92bcd44f00",
         "pullRequest": 441,
         "commentMarker": "A genuine correlation race (F1, MAJOR) found round 1",
-        "confirmation": "the final reviewer adjudication records that round 1 missed a shared-run-id correlation race later fixed by threading effect_id through the log and wait paths"
+        "confirmation": "the digest-verified reviewer snapshot records that round 1 found the shared-run-id correlation race later fixed by threading effect_id through the log and wait paths"
       }
     },
     {

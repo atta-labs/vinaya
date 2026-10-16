@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "role": "security-reviewer",
   "split": {
-    "developmentDigest": "75c2134af4c02ffc97b706bd804825f8f410bcb9f7f081515c317dd15e6f598a",
+    "developmentDigest": "75d34dd2eacd2ea80f8096ce7d4bdf8e654bcdfd38c6bd4eeb2b1f2355a08c71",
     "development": [
       "security-credential",
       "security-traversal",
@@ -58,8 +58,8 @@
       "patch": {
         "source": "inline",
         "file": "apps/cli/src/lib/patch-id.ts",
-        "digest": "150fbb464f6cfefd54202a697b9442c745d16d6977ba7222e173864a551fcf1b",
-        "unified": "diff --git a/apps/cli/src/lib/patch-id.ts b/apps/cli/src/lib/patch-id.ts\n--- a/apps/cli/src/lib/patch-id.ts\n+++ b/apps/cli/src/lib/patch-id.ts\n@@ -22,1 +22,1 @@\n-    execFileSync('git', ['fetch', '--quiet', 'origin', sha], { stdio: ['ignore', 'ignore', 'ignore'] })\n+    execFileSync(`git fetch --quiet origin ${sha}`, { stdio: ['ignore', 'ignore', 'ignore'] })\n"
+        "digest": "4ca1d48f7ce2182a6ce573382fbd0c5cabc1d16ce8f028d61da1b50b652c9d99",
+        "unified": "diff --git a/apps/cli/src/lib/patch-id.ts b/apps/cli/src/lib/patch-id.ts\n--- a/apps/cli/src/lib/patch-id.ts\n+++ b/apps/cli/src/lib/patch-id.ts\n@@ -22,1 +22,1 @@\n-    execFileSync('git', ['fetch', '--quiet', 'origin', sha], { stdio: ['ignore', 'ignore', 'ignore'] })\n+    execFileSync('sh', ['-c', `git fetch --quiet origin ${sha}`], { stdio: ['ignore', 'ignore', 'ignore'] })\n"
       },
       "expected": { "file": "apps/cli/src/lib/patch-id.ts", "severity": "HIGH", "kind": "unsafe-shell" },
       "objectives": ["O1"],
