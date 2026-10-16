@@ -56,42 +56,45 @@ describe('development-only step one', () => {
     expect(isolated.command.join(' ')).toContain(scratch)
   })
 
-  it('denies a graded test file writes outside scratch, network, and ambient tokens', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'step-one-sandbox-proof-'))
-    const workspace = join(root, 'grading')
-    const scratch = join(root, 'scratch')
-    mkdirSync(workspace)
-    mkdirSync(scratch)
-    const outside = join(root, 'outside')
-    mkdirSync(outside)
-    writeFileSync(
-      join(workspace, 'planted.test.ts'),
-      `import { expect, test } from 'bun:test'\n` +
-        `import { writeFileSync } from 'node:fs'\n` +
-        `test('boundary', async () => {\n` +
-        `  expect(() => writeFileSync(${JSON.stringify(join(outside, 'escaped'))}, 'no')).toThrow()\n` +
-        `  expect(await fetch('https://example.com').then(() => false, () => true)).toBe(true)\n` +
-        '  expect(Object.keys(process.env).some((key) => /TOKEN|FORGE|LOG|VENDOR/i.test(key))).toBe(false)\n' +
-        '})\n'
-    )
-    const isolated = gradingIsolation(workspace)(['bun', 'test', 'planted.test.ts'], workspace, scratch)
-    const codex = Bun.which('codex')
-    expect(codex).not.toBeNull()
-    const command = [codex as string, ...isolated.command.slice(3)]
-    const run = await spawnBudgetedAsync(
-      command,
-      { cwd: workspace, env: { ...stripVinayaEnv({}), ...isolated.env } },
-      120_000,
-      'Codex grading sandbox proof'
-    )
-    const exitCode = run.status
-    const output = `${run.stdout}\n${run.stderr}`
-    if (/sandbox_apply: Operation not permitted/.test(output)) {
-      expect(exitCode).not.toBe(0)
-      return
-    }
-    expect(exitCode, output).toBe(0)
-  }, 120_000)
+  it.skipIf(Bun.which('codex') === null)(
+    'denies a graded test file writes outside scratch, network, and ambient tokens',
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), 'step-one-sandbox-proof-'))
+      const workspace = join(root, 'grading')
+      const scratch = join(root, 'scratch')
+      mkdirSync(workspace)
+      mkdirSync(scratch)
+      const outside = join(root, 'outside')
+      mkdirSync(outside)
+      writeFileSync(
+        join(workspace, 'planted.test.ts'),
+        `import { expect, test } from 'bun:test'\n` +
+          `import { writeFileSync } from 'node:fs'\n` +
+          `test('boundary', async () => {\n` +
+          `  expect(() => writeFileSync(${JSON.stringify(join(outside, 'escaped'))}, 'no')).toThrow()\n` +
+          `  expect(await fetch('https://example.com').then(() => false, () => true)).toBe(true)\n` +
+          '  expect(Object.keys(process.env).some((key) => /TOKEN|FORGE|LOG|VENDOR/i.test(key))).toBe(false)\n' +
+          '})\n'
+      )
+      const isolated = gradingIsolation(workspace)(['bun', 'test', 'planted.test.ts'], workspace, scratch)
+      const codex = Bun.which('codex')
+      const command = [codex as string, ...isolated.command.slice(3)]
+      const run = await spawnBudgetedAsync(
+        command,
+        { cwd: workspace, env: { ...stripVinayaEnv({}), ...isolated.env } },
+        120_000,
+        'Codex grading sandbox proof'
+      )
+      const exitCode = run.status
+      const output = `${run.stdout}\n${run.stderr}`
+      if (/sandbox_apply: Operation not permitted/.test(output)) {
+        expect(exitCode).not.toBe(0)
+        return
+      }
+      expect(exitCode, output).toBe(0)
+    },
+    120_000
+  )
 
   it('runs all three suites on both adapters and reports estimates and usage', async () => {
     const calls: string[] = []
