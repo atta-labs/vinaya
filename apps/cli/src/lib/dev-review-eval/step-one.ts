@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { redact } from '@attalabs/aeg-core'
 import {
   addCodexWritableDirs,
   buildCodexExecpolicyRules,
@@ -14,7 +15,7 @@ import { devToolsSocketPath, driverDevBridgeInvocation } from '../task-tools/dev
 import { stageCodexPolicyHome } from '../worker-boundary'
 import { attributeTrialObjects, prepareGradingCopy, testContamination, type HiddenInputs } from './contamination'
 import { suiteMean, type BootstrapMethod } from './estimators'
-import { git, stageTrial } from './staging'
+import { type CloneStaging, git, runGit, stageTrial } from './staging'
 
 export const STEP_ONE_SUITES = [
   'developer-capability.l5',
@@ -38,30 +39,82 @@ export interface StepOneUsage {
 
 type TraceCall = import('../../../tests/eval/tool-selection-suite').TraceCall
 
-/** Reports the increase between the first and last subscription-utilization readings. */
-export function subscriptionQuotaOf(adapter: StepOneAdapter, lines: readonly string[]): number | null {
-  const keys = adapter === 'codex' ? ['used_percent', 'usedPercent'] : ['utilization', 'used_percent']
-  const observed: number[] = []
-  const visit = (value: unknown): void => {
-    if (Array.isArray(value)) {
-      value.forEach(visit)
-      return
+/**
+ * The rate-limit window whose utilization a trial is charged against. Each
+ * adapter reports several windows on one reading (Codex a primary and a
+ * secondary window, Claude Code a five-hour and a seven-day one), and only
+ * readings of the same window are compared.
+ */
+const QUOTA_WINDOW: Record<StepOneAdapter, string> = { codex: 'primary', 'claude-code': 'five_hour' }
+
+/** Every value stored under `key` anywhere inside `value`. */
+function valuesUnder(value: unknown, key: string): unknown[] {
+  if (Array.isArray(value)) return value.flatMap((child) => valuesUnder(child, key))
+  if (value === null || typeof value !== 'object') return []
+  return Object.entries(value).flatMap(([name, child]) =>
+    name === key ? [child, ...valuesUnder(child, key)] : valuesUnder(child, key)
+  )
+}
+
+const finiteNonNegative = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0
+
+/** The utilization one vendor event reports for the adapter's charged window, or `null` when it reports none. */
+function quotaReading(adapter: StepOneAdapter, event: unknown): number | null {
+  const window = QUOTA_WINDOW[adapter]
+  if (adapter === 'codex') {
+    for (const limits of valuesUnder(event, 'rate_limits')) {
+      const entry = (limits as Record<string, unknown> | null)?.[window] as Record<string, unknown> | undefined
+      const used = entry?.used_percent ?? entry?.usedPercent
+      if (finiteNonNegative(used)) return used
     }
-    if (value === null || typeof value !== 'object') return
-    for (const [key, child] of Object.entries(value)) {
-      if (keys.includes(key) && typeof child === 'number' && Number.isFinite(child) && child >= 0) observed.push(child)
-      else visit(child)
-    }
+    return null
   }
+  for (const info of valuesUnder(event, 'rate_limit_info')) {
+    const entry = info as Record<string, unknown> | null
+    if (entry?.rateLimitType === window && finiteNonNegative(entry.utilization)) return entry.utilization
+  }
+  return null
+}
+
+/**
+ * The subscription quota one trial consumed: the vendor's after reading minus
+ * its before reading, both of the adapter's charged window and both taken from
+ * that trial's own stream — the first and the last reading it reports. Equal
+ * readings consumed zero. Without two readings of that window, or when the
+ * window reset between them, the consumption is unavailable (`null`); it is
+ * never inferred from any other number in the stream.
+ */
+export function subscriptionQuotaOf(adapter: StepOneAdapter, lines: readonly string[]): number | null {
+  const readings: number[] = []
   for (const line of lines) {
+    let event: unknown
     try {
-      visit(JSON.parse(line))
+      event = JSON.parse(line)
     } catch {
       // Vendor stdout can contain diagnostics; only structured telemetry counts.
+      continue
     }
+    const reading = quotaReading(adapter, event)
+    if (reading !== null) readings.push(reading)
   }
-  if (observed.length < 2) return null
-  return Math.max(0, (observed.at(-1) as number) - (observed[0] as number))
+  if (readings.length < 2) return null
+  const before = readings[0] as number
+  const after = readings.at(-1) as number
+  return after < before ? null : after - before
+}
+
+/** Longest stored text of one unavailable trial's reason. */
+const UNAVAILABLE_REASON_LIMIT = 500
+
+/**
+ * Why a trial is unavailable, as stored in the result: redacted with the Log's
+ * own redaction and truncated, because the error can carry output of code the
+ * trial's agent wrote.
+ */
+export function unavailableReason(prefix: string, error: unknown): string {
+  const text = redact(`${prefix}: ${error instanceof Error ? error.message : String(error)}`, homedir())
+  return text.length <= UNAVAILABLE_REASON_LIMIT ? text : `${text.slice(0, UNAVAILABLE_REASON_LIMIT)}…`
 }
 
 async function traceOf(adapter: StepOneAdapter, lines: readonly string[]): Promise<TraceCall[]> {
@@ -84,42 +137,116 @@ function performedEffects(
   return effects
 }
 
-export function gradingIsolation(workspace: string) {
-  return (command: readonly string[], cwd: string, scratch: string) => {
-    const home = join(scratch, 'home')
-    mkdirSync(join(home, '.codex'), { recursive: true })
-    writeFileSync(join(home, '.codex', 'auth.json'), '{}\n', { mode: 0o600 })
-    const staged = stageCodexPolicyHome({
-      targetDir: join(scratch, 'codex-home'),
-      realHome: home,
-      execpolicyRules: buildCodexExecpolicyRules('developer') ?? '',
-      sandboxConfigToml: 'sandbox_mode = "workspace-write"\n[sandbox_workspace_write]\nnetwork_access = false\n'
-    })
-    if (staged === null) throw new Error('grading unavailable: Codex policy home could not be staged')
-    const extras = codexSpawnEnvExtras('codex', staged.codexHome, scratch).attribution
-    const args = addCodexWritableDirs(
-      [
-        'sandbox',
-        '--config',
-        'sandbox_mode="workspace-write"',
-        '--config',
-        'sandbox_workspace_write.network_access=false'
-      ],
-      [scratch, workspace],
-      true
-    )
-    return {
-      command: [process.execPath, 'x', '@openai/codex@0.160.0', ...args, '--', ...command],
-      env: {
-        PATH: process.env.PATH ?? '/usr/bin:/bin',
-        LANG: process.env.LANG ?? 'C.UTF-8',
-        HOME: home,
-        TMPDIR: scratch,
-        CODEX_HOME: extras.CODEX_HOME as string
-      },
-      cwd
-    }
+/** The Codex CLI every grading sandbox launches, pinned as the sandbox-conformance suite pins it. */
+export const GRADING_CODEX_PACKAGE = '@openai/codex@0.160.0'
+
+export interface GradingSandbox {
+  /** The empty scratch directory: the child's home and temporary directory, always writable. */
+  scratch: string
+  /** The `codex sandbox` launch of `command`, writable only in the scratch directory and `writable`. */
+  launch(command: readonly string[], writable: readonly string[]): { command: string[]; env: Record<string, string> }
+  /** Runs `command` in the sandbox; throws, naming the exit and output tail, unless it exits 0. */
+  run(command: readonly string[], cwd: string, writable: readonly string[], budgetMs: number): Promise<string>
+  dispose(): void
+}
+
+/**
+ * Opens the one confinement every step over a trial's workspace runs in:
+ * `codex sandbox` with network disabled, `/tmp` and `$TMPDIR` excluded, and
+ * writable roots limited to an empty scratch directory plus the directory the
+ * step works on. The policy home is staged by `stageCodexPolicyHome` from a
+ * throwaway home holding a placeholder login, outside every writable root, and
+ * the child environment is `PATH`, `LANG`, `HOME` and `TMPDIR` (both the
+ * scratch directory) and `CODEX_HOME`. No forge, log or vendor token reaches it.
+ */
+export function openGradingSandbox(): GradingSandbox {
+  const policyRoot = realpathSync(mkdtempSync(join(tmpdir(), 'step-one-grading-policy-')))
+  const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'step-one-grading-scratch-')))
+  const dispose = () => {
+    rmSync(policyRoot, { recursive: true, force: true })
+    rmSync(scratch, { recursive: true, force: true })
   }
+  const throwawayHome = join(policyRoot, 'home')
+  mkdirSync(join(throwawayHome, '.codex'), { recursive: true })
+  writeFileSync(join(throwawayHome, '.codex', 'auth.json'), '{}\n', { mode: 0o600 })
+  const staged = stageCodexPolicyHome({
+    targetDir: join(policyRoot, 'codex-home'),
+    realHome: throwawayHome,
+    execpolicyRules: buildCodexExecpolicyRules('developer') ?? '',
+    sandboxConfigToml: 'sandbox_mode = "workspace-write"\n[sandbox_workspace_write]\nnetwork_access = false\n'
+  })
+  if (staged === null) {
+    dispose()
+    throw new Error('grading unavailable: Codex policy home could not be staged')
+  }
+  const codexHome = codexSpawnEnvExtras('codex', staged.codexHome, scratch).attribution.CODEX_HOME as string
+  const launch: GradingSandbox['launch'] = (command, writable) => ({
+    command: [
+      process.execPath,
+      'x',
+      GRADING_CODEX_PACKAGE,
+      ...addCodexWritableDirs(
+        [
+          'sandbox',
+          '--config',
+          'sandbox_mode="workspace-write"',
+          '--config',
+          'sandbox_workspace_write.network_access=false',
+          '--config',
+          'sandbox_workspace_write.exclude_slash_tmp=true',
+          '--config',
+          'sandbox_workspace_write.exclude_tmpdir_env_var=true'
+        ],
+        [scratch, ...writable],
+        true
+      ),
+      '--',
+      ...command
+    ],
+    env: {
+      PATH: process.env.PATH ?? '/usr/bin:/bin',
+      LANG: process.env.LANG ?? 'C.UTF-8',
+      HOME: scratch,
+      TMPDIR: scratch,
+      CODEX_HOME: codexHome
+    }
+  })
+  return {
+    scratch,
+    launch,
+    async run(command, cwd, writable, budgetMs) {
+      const launched = launch(command, writable)
+      const child = Bun.spawn(launched.command, { cwd, env: launched.env, stdout: 'pipe', stderr: 'pipe' })
+      const timer = setTimeout(() => child.kill('SIGKILL'), budgetMs)
+      const [stdout, stderr] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()])
+      const code = await child.exited
+      clearTimeout(timer)
+      if (code !== 0)
+        throw new Error(`\`${command.join(' ')}\` exited ${code} in codex sandbox: ${stderr.slice(-2000)}`)
+      return stdout
+    },
+    dispose
+  }
+}
+
+/** The `runTests` isolation that runs a test runner in `sandbox`, writable only in its scratch and `target`. */
+export function gradingIsolation(sandbox: GradingSandbox, target: string) {
+  return (command: readonly string[], _cwd: string, _reportDirectory: string) => sandbox.launch(command, [target])
+}
+
+/**
+ * The production grading entry point: runs `testFiles` of the grading copy
+ * with their own runners inside `sandbox`, their reports written to its
+ * scratch directory.
+ */
+export async function gradeInSandbox(
+  sandbox: GradingSandbox,
+  gradingCopy: string,
+  testFiles: readonly string[],
+  timeoutMs: number
+): Promise<import('../../../tests/eval/developer-capability-suite').TestResult[]> {
+  const suite = await import('../../../tests/eval/developer-capability-suite')
+  return suite.runTests(gradingCopy, testFiles, timeoutMs, gradingIsolation(sandbox, gradingCopy), sandbox.scratch)
 }
 
 export interface StepOneTrialResult {
@@ -156,7 +283,9 @@ export interface StepOneResult {
     tasks: Array<{ taskId: string; successes: number; trials: number; unavailable: string[] }>
     mean: number
     interval: { lower: number; upper: number }
+    /** Subscription quota sums only trials with both readings; this many trials had no reading pair. */
     usage: StepOneUsage
+    quotaUnavailableTrials: number
   }>
 }
 
@@ -200,6 +329,7 @@ export async function runStepOne(
         subscriptionQuota: 0,
         estimatedCostUsd: 0
       }
+      let quotaUnavailableTrials = 0
       for (const taskId of input.taskIds) {
         let successes = 0
         const unavailable: string[] = []
@@ -215,10 +345,8 @@ export async function runStepOne(
             (trial.usage.inputTokens * (options.pricing?.inputUsdPerMillion ?? 0) +
               trial.usage.outputTokens * (options.pricing?.outputUsdPerMillion ?? 0)) /
               1_000_000
-          usage.subscriptionQuota =
-            usage.subscriptionQuota === null || trial.usage.subscriptionQuota === null
-              ? null
-              : usage.subscriptionQuota + trial.usage.subscriptionQuota
+          if (trial.usage.subscriptionQuota === null) quotaUnavailableTrials++
+          else usage.subscriptionQuota = (usage.subscriptionQuota ?? 0) + trial.usage.subscriptionQuota
         }
         tasks.push({ taskId, successes, trials: options.trialsPerTask, unavailable })
       }
@@ -234,7 +362,12 @@ export async function runStepOne(
         tasks,
         mean: estimate.value.mean,
         interval: estimate.value.interval,
-        usage
+        usage: {
+          ...usage,
+          subscriptionQuota:
+            quotaUnavailableTrials === tasks.length * options.trialsPerTask ? null : usage.subscriptionQuota
+        },
+        quotaUnavailableTrials
       })
     }
   }
@@ -313,18 +446,111 @@ function hiddenInputs(repository: string, item: DeveloperCase): HiddenInputs {
   }
 }
 
-async function installForTrial(workspace: string, untrusted = false): Promise<void> {
-  const run = Bun.spawn(
-    ['bun', 'install', '--frozen-lockfile', '--silent', ...(untrusted ? ['--ignore-scripts'] : [])],
-    {
-      cwd: workspace,
-      env: { PATH: process.env.PATH ?? '', HOME: tmpdir(), TMPDIR: tmpdir() },
+const INSTALL_COMMAND = ['bun', 'install', '--frozen-lockfile', '--ignore-scripts', '--silent']
+
+/** Longest one sandboxed install or commit step may run. */
+const SANDBOX_STEP_BUDGET_MS = 600_000
+
+/**
+ * Fills the sandbox's package cache (under its scratch home) from the base
+ * commit, cloned from the pinned repository and never from the trial's
+ * workspace, so every install over the trial runs in the sandbox with
+ * network disabled.
+ */
+async function warmPackageCache(sandbox: GradingSandbox, repository: string, baseCommit: string): Promise<void> {
+  const parent = mkdtempSync(join(tmpdir(), 'step-one-base-'))
+  try {
+    const checkout = join(parent, 'repository')
+    git(parent, [
+      'clone',
+      '--quiet',
+      '--no-local',
+      '--no-tags',
+      '--template=',
+      `--revision=${baseCommit}`,
+      '--',
+      repository,
+      checkout
+    ])
+    const run = Bun.spawn(INSTALL_COMMAND, {
+      cwd: checkout,
+      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: sandbox.scratch, TMPDIR: parent },
       stdout: 'pipe',
       stderr: 'pipe'
-    }
+    })
+    const [, stderr] = await Promise.all([new Response(run.stdout).text(), new Response(run.stderr).text()])
+    if ((await run.exited) !== 0) throw new Error(`base dependency installation failed: ${stderr.slice(-2000)}`)
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
+  }
+}
+
+/**
+ * The sandboxed step that commits a trial's work in its own worktree: it
+ * stages and commits any uncommitted change, then prints the commit `HEAD`
+ * names. A trial whose agent already committed its work is left as it is.
+ */
+export const TRIAL_COMMIT_SCRIPT = [
+  'set -e',
+  'g() { git -c core.hooksPath=/dev/null -c core.fsmonitor= --no-optional-locks "$@"; }',
+  'if [ -n "$(g status --porcelain)" ]; then',
+  '  g add -A',
+  '  g -c user.name=\'Vinaya Evaluation\' -c user.email=eval@invalid.local commit --quiet --no-verify -m "$1"',
+  'fi',
+  'printf \'trial-commit %s\\n\' "$(g rev-parse HEAD)"'
+].join('\n')
+
+/** Commits the trial's work inside `sandbox`; returns the step's output for `verifyTrialCommit`. */
+export function commitTrialInSandbox(sandbox: GradingSandbox, staging: CloneStaging, message: string): Promise<string> {
+  return sandbox.run(
+    ['/bin/sh', '-c', TRIAL_COMMIT_SCRIPT, 'commit-trial', message],
+    staging.workspace,
+    [staging.workspace, staging.gitDir],
+    SANDBOX_STEP_BUDGET_MS
   )
-  const code = await run.exited
-  if (code !== 0) throw new Error(`trial dependency installation failed: ${await new Response(run.stderr).text()}`)
+}
+
+export type TrialCommit = { ok: true; commit: string } | { ok: false; reason: string }
+
+/**
+ * Reads the trial commit from the sandboxed commit step's output and verifies
+ * it on the host without running anything the trial's repository configures:
+ * its configuration may include no other file and the repository may borrow
+ * no other one's, and every git call disables hooks and the filesystem
+ * monitor. The commit must exist in that worktree and lie ahead of the base
+ * commit; a trial with no commit ahead of the base is unavailable.
+ */
+export function verifyTrialCommit(staging: CloneStaging, output: string): TrialCommit {
+  const reported = [...output.matchAll(/^trial-commit ([0-9a-f]{40}|[0-9a-f]{64})$/gm)].at(-1)?.[1]
+  if (reported === undefined) return { ok: false, reason: 'the sandboxed commit step reported no commit' }
+  for (const name of ['config', 'config.worktree']) {
+    const path = join(staging.gitDir, name)
+    if (existsSync(path) && /^\s*\[\s*include(if)?\b/im.test(readFileSync(path, 'utf8')))
+      return { ok: false, reason: `the trial repository's ${name} includes another configuration file` }
+  }
+  if (existsSync(join(staging.gitDir, 'commondir')))
+    return { ok: false, reason: 'the trial repository borrows another repository' }
+  const type = runGit(staging.workspace, ['cat-file', '-t', reported])
+  if (type.status !== 0 || type.stdout.toString('utf8').trim() !== 'commit')
+    return { ok: false, reason: 'the reported trial commit is not a commit in its worktree' }
+  if (reported === staging.baseCommit) return { ok: false, reason: 'Developer trial has no commit ahead of its base' }
+  if (runGit(staging.workspace, ['merge-base', '--is-ancestor', staging.baseCommit, reported]).status !== 0)
+    return { ok: false, reason: 'the trial commit does not descend from its base' }
+  return { ok: true, commit: reported }
+}
+
+function trialUsage(
+  adapter: StepOneAdapter,
+  handle: { durationMs: number; usage: { input: number; output: number } | null } | null,
+  transcript: readonly string[]
+): StepOneUsage {
+  return {
+    wallTimeMs: handle?.durationMs ?? 0,
+    inputTokens: handle?.usage?.input ?? 0,
+    outputTokens: handle?.usage?.output ?? 0,
+    subscriptionQuota: handle === null ? 0 : subscriptionQuotaOf(adapter, transcript),
+    estimatedCostUsd: 0
+  }
 }
 
 async function executeDeveloper(
@@ -396,11 +622,26 @@ async function executeDeveloper(
     mode: 'clone',
     taskBranch: `task/eval/${item.pullRequest}-${input.attempt}`
   })
+  if (staging.kind !== 'clone') throw new Error('a Developer trial is staged as a clone')
   let toolHost: Awaited<ReturnType<typeof startDevToolsHost>> | null = null
+  let sandbox: GradingSandbox | null = null
+  const transcript: string[] = []
+  let handle: Awaited<ReturnType<typeof dispatchRole>> | null = null
+  const unavailable = (prefix: string, error: unknown): StepOneTrialResult => ({
+    success: false,
+    unavailableReason: unavailableReason(prefix, error),
+    usage: trialUsage(input.adapter, handle, transcript)
+  })
   try {
     const contamination = testContamination(staging, hidden)
     if (!contamination.clean) throw new Error(`trial contamination: ${JSON.stringify(contamination.findings)}`)
-    await installForTrial(staging.workspace)
+    try {
+      sandbox = openGradingSandbox()
+      await warmPackageCache(sandbox, context.repository, item.baseCommit)
+      await sandbox.run(INSTALL_COMMAND, staging.workspace, [staging.workspace], SANDBOX_STEP_BUDGET_MS)
+    } catch (error) {
+      return unavailable('Codex trial sandbox unavailable before the trial', error)
+    }
     const promptPath = join(staging.root.path, 'prompt.md')
     writeFileSync(promptPath, prompt)
     const tools = await import('../../../tests/eval/tool-selection-suite')
@@ -413,8 +654,7 @@ async function executeDeveloper(
       role: 'developer'
     })
     const devToolsBridge = driverDevBridgeInvocation(socketPath, join(import.meta.dir, '../../index.ts'))
-    const transcript: string[] = []
-    const handle = await dispatchRole('developer', adapterVendor(input.adapter), prompt, {
+    handle = await dispatchRole('developer', adapterVendor(input.adapter), prompt, {
       promptFile: promptPath,
       cwd: staging.workspace,
       unattended: true,
@@ -425,79 +665,44 @@ async function executeDeveloper(
     })
     const trace = await traceOf(input.adapter, transcript)
     const toolState = world.state()
-    if (git(staging.workspace, ['status', '--porcelain']).trim() === '') {
-      return {
-        success: false,
-        unavailableReason: 'Developer trial produced no commit-worthy workspace change',
-        usage: {
-          wallTimeMs: handle.durationMs,
-          inputTokens: handle.usage?.input ?? 0,
-          outputTokens: handle.usage?.output ?? 0,
-          subscriptionQuota: subscriptionQuotaOf(input.adapter, transcript),
-          estimatedCostUsd: 0
-        }
-      }
-    }
+    let committed: TrialCommit
     try {
-      git(staging.workspace, ['add', '-A'])
-      git(staging.workspace, [
-        '-c',
-        'user.name=Vinaya Evaluation',
-        '-c',
-        'user.email=eval@invalid.local',
-        'commit',
-        '-m',
-        `Eval(developer): Commit ${item.id} trial ${input.attempt}`
-      ])
-    } catch (error) {
-      return {
-        success: false,
-        unavailableReason: `Developer trial could not be committed: ${(error as Error).message}`,
-        usage: {
-          wallTimeMs: handle.durationMs,
-          inputTokens: handle.usage?.input ?? 0,
-          outputTokens: handle.usage?.output ?? 0,
-          subscriptionQuota: subscriptionQuotaOf(input.adapter, transcript),
-          estimatedCostUsd: 0
-        }
-      }
-    }
-    const attribution = attributeTrialObjects(staging, hidden)
-    const grading = prepareGradingCopy({
-      staging,
-      attribution,
-      hidden,
-      parentDirectory: gradingParent,
-      apply: 'fail-to-pass'
-    })
-    // The submitted tree controls package manifests. Dependency lifecycle
-    // scripts are therefore disabled before its tests enter the OS boundary.
-    await installForTrial(grading.path, true)
-    const testFiles = [
-      ...new Set([
-        ...item.hiddenTests.files.map((entry) => entry.path),
-        ...item.passToPassFiles.map((entry) => entry.path)
-      ])
-    ]
-    let outcomes: ReturnType<typeof suite.outcomesOf>
-    try {
-      outcomes = suite.outcomesOf(
-        await suite.runTests(grading.path, testFiles, context.timeoutMs, gradingIsolation(grading.path))
+      committed = verifyTrialCommit(
+        staging,
+        await commitTrialInSandbox(sandbox, staging, `Eval(developer): Commit ${item.id} trial ${input.attempt}`)
       )
     } catch (error) {
-      return {
-        success: false,
-        unavailableReason: `Codex grading sandbox unavailable: ${(error as Error).message}`,
-        usage: {
-          wallTimeMs: handle.durationMs,
-          inputTokens: handle.usage?.input ?? 0,
-          outputTokens: handle.usage?.output ?? 0,
-          subscriptionQuota: subscriptionQuotaOf(input.adapter, transcript),
-          estimatedCostUsd: 0
-        }
-      }
+      return unavailable('Developer trial could not be committed', error)
     }
-    const changedPaths = git(staging.workspace, ['diff', '--name-only', item.baseCommit]).split('\n').filter(Boolean)
+    if (!committed.ok) return unavailable('Developer trial unavailable', committed.reason)
+    let outcomes: ReturnType<typeof suite.outcomesOf>
+    try {
+      const attribution = attributeTrialObjects(staging, hidden, committed.commit)
+      const grading = prepareGradingCopy({
+        staging,
+        attribution,
+        hidden,
+        parentDirectory: gradingParent,
+        apply: 'fail-to-pass',
+        commit: committed.commit
+      })
+      // The submitted tree controls its package manifests: its install runs
+      // in the sandbox, from the base commit's package cache, with lifecycle
+      // scripts disabled.
+      await sandbox.run(INSTALL_COMMAND, grading.path, [grading.path], SANDBOX_STEP_BUDGET_MS)
+      const testFiles = [
+        ...new Set([
+          ...item.hiddenTests.files.map((entry) => entry.path),
+          ...item.passToPassFiles.map((entry) => entry.path)
+        ])
+      ]
+      outcomes = suite.outcomesOf(await gradeInSandbox(sandbox, grading.path, testFiles, context.timeoutMs))
+    } catch (error) {
+      return unavailable('Codex grading sandbox unavailable', error)
+    }
+    const changedPaths = git(staging.workspace, ['diff', '--name-only', item.baseCommit, committed.commit])
+      .split('\n')
+      .filter(Boolean)
     const grade = suite.gradeDeveloperTrial(item, {
       caseId: item.id,
       testOutcomes: outcomes,
@@ -520,18 +725,10 @@ async function executeDeveloper(
         outputTokens: handle.usage?.output ?? 0
       }
     })
-    return {
-      success: grade.verdict === 'pass',
-      usage: {
-        wallTimeMs: handle.durationMs,
-        inputTokens: handle.usage?.input ?? 0,
-        outputTokens: handle.usage?.output ?? 0,
-        subscriptionQuota: subscriptionQuotaOf(input.adapter, transcript),
-        estimatedCostUsd: 0
-      }
-    }
+    return { success: grade.verdict === 'pass', usage: trialUsage(input.adapter, handle, transcript) }
   } finally {
     await toolHost?.close()
+    sandbox?.dispose()
     rmSync(parent, { recursive: true, force: true })
     rmSync(gradingParent, { recursive: true, force: true })
   }

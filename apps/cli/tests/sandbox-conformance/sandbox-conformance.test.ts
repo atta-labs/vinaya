@@ -34,6 +34,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { sourceManifestPath, sourceReceiptsPath } from '../../src/lib/source-manifest.js'
 import { devToolsSocketRoot } from '../../src/lib/task-tools/dev-tools-registration.js'
+import { expectGradingSandboxDenies, proveGradingSandbox } from '../eval/grading-sandbox-proof.js'
 import { listingRevealsSocket, reachDriverSocketUnderOptIn } from '../lib/dispatch/driver-socket-reach.js'
 import { commandsTheTextsName, DOCTRINE_SOURCES, isSuiteInput, REPO_ROOT } from './command-sources.js'
 import {
@@ -304,6 +305,18 @@ describe.skipIf(!LIVE || process.platform !== 'linux')('driver socket boundary w
     expect(reach.stdout).toMatch(/DENIED:(EACCES|EPERM|ENOENT)/)
     expect(reach.connectionsAfter).toBe(reach.connectionsBefore)
   }, 60_000)
+})
+
+describe.skipIf(!LIVE)('Developer evaluation grading — the production grading entry point', () => {
+  // A graded test file runs through the same `codex sandbox` launch a
+  // Developer trial's hidden tests run through, and is denied each escape.
+  it(
+    'denies a graded test file writes outside scratch, the network, and every planted token',
+    async () => {
+      expectGradingSandboxDenies(await proveGradingSandbox(COMMAND_BUDGET_MS))
+    },
+    COMMAND_BUDGET_MS + 60_000
+  )
 })
 
 /** Each write a worker could attempt on the required-source store: forge a receipt, rewrite or delete the manifest, plant a new file. */

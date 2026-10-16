@@ -1,16 +1,21 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture'
+import { type CloneStaging, git } from '../../src/lib/dev-review-eval/staging'
 import {
+  GRADING_CODEX_PACKAGE,
+  openGradingSandbox,
   PRODUCTION_STEP_ONE_RUNTIME,
-  gradingIsolation,
   runStepOne,
   runStepOneCommand,
   STEP_ONE_SUITES,
-  subscriptionQuotaOf
+  subscriptionQuotaOf,
+  TRIAL_COMMIT_SCRIPT,
+  unavailableReason,
+  verifyTrialCommit
 } from '../../src/lib/dev-review-eval/step-one'
+import { expectGradingSandboxDenies, proveGradingSandbox } from './grading-sandbox-proof'
 
 const options = {
   split: 'development' as const,
@@ -22,79 +27,188 @@ const suites = () => STEP_ONE_SUITES.map((suite) => ({ suite, taskIds: [`${suite
 const usage = { wallTimeMs: 10, inputTokens: 3, outputTokens: 2, subscriptionQuota: 0.1, estimatedCostUsd: 0.01 }
 
 describe('development-only step one', () => {
-  it('reads adapter-reported quota telemetry without inventing a missing value', () => {
+  it('charges a trial the increase between the before and after readings of one window only', () => {
+    const claude = (type: string, utilization: number) =>
+      JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { rateLimitType: type, utilization } })
+    expect(
+      subscriptionQuotaOf('claude-code', [
+        claude('five_hour', 0.37),
+        claude('seven_day', 0.9),
+        claude('five_hour', 0.42)
+      ])
+    ).toBeCloseTo(0.05)
+    const codex = (primary: number, secondary: number) =>
+      JSON.stringify({
+        msg: { rate_limits: { primary: { used_percent: primary }, secondary: { used_percent: secondary } } }
+      })
+    // The first reading's primary window against the last reading's primary window — never primary against secondary.
+    expect(subscriptionQuotaOf('codex', [codex(10, 80), codex(12, 81)])).toBe(2)
+    expect(subscriptionQuotaOf('codex', [codex(42, 50), codex(42, 50)])).toBe(0)
+  })
+
+  it('records quota unavailable without a reading pair or across a window reset, never inferring one', () => {
+    expect(subscriptionQuotaOf('codex', ['{"rate_limits":{"primary":{"used_percent":42}}}'])).toBeNull()
+    expect(subscriptionQuotaOf('codex', ['{"type":"turn.completed","usage":{"input_tokens":7}}'])).toBeNull()
+    expect(
+      subscriptionQuotaOf('codex', [
+        '{"rate_limits":{"secondary":{"used_percent":3}}}',
+        '{"rate_limits":{"secondary":{"used_percent":9}}}'
+      ])
+    ).toBeNull()
+    expect(
+      subscriptionQuotaOf('codex', [
+        '{"rate_limits":{"primary":{"used_percent":90}}}',
+        '{"rate_limits":{"primary":{"used_percent":1}}}'
+      ])
+    ).toBeNull()
     expect(
       subscriptionQuotaOf('claude-code', [
         '{"rate_limit_info":{"utilization":0.37}}',
         '{"rate_limit_info":{"utilization":0.42}}'
       ])
-    ).toBeCloseTo(0.05)
-    expect(
-      subscriptionQuotaOf('codex', [
-        '{"rate_limits":{"primary":{"used_percent":42}}}',
-        '{"rate_limits":{"primary":{"used_percent":42}}}'
-      ])
-    ).toBe(0)
-    expect(subscriptionQuotaOf('codex', ['{"rate_limits":{"primary":{"used_percent":42}}}'])).toBeNull()
-    expect(subscriptionQuotaOf('codex', ['{"type":"turn.completed"}'])).toBeNull()
+    ).toBeNull()
   })
 
-  it('builds grading only through Codex sandbox with no network or ambient token environment', () => {
-    const root = mkdtempSync(join(tmpdir(), 'step-one-isolation-'))
-    const workspace = join(root, 'grading')
-    const scratch = join(root, 'scratch')
-    mkdirSync(workspace)
-    mkdirSync(scratch)
-    const isolated = gradingIsolation(workspace)(['bun', 'test', 'planted.test.ts'], workspace, scratch)
-    expect(isolated.command).toContain('sandbox')
-    expect(isolated.command).toContain('sandbox_workspace_write.network_access=false')
-    expect(isolated.command.join(' ')).not.toContain('sandbox-exec')
-    expect(isolated.command.join(' ')).not.toContain('bwrap')
-    expect(Object.keys(isolated.env).sort()).toEqual(['CODEX_HOME', 'HOME', 'LANG', 'PATH', 'TMPDIR'])
-    expect(Object.keys(isolated.env).some((key) => /TOKEN|FORGE|LOG|VENDOR/i.test(key))).toBe(false)
-    expect(isolated.command.join(' ')).toContain(workspace)
-    expect(isolated.command.join(' ')).toContain(scratch)
+  it('keeps measured quota when another trial has no reading pair, and counts the unavailable trials', async () => {
+    let calls = 0
+    const result = await runStepOne(options, suites, async () => ({
+      success: true,
+      usage: { ...usage, subscriptionQuota: calls++ % 2 === 0 ? 0.25 : null }
+    }))
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    for (const run of result.value.runs) {
+      expect(run.usage.subscriptionQuota).toBeCloseTo(0.25)
+      expect(run.quotaUnavailableTrials).toBe(1)
+    }
+    const none = await runStepOne(options, suites, async () => ({
+      success: true,
+      usage: { ...usage, subscriptionQuota: null }
+    }))
+    if (none.ok) expect(none.value.runs.every((run) => run.usage.subscriptionQuota === null)).toBe(true)
+  })
+
+  it('stores an unavailable reason redacted and truncated', () => {
+    const token = `ghp_${'a'.repeat(36)}`
+    const reason = unavailableReason(
+      'Codex grading sandbox unavailable',
+      new Error(`leaked ${token} ${'x'.repeat(2000)}`)
+    )
+    expect(reason).not.toContain(token)
+    expect(reason).toContain('<redacted>')
+    expect(reason.length).toBeLessThanOrEqual(501)
+  })
+
+  it('launches every trial step only through codex sandbox, network off, with a placeholder login and no token', () => {
+    const target = realpathSync(mkdtempSync(join(tmpdir(), 'step-one-isolation-')))
+    const sandbox = openGradingSandbox()
+    try {
+      const launched = sandbox.launch(['bun', 'test', 'planted.test.ts'], [target])
+      const text = launched.command.join(' ')
+      expect(launched.command.slice(1, 4)).toEqual(['x', GRADING_CODEX_PACKAGE, 'sandbox'])
+      expect(launched.command).toContain('sandbox_workspace_write.network_access=false')
+      expect(launched.command).toContain('sandbox_workspace_write.exclude_slash_tmp=true')
+      expect(launched.command).toContain('sandbox_workspace_write.exclude_tmpdir_env_var=true')
+      expect(launched.command).toContain(
+        `sandbox_workspace_write.writable_roots=${JSON.stringify([sandbox.scratch, target])}`
+      )
+      expect(text).not.toContain('sandbox-exec')
+      expect(text).not.toContain('bwrap')
+      expect(Object.keys(launched.env).sort()).toEqual(['CODEX_HOME', 'HOME', 'LANG', 'PATH', 'TMPDIR'])
+      expect(launched.env.HOME).toBe(sandbox.scratch)
+      expect(launched.env.TMPDIR).toBe(sandbox.scratch)
+      expect(launched.env.CODEX_HOME?.startsWith(sandbox.scratch)).toBe(false)
+      expect(readFileSync(join(launched.env.CODEX_HOME as string, 'auth.json'), 'utf8')).toBe('{}\n')
+    } finally {
+      sandbox.dispose()
+      rmSync(target, { recursive: true, force: true })
+    }
   })
 
   it.skipIf(Bun.which('codex') === null)(
-    'denies a graded test file writes outside scratch, network, and ambient tokens',
+    'denies a graded test file writes outside scratch, the network, and every planted token',
     async () => {
-      const root = mkdtempSync(join(tmpdir(), 'step-one-sandbox-proof-'))
-      const workspace = join(root, 'grading')
-      const scratch = join(root, 'scratch')
-      mkdirSync(workspace)
-      mkdirSync(scratch)
-      const outside = join(root, 'outside')
-      mkdirSync(outside)
-      writeFileSync(
-        join(workspace, 'planted.test.ts'),
-        `import { expect, test } from 'bun:test'\n` +
-          `import { writeFileSync } from 'node:fs'\n` +
-          `test('boundary', async () => {\n` +
-          `  expect(() => writeFileSync(${JSON.stringify(join(outside, 'escaped'))}, 'no')).toThrow()\n` +
-          `  expect(await fetch('https://example.com').then(() => false, () => true)).toBe(true)\n` +
-          '  expect(Object.keys(process.env).some((key) => /TOKEN|FORGE|LOG|VENDOR/i.test(key))).toBe(false)\n' +
-          '})\n'
-      )
-      const isolated = gradingIsolation(workspace)(['bun', 'test', 'planted.test.ts'], workspace, scratch)
-      const codex = Bun.which('codex')
-      const command = [codex as string, ...isolated.command.slice(3)]
-      const run = await spawnBudgetedAsync(
-        command,
-        { cwd: workspace, env: { ...stripVinayaEnv({}), ...isolated.env } },
-        120_000,
-        'Codex grading sandbox proof'
-      )
-      const exitCode = run.status
-      const output = `${run.stdout}\n${run.stderr}`
-      if (/sandbox_apply: Operation not permitted/.test(output)) {
-        expect(exitCode).not.toBe(0)
-        return
-      }
-      expect(exitCode, output).toBe(0)
+      expectGradingSandboxDenies(await proveGradingSandbox())
     },
-    120_000
+    360_000
   )
+
+  describe('the trial commit the host verifies', () => {
+    const repository = () => {
+      const workspace = realpathSync(mkdtempSync(join(tmpdir(), 'step-one-commit-')))
+      git(workspace, ['init', '--quiet'])
+      const commit = (message: string) => {
+        git(workspace, [
+          '-c',
+          'user.name=t',
+          '-c',
+          'user.email=t@t',
+          'commit',
+          '--quiet',
+          '--allow-empty',
+          '-m',
+          message
+        ])
+        return git(workspace, ['rev-parse', 'HEAD']).trim()
+      }
+      const base = commit('base')
+      const staging = { workspace, gitDir: join(workspace, '.git'), baseCommit: base } as unknown as CloneStaging
+      return { workspace, staging, base, commit }
+    }
+
+    it('grades the commit an agent already made, its tree clean', () => {
+      const { workspace, staging, commit } = repository()
+      const head = commit('agent work')
+      expect(git(workspace, ['status', '--porcelain'])).toBe('')
+      expect(verifyTrialCommit(staging, `noise\ntrial-commit ${head}\n`)).toEqual({ ok: true, commit: head })
+      rmSync(workspace, { recursive: true, force: true })
+    })
+
+    it('commits only uncommitted work, and reports the commit HEAD names either way', () => {
+      const { workspace, staging, commit } = repository()
+      const step = () =>
+        Bun.spawnSync(['/bin/sh', '-c', TRIAL_COMMIT_SCRIPT, 'commit-trial', 'Eval(developer): trial'], {
+          cwd: workspace,
+          env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: workspace }
+        }).stdout.toString()
+      const agentCommit = commit('agent work')
+      expect(step()).toBe(`trial-commit ${agentCommit}\n`)
+      writeFileSync(join(workspace, 'solution.ts'), 'export {}\n')
+      const output = step()
+      const committed = verifyTrialCommit(staging, output)
+      expect(committed.ok).toBe(true)
+      if (committed.ok) expect(committed.commit).not.toBe(agentCommit)
+      expect(git(workspace, ['status', '--porcelain'])).toBe('')
+      rmSync(workspace, { recursive: true, force: true })
+    })
+
+    it('records a trial with no commit ahead of its base unavailable', () => {
+      const { workspace, staging, base } = repository()
+      expect(verifyTrialCommit(staging, `trial-commit ${base}\n`)).toEqual({
+        ok: false,
+        reason: 'Developer trial has no commit ahead of its base'
+      })
+      expect(verifyTrialCommit(staging, 'nothing reported\n').ok).toBe(false)
+      expect(verifyTrialCommit(staging, `trial-commit ${'0'.repeat(40)}\n`).ok).toBe(false)
+      rmSync(workspace, { recursive: true, force: true })
+    })
+
+    it('refuses a trial repository whose configuration includes another file, running none of its hooks', () => {
+      const { workspace, staging, commit } = repository()
+      const head = commit('agent work')
+      const marker = join(workspace, 'hook-ran')
+      writeFileSync(join(workspace, '.git', 'hooks', 'post-checkout'), `#!/bin/sh\ntouch ${marker}\n`, { mode: 0o755 })
+      git(workspace, ['config', 'core.fsmonitor', `touch ${marker}`])
+      expect(verifyTrialCommit(staging, `trial-commit ${head}\n`)).toEqual({ ok: true, commit: head })
+      expect(existsSync(marker)).toBe(false)
+      writeFileSync(
+        join(workspace, '.git', 'config'),
+        `${readFileSync(join(workspace, '.git', 'config'), 'utf8')}[includeIf "gitdir:/"]\n\tpath = /elsewhere\n`
+      )
+      expect(verifyTrialCommit(staging, `trial-commit ${head}\n`).ok).toBe(false)
+      rmSync(workspace, { recursive: true, force: true })
+    })
+  })
 
   it('runs all three suites on both adapters and reports estimates and usage', async () => {
     const calls: string[] = []

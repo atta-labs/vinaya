@@ -596,7 +596,10 @@ function runnerCommand(checkout: string, root: string, files: readonly string[],
   return ['bun', 'test', '--timeout=30000', '--reporter=junit', `--reporter-outfile=${report}`, ...relativeFiles]
 }
 
-/** Runs `files` (repository-relative) from their packages' own directories with their own runners, as continuous integration does. */
+/**
+ * Runs `files` (repository-relative) from their packages' own directories with their own runners, as continuous integration does.
+ * `isolate` wraps each runner's launch; each run's report directory is created under `reportParent`.
+ */
 export async function runTests(
   checkout: string,
   files: readonly string[],
@@ -608,7 +611,8 @@ export async function runTests(
   ) => {
     command: string[]
     env: NodeJS.ProcessEnv
-  }
+  },
+  reportParent: string = tmpdir()
 ): Promise<TestResult[]> {
   const byPackage = new Map<string, string[]>()
   for (const file of files) {
@@ -618,7 +622,7 @@ export async function runTests(
   }
   const results: TestResult[] = []
   for (const [root, own] of byPackage) {
-    const report = join(mkdtempSync(join(tmpdir(), 'developer-capability-junit-')), 'junit.xml')
+    const report = join(mkdtempSync(join(reportParent, 'developer-capability-junit-')), 'junit.xml')
     const command = runnerCommand(checkout, root, own, report)
     const execution = isolate?.(command, join(checkout, root), dirname(report))
     const run = await spawnBudgetedAsync(

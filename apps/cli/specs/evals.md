@@ -315,18 +315,44 @@ before loading suite inputs. Each suite-and-adapter result records task count,
 trials and successes per task, the seeded bootstrap suite mean and interval,
 wall time, tokens, reported subscription quota use and estimated cost.
 
-Developer trials are graded only after their workspace has been committed;
-the grading copy is cloned from that commit, and a trial with no commit is
-recorded unavailable. Grading commands run through the pinned `codex sandbox`
-launcher with network disabled, a placeholder-auth policy home, an allowlisted
-environment, and writable roots limited to the grading copy and an empty
-scratch directory. If that sandbox cannot start, the trial is unavailable and
-is never graded unconfined. The vendor sandbox does not deny reads of `~/.ssh`
-or `/proc/*/environ`, matching a Developer dispatch; no network and no forge,
+Nothing a trial's workspace controls runs on the host. Every step that runs
+in or over it — the dependency install before the agent starts, staging and
+committing the trial's work in its own worktree, the grading copy's install,
+and the hidden and pass-to-pass test run — runs inside one `codex sandbox`
+launch shape (`openGradingSandbox`): the pinned Codex CLI, a policy home staged
+by `stageCodexPolicyHome` from a throwaway home holding a placeholder `{}`
+login and kept outside every writable root, network disabled, `/tmp` and
+`$TMPDIR` excluded, writable roots limited to an empty scratch directory plus
+the directory the step works on (the trial worktree and its git directory for
+the commit step, the grading copy for its install and tests), and a child
+environment of only `PATH`, `LANG`, `HOME` and `TMPDIR` (both the scratch
+directory) and `CODEX_HOME`. The host fills the scratch directory's package
+cache from the base commit, cloned from the pinned repository, so the
+sandboxed installs need no network; they run with lifecycle scripts disabled.
+If that sandbox cannot start, the trial is unavailable and is never graded
+unconfined. The vendor sandbox does not deny reads of `~/.ssh` or
+`/proc/*/environ`, matching a Developer dispatch; no network and no forge,
 log, or vendor token in the grading environment prevent those reads from
-leaving the host. Subscription quota use is the non-negative difference
-between the before and after utilization readings; equal readings consume
-zero quota, and a missing endpoint is reported as unavailable telemetry.
+leaving the host.
+
+The host only reads the result. The sandboxed commit step commits any
+uncommitted change and prints the commit `HEAD` names; a trial whose agent
+already committed its work is graded on that commit. The host takes the SHA
+from that output and verifies it with every harness git call disabling hooks
+and the filesystem monitor (`-c core.hooksPath=/dev/null -c core.fsmonitor=
+--no-optional-locks`), refusing a repository whose configuration includes
+another file: it must be a commit in that worktree, ahead of the base commit.
+The grading copy is cloned from that commit the same way. A trial with no
+commit ahead of its base is unavailable. An unavailable trial's reason is
+redacted with the Log's redaction helper and truncated before it is stored.
+
+Subscription quota use is read per trial from the vendor's own rate-limit
+readings in that trial's stream, of one window only (Codex's primary window,
+Claude Code's five-hour window): the after reading minus the before reading.
+Equal readings consume zero. A trial without both readings, or whose window
+reset between them, has unavailable (`null`) quota, never inferred from other
+numbers; a suite-and-adapter run sums the measured trials and counts the
+unavailable ones in `quotaUnavailableTrials`.
 The executable entry point loads the three pinned development corpora, stages
 each task through the harness isolation boundary, launches the production
 subscription adapter, and applies the suite's pinned grader:
@@ -344,10 +370,7 @@ Developer trials retain the adapter's structured stdout as an observation
 stream: the adapter transcript readers recover the actual tool trace, governed
 publication calls supply effect identities and pull-request evidence, and
 vendor rate-limit telemetry supplies quota utilization when the CLI reports
-it. Missing telemetry remains `null`, never a fabricated zero. Submitted
-dependency lifecycle scripts are disabled, and hidden/pass-to-pass tests run
-with an allowlisted environment inside an OS filesystem boundary with network
-access denied; a host without the required boundary refuses the run.
+it.
 
 `validateFreezeRecord` validates the later Principal-authored milestone freeze.
 It requires product-risk provenance for every Principal floor, explicit seeded
