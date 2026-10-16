@@ -15,7 +15,6 @@ import {
 } from '../../src/lib/dev-review-eval/contracts'
 import {
   REVIEWER_SEVERITIES,
-  type CompletedReview,
   type ReviewBinding,
   type ReviewerRole,
   validateReviewResult
@@ -47,11 +46,13 @@ export type PatchRecord =
   | { source: 'git'; file: string; digest: string; parentCommit: string; changedCommit: string }
 export interface RecordedAdjudication {
   runId: string
-  fresh: true
-  sawOther: false
-  transcriptDigest: string
-  binding: ReviewBinding
-  output: unknown
+  reviewer: ReviewerRole
+  snapshotDigest: string
+  pullRequest: number
+  createdAt: string
+  commentDigest: string
+  judgedHead: string
+  verdict: 'clean' | 'blocking'
 }
 export interface ReviewCase {
   id: string
@@ -86,9 +87,11 @@ export interface ItemGrade {
 }
 export interface QualityReport {
   recall: number
-  falseBlockingRate: number
+  falseBlockingRate: number | null
   objectiveDispositionAccuracy: number
   zeroCriticalHighSecurityMisses: boolean
+  pendingCleanFindings: string[]
+  movedToHistorical: string[]
 }
 
 export const sha256 = (text: string | Uint8Array) => createHash('sha256').update(text).digest('hex')
@@ -102,13 +105,16 @@ const canonical = (value: unknown): string =>
           .join(',')}}`
       : JSON.stringify(value)
 
-const graderContract =
-  'validate ReviewResult against controller binding; require expected blocking finding, clean non-blocking result, and every objective disposition'
+const graderImplementation = [
+  readFileSync(join(import.meta.dir, 'reviewer-quality-suite.ts')),
+  readFileSync(join(REPO_ROOT, 'apps/cli/src/lib/review-result.ts')),
+  Buffer.from(JSON.stringify(REVIEWER_SEVERITIES))
+]
 export const REVIEW_QUALITY_GRADER: CodeGraderIdentity = {
   kind: 'code',
   id: 'reviewer-quality-binary',
   version: '1',
-  logicDigest: sha256(graderContract)
+  logicDigest: sha256(Buffer.concat(graderImplementation))
 }
 export type PatchResolver = (parent: string, changed: string, file: string) => string
 const gitPatch: PatchResolver = (parent, changed, file) => {
@@ -123,32 +129,55 @@ export function patchBytes(item: ReviewCase, resolve: PatchResolver = gitPatch):
       : resolve(item.patch.parentCommit, item.patch.changedCommit, item.patch.file)
   if (bytes.length === 0 || sha256(bytes) !== item.patch.digest)
     throw new Error(`reviewer cases: patch digest changed for ${item.id}`)
+  if (item.patch.source === 'inline') {
+    const source = spawnSync('git', ['show', `${item.baseCommit}:${item.patch.file}`], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8'
+    })
+    if (source.status !== 0) throw new Error(`reviewer cases: seeded path does not exist at its base for ${item.id}`)
+    const removed = item.patch.unified
+      .split('\n')
+      .filter((line) => line.startsWith('-') && !line.startsWith('---'))
+      .map((line) => line.slice(1))
+      .join('\n')
+    if (removed === '' || !source.stdout.includes(removed)) {
+      throw new Error(`reviewer cases: seeded patch does not apply to its base for ${item.id}`)
+    }
+  }
   return bytes
 }
 const blocking = (role: ReviewerRole, severity: string) => {
   const order = REVIEWER_SEVERITIES[role]
   return order.indexOf(severity) >= 0 && order.indexOf(severity) <= 1
 }
-function adjudicationResult(run: RecordedAdjudication, item: ReviewCase): CompletedReview | null {
+function adjudicationResult(run: RecordedAdjudication, item: ReviewCase): RecordedAdjudication | null {
+  const candidateHead = item.patch.source === 'git' ? item.patch.changedCommit : null
   if (
-    !run.fresh ||
-    run.sawOther ||
-    run.binding.role !== item.role ||
-    run.binding.objectiveIds.join('\0') !== item.objectives.join('\0')
+    candidateHead === null ||
+    run.judgedHead !== candidateHead ||
+    run.snapshotDigest !== item.provenance.snapshotDigest ||
+    run.pullRequest !== item.provenance.pullRequest ||
+    !/^[0-9a-f]{64}$/.test(run.commentDigest) ||
+    !/^\d{4}-\d{2}-\d{2}T/.test(run.createdAt)
   )
     return null
-  const validation = validateReviewResult(run.output, run.binding)
-  return validation.ok && validation.result.status === 'completed' ? validation.result : null
+  return run
 }
 /** Clean entries cannot cross the corpus boundary without two independent accepted fresh reviews. */
 export function admitClean(candidate: ReviewCase): 'admit' | 'drop' | 'historical' {
   const evidence = candidate.adjudication
-  if (!evidence || evidence.first.runId === evidence.second.runId) return 'drop'
+  if (
+    !evidence ||
+    evidence.first.runId === evidence.second.runId ||
+    evidence.first.commentDigest === evidence.second.commentDigest ||
+    evidence.first.reviewer === evidence.second.reviewer
+  )
+    return 'drop'
   const first = adjudicationResult(evidence.first, candidate)
   const second = adjudicationResult(evidence.second, candidate)
   if (!first || !second) return 'drop'
-  const a = first.findings.some((finding) => blocking(candidate.role, finding.severity))
-  const b = second.findings.some((finding) => blocking(candidate.role, finding.severity))
+  const a = first.verdict === 'blocking'
+  const b = second.verdict === 'blocking'
   return a && b ? 'historical' : a || b ? 'drop' : 'admit'
 }
 function validateCorpus(file: CaseFile, role: ReviewerRole, resolve: PatchResolver): CaseFile {
@@ -220,21 +249,39 @@ export function gradeItem(item: ReviewCase, output: unknown, binding: ReviewBind
     item.objectives.every((id) => result.objectiveResults.some((objective) => objective.id === id))
   return { defect, clean, objectives, accepted: true, pass: defect && clean && objectives, reason: null }
 }
-export function qualityReport(items: ReviewCase[], grades: ItemGrade[]): QualityReport {
+export type CleanFindingDisposition = Record<string, 'false-block' | 'real-defect' | 'pending'>
+
+export function qualityReport(
+  items: ReviewCase[],
+  grades: ItemGrade[],
+  dispositions: CleanFindingDisposition = {}
+): QualityReport {
   if (items.length !== grades.length || grades.length === 0)
     throw new Error('reviewer report: every item needs one grade')
   const defects = items
     .map((item, i) => ({ item, grade: grades[i]! }))
     .filter(({ item }) => item.expected !== null && item.expected.justified !== true)
   const clean = items.map((item, i) => ({ item, grade: grades[i]! })).filter(({ item }) => item.set === 'clean')
+  const challenged = clean.filter(({ grade }) => !grade.clean)
+  const pendingCleanFindings = challenged
+    .filter(({ item }) => (dispositions[item.id] ?? 'pending') === 'pending')
+    .map(({ item }) => item.id)
+  const movedToHistorical = challenged
+    .filter(({ item }) => dispositions[item.id] === 'real-defect')
+    .map(({ item }) => item.id)
+  const remainingClean = clean.filter(({ item }) => !movedToHistorical.includes(item.id))
+  const falseBlocks = challenged.filter(({ item }) => dispositions[item.id] === 'false-block').length
   const criticalHigh = defects.filter(
     ({ item }) => item.role === 'security-reviewer' && ['CRITICAL', 'HIGH'].includes(item.expected!.severity)
   )
   return {
     recall: defects.length === 0 ? 1 : defects.filter(({ grade }) => grade.defect).length / defects.length,
-    falseBlockingRate: clean.length === 0 ? 0 : clean.filter(({ grade }) => !grade.clean).length / clean.length,
+    falseBlockingRate:
+      pendingCleanFindings.length > 0 ? null : remainingClean.length === 0 ? 0 : falseBlocks / remainingClean.length,
     objectiveDispositionAccuracy: grades.filter((grade) => grade.objectives).length / grades.length,
-    zeroCriticalHighSecurityMisses: criticalHigh.every(({ grade }) => grade.defect)
+    zeroCriticalHighSecurityMisses: criticalHigh.every(({ grade }) => grade.defect),
+    pendingCleanFindings,
+    movedToHistorical
   }
 }
 export function harnessSuite(role: ReviewerRole, file = loadDevelopment(role)) {
@@ -305,7 +352,8 @@ export function harnessReport(
   role: ReviewerRole,
   items: ReviewCase[],
   grades: ItemGrade[],
-  transcriptDigests: string[]
+  transcriptDigests: string[],
+  dispositions: CleanFindingDisposition = {}
 ): { report: Report; quality: QualityReport } {
   const tasks = items.map((item, index) => ({ taskId: item.id, successes: grades[index]!.pass ? 1 : 0, trials: 1 }))
   const mean = tasks.filter((task) => task.successes === 1).length / tasks.length
@@ -328,5 +376,5 @@ export function harnessReport(
   }
   const validated = validateReport(raw)
   if (!validated.ok) throw new Error(`reviewer report: ${validated.refusal.path}: ${validated.refusal.detail}`)
-  return { report: validated.value, quality: qualityReport(items, grades) }
+  return { report: validated.value, quality: qualityReport(items, grades, dispositions) }
 }

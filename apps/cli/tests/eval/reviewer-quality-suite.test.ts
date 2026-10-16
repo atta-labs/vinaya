@@ -12,6 +12,8 @@ import {
   loadHeldOut,
   patchBytes,
   qualityReport,
+  REVIEW_QUALITY_GRADER,
+  sha256,
   type ReviewCase
 } from './reviewer-quality-suite'
 
@@ -81,6 +83,10 @@ describe('reviewer quality suites', () => {
     const planted = structuredClone(items[0]!)
     planted.patch.digest = '0'.repeat(64)
     expect(() => patchBytes(planted)).toThrow('patch digest changed')
+    if (planted.patch.source !== 'inline') throw new Error('the first seed must be inline')
+    planted.patch.unified = planted.patch.unified.replace('return t.successes / t.trials', 'return absent / context')
+    planted.patch.digest = sha256(planted.patch.unified)
+    expect(() => patchBytes(planted)).toThrow('does not apply')
   })
 
   it('holds all required seeded kinds and at least five snapshot-backed historical rounds', () => {
@@ -98,7 +104,7 @@ describe('reviewer quality suites', () => {
     }
   })
 
-  it('enforces two accepted independent adjudicator outputs at the load boundary', () => {
+  it('enforces two snapshot-backed independent adjudications bound to the candidate head', () => {
     const clean: ReviewCase = structuredClone(
       loadDevelopment('code-reviewer').cases.find((item) => item.set === 'clean')!
     )
@@ -106,15 +112,12 @@ describe('reviewer quality suites', () => {
     clean.adjudication!.second.runId = clean.adjudication!.first.runId
     expect(admitClean(clean)).toBe('drop')
     clean.adjudication!.second.runId = 'independent-again'
-    const second = clean.adjudication!.second.output as any
-    second.reviewResult.findings = [
-      { severity: 'MAJOR', file: clean.patch.file, line: 1, description: 'blocking defect' }
-    ]
+    clean.adjudication!.second.judgedHead = 'another-change'
     expect(admitClean(clean)).toBe('drop')
-    const first = clean.adjudication!.first.output as any
-    first.reviewResult.findings = [
-      { severity: 'MAJOR', file: clean.patch.file, line: 1, description: 'same confirmed defect' }
-    ]
+    clean.adjudication!.second.judgedHead = clean.adjudication!.first.judgedHead
+    clean.adjudication!.second.verdict = 'blocking'
+    expect(admitClean(clean)).toBe('drop')
+    clean.adjudication!.first.verdict = 'blocking'
     expect(admitClean(clean)).toBe('historical')
   })
 
@@ -133,6 +136,11 @@ describe('reviewer quality suites', () => {
   })
 
   it('constructs validated Task, Trial, Suite and Report ports with a pinned code grader', () => {
+    expect(REVIEW_QUALITY_GRADER.logicDigest).not.toBe(
+      sha256(
+        'validate ReviewResult against controller binding; require expected blocking finding, clean non-blocking result, and every objective disposition'
+      )
+    )
     for (const role of ['code-reviewer', 'security-reviewer'] as ReviewerRole[]) {
       const items = loadDevelopment(role).cases
       const grades = items.map((item) => {
@@ -154,5 +162,25 @@ describe('reviewer quality suites', () => {
       })
       expect(qualityReport(items, grades)).toEqual(evidence.quality)
     }
+  })
+
+  it('holds a clean blocking finding pending until adjudication decides its disposition', () => {
+    const item = loadDevelopment('code-reviewer').cases.find((candidate) => candidate.set === 'clean')!
+    const blockingReview = review(item, [
+      { severity: 'MAJOR', file: item.patch.file, line: 1, description: 'possible real defect' }
+    ])
+    const grade = gradeItem(item, blockingReview.output, blockingReview.binding)
+    expect(qualityReport([item], [grade])).toMatchObject({
+      falseBlockingRate: null,
+      pendingCleanFindings: [item.id]
+    })
+    expect(qualityReport([item], [grade], { [item.id]: 'false-block' })).toMatchObject({
+      falseBlockingRate: 1,
+      pendingCleanFindings: []
+    })
+    expect(qualityReport([item], [grade], { [item.id]: 'real-defect' })).toMatchObject({
+      falseBlockingRate: 0,
+      movedToHistorical: [item.id]
+    })
   })
 })
