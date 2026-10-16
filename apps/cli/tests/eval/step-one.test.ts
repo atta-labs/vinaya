@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture'
 import {
   PRODUCTION_STEP_ONE_RUNTIME,
   gradingIsolation,
@@ -77,9 +78,14 @@ describe('development-only step one', () => {
     const codex = Bun.which('codex')
     expect(codex).not.toBeNull()
     const command = [codex as string, ...isolated.command.slice(3)]
-    const run = Bun.spawn(command, { cwd: workspace, env: isolated.env, stdout: 'pipe', stderr: 'pipe' })
-    const exitCode = await run.exited
-    const output = `${await new Response(run.stdout).text()}\n${await new Response(run.stderr).text()}`
+    const run = await spawnBudgetedAsync(
+      command,
+      { cwd: workspace, env: { ...stripVinayaEnv({}), ...isolated.env } },
+      120_000,
+      'Codex grading sandbox proof'
+    )
+    const exitCode = run.status
+    const output = `${run.stdout}\n${run.stderr}`
     if (/sandbox_apply: Operation not permitted/.test(output)) {
       expect(exitCode).not.toBe(0)
       return
