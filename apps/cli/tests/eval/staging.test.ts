@@ -530,6 +530,24 @@ describe('after the trial', () => {
     )
   })
 
+  it('restores a pass-to-pass test from the pinned base after a trial weakens it', () => {
+    const staging = stageClone()
+    writeFileSync(join(staging.workspace, 'README.md'), '# weakened assertion\n')
+    commitAll(staging.workspace, 'weaken existing test')
+    const pinned = '# fixture\n'
+    const hidden = { ...HIDDEN, pinnedPassToPassTests: { 'README.md': pinned } }
+    const copy = prepareGradingCopy({
+      staging,
+      attribution: attributeTrialObjects(staging, hidden),
+      hidden,
+      parentDirectory: freshDir('grading'),
+      apply: 'fail-to-pass'
+    })
+    expect(copy.written).toContain('README.md')
+    expect(readFileSync(join(copy.path, 'README.md'), 'utf8')).toBe(pinned)
+    expect(readFileSync(join(staging.workspace, 'README.md'), 'utf8')).toContain('weakened')
+  })
+
   it('applies the reference solution over the base commit in its own copy', () => {
     const staging = stageClone()
     const copy = prepareGradingCopy({

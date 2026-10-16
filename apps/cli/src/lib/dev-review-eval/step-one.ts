@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, relative } from 'node:path'
 import { redact } from '@attalabs/aeg-core'
 import {
   addCodexWritableDirs,
@@ -153,6 +153,34 @@ export interface GradingSandbox {
   dispose(): void
 }
 
+function resolveGradingCodex(toolRoot: string): string {
+  const installed = Bun.which('codex')
+  if (installed !== null) return realpathSync(installed)
+  mkdirSync(toolRoot, { recursive: true })
+  const installedPackage = Bun.spawnSync(
+    [process.execPath, 'add', '--silent', '--no-save', '--cwd', toolRoot, GRADING_CODEX_PACKAGE],
+    {
+      cwd: toolRoot,
+      env: {
+        PATH: process.env.PATH ?? '/usr/bin:/bin',
+        LANG: process.env.LANG ?? 'C.UTF-8',
+        HOME: toolRoot,
+        TMPDIR: toolRoot
+      },
+      stdout: 'pipe',
+      stderr: 'pipe'
+    }
+  )
+  if (installedPackage.exitCode !== 0) {
+    throw new Error(
+      `grading unavailable: Codex CLI could not be resolved: ${installedPackage.stderr.toString().slice(-2000)}`
+    )
+  }
+  const executable = join(toolRoot, 'node_modules', '.bin', 'codex')
+  if (!existsSync(executable)) throw new Error('grading unavailable: installed Codex CLI has no executable')
+  return realpathSync(executable)
+}
+
 /**
  * Opens the one confinement every step over a trial's workspace runs in:
  * `codex sandbox` with network disabled, `/tmp` and `$TMPDIR` excluded, and
@@ -170,6 +198,11 @@ export function openGradingSandbox(): GradingSandbox {
     rmSync(scratch, { recursive: true, force: true })
   }
   const throwawayHome = join(policyRoot, 'home')
+  const codexExecutable = resolveGradingCodex(join(policyRoot, 'tool'))
+  if (!isAbsolute(codexExecutable)) {
+    dispose()
+    throw new Error('grading unavailable: Codex CLI did not resolve to an absolute path')
+  }
   mkdirSync(join(throwawayHome, '.codex'), { recursive: true })
   writeFileSync(join(throwawayHome, '.codex', 'auth.json'), '{}\n', {
     mode: 0o600
@@ -185,37 +218,43 @@ export function openGradingSandbox(): GradingSandbox {
     throw new Error('grading unavailable: Codex policy home could not be staged')
   }
   const codexHome = codexSpawnEnvExtras('codex', staged.codexHome, scratch).attribution.CODEX_HOME as string
-  const launch: GradingSandbox['launch'] = (command, writable) => ({
-    command: [
-      process.execPath,
-      'x',
-      GRADING_CODEX_PACKAGE,
-      ...addCodexWritableDirs(
-        [
-          'sandbox',
-          '--config',
-          'sandbox_mode="workspace-write"',
-          '--config',
-          'sandbox_workspace_write.network_access=false',
-          '--config',
-          'sandbox_workspace_write.exclude_slash_tmp=true',
-          '--config',
-          'sandbox_workspace_write.exclude_tmpdir_env_var=true'
-        ],
-        [scratch, ...writable],
-        true
-      ),
-      '--',
-      ...command
-    ],
-    env: {
-      PATH: process.env.PATH ?? '/usr/bin:/bin',
-      LANG: process.env.LANG ?? 'C.UTF-8',
-      HOME: scratch,
-      TMPDIR: scratch,
-      CODEX_HOME: codexHome
+  const launch: GradingSandbox['launch'] = (command, writable) => {
+    for (const root of [scratch, ...writable]) {
+      const fromRoot = relative(realpathSync(root), codexExecutable)
+      if (fromRoot === '' || (!fromRoot.startsWith('..') && !isAbsolute(fromRoot))) {
+        throw new Error('grading unavailable: Codex CLI resolves inside a writable root')
+      }
     }
-  })
+    return {
+      command: [
+        codexExecutable,
+        ...addCodexWritableDirs(
+          [
+            'sandbox',
+            '--config',
+            'sandbox_mode="workspace-write"',
+            '--config',
+            'sandbox_workspace_write.network_access=false',
+            '--config',
+            'sandbox_workspace_write.exclude_slash_tmp=true',
+            '--config',
+            'sandbox_workspace_write.exclude_tmpdir_env_var=true'
+          ],
+          [scratch, ...writable],
+          true
+        ),
+        '--',
+        ...command
+      ],
+      env: {
+        PATH: process.env.PATH ?? '/usr/bin:/bin',
+        LANG: process.env.LANG ?? 'C.UTF-8',
+        HOME: scratch,
+        TMPDIR: scratch,
+        CODEX_HOME: codexHome
+      }
+    }
+  }
   return {
     scratch,
     launch,
@@ -484,6 +523,9 @@ function hiddenInputs(repository: string, item: DeveloperCase): HiddenInputs {
     ),
     referenceSolution: Object.fromEntries(
       item.referenceSolution.files.map((entry) => [entry.path, fileAt(repository, item.referenceCommit, entry.path)])
+    ),
+    pinnedPassToPassTests: Object.fromEntries(
+      item.passToPassFiles.map((entry) => [entry.path, fileAt(repository, item.baseCommit, entry.path)])
     )
   }
 }

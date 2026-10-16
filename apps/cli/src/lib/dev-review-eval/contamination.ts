@@ -99,6 +99,8 @@ export interface ContaminationReport {
 export interface HiddenInputs {
   failToPassTests: Readonly<Record<string, string | Uint8Array>>
   referenceSolution: Readonly<Record<string, string | Uint8Array>>
+  /** Existing tests restored from the pinned base after the trial, so the trial cannot weaken its grader. */
+  pinnedPassToPassTests?: Readonly<Record<string, string | Uint8Array>>
 }
 
 // ── Observing an object store ───────────────────────────────────────────────
@@ -747,7 +749,8 @@ export function prepareGradingCopy(request: GradingCopyRequest): GradingCopy {
   }
   const files: Array<[string, string | Uint8Array]> = [
     ...(apply === 'reference-solution' ? Object.entries(hidden.referenceSolution) : []),
-    ...Object.entries(hidden.failToPassTests)
+    ...Object.entries(hidden.failToPassTests),
+    ...Object.entries(hidden.pinnedPassToPassTests ?? {})
   ]
   const targets = files.map(([path, content]) => [safeRelativePath(path), content] as const)
 

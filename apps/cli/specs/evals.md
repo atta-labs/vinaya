@@ -319,8 +319,9 @@ Nothing a trial's workspace controls runs on the host. Every step that runs
 in or over it — the dependency install before the agent starts, staging and
 committing the trial's work in its own worktree, the grading copy's install,
 and the hidden and pass-to-pass test run — runs inside one `codex sandbox`
-launch shape (`openGradingSandbox`): the pinned Codex CLI, a policy home staged
-by `stageCodexPolicyHome` from a throwaway home holding a placeholder `{}`
+launch shape (`openGradingSandbox`): the pinned Codex CLI resolved once to an
+absolute host-only path outside the scratch directory and grading copy, a policy
+home staged by `stageCodexPolicyHome` from a throwaway home holding a placeholder `{}`
 login and kept outside every writable root, network disabled, `/tmp` and
 `$TMPDIR` excluded, writable roots limited to an empty scratch directory plus
 the directory the step works on (the trial worktree and its git directory for

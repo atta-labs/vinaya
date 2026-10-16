@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type CloneStaging, git } from '../../src/lib/dev-review-eval/staging'
 import { spawnBudgetedAsync } from '../lib/process-fixture'
 import {
-  GRADING_CODEX_PACKAGE,
   commitTrialInSandbox,
   importTrialBundle,
   openGradingSandbox,
@@ -127,7 +126,9 @@ describe('development-only step one', () => {
     try {
       const launched = sandbox.launch(['bun', 'test', 'planted.test.ts'], [target])
       const text = launched.command.join(' ')
-      expect(launched.command.slice(1, 4)).toEqual(['x', GRADING_CODEX_PACKAGE, 'sandbox'])
+      expect(launched.command[0]?.startsWith('/')).toBe(true)
+      expect(launched.command[0]?.startsWith(sandbox.scratch)).toBe(false)
+      expect(launched.command[1]).toBe('sandbox')
       expect(launched.command).toContain('sandbox_workspace_write.network_access=false')
       expect(launched.command).toContain('sandbox_workspace_write.exclude_slash_tmp=true')
       expect(launched.command).toContain('sandbox_workspace_write.exclude_tmpdir_env_var=true')
@@ -141,6 +142,25 @@ describe('development-only step one', () => {
       expect(launched.env.TMPDIR).toBe(sandbox.scratch)
       expect(launched.env.CODEX_HOME?.startsWith(sandbox.scratch)).toBe(false)
       expect(readFileSync(join(launched.env.CODEX_HOME as string, 'auth.json'), 'utf8')).toBe('{}\n')
+    } finally {
+      sandbox.dispose()
+      rmSync(target, { recursive: true, force: true })
+    }
+  })
+
+  it('never launches a fake codex planted in the writable scratch bunx cache', () => {
+    const sandbox = openGradingSandbox()
+    const target = realpathSync(mkdtempSync(join(tmpdir(), 'step-one-fake-codex-target-')))
+    try {
+      const marker = join(sandbox.scratch, 'fake-codex-ran')
+      const fake = join(sandbox.scratch, '.bun', 'install', 'cache', 'codex')
+      mkdirSync(join(sandbox.scratch, '.bun', 'install', 'cache'), { recursive: true })
+      writeFileSync(fake, `#!/bin/sh\ntouch ${marker}\n`, { mode: 0o755 })
+      const launched = sandbox.launch(['/usr/bin/true'], [target])
+      expect(realpathSync(launched.command[0] as string)).not.toBe(realpathSync(fake))
+      expect(launched.command[0]?.startsWith(sandbox.scratch)).toBe(false)
+      Bun.spawnSync(launched.command, { cwd: target, env: launched.env, stdout: 'ignore', stderr: 'ignore' })
+      expect(existsSync(marker)).toBe(false)
     } finally {
       sandbox.dispose()
       rmSync(target, { recursive: true, force: true })
