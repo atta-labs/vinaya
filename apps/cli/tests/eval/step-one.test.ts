@@ -148,7 +148,7 @@ describe('development-only step one', () => {
     }
   })
 
-  it('never launches a fake codex planted in the writable scratch bunx cache', () => {
+  it('never launches a fake codex planted in the writable scratch bunx cache', async () => {
     const sandbox = openGradingSandbox()
     const target = realpathSync(mkdtempSync(join(tmpdir(), 'step-one-fake-codex-target-')))
     try {
@@ -159,13 +159,13 @@ describe('development-only step one', () => {
       const launched = sandbox.launch(['/usr/bin/true'], [target])
       expect(realpathSync(launched.command[0] as string)).not.toBe(realpathSync(fake))
       expect(launched.command[0]?.startsWith(sandbox.scratch)).toBe(false)
-      Bun.spawnSync(launched.command, { cwd: target, env: launched.env, stdout: 'ignore', stderr: 'ignore' })
+      await spawnBudgetedAsync(launched.command, { cwd: target, env: launched.env }, 60_000, 'pinned grading codex')
       expect(existsSync(marker)).toBe(false)
     } finally {
       sandbox.dispose()
       rmSync(target, { recursive: true, force: true })
     }
-  })
+  }, 120_000)
 
   it.skipIf(Bun.which('codex') === null)(
     'denies a graded test file writes outside scratch, the network, and every planted token',
