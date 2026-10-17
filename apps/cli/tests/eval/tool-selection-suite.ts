@@ -917,12 +917,14 @@ export function gradeState(c: ToolSelectionCase, state: WorldState): GraderVerdi
 
 export const TRACE_GRADER: CodeGraderIdentity = {
   kind: 'code',
+  layer: 'P',
   id: 'tool-selection-trace',
   version: '1',
   logicDigest: sha256([gradeTrace, callMeets, meets].map(String).join('\n'))
 }
 export const STATE_GRADER: CodeGraderIdentity = {
   kind: 'code',
+  layer: 'P',
   id: 'tool-selection-state',
   version: '1',
   logicDigest: sha256([gradeState, valueAt, meets].map(String).join('\n'))
