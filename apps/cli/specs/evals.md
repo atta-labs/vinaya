@@ -192,7 +192,7 @@ A review case adjudicated clean carries no planted defect, and one not adjudicat
 | `O-scope` | The changed paths the execution recorded as outside its authorized scope |
 | `O-capability` | The capabilities the execution used |
 | `O-sources` | The documents the harness holds a receipt for, by content digest, and those the agent claims it used |
-| `O-review` | Each review's id, the intent version and change it judged, and its findings, each at a file and blocking or not; a review approves when it reports no blocking finding |
+| `O-review` | Each review's id, its reviewer (one stable identity per independent reviewer), the intent version and change it judged, and its findings, each at a file and blocking or not; a review approves when it reports no blocking finding |
 | `O-decision` | The decision (`ready` or `not-ready`) and the evidence and review ids it rests on |
 | `O-effects` | Each external effect performed, by idempotency key |
 
@@ -207,13 +207,13 @@ Each outcome carries a fact status: `known` (recorded and valid; only this statu
 | Grader | Applies to | Passes when |
 | -- | -- | -- |
 | `generic-hidden-tests` | change, loop | Every hidden test passes, on the measured head |
-| `generic-scope-kept` | change, loop | No protected path changes unless `in` covers it, and the changed paths outside `in` are exactly the recorded ones |
+| `generic-scope-kept` | change, loop | Every changed path is repository-relative and in normal form (no leading `/`, no backslash, no empty, `.` or `..` segment), no protected path changes unless `in` covers it, and the changed paths outside `in` are exactly the recorded ones |
 | `generic-capabilities-granted` | every kind | Every capability used was granted |
 | `generic-documents-used` | every kind | Every relevant delivered document is claimed and has a harness receipt for its content digest, and no undelivered document is claimed |
 | `generic-planted-defects-found` | review | Every planted defect with `justified: false` has a blocking finding at its file |
 | `generic-clean-change-unblocked` | review | A change adjudicated clean draws no blocking finding |
 | `generic-review-bound` | review, loop | At least one review, each bound to the case's intent version and to the change (the change under review, or the measured change) |
-| `generic-decision-bound` | loop | The decision is `ready`, rests on the current evidence id and exactly the current review ids, the evidence is on the head with every required check passing, and every review is on the head and approves — in the Vinaya process, the loop's ready-for-merge result with both reviewers approving and every required check green |
+| `generic-decision-bound` | loop | The decision is `ready`, rests on the current evidence id and exactly the current review ids, the evidence is on the head with every required check passing, at least two distinct reviewers reviewed (`APPROVING_REVIEWERS`), and every review is on the head and approves — in the Vinaya process, the loop's ready-for-merge result with both reviewers approving and every required check green |
 | `generic-change-bound` | change, loop | The measured change starts from the case's base revision, and the recorded base, head and patch digest equal the measured ones |
 | `generic-effects-once` | every kind | No idempotency key is performed twice |
 
@@ -223,7 +223,7 @@ A glob with no wildcard covers that path and everything under it; `*` matches wi
 
 ### Banned terms
 
-`banned-terms.ts` holds the one list of process terms a neutral task statement may not contain: `Surface`, `objective`, `brief` and `verdict` (any case, singular or plural); every reviewer severity name as the scales write it (`BLOCKER`, `MAJOR`, `MINOR`, `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`); an objective id such as `O3`; a finding id such as `F2` or `R2-CR-3`; and the role names `principal`, `planner`, `architect`, `archivist`, `developer`, `reviewer` and `operator`. `checkTaskStatement` refuses a statement containing any of them as `banned_term`, naming the term, and accepts one free of them; `findBannedTerms` lists every term found.
+`banned-terms.ts` holds the one list of process terms a neutral task statement may not contain: `Surface`, `objective`, `brief` and `verdict` (any case, singular or plural); every reviewer severity name as the scales write it (`BLOCKER`, `MAJOR`, `MINOR`, `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`); an objective id such as `O3`; a finding id such as `F2` or `R2-CR-3`; and the role names `principal`, `planner`, `architect`, `archivist`, `developer`, `reviewer` and `operator`. `checkTaskStatement` refuses a statement containing any of them as `banned_term`, naming the term, and accepts one free of them; `findBannedTerms` lists every term found. Severity names are matched only in capitals, so lowercase `blocker`, `major` or `minor` — and `blocking` — are accepted: banning them in any case would refuse ordinary English such as "a major release" or "low latency". A statement that names a severity in lowercase is therefore not caught here.
 
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/banned-terms.ts contains:export function checkTaskStatement(statement: string, path = 'taskStatement'): Validated<string> { -->
 

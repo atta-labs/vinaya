@@ -95,6 +95,15 @@ export function globMatches(glob: string, path: string): boolean {
   return new RegExp(`^${pattern}$`).test(path)
 }
 
+/**
+ * Whether a path is repository-relative and in normal form: no leading or
+ * trailing `/`, no backslash, and no empty, `.` or `..` segment.
+ */
+export function isNormalPath(path: string): boolean {
+  if (path === '' || path.includes('\\')) return false
+  return path.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..')
+}
+
 export function sameChange(a: ChangeIdentity, b: ChangeIdentity): boolean {
   return a.base === b.base && a.head === b.head && a.patchDigest === b.patchDigest
 }
@@ -160,6 +169,12 @@ function judgeScope(c: NeutralCase, facts: KnownFacts): string[] {
   const reasons: string[] = []
   const outside = new Set<string>()
   for (const path of change.changedPaths) {
+    // A glob matches the path as written, so a path that is not in normal form
+    // (`src/../.github/x`, `./.github/x`) could pass for another one.
+    if (!isNormalPath(path)) {
+      reasons.push(`changed path ${JSON.stringify(path)} is not a normalised repository-relative path`)
+      continue
+    }
     if (inScope(path)) continue
     outside.add(path)
     if (c.authorizedScope.protected.some((glob) => globMatches(glob, path))) {
@@ -240,10 +255,14 @@ function judgeReviewBinding(c: NeutralCase, facts: KnownFacts): string[] {
   return reasons
 }
 
+/** How many distinct reviewers must each approve before a decision to proceed holds. */
+export const APPROVING_REVIEWERS = 2
+
 /**
  * The decision is to proceed, bound to the current evidence and to the
  * current reviews: the evidence is on the change's head with every required
- * check passing, and every review is on that head and approves.
+ * check passing, at least `APPROVING_REVIEWERS` distinct reviewers reviewed,
+ * and every review is on that head and approves.
  */
 function judgeDecision(_c: NeutralCase, facts: KnownFacts): string[] {
   const decision = facts['O-decision']
@@ -265,6 +284,12 @@ function judgeDecision(_c: NeutralCase, facts: KnownFacts): string[] {
   const current = new Set(review.reviews.map((r) => r.id))
   const cited = new Set(decision.reviewIds)
   if (current.size === 0) reasons.push('no review was produced')
+  const reviewers = new Set(review.reviews.map((r) => r.reviewer))
+  if (reviewers.size < APPROVING_REVIEWERS) {
+    reasons.push(
+      `${reviewers.size} distinct reviewer(s) reviewed, fewer than the ${APPROVING_REVIEWERS} a decision needs`
+    )
+  }
   for (const id of current) if (!cited.has(id)) reasons.push(`decision ${decision.id} does not cite review ${id}`)
   for (const id of cited)
     if (!current.has(id)) reasons.push(`decision ${decision.id} cites review ${id}, not a current one`)
@@ -317,7 +342,7 @@ export const SCOPE_GRADER = define(
   PRODUCING,
   { 'O-change': PRODUCING, 'O-scope': PRODUCING },
   judgeScope,
-  [globMatches]
+  [globMatches, isNormalPath]
 )
 export const CAPABILITY_GRADER = define(
   'capabilities-granted',

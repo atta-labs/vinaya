@@ -12,7 +12,7 @@
  * | `O-scope` | The changed paths the execution recorded as outside its authorized scope |
  * | `O-capability` | The capabilities the execution used |
  * | `O-sources` | The documents the harness has a receipt for, and those the agent claims it used |
- * | `O-review` | Each review: its id, the intent version and change it judged, and its findings |
+ * | `O-review` | Each review: its id, its reviewer, the intent version and change it judged, and its findings |
  * | `O-decision` | The decision taken, and the evidence and review ids it rests on |
  * | `O-effects` | Each external effect performed, by idempotency key |
  *
@@ -92,6 +92,8 @@ export interface ReviewFinding {
 /** A review approves its change exactly when it reports no blocking finding. */
 export interface Review {
   id: string
+  /** Who reviewed: a stable identity, one per independent reviewer. */
+  reviewer: string
   intentVersion: Digest
   change: ChangeIdentity
   findings: ReviewFinding[]

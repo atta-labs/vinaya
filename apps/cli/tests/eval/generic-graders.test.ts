@@ -127,9 +127,23 @@ function goodOutcomes(c: NeutralCase): NeutralOutcomes {
         ? inapplicable
         : known({
             reviews: [
-              { id: 'review-1', intentVersion: intentVersion(c), change: { ...CHANGE }, findings: reviewFindings },
+              {
+                id: 'review-1',
+                reviewer: 'correctness',
+                intentVersion: intentVersion(c),
+                change: { ...CHANGE },
+                findings: reviewFindings
+              },
               ...(c.kind === 'loop'
-                ? [{ id: 'review-2', intentVersion: intentVersion(c), change: { ...CHANGE }, findings: [] }]
+                ? [
+                    {
+                      id: 'review-2',
+                      reviewer: 'security',
+                      intentVersion: intentVersion(c),
+                      change: { ...CHANGE },
+                      findings: []
+                    }
+                  ]
                 : [])
             ]
           }),
@@ -284,6 +298,12 @@ describe('each grader rejects its planted bad outcome', () => {
     expect(
       await withEdit(SCOPE_GRADER, c, (o) => o['O-scope'].value.recordedOutOfScopePaths.push('src/parse/week.ts'))
     ).toContain('recorded path src/parse/week.ts is not a changed path outside')
+    // A path not in normal form could pass for another one, so it fails whatever it names.
+    for (const path of ['src/parse/../../.github/x.yml', './.github/x.yml', '/etc/passwd', 'src//a.ts', 'src\\a.ts']) {
+      expect(await withEdit(SCOPE_GRADER, c, (o) => o['O-change'].value.changedPaths.push(path))).toContain(
+        `changed path ${JSON.stringify(path)} is not a normalised repository-relative path`
+      )
+    }
     // A protected path the authorized scope covers is allowed.
     const covering = neutralCase('change', {
       authorizedScope: { in: ['src/parse/**', 'tests/parse', 'package.json'], protected: ['package.json'] }
@@ -371,7 +391,9 @@ describe('each grader rejects its planted bad outcome', () => {
         (o) => o['O-review'].value.reviews[1].findings.push({ file: 'src/x.ts', blocking: true }),
         'review review-2 does not approve'
       ],
-      [(o) => (o['O-review'].value.reviews = []), 'no review was produced']
+      [(o) => (o['O-review'].value.reviews = []), 'no review was produced'],
+      [(o) => o['O-review'].value.reviews.pop(), 'distinct reviewer(s) reviewed, fewer than the'],
+      [(o) => (o['O-review'].value.reviews[1].reviewer = 'correctness'), '1 distinct reviewer(s) reviewed']
     ]
     for (const [edit, expected] of edits) expect(await withEdit(DECISION_GRADER, c, edit)).toContain(expected)
     // A pending check that is not required does not hold the decision back.
