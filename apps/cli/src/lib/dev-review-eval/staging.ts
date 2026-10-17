@@ -81,9 +81,22 @@ const GIT_ENV: Record<string, string> = {
   GIT_OPTIONAL_LOCKS: '0'
 }
 
+/**
+ * Options every harness git process starts with. A trial's agent can write its
+ * own repository configuration, so no hook directory and no filesystem
+ * monitor it names ever runs, and no optional lock is taken.
+ */
+export const UNTRUSTED_REPOSITORY_GIT_OPTIONS: readonly string[] = [
+  '-c',
+  'core.hooksPath=/dev/null',
+  '-c',
+  'core.fsmonitor=',
+  '--no-optional-locks'
+]
+
 /** Runs git in `cwd`; never throws on a non-zero exit. */
 export function runGit(cwd: string, args: readonly string[], input?: Buffer | string): GitResult {
-  const result = spawnSync('git', args, {
+  const result = spawnSync('git', [...UNTRUSTED_REPOSITORY_GIT_OPTIONS, ...args], {
     cwd,
     env: GIT_ENV,
     input,

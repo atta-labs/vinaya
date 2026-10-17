@@ -235,6 +235,8 @@ export type DispatchOpts = {
   task?: number
   pr?: number
   round?: number
+  /** Receives each complete vendor stdout line for a caller-owned evaluation trace. */
+  observeStdoutLine?: (line: string) => void
   /** Finding ids this Developer turn may report, resolved by the loop's handoff. */
   turnResultKnownFindingIds?: readonly string[]
   /** The vendor's own session/thread identifier from a prior dispatch's `resumeId`, to resume that exact session instead of starting fresh. */
@@ -5340,6 +5342,11 @@ export async function dispatchRole(
       renderCarry = lines.pop() ?? ''
       for (const line of lines) {
         if (line.trim().length === 0) continue
+        try {
+          opts.observeStdoutLine?.(line)
+        } catch {
+          // An observer cannot alter the dispatch it is measuring.
+        }
         if (devToolsClaudeArgs.length > 0) devToolsStart.onLine(line)
         // O1: bind the vendor session id onto the launch record the MOMENT the
         // stream first reports it — not only at exit — so an attempt the

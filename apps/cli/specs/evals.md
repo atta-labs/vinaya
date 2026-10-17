@@ -306,6 +306,89 @@ bun apps/cli/tests/eval/source-citation-suite.ts run --split held-out --approve-
 
 ## Developer capability suite
 
+## Development-only step-one run and freeze record
+
+`runStepOne` orchestrates the Developer capability, code reviewer quality and
+security reviewer quality development splits on both supported adapters. It
+accepts only the standalone backend and checks both the backend and split
+before loading suite inputs. Each suite-and-adapter result records task count,
+trials and successes per task, the seeded bootstrap suite mean and interval,
+wall time, tokens, reported subscription quota use and estimated cost.
+
+Nothing a trial's workspace controls runs on the host. Every step that runs
+in or over it — the dependency install before the agent starts, staging and
+committing the trial's work in its own worktree, the grading copy's install,
+and the hidden and pass-to-pass test run — runs inside one `codex sandbox`
+launch shape (`openGradingSandbox`): the pinned Codex CLI resolved once to an
+absolute host-only path outside the scratch directory and grading copy, a policy
+home staged by `stageCodexPolicyHome` from a throwaway home holding a placeholder `{}`
+login and kept outside every writable root, network disabled, `/tmp` and
+`$TMPDIR` excluded, writable roots limited to an empty scratch directory plus
+the directory the step works on (the trial worktree and its git directory for
+the commit step, the grading copy for its install and tests), and a child
+environment of only `PATH`, `LANG`, `HOME` and `TMPDIR` (both the scratch
+directory) and `CODEX_HOME`. The host fills the scratch directory's package
+cache from the base commit, cloned from the pinned repository, so the
+sandboxed installs need no network; they run with lifecycle scripts disabled.
+If that sandbox cannot start, the trial is unavailable and is never graded
+unconfined. The vendor sandbox does not deny reads of `~/.ssh` or
+`/proc/*/environ`, matching a Developer dispatch; no network and no forge,
+log, or vendor token in the grading environment prevent those reads from
+leaving the host.
+
+The host only reads the result. The sandboxed commit step commits any
+uncommitted change; a trial whose agent already committed its work is graded
+on that commit. In the same sandbox step it writes a `base..HEAD` Git bundle
+to scratch and prints the commit `HEAD`. The host never runs Git against the
+trial worktree or its Git directory. It creates a fresh empty grading
+repository with system and global configuration disabled, hooks and the
+filesystem monitor disabled, optional locks disabled and protocols denied;
+loads the pinned base from the controller-trusted repository; permits only the
+local-file transport needed to fetch the scratch bundle; and verifies there
+that the fetched commit equals the sandbox report and descends from the base.
+The grading copy is cloned from this fresh repository. A trial with no commit
+ahead of its base or a bundle that does not verify is unavailable. An
+unavailable trial's reason is redacted with the Log's redaction helper and
+truncated before it is stored.
+
+Subscription quota use is read per trial from the vendor's own rate-limit
+readings in that trial's stream, of one window only (Codex's primary window,
+Claude Code's five-hour window): the after reading minus the before reading.
+Equal readings consume zero. A trial without both readings, or whose window
+reset between them, has unavailable (`null`) quota, never inferred from other
+numbers; a suite-and-adapter run sums the measured trials and counts the
+unavailable ones in `quotaUnavailableTrials`.
+The executable entry point loads the three pinned development corpora, stages
+each task through the harness isolation boundary, launches the production
+subscription adapter, and applies the suite's pinned grader:
+
+```text
+bun apps/cli/src/lib/dev-review-eval/step-one.ts run --split development --backend standalone --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> --developer-snapshot <merged-task-prs.jsonl> --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--out <file>]
+```
+
+The snapshot supplies the frozen Developer briefs whose committed corpus
+entries intentionally retain only digests. The command verifies each brief
+against that digest. Pricing is explicit because subscription CLIs report
+tokens but do not provide one portable cost schedule.
+
+Developer trials retain the adapter's structured stdout as an observation
+stream: the adapter transcript readers recover the actual tool trace, governed
+publication calls supply effect identities and pull-request evidence, and
+vendor rate-limit telemetry supplies quota utilization when the CLI reports
+it.
+
+`validateFreezeRecord` validates the later Principal-authored milestone freeze.
+It requires product-risk provenance for every Principal floor, explicit seeded
+bootstrap inputs, trials, budget, cadence, development results, and only the
+two fixed-floor held-out suite results. Every result requires its suite, split,
+backend, adapter, task tallies, interval, time, token, quota and estimated-cost
+measurements. The whole-loop remaining-task floor separately requires its
+acceptance spend and wall-time budgets. Unknown fields and missing suite or
+adapter results are refused. The whole-loop step-one run remains owed until a
+disposable sandbox repository exists, and Operator capability selection
+remains owed by the Operator on one host project. No floor or live measurement
+is selected or recorded by this implementation.
+
 The evaluation program's §6.5 asks whether the Developer, isolated, completes real tasks correctly within its tools and authority. `apps/cli/tests/eval/developer-capability-suite.ts` is that suite, `developer-capability.l5`, built on this harness: each case is a coding `Task` whose reference solution is the merged change, and each criterion is a pinned code grader. It runs no live trial; it holds the cases, their splits and the grader a live run uses.
 
 <!-- AEG:CLAIM: apps/cli/tests/eval/developer-capability-suite.ts contains:export const SUITE = { name: 'developer-capability.l5', version: 1, layer: 'L5' } as const -->

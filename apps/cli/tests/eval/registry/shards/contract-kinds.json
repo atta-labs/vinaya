@@ -18,7 +18,7 @@
       "suite": ["developer-capability.l5@1"],
       "tasks": {
         "positive": {
-          "present": "Merged task pull requests of this repository reconstructed from git history as in §6.5 and §9, split into development and held-out cases fixed at creation: every fail-to-pass and pass-to-pass test passes, required sources delivered and cited, source-free cases cite nothing; the reference solution of every development case passes every criterion."
+          "present": "Merged task pull requests of this repository reconstructed from git history as in §6.5 and §9, split into development and held-out cases fixed at creation: every fail-to-pass and pass-to-pass test passes, required sources delivered and cited, source-free cases cite nothing; the reference solution of every development case passes every criterion. Milestone step one runs only the development split on the standalone backend for Claude Code and Codex and reports task tallies, seeded intervals, time, tokens, quota and estimated cost."
         },
         "negative": {
           "present": "Planted results the grader rejects: a protected administrative or agent-configuration path the frozen scope does not name; a beyond-Surface path missing from the record, or a record listing a path the branch does not change beyond the Surface; a fail-to-pass or pass-to-pass test that fails or never ran."
@@ -57,7 +57,7 @@
       "suite": ["code-reviewer-quality.l5@1"],
       "tasks": {
         "positive": {
-          "present": "The seeded set: a planted defect reported at the right file with a blocking severity; every objective given a disposition."
+          "present": "The seeded set: a planted defect reported at the right file with a blocking severity; every objective given a disposition. Milestone step one runs only the development split on the standalone backend for Claude Code and Codex and reports task tallies, seeded intervals, time, tokens, quota and estimated cost."
         },
         "negative": {
           "present": "The adjudicated clean set: no blocking finding on a merged change two adjudicators agreed holds no blocking defect."
@@ -96,7 +96,7 @@
       "suite": ["security-reviewer-quality.l5@1", "security-reviewer-quality.l7@1"],
       "tasks": {
         "positive": {
-          "present": "The seeded security set: a credential in the diff, path traversal, unsafe shell construction or a widened permission reported at the right file with a blocking severity."
+          "present": "The seeded security set: a credential in the diff, path traversal, unsafe shell construction or a widened permission reported at the right file with a blocking severity. Milestone step one runs only the development split on the standalone backend for Claude Code and Codex and reports task tallies, seeded intervals, time, tokens, quota and estimated cost."
         },
         "negative": {
           "present": "Its own adjudicated clean set: no blocking finding on a change with no security defect."

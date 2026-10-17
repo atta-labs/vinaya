@@ -596,8 +596,24 @@ function runnerCommand(checkout: string, root: string, files: readonly string[],
   return ['bun', 'test', '--timeout=30000', '--reporter=junit', `--reporter-outfile=${report}`, ...relativeFiles]
 }
 
-/** Runs `files` (repository-relative) from their packages' own directories with their own runners, as continuous integration does. */
-export async function runTests(checkout: string, files: readonly string[], budgetMs: number): Promise<TestResult[]> {
+/**
+ * Runs `files` (repository-relative) from their packages' own directories with their own runners, as continuous integration does.
+ * `isolate` wraps each runner's launch; each run's report directory is created under `reportParent`.
+ */
+export async function runTests(
+  checkout: string,
+  files: readonly string[],
+  budgetMs: number,
+  isolate?: (
+    command: readonly string[],
+    cwd: string,
+    reportDirectory: string
+  ) => {
+    command: string[]
+    env: NodeJS.ProcessEnv
+  },
+  reportParent: string = tmpdir()
+): Promise<TestResult[]> {
   const byPackage = new Map<string, string[]>()
   for (const file of files) {
     if (!existsSync(join(checkout, file))) continue
@@ -606,11 +622,12 @@ export async function runTests(checkout: string, files: readonly string[], budge
   }
   const results: TestResult[] = []
   for (const [root, own] of byPackage) {
-    const report = join(mkdtempSync(join(tmpdir(), 'developer-capability-junit-')), 'junit.xml')
+    const report = join(mkdtempSync(join(reportParent, 'developer-capability-junit-')), 'junit.xml')
     const command = runnerCommand(checkout, root, own, report)
+    const execution = isolate?.(command, join(checkout, root), dirname(report))
     const run = await spawnBudgetedAsync(
-      command,
-      { cwd: join(checkout, root), env: stripVinayaEnv() },
+      execution?.command ?? command,
+      { cwd: join(checkout, root), env: execution?.env ?? stripVinayaEnv() },
       budgetMs,
       'test runner'
     )

@@ -99,6 +99,8 @@ export interface ContaminationReport {
 export interface HiddenInputs {
   failToPassTests: Readonly<Record<string, string | Uint8Array>>
   referenceSolution: Readonly<Record<string, string | Uint8Array>>
+  /** Existing tests restored from the pinned base after the trial, so the trial cannot weaken its grader. */
+  pinnedPassToPassTests?: Readonly<Record<string, string | Uint8Array>>
 }
 
 // ── Observing an object store ───────────────────────────────────────────────
@@ -600,7 +602,11 @@ export type Attribution = CloneAttribution | SnapshotAttribution
  * froze it, in a loose object or a pack staging did not leave, and never a
  * hidden input. Objects are checked here, never admitted to the manifest.
  */
-export function attributeTrialObjects(staging: Staging, hidden: HiddenInputs): Attribution {
+/**
+ * `head`, when given, is the trial commit the controller verified; objects
+ * reachable from it count as the trial's branch instead of its task branch.
+ */
+export function attributeTrialObjects(staging: Staging, hidden: HiddenInputs, head?: string): Attribution {
   const hiddenIds = new Set(hiddenFiles(hidden).map((f) => gitObjectId(staging.manifest.objectFormat, 'blob', f.bytes)))
   if (staging.kind === 'snapshot') {
     const observed = observeSnapshot(staging.workspace, staging.manifest.objectFormat)
@@ -631,7 +637,7 @@ export function attributeTrialObjects(staging: Staging, hidden: HiddenInputs): A
     'rev-list',
     '--objects',
     '--no-object-names',
-    `refs/heads/${staging.taskBranch}`,
+    head ?? `refs/heads/${staging.taskBranch}`,
     '--not',
     staging.baseCommit
   ])
@@ -710,6 +716,8 @@ export interface GradingCopyRequest {
    * hidden tests, proving the task solvable.
    */
   apply: 'fail-to-pass' | 'reference-solution'
+  /** For `fail-to-pass` on a clone: the verified trial commit to clone instead of the task branch. */
+  commit?: string
 }
 
 export interface GradingCopy {
@@ -741,7 +749,8 @@ export function prepareGradingCopy(request: GradingCopyRequest): GradingCopy {
   }
   const files: Array<[string, string | Uint8Array]> = [
     ...(apply === 'reference-solution' ? Object.entries(hidden.referenceSolution) : []),
-    ...Object.entries(hidden.failToPassTests)
+    ...Object.entries(hidden.failToPassTests),
+    ...Object.entries(hidden.pinnedPassToPassTests ?? {})
   ]
   const targets = files.map(([path, content]) => [safeRelativePath(path), content] as const)
 
@@ -752,7 +761,9 @@ export function prepareGradingCopy(request: GradingCopyRequest): GradingCopy {
       const source = apply === 'fail-to-pass' ? staging.workspace : staging.sourceRepository
       const selector =
         apply === 'fail-to-pass'
-          ? ['--single-branch', '--branch', staging.taskBranch]
+          ? request.commit === undefined
+            ? ['--single-branch', '--branch', staging.taskBranch]
+            : [`--revision=${request.commit}`]
           : [`--revision=${staging.baseCommit}`]
       git(path, [
         'clone',

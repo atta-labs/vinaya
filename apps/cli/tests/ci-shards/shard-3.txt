@@ -93,5 +93,7 @@ tests/conformance/agent-config-locations.test.ts
 tests/eval/failure-taxonomy.test.ts
 tests/eval/registry-cutover-gates.test.ts
 tests/eval/reviewer-quality-suite.test.ts
+tests/eval/step-one.test.ts
+tests/eval/freeze-record.test.ts
 tests/lib/task-tools/role-grants.test.ts
 tests/conformance/role-grants-bridge.test.ts
