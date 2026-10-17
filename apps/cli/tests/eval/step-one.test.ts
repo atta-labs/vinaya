@@ -9,6 +9,7 @@ import {
   importTrialBundle,
   openGradingSandbox,
   PRODUCTION_STEP_ONE_RUNTIME,
+  resolveGradingCodex,
   runStepOne,
   runStepOneCommand,
   STEP_ONE_SUITES,
@@ -164,6 +165,25 @@ describe('development-only step one', () => {
     } finally {
       sandbox.dispose()
       rmSync(target, { recursive: true, force: true })
+    }
+  }, 120_000)
+
+  it('never resolves the host grading executable through PATH', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'step-one-fake-path-')))
+    const tool = join(root, 'tool')
+    const marker = join(root, 'fake-codex-ran')
+    const fake = join(root, 'codex')
+    writeFileSync(fake, `#!/bin/sh\ntouch ${marker}\n`, { mode: 0o755 })
+    const originalPath = process.env.PATH
+    try {
+      process.env.PATH = `${root}:${originalPath ?? ''}`
+      const resolved = resolveGradingCodex(tool)
+      expect(resolved).not.toBe(realpathSync(fake))
+      expect(resolved.startsWith(realpathSync(tool))).toBe(true)
+      expect(existsSync(marker)).toBe(false)
+    } finally {
+      process.env.PATH = originalPath
+      rmSync(root, { recursive: true, force: true })
     }
   }, 120_000)
 

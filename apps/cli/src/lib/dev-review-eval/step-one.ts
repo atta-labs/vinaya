@@ -153,24 +153,43 @@ export interface GradingSandbox {
   dispose(): void
 }
 
-function resolveGradingCodex(toolRoot: string): string {
-  const installed = Bun.which('codex')
-  if (installed !== null) return realpathSync(installed)
+export function resolveGradingCodex(toolRoot: string): string {
+  // Never execute a `codex` selected through the controller's PATH. PATH is
+  // operational configuration, not a provenance record, and an executable
+  // planted there would run on the host before the grading sandbox existed.
+  // Install the exact package named by the evaluation program into this
+  // sandbox's host-only policy root and launch only that copy.
   mkdirSync(toolRoot, { recursive: true })
-  const installedPackage = Bun.spawnSync(
-    [process.execPath, 'add', '--silent', '--no-save', '--cwd', toolRoot, GRADING_CODEX_PACKAGE],
-    {
-      cwd: toolRoot,
-      env: {
-        PATH: process.env.PATH ?? '/usr/bin:/bin',
-        LANG: process.env.LANG ?? 'C.UTF-8',
-        HOME: toolRoot,
-        TMPDIR: toolRoot
-      },
-      stdout: 'pipe',
-      stderr: 'pipe'
-    }
-  )
+  const install = (offline: boolean) =>
+    Bun.spawnSync(
+      [
+        process.execPath,
+        'add',
+        ...(offline ? ['--offline'] : []),
+        '--silent',
+        '--no-save',
+        '--cwd',
+        toolRoot,
+        GRADING_CODEX_PACKAGE
+      ],
+      {
+        cwd: toolRoot,
+        env: {
+          PATH: process.env.PATH ?? '/usr/bin:/bin',
+          LANG: process.env.LANG ?? 'C.UTF-8',
+          HOME: toolRoot,
+          TMPDIR: toolRoot,
+          BUN_INSTALL_CACHE_DIR: join(homedir(), '.bun', 'install', 'cache')
+        },
+        stdout: 'pipe',
+        stderr: 'pipe'
+      }
+    )
+  // CI and development hosts normally already carry Bun's pinned package
+  // cache. Prefer it so grading startup does not require the network; only a
+  // cache miss may fetch the same exact version from the registry.
+  let installedPackage = install(true)
+  if (installedPackage.exitCode !== 0) installedPackage = install(false)
   if (installedPackage.exitCode !== 0) {
     throw new Error(
       `grading unavailable: Codex CLI could not be resolved: ${installedPackage.stderr.toString().slice(-2000)}`
@@ -483,22 +502,31 @@ const digest = (value: string): string => createHash('sha256').update(value).dig
 async function loadProductionDevelopment(): Promise<LoadedDevelopment> {
   const developer = await import('../../../tests/eval/developer-capability-suite')
   const reviewers = await import('../../../tests/eval/reviewer-quality-suite')
-  const developerCases = developer.loadCaseFile().cases
-  const code = reviewers.loadDevelopment('code-reviewer').cases
-  const security = reviewers.loadDevelopment('security-reviewer').cases
+  const developerFile = developer.loadCaseFile()
+  const developerSuite = developer.suiteFor(developerFile)
+  const developerCases = developerFile.cases
+  const codeFile = reviewers.loadDevelopment('code-reviewer')
+  const securityFile = reviewers.loadDevelopment('security-reviewer')
+  const code = codeFile.cases
+  const security = securityFile.cases
+  const codeSuite = reviewers.harnessSuite('code-reviewer', codeFile)
+  const securitySuite = reviewers.harnessSuite('security-reviewer', securityFile)
+  if (!codeSuite.ok) throw new Error(`code reviewer harness suite refused: ${JSON.stringify(codeSuite.refusal)}`)
+  if (!securitySuite.ok)
+    throw new Error(`security reviewer harness suite refused: ${JSON.stringify(securitySuite.refusal)}`)
   return {
     suites: [
       {
         suite: 'developer-capability.l5',
-        taskIds: developerCases.map((entry) => entry.id)
+        taskIds: developerSuite.splits.development
       },
       {
         suite: 'code-reviewer-quality.l5',
-        taskIds: code.map((entry) => entry.id)
+        taskIds: codeSuite.value.splits.development
       },
       {
         suite: 'security-reviewer-quality.l5',
-        taskIds: security.map((entry) => entry.id)
+        taskIds: securitySuite.value.splits.development
       }
     ],
     developerCases,
