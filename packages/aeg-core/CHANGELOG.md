@@ -1,5 +1,30 @@
 # @atta/aeg-core
 
+## 0.40.0
+
+### Minor Changes
+
+- 01c44d7: A repository configures its own writing rules. `proseGates.rules` switches a default prose rule off, retunes its scopes, severity or exemptions, and adds custom rules whose findings print the rule's id, the file and line, the matched text and its message; `proseGates.productPaths` replaces the product class's file set, and `proseGates.published.allow` replaces the published pass's allowed mechanics. Every key is validated at load and a malformed one refuses the run, naming the key. `reader-resolvable-prose` runs the reader-resolvable group and `retired-vocabulary` the retired group of the one rule set, and `vinaya check --plan` prints which rules each runs. With none of the keys set, every finding is unchanged.
+- b827e80: Bind reviewer input to the Principal ruling that resumed its pause, and build full and delta Developer context packets from controller-owned records.
+- a9b0c7a: The live check fails closed. When the review loop cannot read the frozen brief's `[live]` lines, the task no longer concludes: the round ends as an infrastructure failure and is retried. `principal-test-plan-wait` and `test-plan` read the task Issue's frozen brief and the pull request's head: each `[live]` line with no passed `AEG:LIVE` entry at that head holds the merge like an unticked `[principal]` item, and a brief they cannot read fails both checks. The generated `vinaya-body-checks.yml` gives the wait job the head, the branch, a token and `issues: read`; run `vinaya upgrade` to pick it up. `evaluateTestPlanGate` takes the brief's `[live]` commands and the head as an optional third argument.
+- 8760d2f: A task's Test plan may carry `[live]` lines — commands that need real signed-in agent sessions. The review loop runs them on its own host, only on a head both reviewers approved and before the task concludes: a failed line sends the Developer back as a new round whose head is reviewed again, a host without the vendor's subscription sign-in records the line unverified, and the merge gate holds an unverified or failed line like an unticked `[principal]` item.
+- 5d192b7: A repository opts into decision records. `decisionRecords.path` names a folder of the repository; load refuses one outside the repository or inside the doctrine tree, naming the key. With it set, the folder joins the writing rules' `spec` scope, the `decision-record-citation` rule blocks `ADR` followed by a number and any path to a numbered record everywhere but the folder itself (including the published pass), and `vinaya new adr <title>` writes the next numbered record from the shipped decision-record template with status Proposed and adds it to the folder's index page. With the key absent, every check, command and finding is unchanged.
+
+### Patch Changes
+
+- 222eb90: Judge a new Issue's `## Surface` for blast radius at creation, the same way `issue edit` and dispatch already do.
+- 900ff4e: Centralize the default writing rules while preserving every existing finding.
+- 7ec77b7: The control store runs inside a Linux user-namespace sandbox: when the uid map leaves root unmapped, a directory owned by the kernel overflow uid is trusted strictly above the store's own root, never at or below it.
+- 9bbbeed: The controller now prepares every required source of a brief before each Developer turn — every round and every resume — pinning a repository source by its git object at the frozen base and a public page by the digest it fetched, and pauses with `missing_source` and a typed reason when one cannot be prepared, including a page behind a login. The required-source manifest and every delivery receipt live in a controller-owned store outside both agents' writable roots, `fetch_documentation` records each delivery against that manifest by source identity with any revision mismatch decided by policy, and completion reads only those receipts; the agents' Stop hooks remain as reminders only.
+- 0599a6f: The Issue gate counts a file that names a pinned file's path as a string as a reader, lists the checks whose declared scope covers each pinned file and refuses the Issue until each has a decision, and the Developer doctrine defines when a brief contradicts the code irreconcilably.
+- 912ae82: The log package computes a structural digest of the event validator (`logEventSchemaDigest`), the log server reports it on its stats route and replays rejected rows on request, and `vinaya log selftest` and `vinaya doctor` compare the server's digest with the CLI's own so a server deployed from an older schema is visible.
+- ff4a2e9: Make the default prose-rule content test produce the same digest under Bun and Node.
+- 206c8b6: The retired-vocabulary rule for the old global decisions file now matches only that bare file name, so a file whose name ends in `-decisions.md`, such as a decision record adopting the practice, no longer reads as the retired file.
+- ee3e9ee: Allow a task Surface to name a new directory when its Boundary pins a file inside it.
+- 0e19c68: A transient GitHub error no longer stops an unattended loop for a person. A red gate counts as a repeated failure only when a Developer attempt finished since the last one. The watcher retries a failed bare retry within the infrastructure budget. A host that cannot reach GitHub waits for the connection without spending that budget. The dispatch gate reports a failed open-Issues query as an infrastructure failure, not as an unarchived prior tranche.
+- @attalabs/aeg-forge-state@0.40.0
+  - @attalabs/aeg-types@0.40.0
+
 ## 0.39.0
 
 ### Minor Changes

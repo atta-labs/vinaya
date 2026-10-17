@@ -1,5 +1,34 @@
 # @atta/vinaya-sources
 
+## 0.40.0
+
+### Minor Changes
+
+- 01c44d7: A repository configures its own writing rules. `proseGates.rules` switches a default prose rule off, retunes its scopes, severity or exemptions, and adds custom rules whose findings print the rule's id, the file and line, the matched text and its message; `proseGates.productPaths` replaces the product class's file set, and `proseGates.published.allow` replaces the published pass's allowed mechanics. Every key is validated at load and a malformed one refuses the run, naming the key. `reader-resolvable-prose` runs the reader-resolvable group and `retired-vocabulary` the retired group of the one rule set, and `vinaya check --plan` prints which rules each runs. With none of the keys set, every finding is unchanged.
+- 5d192b7: A repository opts into decision records. `decisionRecords.path` names a folder of the repository; load refuses one outside the repository or inside the doctrine tree, naming the key. With it set, the folder joins the writing rules' `spec` scope, the `decision-record-citation` rule blocks `ADR` followed by a number and any path to a numbered record everywhere but the folder itself (including the published pass), and `vinaya new adr <title>` writes the next numbered record from the shipped decision-record template with status Proposed and adds it to the folder's index page. With the key absent, every check, command and finding is unchanged.
+
+### Patch Changes
+
+- f8a0190: Add a separate, twenty-minute default timeout for code-reviewer and security dispatches, configurable with `dispatch.reviewerTimeoutMs`.
+- Updated dependencies [222eb90]
+- Updated dependencies [900ff4e]
+- Updated dependencies [01c44d7]
+- Updated dependencies [7ec77b7]
+- Updated dependencies [b827e80]
+- Updated dependencies [9bbbeed]
+- Updated dependencies [0599a6f]
+- Updated dependencies [a9b0c7a]
+- Updated dependencies [8760d2f]
+- Updated dependencies [912ae82]
+- Updated dependencies [5d192b7]
+- Updated dependencies [ff4a2e9]
+- Updated dependencies [206c8b6]
+- Updated dependencies [ee3e9ee]
+- Updated dependencies [0e19c68]
+  - @attalabs/aeg-core@0.40.0
+  - @attalabs/aeg-forge-state@0.40.0
+  - @attalabs/aeg-types@0.40.0
+
 ## 0.39.0
 
 ### Minor Changes
