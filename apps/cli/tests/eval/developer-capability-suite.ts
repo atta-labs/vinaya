@@ -1011,6 +1011,7 @@ const GRADER_LOGIC: Record<Criterion, readonly ((...args: never[]) => unknown)[]
 /** One pinned code grader per criterion. */
 export const GRADERS: readonly CodeGraderIdentity[] = CRITERIA.map((criterion) => ({
   kind: 'code',
+  layer: 'P',
   id: `developer-capability-${criterion}`,
   version: '1',
   logicDigest: sha256(GRADER_LOGIC[criterion].map(String).join('\n'))

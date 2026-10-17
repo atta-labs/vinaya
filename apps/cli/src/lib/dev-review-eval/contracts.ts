@@ -35,6 +35,7 @@ export type ContractRefusalCode =
   | 'splits_changed'
   | 'shared_isolation'
   | 'inconsistent'
+  | 'banned_term'
 
 export interface ContractRefusal {
   code: ContractRefusalCode
@@ -50,11 +51,14 @@ class Refused extends Error {
   }
 }
 
-function refuse(code: ContractRefusalCode, path: string, detail: string): never {
+// The readers below are exported so the harness's other validators (the
+// neutral case among them) refuse with the same codes and dotted paths.
+
+export function refuse(code: ContractRefusalCode, path: string, detail: string): never {
   throw new Refused({ code, path, detail })
 }
 
-function run<T>(input: unknown, check: (input: unknown) => T): Validated<T> {
+export function run<T>(input: unknown, check: (input: unknown) => T): Validated<T> {
   try {
     return { ok: true, value: check(input) }
   } catch (error) {
@@ -73,43 +77,43 @@ const COMMIT = /^[0-9a-f]{40}$/
 /** Stable identifiers: lowercase kebab segments, optionally `/`-separated. */
 const NAME = /^[a-z0-9]+(?:[-.][a-z0-9]+)*(?:\/[a-z0-9]+(?:[-.][a-z0-9]+)*)*$/
 
-function record(input: unknown, path: string): Record<string, unknown> {
+export function record(input: unknown, path: string): Record<string, unknown> {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     refuse('not_object', path, `${path || 'value'} must be an object`)
   }
   return input as Record<string, unknown>
 }
 
-function field(obj: Record<string, unknown>, key: string, path: string): unknown {
+export function field(obj: Record<string, unknown>, key: string, path: string): unknown {
   if (!(key in obj) || obj[key] === undefined)
     refuse('missing_field', join(path, key), `${join(path, key)} is required`)
   return obj[key]
 }
 
-function join(path: string, key: string | number): string {
+export function join(path: string, key: string | number): string {
   return path === '' ? String(key) : `${path}.${key}`
 }
 
-function text(input: unknown, path: string): string {
+export function text(input: unknown, path: string): string {
   if (typeof input !== 'string') refuse('wrong_type', path, `${path} must be a string`)
   if (input.trim() === '') refuse('empty', path, `${path} must not be empty`)
   return input
 }
 
-function name(input: unknown, path: string): string {
+export function name(input: unknown, path: string): string {
   const value = text(input, path)
   if (!NAME.test(value))
     refuse('bad_name', path, `${path} must be a stable lowercase identifier, got ${JSON.stringify(value)}`)
   return value
 }
 
-function digest(input: unknown, path: string): Digest {
+export function digest(input: unknown, path: string): Digest {
   const value = text(input, path)
   if (!DIGEST.test(value)) refuse('bad_digest', path, `${path} must be a 64-character lowercase SHA-256 digest`)
   return value
 }
 
-function commit(input: unknown, path: string): string {
+export function commit(input: unknown, path: string): string {
   const value = text(input, path)
   if (!COMMIT.test(value)) refuse('bad_commit', path, `${path} must be a 40-character lowercase commit id`)
   return value
@@ -128,7 +132,7 @@ function finite(input: unknown, path: string, min: number, max: number): number 
   return input
 }
 
-function oneOf<T extends string>(input: unknown, path: string, allowed: readonly T[]): T {
+export function oneOf<T extends string>(input: unknown, path: string, allowed: readonly T[]): T {
   if (typeof input !== 'string') refuse('wrong_type', path, `${path} must be a string`)
   if (!(allowed as readonly string[]).includes(input)) {
     refuse('unknown_value', path, `${path} must be one of ${allowed.join(', ')}, got ${JSON.stringify(input)}`)
@@ -136,12 +140,12 @@ function oneOf<T extends string>(input: unknown, path: string, allowed: readonly
   return input as T
 }
 
-function list<T>(input: unknown, path: string, item: (value: unknown, path: string) => T): T[] {
+export function list<T>(input: unknown, path: string, item: (value: unknown, path: string) => T): T[] {
   if (!Array.isArray(input)) refuse('wrong_type', path, `${path} must be an array`)
   return input.map((value, index) => item(value, join(path, index)))
 }
 
-function distinct(values: readonly string[], path: string): void {
+export function distinct(values: readonly string[], path: string): void {
   const seen = new Set<string>()
   for (const value of values) {
     if (seen.has(value)) refuse('duplicate', path, `${path} lists ${JSON.stringify(value)} more than once`)
@@ -158,9 +162,21 @@ function digestMap(input: unknown, path: string): Record<string, Digest> {
 
 // ── Grader ──────────────────────────────────────────────────────────────────
 
+/**
+ * Which evaluation layer a grader belongs to. A layer-`G` grader reads only
+ * process-neutral facts — a neutral case and its neutral outcomes — in the
+ * Development Process vocabulary (Intent, Execution, Change, Evidence, Review,
+ * Decision). A layer-`P` grader reads an artifact of one process, such as
+ * Vinaya's frozen brief, a reviewer severity or a structured turn result.
+ * This tag is separate from a suite's `L1`–`L8` cost layer.
+ */
+export const GRADER_LAYERS = ['G', 'P'] as const
+export type GraderLayer = (typeof GRADER_LAYERS)[number]
+
 /** A code grader is pinned by its identifier, version and logic digest. */
 export interface CodeGraderIdentity {
   kind: 'code'
+  layer: GraderLayer
   id: string
   version: string
   logicDigest: Digest
@@ -172,6 +188,7 @@ export interface CodeGraderIdentity {
  */
 export interface ModelGraderIdentity {
   kind: 'model'
+  layer: GraderLayer
   id: string
   version: string
   adapterVersion: string
@@ -208,13 +225,21 @@ export interface Grader<Outcome = unknown> {
 function graderIdentity(input: unknown, path: string): GraderIdentity {
   const obj = record(input, path)
   const kind = oneOf(field(obj, 'kind', path), join(path, 'kind'), ['code', 'model'] as const)
+  const layer = oneOf(field(obj, 'layer', path), join(path, 'layer'), GRADER_LAYERS)
   const id = name(field(obj, 'id', path), join(path, 'id'))
   const version = text(field(obj, 'version', path), join(path, 'version'))
   if (kind === 'code') {
-    return { kind, id, version, logicDigest: digest(field(obj, 'logicDigest', path), join(path, 'logicDigest')) }
+    return {
+      kind,
+      layer,
+      id,
+      version,
+      logicDigest: digest(field(obj, 'logicDigest', path), join(path, 'logicDigest'))
+    }
   }
   return {
     kind,
+    layer,
     id,
     version,
     adapterVersion: text(field(obj, 'adapterVersion', path), join(path, 'adapterVersion')),
