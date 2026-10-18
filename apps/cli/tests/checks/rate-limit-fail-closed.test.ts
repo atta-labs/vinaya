@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { checkDispatchReadiness, type DispatchGateInput } from '@attalabs/aeg-core'
 import { clearEdgeCache, dependsOnFactFromEdge, edgeFromIssueJson, resolveEdge } from '../../src/checks/edge-resolve'
+import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture'
 
 const REPO_ROOT = join(import.meta.dir, '../../../..')
 const SINGLE_PLAN_BIN = join(REPO_ROOT, 'apps/cli/src/checks/bin/check-single-plan-pr.ts')
@@ -72,10 +73,10 @@ function fakeGh(calls: FakeCall[]): string {
   return binDir
 }
 
-/** The parent's environment minus every `GIT_*` variable a running hook may export, plus `gh` on `PATH`. */
+/** The parent's environment minus every `VINAYA_*` and `GIT_*` variable a running driver or hook may export, plus `gh` on `PATH`. */
 function childEnv(binDir: string, extra: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) {
+  for (const [k, v] of Object.entries(stripVinayaEnv())) {
     if (v !== undefined && !k.startsWith('GIT_')) env[k] = v
   }
   return { ...env, PATH: `${binDir}:${process.env.PATH}`, ...extra }
@@ -86,9 +87,7 @@ async function runBin(
   cwd: string,
   env: Record<string, string>
 ): Promise<{ exitCode: number; errors: Array<{ check: string; message: string; agent_recovery_prompt: string }> }> {
-  const proc = Bun.spawn(['bun', bin], { cwd, env, stdout: 'ignore', stderr: 'pipe' })
-  const stderr = await new Response(proc.stderr).text()
-  const exitCode = await proc.exited
+  const { status: exitCode, stderr } = await spawnBudgetedAsync(['bun', bin], { cwd, env })
   const errors = stderr
     .split('\n')
     .filter((l) => l.trimStart().startsWith('{'))
