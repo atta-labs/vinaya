@@ -58,6 +58,7 @@ import {
   recordedBeyondSurfacePaths
 } from '@attalabs/aeg-core'
 import { createForgeSource } from '@attalabs/vinaya-sources'
+import { exitOnIncompleteForgeSnapshot, snapshotIssue } from '../../lib/forge-snapshot'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'surface-scope'
@@ -92,8 +93,11 @@ function resolveRepo(): { owner: string; repo: string } | null {
   return null
 }
 
+/** The task Issue's body — from the run's forge snapshot in CI, else `gh issue view`; `null` when it cannot be read. */
 function fetchIssueBody(issue: number): string | null {
   try {
+    const fromSnapshot = snapshotIssue(issue)
+    if (fromSnapshot !== null) return fromSnapshot.body
     const out = execFileSync('gh', ['issue', 'view', String(issue), '--json', 'body'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
@@ -130,6 +134,7 @@ function refuse(message: string, agent_recovery_prompt: string): never {
 }
 
 async function main(): Promise<void> {
+  exitOnIncompleteForgeSnapshot(CHECK_NAME)
   const branch = process.env.BRANCH || git(['rev-parse', '--abbrev-ref', 'HEAD'])
   const ref = parseTaskBranchIdentity(branch)
   if (!ref) process.exit(0)

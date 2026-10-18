@@ -171,12 +171,19 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // live `## Objectives` section — without them declared here the
       // runner strips them, and the fetch fails every time regardless of
       // the real token the CI job holds.
+      // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: in CI this check reads the
+      // pull request and its task Issue from the run's forge snapshot
+      // (`lib/forge-snapshot.ts`), honoured only when GITHUB_ACTIONS is
+      // `true`; undeclared, the runner strips both and every read goes to
+      // `gh` again.
       env: {
         PR_BODY: { optional: true },
         BRANCH: { optional: true },
         PR_NUMBER: { optional: true },
         GITHUB_TOKEN: { optional: true },
-        GH_TOKEN: { optional: true }
+        GH_TOKEN: { optional: true },
+        VINAYA_FORGE_SNAPSHOT_DIR: { optional: true },
+        GITHUB_ACTIONS: { optional: true }
       }
     },
     0
@@ -223,6 +230,8 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // `principals` from the DEFAULT BRANCH, never local git. All optional:
       // absent, the fetch fails and the allowlist falls back to the hardcoded
       // `PRINCIPAL_ALLOWLIST`, the safe direction.
+      // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
+      // `brief-shape` above.
       env: {
         BASE_SHA: { optional: true },
         GIT_INDEX_FILE: { optional: true },
@@ -232,7 +241,9 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
         PR_NUMBER: { optional: true },
         GITHUB_REPOSITORY: { optional: true },
         GITHUB_TOKEN: { optional: true },
-        GH_TOKEN: { optional: true }
+        GH_TOKEN: { optional: true },
+        VINAYA_FORGE_SNAPSHOT_DIR: { optional: true },
+        GITHUB_ACTIONS: { optional: true }
       }
     },
     0
@@ -289,12 +300,16 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // local-file path, not a forge credential — optional, absent by
       // default, and the bin's own re-assertion path never reaches the
       // network on its account.
+      // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
+      // `brief-shape` above.
       env: {
         AEG_REPO: { optional: true },
         BRANCH: { optional: true },
         GITHUB_TOKEN: { optional: true },
         GH_TOKEN: { optional: true },
-        PREMISE_FILE: { optional: true }
+        PREMISE_FILE: { optional: true },
+        VINAYA_FORGE_SNAPSHOT_DIR: { optional: true },
+        GITHUB_ACTIONS: { optional: true }
       }
     },
     0
@@ -367,6 +382,8 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // `createForgeSource` need on a CI runner. PR_BODY/PR_BODY_FILE carry
       // the pull request body whose beyond-Surface record this check reads;
       // absent, the body records nothing.
+      // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
+      // `brief-shape` above.
       env: {
         AEG_REPO: { optional: true },
         BASE_SHA: { optional: true },
@@ -374,7 +391,9 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
         PR_BODY: { optional: true },
         PR_BODY_FILE: { optional: true },
         GITHUB_TOKEN: { optional: true },
-        GH_TOKEN: { optional: true }
+        GH_TOKEN: { optional: true },
+        VINAYA_FORGE_SNAPSHOT_DIR: { optional: true },
+        GITHUB_ACTIONS: { optional: true }
       }
     },
     // requiresOpenPr: cannot run under the local hook (`--local` skips it) —
@@ -413,13 +432,17 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // (`principalOwed`); the merge hold is `principal-test-plan-wait`'s,
       // which grades the same inputs. The loop's `run_checks` supplies the
       // pull request's head (`worktreeCheckEnv`).
+      // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
+      // `brief-shape` above.
       env: {
         PR_BODY: { optional: true },
         BRANCH: { optional: true },
         PULL_REQUEST_HEAD_SHA: { optional: true },
         GITHUB_REPOSITORY: { optional: true },
         GITHUB_TOKEN: { optional: true },
-        GH_TOKEN: { optional: true }
+        GH_TOKEN: { optional: true },
+        VINAYA_FORGE_SNAPSHOT_DIR: { optional: true },
+        GITHUB_ACTIONS: { optional: true }
       }
     },
     // requiresOpenPr — see `closes-n` above.
@@ -464,13 +487,17 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // reason: on a task branch the bin reads the frozen brief's `[live]`
       // lines and holds the merge on each with no passed entry at
       // PULL_REQUEST_HEAD_SHA, and a brief it cannot read holds it too.
+      // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
+      // `brief-shape` above.
       env: {
         PR_BODY: { optional: true },
         BRANCH: { optional: true },
         PULL_REQUEST_HEAD_SHA: { optional: true },
         GITHUB_REPOSITORY: { optional: true },
         GITHUB_TOKEN: { optional: true },
-        GH_TOKEN: { optional: true }
+        GH_TOKEN: { optional: true },
+        VINAYA_FORGE_SNAPSHOT_DIR: { optional: true },
+        GITHUB_ACTIONS: { optional: true }
       }
     },
     // requiresOpenPr AND ownWorkflow — CI/PR-only twice over, same as
@@ -508,12 +535,16 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // entry. Found live in code review: omitted here, the runner
       // strips it before the check ever runs, and the trust-anchor read
       // silently falls to its local-dev fallback path on every CI run.
+      // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
+      // `brief-shape` above.
       env: {
         PR_BODY: { optional: true },
         PR_NUMBER: { optional: true },
         GITHUB_REPOSITORY: { optional: true },
         GITHUB_TOKEN: { optional: true },
-        GH_TOKEN: { optional: true }
+        GH_TOKEN: { optional: true },
+        VINAYA_FORGE_SNAPSHOT_DIR: { optional: true },
+        GITHUB_ACTIONS: { optional: true }
       }
     },
     // requiresOpenPr AND ownWorkflow — CI/PR-only twice over.
@@ -583,11 +614,17 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // GITHUB_REPOSITORY is not the same thing: it names WHICH repo to ask
       // GitHub about, is runner-set in the only context where this is a trust
       // decision, and never selects a commit — see `trustAnchorRepo`.
+      // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
+      // `brief-shape` above. Not a ref-shaped knob either: it names a
+      // directory a default-branch step of the same trusted workflow wrote,
+      // and it selects no commit and no trust anchor.
       env: {
         PR_NUMBER: { optional: true },
         GITHUB_REPOSITORY: { optional: true },
         GITHUB_TOKEN: { optional: true },
-        GH_TOKEN: { optional: true }
+        GH_TOKEN: { optional: true },
+        VINAYA_FORGE_SNAPSHOT_DIR: { optional: true },
+        GITHUB_ACTIONS: { optional: true }
       }
     },
     // ownWorkflow — see `body-bare-digits` above.
@@ -666,10 +703,14 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // (`overrideActive()`'s first, env-only check) which is opt-in by
       // design — absence is the default, unremarkable path.
       // GITHUB_REPOSITORY/GITHUB_TOKEN/GH_TOKEN: same trust-anchor read as
-      // `doc-coverage` above — see that entry's comment.
+      // `doc-coverage` above — see that entry's comment. The per-file diff
+      // reader adds staged evidence under the same two hook variables
+      // `doc-coverage` declares, so they are declared here too.
       env: {
         OVERRIDE_DOCS: { optional: true },
         BASE_SHA: { optional: true },
+        GIT_INDEX_FILE: { optional: true },
+        VINAYA_COMMIT_HOOK: { optional: true },
         PR_BODY: { optional: true },
         PR_BODY_FILE: { optional: true },
         PR_LABELS: { optional: true },
@@ -720,12 +761,16 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // `doc-coverage`/`doc-coverage-push`/`no-disk-state`/`single-plan-pr`
       // above (`closes-n` declares no BASE_SHA and resolves no merge-base) —
       // for a repo whose default branch resolves as neither.
+      // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
+      // `brief-shape` above.
       env: {
         PR_NUMBER: { optional: true },
         PR_BODY: { optional: true },
         BASE_SHA: { optional: true },
         GITHUB_TOKEN: { optional: true },
-        GH_TOKEN: { optional: true }
+        GH_TOKEN: { optional: true },
+        VINAYA_FORGE_SNAPSHOT_DIR: { optional: true },
+        GITHUB_ACTIONS: { optional: true }
       }
     },
     // requiresOpenPr — see `closes-n` above.
@@ -737,9 +782,11 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       run: bin('check-reader-resolvable-prose'),
       scope: 'full',
       timeoutMs: 30_000,
-      // Reads local files plus the shared diff helper. The hook variables
-      // let that helper add staged evidence only during pre-commit.
+      // Reads local files plus the shared diff helper. BASE_SHA scopes that
+      // helper's diff; the hook variables let it add staged evidence only
+      // during pre-commit.
       env: {
+        BASE_SHA: { optional: true },
         GIT_INDEX_FILE: { optional: true },
         VINAYA_COMMIT_HOOK: { optional: true }
       },
@@ -772,8 +819,10 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       run: bin('check-retired-vocabulary'),
       scope: 'full',
       timeoutMs: 30_000,
-      // Same shared-diff hook declarations as `reader-resolvable-prose`.
+      // Same shared-diff declarations as `reader-resolvable-prose`: BASE_SHA
+      // plus the two hook variables.
       env: {
+        BASE_SHA: { optional: true },
         GIT_INDEX_FILE: { optional: true },
         VINAYA_COMMIT_HOOK: { optional: true }
       },
@@ -839,8 +888,10 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       scope: 'diff',
       timeoutMs: 30_000,
       // Local-only: `git ls-files -s`, a first-line read, and the shared diff
-      // helper; the hook variables admit staged evidence only at pre-commit.
+      // helper; BASE_SHA scopes its diff and the hook variables admit staged
+      // evidence only at pre-commit.
       env: {
+        BASE_SHA: { optional: true },
         GIT_INDEX_FILE: { optional: true },
         VINAYA_COMMIT_HOOK: { optional: true }
       }
@@ -861,8 +912,10 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       scope: 'diff',
       timeoutMs: 15_000,
       // Local-only: `git diff --cached`/`git show :<path>` plus the shared
-      // diff helper, never the network.
+      // diff helper, never the network. BASE_SHA scopes that helper's diff;
+      // the hook variables admit staged evidence only at pre-commit.
       env: {
+        BASE_SHA: { optional: true },
         GIT_INDEX_FILE: { optional: true },
         VINAYA_COMMIT_HOOK: { optional: true }
       }
@@ -876,8 +929,10 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       scope: 'full',
       timeoutMs: 30_000,
       // Local-only: walks the working tree and consults the shared diff
-      // helper; the hook variables admit staged evidence only at pre-commit.
+      // helper; BASE_SHA scopes its diff and the hook variables admit staged
+      // evidence only at pre-commit.
       env: {
+        BASE_SHA: { optional: true },
         GIT_INDEX_FILE: { optional: true },
         VINAYA_COMMIT_HOOK: { optional: true }
       },
@@ -897,8 +952,11 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       timeoutMs: 15_000,
       // Local-only: `.changeset/config.json`, every fixed-group member's own
       // `package.json`, and the shared diff all come from the already-local
-      // working tree and `git`. Blocking on a finding (see the bin's doc).
+      // working tree and `git`. BASE_SHA scopes the diff; the hook variables
+      // admit staged evidence only at pre-commit. Blocking on a finding (see
+      // the bin's doc).
       env: {
+        BASE_SHA: { optional: true },
         GIT_INDEX_FILE: { optional: true },
         VINAYA_COMMIT_HOOK: { optional: true }
       }

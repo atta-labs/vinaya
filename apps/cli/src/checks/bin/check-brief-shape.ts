@@ -34,6 +34,7 @@ import {
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { resolveTaskFrozenBrief } from '../frozen-brief'
 import { readIssueBody, readIssueComments } from '../../lib/forge-read'
+import { exitOnIncompleteForgeSnapshot } from '../../lib/forge-snapshot'
 import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolvePrincipalAllowlist } from '../../lib/config'
 
 const CHECK_NAME = 'brief-shape'
@@ -165,6 +166,10 @@ function resolveObjectivesApplicability(
 }
 
 function main(): void {
+  // In CI the task Issue's body and comments come from the run's forge
+  // snapshot (`readIssueBody`/`readIssueComments` route there); an
+  // incomplete one fails here, before any read.
+  exitOnIncompleteForgeSnapshot(CHECK_NAME)
   const prBody = process.env.PR_BODY ?? ''
   if (!prBody) {
     // No PR body to check (local dev outside a CI/PR context) — nothing to do.

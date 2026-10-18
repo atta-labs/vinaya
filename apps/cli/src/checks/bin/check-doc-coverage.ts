@@ -25,6 +25,7 @@ import { DOC_OWNERS_PATH, evaluateC5, isWaiverLabelActorVerified, WAIVER_LABEL }
 import { fileDiffAgainst } from '../../lib/diff-evidence'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { exitOnIncompleteForgeSnapshot, snapshotPullRequest } from '../../lib/forge-snapshot'
 
 // No chdir: `DOC_OWNERS_PATH` (`.vinaya/doc-owners`) and the `git diff` below
 // must resolve relative to the CALLER's cwd — the repo `vinaya check` is
@@ -84,7 +85,10 @@ function resolvePrBody(): string {
 
 type PrLabelsView = { labels: { name: string }[] }
 
+/** The pull request's labels — from the run's forge snapshot in CI, else `gh pr view`. */
 function fetchPrLabels(prNumber: number): string[] | null {
+  const fromSnapshot = snapshotPullRequest(prNumber)
+  if (fromSnapshot !== null) return fromSnapshot.labels.map((l) => l.name)
   try {
     const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'labels'], {
       encoding: 'utf8',
@@ -137,6 +141,7 @@ function waiverActive(): boolean {
 }
 
 function main(): void {
+  exitOnIncompleteForgeSnapshot(CHECK_NAME)
   // `ref`, not `base`: the fallback below re-resolves against `main` when
   // `origin/main` is absent (a local run, a shallow clone), and the
   // `Doc-neutral:` evidence diff MUST use whichever ref actually produced the

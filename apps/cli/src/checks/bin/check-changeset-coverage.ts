@@ -17,11 +17,11 @@
  *
  * scope: diff, ring 0 (registry.ts) — offline and diff-only, so the managed
  * local hooks can run it; CI re-runs it like every `--all --diff-only`
- * check. `env: {}`: every fact this bin needs comes from already-local git
- * state and the working tree's own manifests — this bin reads no env var of
- * its own at all (the current branch is `git rev-parse`d directly, never
- * `process.env.BRANCH`), so there is nothing for the runner's env allowlist
- * to need to strip in the first place.
+ * check. Env: the bin reads no variable itself (the current branch is
+ * `git rev-parse`d directly, never `process.env.BRANCH`); the registry
+ * declares `BASE_SHA`, `GIT_INDEX_FILE` and `VINAYA_COMMIT_HOOK`, all
+ * optional, for the shared diff helper the bin calls, so a caller-supplied
+ * diff base and the pre-commit staged evidence reach it.
  *
  * Release-branch exemption: reuses `@attalabs/aeg-core`'s own
  * `CHANGESET_RELEASE_BRANCH` constant — the same one `check-body-bare-digits.ts`'s

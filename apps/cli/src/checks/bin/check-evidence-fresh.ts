@@ -56,6 +56,7 @@ import { execFileSync } from 'node:child_process'
 import { isPrincipal } from '@attalabs/aeg-core'
 import { agentCommandText, extractAgentCommandLines } from '../../commands/pr-report'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { exitOnIncompleteForgeSnapshot, snapshotComments, snapshotPullRequest } from '../../lib/forge-snapshot'
 import { patchIdAt } from '../../lib/patch-id'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { compareEvidenceBlock, EVIDENCE_PLACEHOLDER_TEXT } from '../evidence-fresh-logic'
@@ -87,18 +88,23 @@ const DEVELOPER_ROUND_MARKER = /<!--\s*aeg:developer:round-\d+\s*-->/i
  */
 function fetchHasPriorDeveloperRound(prNumber: number): boolean {
   try {
-    const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'comments'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-    const parsed = JSON.parse(out) as { comments?: Array<{ body?: string; author?: { login?: string } }> }
+    const comments = snapshotComments(prNumber) ?? fetchPrComments(prNumber)
     const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
-    return (parsed.comments ?? []).some(
+    return comments.some(
       (c) => DEVELOPER_ROUND_MARKER.test(c.body ?? '') && isPrincipal(c.author?.login ?? null, allowlist)
     )
   } catch {
     return true
   }
+}
+
+/** The pull request's comments through `gh pr view` — the read outside CI, where no forge snapshot applies. */
+function fetchPrComments(prNumber: number): Array<{ body?: string; author?: { login?: string } | null }> {
+  const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'comments'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  return (JSON.parse(out) as { comments?: Array<{ body?: string; author?: { login?: string } | null }> }).comments ?? []
 }
 
 const CHECK_NAME = 'evidence-fresh'
@@ -172,6 +178,12 @@ type PrRefs = { head: string; base: string }
  * view` shape.
  */
 function fetchPrRefs(prNumber: number): PrRefs | null {
+  const fromSnapshot = snapshotPullRequest(prNumber)
+  if (fromSnapshot !== null) {
+    return fromSnapshot.headRefOid && fromSnapshot.baseRefName
+      ? { head: fromSnapshot.headRefOid, base: fromSnapshot.baseRefName }
+      : null
+  }
   try {
     const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'headRefOid,baseRefName'], {
       encoding: 'utf8',
@@ -186,6 +198,7 @@ function fetchPrRefs(prNumber: number): PrRefs | null {
 }
 
 function main(): void {
+  exitOnIncompleteForgeSnapshot(CHECK_NAME)
   const body = process.env.PR_BODY ?? ''
   if (!body) {
     // No PR body — ring 0, or a check run with nothing to evaluate.

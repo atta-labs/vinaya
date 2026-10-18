@@ -446,43 +446,78 @@ ${indented}
 `
 }
 
+/** Where a job keeps its forge snapshot (`lib/forge-snapshot.ts`): the runner's temp directory, which a checkout never touches. Shell steps reach it as `$RUNNER_TEMP/vinaya-forge-snapshot`. */
+const FORGE_SNAPSHOT_DIR = '${{ runner.temp }}/vinaya-forge-snapshot'
+
+/** The artifact `vinaya-body-checks.yml`'s read job hands its snapshot to both check jobs under. */
+export const FORGE_SNAPSHOT_ARTIFACT_NAME = 'vinaya-forge-snapshot'
+
+/** The \`jq\` program a failed read prints both budgets with — remaining, limit and reset, and which one is spent. */
+const READ_FAILURE_BUDGET_JQ =
+  '.resources as $r | "::error::GitHub REST (core) budget: \\($r.core.remaining) of \\($r.core.limit) left, resets at \\($r.core.reset | todate)\\(if $r.core.remaining == 0 then " - spent, so GitHub rate-limited this read" else "" end); GraphQL budget: \\($r.graphql.remaining) of \\($r.graphql.limit) left, resets at \\($r.graphql.reset | todate)\\(if $r.graphql.remaining == 0 then " - spent" else "" end)."'
+
 /**
- * The "Fetch PR body" step body, shared verbatim by \`vinaya-checks.yml\` and
- * \`vinaya-body-checks.yml\` — one rule, not two copies. A
- * single \`gh pr view\` read is a race: \`pr report --push\` (or a plain
- * \`pr edit\`) can land on the forge in the gap between this workflow's
- * trigger firing and its own \`gh pr view\` call, so the run reads a body
- * from BEFORE that write finished — measured live, repeatedly, each red on \`closes-n\` with a body the workflow's own
- * log later showed was correct, green on the very next run with no code
- * change. Every real task PR already passed \`closes-n\` at WRITE time
- * (\`runBodyChecks\`, O1) before it could exist on the forge at all, so a
- * missing/malformed \`AEG:CLOSES\` region here is never a legitimate,
- * permanent state for a task branch — it is this exact race, and it is
- * safe to wait a few seconds for it to resolve.
- *
- * Bounded — six attempts, five seconds apart (thirty seconds total) — and
- * loud on exhaustion: names exactly what it waited for rather than quietly
- * running the check suite against a body it already knows may be stale.
- *
- * No longer waits for the \`AEG:EVIDENCE\` block's \`Head:\` to catch up: both
- * workflows this step feeds now trigger on
- * \`opened\`/\`reopened\`/\`edited\` only, never \`synchronize\` (see each
- * workflow's own \`on:\` block), so a push landing after this run started
- * can no longer race it. \`evidence-fresh\` at the merge gate remains the
- * sole guard against a body whose recorded head lags the branch.
+ * One of the two steps every generated job opens and closes with: the
+ * GraphQL budget's used count, written to the job's summary page, so one
+ * push's summaries show what each job spent. Reading it spends nothing
+ * (\`gh api rate_limit\`), and a failed read writes that it failed rather than
+ * failing the job. Concurrent jobs share the budget, so a job's own delta is
+ * an upper bound.
  */
-function verifiedFetchPrBodyStep(): string {
-  return `      - name: Fetch PR body
-        env:
+export function graphqlBudgetStep(at: 'start' | 'end'): string {
+  return `      - name: Record the GraphQL budget at job ${at}
+${at === 'end' ? '        if: ${{ !cancelled() }}\n' : ''}        env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: \${{ github.event.pull_request.number }}
-          BRANCH: \${{ github.head_ref }}
         run: |
-          ATTEMPTS=0
+          gh api rate_limit --jq '"GraphQL budget at job ${at}: \\(.resources.graphql.used) used of \\(.resources.graphql.limit), resets at \\(.resources.graphql.reset | todate)"' >> "$GITHUB_STEP_SUMMARY" || echo "GraphQL budget at job ${at}: unreadable" >> "$GITHUB_STEP_SUMMARY"
+`
+}
+
+/**
+ * The read of the pull request and its comments, once per run, over REST
+ * (\`gh api repos/{owner}/{repo}/pulls/<n>\` and the paged
+ * \`.../issues/<n>/comments\` listing — never \`gh pr view\`, which spends the
+ * GraphQL budget), into \`raw/\` of the job's forge snapshot directory.
+ * \`vinaya pr snapshot\` (\`forgeSnapshotStep\`) then turns those files into the
+ * snapshot the checks read. A failed or refused read fails the step, naming
+ * what it read and both token budgets, so no check ever runs on a body that
+ * was never read.
+ *
+ * Read live from the forge, never from the event payload: a rerun of an old
+ * run must read the pull request as it stands NOW, not as it stood when the
+ * triggering event fired.
+ *
+ * \`waitForCloses\` keeps the one re-read a run makes, and the only reason it
+ * reads the pull request more than once. A single read is a race: \`pr report
+ * --push\` (or a plain \`pr edit\`) can land on the forge in the gap between
+ * the workflow's trigger firing and its read, so the run reads a body from
+ * BEFORE that write finished — measured live, repeatedly, each red on
+ * \`closes-n\` with a body the workflow's own log later showed was correct,
+ * green on the very next run with no code change. Every real task PR already
+ * passed \`closes-n\` at WRITE time (\`runBodyChecks\`, O1) before it could
+ * exist on the forge at all, so a missing/malformed \`AEG:CLOSES\` region here
+ * is never a legitimate, permanent state for a task branch — it is this exact
+ * race, and it is safe to wait a few seconds for it to resolve. Bounded — six
+ * attempts, five seconds apart (thirty seconds total) — and loud on
+ * exhaustion: names exactly what it waited for rather than quietly running
+ * the check suite against a body it already knows may be stale.
+ *
+ * No longer waits for the \`AEG:EVIDENCE\` block's \`Head:\` to catch up: the
+ * workflows this step feeds trigger on \`opened\`/\`reopened\`/\`edited\` only,
+ * never \`synchronize\` (see each workflow's own \`on:\` block), so a push
+ * landing after this run started can no longer race it. \`evidence-fresh\` at
+ * the merge gate remains the sole guard against a body whose recorded head
+ * lags the branch.
+ */
+function pullRequestReadStep(opts: { name: string; id?: string; prNumber: string; waitForCloses: boolean }): string {
+  const read = `gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER" > "$RAW/pull.json" 2> "$RAW/read-error.txt" || fail_read "pull request #$PR_NUMBER"`
+  const readPull = opts.waitForCloses
+    ? `          ATTEMPTS=0
           MAX_ATTEMPTS=6
           SLEEP_SECONDS=5
           while :; do
-            BODY="$(gh pr view "$PR_NUMBER" --json body --jq .body)"
+            ${read}
+            BODY="$(jq -r '.body // ""' "$RAW/pull.json")"
             WAIT_FOR=""
             if [[ "$BRANCH" =~ ^task/[^/]+/[^/]+$ ]]; then
               CLOSES_REGION="$(printf '%s\\n' "$BODY" | sed -n '/<!-- AEG:CLOSES:START -->/,/<!-- AEG:CLOSES:END -->/p')"
@@ -500,12 +535,64 @@ function verifiedFetchPrBodyStep(): string {
             fi
             sleep "$SLEEP_SECONDS"
           done
-          DELIM="PR_BODY_$(openssl rand -hex 16)"
-          echo "PR_BODY<<$DELIM" >> "$GITHUB_ENV"
-          printf '%s\\n' "$BODY" >> "$GITHUB_ENV"
-          echo "$DELIM" >> "$GITHUB_ENV"
+`
+    : `          ${read}
+`
+  return `      - name: ${opts.name}
+${opts.id ? `        id: ${opts.id}\n` : ''}        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: \${{ github.repository }}
+          PR_NUMBER: ${opts.prNumber}
+${opts.waitForCloses ? '          BRANCH: ${{ github.head_ref }}\n' : ''}        run: |
+          set -o pipefail
+          RAW="$RUNNER_TEMP/vinaya-forge-snapshot/raw"
+          mkdir -p "$RAW"
+          fail_read() {
+            echo "::error::Reading $1 over the REST API failed: $(cat "$RAW/read-error.txt" 2>/dev/null)" >&2
+            gh api rate_limit --jq '${READ_FAILURE_BUDGET_JQ}' >&2 || echo "::error::The token budget could not be read either." >&2
+            exit 1
+          }
+${readPull}          gh api --paginate --slurp "repos/{owner}/{repo}/issues/$PR_NUMBER/comments?per_page=100" > "$RAW/pull-comments.json" 2> "$RAW/read-error.txt" || fail_read "pull request #$PR_NUMBER's comments"
 `
 }
+
+/**
+ * Turns the read step's \`raw/\` files into the forge snapshot
+ * (\`vinaya pr snapshot\`), reading the task Issue the body closes and its
+ * comments over REST on the way; fails, naming both budgets, when a read
+ * does. With \`exportBody\` it also exports \`PR_BODY\` for the steps after it,
+ * from the same REST body \`PR_BODY_FILE\` names. The snapshot directory itself
+ * is handed only to the step that runs checks, never through
+ * \`$GITHUB_ENV\`: a later step that writes to the forge and re-reads must
+ * read live.
+ */
+function forgeSnapshotStep(selfHost: VendoredVinaya | null, opts: { exportBody: boolean }): string {
+  const exportBody = opts.exportBody
+    ? `          DELIM="PR_BODY_$(openssl rand -hex 16)"
+          {
+            echo "PR_BODY<<$DELIM"
+            cat "$RUNNER_TEMP/vinaya-forge-snapshot/body.md"
+            echo
+            echo "$DELIM"
+          } >> "$GITHUB_ENV"
+`
+    : ''
+  return `      - name: Write the forge snapshot
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: \${{ github.repository }}
+        run: |
+          ${vinayaRun(selfHost, 'pr snapshot')} --dir "$RUNNER_TEMP/vinaya-forge-snapshot"
+${exportBody}`
+}
+
+/** The env lines that hand the snapshot to the step that runs checks — the directory and the body file. */
+const FORGE_SNAPSHOT_CHECK_ENV = `          # The run's forge snapshot (\`lib/forge-snapshot.ts\`): the checks read
+          # the pull request and its task Issue from it instead of reading the
+          # forge for them again. Set on this step only.
+          VINAYA_FORGE_SNAPSHOT_DIR: ${FORGE_SNAPSHOT_DIR}
+          PR_BODY_FILE: ${FORGE_SNAPSHOT_DIR}/body.md
+`
 
 function checksWorkflow(selfHost: VendoredVinaya | null, ciSetup: string | null): string {
   return `# ${MANAGED_NOTE}
@@ -568,7 +655,7 @@ jobs:
       # 403'd on the lookup/download without this).
       actions: read
     steps:
-      - uses: actions/checkout@v4
+${graphqlBudgetStep('start')}      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           # The job builds and runs code from this checkout, and the default
@@ -580,18 +667,17 @@ jobs:
           node-version: 22
 ${vinayaSetupSteps(selfHost, 'shared-build')}${adopterSetupStep(ciSetup)}      # PR_BODY is what makes test-plan/closes-n/pr-report-density EVALUATE:
       # none of the three fetches the body itself (all read
-      # \`process.env.PR_BODY\` only) — without it they read "no body —
-      # nothing to check" and pass vacuously regardless of the PR's real
-      # content, on every run. Fetched live from the forge, never the
-      # event payload — a rerun of an old run must read the body as it
-      # stands NOW, not as it stood when the triggering event fired. See
-      # \`verifiedFetchPrBodyStep\`'s own doc comment for why this re-reads
-      # with a bounded backoff instead of trusting the first read.
-${verifiedFetchPrBodyStep()}      - name: Run checks
+      # \`process.env.PR_BODY\`) — without it they read "no body — nothing to
+      # check" and pass vacuously regardless of the PR's real content, on
+      # every run. The pull request, its comments, the task Issue its body
+      # closes and that Issue's comments are read once, over REST, into the
+      # forge snapshot the checks read — see \`pullRequestReadStep\`'s own doc
+      # comment for why the read is live and re-reads with a bounded backoff.
+${pullRequestReadStep({ name: 'Read the pull request over REST', prNumber: '${{ github.event.pull_request.number }}', waitForCloses: true })}${forgeSnapshotStep(selfHost, { exportBody: true })}      - name: Run checks
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: \${{ github.event.pull_request.number }}
-          BRANCH: \${{ github.head_ref }}
+${FORGE_SNAPSHOT_CHECK_ENV}          BRANCH: \${{ github.head_ref }}
           # The pull request's own head — never \`git rev-parse HEAD\`, which on
           # a pull_request run is the merge ref — at which \`test-plan\` demands
           # a passed \`AEG:LIVE\` entry for each \`[live]\` line of the brief.
@@ -634,7 +720,7 @@ ${verifiedFetchPrBodyStep()}      - name: Run checks
             cat vinaya-check-output.txt 2>/dev/null || echo 'no check output captured (runner did not start)'
             echo '~~~'
           } >> "$GITHUB_STEP_SUMMARY"
-${budgetMarkerStep()}`
+${graphqlBudgetStep('end')}${budgetMarkerStep()}`
 }
 
 /**
@@ -671,8 +757,10 @@ function reviewWorkflow(selfHost: VendoredVinaya | null): string {
 # this gate answers for the review verdicts alone, and no other check's
 # result can change its answer, so a CI run finishing tells it nothing.
 #
-# The job's first step never builds: it reads the PR's comments and labels
-# through the API alone and fails fast, without checkout or build, whenever
+# The job's first steps never build: they read the PR, its comments and its
+# labels through the REST API alone — the same read the forge snapshot the
+# gate later evaluates is written from, so the run reads them once — and fail
+# fast, without checkout or build, whenever
 # neither a \`VERDICT:\` comment nor a (presence-only, unverified) waiver
 # label exists yet — the ordinary state on \`opened\`/\`synchronize\`/
 # \`reopened\`/\`labeled\`/\`unlabeled\`. The build runs once that step finds
@@ -729,9 +817,9 @@ jobs:
       issues: read
       checks: read
     steps:
-      # No checkout, no build: read whether a verdict exists yet, or an
-      # actor-verified \`vinaya/waiver:review\` label is present, through the
-      # API alone. Absent both, THIS step fails — the job's own single
+${graphqlBudgetStep('start')}      # No checkout, no build: read whether a verdict exists yet, or an
+      # actor-verified \`vinaya/waiver:review\` label is present, from the REST
+      # read just above. Absent both, THIS step fails — the job's own single
       # check-run ("vinaya review gate") goes red with the reason below and
       # every step after it is skipped, so an ordinary push (opened /
       # synchronize / reopened / labeled / unlabeled) never pays for a build
@@ -779,16 +867,15 @@ jobs:
       # real extractor and the real actor-verified waiver check after
       # checkout, is the authoritative read and still fails correctly on
       # anything this coarser check let through.
-      - name: Require a verdict or waiver before building
+${pullRequestReadStep({ name: 'Read the pull request over REST', prNumber: '${{ github.event.pull_request.number }}', waitForCloses: false })}      - name: Require a verdict or waiver before building
         id: verdict-check
         env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: \${{ github.event.pull_request.number }}
         run: |
           set -o pipefail
-          PR_JSON=$(gh pr view "$PR_NUMBER" --repo \${{ github.repository }} --json comments,labels)
-          HAS_VERDICT=$(echo "$PR_JSON" | jq '[.comments[].body | select((. / "\\n") | any(test("${verdictMarkerForJq}")))] | length > 0')
-          HAS_WAIVER_LABEL=$(echo "$PR_JSON" | jq '[.labels[].name == "${WAIVER_LABEL_REVIEW}"] | any')
+          RAW="$RUNNER_TEMP/vinaya-forge-snapshot/raw"
+          HAS_VERDICT=$(jq '[.[][] | (.body // "") | select((. / "\\n") | any(test("${verdictMarkerForJq}")))] | length > 0' "$RAW/pull-comments.json")
+          HAS_WAIVER_LABEL=$(jq '[.labels[].name == "${WAIVER_LABEL_REVIEW}"] | any' "$RAW/pull.json")
           if [ "$HAS_VERDICT" != "true" ] && [ "$HAS_WAIVER_LABEL" != "true" ]; then
             echo "No VERDICT: comment and no ${WAIVER_LABEL_REVIEW} label yet on PR #$PR_NUMBER - nothing to evaluate. Holding the gate red without building until a reviewer posts a verdict or a principal applies the waiver." >&2
             exit 1
@@ -802,15 +889,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-${vinayaSetupSteps(selfHost, 'trusted')}      - name: Review gate
+${vinayaSetupSteps(selfHost, 'trusted')}${forgeSnapshotStep(selfHost, { exportBody: false })}      - name: Review gate
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           # PR_NUMBER is what makes the review-gate check EVALUATE: without
           # it the adapter reads "no PR yet — local dev" and exits 0, and
           # the gate is green regardless of review state.
           PR_NUMBER: \${{ github.event.pull_request.number }}
-        run: ${vinayaRun(selfHost, 'check review-gate')}
-${budgetMarkerStep()}`
+${FORGE_SNAPSHOT_CHECK_ENV}        run: ${vinayaRun(selfHost, 'check review-gate')}
+${graphqlBudgetStep('end')}${budgetMarkerStep()}`
 }
 
 function bodyChecksWorkflow(selfHost: VendoredVinaya | null): string {
@@ -820,10 +907,18 @@ function bodyChecksWorkflow(selfHost: VendoredVinaya | null): string {
 # request can rewrite. \`pull_request_target\` is the same boundary
 # \`vinaya-review.yml\` uses: GitHub loads this workflow and its default
 # checkout from the repository's default branch, never from the pull
-# request being judged. Neither job fetches, checks out, installs, builds,
-# or executes pull-request content — every check registered here reads only
-# live-fetched PR metadata (\`gh pr view\`), never the diff or repo tree, the
-# same shape \`review-gate\` already requires of its own checks.
+# request being judged. No job fetches, checks out, installs, builds, or
+# executes pull-request content — every check registered here reads only
+# live-fetched PR metadata, never the diff or repo tree, the same shape
+# \`review-gate\` already requires of its own checks.
+#
+# That metadata is read once per run: the \`vinaya-forge-read\` job reads the
+# pull request, its comments, the task Issue its body closes and that Issue's
+# comments over REST into the forge snapshot, and both check jobs take it as
+# this run's own artifact. Each check job needs the read job and runs with
+# \`!cancelled()\`, so a failed read fails both required checks by name on
+# their first step instead of skipping them. Re-run the whole run, not only
+# the failed jobs, to read the pull request afresh.
 #
 # \`body-bare-digits\`: its Changesets-release
 # exemption live-fetches the PR's real author, keyed on \`PR_NUMBER\` — on a
@@ -857,14 +952,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  vinaya-body-checks:
-    name: vinaya check body-bare-digits
+  # The one read of the pull request this run makes: the pull request, its
+  # comments, the task Issue its body closes and that Issue's comments, over
+  # REST, into the forge snapshot — handed to both check jobs below as this
+  # run's own artifact, so neither job reads the forge for them again.
+  vinaya-forge-read:
+    name: vinaya read pull request
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      issues: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+${graphqlBudgetStep('start')}      - uses: actions/checkout@v4
         with:
           # Explicit trusted ref: never use the PR head/merge ref in this job.
           ref: \${{ github.event.repository.default_branch }}
@@ -873,24 +973,52 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-${vinayaSetupSteps(selfHost, 'trusted')}      # PR_BODY is what makes body-bare-digits EVALUATE at all — the bin
-      # reads \`process.env.PR_BODY\` only, never fetches it itself. Fetched
-      # live from the forge, never the event payload — same reasoning as
-      # \`vinaya-checks.yml\`'s own PR_BODY step. See \`verifiedFetchPrBodyStep\`'s
-      # own doc comment for why this re-reads with a bounded backoff instead
-      # of trusting the first read.
-${verifiedFetchPrBodyStep()}      - name: Body checks
+${vinayaSetupSteps(selfHost, 'trusted')}${pullRequestReadStep({ name: 'Read the pull request over REST', prNumber: '${{ github.event.pull_request.number }}', waitForCloses: true })}${forgeSnapshotStep(selfHost, { exportBody: false })}      - name: Share the forge snapshot with the check jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${FORGE_SNAPSHOT_ARTIFACT_NAME}
+          path: ${FORGE_SNAPSHOT_DIR}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+${graphqlBudgetStep('end')}${budgetMarkerStep()}
+  vinaya-body-checks:
+    name: vinaya check body-bare-digits
+    needs: vinaya-forge-read
+    # \`!cancelled()\`, never \`always()\` and never the default: a skipped job
+    # counts as passing on the merge box, so this job runs when the read job
+    # failed and fails on its own first step instead of skipping; a run the
+    # concurrency group cancelled stays cancelled.
+    if: \${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+${forgeReadRequiredStep()}${graphqlBudgetStep('start')}      - uses: actions/checkout@v4
+        with:
+          # Explicit trusted ref: never use the PR head/merge ref in this job.
+          ref: \${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+${vinayaSetupSteps(selfHost, 'trusted')}${forgeSnapshotDownloadSteps()}      - name: Body checks
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           # PR_NUMBER is what makes the Changesets-release exemption
-          # EVALUATE its live gh pr view fetch: without it the check reads
+          # EVALUATE its pull request read: without it the check reads
           # "no PR yet — local dev" and falls through to the ordinary
           # bare-digit scan.
           PR_NUMBER: \${{ github.event.pull_request.number }}
-        run: ${vinayaRun(selfHost, 'check body-bare-digits')}
-${budgetMarkerStep()}
+${FORGE_SNAPSHOT_CHECK_ENV}        run: ${vinayaRun(selfHost, 'check body-bare-digits')}
+${graphqlBudgetStep('end')}${budgetMarkerStep()}
   vinaya-principal-test-plan-wait:
     name: vinaya check principal-test-plan-wait
+    needs: vinaya-forge-read
+    # Same \`!cancelled()\` condition as the sibling job above, same reason.
+    if: \${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -898,7 +1026,7 @@ ${budgetMarkerStep()}
       issues: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+${forgeReadRequiredStep()}${graphqlBudgetStep('start')}      - uses: actions/checkout@v4
         with:
           # Explicit trusted ref: never use the PR head/merge ref in this job.
           ref: \${{ github.event.repository.default_branch }}
@@ -907,18 +1035,56 @@ ${budgetMarkerStep()}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-${vinayaSetupSteps(selfHost, 'trusted')}      # PR_BODY is what makes this check EVALUATE at all — the bin reads
-      # \`process.env.PR_BODY\` only, never fetches it itself. Fetched live from
-      # the forge, same reasoning as the sibling job's identical step above.
-${verifiedFetchPrBodyStep()}      - name: Principal Test Plan wait
+${vinayaSetupSteps(selfHost, 'trusted')}${forgeSnapshotDownloadSteps()}      - name: Principal Test Plan wait
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           BRANCH: \${{ github.head_ref }}
           # The pull request's own head, at which each \`[live]\` line of the
           # task's frozen brief must have passed for the merge to go through.
           PULL_REQUEST_HEAD_SHA: \${{ github.event.pull_request.head.sha }}
-        run: ${vinayaRun(selfHost, 'check principal-test-plan-wait')}
-${budgetMarkerStep()}`
+${FORGE_SNAPSHOT_CHECK_ENV}        run: ${vinayaRun(selfHost, 'check principal-test-plan-wait')}
+${graphqlBudgetStep('end')}${budgetMarkerStep()}`
+}
+
+/**
+ * The first step of each \`vinaya-body-checks.yml\` check job: it fails unless
+ * the run's read job succeeded, so a failed or refused read reddens both
+ * required checks by name instead of leaving them skipped — which the merge
+ * box would count as passing.
+ */
+function forgeReadRequiredStep(): string {
+  return `      - name: Require the pull request read
+        env:
+          READ_RESULT: \${{ needs.vinaya-forge-read.result }}
+        run: |
+          if [ "$READ_RESULT" != "success" ]; then
+            echo "::error::The pull request read job ended '$READ_RESULT', so this check has no pull request to evaluate. Its own log names the failed read; re-run the whole workflow run." >&2
+            exit 1
+          fi
+`
+}
+
+/**
+ * The read job's snapshot, downloaded into this job's own forge snapshot
+ * directory from the same run's artifact, then \`PR_BODY\` exported from its
+ * body for the check step.
+ */
+function forgeSnapshotDownloadSteps(): string {
+  return `      - name: Download the forge snapshot
+        uses: actions/download-artifact@v4
+        with:
+          name: ${FORGE_SNAPSHOT_ARTIFACT_NAME}
+          path: ${FORGE_SNAPSHOT_DIR}
+      - name: Export the pull request body
+        run: |
+          DELIM="PR_BODY_$(openssl rand -hex 16)"
+          {
+            echo "PR_BODY<<$DELIM"
+            cat "$RUNNER_TEMP/vinaya-forge-snapshot/body.md"
+            echo
+            echo "$DELIM"
+          } >> "$GITHUB_ENV"
+`
 }
 
 function reviewVerdictWorkflow(selfHost: VendoredVinaya | null): string {
@@ -958,15 +1124,14 @@ jobs:
       number: \${{ steps.pr.outputs.number }}
       sha: \${{ steps.pr.outputs.sha }}
     steps:
-      # issue_comment payloads carry no PR head SHA — resolve it for immutable
-      # run identity only. It never selects executable code.
+${graphqlBudgetStep('start')}${pullRequestReadStep({ name: 'Read the pull request over REST', prNumber: '${{ github.event.issue.number }}', waitForCloses: false })}      # issue_comment payloads carry no PR head SHA — resolve it, from the REST
+      # read just above, for immutable run identity only. It never selects
+      # executable code.
       - name: Resolve PR head
         id: pr
-        env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
         run: |
           NUMBER="\${{ github.event.issue.number }}"
-          SHA=$(gh pr view "$NUMBER" --repo "\${{ github.repository }}" --json headRefOid -q .headRefOid)
+          SHA=$(jq -r '.head.sha' "$RUNNER_TEMP/vinaya-forge-snapshot/raw/pull.json")
           echo "number=$NUMBER" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
@@ -979,14 +1144,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-${vinayaSetupSteps(selfHost, 'trusted')}      - name: Review gate (verdict evaluation)
+${vinayaSetupSteps(selfHost, 'trusted')}${forgeSnapshotStep(selfHost, { exportBody: false })}      - name: Review gate (verdict evaluation)
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           # Same wiring as the required workflow: PR_NUMBER is what makes
           # the adapter evaluate instead of no-op'ing as "local dev".
           PR_NUMBER: \${{ steps.pr.outputs.number }}
-        run: ${vinayaRun(selfHost, 'check review-gate')}
-${budgetMarkerStep()}
+${FORGE_SNAPSHOT_CHECK_ENV}        run: ${vinayaRun(selfHost, 'check review-gate')}
+${graphqlBudgetStep('end')}${budgetMarkerStep()}
   # Executes nothing; consumes only the evaluator's outputs.
   #
   # Fires on EITHER verdict. The required check stores a conclusion, and that
@@ -1002,7 +1167,7 @@ ${budgetMarkerStep()}
     permissions:
       actions: write
     steps:
-      - name: Re-run the required review gate for this branch
+${graphqlBudgetStep('start')}      - name: Re-run the required review gate for this branch
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: \${{ needs.evaluate.outputs.number }}
@@ -1061,7 +1226,7 @@ ${budgetMarkerStep()}
           # working, not a failure worth reddening the step over; a real
           # 403 or an expired run still surfaces in the log.
           gh run rerun "$RUN_ID" --repo "\${{ github.repository }}" || echo "rerun declined (already queued, or run too old) - the other verdict's retrigger covers it"
-${budgetMarkerStep()}`
+${graphqlBudgetStep('end')}${budgetMarkerStep()}`
 }
 
 // The ring-2 post-merge/scheduled mechanisms — same three-job shape as this
@@ -1101,7 +1266,7 @@ jobs:
       issues: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+${graphqlBudgetStep('start')}      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           # The job builds and runs code from this checkout, and the default
@@ -1127,11 +1292,11 @@ ${vinayaSetupSteps(selfHost)}      - name: Run vinaya archive
         run: |
           PR_NUMBER="$(gh api repos/\${{ github.repository }}/commits/\${{ github.sha }}/pulls --jq '.[0].number // empty')"
           if [ -z "$PR_NUMBER" ]; then exit 0; fi
-          BRANCH="$(gh pr view "$PR_NUMBER" -R \${{ github.repository }} --json headRefName --jq .headRefName)"
+          BRANCH="$(gh api "repos/\${{ github.repository }}/pulls/$PR_NUMBER" --jq .head.ref)"
           SLUG="$(printf '%s' "$BRANCH" | sed -n 's#^task/\\([^/]*\\)/.*#\\1#p')"
           if [ -z "$SLUG" ]; then exit 0; fi
           ${vinayaRun(selfHost, 'archive tranche')} "$SLUG" --yes
-${budgetMarkerStep()}
+${graphqlBudgetStep('end')}${budgetMarkerStep()}
   issue-closed:
     name: Tranche Self-Archive (task Issue closed)
     # A task Issue closed by hand — dropped, replaced, or moved — merges no
@@ -1148,7 +1313,7 @@ ${budgetMarkerStep()}
       issues: write
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+${graphqlBudgetStep('start')}      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           # The job builds and runs code from this checkout, and the default
@@ -1170,12 +1335,12 @@ ${vinayaSetupSteps(selfHost)}      - name: Self-archive the tranche this Issue b
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUMBER: \${{ github.event.issue.number }}
         run: |
-          SLUGS="$(gh issue view "$ISSUE_NUMBER" -R \${{ github.repository }} --json labels --jq '.labels[].name | select(startswith("vinaya/tranche:")) | ltrimstr("vinaya/tranche:")')"
+          SLUGS="$(gh api "repos/\${{ github.repository }}/issues/$ISSUE_NUMBER" --jq '.labels[].name | select(startswith("vinaya/tranche:")) | ltrimstr("vinaya/tranche:")')"
           for SLUG in $SLUGS; do
             case "$SLUG" in ''|-*|*[!A-Za-z0-9._-]*) continue ;; esac
             ${vinayaRun(selfHost, 'archive tranche')} "$SLUG" --yes
           done
-${budgetMarkerStep()}
+${graphqlBudgetStep('end')}${budgetMarkerStep()}
   daily-drift:
     name: Daily Drift Check (dead-branch pushes)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -1185,7 +1350,7 @@ ${budgetMarkerStep()}
       issues: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+${graphqlBudgetStep('start')}      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           # The job builds and runs code from this checkout, and the default
@@ -1210,7 +1375,7 @@ ${vinayaSetupSteps(selfHost)}      - name: Run vinaya audit --only=dead-branches
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
         run: ${vinayaRun(selfHost, 'archive tranches')} --yes
-${budgetMarkerStep()}
+${graphqlBudgetStep('end')}${budgetMarkerStep()}
   direct-main-push-detection:
     name: Direct-Main-Push Detection
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
@@ -1220,7 +1385,7 @@ ${budgetMarkerStep()}
       issues: write
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+${graphqlBudgetStep('start')}      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           # The job builds and runs code from this checkout, and the default
@@ -1234,7 +1399,7 @@ ${vinayaSetupSteps(selfHost)}      - name: Run vinaya audit --only=direct-push
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
         run: ${vinayaRun(selfHost, 'audit --only=direct-push')} --sha=\${{ github.sha }}
-${budgetMarkerStep()}`
+${graphqlBudgetStep('end')}${budgetMarkerStep()}`
 }
 
 // ---------------------------------------------------------------------------

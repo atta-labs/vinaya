@@ -26,6 +26,7 @@ import {
   CONFIG_PATH,
   DOCTRINE_POINTER_PATH,
   doctrinePointer,
+  FORGE_SNAPSHOT_ARTIFACT_NAME,
   GEMINI_SETTINGS_PATH,
   labelOps,
   MCP_JSON_PATH,
@@ -618,12 +619,14 @@ describe('workflows', () => {
     // unwired job passes them vacuously regardless of the PR's real content
     // (found live: reproduced against a real adopter repo's real CI run).
     // The checks job runs `check --all --diff-only` (test-plan/closes-n
-    // included) and needs it, fetched live via `gh pr view` rather than the
-    // event payload (a rerun of an old run must read the CURRENT body); the
+    // included) and needs it, read live over REST (once per run, into the
+    // forge snapshot) rather than from the event payload (a rerun of an old
+    // run must read the CURRENT body); the
     // review job runs only `check review-gate` now (#870), which never
     // reads PR_BODY, so it must NOT carry this wiring — re-adding it would
     // regress to the exact bug this fix closes.
-    expect(checks).toContain('gh pr view "$PR_NUMBER" --json body --jq .body')
+    expect(checks).toContain('gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER"')
+    expect(checks).not.toContain('gh pr view')
     expect(checks).not.toContain('github.event.pull_request.body')
     expect(review).not.toContain('github.event.pull_request.body')
     // review-gate is the review job's sole check (#870) — decoupled from the
@@ -728,11 +731,11 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const files = generated()
 
-    // Nine invocations (the archivist's issue-closed job and its daily catch-up add one each) — the "Export task-log artifact" step task-log-v1
+    // Twelve invocations (the archivist's issue-closed job and its daily catch-up add one each, and the checks, review and verdict jobs each write their forge snapshot with `pr snapshot`) — the "Export task-log artifact" step task-log-v1
     // task 4 added is deleted outright (task-files-v1 6, O1/O2): telemetry
     // delivers live to a configured server destination now, so there is no
     // artifact left to export.
-    expect(occurrences(files, `${PUBLISHED_RUN} `)).toBe(9)
+    expect(occurrences(files, `${PUBLISHED_RUN} `)).toBe(12)
     // …and none of them unpinned. An unpinned `npx` is NOT "latest". Where
     // the generated checks workflow carries an install step — only when the
     // adopter declares `ci.setup` — a repo carrying `@attalabs/vinaya` as a
@@ -766,12 +769,13 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     }
     // Count, not just uniqueness: a set-only assertion would still pass if the
     // workflows lost their pin entirely and the hook alone contributed the
-    // single value. Nine workflow invocations (O4, issue-545: the
+    // single value. Twelve workflow invocations (O4, issue-545: the
     // archivist's post-merge job now also self-archives the tranche; its
-    // issue-closed job does the same for a hand-closed task) plus one
+    // issue-closed job does the same for a hand-closed task; the checks,
+    // review and verdict jobs each write their forge snapshot) plus one
     // hook — the "Export task-log artifact" step task-log-v1 task 4 added is
     // deleted outright (task-files-v1 6, O1/O2).
-    expect(specs).toHaveLength(10)
+    expect(specs).toHaveLength(13)
     expect([...new Set(specs)]).toEqual([OWN_VERSION])
   })
 
@@ -882,8 +886,8 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // testing the emitted text.
     // biome-ignore lint/suspicious/noTemplateCurlyInString: asserts emitted Actions syntax, not a JS template
     expect(verdict).toContain('HEAD_SHA: ${{ needs.evaluate.outputs.sha }}')
-    expect(verdict.indexOf('if [ -z "$HEAD_SHA" ]')).toBeLessThan(verdict.indexOf('gh api --paginate'))
-    expect(verdict.indexOf('if [ -z "$PR_NUMBER" ]')).toBeLessThan(verdict.indexOf('gh api --paginate'))
+    expect(verdict.indexOf('if [ -z "$HEAD_SHA" ]')).toBeLessThan(verdict.indexOf('RUN_ID=$(gh api --paginate'))
+    expect(verdict.indexOf('if [ -z "$PR_NUMBER" ]')).toBeLessThan(verdict.indexOf('RUN_ID=$(gh api --paginate'))
   })
 
   it('the retrigger lookup never requires status == "completed" — a concurrent retrigger racing an in-flight rerun must still find it (O7, PRs #401/#409)', async () => {
@@ -919,7 +923,7 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // Outputs can still be empty when Resolve PR head fails; both immutable
     // run-name components must be guarded before querying all workflow runs.
     expect(verdict).toContain('if [ -z "$PR_NUMBER" ]')
-    expect(verdict.indexOf('if [ -z "$PR_NUMBER" ]')).toBeLessThan(verdict.indexOf('gh api --paginate'))
+    expect(verdict.indexOf('if [ -z "$PR_NUMBER" ]')).toBeLessThan(verdict.indexOf('RUN_ID=$(gh api --paginate'))
   })
 
   it('ordinary adopter: gains the credential opt-out, and no vendored token', async () => {
@@ -997,11 +1001,11 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const files = generated()
 
-    // All nine invocations move — none left on the broken path. The
+    // All twelve invocations move — none left on the broken path. The
     // "Export task-log artifact" step task-log-v1 task 4 added is deleted
     // outright (task-files-v1 6, O1/O2).
     expect(occurrences(files, 'npx --yes @attalabs/vinaya')).toBe(0)
-    expect(occurrences(files, VENDORED_BIN)).toBe(9)
+    expect(occurrences(files, VENDORED_BIN)).toBe(12)
     // Every job in `WORKFLOWS` installs (7 — see the setup-bun count above);
     // only the jobs that actually BUILD their own copy run the build
     // command — every one except `vinaya-checks.yml`, which downloads the
@@ -1060,13 +1064,17 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     expect(checks).toContain('actions/download-artifact@v4')
     for (const [name, content] of [
       ['review', review],
-      ['body-checks', bodyChecks],
       ['archivist', archivist],
       ['verdict', verdict]
     ] as const) {
       expect(`${name}: ${content.includes('download-artifact')}`).toBe(`${name}: false`)
       expect(`${name}: ${content.includes(CLI_DIST_ARTIFACT_NAME)}`).toBe(`${name}: false`)
     }
+    // vinaya-body-checks.yml downloads only its own run's forge snapshot —
+    // never the shared CLI build and never another run's artifact.
+    expect(bodyChecks).not.toContain(CLI_DIST_ARTIFACT_NAME)
+    expect(bodyChecks).not.toContain('run-id:')
+    expect(bodyChecks).toContain(`name: ${FORGE_SNAPSHOT_ARTIFACT_NAME}`)
   })
 
   it('O2 security finding: vinaya-checks.yml grants `actions: read` for the shared-build API calls', async () => {
@@ -1103,9 +1111,9 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       const review = files.get(REVIEW_WORKFLOW_PATH) ?? ''
       const verdict = files.get(REVIEW_VERDICT_WORKFLOW_PATH) ?? ''
 
-      // PR_BODY is fetched live via `gh pr view`, never the event payload.
+      // PR_BODY is read live over REST, never from the event payload.
       expect(checks).not.toContain('github.event.pull_request.body')
-      expect(checks).toContain('gh pr view "$PR_NUMBER" --json body --jq .body')
+      expect(checks).toContain('gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER"')
       expect(checks).toContain(expr('PR_NUMBER', 'github.event.pull_request.number'))
       expect(checks).toContain(expr('BRANCH', 'github.head_ref'))
       expect(review).toContain(expr('PR_NUMBER', 'github.event.pull_request.number'))
@@ -1114,15 +1122,18 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       expect(review).not.toContain('BRANCH:')
       expect(verdict).not.toContain('BRANCH:')
       expect(verdict).not.toContain('headRefName')
-      // GH_TOKEN on every step that talks to the forge: checks 2 (fetch PR
-      // body, run checks) + 1 more when vendored (find the shared build,
-      // O2), review 2 (require a verdict before building, O3; review gate),
-      // verdict 3 (resolve-head, evaluate, retrigger), archivist 6 (archive,
-      // the O4 self-archive step, the issue-closed self-archive step,
-      // dead-branch audit, the daily tranche catch-up, direct-push audit),
-      // plus each job's failure-only budget step: checks 1, review 1,
-      // verdict 2, archivist 4.
-      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(vendored ? 22 : 21)
+      // GH_TOKEN on every step that talks to the forge: checks 3 (read the
+      // pull request over REST, write the forge snapshot, run checks) + 1
+      // more when vendored (find the shared build, O2), review 3 (read the
+      // pull request over REST, write the forge snapshot, review gate),
+      // verdict 4 (read the pull request over REST, write the forge
+      // snapshot, evaluate, retrigger), archivist 6 (archive, the O4
+      // self-archive step, the issue-closed self-archive step, dead-branch
+      // audit, the daily tranche catch-up, direct-push audit), plus each
+      // job's failure-only budget step and its two GraphQL budget steps
+      // (start and end): checks 1 + 2, review 1 + 2, verdict 2 + 4,
+      // archivist 4 + 8.
+      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(vendored ? 41 : 40)
     }
   })
 
@@ -1178,7 +1189,9 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // for either.
     expect(gateIdx).toBeLessThan(checkoutIdx)
     expect(checkoutIdx).toBeLessThan(buildIdx)
-    expect(review).toContain('gh pr view "$PR_NUMBER"')
+    expect(review).toContain('gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER"')
+    expect(review).not.toContain('gh pr view')
+    expect(review.indexOf('Read the pull request over REST')).toBeLessThan(gateIdx)
     expect(review).toContain('exit 1')
     // One job, one required check-run name — never a second job/name.
     expect(occurrences(new Map([[REVIEW_WORKFLOW_PATH, review]]), '\n  vinaya-review:')).toBe(1)
@@ -1222,7 +1235,7 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
 
     expect(review).toContain(`"${WAIVER_LABEL_REVIEW}"`)
 
-    const verdictJqExpr = `[.comments[].body | select((. / "\\n") | any(test("${jqStringEscape(VERDICT_MARKER_SOURCE)}")))] | length > 0`
+    const verdictJqExpr = `[.[][] | (.body // "") | select((. / "\\n") | any(test("${jqStringEscape(VERDICT_MARKER_SOURCE)}")))] | length > 0`
     expect(review).toContain(verdictJqExpr)
 
     const labelJqExpr = `[.labels[].name == "${WAIVER_LABEL_REVIEW}"] | any`
@@ -1231,8 +1244,13 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // Three fixtures (O1), the jq expressions run for real against each:
     // neither marker nor label present — red, stays unbuilt; the label alone
     // (unverified) — builds; a real verdict alone — builds.
-    const runJq = (jqExpr: string, input: unknown): string =>
+    // The read step writes the comment pages (`gh api --paginate --slurp`)
+    // and the pull request object as separate files; each expression reads
+    // its own, so the fixtures below are split the same way.
+    const runJqOn = (jqExpr: string, input: unknown): string =>
       execFileSync('jq', [jqExpr], { input: JSON.stringify(input), encoding: 'utf8' }).trim()
+    const runJq = (jqExpr: string, fixture: { comments: unknown[]; labels?: unknown[] }): string =>
+      runJqOn(jqExpr, jqExpr === verdictJqExpr ? [fixture.comments] : { labels: fixture.labels ?? [] })
 
     const neither = { comments: [{ body: 'just discussion, no verdict here' }], labels: [] }
     expect(runJq(verdictJqExpr, neither)).toBe('false')
@@ -2674,7 +2692,7 @@ describe('generated workflows — verified PR-body fetch, bounded backoff (O3)',
     if (checks?.kind !== 'create-file' || bodyChecks?.kind !== 'create-file')
       throw new Error('expected create-file ops')
     const extractFetchStep = (content: string): string => {
-      const start = content.indexOf('- name: Fetch PR body')
+      const start = content.indexOf('- name: Read the pull request over REST')
       const end = content.indexOf('\n      - name:', start + 1)
       return content.slice(start, end === -1 ? undefined : end)
     }

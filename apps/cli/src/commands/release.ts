@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 
 /**
  * `vinaya release` — the release sequence from `apps/cli/specs/self-hosting.md`
@@ -17,6 +19,7 @@ import { execFileSync } from 'node:child_process'
  *   4. HEAD's subject starts with `Chore(release): Version packages`,
  *      unless `--allow-any-commit`
  *   5. `npm whoami` exits `0`
+ *   6. Every fixed-group workspace version is unpublished; read/registry errors refuse
  *
  * Then, streaming each command's own output as it runs: `bun install
  * --frozen-lockfile`, `bun run build`, `bun run changeset:publish`, `git
@@ -29,6 +32,10 @@ import { execFileSync } from 'node:child_process'
  * `--dry-run` runs the preconditions only and prints the plan; it never
  * calls `runStreamed`.
  */
+
+export type ReleasePackage = { name: string; version: string }
+export type FixedReleasePackages = { ok: true; packages: ReleasePackage[] } | { ok: false; reason: string }
+export type RegistryVersion = { status: 'published' } | { status: 'not-found' } | { status: 'failure'; reason: string }
 
 export type ReleaseDeps = {
   /** `git symbolic-ref --quiet --short HEAD` — `null` on detached HEAD. */
@@ -47,6 +54,10 @@ export type ReleaseDeps = {
   headSubject(): string
   /** `npm whoami` — `true` on exit `0`. */
   npmWhoami(): boolean
+  /** Fixed-group members resolved by workspace package name, or a named read failure. */
+  fixedReleasePackages(): FixedReleasePackages
+  /** Query exactly this version; only npm's E404 answer means unpublished. */
+  npmViewExactVersion(pkg: string, version: string): RegistryVersion
   /** Runs one plan step, streaming its own stdout/stderr live; throws on a non-zero exit. */
   runStreamed(cmd: string, args: string[]): void
   /** `git tag --points-at HEAD` — every tag now sitting on HEAD, e.g. `@attalabs/vinaya@0.24.0`. */
@@ -104,6 +115,60 @@ export function realDeps(): ReleaseDeps {
         return true
       } catch {
         return false
+      }
+    },
+    fixedReleasePackages() {
+      let reading = '.changeset/config.json'
+      try {
+        const config = JSON.parse(readFileSync(reading, 'utf8'))
+        if (
+          !Array.isArray(config.fixed) ||
+          !config.fixed.every(
+            (group: unknown) =>
+              Array.isArray(group) && group.every((name: unknown) => typeof name === 'string' && name.length > 0)
+          )
+        ) {
+          throw new Error('expected fixed groups of package names')
+        }
+        const names = [...new Set<string>(config.fixed.flat())]
+        const manifests: { name?: unknown; version?: unknown }[] = []
+        for (const workspace of ['apps', 'packages']) {
+          reading = workspace
+          for (const entry of readdirSync(workspace, { withFileTypes: true })) {
+            if (!entry.isDirectory()) continue
+            reading = join(workspace, entry.name, 'package.json')
+            manifests.push(JSON.parse(readFileSync(reading, 'utf8')))
+          }
+        }
+        const packages: ReleasePackage[] = []
+        for (const name of names) {
+          reading = name
+          const matches = manifests.filter((manifest) => manifest.name === name)
+          if (matches.length !== 1) throw new Error(`expected one matching workspace, found ${matches.length}`)
+          const version = matches[0]?.version
+          if (typeof version !== 'string' || version.trim() === '') throw new Error('missing package version')
+          packages.push({ name, version })
+        }
+        return { ok: true, packages }
+      } catch (error) {
+        return { ok: false, reason: `${reading}: ${error instanceof Error ? error.message : String(error)}` }
+      }
+    },
+    npmViewExactVersion(pkg, version) {
+      try {
+        const output = execFileSync('npm', ['view', `${pkg}@${version}`, 'version'], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe']
+        }).trim()
+        if (output === version) return { status: 'published' }
+        return { status: 'failure', reason: `unexpected npm view output: ${JSON.stringify(output)}` }
+      } catch (error) {
+        const failure = error as { status?: number; stdout?: string | Buffer; stderr?: string | Buffer }
+        const output = `${failure.stdout ?? ''}\n${failure.stderr ?? ''}`.trim()
+        if (typeof failure.status === 'number' && failure.status !== 0 && /\bE404\b/.test(output)) {
+          return { status: 'not-found' }
+        }
+        return { status: 'failure', reason: output || (error instanceof Error ? error.message : String(error)) }
       }
     },
     runStreamed(cmd, args) {
@@ -229,6 +294,17 @@ export function runRelease(opts: { dryRun: boolean; allowAnyCommit: boolean }, d
       message: 'vinaya release: `npm whoami` failed — run `npm login` first.'
     }
   }
+
+  const fixed = deps.fixedReleasePackages()
+  if (!fixed.ok)
+    return { ok: false, message: `vinaya release: could not read fixed release packages — ${fixed.reason}` }
+  const refusals: string[] = []
+  for (const { name, version } of fixed.packages) {
+    const answer = deps.npmViewExactVersion(name, version)
+    if (answer.status === 'published') refusals.push(`${name}@${version} is already published`)
+    if (answer.status === 'failure') refusals.push(`${name}@${version}: registry query failed — ${answer.reason}`)
+  }
+  if (refusals.length > 0) return { ok: false, message: `vinaya release: ${refusals.join('; ')}` }
 
   if (opts.dryRun) {
     return { ok: true, dryRun: true, plan: RELEASE_PLAN }
