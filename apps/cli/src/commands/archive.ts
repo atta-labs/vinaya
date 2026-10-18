@@ -27,15 +27,11 @@ import {
   type MeteringCapability,
   type TranscriptSummary
 } from '@attalabs/aeg-core'
-import {
-  deriveTrancheFromForge,
-  hasTrancheIntentsSection,
-  intentLines,
-  milestoneLifecycleFromTrancheLifecycles
-} from '@attalabs/aeg-forge-state'
+import { deriveTrancheFromForge, hasTrancheIntentsSection } from '@attalabs/aeg-forge-state'
 import { detectGitRepo, type RepoInfo } from '../lib/detect.js'
 import { closeStdin, promptYesNo } from '../lib/prompt.js'
 import { loadConfig } from '../lib/config.js'
+import { declaredTranches, milestoneCloseDecision, type TrancheLifecycle } from '../lib/milestone-close-hold.js'
 import { realDeps as meteringRealDeps } from './tokens.js'
 
 // `rings.ring2_asyncAudits` means what it says: `true` (the default — an
@@ -48,9 +44,6 @@ import { realDeps as meteringRealDeps } from './tokens.js'
 function ring2AsyncAuditsDisabled(): boolean {
   return loadConfig()?.rings?.ring2_asyncAudits === false
 }
-
-/** The three lifecycles a tranche can be in, read off the one derivation `@attalabs/aeg-forge-state` owns rather than restated here. */
-type TrancheLifecycle = Awaited<ReturnType<typeof deriveTrancheFromForge>>['lifecycle']
 
 export type ArchiveDeps = {
   detectRepo: () => Promise<RepoInfo | null>
@@ -579,81 +572,6 @@ export function trancheArchivalStatus(
   return { kind: 'complete' }
 }
 
-export type DeclaredTranche = { slug: string; lifecycle: TrancheLifecycle }
-
-/**
- * Every tranche a Milestone's `### Tranche intents` section declares, with
- * each one's lifecycle derived from its OWN labeled Issues — the same
- * `deriveTrancheFromForge` composition `vinaya milestone status` prints, so
- * "is that tranche done" is answered exactly once in this product, never a
- * second time here.
- *
- * The tranche being archived is `complete` by construction and is never
- * re-fetched: `trancheArchivalStatus` has already proved every Issue
- * carrying its label is closed, and re-deriving it would read a legacy
- * Milestone titled exactly the slug — still open, because closing it is what
- * this command is about to do — as `active`, leaving the tranche blocking
- * its own Milestone forever.
- */
-async function declaredTranches(
-  owner: string,
-  repo: string,
-  description: string,
-  archivedSlug: string,
-  deps: ArchiveDeps
-): Promise<DeclaredTranche[]> {
-  const rows: DeclaredTranche[] = []
-  for (const intent of intentLines(description)) {
-    if (intent.slug === archivedSlug) {
-      rows.push({ slug: intent.slug, lifecycle: 'complete' })
-      continue
-    }
-    rows.push({ slug: intent.slug, lifecycle: await deps.trancheLifecycle(owner, repo, intent.slug) })
-  }
-  return rows
-}
-
-/**
- * Whether this archival may close the Milestone, and — when it may not —
- * every reason it stays open, in the words the prompt and the closing
- * message both print.
- *
- * Two independent holds, because a Milestone is a product goal and a tranche
- * is one slice of it. An attached Issue still open is the older hold (a
- * shared Milestone's other tenants). A tranche the Milestone DECLARES but
- * that has no Issues yet is the second: it is real, `planned` work the
- * Milestone is still committed to, invisible to any count of attached
- * Issues, and closing on that count alone marked most of a product finished
- * the first time a tranche of it completed. `milestoneLifecycleFromTrancheLifecycles`
- * is what reads the declared set — never `.every(...)` inline, whose
- * vacuous truth on an empty list is the same bug in a new place.
- *
- * A Milestone declaring no `### Tranche intents` section at all keeps the
- * older rule untouched: nothing declared, nothing to hold it open. A
- * section present but carrying no line this parser can read is NOT that
- * case — an unreadable declaration is a declaration, and it holds.
- */
-export function milestoneCloseDecision(input: {
-  otherWorkOpen: boolean
-  declaresIntents: boolean
-  declared: readonly DeclaredTranche[]
-}): { close: true } | { close: false; reasons: string[] } {
-  const reasons: string[] = []
-  if (input.otherWorkOpen) reasons.push('other tasks remain')
-  if (
-    input.declaresIntents &&
-    milestoneLifecycleFromTrancheLifecycles(input.declared.map((d) => d.lifecycle)) !== 'complete'
-  ) {
-    const unfinished = input.declared.filter((d) => d.lifecycle !== 'complete')
-    reasons.push(
-      unfinished.length > 0
-        ? `unfinished tranches it declares: ${unfinished.map((d) => `${d.slug} (${d.lifecycle})`).join(', ')}`
-        : 'it declares a `### Tranche intents` section with no readable tranche line'
-    )
-  }
-  return reasons.length === 0 ? { close: true } : { close: false, reasons }
-}
-
 /**
  * A tranche's identity is its `vinaya/tranche:<slug>` label, not a Milestone
  * number: this command used to find an open Milestone titled the slug FIRST and list its Issues
@@ -798,7 +716,12 @@ async function archiveCompleteTranche(
   const verdict = milestoneCloseDecision({
     otherWorkOpen,
     declaresIntents: hasTrancheIntentsSection(description),
-    declared: await declaredTranches(ctx.owner, ctx.repo, description, slug, deps)
+    // The tranche being archived is `complete` by construction:
+    // `trancheArchivalStatus` already proved every Issue carrying its label
+    // is closed, so it is never re-read.
+    declared: await declaredTranches(description, (declaredSlug) =>
+      declaredSlug === slug ? Promise.resolve('complete') : deps.trancheLifecycle(ctx.owner, ctx.repo, declaredSlug)
+    )
   })
 
   if (!yes && !confirmed) {
