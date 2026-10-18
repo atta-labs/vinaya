@@ -2,7 +2,7 @@
 
 Status: draft
 
-The evaluation program (`apps/cli/specs/dev-review-evaluation-program.md`) defines four harness ports — Task, Trial, Grader, Report — and the statistics reported over them (its §3, §7, §8, §9 and §11). This file describes the code that implements those contracts and estimators, `apps/cli/src/lib/dev-review-eval/contracts.ts` and `apps/cli/src/lib/dev-review-eval/estimators.ts`, the module registry the program's §6 requires, `apps/cli/src/lib/dev-review-eval/registry.ts`, and the trial staging and contamination test its §11 requires, `apps/cli/src/lib/dev-review-eval/staging.ts` and `apps/cli/src/lib/dev-review-eval/contamination.ts`, and the process-neutral layer G — `neutral-case.ts`, `neutral-outcomes.ts`, `generic-graders.ts` and `banned-terms.ts` in the same directory. Vocabulary is the evaluation program's §3, used exactly.
+The evaluation program (`apps/cli/specs/dev-review-evaluation-program.md`) defines four harness ports — Task, Trial, Grader, Report — and the statistics reported over them (its §3, §7, §8, §9 and §11). This file describes the code that implements those contracts and estimators, `apps/cli/src/lib/dev-review-eval/contracts.ts` and `apps/cli/src/lib/dev-review-eval/estimators.ts`, the module registry the program's §6 requires, `apps/cli/src/lib/dev-review-eval/registry.ts`, and the trial staging and contamination test its §11 requires, `apps/cli/src/lib/dev-review-eval/staging.ts` and `apps/cli/src/lib/dev-review-eval/contamination.ts`, and the process-neutral layer G — `neutral-case.ts`, `neutral-outcomes.ts`, `generic-graders.ts` and `banned-terms.ts` in the same directory, with `vinaya-renderer.ts` mapping it to and from the Vinaya process. Vocabulary is the evaluation program's §3, used exactly.
 
 Nothing here runs an agent or decides acceptance. Those come later; this layer gives them typed values to exchange, pure functions to compute what a report shows, and a clean, proven-isolated workspace for each trial.
 
@@ -42,6 +42,7 @@ One isolated execution of one task under one condition: `id`, `taskId`, `conditi
 - **Isolation** names the trial's workspace, vendor home, checkpointer and Log destination. `validateTrialSet` refuses two trials sharing any of them (`shared_isolation`) — every trial starts clean, with its own fresh checkpointer — and refuses a repeated (task, condition, attempt).
 - **Outcome** is `graded` (the outcome digest plus one result per grader) or `errored` with a reason.
 - `trialVerdict` reads a trial as `pass` only when every grade passes, `fail` when any grade fails or the trial errored, and otherwise `unknown`, which must be adjudicated before it is counted.
+- A layer-`G` trial of the Vinaya process is graded on outcomes the Vinaya renderer extracts, and its trial record carries the renderer version it was rendered and extracted under (see "The Vinaya renderer").
 
 ### Suite
 
@@ -228,6 +229,36 @@ A glob with no wildcard covers that path and everything under it; `*` matches wi
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/banned-terms.ts contains:export function checkTaskStatement(statement: string, path = 'taskStatement'): Validated<string> { -->
 
 `apps/cli/tests/eval/neutral-case.test.ts`, `generic-graders.test.ts` and `banned-terms.test.ts` prove each refusal, the digest's stability and sensitivity, every grader's pass on good outcomes for every case kind, its fail on every non-`known`, non-`inapplicable` status of every outcome it reads, and its rejection of a planted bad outcome.
+
+### The Vinaya renderer
+
+`vinaya-renderer.ts` maps between a neutral case and the Vinaya process in both directions, so the generic graders judge a Vinaya trial without reading a Vinaya artifact themselves. The renderer imports the graders' types; no grader imports the renderer.
+
+`renderCase` validates a neutral case and renders it as Vinaya process input: a frozen brief whose `## Surface` is the authorized scope (`in:` from `in`, `out:` from `protected`), whose `## Documentation` lists the relevant delivered documents, and whose one objective is the task statement; the source manifest, which also delivers the documents that are not relevant, without requiring them; and each dispatched role's tool grant — the Developer for a `change` case, both reviewers for a `review` case, all three for a `loop` case — holding the tools of the granted capabilities that role may hold. Every case field is rendered, withheld (only grading reads it: hidden tests, reference solution, planted defects, adjudication) or declared inapplicable (`layer`). A case the process cannot express is refused as `unexpressible`, naming the field: a scope glob that is not a directory, optionally followed by `/**`, which is the only form a Surface entry can take; a protected glob overlapping an `in` glob, since an `out:` glob overrides `in:` where a neutral `in` glob overrides `protected`; a document id that cannot be one Documentation source; a relevant document in a review case, since a reviewer reports no source use; a capability no tool exercises, or none a dispatched role may hold; a `change` or `loop` case without `publish_change` and `open_change_request`; and a task statement with a line break. An invalid case is refused as `invalid_case` with the validator's path.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/vinaya-renderer.ts contains:export function renderCase(raw: unknown): Rendered { -->
+
+`extractOutcomes` reads the nine neutral outcomes from a Vinaya trial record, which holds the process input the trial ran on and what the harness recorded:
+
+| Outcome | Read from |
+| -- | -- |
+| `O-change` | The pull request's head, base and diff digest as recorded; the harness's measured change and changed paths |
+| `O-tests` | The hidden-test results the grading sandbox recorded |
+| `O-evidence` | The required-check result on one head, each conclusion mapped to `pass`, `fail` or `pending` |
+| `O-scope` | The paths in the pull request body's beyond-Surface block; a body with no such block is `absent` |
+| `O-capability` | Each traced tool name, mapped to a neutral capability by `TOOL_CAPABILITIES`; an unmapped tool is `invalid` |
+| `O-sources` | The controller's counted receipts, by delivered digest, and the Developer turn result's `sourceUses`; a review case claims none |
+| `O-review` | Each completed review result, its findings' severities mapped to `blocking` by `SEVERITY_BLOCKING`; a blocked review is no review; a malformed result, a crossed role or head, or an off-scale severity is `invalid`; a review bound to another brief is bound to another intent |
+| `O-decision` | The loop's ready-for-merge result — both reviewers approved on the current head and every required check green; none is `absent`, no Decision |
+| `O-effects` | Each governed effect, by idempotency key |
+
+`SEVERITY_BLOCKING` is read once from each role's severity scale by rank: a severity among the scale's two most severe ranks blocks (today `BLOCKER` and `MAJOR`; `CRITICAL` and `HIGH`), the rank rule the reviewer-quality suites apply. A fact the record does not carry is `unavailable`, one it records as missing is `absent`, and a fact of another kind of case is `inapplicable`; none is ever given a passing value.
+
+`VINAYA_RENDERER_VERSION` is the renderer's schema version and a SHA-256 over its mapping tables (the tool catalog's names among them), every render and extract function, and the whole text of every source file the mapping depends on (`MAPPING_SOURCE_PATHS`: the renderer, the neutral case and its validator, the review-result and turn-result parsers and schemas, the role grants, and the beyond-Surface reader with its helpers), so any change to the mapping changes it. Every process input and trial record carries the version it was made under, and `extractOutcomes` refuses one of another version as `stale_renderer`; every extraction returns the version it ran under.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/vinaya-renderer.ts contains:export const VINAYA_RENDERER_VERSION = rendererVersionOf(MAPPING_TABLES, MAPPING_LOGIC, MAPPING_SOURCES) -->
+
+`apps/cli/tests/eval/vinaya-renderer.test.ts` proves each rendered section, each refusal, each mapping table and each extraction status. `vinaya-renderer-round-trip.test.ts` runs the committed cases in `neutral-cases-fixture.json` through fixture trial records: each reference solution, rendered and extracted, passes every generic grader for its kind; each known-bad variant that applies — the reference reverted, a planted protected-path edit, a planted blocking finding removed, an ungranted capability call, a relevant document left unused — fails the grader it targets and no other; an outcome the record does not carry fails every grader that reads it; and every grader's logic digest is the same in a process that never loads the renderer. Hidden-test results in these records are recorded facts: the tests call no model and run no repository's code.
 
 ## Trial staging
 

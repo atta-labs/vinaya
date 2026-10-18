@@ -1,0 +1,374 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "case": {
+        "id": "change-week-dates",
+        "layer": "G",
+        "kind": "change",
+        "repository": "example/dates",
+        "baseRevision": "1185f9e1d23966e789f537c267d587dfcb3aefad",
+        "taskStatement": "Make the date parser accept week dates such as 2026-W03-4 and keep every existing format working.",
+        "authorizedScope": {
+          "in": ["src/parse/**", "tests/parse"],
+          "protected": [".github/**", "scripts"]
+        },
+        "deliveredDocuments": [
+          {
+            "id": "iso-week-dates",
+            "contentDigest": "7da3ec8658fb79e364f311c4831788fb15d357c9c59e279e48594dab41f141a9",
+            "relevant": true
+          },
+          {
+            "id": "style-guide",
+            "contentDigest": "184ccd40fd2f254dbdfe92e3e15b0b1fc2bef5a608ee062de7b4c1f76f736528",
+            "relevant": false
+          }
+        ],
+        "grantedCapabilities": [
+          "read_file",
+          "write_file",
+          "run_commands",
+          "read_document",
+          "publish_change",
+          "open_change_request"
+        ],
+        "hiddenTests": [
+          {
+            "path": "tests/parse/week.test.ts",
+            "name": "parses 2026-W03-4",
+            "expectation": "fail-to-pass"
+          },
+          {
+            "path": "tests/parse/basic.test.ts",
+            "name": "parses 2026-01-15",
+            "expectation": "pass-to-pass"
+          }
+        ],
+        "referenceSolution": {
+          "patchDigest": "43f45b1acc2d3422e82421556b28ebbca8153c6b61dd2625edc5fe4f39a33b12"
+        }
+      },
+      "reference": {
+        "head": "b4898ca4cb7ba64e662ea627b6985cd1a5b3b1c3",
+        "changedPaths": ["src/parse/week.ts", "tests/parse/week.test.ts", "docs/parse-notes.md"],
+        "trace": ["Read", "Grep", "fetch_documentation", "Edit", "shell", "publish_changes", "open_pull_request"],
+        "findings": {
+          "code-reviewer": [],
+          "security-reviewer": []
+        }
+      }
+    },
+    {
+      "case": {
+        "id": "change-retry-budget",
+        "layer": "G",
+        "kind": "change",
+        "repository": "example/http-client",
+        "baseRevision": "e0d0d33f94e5b327c4480aa7e1f6497d1fa32583",
+        "taskStatement": "Stop the HTTP client retrying a request once its total retry budget of ten seconds is spent.",
+        "authorizedScope": {
+          "in": ["lib/http/**"],
+          "protected": []
+        },
+        "deliveredDocuments": [
+          {
+            "id": "http-semantics",
+            "contentDigest": "0f11b7ae858ddee14bba9cc204e7a5e72f832cd422e8d0a3d6909041d6cebf30",
+            "relevant": true
+          }
+        ],
+        "grantedCapabilities": [
+          "read_file",
+          "write_file",
+          "run_checks",
+          "read_document",
+          "publish_change",
+          "open_change_request"
+        ],
+        "hiddenTests": [
+          {
+            "path": "lib/http/retry.test.ts",
+            "name": "stops after the budget",
+            "expectation": "fail-to-pass"
+          },
+          {
+            "path": "lib/http/retry.test.ts",
+            "name": "retries a transient failure",
+            "expectation": "pass-to-pass"
+          }
+        ],
+        "referenceSolution": {
+          "patchDigest": "e4fdabdb6534ead6c011e954a1014d002ab0b7c16e81c783d8c9cdee66609216"
+        }
+      },
+      "reference": {
+        "head": "3a907a20c26f33b0da73427392cc69d77fc4d059",
+        "changedPaths": ["lib/http/retry.ts", "lib/http/retry.test.ts"],
+        "trace": ["Read", "fetch_documentation", "Write", "run_checks", "publish_changes", "open_pull_request"],
+        "findings": {
+          "code-reviewer": [],
+          "security-reviewer": []
+        }
+      }
+    },
+    {
+      "case": {
+        "id": "review-session-expiry",
+        "layer": "G",
+        "kind": "review",
+        "repository": "example/auth",
+        "baseRevision": "e76a6b47dccd3aba03dd48147670a378e13c40a2",
+        "taskStatement": "Judge whether this change expires idle sessions after thirty minutes without logging anyone out early.",
+        "authorizedScope": {
+          "in": ["src/auth/**"],
+          "protected": [".github/**"]
+        },
+        "deliveredDocuments": [
+          {
+            "id": "coding-standards",
+            "contentDigest": "f846a0686c0b8db9be533abb96fa27697786a9eab13d03a7a909c0739fe3aca6",
+            "relevant": false
+          }
+        ],
+        "grantedCapabilities": ["read_file", "read_document"],
+        "plantedDefects": [
+          {
+            "file": "src/auth/session.ts",
+            "kind": "logic-error",
+            "blocking": true,
+            "critical": true,
+            "justified": false
+          },
+          {
+            "file": "docs/changelog.md",
+            "kind": "out-of-scope-change",
+            "blocking": false,
+            "critical": false,
+            "justified": true
+          }
+        ],
+        "changeUnderReview": {
+          "base": "e76a6b47dccd3aba03dd48147670a378e13c40a2",
+          "head": "36abbdeb83684054ba9fceda7e6b3062d5f5fd12",
+          "patchDigest": "3bf7703e361ec104c1e2d7cc1560831d8e4e6df71821dd8065c6fdb65c5c60e5"
+        },
+        "adjudication": {
+          "clean": false,
+          "adjudicators": ["adjudicator-a", "adjudicator-b"]
+        }
+      },
+      "reference": {
+        "head": "36abbdeb83684054ba9fceda7e6b3062d5f5fd12",
+        "changedPaths": [],
+        "trace": ["Read", "Grep", "read_source"],
+        "findings": {
+          "code-reviewer": [
+            {
+              "file": "src/auth/session.ts",
+              "severity": "BLOCKER"
+            },
+            {
+              "file": "docs/changelog.md",
+              "severity": "MINOR"
+            }
+          ],
+          "security-reviewer": [
+            {
+              "file": "src/auth/session.ts",
+              "severity": "LOW"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "case": {
+        "id": "review-clean-logging",
+        "layer": "G",
+        "kind": "review",
+        "repository": "example/server",
+        "baseRevision": "8a48d5fe72b38be1376519543941da9a109bbde6",
+        "taskStatement": "Judge whether this change adds request identifiers to every access log line.",
+        "authorizedScope": {
+          "in": ["src/logging/**"],
+          "protected": []
+        },
+        "deliveredDocuments": [],
+        "grantedCapabilities": ["read_file"],
+        "plantedDefects": [],
+        "changeUnderReview": {
+          "base": "8a48d5fe72b38be1376519543941da9a109bbde6",
+          "head": "c59d92439b585164ce866eef325a30b0f7886215",
+          "patchDigest": "5e5ac648be00e293c0b9dfc7be51ba05272ed95f2ae5b6a54e7380e429a913f0"
+        },
+        "adjudication": {
+          "clean": true,
+          "adjudicators": ["adjudicator-a", "adjudicator-b"]
+        }
+      },
+      "reference": {
+        "head": "c59d92439b585164ce866eef325a30b0f7886215",
+        "changedPaths": [],
+        "trace": ["Read", "Glob"],
+        "findings": {
+          "code-reviewer": [
+            {
+              "file": "src/logging/access.ts",
+              "severity": "MINOR"
+            }
+          ],
+          "security-reviewer": [
+            {
+              "file": "src/logging/access.ts",
+              "severity": "LOW"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "case": {
+        "id": "loop-cache-eviction",
+        "layer": "G",
+        "kind": "loop",
+        "repository": "example/cache",
+        "baseRevision": "fb638fb3e8bdc43b24483d0995983eb5f713ee3c",
+        "taskStatement": "Evict the least recently used cache entry when the cache is full, instead of the oldest one.",
+        "authorizedScope": {
+          "in": ["src/cache/**"],
+          "protected": [".github/**"]
+        },
+        "deliveredDocuments": [
+          {
+            "id": "cache-design",
+            "contentDigest": "c18f92f7a4a544111dba5cbd21932e70a825c4b175d1c638447de453d8383a2e",
+            "relevant": true
+          }
+        ],
+        "grantedCapabilities": [
+          "read_file",
+          "write_file",
+          "run_commands",
+          "read_document",
+          "run_checks",
+          "publish_change",
+          "open_change_request",
+          "read_change_request"
+        ],
+        "hiddenTests": [
+          {
+            "path": "src/cache/lru.test.ts",
+            "name": "evicts the least recently used entry",
+            "expectation": "fail-to-pass"
+          },
+          {
+            "path": "src/cache/basic.test.ts",
+            "name": "stores and reads an entry",
+            "expectation": "pass-to-pass"
+          }
+        ],
+        "referenceSolution": {
+          "patchDigest": "c84e02705b50d1ef183ac82b9356faf9ece48838db5269fe2812bde53ca72654"
+        }
+      },
+      "reference": {
+        "head": "9439df80d98d1e0563b081660f51d47c9c5452ae",
+        "changedPaths": ["src/cache/lru.ts", "src/cache/lru.test.ts"],
+        "trace": [
+          "Read",
+          "fetch_documentation",
+          "Edit",
+          "shell",
+          "run_checks",
+          "publish_changes",
+          "open_pull_request",
+          "read_pull_request",
+          "read_source"
+        ],
+        "findings": {
+          "code-reviewer": [
+            {
+              "file": "src/cache/lru.ts",
+              "severity": "MINOR"
+            }
+          ],
+          "security-reviewer": []
+        }
+      }
+    },
+    {
+      "case": {
+        "id": "loop-config-schema",
+        "layer": "G",
+        "kind": "loop",
+        "repository": "example/settings",
+        "baseRevision": "9be915f5e8495b09b4e4507c9b191f70d2e6eb73",
+        "taskStatement": "Reject a settings file that names an unknown key, and say which key it was.",
+        "authorizedScope": {
+          "in": ["packages/config/**", "docs/config"],
+          "protected": ["packages/cli/**"]
+        },
+        "deliveredDocuments": [
+          {
+            "id": "json-schema",
+            "contentDigest": "9dbae2adf1b5b805aae5d88002e03b5449d525c82ba58bbe8f37ba468f7477a5",
+            "relevant": true
+          },
+          {
+            "id": "changelog-guide",
+            "contentDigest": "2f733ec4b8306d9b2b5f96bb063591a8900229ed6cea741fbdb7d1fdc465f888",
+            "relevant": false
+          }
+        ],
+        "grantedCapabilities": [
+          "read_file",
+          "write_file",
+          "read_document",
+          "run_checks",
+          "publish_change",
+          "open_change_request",
+          "update_change_request"
+        ],
+        "hiddenTests": [
+          {
+            "path": "packages/config/validate.test.ts",
+            "name": "rejects an unknown key",
+            "expectation": "fail-to-pass"
+          }
+        ],
+        "referenceSolution": {
+          "patchDigest": "e21c1788156b7c7141adba5b56ad9105909f05ef920c46e33529923c321786d2"
+        }
+      },
+      "reference": {
+        "head": "9efde268a32a562101e6ea2dec4085fcafb6b747",
+        "changedPaths": [
+          "packages/config/validate.ts",
+          "packages/config/validate.test.ts",
+          "docs/config/keys.md",
+          "README.md"
+        ],
+        "trace": [
+          "Read",
+          "fetch_documentation",
+          "Edit",
+          "run_checks",
+          "publish_changes",
+          "open_pull_request",
+          "update_pull_request_body",
+          "read_source"
+        ],
+        "findings": {
+          "code-reviewer": [],
+          "security-reviewer": [
+            {
+              "file": "packages/config/validate.ts",
+              "severity": "MEDIUM"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
