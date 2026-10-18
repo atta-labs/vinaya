@@ -90,6 +90,30 @@ describe('edge resolution — a failed lookup blocks, it never passes', () => {
     })
   })
 
+  /**
+   * Where this resolver deliberately differs from `verify-dispatch.ts`: that
+   * script treats a bare `#NNN` with no known state as read-failed, while
+   * here an Issue the forge says does not exist is an answer, not a failed
+   * read — it keeps the shape above, with no `readFailed`, and the gate goes
+   * on calling it unmerged. Only a read that failed (rate limit, auth,
+   * network, malformed output) adds `readFailed: true`, and it changes no
+   * other field, so a caller that does not map it gives the same verdict.
+   */
+  it('a failed read adds only readFailed: true; a missing Issue adds nothing', () => {
+    const missing = edgeFromIssueJson(192, null)
+    expect('readFailed' in missing).toBe(false)
+    expect(edgeFromIssueJson(192, null, true)).toEqual({
+      issue: 192,
+      merged: false,
+      open: false,
+      issueState: null,
+      stateReason: null,
+      closedByActor: null,
+      resolved: true,
+      readFailed: true
+    })
+  })
+
   it('an unrecognised state is not treated as either', () => {
     const e = edgeFromIssueJson(195, { state: 'MERGED', closedByPullRequestsReferences: [] })
     expect(e.merged).toBe(false)

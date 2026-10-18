@@ -18,6 +18,8 @@
  */
 
 import { execFileSync } from 'node:child_process'
+import type { DispatchDependsOnFact } from '@attalabs/aeg-core'
+import { execErrorText } from '../lib/github-rate-limit'
 import { deriveTrancheFromForge, fetchForgeFacts, splitSlugQualifiedEdge } from '@attalabs/aeg-forge-state'
 
 export type ResolvedEdge = {
@@ -36,6 +38,15 @@ export type ResolvedEdge = {
    * lookup itself failed (an outage) — that case is `resolved: true`.
    */
   resolved: boolean
+  /**
+   * `true` only when the edge's Issue could not be read at all — a rate
+   * limit, missing auth, network, malformed output — so nothing is known
+   * about it. Absent otherwise, including for an Issue the forge says does
+   * not exist. Every other field keeps the value it carried before this one
+   * existed, so a caller that does not map it gives the same verdict as
+   * before.
+   */
+  readFailed?: true
 }
 
 export type EdgeTaskRef = { id: string; issue: number | null }
@@ -74,7 +85,13 @@ type IssueStateJson = {
 /** Keyed by `owner/repo#number`, not by number. A bare number is only unique
  * within one repository, and a cache that assumes otherwise is a trap waiting
  * for the first caller that evaluates two. */
-const issueCache = new Map<string, IssueStateJson | null>()
+const issueCache = new Map<string, IssueRead>()
+
+/** What one `gh issue view` returned: the JSON, or `null` with whether the read itself failed. */
+type IssueRead = { json: IssueStateJson | null; readFailed: boolean }
+
+/** `gh`'s wording for an Issue number the repository does not have — an answer, not a failed read. */
+const ISSUE_NOT_FOUND = /could not resolve to an issue/i
 
 /**
  * One `gh issue view` for the three facts the gate actually needs. `--json
@@ -82,16 +99,19 @@ const issueCache = new Map<string, IssueStateJson | null>()
  * `closedByPullRequestsReferences` come from the identical call, and the second
  * is the real "this landed" fact.
  *
- * Returns `null` on any failure — missing auth, network, rate limit, malformed
- * JSON, `gh` absent. The caller treats `null` as unresolved, so an outage
- * blocks rather than passing. That is what the original conservative default
- * was for; it was only ever wrong for the case where the answer was one query
- * away.
+ * `json` is `null` on any failure — missing auth, network, rate limit,
+ * malformed JSON, `gh` absent, or an Issue that does not exist. The caller
+ * treats `null` as unresolved, so an outage blocks rather than passing. That
+ * is what the original conservative default was for; it was only ever wrong
+ * for the case where the answer was one query away. `readFailed` separates
+ * the two kinds of `null`: it is `false` only for an Issue the forge says it
+ * does not have.
  */
-function fetchIssueState(num: number, repo: EdgeRepo): IssueStateJson | null {
+function fetchIssueState(num: number, repo: EdgeRepo): IssueRead {
   const key = `${repo.owner}/${repo.repo}#${num}`
-  if (issueCache.has(key)) return issueCache.get(key) ?? null
-  let out: IssueStateJson | null = null
+  const cached = issueCache.get(key)
+  if (cached) return cached
+  let out: IssueRead
   try {
     const raw = execFileSync(
       'gh',
@@ -106,9 +126,9 @@ function fetchIssueState(num: number, repo: EdgeRepo): IssueStateJson | null {
       ],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
     )
-    out = JSON.parse(raw) as IssueStateJson
-  } catch {
-    out = null
+    out = { json: JSON.parse(raw) as IssueStateJson, readFailed: false }
+  } catch (err) {
+    out = { json: null, readFailed: !ISSUE_NOT_FOUND.test(execErrorText(err)) }
   }
   issueCache.set(key, out)
   return out
@@ -172,8 +192,12 @@ export function clearEdgeCache(): void {
  * the hand-closed-by-a-Principal path cannot fire for a cross-tranche edge.
  * Conservative, and correct — that path exists for a Principal closing an Issue
  * in the tranche being dispatched.
+ *
+ * `readFailed` marks a `null` that came from a failed read rather than from
+ * an Issue that does not exist; it adds `readFailed: true` and changes no
+ * other field.
  */
-export function edgeFromIssueJson(num: number, json: IssueStateJson | null): ResolvedEdge {
+export function edgeFromIssueJson(num: number, json: IssueStateJson | null, readFailed = false): ResolvedEdge {
   if (json === null) {
     return {
       issue: num,
@@ -182,7 +206,8 @@ export function edgeFromIssueJson(num: number, json: IssueStateJson | null): Res
       issueState: null,
       stateReason: null,
       closedByActor: null,
-      resolved: true
+      resolved: true,
+      ...(readFailed ? { readFailed: true as const } : {})
     }
   }
   const state = json.state === 'CLOSED' ? 'closed' : json.state === 'OPEN' ? 'open' : null
@@ -230,7 +255,8 @@ export async function resolveEdge(
   const direct = id.match(DIRECT_ISSUE_REF)
   if (direct) {
     const num = Number(direct[1])
-    return edgeFromIssueJson(num, fetchIssueState(num, repo))
+    const read = fetchIssueState(num, repo)
+    return edgeFromIssueJson(num, read.json, read.readFailed)
   }
   const qualified = splitSlugQualifiedEdge(id)
   if (qualified) {
@@ -266,5 +292,23 @@ export async function resolveEdge(
     stateReason: null,
     closedByActor: null,
     resolved: false
+  }
+}
+
+/**
+ * The one mapping from a resolved edge to the gate's dependency fact, shared
+ * by the dispatch-readiness check and the brief assembly `vinaya task run`
+ * gates on, so both carry the same facts — `readFailed` included.
+ */
+export function dependsOnFactFromEdge(id: string, r: ResolvedEdge): DispatchDependsOnFact {
+  return {
+    id,
+    issue: r.issue,
+    merged: r.merged,
+    resolved: r.resolved,
+    issueState: r.issueState,
+    stateReason: r.stateReason,
+    closedByActor: r.closedByActor,
+    ...(r.readFailed ? { readFailed: true } : {})
   }
 }

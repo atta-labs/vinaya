@@ -87,7 +87,7 @@ import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
 import { containedAbs } from '../../lib/ops'
-import { type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../edge-resolve'
+import { dependsOnFactFromEdge, type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../edge-resolve'
 import { resolveSiblingConflictFacts } from '../sibling-conflict-facts'
 import { reassertPremiseFile } from '../premise-reassert-logic'
 
@@ -293,15 +293,7 @@ async function runIssueMode(issueNumber: number): Promise<void> {
   const dependsOn: DispatchDependsOnFact[] = await Promise.all(
     dependsOnIds.map(async (dep) => {
       const r = await resolveEdge(dep, taskById, factsByTaskId, repo)
-      return {
-        id: dep,
-        issue: r.issue,
-        merged: r.merged,
-        resolved: r.resolved,
-        issueState: r.issueState,
-        stateReason: r.stateReason,
-        closedByActor: r.closedByActor
-      }
+      return dependsOnFactFromEdge(dep, r)
     })
   )
   const conflictsWith: DispatchConflictsWithFact[] = await Promise.all(
@@ -447,15 +439,7 @@ async function runTrancheMode(trancheSlug: string, taskId: string): Promise<void
   const dependsOn: DispatchDependsOnFact[] = await Promise.all(
     task.dependsOn.map(async (dep) => {
       const r = await resolveEdge(dep, taskById, factsByTaskId, repo)
-      return {
-        id: dep,
-        issue: r.issue,
-        merged: r.merged,
-        resolved: r.resolved,
-        issueState: r.issueState,
-        stateReason: r.stateReason,
-        closedByActor: r.closedByActor
-      }
+      return dependsOnFactFromEdge(dep, r)
     })
   )
   const ownConflictFacts: DispatchConflictsWithFact[] = await Promise.all(
