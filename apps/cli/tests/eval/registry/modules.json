@@ -791,7 +791,7 @@
       "title": "Run control, pauses and Operator (`RunControl`; Engine §16.11)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 15,
+        "revision": 11,
         "section": "6.14 Run control, pauses and Operator (`RunControl`; Engine §16.11)"
       },
       "excluded": null,
