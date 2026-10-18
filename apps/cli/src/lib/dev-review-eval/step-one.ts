@@ -24,9 +24,50 @@ export const STEP_ONE_SUITES = [
 ] as const
 export const STEP_ONE_ADAPTERS = ['claude-code', 'codex'] as const
 
+/**
+ * The suites step one compares the standalone and Engine backends on: the
+ * layer-`G` developer capability, code reviewer and security reviewer
+ * suites, whose graders read only neutral outcomes.
+ */
+export const STEP_ONE_COMPARISON_SUITES = [
+  'developer-capability-neutral.l5',
+  'code-reviewer-quality-neutral.l5',
+  'security-reviewer-quality-neutral.l5'
+] as const
+
+/** The layer-`G` suites step one runs only for development-only and practice results, never as comparison evidence. */
+export const STEP_ONE_PRACTICE_SUITES = ['source-delivery-neutral.l5'] as const
+
+/**
+ * What a step-one run is for: `development-only` results, a `practice` run
+ * of one trial per task that measures cost and decides nothing, or
+ * `comparison` evidence for the backend comparison.
+ */
+export const STEP_ONE_PURPOSES = ['development-only', 'practice', 'comparison'] as const
+
 export type StepOneSuite = (typeof STEP_ONE_SUITES)[number]
+export type StepOneComparisonSuite = (typeof STEP_ONE_COMPARISON_SUITES)[number]
+export type StepOneRunSuite = StepOneSuite | StepOneComparisonSuite | (typeof STEP_ONE_PRACTICE_SUITES)[number]
+export type StepOnePurpose = (typeof STEP_ONE_PURPOSES)[number]
 export type StepOneAdapter = (typeof STEP_ONE_ADAPTERS)[number]
-export type StepOneRefusalCode = 'held_out_forbidden' | 'engine_forbidden' | 'empty_development_split' | 'invalid_input'
+export type StepOneRefusalCode =
+  | 'held_out_forbidden'
+  | 'engine_forbidden'
+  | 'empty_development_split'
+  | 'invalid_input'
+  | 'layer_p_comparison'
+  | 'comparison_forbidden'
+
+/** Each suite step one may run, by its process layer as the module registry declares it. */
+export const STEP_ONE_SUITE_LAYERS: Readonly<Record<StepOneRunSuite, 'G' | 'P'>> = {
+  'developer-capability.l5': 'P',
+  'code-reviewer-quality.l5': 'P',
+  'security-reviewer-quality.l5': 'P',
+  'developer-capability-neutral.l5': 'G',
+  'code-reviewer-quality-neutral.l5': 'G',
+  'security-reviewer-quality-neutral.l5': 'G',
+  'source-delivery-neutral.l5': 'G'
+}
 export type StepOneRefusal = { code: StepOneRefusalCode; detail: string }
 
 export interface StepOneUsage {
@@ -324,13 +365,17 @@ export interface StepOneTrialResult {
 }
 
 export interface StepOneSuiteInput {
-  suite: StepOneSuite
+  suite: StepOneRunSuite
   taskIds: readonly string[]
 }
 
 export interface StepOneOptions {
   split: 'development' | 'held-out'
   backend: 'standalone' | 'engine'
+  /** `development-only` when absent. */
+  purpose?: StepOnePurpose
+  /** The suites to run; when absent, the comparison suites for `comparison` and `STEP_ONE_SUITES` otherwise. */
+  suites?: readonly string[]
   trialsPerTask: number
   bootstrap: {
     method: BootstrapMethod
@@ -345,9 +390,10 @@ export interface StepOneResult {
   kind: 'development-standalone-step-one'
   split: 'development'
   backend: 'standalone'
+  purpose: StepOnePurpose
   trialsPerTask: number
   runs: Array<{
-    suite: StepOneSuite
+    suite: StepOneRunSuite
     split: 'development'
     backend: 'standalone'
     adapter: StepOneAdapter
@@ -369,7 +415,7 @@ export interface StepOneResult {
 
 export type StepOneOutcome = { ok: true; value: StepOneResult } | { ok: false; refusal: StepOneRefusal }
 export type StepOneExecutor = (input: {
-  suite: StepOneSuite
+  suite: StepOneRunSuite
   adapter: StepOneAdapter
   taskId: string
   attempt: number
@@ -380,9 +426,45 @@ const refusal = (code: StepOneRefusalCode, detail: string): StepOneOutcome => ({
   refusal: { code, detail }
 })
 
+const isRunSuite = (suite: string): suite is StepOneRunSuite => Object.hasOwn(STEP_ONE_SUITE_LAYERS, suite)
+
 /**
- * Runs milestone step one only. The split and backend checks precede every
- * access to suite inputs, so a refused invocation cannot open held-out data.
+ * The suites a step-one request runs, or its refusal. Comparison evidence
+ * comes only from the comparison suites: a layer-`P` suite named as
+ * comparison evidence is refused, and so is a layer-`G` suite admitted only
+ * for development-only and practice runs. A practice run has one trial per
+ * task.
+ */
+export function selectStepOneSuites(
+  purpose: StepOnePurpose,
+  suites: readonly string[] | undefined,
+  trialsPerTask: number
+): { ok: true; suites: StepOneRunSuite[] } | { ok: false; refusal: StepOneRefusal } {
+  const fail = (code: StepOneRefusalCode, detail: string) => ({ ok: false as const, refusal: { code, detail } })
+  if (!(STEP_ONE_PURPOSES as readonly string[]).includes(purpose)) {
+    return fail('invalid_input', `purpose must be one of ${STEP_ONE_PURPOSES.join(', ')}`)
+  }
+  const requested = suites ?? (purpose === 'comparison' ? STEP_ONE_COMPARISON_SUITES : STEP_ONE_SUITES)
+  if (requested.length === 0) return fail('invalid_input', 'a step-one run names at least one suite')
+  for (const suite of requested) {
+    if (!isRunSuite(suite)) return fail('invalid_input', `${suite} is not a step-one suite`)
+    if (purpose !== 'comparison') continue
+    if (STEP_ONE_SUITE_LAYERS[suite] === 'P') {
+      return fail('layer_p_comparison', `${suite} is a layer-P suite, and only layer-G suites are comparison evidence`)
+    }
+    if (!(STEP_ONE_COMPARISON_SUITES as readonly string[]).includes(suite)) {
+      return fail('comparison_forbidden', `${suite} runs only for development-only and practice results`)
+    }
+  }
+  if (purpose === 'practice' && trialsPerTask !== 1) {
+    return fail('invalid_input', 'a practice run carries exactly one trial per task')
+  }
+  return { ok: true, suites: [...new Set(requested as readonly StepOneRunSuite[])] }
+}
+
+/**
+ * Runs milestone step one only. The split, backend and suite checks precede
+ * every access to suite inputs, so a refused invocation cannot open held-out data.
  */
 export async function runStepOne(
   options: StepOneOptions,
@@ -394,10 +476,13 @@ export async function runStepOne(
     return refusal('engine_forbidden', 'step one runs only on the standalone backend')
   if (!Number.isInteger(options.trialsPerTask) || options.trialsPerTask < 1)
     return refusal('invalid_input', 'trialsPerTask must be a positive integer')
+  const purpose = options.purpose ?? 'development-only'
+  const selected = selectStepOneSuites(purpose, options.suites, options.trialsPerTask)
+  if (!selected.ok) return selected
 
   const suites = loadDevelopmentSuites()
   const runs: StepOneResult['runs'] = []
-  for (const suite of STEP_ONE_SUITES) {
+  for (const suite of selected.suites) {
     const input = suites.find((entry) => entry.suite === suite)
     if (input === undefined || input.taskIds.length === 0)
       return refusal('empty_development_split', `${suite} has no reconstructable development task`)
@@ -468,6 +553,7 @@ export async function runStepOne(
       kind: 'development-standalone-step-one',
       split: 'development',
       backend: 'standalone',
+      purpose,
       trialsPerTask: options.trialsPerTask,
       runs
     }
@@ -502,6 +588,7 @@ const digest = (value: string): string => createHash('sha256').update(value).dig
 async function loadProductionDevelopment(): Promise<LoadedDevelopment> {
   const developer = await import('../../../tests/eval/developer-capability-suite')
   const reviewers = await import('../../../tests/eval/reviewer-quality-suite')
+  const generic = await import('../../../tests/eval/generic-suites')
   const developerFile = developer.loadCaseFile()
   const developerSuite = developer.suiteFor(developerFile)
   const developerCases = developerFile.cases
@@ -527,7 +614,15 @@ async function loadProductionDevelopment(): Promise<LoadedDevelopment> {
       {
         suite: 'security-reviewer-quality.l5',
         taskIds: securitySuite.value.splits.development
-      }
+      },
+      ...(
+        [
+          ['developer-capability-neutral.l5', 'developer'],
+          ['code-reviewer-quality-neutral.l5', 'codeReviewer'],
+          ['security-reviewer-quality-neutral.l5', 'securityReviewer'],
+          ['source-delivery-neutral.l5', 'sourceCitation']
+        ] as const
+      ).map(([suite, key]) => ({ suite, taskIds: generic.genericSuite(key).splits.development }))
     ],
     developerCases,
     reviewerCases: [...code, ...security]
@@ -1051,6 +1146,12 @@ async function executeReviewer(
 }
 
 async function executeProduction(input: Parameters<StepOneExecutor>[0], context: StepOneCommandContext) {
+  // A layer-G trial runs the rendered neutral case through the Vinaya process
+  // and is graded on the outcomes the renderer extracts; no live executor for
+  // one exists yet, so such a trial is refused rather than graded another way.
+  if (STEP_ONE_SUITE_LAYERS[input.suite] === 'G') {
+    throw new Error(`no live executor runs ${input.suite} trials yet`)
+  }
   if (input.suite === 'developer-capability.l5') {
     const item = context.loaded.developerCases.find((entry) => entry.id === input.taskId)
     if (item === undefined) throw new Error(`unknown Developer task ${input.taskId}`)
@@ -1075,6 +1176,12 @@ const flag = (args: readonly string[], name: string): string | undefined => {
   return index < 0 ? undefined : args[index + 1]
 }
 
+/** Every value given for a repeatable flag, in order. */
+const flags = (args: readonly string[], name: string): string[] =>
+  args.flatMap((arg, index) =>
+    arg === `--${name}` && args[index + 1] !== undefined ? [args[index + 1] as string] : []
+  )
+
 function numberFlag(args: readonly string[], name: string): number {
   const value = Number(flag(args, name))
   if (!Number.isFinite(value)) throw new Error(`--${name} is required and must be numeric`)
@@ -1097,7 +1204,7 @@ export async function runStepOneCommand(
 ): Promise<StepOneOutcome> {
   if (argv[0] !== 'run')
     throw new Error(
-      'usage: step-one.ts run --split development --backend standalone --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> --developer-snapshot <jsonl> --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--out <file>]'
+      'usage: step-one.ts run --split development --backend standalone [--purpose <development-only|practice|comparison>] [--suite <name>]... --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> --developer-snapshot <jsonl> --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--out <file>]'
     )
   const split = flag(argv, 'split')
   const backend = flag(argv, 'backend')
@@ -1119,6 +1226,8 @@ export async function runStepOneCommand(
     {
       split: split as StepOneOptions['split'],
       backend: backend as StepOneOptions['backend'],
+      purpose: (flag(argv, 'purpose') ?? 'development-only') as StepOnePurpose,
+      ...(flags(argv, 'suite').length === 0 ? {} : { suites: flags(argv, 'suite') }),
       trialsPerTask: numberFlag(argv, 'trials'),
       bootstrap: {
         method: flag(argv, 'bootstrap') as BootstrapMethod,

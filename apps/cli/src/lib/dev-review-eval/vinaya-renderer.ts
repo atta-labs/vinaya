@@ -4,7 +4,8 @@
  * without reading any Vinaya artifact themselves.
  *
  *  - `renderCase(case)` turns a neutral case into Vinaya process input: a
- *    frozen brief whose `## Surface` comes from the authorized scope, whose
+ *    frozen brief whose `## Surface` comes from the authorized scope (an
+ *    `answer` case, which changes nothing, has none), whose
  *    `## Documentation` comes from the relevant delivered documents and whose
  *    one objective is the task statement, plus the source manifest and each
  *    dispatched role's tool grant, derived from the granted capabilities. A
@@ -41,6 +42,7 @@ import {
   intentVersion,
   type NeutralCase,
   type NeutralCaseKind,
+  NEUTRAL_CASE_KINDS,
   neutralCaseDigest,
   validateNeutralCase
 } from './neutral-case'
@@ -98,14 +100,16 @@ export const READ_ONLY_BUILTINS: readonly string[] = ['Read', 'Grep', 'Glob']
 export const ROLES_BY_KIND: Readonly<Record<NeutralCaseKind, readonly GrantedRole[]>> = {
   change: ['developer'],
   review: ['code-reviewer', 'security'],
-  loop: ['developer', 'code-reviewer', 'security']
+  loop: ['developer', 'code-reviewer', 'security'],
+  answer: ['developer']
 }
 
 /** Capabilities without which the Vinaya process cannot produce what a kind of case asks for. */
 export const REQUIRED_CAPABILITIES: Readonly<Record<NeutralCaseKind, readonly string[]>> = {
   change: ['publish_change', 'open_change_request'],
   review: [],
-  loop: ['publish_change', 'open_change_request']
+  loop: ['publish_change', 'open_change_request'],
+  answer: []
 }
 
 /**
@@ -162,7 +166,8 @@ export interface VinayaProcessInput {
   briefHash: Digest
   /** The case's intent version, which a review bound to this brief is bound to. */
   intentVersion: Digest
-  surface: IssueSurface
+  /** The brief's Surface; `null` for an `answer` case, which changes nothing. */
+  surface: IssueSurface | null
   objectives: { id: string; text: string }[]
   sources: RenderedSource[]
   /** Each dispatched role's tools, in name order. */
@@ -249,36 +254,37 @@ const mayHold = (role: GrantedRole, tool: string): boolean =>
     : role === 'developer' || READ_ONLY_BUILTINS.includes(tool)
 
 /**
- * The directory a neutral glob covers when Vinaya's `## Surface` can say the
- * same thing: a literal directory, optionally followed by `/**`. A Surface
- * entry is a directory-level glob covering everything below it, so a file
- * path, a wildcard inside a segment or a single-level `/*` cannot be written
- * there without changing what it covers.
+ * The path a neutral glob covers when Vinaya's `## Surface` can say the same
+ * thing. A Surface entry covers a literal path and everything below it, or,
+ * as a bare `*`, the repository-root files; so a literal path, optionally
+ * followed by `/**`, and a bare `*` are expressible, while any other wildcard
+ * cannot be written there without changing what it covers.
  */
-function surfaceDirectory(glob: string, path: string): string {
-  const directory = glob.replace(/\/\*\*$/, '')
-  if (/[*?,`\s]/.test(directory)) unexpressible(path, `${JSON.stringify(glob)} is not a directory-level Surface glob`)
-  const segments = directory.split('/')
-  if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
-    unexpressible(path, `${JSON.stringify(glob)} is not a repository-relative directory`)
+function surfaceEntry(glob: string, path: string): string {
+  if (glob === '*') return glob
+  const entry = glob.replace(/\/\*\*$/, '')
+  if (/[*?,`\s]/.test(entry)) {
+    unexpressible(path, `${JSON.stringify(glob)} has a wildcard whose coverage a Surface entry cannot state`)
   }
-  const last = segments[segments.length - 1] as string
-  const extension = /\.[A-Za-z0-9]{1,6}$/.exec(last)
-  if (extension !== null && extension.index > 0) {
-    unexpressible(path, `${JSON.stringify(glob)} names a file, and a Surface entry names only directories`)
+  if (entry.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')) {
+    unexpressible(path, `${JSON.stringify(glob)} is not a repository-relative path`)
   }
-  return directory
+  return entry
 }
 
-const covers = (outer: string, inner: string) => inner === outer || inner.startsWith(`${outer}/`)
+/** Whether the Surface entry `outer` covers everything `inner` covers: `*` covers each path with no `/`. */
+const covers = (outer: string, inner: string) =>
+  outer === '*' ? !inner.includes('/') : inner === outer || inner.startsWith(`${outer}/`)
 
 function renderSurface(c: NeutralCase): IssueSurface {
-  const inDirs = c.authorizedScope.in.map((glob, i) => surfaceDirectory(glob, `authorizedScope.in.${i}`))
-  const outDirs = c.authorizedScope.protected.map((glob, i) => surfaceDirectory(glob, `authorizedScope.protected.${i}`))
-  // A neutral protected path is allowed where `in` covers it, while a Vinaya
-  // `out:` glob wins over `in:`; the two agree only when they never overlap.
-  for (const [i, out] of outDirs.entries()) {
-    const overlapping = inDirs.find((dir) => covers(dir, out) || covers(out, dir))
+  const scope = c.authorizedScope
+  const inEntries = scope.in.map((glob, i) => surfaceEntry(glob, `authorizedScope.in.${i}`))
+  for (const [i, glob] of scope.excluded.entries()) surfaceEntry(glob, `authorizedScope.excluded.${i}`)
+  const protectedEntries = scope.protected.map((glob, i) => surfaceEntry(glob, `authorizedScope.protected.${i}`))
+  // A neutral protected path is allowed where the scope covers it, while a
+  // Vinaya `out:` glob wins over `in:`; the two agree only when they never overlap.
+  for (const [i, out] of protectedEntries.entries()) {
+    const overlapping = inEntries.find((entry) => covers(entry, out) || covers(out, entry))
     if (overlapping !== undefined) {
       unexpressible(
         `authorizedScope.protected.${i}`,
@@ -286,7 +292,9 @@ function renderSurface(c: NeutralCase): IssueSurface {
       )
     }
   }
-  return { in: [...c.authorizedScope.in], out: [...c.authorizedScope.protected] }
+  // An excluded path is outside the scope wherever `in` covers it, as a Vinaya
+  // `out:` glob is beyond the Surface wherever `in:` covers it.
+  return { in: [...scope.in], out: [...scope.excluded, ...scope.protected] }
 }
 
 function renderSources(c: NeutralCase): RenderedSource[] {
@@ -335,8 +343,18 @@ function renderGrants(c: NeutralCase): Partial<Record<GrantedRole, string[]>> {
   return grants
 }
 
-function renderBrief(c: NeutralCase, surface: IssueSurface, sources: RenderedSource[]): string {
+function renderBrief(c: NeutralCase, surface: IssueSurface | null, sources: RenderedSource[]): string {
   const required = sources.filter((s) => s.required)
+  const surfaceSection =
+    surface === null
+      ? []
+      : [
+          '## Surface',
+          '',
+          `in: ${surface.in.join(', ')}`,
+          `out: ${surface.out.length === 0 ? '(none)' : surface.out.join(', ')}`,
+          ''
+        ]
   return [
     `**Goal:** ${c.taskStatement}`,
     `**Repository:** ${c.repository} at \`${c.baseRevision}\``,
@@ -349,11 +367,7 @@ function renderBrief(c: NeutralCase, surface: IssueSurface, sources: RenderedSou
     '',
     ...(required.length === 0 ? ['(none)'] : required.map((s) => `- ${s.sourceId}`)),
     '',
-    '## Surface',
-    '',
-    `in: ${surface.in.join(', ')}`,
-    `out: ${surface.out.length === 0 ? '(none)' : surface.out.join(', ')}`,
-    ''
+    ...surfaceSection
   ].join('\n')
 }
 
@@ -368,7 +382,8 @@ function render(c: NeutralCase): VinayaProcessInput {
   // let the statement start a section of its own.
   if (/[\r\n]/.test(c.taskStatement))
     unexpressible('taskStatement', 'an objective is one line, and the statement has a line break')
-  const surface = renderSurface(c)
+  // An answer case changes nothing, so the Developer is dispatched with no Surface.
+  const surface = c.kind === 'answer' ? null : renderSurface(c)
   const sources = renderSources(c)
   const roleToolGrants = renderGrants(c)
   const brief = renderBrief(c, surface, sources)
@@ -466,7 +481,7 @@ function fact<T>(
 }
 
 const PRODUCING: readonly NeutralCaseKind[] = ['change', 'loop']
-const ALL: readonly NeutralCaseKind[] = ['change', 'review', 'loop']
+const ALL: readonly NeutralCaseKind[] = NEUTRAL_CASE_KINDS
 
 function readChange(record: VinayaTrialRecord) {
   const pr = record.pullRequest as NonNullable<VinayaTrialRecord['pullRequest']>
@@ -708,7 +723,7 @@ export const MAPPING_LOGIC: readonly ((...args: never[]) => unknown)[] = [
   render,
   renderCase,
   renderSurface,
-  surfaceDirectory,
+  surfaceEntry,
   renderSources,
   renderGrants,
   renderBrief,

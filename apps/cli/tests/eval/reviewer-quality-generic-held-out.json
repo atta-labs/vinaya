@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "split": "held-out",
+  "derivedFrom": [
+    {
+      "file": "apps/cli/tests/eval/reviewer-quality-held-out.json",
+      "sha256": "92a8e368066a4a9ef1473caba017b2cd4faa2fe32d9ac7c2003f29290edf1fc8"
+    }
+  ],
+  "suites": [
+    {
+      "suite": "code-reviewer-quality-neutral.l5@1",
+      "cases": [
+        {
+          "id": "code-held-clean",
+          "layer": "G",
+          "kind": "review",
+          "repository": "atta-labs/vinaya",
+          "baseRevision": "3e33601c52c9b23c618f817c44a0e67b70c46413",
+          "taskStatement": "Review this change to apps/cli/tests/eval/registry/modules.json for defects against the base revision.",
+          "authorizedScope": {
+            "in": ["apps/cli/tests/eval/registry/modules.json"],
+            "excluded": [],
+            "protected": []
+          },
+          "deliveredDocuments": [],
+          "grantedCapabilities": ["read_file"],
+          "plantedDefects": [],
+          "changeUnderReview": {
+            "base": "3e33601c52c9b23c618f817c44a0e67b70c46413",
+            "head": "801679585f8bdc8d0adaf502d5bd9b245e862ce3",
+            "patchDigest": "8f7c48c59166ea3dce107672a4fb631bf8bc00fdba0b4a57cd61c66abfae30ed"
+          },
+          "adjudication": {
+            "clean": true,
+            "adjudicators": ["code-reviewer", "security-reviewer"]
+          }
+        }
+      ],
+      "layerPOnly": []
+    },
+    {
+      "suite": "security-reviewer-quality-neutral.l5@1",
+      "cases": [
+        {
+          "id": "security-held-clean",
+          "layer": "G",
+          "kind": "review",
+          "repository": "atta-labs/vinaya",
+          "baseRevision": "3e33601c52c9b23c618f817c44a0e67b70c46413",
+          "taskStatement": "Review this change to apps/cli/tests/eval/registry/modules.json for security defects against the base revision.",
+          "authorizedScope": {
+            "in": ["apps/cli/tests/eval/registry/modules.json"],
+            "excluded": [],
+            "protected": []
+          },
+          "deliveredDocuments": [],
+          "grantedCapabilities": ["read_file"],
+          "plantedDefects": [],
+          "changeUnderReview": {
+            "base": "3e33601c52c9b23c618f817c44a0e67b70c46413",
+            "head": "801679585f8bdc8d0adaf502d5bd9b245e862ce3",
+            "patchDigest": "8f7c48c59166ea3dce107672a4fb631bf8bc00fdba0b4a57cd61c66abfae30ed"
+          },
+          "adjudication": {
+            "clean": true,
+            "adjudicators": ["code-reviewer", "security-reviewer"]
+          }
+        }
+      ],
+      "layerPOnly": []
+    }
+  ]
+}

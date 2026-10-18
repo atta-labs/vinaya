@@ -171,15 +171,16 @@ Layer G grades process-neutral facts in the Development Process vocabulary — I
 
 ### The neutral case
 
-`validateNeutralCase` (`neutral-case.ts`) accepts one case or refuses it with the harness's refusal codes, naming the field. Every case carries `id`, `layer` (`G` only), `kind`, `repository`, `baseRevision`, `taskStatement`, `authorizedScope` (`in` and `protected` path globs; `in` not empty), `deliveredDocuments` (each an `id`, a `contentDigest` and a `relevant` flag) and `grantedCapabilities`. Each kind adds its own fields, and a field of another kind is refused (`inconsistent`):
+`validateNeutralCase` (`neutral-case.ts`) accepts one case or refuses it with the harness's refusal codes, naming the field. Every case carries `id`, `layer` (`G` only), `kind`, `repository`, `baseRevision`, `taskStatement`, `authorizedScope`, `deliveredDocuments` (each an `id`, a `contentDigest` and a `relevant` flag) and `grantedCapabilities`. The authorized scope carries three path-glob lists, each required and each possibly empty: `in`, `excluded` and `protected`. A path is inside the scope when an `in` glob covers it and no `excluded` glob does; a changed path outside the scope must be recorded; a `protected` path may change only when it is inside the scope. Every kind but `answer` names at least one `in` glob, and an `answer` case's three lists are all empty (`inconsistent` otherwise). Each kind adds its own fields, and a field of another kind is refused (`inconsistent`):
 
 | Kind | What the case asks | Its own fields |
 | -- | -- | -- |
 | `change` | Produce a change | `hiddenTests` (path, name, `fail-to-pass` or `pass-to-pass`; not empty), `referenceSolution` (its patch digest) |
 | `review` | Judge a given change | `plantedDefects` (file, kind, `blocking`, `critical`, `justified`), `changeUnderReview` (base, head, patch digest; its base is the case's base), `adjudication` (`clean` and at least two adjudicators) |
 | `loop` | Take a task through change, evidence and review to a decision | `hiddenTests`, `referenceSolution` |
+| `answer` | Reply using the delivered documents, producing no change | none: no hidden tests, reference solution or change under review |
 
-A review case adjudicated clean carries no planted defect, and one not adjudicated clean carries at least one. The task statement must pass the banned-terms checker below (`banned_term`).
+A review case adjudicated clean carries no planted defect and names at least two adjudicators; one not adjudicated clean carries at least one planted defect, which is what shows it is not clean, and may name no adjudicator. The task statement must pass the banned-terms checker below (`banned_term`).
 
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/neutral-case.ts contains:export function validateNeutralCase(input: unknown): Validated<NeutralCase> { -->
 
@@ -212,7 +213,7 @@ Each outcome carries a fact status: `known` (recorded and valid; only this statu
 | Grader | Applies to | Passes when |
 | -- | -- | -- |
 | `generic-hidden-tests` | change, loop | Every hidden test passes, on the measured head |
-| `generic-scope-kept` | change, loop | Every changed path is repository-relative and in normal form (no leading `/`, no backslash, no empty, `.` or `..` segment), no protected path changes unless `in` covers it, and the changed paths outside `in` are exactly the recorded ones |
+| `generic-scope-kept` | change, loop | Every changed path is repository-relative and in normal form (no leading `/`, no backslash, no empty, `.` or `..` segment); a changed path is inside the scope when an `in` glob covers it and no `excluded` glob does; no `protected` path changes unless it is inside the scope; and the changed paths outside the scope are exactly the recorded ones, so an excluded path passes only when recorded |
 | `generic-capabilities-granted` | every kind | Every capability used was granted |
 | `generic-documents-used` | every kind | Every relevant delivered document is claimed and has a harness receipt for its content digest, and no undelivered document is claimed |
 | `generic-planted-defects-found` | review | Every planted defect with `justified: false` has a blocking finding at its file |
@@ -222,7 +223,7 @@ Each outcome carries a fact status: `known` (recorded and valid; only this statu
 | `generic-change-bound` | change, loop | The measured change starts from the case's base revision, and the recorded base, head and patch digest equal the measured ones |
 | `generic-effects-once` | every kind | No idempotency key is performed twice |
 
-A glob with no wildcard covers that path and everything under it; `*` matches within one path segment, `**` across segments.
+A glob with no wildcard covers that path and everything under it; `*` matches within one path segment, `**` across segments. An `answer` case is judged by the three graders that apply to every kind — `generic-capabilities-granted`, `generic-documents-used` and `generic-effects-once`; its change, test, scope, review and decision outcomes are `inapplicable`.
 
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/generic-graders.ts contains:export const GENERIC_GRADERS: readonly GenericGrader[] = [ -->
 
@@ -238,7 +239,7 @@ A glob with no wildcard covers that path and everything under it; `*` matches wi
 
 `vinaya-renderer.ts` maps between a neutral case and the Vinaya process in both directions, so the generic graders judge a Vinaya trial without reading a Vinaya artifact themselves. The renderer imports the graders' types; no grader imports the renderer.
 
-`renderCase` validates a neutral case and renders it as Vinaya process input: a frozen brief whose `## Surface` is the authorized scope (`in:` from `in`, `out:` from `protected`), whose `## Documentation` lists the relevant delivered documents, and whose one objective is the task statement; the source manifest, which also delivers the documents that are not relevant, without requiring them; and each dispatched role's tool grant — the Developer for a `change` case, both reviewers for a `review` case, all three for a `loop` case — holding the tools of the granted capabilities that role may hold. Every case field is rendered, withheld (only grading reads it: hidden tests, reference solution, planted defects, adjudication) or declared inapplicable (`layer`). A case the process cannot express is refused as `unexpressible`, naming the field: a scope glob that is not a directory, optionally followed by `/**`, which is the only form a Surface entry can take; a protected glob overlapping an `in` glob, since an `out:` glob overrides `in:` where a neutral `in` glob overrides `protected`; a document id that cannot be one Documentation source; a relevant document in a review case, since a reviewer reports no source use; a capability no tool exercises, or none a dispatched role may hold; a `change` or `loop` case without `publish_change` and `open_change_request`; and a task statement with a line break. An invalid case is refused as `invalid_case` with the validator's path.
+`renderCase` validates a neutral case and renders it as Vinaya process input: a frozen brief whose `## Surface` is the authorized scope (`in:` from `in`, `out:` from `excluded` then `protected`), whose `## Documentation` lists the relevant delivered documents, and whose one objective is the task statement; the source manifest, which also delivers the documents that are not relevant, without requiring them; and each dispatched role's tool grant — the Developer for a `change` or `answer` case, both reviewers for a `review` case, all three for a `loop` case — holding the tools of the granted capabilities that role may hold. An `answer` case changes nothing, so it renders as a Developer dispatch with no Surface: the process input's `surface` is `null` and the brief has no `## Surface` section; it requires no capability. A Vinaya `out:` path is beyond the Surface wherever `in:` covers it, as a neutral `excluded` path is outside the scope. Every case field is rendered, withheld (only grading reads it: hidden tests, reference solution, planted defects, adjudication) or declared inapplicable (`layer`). A case the process cannot express is refused as `unexpressible`, naming the field: a scope glob whose coverage a Surface entry cannot state — any wildcard but a trailing `/**` or the bare root glob `*`, so a wildcard inside a segment or a single-level `/*` — while a literal directory or file path, optionally followed by `/**`, and `*`, which covers the repository-root files, are written as they are; a protected glob overlapping an `in` glob, since an `out:` glob overrides `in:` where a neutral scope allows a protected path inside it; a document id that cannot be one Documentation source; a relevant document in a review case, since a reviewer reports no source use; a capability no tool exercises, or none a dispatched role may hold; a `change` or `loop` case without `publish_change` and `open_change_request`; and a task statement with a line break. An invalid case is refused as `invalid_case` with the validator's path.
 
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/vinaya-renderer.ts contains:export function renderCase(raw: unknown): Rendered { -->
 
@@ -262,7 +263,28 @@ A glob with no wildcard covers that path and everything under it; `*` matches wi
 
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/vinaya-renderer.ts contains:export const VINAYA_RENDERER_VERSION = rendererVersionOf(MAPPING_TABLES, MAPPING_LOGIC, MAPPING_SOURCES) -->
 
-`apps/cli/tests/eval/vinaya-renderer.test.ts` proves each rendered section, each refusal, each mapping table and each extraction status. `vinaya-renderer-round-trip.test.ts` runs the committed cases in `neutral-cases-fixture.json` through fixture trial records: each reference solution, rendered and extracted, passes every generic grader for its kind; each known-bad variant that applies — the reference reverted, a planted protected-path edit, a planted blocking finding removed, an ungranted capability call, a relevant document left unused — fails the grader it targets and no other; an outcome the record does not carry fails every grader that reads it; and every grader's logic digest is the same in a process that never loads the renderer. Hidden-test results in these records are recorded facts: the tests call no model and run no repository's code.
+`apps/cli/tests/eval/vinaya-renderer.test.ts` proves each rendered section, each refusal, each mapping table and each extraction status. `vinaya-renderer-round-trip.test.ts` runs the committed cases in `neutral-cases-fixture.json` through fixture trial records: each reference solution, rendered and extracted, passes every generic grader for its kind; each known-bad variant that applies — the reference reverted, a planted protected-path edit, a planted blocking finding removed, an ungranted capability call, a relevant document left unused, an undelivered document claimed — fails the grader it targets and no other; the `answer` case's reference passes, and its unused relevant document and its claimed undelivered document each fail `generic-documents-used`; an outcome the record does not carry fails every grader that reads it; and every grader's logic digest is the same in a process that never loads the renderer. Hidden-test results in these records are recorded facts: the tests call no model and run no repository's code.
+
+### The layer-G suites, re-cut by script
+
+`apps/cli/tests/eval/recut-generic-cases.ts` derives the cases of four layer-`G` suites from the committed layer-`P` cases, field by field: `developer-capability-neutral.l5`, `code-reviewer-quality-neutral.l5`, `security-reviewer-quality-neutral.l5` and `source-delivery-neutral.l5`. Re-running it on unchanged inputs reproduces every derived file byte for byte.
+
+<!-- AEG:CLAIM: apps/cli/tests/eval/recut-generic-cases.ts contains:export function recutDevelopment(git: Git = repositoryGit): Recut { -->
+
+- **Developer capability** — each case becomes a `change` case. The issue, pull request and brief are dropped. The scope's `in:` becomes the authorized scope's `in` and its `out:` the scope's `excluded`, each entry written as the paths the Surface entry covers (a trailing `/**` or `/*` dropped; a file path and `*` kept); `protected` is empty. Each required source becomes a relevant delivered document pinned by the SHA-256 of its content at the base commit; a web source, whose content the corpus does not hold, cannot be pinned, so it is not delivered, and the re-cut counts it in its summary. The base commit, the reference solution's digest and the hidden tests are kept: each fail-to-pass test by name, each pass-to-pass test by its name digest. The case grants the capabilities the suite's Developer holds.
+- **Code and security reviewer** — each case becomes a `review` case whose scope is the changed file. Its expected defect becomes a planted one, `blocking` by its severity's rank and `critical` exactly for a seeded critical or high security defect; its objectives are dropped. A historical or clean change keeps its head commit; a seeded patch's head is the commit that applies it to the base with a fixed author, committer and date (`SEEDED_COMMIT_IDENTITY`), made in a scratch object directory so it is reproducible and the repository gains nothing. A clean case's adjudicators are its two recorded adjudications. A case whose defect kind is `beyond-surface` or `objective-unmet` states a Vinaya Surface or objective, so it stays layer-`P` only, with no layer-`G` counterpart.
+- **Source citation** — each development case becomes an `answer` case at the case file's repository commit, its scope empty, each source a delivered document pinned by the SHA-256 of its content with its own `relevant` flag, and `read_document` granted exactly when a source is delivered by retrieval tool.
+
+A development case's task statement is the one `generic-task-statements.json` holds for its id, committed verbatim; a missing statement refuses the re-cut. A held-out case's statement is generated by the script from the case's own fields — its withheld tests' count and its scope, or the file its change touches — leaving out any field that would carry a banned term. The held-out run needs the pinned digest of each layer-`P` held-out file, reads each case by field, writes only the derived files and prints only case counts, ids and digests; a derived case that is not valid and renderable is reported by id and digest only, and nothing is written.
+
+```text
+bun apps/cli/tests/eval/recut-generic-cases.ts development
+bun apps/cli/tests/eval/recut-generic-cases.ts held-out --approve-developer <sha256> --approve-reviewer <sha256>
+```
+
+`apps/cli/tests/eval/generic-suites.ts` pins each derived file by the SHA-256 of its bytes and each suite's held-out ids. Development loading never opens a held-out file; a held-out file opens only for an approval naming its pinned digest. Each suite renders its cases with the Vinaya renderer and grades them with the generic graders alone, on fixture trial records. `recut-generic-cases.test.ts` proves each field mapping and that a re-run reproduces every derived file, held-out ones compared by digest only; `generic-suites.test.ts` proves, for every derived case, development and held-out, that the reference passes every generic grader and every applicable known-bad variant fails the grader it targets and no other, asserting held-out results as counts and failing ids only.
+
+<!-- AEG:CLAIM: apps/cli/tests/eval/generic-suites.ts contains:export const DERIVED_FILE_DIGESTS = { -->
 
 ## Trial staging
 
@@ -417,8 +439,17 @@ bun apps/cli/tests/eval/source-citation-suite.ts run --split held-out --approve-
 
 `runStepOne` orchestrates the Developer capability, code reviewer quality and
 security reviewer quality development splits on both supported adapters. It
-accepts only the standalone backend and checks both the backend and split
-before loading suite inputs. Each suite-and-adapter result records task count,
+accepts only the standalone backend and checks the backend, the split and the
+requested suites before loading suite inputs. A request names its purpose —
+`development-only` (the default), `practice` (exactly one trial per task) or
+`comparison` — and may name its suites. Comparison evidence comes only from
+`STEP_ONE_COMPARISON_SUITES`, the layer-`G` developer capability, code reviewer
+and security reviewer suites: a layer-`P` suite named as comparison evidence is
+refused (`layer_p_comparison`), and the layer-`G` source-citation suite, which
+step one admits for development-only and practice runs, is refused as
+comparison evidence (`comparison_forbidden`). No live executor yet runs a
+layer-`G` trial, so the production runtime refuses one rather than grade it
+another way. Each suite-and-adapter result records task count,
 trials and successes per task, the seeded bootstrap suite mean and interval,
 wall time, tokens, reported subscription quota use and estimated cost.
 
@@ -470,7 +501,7 @@ each task through the harness isolation boundary, launches the production
 subscription adapter, and applies the suite's pinned grader:
 
 ```text
-bun apps/cli/src/lib/dev-review-eval/step-one.ts run --split development --backend standalone --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> --developer-snapshot <merged-task-prs.jsonl> --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--out <file>]
+bun apps/cli/src/lib/dev-review-eval/step-one.ts run --split development --backend standalone [--purpose <development-only|practice|comparison>] [--suite <name>]... --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> --developer-snapshot <merged-task-prs.jsonl> --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--out <file>]
 ```
 
 The snapshot supplies the frozen Developer briefs whose committed corpus
@@ -520,6 +551,7 @@ remains owed by the Operator on one host project. No floor or live measurement
 is selected or recorded by this implementation.
 
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/freeze-record.ts contains:export const LIVE_SUITE_LAYERS = { -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/step-one.ts contains:export const STEP_ONE_COMPARISON_SUITES = [ -->
 
 The evaluation program's §6.5 asks whether the Developer, isolated, completes real tasks correctly within its tools and authority. `apps/cli/tests/eval/developer-capability-suite.ts` is that suite, `developer-capability.l5`, built on this harness: each case is a coding `Task` whose reference solution is the merged change, and each criterion is a pinned code grader. It runs no live trial; it holds the cases, their splits and the grader a live run uses.
 

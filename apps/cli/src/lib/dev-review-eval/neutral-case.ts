@@ -11,7 +11,9 @@
  *  - `review` — judge a given change: the defects planted in it, the change
  *    under review and how the change was adjudicated;
  *  - `loop` — take a task through change, evidence and review to a decision:
- *    the hidden tests and the reference solution.
+ *    the hidden tests and the reference solution;
+ *  - `answer` — reply using the delivered documents, producing no change: no
+ *    field of its own, and an authorized scope with every list empty.
  *
  * `validateNeutralCase` returns the case or refuses it naming the field, with
  * the harness's refusal codes. `neutralCaseDigest` identifies a validated case
@@ -37,12 +39,18 @@ import {
   type Validated
 } from './contracts'
 
-export const NEUTRAL_CASE_KINDS = ['change', 'review', 'loop'] as const
+export const NEUTRAL_CASE_KINDS = ['change', 'review', 'loop', 'answer'] as const
 export type NeutralCaseKind = (typeof NEUTRAL_CASE_KINDS)[number]
 
-/** Path globs: `in` is what the task may change; `protected` is what it may not, unless `in` covers it. */
+/**
+ * Path globs. A path is inside the scope when an `in` glob covers it and no
+ * `excluded` glob does; a changed path outside the scope must be recorded.
+ * `protected` is what the task may not change at all, unless the path is
+ * inside the scope.
+ */
 export interface AuthorizedScope {
   in: string[]
+  excluded: string[]
   protected: string[]
 }
 
@@ -115,13 +123,18 @@ export interface LoopCase extends NeutralCaseCommon {
   referenceSolution: { patchDigest: Digest }
 }
 
-export type NeutralCase = ChangeCase | ReviewCase | LoopCase
+export interface AnswerCase extends NeutralCaseCommon {
+  kind: 'answer'
+}
+
+export type NeutralCase = ChangeCase | ReviewCase | LoopCase | AnswerCase
 
 /** The fields each kind requires beyond the common ones; a field of another kind is refused. */
 export const KIND_FIELDS: Readonly<Record<NeutralCaseKind, readonly string[]>> = {
   change: ['hiddenTests', 'referenceSolution'],
   review: ['plantedDefects', 'changeUnderReview', 'adjudication'],
-  loop: ['hiddenTests', 'referenceSolution']
+  loop: ['hiddenTests', 'referenceSolution'],
+  answer: []
 }
 
 // ── Validation ──────────────────────────────────────────────────────────────
@@ -137,11 +150,27 @@ function texts(input: unknown, path: string): string[] {
   return values
 }
 
-function scope(input: unknown, path: string): AuthorizedScope {
+/**
+ * Every list is required. A case that produces a change names at least one
+ * `in` glob; an `answer` case produces none, so every list of its scope is empty.
+ */
+function scope(input: unknown, path: string, kind: NeutralCaseKind): AuthorizedScope {
   const obj = record(input, path)
-  const inGlobs = texts(field(obj, 'in', path), join(path, 'in'))
-  if (inGlobs.length === 0) refuse('empty', join(path, 'in'), `${join(path, 'in')} must name at least one glob`)
-  return { in: inGlobs, protected: texts(field(obj, 'protected', path), join(path, 'protected')) }
+  const value: AuthorizedScope = {
+    in: texts(field(obj, 'in', path), join(path, 'in')),
+    excluded: texts(field(obj, 'excluded', path), join(path, 'excluded')),
+    protected: texts(field(obj, 'protected', path), join(path, 'protected'))
+  }
+  if (kind === 'answer') {
+    for (const key of ['in', 'excluded', 'protected'] as const) {
+      if (value[key].length > 0) {
+        refuse('inconsistent', join(path, key), `an answer case changes nothing, so ${join(path, key)} is empty`)
+      }
+    }
+  } else if (value.in.length === 0) {
+    refuse('empty', join(path, 'in'), `${join(path, 'in')} must name at least one glob`)
+  }
+  return value
 }
 
 function deliveredDocument(input: unknown, path: string): DeliveredDocument {
@@ -198,11 +227,13 @@ function plantedDefect(input: unknown, path: string): PlantedDefect {
 function adjudication(input: unknown, path: string): Adjudication {
   const obj = record(input, path)
   const adjudicators = texts(field(obj, 'adjudicators', path), join(path, 'adjudicators'))
-  // A clean set is two adjudicators agreeing independently, so one is never enough.
-  if (adjudicators.length < 2) {
+  const clean = flag(field(obj, 'clean', path), join(path, 'clean'))
+  // A clean change is two adjudicators agreeing independently, so one is never
+  // enough; a change that is not clean is shown so by its planted defects.
+  if (clean && adjudicators.length < 2) {
     refuse('out_of_range', join(path, 'adjudicators'), `${join(path, 'adjudicators')} must name at least two`)
   }
-  return { clean: flag(field(obj, 'clean', path), join(path, 'clean')), adjudicators }
+  return { clean, adjudicators }
 }
 
 function neutralCase(input: unknown): NeutralCase {
@@ -223,7 +254,7 @@ function neutralCase(input: unknown): NeutralCase {
     repository: text(field(obj, 'repository', ''), 'repository'),
     baseRevision: commit(field(obj, 'baseRevision', ''), 'baseRevision'),
     taskStatement: statement.value,
-    authorizedScope: scope(field(obj, 'authorizedScope', ''), 'authorizedScope'),
+    authorizedScope: scope(field(obj, 'authorizedScope', ''), 'authorizedScope', kind),
     deliveredDocuments,
     grantedCapabilities: texts(field(obj, 'grantedCapabilities', ''), 'grantedCapabilities')
   }
@@ -251,6 +282,7 @@ function neutralCase(input: unknown): NeutralCase {
     }
     return { ...common, kind, plantedDefects, changeUnderReview, adjudication: judged }
   }
+  if (kind === 'answer') return { ...common, kind }
 
   const referencePath = 'referenceSolution'
   const rawReference = record(field(obj, referencePath, ''), referencePath)

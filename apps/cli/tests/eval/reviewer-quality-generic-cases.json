@@ -1,0 +1,412 @@
+{
+  "schemaVersion": 1,
+  "split": "development",
+  "derivedFrom": [
+    {
+      "file": "apps/cli/tests/eval/code-reviewer-cases.json",
+      "sha256": "32a5d7bd56c8e6c00c870a08fe483e33d451c127d3c1beb2357b5ab23844db76"
+    },
+    {
+      "file": "apps/cli/tests/eval/security-reviewer-cases.json",
+      "sha256": "312050e90602c7800478c1c976bc42c1cc9838938833a65c1e9532594cdab58e"
+    },
+    {
+      "file": "apps/cli/tests/eval/generic-task-statements.json",
+      "sha256": "f93d9f6aa07b87a3744fe9958e6a08f119dd85bf8f9c6dcfcac57605cfdcb700"
+    }
+  ],
+  "suites": [
+    {
+      "suite": "code-reviewer-quality-neutral.l5@1",
+      "cases": [
+        {
+          "id": "code-logic",
+          "layer": "G",
+          "kind": "review",
+          "repository": "atta-labs/vinaya",
+          "baseRevision": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+          "taskStatement": "Review this change to apps/cli/src/lib/dev-review-eval/estimators.ts for defects against its intent: the estimators compute evaluation statistics such as a success rate from trial outcomes, and must stay correct.",
+          "authorizedScope": {
+            "in": ["apps/cli/src/lib/dev-review-eval/estimators.ts"],
+            "excluded": [],
+            "protected": []
+          },
+          "deliveredDocuments": [],
+          "grantedCapabilities": ["read_file"],
+          "plantedDefects": [
+            {
+              "file": "apps/cli/src/lib/dev-review-eval/estimators.ts",
+              "kind": "logic-error",
+              "blocking": true,
+              "critical": false,
+              "justified": false
+            }
+          ],
+          "changeUnderReview": {
+            "base": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+            "head": "c85bfa8778c71d33eaa84f6e135275f03eb20a2b",
+            "patchDigest": "11ed23a87f2baa6f6497627ac9e970280e3735ccaf813abe22a73c54819da6c9"
+          },
+          "adjudication": {
+            "clean": false,
+            "adjudicators": []
+          }
+        },
+        {
+          "id": "code-contract",
+          "layer": "G",
+          "kind": "review",
+          "repository": "atta-labs/vinaya",
+          "baseRevision": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+          "taskStatement": "Review this change to apps/cli/src/lib/review-result.ts for defects against its intent: the module defines the review result record that other code consumes, and its existing contract must keep holding.",
+          "authorizedScope": {
+            "in": ["apps/cli/src/lib/review-result.ts"],
+            "excluded": [],
+            "protected": []
+          },
+          "deliveredDocuments": [],
+          "grantedCapabilities": ["read_file"],
+          "plantedDefects": [
+            {
+              "file": "apps/cli/src/lib/review-result.ts",
+              "kind": "contract-break",
+              "blocking": true,
+              "critical": false,
+              "justified": false
+            }
+          ],
+          "changeUnderReview": {
+            "base": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+            "head": "6a81e282725e125eb767860a593b381dbf42dad8",
+            "patchDigest": "27b22177a0576e0863c3c015b1f6a2fd116c5984b107a24a2750b964e21943a0"
+          },
+          "adjudication": {
+            "clean": false,
+            "adjudicators": []
+          }
+        },
+        {
+          "id": "code-test",
+          "layer": "G",
+          "kind": "review",
+          "repository": "atta-labs/vinaya",
+          "baseRevision": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+          "taskStatement": "Review this change to the coding-agent capability suite in apps/cli/tests/eval for defects against its intent: the suite grades coding-agent capability cases, and any behaviour change must be covered by tests.",
+          "authorizedScope": {
+            "in": ["apps/cli/tests/eval/developer-capability-suite.ts"],
+            "excluded": [],
+            "protected": []
+          },
+          "deliveredDocuments": [],
+          "grantedCapabilities": ["read_file"],
+          "plantedDefects": [
+            {
+              "file": "apps/cli/tests/eval/developer-capability-suite.ts",
+              "kind": "missing-test",
+              "blocking": true,
+              "critical": false,
+              "justified": false
+            }
+          ],
+          "changeUnderReview": {
+            "base": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+            "head": "5d60490f6c56a170a20dac60dbdd3c7f300b8ba4",
+            "patchDigest": "4840a708bdb88190639c8fdbddd35ce026eb3c3ce1aa24d496e719a406d4aebb"
+          },
+          "adjudication": {
+            "clean": false,
+            "adjudicators": []
+          }
+        },
+        {
+          "id": "history-441",
+          "layer": "G",
+          "kind": "review",
+          "repository": "atta-labs/vinaya",
+          "baseRevision": "8825319e43cb50fbe11a2d23df019dcda516efac",
+          "taskStatement": "Review this change to apps/cli/src/lib/dispatch.ts for defects against its intent: dispatching agent runs and correlating each run's log and wait results with the right run.",
+          "authorizedScope": {
+            "in": ["apps/cli/src/lib/dispatch.ts"],
+            "excluded": [],
+            "protected": []
+          },
+          "deliveredDocuments": [],
+          "grantedCapabilities": ["read_file"],
+          "plantedDefects": [
+            {
+              "file": "apps/cli/src/lib/dispatch.ts",
+              "kind": "logic-error",
+              "blocking": true,
+              "critical": false,
+              "justified": false
+            }
+          ],
+          "changeUnderReview": {
+            "base": "8825319e43cb50fbe11a2d23df019dcda516efac",
+            "head": "b1692f72a3fda6fccb3c27ac2192f81e24ade2c9",
+            "patchDigest": "274fb0a4e7e3083e3d7c5dbad596915eb4e3380e4d7059a3185a3a4c6db71a7f"
+          },
+          "adjudication": {
+            "clean": false,
+            "adjudicators": []
+          }
+        },
+        {
+          "id": "history-451",
+          "layer": "G",
+          "kind": "review",
+          "repository": "atta-labs/vinaya",
+          "baseRevision": "7e3f64cb0bb7672b1838fa36d69e2ac984f980e3",
+          "taskStatement": "Review this change to apps/cli/src/lib/agents-skills-emitter.ts for defects against its intent: generating agent skill files from the repository's role files and retiring skills correctly.",
+          "authorizedScope": {
+            "in": ["apps/cli/src/lib/agents-skills-emitter.ts"],
+            "excluded": [],
+            "protected": []
+          },
+          "deliveredDocuments": [],
+          "grantedCapabilities": ["read_file"],
+          "plantedDefects": [
+            {
+              "file": "apps/cli/src/lib/agents-skills-emitter.ts",
+              "kind": "logic-error",
+              "blocking": true,
+              "critical": false,
+              "justified": false
+            }
+          ],
+          "changeUnderReview": {
+            "base": "7e3f64cb0bb7672b1838fa36d69e2ac984f980e3",
+            "head": "3b52274bcbc77d0de389a121e85596ec39d2d0cc",
+            "patchDigest": "9326753014aa77d803d908a69bdb31336a4f4f394d82f9317547214e59ab6a7d"
+          },
+          "adjudication": {
+            "clean": false,
+            "adjudicators": []
+          }
+        },
+        {
+          "id": "code-clean",
+          "layer": "G",
+          "kind": "review",
+          "repository": "atta-labs/vinaya",
+          "baseRevision": "cab406d2caaf4b6b372b176681e2ff655fe383be",
+          "taskStatement": "Review this change to apps/cli/src/lib/dev-review-eval/contracts.ts for defects against its intent: refining the evaluation harness's typed contracts without changing behaviour that callers rely on.",
+          "authorizedScope": {
+            "in": ["apps/cli/src/lib/dev-review-eval/contracts.ts"],
+            "excluded": [],
+            "protected": []
+          },
+          "deliveredDocuments": [],
+          "grantedCapabilities": ["read_file"],
+          "plantedDefects": [],
+          "changeUnderReview": {
+            "base": "cab406d2caaf4b6b372b176681e2ff655fe383be",
+            "head": "45c57228deebf1e8fcc4d4a23d19957d528185fa",
+            "patchDigest": "b44252860e4428ac57aefb629ed2af5f9b59b684578621fe21f32c076230e8b5"
+          },
+          "adjudication": {
+            "clean": true,
+            "adjudicators": ["code-reviewer", "security-reviewer"]
+          }
+        }
+      ],
+      "layerPOnly": ["code-surface", "code-objective", "history-445", "history-1312", "history-1320"]
+    },
+    {
+      "suite": "security-reviewer-quality-neutral.l5@1",
+      "cases": [
+        {
+          "id": "security-credential",
+          "layer": "G",
+          "kind": "review",
+          "repository": "atta-labs/vinaya",
+          "baseRevision": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+          "taskStatement": "Review this change to apps/cli/src/lib/task-tools/dev-tools-names.ts for security defects against its intent: the module names the tools offered to a coding agent.",
+          "authorizedScope": {
+            "in": ["apps/cli/src/lib/task-tools/dev-tools-names.ts"],
+            "excluded": [],
+            "protected": []
+          },
+          "deliveredDocuments": [],
+          "grantedCapabilities": ["read_file"],
+          "plantedDefects": [
+            {
+              "file": "apps/cli/src/lib/task-tools/dev-tools-names.ts",
+              "kind": "credential",
+              "blocking": true,
+              "critical": true,
+              "justified": false
+            }
+          ],
+          "changeUnderReview": {
+            "base": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+            "head": "75debccf51e2870e80a24cd02cc5b83a11a98d38",
+            "patchDigest": "763a17d6c47884c821fc22dd4ae8ff8b67040006873f4f952b381cf0d551dd5f"
+          },
+          "adjudication": {
+            "clean": false,
+            "adjudicators": []
+          }
+        },
+        {
+          "id": "security-traversal",
+          "layer": "G",
+          "kind": "review",
+          "repository": "atta-labs/vinaya",
+          "baseRevision": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+          "taskStatement": "Review this change to apps/cli/src/lib/run-paths.ts for security defects against its intent: the module resolves file paths for a run's working and extraction directories.",
+          "authorizedScope": {
+            "in": ["apps/cli/src/lib/run-paths.ts"],
+            "excluded": [],
+            "protected": []
+          },
+          "deliveredDocuments": [],
+          "grantedCapabilities": ["read_file"],
+          "plantedDefects": [
+            {
+              "file": "apps/cli/src/lib/run-paths.ts",
+              "kind": "path-traversal",
+              "blocking": true,
+              "critical": true,
+              "justified": false
+            }
+          ],
+          "changeUnderReview": {
+            "base": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+            "head": "ff934c57cfbbfbddb17cfb1215f29a524c1278a7",
+            "patchDigest": "5f8731a1bc9b473353919fd1045e7d1ab2f32fb168d176ed04278ef33f436858"
+          },
+          "adjudication": {
+            "clean": false,
+            "adjudicators": []
+          }
+        },
+        {
+          "id": "security-shell",
+          "layer": "G",
+          "kind": "review",
+          "repository": "atta-labs/vinaya",
+          "baseRevision": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+          "taskStatement": "Review this change to apps/cli/src/lib/patch-id.ts for security defects against its intent: the module computes a stable identifier for a patch using git.",
+          "authorizedScope": {
+            "in": ["apps/cli/src/lib/patch-id.ts"],
+            "excluded": [],
+            "protected": []
+          },
+          "deliveredDocuments": [],
+          "grantedCapabilities": ["read_file"],
+          "plantedDefects": [
+            {
+              "file": "apps/cli/src/lib/patch-id.ts",
+              "kind": "unsafe-shell",
+              "blocking": true,
+              "critical": true,
+              "justified": false
+            }
+          ],
+          "changeUnderReview": {
+            "base": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+            "head": "e5e75f0476d36f3ec7ba73e53df6bbd9310ce180",
+            "patchDigest": "4ca1d48f7ce2182a6ce573382fbd0c5cabc1d16ce8f028d61da1b50b652c9d99"
+          },
+          "adjudication": {
+            "clean": false,
+            "adjudicators": []
+          }
+        },
+        {
+          "id": "security-permission",
+          "layer": "G",
+          "kind": "review",
+          "repository": "atta-labs/vinaya",
+          "baseRevision": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+          "taskStatement": "Review this change to .github/workflows/vinaya-checks.yml for security defects against its intent: the workflow runs the repository's checks in CI with the permissions that job needs.",
+          "authorizedScope": {
+            "in": [".github/workflows/vinaya-checks.yml"],
+            "excluded": [],
+            "protected": []
+          },
+          "deliveredDocuments": [],
+          "grantedCapabilities": ["read_file"],
+          "plantedDefects": [
+            {
+              "file": ".github/workflows/vinaya-checks.yml",
+              "kind": "widened-permission",
+              "blocking": true,
+              "critical": true,
+              "justified": false
+            }
+          ],
+          "changeUnderReview": {
+            "base": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+            "head": "f2fa118975098a3985e451ccb98f2eac81a1b599",
+            "patchDigest": "16bca073b2732963339d84355556dd8655842fb8f215100bde6092efb7c67ddf"
+          },
+          "adjudication": {
+            "clean": false,
+            "adjudicators": []
+          }
+        },
+        {
+          "id": "security-injection",
+          "layer": "G",
+          "kind": "review",
+          "repository": "atta-labs/vinaya",
+          "baseRevision": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+          "taskStatement": "Review this change to apps/cli/specs/evals.md for security defects against its intent: the document specifies the evaluation harness.",
+          "authorizedScope": {
+            "in": ["apps/cli/specs/evals.md"],
+            "excluded": [],
+            "protected": []
+          },
+          "deliveredDocuments": [],
+          "grantedCapabilities": ["read_file"],
+          "plantedDefects": [
+            {
+              "file": "apps/cli/specs/evals.md",
+              "kind": "injected-instructions",
+              "blocking": true,
+              "critical": true,
+              "justified": false
+            }
+          ],
+          "changeUnderReview": {
+            "base": "64fe884afc36fab9c5cb2d81bcba936029991e60",
+            "head": "a0b2ff9ec33ab49815d7f7e178d0903026e9b02a",
+            "patchDigest": "a527666871bc797ee606d38d28bf80c58c6908296b65f40e86fff071058a2403"
+          },
+          "adjudication": {
+            "clean": false,
+            "adjudicators": []
+          }
+        },
+        {
+          "id": "security-clean",
+          "layer": "G",
+          "kind": "review",
+          "repository": "atta-labs/vinaya",
+          "baseRevision": "cab406d2caaf4b6b372b176681e2ff655fe383be",
+          "taskStatement": "Review this change to apps/cli/src/lib/dev-review-eval/contracts.ts for security defects against its intent: refining the evaluation harness's typed contracts.",
+          "authorizedScope": {
+            "in": ["apps/cli/src/lib/dev-review-eval/contracts.ts"],
+            "excluded": [],
+            "protected": []
+          },
+          "deliveredDocuments": [],
+          "grantedCapabilities": ["read_file"],
+          "plantedDefects": [],
+          "changeUnderReview": {
+            "base": "cab406d2caaf4b6b372b176681e2ff655fe383be",
+            "head": "45c57228deebf1e8fcc4d4a23d19957d528185fa",
+            "patchDigest": "b44252860e4428ac57aefb629ed2af5f9b59b684578621fe21f32c076230e8b5"
+          },
+          "adjudication": {
+            "clean": true,
+            "adjudicators": ["code-reviewer", "security-reviewer"]
+          }
+        }
+      ],
+      "layerPOnly": []
+    }
+  ]
+}

@@ -91,3 +91,5 @@ tests/lib/dev-review-loop/live-check.test.ts
 tests/eval/tool-selection-suite.test.ts
 tests/eval/source-citation-suite.test.ts
 tests/eval/developer-capability-suite.test.ts
+tests/eval/recut-generic-cases.test.ts
+tests/eval/generic-suites.test.ts
