@@ -210,6 +210,18 @@ async function checkAgainstIssue(issue: number): Promise<void> {
   const result = checkSurfaceScope(files, surface.value, recordedBeyondSurfacePaths(resolvePrBody()))
   if (!result.ok) {
     const v = result.violation
+    if (v.reason === 'protected') {
+      emitCheckError({
+        schema: CHECK_SCHEMA_VERSION,
+        check: CHECK_NAME,
+        severity: 'error',
+        message: `surface-scope: \`${v.path}\` is a protected administrative path and no \`in:\` glob of Issue #${issue}'s \`## Surface\` covers it — the task's Surface must name it; the pull request body's \`AEG:BEYOND-SURFACE\` record does not excuse it.`,
+        agent_recovery_prompt:
+          "Drop the change to that protected path from this PR, or have the Planner add the path to the task's `## Surface` `in:` list via `vinaya issue edit` — then re-run `vinaya check surface-scope`.",
+        file: v.path
+      })
+      process.exit(1)
+    }
     const beyond =
       v.reason === 'out'
         ? `falls inside Issue #${issue}'s \`## Surface\` \`out:\` glob \`${v.glob}\``

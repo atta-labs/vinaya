@@ -368,6 +368,7 @@ export type {
   ForcedCompanion,
   BeyondSurfacePath,
   SurfaceScopeResult,
+  ProtectedPathViolation,
   ProjectPath,
   TaskFileFacts,
   TaskIssueFacts,
@@ -923,3 +924,5 @@ export type {
   TransitionInput,
   TransitionRecord
 } from './control-store'
+
+export { isProtectedAdminPath, normalizeTouchedPath, PROTECTED_ADMIN_PATHS } from './protected-paths'
