@@ -37,11 +37,18 @@
  * handed via `PR_BODY` — an unscrubbed ambient `PR_NUMBER` would exempt
  * today's body on a stranger's identity. See the call site's own comment for
  * how it satisfies that.
+ *
+ * In CI the pull request is read once per run into the forge snapshot
+ * (`lib/forge-snapshot.ts`) by the workflow's own default-branch read job,
+ * and this check reads the branch and author from there — still the forge's
+ * own answer, read live when the run started, never an env var. Outside CI
+ * the fetch below goes to the forge as before.
  */
 
 import { execFileSync } from 'node:child_process'
 import { CHANGESET_RELEASE_BRANCH, isChangesetsReleasePr } from '@attalabs/aeg-core'
 import { loadTrustAnchorConfig, resolveReleaseActor } from '../../lib/config'
+import { exitOnIncompleteForgeSnapshot, snapshotPullRequest } from '../../lib/forge-snapshot'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { checkBareDigits } from '../body-bare-digits-logic'
 
@@ -49,8 +56,10 @@ const CHECK_NAME = 'body-bare-digits'
 
 type PrView = { number: number; headRefName: string; author?: { login?: string } | null }
 
-/** Live-fetched branch/author only — never an env var. See module doc for why. */
+/** Live-fetched branch/author only — the forge or the run's forge snapshot, never an env var. See module doc for why. */
 function fetchPr(prNumber: number): PrView | null {
+  const fromSnapshot = snapshotPullRequest(prNumber)
+  if (fromSnapshot !== null) return fromSnapshot
   try {
     const out = execFileSync('gh', ['pr', 'view', String(prNumber), '--json', 'number,headRefName,author'], {
       encoding: 'utf8',
@@ -78,6 +87,7 @@ function isExemptChangesetsReleasePr(prNumberStr: string | undefined): boolean {
 }
 
 function main(): void {
+  exitOnIncompleteForgeSnapshot(CHECK_NAME)
   if (isExemptChangesetsReleasePr(process.env.PR_NUMBER)) {
     // Machine-rendered changelog, not agent-narrated prose — see module doc.
     process.exit(0)

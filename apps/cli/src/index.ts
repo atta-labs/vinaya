@@ -57,6 +57,7 @@ import { tokensCommand } from './commands/tokens.js'
 import { upgradeCommand } from './commands/upgrade.js'
 import { waiverCommand } from './commands/waiver.js'
 import { printJson } from './lib/envelope.js'
+import { forgeSnapshotCommand } from './lib/forge-snapshot.js'
 import { ensureGhOnPath } from './lib/gh-path.js'
 import { recordCliOperationAtExit } from './lib/cli-operation-log.js'
 import { logSync } from './lib/log-sink.js'
@@ -239,9 +240,14 @@ try {
         await prVerifyEvidenceCommand(rest)
       } else if (subcommand === 'rule') {
         prRuleCommand(rest)
+      } else if (subcommand === 'snapshot') {
+        // CI plumbing, not a user command: the generated workflows' pull
+        // request read step hands its REST reads to this to write the forge
+        // snapshot their checks read (`lib/forge-snapshot.ts`).
+        forgeSnapshotCommand(rest)
       } else {
         console.error(
-          `Unknown 'pr' subcommand: ${subcommand ?? '(none)'} (expected 'create', 'edit', 'report', 'verify-evidence', or 'rule')`
+          `Unknown 'pr' subcommand: ${subcommand ?? '(none)'} (expected 'create', 'edit', 'report', 'verify-evidence', 'rule', or 'snapshot')`
         )
         process.exit(2)
       }

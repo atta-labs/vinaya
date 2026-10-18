@@ -94,3 +94,5 @@ tests/eval/source-citation-suite.test.ts
 tests/eval/developer-capability-suite.test.ts
 tests/eval/recut-generic-cases.test.ts
 tests/eval/generic-suites.test.ts
+tests/lib/forge-snapshot.test.ts
+tests/lib/ci-graphql-calls.test.ts

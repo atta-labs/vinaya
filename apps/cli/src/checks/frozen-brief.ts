@@ -8,6 +8,7 @@ import {
 } from '@attalabs/aeg-core'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../lib/config'
 import { isForgeReadOversize, readIssueComments } from '../lib/forge-read'
+import { incompleteForgeSnapshot } from '../lib/forge-snapshot'
 
 /** One task Issue comment, as the CI-side checks read it. */
 export type IssueComment = { body: string; author?: { login?: string } | null }
@@ -51,7 +52,7 @@ export function resolveTaskFrozenBrief(
     return {
       ok: false,
       notFound: isIssueNotFoundError(err),
-      message: `could not fetch Issue #${issue}'s comments (\`gh issue view\`) to ${purpose}: ${err instanceof Error ? err.message : String(err)}`
+      message: `could not fetch Issue #${issue}'s comments to ${purpose}: ${err instanceof Error ? err.message : String(err)}`
     }
   }
   const resolved = resolveNewestFrozenBrief(
@@ -67,7 +68,11 @@ export function resolveTaskFrozenBrief(
 /** What a Test Plan check reads: the PR body, its branch, and the pull request's head SHA (`PULL_REQUEST_HEAD_SHA`). */
 export type LiveCheckInputs = { body: string; branch: string; head: string }
 
-/** The forge reads behind the frozen-brief resolution — injected so a test can make one throw. */
+/**
+ * The forge reads behind the frozen-brief resolution — injected so a test can
+ * make one throw. In CI the default comment read is served from the run's
+ * forge snapshot for the task Issue (`readIssueComments` routes there).
+ */
 export type LiveCheckDeps = {
   fetchIssueComments: (issue: number) => IssueComment[]
   principalAllowlist: () => readonly string[]
@@ -85,13 +90,18 @@ export const defaultLiveCheckDeps: LiveCheckDeps = {
  * pull request head (a local run before any pull request exists). A task
  * branch with a pull request head but no body, or whose frozen brief cannot
  * be resolved — any fetch error, a not-found Issue included — fails: the
- * lines the merge must wait for are then unknown.
+ * lines the merge must wait for are then unknown. So does an incomplete
+ * forge snapshot, on any branch.
  */
 export function resolveLiveCheckInputs(
   inputs: LiveCheckInputs,
   deps: LiveCheckDeps = defaultLiveCheckDeps
 ): { ok: true; live: LiveGateInputs | undefined } | { ok: false; message: string } {
   const { body, branch, head } = inputs
+  // Given an incomplete forge snapshot the check fails, on any branch, before
+  // a read could fall back to the forge or a missing file could pass.
+  const incomplete = incompleteForgeSnapshot()
+  if (incomplete !== null) return { ok: false, message: incomplete }
   if (!isTaskBranch(branch)) return { ok: true, live: undefined }
   if (!body) {
     return head

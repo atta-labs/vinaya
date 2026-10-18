@@ -18,8 +18,10 @@
 # this gate answers for the review verdicts alone, and no other check's
 # result can change its answer, so a CI run finishing tells it nothing.
 #
-# The job's first step never builds: it reads the PR's comments and labels
-# through the API alone and fails fast, without checkout or build, whenever
+# The job's first steps never build: they read the PR, its comments and its
+# labels through the REST API alone — the same read the forge snapshot the
+# gate later evaluates is written from, so the run reads them once — and fail
+# fast, without checkout or build, whenever
 # neither a `VERDICT:` comment nor a (presence-only, unverified) waiver
 # label exists yet — the ordinary state on `opened`/`synchronize`/
 # `reopened`/`labeled`/`unlabeled`. The build runs once that step finds
@@ -76,9 +78,14 @@ jobs:
       issues: read
       checks: read
     steps:
+      - name: Record the GraphQL budget at job start
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api rate_limit --jq '"GraphQL budget at job start: \(.resources.graphql.used) used of \(.resources.graphql.limit), resets at \(.resources.graphql.reset | todate)"' >> "$GITHUB_STEP_SUMMARY" || echo "GraphQL budget at job start: unreadable" >> "$GITHUB_STEP_SUMMARY"
       # No checkout, no build: read whether a verdict exists yet, or an
-      # actor-verified `vinaya/waiver:review` label is present, through the
-      # API alone. Absent both, THIS step fails — the job's own single
+      # actor-verified `vinaya/waiver:review` label is present, from the REST
+      # read just above. Absent both, THIS step fails — the job's own single
       # check-run ("vinaya review gate") goes red with the reason below and
       # every step after it is skipped, so an ordinary push (opened /
       # synchronize / reopened / labeled / unlabeled) never pays for a build
@@ -126,16 +133,31 @@ jobs:
       # real extractor and the real actor-verified waiver check after
       # checkout, is the authoritative read and still fails correctly on
       # anything this coarser check let through.
-      - name: Require a verdict or waiver before building
-        id: verdict-check
+      - name: Read the pull request over REST
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -o pipefail
-          PR_JSON=$(gh pr view "$PR_NUMBER" --repo ${{ github.repository }} --json comments,labels)
-          HAS_VERDICT=$(echo "$PR_JSON" | jq '[.comments[].body | select((. / "\n") | any(test("^[ \\t]*(?:\\*{1,3}|_{1,3})?VERDICT:")))] | length > 0')
-          HAS_WAIVER_LABEL=$(echo "$PR_JSON" | jq '[.labels[].name == "vinaya/waiver:review"] | any')
+          RAW="$RUNNER_TEMP/vinaya-forge-snapshot/raw"
+          mkdir -p "$RAW"
+          fail_read() {
+            echo "::error::Reading $1 over the REST API failed: $(cat "$RAW/read-error.txt" 2>/dev/null)" >&2
+            gh api rate_limit --jq '.resources as $r | "::error::GitHub REST (core) budget: \($r.core.remaining) of \($r.core.limit) left, resets at \($r.core.reset | todate)\(if $r.core.remaining == 0 then " - spent, so GitHub rate-limited this read" else "" end); GraphQL budget: \($r.graphql.remaining) of \($r.graphql.limit) left, resets at \($r.graphql.reset | todate)\(if $r.graphql.remaining == 0 then " - spent" else "" end)."' >&2 || echo "::error::The token budget could not be read either." >&2
+            exit 1
+          }
+          gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER" > "$RAW/pull.json" 2> "$RAW/read-error.txt" || fail_read "pull request #$PR_NUMBER"
+          gh api --paginate --slurp "repos/{owner}/{repo}/issues/$PR_NUMBER/comments?per_page=100" > "$RAW/pull-comments.json" 2> "$RAW/read-error.txt" || fail_read "pull request #$PR_NUMBER's comments"
+      - name: Require a verdict or waiver before building
+        id: verdict-check
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -o pipefail
+          RAW="$RUNNER_TEMP/vinaya-forge-snapshot/raw"
+          HAS_VERDICT=$(jq '[.[][] | (.body // "") | select((. / "\n") | any(test("^[ \\t]*(?:\\*{1,3}|_{1,3})?VERDICT:")))] | length > 0' "$RAW/pull-comments.json")
+          HAS_WAIVER_LABEL=$(jq '[.labels[].name == "vinaya/waiver:review"] | any' "$RAW/pull.json")
           if [ "$HAS_VERDICT" != "true" ] && [ "$HAS_WAIVER_LABEL" != "true" ]; then
             echo "No VERDICT: comment and no vinaya/waiver:review label yet on PR #$PR_NUMBER - nothing to evaluate. Holding the gate red without building until a reviewer posts a verdict or a principal applies the waiver." >&2
             exit 1
@@ -175,6 +197,12 @@ jobs:
         run: |
           bun install --frozen-lockfile --ignore-scripts
           bun run --cwd apps/cli build
+      - name: Write the forge snapshot
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          node apps/cli/dist/index.js pr snapshot --dir "$RUNNER_TEMP/vinaya-forge-snapshot"
       - name: Review gate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -182,7 +210,18 @@ jobs:
           # it the adapter reads "no PR yet — local dev" and exits 0, and
           # the gate is green regardless of review state.
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          # The run's forge snapshot (`lib/forge-snapshot.ts`): the checks read
+          # the pull request and its task Issue from it instead of reading the
+          # forge for them again. Set on this step only.
+          VINAYA_FORGE_SNAPSHOT_DIR: ${{ runner.temp }}/vinaya-forge-snapshot
+          PR_BODY_FILE: ${{ runner.temp }}/vinaya-forge-snapshot/body.md
         run: node apps/cli/dist/index.js check review-gate
+      - name: Record the GraphQL budget at job end
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api rate_limit --jq '"GraphQL budget at job end: \(.resources.graphql.used) used of \(.resources.graphql.limit), resets at \(.resources.graphql.reset | todate)"' >> "$GITHUB_STEP_SUMMARY" || echo "GraphQL budget at job end: unreadable" >> "$GITHUB_STEP_SUMMARY"
       # When this job failed, print its own token budgets on one line for
       # the review loop (`apps/cli/specs/loop.md`). Reading them spends none.
       - name: Report this job's GitHub token budget

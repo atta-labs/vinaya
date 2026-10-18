@@ -27,6 +27,11 @@
  * concluded, keep going", never "crash the driver". `message` and
  * `agentRecoveryPrompt` therefore carry the check's own wording, and the check
  * is the caller that emits them.
+ *
+ * In CI the pull request, the task Issue's body and comments, and every
+ * comment read of either come from the run's forge snapshot
+ * (`forge-snapshot.ts`), written by a default-branch step of the same trusted
+ * workflow; the driver's host has no `GITHUB_ACTIONS`, so its reads stay live.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -53,6 +58,7 @@ import {
   type ReviewGateInput
 } from '@attalabs/aeg-core'
 import { loadTrustAnchorConfig, resolveGateCutovers, resolvePrincipalAllowlist, resolveReviewPolicy } from './config.js'
+import { incompleteForgeSnapshot, snapshotComments, snapshotIssue, snapshotPullRequest } from './forge-snapshot.js'
 import { patchIdAt } from './patch-id.js'
 
 export type PrView = {
@@ -80,6 +86,11 @@ function failure(message: string, agentRecoveryPrompt: string): { ok: false; fai
 }
 
 function fetchPr(prNumber: number): PrView | null {
+  const fromSnapshot = snapshotPullRequest(prNumber)
+  if (fromSnapshot !== null) {
+    const comments = snapshotComments(prNumber)
+    return comments === null ? null : { ...fromSnapshot, comments }
+  }
   try {
     const out = execFileSync(
       'gh',
@@ -95,8 +106,10 @@ function fetchPr(prNumber: number): PrView | null {
   }
 }
 
-/** `gh issue view <n> --json body --jq .body` — mirrors `verify-brief.ts`'s `fetchIssueBodyForObjectives`. */
+/** `gh issue view <n> --json body --jq .body` — mirrors `verify-brief.ts`'s `fetchIssueBodyForObjectives`; the run's forge snapshot in CI. */
 function fetchIssueBodyForObjectives(issueNumber: number): string {
+  const fromSnapshot = snapshotIssue(issueNumber)
+  if (fromSnapshot !== null) return fromSnapshot.body
   return execFileSync('gh', ['issue', 'view', String(issueNumber), '--json', 'body', '--jq', '.body'], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe']
@@ -104,6 +117,8 @@ function fetchIssueBodyForObjectives(issueNumber: number): string {
 }
 
 function fetchIssueCommentsForBrief(issueNumber: number): { body: string; author: string | null }[] {
+  const fromSnapshot = snapshotComments(issueNumber)
+  if (fromSnapshot !== null) return fromSnapshot.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
   const out = execFileSync('gh', ['issue', 'view', String(issueNumber), '--json', 'comments'], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe']
@@ -394,6 +409,15 @@ function fetchWaiverLabelActor(prNumber: number, label: string): string | null {
  * finding). Do not move either resolver ahead of it.
  */
 export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssembly {
+  // Given an incomplete forge snapshot the gate fails closed before any read
+  // could fall back to the forge.
+  const incomplete = incompleteForgeSnapshot()
+  if (incomplete !== null) {
+    return failure(
+      `review-gate severity:infra — ${incomplete}`,
+      'Re-run the whole workflow run so its pull request read step writes the snapshot again (its own log names the failed read), then re-run `vinaya check review-gate`.'
+    )
+  }
   const pr = fetchPr(prNumber)
   if (!pr) {
     return failure(
