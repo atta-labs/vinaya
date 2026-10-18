@@ -13,15 +13,21 @@
  * against `base` directly (same `git diff` pattern every other diff-scoped
  * adapter here uses) so it also works pre-PR (`vinaya check` run locally
  * before a PR exists, e.g. from a pre-push hook) — the reference script
- * requires `PR_NUMBER` and cannot run pre-PR at all. A `gh pr list` failure
- * (auth/network) degrades to "no other open PRs known" rather than a hard
- * error — a transient forge outage must never fabricate a false conflict.
+ * requires `PR_NUMBER` and cannot run pre-PR at all.
+ *
+ * A failed `gh pr list` read degrades to "no other open PRs known" only when
+ * it is not a rate limit (auth, network, malformed output) — a transient
+ * forge outage must never fabricate a false conflict. A rate limit is
+ * different: GitHub refused to answer, so an empty list would be a pass
+ * nobody checked. The check fails instead, naming the budget and when it
+ * resets.
  *
  * scope: diff — a plan PR is defined entirely by what its diff touches.
  */
 
 import { execFileSync } from 'node:child_process'
 import { checkSinglePlanPr, touchesAnyTopology, type OpenPrFiles } from '@attalabs/aeg-core'
+import { execErrorText, isGithubRateLimitError, rateLimitMessage } from '../../lib/github-rate-limit'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'single-plan-pr'
@@ -48,7 +54,9 @@ function fetchOtherOpenPrFiles(excludePrNumber: number | null): OpenPrFiles[] {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
     })
-  } catch {
+  } catch (err) {
+    const text = execErrorText(err)
+    if (isGithubRateLimitError(text)) failRateLimited(text)
     return []
   }
   let all: Array<{ number: number; files: Array<{ path: string }> }>
@@ -60,6 +68,18 @@ function fetchOtherOpenPrFiles(excludePrNumber: number | null): OpenPrFiles[] {
   return all
     .filter((pr) => pr.number !== excludePrNumber)
     .map((pr) => ({ number: pr.number, files: pr.files.map((f) => f.path) }))
+}
+
+function failRateLimited(errorText: string): never {
+  emitCheckError({
+    schema: CHECK_SCHEMA_VERSION,
+    check: CHECK_NAME,
+    severity: 'error',
+    message: `single-plan-pr: could not read the open pull requests — ${rateLimitMessage(errorText)}.`,
+    agent_recovery_prompt:
+      'GitHub refused the open pull request read on a rate limit, so no conflict check ran. Re-run `vinaya check single-plan-pr` after the reset time.'
+  })
+  process.exit(1)
 }
 
 function main(): void {

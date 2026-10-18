@@ -53,7 +53,7 @@ import {
 } from '@attalabs/aeg-core'
 import { parseRationaleDeps } from '@attalabs/aeg-forge-state'
 import { createForgeSource } from '@attalabs/vinaya-sources'
-import { type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../checks/edge-resolve.js'
+import { dependsOnFactFromEdge, type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../checks/edge-resolve.js'
 import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolvePrincipalAllowlist } from './config.js'
 import { briefCliInvocation } from './own-version.js'
 import { packageRoot } from './package-root.js'
@@ -808,15 +808,7 @@ export async function assembleAndRenderBrief(
   const dependsOn: DispatchDependsOnFact[] = await Promise.all(
     task.dependsOn.map(async (dep) => {
       const r = await resolveEdge(dep, taskById, snapshot.facts, repo)
-      return {
-        id: dep,
-        issue: r.issue,
-        merged: r.merged,
-        resolved: r.resolved,
-        issueState: r.issueState,
-        stateReason: r.stateReason,
-        closedByActor: r.closedByActor
-      }
+      return dependsOnFactFromEdge(dep, r)
     })
   )
   const conflictsWith: DispatchConflictsWithFact[] = await Promise.all(
@@ -1123,15 +1115,7 @@ export async function assembleAndRenderBriefForIssue(
   const dependsOn: DispatchDependsOnFact[] = await Promise.all(
     task.dependsOn.map(async (dep) => {
       const r = await resolveEdge(dep, taskById, factsByTaskId, repo)
-      return {
-        id: dep,
-        issue: r.issue,
-        merged: r.merged,
-        resolved: r.resolved,
-        issueState: r.issueState,
-        stateReason: r.stateReason,
-        closedByActor: r.closedByActor
-      }
+      return dependsOnFactFromEdge(dep, r)
     })
   )
   const conflictsWith: DispatchConflictsWithFact[] = await Promise.all(

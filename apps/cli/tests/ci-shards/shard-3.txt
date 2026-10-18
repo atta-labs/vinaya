@@ -6,6 +6,8 @@ tests/checks/check-review-gate-true-head.test.ts
 tests/checks/config-reference-coverage.test.ts
 tests/checks/contract.test.ts
 tests/checks/edge-parity.test.ts
+tests/checks/rate-limit-fail-closed.test.ts
+tests/lib/github-rate-limit.test.ts
 tests/checks/quoted-command-bin.test.ts
 tests/checks/registry-env.test.ts
 tests/checks/repo-root-resolution.test.ts
