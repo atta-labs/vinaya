@@ -135,7 +135,7 @@ import {
   resolveMilestoneAttachTarget
 } from '@attalabs/aeg-forge-state'
 import { COMMANDS, CONFIG_REFERENCE } from '@attalabs/vinaya-sources'
-import { coreCheckRegistry } from '../checks/registry'
+import { CORE_CHECK_RING, coreCheckRegistry } from '../checks/registry'
 import { resolveChecks } from '../checks/resolver'
 import { defaultParallelism, runChecks } from '../checks/runner'
 import { CHECK_SCHEMA_VERSION, type CheckError, type CheckSpec, emitCheckError } from '../checks/contract'
@@ -680,15 +680,13 @@ function resolvedRegistry(): CheckSpec[] {
  * enforced here with zero further wiring.
  *
  * `prNumber` distinguishes the two shapes every body write actually has:
- * `undefined` (no PR exists yet — `pr create`, before the write) sets
- * `localOnly: true`, which skips every `requiresOpenPr` check outright
- * (`closes-n`, `test-plan`, `body-bare-digits`, `evidence-fresh` all take
- * their own documented "no PR yet" bypass when
- * actually run — skipping here is cheaper and matches the pre-commit/
- * pre-push hooks' own `--local` posture); a real number (`pr edit`, `pr
- * report --push`, both against an already-open PR) runs the full set,
- * `PR_NUMBER` forwarded so a `requiresOpenPr` check resolves the REAL PR
- * rather than taking its no-PR bypass against one that already exists.
+ * `undefined` (no PR exists yet — `pr create`, before the write) excludes
+ * selected `requiresOpenPr` checks unless their core ring pairing is zero.
+ * Ring-0 body checks grade the outgoing draft even though hooks skip them
+ * without a body. Pull-request-bound checks and adopter checks declaring
+ * `requiresOpenPr` remain skipped until a real PR number is available.
+ * With a real number (`pr edit`, `pr report --push`), the full selected set
+ * runs with `PR_NUMBER` forwarded so checks resolve the existing PR.
  *
  * Skipped entirely when `rings.ring1_forgeWriteInterception` is `false` —
  * the same opt-out `resolveSections` already honors to skip
@@ -758,7 +756,11 @@ export async function collectBodyCheckErrors(
     changedFiles: null,
     defaultTimeoutMs: 30_000,
     callerEnv,
-    localOnly: prNumber === undefined
+    localOnly: false,
+    excludeChecks:
+      prNumber === undefined
+        ? specs.filter((s) => s.requiresOpenPr && CORE_CHECK_RING[s.name] !== 0).map((s) => s.name)
+        : []
   })
 
   return outcomes
