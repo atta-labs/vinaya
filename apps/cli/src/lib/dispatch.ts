@@ -2725,9 +2725,12 @@ function parseGeminiResumeId(stdout: string): string | null {
  * Deliberately NOT the Vinaya Log's own `dispatch` family:
  * `DispatchOutcomeSchema` (`packages/aeg-core/src/log/schema.ts`) has no
  * member for "here is a vendor session id" — every variant names a specific
- * forge outcome (`pr_opened`, `verdict`, …) — and the schema, `.strict()`
- * throughout, is out of this task's own surface (see this file's module doc
- * on the `outcome_received` placeholder). A second, narrower durable file —
+ * forge outcome (`pr_opened`, `verdict`, …). `pr_opened`, `round_pushed` and
+ * `verdict` are declared with no producer yet, and `escalation`, `brief`,
+ * `plan` and `archive` likewise appear only in tests and test fixtures today,
+ * with no producer. The schema, `.strict()` throughout, is out of this
+ * task's own surface (see this file's module doc on the `outcome_received`
+ * placeholder). A second, narrower durable file —
  * machine-local, the same `~/.vinaya/` home `dispatch-output`'s tee already
  * uses — is the destination that needs no schema change.
  */

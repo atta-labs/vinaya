@@ -54,7 +54,7 @@ import { GLOBAL_VINAYA_HOME } from './config.js'
 /** One POST body capped well under common reverse-proxy/body-size limits (most default to 1-10 MiB). A queue larger than this is not a failure any more — it is delivered as however many chunks of at most this size it takes, each acknowledged and removed on its own. */
 export const MAX_WEBHOOK_BODY_BYTES = 5 * 1024 * 1024
 
-/** Bounds the POST itself (round-2 security review, MEDIUM) — an unresponsive or intentionally slow endpoint would otherwise hang this call, and with it the round-end auto-flush and the whole dev-review-loop, indefinitely. Applies per chunk: a multi-chunk drain is bounded by this per POST, never once for the whole backlog. */
+/** Bounds the POST itself (round-2 security review, MEDIUM) — an unresponsive or intentionally slow endpoint would otherwise hang this call, and with it every later drain queued behind it on the sink's drain chain, indefinitely. Applies per chunk: a multi-chunk drain is bounded by this per POST, never once for the whole backlog. */
 export const WEBHOOK_FETCH_TIMEOUT_MS = 30_000
 
 const SAFE_PATH_SEGMENT = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/
