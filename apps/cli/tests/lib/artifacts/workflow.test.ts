@@ -38,6 +38,12 @@ describe('generated vinaya-checks.yml: no log artifact, no collector', () => {
     expect(ops.find((o) => o.kind === 'create-file' && o.path.includes('task-log-collector'))).toBeUndefined()
   })
 
+  it('the Run checks step carries BASE_SHA from the pull request base commit', () => {
+    const checks = contentOf(opsFor(null), CHECKS_WORKFLOW_PATH)
+    const step = checks.slice(checks.indexOf('- name: Run checks'))
+    expect(step).toContain('BASE_SHA: ${{ github.event.pull_request.base.sha }}')
+  })
+
   it('vinaya-checks.yml still holds no forge-write credential', () => {
     const checks = contentOf(opsFor(null), CHECKS_WORKFLOW_PATH)
     const permissionsBlock = checks.slice(checks.indexOf('permissions:'), checks.indexOf('steps:'))
