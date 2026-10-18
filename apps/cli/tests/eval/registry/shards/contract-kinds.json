@@ -1090,7 +1090,7 @@
       "id": "adapter:claude-code",
       "kind": "adapter",
       "module": "6.3",
-      "additionalModules": ["6.4", "6.8", "6.21", "6.22"],
+      "additionalModules": ["6.4", "6.8", "6.21", "6.22", "6.25"],
       "source": {
         "document": "apps/cli/specs/dev-review-engine-capability-matrix.md",
         "revision": 17,
@@ -1130,7 +1130,7 @@
       "id": "adapter:codex",
       "kind": "adapter",
       "module": "6.3",
-      "additionalModules": ["6.4", "6.8", "6.21", "6.22"],
+      "additionalModules": ["6.4", "6.8", "6.21", "6.22", "6.25"],
       "source": {
         "document": "apps/cli/specs/dev-review-engine-capability-matrix.md",
         "revision": 17,
