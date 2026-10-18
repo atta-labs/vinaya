@@ -60,6 +60,22 @@ const workflowRoutes: Record<string, Route> = {
   'workflow:vinaya-review.yml:vinaya-review:Review gate': {
     producer: 'gate',
     commandToken: 'check review-gate'
+  },
+  'workflow:vinaya-body-checks.yml:vinaya-forge-read:Write the forge snapshot': {
+    producer: 'operation',
+    commandToken: 'pr snapshot'
+  },
+  'workflow:vinaya-checks.yml:vinaya-checks:Write the forge snapshot': {
+    producer: 'operation',
+    commandToken: 'pr snapshot'
+  },
+  'workflow:vinaya-review-verdict.yml:evaluate:Write the forge snapshot': {
+    producer: 'operation',
+    commandToken: 'pr snapshot'
+  },
+  'workflow:vinaya-review.yml:vinaya-review:Write the forge snapshot': {
+    producer: 'operation',
+    commandToken: 'pr snapshot'
   }
 }
 
@@ -94,14 +110,11 @@ const workflowWithoutProducers = [
   'workflow:vinaya-archivist.yml:daily-drift:Build the vendored Vinaya CLI',
   'workflow:vinaya-archivist.yml:direct-main-push-detection:Build the vendored Vinaya CLI',
   'workflow:vinaya-body-checks.yml:vinaya-body-checks:Build the trusted Vinaya CLI',
-  'workflow:vinaya-body-checks.yml:vinaya-body-checks:Fetch PR body',
   'workflow:vinaya-body-checks.yml:vinaya-principal-test-plan-wait:Build the trusted Vinaya CLI',
-  'workflow:vinaya-body-checks.yml:vinaya-principal-test-plan-wait:Fetch PR body',
   'workflow:vinaya-checks.yml:vinaya-checks:Install dependencies (dist is downloaded below, never built here)',
   'workflow:vinaya-checks.yml:vinaya-checks:Find the shared CLI build for this commit',
   'workflow:vinaya-checks.yml:vinaya-checks:Restore executable bits lost in the artifact round-trip',
   'workflow:vinaya-checks.yml:vinaya-checks:Adopter CI setup',
-  'workflow:vinaya-checks.yml:vinaya-checks:Fetch PR body',
   'workflow:vinaya-checks.yml:vinaya-checks:Per-check summary',
   'workflow:vinaya-review-verdict.yml:evaluate:Resolve PR head',
   'workflow:vinaya-review-verdict.yml:evaluate:Build the trusted Vinaya CLI',
@@ -124,7 +137,39 @@ const workflowWithoutProducers = [
   "workflow:vinaya-checks.yml:vinaya-checks:Report this job's GitHub token budget",
   "workflow:vinaya-review-verdict.yml:evaluate:Report this job's GitHub token budget",
   "workflow:vinaya-review-verdict.yml:retrigger:Report this job's GitHub token budget",
-  "workflow:vinaya-review.yml:vinaya-review:Report this job's GitHub token budget"
+  "workflow:vinaya-review.yml:vinaya-review:Report this job's GitHub token budget",
+  'workflow:vinaya-archivist.yml:post-merge:Record the GraphQL budget at job start',
+  'workflow:vinaya-archivist.yml:post-merge:Record the GraphQL budget at job end',
+  'workflow:vinaya-archivist.yml:issue-closed:Record the GraphQL budget at job start',
+  'workflow:vinaya-archivist.yml:issue-closed:Record the GraphQL budget at job end',
+  'workflow:vinaya-archivist.yml:daily-drift:Record the GraphQL budget at job start',
+  'workflow:vinaya-archivist.yml:daily-drift:Record the GraphQL budget at job end',
+  'workflow:vinaya-archivist.yml:direct-main-push-detection:Record the GraphQL budget at job start',
+  'workflow:vinaya-archivist.yml:direct-main-push-detection:Record the GraphQL budget at job end',
+  'workflow:vinaya-body-checks.yml:vinaya-forge-read:Record the GraphQL budget at job start',
+  'workflow:vinaya-body-checks.yml:vinaya-forge-read:Build the trusted Vinaya CLI',
+  'workflow:vinaya-body-checks.yml:vinaya-forge-read:Read the pull request over REST',
+  'workflow:vinaya-body-checks.yml:vinaya-forge-read:Record the GraphQL budget at job end',
+  "workflow:vinaya-body-checks.yml:vinaya-forge-read:Report this job's GitHub token budget",
+  'workflow:vinaya-body-checks.yml:vinaya-body-checks:Require the pull request read',
+  'workflow:vinaya-body-checks.yml:vinaya-body-checks:Record the GraphQL budget at job start',
+  'workflow:vinaya-body-checks.yml:vinaya-body-checks:Export the pull request body',
+  'workflow:vinaya-body-checks.yml:vinaya-body-checks:Record the GraphQL budget at job end',
+  'workflow:vinaya-body-checks.yml:vinaya-principal-test-plan-wait:Require the pull request read',
+  'workflow:vinaya-body-checks.yml:vinaya-principal-test-plan-wait:Record the GraphQL budget at job start',
+  'workflow:vinaya-body-checks.yml:vinaya-principal-test-plan-wait:Export the pull request body',
+  'workflow:vinaya-body-checks.yml:vinaya-principal-test-plan-wait:Record the GraphQL budget at job end',
+  'workflow:vinaya-checks.yml:vinaya-checks:Record the GraphQL budget at job start',
+  'workflow:vinaya-checks.yml:vinaya-checks:Read the pull request over REST',
+  'workflow:vinaya-checks.yml:vinaya-checks:Record the GraphQL budget at job end',
+  'workflow:vinaya-review-verdict.yml:evaluate:Record the GraphQL budget at job start',
+  'workflow:vinaya-review-verdict.yml:evaluate:Read the pull request over REST',
+  'workflow:vinaya-review-verdict.yml:evaluate:Record the GraphQL budget at job end',
+  'workflow:vinaya-review-verdict.yml:retrigger:Record the GraphQL budget at job start',
+  'workflow:vinaya-review-verdict.yml:retrigger:Record the GraphQL budget at job end',
+  'workflow:vinaya-review.yml:vinaya-review:Record the GraphQL budget at job start',
+  'workflow:vinaya-review.yml:vinaya-review:Read the pull request over REST',
+  'workflow:vinaya-review.yml:vinaya-review:Record the GraphQL budget at job end'
 ] as const
 
 const checkNames = [
@@ -317,7 +362,7 @@ describe('log entry-path producer inventory', () => {
 
   it("keeps today's no-producer list explicit and shrinking", () => {
     const noProducer = inventory.filter((row) => row.noProducer)
-    expect(noProducer).toHaveLength(62)
+    expect(noProducer).toHaveLength(91)
     expect(noProducer.every((row) => row.noProducer!.trim().length > 0)).toBe(true)
   })
 })

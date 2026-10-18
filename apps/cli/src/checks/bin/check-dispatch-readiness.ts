@@ -86,6 +86,7 @@ import { fetchForgeFactsByIssue, parseRationaleDeps, resolveDuplicateTasks } fro
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { exitOnIncompleteForgeSnapshot, snapshotIssue } from '../../lib/forge-snapshot'
 import { containedAbs } from '../../lib/ops'
 import { dependsOnFactFromEdge, type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../edge-resolve'
 import { resolveSiblingConflictFacts } from '../sibling-conflict-facts'
@@ -239,8 +240,18 @@ function containedRealPath(root: string, p: string): string | null {
 
 type IssueJson = { number: number; state: 'OPEN' | 'CLOSED'; body: string; labels: { name: string }[] }
 
+/** The backlog Issue — from the run's forge snapshot in CI when it is the task Issue, else `gh issue view`. */
 function fetchIssueJson(issueNumber: number): IssueJson | null {
   try {
+    const fromSnapshot = snapshotIssue(issueNumber)
+    if (fromSnapshot !== null) {
+      return {
+        number: fromSnapshot.number,
+        state: fromSnapshot.state,
+        body: fromSnapshot.body,
+        labels: fromSnapshot.labels
+      }
+    }
     const out = execFileSync('gh', ['issue', 'view', String(issueNumber), '--json', 'number,state,body,labels'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
@@ -508,6 +519,7 @@ function parseTrancheTaskArgs(argv: string[]): { tranche: string; taskId: string
 }
 
 async function main(): Promise<void> {
+  exitOnIncompleteForgeSnapshot(CHECK_NAME)
   const argsRef = parseTrancheTaskArgs(process.argv.slice(2))
   if (argsRef) {
     await runTrancheMode(argsRef.tranche, argsRef.taskId)

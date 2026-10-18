@@ -1,9 +1,10 @@
-import { readFileSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { basename, join, relative } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import type { CheckSpec } from '../../src/checks/contract'
 import { coreCheckRegistry } from '../../src/checks/registry'
 import { VinayaConfigSchema } from '../../src/lib/config'
+import { FORGE_SNAPSHOT_DIR_ENV, forgeSnapshotDir } from '../../src/lib/forge-snapshot'
 
 /**
  * Proves the task 2 (#775) audit actually landed: every registered core
@@ -256,6 +257,61 @@ describe('registry env declarations', () => {
     expect(guardAt, 'PR_NUMBER guard must come BEFORE the trust-anchor fetch').toBeLessThan(trustAnchorAt)
   })
 
+  // The forge snapshot is the one other place an identity field (the pull
+  // request author, a comment author) may come from, and only in CI: its
+  // directory is honoured only when `GITHUB_ACTIONS` is exactly `true`, so a
+  // local run, a hook or the review loop's host reads every identity from the
+  // forge as before, and the trusted-checkout workflows keep authority over
+  // what the snapshot says (a default-branch step of the same run writes it).
+  it('the forge snapshot is honoured only in CI — GITHUB_ACTIONS must be exactly `true`', () => {
+    expect(forgeSnapshotDir({ [FORGE_SNAPSHOT_DIR_ENV]: '/snapshot' })).toBeNull()
+    expect(forgeSnapshotDir({ [FORGE_SNAPSHOT_DIR_ENV]: '/snapshot', GITHUB_ACTIONS: '1' })).toBeNull()
+    expect(forgeSnapshotDir({ [FORGE_SNAPSHOT_DIR_ENV]: '/snapshot', GITHUB_ACTIONS: 'false' })).toBeNull()
+    expect(forgeSnapshotDir({ GITHUB_ACTIONS: 'true' })).toBeNull()
+    expect(forgeSnapshotDir({ [FORGE_SNAPSHOT_DIR_ENV]: '/snapshot', GITHUB_ACTIONS: 'true' })).toBe('/snapshot')
+  })
+
+  it('no source reads the snapshot directory from env except `lib/forge-snapshot.ts`, the one place the CI rule lives', () => {
+    const SRC = join(import.meta.dir, '..', '..', 'src')
+    const offenders: string[] = []
+    const walk = (dir: string): void => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name)
+        if (statSync(path).isDirectory()) walk(path)
+        else if (name.endsWith('.ts') && !name.endsWith('.test.ts')) {
+          const rel = relative(SRC, path)
+          if (rel === join('lib', 'forge-snapshot.ts')) continue
+          const code = readSource(rel)
+          if (
+            /env\.VINAYA_FORGE_SNAPSHOT_DIR|env\[FORGE_SNAPSHOT_DIR_ENV\]|env\[['"`]VINAYA_FORGE_SNAPSHOT_DIR/.test(
+              code
+            )
+          ) {
+            offenders.push(rel)
+          }
+        }
+      }
+    }
+    walk(SRC)
+    expect(offenders).toEqual([])
+  })
+
+  it('every check that reads the forge snapshot declares VINAYA_FORGE_SNAPSHOT_DIR and GITHUB_ACTIONS', () => {
+    // The runner forwards only declared variables: a check reading the
+    // snapshot without both declared has them stripped and silently reads
+    // the forge again. A bin reaches the snapshot through `forge-snapshot`
+    // itself or through a module that routes its reads there.
+    const ROUTES = /from '\.\.\/(?:\.\.\/lib\/(?:forge-snapshot|forge-read|review-gate-input)|frozen-brief)(?:\.js)?'/
+    const offenders: string[] = []
+    for (const spec of specs) {
+      const binName = `${basename(spec.run).replace(/\.(js|ts)$/, '')}.ts`
+      if (!ROUTES.test(readCode(binName))) continue
+      const env = spec.env ?? {}
+      if (!('VINAYA_FORGE_SNAPSHOT_DIR' in env) || !('GITHUB_ACTIONS' in env)) offenders.push(spec.name)
+    }
+    expect(offenders).toEqual([])
+  })
+
   // `PR_AUTHOR` is banned outright, not just discouraged: a `pull_request`-
   // triggered workflow runs the PR's OWN copy of its YAML, so any env var it
   // sets — however it's computed — can be replaced with a hardcoded literal
@@ -265,7 +321,8 @@ describe('registry env declarations', () => {
   // PR #165 round 2) by trusting this exact variable before switching to a
   // live `gh pr view` fetch. This is the mechanical guard that should have
   // caught that the first time — no check bin may read this variable, full
-  // stop; an identity/author decision must be fetched live, every time.
+  // stop; an identity/author decision must be fetched live, every time — from
+  // the forge, or in CI from the run's forge snapshot (the tests above).
   it('no check bin reads process.env.PR_AUTHOR — identity must be fetched live, never trusted from env', () => {
     const offenders = specs
       .map((s) => `${basename(s.run).replace(/\.(js|ts)$/, '')}.ts`)

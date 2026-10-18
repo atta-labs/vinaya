@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { forgeSnapshotDir, snapshotBody, snapshotComments } from './forge-snapshot'
 
 /**
  * The one reader of an Issue's or pull request's body and comments. Those
@@ -10,6 +11,11 @@ import { execFileSync } from 'node:child_process'
  * each exactly once) instead of one aggregate view; the whole read is held
  * under `FORGE_READ_CEILING_BYTES`, and a response above it is a
  * `ForgeReadOversizeError` every caller reports the same way.
+ *
+ * In CI, when the step that runs checks carries the forge snapshot
+ * (`forge-snapshot.ts`), a body or comment read of the pull request or the
+ * task Issue it closes is served from that snapshot instead of the forge;
+ * every other number, and every run outside CI, reads live exactly as before.
  */
 
 /** The declared ceiling, in bytes, on everything one forge read buffers. */
@@ -23,7 +29,7 @@ export type ForgeComment = { body: string; url: string; author: { login: string 
 /** Runs `gh` with the given args and returns stdout; the seam tests replace. */
 export type ForgeRunner = (args: string[], maxBuffer: number) => string
 
-const ghRunner: ForgeRunner = (args, maxBuffer) =>
+export const ghRunner: ForgeRunner = (args, maxBuffer) =>
   execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer })
 
 /** A forge response larger than the ceiling — names the subject, the ceiling and the observed size. */
@@ -55,7 +61,8 @@ function isBufferOverflow(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === 'ENOBUFS'
 }
 
-function run(runner: ForgeRunner, args: string[], subject: string, usedBytes: number): string {
+/** Runs one `gh` read with what is left of the ceiling as its buffer; a larger response is a `ForgeReadOversizeError`. */
+export function runBounded(runner: ForgeRunner, args: string[], subject: string, usedBytes: number): string {
   const remaining = FORGE_READ_CEILING_BYTES - usedBytes
   let out: string
   try {
@@ -70,7 +77,39 @@ function run(runner: ForgeRunner, args: string[], subject: string, usedBytes: nu
   return out
 }
 
-type RestComment = { body?: string | null; html_url?: string; user?: { login?: string } | null }
+/** One row of the REST comment listing — the fields the readers below map from. */
+export type RestComment = {
+  body?: string | null
+  html_url?: string
+  created_at?: string
+  user?: { login?: string; type?: string } | null
+}
+
+/**
+ * Every REST comment row on an Issue or pull request, in order, each once —
+ * paged through the REST listing under the read ceiling. `number` is already
+ * resolved: this never reads the snapshot and never takes a ref.
+ */
+export function readRestCommentRows(
+  number: number,
+  subjectLabel = `Issue ${number}`,
+  runner: ForgeRunner = ghRunner
+): RestComment[] {
+  const rows: RestComment[] = []
+  let used = 0
+  for (let page = 1; ; page++) {
+    const out = runBounded(
+      runner,
+      ['api', `repos/{owner}/{repo}/issues/${number}/comments?per_page=${PAGE_SIZE}&page=${page}`],
+      subjectLabel,
+      used
+    )
+    used += Buffer.byteLength(out, 'utf8')
+    const pageRows = JSON.parse(out) as RestComment[]
+    rows.push(...pageRows)
+    if (pageRows.length < PAGE_SIZE) return rows
+  }
+}
 
 /** Every comment on an Issue or pull request, in order, each once. `issue` is a number or any ref `gh issue view` accepts. */
 export function readIssueComments(
@@ -79,26 +118,13 @@ export function readIssueComments(
   runner: ForgeRunner = ghRunner
 ): ForgeComment[] {
   const number = resolveNumber(issue, subjectLabel, runner)
-  const comments: ForgeComment[] = []
-  let used = 0
-  for (let page = 1; ; page++) {
-    const out = run(
-      runner,
-      ['api', `repos/{owner}/{repo}/issues/${number}/comments?per_page=${PAGE_SIZE}&page=${page}`],
-      subjectLabel,
-      used
-    )
-    used += Buffer.byteLength(out, 'utf8')
-    const rows = JSON.parse(out) as RestComment[]
-    for (const r of rows) {
-      comments.push({
-        body: r.body ?? '',
-        url: r.html_url ?? '',
-        author: r.user?.login ? { login: r.user.login } : null
-      })
-    }
-    if (rows.length < PAGE_SIZE) return comments
-  }
+  const fromSnapshot = snapshotComments(number)
+  if (fromSnapshot !== null) return fromSnapshot
+  return readRestCommentRows(number, subjectLabel, runner).map((r) => ({
+    body: r.body ?? '',
+    url: r.html_url ?? '',
+    author: r.user?.login ? { login: r.user.login } : null
+  }))
 }
 
 /** An Issue's or pull request's body. */
@@ -107,7 +133,11 @@ export function readIssueBody(
   subjectLabel = `Issue ${issue}`,
   runner: ForgeRunner = ghRunner
 ): string {
-  const out = run(runner, ['issue', 'view', String(issue), '--json', 'body'], subjectLabel, 0)
+  if (forgeSnapshotDir() !== null) {
+    const fromSnapshot = snapshotBody(resolveNumber(issue, subjectLabel, runner))
+    if (fromSnapshot !== null) return fromSnapshot
+  }
+  const out = runBounded(runner, ['issue', 'view', String(issue), '--json', 'body'], subjectLabel, 0)
   return (JSON.parse(out) as { body?: string | null }).body ?? ''
 }
 
@@ -118,7 +148,7 @@ export function readIssueFields<T extends object>(
   subjectLabel = `Issue ${issue}`,
   runner: ForgeRunner = ghRunner
 ): T {
-  return JSON.parse(run(runner, ['issue', 'view', String(issue), '--json', fields], subjectLabel, 0)) as T
+  return JSON.parse(runBounded(runner, ['issue', 'view', String(issue), '--json', fields], subjectLabel, 0)) as T
 }
 
 function resolveNumber(issue: number | string, subjectLabel: string, runner: ForgeRunner): number {

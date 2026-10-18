@@ -34,6 +34,7 @@ import { newAdrCommand } from './commands/new-adr.js'
 import { newRoleCommand } from './commands/new-role.js'
 import { prCreateCommand, prEditCommand } from './commands/pr.js'
 import { prRuleCommand } from './commands/pr-rule.js'
+import { prSnapshotCommand } from './commands/pr-snapshot.js'
 import { prReportCommand } from './commands/pr-report.js'
 import { prVerifyEvidenceCommand } from './commands/pr-verify-evidence.js'
 import { quickstartCommand } from './commands/quickstart.js'
@@ -239,9 +240,11 @@ try {
         await prVerifyEvidenceCommand(rest)
       } else if (subcommand === 'rule') {
         prRuleCommand(rest)
+      } else if (subcommand === 'snapshot') {
+        prSnapshotCommand(rest)
       } else {
         console.error(
-          `Unknown 'pr' subcommand: ${subcommand ?? '(none)'} (expected 'create', 'edit', 'report', 'verify-evidence', or 'rule')`
+          `Unknown 'pr' subcommand: ${subcommand ?? '(none)'} (expected 'create', 'edit', 'report', 'verify-evidence', 'rule', or 'snapshot')`
         )
         process.exit(2)
       }
