@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { coreCheckRegistry } from '../../src/checks/registry'
 import { runChecks } from '../../src/checks/runner'
+import { spawnSyncBudgeted } from '../lib/process-fixture'
 
 // Bin-level tests for check-main-branch-refusal.ts: scratch repositories with
 // no network and an isolated git configuration, so the developer's own
@@ -51,7 +52,7 @@ function newRepo(branch: string): { dir: string; home: string } {
 }
 
 function runBin(dir: string, home: string): { status: number | null; out: string } {
-  const r = spawnSync('bun', [BIN], { cwd: dir, encoding: 'utf8', env: isolatedEnv(home) })
+  const r = spawnSyncBudgeted('bun', [BIN], { cwd: dir, encoding: 'utf8', env: isolatedEnv(home) })
   return { status: r.status, out: `${r.stdout}${r.stderr}` }
 }
 
