@@ -394,6 +394,23 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'pr snapshot',
+    needs: ['forge'],
+    description: "CI plumbing: write a run's forge snapshot of the pull request and its task Issue, read over REST",
+    flags: [
+      {
+        flag: '--dir',
+        description:
+          'The snapshot directory; its `raw/` holds the REST pull request and comment pages the read step wrote'
+      }
+    ],
+    details: [
+      "Run by the generated workflows' read step, never by hand. Maps the REST pull request and its comments to the shape `gh pr view --json` prints, resolves the task Issue from the body's `Closes #N`, and reads that Issue and its comments over REST — never GraphQL.",
+      'A check reads the snapshot only when `GITHUB_ACTIONS` is `true` and the step running it sets `VINAYA_FORGE_SNAPSHOT_DIR`; anywhere else every read goes to the forge as before. Exits 1, naming what it could not read and both token budgets, on a failed read; 2 on a usage error.'
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'issue create',
     needs: ['forge'],
     description: 'Open an issue after full brief-schema validation',

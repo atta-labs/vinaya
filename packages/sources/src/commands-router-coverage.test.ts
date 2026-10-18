@@ -79,6 +79,7 @@ describe('router -> COMMANDS coverage', () => {
         'pr report',
         'pr verify-evidence',
         'pr rule',
+        'pr snapshot',
         'issue create',
         'issue edit',
         'issue surface',
