@@ -5,7 +5,6 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { CHECK_SCHEMA_VERSION, type CheckError } from '../../src/checks/contract'
 import { EVIDENCE_PLACEHOLDER_TEXT } from '../../src/checks/evidence-fresh-logic'
-import { PRINCIPALS_NOT_CONFIGURED_FIX } from '../../src/lib/config'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture'
 
 /**
@@ -20,6 +19,11 @@ import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture'
  * decisions and is one warning in the push-time checks, which then treat the
  * result that needed the list as unknown.
  */
+
+// The fix every refusal names, spelled out rather than imported: this suite
+// spawns the checks and reads only their output, so it imports no source
+// module the checks resolve through.
+const PRINCIPALS_NOT_CONFIGURED_FIX = 'add "principals": [...] to vinaya.config.json on the default branch'
 
 const BIN_DIR = join(import.meta.dir, '../../src/checks/bin')
 const TRANCHE = 'fixture-tranche'
