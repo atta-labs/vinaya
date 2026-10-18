@@ -114,4 +114,31 @@ describe('check-doc-claims bin', () => {
     expect(exitCode).toBe(1)
     expect(parseFindings(stderr)[0]?.message).toContain('could not be read')
   })
+
+  it('sweeps the claim markers under a configured doctrine root, not aeg-root', async () => {
+    const root = newRepo('Nothing claimed here.\n', CITED)
+    mkdirSync(join(root, 'governance-docs'), { recursive: true })
+    writeFileSync(
+      join(root, 'governance-docs', 'page.md'),
+      "The greeting is goodbye.\n<!-- AEG:CLAIM: apps/demo/code.ts contains:greeting = 'goodbye' -->\n"
+    )
+    writeFileSync(join(root, 'vinaya.config.json'), JSON.stringify({ proseGates: { doctrineRoot: 'governance-docs' } }))
+    git(root, ['add', '-A'])
+    const { exitCode, stderr } = await runBin(root)
+    expect(exitCode).toBe(1)
+    expect(parseFindings(stderr)[0]?.file).toBe('governance-docs/page.md')
+  })
+
+  it('leaves the doctrine half empty for a configured root outside the repository', async () => {
+    const root = newRepo(
+      "The greeting is hello.\n<!-- AEG:CLAIM: apps/demo/code.ts contains:greeting = 'hello' -->\n",
+      CITED
+    )
+    writeFileSync(join(root, 'vinaya.config.json'), JSON.stringify({ proseGates: { doctrineRoot: '../elsewhere' } }))
+    git(root, ['add', '-A'])
+    const { exitCode, stderr, stdout } = await runBin(root)
+    expect(stderr.trim()).toBe('')
+    expect(exitCode).toBe(0)
+    expect(stdout).toContain('0 binding(s) verified')
+  })
 })

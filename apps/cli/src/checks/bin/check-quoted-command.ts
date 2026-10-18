@@ -34,10 +34,11 @@
  * is a later, separately-dispatched decision once the false-positive rate
  * is observed against real corpora — not designed here.
  *
- * scope: diff, ring 0 (registry.ts): offline and local (no gh CLI call, no
- * forge call — every fact comes from already-checked-out working-tree files), so
- * the managed local hooks can run it; CI re-runs it like every
- * `--all --diff-only` check. `env: {}`: no environment variable is read.
+ * scope: full, ring 0 (registry.ts): the sweep covers the whole doctrine tree
+ * whatever the diff, so the pre-commit run skips it and the pre-push hook
+ * and CI run it. Offline and local (no gh CLI call, no forge call — every
+ * fact comes from already-checked-out working-tree files). `env: {}`: no
+ * environment variable is read.
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'

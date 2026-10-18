@@ -271,7 +271,7 @@ The generated review-authority workflows run only default-branch code: the requi
 
 ## Changeset coverage
 
-The `changeset-coverage` core check couples a diff touching a published package's shipped files to a `.changeset/*.md` entry in the same diff — for each member of `.changeset/config.json`'s `fixed` group, a changed path counts as shipped iff it falls under that member's own `package.json` `files` allowlist, read live from every workspace member's own manifest, never a hardcoded path list. The Changesets-release branch itself is exempt by construction. Report-only (`scope: diff`, ring 0): findings print at `warning` severity and the check's own exit code always stays `0`, so installing it cannot newly redden an existing repo's CI. Dormant when the repo carries no `.changeset/config.json`, or none of its `fixed`-group members resolve.
+The `changeset-coverage` core check couples a diff touching a published package's shipped files to a `.changeset/*.md` entry in the same diff — for each member of `.changeset/config.json`'s `fixed` group, a changed path counts as shipped iff it falls under that member's own `package.json` `files` allowlist, read live from every workspace member's own manifest, never a hardcoded path list. The Changesets-release branch itself is exempt by construction. Report-only (`scope: full`, ring 0: the pre-commit run skips it, the pre-push hook and CI run it): findings print at `warning` severity and the check's own exit code always stays `0`, so installing it cannot newly redden an existing repo's CI. Dormant when the repo carries no `.changeset/config.json`, or none of its `fixed`-group members resolve.
 
 ## Quoted-command staleness
 
@@ -285,7 +285,7 @@ one job — <!-- AEG:QUOTES-FILE:START:.github/workflows/ci.yml -->`npm test`<!-
 
 Both markers are HTML comments — invisible on render — and may sit inline within a sentence or on their own lines around a fenced block. The check reads the text between them (an inline `` `span` ``, a fenced block, or bare text — one layer of wrapping is stripped either way) and asserts it still appears verbatim in the named file's current content; a marker inside a fenced/inline code example (e.g. one demonstrating this very syntax) is ignored, never mistaken for a real annotation. A finding names both sides: what the doc claims, and which file no longer contains it.
 
-Swept corpus: the same `ships`/`reader-facing` governed-doc classes `reader-resolvable-prose` sweeps (`<doctrineRoot>/**` by default, plus any configured reader-facing pages) — never `apps/*/specs/**` or a `CLAUDE.md`. The cited file itself can be anywhere in the repo. Report-only (`scope: diff`, ring 0): findings print at `warning` severity and the check's own exit code always stays `0`, so installing it cannot newly redden an existing repo's CI. Dormant everywhere no doc carries the marker.
+Swept corpus: the same `ships`/`reader-facing` governed-doc classes `reader-resolvable-prose` sweeps (`<doctrineRoot>/**` by default, plus any configured reader-facing pages) — never `apps/*/specs/**` or a `CLAUDE.md`. The cited file itself can be anywhere in the repo. Report-only (`scope: full`, ring 0: the pre-commit run skips it, the pre-push hook and CI run it): findings print at `warning` severity and the check's own exit code always stays `0`, so installing it cannot newly redden an existing repo's CI. Dormant everywhere no doc carries the marker.
 
 ## Doctrine-no-procedures
 
