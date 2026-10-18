@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import type { GhIssue, TrancheMilestoneIndex } from '@attalabs/aeg-forge-state'
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture'
@@ -82,10 +82,11 @@ describe('check-coherence bin under a failing forge', () => {
   const binPath = join(import.meta.dir, '..', '..', 'src', 'checks', 'bin', 'check-coherence.ts')
   const config = Buffer.from(JSON.stringify({ principals: ['fixture-principal'] })).toString('base64')
 
-  function run(stubBody: string): { status: number | null; lines: string[] } {
+  function run(stubBody: string): { status: number | null; lines: string[]; calls: string[] } {
     const root = join(tmpdir(), `vinaya-coherence-lifecycle-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     const binDir = join(root, 'stub-bin')
     const repo = join(root, 'repo')
+    const callLog = join(root, 'gh-calls.log')
     mkdirSync(binDir, { recursive: true })
     mkdirSync(repo, { recursive: true })
     try {
@@ -109,10 +110,16 @@ describe('check-coherence bin under a failing forge', () => {
           HOME: process.env.HOME ?? root,
           AEG_REPO: 'fixture-owner/fixture-repo',
           GITHUB_TOKEN: 'dummy',
-          BRANCH: `task/${SLUG}/1`
+          BRANCH: `task/${SLUG}/1`,
+          GH_CALL_LOG: callLog
         }
       })
-      return { status: result.status, lines: result.stderr.split('\n').filter((l) => l.trim() !== '') }
+      const calls = existsSync(callLog)
+        ? readFileSync(callLog, 'utf8')
+            .split('\n')
+            .filter((l) => l !== '')
+        : []
+      return { status: result.status, lines: result.stderr.split('\n').filter((l) => l.trim() !== ''), calls }
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -153,5 +160,31 @@ describe('check-coherence bin under a failing forge', () => {
     const notEvaluated = parsed.filter((p) => String(p.message).includes('L2 and L4 did not evaluate'))
     expect(notEvaluated).toHaveLength(1)
     expect(notEvaluated[0]?.severity).toBe('warning')
+  }, 30_000)
+  it('reads Issues for the branch tranche label only, in at most three gh issue list calls', () => {
+    const labels = JSON.stringify(
+      Array.from({ length: 47 }, (_, n) => ({ name: `vinaya/tranche:other-${n}-v1` })).concat([
+        { name: `vinaya/tranche:${SLUG}` }
+      ])
+    )
+    const { calls } = run(
+      [
+        'echo "$*" >> "$GH_CALL_LOG"',
+        'case "$*" in',
+        '  *"issue list"*) echo "[]" ;;',
+        '  *"repos/fixture-owner/fixture-repo/milestones"*) echo "[]" ;;',
+        `  *"repos/fixture-owner/fixture-repo/labels"*) echo '${labels}' ;;`,
+        `  *"repos/fixture-owner/fixture-repo/contents/vinaya.config.json"*) echo '{"content":"${config}","encoding":"base64"}' ;;`,
+        '  *) echo "[]" ;;',
+        'esac'
+      ].join('\n')
+    )
+    const issueLists = calls.filter((c) => c.startsWith('issue list'))
+    expect(issueLists.length).toBeGreaterThan(0)
+    expect(issueLists.length).toBeLessThanOrEqual(3)
+    for (const call of issueLists) {
+      const named = call.split(' ').flatMap((arg, n, all) => (all[n - 1] === '--label' ? [arg] : []))
+      expect(named).toEqual([`vinaya/tranche:${SLUG}`])
+    }
   }, 30_000)
 })

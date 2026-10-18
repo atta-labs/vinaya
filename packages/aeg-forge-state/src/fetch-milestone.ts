@@ -586,3 +586,50 @@ export async function tranchesAttachedToMilestone(
   }
   return [...slugs]
 }
+
+/**
+ * `indexTrancheMilestonesAsync` narrowed to one tranche: the same index shape,
+ * holding only `slug`, built from the same helpers so the two cannot drift.
+ * The Milestone and label lists are read exactly as the repository-wide
+ * reader reads them, but the Issue list is read once, for this tranche's label
+ * only, whatever the number of tranche labels the repository carries.
+ *
+ * A slug backed by neither a slug-shaped Milestone title nor a
+ * `vinaya/tranche:<slug>` label is absent from the result, as it is from the
+ * repository-wide index. The Issue read still runs concurrently with the
+ * other two so the call count does not depend on that shape.
+ */
+export async function indexTrancheMilestonesForSlugAsync(
+  owner: string,
+  repo: string,
+  slug: string
+): Promise<TrancheMilestoneIndex> {
+  const [milestones, labels, issues] = await Promise.all([
+    ghApiGetAllPagesAsync<GhMilestone>(`repos/${owner}/${repo}/milestones?state=all&per_page=100`),
+    ghApiGetAllPagesAsync<GhLabel>(`repos/${owner}/${repo}/labels?per_page=100`),
+    ghIssueListByLabelAsync(owner, repo, trancheLabel(slug))
+  ])
+
+  const active: ActiveTrancheRef[] = []
+  const archived: ActiveTrancheRef[] = []
+  const facts = new Map<string, MilestoneFacts>()
+  const legacySlugs = new Set<string>()
+
+  const legacyMilestone = slugShapedTitles(milestones).includes(slug) ? matchesLegacyMilestone(milestones, slug) : null
+  if (legacyMilestone) {
+    legacySlugs.add(slug)
+    const ref = { slug, goal: legacyMilestone.description ?? '' }
+    const f = resolveLegacyFacts(legacyMilestone, issues)
+    if (f.lifecycle === 'complete') archived.push(ref)
+    else if (f.lifecycle === 'active') active.push(ref)
+    facts.set(slug, f)
+  } else if (trancheSlugsFromLabels(labels).includes(slug)) {
+    const lifecycle = lifecycleFromIssues(issues)
+    const goal = goalFromMilestones(milestones, slug)
+    facts.set(slug, { goal, lifecycle })
+    if (lifecycle === 'active') active.push({ slug, goal })
+    else if (lifecycle === 'complete') archived.push({ slug, goal })
+  }
+
+  return { active, archived, facts, legacySlugs }
+}
