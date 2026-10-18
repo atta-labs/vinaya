@@ -19,7 +19,7 @@
 
 import { readdirSync, readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
-import { EVALUATION_LAYERS, type EvaluationLayer } from './contracts'
+import { EVALUATION_LAYERS, type EvaluationLayer, GRADER_LAYERS, type GraderLayer } from './contracts'
 
 // ── Vocabulary ──────────────────────────────────────────────────────────────
 
@@ -121,11 +121,23 @@ export interface RequiredFields {
   migrationGate: string
 }
 
-/** A suite a module declares: a stable name, a version and its layer. */
+/**
+ * The evaluation layers whose suites run real agents on tasks, so each also
+ * declares a process layer: `G` when its graders read only process-neutral
+ * outcomes, `P` when they read an artifact of one process.
+ */
+export const PROCESS_LAYERED = ['L5', 'L6'] as const satisfies readonly EvaluationLayer[]
+
+/**
+ * A suite a module declares: a stable name, a version and its layer. An L5 or
+ * L6 suite also carries its process layer, `G` or `P` — a separate tag from
+ * `layer`, never folded into it; a suite of any other layer carries none.
+ */
 export interface SuiteDeclaration {
   name: string
   version: number
   layer: EvaluationLayer
+  processLayer?: GraderLayer
 }
 
 /**
@@ -398,11 +410,22 @@ function suiteDeclaration(input: unknown, path: string): SuiteDeclaration {
   const name = text(field(obj, 'name', path), at(path, 'name'))
   if (!SUITE_NAME.test(name))
     refuse('bad_name', at(path, 'name'), `${at(path, 'name')} must be a stable lowercase suite name`)
-  return {
+  const declaration: SuiteDeclaration = {
     name,
     version: integer(field(obj, 'version', path), at(path, 'version'), 1),
     layer: oneOf(field(obj, 'layer', path), at(path, 'layer'), EVALUATION_LAYERS)
   }
+  const processLayerPath = at(path, 'processLayer')
+  if ((PROCESS_LAYERED as readonly string[]).includes(declaration.layer)) {
+    declaration.processLayer = oneOf(field(obj, 'processLayer', path), processLayerPath, GRADER_LAYERS)
+  } else if ('processLayer' in obj) {
+    refuse(
+      'unknown_value',
+      processLayerPath,
+      `${processLayerPath} is declared only by an ${PROCESS_LAYERED.join(' or ')} suite, not by an ${declaration.layer} one`
+    )
+  }
+  return declaration
 }
 
 function moduleEntry(input: unknown, path: string): ModuleEntry {

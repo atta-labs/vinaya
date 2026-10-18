@@ -22,6 +22,8 @@ import {
 
 export const CODE_SUITE = { name: 'code-reviewer-quality.l5', version: 1, layer: 'L5' } as const
 export const SECURITY_SUITE = { name: 'security-reviewer-quality.l5', version: 1, layer: 'L5' } as const
+/** Process layer `P`, for both suites: the grader reads Vinaya's review result and its severity scales. */
+export const REVIEWER_SUITES_PROCESS_LAYER = 'P' as const
 export const CASES = {
   'code-reviewer': join(import.meta.dir, 'code-reviewer-cases.json'),
   'security-reviewer': join(import.meta.dir, 'security-reviewer-cases.json')

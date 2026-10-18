@@ -55,6 +55,8 @@ export const CASE_CLASSES = [
 ] as const
 export type CaseClass = (typeof CASE_CLASSES)[number]
 export const SOURCE_CITATION_FLOOR = 0.95
+/** `source-delivery.l5` is process layer `P`: its grader reads Vinaya's source manifest, receipts and `sourceUses`. */
+export const LIVE_SUITE_PROCESS_LAYER = 'P' as const
 export const TRIALS_PER_TASK = 3
 export const CASES_PATH = join(import.meta.dir, 'source-citation-cases.json')
 export const HELD_OUT_PATH = join(import.meta.dir, 'source-citation-held-out.json')
