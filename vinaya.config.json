@@ -34,6 +34,7 @@
       "authorization": "Bearer ${VINAYA_LOG_READ_TOKEN}"
     }
   },
+  "principals": ["daniboomerang"],
   "releaseActor": "daniboomerang",
   "reviewPolicy": {
     "codeReviewThreshold": "MAJOR",
