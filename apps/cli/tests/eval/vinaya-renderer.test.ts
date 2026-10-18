@@ -2,6 +2,7 @@
 // process input or refusing it naming the field, and extracting each neutral
 // outcome from a Vinaya trial record through one mapping table per name
 // translation, never defaulting a missing fact to a passing value.
+import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { parseIssueSurface } from '@attalabs/aeg-core'
 import { KIND_FIELDS, type NeutralCase, NEUTRAL_CASE_KINDS } from '../../src/lib/dev-review-eval/neutral-case'
@@ -10,6 +11,8 @@ import {
   extractOutcomes,
   FIELD_DISPOSITIONS,
   MAPPING_LOGIC,
+  MAPPING_SOURCE_PATHS,
+  MAPPING_SOURCES,
   MAPPING_TABLES,
   READ_ONLY_BUILTINS,
   renderCase,
@@ -21,6 +24,7 @@ import {
 } from '../../src/lib/dev-review-eval/vinaya-renderer'
 import { REVIEWER_ROLES, REVIEWER_SEVERITIES } from '../../src/lib/review-result'
 import { ROLE_TOOL_GRANTS } from '../../src/lib/task-tools/role-grants'
+import { AGENT_TOOL_CATALOG } from '../../src/lib/task-tools/tool-catalog'
 import {
   type FixtureEntry,
   loadFixture,
@@ -427,16 +431,59 @@ describe('the renderer version', () => {
   })
 
   it('changes when a mapping table or a mapping function changes', () => {
-    expect(rendererVersionOf(MAPPING_TABLES, MAPPING_LOGIC)).toBe(VINAYA_RENDERER_VERSION)
+    expect(rendererVersionOf(MAPPING_TABLES, MAPPING_LOGIC, MAPPING_SOURCES)).toBe(VINAYA_RENDERER_VERSION)
     const severity = rendererVersionOf(
       {
         ...MAPPING_TABLES,
         SEVERITY_BLOCKING: { ...SEVERITY_BLOCKING, 'code-reviewer': { BLOCKER: true, MAJOR: false, MINOR: false } }
       },
-      MAPPING_LOGIC
+      MAPPING_LOGIC,
+      MAPPING_SOURCES
     )
     expect(severity).not.toBe(VINAYA_RENDERER_VERSION)
-    const logic = rendererVersionOf(MAPPING_TABLES, [...MAPPING_LOGIC.slice(1), (c: NeutralCase) => c.id])
+    const catalog = rendererVersionOf(
+      {
+        ...MAPPING_TABLES,
+        CATALOG_TOOL_NAMES: MAPPING_TABLES.CATALOG_TOOL_NAMES.filter((t) => t !== 'read_pull_request')
+      },
+      MAPPING_LOGIC,
+      MAPPING_SOURCES
+    )
+    expect(catalog).not.toBe(VINAYA_RENDERER_VERSION)
+    const logic = rendererVersionOf(
+      MAPPING_TABLES,
+      [...MAPPING_LOGIC.slice(1), (c: NeutralCase) => c.id],
+      MAPPING_SOURCES
+    )
     expect(logic).not.toBe(VINAYA_RENDERER_VERSION)
+  })
+
+  it('changes when a source file the mapping depends on changes', () => {
+    for (const path of [
+      'apps/cli/src/lib/review-result.ts',
+      'apps/cli/src/lib/developer-turn-result.ts',
+      'apps/cli/src/lib/dev-review-eval/neutral-case.ts',
+      'apps/cli/src/lib/task-tools/role-grants.ts',
+      'packages/aeg-core/src/issue-validation.ts'
+    ]) {
+      expect(MAPPING_SOURCE_PATHS).toContain(path)
+      const edited = { ...MAPPING_SOURCES, [path]: `${MAPPING_SOURCES[path]}\n// edited` }
+      expect({ path, version: rendererVersionOf(MAPPING_TABLES, MAPPING_LOGIC, edited) }).not.toEqual({
+        path,
+        version: VINAYA_RENDERER_VERSION
+      })
+    }
+  })
+
+  it('digests the source of every repository module the renderer imports at run time', () => {
+    const source = MAPPING_SOURCES['apps/cli/src/lib/dev-review-eval/vinaya-renderer.ts'] as string
+    const imports = [...source.matchAll(/^import (?!type )[^;]*? from '(\.{1,2}\/[^']+)'/gm)].map((m) => m[1] as string)
+    const resolved = imports.map((spec) =>
+      join('apps/cli/src/lib/dev-review-eval', `${spec.replace(/\.js$/, '')}.ts`).replace(/\\/g, '/')
+    )
+    // The tool catalog is read only for its tool names, which the tables carry.
+    const covered = resolved.filter((path) => path !== 'apps/cli/src/lib/task-tools/tool-catalog.ts')
+    for (const path of covered) expect(MAPPING_SOURCE_PATHS).toContain(path)
+    expect(MAPPING_TABLES.CATALOG_TOOL_NAMES).toEqual(AGENT_TOOL_CATALOG.map((tool) => tool.name))
   })
 })

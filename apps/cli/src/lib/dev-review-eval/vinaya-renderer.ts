@@ -25,7 +25,10 @@
  */
 
 import { createHash } from 'node:crypto'
-import { blockingSeverities, type IssueSurface, recordedBeyondSurfacePaths } from '@attalabs/aeg-core'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { type IssueSurface, recordedBeyondSurfacePaths } from '@attalabs/aeg-core'
 import { parseDeveloperTurnResult } from '../developer-turn-result'
 import { parseReviewResult, REVIEWER_ROLES, REVIEWER_SEVERITIES, type ReviewerRole } from '../review-result'
 import type { SourceDeliveryReceipt } from '../source-manifest'
@@ -70,14 +73,11 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, string>> = {
 }
 
 /**
- * The severity at which each reviewer's findings start to block: the two most
- * severe ranks of each scale, as the reviewer-quality suites read a blocking
- * severity and as this repository's review policy sets its thresholds.
+ * How many of each scale's most severe ranks block: a severity blocks when
+ * its index in its role's scale is below this, the rank rule the
+ * reviewer-quality suites apply to a blocking severity.
  */
-const BLOCKING_THRESHOLDS: Readonly<Record<ReviewerRole, string>> = {
-  'code-reviewer': 'MAJOR',
-  'security-reviewer': 'HIGH'
-}
+const BLOCKING_RANKS = 2
 
 /**
  * The one table from a reviewer severity to `blocking`, read once from each
@@ -86,11 +86,8 @@ const BLOCKING_THRESHOLDS: Readonly<Record<ReviewerRole, string>> = {
  */
 export const SEVERITY_BLOCKING: Readonly<Record<ReviewerRole, Readonly<Record<string, boolean>>>> = Object.fromEntries(
   REVIEWER_ROLES.map((role) => {
-    const blocking = blockingSeverities(REVIEWER_SEVERITIES[role], BLOCKING_THRESHOLDS[role])
-    return [
-      role,
-      Object.fromEntries(REVIEWER_SEVERITIES[role].map((severity) => [severity, blocking.includes(severity)]))
-    ]
+    const order = REVIEWER_SEVERITIES[role]
+    return [role, Object.fromEntries(order.map((severity, rank) => [severity, rank < BLOCKING_RANKS]))]
   })
 ) as Record<ReviewerRole, Record<string, boolean>>
 
@@ -696,7 +693,8 @@ export const RENDERER_SCHEMA_VERSION = 1
 export const MAPPING_TABLES = {
   TOOL_CAPABILITIES,
   READ_ONLY_BUILTINS,
-  BLOCKING_THRESHOLDS,
+  BLOCKING_RANKS,
+  CATALOG_TOOL_NAMES: AGENT_TOOL_CATALOG.map((tool) => tool.name),
   SEVERITY_BLOCKING,
   ROLES_BY_KIND,
   REQUIRED_CAPABILITIES,
@@ -734,16 +732,50 @@ export const MAPPING_LOGIC: readonly ((...args: never[]) => unknown)[] = [
   digestOf,
   listOf,
   stringOf,
-  recordedBeyondSurfacePaths,
-  blockingSeverities
+  recordedBeyondSurfacePaths
 ]
 
-/** The version of a mapping: its schema version and a digest over its tables and logic. */
+/**
+ * Every source file the mapping depends on, repository-relative: this module,
+ * the neutral case it validates and identifies, the parsers and schemas that
+ * decide whether a review or turn result is read as known or invalid, the
+ * role grants, and the beyond-Surface reader with the helpers it calls. A
+ * function's own text does not show what it calls, so the version digests
+ * these files whole; an edit to any of them changes the version, even one
+ * that leaves the mapping as it was.
+ */
+export const MAPPING_SOURCE_PATHS: readonly string[] = [
+  'apps/cli/src/lib/dev-review-eval/vinaya-renderer.ts',
+  'apps/cli/src/lib/dev-review-eval/neutral-case.ts',
+  'apps/cli/src/lib/dev-review-eval/neutral-outcomes.ts',
+  'apps/cli/src/lib/dev-review-eval/banned-terms.ts',
+  'apps/cli/src/lib/dev-review-eval/contracts.ts',
+  'apps/cli/src/lib/review-result.ts',
+  'apps/cli/src/lib/developer-turn-result.ts',
+  'apps/cli/src/lib/task-tools/role-grants.ts',
+  'packages/aeg-core/src/review-policy.ts',
+  'packages/aeg-core/src/log/schema.ts',
+  'packages/aeg-core/src/issue-validation.ts',
+  'packages/aeg-core/src/anchored-region.ts',
+  'packages/aeg-forge-state/src/strip-code.ts'
+]
+
+const REPOSITORY_ROOT = fileURLToPath(new URL('../../../../../', import.meta.url))
+
+/** Each mapping source file's content, by its repository-relative path. */
+export const MAPPING_SOURCES: Readonly<Record<string, string>> = Object.fromEntries(
+  MAPPING_SOURCE_PATHS.map((path) => [path, readFileSync(join(REPOSITORY_ROOT, path), 'utf8')])
+)
+
+/** The version of a mapping: its schema version and a digest over its tables, its logic and its source files. */
 export function rendererVersionOf(
   tables: Readonly<Record<string, unknown>>,
-  logic: readonly ((...args: never[]) => unknown)[]
+  logic: readonly ((...args: never[]) => unknown)[],
+  sources: Readonly<Record<string, string>>
 ): string {
-  return `${RENDERER_SCHEMA_VERSION}:${sha256(`${canonicalJson(tables)}\n${logic.map(String).join('\n')}`)}`
+  const sourceDigests = Object.fromEntries(Object.entries(sources).map(([path, text]) => [path, sha256(text)]))
+  const material = `${canonicalJson(tables)}\n${logic.map(String).join('\n')}\n${canonicalJson(sourceDigests)}`
+  return `${RENDERER_SCHEMA_VERSION}:${sha256(material)}`
 }
 
-export const VINAYA_RENDERER_VERSION = rendererVersionOf(MAPPING_TABLES, MAPPING_LOGIC)
+export const VINAYA_RENDERER_VERSION = rendererVersionOf(MAPPING_TABLES, MAPPING_LOGIC, MAPPING_SOURCES)

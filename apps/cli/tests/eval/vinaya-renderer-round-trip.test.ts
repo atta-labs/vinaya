@@ -10,6 +10,7 @@ import { OUTCOME_NAMES } from '../../src/lib/dev-review-eval/neutral-outcomes'
 import {
   extractOutcomes,
   MAPPING_LOGIC,
+  MAPPING_SOURCES,
   MAPPING_TABLES,
   rendererVersionOf,
   TOOL_CAPABILITIES,
@@ -165,7 +166,8 @@ describe('the generic graders and the renderer', () => {
     const digests = GENERIC_GRADERS.map((g) => g.identity.logicDigest)
     const changed = rendererVersionOf(
       { ...MAPPING_TABLES, TOOL_CAPABILITIES: { ...TOOL_CAPABILITIES, WebFetch: 'read_document' } },
-      MAPPING_LOGIC
+      MAPPING_LOGIC,
+      MAPPING_SOURCES
     )
     expect(changed).not.toBe(VINAYA_RENDERER_VERSION)
     expect(GENERIC_GRADERS.map((g) => g.identity.logicDigest)).toEqual(digests)
