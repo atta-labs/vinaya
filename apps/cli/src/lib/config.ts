@@ -692,9 +692,10 @@ const VinayaConfigObjectSchema = z.object({
   // `z.enum(...)`: a `z.enum` failure fails the WHOLE config's schema parse,
   // which both `loadConfig`/`loadTrustAnchorConfig` turn into a `null`
   // (each with a one-line warning, but every other field falls back too) —
-  // the opposite of this field's own contract. `resolveReviewPolicy` (below) is where an unknown value
-  // actually refuses, so a typo here is a loud, review-policy-specific error,
-  // never a silent whole-config fallback. Same trust class as `principals` —
+  // the opposite of this field's own contract. `resolveReviewPolicy`
+  // (below) is where an unknown value actually refuses, so a typo here is a
+  // review-policy-specific refusal, never a whole-config fallback to
+  // defaults. Same trust class as `principals` —
   // read only via `loadTrustAnchorConfig` (the default branch), never the PR
   // checkout, so a change cannot lower its own threshold.
   reviewPolicy: z
@@ -703,9 +704,9 @@ const VinayaConfigObjectSchema = z.object({
       securityThreshold: z.string().min(1).optional(),
       // Same deliberately-loose typing as the two thresholds
       // above, for the same reason: a `z.number().int().positive()` failure
-      // here would fail the WHOLE config's schema parse (silently falling
-      // back to null everywhere) rather than this field's own loud refusal
-      // in `resolveReviewPolicy`, below.
+      // here would fail the WHOLE config's schema parse (a one-line warning,
+      // then every field falls back to defaults) rather than this field's
+      // own loud refusal in `resolveReviewPolicy`, below.
       maxRounds: z.number().optional(),
       // Same deliberately-loose typing, same reason as the fields above: a
       // schema-level refusal here would fail the WHOLE config's parse rather
@@ -1885,9 +1886,10 @@ export type ConfigLoadResult = { ok: true; config: VinayaConfig | null } | { ok:
  * reports the invalid file once on standard error; this loader reports
  * nothing itself — its callers print their own error.
  *
- * Used only by the `check` command path: a typo'd `checks` key silently
- * meaning "no custom checks ran" would make `vinaya check --all` print
- * green over a broken registration — this is the loud alternative.
+ * Used only by the `check` command path: a typo'd `checks` key falling back
+ * to "no custom checks ran" behind a warning would still let `vinaya check
+ * --all` print green over a broken registration — this loader refuses
+ * instead.
  */
 export function loadConfigChecked(): ConfigLoadResult {
   const path = configPath()
