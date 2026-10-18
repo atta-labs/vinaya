@@ -3,7 +3,6 @@
 // refused with a typed reason, and shards found by listing their directory
 // aggregate with duplicate component ids refused at both locations.
 import { describe, expect, it } from 'bun:test'
-import { OPERATOR_EXIT_EXCLUSIONS } from '../../src/lib/dev-review-eval/exit-check'
 import { LIVE_SUITE_LAYERS } from '../../src/lib/dev-review-eval/freeze-record'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -112,18 +111,12 @@ describe('the module catalog mirrors the evaluation program', () => {
   })
 
   it('has exactly one entry per §6 module, each citing its own heading at the mirror’s revision', () => {
-    const excludedModules = OPERATOR_EXIT_EXCLUSIONS.filter((entry) => entry.kind === 'module').map(
-      (entry) => entry.name
-    )
-    expect(excludedModules).toEqual(['6.14', '6.23'])
     expect(headings.length).toBe(25)
     expect(catalog.modules.map((m) => m.source.section)).toEqual(headings)
     for (const module of catalog.modules) {
       expect(module.source.section).toBe(`${module.id} ${module.title}`)
       expect(module.source.document).toBe(PROGRAM_PATH)
-      const excluded = OPERATOR_EXIT_EXCLUSIONS.some((entry) => entry.kind === 'module' && entry.name === module.id)
-      if (excluded) expect(module.source.revision).not.toBe(PROVENANCE.revision)
-      else expect(module.source.revision).toBe(PROVENANCE.revision)
+      expect(module.source.revision).toBe(PROVENANCE.revision)
     }
   })
 
