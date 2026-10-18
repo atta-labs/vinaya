@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { LogEventSchema } from '@attalabs/aeg-core'
 import { spawnSync } from 'node:child_process'
 import {
   existsSync,
@@ -182,6 +183,31 @@ describe('log-sink — the pull request number', () => {
       await flush()
       const parsed = JSON.parse(readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson'), 'utf8').trim())
       expect(parsed.subject.pr).toBe(expected)
+      expect(parsed.meta.work.change).toBe(expected === undefined ? null : String(expected))
+      expect(LogEventSchema.safeParse(parsed).success).toBe(true)
+    }
+  })
+})
+
+describe('log-sink — asserted provenance and call-time attribution', () => {
+  it('writes asserted provenance and snapshots pull request and attempt before async work', async () => {
+    const env = { VINAYA_ROLE: 'developer', VINAYA_TASK: '404', VINAYA_PR: '977', VINAYA_ATTEMPT: '2' }
+    const { dir, deps } = testDeps({ env: () => env, provenance: 'parent_attributed' })
+    const sink = createLogSink(deps)
+    sink.log(DISPATCHED)
+    env.VINAYA_PR = '978'
+    env.VINAYA_ATTEMPT = '3'
+    await sink.drain()
+    sink.logSync(DISPATCHED)
+    const lines = readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    expect(lines.map((line) => line.meta.work.change)).toEqual(['977', '978'])
+    expect(lines.map((line) => line.meta.lineage.attempt)).toEqual([2, 3])
+    for (const line of lines) {
+      expect(line.meta.provenance).toBe('parent_attributed')
+      expect(LogEventSchema.safeParse(line).success).toBe(true)
     }
   })
 })
@@ -1109,6 +1135,25 @@ describe('log-sink — the commit a gate event was checked at', () => {
     outcome: 'pass' as const,
     payload: {}
   }
+  it('uses the same commit for work revision and subject sha on async and sync gate writes', async () => {
+    const sha = 'a'.repeat(40)
+    const { dir, deps } = testDeps({ resolveHeadSha: () => Promise.resolve(sha) })
+    const sink = createLogSink(deps)
+    sink.log(GATE)
+    await sink.drain()
+    sink.logSync(GATE)
+    sink.logSync(DISPATCHED)
+    const lines = readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    for (const line of lines) {
+      expect(LogEventSchema.safeParse(line).success).toBe(true)
+      expect(line.meta.work.revision).toBe(line.kind === 'gate' ? sha : null)
+      if (line.kind === 'gate') expect(line.meta.work.revision).toBe(line.subject.sha)
+    }
+  })
+
   const subjectsOf = (dir: string): Array<Record<string, unknown>> => {
     const folder = join(dir, 'outbox', 'atta-labs-vinaya')
     return readdirSync(folder)

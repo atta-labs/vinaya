@@ -70,6 +70,7 @@ describe('dispatchRole — launch intent precedes spawn (O1)', () => {
     const cwd = tempDir('vinaya-launch-cwd-')
     const binDir = tempDir('vinaya-launch-bin-')
     const seenRecordFile = join(cwd, 'seen-record.json')
+    const seenEnvFile = join(cwd, 'seen-env.txt')
     const promptFile = join(cwd, 'prompt.txt')
     writeFileSync(promptFile, 'do the thing')
 
@@ -89,7 +90,7 @@ describe('dispatchRole — launch intent precedes spawn (O1)', () => {
     )
     writeFileSync(
       join(binDir, 'claude'),
-      `#!/bin/sh\ncat "${recordPath}" > "${seenRecordFile}" 2>/dev/null\ncat > /dev/null\nprintf '%s' '{"session_id":"sess-x","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
+      `#!/bin/sh\ncat "${recordPath}" > "${seenRecordFile}" 2>/dev/null\nprintf '%s|%s' "\${VINAYA_ATTEMPT-unset}" "\${VINAYA_PR-unset}" > "${seenEnvFile}"\ncat > /dev/null\nprintf '%s' '{"session_id":"sess-x","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
     )
     chmodSync(join(binDir, 'claude'), 0o755)
 
@@ -119,6 +120,7 @@ describe('dispatchRole — launch intent precedes spawn (O1)', () => {
     // spawn, not after the child produced output.
     expect(existsSync(seenRecordFile)).toBe(true)
     const seen = JSON.parse(readFileSync(seenRecordFile, 'utf8')) as { status: string; role: string; runId: string }
+    expect(readFileSync(seenEnvFile, 'utf8')).toBe('unset|unset')
     expect(seen.status).toBe('launched')
     expect(seen.role).toBe('developer')
     expect(seen.runId.length).toBeGreaterThan(0)

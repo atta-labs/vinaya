@@ -35,6 +35,7 @@ import {
   type LogEvent,
   LogEventSchema,
   type OverflowDiagnostic,
+  type Provenance,
   recordIdentity,
   redact
 } from '@attalabs/aeg-core'
@@ -142,6 +143,8 @@ export function describeFolderFallback(reason: FolderFallbackReason): string {
 }
 
 export type LogSinkDeps = {
+  /** Trust asserted by a caller that structurally knows the producer; absent uses the derived default. */
+  provenance?: Provenance
   outboxRoot: () => string
   home: () => string
   hostname: () => string
@@ -1710,6 +1713,8 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
       branchIssue,
       eventId: randomUUID(),
       processId,
+      revision: headSha,
+      provenance: deps.provenance,
       inputVersions: deps.inputVersions()
     })
     // A gate event names the commit it was checked at, omitted when the
