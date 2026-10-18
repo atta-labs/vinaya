@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { parse } from 'yaml'
 import { isRateLimitedJobLog } from '../src/lib/dev-review-loop/round-assess'
+import { spawnSyncBudgeted, stripVinayaEnv } from './lib/process-fixture'
 
 const CI_PATH = join(import.meta.dir, '..', '..', '..', '.github', 'workflows', 'ci.yml')
 const STEP_NAME = "Print the limits of this job's GitHub reads"
@@ -107,8 +108,11 @@ function runStep(fakeCase: string, gql: string, rest: string): { output: string;
   writeFileSync(join(dir, 'gh'), FAKE_GH)
   chmodSync(join(dir, 'gh'), 0o755)
   writeFileSync(join(dir, 'step.sh'), script)
-  const result = Bun.spawnSync(['bash', '-e', join(dir, 'step.sh')], {
+  const result = spawnSyncBudgeted('bash', ['-e', join(dir, 'step.sh')], {
+    encoding: 'utf8',
+    killSignal: 'SIGKILL',
     env: {
+      ...stripVinayaEnv(),
       PATH: `${dir}:/usr/bin:/bin`,
       GITHUB_REPOSITORY: 'owner/repo',
       FAKE_CASE: fakeCase,
@@ -116,7 +120,7 @@ function runStep(fakeCase: string, gql: string, rest: string): { output: string;
       REST_HEADERS: rest
     }
   })
-  return { output: result.stdout.toString() + result.stderr.toString(), code: result.exitCode }
+  return { output: result.stdout + result.stderr, code: result.status }
 }
 
 const CASES = [
