@@ -18,8 +18,8 @@
  *     stripped of its `origin/` prefix — the local ref a `git clone` sets
  *     automatically and `git remote set-head origin -a` (re)computes. When
  *     it does not resolve, `resolveDefaultBranch` falls back to an existing
- *     `refs/remotes/origin/main`, then `refs/remotes/origin/master`, then
- *     the `init.defaultBranch` setting. No forge CLI, fetch or network call,
+ *     `refs/remotes/origin/main`, then `refs/remotes/origin/master`. A repository with
+ *     no remote resolves nothing and keeps the warning. No forge CLI, fetch or network call,
  *     so this stays evaluable with zero network and zero token, same
  *     constraint as `workspace-escape`'s `env: {}`.
  *
@@ -73,8 +73,7 @@ function defaultBranch(): string | null {
   return resolveDefaultBranch({
     originHead: originHeadBranch(),
     hasOriginMain: hasRef('refs/remotes/origin/main'),
-    hasOriginMaster: hasRef('refs/remotes/origin/master'),
-    initDefaultBranch: git(['config', '--get', 'init.defaultBranch'])
+    hasOriginMaster: hasRef('refs/remotes/origin/master')
   })
 }
 
@@ -116,9 +115,9 @@ function main(): void {
     check: CHECK_NAME,
     severity: 'warning',
     message:
-      "main-branch-refusal: could not determine this repo's default branch (no `origin/HEAD`, no remote-tracking `origin/main` or `origin/master`, no `init.defaultBranch`) — skipping the refusal check rather than risk a false block.",
+      "main-branch-refusal: could not determine this repo's default branch (no `origin/HEAD`, no remote-tracking `origin/main` or `origin/master`, as in a repository with no remote) — skipping the refusal check rather than risk a false block.",
     agent_recovery_prompt:
-      'Run `git remote set-head origin -a` (requires network) so `origin/HEAD` resolves locally, or set `git config init.defaultBranch <name>`, then re-run `vinaya check main-branch-refusal`.'
+      'Run `git remote set-head origin -a` (requires network) so `origin/HEAD` resolves locally, then re-run `vinaya check main-branch-refusal`.'
   })
   process.exit(0)
 }

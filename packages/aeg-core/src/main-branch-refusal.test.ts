@@ -79,27 +79,19 @@ describe('main-branch refusal', () => {
 })
 
 describe('resolveDefaultBranch', () => {
-  const none = { originHead: null, hasOriginMain: false, hasOriginMaster: false, initDefaultBranch: null }
+  const none = { originHead: null, hasOriginMain: false, hasOriginMaster: false }
 
   it('prefers origin/HEAD over every other fact', () => {
-    expect(
-      resolveDefaultBranch({ originHead: 'trunk', hasOriginMain: true, hasOriginMaster: true, initDefaultBranch: 'x' })
-    ).toBe('trunk')
+    expect(resolveDefaultBranch({ originHead: 'trunk', hasOriginMain: true, hasOriginMaster: true })).toBe('trunk')
   })
 
   it('falls back to origin/main, then origin/master', () => {
-    expect(resolveDefaultBranch({ ...none, hasOriginMain: true, hasOriginMaster: true, initDefaultBranch: 'x' })).toBe(
-      'main'
-    )
-    expect(resolveDefaultBranch({ ...none, hasOriginMaster: true, initDefaultBranch: 'x' })).toBe('master')
-  })
-
-  it('reads init.defaultBranch last', () => {
-    expect(resolveDefaultBranch({ ...none, initDefaultBranch: 'develop' })).toBe('develop')
+    expect(resolveDefaultBranch({ ...none, hasOriginMain: true, hasOriginMaster: true })).toBe('main')
+    expect(resolveDefaultBranch({ ...none, hasOriginMaster: true })).toBe('master')
   })
 
   it('returns null when nothing resolves, treating empty strings as unresolved', () => {
     expect(resolveDefaultBranch(none)).toBeNull()
-    expect(resolveDefaultBranch({ ...none, originHead: '', initDefaultBranch: '' })).toBeNull()
+    expect(resolveDefaultBranch({ ...none, originHead: '' })).toBeNull()
   })
 })

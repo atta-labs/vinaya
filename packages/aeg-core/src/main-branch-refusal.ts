@@ -19,7 +19,7 @@
  *
  * `defaultBranch: null` means the caller could not derive the default
  * branch (`resolveDefaultBranch` found no `origin/HEAD`, no remote-tracking
- * `origin/main` or `origin/master`, and no `init.defaultBranch`) — this predicate
+ * `origin/main` or `origin/master`, as in a repository with no remote) — this predicate
  * fails OPEN with a `warning` finding naming why, never a false refusal: a
  * check whose job is refusing risky actions must not itself risk refusing
  * a legitimate one it cannot actually evaluate.
@@ -56,22 +56,21 @@ function pushesAnyBranchRef(pushRefs: string): boolean {
 /**
  * Picks the repository's default branch from local git facts alone, strongest
  * first: the branch `origin/HEAD` points at, else `main` when a remote-tracking
- * `origin/main` exists, else `master` when `origin/master` exists, else the
- * `init.defaultBranch` setting (a per-user setting for new repositories, so the
- * weakest fact). `null` when none of them resolves. Pure — the caller reads
- * the facts with local `git` calls and passes them in.
+ * `origin/main` exists, else `master` when `origin/master` exists. `null` when
+ * none of them resolves — a repository with no remote has no default branch to
+ * refuse on. `init.defaultBranch` is deliberately not read: it is a per-user
+ * setting for new repositories, not a fact about this one. Pure — the caller
+ * reads the facts with local `git` calls and passes them in.
  */
 export function resolveDefaultBranch(facts: {
   originHead: string | null
   hasOriginMain: boolean
   hasOriginMaster: boolean
-  initDefaultBranch: string | null
 }): string | null {
-  const { originHead, hasOriginMain, hasOriginMaster, initDefaultBranch } = facts
+  const { originHead, hasOriginMain, hasOriginMaster } = facts
   if (originHead !== null && originHead !== '') return originHead
   if (hasOriginMain) return 'main'
   if (hasOriginMaster) return 'master'
-  if (initDefaultBranch !== null && initDefaultBranch !== '') return initDefaultBranch
   return null
 }
 

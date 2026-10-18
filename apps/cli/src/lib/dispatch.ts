@@ -877,8 +877,7 @@ export const GIT_FORCE_OR_SKIP_VERIFY_DENY_REASON =
  * checkout at all each read as "nothing to refuse," never a false deny.
  * This hook reads the remote-tracking `origin/HEAD` alone, so it passes
  * where `check-main-branch-refusal.ts` — which also falls back to the
- * remote-tracking `origin/main` and `origin/master`, then
- * `init.defaultBranch` — can still refuse; the current branch is read the
+ * remote-tracking `origin/main` and `origin/master` — can still refuse; the current branch is read the
  * same way by both.
  */
 function defaultBranchCommitOrPushDetectorSource(): string {

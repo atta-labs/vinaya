@@ -932,7 +932,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // only full-scope checks and `--diff-only` never skips a diff-scope
       // check without `include` globs, so a commit on the default branch is
       // refused too. Local-only: the facts (`symbolic-ref --short HEAD`, the
-      // remote-tracking refs of origin, `init.defaultBranch`) read
+      // remote-tracking refs of origin) read
       // already-local git state — no forge call, no PR content, same `env: {}` shape as
       // `workspace-escape` above. `VINAYA_PUSH_REFS` is the
       // one exception: the generated pre-push hook sets it from git's own

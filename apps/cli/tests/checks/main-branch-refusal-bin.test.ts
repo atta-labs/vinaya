@@ -70,10 +70,12 @@ describe('check-main-branch-refusal bin', () => {
     expect(runBin(dir, home).status).toBe(1)
   })
 
-  it('refuses on main with no remote and init.defaultBranch=main', () => {
+  it('passes with a warning on main with no remote, even with init.defaultBranch=main', () => {
     const { dir, home } = newRepo('main')
     git(dir, home, ['config', 'init.defaultBranch', 'main'])
-    expect(runBin(dir, home).status).toBe(1)
+    const r = runBin(dir, home)
+    expect(r.status).toBe(0)
+    expect(r.out).toContain('could not determine')
   })
 
   it('passes with a warning when nothing resolves', () => {
