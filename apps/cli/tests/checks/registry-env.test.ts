@@ -59,7 +59,6 @@ describe('registry env declarations', () => {
         'issue-parts-coverage',
         'issue-surface-globs',
         'issue-title-grammar',
-        'issue-tranche-label',
         'main-branch-refusal',
         'no-disk-state',
         'pr-premise-reassert',

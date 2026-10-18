@@ -2,8 +2,8 @@
 
 /**
  * Core check: issue-surface-globs. Thin adapter over `@attalabs/aeg-core`'s
- * `checkSurfaceGlobsResolve` — one of the six write-only rules named in
- * task 17, O2. `validates: 'issue'`: a `## Surface` `in:` glob resolving to a
+ * `checkSurfaceGlobsResolve` — one of the five write-only rules named
+ * apart. `validates: 'issue'`: a `## Surface` `in:` glob resolving to a
  * real tracked file is a property of a task Issue's own body, never a pull
  * request's.
  *
@@ -12,10 +12,9 @@
  * `forge-write.ts`'s `validateIssueContent` already use) — the gate and the
  * renderer can never disagree about whether a glob resolves.
  *
- * scope: full, ownWorkflow: true — invoked by name from
- * `apps/cli/src/lib/forge-write.ts`'s `runIssueChecks` (Issue write time) and
- * from `packages/aeg-core/bin/verify-coherence.ts`'s open-Issue sweep, never
- * from `vinaya check --all`.
+ * scope: full, ownWorkflow: true — invoked by name only from
+ * `apps/cli/src/lib/forge-write.ts`'s `runIssueChecks` (the Issue write
+ * gate's runner), never from `vinaya check --all`.
  */
 
 import { checkSurfaceGlobsResolve } from '@attalabs/aeg-core'

@@ -89,7 +89,6 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
         'issue-parts-coverage',
         'issue-surface-globs',
         'issue-title-grammar',
-        'issue-tranche-label',
         'main-branch-refusal',
         'no-disk-state',
         'pr-premise-reassert',

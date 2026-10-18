@@ -7,7 +7,7 @@ import { coreCheckRegistry } from '../../src/checks/registry'
 import { runChecks } from '../../src/checks/runner'
 
 /**
- * task 17, O2 — the six write-only rules, registered as `validates: 'issue'`
+ * The five write-only rules, registered as `validates: 'issue'`
  * checks, run through the SAME `runChecks` entry point every other check
  * uses — no bespoke invocation path.
  */
@@ -29,13 +29,12 @@ async function run(name: string, env: Record<string, string>) {
   return outcome
 }
 
-describe('validates: issue — every one of the six checks is registered, ownWorkflow, never a pull-request-only signal', () => {
+describe('validates: issue — every one of the five checks is registered, ownWorkflow, never a pull-request-only signal', () => {
   it.each([
     'issue-title-grammar',
     'issue-objectives-numbering',
     'issue-parts-coverage',
     'issue-surface-globs',
-    'issue-tranche-label',
     'issue-milestone-attach'
   ])('%s declares validates: "issue" and ownWorkflow: true', (name) => {
     const spec = specFor(name)
@@ -116,26 +115,6 @@ describe('issue-surface-globs (bin)', () => {
       ISSUE_BODY: '## Surface\n\nin: this/directory/does-not-exist-anywhere/**\nout: (none)\n'
     })
     expect(outcome?.status).toBe('fail')
-  })
-})
-
-describe('issue-tranche-label (bin)', () => {
-  it('passes a task-shaped body carrying the tranche label', async () => {
-    const outcome = await run('issue-tranche-label', {
-      ISSUE_BODY: "## Objectives\n\nO1. Thing.\n\n## Planner's rationale\n\nsome rationale\n",
-      ISSUE_LABELS: 'vinaya/tranche:demo-v1'
-    })
-    expect(outcome?.status).toBe('pass')
-  })
-
-  // Retired to an always-pass check by task-run-v1 task 15, O3: a task-shaped
-  // body with no tranche label is now a legitimate backlog Issue.
-  it('passes a task-shaped body with no tranche label — a legitimate backlog Issue (task-run-v1 task 15, O3)', async () => {
-    const outcome = await run('issue-tranche-label', {
-      ISSUE_BODY: "## Objectives\n\nO1. Thing.\n\n## Planner's rationale\n\nsome rationale\n",
-      ISSUE_LABELS: ''
-    })
-    expect(outcome?.status).toBe('pass')
   })
 })
 

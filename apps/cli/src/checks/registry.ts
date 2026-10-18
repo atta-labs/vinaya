@@ -963,15 +963,18 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
     },
     0
   ],
-  // The six write-only rules named apart — `validates: 'issue'`
+  // The five write-only rules named apart — `validates: 'issue'`
   // means each applies only to a task Issue's own content, never a pull
   // request. `ownWorkflow: true`: nothing in `.github/workflows` ever
   // invokes these by name, so `--all` (both `vinaya-checks.yml` and
   // `vinaya-body-checks.yml`, both PULL-REQUEST workflows) never selects
   // them either way — declared for the same reason `review-gate`/
   // `body-bare-digits` declare it: a check that is invoked directly, by
-  // name, from somewhere other than `--all` (here: `runIssueChecks` at
-  // Issue-write time, and `verify-coherence.ts`'s open-Issue sweep).
+  // name, from somewhere other than `--all`. The executables run by name
+  // only from the Issue write gate's runner (`runIssueChecks`); the
+  // coherence sweep never spawns one, though its R1 rule calls two of their
+  // rule functions directly (`checkIssueObjectives`,
+  // `checkPartsCiteDefinedObjectives`).
   [
     {
       name: 'issue-title-grammar',
@@ -1017,18 +1020,6 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       ownWorkflow: true,
       timeoutMs: 15_000,
       env: { ISSUE_BODY: { optional: true } }
-    },
-    1
-  ],
-  [
-    {
-      name: 'issue-tranche-label',
-      run: bin('check-issue-tranche-label'),
-      validates: 'issue',
-      scope: 'full',
-      ownWorkflow: true,
-      timeoutMs: 15_000,
-      env: { ISSUE_BODY: { optional: true }, ISSUE_LABELS: { optional: true } }
     },
     1
   ],

@@ -5,7 +5,7 @@
  * re-fetch the same forge state its caller already has in hand.
  *
  * Every field is absence-tolerant (`''`/`null`) — a bin invoked directly
- * (`vinaya check issue-tranche-label`) with no Issue write in flight has
+ * (`vinaya check issue-parts-coverage`) with no Issue write in flight has
  * nothing to grade and takes its own documented "nothing to do" bypass.
  */
 export type IssueCheckEnv = {

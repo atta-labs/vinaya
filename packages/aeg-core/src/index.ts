@@ -319,7 +319,6 @@ export {
   checkSurfaceGlobsResolve,
   surfaceEntryResolves,
   checkSurfaceOverlap,
-  checkTrancheLabelPresence,
   checkTestPlanDeveloperRunnable,
   checkSurfaceScope,
   beyondSurfacePaths,

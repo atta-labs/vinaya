@@ -52,7 +52,6 @@ import {
   renderBeyondSurfaceBlock,
   withBeyondSurfaceBlock,
   checkTestPlanDeveloperRunnable,
-  checkTrancheLabelPresence,
   declaredProjects,
   DOCUMENTATION_SINCE_ISSUE,
   frozenSectionsChanged,
@@ -2850,27 +2849,7 @@ describe('checkIssueBriefSections', () => {
   })
 })
 
-// task 17, O2 — the six write-only rules named apart.
-// Retired to an always-pass check: a task-shaped
-// body with no tranche label is now a legitimate backlog Issue, not a
-// Planner mistake — see the function's own doc comment.
-describe('checkTrancheLabelPresence', () => {
-  it('passes a task-shaped body carrying the tranche label', () => {
-    const r = checkTrancheLabelPresence('## Objectives\n\nO1. Thing.\n', ['vinaya/tranche:demo-v1'])
-    expect(r.status).toBe('pass')
-  })
-
-  it('passes a task-shaped body with no tranche label — a legitimate backlog Issue (task-run-v1 task 15, O3)', () => {
-    const r = checkTrancheLabelPresence('## Objectives\n\nO1. Thing.\n', [])
-    expect(r.status).toBe('pass')
-  })
-
-  it('passes a genuinely non-task body with no label — nothing to require', () => {
-    const r = checkTrancheLabelPresence('just an ordinary Issue about a bug.', [])
-    expect(r.status).toBe('pass')
-  })
-})
-
+// The five write-only rules named apart.
 describe('checkMilestoneAttach', () => {
   it('passes a non-task Issue regardless of Milestone state', () => {
     const r = checkMilestoneAttach([], null, 'v1')

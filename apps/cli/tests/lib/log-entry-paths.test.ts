@@ -165,7 +165,6 @@ const checkNames = [
   'issue-objectives-numbering',
   'issue-parts-coverage',
   'issue-surface-globs',
-  'issue-tranche-label',
   'issue-milestone-attach',
   'atta-labs/secret-scan'
 ] as const

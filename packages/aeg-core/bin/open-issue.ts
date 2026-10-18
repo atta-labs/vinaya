@@ -87,7 +87,6 @@ import {
   checkProjectsRegistered,
   checkRationaleNamesDocs,
   checkSurfaceGlobsResolve,
-  checkTrancheLabelPresence,
   isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
   type ProjectPath,
@@ -846,18 +845,6 @@ export function main(): void {
     labels = [...new Set([...forgeLabels, ...labels])]
   }
 
-  // Retired (task-run-v1 task 15, O3) — `checkTrancheLabelPresence` (this
-  // file's `isTaskIssueBodyShaped`/`isTaskIssueLabelSet`-based predicate,
-  // mirrored from `apps/cli/src/lib/forge-write.ts`'s own copy) now always
-  // passes: a task-shaped, unlabeled body is a legitimate backlog Issue, not
-  // a Planner mistake. See that function's own doc comment in
-  // `@attalabs/aeg-core` for the full rationale. Delegated here (rather than
-  // deleted) so this call site stays wired to the one shared rule.
-  if (body !== null) {
-    const trancheLabelResult = checkTrancheLabelPresence(body, labels)
-    if (trancheLabelResult.status === 'fail') fail(trancheLabelResult.errors.join(' '))
-  }
-
   // O2/O3 (task 21, `#541`, round 2 review SECURITY HIGH): a labelless
   // backlog Issue is task-shaped content too — gating this whole content
   // gate on the label alone let a labelless body through with NONE of
@@ -939,7 +926,7 @@ export function main(): void {
     // edit costs nothing for the forward case and exempts every pre-merge
     // Issue exactly as promised.
     const typeErrors = isEdit ? [] : checkIssueType(body, labels).errors
-    // O2 (task 17) — three of the six write-only rules named apart:
+    // Three of the five write-only rules named apart:
     // objectives numbering, Parts coverage, Surface glob resolution.
     // `issueNumber` mirrors `apps/cli`'s own fail-closed-on-null posture
     // (`checkIssueObjectives`'s own doc comment): `create` has no number
@@ -947,13 +934,11 @@ export function main(): void {
     // already far past the Objectives cutover, so this never blocks a
     // legitimate create. `checkPartsCiteDefinedObjectives`/
     // `checkSurfaceGlobsResolve` are dormant when the Issue carries no
-    // `## Parts`/`## Surface` section at all. Title grammar and tranche-label
-    // presence are already enforced above; Milestone attach's validating half
-    // is deliberately NOT wired here — see `runIssueChecks`'s own comment in
-    // `apps/cli/src/lib/forge-write.ts` for why every write-path moment for
-    // it is a false-positive risk (`edit` never re-attaches by this file's
-    // own `resolveMilestoneToAttach` design, and `create`'s attach happens as
-    // part of this SAME write).
+    // `## Parts`/`## Surface` section at all. Title grammar is already
+    // enforced above. Milestone attach's validating half is NOT wired here:
+    // this script never re-attaches a Milestone on `edit` (its own
+    // `resolveMilestoneToAttach` design), and its `create` attach happens as
+    // part of this SAME write, so no moment here has an attach to verify.
     const issueNumber = isEdit ? parseIssueNumberFromRef(ghArgs[0] as string) : null
     const contentErrors = [
       ...blastRadiusErrorsForWrite(body, labels, sharedPackages, projectPaths, isEdit ? (ghArgs[0] as string) : null),
