@@ -14,7 +14,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { AgentVendor } from '../../src/lib/agent-vendors.js'
-import { buildInitOps } from '../../src/lib/artifacts.js'
+import { BODY_CHECKS_WORKFLOW_PATH, buildInitOps, FORGE_SNAPSHOT_ARTIFACT_NAME } from '../../src/lib/artifacts.js'
 import type { VendoredVinaya } from '../../src/lib/self-host.js'
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
@@ -101,9 +101,13 @@ describe('no source file posts a log comment or uploads a log artifact (O4)', ()
     expect(offenders).toEqual([])
   })
 
-  it('no file references `actions/upload-artifact` at all — the log-artifact upload step is deleted outright, not merely renamed', () => {
+  it('no file references `actions/upload-artifact` but the generator, for the forge snapshot alone — the log-artifact upload step is deleted outright, not merely renamed', () => {
+    // `artifacts.ts` emits exactly one upload: `vinaya-body-checks.yml`'s read
+    // job handing the forge snapshot to its two check jobs. The workflow test
+    // below holds every generated upload to that one artifact name.
+    const allowlist = new Set(['apps/cli/src/lib/artifacts.ts'])
     const offenders = files
-      .filter(([, abs]) => readFileSync(abs, 'utf8').includes('actions/upload-artifact'))
+      .filter(([rel, abs]) => !allowlist.has(rel) && readFileSync(abs, 'utf8').includes('actions/upload-artifact'))
       .map(([rel]) => rel)
     expect(offenders).toEqual([])
   })
@@ -138,13 +142,22 @@ describe('the generated workflow set carries neither (O2/O4)', () => {
     })
   }
 
-  it('no generated workflow file uploads an artifact or triggers on workflow_run', () => {
+  it('no generated workflow file uploads an artifact but the forge snapshot, or triggers on workflow_run', () => {
     const workflowOps = opsFor(null).filter(
       (o): o is Extract<typeof o, { kind: 'create-file' }> => o.kind === 'create-file' && o.path.endsWith('.yml')
     )
     expect(workflowOps.length).toBeGreaterThan(0)
     for (const op of workflowOps) {
-      expect(op.content, `${op.path} references actions/upload-artifact`).not.toContain('actions/upload-artifact')
+      // Each upload step is followed by its `with:` block naming the artifact.
+      const uploads = op.content.split('uses: actions/upload-artifact@').slice(1)
+      for (const upload of uploads) {
+        expect(upload, `${op.path} uploads an artifact other than the forge snapshot`).toMatch(
+          new RegExp(`^v\\d+\\n\\s+with:\\n\\s+name: ${FORGE_SNAPSHOT_ARTIFACT_NAME}\\n`)
+        )
+      }
+      expect(uploads.length, `${op.path} uploads more than the forge snapshot`).toBeLessThanOrEqual(
+        op.path === BODY_CHECKS_WORKFLOW_PATH ? 1 : 0
+      )
       expect(op.content, `${op.path} triggers on workflow_run`).not.toContain('workflow_run:')
     }
   })

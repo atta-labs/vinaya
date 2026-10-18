@@ -29,7 +29,7 @@ import type { CheckSpec } from '../../src/checks/contract'
 import { coreCheckRegistry } from '../../src/checks/registry'
 import { runChecks } from '../../src/checks/runner'
 import { FORGE_SNAPSHOT_DIR_ENV } from '../../src/lib/forge-snapshot'
-import { stripVinayaEnv } from './process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 const REPO_ROOT = join(import.meta.dir, '../../../..')
 const WORKFLOWS = join(REPO_ROOT, '.github', 'workflows')
@@ -206,12 +206,8 @@ function runStep(script: string, env: Record<string, string>): void {
   const resolved = script
     .replaceAll('node apps/cli/dist/index.js', `bun ${join(REPO_ROOT, 'apps/cli/src/index.ts')}`)
     .replaceAll('${{ github.event.issue.number }}', String(PR))
-  execFileSync('bash', ['-e', '-c', resolved], {
-    cwd: REPO_ROOT,
-    env,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe']
-  })
+  const r = spawnSyncBudgeted('bash', ['-e', '-c', resolved], { cwd: REPO_ROOT, env, encoding: 'utf8' }, 60_000)
+  if (r.status !== 0) throw new Error(`step exited ${r.status}: ${r.stderr}`)
 }
 
 type Counts = { views: number; graphql: number; total: number }
