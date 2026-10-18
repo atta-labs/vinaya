@@ -361,6 +361,8 @@ describe('the watching driver resumes a rate-limit pause at the reset it recorde
 describe('every CI job ends with the failure-only budget step', () => {
   const ROOT = join(import.meta.dir, '..', '..', '..', '..', '..')
   const STEP = "Report this job's GitHub token budget"
+  // The temporary limits step may follow the budget step; it is judged by its own test.
+  const LIMITS_STEP = "Print the limits of this job's GitHub reads"
   for (const file of [
     'ci.yml',
     'vinaya-checks.yml',
@@ -377,7 +379,8 @@ describe('every CI job ends with the failure-only budget step', () => {
         >
       }
       for (const [job, { steps }] of Object.entries(workflow.jobs)) {
-        const last = steps[steps.length - 1]!
+        const budgetSteps = steps.filter((step) => step.name !== LIMITS_STEP)
+        const last = budgetSteps[budgetSteps.length - 1]!
         expect(`${job}: ${last.name}`).toBe(`${job}: ${STEP}`)
         expect(last.if).toBe('failure()')
         expect(last.run).toContain('gh api rate_limit')

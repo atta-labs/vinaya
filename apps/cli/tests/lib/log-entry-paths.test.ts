@@ -128,6 +128,9 @@ const workflowWithoutProducers = [
   "workflow:ci.yml:sandbox-conformance:Report this job's GitHub token budget",
   "workflow:ci.yml:sandbox-conformance-macos:Report this job's GitHub token budget",
   "workflow:ci.yml:aggregate:Report this job's GitHub token budget",
+  "workflow:ci.yml:build:Print the limits of this job's GitHub reads",
+  "workflow:ci.yml:sandbox-conformance:Print the limits of this job's GitHub reads",
+  "workflow:ci.yml:sandbox-conformance-macos:Print the limits of this job's GitHub reads",
   "workflow:vinaya-archivist.yml:post-merge:Report this job's GitHub token budget",
   "workflow:vinaya-archivist.yml:issue-closed:Report this job's GitHub token budget",
   "workflow:vinaya-archivist.yml:daily-drift:Report this job's GitHub token budget",
@@ -362,7 +365,7 @@ describe('log entry-path producer inventory', () => {
 
   it("keeps today's no-producer list explicit and shrinking", () => {
     const noProducer = inventory.filter((row) => row.noProducer)
-    expect(noProducer).toHaveLength(91)
+    expect(noProducer).toHaveLength(94)
     expect(noProducer.every((row) => row.noProducer!.trim().length > 0)).toBe(true)
   })
 })

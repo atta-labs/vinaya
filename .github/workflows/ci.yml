@@ -216,13 +216,61 @@ jobs:
 
       # When this job failed, print its own token budgets on one line for
       # the review loop (`apps/cli/specs/loop.md`). Reading them spends none.
-      # The same step ends every job in this file.
+      # The same step ends every job in this file; the limits step after it
+      # follows it in the build and sandbox jobs.
       - name: Report this job's GitHub token budget
         if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
+      # Temporary: shows which limit refused a read, from the response headers.
+      - name: Print the limits of this job's GitHub reads
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          probe() {
+            label=$1
+            shift
+            code=0
+            raw=$("$@" 2>/dev/null) || code=$?
+            printf '%s\n' "$raw" | tr -d '\r' | awk -v label="$label" -v code="$code" '
+              NR == 1 && /^HTTP/ { status = $2; next }
+              inbody { body = body $0; next }
+              $0 == "" { inbody = 1; next }
+              {
+                i = index($0, ":")
+                if (i > 0) {
+                  v = substr($0, i + 1)
+                  gsub(/[^A-Za-z0-9_.,-]/, "", v)
+                  h[tolower(substr($0, 1, i - 1))] = v
+                }
+              }
+              function val(k) { return (k in h && h[k] != "") ? h[k] : "-" }
+              END {
+                types = ""
+                rest = body
+                if (body ~ /"errors"/) {
+                  while (match(rest, /"type":"[A-Z_]+"/)) {
+                    types = (types == "" ? "" : types ",") substr(rest, RSTART + 8, RLENGTH - 9)
+                    rest = substr(rest, RSTART + RLENGTH)
+                  }
+                }
+                refused = (code != 0 || types ~ /RATE_LIMITED/) ? "yes" : "no"
+                out = label " exit=" code " status=" (status == "" ? "-" : status)
+                out = out " limit=" val("x-ratelimit-limit") " used=" val("x-ratelimit-used")
+                out = out " remaining=" val("x-ratelimit-remaining") " reset=" val("x-ratelimit-reset")
+                out = out " resource=" val("x-ratelimit-resource")
+                if ("retry-after" in h) out = out " retry_after=" val("retry-after")
+                if (label == "graphql") out = out " errors=" (types == "" ? "-" : types)
+                print out " refused=" refused
+              }'
+          }
+          gql=$(probe graphql gh api -i graphql -f query='query { rateLimit { limit cost used remaining resetAt } }') || true
+          rest=$(probe rest gh api -i "repos/$GITHUB_REPOSITORY") || true
+          echo "vinaya-limits: $gql | $rest"
+          exit 0
 
   # Every workspace package except `@attalabs/vinaya` (apps/cli) — that one
   # is by far the largest and is sharded below (O3). `--concurrency=1`
@@ -447,6 +495,53 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
+      # Temporary: shows which limit refused a read, from the response headers.
+      - name: Print the limits of this job's GitHub reads
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          probe() {
+            label=$1
+            shift
+            code=0
+            raw=$("$@" 2>/dev/null) || code=$?
+            printf '%s\n' "$raw" | tr -d '\r' | awk -v label="$label" -v code="$code" '
+              NR == 1 && /^HTTP/ { status = $2; next }
+              inbody { body = body $0; next }
+              $0 == "" { inbody = 1; next }
+              {
+                i = index($0, ":")
+                if (i > 0) {
+                  v = substr($0, i + 1)
+                  gsub(/[^A-Za-z0-9_.,-]/, "", v)
+                  h[tolower(substr($0, 1, i - 1))] = v
+                }
+              }
+              function val(k) { return (k in h && h[k] != "") ? h[k] : "-" }
+              END {
+                types = ""
+                rest = body
+                if (body ~ /"errors"/) {
+                  while (match(rest, /"type":"[A-Z_]+"/)) {
+                    types = (types == "" ? "" : types ",") substr(rest, RSTART + 8, RLENGTH - 9)
+                    rest = substr(rest, RSTART + RLENGTH)
+                  }
+                }
+                refused = (code != 0 || types ~ /RATE_LIMITED/) ? "yes" : "no"
+                out = label " exit=" code " status=" (status == "" ? "-" : status)
+                out = out " limit=" val("x-ratelimit-limit") " used=" val("x-ratelimit-used")
+                out = out " remaining=" val("x-ratelimit-remaining") " reset=" val("x-ratelimit-reset")
+                out = out " resource=" val("x-ratelimit-resource")
+                if ("retry-after" in h) out = out " retry_after=" val("retry-after")
+                if (label == "graphql") out = out " errors=" (types == "" ? "-" : types)
+                print out " refused=" refused
+              }'
+          }
+          gql=$(probe graphql gh api -i graphql -f query='query { rateLimit { limit cost used remaining resetAt } }') || true
+          rest=$(probe rest gh api -i "repos/$GITHUB_REPOSITORY") || true
+          echo "vinaya-limits: $gql | $rest"
+          exit 0
 
   # The same suite on a macOS runner: confinement is platform-specific
   # security behavior, and the Linux job cannot exercise the macOS sandbox
@@ -492,6 +587,53 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
+      # Temporary: shows which limit refused a read, from the response headers.
+      - name: Print the limits of this job's GitHub reads
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          probe() {
+            label=$1
+            shift
+            code=0
+            raw=$("$@" 2>/dev/null) || code=$?
+            printf '%s\n' "$raw" | tr -d '\r' | awk -v label="$label" -v code="$code" '
+              NR == 1 && /^HTTP/ { status = $2; next }
+              inbody { body = body $0; next }
+              $0 == "" { inbody = 1; next }
+              {
+                i = index($0, ":")
+                if (i > 0) {
+                  v = substr($0, i + 1)
+                  gsub(/[^A-Za-z0-9_.,-]/, "", v)
+                  h[tolower(substr($0, 1, i - 1))] = v
+                }
+              }
+              function val(k) { return (k in h && h[k] != "") ? h[k] : "-" }
+              END {
+                types = ""
+                rest = body
+                if (body ~ /"errors"/) {
+                  while (match(rest, /"type":"[A-Z_]+"/)) {
+                    types = (types == "" ? "" : types ",") substr(rest, RSTART + 8, RLENGTH - 9)
+                    rest = substr(rest, RSTART + RLENGTH)
+                  }
+                }
+                refused = (code != 0 || types ~ /RATE_LIMITED/) ? "yes" : "no"
+                out = label " exit=" code " status=" (status == "" ? "-" : status)
+                out = out " limit=" val("x-ratelimit-limit") " used=" val("x-ratelimit-used")
+                out = out " remaining=" val("x-ratelimit-remaining") " reset=" val("x-ratelimit-reset")
+                out = out " resource=" val("x-ratelimit-resource")
+                if ("retry-after" in h) out = out " retry_after=" val("retry-after")
+                if (label == "graphql") out = out " errors=" (types == "" ? "-" : types)
+                print out " refused=" refused
+              }'
+          }
+          gql=$(probe graphql gh api -i graphql -f query='query { rateLimit { limit cost used remaining resetAt } }') || true
+          rest=$(probe rest gh api -i "repos/$GITHUB_REPOSITORY") || true
+          echo "vinaya-limits: $gql | $rest"
+          exit 0
 
   # The one job branch protection should require. Depends on every job
   # above and reports under the historical "Vinaya CI" name (`run-name`
