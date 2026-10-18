@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { changedLineRanges, resolveChangedFiles } from '../src/lib/diff-evidence'
@@ -168,23 +168,6 @@ describe('resolveChangedFiles — pre-commit staged evidence', () => {
     }
   })
 
-  it('declares both hook variables on every shared-diff consumer', () => {
-    const names = [
-      'changeset-coverage',
-      'ci-shard-coverage',
-      'exec-bits',
-      'doctrine-portability',
-      'retired-vocabulary',
-      'reader-resolvable-prose',
-      'workspace-escape'
-    ]
-    for (const name of names) {
-      const spec = coreCheckRegistry().find((candidate) => candidate.name === name)
-      expect(spec?.env?.GIT_INDEX_FILE).toEqual({ optional: true })
-      expect(spec?.env?.VINAYA_COMMIT_HOOK).toEqual({ optional: true })
-    }
-  })
-
   it('returns null when a marked pre-commit staged diff cannot be read', () => {
     const root = newRoot('unreadable-index')
     initRepo(root)
@@ -298,5 +281,75 @@ describe('resolveChangedFiles — indeterminate cases fail closed, never silentl
     } finally {
       process.chdir(cwd)
     }
+  })
+})
+
+function stripComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+}
+
+describe('diff-reading checks declare the variables their diff reader uses', () => {
+  const srcDir = join(import.meta.dir, '..', 'src')
+  // `repoRoot` resolves the repository root and reads no diff; `lineIsInRanges`
+  // is a pure predicate over ranges it is handed.
+  const NOT_READERS = new Set(['repoRoot', 'lineIsInRanges'])
+
+  function readerSet(): Set<string> {
+    const helper = stripComments(readFileSync(join(srcDir, 'lib', 'diff-evidence.ts'), 'utf8'))
+    const names = new Set<string>()
+    for (const m of helper.matchAll(/^export\s+(?:async\s+)?(?:function|const)\s+([A-Za-z_$][\w$]*)/gm)) {
+      if (m[1] && !NOT_READERS.has(m[1])) names.add(m[1])
+    }
+    return names
+  }
+
+  it('derives the reader set from the helper and exports no shape the derivation misses', () => {
+    const helper = stripComments(readFileSync(join(srcDir, 'lib', 'diff-evidence.ts'), 'utf8'))
+    const readers = readerSet()
+    for (const name of [
+      'fileDiffAgainst',
+      'resolveChangedFiles',
+      'resolveDiff',
+      'changedLineRanges',
+      'findingsInThisDiff'
+    ]) {
+      expect(readers.has(name), name).toBe(true)
+    }
+    expect(helper).not.toMatch(/^export\s*\{/m)
+    expect(helper).not.toMatch(/^export\s+default\b/m)
+    expect(helper).not.toMatch(/^export\s+(?:let|class)\b/m)
+  })
+
+  it('every check bin that calls a shared diff reader declares BASE_SHA, GIT_INDEX_FILE and VINAYA_COMMIT_HOOK', () => {
+    const readers = readerSet()
+    const diffReading: string[] = []
+    for (const spec of coreCheckRegistry()) {
+      const binPath = join(srcDir, 'checks', 'bin', `check-${spec.name}.ts`)
+      if (!existsSync(binPath)) continue
+      const source = stripComments(readFileSync(binPath, 'utf8'))
+      const imported = new Set<string>()
+      for (const m of source.matchAll(
+        /import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*['"][^'"]*\/lib\/diff-evidence['"]/g
+      )) {
+        for (const part of (m[1] ?? '').split(',')) {
+          const name = part
+            .trim()
+            .split(/\s+as\s+/)[0]
+            ?.trim()
+          if (name) imported.add(name)
+        }
+      }
+      if (![...imported].some((name) => readers.has(name))) continue
+      diffReading.push(spec.name)
+      for (const key of ['BASE_SHA', 'GIT_INDEX_FILE', 'VINAYA_COMMIT_HOOK']) {
+        expect(spec.env?.[key], `${spec.name} must declare ${key}`).toEqual({ optional: true })
+      }
+    }
+    expect(diffReading.length).toBeGreaterThanOrEqual(8)
+  })
+
+  it('review-gate declares no diff base', () => {
+    const spec = coreCheckRegistry().find((candidate) => candidate.name === 'review-gate')
+    expect(spec?.env?.BASE_SHA).toBeUndefined()
   })
 })
