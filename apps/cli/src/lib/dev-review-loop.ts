@@ -260,7 +260,10 @@ import {
   parseShortstat,
   persistLoopState,
   pollUntil,
+  assessRateLimitedRed,
+  RateLimitWaitsSpent,
   rateLimitPauseDetail,
+  rateLimitResetFromDetail,
   rateLimitWaitMs,
   renderDeveloperRoundComment,
   routeCompletionEvents,
@@ -3164,6 +3167,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   let roleDispatchesInPass = 0
   let rateLimitWaits = 0
   let roundAtLastWait = -1
+  // The reset (epoch seconds) the last rate-limit wait slept to — what a
+  // rate-limit pause records, so the watching driver resumes after it.
+  let lastRateLimitResetEpoch: number | null = null
   // A connection failure to GitHub waits in place too (`absorbGitHubOutage`):
   // these count only the re-runs GitHub answered the first check for.
   let answeredConnectionRetries = 0
@@ -4506,6 +4512,26 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           ].join('\n\n')
           continue
         }
+        // A `tooling_unavailable` block that coincides with a spent GitHub
+        // rate limit is waited out and re-dispatched, never paused for a
+        // ruling. The cause is read from the forge — the head's failed jobs,
+        // then this host's own budget — never from the blocker's prose.
+        const rateLimitWait = await waitOutRateLimitForToolingReport(handle, roundNum, opts.answersFindings === true)
+        if (rateLimitWait !== null) {
+          currentPrompt = [
+            'Your previous turn reported `blocked` with reason `tooling_unavailable` while a GitHub rate limit was spent.',
+            rateLimitWait.kind === 'checks'
+              ? `CI's token on the pull request's head was out of budget. The driver waited for its reset, reran the failed jobs${
+                  rateLimitWait.runIds.length > 0
+                    ? ` of workflow run${rateLimitWait.runIds.length === 1 ? '' : 's'} ${rateLimitWait.runIds.join(', ')}`
+                    : ''
+                } and waited for the gate: it now reads ${rateLimitWait.ciConclusion}.`
+              : "The driver's own GitHub token was out of budget. The driver waited for its reset.",
+            'A GitHub rate limit is never yours to escalate. Continue the task without pausing.',
+            `End your turn — ${publishingInstructionLine()}`
+          ].join('\n\n')
+          continue
+        }
         // A `tooling_unavailable` block on a pull request whose head has a
         // failed mechanical check run gets that run's failed jobs rerun once
         // per round, the gate waited for, and the turn re-dispatched. Keyed on
@@ -4586,6 +4612,59 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     /**
+     * A `tooling_unavailable` report made while a GitHub rate limit is spent
+     * is waited out by the driver. When the open pull request's head has
+     * failed jobs that are all rate-limited (`assessRateLimitedRed`), the
+     * driver sleeps to the reset their own markers name — CI's token, never
+     * this host's — then reruns them and waits for the gate. Otherwise, when
+     * this host's own budget is spent (`readRateLimitReset`), it sleeps to
+     * that budget's reset. Each wait spends the loop's rate-limit wait
+     * budget. `null` — the report goes on as before — when the result is
+     * another kind or neither budget is spent.
+     */
+    async function waitOutRateLimitForToolingReport(
+      handle: DispatchHandle,
+      roundNum: number,
+      answersFindings: boolean
+    ): Promise<
+      { kind: 'checks'; runIds: number[]; ciConclusion: 'green' | 'red' | 'pending' } | { kind: 'host' } | null
+    > {
+      const verdict = judgeTurnOutput(handle.turnOutput, {
+        round: roundNum,
+        knownFindingIds: handoffFindingIdsByRound.get(roundNum) ?? [],
+        requireAddressedFindings: answersFindings && (handoffFindingIdsByRound.get(roundNum) ?? []).length > 0,
+        documentation: handle.documentation ?? { sources: [], countedReads: [] }
+      })
+      if (!verdict.ok || verdict.result.status !== 'blocked' || verdict.result.blocker.kind !== 'tooling_unavailable')
+        return null
+      let head: string | null = null
+      if (d.findOpenPrForBranch(branch) !== null) {
+        try {
+          head = d.resolveHead(branch)
+        } catch {
+          head = null
+        }
+      }
+      if (head !== null) {
+        const failureLogs = readFailedCheckLogs(
+          d.fetchFailingCheckRuns(head).filter((run) => run.detail === undefined),
+          d.readFailedCheckLogTail
+        )
+        const limited = assessRateLimitedRed(failureLogs)
+        if (limited !== null) {
+          await waitForRateLimitReset(limited.resetEpochSeconds, `the failed checks on head ${head}`)
+          const runIds = rerunFailedWorkflowsOn(head, roundNum, 'a tooling_unavailable report during a rate limit')
+          const gate = await waitForGreenGate(d.now(), head)
+          return { kind: 'checks', runIds, ciConclusion: gate.ciConclusion }
+        }
+      }
+      const hostReset = d.readRateLimitReset ? await d.readRateLimitReset() : null
+      if (hostReset === null) return null
+      await waitForRateLimitReset(hostReset, "this host's GitHub token")
+      return { kind: 'host' }
+    }
+
+    /**
      * A `tooling_unavailable` report is settled by the driver when the open
      * pull request's head has failed mechanical check runs: each one's
      * workflow run has its failed jobs rerun through the forge, then the gate
@@ -4624,6 +4703,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       roundNum: number,
       reason: string
     ): Promise<{ runIds: number[]; gate: Awaited<ReturnType<typeof waitForGreenGate>> } | null> {
+      const rerunIds = rerunFailedWorkflowsOn(head, roundNum, reason)
+      if (rerunIds.length === 0) return null
+      const gate = await waitForGreenGate(d.now())
+      return { runIds: rerunIds, gate }
+    }
+
+    /** Rerun the failed jobs of every failed workflow on one head; the run ids the forge accepted. */
+    function rerunFailedWorkflowsOn(head: string, roundNum: number, reason: string): number[] {
       const rerunIds: number[] = []
       for (const runId of d.fetchFailedCheckWorkflowRunIds(head)) {
         try {
@@ -4635,12 +4722,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           )
         }
       }
-      if (rerunIds.length === 0) return null
-      console.error(
-        `vinaya dev-review-loop: reran the failed jobs of workflow run ${rerunIds.join(', ')} for ${reason} in round ${roundNum}`
-      )
-      const gate = await waitForGreenGate(d.now())
-      return { runIds: rerunIds, gate }
+      if (rerunIds.length > 0)
+        console.error(
+          `vinaya dev-review-loop: reran the failed jobs of workflow run ${rerunIds.join(', ')} for ${reason} in round ${roundNum}`
+        )
+      return rerunIds
     }
 
     /**
@@ -7136,7 +7222,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                   : err instanceof DispatchUsageLimit
                     ? usageLimitPauseDetail(err.limit, d.now())
                     : isGitHubRateLimitError(err)
-                      ? `${rateLimitPauseDetail(round === roundAtLastWait ? rateLimitWaits : 0)} (round ${round}: ${err instanceof Error ? err.message : String(err)})`
+                      ? `${rateLimitPauseDetail(
+                          round === roundAtLastWait ? rateLimitWaits : 0,
+                          err instanceof RateLimitWaitsSpent
+                            ? err.resetEpochSeconds
+                            : round === roundAtLastWait
+                              ? lastRateLimitResetEpoch
+                              : null
+                        )} (round ${round}: ${err instanceof Error ? err.message : String(err)})`
                       : `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
       }
       // A host-repair pause ends this driver and frees the lock, so the
@@ -7248,8 +7341,53 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       if (rateLimitWaits >= MAX_CONSECUTIVE_RATE_LIMIT_WAITS) throw err
       roundAtLastWait = round
       const reset = d.readRateLimitReset ? await d.readRateLimitReset() : null
+      lastRateLimitResetEpoch = reset
       await d.sleep(rateLimitWaitMs(reset, d.now()))
       rateLimitWaits += 1
+    }
+
+    /**
+     * One wait for a rate limit that reached the loop through a red check or
+     * a blocked Developer turn, to the reset the caller read — a CI job's own
+     * marker, or this host's own budget — never polled. It spends the same
+     * budget `absorbRateLimit` does; past it, it throws `RateLimitWaitsSpent`,
+     * which ends the round in the no-ruling rate-limit pause.
+     */
+    async function waitForRateLimitReset(resetEpochSeconds: number | null, what: string): Promise<void> {
+      if (round !== roundAtLastWait) rateLimitWaits = 0
+      if (rateLimitWaits >= MAX_CONSECUTIVE_RATE_LIMIT_WAITS) throw new RateLimitWaitsSpent(resetEpochSeconds, what)
+      roundAtLastWait = round
+      lastRateLimitResetEpoch = resetEpochSeconds
+      const waitMs = rateLimitWaitMs(resetEpochSeconds, d.now())
+      appendDriverLine(
+        loopLogPath,
+        `GitHub rate limit in round ${round}: ${what} — waiting ${Math.round(waitMs / 1000)}s for the reset`,
+        'round'
+      )
+      await d.sleep(waitMs)
+      rateLimitWaits += 1
+    }
+
+    /**
+     * A red gate whose every failed job is rate-limited (`assessRateLimitedRed`)
+     * is waited out, never sent to the Developer: sleep to the reset the
+     * jobs' own markers name, rerun the failed jobs, and read the gate again
+     * — as often as the rate-limit wait budget allows. Returns the first gate
+     * that is not a rate-limited red; it is observed like any other.
+     */
+    async function absorbRateLimitedRed(
+      gate: Awaited<ReturnType<typeof waitForGreenGate>>
+    ): Promise<Awaited<ReturnType<typeof waitForGreenGate>>> {
+      let current = gate
+      while (current.ciConclusion === 'red') {
+        const limited = assessRateLimitedRed(current.failureLogs)
+        if (limited === null) break
+        const head = d.resolveHead(branch)
+        await waitForRateLimitReset(limited.resetEpochSeconds, `the failed checks on head ${head}`)
+        rerunFailedWorkflowsOn(head, round, 'a rate-limited red gate')
+        current = await waitForGreenGate(roundStartMs, head)
+      }
+      return current
     }
 
     /**
@@ -7674,7 +7812,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
           pendingConflictFiles = null
 
-          const gate = gateAfterUnchangedHeadRerun ?? (await waitForGreenGate(roundStartMs))
+          // A red that is a GitHub rate limit and nothing else is waited out
+          // and rerun here, before any observation: it is never the
+          // Developer's, never a stall and never a mechanical retry.
+          const gate = await absorbRateLimitedRed(gateAfterUnchangedHeadRerun ?? (await waitForGreenGate(roundStartMs)))
           // The dispatch gate's own premise re-assertion,
           // re-run against the PR's live body at this exact head — a stale
           // `Premise:` pin (a symbol the head deleted since the brief was
@@ -9091,8 +9232,13 @@ async function watchPauseThenResume(
   // is not a bounded retry and the pause stays for the Principal.
   let isUsageLimitPause = false
   let usageLimitResetMs: number | null = null
+  // The reset a rate-limit pause recorded — a CI job's own budget, when the
+  // limit reached the loop through a red check — slept to instead of this
+  // host's own reset, which belongs to a different token.
+  let recordedRateLimitReset: number | null = null
   const classifyRateLimitPause = (pause: { round?: number; detail?: string } | null | undefined): void => {
     isRateLimitPause = isRateLimitPauseDetail(pause?.detail)
+    recordedRateLimitReset = rateLimitResetFromDetail(pause?.detail)
     isUsageLimitPause = isUsageLimitPauseDetail(pause?.detail)
     if (!isRateLimitPause && !isUsageLimitPause) return
     const round = pause?.round ?? -1
@@ -9183,9 +9329,10 @@ async function watchPauseThenResume(
         rateLimitBudget.count += 1
         await w.sleep(usageLimitWaitMs(usageLimitResetMs, w.now()) ?? 0)
       } else if (isRateLimitPause) {
-        // The reset is read once and slept to — never polled.
+        // The recorded reset, or else this host's, read once and slept to —
+        // never polled.
         rateLimitBudget.count += 1
-        const reset = await w.readRateLimitReset()
+        const reset = recordedRateLimitReset ?? (await w.readRateLimitReset())
         await w.sleep(rateLimitWaitMs(reset, w.now()))
       } else {
         await w.sleep(w.infrastructureBackoffMs)
@@ -9316,7 +9463,7 @@ async function watchPrePrPauseThenResume(
     }
     if (rateLimitBudget.count >= MAX_AUTOMATIC_RATE_LIMIT_RESUMES) return { kind: 'unwatched' }
     rateLimitBudget.count += 1
-    const reset = await w.readRateLimitReset()
+    const reset = rateLimitResetFromDetail(held.detail) ?? (await w.readRateLimitReset())
     await w.sleep(rateLimitWaitMs(reset, w.now()))
   } else if (isUsageLimitPauseDetail(held.detail)) {
     // The agent's own reset, recorded in the pause; past six hours (or none

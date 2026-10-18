@@ -242,6 +242,32 @@ function bunInstallCacheStep(): string {
 }
 
 /**
+ * The last step of every generated job: when the job failed, it prints that
+ * job's own token budgets — REST (`core`) and GraphQL — on one marker line,
+ * read through \`gh api rate_limit\`, which spends neither. The review loop
+ * reads this line off a failed job's log tail to tell a red that is GitHub's
+ * rate limit from a real failure, and to learn when that budget resets: the
+ * loop host's own token is a different token with a different reset, and it
+ * cannot read this one's. The line never carries GitHub's rate-limit wording
+ * itself, and \`|| true\` keeps a failed read from failing the job twice.
+ */
+export function budgetMarkerStep(): string {
+  return `      # When this job failed, print its own token budgets on one line for
+      # the review loop (\`apps/cli/specs/loop.md\`). Reading them spends none.
+      - name: Report this job's GitHub token budget
+        if: failure()
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api rate_limit --jq '${BUDGET_MARKER_JQ}' || true
+`
+}
+
+/** The \`jq\` program behind \`budgetMarkerStep\`: one \`vinaya-budget:\` line naming the spent budget (\`core\` first) and both budgets' remaining count and reset epoch. */
+const BUDGET_MARKER_JQ =
+  '.resources as $r | "vinaya-budget: exhausted=\\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\\($r.core.remaining) core_reset=\\($r.core.reset) graphql_remaining=\\($r.graphql.remaining) graphql_reset=\\($r.graphql.reset)"'
+
+/**
  * The steps that make the vinaya binary available, emitted directly after
  * `setup-node` at 6-space step indentation. Empty for the ordinary adopter —
  * `npx` needs no preparation.
@@ -608,7 +634,7 @@ ${verifiedFetchPrBodyStep()}      - name: Run checks
             cat vinaya-check-output.txt 2>/dev/null || echo 'no check output captured (runner did not start)'
             echo '~~~'
           } >> "$GITHUB_STEP_SUMMARY"
-`
+${budgetMarkerStep()}`
 }
 
 /**
@@ -784,7 +810,7 @@ ${vinayaSetupSteps(selfHost, 'trusted')}      - name: Review gate
           # the gate is green regardless of review state.
           PR_NUMBER: \${{ github.event.pull_request.number }}
         run: ${vinayaRun(selfHost, 'check review-gate')}
-`
+${budgetMarkerStep()}`
 }
 
 function bodyChecksWorkflow(selfHost: VendoredVinaya | null): string {
@@ -862,7 +888,7 @@ ${verifiedFetchPrBodyStep()}      - name: Body checks
           # bare-digit scan.
           PR_NUMBER: \${{ github.event.pull_request.number }}
         run: ${vinayaRun(selfHost, 'check body-bare-digits')}
-
+${budgetMarkerStep()}
   vinaya-principal-test-plan-wait:
     name: vinaya check principal-test-plan-wait
     runs-on: ubuntu-latest
@@ -892,7 +918,7 @@ ${verifiedFetchPrBodyStep()}      - name: Principal Test Plan wait
           # task's frozen brief must have passed for the merge to go through.
           PULL_REQUEST_HEAD_SHA: \${{ github.event.pull_request.head.sha }}
         run: ${vinayaRun(selfHost, 'check principal-test-plan-wait')}
-`
+${budgetMarkerStep()}`
 }
 
 function reviewVerdictWorkflow(selfHost: VendoredVinaya | null): string {
@@ -960,7 +986,7 @@ ${vinayaSetupSteps(selfHost, 'trusted')}      - name: Review gate (verdict evalu
           # the adapter evaluate instead of no-op'ing as "local dev".
           PR_NUMBER: \${{ steps.pr.outputs.number }}
         run: ${vinayaRun(selfHost, 'check review-gate')}
-
+${budgetMarkerStep()}
   # Executes nothing; consumes only the evaluator's outputs.
   #
   # Fires on EITHER verdict. The required check stores a conclusion, and that
@@ -1035,7 +1061,7 @@ ${vinayaSetupSteps(selfHost, 'trusted')}      - name: Review gate (verdict evalu
           # working, not a failure worth reddening the step over; a real
           # 403 or an expired run still surfaces in the log.
           gh run rerun "$RUN_ID" --repo "\${{ github.repository }}" || echo "rerun declined (already queued, or run too old) - the other verdict's retrigger covers it"
-`
+${budgetMarkerStep()}`
 }
 
 // The ring-2 post-merge/scheduled mechanisms — same three-job shape as this
@@ -1105,7 +1131,7 @@ ${vinayaSetupSteps(selfHost)}      - name: Run vinaya archive
           SLUG="$(printf '%s' "$BRANCH" | sed -n 's#^task/\\([^/]*\\)/.*#\\1#p')"
           if [ -z "$SLUG" ]; then exit 0; fi
           ${vinayaRun(selfHost, 'archive tranche')} "$SLUG" --yes
-
+${budgetMarkerStep()}
   issue-closed:
     name: Tranche Self-Archive (task Issue closed)
     # A task Issue closed by hand — dropped, replaced, or moved — merges no
@@ -1149,7 +1175,7 @@ ${vinayaSetupSteps(selfHost)}      - name: Self-archive the tranche this Issue b
             case "$SLUG" in ''|-*|*[!A-Za-z0-9._-]*) continue ;; esac
             ${vinayaRun(selfHost, 'archive tranche')} "$SLUG" --yes
           done
-
+${budgetMarkerStep()}
   daily-drift:
     name: Daily Drift Check (dead-branch pushes)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -1184,7 +1210,7 @@ ${vinayaSetupSteps(selfHost)}      - name: Run vinaya audit --only=dead-branches
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
         run: ${vinayaRun(selfHost, 'archive tranches')} --yes
-
+${budgetMarkerStep()}
   direct-main-push-detection:
     name: Direct-Main-Push Detection
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
@@ -1208,7 +1234,7 @@ ${vinayaSetupSteps(selfHost)}      - name: Run vinaya audit --only=direct-push
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
         run: ${vinayaRun(selfHost, 'audit --only=direct-push')} --sha=\${{ github.sha }}
-`
+${budgetMarkerStep()}`
 }
 
 // ---------------------------------------------------------------------------

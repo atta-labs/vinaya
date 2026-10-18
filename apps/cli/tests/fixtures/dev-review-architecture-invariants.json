@@ -150,6 +150,11 @@
         "path": "apps/cli/tests/lib/dev-review-loop/live-gate-fail-closed.test.ts",
         "kind": "test",
         "reason": "Proves the live check fails closed: a frozen-brief read that fails once both reviewers approved leaves the task unconcluded as an infrastructure pause with nothing run and no `AEG:LIVE` record, the retry runs the line on the approved head before the task concludes, and a plan with no `[live]` line concludes as before; loop.md's \"The live check\" section describes it."
+      },
+      {
+        "path": "apps/cli/tests/lib/dev-review-loop/rate-limit-red-gate.test.ts",
+        "kind": "test",
+        "reason": "Proves a GitHub rate limit that reaches the loop through a red check or a tooling_unavailable turn is waited out to the reset the CI job's own budget marker names (or the host's own budget for a turn with no rate-limited job), rerun and continued without a Developer re-dispatch or a Principal pause, that a real failure still goes to the Developer, and that a third consecutive rate-limited red pauses with the no-ruling detail the watching driver resumes after; loop.md's \"A rate limit that reaches the loop through a red check or a blocked Developer waits too\" paragraph describes it."
       }
     ]
   },
@@ -2957,7 +2962,8 @@
       ],
       "tests": [
         "apps/cli/tests/lib/dev-review-loop.test.ts",
-        "apps/cli/tests/lib/dev-review-loop/round-assess.test.ts"
+        "apps/cli/tests/lib/dev-review-loop/round-assess.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/rate-limit-red-gate.test.ts"
       ],
       "loopSpec": [],
       "reason": "Shipped fix. Evidence: a spent hourly forge budget produced a human pause although the limit resets by itself. Revision 17 section 16.11 makes a provider rate limit automatic recovery, never a ruling. Reclassified from `defect` to `named-defect`: a demonstrated weakness cited in the defect register, the same meaning under the one vocabulary."

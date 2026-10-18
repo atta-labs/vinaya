@@ -130,6 +130,14 @@ jobs:
           # bare-digit scan.
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: node apps/cli/dist/index.js check body-bare-digits
+      # When this job failed, print its own token budgets on one line for
+      # the review loop (`apps/cli/specs/loop.md`). Reading them spends none.
+      - name: Report this job's GitHub token budget
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
 
   vinaya-principal-test-plan-wait:
     name: vinaya check principal-test-plan-wait
@@ -218,3 +226,11 @@ jobs:
           # task's frozen brief must have passed for the merge to go through.
           PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node apps/cli/dist/index.js check principal-test-plan-wait
+      # When this job failed, print its own token budgets on one line for
+      # the review loop (`apps/cli/specs/loop.md`). Reading them spends none.
+      - name: Report this job's GitHub token budget
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true

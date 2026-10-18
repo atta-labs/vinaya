@@ -88,6 +88,14 @@ jobs:
           SLUG="$(printf '%s' "$BRANCH" | sed -n 's#^task/\([^/]*\)/.*#\1#p')"
           if [ -z "$SLUG" ]; then exit 0; fi
           node apps/cli/dist/index.js archive tranche "$SLUG" --yes
+      # When this job failed, print its own token budgets on one line for
+      # the review loop (`apps/cli/specs/loop.md`). Reading them spends none.
+      - name: Report this job's GitHub token budget
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
 
   issue-closed:
     name: Tranche Self-Archive (task Issue closed)
@@ -163,6 +171,14 @@ jobs:
             case "$SLUG" in ''|-*|*[!A-Za-z0-9._-]*) continue ;; esac
             node apps/cli/dist/index.js archive tranche "$SLUG" --yes
           done
+      # When this job failed, print its own token budgets on one line for
+      # the review loop (`apps/cli/specs/loop.md`). Reading them spends none.
+      - name: Report this job's GitHub token budget
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
 
   daily-drift:
     name: Daily Drift Check (dead-branch pushes)
@@ -229,6 +245,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node apps/cli/dist/index.js archive tranches --yes
+      # When this job failed, print its own token budgets on one line for
+      # the review loop (`apps/cli/specs/loop.md`). Reading them spends none.
+      - name: Report this job's GitHub token budget
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
 
   direct-main-push-detection:
     name: Direct-Main-Push Detection
@@ -284,3 +308,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node apps/cli/dist/index.js audit --only=direct-push --sha=${{ github.sha }}
+      # When this job failed, print its own token budgets on one line for
+      # the review loop (`apps/cli/specs/loop.md`). Reading them spends none.
+      - name: Report this job's GitHub token budget
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true

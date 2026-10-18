@@ -318,6 +318,7 @@ const GITHUB_RATE_LIMIT_WORDING = /api rate limit (?:already )?exceeded|secondar
  */
 export function isGitHubRateLimitError(err: unknown): boolean {
   if (!(err instanceof Error)) return false
+  if (err instanceof RateLimitWaitsSpent) return true
   const stderr = (err as { stderr?: unknown }).stderr
   return GITHUB_RATE_LIMIT_WORDING.test(`${err.message}\n${stderr === undefined ? '' : String(stderr)}`)
 }
@@ -339,17 +340,133 @@ const RATE_LIMIT_RESET_SLACK_MS = 5_000
  * what actually happened: how many waits really ran before the pause. It names
  * the cause and what clears it.
  */
-export function rateLimitPauseDetail(waitsRun: number): string {
+export function rateLimitPauseDetail(waitsRun: number, resetEpochSeconds: number | null = null): string {
   const what =
     waitsRun === 0
       ? 'GitHub refused a request at a step the loop cannot safely repeat, so it did not wait'
       : `the loop waited for the limit to reset ${waitsRun === 1 ? 'once' : `${waitsRun} times`} and was still refused`
-  return `GitHub rate limit: ${what}. No ruling is needed — a plain resume continues once the limit has reset`
+  const reset = resetEpochSeconds === null ? '' : `; the reset it last read is epoch ${resetEpochSeconds}`
+  return `GitHub rate limit: ${what}${reset}. No ruling is needed — a plain resume continues once the limit has reset`
 }
 
 /** Does this pause detail say the pause is a GitHub rate limit, so its comment must not ask for a ruling? */
 export function isRateLimitPauseDetail(detail: string | undefined): boolean {
   return detail?.startsWith('GitHub rate limit:') === true
+}
+
+/** The reset (epoch seconds) a rate-limit pause detail recorded, or `null` when it recorded none — what the watching driver sleeps to before it resumes. */
+export function rateLimitResetFromDetail(detail: string | undefined): number | null {
+  if (!isRateLimitPauseDetail(detail)) return null
+  const m = /^GitHub rate limit: [^.]*?; the reset it last read is epoch (\d+)\./.exec(detail ?? '')
+  return m ? Number(m[1]) : null
+}
+
+/**
+ * The line every CI job's failure-only budget step prints: the job token's
+ * own REST (`core`) and GraphQL budgets, read through `gh api rate_limit`
+ * (which spends neither), and which one is spent. Its wording never matches
+ * `GITHUB_RATE_LIMIT_WORDING`, so the marker alone never makes a failure
+ * read as a rate limit — only its `exhausted=` value does. Matched anywhere
+ * in a line: a job log prefixes each line with a timestamp, and the step's
+ * own echoed script never carries digits where this pattern needs them.
+ */
+const BUDGET_MARKER =
+  /vinaya-budget: exhausted=(core|graphql|none) core_remaining=(\d+) core_reset=(\d+) graphql_remaining=(\d+) graphql_reset=(\d+)/g
+
+/** One job's own token budgets, as its failure-only budget step printed them. */
+export type BudgetMarker = {
+  exhausted: 'core' | 'graphql' | 'none'
+  core: { remaining: number; reset: number }
+  graphql: { remaining: number; reset: number }
+}
+
+/** The last budget marker line in a job's log tail, or `null` when the tail carries none (the step did not run, or its line scrolled out). */
+export function parseBudgetMarker(logTail: string | null): BudgetMarker | null {
+  if (logTail === null) return null
+  let last: RegExpExecArray | null = null
+  for (const m of logTail.matchAll(BUDGET_MARKER)) last = m
+  if (last === null) return null
+  return {
+    exhausted: last[1] as BudgetMarker['exhausted'],
+    core: { remaining: Number(last[2]), reset: Number(last[3]) },
+    graphql: { remaining: Number(last[4]), reset: Number(last[5]) }
+  }
+}
+
+/**
+ * The line an aggregate job prints when a job it `needs` did not succeed — its
+ * only failure is that upstream result. Matched with the result word itself,
+ * so the job log's echo of the step's own script (`$result`) never counts.
+ */
+const UPSTREAM_NEEDS_MARKER = /vinaya-needs: a required job ended [a-z_]+/
+
+/** The GraphQL API's own rate-limit wording, as `gh` prints it — names which budget a refusal spent. */
+const GRAPHQL_RATE_LIMIT_LINE = 'GraphQL: API rate limit'
+
+/** Did this failed job fail on a GitHub rate limit: its log tail carries the rate-limit wording, or its budget marker names a spent budget? */
+export function isRateLimitedJobLog(logTail: string | null): boolean {
+  if (logTail === null) return false
+  if (GITHUB_RATE_LIMIT_WORDING.test(logTail)) return true
+  return (parseBudgetMarker(logTail)?.exhausted ?? 'none') !== 'none'
+}
+
+/**
+ * The reset (epoch seconds) a rate-limited job's own marker names: the
+ * GraphQL budget's when the tail carries GraphQL's rate-limit line, otherwise
+ * the budget the marker says is spent. `null` when the tail has no marker or
+ * names no spent budget — the caller then waits the fixed fallback, never the
+ * loop host's own reset (a different token, with a different reset).
+ */
+export function jobRateLimitReset(logTail: string | null): number | null {
+  const marker = parseBudgetMarker(logTail)
+  if (marker === null) return null
+  if (logTail?.includes(GRAPHQL_RATE_LIMIT_LINE)) return marker.graphql.reset
+  if (marker.exhausted === 'none') return null
+  return marker[marker.exhausted].reset
+}
+
+/**
+ * A red gate that is a rate limit and nothing else: every failed job in it is
+ * rate-limited (`isRateLimitedJobLog`), or is an aggregate job whose only
+ * failure is an upstream `needs` result, and at least one is rate-limited. A
+ * failed workflow-run entry is no job and has no log, so the jobs it holds
+ * cover it. Returns the reset to wait for — the latest any rate-limited job's
+ * marker names, `null` when none names one — or `null` itself when the red
+ * holds any other failure, which then goes to the Developer as it stands.
+ */
+export function assessRateLimitedRed(
+  failureLogs: readonly { logTail: string | null }[]
+): { resetEpochSeconds: number | null } | null {
+  let limited = 0
+  let reset: number | null = null
+  for (const log of failureLogs) {
+    if (isRateLimitedJobLog(log.logTail)) {
+      limited += 1
+      const jobReset = jobRateLimitReset(log.logTail)
+      if (jobReset !== null && (reset === null || jobReset > reset)) reset = jobReset
+      continue
+    }
+    if (log.logTail !== null && UPSTREAM_NEEDS_MARKER.test(log.logTail)) continue
+    return null
+  }
+  return limited > 0 ? { resetEpochSeconds: reset } : null
+}
+
+/**
+ * A GitHub rate limit that reached the loop through a red check or a blocked
+ * Developer turn and was still spent past the loop's rate-limit wait budget.
+ * Read as a GitHub rate limit (`isGitHubRateLimitError`), so it ends the
+ * round in the same no-ruling rate-limit pause a refused `gh` read does,
+ * carrying the reset it last read.
+ */
+export class RateLimitWaitsSpent extends Error {
+  constructor(
+    readonly resetEpochSeconds: number | null,
+    what: string
+  ) {
+    super(`${what} was still refused by its GitHub budget after every wait`)
+    this.name = 'RateLimitWaitsSpent'
+  }
 }
 
 /**
