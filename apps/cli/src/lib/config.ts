@@ -1781,27 +1781,33 @@ export class PrincipalsUnresolvedError extends Error {
  * `fetcher` is injectable for tests ONLY; production callers pass nothing.
  */
 export function resolveTrustedPrincipals(fetcher: TrustAnchorFetcher = ghFetchTrustAnchorConfig): string[] {
+  // Which default branch was read, named in a refusal so the fix lands in the
+  // right repository — known only for the real forge read.
+  const where = (): string => {
+    const repo = fetcher === ghFetchTrustAnchorConfig && !resolveCiTrustAnchorProbeRef() ? trustAnchorRepo() : null
+    return repo ? `the default branch of ${repo}` : 'the default branch'
+  }
   let content: string
   try {
     content = fetcher()
   } catch (err) {
     if (isMissingFileError(err)) {
-      throw principalsNotConfigured('the default branch has no vinaya.config.json')
+      throw principalsNotConfigured(`${where()} has no vinaya.config.json`)
     }
     if (/could not resolve repo identity/.test((err as Error)?.message ?? '')) {
       throw principalsNotConfigured('no repository resolves for the default-branch read')
     }
     throw new PrincipalsUnresolvedError(
       'read-failed',
-      `could not read \`principals\` from vinaya.config.json on the default branch: ${failedReadReason(err)}`
+      `could not read \`principals\` from vinaya.config.json on ${where()}: ${failedReadReason(err)}`
     )
   }
-  let why = 'vinaya.config.json on the default branch does not satisfy the config schema'
+  let why = `vinaya.config.json on ${where()} does not satisfy the config schema`
   const config = parseTrustAnchorContent(content, (reason) => {
-    why = `vinaya.config.json on the default branch: ${reason}`
+    why = `vinaya.config.json on ${where()}: ${reason}`
   })
-  if (!config) throw principalsNotConfigured(content.trim() ? why : 'vinaya.config.json on the default branch is empty')
-  if (!config.principals) throw principalsNotConfigured('vinaya.config.json on the default branch sets no `principals`')
+  if (!config) throw principalsNotConfigured(content.trim() ? why : `vinaya.config.json on ${where()} is empty`)
+  if (!config.principals) throw principalsNotConfigured(`vinaya.config.json on ${where()} sets no \`principals\``)
   return config.principals
 }
 
