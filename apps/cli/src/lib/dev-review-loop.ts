@@ -825,6 +825,8 @@ export type LoopDeps = {
   gitWorktreeDiffText: (worktreePath: string, base: string) => string | null
   /** Builds this repository's vendored CLI before the driver's commit when its ignored bin is absent; ordinary adopters are a no-op. */
   buildVendoredCliIfMissing: (worktreePath: string) => void
+  /** Installs the worktree's own dependencies before the Developer's first turn; a worktree with no `bun.lock` is a no-op, and a failure throws. */
+  installWorktreeDependencies: (worktreePath: string) => void
   /**
    * O2: stages every change in the worktree and makes ONE commit under
    * `header`, returning the new HEAD sha. The commit runs the repository's
@@ -1568,6 +1570,43 @@ function defaultBuildVendoredCliIfMissing(worktreePath: string): void {
     throw new Error(
       `vendored CLI build failed before publication commit: ${firstErrorLine(output, result.error?.message ?? `exit ${result.status ?? 'unknown'}`)}`
     )
+  }
+}
+
+/**
+ * Installs the worktree's own dependencies, outside any sandbox. Lifecycle
+ * scripts stay off because a resumed worktree holds Developer-authored
+ * manifests and this runs with the driver's credentials in reach; the frozen
+ * lockfile keeps the install from rewriting what the branch carries.
+ */
+/**
+ * The install's environment: only `WORKER_ENV_ALLOWLIST_KEYS`, never the
+ * driver's whole environment. A resumed worktree holds Developer-authored
+ * `bunfig.toml`/`.npmrc`, which expand `$VAR` in registry tokens, so no
+ * driver-held secret may be present for them to expand.
+ */
+export function worktreeInstallEnv(sourceEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const key of WORKER_ENV_ALLOWLIST_KEYS) {
+    const value = sourceEnv[key]
+    if (value !== undefined) env[key] = value
+  }
+  return env
+}
+
+export function defaultInstallWorktreeDependencies(worktreePath: string): void {
+  if (!existsSync(join(worktreePath, 'bun.lock'))) return
+  const result = spawnSync('bun', ['install', '--frozen-lockfile', '--ignore-scripts'], {
+    cwd: worktreePath,
+    env: worktreeInstallEnv(),
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 10 * 60 * 1000
+  })
+  if (result.error || result.status !== 0) {
+    const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.trim().split('\n').slice(-20).join('\n')
+    const cause = result.error?.message ?? `exit ${result.status ?? 'unknown'}`
+    throw new Error(`dependency install failed in worktree ${worktreePath} (${cause}):\n${output}`)
   }
 }
 
@@ -2462,6 +2501,7 @@ function defaultDeps(): LoopDeps {
     readMergedDefaultCommit: defaultReadMergedDefaultCommit,
     gitWorktreeDiffText: defaultGitWorktreeDiffText,
     buildVendoredCliIfMissing: defaultBuildVendoredCliIfMissing,
+    installWorktreeDependencies: defaultInstallWorktreeDependencies,
     commitWorktree: defaultCommitWorktree,
     validatePrBodyForCreate,
     pushTaskBranch: defaultPushTaskBranch,
@@ -4085,6 +4125,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
     }
 
+    let worktreeDependenciesInstalled = false
     async function dispatchDeveloperOnce(
       promptText: string,
       roundNum: number,
@@ -4122,6 +4163,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             )
           }
         }
+      }
+      // The worktree's own dependencies are installed once per driver process,
+      // before the Developer's model is recorded or any prompt is built, so the
+      // first command resolves inside the worktree. A failure throws and pauses
+      // as an infrastructure pause; it is never logged and continued.
+      if (!worktreeDependenciesInstalled && existsSync(worktreePathForBranch())) {
+        d.installWorktreeDependencies(worktreePathForBranch())
+        worktreeDependenciesInstalled = true
       }
       // This is the same handoff the controller uses in settleTurnResult.
       // Passing it into the launcher makes the vendor schema turn-specific.

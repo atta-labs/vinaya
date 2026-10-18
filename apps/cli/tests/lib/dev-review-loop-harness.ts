@@ -271,10 +271,14 @@ export type LoopWorld = {
   remoteBranchCreations: string[]
   /** Each worktree the loop created from the pushed branch (`createTaskWorktreeFromRemote`), with the remote head it was created at. */
   worktreesFromRemote: Array<{ branch: string; head: string }>
+  /** Each `installWorktreeDependencies` call, with how many Developer turns had started before it. */
+  dependencyInstalls: Array<{ worktreePath: string; promptsSoFar: number }>
   /** When set, `createTaskWorktreeFromRemote` throws this message instead of creating the worktree. */
   worktreeFromRemoteFailure?: string
   /** When true, `createTaskWorktreeFromRemote` also creates `<repoRoot>/.worktrees/<branch>`; default `false`, so a fixture that never models a second machine keeps its worktree-less behaviour. */
   worktreeFromRemoteCreatesDir?: boolean
+  /** When set, `installWorktreeDependencies` throws this text (the installer's output). */
+  dependencyInstallFailure?: string
   postedComments: PostedComment[]
   dispatches: DispatchRecord[]
   /** How many times each role was dispatched, cumulative across rounds. */
@@ -407,6 +411,7 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     runChecksPassed: true,
     remoteBranchCreations: [],
     worktreesFromRemote: [],
+    dependencyInstalls: [],
     evidenceOutcome: { ok: true, gatesFailed: false },
     blockEvidenceUntilReviewerStarts: false,
     reviewerDispatchStarted: false,
@@ -812,6 +817,14 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     // has here.
     gitWorktreeDiffText: (_worktreePath, _base) => world.worktreeDiffText,
     buildVendoredCliIfMissing: () => {},
+    installWorktreeDependencies: (worktreePath: string) => {
+      world.dependencyInstalls.push({ worktreePath, promptsSoFar: world.dispatchCountByRole.developer ?? 0 })
+      if (world.dependencyInstallFailure !== undefined) {
+        throw new Error(
+          `dependency install failed in worktree ${worktreePath} (exit 1):\n${world.dependencyInstallFailure}`
+        )
+      }
+    },
     commitWorktree: (_worktreePath, header) => {
       const commitSha = world.nextCommitSha
       world.commits.push({ header, sha: commitSha })
