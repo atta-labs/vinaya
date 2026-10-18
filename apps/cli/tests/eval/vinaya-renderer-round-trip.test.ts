@@ -2,7 +2,6 @@
 // solution, rendered and extracted, passes every generic grader for its kind;
 // each known-bad variant that applies fails the grader it targets; and the
 // graders' logic digests do not depend on the renderer.
-import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { GENERIC_GRADERS } from '../../src/lib/dev-review-eval/generic-graders'
@@ -24,6 +23,7 @@ import {
   referenceRecord,
   renderOrThrow
 } from './vinaya-trial-records'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture'
 
 const fixture = loadFixture()
 
@@ -155,7 +155,7 @@ describe('the generic graders and the renderer', () => {
     // A fresh process that loads the graders and never the renderer.
     const graders = join(import.meta.dir, '../../src/lib/dev-review-eval/generic-graders.ts')
     const script = `const { GENERIC_GRADERS } = await import(${JSON.stringify(graders)}); console.log(JSON.stringify(GENERIC_GRADERS.map((g) => [g.identity.id, g.identity.logicDigest])))`
-    const run = spawnSync(process.execPath, ['--eval', script], { encoding: 'utf8' })
+    const run = spawnSyncBudgeted(process.execPath, ['--eval', script], { encoding: 'utf8', env: stripVinayaEnv() })
     expect(run.status).toBe(0)
     const alone = JSON.parse(run.stdout.trim()) as [string, string][]
     expect(GENERIC_GRADERS.map((g) => [g.identity.id, g.identity.logicDigest])).toEqual(alone)
