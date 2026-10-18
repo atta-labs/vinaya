@@ -556,7 +556,7 @@
       "source": {
         "document": "apps/cli/specs/dev-review-capabilities-contracts.md",
         "revision": 17,
-        "section": "4.2 Planned tool (reviewers)"
+        "section": "4.2 Built tool (reviewers)"
       },
       "contract": "`read_source({ sourceId, offset })` returns the controller-pinned content, final URL and digest of one entry of the required-source manifest the round's Developer was given, in pages of at most the catalog's size limit with the next offset, so the code and security reviewers judge exactly the source revision the Developer was given; reviewers get no URL-based fetch, and a manifest other than the bound one, an unknown source or content that does not hash to the pinned digest is refused.",
       "owner": "vinaya-policy",

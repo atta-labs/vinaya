@@ -136,13 +136,13 @@ The second shard, `contract-kinds.json`, covers the kinds stated in the contract
 | Kind | Universe | Source |
 | -- | -- | -- |
 | `role` | the grant table's roles | `apps/cli/specs/dev-review-capabilities-contracts.md` §3 |
-| `tool` | `DEV_TOOL_NAMES`, matched against the §4.1 table; the planned `read_source` of §4.2; `TASK_TOOL_NAMES`, the Operator's five tools and its pull-request read | `apps/cli/src/lib/task-tools/dev-tools-server.ts`, `packages/aeg-core/src/task-tools.ts`, the contracts specification |
+| `tool` | `DEV_TOOL_NAMES`, matched against the §4.1 table; the built `read_source` of §4.2; `TASK_TOOL_NAMES`, the Operator's five tools and its pull-request read | `apps/cli/src/lib/task-tools/dev-tools-server.ts`, `packages/aeg-core/src/task-tools.ts`, the contracts specification |
 | `effect` | each §4.1 tool marked as a write, and the controller's own publications named in the evaluation program's §6.12 and §6.13 | the contracts specification and the evaluation program |
 | `adapter` | `adapters` | `apps/cli/tests/fixtures/dev-review-engine-capability-matrix.json` |
 | `isolation-boundary` | the six rows of the boundary table | `apps/cli/specs/isolation.md` §1 |
 | `gate` | the workflow-gate list | the contracts specification §7 |
 
-Each row cites the section that states its component: an evaluation-program section at the mirror's revision, and any other specification at the Engine revision the register is pinned to. The `read_source` row says it is planned, not live. `apps/cli/tests/eval/registry-contract-kinds.test.ts` fails on any missing, extra or invalid row, and checks that the shard aggregates with the others without a duplicate id.
+Each row cites the section that states its component: an evaluation-program section at the mirror's revision, and any other specification at the Engine revision the register is pinned to. The `read_source` row cites the built reviewer tool of §4.2. `apps/cli/tests/eval/registry-contract-kinds.test.ts` fails on any missing, extra or invalid row, and checks that the shard aggregates with the others without a duplicate id.
 
 `apps/cli/tests/eval/registry.test.ts` checks the catalog against the mirror — one entry per `### 6.n` heading, the ten fields of its table in order, one suite per listed layer, the mirror's revision — and every refusal above; the typed-sources test prints the per-kind counts and fails on any missing, extra or invalid row.
 

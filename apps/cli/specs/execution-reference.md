@@ -54,7 +54,7 @@ vendor.
 ## C — Adapter boundary
 
 Two runtime adapters, one shared server: `packages/aeg-core/src/task-tools.ts`'s
-five registered tools are served by exactly one process
+six registered tools are served by exactly one process
 (`apps/cli/src/lib/task-tools/server.ts`, MCP protocol `2025-06-18`,
 newline-delimited JSON-RPC over stdio) — `apps/cli/src/lib/task-tools/adapters.ts`'s
 `claudeMcpJsonConfig`/`codexMcpServersToml` differ only in how each runtime
@@ -62,7 +62,7 @@ is TOLD to launch that one server (Claude's project-root `.mcp.json`;
 Codex's user-home `~/.codex/config.toml`), never in the server, the
 protocol, or the tool catalog itself (`protocol.test.ts`'s own "identical
 command" assertion). This is the adapter boundary in full: everything below
-it (the server, the router, the five tools) is runtime-agnostic; everything
+it (the server, the router, the six tools) is runtime-agnostic; everything
 above it (how a runtime discovers and launches that server) is the only
 runtime-specific surface. `conformance.md`'s Table C is the proof this
 boundary holds identically on both runtimes; Section D there records what a
@@ -78,7 +78,7 @@ and its agents — tools, grants, staged inputs and agent results — lives in
 
 Unattended Codex developer dispatches use `workspace-write` with a task-scoped `CODEX_HOME`. Vinaya brokers the existing ChatGPT access token into the Codex parent and removes credential-shaped variables from its tool subprocess environment. The generated Documentation-gate lifecycle hooks are installed into that scoped home as a local Codex plugin — live-verified on this authoring host that a bare `hooks.json` file dropped at `CODEX_HOME` root is never discovered by the real Codex CLI at all; the real, documented, non-interactive path is `codex plugin marketplace add <local-dir>` followed by `codex plugin add <plugin>@<marketplace>`, confirmed live end to end (`codex plugin list --json` reporting the installed plugin as `installed: true, enabled: true`, with its `hooks.json` genuinely present at the path Codex's own plugin cache resolves to). `--dangerously-bypass-hook-trust` (already passed at every Codex launch) is the separate gate that then lets an enabled plugin's hooks fire without an interactive trust prompt. The operator's real Codex home is never exposed to repository commands.
 
-The five registered tools and their handlers:
+The six registered tools and their handlers:
 
 | Tool | Handler | What it does |
 | ---- | ------- | ------------- |
@@ -87,6 +87,7 @@ The five registered tools and their handlers:
 | `task_escalation_read` | `apps/cli/src/lib/task-tools/read.ts` | Reads the full escalation packet for a paused task — reason, round inputs, attempted recovery, permitted next actions — for a pause raised before any pull request whose Developer asked for `widen_surface`, the Planner's `vinaya task run … --widen-surface <glob,...> --reason <text>` with the globs the Developer named; never resumes or cancels. |
 | `task_resume` | `apps/cli/src/lib/task-tools/resume.ts` | Continues a paused run once a Principal ruling, read fresh from the forge, authenticates it. Refuses a pre-pull-request `widen_surface` escalation, naming the Planner's `task run … --widen-surface` command: widening a Surface supersedes the brief, which the Operator never does. |
 | `task_cancel` | `apps/cli/src/lib/task-tools/cancel.ts` | Stops a paused run, fencing in-flight effects it can no longer safely complete; repeated calls replay the same outcome idempotently. |
+| `task_pr_read` | `apps/cli/src/lib/task-tools/pr-read.ts` | Reads the selected task's pull request, its check rollup and its Principal-authored comments, resolved from the task's own branch; a read only, never a write. |
 
 ## D — Event ownership
 

@@ -1,5 +1,5 @@
 // The universes of the contract-kinds shard, derived from the repository
-// sources that state them — never listed here. Roles, the reviewers' planned
+// sources that state them — never listed here. Roles, the reviewers' built
 // tool, the write tools and the workflow gates are parsed from the
 // capabilities-and-contracts specification; the Developer's and the
 // Operator's tools come from their typed name lists; the adapters from the
@@ -139,7 +139,7 @@ export function deriveContractUniverses(sources: ContractSources): Record<Contra
   const grants = sectionBody(sources.contracts, '3. ')
   const liveTools = sectionBody(sources.contracts, '4.1 ')
   const toolContracts = sectionBody(sources.contracts, '4.0 ')
-  const plannedTool = sectionBody(sources.contracts, '4.2 ')
+  const reviewerTool = sectionBody(sources.contracts, '4.2 ')
   const gates = sectionBody(sources.contracts, '7. ')
   const boundaries = sectionBody(sources.isolation, '1. The six boundaries')
   const operator = sectionBody(sources.program, '6.23 ')
@@ -168,13 +168,13 @@ export function deriveContractUniverses(sources: ContractSources): Record<Contra
     throw new Error(`§3 grants the Developer "${developerGrant}", but DEV_TOOL_NAMES has ${sources.devTools.length}`)
   }
 
-  // The reviewers' planned tool: the call §4.2 names, granted in §3 as planned.
-  const planned = /`(\w+)\(/.exec(plannedTool.body)?.[1]
-  if (planned === undefined) throw new Error('§4.2 names no planned tool')
+  // The reviewers' tool: the call §4.2 names, granted in §3.
+  const reviewerToolName = /`(\w+)\(/.exec(reviewerTool.body)?.[1]
+  if (reviewerToolName === undefined) throw new Error('§4.2 names no reviewer tool')
   for (const reviewer of ['code-reviewer', 'security-reviewer']) {
     const grant = grantRows.find((row) => slug(row[0] as string) === reviewer)?.[1] ?? ''
-    if (!grant.includes(`\`${planned}\``) || !grant.includes('planned')) {
-      throw new Error(`§3 does not grant ${reviewer} the planned ${planned}`)
+    if (!grant.includes(`\`${reviewerToolName}\``)) {
+      throw new Error(`§3 does not grant ${reviewer} the ${reviewerToolName}`)
     }
   }
 
@@ -202,7 +202,7 @@ export function deriveContractUniverses(sources: ContractSources): Record<Contra
       source: at(CONTRACTS_DOC, toolContracts)
     })),
     ...sources.devTools.map((name) => ({ name, source: at(CONTRACTS_DOC, liveTools) })),
-    { name: planned, source: at(CONTRACTS_DOC, plannedTool) },
+    { name: reviewerToolName, source: at(CONTRACTS_DOC, reviewerTool) },
     ...sources.taskTools.map((name) => ({ name, source: at(PROGRAM_DOC, operator) }))
   ]
 
