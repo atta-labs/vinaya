@@ -843,7 +843,7 @@ export const COMMANDS: readonly Command[] = [
       }
     ],
     details: [
-      "Refuses unless HEAD is the default branch, the working tree is clean, HEAD equals `origin/<default>` (after `git fetch origin`), HEAD's commit subject starts with `Chore(release): Version packages` (unless `--allow-any-commit`), and `npm whoami` exits `0` — each its own refusal naming the fix.",
+      "Refuses unless HEAD is the default branch, the working tree is clean, HEAD equals `origin/<default>` (after `git fetch origin`), HEAD's commit subject starts with `Chore(release): Version packages` (unless `--allow-any-commit`), and `npm whoami` exits `0`. Before any plan step, including under `--dry-run`, every package in `.changeset/config.json` fixed groups must have an unpublished working-tree version. Exact-version registry queries refuse with every already-published package and version; workspace read failures and registry errors other than E404 also refuse with their reason. E404 for a missing package or version counts as unpublished.",
       "Then streams `bun install --frozen-lockfile`, `bun run build`, `bun run changeset:publish`, and `git push origin --tags` — a real push, so the repo's own generated pre-push hook sees it exactly as any other push would. After it, prints `npm view <pkg> version` for every tag now on HEAD, noting registry lag on `@attalabs/vinaya` (observed ~20 minutes) when it still shows the previous version.",
       'This is the one procedure named in `apps/cli/specs/self-hosting.md`, "How the published version is produced" — publishing itself stays manual and human-triggered; this command only removes the hand-typed four-step recipe.'
     ],
