@@ -528,14 +528,15 @@ export const COMMANDS: readonly Command[] = [
   {
     name: 'milestone close',
     needs: ['forge'],
-    description: "Close a tranche's Milestone after verifying every labeled Issue is actually attached",
+    description:
+      "Close a tranche's Milestone after verifying every labeled Issue is attached and every tranche it declares is complete",
     flags: [
       { flag: '--slug', description: 'The tranche whose Milestone is being closed' },
       { flag: '--validate-only', description: 'Run every gate and report PASS without closing the Milestone' },
       { flag: '--json', description: 'Enveloped JSON output (schema: 1)' }
     ],
     details: [
-      "Resolves the target Milestone the same legacy-or-intent-declared way Issue create auto-attach does, then refuses to close on any mismatch between the label's Issues and the Milestone's natively attached Issues — naming each unattached or foreign Issue and its repair path (`gh issue edit <n> --milestone <title>`, or `vinaya milestone adopt`) — before the PATCH ever reaches the forge."
+      "Resolves the target Milestone the same legacy-or-intent-declared way Issue create auto-attach does, then refuses to close on any mismatch between the label's Issues and the Milestone's natively attached Issues — naming each unattached or foreign Issue and its repair path (`gh issue edit <n> --milestone <title>`, or `vinaya milestone adopt`) — before the PATCH ever reaches the forge. It also holds the Milestone open while a tranche its `### Tranche intents` section declares is not complete — naming each unfinished tranche and its lifecycle — or while that section carries no readable tranche line; a Milestone with no such section closes on attachment alone. `--validate-only` refuses with the same reasons."
     ],
     status: 'shipped'
   },

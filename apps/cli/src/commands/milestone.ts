@@ -20,8 +20,10 @@ import {
 } from '@attalabs/aeg-core'
 import {
   checkMilestoneAttachment,
+  deriveTrancheFromForge,
   fetchTrancheIssuesAsync,
   findMilestoneForSlug,
+  hasTrancheIntentsSection,
   intentLines,
   resolveMilestoneAttachTarget,
   trancheFromIssues,
@@ -29,6 +31,7 @@ import {
 } from '@attalabs/aeg-forge-state'
 import { detectGitRepo } from '../lib/detect.js'
 import { printJson } from '../lib/envelope.js'
+import { declaredTranches, milestoneCloseDecision, type TrancheLifecycle } from '../lib/milestone-close-hold.js'
 import {
   type BodyResult,
   ForgeArgError,
@@ -693,6 +696,47 @@ export async function milestoneCloseCommand(args: string[]): Promise<void> {
     refuse(errors)
   }
 
+  // ---- the declared-tranche hold — the same decision `vinaya archive
+  // tranche` makes, decided before the dry-run branch so a dry run refuses
+  // with the same reasons. Open attached work needs no second hold here: an
+  // open Issue either carries this tranche's label (the attachment rule
+  // saw it), a declared tranche's label (the hold below sees it), or
+  // neither (the foreign-Issue refusal above stopped it). ----
+  const closingLifecycle: TrancheLifecycle =
+    labeledIssues.length === 0 ? 'planned' : labeledIssues.some((i) => i.state === 'OPEN') ? 'active' : 'complete'
+  const description = milestones.find((m) => m.number === target.number)?.description ?? ''
+  const [owner = '', repoName = ''] = repoFlag.split('/')
+  let declared: Awaited<ReturnType<typeof declaredTranches>>
+  try {
+    declared = await declaredTranches(description, async (declaredSlug) =>
+      declaredSlug === slug ? closingLifecycle : (await deriveTrancheFromForge(owner, repoName, declaredSlug)).lifecycle
+    )
+  } catch (e) {
+    refuse([
+      makeCheckError(
+        'forge-fetch',
+        `could not read a declared tranche's lifecycle from the forge: ${ghErrorDetail(e)}`,
+        `Check \`gh auth status\` and network, then re-run \`${RETRY_CLOSE}\`.`
+      )
+    ])
+  }
+  const verdict = milestoneCloseDecision({
+    otherWorkOpen: false,
+    declaresIntents: hasTrancheIntentsSection(description),
+    declared
+  })
+  if (!verdict.close) {
+    refuse(
+      verdict.reasons.map((reason) =>
+        makeCheckError(
+          'milestone-close',
+          `Milestone "${target.title}" must stay open: ${reason}.`,
+          `Finish the declared work, then re-run \`${RETRY_CLOSE}\`.`
+        )
+      )
+    )
+  }
+
   if (validateOnly) {
     if (json) printJson({ validated: true, written: false, command: 'milestone close', number: target.number })
     else {
@@ -880,6 +924,6 @@ export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
   'milestone create': { date: '2026-09-05', callsToday: 8, retiresVia: 'forgeWrite' },
   'milestone adopt': { date: '2026-09-05', callsToday: 4, retiresVia: 'forgeWrite' },
   'milestone edit': { date: '2026-09-05', callsToday: 7, retiresVia: 'forgeWrite' },
-  'milestone close': { date: '2026-09-05', callsToday: 4, retiresVia: 'forgeWrite' },
+  'milestone close': { date: '2026-09-05', callsToday: 6, retiresVia: 'forgeWrite' },
   'milestone status': { date: '2026-09-10', callsToday: 4, retiresVia: 'forgeWrite' }
 }

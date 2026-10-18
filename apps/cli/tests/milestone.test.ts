@@ -623,6 +623,67 @@ describe('vinaya milestone close', () => {
     expect(ghLog()).toContain('-X PATCH repos/test-owner/test-repo/milestones/64')
   })
 
+  const heldDescription = (...lines: string[]): string => ['Ship the Engine.', '', ...lines].join('\n')
+  const closedEngine = {
+    labeledIssuesBySlug: { 'engine-v1': [{ number: 981, state: 'CLOSED' as const, milestone: { title: 'Engine' } }] },
+    attachedIssuesByTitle: { Engine: [{ number: 981, state: 'CLOSED' as const, milestone: { title: 'Engine' } }] }
+  }
+
+  it('refuses — naming the unfinished tranche and its lifecycle — while a declared tranche has no Issues yet', () => {
+    const description = heldDescription('### Tranche intents', '- engine-v1: Real agent spawn.', '- engine-v2: Later.')
+    installFakeCloseGh({ milestones: [{ number: 64, title: 'Engine', description, state: 'open' }], ...closedEngine })
+
+    const r = runCli(['milestone', 'close', '--slug', 'engine-v1'], cwd)
+
+    expect(r.status).toBe(1)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.check).toBe('milestone-close')
+    expect(finding.message).toContain('engine-v2 (planned)')
+    expect(finding.message).not.toContain('engine-v1')
+    expect(ghLog()).not.toContain('PATCH')
+  })
+
+  it('--validate-only refuses with the same declared-tranche hold and writes nothing', () => {
+    const description = heldDescription('### Tranche intents', '- engine-v1: Real agent spawn.', '- engine-v2: Later.')
+    installFakeCloseGh({ milestones: [{ number: 64, title: 'Engine', description, state: 'open' }], ...closedEngine })
+
+    const r = runCli(['milestone', 'close', '--slug', 'engine-v1', '--validate-only'], cwd)
+
+    expect(r.status).toBe(1)
+    expect(r.stdout).not.toContain('verified')
+    expect(r.stderr).toContain('engine-v2 (planned)')
+    expect(ghLog()).not.toContain('PATCH')
+  })
+
+  it('refuses while the Milestone carries a `### Tranche intents` section with no readable tranche line', () => {
+    const description = heldDescription('### Tranche intents', 'nothing parseable here')
+    installFakeCloseGh({
+      milestones: [{ number: 64, title: 'engine-v1', description, state: 'open' }],
+      labeledIssuesBySlug: { 'engine-v1': [{ number: 981, state: 'CLOSED', milestone: { title: 'engine-v1' } }] },
+      attachedIssuesByTitle: { 'engine-v1': [{ number: 981, state: 'CLOSED', milestone: { title: 'engine-v1' } }] }
+    })
+
+    const r = runCli(['milestone', 'close', '--slug', 'engine-v1'], cwd)
+
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('no readable tranche line')
+    expect(ghLog()).not.toContain('PATCH')
+  })
+
+  it('closes on attachment alone when the Milestone has no `### Tranche intents` section', () => {
+    const description = heldDescription('Just prose, nothing declared.')
+    installFakeCloseGh({
+      milestones: [{ number: 64, title: 'engine-v1', description, state: 'open' }],
+      labeledIssuesBySlug: { 'engine-v1': [{ number: 981, state: 'CLOSED', milestone: { title: 'engine-v1' } }] },
+      attachedIssuesByTitle: { 'engine-v1': [{ number: 981, state: 'CLOSED', milestone: { title: 'engine-v1' } }] }
+    })
+
+    const r = runCli(['milestone', 'close', '--slug', 'engine-v1'], cwd)
+
+    expect(r.status).toBe(0)
+    expect(ghLog()).toContain('-X PATCH repos/test-owner/test-repo/milestones/64')
+  })
+
   it('refuses — names the Issue and the repair path — when a labeled Issue is never attached (the live #301 defect)', () => {
     installFakeCloseGh({
       milestones: [{ number: 5, title: 'tranche-a', state: 'open' }],

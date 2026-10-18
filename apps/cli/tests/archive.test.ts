@@ -5,6 +5,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ArchiveDeps } from '../src/commands/archive.js'
+import { milestoneCloseDecision } from '../src/lib/milestone-close-hold.js'
 import {
   appendRetrospectiveSection,
   fetchMilestoneIssueStates,
@@ -16,7 +17,6 @@ import {
   resolveTaskMilestone,
   roundsForTaskPr,
   runArchive,
-  milestoneCloseDecision,
   runArchiveTranche,
   runArchiveTranches,
   trancheArchivalStatus
