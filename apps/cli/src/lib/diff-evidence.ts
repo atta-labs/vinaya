@@ -201,6 +201,37 @@ export function resolveDiff(base = process.env.BASE_SHA || 'origin/main'): {
 }
 
 /**
+ * Repo-relative files added by the committed branch diff. Unlike the changed
+ * file reader, this never supplements its answer with staged evidence.
+ * Try the requested base (BASE_SHA by default), origin/main, then main,
+ * skipping candidates at HEAD. An unresolved diff is null, never clean;
+ * callers must judge every tracked file when no candidate can answer.
+ */
+export function resolveAddedFiles(base = process.env.BASE_SHA || 'origin/main'): string[] | null {
+  if (repoRoot() === null) return null
+  const head = revParse('HEAD')
+  for (const ref of new Set([base, 'origin/main', 'main'])) {
+    const resolved = revParse(ref)
+    if (resolved === null || resolved === head) continue
+    try {
+      const out = execFileSync('git', ['diff', '--name-only', '--diff-filter=A', `${ref}...HEAD`], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+      }).trim()
+      return out === ''
+        ? []
+        : out
+            .split('\n')
+            .map((p) => p.trim())
+            .filter(Boolean)
+    } catch {
+      // A resolved ref without a merge base is indeterminate; try the next candidate.
+    }
+  }
+  return null
+}
+
+/**
  * The line ranges `path` actually changed in, against `ref` — `null` when
  * that file has no diff at all, or when git could not answer. A report-only
  * sweep uses this to print only the findings THIS diff caused: a `null`

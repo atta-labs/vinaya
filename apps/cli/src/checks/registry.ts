@@ -703,9 +703,9 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // (`overrideActive()`'s first, env-only check) which is opt-in by
       // design — absence is the default, unremarkable path.
       // GITHUB_REPOSITORY/GITHUB_TOKEN/GH_TOKEN: same trust-anchor read as
-      // `doc-coverage` above — see that entry's comment. The per-file diff
-      // reader adds staged evidence under the same two hook variables
-      // `doc-coverage` declares, so they are declared here too.
+      // `doc-coverage` above — see that entry's comment. Changed paths and
+      // per-file evidence supplement the committed diff only when both
+      // pre-commit hook variables are set; push and CI stay committed-only.
       env: {
         OVERRIDE_DOCS: { optional: true },
         BASE_SHA: { optional: true },
@@ -900,13 +900,10 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   ],
   [
     {
-      // Refuses a commit that stages a new CLI test file not
-      // listed in any `apps/cli/tests/ci-shards/shard-{1,2,3}.txt` —
-      // `tests/ci-shards.test.ts` already enforces the same rule, but only at
-      // push time, over the whole affected suite. No `include` glob: the
-      // bin reads `git diff --cached` itself to see the file being staged
-      // for THIS commit, which a committed-history diff (what an `include`
-      // glob would be tested against) cannot see before the commit exists.
+      // Refuses new CLI tests absent from every shard list. No include glob:
+      // pre-commit reads additions and shard lists from the index under both
+      // hook markers; push and CI judge committed branch additions against
+      // HEAD's shard lists, or all tracked CLI tests if no diff resolves.
       name: 'ci-shard-coverage',
       run: bin('check-ci-shard-coverage'),
       scope: 'diff',

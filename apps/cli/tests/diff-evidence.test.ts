@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { changedLineRanges, resolveChangedFiles } from '../src/lib/diff-evidence'
+import { changedLineRanges, resolveAddedFiles, resolveChangedFiles } from '../src/lib/diff-evidence'
 import { coreCheckRegistry } from '../src/checks/registry'
 
 // Code review, PR #290:
@@ -284,6 +284,86 @@ describe('resolveChangedFiles — indeterminate cases fail closed, never silentl
   })
 })
 
+describe('resolveAddedFiles — committed additions and conservative fallback', () => {
+  function fixture(): string {
+    const root = newRoot('added')
+    initRepo(root)
+    writeFileSync(join(root, 'existing.md'), 'base\n')
+    writeFileSync(join(root, 'deleted.md'), 'base\n')
+    git(root, ['add', '.'])
+    git(root, ['commit', '-q', '-m', 'base'])
+    git(root, ['checkout', '-q', '-b', 'feature'])
+    return root
+  }
+
+  function fromRoot<T>(root: string, read: () => T): T {
+    const cwd = process.cwd()
+    try {
+      process.chdir(root)
+      return read()
+    } finally {
+      process.chdir(cwd)
+    }
+  }
+
+  it('returns only committed additions, independent of index evidence or caller subdirectory', () => {
+    const root = fixture()
+    writeFileSync(join(root, 'existing.md'), 'edited\n')
+    writeFileSync(join(root, 'added.md'), 'added\n')
+    git(root, ['rm', 'deleted.md'])
+    git(root, ['add', '.'])
+    git(root, ['commit', '-q', '-m', 'changes'])
+    writeFileSync(join(root, 'staged.md'), 'staged\n')
+    git(root, ['add', 'staged.md'])
+    const subdir = join(root, 'subdir')
+    mkdirSync(subdir)
+    const oldMarker = process.env.VINAYA_COMMIT_HOOK
+    const oldIndex = process.env.GIT_INDEX_FILE
+    try {
+      process.env.VINAYA_COMMIT_HOOK = '1'
+      process.env.GIT_INDEX_FILE = join(root, '.git', 'index')
+      expect(fromRoot(subdir, () => resolveAddedFiles('main'))).toEqual(['added.md'])
+    } finally {
+      if (oldMarker === undefined) delete process.env.VINAYA_COMMIT_HOOK
+      else process.env.VINAYA_COMMIT_HOOK = oldMarker
+      if (oldIndex === undefined) delete process.env.GIT_INDEX_FILE
+      else process.env.GIT_INDEX_FILE = oldIndex
+    }
+  })
+
+  it('tries explicit base, origin/main, and main in order, skipping same-HEAD candidates', () => {
+    const root = fixture()
+    writeFileSync(join(root, 'first.md'), 'first\n')
+    git(root, ['add', '.'])
+    git(root, ['commit', '-q', '-m', 'first'])
+    git(root, ['branch', 'explicit'])
+    git(root, ['update-ref', 'refs/remotes/origin/main', 'HEAD'])
+    writeFileSync(join(root, 'second.md'), 'second\n')
+    git(root, ['add', '.'])
+    git(root, ['commit', '-q', '-m', 'second'])
+    fromRoot(root, () => {
+      expect(resolveAddedFiles('explicit')).toEqual(['second.md'])
+      expect(resolveAddedFiles('missing')).toEqual(['second.md'])
+      git(root, ['update-ref', 'refs/remotes/origin/main', 'HEAD'])
+      expect(resolveAddedFiles('HEAD')).toEqual(['first.md', 'second.md'])
+    })
+  })
+
+  it('distinguishes a resolved empty diff from indeterminate or unrelated history', () => {
+    const root = fixture()
+    expect(fromRoot(root, () => resolveAddedFiles('missing'))).toBeNull()
+    git(root, ['commit', '-q', '--allow-empty', '-m', 'empty'])
+    expect(fromRoot(root, () => resolveAddedFiles('main'))).toEqual([])
+    git(root, ['checkout', '-q', '--orphan', 'unrelated'])
+    git(root, ['commit', '-q', '-m', 'unrelated'])
+    expect(fromRoot(root, () => resolveAddedFiles('main'))).toBeNull()
+    // A failed first candidate must not prevent a later usable main diff.
+    git(root, ['checkout', '-q', 'feature'])
+    expect(fromRoot(root, () => resolveAddedFiles('unrelated'))).toEqual([])
+    expect(fromRoot(newRoot('no-git'), () => resolveAddedFiles())).toBeNull()
+  })
+})
+
 function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 }
@@ -309,6 +389,7 @@ describe('diff-reading checks declare the variables their diff reader uses', () 
     for (const name of [
       'fileDiffAgainst',
       'resolveChangedFiles',
+      'resolveAddedFiles',
       'resolveDiff',
       'changedLineRanges',
       'findingsInThisDiff'
