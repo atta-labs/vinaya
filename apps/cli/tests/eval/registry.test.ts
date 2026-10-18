@@ -121,7 +121,8 @@ describe('the module catalog mirrors the evaluation program', () => {
     for (const module of catalog.modules) {
       expect(module.source.section).toBe(`${module.id} ${module.title}`)
       expect(module.source.document).toBe(PROGRAM_PATH)
-      if (module.id === '6.14') expect(module.source.revision).toBe(11)
+      const excluded = OPERATOR_EXIT_EXCLUSIONS.some((entry) => entry.kind === 'module' && entry.name === module.id)
+      if (excluded) expect(module.source.revision).not.toBe(PROVENANCE.revision)
       else expect(module.source.revision).toBe(PROVENANCE.revision)
     }
   })

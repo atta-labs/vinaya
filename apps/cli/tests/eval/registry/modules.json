@@ -1252,7 +1252,7 @@
       "title": "Operator role and capabilities (Engine §16.11; contracts §3)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 15,
+        "revision": 11,
         "section": "6.23 Operator role and capabilities (Engine §16.11; contracts §3)"
       },
       "excluded": null,
