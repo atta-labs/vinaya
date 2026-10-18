@@ -221,6 +221,7 @@ Every brief includes stop conditions. Honor them unconditionally. Common reasons
 - A test still fails after genuine diagnosis — but a failing test is yours to fix, in the code or the test. CI on the pull request's head is the authority for a test that fails only inside your sandbox, so a sandbox-only failure is not a block; return `blocked` with reason `test_failure` only when the same test also fails on `origin/main` in a clean checkout
 - Any destructive action (force push, file deletion, database mutation) not explicitly authorized by the brief
 - You discover a decision that should be Type 1 (irreversible) but the brief doesn't mention it
+- GitHub refuses a call, a check or a publication on its rate limit — a GitHub rate limit is never yours to escalate. Return `blocked` with reason `tooling_unavailable`, naming the rate limit, and never `needs_ruling`: the loop waits for the reset and dispatches you again. This holds whichever coding agent runs you
 - A link or file the task references cannot be opened — stop at once and return a `blocked` turn result with kind `preflight_failed`, naming the reference. For a URL under the review loop, "cannot be opened" means the driver's `fetch_documentation` tool failed to read it; a `curl` or other network call your sandbox blocks never counts, so read the URL with `fetch_documentation` before deciding. Working without the driver's tools, it means your own fetch failed. Never develop around it: the task named it because the work needs what it holds.
 
 ---

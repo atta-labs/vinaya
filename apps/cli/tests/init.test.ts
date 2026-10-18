@@ -1119,8 +1119,10 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       // O2), review 2 (require a verdict before building, O3; review gate),
       // verdict 3 (resolve-head, evaluate, retrigger), archivist 6 (archive,
       // the O4 self-archive step, the issue-closed self-archive step,
-      // dead-branch audit, the daily tranche catch-up, direct-push audit).
-      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(vendored ? 14 : 13)
+      // dead-branch audit, the daily tranche catch-up, direct-push audit),
+      // plus each job's failure-only budget step: checks 1, review 1,
+      // verdict 2, archivist 4.
+      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(vendored ? 22 : 21)
     }
   })
 

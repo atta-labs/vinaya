@@ -107,7 +107,24 @@ const workflowWithoutProducers = [
   'workflow:vinaya-review-verdict.yml:evaluate:Build the trusted Vinaya CLI',
   'workflow:vinaya-review-verdict.yml:retrigger:Re-run the required review gate for this branch',
   'workflow:vinaya-review.yml:vinaya-review:Require a verdict or waiver before building',
-  'workflow:vinaya-review.yml:vinaya-review:Build the trusted Vinaya CLI'
+  'workflow:vinaya-review.yml:vinaya-review:Build the trusted Vinaya CLI',
+  "workflow:ci.yml:build:Report this job's GitHub token budget",
+  "workflow:ci.yml:test-shared-packages:Report this job's GitHub token budget",
+  "workflow:ci.yml:test-cli:Report this job's GitHub token budget",
+  "workflow:ci.yml:test-cli-config-anchor:Report this job's GitHub token budget",
+  "workflow:ci.yml:sandbox-conformance:Report this job's GitHub token budget",
+  "workflow:ci.yml:sandbox-conformance-macos:Report this job's GitHub token budget",
+  "workflow:ci.yml:aggregate:Report this job's GitHub token budget",
+  "workflow:vinaya-archivist.yml:post-merge:Report this job's GitHub token budget",
+  "workflow:vinaya-archivist.yml:issue-closed:Report this job's GitHub token budget",
+  "workflow:vinaya-archivist.yml:daily-drift:Report this job's GitHub token budget",
+  "workflow:vinaya-archivist.yml:direct-main-push-detection:Report this job's GitHub token budget",
+  "workflow:vinaya-body-checks.yml:vinaya-body-checks:Report this job's GitHub token budget",
+  "workflow:vinaya-body-checks.yml:vinaya-principal-test-plan-wait:Report this job's GitHub token budget",
+  "workflow:vinaya-checks.yml:vinaya-checks:Report this job's GitHub token budget",
+  "workflow:vinaya-review-verdict.yml:evaluate:Report this job's GitHub token budget",
+  "workflow:vinaya-review-verdict.yml:retrigger:Report this job's GitHub token budget",
+  "workflow:vinaya-review.yml:vinaya-review:Report this job's GitHub token budget"
 ] as const
 
 const checkNames = [
@@ -300,7 +317,7 @@ describe('log entry-path producer inventory', () => {
 
   it("keeps today's no-producer list explicit and shrinking", () => {
     const noProducer = inventory.filter((row) => row.noProducer)
-    expect(noProducer).toHaveLength(45)
+    expect(noProducer).toHaveLength(62)
     expect(noProducer.every((row) => row.noProducer!.trim().length > 0)).toBe(true)
   })
 })

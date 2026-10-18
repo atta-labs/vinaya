@@ -214,6 +214,16 @@ jobs:
         if: steps.docs-only.outputs.docs_only == 'true'
         run: echo "Docs-only diff (**/*.md, .changeset/**, aeg-root/**) — lint/typecheck/test skipped." >> "$GITHUB_STEP_SUMMARY"
 
+      # When this job failed, print its own token budgets on one line for
+      # the review loop (`apps/cli/specs/loop.md`). Reading them spends none.
+      # The same step ends every job in this file.
+      - name: Report this job's GitHub token budget
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
+
   # Every workspace package except `@attalabs/vinaya` (apps/cli) — that one
   # is by far the largest and is sharded below (O3). `--concurrency=1`
   # carries forward from this job's own pre-shard history (`#438`): running
@@ -250,6 +260,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bunx turbo test --filter='!@attalabs/vinaya' --concurrency=1
+      - name: Report this job's GitHub token budget
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
 
   # apps/cli's own suite, split across three jobs by an
   # explicit, pre-measured-balanced file list — see this file's header
@@ -293,6 +309,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         working-directory: apps/cli
         run: bun test --timeout=30000 $(tr '\n' ' ' < tests/ci-shards/shard-${{ matrix.shard }}.txt)
+      - name: Report this job's GitHub token budget
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
 
   # O1/O2/O3 (Issue #783): the pre-merge trust-anchor probe. Runs ONLY when
   # this PR's diff touches the root `vinaya.config.json` (`config_changed`
@@ -353,6 +375,14 @@ jobs:
       - name: Test shard ${{ matrix.shard }} with the PR's config as the trust anchor
         working-directory: apps/cli
         run: bun test --timeout=30000 $(tr '\n' ' ' < tests/ci-shards/shard-${{ matrix.shard }}.txt)
+      # The same budget step as every other job, deliberately WITHOUT a token:
+      # this job holds no forge credential (O2 above), so it spends no GitHub
+      # budget and its failure is never a rate limit. With no token `gh`
+      # refuses, prints nothing, and `|| true` keeps the job's own result.
+      - name: Report this job's GitHub token budget
+        if: failure()
+        run: |
+          gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
 
   # The sandbox conformance suite (`apps/cli/tests/sandbox-conformance/`,
   # `apps/cli/specs/isolation.md`): every command the Developer doctrine and
@@ -411,6 +441,12 @@ jobs:
           VINAYA_SANDBOX_CONFORMANCE: '1'
         working-directory: apps/cli
         run: bun test --timeout=900000 tests/sandbox-conformance/sandbox-conformance.test.ts
+      - name: Report this job's GitHub token budget
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
 
   # The same suite on a macOS runner: confinement is platform-specific
   # security behavior, and the Linux job cannot exercise the macOS sandbox
@@ -450,6 +486,12 @@ jobs:
           VINAYA_SANDBOX_CONFORMANCE: '1'
         working-directory: apps/cli
         run: bun test --timeout=900000 tests/sandbox-conformance/sandbox-conformance.test.ts
+      - name: Report this job's GitHub token budget
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true
 
   # The one job branch protection should require. Depends on every job
   # above and reports under the historical "Vinaya CI" name (`run-name`
@@ -474,6 +516,15 @@ jobs:
           for result in "${{ needs.build.result }}" "${{ needs.test-shared-packages.result }}" "${{ needs.test-cli.result }}" "${{ needs.test-cli-config-anchor.result }}" "${{ needs.sandbox-conformance.result }}"; do
             if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
               echo "A required job did not succeed: $result" >&2
+              # The review loop reads this line: this job's only failure is
+              # an upstream job's result, whose own log names the cause.
+              echo "vinaya-needs: a required job ended $result"
               exit 1
             fi
           done
+      - name: Report this job's GitHub token budget
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api rate_limit --jq '.resources as $r | "vinaya-budget: exhausted=\(if $r.core.remaining == 0 then "core" elif $r.graphql.remaining == 0 then "graphql" else "none" end) core_remaining=\($r.core.remaining) core_reset=\($r.core.reset) graphql_remaining=\($r.graphql.remaining) graphql_reset=\($r.graphql.reset)"' || true

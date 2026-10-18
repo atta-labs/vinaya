@@ -9,8 +9,15 @@
  */
 
 import { describe, expect, it } from 'bun:test'
+import { budgetMarkerStep } from '../../../src/lib/artifacts'
 import {
   assertDispatchOrEscalate,
+  assessRateLimitedRed,
+  isRateLimitedJobLog,
+  jobRateLimitReset,
+  parseBudgetMarker,
+  RateLimitWaitsSpent,
+  rateLimitResetFromDetail,
   DeveloperDispatchHistory,
   DevReviewLoopResumeError,
   DispatchSandboxRefused,
@@ -162,6 +169,121 @@ describe('GitHub rate-limit classification', () => {
     expect(isRateLimitPauseDetail(rateLimitPauseDetail(2))).toBe(true)
     expect(rateLimitPauseDetail(2)).toContain('No ruling is needed')
     expect(isRateLimitPauseDetail('an uncaught error ended round 1')).toBe(false)
+  })
+
+  it('the pause detail records the reset it last read after its prefix, and only it reads back', () => {
+    const detail = `${rateLimitPauseDetail(2, 1_760_000_500)} (round 3: boom at epoch 99.)`
+    expect(isRateLimitPauseDetail(detail)).toBe(true)
+    expect(detail.startsWith('GitHub rate limit:')).toBe(true)
+    expect(rateLimitResetFromDetail(detail)).toBe(1_760_000_500)
+    expect(rateLimitResetFromDetail(rateLimitPauseDetail(2))).toBeNull()
+    expect(rateLimitResetFromDetail('Usage limit: the reset it last read is epoch 5.')).toBeNull()
+  })
+
+  it('a spent wait budget for a red check reads as a GitHub rate limit that spends no retry', () => {
+    const err = new RateLimitWaitsSpent(1_760_000_500, 'the failed checks on head abc')
+    expect(isGitHubRateLimitError(err)).toBe(true)
+    expect(spendsInfrastructureRetry(err)).toBe(false)
+    expect(err.resetEpochSeconds).toBe(1_760_000_500)
+  })
+})
+
+/** A job log tail as GitHub prints it: every line timestamped. */
+const tail = (...lines: string[]) => lines.map((line) => `2026-10-18T10:00:00.0000000Z ${line}`).join('\n')
+const marker = (exhausted: 'core' | 'graphql' | 'none', coreReset = 1_760_000_100, graphqlReset = 1_760_000_900) =>
+  `vinaya-budget: exhausted=${exhausted} core_remaining=${exhausted === 'core' ? 0 : 4000} core_reset=${coreReset} graphql_remaining=${exhausted === 'graphql' ? 0 : 4000} graphql_reset=${graphqlReset}`
+
+describe('the budget marker a failed CI job prints', () => {
+  it('never matches the rate-limit pattern, whatever budget it names', () => {
+    for (const exhausted of ['core', 'graphql', 'none'] as const) {
+      expect(isGitHubRateLimitError(new Error(marker(exhausted)))).toBe(false)
+      expect(marker(exhausted).length).toBeLessThanOrEqual(200)
+    }
+    // The generated step's own text, which a job log echoes, matches neither the wording nor the marker.
+    expect(isGitHubRateLimitError(new Error(budgetMarkerStep()))).toBe(false)
+    expect(parseBudgetMarker(budgetMarkerStep())).toBeNull()
+  })
+
+  it('the generated step runs only on failure, with the job token, and never fails the job again', () => {
+    const step = budgetMarkerStep()
+    expect(step).toContain('if: failure()')
+    expect(step).toContain('GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}')
+    expect(step).toContain('gh api rate_limit')
+    expect(step.trimEnd().endsWith('|| true')).toBe(true)
+  })
+
+  it('reads the last marker line, prefixed by a timestamp', () => {
+    const log = tail('error: boom', marker('none'), marker('core', 1_760_000_222))
+    expect(parseBudgetMarker(log)).toEqual({
+      exhausted: 'core',
+      core: { remaining: 0, reset: 1_760_000_222 },
+      graphql: { remaining: 4000, reset: 1_760_000_900 }
+    })
+    expect(parseBudgetMarker(tail('error: boom'))).toBeNull()
+    expect(parseBudgetMarker(null)).toBeNull()
+  })
+
+  it('a job is rate-limited by the wording, or by a marker naming a spent budget once the wording scrolled out', () => {
+    expect(isRateLimitedJobLog(tail('gh: API rate limit already exceeded for installation ID 1'))).toBe(true)
+    expect(isRateLimitedJobLog(tail('(fail) some test', marker('graphql')))).toBe(true)
+    expect(isRateLimitedJobLog(tail('(fail) some test', marker('none')))).toBe(false)
+    expect(isRateLimitedJobLog(null)).toBe(false)
+  })
+
+  it('the reset is the GraphQL budget when a line contains GraphQL’s wording, else the spent budget, else none', () => {
+    expect(jobRateLimitReset(tail('GraphQL: API rate limit exceeded for installation ID 1', marker('core')))).toBe(
+      1_760_000_900
+    )
+    expect(jobRateLimitReset(tail('(fail) x', marker('core')))).toBe(1_760_000_100)
+    expect(jobRateLimitReset(tail('(fail) x', marker('graphql')))).toBe(1_760_000_900)
+    expect(jobRateLimitReset(tail('secondary rate limit', marker('none')))).toBeNull()
+    expect(jobRateLimitReset(tail('API rate limit exceeded'))).toBeNull()
+  })
+})
+
+describe('assessRateLimitedRed — a red that is a rate limit and nothing else', () => {
+  const aggregate = tail(
+    'A required job did not succeed: failure',
+    'vinaya-needs: a required job ended failure',
+    marker('none')
+  )
+
+  it('every failed job rate-limited, plus an aggregate failing only on its needs, is a rate-limited red at the latest reset', () => {
+    expect(
+      assessRateLimitedRed([
+        { logTail: tail('(fail) x', marker('core', 1_760_000_100)) },
+        { logTail: tail('GraphQL: API rate limit exceeded', marker('none', 1, 1_760_000_700)) },
+        { logTail: aggregate }
+      ])
+    ).toEqual({ resetEpochSeconds: 1_760_000_700 })
+  })
+
+  it('a rate-limited job with no marker line waits the fallback', () => {
+    expect(assessRateLimitedRed([{ logTail: tail('API rate limit exceeded') }])).toEqual({ resetEpochSeconds: null })
+  })
+
+  it('any failed job that is not rate-limited makes it an ordinary red', () => {
+    expect(
+      assessRateLimitedRed([
+        { logTail: tail('(fail) x', marker('core')) },
+        { logTail: tail('(fail) y', marker('none')) }
+      ])
+    ).toBeNull()
+    expect(assessRateLimitedRed([{ logTail: tail('(fail) x', marker('core')) }, { logTail: null }])).toBeNull()
+  })
+
+  it('an aggregate alone, or no failed job at all, is no rate-limited red', () => {
+    expect(assessRateLimitedRed([{ logTail: aggregate }])).toBeNull()
+    expect(assessRateLimitedRed([])).toBeNull()
+  })
+
+  it('the echoed needs script, with no result word, does not cover a failure', () => {
+    expect(
+      assessRateLimitedRed([
+        { logTail: tail('(fail) x', marker('core')) },
+        { logTail: tail('echo "vinaya-needs: a required job ended $result"', 'boom') }
+      ])
+    ).toBeNull()
   })
 })
 
