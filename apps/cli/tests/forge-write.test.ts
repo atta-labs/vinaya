@@ -790,7 +790,10 @@ describe('runBodyChecks — the ONE registry-runner call every forge-write path 
       'Ships the validated forge-write path for the Vinaya CLI.',
       'First paragraph.\n\nSecond paragraph.'
     )
-    const errors = await collectBodyCheckErrors(body, 'fix/some-branch', undefined)
+    // The canonical report uses Decisions; Summary remains in this fixture
+    // to exercise the draft shape named by the caller.
+    const report = `${body}\n\n## Decisions\n\nFirst choice.\n\nSecond choice.\n`
+    const errors = await collectBodyCheckErrors(report, 'fix/some-branch', undefined)
     expect(errors.some((error) => error.check === 'pr-report-density')).toBe(true)
   })
 
