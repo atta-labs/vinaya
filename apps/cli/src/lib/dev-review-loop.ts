@@ -4177,7 +4177,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // first command resolves inside the worktree. A failure throws and pauses
       // as an infrastructure pause; it is never logged and continued.
       if (!worktreeDependenciesInstalled && existsSync(worktreePathForBranch())) {
+        const installStartedAt = d.now()
         d.installWorktreeDependencies(worktreePathForBranch())
+        // Only a return reaches this line, so the log never claims a ready
+        // worktree that then pauses.
+        appendDriverLine(
+          loopLogPath,
+          `Worktree dependencies ready in ${worktreePathForBranch()} after ${((d.now() - installStartedAt) / 1000).toFixed(1)}s`,
+          'done'
+        )
         worktreeDependenciesInstalled = true
       }
       // This is the same handoff the controller uses in settleTurnResult.

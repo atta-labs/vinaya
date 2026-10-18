@@ -7,6 +7,7 @@
 
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
 import {
@@ -16,8 +17,10 @@ import {
   makeInProcessDeps,
   makeWorld,
   runLoopInProcess,
+  withWorldEnv,
   type LoopWorld
 } from './dev-review-loop-harness.js'
+import { loopLogPathFor } from '../../src/lib/loop-log.js'
 import { defaultInstallWorktreeDependencies, worktreeInstallEnv, type LoopDeps } from '../../src/lib/dev-review-loop.js'
 
 afterEach(cleanupWorlds)
@@ -49,6 +52,12 @@ function recordingDeps(world: LoopWorld): { deps: Partial<LoopDeps>; prompts: st
   }
   return { deps: { ...base, dispatchRole }, prompts }
 }
+
+async function readDriverLog(world: LoopWorld): Promise<string> {
+  return withWorldEnv(world, () => readFileSync(loopLogPathFor(null, world.task), 'utf8'))
+}
+
+const READY_LINE = 'Worktree dependencies ready in'
 
 describe('installing the task worktree dependencies before the Developer starts', () => {
   it('a fresh start installs once, on the worktree, before the first Developer prompt', async () => {
@@ -110,6 +119,49 @@ describe('installing the task worktree dependencies before the Developer starts'
     expect(decision.detail).toContain('error: lockfile had changes')
     expect(decision.detail).toContain(worktreePath(world))
     expect(prompts).toHaveLength(0)
+  })
+
+  it('a one-round run logs one ready line naming the worktree, before the first round starts', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    const { deps } = recordingDeps(world)
+    await runLoopInProcess(world, { task: world.task, agent: 'claude' }, deps)
+
+    const log = await readDriverLog(world)
+    expect(log.split(READY_LINE)).toHaveLength(2)
+    expect(log).toMatch(
+      new RegExp(`${READY_LINE} ${worktreePath(world).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} after \\d+\\.\\ds`)
+    )
+    expect(log.indexOf(READY_LINE)).toBeLessThan(log.indexOf('Developer starting round 1'))
+  })
+
+  it('a run of several rounds logs exactly one ready line', async () => {
+    const world = makeWorld({
+      worktreeExists: true,
+      roleOutcomes: {
+        1: {
+          reviewer: {
+            findings: 'BLOCKER|apps/cli/src/lib/x.ts:1|fix the behavior',
+            report: 'BRIEF_CONFORMANCE: yes\nSPEC_CONFORMANCE: yes\nSCOPE: small\nTESTS: pass\nDOCS: n/a\n',
+            objectives: 'O1|MET|done.\n',
+            sessionId: 'rev-session-1'
+          }
+        }
+      }
+    })
+    const publishing = developerPublishesViaToolsDeps(world, { header: 'Fix(cli): address blocking review' })
+    await runLoopInProcess(world, { task: world.task, agent: 'claude' }, publishing)
+
+    expect(world.dispatches.some((d) => d.role === 'developer' && d.round === 2)).toBe(true)
+    expect((await readDriverLog(world)).split(READY_LINE)).toHaveLength(2)
+  })
+
+  it('a failing install logs no ready line', async () => {
+    const world = makeWorld({ worktreeExists: true, dependencyInstallFailure: 'error: lockfile had changes' })
+    const { deps } = recordingDeps(world)
+    const result = await runLoopInProcess(world, { task: world.task, agent: 'claude' }, deps)
+
+    expect(result.finalDecision.type).toBe('pause')
+    expect(await readDriverLog(world)).not.toContain(READY_LINE)
   })
 
   it('the real implementation leaves a worktree with no bun.lock alone', () => {
