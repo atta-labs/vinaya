@@ -703,10 +703,14 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // (`overrideActive()`'s first, env-only check) which is opt-in by
       // design — absence is the default, unremarkable path.
       // GITHUB_REPOSITORY/GITHUB_TOKEN/GH_TOKEN: same trust-anchor read as
-      // `doc-coverage` above — see that entry's comment.
+      // `doc-coverage` above — see that entry's comment. The per-file diff
+      // reader adds staged evidence under the same two hook variables
+      // `doc-coverage` declares, so they are declared here too.
       env: {
         OVERRIDE_DOCS: { optional: true },
         BASE_SHA: { optional: true },
+        GIT_INDEX_FILE: { optional: true },
+        VINAYA_COMMIT_HOOK: { optional: true },
         PR_BODY: { optional: true },
         PR_BODY_FILE: { optional: true },
         PR_LABELS: { optional: true },
@@ -778,9 +782,11 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       run: bin('check-reader-resolvable-prose'),
       scope: 'full',
       timeoutMs: 30_000,
-      // Reads local files plus the shared diff helper. The hook variables
-      // let that helper add staged evidence only during pre-commit.
+      // Reads local files plus the shared diff helper. BASE_SHA scopes that
+      // helper's diff; the hook variables let it add staged evidence only
+      // during pre-commit.
       env: {
+        BASE_SHA: { optional: true },
         GIT_INDEX_FILE: { optional: true },
         VINAYA_COMMIT_HOOK: { optional: true }
       },
@@ -813,8 +819,10 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       run: bin('check-retired-vocabulary'),
       scope: 'full',
       timeoutMs: 30_000,
-      // Same shared-diff hook declarations as `reader-resolvable-prose`.
+      // Same shared-diff declarations as `reader-resolvable-prose`: BASE_SHA
+      // plus the two hook variables.
       env: {
+        BASE_SHA: { optional: true },
         GIT_INDEX_FILE: { optional: true },
         VINAYA_COMMIT_HOOK: { optional: true }
       },
@@ -880,8 +888,10 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       scope: 'diff',
       timeoutMs: 30_000,
       // Local-only: `git ls-files -s`, a first-line read, and the shared diff
-      // helper; the hook variables admit staged evidence only at pre-commit.
+      // helper; BASE_SHA scopes its diff and the hook variables admit staged
+      // evidence only at pre-commit.
       env: {
+        BASE_SHA: { optional: true },
         GIT_INDEX_FILE: { optional: true },
         VINAYA_COMMIT_HOOK: { optional: true }
       }
@@ -902,8 +912,10 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       scope: 'diff',
       timeoutMs: 15_000,
       // Local-only: `git diff --cached`/`git show :<path>` plus the shared
-      // diff helper, never the network.
+      // diff helper, never the network. BASE_SHA scopes that helper's diff;
+      // the hook variables admit staged evidence only at pre-commit.
       env: {
+        BASE_SHA: { optional: true },
         GIT_INDEX_FILE: { optional: true },
         VINAYA_COMMIT_HOOK: { optional: true }
       }
@@ -917,8 +929,10 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       scope: 'full',
       timeoutMs: 30_000,
       // Local-only: walks the working tree and consults the shared diff
-      // helper; the hook variables admit staged evidence only at pre-commit.
+      // helper; BASE_SHA scopes its diff and the hook variables admit staged
+      // evidence only at pre-commit.
       env: {
+        BASE_SHA: { optional: true },
         GIT_INDEX_FILE: { optional: true },
         VINAYA_COMMIT_HOOK: { optional: true }
       },
@@ -938,8 +952,11 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       timeoutMs: 15_000,
       // Local-only: `.changeset/config.json`, every fixed-group member's own
       // `package.json`, and the shared diff all come from the already-local
-      // working tree and `git`. Blocking on a finding (see the bin's doc).
+      // working tree and `git`. BASE_SHA scopes the diff; the hook variables
+      // admit staged evidence only at pre-commit. Blocking on a finding (see
+      // the bin's doc).
       env: {
+        BASE_SHA: { optional: true },
         GIT_INDEX_FILE: { optional: true },
         VINAYA_COMMIT_HOOK: { optional: true }
       }
