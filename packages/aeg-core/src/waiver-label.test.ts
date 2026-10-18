@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { isPrincipal, isWaiverLabelActorVerified, PRINCIPAL_ALLOWLIST, WAIVER_LABEL } from './waiver-label'
+import { isPrincipal, isWaiverLabelActorVerified, WAIVER_LABEL } from './waiver-label'
+
+/** The Principal list every case passes, unless a case is about the list itself. */
+const PRINCIPALS = ['daniboomerang']
 
 /**
  * `isPrincipal` is the single membership predicate every allowlist consumer
@@ -10,15 +13,15 @@ import { isPrincipal, isWaiverLabelActorVerified, PRINCIPAL_ALLOWLIST, WAIVER_LA
  */
 describe('isPrincipal (shared allowlist membership predicate)', () => {
   it('a null login is never a principal — an unresolvable actor is not a trusted one', () => {
-    expect(isPrincipal(null, PRINCIPAL_ALLOWLIST)).toBe(false)
+    expect(isPrincipal(null, PRINCIPALS)).toBe(false)
   })
 
   it('an exact match is a principal', () => {
-    expect(isPrincipal('daniboomerang', PRINCIPAL_ALLOWLIST)).toBe(true)
+    expect(isPrincipal('daniboomerang', PRINCIPALS)).toBe(true)
   })
 
   it('a login absent from the allowlist is not a principal', () => {
-    expect(isPrincipal('drive-by-account', PRINCIPAL_ALLOWLIST)).toBe(false)
+    expect(isPrincipal('drive-by-account', PRINCIPALS)).toBe(false)
   })
 
   it.each([
@@ -41,7 +44,7 @@ describe('isPrincipal (shared allowlist membership predicate)', () => {
   it('an empty-string login is not a principal, even against an allowlist containing one', () => {
     // Defensive: `''` is what a careless `?? ''` upstream would hand in place of
     // the `null` the type already models. It must not become a match.
-    expect(isPrincipal('', PRINCIPAL_ALLOWLIST)).toBe(false)
+    expect(isPrincipal('', PRINCIPALS)).toBe(false)
   })
 
   it('scans the whole allowlist, not just its first entry', () => {
@@ -56,7 +59,7 @@ describe('isWaiverLabelActorVerified (actor-verified waiver label)', () => {
         label: WAIVER_LABEL,
         labels: ['vinaya/tier:1'],
         labelActor: 'daniboomerang',
-        principalAllowlist: PRINCIPAL_ALLOWLIST
+        principalAllowlist: PRINCIPALS
       })
     ).toBe(false)
   })
@@ -67,7 +70,7 @@ describe('isWaiverLabelActorVerified (actor-verified waiver label)', () => {
         label: WAIVER_LABEL,
         labels: [WAIVER_LABEL],
         labelActor: null,
-        principalAllowlist: PRINCIPAL_ALLOWLIST
+        principalAllowlist: PRINCIPALS
       })
     ).toBe(false)
   })
@@ -78,7 +81,7 @@ describe('isWaiverLabelActorVerified (actor-verified waiver label)', () => {
         label: WAIVER_LABEL,
         labels: [WAIVER_LABEL],
         labelActor: 'some-agent-bot',
-        principalAllowlist: PRINCIPAL_ALLOWLIST
+        principalAllowlist: PRINCIPALS
       })
     ).toBe(false)
   })
@@ -89,7 +92,7 @@ describe('isWaiverLabelActorVerified (actor-verified waiver label)', () => {
         label: WAIVER_LABEL,
         labels: [WAIVER_LABEL],
         labelActor: 'daniboomerang',
-        principalAllowlist: PRINCIPAL_ALLOWLIST
+        principalAllowlist: PRINCIPALS
       })
     ).toBe(true)
   })
@@ -100,7 +103,7 @@ describe('isWaiverLabelActorVerified (actor-verified waiver label)', () => {
         label: WAIVER_LABEL,
         labels: ['vinaya/waiver:review'],
         labelActor: 'daniboomerang',
-        principalAllowlist: PRINCIPAL_ALLOWLIST
+        principalAllowlist: PRINCIPALS
       })
     ).toBe(false)
   })
@@ -111,7 +114,7 @@ describe('isWaiverLabelActorVerified (actor-verified waiver label)', () => {
         label: WAIVER_LABEL,
         labels: [WAIVER_LABEL],
         labelActor: '',
-        principalAllowlist: PRINCIPAL_ALLOWLIST
+        principalAllowlist: PRINCIPALS
       })
     ).toBe(false)
   })
@@ -136,7 +139,7 @@ describe('isWaiverLabelActorVerified (actor-verified waiver label)', () => {
         label: WAIVER_LABEL,
         labels: [WAIVER_LABEL],
         labelActor: 'DaniBoomerang',
-        principalAllowlist: PRINCIPAL_ALLOWLIST
+        principalAllowlist: PRINCIPALS
       })
     ).toBe(true)
     expect(
@@ -144,7 +147,7 @@ describe('isWaiverLabelActorVerified (actor-verified waiver label)', () => {
         label: WAIVER_LABEL,
         labels: [WAIVER_LABEL.toUpperCase()],
         labelActor: 'daniboomerang',
-        principalAllowlist: PRINCIPAL_ALLOWLIST
+        principalAllowlist: PRINCIPALS
       })
     ).toBe(false)
   })
@@ -161,7 +164,7 @@ describe('isWaiverLabelActorVerified (actor-verified waiver label)', () => {
         label: WAIVER_LABEL,
         labels: [WAIVER_LABEL],
         labelActor,
-        principalAllowlist: PRINCIPAL_ALLOWLIST
+        principalAllowlist: PRINCIPALS
       })
     // Every actor an agent could produce for itself:
     expect(withActor(null)).toBe(false)

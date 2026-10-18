@@ -40,7 +40,7 @@ export function siblingsSharingConflictEdge<S extends ConflictEdgeParty>(
 }
 
 import type { Task } from './types'
-import { isPrincipal, PRINCIPAL_ALLOWLIST } from './waiver-label'
+import { isPrincipal } from './waiver-label'
 
 export type DispatchIssueFact = { number: number; state: 'open' | 'closed' } | null
 
@@ -158,16 +158,15 @@ export type DispatchGateInput = {
   /** One entry per project named in `task.projects`. */
   priorTrancheArchival: DispatchPriorTrancheFact[]
   /**
-   * Overrides `PRINCIPAL_ALLOWLIST` for hand-close recognition when
-   * provided — an adopter repo's own `vinaya.config.json` `principals`
-   * field, resolved by the CLI bin before calling in (never read from here;
-   * this stays pure). Defaults to `PRINCIPAL_ALLOWLIST` when omitted, same
-   * pattern as `checkReviewGate`'s `principalAllowlist` (`review-gate.ts`) —
-   * hardcoding this repo's own principal made that gate unpassable on any
-   * adopter repo; the same mistake here would silently do the same to the
-   * hand-close path.
+   * The Principal list for hand-close recognition — the repository's own
+   * `vinaya.config.json` `principals` field, resolved by the caller before
+   * calling in (never read from here; this stays pure). REQUIRED, with no
+   * built-in fallback, same as `checkReviewGate`'s `principalAllowlist`
+   * (`review-gate.ts`) — hardcoding this repo's own principal made that gate
+   * unpassable on any adopter repo; the same mistake here would silently do
+   * the same to the hand-close path.
    */
-  principalAllowlist?: string[]
+  principalAllowlist: string[]
 }
 
 /**
@@ -242,7 +241,7 @@ function isSelfDependency(dep: DispatchDependsOnFact, task: Task, issue: Dispatc
 export function checkDispatchReadiness(input: DispatchGateInput): DispatchResult {
   const { trancheSlug, task } = input
   const taskLabel = `task ${task.id} (tranche ${trancheSlug})`
-  const principalAllowlist = input.principalAllowlist ?? PRINCIPAL_ALLOWLIST
+  const { principalAllowlist } = input
   const blockerDetails: DispatchBlocker[] = []
   const push = (blockerClass: DispatchBlockerClass, message: string): void => {
     blockerDetails.push({ class: blockerClass, message })

@@ -36,7 +36,8 @@
 
 import { execSync } from 'node:child_process'
 import { join } from 'node:path'
-import { checkReviewGate, newestPrincipalRulingOrdinal, PRINCIPAL_ALLOWLIST, WAIVER_LABEL_REVIEW } from '../src/index'
+import { checkReviewGate, newestPrincipalRulingOrdinal, WAIVER_LABEL_REVIEW } from '../src/index'
+import { readConfigPrincipals } from '../src/principals-config'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')
 process.chdir(REPO_ROOT)
@@ -72,6 +73,11 @@ function fetchWaiverLabelActor(prNumber: number, label: string): string | null {
 }
 
 export function main(prNumber: number): void {
+  const principals = readConfigPrincipals()
+  if (!principals.ok) {
+    console.error(`verify-review-gate FAILED (PR #${prNumber}): ${principals.reason}`)
+    process.exit(1)
+  }
   const pr = fetchPr(prNumber)
   const labels = pr.labels.map((l) => l.name)
   const waiverLabelActor = labels.includes(WAIVER_LABEL_REVIEW)
@@ -83,19 +89,21 @@ export function main(prNumber: number): void {
     labels,
     waiverLabelActor,
     headSha: pr.headRefOid,
+    principalAllowlist: principals.principals,
     // This shim does not resolve an Issue's objectives list (dev-review-loop-v1
     // task 2, #412, out of this bin's brief-scoped surface) — `null` skips the
     // objectives binding entirely, the same as a pre-cutover PR.
     objectivesVersion: null,
     // Unlike objectivesVersion, this has no unconditional-skip value and needs
     // no extra fetch: `pr.comments` is already in scope, and
-    // `newestPrincipalRulingOrdinal`/`PRINCIPAL_ALLOWLIST` are already imported
-    // from this same module (review-validity-v1 task 3, #477, O2 — review
+    // `newestPrincipalRulingOrdinal` is already imported from this same
+    // module and the configured Principal list is resolved above
+    // (review-validity-v1 task 3, #477, O2 — review
     // round 2, BLOCKER: a hardcoded `0` here fails both directions, reading a
     // stale pre-ruling verdict as bound and a correctly re-cast one as not).
     rulingOrdinal: newestPrincipalRulingOrdinal(
       pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
-      PRINCIPAL_ALLOWLIST
+      principals.principals
     )
   })
 

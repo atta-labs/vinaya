@@ -28,11 +28,11 @@ import {
   extractIssue,
   hasProvenance,
   isEligibleForProvenance,
-  PRINCIPAL_ALLOWLIST,
   resolveNewestFrozenBrief,
   taskRefFromBranch
 } from '../src/index'
 import type { MergedPrFacts } from '../src/index'
+import { readConfigPrincipals } from '../src/principals-config'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')
 process.chdir(REPO_ROOT)
@@ -73,12 +73,15 @@ type PrView = {
  * #503 round 2, BLOCKER: this previously matched only the literal
  * `aeg:brief:v1` marker, so a task corrected via `--supersede` archived a
  * link to the superseded, non-authoritative version instead of the newest).
+ * `principalAllowlist` is the caller's resolved Principal list — no built-in
+ * fallback.
  */
 export function resolveNewestFrozenBriefCommentUrl(
-  comments: Array<{ body: string; url: string; author?: { login?: string } | null }>
+  comments: Array<{ body: string; url: string; author?: { login?: string } | null }>,
+  principalAllowlist: string[]
 ): string | null {
   const normalized = comments.map((c) => ({ body: c.body, url: c.url, author: c.author?.login ?? null }))
-  const briefComment = resolveNewestFrozenBrief(normalized, PRINCIPAL_ALLOWLIST)
+  const briefComment = resolveNewestFrozenBrief(normalized, principalAllowlist)
   return briefComment?.url ?? null
 }
 
@@ -86,6 +89,11 @@ export function main(): void {
   const mergeSha = process.env.MERGE_SHA ?? ''
   if (!mergeSha) {
     console.error('[archive-task] MERGE_SHA env var is required.')
+    process.exit(1)
+  }
+  const principals = readConfigPrincipals()
+  if (!principals.ok) {
+    console.error(`[archive-task] FAILED — ${principals.reason}`)
     process.exit(1)
   }
 
@@ -137,7 +145,7 @@ export function main(): void {
       const issueComments = shJson<{ comments: { body: string; url: string; author?: { login?: string } | null }[] }>(
         `gh issue view ${primaryIssue} --json comments`
       )
-      briefCommentUrl = resolveNewestFrozenBriefCommentUrl(issueComments.comments)
+      briefCommentUrl = resolveNewestFrozenBriefCommentUrl(issueComments.comments, principals.principals)
     } catch {
       briefCommentUrl = null
     }

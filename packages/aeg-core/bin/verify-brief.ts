@@ -56,11 +56,11 @@ import {
   type Objective,
   type PackageManifest,
   objectivesOf,
-  PRINCIPAL_ALLOWLIST,
   readTierFromPrBody,
   resolveNewestFrozenBrief
 } from '../src/index'
 import { readConfigObjectivesSinceIssue } from '../src/objectives-cutover-config'
+import { readConfigPrincipals } from '../src/principals-config'
 
 /** Immediate child directory names of `dir` — `deriveWorkspaceMemberDirs`'s injected filesystem access. Missing/unreadable `dir` degrades to `[]`, never throws. */
 function listDirs(dir: string): string[] {
@@ -170,6 +170,9 @@ type GradedBodyResolution = { ok: true; body: string } | { ok: false; message: s
 function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResolution {
   if (!taskBranch) return { ok: true, body: prBody }
 
+  const principals = readConfigPrincipals()
+  if (!principals.ok) return { ok: false, message: principals.reason }
+
   const { issue } = extractIssue(prBody)
   if (issue === null) {
     return { ok: false, message: 'not dispatched — no `Closes #N` in the PR body to resolve the task Issue.' }
@@ -191,7 +194,7 @@ function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResol
     }
   }
   const comments = json.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
-  const comment = resolveNewestFrozenBrief(comments, PRINCIPAL_ALLOWLIST)
+  const comment = resolveNewestFrozenBrief(comments, principals.principals)
   if (!comment) {
     return { ok: false, message: `not dispatched — no \`aeg:brief:v<k>\` comment on Issue #${issue}.` }
   }

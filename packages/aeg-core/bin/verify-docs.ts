@@ -98,11 +98,11 @@ import {
   type NoDocRule,
   overrideActive,
   parseDocOwners,
-  PRINCIPAL_ALLOWLIST,
   readTierFromPrBody,
   WAIVER_LABEL,
   isEntryPoint
 } from '../src/index'
+import { readConfigPrincipals } from '../src/principals-config'
 
 const REPO_ROOT = join(import.meta.dir, '../../..')
 process.chdir(REPO_ROOT)
@@ -164,9 +164,16 @@ function resolvePrBody(): string {
  * A waiver is honored only when the `vinaya/waiver:docs` label is present AND
  * the actor of its labeling timeline event is a configured principal.
  * WAIVER_LABEL_ACTOR is resolved by CI (the GraphQL step ahead of this gate)
- * or is empty/unset locally — an empty/unset actor never verifies.
+ * or is empty/unset locally — an empty/unset actor never verifies. The
+ * principals come from `vinaya.config.json`; a config without a Principal
+ * list refuses the run with a non-zero exit naming the fix.
  */
 function waiverActiveFromEnv(): boolean {
+  const principals = readConfigPrincipals()
+  if (!principals.ok) {
+    console.error(`[verify-docs] FAILED — ${principals.reason}`)
+    process.exit(1)
+  }
   const labels = (process.env.PR_LABELS || '')
     .split(',')
     .map((s) => s.trim())
@@ -175,7 +182,7 @@ function waiverActiveFromEnv(): boolean {
     label: WAIVER_LABEL,
     labels,
     labelActor: process.env.WAIVER_LABEL_ACTOR || null,
-    principalAllowlist: PRINCIPAL_ALLOWLIST
+    principalAllowlist: principals.principals
   })
 }
 

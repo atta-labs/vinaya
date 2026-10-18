@@ -3,7 +3,6 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { PRINCIPAL_ALLOWLIST } from '../src/index'
 
 /**
  * CLI-level coverage for the two behaviors that live in the shim rather than in
@@ -18,6 +17,9 @@ import { PRINCIPAL_ALLOWLIST } from '../src/index'
  */
 
 const SCRIPT = join(import.meta.dirname, 'verify-brief.ts')
+
+/** A login on this repository's `vinaya.config.json` `principals` list, which the spawned script reads. */
+const CONFIGURED_PRINCIPAL = 'daniboomerang'
 
 /** A complete standalone-fix brief: every required section, and no `Closes #N` (it has no task Issue). */
 const FIX_BRIEF = `**For:** Sonnet (coding-agent CLI, dispatched locally)
@@ -128,7 +130,7 @@ const TASK_BRIEF_CLOSING_500 = FIX_BRIEF.replace(
 
 /**
  * A fake `gh` on PATH whose `issue view --json comments` returns exactly one
- * comment with `commentBody`, authored by `PRINCIPAL_ALLOWLIST[0]` —
+ * comment with `commentBody`, authored by `CONFIGURED_PRINCIPAL` —
  * `resolveNewestFrozenBrief` (task 4, Issue #483, O3) requires a
  * principal-authored comment, unlike the old raw marker-match this replaced.
  */
@@ -138,7 +140,7 @@ function fakeGhWithComments(commentBody: string): string {
   const responseFile = join(dir, 'response.json')
   writeFileSync(
     responseFile,
-    JSON.stringify({ comments: [{ body: commentBody, author: { login: PRINCIPAL_ALLOWLIST[0] } }] })
+    JSON.stringify({ comments: [{ body: commentBody, author: { login: CONFIGURED_PRINCIPAL } }] })
   )
   writeFileSync(gh, `#!/bin/sh\ncat "${responseFile}"\n`)
   chmodSync(gh, 0o755)

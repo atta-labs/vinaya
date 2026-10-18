@@ -20,7 +20,7 @@ import {
   type TaskSurfaceFacts
 } from './issue-validation'
 import { parseTaskBranchIdentity } from './task-branch-identity'
-import { isPrincipal, PRINCIPAL_ALLOWLIST } from './waiver-label'
+import { isPrincipal } from './waiver-label'
 import type { ForgeIssue, TaskIssueRef } from '@attalabs/aeg-types'
 import type { GhIssue } from '@attalabs/aeg-forge-state'
 import type { ForgeFacts, Tranche, Task } from './types'
@@ -150,7 +150,7 @@ export type TrancheFile = {
  * is done-but-unprovable, or a broken close, exactly the class this check
  * exists to catch.
  */
-export function checkA1(entries: TaskEntry[], principalAllowlist: string[] = PRINCIPAL_ALLOWLIST): CheckResult {
+export function checkA1(entries: TaskEntry[], principalAllowlist: string[]): CheckResult {
   const failures: CheckFailure[] = []
   for (const e of entries) {
     if (!e.facts) continue
