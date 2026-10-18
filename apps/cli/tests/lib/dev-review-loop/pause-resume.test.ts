@@ -533,6 +533,38 @@ describe('PAUSE_REASON_PROFILE — every reason whose next-action mentions `deta
   })
 })
 
+describe('a repeated mechanical failure is addressed to the Principal', () => {
+  afterEach(cleanupWorlds)
+
+  it('the profile names the Principal and asks for a decision on the failure in detail', () => {
+    expect(PAUSE_REASON_PROFILE.repeat_failure.requestedAuthority).toBe('principal')
+    expect(PAUSE_REASON_PROFILE.repeat_failure.nextActions.join(' ')).toContain('Rule on the mechanical failure')
+  })
+
+  it('a real repeat_failure pause reads principal through the escalation packet', async () => {
+    const world = makeWorld({
+      gate: 'red',
+      failingCheckRuns: [{ id: 101, name: 'Some check', conclusion: 'failure' }]
+    })
+    const base = makeInProcessDeps(world)
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        ...base,
+        resolveHead: () => String(world.dispatchCountByRole.developer ?? 0).repeat(40),
+        readFailedCheckLogTail: () => 'error: the same failure'
+      }
+    )
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'repeat_failure' })
+    const packet = await withWorldEnv(world, () => readEscalationPacket(world.runtimeDir, world.task))
+    expect(packet?.reason).toBe('repeat_failure')
+    expect(packet?.requestedAuthority).toBe('principal')
+    expect(packet?.detail).toContain('the same failure')
+  })
+})
+
 /**
  * A developer launch refused before any vendor process started — the record
  * a sign-in refusal leaves behind — never blocks the task: the next run

@@ -964,10 +964,12 @@ export const PAUSE_REASON_PROFILE: Record<
     ]
   },
   repeat_failure: {
-    requestedAuthority: 'operator',
+    requestedAuthority: 'principal',
     attemptedRecovery:
       'one further attempt, which ended on the same mechanical failure — the message is in `detail`, unnormalised.',
-    nextActions: ['Fix the mechanical failure named in `detail`, then resume.']
+    nextActions: [
+      'Rule on the mechanical failure named in `detail` — fix it, redirect the work, or accept it — then resume.'
+    ]
   },
   infrastructure: {
     requestedAuthority: 'operator',
