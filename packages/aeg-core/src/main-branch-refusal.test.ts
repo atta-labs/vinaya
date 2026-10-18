@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { checkMainBranchRefusal } from './main-branch-refusal'
+import { checkMainBranchRefusal, resolveDefaultBranch } from './main-branch-refusal'
 
 describe('main-branch refusal', () => {
   it('refuses when the symbolic current branch equals the default branch', () => {
@@ -75,5 +75,23 @@ describe('main-branch refusal', () => {
       currentBranch: 'main',
       defaultBranch: 'main'
     })
+  })
+})
+
+describe('resolveDefaultBranch', () => {
+  const none = { originHead: null, hasOriginMain: false, hasOriginMaster: false }
+
+  it('prefers origin/HEAD over every other fact', () => {
+    expect(resolveDefaultBranch({ originHead: 'trunk', hasOriginMain: true, hasOriginMaster: true })).toBe('trunk')
+  })
+
+  it('falls back to origin/main, then origin/master', () => {
+    expect(resolveDefaultBranch({ ...none, hasOriginMain: true, hasOriginMaster: true })).toBe('main')
+    expect(resolveDefaultBranch({ ...none, hasOriginMaster: true })).toBe('master')
+  })
+
+  it('returns null when nothing resolves, treating empty strings as unresolved', () => {
+    expect(resolveDefaultBranch(none)).toBeNull()
+    expect(resolveDefaultBranch({ ...none, originHead: '' })).toBeNull()
   })
 })

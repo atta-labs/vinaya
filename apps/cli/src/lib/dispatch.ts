@@ -875,10 +875,10 @@ export const GIT_FORCE_OR_SKIP_VERIFY_DENY_REASON =
  * risk refusing a legitimate one it cannot actually evaluate"): a detached
  * HEAD, an unresolvable `origin/HEAD`, or a `cwd` that is not a git
  * checkout at all each read as "nothing to refuse," never a false deny.
- * This hook and `checkMainBranchRefusal`/`check-main-branch-refusal.ts`
- * deliberately read the identical two `git symbolic-ref` facts the same
- * way, so neither can disagree with the other about what counts as "on the
- * default branch."
+ * This hook reads the remote-tracking `origin/HEAD` alone, so it passes
+ * where `check-main-branch-refusal.ts` — which also falls back to the
+ * remote-tracking `origin/main` and `origin/master` — can still refuse; the current branch is read the
+ * same way by both.
  */
 function defaultBranchCommitOrPushDetectorSource(): string {
   return [
