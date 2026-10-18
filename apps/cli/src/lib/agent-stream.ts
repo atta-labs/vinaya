@@ -6,7 +6,7 @@ import {
   scrub,
   translateClaudeEvent
 } from './loop-narration-claude.js'
-import { translateCodexEvent, translateGeminiEvent, unwrapShell } from './loop-narration-codex.js'
+import { translateCodexEvent, unwrapShell } from './loop-narration-codex.js'
 
 type Json = Record<string, unknown>
 type Translate = (
@@ -15,7 +15,7 @@ type Translate = (
   ctx: NarrationContext
 ) => NarratedUpdate[]
 
-const TRANSLATORS = { claude: translateClaudeEvent, codex: translateCodexEvent, gemini: translateGeminiEvent } as const
+const TRANSLATORS = { claude: translateClaudeEvent, codex: translateCodexEvent } as const
 
 const DETAIL_LINES_MAX = 20
 const DETAIL_LINE_MAX = 400

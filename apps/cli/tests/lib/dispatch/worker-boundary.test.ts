@@ -24,7 +24,6 @@ import {
   stageCodexPolicyHome,
   CODEX_POLICY_RULES_FILE,
   SUBSCRIPTION_LOGIN_AGENTS,
-  hasSubscriptionLogin,
   stageOAuthCredential,
   WORKER_ENV_ALLOWLIST_KEYS,
   readRealClaudeKeychainCredential,
@@ -155,19 +154,6 @@ describe('buildWorkerEnv — O2 allowlist, never a spread', () => {
 describe('SUBSCRIPTION_LOGIN_AGENTS — no agent authenticates with an API key', () => {
   it('names exactly the agents whose subscription login this module can stage', () => {
     expect([...SUBSCRIPTION_LOGIN_AGENTS]).toEqual(['claude', 'codex'])
-  })
-
-  it('O2: gemini has no subscription login yet, so it is not in the table', () => {
-    expect(hasSubscriptionLogin('gemini')).toBe(false)
-  })
-
-  it('claude and codex do have one', () => {
-    expect(hasSubscriptionLogin('claude')).toBe(true)
-    expect(hasSubscriptionLogin('codex')).toBe(true)
-  })
-
-  it('an unknown vendor string has none either — a caller never throws', () => {
-    expect(hasSubscriptionLogin('not-a-real-vendor')).toBe(false)
   })
 })
 

@@ -26,10 +26,6 @@ import {
  * its arguments or result. An event or item type it does not recognise yields
  * nothing and never throws.
  *
- * Gemini is deliberately minimal. Its streaming shape has never been checked
- * against a real run, so `translateGeminiEvent` recognises only the session
- * start (the one event the existing renderer already trusts) and returns one
- * `working` action for it, and nothing for any other event.
  */
 
 const SUBJECT_MAX = 80
@@ -179,10 +175,4 @@ export function translateCodexEvent(event: Json, state: NarrationState, ctx: Nar
   } catch {
     return []
   }
-}
-
-/** Gemini's stream shape is unverified: the session start is the one event narrated, as `working`; every other event yields nothing. */
-export function translateGeminiEvent(event: Json, _state: NarrationState, ctx: NarrationContext): NarratedUpdate[] {
-  if (event.type !== 'init') return []
-  return [{ type: 'action', id: null, at: ctx.now, kind: 'working', subject: 'session started' }]
 }

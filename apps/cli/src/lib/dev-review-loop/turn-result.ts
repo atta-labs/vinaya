@@ -162,7 +162,7 @@ export function readCodexTurnOutput(stdout: string): TurnRead {
   return read
 }
 
-/** The structured-output flag each adapter passes, or `null` for a vendor with none (Gemini). */
+/** The structured-output flag each adapter passes, or `null` for a vendor with none. */
 export type TurnResultAdapter = 'claude --json-schema' | 'codex --output-schema'
 
 /**

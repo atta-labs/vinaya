@@ -112,12 +112,11 @@ describe('vinaya task run — argv parsing', () => {
     expect(r.stderr).toContain('is required')
   })
 
-  it('refuses an --agent value outside claude|codex|gemini', () => {
-    const r = runCli(['task', 'run', 'task-run-v1', '2', '--agent', 'skills'])
+  it('refuses an --agent value outside claude|codex', () => {
+    const r = runCli(['task', 'run', 'task-run-v1', '2', '--agent', 'gemini'])
     expect(r.status).toBe(2)
     expect(r.stderr).toContain('claude')
     expect(r.stderr).toContain('codex')
-    expect(r.stderr).toContain('gemini')
   })
 
   it('refuses --agent with no value', () => {
@@ -243,8 +242,8 @@ describe('vinaya task run — pauseResumeCommand (#785, O1)', () => {
   })
 
   it('names `task run --issue <n>` for a before-any-push pause on a backlog branch (prNumber -1), never `--resume -1`', () => {
-    const command = pauseResumeCommand({ prNumber: -1, task: 785, branch: 'task/issue-785' }, { agent: 'gemini' })
-    expect(command).toBe('vinaya task run --issue 785 --agent gemini')
+    const command = pauseResumeCommand({ prNumber: -1, task: 785, branch: 'task/issue-785' }, { agent: 'codex' })
+    expect(command).toBe('vinaya task run --issue 785 --agent codex')
     expect(command).not.toContain('--resume')
   })
 
@@ -285,7 +284,7 @@ describe('vinaya task run --quiet', () => {
   })
 
   it('the command accepts --quiet as a known flag', () => {
-    const r = runCli(['task', 'run', 'task-run-v1', '2', '--agent', 'skills', '--quiet'])
+    const r = runCli(['task', 'run', 'task-run-v1', '2', '--agent', 'gemini', '--quiet'])
     expect(r.stderr).not.toContain('unrecognized flag')
     expect(r.stderr).toContain('claude')
   })

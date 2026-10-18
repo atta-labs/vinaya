@@ -171,7 +171,7 @@ export class DispatchSandboxRefused extends Error {
  * waited it out in place, or pauses for the reset): that budget bounds how often a task may be resumed past a recoverable
  * hiccup with no genuine round in between, and a host with no credentials
  * never produced a round to bound — counting it would exhaust the budget
- * and demand a Principal ruling for a failure a `claude`/`codex`/`gemini`
+ * and demand a Principal ruling for a failure a `claude`/`codex`
  * login fixes. Keyed on the sign-in cause alone, never on "a pause that
  * came through this code path", so every other infrastructure loop keeps
  * its bound. A connection failure to GitHub (`isGitHubConnectionFailure`)

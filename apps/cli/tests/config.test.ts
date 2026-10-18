@@ -382,6 +382,25 @@ describe('config', () => {
       }
     })
 
+    it('rejects dispatch.agent gemini and names dispatch.agent in the invalid-configuration report', () => {
+      const config = { dispatch: { agent: 'gemini' } }
+      const parsed = VinayaConfigSchema.safeParse(config)
+      expect(parsed.success).toBe(false)
+      if (!parsed.success) expect(parsed.error.issues.map((issue) => issue.path.join('.'))).toContain('dispatch.agent')
+      for (const agent of ['claude', 'codex']) {
+        expect(VinayaConfigSchema.safeParse({ dispatch: { agent } }).success).toBe(true)
+      }
+      writeFileSync(join(tmpDir, 'vinaya.config.json'), JSON.stringify(config))
+      const errorSpy = spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        expect(loadConfig()).toBeNull()
+        expect(errorSpy).toHaveBeenCalledTimes(1)
+        expect(String(errorSpy.mock.calls[0]?.[0])).toContain('dispatch.agent:')
+      } finally {
+        errorSpy.mockRestore()
+      }
+    })
+
     it('reports a file that is not valid JSON', () => {
       writeFileSync(join(tmpDir, 'vinaya.config.json'), '{ not json', 'utf-8')
 

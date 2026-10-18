@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createNarrationState, type NarrationContext, translateClaudeEvent } from '../../src/lib/loop-narration-claude'
-import { translateCodexEvent, translateGeminiEvent } from '../../src/lib/loop-narration-codex'
+import { translateCodexEvent } from '../../src/lib/loop-narration-codex'
 
 const WORKTREE = '/work/repo/.worktrees/task/t/1'
 const HOME = '/Users/someone'
@@ -201,22 +201,6 @@ describe('a recorded developer stream (O4)', () => {
     const state = createNarrationState()
     const out = lines.flatMap((line, i) => translateCodexEvent(JSON.parse(line), state, ctx(i * 1000)))
     expect(JSON.stringify(out)).not.toMatch(/aggregated_output|\/Users\/|AEG:CLOSES|ACK: /)
-  })
-})
-
-describe('Gemini stays minimal (O5)', () => {
-  test('only the session start is narrated, as a working action', () => {
-    const state = createNarrationState()
-    expect(translateGeminiEvent({ type: 'init' }, state, ctx(7))).toEqual([
-      { type: 'action', id: null, at: 7, kind: 'working', subject: 'session started' }
-    ])
-    for (const event of [
-      { type: 'message', role: 'assistant', content: 'hi' },
-      { type: 'result', status: 'success' },
-      {}
-    ]) {
-      expect(translateGeminiEvent(event, state, ctx(0))).toEqual([])
-    }
   })
 })
 

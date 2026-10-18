@@ -6,12 +6,7 @@
  * through a real dispatched attempt end to end.
  */
 import { describe, expect, it } from 'vitest'
-import {
-  classifyRoleAttemptOutcome,
-  parseClaudeUsageUnits,
-  parseCodexUsageUnits,
-  parseGeminiUsageUnits
-} from '../../../src/lib/dispatch.js'
+import { classifyRoleAttemptOutcome, parseClaudeUsageUnits, parseCodexUsageUnits } from '../../../src/lib/dispatch.js'
 
 describe('parseClaudeUsageUnits', () => {
   it('sums cache_creation_input_tokens and cache_read_input_tokens into one cache figure', () => {
@@ -62,15 +57,6 @@ describe('parseCodexUsageUnits', () => {
     const result = parseCodexUsageUnits(JSON.stringify({ type: 'turn.started' }))
     expect(result.units).toEqual({ input: null, output: null, cache: null })
     expect(result.unknownReason).toMatch(/turn\.completed/)
-  })
-})
-
-describe('parseGeminiUsageUnits', () => {
-  it('always reports the confirmed-unread per-model shape as an explicit unknown reason, never a guessed field', () => {
-    const stdout = JSON.stringify({ stats: { models: { 'gemini-3.5-flash': { tokens: { input: 1, output: 1 } } } } })
-    const result = parseGeminiUsageUnits(stdout)
-    expect(result.units).toEqual({ input: null, output: null, cache: null })
-    expect(result.unknownReason).toMatch(/stats\.models/)
   })
 })
 

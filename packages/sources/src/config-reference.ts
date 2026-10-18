@@ -605,7 +605,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'dispatch',
     type: 'object (optional)',
     semantics: [
-      '`vinaya dispatch <role> --agent claude|codex|gemini` (`apps/cli/src/lib/dispatch.ts`) settings: role-scoped wall-time ceilings before the headless child is signaled, and a default vendor for repos that always dispatch the same one.'
+      '`vinaya dispatch <role> --agent claude|codex` (`apps/cli/src/lib/dispatch.ts`) settings: role-scoped wall-time ceilings before the headless child is signaled, and a default vendor for repos that always dispatch the same one.'
     ],
     example: `{
   "dispatch": {
@@ -633,7 +633,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
   },
   {
     key: 'dispatch.agent',
-    type: '"claude" | "codex" | "gemini" (optional)',
+    type: '"claude" | "codex" (optional)',
     semantics: [
       "A default vendor `vinaya dispatch`'s own `--agent` flag overrides when given. Absent, `--agent` is required on the command line."
     ],

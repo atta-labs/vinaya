@@ -1,5 +1,5 @@
 /**
- * `vinaya dispatch <role> --agent claude|codex|gemini --prompt-file <path>`.
+ * `vinaya dispatch <role> --agent claude|codex --prompt-file <path>`.
  * Thin argv-parsing shim over
  * `dispatchRole` (`../lib/dispatch.js`) — the real spawn/timeout/attribution
  * logic lives there, including where its own log lines are delivered (the
@@ -102,7 +102,7 @@ export async function dispatchCommand(args: string[]): Promise<void> {
   const agentRaw = parsed.agent ?? loadConfig()?.dispatch?.agent
   if (!agentRaw) {
     process.stderr.write(
-      'vinaya dispatch: --agent <claude|codex|gemini> is required (or set dispatch.agent in vinaya.config.json)\n'
+      'vinaya dispatch: --agent <claude|codex> is required (or set dispatch.agent in vinaya.config.json)\n'
     )
     process.exit(1)
   }

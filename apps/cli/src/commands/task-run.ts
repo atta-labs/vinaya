@@ -1,5 +1,5 @@
 /**
- * `vinaya task run <tranche> <n> --agent <claude|codex|gemini> [--model <model>]` — argv
+ * `vinaya task run <tranche> <n> --agent <claude|codex> [--model <model>]` — argv
  * parsing around `runTask` (`lib/task-run.js`), plus `colourLoopLine`
  * (`lib/dispatch.js`) to role-colour its two summary lines the same way
  * `dev-review-loop`'s own equivalent lines already are, and the two continuation

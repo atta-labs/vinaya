@@ -71,15 +71,8 @@ export const WORKER_ENV_ALLOWLIST_KEYS = [
  *   is that login's own stdin bootstrap value, never an API key and never
  *   set on the confined child's environment — doing so breaks the staged
  *   session's bearer auth outright (`isolation.md` §3).
- * - `gemini` — no subscription login exists in Vinaya yet, so a dispatch
- *   refuses rather than reaching for a key (`dispatch.ts`).
  */
 export const SUBSCRIPTION_LOGIN_AGENTS = ['claude', 'codex'] as const
-
-/** True when `agent` has a subscription login this module can stage — the negative case is the Gemini refusal `dispatch.ts` raises before any spawn. */
-export function hasSubscriptionLogin(agent: string): boolean {
-  return (SUBSCRIPTION_LOGIN_AGENTS as readonly string[]).includes(agent)
-}
 
 const CODEX_AUTH_FILE_NAME = 'auth.json'
 /** The macOS Keychain service name Codex keeps its cached session under. */
@@ -358,7 +351,7 @@ export type CodexAuthPreflightResult = { ok: true } | { ok: false; reason: strin
  * the read was refused), so this call's real-world behavior can only be
  * proven by a live canary or the Principal's own privileged host, not by
  * this dispatch — disclosed rather than silently assumed, the same posture
- * this file already takes for `codex`/`gemini`'s unverified env var names.
+ * this file already takes for `codex`'s unverified env var names.
  */
 function runRealCodexLoginWithAccessToken(input: {
   binaryPath: string
@@ -564,7 +557,7 @@ function runRealCodexAuthPreflight(input: {
  * `<realHome>/.claude`, verified live via `strings` on this authoring
  * host's installed `claude` binary — no `--help`-documented flag exists for
  * it, so it is confirmed the same way a prior task in this file already
- * disclosed `codex`/`gemini`'s env-var names as convention rather than
+ * disclosed `codex`'s env-var names as convention rather than
  * `--help` text: read directly off the vendor's own shipped artifact) holds
  * an OAuth-authenticated session's credential. `isolation.md` §1's HOME deny
  * rule denies this path unconditionally (it is a subpath of the real
@@ -772,7 +765,7 @@ export const CLAUDE_OWN_CONFIG_SUBPATHS = ['.claude', '.mcp.json'] as const
 /** O3: the subpaths, relative to a task's own worktree, Codex's own configuration lives at — its `.codex/` directory and the `.agents/` tree this repo's own skill/plugin emitters write into. */
 export const CODEX_OWN_CONFIG_SUBPATHS = ['.codex', '.agents'] as const
 
-/** `CLAUDE_OWN_CONFIG_SUBPATHS`/`CODEX_OWN_CONFIG_SUBPATHS` for the named agent, or `[]` for a vendor with no agent-native configuration path of its own (`gemini` today). */
+/** `CLAUDE_OWN_CONFIG_SUBPATHS`/`CODEX_OWN_CONFIG_SUBPATHS` for the named agent, or `[]` for a vendor with no agent-native configuration path of its own. */
 export function agentOwnConfigSubpaths(agent: string): readonly string[] {
   if (agent === 'claude') return CLAUDE_OWN_CONFIG_SUBPATHS
   if (agent === 'codex') return CODEX_OWN_CONFIG_SUBPATHS
@@ -947,7 +940,7 @@ export const DOCUMENTATION_HOSTS: readonly string[] = [
 
 export type ConfinementRequest = {
   readonly role: Role
-  /** A plain string, never `AgentVendor` — that type lives in `dispatch.ts`, which imports this module, and importing it back here would cycle; `hasSubscriptionLogin` (above) already takes the same shape for the same reason. */
+  /** A plain string, never `AgentVendor` — that type lives in `dispatch.ts`, which imports this module, and importing it back here would cycle. */
   readonly agent: string
   readonly worktreeDir: string
   readonly scratchDir: string

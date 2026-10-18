@@ -2781,11 +2781,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     const escalationPr = escalationPrOf(held)
     issueRulingsOwed = escalationPr === null
     if (held.agent !== undefined && !isAgentVendor(held.agent)) {
-      throw new Error(`devReviewLoop --resume: held pause state carries invalid agent '${held.agent}'.`)
+      throw new Error(
+        `devReviewLoop --resume: held pause state carries invalid agent '${held.agent}' — expected claude or codex.`
+      )
     }
     if (!input.agent && !held.agent) {
       throw new Error(
-        'devReviewLoop --resume: this legacy pause state does not record an agent; retry once with --agent <claude|codex|gemini>.'
+        'devReviewLoop --resume: this legacy pause state does not record an agent; retry once with --agent <claude|codex>.'
       )
     }
     // An explicit `--agent` that differs from the recorded one continues the

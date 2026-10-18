@@ -43,10 +43,7 @@ import {
   parseClaudeUsage,
   readClaudeTranscriptUsage,
   resolveClaudeUsageUnits,
-  parseGeminiModel,
-  parseGeminiUsage,
   renderClaudeEvent,
-  renderGeminiEvent,
   resolveClassModel,
   HEARTBEAT_INTERVAL_MS,
   MAX_TEE_BYTES,
@@ -72,7 +69,6 @@ import {
   PERMISSION_POLICY_VERSION,
   codexSpawnEnvExtras,
   missingSubscriptionLoginReason,
-  NO_SUBSCRIPTION_LOGIN_REASON,
   REVIEWER_RESUME_REFUSED_REASON,
   isReviewerResume,
   codexBoundaryFailureReason,
@@ -1850,7 +1846,7 @@ describe('dispatchRole — a shared run_id (a nested dispatch inheriting VINAYA_
   }, 10_000)
 })
 
-/** One argv element per line, preserving an empty-string element (gemini's `-p ''`) as a blank line — unambiguous, unlike a single space-joined `echo "$@"`. */
+/** One argv element per line, preserving argument boundaries. */
 function readArgv(path: string): string[] {
   return readFileSync(path, 'utf8').replace(/\n$/, '').split('\n')
 }
@@ -1869,7 +1865,7 @@ function withoutTurnResultFlag(argv: string[], flag: '--json-schema' | '--output
 }
 
 type ResumeVendorFixture = {
-  agent: 'claude' | 'codex' | 'gemini'
+  agent: 'claude' | 'codex'
   /** stdout a real first dispatch prints, carrying `synthId` as that vendor's own resume identifier. */
   firstStdout: (synthId: string) => string
   /** The exact argv `dispatchRole` must pass the vendor's binary for a `--resume <id>` dispatch. */
@@ -1899,13 +1895,6 @@ const RESUME_VENDOR_FIXTURES: ResumeVendorFixture[] = [
       '--json',
       '-'
     ]
-  },
-  {
-    agent: 'gemini',
-    firstStdout: (id) => `{"session_id":"${id}"}`,
-    // Streams for the same reason claude does (Issue #447, O5); shape
-    // verified against a real gemini run, not assumed.
-    resumeArgv: (id) => ['-p', '', '--resume', id, '--output-format', 'stream-json', '--skip-trust']
   }
 ]
 
@@ -2513,7 +2502,7 @@ describe('dispatch role log — redaction (round 2 review, SECURITY HIGH)', () =
 })
 
 describe('dispatch role log — each agent’s stream through its translator', () => {
-  function dispatchLog(agent: 'codex' | 'gemini', stream: string): string {
+  function dispatchLog(agent: 'codex', stream: string): string {
     const home = tempDir('vinaya-narr-home-')
     const cwd = tempDir('vinaya-narr-cwd-')
     const binDir = tempDir('vinaya-narr-bin-')
@@ -2544,11 +2533,6 @@ describe('dispatch role log — each agent’s stream through its translator', (
     expect(contents).toMatch(/ {2}· exit 1$/m)
     expect(contents).toMatch(/ {2}\+ Developer {3}Finished /m)
     expect(contents).toMatch(/ {2}> Developer {3}Reporting /m)
-  })
-
-  it('a Gemini session start reaches the file as a working line', () => {
-    const contents = dispatchLog('gemini', '{"type":"init","session_id":"s1"}\n')
-    expect(contents).toMatch(/ {2}> Developer {3}Working: session started$/m)
   })
 })
 
@@ -2739,28 +2723,6 @@ describe('dispatch streaming output (#447 O5)', () => {
   it('renders nothing for an event that carries nothing worth showing', () => {
     expect(renderClaudeEvent({ type: 'rate_limit_event', rate_limit_info: {} })).toBeNull()
     expect(renderClaudeEvent({ type: 'system', subtype: 'hook_started' })).toBeNull()
-    expect(renderGeminiEvent({ type: 'rate_limit', anything: true })).toBeNull()
-  })
-
-  it("renders gemini's own stream, whose shape was verified against a real run", () => {
-    // `init` / `message` / `result` — the three event kinds a real
-    // `gemini --output-format stream-json` run emits, checked rather than
-    // assumed (the Issue's trap named exactly this).
-    expect(renderGeminiEvent({ type: 'init', session_id: 'x' })).toBe('⏵ session started')
-    expect(renderGeminiEvent({ type: 'message', role: 'assistant', content: '  ok  ' })).toBe('ok')
-    expect(renderGeminiEvent({ type: 'result', status: 'success' })).toBe('⏹ success')
-    // A user echo is the prompt coming back, not the agent working.
-    expect(renderGeminiEvent({ type: 'message', role: 'user', content: 'the prompt' })).toBeNull()
-  })
-
-  it("reads gemini's usage from its terminal result event, where it previously read none at all", () => {
-    const stream = [
-      JSON.stringify({ type: 'init' }),
-      JSON.stringify({ type: 'message', role: 'assistant', content: 'ok' }),
-      JSON.stringify({ type: 'result', status: 'success', stats: { input_tokens: 8983, output_tokens: 36 } })
-    ].join('\n')
-    expect(parseGeminiUsage(stream)).toEqual({ input: 8983, output: 36 })
-    expect(parseGeminiUsage('not json')).toBeNull()
   })
 
   it("reads usage from a stream's terminal event, and still from a single whole-blob payload", () => {
@@ -2792,25 +2754,6 @@ describe('dispatch streaming output (#447 O5)', () => {
     // No `modelUsage` field at all — no receipt to read.
     expect(parseClaudeModel(JSON.stringify({ usage: { input_tokens: 3, output_tokens: 4 } }))).toBeNull()
     expect(parseClaudeModel('not json at all')).toBeNull()
-  })
-
-  it("reads gemini's genuine model receipt from stats.models' own key(s), distinct from the requested alias (O2, #456)", () => {
-    const stream = [
-      JSON.stringify({ type: 'init' }),
-      JSON.stringify({
-        type: 'result',
-        status: 'success',
-        stats: { input_tokens: 8983, output_tokens: 36, models: { 'gemini-3.8-flash': { tokens: {} } } }
-      })
-    ].join('\n')
-    expect(parseGeminiModel(stream)).toBe('gemini-3.8-flash')
-    // More than one model key in one run — both are real, join rather than
-    // guessing which one to keep.
-    const multiModel = JSON.stringify({ stats: { models: { 'gemini-a': {}, 'gemini-b': {} } } })
-    expect(parseGeminiModel(multiModel)).toBe('gemini-a,gemini-b')
-    // No `models` key at all — no receipt to read.
-    expect(parseGeminiModel(JSON.stringify({ stats: { input_tokens: 1, output_tokens: 1 } }))).toBeNull()
-    expect(parseGeminiModel('not json')).toBeNull()
   })
 
   it("reads the resume id from a stream's terminal event, and still from a whole-blob payload", () => {
@@ -2962,7 +2905,7 @@ describe('sawVendorConnectionRetry (pure) — [task-operator-v1]/Issue #662, O2'
  * refused before any spawn.
  */
 describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
-  const MODEL_ARGV_FIXTURES: Array<{ agent: 'claude' | 'codex' | 'gemini'; model: string; argv: string[] }> = [
+  const MODEL_ARGV_FIXTURES: Array<{ agent: 'claude' | 'codex'; model: string; argv: string[] }> = [
     {
       agent: 'claude',
       model: 'opus',
@@ -2983,11 +2926,6 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
         '--json',
         '-'
       ]
-    },
-    {
-      agent: 'gemini',
-      model: 'gemini-3.5-flash',
-      argv: ['-p', '', '--model', 'gemini-3.5-flash', '--output-format', 'stream-json', '--skip-trust']
     }
   ]
 
@@ -3203,30 +3141,9 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
     expect((dispatchLine as { model: string }).model).toBe('requested:claude-opus-5')
   })
 
-  it('O4: a Gemini-shaped model passed to claude is refused the same way', () => {
-    const home = tempDir('vinaya-dispatch-home-')
-    const cwd = tempDir('vinaya-dispatch-cwd-')
-    const binDir = tempDir('vinaya-dispatch-bin-')
-    const promptFile = join(cwd, 'prompt.txt')
-    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
-    const spawnedMarker = join(cwd, 'spawned')
-    writeFakeBinary(binDir, 'claude', `#!/bin/sh\ntouch "${spawnedMarker}"\ncat > /dev/null\necho '{}'\nexit 0\n`)
-
-    const r = runDispatch(
-      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--model', 'gemini-3.5-flash'],
-      cwd,
-      home,
-      `${binDir}:${pathWithoutRealVendors()}`
-    )
-    expect(r.status).toBe(1)
-    expect(existsSync(spawnedMarker)).toBe(false)
-  })
-
   it('a same-vendor model, and a vendor with no known naming convention (codex), are never refused for their shape', () => {
     expect(identifyVendorFromModelShape('claude-sonnet-5')).toBe('claude')
     expect(identifyVendorFromModelShape('sonnet')).toBe('claude')
-    expect(identifyVendorFromModelShape('gemini-3.5-flash')).toBe('gemini')
-    expect(identifyVendorFromModelShape('gemma-3-27b')).toBe('gemini')
     // Codex publishes no naming convention to detect — never treated as a
     // shape, only as a vendor a wrongly-shaped model can be refused FROM.
     expect(identifyVendorFromModelShape('gpt-5.6-sol')).toBeNull()
@@ -3234,7 +3151,7 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
     expect(identifyVendorFromModelShape('some-random-string')).toBeNull()
   })
 
-  it('O3: class resolution is a verified, non-stale table for Claude, and deliberately empty for Codex/Gemini', () => {
+  it('O3: class resolution is a verified, non-stale table for Claude, and deliberately empty for Codex', () => {
     expect(resolveClassModel('claude', 'high')).toBe('opus')
     expect(resolveClassModel('claude', 'mid')).toBe('sonnet')
     expect(resolveClassModel('claude', 'fast')).toBe('haiku')
@@ -3242,7 +3159,6 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
     // each CLI's own --help, see `VendorSpec`'s doc comment) — never a
     // guessed, version-pinned model name.
     expect(resolveClassModel('codex', 'high')).toBeNull()
-    expect(resolveClassModel('gemini', 'high')).toBeNull()
   })
 })
 
@@ -3608,8 +3524,8 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     expect(isDenied(run('echo "background job &"'))).toBe(false)
   })
 
-  it('never wires --settings for codex or gemini — no confirmed-live equivalent deny mechanism for either', () => {
-    for (const agent of ['codex', 'gemini']) {
+  it('never wires --settings for codex — no Claude settings flag for Codex', () => {
+    for (const agent of ['codex']) {
       const home = tempDir('vinaya-dispatch-home-')
       const cwd = tempDir('vinaya-dispatch-cwd-')
       const binDir = tempDir('vinaya-dispatch-bin-')
@@ -4734,17 +4650,13 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
   })
 
   /**
-   * Round 4 security review, MEDIUM. A `--agent gemini` dispatch — and a
-   * `--agent codex` dispatch of a role that carries no machine-state floor —
+   * A `--agent codex` dispatch of a role that carries no machine-state floor —
    * runs with no permission policy, and says so in its first lifecycle line,
    * so a run log is never indistinguishable from a protected one. A Codex
    * dispatch of a floor-carrying role is the separate case just below: it now
    * DOES carry the machine-state deny list, through Codex's own execpolicy.
    */
-  for (const [agent, role] of [
-    ['gemini', 'developer'],
-    ['codex', 'planner']
-  ] as const) {
+  for (const [agent, role] of [['codex', 'planner']] as const) {
     it(`an agent that carries no permission policy says so in its own first lifecycle line (${agent}/${role})`, () => {
       const home = tempDir('vinaya-dispatch-home-')
       const cwd = tempDir('vinaya-dispatch-cwd-')
@@ -5019,11 +4931,6 @@ describe('missingSubscriptionLoginReason — O3 (names where Vinaya looked and h
         /set .{0,20}api key|api key .{0,20}(required|missing)/
       )
     }
-  })
-
-  it('O2: gemini reads as the no-subscription-login refusal, not a missing credential file', () => {
-    expect(missingSubscriptionLoginReason('gemini', {})).toBe(NO_SUBSCRIPTION_LOGIN_REASON)
-    expect(NO_SUBSCRIPTION_LOGIN_REASON).toContain('no subscription login in Vinaya yet')
   })
 })
 
@@ -5434,29 +5341,7 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
     expect(result.status).toBe(0)
   })
 
-  it('warns only for a vendor whose Documentation gate remains unenforced', () => {
-    for (const agent of ['gemini']) {
-      const home = tempDir('vinaya-dispatch-home-')
-      const cwd = tempDir('vinaya-dispatch-cwd-')
-      const binDir = tempDir('vinaya-dispatch-bin-')
-      writeFakeBinary(binDir, agent, `#!/bin/sh\ncat > /dev/null\necho '{}'\nexit 0\n`)
-      const promptFile = join(cwd, 'prompt.txt')
-      writeFileSync(promptFile, DOC_PROMPT)
-
-      const r = spawnBudgeted(
-        [INDEX, 'dispatch', 'developer', '--agent', agent, '--prompt-file', promptFile],
-        {
-          encoding: 'utf8',
-          cwd,
-          env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` })
-        },
-        'vinaya dispatch'
-      )
-      expect(r.status).toBe(0)
-      expect(r.stderr).toContain('Documentation read-gate')
-      expect(r.stderr).toContain(agent)
-    }
-
+  it('Codex does not emit an unenforced Documentation gate warning', () => {
     {
       const home = tempDir('vinaya-dispatch-home-')
       const cwd = tempDir('vinaya-dispatch-cwd-')

@@ -1,7 +1,7 @@
 /**
  * `dispatchRole` — the Vinaya Log's `dispatch` family chokepoint (Linear
  * "Tech spec — The Vinaya Log" rev 4, §8, §20; `apps/cli/specs/log.md`).
- * Starts one of three vendors' headless CLI as a child process with
+ * Starts one of two vendors' headless CLI as a child process with
  * attribution (`VINAYA_RUN_ID`/`VINAYA_ROLE`/`VINAYA_TASK`/`VINAYA_ROUND`) plus
  * this driver's own pid (`VINAYA_DRIVER_PID`, so a role that lists processes
  * recognizes its own launcher rather than reading it as a competing run) set
@@ -28,17 +28,6 @@
  *     line. Confirmed live: the terminal `turn.completed` event carries
  *     `usage: { input_tokens, output_tokens, ... }` — the same field names
  *     as Claude's, so it is parsed the same way rather than left `null`.
- *   - `gemini -p '' --output-format json --skip-trust` — `-p ''` triggers
- *     headless mode while leaving the real prompt to arrive on stdin (Gemini
- *     appends stdin to whatever `-p` carries); `--skip-trust` is Gemini's own
- *     documented flag for unattended/automated environments, confirmed by its
- *     own workspace-trust refusal message rather than guessed. Confirmed
- *     live: Gemini's stdout is a `{ session_id, response, stats: { models:
- *     { <model>: { tokens: {...} } } } }` shape — per-model token buckets,
- *     never a single `{ input, output }` pair. That does not match this
- *     family's `usage` shape and is never guessed into one; `usage: null` is
- *     recorded for every Gemini dispatch until a real reader exists for its
- *     own shape.
  *
  * **The generic "no specific, identifiable forge outcome" gap this module
  * doc used to disclose is closed:**
@@ -125,7 +114,6 @@ import {
   controllerStoreReachableBy,
   buildCodexHooksMarketplace,
   buildWorkerEnv,
-  hasSubscriptionLogin,
   LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV,
   probeAgentSandbox,
   REAL_WORKER_BOUNDARY_DEPS,
@@ -209,7 +197,7 @@ export function colourLoopLine(line: string, stream: { isTTY?: boolean }): strin
   return colourEnabled(stream) ? `${LOOP_ANSI}${line}${ANSI_RESET}` : line
 }
 
-export const AGENT_VENDOR_NAMES = ['claude', 'codex', 'gemini'] as const
+export const AGENT_VENDOR_NAMES = ['claude', 'codex'] as const
 export type AgentVendor = (typeof AGENT_VENDOR_NAMES)[number]
 
 export function isAgentVendor(value: string): value is AgentVendor {
@@ -403,7 +391,7 @@ export type DispatchOpts = {
  * lines on stdout — never stderr, so this reads the SAME buffer
  * `parseUsage`/`parseResumeId` already scan, never violating this file's own
  * "stderr content never decides success or failure" rule (`handleChildExit`'s
- * own doc comment, above). Vendor-agnostic by construction — Codex/Gemini's
+ * own doc comment, above). Vendor-agnostic by construction — Codex's
  * own stream shapes never emit this marker, so the scan is always a no-op
  * for them, never a guessed classification for an unconfirmed vendor's own
  * shape (the vendor tables themselves are unchanged).
@@ -690,9 +678,7 @@ export function openOutputTee(
  * This is generated fresh per `dispatchRole` call (this function's own
  * "per-dispatch" — every dispatch, every role, always the same content) and
  * wired in only for `claude`: Codex's `exec --help` exposes no
- * settings-injection or hook flag at all, and Gemini's own `hooks`/`--policy`
- * subsystem needs its own live confirmation this task's boundary doesn't
- * reach, so neither is silently claimed as covered.
+ * settings-injection flag at all.
  */
 export const BACKGROUND_DENY_REASON =
   'Dispatched sessions cannot run shell commands in the background — run this command in the foreground instead.'
@@ -2210,29 +2196,6 @@ function parseCodexModel(_stdout: string): string | null {
   return null
 }
 
-/**
- * Gemini's own confirmed-live receipt: the terminal `result` event's
- * `stats.models` object is keyed by the resolved model name(s) that actually
- * ran — confirmed live: requesting the alias `--model gemini-flash-latest`
- * produced `stats.models` keyed by `gemini-3.8-flash`, a DIFFERENT string
- * than the one requested. Scanned from the end, same reason `parseGeminiUsage`
- * is. More than one key (a run spanning two models, observed live after a
- * mid-run retry) joins both rather than picking one arbitrarily.
- */
-export function parseGeminiModel(stdout: string): string | null {
-  const lines = stdout.split('\n').filter((l) => l.trim().length > 0)
-  for (let i = lines.length - 1; i >= 0; i--) {
-    try {
-      const obj = JSON.parse(lines[i] as string) as { stats?: { models?: Record<string, unknown> } }
-      const keys = obj.stats?.models ? Object.keys(obj.stats.models) : []
-      if (keys.length > 0) return keys.join(',')
-    } catch {
-      // not a JSON line — keep scanning backwards, never a guessed shape
-    }
-  }
-  return null
-}
-
 export function parseClaudeUsage(stdout: string): { input: number; output: number } | null {
   // `stream-json` prints one event per line and the terminal event carries
   // `usage`; scanned from the end for the same reason `parseCodexUsage` is.
@@ -2274,28 +2237,6 @@ function parseCodexUsage(stdout: string): { input: number; output: number } | nu
       }
     } catch {
       // not a JSON line — Codex's own stdout is JSONL only, but never trust it blindly
-    }
-  }
-  return null
-}
-
-/** Gemini's own JSON stdout is a per-model `stats.models.*.tokens` breakdown, not a single `{ input, output }` pair (confirmed live, module doc above) — never guessed into one. */
-export function parseGeminiUsage(stdout: string): { input: number; output: number } | null {
-  // The terminal `result` event's `stats` carries the counts; scanned from the
-  // end for the same reason the other two parsers are. This previously always
-  // returned null, so a gemini dispatch reported no usage at all.
-  const lines = stdout.split('\n').filter((l) => l.trim().length > 0)
-  for (let i = lines.length - 1; i >= 0; i--) {
-    try {
-      const obj = JSON.parse(lines[i] as string) as {
-        stats?: { input_tokens?: unknown; output_tokens?: unknown }
-      }
-      const st = obj.stats
-      if (st && typeof st.input_tokens === 'number' && typeof st.output_tokens === 'number') {
-        return { input: st.input_tokens, output: st.output_tokens }
-      }
-    } catch {
-      // not a JSON line — keep scanning backwards
     }
   }
   return null
@@ -2486,21 +2427,6 @@ export function parseCodexUsageUnits(stdout: string): UsageObservation {
 }
 
 /**
- * Gemini's own confirmed-live shape (module doc above) is a per-model
- * `stats.models.<model>.tokens` breakdown, never a single `{ input, output }`
- * pair — this vendor's usage is always reported as explicitly unknown here,
- * naming that confirmed shape, rather than guessing at field names inside
- * `tokens` that were never verified against a real run.
- */
-export function parseGeminiUsageUnits(_stdout: string): UsageObservation {
-  return {
-    units: NO_USAGE_UNITS,
-    unknownReason:
-      'gemini reports token usage per-model under stats.models.<model>.tokens, confirmed live to carry no single input/output pair — this launcher does not yet read that per-model shape'
-  }
-}
-
-/**
  * O2 — true when `stdout` carries at least
  * one `{"type":"system","subtype":"api_retry",...}` line: the vendor's own
  * signal that it could not reach its backend and was retrying internally
@@ -2509,7 +2435,7 @@ export function parseGeminiUsageUnits(_stdout: string): UsageObservation {
  * Scans the SAME `stdoutBuf` every other vendor-output reader here already
  * does — never stderr (this file's own "stderr content never decides
  * success or failure" rule, `handleChildExit`'s doc comment) — and is
- * vendor-agnostic: Codex/Gemini never emit this shape, so it is always
+ * vendor-agnostic: Codex never emits this shape, so it is always
  * `false` for them, never a guess about a vendor's own unconfirmed output.
  */
 /**
@@ -2689,15 +2615,6 @@ export function parseCodexResumeId(stdout: string): string | null {
     }
   }
   return null
-}
-
-function parseGeminiResumeId(stdout: string): string | null {
-  try {
-    const obj = JSON.parse(stdout) as { session_id?: unknown }
-    return typeof obj.session_id === 'string' ? obj.session_id : null
-  } catch {
-    return null
-  }
 }
 
 /**
@@ -3404,10 +3321,9 @@ type VendorSpec = {
    * real, non-stale mapping exists — Claude's own `--model` help text
    * documents these three as aliases that always track its "latest" model
    * per tier, so the mapping never goes stale as new Claude models ship.
-   * Codex and Gemini publish no such alias layer (`codex --help`/
-   * `gemini --help` show a bare `--model <value>` with no enumerated or
-   * aliased values, confirmed live) — inventing a version-pinned mapping
-   * for either would be exactly the stale catalogue this task's own
+   * Codex publishes no such alias layer (`codex --help` shows a bare
+   * `--model <value>` with no enumerated or aliased values, confirmed live)
+   * — inventing a version-pinned mapping would be the stale catalogue this task's own
    * Stop-and-escalate condition names, so both stay empty: a task naming
    * neither vendor's own model runs that vendor's default, same as before
    * this task, rather than resolving to a name that will go stale.
@@ -3472,20 +3388,6 @@ export function renderCodexEvent(obj: Record<string, unknown>): string | null {
   if (type.endsWith('.completed') || type.endsWith('.started')) return `⏵ ${type}`
   const item = obj.item as { text?: unknown } | undefined
   return typeof item?.text === 'string' && item.text.trim().length > 0 ? item.text.trim() : null
-}
-
-/** Gemini's streaming shape is not yet verified against a real run; show nothing rather than guess a field. */
-export function renderGeminiEvent(obj: Record<string, unknown>): string | null {
-  if (obj.type === 'init') return '⏵ session started'
-  if (obj.type === 'message' && obj.role === 'assistant') {
-    const text = typeof obj.content === 'string' ? obj.content.trim() : ''
-    return text.length > 0 ? text : null
-  }
-  if (obj.type === 'result') {
-    const status = typeof obj.status === 'string' ? obj.status : 'finished'
-    return `⏹ ${status}`
-  }
-  return null
 }
 
 const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
@@ -3568,34 +3470,6 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
     // own doc comment) — a real invocation's own configured model
     // (`codex doctor`) is a version-pinned string, not a "latest" alias.
     classModels: {}
-  },
-  gemini: {
-    binary: 'gemini',
-    // Verified against a real run, not assumed (the Issue's own trap): gemini
-    // emits `init`, then a `message` per turn carrying `role`/`content`, then
-    // a terminal `result` whose `stats` holds the token counts.
-    // `-m, --model <string>` confirmed live via `gemini --help` — same bare,
-    // unaliased shape as Codex's (contrast `--output-format`, which does
-    // list `[choices: ...]` in the same help output).
-    args: (model) => ['-p', '', ...(model ? ['--model', model] : []), '--output-format', 'stream-json', '--skip-trust'],
-    resumeArgs: (id, model) => [
-      '-p',
-      '',
-      '--resume',
-      id,
-      ...(model ? ['--model', model] : []),
-      '--output-format',
-      'stream-json',
-      '--skip-trust'
-    ],
-    parseUsage: parseGeminiUsage,
-    parseUsageUnits: parseGeminiUsageUnits,
-    parseModel: parseGeminiModel,
-    parseResumeId: parseGeminiResumeId,
-    renderEvent: renderGeminiEvent,
-    // No non-stale alias layer either — a real run's own default (confirmed
-    // live) is a dated model string, not a "latest" alias.
-    classModels: {}
   }
 }
 
@@ -3642,21 +3516,17 @@ export function developerWrittenTextFromVendorOutput(raw: string, agent: AgentVe
  * Confirmed live, not assumed: `claude --model`'s own help text names
  * `fable`/`opus`/`sonnet` as aliases (haiku is the same family's fourth
  * tier), and its "full name" example (`claude-fable-5`) establishes the
- * `claude-` prefix every full Claude model name carries. A real `gemini`
- * run's own `stats.models` keys (`gemini-3.1-flash-lite`,
- * `gemini-3.5-flash`) confirm its own `gemini-`/`gemma-` prefix
- * (`gemini gemma` is a documented subcommand for the latter family).
+ * `claude-` prefix every full Claude model name carries.
  * Codex publishes no equivalent naming convention to check against — a real
  * run's own configured model (`codex doctor`: `gpt-5.6-sol`) is one instance,
  * not a rule, so Codex is never treated as a shape to detect, only as the
- * vendor a wrongly-shaped Claude/Gemini model can be refused FROM.
+ * vendor a wrongly-shaped Claude model can be refused FROM.
  */
 const CLAUDE_MODEL_ALIASES = new Set(['fable', 'opus', 'sonnet', 'haiku'])
 
 export function identifyVendorFromModelShape(model: string): AgentVendor | null {
   const lower = model.toLowerCase()
   if (CLAUDE_MODEL_ALIASES.has(lower) || lower.startsWith('claude-')) return 'claude'
-  if (lower.startsWith('gemini-') || lower.startsWith('gemma-')) return 'gemini'
   return null
 }
 
@@ -3848,16 +3718,6 @@ export function codexBoundaryFailureReason(agent: AgentVendor, boundaryFailureRe
 }
 
 /**
- * O2: Gemini has no subscription login route in Vinaya — the trusted
- * controller has nothing to read, nothing to stage, and no API-key
- * fallback to reach for, so an unattended dispatch refuses before any
- * spawn rather than launching a child that cannot authenticate.
- */
-export const NO_SUBSCRIPTION_LOGIN_REASON =
-  'this agent has no subscription login in Vinaya yet, and no agent authenticates with an API key — ' +
-  'dispatch a vendor whose subscription login Vinaya can stage (claude, codex)'
-
-/**
  * O3: why a confined dispatch found no subscription login, as the operator
  * reads it — where this looked, and the command that signs in. Never an API
  * key: no agent authenticates with one, so there is no second route to
@@ -3883,7 +3743,7 @@ export function missingSubscriptionLoginReason(
       "or in this host's credential store. Sign in as the operator with `codex login`, then dispatch again."
     )
   }
-  return NO_SUBSCRIPTION_LOGIN_REASON
+  throw new Error(`Unknown agent '${agent}' — expected claude or codex`)
 }
 
 /**
@@ -4164,7 +4024,7 @@ export async function dispatchRole(
   // Used for every log line before the child's own report can be read
   // (`dispatched`, every `dispatch_failed` path) and as the fallback for
   // `outcome_received` when the vendor gives no receipt at all (Codex,
-  // always; Claude/Gemini, on an unparseable payload).
+  // always; Claude, on an unparseable payload).
   const resolvedModel = opts.model !== undefined ? `requested:${opts.model}` : 'default'
 
   // O1: persist the launch intent — run, attempt, role — BEFORE anything
@@ -4282,7 +4142,7 @@ export async function dispatchRole(
       writeLifecycle(
         `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — model '${opts.model}' is a ${foreignVendor} model; ` +
           `${agent} does not accept it. ${agent} accepts its own model names (never a ${foreignVendor} alias or a ` +
-          `'${foreignVendor}-'/'gemma-' full name).`
+          `'${foreignVendor}-' full name).`
       )
       patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
       await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
@@ -4295,43 +4155,6 @@ export async function dispatchRole(
         failureReason: 'refused',
         effectId
       }
-    }
-  }
-
-  // O2: an agent with no subscription login route in Vinaya can never
-  // authenticate an unattended run — the controller has nothing to read and
-  // nothing to stage for it, and no API-key fallback exists for any agent.
-  // Refuse here, before the binary is even resolved, rather than letting a
-  // child launch and hang unauthenticated to the dispatch ceiling. Scoped to
-  // an unattended start: an attended dispatch is a human at their own
-  // terminal, whose vendor CLI signs itself in interactively.
-  if (opts.unattended === true && !hasSubscriptionLogin(agent)) {
-    const failureReason: DispatchFailureReason = 'authentication-failed'
-    const durationMs = Date.now() - start
-    const priorSize = sizeOfSafe(outboxPath)
-    log({
-      kind: 'dispatch',
-      event: 'dispatch_failed',
-      payload: {},
-      target_role: role,
-      model: resolvedModel,
-      ...roundField,
-      effect_id: effectId,
-      reason: 'refused',
-      usage: null,
-      duration_ms: durationMs
-    })
-    writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — ${NO_SUBSCRIPTION_LOGIN_REASON}`)
-    patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
-    await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
-    return {
-      exitCode: null,
-      durationMs,
-      usage: null,
-      resumeId: null,
-      timedOut: false,
-      failureReason,
-      effectId
     }
   }
 
@@ -4540,7 +4363,7 @@ export async function dispatchRole(
     }
   }
   // O1: claude only — see `writeDispatchSettings`'s own doc comment for why
-  // Codex/Gemini are not silently included. Computed here, once, before the
+  // Codex is not silently included. Computed here, once, before the
   // 'dispatched' log line — moved up from inside the spawn `Promise`
   // so the SAME final `spawnArgs` (baseArgs plus `--settings`)
   // is what an unattended start's boundary resolution wraps below, rather
@@ -4550,18 +4373,6 @@ export async function dispatchRole(
     agent === 'codex' && documentationSources.some((source) => isDocumentationUrl(source.source))
       ? `\n\nCodex documentation receipt: read every URL in \`## Documentation\` with the dev-tools \`${FETCH_DOCUMENTATION_TOOL}\` tool before ending this turn — the driver fetches the page outside your sandbox and records the read. \`curl -L <URL>\` in a Bash tool call also counts when the host is reachable from the sandbox; a \`curl\` your sandbox blocks never means the source cannot be opened — read it with \`${FETCH_DOCUMENTATION_TOOL}\`. Built-in web search is not a receipt route for this dispatch.\n`
       : ''
-  if (agent === 'gemini' && documentationSources.some((s) => isDocumentationUrl(s.source))) {
-    // round 2 security review, LOW — the PostToolUse/Stop hook
-    // pair below is Claude-only, same limitation `deny-background-bash.mjs`
-    // already has; unlike that hook, an unenforced Documentation obligation
-    // is silent otherwise, so this dispatch names it rather than leaving
-    // the operator to discover it only by a source never actually read.
-    writeLifecycle(
-      'vinaya dispatch-role: the Documentation read-gate (Issue #625, O2) is Claude-only — ' +
-        `agent '${agent}' gets no WebFetch log/Stop hook, so this brief's URL-shaped ` +
-        `'## Documentation' source(s) are not mechanically enforced for this dispatch.`
-    )
-  }
   // The directory a Developer's `Write`/`Edit` rules are scoped to — this
   // policy is written on EVERY host and EVERY run (unlike either vendor's
   // own, unattended-only sandbox resolution above), so it needs a value even
@@ -4632,13 +4443,12 @@ export async function dispatchRole(
   // floor-only home this task does not confine (`stageCodexPolicyHome`'s own
   // `sandboxConfigToml`-omitted behavior, byte-for-byte unchanged). Both
   // paths share the one `stageCodexPolicyHome` call site below.
-  const codexStagedConfigDir =
-    codexRequireIsolation && hasSubscriptionLogin(agent)
-      ? runPath(runtimeDirForRepo(repo), scopeOf(opts.task, opts.pr), {
-          area: 'sessions',
-          file: `${role}-${agent}-config`
-        })
-      : undefined
+  const codexStagedConfigDir = codexRequireIsolation
+    ? runPath(runtimeDirForRepo(repo), scopeOf(opts.task, opts.pr), {
+        area: 'sessions',
+        file: `${role}-${agent}-config`
+      })
+    : undefined
   const codexHomeTargetDir =
     agent === 'codex'
       ? codexStagedConfigDir !== undefined
@@ -4817,7 +4627,7 @@ export async function dispatchRole(
     // machine-state deny floor, not that hook (the sibling
     // `writeCodexDispatchHooks` wires a `PostToolUse` logger and a `Stop`
     // gate, neither of which can refuse a call before it runs). This branch
-    // is what remains: `gemini`, and a Codex dispatch of a role that carries
+    // is what remains: a Codex dispatch of a role that carries
     // no floor on the Claude side either. Before the Documentation read-gate's
     // own fix such a dispatch ran silently; an absence this consequential is stated in the
     // log, in the same first lifecycle position where a Claude dispatch names
@@ -5076,11 +4886,9 @@ export async function dispatchRole(
   // schema `developer-turn-result.ts` generates, so the shape the provider is
   // given and the shape the driver accepts are the same zod value. One
   // authority per adapter: no result file, no report tool, no Stop hook in
-  // the path. Gemini has no native structured output; its Developer turn
-  // delivers none (`turnOutput.adapter: null`) and the loop pauses on it.
+  // the path.
   // A code or security reviewer asks the same way for its own role's
-  // ReviewResult schema (`review-result.ts`), always on a fresh session; a
-  // Gemini reviewer delivers no result, which the loop records as no review.
+  // ReviewResult schema (`review-result.ts`), always on a fresh session.
   const turnResultAdapter: TurnResultAdapter | null =
     role !== 'developer' && reviewerRole === null
       ? null
