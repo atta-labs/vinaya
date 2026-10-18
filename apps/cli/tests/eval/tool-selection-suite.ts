@@ -76,6 +76,8 @@ import { AGENT_TOOL_CATALOG } from '../../src/lib/task-tools/tool-catalog'
 
 /** The live suite module 6.6 declares, run on both splits. */
 export const LIVE_SUITE = { name: 'tool-catalog.l5', version: 1, layer: 'L5' } as const
+/** Process layer `P` only: the tools under test are Vinaya's own role catalog, so no process-neutral suite exists. */
+export const LIVE_SUITE_PROCESS_LAYER = 'P' as const
 /** The deterministic regression subset module 6.6 declares: the development cases, replayed. */
 export const REGRESSION_SUITE = { name: 'tool-catalog.l4', version: 1, layer: 'L4' } as const
 

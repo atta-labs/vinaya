@@ -22,7 +22,7 @@ Digests are SHA-256, written as 64 lowercase hexadecimal characters; commits are
 
 A grader is pinned logic scoring one aspect of a trial's outcome.
 
-- Every grader declares its **layer**, `G` or `P`. A layer-`G` grader reads only process-neutral facts — a neutral case and its neutral outcomes (see "Layer G" below). A layer-`P` grader reads an artifact one process owns, such as Vinaya's frozen brief, a reviewer severity or a structured turn result. An identity that declares no layer, or any other value, is refused. This tag is not a suite's `L1`–`L8` layer. Every grader of the Developer capability, reviewer-quality and tool-selection suites is `P`.
+- Every grader declares its **layer**, `G` or `P`. A layer-`G` grader reads only process-neutral facts — a neutral case and its neutral outcomes (see "Layer G" below). A layer-`P` grader reads an artifact one process owns, such as Vinaya's frozen brief, a reviewer severity or a structured turn result. An identity that declares no layer, or any other value, is refused. This tag is not a suite's `L1`–`L8` layer; an L5 or L6 suite carries it separately, as its `processLayer` in the module registry. Every grader of the Developer capability, reviewer-quality and tool-selection suites is `P`.
 - A **code grader** is pinned by `layer`, `id`, `version` and `logicDigest`.
 - A **model grader** is pinned by its `layer` and every element the evaluation program's §7 names: `id`, `version`, `adapterVersion`, `cliVersion`, `model`, `promptDigest`, `outputSchemaDigest`, `calibrationCorpusDigest`. A missing element is refused.
 - A verdict is `pass`, `fail` with a reason, or `unknown` with a reason. A code grader returning `unknown` is refused (`unknown_from_code_grader`); a `fail` or `unknown` without a reason is refused (`reason_required`).
@@ -42,11 +42,13 @@ One isolated execution of one task under one condition: `id`, `taskId`, `conditi
 - **Isolation** names the trial's workspace, vendor home, checkpointer and Log destination. `validateTrialSet` refuses two trials sharing any of them (`shared_isolation`) — every trial starts clean, with its own fresh checkpointer — and refuses a repeated (task, condition, attempt).
 - **Outcome** is `graded` (the outcome digest plus one result per grader) or `errored` with a reason.
 - `trialVerdict` reads a trial as `pass` only when every grade passes, `fail` when any grade fails or the trial errored, and otherwise `unknown`, which must be adjudicated before it is counted.
-- A layer-`G` trial of the Vinaya process is graded on outcomes the Vinaya renderer extracts, and its trial record carries the renderer version it was rendered and extracted under (see "The Vinaya renderer").
+- A layer-`G` trial of the Vinaya process is graded on outcomes the Vinaya renderer extracts, and its trial record carries the renderer version it was rendered and extracted under (see "The Vinaya renderer"). A result reported from such trials names that version too (see "Development-only step-one run and freeze record").
 
 ### Suite
 
 A named, versioned set of tasks: stable `name`, `version` (from 1), `layer` (`L1`–`L8`, the evaluation program's §5), `kind` (`capability` or `regression`), and `splits` — `development` and `heldOut` task ids, disjoint (`splits_overlap`), without repeats, and not both empty.
+
+A suite that runs real agents on tasks — an L5 or L6 suite — also has a **process layer**, `G` or `P`, declared beside it in the module registry: `G` when its graders read only process-neutral outcomes, `P` when they read one process's artifacts. Only layer-`G` suites compare the standalone and Engine backends. The process layer is never written into `layer`.
 
 Splits are fixed at creation. `createSuite` returns a deeply frozen suite, and `validateSuiteRevision` refuses a suite with the same name and version as a recorded one whose splits differ (`splits_changed`). Changing the splits needs a new version.
 
@@ -90,8 +92,8 @@ The evaluation program's §6 requires every migrating component to carry a recor
 
 ### Rows and their sources
 
-- **The catalog**, `modules.json`, has one entry per §6 module, `6.1` to `6.24`. Each entry states all ten fields and the suites it declares — one per layer its §6 entry lists, as a stable name and a version (`run-preparation.l1`, version 1), never a test file. `6.19`, the Planner, is listed so its absence is a decision: it is the one entry marked `excluded` with its reason, it declares no suite, and only an excluded entry may state a field as `notApplicable`.
-- **A component row** names its `kind` (port, node, role, tool, gate, transition, effect, adapter, isolation boundary, product guarantee, fault or attack, or cutover gate), an id `<kind>:<name>`, exactly one catalog module, and the ten fields, every one stored on the row. Copying a module's value is allowed; leaving a field to be inherited is not. Its `suite` field names only suites its module declares, as `<name>@<version>`.
+- **The catalog**, `modules.json`, has one entry per §6 module, `6.1` to `6.24`. Each entry states all ten fields and the suites it declares — one per layer its §6 entry lists, as a stable name and a version (`run-preparation.l1`, version 1), never a test file. Every L5 and L6 suite also declares its `processLayer`, `G` or `P`, and a module may declare one L5 suite of each: the Developer capability, code reviewer, security reviewer and source citation modules declare their existing L5 suites `P` and a `-neutral` suite `G` beside each (`developer-capability-neutral.l5`); tool selection, Vinaya's own role catalog, has only its `P` suite; the whole loop's `whole-loop.l6` is `G`, since its backend comparison runs on layer-`G` suites only; `operator.l5` and `backend-selection.l6`, which judge Vinaya's own Operator and rollback, are `P`. A suite of L1–L4, L7 or L8 declares no process layer. `6.19`, the Planner, is listed so its absence is a decision: it is the one entry marked `excluded` with its reason, it declares no suite, and only an excluded entry may state a field as `notApplicable`.
+- **A component row** names its `kind` (port, node, role, tool, gate, transition, effect, adapter, isolation boundary, product guarantee, fault or attack, or cutover gate), an id `<kind>:<name>`, exactly one catalog module, and the ten fields, every one stored on the row. Copying a module's value is allowed; leaving a field to be inherited is not. Its `suite` field names only suites its module declares, as `<name>@<version>`. A fault-or-attack row names its module's suites at the table's layers except a layer-`G` one: those grade process-neutral outcomes, never a fault or attack on the process.
 - **Tasks** state each of the five cases — positive, negative, refusal, recovery, adversarial — as `{ present }` or `{ notApplicable }` with the reason.
 - **Owner, backends, cadence and grader kinds** take the program's own vocabulary: owners `engine`, `vinaya-policy`, `adapter`, `sandbox`, `governed-effect`, `process-package`; backends `standalone`, `engine`; cadences `every-affected-change`, `scheduled-live`, `pre-release`, `canary`; grader kinds `code`, `model`, `human`.
 - **Every row carries its own source**: the document, its revision and a heading in it. A catalog entry cites its `### 6.n` heading of `apps/cli/specs/dev-review-evaluation-program.md` at the mirror's pinned revision; a component row cites the document that states it.
@@ -102,9 +104,11 @@ A pending number is written with the program's own marker — a floor marked *Pr
 
 ### Validation
 
-Validation returns the value or `{ ok: false, refusal }` with a typed `code`, the dotted `path` of the offending field (prefixed by the file and `#` when it came from one) and a one-line `detail`. It refuses a missing field (`missing_field`), an empty one (`empty`), a placeholder such as `TBD`, `N/A` or `…` (`placeholder`), a value outside the vocabulary (`unknown_value`), an unknown module (`unknown_module`), the excluded module (`module_excluded`), a suite the module does not declare (`unknown_suite`), and a component field stated as not applicable (`not_applicable_refused`).
+Validation returns the value or `{ ok: false, refusal }` with a typed `code`, the dotted `path` of the offending field (prefixed by the file and `#` when it came from one) and a one-line `detail`. It refuses a missing field (`missing_field`) — an L5 or L6 suite without its `processLayer` among them — an empty one (`empty`), a placeholder such as `TBD`, `N/A` or `…` (`placeholder`), a value outside the vocabulary (`unknown_value`) — a `processLayer` other than `G` or `P`, or one on a suite of another layer, among them — an unknown module (`unknown_module`), the excluded module (`module_excluded`), a suite the module does not declare (`unknown_suite`), and a component field stated as not applicable (`not_applicable_refused`).
 
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/registry.ts contains:export type RegistryResult<T> = { ok: true; value: T } | { ok: false; refusal: RegistryRefusal } -->
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/registry.ts contains:export const PROCESS_LAYERED = ['L5', 'L6'] as const -->
 
 ### Shards and aggregation
 
@@ -487,10 +491,35 @@ two fixed-floor held-out suite results. Every result requires its suite, split,
 backend, adapter, task tallies, interval, time, token, quota and estimated-cost
 measurements. The whole-loop remaining-task floor separately requires its
 acceptance spend and wall-time budgets. Unknown fields and missing suite or
-adapter results are refused. The whole-loop step-one run remains owed until a
+adapter results are refused.
+
+Every measured result also names its suite's process layer, `layer` (`G` or
+`P`), which must equal the layer the module registry declares for that suite
+(`LIVE_SUITE_LAYERS`, which `apps/cli/tests/eval/registry.test.ts` proves
+equal to the registry), and `rendererVersion`, the renderer version its trial
+records were made under. A result missing either is refused, and so is a
+layer-`G` result whose renderer version is empty; a layer-`P` suite has no
+renderer, so its version may be empty. The record also holds:
+
+- `backendComparisonFloors` — one entry per layer-`G` suite, the only suites
+  the backends are compared on. Each floor's value stays absent until the
+  Principal rules on it, and an entry carrying one is refused, as is a floor
+  attached to a layer-`P` suite.
+- `practiceRuns` — development results of exactly one trial per task, each
+  with its usage and cost and marked `evidence: "never"`: they measure what a
+  run costs and decide nothing. A result with more trials is refused.
+- `comparisonParameters` — the non-inferiority margin, trials per task and
+  minimum task count, with the UTC time they were recorded (`recordedAt`).
+  Recorded before any Engine held-out run, they let the standalone layer-`G`
+  held-out baseline be observed before the Engine comparison.
+- `engineHeldOut` — Engine held-out results of layer-`G` suites, each with its
+  `recordedAt`, run at the comparison parameters' trials per task. The
+  comparison parameters are refused when dated after any of them. The whole-loop step-one run remains owed until a
 disposable sandbox repository exists, and Operator capability selection
 remains owed by the Operator on one host project. No floor or live measurement
 is selected or recorded by this implementation.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/freeze-record.ts contains:export const LIVE_SUITE_LAYERS = { -->
 
 The evaluation program's §6.5 asks whether the Developer, isolated, completes real tasks correctly within its tools and authority. `apps/cli/tests/eval/developer-capability-suite.ts` is that suite, `developer-capability.l5`, built on this harness: each case is a coding `Task` whose reference solution is the merged change, and each criterion is a pinned code grader. It runs no live trial; it holds the cases, their splits and the grader a live run uses.
 

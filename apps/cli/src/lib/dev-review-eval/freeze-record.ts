@@ -1,10 +1,42 @@
+import { GRADER_LAYERS, type GraderLayer } from './contracts'
 import { BOOTSTRAP_METHODS } from './estimators'
 import { STEP_ONE_ADAPTERS, STEP_ONE_SUITES, type StepOneAdapter } from './step-one'
 
+/**
+ * The process layer every L5 and L6 suite declares in the module registry
+ * (`apps/cli/tests/eval/registry/modules.json`): `G` when its graders read
+ * only process-neutral outcomes, `P` when they read one process's artifacts.
+ * The registry test proves this table equals the registry's declarations.
+ */
+export const LIVE_SUITE_LAYERS = {
+  'source-delivery.l5': 'P',
+  'source-delivery-neutral.l5': 'G',
+  'developer-capability.l5': 'P',
+  'developer-capability-neutral.l5': 'G',
+  'tool-catalog.l5': 'P',
+  'code-reviewer-quality.l5': 'P',
+  'code-reviewer-quality-neutral.l5': 'G',
+  'security-reviewer-quality.l5': 'P',
+  'security-reviewer-quality-neutral.l5': 'G',
+  'whole-loop.l6': 'G',
+  'backend-selection.l6': 'P',
+  'operator.l5': 'P'
+} as const satisfies Record<string, GraderLayer>
+export type LiveSuite = keyof typeof LIVE_SUITE_LAYERS
+
+/** The layer-`G` suites: the only suites the standalone and Engine backends are compared on. */
+export const BACKEND_COMPARISON_SUITES = (Object.keys(LIVE_SUITE_LAYERS) as LiveSuite[]).filter(
+  (suite) => LIVE_SUITE_LAYERS[suite] === 'G'
+)
+
 export interface MeasuredResult {
   suite: string
+  /** The suite's process layer, as the module registry declares it. */
+  layer: GraderLayer
+  /** The renderer version the trial records were made under; empty only for a layer-`P` suite, which has no renderer. */
+  rendererVersion: string
   split: 'development' | 'held-out'
-  backend: 'standalone'
+  backend: 'standalone' | 'engine'
   adapter: StepOneAdapter
   taskCount: number
   trialsPerTask: number
@@ -18,6 +50,40 @@ export interface MeasuredResult {
     subscriptionQuota: number | null
     estimatedCostUsd: number
   }
+}
+
+/** A one-trial development run that measures cost; never evidence for any decision. */
+export interface PracticeRunResult extends MeasuredResult {
+  split: 'development'
+  trialsPerTask: 1
+  evidence: 'never'
+}
+
+/** An Engine held-out result, with the time it was recorded. */
+export interface EngineHeldOutResult extends MeasuredResult {
+  split: 'held-out'
+  backend: 'engine'
+  recordedAt: string
+}
+
+/**
+ * One backend-comparison floor per layer-`G` suite. Its value stays absent
+ * until the Principal rules on it; a recorded value is refused until then.
+ */
+export interface BackendComparisonFloor {
+  suite: string
+  layer: 'G'
+}
+
+/**
+ * The comparison parameters, recorded before any Engine held-out result so
+ * the standalone layer-`G` baseline may be observed first.
+ */
+export interface ComparisonParameters {
+  recordedAt: string
+  margin: number
+  trialsPerTask: number
+  minimumTaskCount: number
 }
 
 export interface FreezeRecord {
@@ -56,6 +122,10 @@ export interface FreezeRecord {
   }
   cadence: { nightly: string; weekly: string; release: string }
   developmentRuns: MeasuredResult[]
+  backendComparisonFloors: BackendComparisonFloor[]
+  practiceRuns: PracticeRunResult[]
+  comparisonParameters: ComparisonParameters
+  engineHeldOut: EngineHeldOutResult[]
   heldOut: {
     toolSelection: {
       suite: 'tool-catalog.l5'
@@ -97,6 +167,14 @@ const object = (value: unknown): value is Record<string, unknown> =>
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
 const bounded = (value: unknown): value is number => finite(value) && value >= 0 && value <= 1
 const nonNegative = (value: unknown): value is number => finite(value) && value >= 0
+const positiveInteger = (value: unknown): value is number => Number.isInteger(value) && (value as number) >= 1
+const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/
+/** A UTC ISO-8601 timestamp that names a real instant, such as `2026-10-17T09:30:00Z`. */
+const timestamp = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  TIMESTAMP.test(value) &&
+  !Number.isNaN(Date.parse(value)) &&
+  new Date(value).toISOString().slice(0, 19) === value.slice(0, 19)
 const exact = (
   value: Record<string, unknown>,
   keys: readonly string[],
@@ -109,30 +187,53 @@ const exact = (
   return missing === undefined ? null : fail(path === '' ? missing : `${path}.${missing}`, 'value is required')
 }
 
+const MEASURED_KEYS = [
+  'suite',
+  'layer',
+  'rendererVersion',
+  'split',
+  'backend',
+  'adapter',
+  'taskCount',
+  'trialsPerTask',
+  'tasks',
+  'mean',
+  'interval',
+  'usage'
+] as const
+
 function measuredResult(
   input: unknown,
   path: string,
   expected: {
     suites: readonly string[]
     split: 'development' | 'held-out'
+    backends: readonly ('standalone' | 'engine')[]
     trials: number
+    /** Why a result with another trial count is refused. */
+    trialsDetail?: string
+    /** Keys this kind of result adds to the measured ones. */
+    extraKeys?: readonly string[]
   }
 ): FreezeRecordValidation | null {
   if (!object(input)) return fail(path, 'measured result object is required')
-  const shape = exact(
-    input,
-    ['suite', 'split', 'backend', 'adapter', 'taskCount', 'trialsPerTask', 'tasks', 'mean', 'interval', 'usage'],
-    path
-  )
+  const shape = exact(input, [...MEASURED_KEYS, ...(expected.extraKeys ?? [])], path)
   if (shape !== null) return shape
   if (!expected.suites.includes(String(input.suite))) return fail(`${path}.suite`, 'suite is not permitted here')
+  const declared = LIVE_SUITE_LAYERS[input.suite as LiveSuite] as GraderLayer | undefined
+  if (!(GRADER_LAYERS as readonly unknown[]).includes(input.layer)) return fail(`${path}.layer`, 'must be G or P')
+  if (input.layer !== declared) return fail(`${path}.layer`, `must equal the layer the registry declares, ${declared}`)
+  if (typeof input.rendererVersion !== 'string') return fail(`${path}.rendererVersion`, 'string is required')
+  if (input.layer === 'G' && input.rendererVersion.trim() === '')
+    return fail(`${path}.rendererVersion`, 'a layer-G result names the renderer version of its trial records')
   if (input.split !== expected.split) return fail(`${path}.split`, `must equal ${expected.split}`)
-  if (input.backend !== 'standalone') return fail(`${path}.backend`, 'must equal standalone')
+  if (!(expected.backends as readonly unknown[]).includes(input.backend))
+    return fail(`${path}.backend`, `must equal ${expected.backends.join(' or ')}`)
   if (!(STEP_ONE_ADAPTERS as readonly unknown[]).includes(input.adapter))
     return fail(`${path}.adapter`, 'unknown adapter')
-  if (!Number.isInteger(input.taskCount) || (input.taskCount as number) < 1)
-    return fail(`${path}.taskCount`, 'positive integer is required')
-  if (input.trialsPerTask !== expected.trials) return fail(`${path}.trialsPerTask`, 'does not match the freeze')
+  if (!positiveInteger(input.taskCount)) return fail(`${path}.taskCount`, 'positive integer is required')
+  if (input.trialsPerTask !== expected.trials)
+    return fail(`${path}.trialsPerTask`, expected.trialsDetail ?? 'does not match the freeze')
   if (!Array.isArray(input.tasks) || input.tasks.length !== input.taskCount)
     return fail(`${path}.tasks`, 'must contain exactly taskCount tallies')
   const ids = new Set<string>()
@@ -144,8 +245,9 @@ function measuredResult(
     if (typeof raw.taskId !== 'string' || raw.taskId === '' || ids.has(raw.taskId))
       return fail(`${itemPath}.taskId`, 'non-empty unique task id is required')
     ids.add(raw.taskId)
+    if (raw.trials !== expected.trials)
+      return fail(`${itemPath}.trials`, expected.trialsDetail ?? 'does not match the freeze')
     if (
-      raw.trials !== expected.trials ||
       !Number.isInteger(raw.successes) ||
       (raw.successes as number) < 0 ||
       (raw.successes as number) > (raw.trials as number)
@@ -190,6 +292,10 @@ export function validateFreezeRecord(input: unknown): FreezeRecordValidation {
       'liveRunBudget',
       'cadence',
       'developmentRuns',
+      'backendComparisonFloors',
+      'practiceRuns',
+      'comparisonParameters',
+      'engineHeldOut',
       'heldOut',
       'owed'
     ],
@@ -270,6 +376,7 @@ export function validateFreezeRecord(input: unknown): FreezeRecordValidation {
     const invalid = measuredResult(result, `developmentRuns[${index}]`, {
       suites: STEP_ONE_SUITES,
       split: 'development',
+      backends: ['standalone'],
       trials
     })
     if (invalid !== null) return invalid
@@ -281,6 +388,78 @@ export function validateFreezeRecord(input: unknown): FreezeRecordValidation {
     expectedDevelopment.some((key) => !seenDevelopment.includes(key))
   )
     return fail('developmentRuns', 'exactly one result per suite and adapter is required')
+
+  if (!Array.isArray(input.backendComparisonFloors)) return fail('backendComparisonFloors', 'array is required')
+  const floored: string[] = []
+  for (const [index, floor] of input.backendComparisonFloors.entries()) {
+    const path = `backendComparisonFloors[${index}]`
+    if (!object(floor)) return fail(path, 'floor object is required')
+    if ('value' in floor) return fail(`${path}.value`, 'a floor value stays absent until the Principal rules on it')
+    const floorShape = exact(floor, ['suite', 'layer'], path)
+    if (floorShape !== null) return floorShape
+    const declared = LIVE_SUITE_LAYERS[floor.suite as LiveSuite] as GraderLayer | undefined
+    if (declared === 'P') return fail(`${path}.suite`, 'a backend-comparison floor attaches only to a layer-G suite')
+    if (declared === undefined) return fail(`${path}.suite`, 'unknown live suite')
+    if (floor.layer !== 'G') return fail(`${path}.layer`, 'must equal G')
+    if (floored.includes(floor.suite as string)) return fail(`${path}.suite`, 'one floor per suite')
+    floored.push(floor.suite as string)
+  }
+  const unfloored = BACKEND_COMPARISON_SUITES.find((suite) => !floored.includes(suite))
+  if (unfloored !== undefined) return fail('backendComparisonFloors', `layer-G suite ${unfloored} has no floor entry`)
+
+  if (!Array.isArray(input.practiceRuns)) return fail('practiceRuns', 'array is required')
+  for (const [index, result] of input.practiceRuns.entries()) {
+    const path = `practiceRuns[${index}]`
+    const invalid = measuredResult(result, path, {
+      suites: Object.keys(LIVE_SUITE_LAYERS),
+      split: 'development',
+      backends: ['standalone', 'engine'],
+      trials: 1,
+      trialsDetail: 'a practice run carries exactly one trial per task',
+      extraKeys: ['evidence']
+    })
+    if (invalid !== null) return invalid
+    if ((result as Record<string, unknown>).evidence !== 'never')
+      return fail(`${path}.evidence`, 'a practice run measures cost and is never evidence')
+  }
+
+  const parameters = input.comparisonParameters
+  if (!object(parameters)) return fail('comparisonParameters', 'object is required')
+  const parametersShape = exact(
+    parameters,
+    ['recordedAt', 'margin', 'trialsPerTask', 'minimumTaskCount'],
+    'comparisonParameters'
+  )
+  if (parametersShape !== null) return parametersShape
+  if (!timestamp(parameters.recordedAt))
+    return fail('comparisonParameters.recordedAt', 'UTC ISO-8601 timestamp is required')
+  if (!finite(parameters.margin) || !(parameters.margin > 0 && parameters.margin <= 1))
+    return fail('comparisonParameters.margin', 'must lie in (0, 1]')
+  if (!positiveInteger(parameters.trialsPerTask))
+    return fail('comparisonParameters.trialsPerTask', 'positive integer is required')
+  if (!positiveInteger(parameters.minimumTaskCount))
+    return fail('comparisonParameters.minimumTaskCount', 'positive integer is required')
+
+  if (!Array.isArray(input.engineHeldOut)) return fail('engineHeldOut', 'array is required')
+  for (const [index, result] of input.engineHeldOut.entries()) {
+    const path = `engineHeldOut[${index}]`
+    const invalid = measuredResult(result, path, {
+      suites: BACKEND_COMPARISON_SUITES,
+      split: 'held-out',
+      backends: ['engine'],
+      trials: parameters.trialsPerTask,
+      trialsDetail: 'does not match the comparison parameters',
+      extraKeys: ['recordedAt']
+    })
+    if (invalid !== null) return invalid
+    const recordedAt = (result as Record<string, unknown>).recordedAt
+    if (!timestamp(recordedAt)) return fail(`${path}.recordedAt`, 'UTC ISO-8601 timestamp is required')
+    if (Date.parse(parameters.recordedAt) > Date.parse(recordedAt))
+      return fail(
+        'comparisonParameters.recordedAt',
+        `must not be dated after the Engine held-out result recorded at ${recordedAt}`
+      )
+  }
 
   if (!object(input.heldOut)) return fail('heldOut', 'object is required')
   const heldShape = exact(input.heldOut, ['toolSelection', 'sourceCitation'], 'heldOut')
@@ -301,6 +480,7 @@ export function validateFreezeRecord(input: unknown): FreezeRecordValidation {
       const invalid = measuredResult(result, `${path}.results[${index}]`, {
         suites: [suite],
         split: 'held-out',
+        backends: ['standalone'],
         trials
       })
       if (invalid !== null) return invalid

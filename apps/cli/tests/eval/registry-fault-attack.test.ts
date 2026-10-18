@@ -58,10 +58,14 @@ interface Mismatch {
   detail: string
 }
 
-/** The suites a module declares at the given layers. */
+/**
+ * The suites a module declares at the given layers. A process-layer `G` suite
+ * is left out: it grades process-neutral outcomes, while every fault or attack
+ * in the table is one on this process's own mechanics.
+ */
 function suitesAt(moduleId: string, layers: readonly string[]): string[] {
   const module = catalog.modules.find((m) => m.id === moduleId)
-  return (module?.suites ?? []).filter((s) => layers.includes(s.layer)).map(suiteId)
+  return (module?.suites ?? []).filter((s) => layers.includes(s.layer) && s.processLayer !== 'G').map(suiteId)
 }
 
 /**

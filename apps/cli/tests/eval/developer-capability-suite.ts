@@ -65,6 +65,8 @@ import {
 
 export const SUITE = { name: 'developer-capability.l5', version: 1, layer: 'L5' } as const
 export const SUITE_ID = `${SUITE.name}@${SUITE.version}`
+/** Process layer `P`: its graders read Vinaya artifacts — the frozen brief, the turn result, the beyond-Surface record. */
+export const SUITE_PROCESS_LAYER = 'P' as const
 export const CASES_PATH = join(import.meta.dir, 'developer-capability-cases.json')
 export const HELD_OUT_PATH = join(import.meta.dir, 'developer-capability-held-out.json')
 /** The fewest admitted cases the suite is built on; fewer is a strategy question, never a lowered bar. */

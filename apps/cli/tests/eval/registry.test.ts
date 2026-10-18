@@ -4,6 +4,7 @@
 // aggregate with duplicate component ids refused at both locations.
 import { describe, expect, it } from 'bun:test'
 import { OPERATOR_EXIT_EXCLUSIONS } from '../../src/lib/dev-review-eval/exit-check'
+import { LIVE_SUITE_LAYERS } from '../../src/lib/dev-review-eval/freeze-record'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,6 +13,7 @@ import {
   type ComponentRow,
   loadRegistry,
   type ModuleCatalog,
+  PROCESS_LAYERED,
   REQUIRED_FIELDS,
   type RegistryRefusalCode,
   type RegistryResult,
@@ -21,6 +23,13 @@ import {
   validateModuleCatalog,
   validateShard
 } from '../../src/lib/dev-review-eval/registry'
+import {
+  SUITE_PROCESS_LAYER as DEVELOPER_CAPABILITY_LAYER,
+  SUITE as DEVELOPER_CAPABILITY
+} from './developer-capability-suite'
+import { CODE_SUITE, REVIEWER_SUITES_PROCESS_LAYER, SECURITY_SUITE } from './reviewer-quality-suite'
+import { LIVE_SUITE_PROCESS_LAYER as SOURCE_CITATION_LAYER } from './source-citation-suite'
+import { LIVE_SUITE as TOOL_CATALOG, LIVE_SUITE_PROCESS_LAYER as TOOL_CATALOG_LAYER } from './tool-selection-suite'
 
 const REGISTRY_DIR = join(import.meta.dir, 'registry')
 const MODULES_FILE = join(REGISTRY_DIR, 'modules.json')
@@ -118,13 +127,66 @@ describe('the module catalog mirrors the evaluation program', () => {
     }
   })
 
-  it('declares one suite per layer the program lists for the module', () => {
+  it('declares one suite per layer the program lists for the module, and one per process layer at L5 and L6', () => {
     for (const module of catalog.modules) {
       const layersLine = /\*\*Layers:\*\* ([^\n]*)/.exec(sectionText(module.id))?.[1] ?? ''
       const layers = [...new Set(layersLine.match(/L[1-8]/g) ?? [])].sort()
-      const declared: string[] = module.suites.map((s) => s.layer).sort()
+      const declared: string[] = [...new Set(module.suites.map((s) => s.layer))].sort()
       expect({ module: module.id, layers: declared }).toEqual({ module: module.id, layers })
+      const perLayer = module.suites.map((s) => `${s.layer}:${s.processLayer ?? '-'}`)
+      expect({ module: module.id, repeated: perLayer.length - new Set(perLayer).size }).toEqual({
+        module: module.id,
+        repeated: 0
+      })
     }
+  })
+
+  it('tags every L5 and L6 suite G or P, and no suite of another layer', () => {
+    for (const suite of catalog.modules.flatMap((m) => m.suites)) {
+      const layered = (PROCESS_LAYERED as readonly string[]).includes(suite.layer)
+      expect({ suite: suite.name, tagged: suite.processLayer !== undefined }).toEqual({
+        suite: suite.name,
+        tagged: layered
+      })
+    }
+  })
+
+  it('declares the existing role suites P, a G suite beside four of them, and none beside tool selection', () => {
+    const layerOf = (module: string) =>
+      Object.fromEntries(
+        (catalog.modules.find((m) => m.id === module)?.suites ?? [])
+          .filter((s) => s.layer === 'L5')
+          .map((s) => [s.name, s.processLayer])
+      )
+    expect(layerOf('6.5')).toEqual({ 'developer-capability.l5': 'P', 'developer-capability-neutral.l5': 'G' })
+    expect(layerOf('6.9')).toEqual({ 'code-reviewer-quality.l5': 'P', 'code-reviewer-quality-neutral.l5': 'G' })
+    expect(layerOf('6.10')).toEqual({
+      'security-reviewer-quality.l5': 'P',
+      'security-reviewer-quality-neutral.l5': 'G'
+    })
+    expect(layerOf('6.2')).toEqual({ 'source-delivery.l5': 'P', 'source-delivery-neutral.l5': 'G' })
+    expect(layerOf('6.6')).toEqual({ 'tool-catalog.l5': 'P' })
+  })
+
+  it('agrees with each suite file’s own process layer and with the freeze record’s layer table', () => {
+    const declared = Object.fromEntries(
+      catalog.modules.flatMap((m) => m.suites).flatMap((s) => (s.processLayer ? [[s.name, s.processLayer]] : []))
+    )
+    expect(declared).toEqual({ ...LIVE_SUITE_LAYERS })
+    const fileLayers: Record<string, string | undefined> = {
+      [DEVELOPER_CAPABILITY.name]: DEVELOPER_CAPABILITY_LAYER,
+      [CODE_SUITE.name]: REVIEWER_SUITES_PROCESS_LAYER,
+      [SECURITY_SUITE.name]: REVIEWER_SUITES_PROCESS_LAYER,
+      'source-delivery.l5': SOURCE_CITATION_LAYER,
+      [TOOL_CATALOG.name]: TOOL_CATALOG_LAYER
+    }
+    expect(fileLayers).toEqual({
+      'developer-capability.l5': declared['developer-capability.l5'],
+      'code-reviewer-quality.l5': declared['code-reviewer-quality.l5'],
+      'security-reviewer-quality.l5': declared['security-reviewer-quality.l5'],
+      'source-delivery.l5': declared['source-delivery.l5'],
+      'tool-catalog.l5': declared['tool-catalog.l5']
+    })
   })
 
   it('states every field of every included module as a value, and names only its own suites', () => {
@@ -164,6 +226,35 @@ describe('module catalog validation', () => {
     const first = bad.modules[0] as { suites: unknown[] }
     first.suites.push(clone((bad.modules[1] as { suites: unknown[] }).suites[0]))
     refusedWith(validateModuleCatalog(bad), 'duplicate')
+  })
+
+  it('refuses an L5 or L6 suite without a process layer, or with one outside G and P', () => {
+    for (const layer of PROCESS_LAYERED) {
+      const bad = clone(rawCatalog)
+      ;(bad.modules[0] as { suites: unknown[] }).suites.push({ name: 'run-preparation.live', version: 1, layer })
+      refusedWith(validateModuleCatalog(bad), 'missing_field', 'modules[0].suites[3].processLayer')
+      const wrong = clone(rawCatalog)
+      ;(wrong.modules[0] as { suites: unknown[] }).suites.push({
+        name: 'run-preparation.live',
+        version: 1,
+        layer,
+        processLayer: 'L5'
+      })
+      refusedWith(validateModuleCatalog(wrong), 'unknown_value', 'modules[0].suites[3].processLayer')
+    }
+  })
+
+  it('refuses a process layer on a suite of L1–L4, L7 or L8', () => {
+    for (const layer of ['L1', 'L2', 'L3', 'L4', 'L7', 'L8']) {
+      const bad = clone(rawCatalog)
+      ;(bad.modules[0] as { suites: unknown[] }).suites.push({
+        name: 'run-preparation.extra',
+        version: 1,
+        layer,
+        processLayer: 'P'
+      })
+      refusedWith(validateModuleCatalog(bad), 'unknown_value', 'modules[0].suites[3].processLayer')
+    }
   })
 
   it('refuses an excluded module that declares a suite', () => {
