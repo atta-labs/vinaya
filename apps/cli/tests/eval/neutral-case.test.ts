@@ -1,6 +1,6 @@
 // The neutral case: the validator accepts each kind with the fields it needs,
 // refuses a missing or foreign field by name, and the digest identifies a case
-// whatever its key order.
+// whatever its key order. An answer case changes nothing, so its scope is empty.
 import { describe, expect, it } from 'bun:test'
 import type { ContractRefusalCode, Validated } from '../../src/lib/dev-review-eval/contracts'
 import {
@@ -15,6 +15,8 @@ import {
 const D = (c: string) => c.repeat(64)
 const BASE = 'a'.repeat(40)
 const HEAD = 'b'.repeat(40)
+const SCOPE = () => ({ in: ['src/parse/**', 'tests/parse'], excluded: ['src/parse/legacy'], protected: ['.github/**'] })
+const EMPTY_SCOPE = () => ({ in: [], excluded: [], protected: [] })
 
 function common(): Record<string, unknown> {
   return {
@@ -23,7 +25,7 @@ function common(): Record<string, unknown> {
     repository: 'example/dates',
     baseRevision: BASE,
     taskStatement: 'Make the date parser accept ISO week dates and keep every existing format working.',
-    authorizedScope: { in: ['src/parse/**', 'tests/parse'], protected: ['.github/**'] },
+    authorizedScope: SCOPE(),
     deliveredDocuments: [
       { id: 'iso-8601', contentDigest: D('1'), relevant: true },
       { id: 'style-guide', contentDigest: D('2'), relevant: false }
@@ -50,6 +52,7 @@ const reviewFields = () => ({
 })
 
 function caseOf(kind: (typeof NEUTRAL_CASE_KINDS)[number]): Record<string, unknown> {
+  if (kind === 'answer') return { ...common(), kind, authorizedScope: EMPTY_SCOPE() }
   return { ...common(), kind, ...(kind === 'review' ? reviewFields() : changeFields()) }
 }
 
@@ -84,12 +87,12 @@ function reversedKeys(value: unknown): unknown {
 }
 
 describe('neutral case validator', () => {
-  it('accepts a change, a review and a loop case carrying every field its kind needs', () => {
+  it('accepts a change, a review, a loop and an answer case carrying every field its kind needs', () => {
     for (const kind of NEUTRAL_CASE_KINDS) {
       const value = accepted(caseOf(kind))
       expect(value.kind).toBe(kind)
       expect(value.layer).toBe('G')
-      expect(value.authorizedScope).toEqual({ in: ['src/parse/**', 'tests/parse'], protected: ['.github/**'] })
+      expect(value.authorizedScope).toEqual(kind === 'answer' ? EMPTY_SCOPE() : SCOPE())
       expect(value.deliveredDocuments.map((d) => d.relevant)).toEqual([true, false])
     }
     const review = accepted(caseOf('review'))
@@ -132,9 +135,11 @@ describe('neutral case validator', () => {
   })
 
   it('refuses a missing field inside a nested value, naming its path', () => {
-    const scope = caseOf('change')
-    delete (scope.authorizedScope as Record<string, unknown>).protected
-    expect(refused(validateNeutralCase(scope))).toEqual({ code: 'missing_field', path: 'authorizedScope.protected' })
+    for (const key of ['in', 'excluded', 'protected']) {
+      const scope = caseOf('change')
+      delete (scope.authorizedScope as Record<string, unknown>)[key]
+      expect(refused(validateNeutralCase(scope))).toEqual({ code: 'missing_field', path: `authorizedScope.${key}` })
+    }
 
     const document = caseOf('change')
     delete (document.deliveredDocuments as Record<string, unknown>[])[0]?.contentDigest
@@ -166,6 +171,28 @@ describe('neutral case validator', () => {
       code: 'inconsistent',
       path: 'hiddenTests'
     })
+    for (const key of ['hiddenTests', 'referenceSolution', 'plantedDefects', 'changeUnderReview', 'adjudication']) {
+      const foreign = {
+        ...caseOf('answer'),
+        [key]: (key in changeFields() ? changeFields() : reviewFields())[key as never]
+      }
+      expect({ key, ...refused(validateNeutralCase(foreign)) }).toEqual({ key, code: 'inconsistent', path: key })
+    }
+  })
+
+  it('accepts an empty in only for an answer case, whose scope lists are all empty', () => {
+    expect(refused(validateNeutralCase({ ...caseOf('change'), authorizedScope: EMPTY_SCOPE() }))).toEqual({
+      code: 'empty',
+      path: 'authorizedScope.in'
+    })
+    for (const key of ['in', 'excluded', 'protected'] as const) {
+      const scope = { ...EMPTY_SCOPE(), [key]: ['docs'] }
+      expect({ key, ...refused(validateNeutralCase({ ...caseOf('answer'), authorizedScope: scope })) }).toEqual({
+        key,
+        code: 'inconsistent',
+        path: `authorizedScope.${key}`
+      })
+    }
   })
 
   it('refuses a layer other than G, an unknown kind and malformed values', () => {
@@ -208,12 +235,17 @@ describe('neutral case validator', () => {
     ;(clean.adjudication as Record<string, unknown>).clean = true
     expect(accepted(clean).kind).toBe('review')
 
-    const oneAdjudicator = caseOf('review')
-    ;(oneAdjudicator.adjudication as Record<string, unknown>).adjudicators = ['adjudicator-a']
+    const oneAdjudicator: Record<string, unknown> = { ...caseOf('review'), plantedDefects: [] }
+    oneAdjudicator.adjudication = { clean: true, adjudicators: ['adjudicator-a'] }
     expect(refused(validateNeutralCase(oneAdjudicator))).toEqual({
       code: 'out_of_range',
       path: 'adjudication.adjudicators'
     })
+
+    // A change that is not clean is shown so by its planted defects, with or without adjudicators.
+    const seeded = caseOf('review')
+    ;(seeded.adjudication as Record<string, unknown>).adjudicators = []
+    expect(accepted(seeded).kind).toBe('review')
   })
 
   it('refuses a task statement carrying a process term', () => {
@@ -245,6 +277,7 @@ describe('neutral case digest', () => {
       (c) => (c.baseRevision = 'f'.repeat(40)),
       (c) => (c.taskStatement = `${c.taskStatement} Also handle ordinal dates.`),
       (c) => c.authorizedScope.in.push('src/extra'),
+      (c) => c.authorizedScope.excluded.push('src/parse/old'),
       (c) => c.authorizedScope.protected.push('package.json'),
       (c) => (c.deliveredDocuments[0].contentDigest = D('9')),
       (c) => (c.deliveredDocuments[1].relevant = true),

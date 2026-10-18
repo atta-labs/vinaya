@@ -24,7 +24,8 @@ export const FIXTURE_PATH = join(import.meta.dir, 'neutral-cases-fixture.json')
 export interface FixtureEntry {
   case: NeutralCase
   reference: {
-    head: string
+    /** The reference head of a case that produces a change. */
+    head?: string
     changedPaths: string[]
     trace: string[]
     findings: Record<ReviewerRole, { file: string; severity: string }[]>
@@ -47,7 +48,7 @@ const MANIFEST = 'f'.repeat(64)
 const PR_BODY = 'Closes the task.\n\n## Scope\n\nThe change the task asks for.\n'
 
 export const prBody = (input: VinayaProcessInput, changedPaths: readonly string[]) =>
-  withBeyondSurfaceBlock(PR_BODY, beyondSurfacePaths(changedPaths, input.surface))
+  withBeyondSurfaceBlock(PR_BODY, beyondSurfacePaths(changedPaths, input.surface ?? { in: [], out: [] }))
 
 export function reviewOutput(role: ReviewerRole, head: string, findings: { file: string; severity: string }[]) {
   return {
@@ -83,10 +84,11 @@ export function turnResult(sources: readonly string[]) {
 export function referenceRecord(entry: FixtureEntry, input: VinayaProcessInput): VinayaTrialRecord {
   const c = entry.case
   const ref = entry.reference
-  const producing = c.kind !== 'review'
-  const head = c.kind === 'review' ? c.changeUnderReview.head : ref.head
-  const patchDigest = c.kind === 'review' ? c.changeUnderReview.patchDigest : c.referenceSolution.patchDigest
-  const reviewed = c.kind !== 'change'
+  const producing = c.kind === 'change' || c.kind === 'loop'
+  const head = c.kind === 'review' ? c.changeUnderReview.head : (ref.head ?? c.baseRevision)
+  const patchDigest =
+    c.kind === 'review' ? c.changeUnderReview.patchDigest : c.kind === 'answer' ? '' : c.referenceSolution.patchDigest
+  const reviewed = c.kind === 'review' || c.kind === 'loop'
   const reviewIds = REVIEWERS.map((role) => `${c.id}-${role}`)
   return {
     rendererVersion: input.rendererVersion,
@@ -96,7 +98,7 @@ export function referenceRecord(entry: FixtureEntry, input: VinayaProcessInput):
       : null,
     measuredChange: producing ? { base: c.baseRevision, head, patchDigest, changedPaths: [...ref.changedPaths] } : null,
     hiddenTests:
-      c.kind === 'review'
+      c.kind !== 'change' && c.kind !== 'loop'
         ? null
         : {
             revision: head,
@@ -123,7 +125,8 @@ export function referenceRecord(entry: FixtureEntry, input: VinayaProcessInput):
       : null,
     readyForMerge:
       c.kind === 'loop' ? { id: `${c.id}-ready`, headSha: head, evidenceId: `${c.id}-evidence`, reviewIds } : null,
-    developerTurnResult: producing ? turnResult(input.sources.filter((s) => s.required).map((s) => s.sourceId)) : null,
+    developerTurnResult:
+      c.kind !== 'review' ? turnResult(input.sources.filter((s) => s.required).map((s) => s.sourceId)) : null,
     receipts: input.sources.map((s) => ({
       schemaVersion: 1 as const,
       sourceId: s.sourceId,
@@ -143,7 +146,9 @@ export function referenceRecord(entry: FixtureEntry, input: VinayaProcessInput):
           { idempotencyKey: `publish:${head}`, kind: 'publish-changes' },
           { idempotencyKey: `open:${c.id}`, kind: 'open-pull-request' }
         ]
-      : [{ idempotencyKey: `review:${c.id}`, kind: 'post-review' }]
+      : c.kind === 'review'
+        ? [{ idempotencyKey: `review:${c.id}`, kind: 'post-review' }]
+        : []
   }
 }
 
@@ -164,7 +169,7 @@ export const KNOWN_BAD_VARIANTS: readonly {
     name: 'reference solution reverted',
     graderId: 'generic-hidden-tests',
     plant(record, { case: c }) {
-      if (c.kind === 'review' || !record.hiddenTests) return null
+      if ((c.kind !== 'change' && c.kind !== 'loop') || !record.hiddenTests) return null
       const bad = clone(record)
       const failing = new Set(
         c.hiddenTests.filter((t) => t.expectation === 'fail-to-pass').map((t) => `${t.path} ${t.name}`)
@@ -184,7 +189,7 @@ export const KNOWN_BAD_VARIANTS: readonly {
     graderId: 'generic-scope-kept',
     plant(record, { case: c }) {
       const protectedDir = c.authorizedScope.protected[0]?.replace(/\/\*\*$/, '')
-      if (c.kind === 'review' || protectedDir === undefined || !record.measuredChange) return null
+      if (protectedDir === undefined || !record.measuredChange) return null
       const bad = clone(record)
       const changedPaths = [...record.measuredChange.changedPaths, `${protectedDir}/planted.yml`]
       bad.measuredChange = { ...record.measuredChange, changedPaths }
@@ -234,6 +239,18 @@ export const KNOWN_BAD_VARIANTS: readonly {
       if (required.length === 0 || record.input.kind === 'review') return null
       const bad = clone(record)
       bad.developerTurnResult = turnResult(required.slice(1))
+      return bad
+    }
+  },
+  {
+    // A document claimed as used that was never delivered.
+    name: 'undelivered document claimed',
+    graderId: 'generic-documents-used',
+    plant(record) {
+      if (record.input.kind === 'review') return null
+      const used = record.input.sources.filter((s) => s.required).map((s) => s.sourceId)
+      const bad = clone(record)
+      bad.developerTurnResult = turnResult([...used, 'never-delivered-document'])
       return bad
     }
   }

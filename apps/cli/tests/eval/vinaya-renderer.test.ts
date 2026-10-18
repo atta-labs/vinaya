@@ -39,6 +39,11 @@ const entryOf = (id: string) => fixture.find((e) => e.case.id === id) as Fixture
 const changeEntry = entryOf('change-week-dates')
 const reviewEntry = entryOf('review-session-expiry')
 const loopEntry = entryOf('loop-cache-eviction')
+const scopeEntry = entryOf('change-scope-entries')
+const answerEntry = entryOf('answer-retry-policy')
+const scopeOf = (scope: Partial<NeutralCase['authorizedScope']>) => ({
+  authorizedScope: { in: [], excluded: [], protected: [], ...scope }
+})
 
 function refusalOf(raw: unknown) {
   const rendered = renderCase(raw)
@@ -61,7 +66,23 @@ describe('render', () => {
     const input = renderOrThrow(changeEntry.case)
     expect(input.surface).toEqual({ in: ['src/parse/**', 'tests/parse'], out: ['.github/**', 'scripts'] })
     const parsed = parseIssueSurface(input.brief)
-    expect(parsed.ok && parsed.value).toEqual(input.surface)
+    expect(parsed.ok && parsed.value).toEqual(input.surface as NonNullable<typeof input.surface>)
+  })
+
+  it('writes excluded and protected paths as out:, and accepts a file path and the root glob as Surface entries', () => {
+    const input = renderOrThrow(scopeEntry.case)
+    expect(input.surface).toEqual({ in: ['lib/**', '*', 'docs/client.md'], out: ['lib/legacy', 'ops/deploy/**'] })
+    expect(input.brief).toContain('## Surface\n\nin: lib/**, *, docs/client.md\nout: lib/legacy, ops/deploy/**\n')
+  })
+
+  it('renders an answer case as a Developer dispatch with no Surface', () => {
+    const input = renderOrThrow(answerEntry.case)
+    expect(input.kind).toBe('answer')
+    expect(input.surface).toBeNull()
+    expect(input.brief).not.toContain('## Surface')
+    expect(input.brief).toContain('## Documentation\n\n- retry-policy\n')
+    expect(input.roleToolGrants).toEqual({ developer: ['fetch_documentation'] })
+    expect(input.changeUnderReview).toBeNull()
   })
 
   it('writes the relevant delivered documents as the Documentation section, and delivers the rest unrequired', () => {
@@ -148,37 +169,48 @@ describe('render', () => {
 })
 
 describe('render refuses a case it cannot express, naming the field', () => {
-  const cases: [string, unknown, string][] = [
-    ['an invalid case', withCase(changeEntry, { baseRevision: 'nope' }), 'baseRevision'],
+  const cases: [string, unknown, string, ('invalid_case' | 'unexpressible')?][] = [
+    ['an invalid case', withCase(changeEntry, { baseRevision: 'nope' }), 'baseRevision', 'invalid_case'],
+    ['a wildcard inside a segment', withCase(changeEntry, scopeOf({ in: ['src/*/parse'] })), 'authorizedScope.in.0'],
+    ['a wildcard inside a file name', withCase(changeEntry, scopeOf({ in: ['src/*.ts'] })), 'authorizedScope.in.0'],
+    ['a single-level wildcard', withCase(changeEntry, scopeOf({ in: ['src/parse/*'] })), 'authorizedScope.in.0'],
     [
-      'a file glob in scope',
-      withCase(changeEntry, { authorizedScope: { in: ['src/parse/week.ts'], protected: [] } }),
-      'authorizedScope.in.0'
-    ],
-    [
-      'a wildcard inside a segment',
-      withCase(changeEntry, { authorizedScope: { in: ['src/*/parse'], protected: [] } }),
-      'authorizedScope.in.0'
-    ],
-    [
-      'a single-level wildcard',
-      withCase(changeEntry, { authorizedScope: { in: ['src/parse/*'], protected: [] } }),
-      'authorizedScope.in.0'
-    ],
-    [
-      'a protected file',
-      withCase(changeEntry, { authorizedScope: { in: ['src'], protected: ['package.json'] } }),
-      'authorizedScope.protected.0'
+      'an excluded wildcard inside a segment',
+      withCase(changeEntry, scopeOf({ in: ['src'], excluded: ['src/*-legacy'] })),
+      'authorizedScope.excluded.0'
     ],
     [
       'protected inside scope',
-      withCase(changeEntry, { authorizedScope: { in: ['src/**'], protected: ['src/secrets/**'] } }),
+      withCase(changeEntry, scopeOf({ in: ['src/**'], protected: ['src/secrets/**'] })),
       'authorizedScope.protected.0'
     ],
     [
       'scope inside protected',
-      withCase(changeEntry, { authorizedScope: { in: ['src/parse'], protected: ['src'] } }),
+      withCase(changeEntry, scopeOf({ in: ['src/parse'], protected: ['src'] })),
       'authorizedScope.protected.0'
+    ],
+    [
+      'a protected root file under the root glob',
+      withCase(changeEntry, scopeOf({ in: ['*'], protected: ['package.json'] })),
+      'authorizedScope.protected.0'
+    ],
+    [
+      'an answer case with an in path',
+      withCase(answerEntry, scopeOf({ in: ['docs'] })),
+      'authorizedScope.in',
+      'invalid_case'
+    ],
+    [
+      'an answer case with an excluded path',
+      withCase(answerEntry, scopeOf({ excluded: ['docs'] })),
+      'authorizedScope.excluded',
+      'invalid_case'
+    ],
+    [
+      'an answer case with a protected path',
+      withCase(answerEntry, scopeOf({ protected: ['.github'] })),
+      'authorizedScope.protected',
+      'invalid_case'
     ],
     [
       'a document id with a space',
@@ -215,14 +247,24 @@ describe('render refuses a case it cannot express, naming the field', () => {
       'taskStatement'
     ]
   ]
-  for (const [what, raw, field] of cases) {
+  for (const [what, raw, field, code = 'unexpressible'] of cases) {
     it(`refuses ${what} at ${field}`, () => {
       const refusal = refusalOf(raw)
       expect(refusal.field).toBe(field)
-      expect(refusal.code).toBe(field === 'baseRevision' ? 'invalid_case' : 'unexpressible')
+      expect(refusal.code).toBe(code)
       expect(refusal.detail.length).toBeGreaterThan(0)
     })
   }
+
+  it('accepts a file path, the root glob beside a nested protected path, and an excluded path inside in', () => {
+    for (const scope of [
+      { in: ['src/parse/week.ts'] },
+      { in: ['*'], protected: ['.github/workflows/**'] },
+      { in: ['src'], excluded: ['src/keys'], protected: ['package.json'] }
+    ]) {
+      expect({ scope, ok: renderCase(withCase(changeEntry, scopeOf(scope))).ok }).toEqual({ scope, ok: true })
+    }
+  })
 })
 
 describe('the mapping tables', () => {

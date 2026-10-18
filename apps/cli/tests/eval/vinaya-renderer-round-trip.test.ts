@@ -93,16 +93,49 @@ describe('each known-bad variant, rendered and extracted', () => {
     for (const entry of fixture) {
       const c = entry.case
       const applied = KNOWN_BAD_VARIANTS.filter((v) => v.plant(reference(entry), entry) !== null).map((v) => v.graderId)
+      const producing = c.kind === 'change' || c.kind === 'loop'
       const expected = [
-        ...(c.kind !== 'review' ? ['generic-hidden-tests'] : []),
-        ...(c.kind !== 'review' && c.authorizedScope.protected.length > 0 ? ['generic-scope-kept'] : []),
+        ...(producing ? ['generic-hidden-tests'] : []),
+        ...(producing && c.authorizedScope.protected.length > 0 ? ['generic-scope-kept'] : []),
         ...(c.kind === 'review' && !c.adjudication.clean ? ['generic-planted-defects-found'] : []),
         ...(Object.values(TOOL_CAPABILITIES).some((cap) => !c.grantedCapabilities.includes(cap))
           ? ['generic-capabilities-granted']
           : []),
-        ...(c.deliveredDocuments.some((d) => d.relevant) ? ['generic-documents-used'] : [])
+        ...(c.deliveredDocuments.some((d) => d.relevant) ? ['generic-documents-used'] : []),
+        ...(c.kind !== 'review' ? ['generic-documents-used'] : [])
       ]
       expect({ id: c.id, applied }).toEqual({ id: c.id, applied: expected })
+    }
+  })
+})
+
+describe('an answer case', () => {
+  const entry = fixture.find((e) => e.case.kind === 'answer') as FixtureEntry
+  const judging = ['generic-capabilities-granted', 'generic-documents-used', 'generic-effects-once']
+
+  it('is judged only on documents, capabilities and effects, its other outcomes inapplicable', async () => {
+    const outcomes = outcomesOf(reference(entry))
+    for (const name of ['O-change', 'O-tests', 'O-evidence', 'O-scope', 'O-review', 'O-decision'] as const) {
+      expect({ name, status: outcomes[name].status }).toEqual({ name, status: 'inapplicable' })
+    }
+    expect(
+      GENERIC_GRADERS.filter((g) => g.appliesTo.includes('answer'))
+        .map((g) => g.identity.id)
+        .sort()
+    ).toEqual(judging)
+    for (const grader of GENERIC_GRADERS) {
+      const verdict = await grader.grade({ case: entry.case, outcomes })
+      expect({ grader: grader.identity.id, ...verdict }).toEqual({ grader: grader.identity.id, verdict: 'pass' })
+    }
+  })
+
+  it('fails generic-documents-used when a relevant document is left unused or an undelivered one is claimed', async () => {
+    for (const name of ['delivered relevant document left unused', 'undelivered document claimed']) {
+      const variant = KNOWN_BAD_VARIANTS.find((v) => v.name === name)
+      const bad = variant?.plant(reference(entry), entry)
+      if (bad === null || bad === undefined) throw new Error(`${name} does not apply to the answer case`)
+      const verdict = await graderById('generic-documents-used').grade({ case: entry.case, outcomes: outcomesOf(bad) })
+      expect({ name, verdict: verdict.verdict }).toEqual({ name, verdict: 'fail' })
     }
   })
 })

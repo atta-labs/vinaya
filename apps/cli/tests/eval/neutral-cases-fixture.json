@@ -11,6 +11,7 @@
         "taskStatement": "Make the date parser accept week dates such as 2026-W03-4 and keep every existing format working.",
         "authorizedScope": {
           "in": ["src/parse/**", "tests/parse"],
+          "excluded": [],
           "protected": [".github/**", "scripts"]
         },
         "deliveredDocuments": [
@@ -69,6 +70,7 @@
         "taskStatement": "Stop the HTTP client retrying a request once its total retry budget of ten seconds is spent.",
         "authorizedScope": {
           "in": ["lib/http/**"],
+          "excluded": [],
           "protected": []
         },
         "deliveredDocuments": [
@@ -122,6 +124,7 @@
         "taskStatement": "Judge whether this change expires idle sessions after thirty minutes without logging anyone out early.",
         "authorizedScope": {
           "in": ["src/auth/**"],
+          "excluded": [],
           "protected": [".github/**"]
         },
         "deliveredDocuments": [
@@ -192,6 +195,7 @@
         "taskStatement": "Judge whether this change adds request identifiers to every access log line.",
         "authorizedScope": {
           "in": ["src/logging/**"],
+          "excluded": [],
           "protected": []
         },
         "deliveredDocuments": [],
@@ -237,6 +241,7 @@
         "taskStatement": "Evict the least recently used cache entry when the cache is full, instead of the oldest one.",
         "authorizedScope": {
           "in": ["src/cache/**"],
+          "excluded": [],
           "protected": [".github/**"]
         },
         "deliveredDocuments": [
@@ -307,6 +312,7 @@
         "taskStatement": "Reject a settings file that names an unknown key, and say which key it was.",
         "authorizedScope": {
           "in": ["packages/config/**", "docs/config"],
+          "excluded": [],
           "protected": ["packages/cli/**"]
         },
         "deliveredDocuments": [
@@ -367,6 +373,85 @@
               "severity": "MEDIUM"
             }
           ]
+        }
+      }
+    },
+    {
+      "case": {
+        "id": "change-scope-entries",
+        "layer": "G",
+        "kind": "change",
+        "repository": "example/http-client",
+        "baseRevision": "68d6b8963dc9b27f563518272702a383d9579e3c",
+        "taskStatement": "Add a request timeout option to the HTTP client and describe it in the README and the client guide.",
+        "authorizedScope": {
+          "in": ["lib/**", "*", "docs/client.md"],
+          "excluded": ["lib/legacy"],
+          "protected": ["ops/deploy/**"]
+        },
+        "deliveredDocuments": [],
+        "grantedCapabilities": ["read_file", "write_file", "run_commands", "publish_change", "open_change_request"],
+        "hiddenTests": [
+          {
+            "path": "lib/http/timeout.test.ts",
+            "name": "aborts a request after its timeout",
+            "expectation": "fail-to-pass"
+          }
+        ],
+        "referenceSolution": {
+          "patchDigest": "0442ba1ae67f059f8d3b3203cf93eb4cf1f322c548b75ddb0f48cca57858cc7c"
+        }
+      },
+      "reference": {
+        "head": "e9511320256b14db5c3665a16c33dca907b11e2d",
+        "changedPaths": [
+          "lib/http/timeout.ts",
+          "lib/http/timeout.test.ts",
+          "lib/legacy/client.ts",
+          "README.md",
+          "docs/client.md",
+          "docs/changelog.md"
+        ],
+        "trace": ["Read", "Edit", "shell", "publish_changes", "open_pull_request"],
+        "findings": {
+          "code-reviewer": [],
+          "security-reviewer": []
+        }
+      }
+    },
+    {
+      "case": {
+        "id": "answer-retry-policy",
+        "layer": "G",
+        "kind": "answer",
+        "repository": "example/http-client",
+        "baseRevision": "f5df79ce5092313ce90ed0bc6364f1217c3e6d33",
+        "taskStatement": "State how many times the delivered retry policy lets a request be retried, and on which responses.",
+        "authorizedScope": {
+          "in": [],
+          "excluded": [],
+          "protected": []
+        },
+        "deliveredDocuments": [
+          {
+            "id": "retry-policy",
+            "contentDigest": "bd2a8f0096b7d4a2b2779c696b3803d5f66a3245ba88e8346a64c17334fe4a3a",
+            "relevant": true
+          },
+          {
+            "id": "style-guide",
+            "contentDigest": "dd6f3e89017453b18ca41417db258343cada8e2abdb1b166be5dad3514c62c39",
+            "relevant": false
+          }
+        ],
+        "grantedCapabilities": ["read_document"]
+      },
+      "reference": {
+        "changedPaths": [],
+        "trace": ["fetch_documentation", "read_source"],
+        "findings": {
+          "code-reviewer": [],
+          "security-reviewer": []
         }
       }
     }

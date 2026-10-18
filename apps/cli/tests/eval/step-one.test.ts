@@ -12,12 +12,17 @@ import {
   resolveGradingCodex,
   runStepOne,
   runStepOneCommand,
+  selectStepOneSuites,
+  STEP_ONE_COMPARISON_SUITES,
+  STEP_ONE_PRACTICE_SUITES,
+  STEP_ONE_SUITE_LAYERS,
   STEP_ONE_SUITES,
   subscriptionQuotaOf,
   TRIAL_COMMIT_SCRIPT,
   unavailableReason,
   verifyTrialCommit
 } from '../../src/lib/dev-review-eval/step-one'
+import { LIVE_SUITE_LAYERS } from '../../src/lib/dev-review-eval/freeze-record'
 import { expectGradingSandboxDenies, proveGradingSandbox } from './grading-sandbox-proof'
 
 const options = {
@@ -31,7 +36,8 @@ const options = {
     confidence: 0.95
   }
 }
-const suites = () => STEP_ONE_SUITES.map((suite) => ({ suite, taskIds: [`${suite}-task`] }))
+const ALL_SUITES = Object.keys(STEP_ONE_SUITE_LAYERS) as (keyof typeof STEP_ONE_SUITE_LAYERS)[]
+const suites = () => ALL_SUITES.map((suite) => ({ suite, taskIds: [`${suite}-task`] }))
 const usage = {
   wallTimeMs: 10,
   inputTokens: 3,
@@ -385,12 +391,104 @@ describe('development-only step one', () => {
     expect(reads).toBe(0)
   })
 
+  it('declares each suite at the process layer the module registry gives it', () => {
+    for (const suite of ALL_SUITES) {
+      expect({ suite, layer: STEP_ONE_SUITE_LAYERS[suite] }).toEqual({ suite, layer: LIVE_SUITE_LAYERS[suite] })
+    }
+    for (const suite of [...STEP_ONE_COMPARISON_SUITES, ...STEP_ONE_PRACTICE_SUITES]) {
+      expect(STEP_ONE_SUITE_LAYERS[suite]).toBe('G')
+    }
+  })
+
+  it('compares the backends on the layer-G developer and reviewer suites only', async () => {
+    const calls = new Set<string>()
+    const result = await runStepOne({ ...options, purpose: 'comparison' }, suites, async (input) => {
+      calls.add(input.suite)
+      return { success: true, usage }
+    })
+    expect(result.ok && result.value.purpose).toBe('comparison')
+    expect([...calls]).toEqual([
+      'developer-capability-neutral.l5',
+      'code-reviewer-quality-neutral.l5',
+      'security-reviewer-quality-neutral.l5'
+    ])
+  })
+
+  it('refuses a layer-P suite, or a practice-only one, named as comparison evidence, before loading any split', async () => {
+    let reads = 0
+    const load = () => {
+      reads++
+      return suites()
+    }
+    const execute = async () => ({ success: true, usage })
+    for (const suite of STEP_ONE_SUITES) {
+      const refused = await runStepOne({ ...options, purpose: 'comparison', suites: [suite] }, load, execute)
+      expect(refused).toEqual({ ok: false, refusal: { code: 'layer_p_comparison', detail: expect.any(String) } })
+    }
+    const mixed = await runStepOne(
+      { ...options, purpose: 'comparison', suites: ['developer-capability-neutral.l5', 'developer-capability.l5'] },
+      load,
+      execute
+    )
+    expect(mixed.ok || mixed.refusal.code).toBe('layer_p_comparison')
+    const citation = await runStepOne(
+      { ...options, purpose: 'comparison', suites: ['source-delivery-neutral.l5'] },
+      load,
+      execute
+    )
+    expect(citation.ok || citation.refusal.code).toBe('comparison_forbidden')
+    expect(selectStepOneSuites('comparison', ['source-delivery.l5'], 1)).toEqual({
+      ok: false,
+      refusal: { code: 'invalid_input', detail: 'source-delivery.l5 is not a step-one suite' }
+    })
+    expect(reads).toBe(0)
+  })
+
+  it('admits the layer-G source-citation suite for development-only runs and a one-trial practice run', async () => {
+    const execute = async () => ({ success: true, usage })
+    const practice = await runStepOne(
+      { ...options, trialsPerTask: 1, purpose: 'practice', suites: ['source-delivery-neutral.l5'] },
+      suites,
+      execute
+    )
+    expect(practice.ok).toBe(true)
+    if (practice.ok) {
+      expect(practice.value.purpose).toBe('practice')
+      expect(practice.value.runs.map((run) => [run.suite, run.trialsPerTask])).toEqual([
+        ['source-delivery-neutral.l5', 1],
+        ['source-delivery-neutral.l5', 1]
+      ])
+    }
+    const development = await runStepOne({ ...options, suites: ['source-delivery-neutral.l5'] }, suites, execute)
+    expect(development.ok && development.value.purpose).toBe('development-only')
+    const twoTrials = await runStepOne(
+      { ...options, purpose: 'practice', suites: ['source-delivery-neutral.l5'] },
+      suites,
+      execute
+    )
+    expect(twoTrials.ok || twoTrials.refusal.code).toBe('invalid_input')
+  })
+
+  it('refuses to grade a layer-G trial it has no live executor for', async () => {
+    const loaded = { suites: [], developerCases: [], reviewerCases: [] }
+    const context = { repository: '.', developerBriefs: new Map(), models: {}, timeoutMs: 1, loaded }
+    for (const suite of [...STEP_ONE_COMPARISON_SUITES, ...STEP_ONE_PRACTICE_SUITES]) {
+      await expect(
+        PRODUCTION_STEP_ONE_RUNTIME.execute({ suite, adapter: 'codex', taskId: 'any', attempt: 1 }, context)
+      ).rejects.toThrow(`no live executor runs ${suite} trials yet`)
+    }
+  })
+
   it('the executable command loads the real development corpora and dispatches every real task', async () => {
     const loaded = await PRODUCTION_STEP_ONE_RUNTIME.loadDevelopment()
     expect(loaded.suites.map((entry) => [entry.suite, entry.taskIds.length])).toEqual([
       ['developer-capability.l5', 28],
       ['code-reviewer-quality.l5', 11],
-      ['security-reviewer-quality.l5', 6]
+      ['security-reviewer-quality.l5', 6],
+      ['developer-capability-neutral.l5', 28],
+      ['code-reviewer-quality-neutral.l5', 6],
+      ['security-reviewer-quality-neutral.l5', 6],
+      ['source-delivery-neutral.l5', 7]
     ])
     const calls: string[] = []
     const out = join(mkdtempSync(join(tmpdir(), 'step-one-command-')), 'result.json')
@@ -430,5 +528,44 @@ describe('development-only step one', () => {
     expect(calls).toHaveLength(90)
     expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual(result)
     if (result.ok) expect(result.value.runs.every((run) => run.usage.estimatedCostUsd > 0)).toBe(true)
+
+    // The same command requests a one-trial practice run of the layer-G source-citation suite.
+    const practice: string[] = []
+    const practiceArgs = ['run', '--split', 'development', '--backend', 'standalone', '--purpose', 'practice']
+    const rest = [
+      '--trials',
+      '1',
+      '--bootstrap',
+      'percentile',
+      '--seed',
+      '7',
+      '--resamples',
+      '20',
+      '--confidence',
+      '0.95'
+    ]
+    const requested = await runStepOneCommand(
+      [
+        ...practiceArgs,
+        '--suite',
+        'source-delivery-neutral.l5',
+        ...rest,
+        '--input-cost-per-million',
+        '1',
+        '--output-cost-per-million',
+        '2',
+        '--out',
+        out
+      ],
+      {
+        loadDevelopment: async () => loaded,
+        execute: async (input) => {
+          practice.push(`${input.suite}:${input.adapter}:${input.taskId}`)
+          return { success: true, usage }
+        }
+      }
+    )
+    expect(requested.ok && requested.value.purpose).toBe('practice')
+    expect(practice).toHaveLength(14)
   })
 })

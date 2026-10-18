@@ -14,7 +14,13 @@
 
 import { createHash } from 'node:crypto'
 import type { CodeGraderIdentity, Grader, GraderVerdict } from './contracts'
-import { type ChangeIdentity, intentVersion, type NeutralCase, type NeutralCaseKind } from './neutral-case'
+import {
+  type ChangeIdentity,
+  intentVersion,
+  NEUTRAL_CASE_KINDS,
+  type NeutralCase,
+  type NeutralCaseKind
+} from './neutral-case'
 import { FACT_STATUSES, type Fact, type NeutralOutcomes, type OutcomeName } from './neutral-outcomes'
 
 /** A layer-`G` grader's only inputs. */
@@ -108,7 +114,7 @@ export function sameChange(a: ChangeIdentity, b: ChangeIdentity): boolean {
   return a.base === b.base && a.head === b.head && a.patchDigest === b.patchDigest
 }
 
-const ALL_KINDS: readonly NeutralCaseKind[] = ['change', 'review', 'loop']
+const ALL_KINDS: readonly NeutralCaseKind[] = NEUTRAL_CASE_KINDS
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
 
 function define(
@@ -144,7 +150,7 @@ function define(
 function judgeHiddenTests(c: NeutralCase, facts: KnownFacts): string[] {
   const change = facts['O-change']
   const tests = facts['O-tests']
-  if (c.kind === 'review' || change === undefined || tests === undefined) return []
+  if ((c.kind !== 'change' && c.kind !== 'loop') || change === undefined || tests === undefined) return []
   const reasons: string[] = []
   if (tests.revision !== change.measured.head) {
     reasons.push(`the hidden tests ran on ${tests.revision}, not on the head ${change.measured.head}`)
@@ -158,14 +164,16 @@ function judgeHiddenTests(c: NeutralCase, facts: KnownFacts): string[] {
 }
 
 /**
- * No protected path is changed unless the authorized scope covers it, and the
- * changed paths outside the authorized scope are exactly the ones recorded.
+ * A path is inside the authorized scope when an `in` glob covers it and no
+ * `excluded` glob does. No protected path is changed unless it is inside the
+ * scope, and the changed paths outside the scope are exactly the ones recorded.
  */
 function judgeScope(c: NeutralCase, facts: KnownFacts): string[] {
   const change = facts['O-change']
   const scope = facts['O-scope']
   if (change === undefined || scope === undefined) return []
-  const inScope = (path: string) => c.authorizedScope.in.some((glob) => globMatches(glob, path))
+  const covered = (globs: readonly string[], path: string) => globs.some((glob) => globMatches(glob, path))
+  const inScope = (path: string) => covered(c.authorizedScope.in, path) && !covered(c.authorizedScope.excluded, path)
   const reasons: string[] = []
   const outside = new Set<string>()
   for (const path of change.changedPaths) {
