@@ -2,7 +2,7 @@
 
 Status: draft
 
-The evaluation program (`apps/cli/specs/dev-review-evaluation-program.md`) defines four harness ports — Task, Trial, Grader, Report — and the statistics reported over them (its §3, §7, §8, §9 and §11). This file describes the code that implements those contracts and estimators, `apps/cli/src/lib/dev-review-eval/contracts.ts` and `apps/cli/src/lib/dev-review-eval/estimators.ts`, the module registry the program's §6 requires, `apps/cli/src/lib/dev-review-eval/registry.ts`, and the trial staging and contamination test its §11 requires, `apps/cli/src/lib/dev-review-eval/staging.ts` and `apps/cli/src/lib/dev-review-eval/contamination.ts`. Vocabulary is the evaluation program's §3, used exactly.
+The evaluation program (`apps/cli/specs/dev-review-evaluation-program.md`) defines four harness ports — Task, Trial, Grader, Report — and the statistics reported over them (its §3, §7, §8, §9 and §11). This file describes the code that implements those contracts and estimators, `apps/cli/src/lib/dev-review-eval/contracts.ts` and `apps/cli/src/lib/dev-review-eval/estimators.ts`, the module registry the program's §6 requires, `apps/cli/src/lib/dev-review-eval/registry.ts`, and the trial staging and contamination test its §11 requires, `apps/cli/src/lib/dev-review-eval/staging.ts` and `apps/cli/src/lib/dev-review-eval/contamination.ts`, and the process-neutral layer G — `neutral-case.ts`, `neutral-outcomes.ts`, `generic-graders.ts` and `banned-terms.ts` in the same directory. Vocabulary is the evaluation program's §3, used exactly.
 
 Nothing here runs an agent or decides acceptance. Those come later; this layer gives them typed values to exchange, pure functions to compute what a report shows, and a clean, proven-isolated workspace for each trial.
 
@@ -22,8 +22,9 @@ Digests are SHA-256, written as 64 lowercase hexadecimal characters; commits are
 
 A grader is pinned logic scoring one aspect of a trial's outcome.
 
-- A **code grader** is pinned by `id`, `version` and `logicDigest`.
-- A **model grader** is pinned by every element the evaluation program's §7 names: `id`, `version`, `adapterVersion`, `cliVersion`, `model`, `promptDigest`, `outputSchemaDigest`, `calibrationCorpusDigest`. A missing element is refused.
+- Every grader declares its **layer**, `G` or `P`. A layer-`G` grader reads only process-neutral facts — a neutral case and its neutral outcomes (see "Layer G" below). A layer-`P` grader reads an artifact one process owns, such as Vinaya's frozen brief, a reviewer severity or a structured turn result. An identity that declares no layer, or any other value, is refused. This tag is not a suite's `L1`–`L8` layer. Every grader of the Developer capability, reviewer-quality and tool-selection suites is `P`.
+- A **code grader** is pinned by `layer`, `id`, `version` and `logicDigest`.
+- A **model grader** is pinned by its `layer` and every element the evaluation program's §7 names: `id`, `version`, `adapterVersion`, `cliVersion`, `model`, `promptDigest`, `outputSchemaDigest`, `calibrationCorpusDigest`. A missing element is refused.
 - A verdict is `pass`, `fail` with a reason, or `unknown` with a reason. A code grader returning `unknown` is refused (`unknown_from_code_grader`); a `fail` or `unknown` without a reason is refused (`reason_required`).
 - The `Grader` port is `{ identity, grade(outcome) }`: it receives the trial's recorded outcome, never what the agent said happened.
 
@@ -156,6 +157,77 @@ It reports, by kind, the components covered, the empty fields and the unmapped c
 - the empty-field and unmapped counts are both zero.
 
 A failure names its cause: `shard_absent`, `kind_missing`, `duplicate_id`, `empty_field`, `no_module`, `module_unnamed`, `universe_missing`, `universe_extra`, `count_mismatch`, `exclusion_stale` or `exclusion_covered`. The test plants each gap on a copy of the real data and edits no shard.
+
+## Layer G — neutral cases and generic graders
+
+Layer G grades process-neutral facts in the Development Process vocabulary — Intent, Execution, Change, Evidence, Review, Decision — so the same case and the same graders can judge any process. A grader that has to parse a brief, a verdict or a severity name is layer P. Layer G reads no Vinaya artifact: its graders' input type is a neutral case plus neutral outcomes, and nothing else.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/contracts.ts contains:export const GRADER_LAYERS = ['G', 'P'] as const -->
+
+### The neutral case
+
+`validateNeutralCase` (`neutral-case.ts`) accepts one case or refuses it with the harness's refusal codes, naming the field. Every case carries `id`, `layer` (`G` only), `kind`, `repository`, `baseRevision`, `taskStatement`, `authorizedScope` (`in` and `protected` path globs; `in` not empty), `deliveredDocuments` (each an `id`, a `contentDigest` and a `relevant` flag) and `grantedCapabilities`. Each kind adds its own fields, and a field of another kind is refused (`inconsistent`):
+
+| Kind | What the case asks | Its own fields |
+| -- | -- | -- |
+| `change` | Produce a change | `hiddenTests` (path, name, `fail-to-pass` or `pass-to-pass`; not empty), `referenceSolution` (its patch digest) |
+| `review` | Judge a given change | `plantedDefects` (file, kind, `blocking`, `critical`, `justified`), `changeUnderReview` (base, head, patch digest; its base is the case's base), `adjudication` (`clean` and at least two adjudicators) |
+| `loop` | Take a task through change, evidence and review to a decision | `hiddenTests`, `referenceSolution` |
+
+A review case adjudicated clean carries no planted defect, and one not adjudicated clean carries at least one. The task statement must pass the banned-terms checker below (`banned_term`).
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/neutral-case.ts contains:export function validateNeutralCase(input: unknown): Validated<NeutralCase> { -->
+
+`neutralCaseDigest` is the SHA-256 of the validated case's canonical JSON — every object's keys sorted — so it is the same whatever the key order and changes when any field changes. `intentVersion` is the SHA-256 of the task statement and authorized scope alone: the intent a review is bound to.
+
+### Neutral outcomes
+
+`neutral-outcomes.ts` types the nine facts the harness records about a trial, from the trial's environment and never from what the agent said:
+
+| Outcome | The fact |
+| -- | -- |
+| `O-change` | The change's base, head and patch digest, as the published change records them and as the harness measures them, and the changed paths |
+| `O-tests` | Each hidden test's result, and the revision the tests ran on |
+| `O-evidence` | The checks run on one revision, under one evidence id, each required or not |
+| `O-scope` | The changed paths the execution recorded as outside its authorized scope |
+| `O-capability` | The capabilities the execution used |
+| `O-sources` | The documents the harness holds a receipt for, by content digest, and those the agent claims it used |
+| `O-review` | Each review's id, its reviewer (one stable identity per independent reviewer), the intent version and change it judged, and its findings, each at a file and blocking or not; a review approves when it reports no blocking finding |
+| `O-decision` | The decision (`ready` or `not-ready`) and the evidence and review ids it rests on |
+| `O-effects` | Each external effect performed, by idempotency key |
+
+Each outcome carries a fact status: `known` (recorded and valid; only this status carries a value), `absent` (looked for where it is recorded, and not there), `unavailable` (could not be observed), `invalid` (recorded but malformed) or `inapplicable` (the fact does not exist for this kind of case).
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/neutral-outcomes.ts contains:export const FACT_STATUSES = ['known', 'absent', 'unavailable', 'invalid', 'inapplicable'] as const -->
+
+### Generic graders
+
+`generic-graders.ts` holds ten pinned code graders, each tagged `layer: G`, whose `grade` takes `{ case, outcomes }` and nothing else. Each first reads the outcomes it declares: one that is `absent`, `unavailable` or `invalid` — or missing, which counts as `unavailable`, or carrying an unrecognised status — fails the grade, whatever the case kind; one that is `inapplicable` fails it when the case's kind needs that fact. A grader then judges only the case kinds it applies to and passes any other kind.
+
+| Grader | Applies to | Passes when |
+| -- | -- | -- |
+| `generic-hidden-tests` | change, loop | Every hidden test passes, on the measured head |
+| `generic-scope-kept` | change, loop | Every changed path is repository-relative and in normal form (no leading `/`, no backslash, no empty, `.` or `..` segment), no protected path changes unless `in` covers it, and the changed paths outside `in` are exactly the recorded ones |
+| `generic-capabilities-granted` | every kind | Every capability used was granted |
+| `generic-documents-used` | every kind | Every relevant delivered document is claimed and has a harness receipt for its content digest, and no undelivered document is claimed |
+| `generic-planted-defects-found` | review | Every planted defect with `justified: false` has a blocking finding at its file |
+| `generic-clean-change-unblocked` | review | A change adjudicated clean draws no blocking finding |
+| `generic-review-bound` | review, loop | At least one review, each bound to the case's intent version and to the change (the change under review, or the measured change) |
+| `generic-decision-bound` | loop | The decision is `ready`, rests on the current evidence id and exactly the current review ids, the evidence is on the head with every required check passing, at least two distinct reviewers reviewed (`APPROVING_REVIEWERS`), and every review is on the head and approves — in the Vinaya process, the loop's ready-for-merge result with both reviewers approving and every required check green |
+| `generic-change-bound` | change, loop | The measured change starts from the case's base revision, and the recorded base, head and patch digest equal the measured ones |
+| `generic-effects-once` | every kind | No idempotency key is performed twice |
+
+A glob with no wildcard covers that path and everything under it; `*` matches within one path segment, `**` across segments.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/generic-graders.ts contains:export const GENERIC_GRADERS: readonly GenericGrader[] = [ -->
+
+### Banned terms
+
+`banned-terms.ts` holds the one list of process terms a neutral task statement may not contain: `Surface`, `objective`, `brief` and `verdict` (any case, singular or plural); every reviewer severity name as the scales write it (`BLOCKER`, `MAJOR`, `MINOR`, `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`); an objective id such as `O3`; a finding id such as `F2` or `R2-CR-3`; and the role names `principal`, `planner`, `architect`, `archivist`, `developer`, `reviewer` and `operator`. `checkTaskStatement` refuses a statement containing any of them as `banned_term`, naming the term, and accepts one free of them; `findBannedTerms` lists every term found. Severity names are matched only in capitals, so lowercase `blocker`, `major` or `minor` — and `blocking` — are accepted: banning them in any case would refuse ordinary English such as "a major release" or "low latency". A statement that names a severity in lowercase is therefore not caught here.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/banned-terms.ts contains:export function checkTaskStatement(statement: string, path = 'taskStatement'): Validated<string> { -->
+
+`apps/cli/tests/eval/neutral-case.test.ts`, `generic-graders.test.ts` and `banned-terms.test.ts` prove each refusal, the digest's stability and sensitivity, every grader's pass on good outcomes for every case kind, its fail on every non-`known`, non-`inapplicable` status of every outcome it reads, and its rejection of a planted bad outcome.
 
 ## Trial staging
 

@@ -112,6 +112,7 @@ const graderImplementation = [
 ]
 export const REVIEW_QUALITY_GRADER: CodeGraderIdentity = {
   kind: 'code',
+  layer: 'P',
   id: 'reviewer-quality-binary',
   version: '1',
   logicDigest: sha256(Buffer.concat(graderImplementation))

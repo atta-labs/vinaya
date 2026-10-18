@@ -280,7 +280,7 @@
       },
       "grader": {
         "kinds": ["code"],
-        "detail": "Hidden fail-to-pass and pass-to-pass tests; protected-path and beyond-Surface record checks; a code grader binding accepted `sourceUses` to controller receipts and current manifest digests; a trace predicate on tools and authority; an accepted `DeveloperTurnResult`."
+        "detail": "Hidden fail-to-pass and pass-to-pass tests; protected-path and beyond-Surface record checks; a code grader binding accepted `sourceUses` to controller receipts and current manifest digests; a trace predicate on tools and authority; an accepted `DeveloperTurnResult`. Each of these graders is pinned with `layer: P`, since it reads Vinaya artifacts. Layer-G generic graders (`generic-graders.ts`) judge the same facts process-neutrally, from a neutral case and its neutral outcomes alone: hidden tests passing on head, scope kept, only granted capabilities used, relevant delivered documents used with a harness receipt, the change bound to its base, head and patch, and no repeated effect."
       },
       "backends": ["standalone", "engine"],
       "decisionRule": "§10 backend-comparison live suite: the *Principal* absolute floor (minimum resolved rate on held-out tasks, frozen in milestone 2), no unadjudicated paired regression, and non-inferiority once powered (margin and minimum task count from the milestone-3 paired pilot); the source-citation cases in source-delivery.l5@1 separately require at least 0.95 pass^3 on source-requiring held-out tasks on each adapter, with no margin.",
@@ -331,7 +331,7 @@
       },
       "grader": {
         "kinds": ["code"],
-        "detail": "Trace predicate on tool name and arguments, plus an outcome check on the resulting state."
+        "detail": "Trace predicate on tool name and arguments, plus an outcome check on the resulting state. Both graders are pinned with `layer: P`, since they read Vinaya's own tool catalog and role grants."
       },
       "backends": ["standalone", "engine"],
       "decisionRule": "§10 absolute-floor live suite: ≥ 0.95 per tool on the held-out split, both adapters, no margin; the deterministic L4 regression subset passes 100%.",
@@ -505,7 +505,7 @@
       },
       "grader": {
         "kinds": ["code", "model", "human"],
-        "detail": "Binary per item: planted defect reported at the right file with a blocking severity; beyond-Surface flagging; no blocking finding on a clean change; every objective given a disposition; an accepted `ReviewResult`. A pinned, calibrated model grader only where the file matches but the wording differs (§7); human adjudicators decide a blocking finding on a clean change."
+        "detail": "Binary per item: planted defect reported at the right file with a blocking severity; beyond-Surface flagging; no blocking finding on a clean change; every objective given a disposition; an accepted `ReviewResult`. A pinned, calibrated model grader only where the file matches but the wording differs (§7); human adjudicators decide a blocking finding on a clean change. The binary grader is pinned with `layer: P`, since it reads `ReviewResult` and the severity scales. Layer-G generic graders (`generic-graders.ts`) judge the same facts process-neutrally, from a neutral case and its neutral outcomes alone: a blocking finding at each unjustified planted file, no blocking finding on an adjudicated clean change, and every review bound to the intent version and the change."
       },
       "backends": ["standalone", "engine"],
       "decisionRule": "§10 backend-comparison live suite: the *Principal* floors (minimum recall on seeded and historical sets; maximum adjudicated false-blocking rate), frozen in milestone 2; no unadjudicated paired regression; non-inferiority from the milestone-3 paired pilot.",
@@ -556,7 +556,7 @@
       },
       "grader": {
         "kinds": ["code", "model", "human"],
-        "detail": "As §6.9: binary per item, a pinned calibrated model grader only where code cannot judge, human adjudication of clean-set blocking findings."
+        "detail": "As §6.9: binary per item, a pinned calibrated model grader only where code cannot judge, human adjudication of clean-set blocking findings. The binary grader is pinned with `layer: P`; the same layer-G generic graders as §6.9 judge planted defects, clean changes and review binding process-neutrally."
       },
       "backends": ["standalone", "engine"],
       "decisionRule": "Zero misses on seeded critical and high defects on every trial (absolute floor); the rest per §10 backend-comparison rules, as §6.9.",
@@ -1011,7 +1011,7 @@
       },
       "grader": {
         "kinds": ["code"],
-        "detail": "All binary: hidden tests on the final repository state, the ready-for-merge decision with every §16.10 condition, a trace predicate on handoffs, and the intervention record."
+        "detail": "All binary: hidden tests on the final repository state, the ready-for-merge decision with every §16.10 condition, a trace predicate on handoffs, and the intervention record. Layer-G generic graders (`generic-graders.ts`) judge the same facts process-neutrally, from a neutral case and its neutral outcomes alone: hidden tests passing on head, review binding, a decision bound to the current evidence and review ids, the change bound to its base, head and patch, and no repeated effect."
       },
       "backends": ["standalone", "engine"],
       "decisionRule": "§10: critical tasks — every trial of every critical task succeeds (pass^3 = 1 per task), designated before the run; remaining tasks — the *Principal* suite-level pass^3 floor with spend and wall time within the declared budget, no unadjudicated paired regression, non-inferiority from the milestone-3 paired pilot.",

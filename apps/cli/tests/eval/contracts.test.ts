@@ -17,13 +17,18 @@ import {
   validateTrial,
   validateTrialSet
 } from '../../src/lib/dev-review-eval/contracts'
+import { GENERIC_GRADERS } from '../../src/lib/dev-review-eval/generic-graders'
+import { GRADERS as DEVELOPER_CAPABILITY_GRADERS } from './developer-capability-suite'
+import { REVIEW_QUALITY_GRADER } from './reviewer-quality-suite'
+import { STATE_GRADER, TRACE_GRADER } from './tool-selection-suite'
 
 const D = (c: string) => c.repeat(64)
 const COMMIT = 'c'.repeat(40)
 
-const codeGrader = { kind: 'code', id: 'hidden-tests', version: '1', logicDigest: D('1') }
+const codeGrader = { kind: 'code', layer: 'G', id: 'hidden-tests', version: '1', logicDigest: D('1') }
 const modelGrader = {
   kind: 'model',
+  layer: 'P',
   id: 'finding-matches-defect',
   version: '2',
   adapterVersion: '0.4.0',
@@ -190,6 +195,31 @@ describe('Grader contract', () => {
       code: 'unknown_value',
       path: 'kind'
     })
+  })
+
+  it('refuses a code or model grader that declares no layer, or a layer other than G or P', () => {
+    for (const grader of [codeGrader, modelGrader]) {
+      expect(refused(validateGraderIdentity(withPath(grader, 'layer', undefined)))).toEqual({
+        code: 'missing_field',
+        path: 'layer'
+      })
+      expect(refused(validateGraderIdentity({ ...grader, layer: 'L5' }))).toEqual({
+        code: 'unknown_value',
+        path: 'layer'
+      })
+    }
+  })
+
+  it('tags every existing suite grader with layer P and every generic grader with layer G', () => {
+    const existing = [...DEVELOPER_CAPABILITY_GRADERS, REVIEW_QUALITY_GRADER, TRACE_GRADER, STATE_GRADER]
+    for (const identity of existing) {
+      expect({ id: identity.id, layer: identity.layer }).toEqual({ id: identity.id, layer: 'P' })
+      expect(validateGraderIdentity(identity).ok).toBe(true)
+    }
+    for (const { identity } of GENERIC_GRADERS) {
+      expect({ id: identity.id, layer: identity.layer }).toEqual({ id: identity.id, layer: 'G' })
+      expect(validateGraderIdentity(identity).ok).toBe(true)
+    }
   })
 
   it('returns pass, fail or — for a model grader only — unknown with a reason', () => {
