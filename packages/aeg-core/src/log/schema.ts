@@ -1,6 +1,6 @@
 /**
  * The Vinaya Log's typed event schema (Linear "Tech spec — The Vinaya Log").
- * This module versions the envelope to `schema: 2` and widens `kind` past
+ * This module versions the envelope to `schema: 3` and widens `kind` past
  * the first three families it originally shipped with.
  *
  * Three families shipped first — `dispatch`, `dev_review_loop`, and

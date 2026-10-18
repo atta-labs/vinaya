@@ -860,7 +860,7 @@ export const COMMANDS: readonly Command[] = [
     ],
     details: [
       "Sets `VINAYA_RUN_ID`/`VINAYA_ROLE`/`VINAYA_TASK`/`VINAYA_ROUND` on the child only — never on this process's own environment — and refuses by name, before any spawn attempt, when the named vendor binary is absent from `PATH` or present but not executable.",
-      "Records `dispatched` (with the prompt's sha256), `outcome_received` (duration, the vendor's own usage when its stdout prints a recognizable shape), or `dispatch_failed` (`timeout`, `crash`, or `refused`) through the Vinaya Log's one `dispatch` family writer, `dispatchRole`. A wall-time ceiling (`dispatch.timeoutMs` in config, default one hour) sends `SIGTERM` then, after a grace window, `SIGKILL`.",
+      "Records `dispatched` (with the prompt's sha256), `outcome_received` (duration, the vendor's own usage when its stdout prints a recognizable shape), or `dispatch_failed` (`timeout`, `crash`, `refused`, or `usage_limit`) through the Vinaya Log's one `dispatch` family writer, `dispatchRole`. A wall-time ceiling (`dispatch.timeoutMs` in config, default one hour) sends `SIGTERM` then, after a grace window, `SIGKILL`.",
       'Runs no flush of its own after the dispatch returns: every log line `dispatchRole` emits reaches its configured `logs` destination live, as it is emitted, so there is nothing left to ship in a trailing step. `--task`/`--pr` are attribution only, and remain mutually exclusive.',
       // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:'-r',
       // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:resumeArgs: (id, model) => [
