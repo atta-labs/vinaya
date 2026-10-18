@@ -439,11 +439,14 @@ async function runOne(
   // inherits the full parent environment. `detached: true` puts the child
   // in its OWN process group (pid becomes the group's pgid on POSIX) so the
   // timeout handler below can kill the whole tree, not just this direct
-  // child.
+  // child. `VINAYA_CHECK_NAME` is stamped here, outside `buildCheckEnv`, so
+  // the check's fingerprint and its declared env stay as they were: it tells
+  // code inside the check (the config loader) to report on the check-error
+  // channel, under this check's name, instead of in plain text.
   const proc = spawn(spec.run, spec.args ?? [], {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: true,
-    env: buildCheckEnv(spec.env, callerEnv)
+    env: { ...buildCheckEnv(spec.env, callerEnv), VINAYA_CHECK_NAME: spec.name }
   })
 
   // Best-effort process-GROUP kill: negative pid targets every process in

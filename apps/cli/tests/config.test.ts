@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import {
   copyFileSync,
@@ -318,7 +318,7 @@ describe('config', () => {
       'utf-8'
     )
 
-    // Invalid schema — VinayaConfigSchema.parse throws, loadConfig swallows and returns null
+    // Invalid schema — loadConfig reports the file on stderr and returns null
     expect(loadConfig()).toBeNull()
   })
 
@@ -338,12 +338,111 @@ describe('config', () => {
     expect(result?.checks?.['my-check']?.include).toEqual(['src/**/*.ts'])
   })
 
-  it('loadConfig swallows an invalid checks entry to null (existing null-on-failure contract, unchanged)', () => {
+  it('loadConfig returns null for an invalid checks entry and reports it on stderr (callers still fall back to defaults)', () => {
     const localPath = join(tmpDir, 'vinaya.config.json')
     // Fixture has a "scop" typo — schema requires "scope".
     copyFileSync(INVALID_CHECKS_FIXTURE, localPath)
 
-    expect(loadConfig()).toBeNull()
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      expect(loadConfig()).toBeNull()
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
+  describe('an invalid config file is reported, not ignored in silence', () => {
+    let savedCheckName: string | undefined
+    beforeEach(() => {
+      savedCheckName = process.env.VINAYA_CHECK_NAME
+      delete process.env.VINAYA_CHECK_NAME
+    })
+    afterEach(() => {
+      if (savedCheckName === undefined) delete process.env.VINAYA_CHECK_NAME
+      else process.env.VINAYA_CHECK_NAME = savedCheckName
+    })
+
+    it('returns null and prints exactly one line naming the file and the failing key, however often it loads', () => {
+      const localPath = join(tmpDir, 'vinaya.config.json')
+      writeFileSync(localPath, JSON.stringify({ rings: { ring1_forgeWriteInterception: 'yes' } }), 'utf-8')
+
+      const errorSpy = spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        expect(loadConfig()).toBeNull()
+        expect(loadConfig()).toBeNull()
+        expect(loadConfig()).toBeNull()
+        expect(errorSpy).toHaveBeenCalledTimes(1)
+        const line = String(errorSpy.mock.calls[0]?.[0])
+        expect(line).not.toContain('\n')
+        expect(line).toContain(configPath() as string)
+        expect(line).toContain('rings.ring1_forgeWriteInterception:')
+        expect(line).toContain('built-in defaults')
+      } finally {
+        errorSpy.mockRestore()
+      }
+    })
+
+    it('reports a file that is not valid JSON', () => {
+      writeFileSync(join(tmpDir, 'vinaya.config.json'), '{ not json', 'utf-8')
+
+      const errorSpy = spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        expect(loadConfig()).toBeNull()
+        expect(errorSpy).toHaveBeenCalledTimes(1)
+        expect(String(errorSpy.mock.calls[0]?.[0])).toContain('invalid JSON')
+      } finally {
+        errorSpy.mockRestore()
+      }
+    })
+
+    it('a different offending file still prints its own report', () => {
+      const first = join(tmpDir, 'a')
+      const second = join(tmpDir, 'b')
+      mkdirSync(first)
+      mkdirSync(second)
+      writeFileSync(join(first, 'vinaya.config.json'), JSON.stringify({ rings: { ring2_asyncAudits: 1 } }), 'utf-8')
+      writeFileSync(join(second, 'vinaya.config.json'), JSON.stringify({ rings: { ring2_asyncAudits: 1 } }), 'utf-8')
+
+      const errorSpy = spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        process.chdir(first)
+        expect(loadConfig()).toBeNull()
+        process.chdir(second)
+        expect(loadConfig()).toBeNull()
+        expect(errorSpy).toHaveBeenCalledTimes(2)
+        expect(String(errorSpy.mock.calls[0]?.[0])).toContain(join('a', 'vinaya.config.json'))
+        expect(String(errorSpy.mock.calls[1]?.[0])).toContain(join('b', 'vinaya.config.json'))
+      } finally {
+        errorSpy.mockRestore()
+      }
+    })
+
+    it('inside a spawned check (VINAYA_CHECK_NAME set) the report is one warning check-error line naming that check', () => {
+      const localPath = join(tmpDir, 'vinaya.config.json')
+      copyFileSync(INVALID_CHECKS_FIXTURE, localPath)
+      process.env.VINAYA_CHECK_NAME = 'my-check'
+
+      const errorSpy = spyOn(console, 'error').mockImplementation(() => {})
+      const stderrSpy = spyOn(process.stderr, 'write').mockImplementation(() => true)
+      try {
+        expect(loadConfig()).toBeNull()
+        expect(errorSpy).not.toHaveBeenCalled()
+        expect(stderrSpy).toHaveBeenCalledTimes(1)
+        const written = String(stderrSpy.mock.calls[0]?.[0])
+        expect(written.trimEnd().split('\n')).toHaveLength(1)
+        const parsed = JSON.parse(written)
+        expect(parsed.schema).toBe(1)
+        expect(parsed.check).toBe('my-check')
+        expect(parsed.severity).toBe('warning')
+        expect(parsed.message).toContain(configPath() as string)
+        expect(parsed.message).toContain('checks.')
+        expect(typeof parsed.agent_recovery_prompt).toBe('string')
+        expect(parsed.agent_recovery_prompt).not.toBe(parsed.message)
+      } finally {
+        stderrSpy.mockRestore()
+        errorSpy.mockRestore()
+      }
+    })
   })
 
   it('loadConfigChecked surfaces the same invalid checks entry loudly instead of silently returning null', () => {

@@ -19,6 +19,7 @@ import {
   SECURITY_SEVERITY_ORDER
 } from '@attalabs/aeg-core'
 import { CustomEventDeclarationsSchema } from '@attalabs/aeg-core/log'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '../checks/contract.js'
 import { AGENT_VENDORS, type AgentVendor } from './agent-vendors.js'
 import { CLAUDE_COMMAND_PATH } from './claude-command-emitter.js'
 import { GEMINI_COMMAND_PATH } from './gemini-command-emitter.js'
@@ -689,9 +690,9 @@ const VinayaConfigObjectSchema = z.object({
   // severity scale (`@attalabs/aeg-core`'s `CODE_REVIEW_SEVERITY_ORDER`/
   // `SECURITY_SEVERITY_ORDER`). Typed as a bare string here, deliberately NOT
   // `z.enum(...)`: a `z.enum` failure fails the WHOLE config's schema parse,
-  // which both `loadConfig`/`loadTrustAnchorConfig` swallow into a silent
-  // `null` (every other field falls back too) — the opposite of this field's
-  // own contract. `resolveReviewPolicy` (below) is where an unknown value
+  // which both `loadConfig`/`loadTrustAnchorConfig` turn into a `null`
+  // (each with a one-line warning, but every other field falls back too) —
+  // the opposite of this field's own contract. `resolveReviewPolicy` (below) is where an unknown value
   // actually refuses, so a typo here is a loud, review-policy-specific error,
   // never a silent whole-config fallback. Same trust class as `principals` —
   // read only via `loadTrustAnchorConfig` (the default branch), never the PR
@@ -1795,12 +1796,65 @@ function parseTrustAnchorContent(
 export function loadConfig(): VinayaConfig | null {
   const path = configPath()
   if (!path) return null
+  let text: string
   try {
-    const raw = JSON.parse(readFileSync(path, 'utf-8'))
-    return stripGlobalOnlyKeys(VinayaConfigSchema.parse(raw), path)
-  } catch {
+    text = readFileSync(path, 'utf-8')
+  } catch (err) {
+    reportInvalidConfigOnce(path, `unreadable: ${(err as Error).message}`)
     return null
   }
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch (err) {
+    reportInvalidConfigOnce(path, `invalid JSON: ${(err as Error).message}`)
+    return null
+  }
+  const parsed = VinayaConfigSchema.safeParse(raw)
+  if (!parsed.success) {
+    reportInvalidConfigOnce(path, schemaIssueDetail(parsed.error))
+    return null
+  }
+  return stripGlobalOnlyKeys(parsed.data, path)
+}
+
+/** `path: message` per failing key, joined by `; ` — the detail both loaders report. */
+function schemaIssueDetail(error: z.ZodError): string {
+  return error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ')
+}
+
+/**
+ * `loadConfig()` keeps its null return — every caller falls back to built-in
+ * defaults — but an invalid file is reported, never ignored in silence. Same
+ * once-per-process dedupe as the global-key warnings, keyed by path + detail,
+ * so a command that loads config several times prints it once while a
+ * different offending file still prints its own.
+ *
+ * Inside a check the runner spawned (`VINAYA_CHECK_NAME` set, stamped by
+ * `runOne` in `src/checks/runner.ts`), standard error is the check-error
+ * channel: any non-JSON line there turns the check into a malformed-output
+ * `error`. So there the report is one `warning` check-error line naming that
+ * check — `warning`, because the check still runs, on defaults.
+ */
+const emittedInvalidConfigReports = new Set<string>()
+function reportInvalidConfigOnce(path: string, detail: string): void {
+  const key = `${path}\n${detail}`
+  if (emittedInvalidConfigReports.has(key)) return
+  emittedInvalidConfigReports.add(key)
+  const message = `${path} is not a valid Vinaya configuration (${detail}) — falling back to built-in defaults.`
+  const checkName = process.env.VINAYA_CHECK_NAME
+  if (checkName) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: checkName,
+      severity: 'warning',
+      message,
+      agent_recovery_prompt: `Fix the failing keys in ${path} (${detail}) so the file parses and satisfies the configuration schema, then re-run.`,
+      file: path
+    })
+    return
+  }
+  console.error(`⚠ ${message}`)
 }
 
 /**
@@ -1825,10 +1879,11 @@ export function readRepoCiSetup(repoRoot: string): string | null {
 export type ConfigLoadResult = { ok: true; config: VinayaConfig | null } | { ok: false; path: string; error: string }
 
 /**
- * Same hierarchical resolution as `loadConfig()`, but surfaces parse/
- * validation failures instead of swallowing them to `null`. `loadConfig()`
- * itself is UNCHANGED — its existing null-on-failure contract has other
- * callers relying on it, and this task does not alter that signature.
+ * Same hierarchical resolution as `loadConfig()`, but returns parse/
+ * validation failures to the caller instead of `null`. `loadConfig()` keeps
+ * its `null` return for its own callers, which fall back to defaults, and
+ * reports the invalid file once on standard error; this loader reports
+ * nothing itself — its callers print their own error.
  *
  * Used only by the `check` command path: a typo'd `checks` key silently
  * meaning "no custom checks ran" would make `vinaya check --all` print
@@ -1847,8 +1902,7 @@ export function loadConfigChecked(): ConfigLoadResult {
 
   const parsed = VinayaConfigSchema.safeParse(raw)
   if (!parsed.success) {
-    const detail = parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ')
-    return { ok: false, path, error: detail }
+    return { ok: false, path, error: schemaIssueDetail(parsed.error) }
   }
   return { ok: true, config: stripGlobalOnlyKeys(parsed.data, path) }
 }
