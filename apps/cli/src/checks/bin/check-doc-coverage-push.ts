@@ -36,6 +36,9 @@
  *      pre-existing gap versus `verify-docs.ts --pr`, left unchanged here
  *      (out of surface — see the PR body's Part 4 note).
  *
+ * Pre-commit supplements the committed branch diff with staged paths only
+ * when both hook markers are present; pre-push and CI use committed paths.
+ *
  * scope: diff — same as `doc-coverage`, C5 is a diff-vs-doc-owners check.
  */
 
@@ -64,6 +67,19 @@ function git(args: string[]): string {
 
 function changedFiles(base: string): string[] {
   return git(['diff', '--name-only', `${base}...HEAD`])
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+function stagedChangedFiles(): string[] {
+  // Git sets GIT_INDEX_FILE for both pre-commit and pre-push. Only the
+  // generated pre-commit hook sets VINAYA_COMMIT_HOOK, so use its explicit
+  // marker as well before allowing staged paths to supplement the branch
+  // diff. Push and CI therefore retain the committed `<base>...HEAD` view.
+  if (process.env.VINAYA_COMMIT_HOOK !== '1' || !process.env.GIT_INDEX_FILE) return []
+
+  return git(['diff', '--cached', '--name-only'])
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean)
@@ -124,6 +140,8 @@ function main(): void {
     ref = 'main'
     changed = changedFiles(ref)
   }
+  // Settle the committed base and its fallback before staged paths supplement it.
+  changed = [...new Set([...changed, ...stagedChangedFiles()])]
   if (changed.length === 0) process.exit(0)
 
   const content = existsSync(DOC_OWNERS_PATH) ? readFileSync(DOC_OWNERS_PATH, 'utf8') : null

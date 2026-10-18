@@ -1,33 +1,20 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: ci-shard-coverage. Refuses a commit that stages a new CLI test
- * file (`apps/cli/**\/*.test.ts`) not listed in any of
- * `apps/cli/tests/ci-shards/shard-{1,2,3}.txt` — the same membership rule
- * `tests/ci-shards.test.ts` enforces over every file on disk, at push time.
- * That test only runs on the one push (`3`+ minutes observed for the full
- * affected suite), so a Developer who forgets the shard line pays a whole
- * pre-push run to learn it. This check runs the same rule over the STAGED
- * diff, in the pre-commit hook, in seconds.
+ * Core check: ci-shard-coverage. Every newly added CLI test must appear in
+ * apps/cli/tests/ci-shards/shard-{1,2,3}.txt.
  *
- * Reads the git INDEX, never `resolveChangedFiles()`
- * (`../../lib/diff-evidence.ts`)'s committed `base...HEAD` diff: at
- * pre-commit time the commit being made has no SHA yet, so a file staged for
- * THIS commit is invisible to a committed-history diff. `git diff --cached`
- * is the diff that actually contains it. For the same reason, a shard file's
- * membership is read from the INDEX (`git show :<path>`), not from `HEAD` or
- * the working tree — the passing case stages the new test file and its
- * shard line together, in the same commit, before either is committed.
+ * Pre-commit reads added files and shard lists from the index, only when
+ * VINAYA_COMMIT_HOOK=1 and GIT_INDEX_FILE are both set. Pre-push and CI read
+ * branch additions against the resolved base and shard lists from HEAD.
+ * If no branch diff resolves, judge every CLI test tracked at HEAD instead
+ * of treating an indeterminate diff as clean.
  *
- * Only newly ADDED CLI test files are judged (`--diff-filter=A`) — a
- * modified existing one is already covered by `ci-shards.test.ts` itself,
- * which this check does not duplicate.
- *
- * scope: diff, local-only: `git diff --cached`/`git show :<path>` only,
- * never the network.
+ * scope: diff, local-only git reads, never the network.
  */
 
 import { execFileSync } from 'node:child_process'
+import { resolveAddedFiles } from '../../lib/diff-evidence'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { CI_SHARD_COUNT, isCliTestFile, shardFileRelPath } from '../../lib/ci-shard-membership'
 
@@ -58,20 +45,33 @@ function stagedCliFileContent(relPath: string): string | null {
 }
 
 function main(): void {
-  const addedTestFiles = stagedAddedFiles()
+  const preCommit = process.env.VINAYA_COMMIT_HOOK === '1' && Boolean(process.env.GIT_INDEX_FILE)
+  const files = preCommit ? stagedAddedFiles() : resolveAddedFiles()
+  const tracked = files === null ? git(['ls-tree', '-r', '--name-only', 'HEAD', '--', CLI_PREFIX]) : null
+  if (files === null && tracked === null) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: 'Cannot resolve the branch diff or enumerate CLI tests tracked at HEAD.',
+      agent_recovery_prompt: 'Restore readable git history and run the check again.'
+    })
+    process.exit(1)
+  }
+  const addedTestFiles = (files ?? (tracked || '').split('\n'))
     .filter((p) => p.startsWith(CLI_PREFIX))
     .map((p) => p.slice(CLI_PREFIX.length))
     .filter(isCliTestFile)
 
   if (addedTestFiles.length === 0) {
-    process.stdout.write(`${CHECK_NAME}: no new CLI test file staged in this commit\n`)
+    process.stdout.write(`${CHECK_NAME}: no CLI test file to judge\n`)
     process.exit(0)
   }
 
   const shardRelPaths = Array.from({ length: CI_SHARD_COUNT }, (_, i) => shardFileRelPath(i + 1))
   const shardMembers = new Set<string>()
   for (const rel of shardRelPaths) {
-    const content = stagedCliFileContent(rel)
+    const content = preCommit ? stagedCliFileContent(rel) : git(['show', `HEAD:${CLI_PREFIX}${rel}`])
     if (content === null) continue
     for (const line of content.split('\n')) {
       const trimmed = line.trim()
@@ -82,7 +82,7 @@ function main(): void {
   const missing = addedTestFiles.filter((f) => !shardMembers.has(f))
 
   process.stdout.write(
-    `${CHECK_NAME}: ${addedTestFiles.length} new CLI test file(s) staged; ${missing.length} missing from a shard\n`
+    `${CHECK_NAME}: ${addedTestFiles.length} CLI test file(s) judged from ${preCommit ? 'index' : 'HEAD'}; ${missing.length} missing from a shard\n`
   )
 
   const shardPaths = shardRelPaths.map((rel) => `${CLI_PREFIX}${rel}`)
@@ -91,9 +91,9 @@ function main(): void {
       schema: CHECK_SCHEMA_VERSION,
       check: CHECK_NAME,
       severity: 'error',
-      message: `${CLI_PREFIX}${file} is a new CLI test file not listed in any CI shard (${shardPaths.join(', ')}).`,
+      message: `${CLI_PREFIX}${file} is a CLI test file not listed in any CI shard (${shardPaths.join(', ')}).`,
       file: `${CLI_PREFIX}${file}`,
-      agent_recovery_prompt: `Add "${file}" as its own line to one of ${shardPaths.join(', ')}, stage that shard file, and commit again.`
+      agent_recovery_prompt: `Add "${file}" as its own line to one of ${shardPaths.join(', ')}, stage that shard file, and commit the update.`
     })
   }
 

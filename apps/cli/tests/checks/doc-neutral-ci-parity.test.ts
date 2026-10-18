@@ -57,7 +57,7 @@ function repoWithFiredBinding(codeEdit: string): { dir: string; base: string } {
   git(dir, ['checkout', '-qb', 'work'])
   writeFileSync(join(dir, 'src/x.ts'), codeEdit)
   git(dir, ['add', '-A'])
-  git(dir, ['commit', '-qm', 'edit'])
+  git(dir, ['commit', '--allow-empty', '-qm', 'edit'])
   return { dir, base }
 }
 
@@ -203,5 +203,74 @@ describe('C5 commit-time staged documentation coverage', () => {
     const result = await runBlockingCheckThroughRunner(dir, '', gitIndexFile)
     expect(result.code).not.toBe(0)
     expect(result.stderr).toContain('docs/x.md')
+  })
+})
+
+describe('push documentation check — staged paths only at pre-commit', () => {
+  async function runPush(
+    dir: string,
+    base: string,
+    marker: string,
+    index = true
+  ): Promise<{ code: number; stderr: string }> {
+    const proc = Bun.spawn(['bun', BINS.push], {
+      cwd: dir,
+      env: {
+        ...process.env,
+        BASE_SHA: base,
+        PR_BODY: '',
+        PR_LABELS: '',
+        OVERRIDE_DOCS: '',
+        VINAYA_COMMIT_HOOK: marker,
+        GIT_INDEX_FILE: index ? join(dir, '.git', 'index') : ''
+      },
+      stdout: 'pipe',
+      stderr: 'pipe'
+    })
+    const stderr = await new Response(proc.stderr).text()
+    return { code: await proc.exited, stderr }
+  }
+
+  it('counts a staged owning doc only when both hook markers are present', async () => {
+    const { dir, base } = repoWithFiredBinding('export const x = 2\n')
+    const before = await runPush(dir, base, '1')
+    expect(before.code).toBe(0)
+    expect(before.stderr).toContain('C5 doc-coverage')
+    writeFileSync(join(dir, 'docs/x.md'), '# updated\n')
+    git(dir, ['add', 'docs/x.md'])
+    const staged = await runPush(dir, base, '1')
+    expect(staged.code).toBe(0)
+    expect(staged.stderr).not.toContain('C5 doc-coverage')
+    for (const [marker, index] of [
+      ['', true],
+      ['1', false],
+      ['', false]
+    ] as const) {
+      const committedOnly = await runPush(dir, base, marker, index)
+      expect(committedOnly.code).toBe(0)
+      expect(committedOnly.stderr).toContain('C5 doc-coverage')
+    }
+  })
+
+  it('resolves the main fallback before unioning unrelated staged paths', async () => {
+    const { dir } = repoWithFiredBinding('export const x = 2\n')
+    writeFileSync(join(dir, 'staged.md'), 'unrelated\n')
+    git(dir, ['add', 'staged.md'])
+    const result = await runPush(dir, '', '1')
+    expect(result.code).toBe(0)
+    expect(result.stderr).toContain('C5 doc-coverage')
+    expect(result.stderr).toContain('docs/x.md')
+  })
+
+  it('finds a staged-only governed code edit at pre-commit', async () => {
+    const { dir, base } = repoWithFiredBinding('export const x = 1\n')
+    writeFileSync(join(dir, 'src/x.ts'), 'export const x = 3\n')
+    git(dir, ['add', 'src/x.ts'])
+    const staged = await runPush(dir, base, '1')
+    expect(staged.code).toBe(0)
+    expect(staged.stderr).toContain('C5 doc-coverage')
+    const push = await runPush(dir, base, '')
+    expect(push.code).toBe(0)
+    expect(push.stderr).not.toContain('C5 doc-coverage')
   })
 })

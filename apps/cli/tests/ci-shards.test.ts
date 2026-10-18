@@ -93,14 +93,8 @@ describe('the repository CI workflow', () => {
   })
 })
 
-// `check-ci-shard-coverage.ts` enforces the same membership rule
-// as the suite above, but over a commit's STAGED diff, at commit time — so a
-// Developer who forgets a shard line is refused in seconds, not after a
-// whole pre-push affected-suite run. Exercised against a real git index
-// (`git diff --cached` / `git show :<path>`, never a stub) because the
-// staged-but-uncommitted state this check reads has no meaningful fixture
-// other than a real repo.
-describe('ci-shard-coverage — the commit-time check', () => {
+// Real git fixtures exercise staged and committed membership independently.
+describe('ci-shard-coverage — hook-specific membership', () => {
   const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'checks', 'bin', 'check-ci-shard-coverage.ts')
 
   const tempDirs: string[] = []
@@ -123,6 +117,7 @@ describe('ci-shard-coverage — the commit-time check', () => {
     writeFileSync(join(dir, 'README.md'), '# base\n')
     git(dir, ['add', 'README.md'])
     git(dir, ['commit', '-m', 'base'])
+    git(dir, ['checkout', '-b', 'work'])
 
     const abs = join(dir, 'apps', 'cli', relPath)
     mkdirSync(dirname(abs), { recursive: true })
@@ -139,11 +134,22 @@ describe('ci-shard-coverage — the commit-time check', () => {
     git(dir, ['add', join('apps', 'cli', rel)])
   }
 
-  function run(cwd: string): { status: number; stdout: string; stderr: string } {
+  function run(
+    cwd: string,
+    preCommit = true,
+    extraEnv: NodeJS.ProcessEnv = {}
+  ): { status: number; stdout: string; stderr: string } {
     return spawnSyncBudgeted('bun', [BIN], {
       cwd,
       encoding: 'utf8',
-      env: { ...stripVinayaEnv(), PATH: process.env.PATH }
+      env: {
+        ...stripVinayaEnv(),
+        PATH: process.env.PATH,
+        BASE_SHA: '',
+        GIT_INDEX_FILE: preCommit ? join(cwd, '.git', 'index') : '',
+        VINAYA_COMMIT_HOOK: preCommit ? '1' : '',
+        ...extraEnv
+      }
     })
   }
 
@@ -163,5 +169,65 @@ describe('ci-shard-coverage — the commit-time check', () => {
     const result = run(dir)
     expect(result.status).toBe(0)
     expect(result.stdout).toContain('0 missing from a shard')
+  })
+
+  it('does not count an unstaged shard line at pre-commit', () => {
+    const dir = repoStagingCliFile('tests/widget.test.ts', 'test("x", () => {})\n')
+    stageShardLine(dir, 1, 'tests/other.test.ts')
+    writeFileSync(join(dir, 'apps/cli/tests/ci-shards/shard-1.txt'), 'tests/widget.test.ts\n')
+    expect(run(dir).status).toBe(1)
+  })
+
+  for (const withIndex of [false, true]) {
+    it(`refuses committed additions with an empty index (index variable: ${withIndex})`, () => {
+      const dir = repoStagingCliFile('tests/widget.test.ts', 'test("x", () => {})\n')
+      git(dir, ['commit', '-m', 'add unlisted test'])
+      const result = run(dir, false, { GIT_INDEX_FILE: withIndex ? join(dir, '.git', 'index') : '' })
+      expect(result.status).toBe(1)
+      expect(result.stderr).toContain('apps/cli/tests/widget.test.ts')
+    })
+  }
+
+  it('uses HEAD shard lists despite staged and unstaged attempts to list a committed addition', () => {
+    const dir = repoStagingCliFile('tests/widget.test.ts', 'test("x", () => {})\n')
+    git(dir, ['commit', '-m', 'add unlisted test'])
+    stageShardLine(dir, 1, 'tests/widget.test.ts')
+    const extraEnv = { GIT_INDEX_FILE: join(dir, '.git', 'index') }
+    expect(run(dir, false, extraEnv).status).toBe(1)
+    writeFileSync(join(dir, 'apps/cli/tests/ci-shards/shard-1.txt'), 'tests/widget.test.ts\ntests/other.test.ts\n')
+    expect(run(dir, false, extraEnv).status).toBe(1)
+    git(dir, ['add', '.'])
+    git(dir, ['commit', '-m', 'list test'])
+    const result = run(dir, false, extraEnv)
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('1 CLI test file(s) judged from HEAD')
+  })
+
+  it('ignores index-only additions outside pre-commit, including when only the marker is supplied', () => {
+    const dir = repoStagingCliFile('tests/widget.test.ts', 'test("x", () => {})\n')
+    git(dir, ['commit', '--allow-empty', '--only', '-m', 'distinct head'])
+    expect(run(dir, false, { GIT_INDEX_FILE: join(dir, '.git', 'index') }).status).toBe(0)
+    expect(run(dir, false, { VINAYA_COMMIT_HOOK: '1' }).status).toBe(0)
+  })
+
+  it('judges every tracked test when no distinct base resolves, using HEAD shard content', () => {
+    const dir = repoStagingCliFile('tests/widget.test.ts', 'test("x", () => {})\n')
+    git(dir, ['commit', '-m', 'add unlisted test'])
+    git(dir, ['branch', '-f', 'main', 'HEAD'])
+    stageShardLine(dir, 2, 'tests/widget.test.ts')
+    expect(run(dir, false, { BASE_SHA: 'missing-ref' }).status).toBe(1)
+    git(dir, ['commit', '-m', 'list test'])
+    git(dir, ['branch', '-f', 'main', 'HEAD'])
+    expect(run(dir, false, { BASE_SHA: 'missing-ref' }).status).toBe(0)
+  })
+
+  it('judges tracked tests when candidate history has no merge base', () => {
+    const dir = repoStagingCliFile('tests/widget.test.ts', 'test("x", () => {})\n')
+    git(dir, ['commit', '-m', 'test'])
+    git(dir, ['checkout', '--orphan', 'unrelated'])
+    git(dir, ['commit', '-m', 'unrelated test tree'])
+    const result = run(dir, false)
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('apps/cli/tests/widget.test.ts')
   })
 })
