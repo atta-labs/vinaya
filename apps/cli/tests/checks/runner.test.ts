@@ -17,6 +17,7 @@ const SPAWNS_GRANDCHILD = join(FIXTURES, 'spawns-grandchild.ts')
 const SPAWNS_STUBBORN_GRANDCHILD = join(FIXTURES, 'spawns-stubborn-grandchild.ts')
 const RUN_AND_HANG = join(FIXTURES, 'run-and-hang.ts')
 const ENV_PROBE = join(FIXTURES, 'env-probe.ts')
+const LOADS_CONFIG = join(FIXTURES, 'loads-config.ts')
 
 function fullScope(overrides: Partial<CheckSpec> & Pick<CheckSpec, 'name' | 'run'>): CheckSpec {
   return { scope: 'full', ...overrides }
@@ -287,6 +288,33 @@ describe('runChecks — env allowlist flip (task 3, #776)', () => {
     })
     expect(outcome?.status).toBe('pass')
     expect(outcome?.errors[0]?.message).toBe('MY_VAR=forwarded')
+  })
+
+  it('a spawned check sees VINAYA_CHECK_NAME equal to its own name, even with no env declared', async () => {
+    const spec = fullScope({ name: 'named-probe', run: ENV_PROBE, args: ['VINAYA_CHECK_NAME'] })
+    const [outcome] = await runChecks([spec], {
+      ...BASE_OPTS,
+      callerEnv: { ...REAL_PATH, VINAYA_CHECK_NAME: 'a-parent-value' }
+    })
+    expect(outcome?.status).toBe('pass')
+    expect(outcome?.errors[0]?.message).toBe('VINAYA_CHECK_NAME=named-probe')
+  })
+
+  it('an invalid vinaya.config.json under a passing check arrives as one warning check-error line, never malformed output', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-runner-invalid-config-'))
+    writeFileSync(join(dir, 'vinaya.config.json'), JSON.stringify({ rings: { ring2_asyncAudits: 'no' } }))
+    const spec = fullScope({ name: 'loads-config', run: LOADS_CONFIG, args: [dir] })
+    const [outcome] = await runChecks([spec], {
+      ...BASE_OPTS,
+      defaultTimeoutMs: 20000,
+      callerEnv: { ...REAL_PATH, HOME: dir }
+    })
+    expect(outcome?.status).toBe('pass')
+    expect(outcome?.errors).toHaveLength(1)
+    expect(outcome?.errors[0]?.check).toBe('loads-config')
+    expect(outcome?.errors[0]?.severity).toBe('warning')
+    expect(outcome?.errors[0]?.message).toContain('vinaya.config.json')
+    expect(outcome?.errors[0]?.message).toContain('rings.ring2_asyncAudits:')
   })
 
   it('a missing `true` env var synthesizes a CheckError and the check never spawns', async () => {
