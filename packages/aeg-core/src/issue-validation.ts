@@ -1306,13 +1306,13 @@ const OBJECTIVES_HEADING_RE = /^##[ \t]*Objectives[ \t]*$/im
 
 /**
  * **O1 — is this body task-Issue-shaped at all?** The
- * forge-write label gate (`forge-write.ts`'s `refuseUnlabeledTaskShapedBody`,
- * and `bin/open-issue.ts`'s mirrored inline check) uses this to catch a
- * Planner's mistake `isTaskIssueLabelSet`-gated validation cannot see: a body
- * that carries the Planner's judgment sections but no `vinaya/tranche:*`
- * label reads, to every check gated behind `isTaskIssueLabelSet`, as "not a
- * task Issue" and sails through unvalidated — the exact hole a task Issue
- * never reaching the forge unlabeled falls through.
+ * Issue create and edit gates (`forge-write.ts`'s `writeValidatedIssueEdit`
+ * and the `issue create`/`issue edit` commands) widen brief-schema
+ * validation with this beyond `isTaskIssueLabelSet`: a body that carries the
+ * Planner's judgment sections but no `vinaya/tranche:*` label — a backlog
+ * Issue — would otherwise read, to every check gated behind
+ * `isTaskIssueLabelSet` alone, as "not a task Issue" and sail through
+ * unvalidated.
  *
  * Two signals, either sufficient: a real `## Objectives` heading, or any ONE
  * of the eight Planner's-rationale fields (`hasRationaleField` — the same
@@ -1330,30 +1330,6 @@ export function isTaskIssueBodyShaped(body: string): boolean {
   const text = stripCode(body)
   if (OBJECTIVES_HEADING_RE.test(text)) return true
   return RATIONALE_FIELDS.some((f) => hasRationaleField(text, f.pattern))
-}
-
-/**
- * task 17, O2 — one of the six write-only rules given a name apart: a task-
- * shaped Issue body reaching the forge with no `vinaya/tranche:*` label. Pure
- * over `isTaskIssueBodyShaped`/`isTaskIssueLabelSet` — the exact predicate
- * `forge-write.ts`'s `refuseUnlabeledTaskShapedBody` and `bin/open-issue.ts`'s
- * mirrored inline check already enforce; this names it once so a registered
- * `issue`-scope check and the coherence sweep can both call the SAME
- * function instead of re-deriving the same two-line condition.
- *
- * **Retired to an always-pass check.** A task-
- * shaped body reaching the forge with no `vinaya/tranche:*` label is no
- * longer, by itself, evidence of a mistake — it is the exact shape of a
- * legitimate backlog Issue (`task run --issue <n>`'s own dispatch target),
- * which carries the same body grammar as a tranche task with the label
- * simply omitted. The invariant this rule enforced ("a task Issue never
- * reaches the forge unlabeled") no longer holds; kept as a function (never
- * deleted) so every caller above stays wired to one place rather than three
- * independently-updated copies, and so a future rule needing this exact
- * shape has somewhere to register itself apart from a fresh predicate.
- */
-export function checkTrancheLabelPresence(_body: string, _labels: string[]): IssueSectionResult {
-  return { status: 'pass', errors: [] }
 }
 
 /**

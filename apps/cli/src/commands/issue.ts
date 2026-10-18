@@ -12,7 +12,6 @@ import {
   parseIssueNumberFromRef,
   refuse,
   refuseFrozenSectionChange,
-  refuseUnlabeledTaskShapedBody,
   resolveMilestoneAttachArgs,
   runGhWrite,
   runIssueSurface,
@@ -74,8 +73,6 @@ export async function issueCreateCommand(args: string[]): Promise<void> {
   const title = extractTitle(ghArgs)
   const labels = extractLabels(ghArgs)
 
-  refuseUnlabeledTaskShapedBody(body, labels, RETRY_CREATE)
-
   // O3: a backlog Issue (task-shaped body, no
   // `vinaya/tranche:*` label) gets the same brief-schema validation as a
   // tranche task — everything except the tranche-specific label/Milestone
@@ -127,7 +124,6 @@ export async function issueEditCommand(args: string[]): Promise<void> {
     // normally silent on edit, so the forge is what decides task-Issue
     // applicability.
     const labels = [...new Set([...fetchForgeLabels(issueRef, RETRY_EDIT), ...extractLabels(ghArgs)])]
-    refuseUnlabeledTaskShapedBody(body, labels, RETRY_EDIT)
     let renderSkipped: string | null = null
     if (isTaskIssueLabelSet(labels) || (body !== null && isTaskIssueBodyShaped(body))) {
       refuseFrozenSectionChange(issueRef, body, RETRY_EDIT)
@@ -164,6 +160,6 @@ export function issueSurfaceCommand(args: string[]): void {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'issue create': { date: '2026-09-11', callsToday: 11, retiresVia: 'forgeWrite' },
-  'issue edit': { date: '2026-09-11', callsToday: 12, retiresVia: 'forgeWrite' }
+  'issue create': { date: '2026-09-11', callsToday: 10, retiresVia: 'forgeWrite' },
+  'issue edit': { date: '2026-09-11', callsToday: 11, retiresVia: 'forgeWrite' }
 }

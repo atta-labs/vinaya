@@ -89,7 +89,6 @@ import {
   checkTestPlanDeveloperRunnable,
   checkTestPlanExclusivity,
   checkTierField,
-  checkTrancheLabelPresence,
   checkWorktreeStep0,
   DEFERRAL_REASON_TEXT,
   type DeferralReason,
@@ -354,33 +353,6 @@ export function resolveMilestoneAttachArgs(ghArgs: string[], labels: string[]): 
     return ghArgs
   }
   return target ? [...ghArgs, '--milestone', target.title] : ghArgs
-}
-
-const CHECK_ISSUE_LABEL = 'issue-label'
-
-/**
- * **Retired.** Used to refuse a task-shaped body
- * with no `vinaya/tranche:*` label — that invariant no longer holds: a task-
- * shaped, unlabeled body is now the exact shape of a legitimate backlog
- * Issue (see `checkTrancheLabelPresence`'s own doc comment, `@attalabs/aeg-core`,
- * for the full rationale). Delegates to that now-always-pass rule rather
- * than being deleted outright, so every call site stays wired to the one
- * shared predicate instead of independently re-deriving "never refuses"
- * three times over. `validateTaskIssue`'s own gate (below) is what changed
- * to actually run validation for an unlabeled-but-task-shaped body, closing
- * the hole this function used to guard from the other side.
- */
-export function refuseUnlabeledTaskShapedBody(body: string | null, labels: string[], retryCommand: string): void {
-  if (body === null) return
-  const result = checkTrancheLabelPresence(body, labels)
-  if (result.status === 'pass') return
-  refuse([
-    makeCheckError(
-      CHECK_ISSUE_LABEL,
-      result.errors.join(' '),
-      `Add a \`vinaya/tranche:<slug>\` label (e.g. \`--label vinaya/tranche:<slug>\`), then re-run \`${retryCommand}\`.`
-    )
-  ])
 }
 
 /**
@@ -839,13 +811,14 @@ export function isPendingOnlyFailure(errors: CheckError[]): boolean {
 /**
  * Runs every registered check whose `validates` is `'issue'` over a task
  * Issue's own content — title grammar, Objectives numbering, Parts coverage,
- * Surface glob resolution, tranche-label presence, Milestone attach.
+ * Surface glob resolution, Milestone attach — the five write-only rules.
  * These never apply to a pull request (a PR body has no Milestone, no
- * `## Objectives` numbering of its own to grade), so they run ONLY from an
- * Issue write path and from the coherence sweep over open Issues
- * (`packages/aeg-core/bin/verify-coherence.ts`) — never selected into a
- * pull-request workflow, matching every `validates: 'issue'` entry's
- * `ownWorkflow: true` declaration.
+ * `## Objectives` numbering of its own to grade), so their executables run
+ * by name ONLY from an Issue write path, through this runner — never
+ * selected into a pull-request workflow, matching every `validates: 'issue'`
+ * entry's `ownWorkflow: true` declaration. The coherence sweep never spawns
+ * one; its R1 rule calls two of the same rule functions directly
+ * (`checkIssueObjectives`, `checkPartsCiteDefinedObjectives`).
  *
  * Every fact these checks need is precomputed and injected by the caller as
  * an env var (`ISSUE_*`) — mirroring `brief-shape`'s own PR_BODY/BRANCH/
@@ -2893,7 +2866,7 @@ export async function collectTaskIssueErrors(
   })
   errors.push(...rendered.errors)
 
-  // O2 (task 17) — the six write-only rules, through the SAME registry
+  // The five write-only rules, through the SAME registry
   // runner `runBodyChecks` uses. `checkMilestoneAttach` stays dormant on
   // EVERY write-path call (both `currentMilestoneTitle`/`resolvedMilestoneTitle`
   // null): `create`'s auto-attach action happens as part of THIS SAME write,
@@ -2994,8 +2967,6 @@ export async function writeValidatedIssueEdit(input: {
   // Union the forge's real labels with any passed on argv — argv is normally
   // silent on edit, so the forge is what decides task-Issue applicability.
   const labels = [...new Set([...fetchForgeLabels(issueRef, retryCommand), ...extractLabels(ghArgs)])]
-
-  refuseUnlabeledTaskShapedBody(body, labels, retryCommand)
 
   // O3: same widened gate as `issueCreateCommand`'s —
   // a backlog Issue's edit is validated too, minus the tranche-specific

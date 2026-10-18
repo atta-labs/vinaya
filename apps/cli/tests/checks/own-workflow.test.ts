@@ -16,12 +16,13 @@ import { coreCheckRegistry, runsUnderAll } from '../../src/checks/registry'
  * PR's own workflow YAML controls `PR_NUMBER` there. It only runs from
  * `vinaya-body-checks.yml`, a `pull_request_target` job the PR cannot edit.
  *
- * The six `issue-*` checks (task 17, O2) joined for a third reason: they
+ * The five write-only `issue-*` checks joined for a third reason: they
  * validate `'issue'`-scope content, which no pull-request workflow ever has
- * — nothing in `.github/workflows` invokes them at all. They run by name
- * only, from `apps/cli/src/lib/forge-write.ts`'s `runIssueChecks` at
- * Issue-write time and from `packages/aeg-core/bin/verify-coherence.ts`'s
- * open-Issue sweep.
+ * — nothing in `.github/workflows` invokes them at all. Their executables run
+ * by name only from the Issue write gate's runner,
+ * `apps/cli/src/lib/forge-write.ts`'s `runIssueChecks`. The coherence sweep
+ * never spawns one, though its R1 rule calls two of their rule functions
+ * (`checkIssueObjectives`, `checkPartsCiteDefinedObjectives`) directly.
  */
 describe('ownWorkflow — checks reported by their own workflow', () => {
   it('review-gate is marked, because its verdicts arrive after a push', () => {
@@ -39,7 +40,7 @@ describe('ownWorkflow — checks reported by their own workflow', () => {
     expect(spec?.ownWorkflow).toBe(true)
   })
 
-  it('exactly these nine core checks are so marked — this narrows --all and must stay narrow', () => {
+  it('exactly these eight core checks are so marked — this narrows --all and must stay narrow', () => {
     const marked = coreCheckRegistry()
       .filter((s) => s.ownWorkflow)
       .map((s) => s.name)
@@ -51,7 +52,6 @@ describe('ownWorkflow — checks reported by their own workflow', () => {
       'issue-parts-coverage',
       'issue-surface-globs',
       'issue-title-grammar',
-      'issue-tranche-label',
       'principal-test-plan-wait',
       'review-gate'
     ])
@@ -64,8 +64,8 @@ describe('ownWorkflow — checks reported by their own workflow', () => {
     const runnable = coreCheckRegistry().filter(runsUnderAll)
     // Relative to the live registry's own size, not a hardcoded count — this
     // cannot go stale as the registry grows, unlike an absolute number would.
-    // Exactly nine checks (pinned above) are ever withheld.
-    expect(runnable.length).toBe(coreCheckRegistry().length - 9)
+    // Exactly eight checks (pinned above) are ever withheld.
+    expect(runnable.length).toBe(coreCheckRegistry().length - 8)
     expect(runnable.some((s) => s.name === 'review-gate')).toBe(false)
     expect(runnable.some((s) => s.name === 'body-bare-digits')).toBe(false)
     expect(runnable.some((s) => s.name === 'principal-test-plan-wait')).toBe(false)
@@ -74,13 +74,12 @@ describe('ownWorkflow — checks reported by their own workflow', () => {
       'issue-objectives-numbering',
       'issue-parts-coverage',
       'issue-surface-globs',
-      'issue-tranche-label',
       'issue-milestone-attach'
     ]) {
       expect(runnable.some((s) => s.name === name)).toBe(false)
     }
     // issue-assignment is NOT ownWorkflow (pre-existing, visibility-only) —
-    // confirms the withholding above is scoped to the six named checks, not
+    // confirms the withholding above is scoped to the five named checks, not
     // an accidental blanket "issue-" prefix match.
     expect(runnable.some((s) => s.name === 'issue-assignment')).toBe(true)
     // Spot-check that the withholding is not accidentally broad.

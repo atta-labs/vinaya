@@ -2,15 +2,14 @@
 
 /**
  * Core check: issue-title-grammar. Thin adapter over `@attalabs/aeg-core`'s
- * `checkForgeTitle` — one of the six write-only rules named in task 17, O2.
+ * `checkForgeTitle` — one of the five write-only rules named apart.
  * `validates: 'issue'`: title grammar only ever applies to a task Issue's own
  * title, never a pull request's — this check has no pull-request body to
  * grade and is never selected into a pull-request workflow.
  *
- * scope: full, ownWorkflow: true — invoked by name from
- * `apps/cli/src/lib/forge-write.ts`'s `runIssueChecks` (Issue write time) and
- * from `packages/aeg-core/bin/verify-coherence.ts`'s open-Issue sweep, never
- * from `vinaya check --all`.
+ * scope: full, ownWorkflow: true — invoked by name only from
+ * `apps/cli/src/lib/forge-write.ts`'s `runIssueChecks` (the Issue write
+ * gate's runner), never from `vinaya check --all`.
  */
 
 import { checkForgeTitle } from '@attalabs/aeg-core'

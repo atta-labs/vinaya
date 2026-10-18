@@ -2,14 +2,16 @@
 
 /**
  * Core check: issue-parts-coverage. Thin adapter over `@attalabs/aeg-core`'s
- * `checkPartsCiteDefinedObjectives` — one of the six write-only rules named
- * in task 17, O2. `validates: 'issue'`: `## Parts` citing a real Objective id
+ * `checkPartsCiteDefinedObjectives` — one of the five write-only rules named
+ * apart. `validates: 'issue'`: `## Parts` citing a real Objective id
  * is a property of a task Issue's own body, never a pull request's.
  *
- * scope: full, ownWorkflow: true — invoked by name from
- * `apps/cli/src/lib/forge-write.ts`'s `runIssueChecks` (Issue write time) and
- * from `packages/aeg-core/bin/verify-coherence.ts`'s open-Issue sweep, never
- * from `vinaya check --all`.
+ * scope: full, ownWorkflow: true — invoked by name only from
+ * `apps/cli/src/lib/forge-write.ts`'s `runIssueChecks` (the Issue write
+ * gate's runner), never from `vinaya check --all`.
+ * The coherence sweep never spawns this executable, but its R1 rule runs the
+ * same rule function, `checkPartsCiteDefinedObjectives`, directly — both in
+ * `packages/aeg-core/bin/verify-coherence.ts` and in `vinaya check coherence`.
  */
 
 import { checkPartsCiteDefinedObjectives } from '@attalabs/aeg-core'

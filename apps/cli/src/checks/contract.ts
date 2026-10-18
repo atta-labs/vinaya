@@ -148,7 +148,7 @@ export type CheckSpec = {
    * --push`, and the Issue write paths' own body checks); `'issue'` for a
    * rule that only ever applies to a task Issue's own content (title
    * grammar, Objectives numbering, Parts coverage, Surface glob resolution,
-   * tranche-label presence, Milestone attach) — never a pull request. Absent
+   * Milestone attach) — never a pull request. Absent
    * for a check that grades the code diff itself, never forge-write content.
    *
    * This is the ONE taxonomy `apps/cli/src/lib/forge-write.ts`'s pre-write
