@@ -22,7 +22,6 @@ import {
   CHECKS_FOLDER_PLACEHOLDER_PATH,
   CHECKS_WORKFLOW_PATH,
   CLAUDE_POINTER_PATH,
-  CLI_DIST_ARTIFACT_NAME,
   CONFIG_PATH,
   DOCTRINE_POINTER_PATH,
   doctrinePointer,
@@ -1006,13 +1005,10 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // outright (task-files-v1 6, O1/O2).
     expect(occurrences(files, 'npx --yes @attalabs/vinaya')).toBe(0)
     expect(occurrences(files, VENDORED_BIN)).toBe(12)
-    // Every job in `WORKFLOWS` installs (7 — see the setup-bun count above);
-    // only the jobs that actually BUILD their own copy run the build
-    // command — every one except `vinaya-checks.yml`, which downloads the
-    // shared build instead (O2) but still installs for the downloaded
-    // dist's runtime deps.
+    // Every job in `WORKFLOWS` installs and builds its own copy (7 — see
+    // the setup-bun count above).
     expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(7)
-    expect(occurrences(files, 'bun run --cwd apps/cli build')).toBe(6)
+    expect(occurrences(files, 'bun run --cwd apps/cli build')).toBe(7)
 
     // Per-file: the exact subcommands, in the built-binary shape.
     const checks = files.get(CHECKS_WORKFLOW_PATH) ?? ''
@@ -1030,71 +1026,39 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     expect(archivist).toContain(`${VENDORED_BIN} audit --only=direct-push --sha=${SIGIL}{{ github.sha }}`)
     expect(occurrences(new Map([[ARCHIVIST_WORKFLOW_PATH, archivist]]), 'setup-bun')).toBe(4)
 
-    // O2: `vinaya-checks.yml` never builds; it downloads the artifact
-    // `ci.yml` uploads (but still installs, for the downloaded dist's
-    // runtime deps — see above). A `pull_request_target` workflow never
-    // downloads an artifact at all — see the boundary test below.
+    // `vinaya-checks.yml` builds its own copy at pull-request trust, before
+    // it runs any check, and looks up no other run's build.
     expect(checks).toContain('oven-sh/setup-bun')
     expect(checks).toContain('bun install --frozen-lockfile --ignore-scripts')
-    expect(checks).not.toContain('bun run --cwd apps/cli build')
-    expect(checks).toContain('actions/download-artifact@v4')
-    expect(checks).toContain(`name: ${CLI_DIST_ARTIFACT_NAME}`)
-    expect(checks).toContain('actions/workflows/ci.yml/runs')
-    // CI red, found live: download-artifact does not reliably preserve the
-    // executable bit `scripts/build.ts` sets on every emitted entrypoint —
-    // every check, spawned directly from `dist/checks/bin/*.js`, failed
-    // EACCES after download. Restored explicitly, after the download.
-    const downloadIdx = checks.indexOf('actions/download-artifact@v4')
-    const chmodIdx = checks.indexOf('chmod -R +x apps/cli/dist')
-    expect(chmodIdx).toBeGreaterThan(downloadIdx)
+    expect(checks).toContain('- name: Build the vendored Vinaya CLI')
+    expect(checks).toContain('bun run --cwd apps/cli build')
+    expect(checks.indexOf('bun run --cwd apps/cli build')).toBeLessThan(checks.indexOf(`${VENDORED_BIN} check --all`))
+    expect(checks).not.toContain('Find the shared CLI build')
+    expect(checks).not.toContain('download-artifact')
+    expect(checks).not.toContain('actions/workflows/ci.yml/runs')
+    const checksPermissions = checks.slice(checks.indexOf('permissions:'), checks.indexOf('steps:'))
+    expect(checksPermissions).not.toContain('actions: read')
   })
 
-  it('O2 boundary: only the shared pull_request build downloads it — pull_request_target workflows always build their own', async () => {
+  it('no generated workflow downloads an artifact except body-checks, which takes only its own forge snapshot', async () => {
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const files = generated()
-    const checks = files.get(CHECKS_WORKFLOW_PATH) ?? ''
-    const review = files.get(REVIEW_WORKFLOW_PATH) ?? ''
+    for (const name of [
+      CHECKS_WORKFLOW_PATH,
+      REVIEW_WORKFLOW_PATH,
+      ARCHIVIST_WORKFLOW_PATH,
+      REVIEW_VERDICT_WORKFLOW_PATH
+    ]) {
+      const content = files.get(name) ?? ''
+      expect(`${name}: ${content.includes('download-artifact')}`).toBe(`${name}: false`)
+      expect(`${name}: ${content.includes('actions: read')}`).toBe(`${name}: false`)
+    }
     // Not in `generated()`'s WORKFLOWS list — read directly so `?? ''`
     // never silently makes this assertion trivially pass on a missing file.
     const bodyChecks = readFileSync(join(root, BODY_CHECKS_WORKFLOW_PATH), 'utf-8')
-    const archivist = files.get(ARCHIVIST_WORKFLOW_PATH) ?? ''
-    const verdict = files.get(REVIEW_VERDICT_WORKFLOW_PATH) ?? ''
-
-    expect(checks).toContain('actions/download-artifact@v4')
-    for (const [name, content] of [
-      ['review', review],
-      ['archivist', archivist],
-      ['verdict', verdict]
-    ] as const) {
-      expect(`${name}: ${content.includes('download-artifact')}`).toBe(`${name}: false`)
-      expect(`${name}: ${content.includes(CLI_DIST_ARTIFACT_NAME)}`).toBe(`${name}: false`)
-    }
-    // vinaya-body-checks.yml downloads only its own run's forge snapshot —
-    // never the shared CLI build and never another run's artifact.
-    expect(bodyChecks).not.toContain(CLI_DIST_ARTIFACT_NAME)
     expect(bodyChecks).not.toContain('run-id:')
     expect(bodyChecks).toContain(`name: ${FORGE_SNAPSHOT_ARTIFACT_NAME}`)
-  })
-
-  it('O2 security finding: vinaya-checks.yml grants `actions: read` for the shared-build API calls', async () => {
-    // Without it, `gh api .../actions/workflows/ci.yml/runs`, `.../actions/
-    // runs/$RUN_ID/artifacts`, and `actions/download-artifact@v4`'s
-    // cross-run `run-id` all 403 against GITHUB_TOKEN — an explicit
-    // `permissions:` block grants nothing not listed. Scoped to the checks
-    // job specifically: the trusted-build workflows never take the
-    // shared-build branch and must not gain this scope they don't need.
-    vendorVinaya()
-    await captureStdout(() => runInit(['--yes'], makeDeps()))
-    const files = generated()
-    const checks = files.get(CHECKS_WORKFLOW_PATH) ?? ''
-    const review = files.get(REVIEW_WORKFLOW_PATH) ?? ''
-    const archivist = files.get(ARCHIVIST_WORKFLOW_PATH) ?? ''
-
-    const checksPermissions = checks.slice(checks.indexOf('permissions:'), checks.indexOf('steps:'))
-    expect(checksPermissions).toContain('actions: read')
-    expect(review).not.toContain('actions: read')
-    expect(archivist).not.toContain('actions: read')
   })
 
   it('every env: wiring survives in BOTH shapes', async () => {
@@ -1123,8 +1087,7 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       expect(verdict).not.toContain('BRANCH:')
       expect(verdict).not.toContain('headRefName')
       // GH_TOKEN on every step that talks to the forge: checks 3 (read the
-      // pull request over REST, write the forge snapshot, run checks) + 1
-      // more when vendored (find the shared build, O2), review 3 (read the
+      // pull request over REST, write the forge snapshot, run checks), review 3 (read the
       // pull request over REST, write the forge snapshot, review gate),
       // verdict 4 (read the pull request over REST, write the forge
       // snapshot, evaluate, retrigger), archivist 6 (archive, the O4
@@ -1133,7 +1096,7 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       // job's failure-only budget step and its two GraphQL budget steps
       // (start and end): checks 1 + 2, review 1 + 2, verdict 2 + 4,
       // archivist 4 + 8.
-      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(vendored ? 41 : 40)
+      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(40)
     }
   })
 

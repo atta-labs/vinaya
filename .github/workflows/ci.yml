@@ -6,15 +6,6 @@
 # Runs unscoped (no --affected, no --filter): the suite is ~1-2 minutes and
 # scoping has hidden failures here before.
 #
-# The `build` job also builds the CLI once and uploads it as the
-# `vinaya-cli-dist` artifact (O2) — the exact name `CLI_DIST_ARTIFACT_NAME` in
-# `apps/cli/src/lib/artifacts.ts` names — so the sibling `pull_request`
-# workflow `vinaya-checks.yml` downloads it instead of building its own copy.
-# Both run at the same trust level (untrusted PR content), so sharing here
-# crosses no boundary; see `apps/cli/specs/self-hosting.md`. The build and
-# upload always run, even on a docs-only diff, because `vinaya-checks.yml`
-# needs the artifact regardless of whether the test jobs below ran.
-#
 # The apps/cli suite (by far the largest — 123 files, on
 # the order of 2000 tests) is sharded across three jobs (`test-cli`, a
 # `matrix.shard` of 1..3), each running an explicit, pre-measured-balanced
@@ -142,18 +133,8 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # O2: built once here, uploaded below, and downloaded by
-      # `vinaya-checks.yml` instead of that workflow building its own copy.
-      # Always runs, docs-only diff or not — see the header note.
       - name: Build the Vinaya CLI
         run: bun run --cwd apps/cli build
-
-      - name: Upload the shared CLI build
-        uses: actions/upload-artifact@v4
-        with:
-          name: vinaya-cli-dist
-          path: apps/cli/dist
-          retention-days: 1
 
       # `actions/checkout` produces a fresh clone with no local git config,
       # so `core.hooksPath` is never set here the way a real contributor's

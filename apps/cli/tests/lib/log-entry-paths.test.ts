@@ -111,9 +111,7 @@ const workflowWithoutProducers = [
   'workflow:vinaya-archivist.yml:direct-main-push-detection:Build the vendored Vinaya CLI',
   'workflow:vinaya-body-checks.yml:vinaya-body-checks:Build the trusted Vinaya CLI',
   'workflow:vinaya-body-checks.yml:vinaya-principal-test-plan-wait:Build the trusted Vinaya CLI',
-  'workflow:vinaya-checks.yml:vinaya-checks:Install dependencies (dist is downloaded below, never built here)',
-  'workflow:vinaya-checks.yml:vinaya-checks:Find the shared CLI build for this commit',
-  'workflow:vinaya-checks.yml:vinaya-checks:Restore executable bits lost in the artifact round-trip',
+  'workflow:vinaya-checks.yml:vinaya-checks:Build the vendored Vinaya CLI',
   'workflow:vinaya-checks.yml:vinaya-checks:Adopter CI setup',
   'workflow:vinaya-checks.yml:vinaya-checks:Per-check summary',
   'workflow:vinaya-review-verdict.yml:evaluate:Resolve PR head',
@@ -364,7 +362,7 @@ describe('log entry-path producer inventory', () => {
 
   it("keeps today's no-producer list explicit and shrinking", () => {
     const noProducer = inventory.filter((row) => row.noProducer)
-    expect(noProducer).toHaveLength(94)
+    expect(noProducer).toHaveLength(92)
     expect(noProducer.every((row) => row.noProducer!.trim().length > 0)).toBe(true)
   })
 })
