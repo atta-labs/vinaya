@@ -12,6 +12,7 @@ tests/checks/quoted-command-bin.test.ts
 tests/checks/registry-env.test.ts
 tests/checks/repo-root-resolution.test.ts
 tests/checks/shipped-bin-audience.test.ts
+tests/ci-limits-diagnostic.test.ts
 tests/ci-shards.test.ts
 tests/claude-stop-hook-emitter.test.ts
 tests/commands.test.ts
