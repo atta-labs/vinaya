@@ -13,18 +13,24 @@
  * task's boundary re-exports from `@attalabs/aeg-core`: `fetchForgeFacts` and
  * `fetchOpenIssuesByLabel`.
  *
- * Known scope gap (recorded in the PR body): this check runs A1, A3, T1, T2,
- * T3, D1, R1, L1 (and the always-info L3) — the checks whose required facts
- * are obtainable from the two forge primitives above. It does NOT run A2
- * (needs `fetchProvenance`, not re-exported), or L2/L4/L5 (need
- * `listActiveTrancheSlugs`/`listIssueMilestonesForSlug`, not re-exported).
- * A2/L2/L4/L5 are genuinely unavailable to this check's dependency boundary,
- * not re-derived — a narrower but honest scope versus `verify-coherence.ts`.
+ * Runs A1, A3, T1, T2, T3, D1, R1, L1, L3 and the report-only lifecycle
+ * rules L2 and L4. L2 and L4 print as `warning` check-error lines and never
+ * change the exit code. Their facts come from the Milestone index
+ * (`indexTrancheMilestonesAsync`) and, for L4 only, the branch tranche's
+ * labeled Issue list. It does NOT run A2 or L5 — a narrower scope than
+ * `verify-coherence.ts`.
  *
  * scope: full — reads the live forge, not the local diff.
  */
 
 import { isEntryPoint } from '@attalabs/aeg-core'
+import {
+  deriveTrancheFromForge,
+  fetchTrancheIssuesAsync,
+  indexTrancheMilestonesAsync,
+  issueMilestonesFromIssues
+} from '@attalabs/aeg-forge-state'
+import type { GhIssue, TrancheMilestoneIndex } from '@attalabs/aeg-forge-state'
 import { execFile, execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -34,7 +40,9 @@ import {
   checkA3,
   checkD1,
   checkL1,
+  checkL2,
   checkL3,
+  checkL4,
   checkR1,
   checkT1,
   checkT2,
@@ -49,7 +57,6 @@ import {
   type TrancheFile,
   type TaskEntry
 } from '@attalabs/aeg-core'
-import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolvePrincipalAllowlist } from '../../lib/config'
 
@@ -236,6 +243,65 @@ function emitFailure(result: CheckResult): void {
   }
 }
 
+/**
+ * True when L4 applies to the slug: its Milestone is open AND titled exactly
+ * the slug. A label-only tranche shares a Milestone with others, so the
+ * exact-title invariant L4 evaluates is meaningless there.
+ */
+export function l4Applies(slug: string, index: TrancheMilestoneIndex): boolean {
+  return index.active.some((r) => r.slug === slug) && index.legacySlugs.has(slug)
+}
+
+/**
+ * Assembles L2's and L4's facts for the branch tranche from the Milestone
+ * index and the tranche's Issue list, and returns their results. Pure — the
+ * caller does every forge read. `issues` is only consulted when L4 applies.
+ */
+export function evaluateLifecycleAdvisories(
+  slug: string,
+  tranche: TrancheFile['tranche'],
+  entries: TaskEntry[],
+  index: TrancheMilestoneIndex,
+  issues: GhIssue[]
+): CheckResult[] {
+  const archived = index.archived.some((r) => r.slug === slug)
+  const results: CheckResult[] = [checkL2([{ slug, archived, tranche }], new Map([[slug, entries]]))]
+  if (l4Applies(slug, index)) {
+    const issueMilestones = issueMilestonesFromIssues(issues).map((f) => ({ tranche: slug, ...f }))
+    results.push(checkL4([slug], issueMilestones))
+  }
+  return results
+}
+
+function emitAdvisories(results: CheckResult[]): void {
+  for (const result of results) {
+    for (const failure of result.failures) {
+      emitCheckError({
+        schema: CHECK_SCHEMA_VERSION,
+        check: CHECK_NAME,
+        severity: 'warning',
+        message: `${result.check}: ${failure.reason}`,
+        agent_recovery_prompt: recoveryPromptFor(failure.code)
+      })
+    }
+  }
+}
+
+function emitLifecycleUnevaluated(slug: string, detail: string): void {
+  emitCheckError({
+    schema: CHECK_SCHEMA_VERSION,
+    check: CHECK_NAME,
+    severity: 'warning',
+    message: `coherence: L2 and L4 did not evaluate for tranche "${slug}" — a forge read failed while collecting their facts: ${detail}`,
+    agent_recovery_prompt:
+      'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya check coherence` so the lifecycle advisories L2 and L4 evaluate.'
+  })
+}
+
+function errorText(err: unknown): string {
+  return (err instanceof Error ? err.message : String(err)).split('\n')[0] ?? ''
+}
+
 async function main(): Promise<void> {
   const slug = currentTrancheSlug()
   if (!slug) {
@@ -256,8 +322,30 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
-  const source = createForgeSource({ owner: repo.owner, repo: repo.repo })
-  const tranche = await source.getTranche(slug)
+  // The index read comes first: it supplies the branch tranche's own facts, so
+  // the synchronous Milestone reader (whose `gh` child writes raw lines to
+  // this process's stderr) is never reached.
+  let index: TrancheMilestoneIndex
+  try {
+    index = await indexTrancheMilestonesAsync(repo.owner, repo.repo)
+  } catch (err) {
+    emitLifecycleUnevaluated(slug, errorText(err))
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `coherence severity:infra — Milestone index unavailable for ${repo.owner}/${repo.repo}, tranche "${slug}": ${errorText(err)}`,
+      agent_recovery_prompt: recoveryPromptFor('forge-read-unavailable')
+    })
+    process.exit(1)
+  }
+
+  const tranche = await deriveTrancheFromForge(
+    repo.owner,
+    repo.repo,
+    slug,
+    index.facts.get(slug) ?? { goal: '', lifecycle: 'planned' }
+  )
   const file: TrancheFile = { slug, archived: false, tranche }
 
   const baseEntries: TaskEntry[] = tranche.tasks.map((t) => ({
@@ -297,6 +385,19 @@ async function main(): Promise<void> {
   results.push(checkD1(enrichedEntries, issueToEntry(enrichedEntries), taskToEntry(enrichedEntries, slug)))
   results.push(checkT3(baseEntries, slug, enrichedEntries, new Set()))
   results.push(checkL1([file], new Map([[slug, enrichedEntries]])))
+
+  // L2/L4: report-only. A failed Issue-list read is reported, never a pass.
+  let slugIssues: GhIssue[] | null = []
+  if (l4Applies(slug, index)) {
+    try {
+      slugIssues = await fetchTrancheIssuesAsync(repo.owner, repo.repo, slug)
+    } catch (err) {
+      slugIssues = null
+      emitLifecycleUnevaluated(slug, errorText(err))
+    }
+  }
+  if (slugIssues !== null)
+    emitAdvisories(evaluateLifecycleAdvisories(slug, tranche, enrichedEntries, index, slugIssues))
 
   const token = (await resolveToken()) ?? ''
   const openIssuesBySlug = await fetchOpenIssuesByLabel([slug], repo.owner, repo.repo, token)
@@ -343,5 +444,14 @@ async function main(): Promise<void> {
 // Guarded so this module can be imported by unit tests without executing the
 // check. Spawned as a bin (the only way it runs for real) this is still true.
 if (isEntryPoint(import.meta.url, 'check-coherence')) {
-  main()
+  main().catch((err: unknown) => {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `coherence severity:infra — the check failed unexpectedly: ${errorText(err)}`,
+      agent_recovery_prompt: recoveryPromptFor('forge-read-unavailable')
+    })
+    process.exit(1)
+  })
 }
