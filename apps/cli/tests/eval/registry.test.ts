@@ -116,7 +116,7 @@ describe('the module catalog mirrors the evaluation program', () => {
       (entry) => entry.name
     )
     expect(excludedModules).toEqual(['6.14', '6.23'])
-    expect(headings.length).toBe(24)
+    expect(headings.length).toBe(25)
     expect(catalog.modules.map((m) => m.source.section)).toEqual(headings)
     for (const module of catalog.modules) {
       expect(module.source.section).toBe(`${module.id} ${module.title}`)
@@ -468,7 +468,7 @@ describe('the repository registry', () => {
     console.log(
       `registry: modules ${result.value.catalog.modules.length}, shards ${result.value.shards.length}, components ${components.length}`
     )
-    expect(result.value.catalog.modules.length).toBe(24)
+    expect(result.value.catalog.modules.length).toBe(25)
     expect(result.value.shards.length).toBeGreaterThan(0)
   })
 })

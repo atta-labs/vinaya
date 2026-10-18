@@ -6,7 +6,7 @@
       "title": "Run preparation and external reconciliation (`prepare_run`, `reconcile_external_state`)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
+        "revision": 15,
         "section": "6.1 Run preparation and external reconciliation (`prepare_run`, `reconcile_external_state`)"
       },
       "excluded": null,
@@ -62,7 +62,7 @@
       "title": "Source preparation and delivery (`SourceProvider`, `prepare_sources`)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
+        "revision": 15,
         "section": "6.2 Source preparation and delivery (`SourceProvider`, `prepare_sources`)"
       },
       "excluded": null,
@@ -142,7 +142,7 @@
       "title": "Developer invocation (`AgentRuntime` adapter; `dispatch_developer`, `await_developer`)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
+        "revision": 15,
         "section": "6.3 Developer invocation (`AgentRuntime` adapter; `dispatch_developer`, `await_developer`)"
       },
       "excluded": null,
@@ -193,7 +193,7 @@
       "title": "Developer result acceptance (`validate_developer_output`; contracts §6.0–6.1)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
+        "revision": 15,
         "section": "6.4 Developer result acceptance (`validate_developer_output`; contracts §6.0–6.1)"
       },
       "excluded": null,
@@ -251,11 +251,11 @@
     },
     {
       "id": "6.5",
-      "title": "Developer capability (role eval)",
+      "title": "Developer capability (role eval, layers G and P)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
-        "section": "6.5 Developer capability (role eval)"
+        "revision": 15,
+        "section": "6.5 Developer capability (role eval, layers G and P)"
       },
       "excluded": null,
       "suites": [
@@ -307,7 +307,7 @@
       "title": "Tool catalog and selection (contracts §4; Engine gate 6)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
+        "revision": 15,
         "section": "6.6 Tool catalog and selection (contracts §4; Engine gate 6)"
       },
       "excluded": null,
@@ -359,7 +359,7 @@
       "title": "Mechanical gates and gate-failure classification (`run_mechanical_gates`, `classify_gate_failure`)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
+        "revision": 15,
         "section": "6.7 Mechanical gates and gate-failure classification (`run_mechanical_gates`, `classify_gate_failure`)"
       },
       "excluded": null,
@@ -415,7 +415,7 @@
       "title": "Reviewer invocation, isolation and validity (`dispatch_reviewers`, `validate_reviewer_outputs`; contracts §6.2)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
+        "revision": 15,
         "section": "6.8 Reviewer invocation, isolation and validity (`dispatch_reviewers`, `validate_reviewer_outputs`; contracts §6.2)"
       },
       "excluded": null,
@@ -484,11 +484,11 @@
     },
     {
       "id": "6.9",
-      "title": "Code reviewer quality (role eval)",
+      "title": "Code reviewer quality (role eval, layers G and P)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
-        "section": "6.9 Code reviewer quality (role eval)"
+        "revision": 15,
+        "section": "6.9 Code reviewer quality (role eval, layers G and P)"
       },
       "excluded": null,
       "suites": [
@@ -537,11 +537,11 @@
     },
     {
       "id": "6.10",
-      "title": "Security reviewer quality (role eval)",
+      "title": "Security reviewer quality (role eval, layers G and P)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
-        "section": "6.10 Security reviewer quality (role eval)"
+        "revision": 15,
+        "section": "6.10 Security reviewer quality (role eval, layers G and P)"
       },
       "excluded": null,
       "suites": [
@@ -602,7 +602,7 @@
       "title": "Assessment, convergence and handoff (`assess_round`, `build_revision_handoff`)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
+        "revision": 15,
         "section": "6.11 Assessment, convergence and handoff (`assess_round`, `build_revision_handoff`)"
       },
       "excluded": null,
@@ -658,7 +658,7 @@
       "title": "Ready-for-merge publication (`publish_ready_for_merge`)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
+        "revision": 15,
         "section": "6.12 Ready-for-merge publication (`publish_ready_for_merge`)"
       },
       "excluded": null,
@@ -719,7 +719,7 @@
       "title": "Governed effects (`EffectExecutor`)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
+        "revision": 15,
         "section": "6.13 Governed effects (`EffectExecutor`)"
       },
       "excluded": null,
@@ -852,7 +852,7 @@
       "title": "Isolation and confinement (Agent sandbox; Engine §16.15)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
+        "revision": 15,
         "section": "6.15 Isolation and confinement (Agent sandbox; Engine §16.15)"
       },
       "excluded": null,
@@ -903,7 +903,7 @@
       "title": "Observability (Log producers and correlation)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
+        "revision": 15,
         "section": "6.16 Observability (Log producers and correlation)"
       },
       "excluded": null,
@@ -959,7 +959,7 @@
       "title": "Engine run-control boundary (Engine gates 1 and 16)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
+        "revision": 15,
         "section": "6.17 Engine run-control boundary (Engine gates 1 and 16)"
       },
       "excluded": null,
@@ -1002,11 +1002,11 @@
     },
     {
       "id": "6.18",
-      "title": "The whole loop (orchestration eval)",
+      "title": "The whole loop (orchestration eval, layer G)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
-        "section": "6.18 The whole loop (orchestration eval)"
+        "revision": 15,
+        "section": "6.18 The whole loop (orchestration eval, layer G)"
       },
       "excluded": null,
       "scope": "system",
@@ -1058,7 +1058,7 @@
       "title": "The Planner",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
+        "revision": 15,
         "section": "6.19 The Planner"
       },
       "excluded": "Planner evaluation is excluded from developer-review (Engine spec §16.19); it belongs to the evaluation program of Any Process, One Harness (§6.19).",
@@ -1093,7 +1093,7 @@
       "title": "Backend selection and rollback (Engine gate 13)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
+        "revision": 15,
         "section": "6.20 Backend selection and rollback (Engine gate 13)"
       },
       "excluded": null,
@@ -1150,7 +1150,7 @@
       "title": "Role context delivery (adapter)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
+        "revision": 15,
         "section": "6.21 Role context delivery (adapter)"
       },
       "excluded": null,
@@ -1201,7 +1201,7 @@
       "title": "Host dispatch readiness (sandbox)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
+        "revision": 15,
         "section": "6.22 Host dispatch readiness (sandbox)"
       },
       "excluded": null,
@@ -1314,7 +1314,7 @@
       "title": "Cutover authorization evidence (Engine gate 17)",
       "source": {
         "document": "apps/cli/specs/dev-review-evaluation-program.md",
-        "revision": 14,
+        "revision": 15,
         "section": "6.24 Cutover authorization evidence (Engine gate 17)"
       },
       "excluded": null,
@@ -1359,6 +1359,52 @@
       "decisionRule": "Deterministic: the Engine backend passes 100% of every mandatory case; a standalone failure needs a registered expected defect, recorded as comparison evidence only (§10).",
       "cadence": ["every-affected-change"],
       "migrationGate": "§14: both backends execute its suites (cutover-authorization.l1@1, cutover-authorization.l2@1); on its deterministic suites the Engine backend passes every mandatory case and every standalone failure is named by a registered expected defect, comparison evidence only; its suites run in the regression floor or the live schedule on both backends until cutover and on the Engine backend afterwards; each of its §13 rows satisfies its declared cutover outcome. Recommended order: step 7, whole loop, rollback and cutover authorization."
+    },
+    {
+      "id": "6.25",
+      "title": "Process renderer (neutral case to process input and back)",
+      "source": {
+        "document": "apps/cli/specs/dev-review-evaluation-program.md",
+        "revision": 15,
+        "section": "6.25 Process renderer (neutral case to process input and back)"
+      },
+      "excluded": null,
+      "suites": [
+        {
+          "name": "renderer-round-trip.l1",
+          "version": 1,
+          "layer": "L1"
+        }
+      ],
+      "contract": "A process renderer maps every supported neutral case to process input and extracts all nine neutral outcomes from its trial record without loss, while refusing cases it cannot express.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision.",
+      "suite": ["renderer-round-trip.l1@1"],
+      "tasks": {
+        "positive": {
+          "present": "Every reference solution renders and extracts to outcomes that pass every applicable layer-G grader."
+        },
+        "negative": {
+          "present": "Each known-bad variant fails exactly the generic grader it targets."
+        },
+        "refusal": {
+          "present": "An inexpressible case or a task statement containing a banned process term is refused with the field named."
+        },
+        "recovery": {
+          "notApplicable": "The renderer is a pure function, so a refused input is replaced rather than recovered in place."
+        },
+        "adversarial": {
+          "present": "A renderer change that would alter a layer-G grader logic digest is detected by the round trip."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: neutral-case validation, render and extract assertions, known-bad-variant grading, and renderer logic-digest isolation."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic: 100% of reference and known-bad round-trip cases pass their declared expectations.",
+      "cadence": ["every-affected-change"],
+      "migrationGate": "§14: both backends use the versioned renderer for every layer-G suite; the round trip passes at 100%, renderer changes re-run it, and extraction changes re-grade every stored trial with the result difference published."
     }
   ]
 }

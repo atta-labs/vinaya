@@ -1,22 +1,22 @@
 {
   "sourceUrl": "https://linear.app/attalabs/document/tech-spec-developer-review-evaluation-program-768283062392",
   "sourceDocumentId": "535a4392-b658-4c92-835a-4b8f2d2830d4",
-  "revision": 14,
-  "retrieved": "2026-10-12",
+  "revision": 15,
+  "retrieved": "2026-10-18",
   "chunks": [
     {
-      "commentId": 6128511645,
-      "bytes": 59917,
-      "sha256": "332a528a0ca54b3bbc0f4e9445eb61937422f09d5c2dfc284e12153ec3a11108"
+      "commentId": 6245834952,
+      "bytes": 59808,
+      "sha256": "bef78a72eeb8d717e6bab73c75580370a3d00c89b9c267e724a116b6ca413fe0"
     },
     {
-      "commentId": 6128511984,
-      "bytes": 24967,
-      "sha256": "7dee17700ce7c3c1802f3615dc6978b1823d4f106484cf5c21e2c4442fdd4581"
+      "commentId": 6245835283,
+      "bytes": 41198,
+      "sha256": "4c9d661bffcc47f5121b1f6e6d967663551529a99d4f95abb0073ea98337a5a2"
     }
   ],
-  "totalBytes": 84884,
-  "sha256": "52fc271ad95e0c6b98fa5d4524abfe0b26da927b8f23862dd0775c04e4423700",
+  "totalBytes": 101006,
+  "sha256": "db3876c8ecb20446e5f93c8751b22f83df703570554d29511354a49d3ff1ad71",
   "documents": {
     "Tech spec — Developer-review on Atta Engine": {
       "path": "apps/cli/specs/dev-review-engine-state-machine.md",
