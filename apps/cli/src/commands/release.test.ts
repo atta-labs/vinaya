@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'bun:test'
-import { RELEASE_PLAN, type ReleaseDeps, runRelease } from './release'
+import { describe, expect, it, spyOn } from 'bun:test'
+import * as childProcess from 'node:child_process'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { RELEASE_PLAN, type ReleaseDeps, realDeps, runRelease } from './release'
 
 /** A fully-passing baseline — each test overrides exactly the one seam it wants to fail. */
 function makeDeps(overrides: Partial<ReleaseDeps> = {}): ReleaseDeps {
@@ -13,6 +17,8 @@ function makeDeps(overrides: Partial<ReleaseDeps> = {}): ReleaseDeps {
     defaultBranchSha: () => 'abc123',
     headSubject: () => 'Chore(release): Version packages',
     npmWhoami: () => true,
+    fixedReleasePackages: () => ({ ok: true, packages: [{ name: '@example/new-member', version: '1.2.3' }] }),
+    npmViewExactVersion: () => ({ status: 'not-found' }),
     runStreamed: (cmd, args) => {
       calls.push([cmd, ...args])
     },
@@ -193,5 +199,149 @@ describe('vinaya release — partial failure after publish', () => {
     expect(result.recoveryCommand).toBeUndefined()
     expect(result.message).toContain('stubbed bun: build failed')
     expect(result.message).not.toContain('registry')
+  })
+})
+
+describe('release registry precondition', () => {
+  for (const dryRun of [false, true]) {
+    it(`names every published version before any plan step (dryRun=${dryRun})`, () => {
+      const ran: string[] = []
+      const queried: string[] = []
+      const result = runRelease(
+        { dryRun, allowAnyCommit: true },
+        makeDeps({
+          fixedReleasePackages: () => ({
+            ok: true,
+            packages: [
+              { name: '@example/first', version: '1.2.3' },
+              { name: '@example/second', version: '4.5.6' }
+            ]
+          }),
+          npmViewExactVersion: (name, version) => {
+            queried.push(`${name}@${version}`)
+            return { status: 'published' }
+          },
+          runStreamed: (cmd) => {
+            ran.push(cmd)
+          }
+        })
+      )
+      expect(result.ok).toBe(false)
+      if (result.ok) throw new Error('expected refusal')
+      for (const name of queried) expect(result.message).toContain(name)
+      expect(queried).toEqual(['@example/first@1.2.3', '@example/second@4.5.6'])
+      expect(ran).toEqual([])
+    })
+    it(`refuses registry failures with the package and reason (dryRun=${dryRun})`, () => {
+      const ran: string[] = []
+      const result = runRelease(
+        { dryRun, allowAnyCommit: false },
+        makeDeps({
+          npmViewExactVersion: () => ({ status: 'failure', reason: 'E401 authentication failed' }),
+          runStreamed: (cmd) => {
+            ran.push(cmd)
+          }
+        })
+      )
+      expect(result).toMatchObject({ ok: false })
+      if (result.ok) throw new Error('expected refusal')
+      expect(result.message).toContain('@example/new-member@1.2.3')
+      expect(result.message).toContain('E401 authentication failed')
+      expect(ran).toEqual([])
+    })
+  }
+  it('refuses named manifest failures without querying the registry', () => {
+    const result = runRelease(
+      { dryRun: true, allowAnyCommit: false },
+      makeDeps({
+        fixedReleasePackages: () => ({ ok: false, reason: '@example/missing: missing package version' }),
+        npmViewExactVersion: () => {
+          throw new Error('must not query')
+        }
+      })
+    )
+    expect(result).toMatchObject({ ok: false, message: expect.stringContaining('@example/missing') })
+  })
+  it('checks authentication before reading fixed packages', () => {
+    const result = runRelease(
+      { dryRun: true, allowAnyCommit: false },
+      makeDeps({
+        npmWhoami: () => false,
+        fixedReleasePackages: () => {
+          throw new Error('must not read')
+        }
+      })
+    )
+    expect(result.ok).toBe(false)
+  })
+})
+
+describe('release real I/O seams', () => {
+  it('reads all fixed groups by manifest name and reports missing members and versions', () => {
+    const root = mkdtempSync(join(tmpdir(), 'release-packages-'))
+    const previous = process.cwd()
+    try {
+      mkdirSync(join(root, '.changeset'))
+      mkdirSync(join(root, 'apps', 'different-directory'), { recursive: true })
+      mkdirSync(join(root, 'packages', 'other'), { recursive: true })
+      const config = join(root, '.changeset/config.json')
+      const manifest = join(root, 'apps/different-directory/package.json')
+      writeFileSync(config, JSON.stringify({ fixed: [['@example/new'], ['@example/other', '@example/new']] }))
+      writeFileSync(manifest, JSON.stringify({ name: '@example/new', version: '1.2.3' }))
+      writeFileSync(
+        join(root, 'packages/other/package.json'),
+        JSON.stringify({ name: '@example/other', version: '2.0.0' })
+      )
+      process.chdir(root)
+      expect(realDeps().fixedReleasePackages()).toEqual({
+        ok: true,
+        packages: [
+          { name: '@example/new', version: '1.2.3' },
+          { name: '@example/other', version: '2.0.0' }
+        ]
+      })
+      writeFileSync(manifest, JSON.stringify({ name: '@example/new' }))
+      expect(realDeps().fixedReleasePackages()).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('@example/new')
+      })
+      writeFileSync(config, JSON.stringify({ fixed: [['@example/missing']] }))
+      expect(realDeps().fixedReleasePackages()).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('@example/missing')
+      })
+      writeFileSync(config, '{')
+      expect(realDeps().fixedReleasePackages()).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('.changeset/config.json')
+      })
+    } finally {
+      process.chdir(previous)
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+  it('queries an exact version and distinguishes E404 from other failures and empty output', () => {
+    const exec = spyOn(childProcess, 'execFileSync')
+    try {
+      exec.mockReturnValue('1.2.3\n')
+      expect(realDeps().npmViewExactVersion('@example/pkg', '1.2.3')).toEqual({ status: 'published' })
+      expect(exec).toHaveBeenLastCalledWith('npm', ['view', '@example/pkg@1.2.3', 'version'], expect.anything())
+      for (const reason of ['npm error code E404 No match found for version', 'npm error code E404 Not Found']) {
+        exec.mockImplementation(() => {
+          throw Object.assign(new Error(reason), { status: 1, stderr: reason })
+        })
+        expect(realDeps().npmViewExactVersion('@example/pkg', '1.2.3')).toEqual({ status: 'not-found' })
+      }
+      for (const reason of ['E401 authentication failed', 'ENETUNREACH network unavailable']) {
+        exec.mockImplementation(() => {
+          throw Object.assign(new Error(reason), { status: 1, stderr: reason })
+        })
+        expect(realDeps().npmViewExactVersion('@example/pkg', '1.2.3')).toEqual({ status: 'failure', reason })
+      }
+      exec.mockReturnValue('')
+      expect(realDeps().npmViewExactVersion('@example/pkg', '1.2.3').status).toBe('failure')
+    } finally {
+      exec.mockRestore()
+    }
   })
 })
