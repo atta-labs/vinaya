@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildHeader, type HeaderInput } from './envelope'
+import { HeaderSchema } from './schema'
 
 const baseInput: HeaderInput = {
   now: new Date('2026-09-05T00:00:00.000Z'),
@@ -218,6 +219,20 @@ describe('buildHeader', () => {
     const a = buildHeader(baseInput).meta.machine
     const b = buildHeader({ ...baseInput, hostname: 'my-laptop.local' }).meta.machine
     expect(a).toBe(b)
+  })
+
+  it('fills work change from the parsed pull request and revision only from the caller', () => {
+    for (const pr of [undefined, '', 'x', '0', '-3', '1.5', '977', '00977']) {
+      const header = buildHeader({ ...baseInput, env: { pr }, revision: 'abc123' })
+      expect(HeaderSchema.safeParse(header).success).toBe(true)
+      if (header.meta.schema !== 3) throw new Error('expected schema 3')
+      expect(header.meta.work.change).toBe(pr === '977' || pr === '00977' ? '977' : null)
+      expect(header.meta.work.revision).toBe('abc123')
+    }
+    const header = buildHeader(baseInput)
+    if (header.meta.schema !== 3) throw new Error('expected schema 3')
+    expect(header.meta.work.change).toBeNull()
+    expect(header.meta.work.revision).toBeNull()
   })
 
   it('parses VINAYA_PR into subject.pr, and leaves it out when absent or not a positive integer', () => {

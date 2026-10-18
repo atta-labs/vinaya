@@ -441,6 +441,13 @@ describe('dispatchRole — a successful dispatch', () => {
     const lines = outboxLines(home, 9001) as Array<Record<string, unknown>>
     const dispatched = lines.find((l) => l.event === 'dispatched')
     const outcome = lines.find((l) => l.event === 'outcome_received')
+    for (const line of lines) {
+      expect(line.meta).toMatchObject({
+        work: { change: null, revision: null },
+        lineage: { attempt: 1, parent: null },
+        provenance: 'parent_attributed'
+      })
+    }
     expect(dispatched).toBeDefined()
     expect((dispatched as { prompt_hash: string }).prompt_hash).toMatch(/^sha256:[0-9a-f]{64}$/)
     expect(outcome).toBeDefined()
@@ -451,6 +458,57 @@ describe('dispatchRole — a successful dispatch', () => {
     // vendor's own default ran" is recorded instead of `'claude'`.
     expect((outcome as { model: string }).model).toBe('default')
   })
+
+  for (const explicitPr of [true, false]) {
+    it(`attributes every launcher family across repeated attempts with ${explicitPr ? 'an explicit' : 'an inherited'} pull request`, () => {
+      const home = tempDir('vinaya-header-home-')
+      const cwd = tempDir('vinaya-header-cwd-')
+      const binDir = tempDir('vinaya-header-bin-')
+      const envOut = join(cwd, 'env.out')
+      writeFakeBinary(
+        binDir,
+        'claude',
+        `#!/bin/sh\nprintf 'VINAYA_PR=%s\\nVINAYA_ATTEMPT=%s\\n' "\${VINAYA_PR-}" "\${VINAYA_ATTEMPT-}" > "${envOut}"\ncat > /dev/null\necho '{"usage":{"input_tokens":11,"output_tokens":22}}'\nexit 0\n`
+      )
+      const promptFile = join(cwd, 'prompt.txt')
+      writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const result = runDispatch(
+          [
+            'developer',
+            '--agent',
+            'claude',
+            '--prompt-file',
+            promptFile,
+            '--task',
+            '9001',
+            ...(explicitPr ? ['--pr', '977'] : [])
+          ],
+          cwd,
+          home,
+          `${binDir}:${pathWithoutRealVendors()}`,
+          { VINAYA_PR: '978' }
+        )
+        expect(result.status).toBe(0)
+        const lines = outboxLines(home, 9001) as Array<{
+          kind: string
+          attempt?: number
+          meta: { work: { change: string }; lineage: { attempt: number }; provenance: string }
+        }>
+        const current = lines.filter((line) => line.meta.lineage.attempt === attempt)
+        expect(new Set(current.map((line) => line.kind))).toEqual(new Set(['dispatch', 'role_attempt', 'usage']))
+        for (const line of current) {
+          expect(line.meta.work.change).toBe(explicitPr ? '977' : '978')
+          expect(line.meta.provenance).toBe('parent_attributed')
+          if (line.kind === 'role_attempt') expect(line.attempt).toBe(attempt)
+        }
+        expect(current.length).toBe(4)
+        expect(lines.length).toBe(attempt * 4)
+        const childEnv = readFileSync(envOut, 'utf8')
+        expect(childEnv).toBe('VINAYA_PR=978\nVINAYA_ATTEMPT=\n')
+      }
+    })
+  }
 
   // O1/O3: the value a dispatched role reads to recognize its OWN driver. The
   // regression it closes: a Developer ran `ps`, found the `vinaya task run`

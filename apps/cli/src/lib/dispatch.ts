@@ -4104,14 +4104,19 @@ export async function dispatchRole(
   // identical synthetic env or they can resolve two different destinations
   // whenever a human runs `vinaya dispatch` by hand with a non-default
   // `logs` setting still only declared locally.
+  // Construction reads the environment before the launch record exists.
+  let sinkAttempt: number | undefined
   const sinkEnv = (): NodeJS.ProcessEnv => ({
     ...process.env,
     VINAYA_ROLE: role,
     VINAYA_TASK: opts.task !== undefined ? String(opts.task) : undefined,
-    VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined
+    VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined,
+    ...(opts.pr !== undefined ? { VINAYA_PR: String(opts.pr) } : {}),
+    VINAYA_ATTEMPT: sinkAttempt === undefined ? undefined : String(sinkAttempt)
   })
   const { log, runId } = createLogSink({
     env: sinkEnv,
+    provenance: 'parent_attributed',
     inputVersions: () => opts.inputVersions
   })
 
@@ -4194,6 +4199,7 @@ export async function dispatchRole(
     writeLaunchRecord(launch)
   }
   writeLaunchRecord(launch)
+  sinkAttempt = launch.attempt
 
   // A reviewer's result is valid only from a fresh session: refused before
   // any spawn, so a resumed reviewer session can never deliver a review.
