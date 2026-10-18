@@ -1579,10 +1579,26 @@ function defaultBuildVendoredCliIfMissing(worktreePath: string): void {
  * manifests and this runs with the driver's credentials in reach; the frozen
  * lockfile keeps the install from rewriting what the branch carries.
  */
+/**
+ * The install's environment: only `WORKER_ENV_ALLOWLIST_KEYS`, never the
+ * driver's whole environment. A resumed worktree holds Developer-authored
+ * `bunfig.toml`/`.npmrc`, which expand `$VAR` in registry tokens, so no
+ * driver-held secret may be present for them to expand.
+ */
+export function worktreeInstallEnv(sourceEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const key of WORKER_ENV_ALLOWLIST_KEYS) {
+    const value = sourceEnv[key]
+    if (value !== undefined) env[key] = value
+  }
+  return env
+}
+
 export function defaultInstallWorktreeDependencies(worktreePath: string): void {
   if (!existsSync(join(worktreePath, 'bun.lock'))) return
   const result = spawnSync('bun', ['install', '--frozen-lockfile', '--ignore-scripts'], {
     cwd: worktreePath,
+    env: worktreeInstallEnv(),
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 10 * 60 * 1000

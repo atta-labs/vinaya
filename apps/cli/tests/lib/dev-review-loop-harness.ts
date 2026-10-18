@@ -819,7 +819,11 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     buildVendoredCliIfMissing: () => {},
     installWorktreeDependencies: (worktreePath: string) => {
       world.dependencyInstalls.push({ worktreePath, promptsSoFar: world.dispatchCountByRole.developer ?? 0 })
-      if (world.dependencyInstallFailure !== undefined) throw new Error(world.dependencyInstallFailure)
+      if (world.dependencyInstallFailure !== undefined) {
+        throw new Error(
+          `dependency install failed in worktree ${worktreePath} (exit 1):\n${world.dependencyInstallFailure}`
+        )
+      }
     },
     commitWorktree: (_worktreePath, header) => {
       const commitSha = world.nextCommitSha

@@ -18,7 +18,7 @@ import {
   runLoopInProcess,
   type LoopWorld
 } from './dev-review-loop-harness.js'
-import { defaultInstallWorktreeDependencies, type LoopDeps } from '../../src/lib/dev-review-loop.js'
+import { defaultInstallWorktreeDependencies, worktreeInstallEnv, type LoopDeps } from '../../src/lib/dev-review-loop.js'
 
 afterEach(cleanupWorlds)
 
@@ -108,6 +108,7 @@ describe('installing the task worktree dependencies before the Developer starts'
     const decision = result.finalDecision as { reason: string; detail: string }
     expect(decision.reason).toBe('infrastructure')
     expect(decision.detail).toContain('error: lockfile had changes')
+    expect(decision.detail).toContain(worktreePath(world))
     expect(prompts).toHaveLength(0)
   })
 
@@ -120,5 +121,17 @@ describe('installing the task worktree dependencies before the Developer starts'
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it('the install environment carries only allowlisted keys, never a driver secret', () => {
+    const env = worktreeInstallEnv({
+      PATH: '/usr/bin',
+      HOME: '/home/x',
+      GH_TOKEN: 'secret',
+      ANTHROPIC_API_KEY: 'secret'
+    })
+    expect(env.PATH).toBe('/usr/bin')
+    expect(Object.keys(env)).not.toContain('GH_TOKEN')
+    expect(Object.keys(env)).not.toContain('ANTHROPIC_API_KEY')
   })
 })
