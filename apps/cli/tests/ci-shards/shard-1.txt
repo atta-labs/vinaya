@@ -82,6 +82,8 @@ tests/lib/dev-review-loop/readiness-gate-adopter.test.ts
 tests/eval/contracts.test.ts
 tests/eval/neutral-case.test.ts
 tests/eval/generic-graders.test.ts
+tests/eval/vinaya-renderer.test.ts
+tests/eval/vinaya-renderer-round-trip.test.ts
 tests/eval/banned-terms.test.ts
 tests/eval/estimators.test.ts
 tests/eval/not-shipped.test.ts
