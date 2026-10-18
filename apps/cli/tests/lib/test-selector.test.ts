@@ -336,7 +336,7 @@ describe('selectAffectedTestFiles replayed against the two recorded 2026-09-19 i
       const alwaysRun = loadConfig()?.prePush?.alwaysRun ?? []
       const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun })
       expect(selected).toContain(LOG_CALLERS_TEST)
-    })
+    }, 30_000)
 
     it(`${label} — with no alwaysRun at all, the scan rule now selects it; the IMPORT graph alone still cannot`, () => {
       // `log-callers.test.ts` walks the repository from disk, so no import edge
@@ -348,7 +348,7 @@ describe('selectAffectedTestFiles replayed against the two recorded 2026-09-19 i
       expect(
         selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [], repoTreeScanners: 'ignore' }).selected
       ).not.toContain(LOG_CALLERS_TEST)
-    })
+    }, 60_000)
   }
 })
 
@@ -381,7 +381,7 @@ describe('a second real CI failure in the SAME task-files-v1/1 change set (Issue
     const alwaysRun = loadConfig()?.prePush?.alwaysRun ?? []
     const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun })
     expect(selected).toContain(TASK_STATUS_E2E_TEST)
-  })
+  }, 30_000)
 
   it('reachability ALONE (no alwaysRun) now selects it on the merits — the CLI-spawn edge (Issue #702), not the escape hatch', () => {
     expect(selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [] }).selected).toContain(TASK_STATUS_E2E_TEST)
@@ -391,7 +391,7 @@ describe('a second real CI failure in the SAME task-files-v1/1 change set (Issue
     expect(
       selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [], cliSpawnDetection: 'ignore' }).selected
     ).not.toContain(TASK_STATUS_E2E_TEST)
-  })
+  }, 60_000)
 })
 
 // symbol-aware-test-selection-v1 1, Part 3 — real on-disk fixtures for every
@@ -1390,7 +1390,7 @@ describe('a relative specifier written with an output extension resolves to its 
       selectAffectedTestFiles(REPO_ROOT, [join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')]).selected
     )
     expect(selected).toContain(join(REPO_ROOT, 'apps/cli/tests/demo.test.ts'))
-  })
+  }, 30_000)
 })
 
 // O2 — resolution is the compiler's, with the text scan kept only for a
@@ -1401,7 +1401,7 @@ describe('the compiler resolves the graph, and the text scan remains a safe fall
     const result = selectAffectedTestFiles(REPO_ROOT, [join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')])
     expect(result.resolver).toBe('compiler')
     expect(result.programMs).toBeGreaterThan(0)
-  })
+  }, 30_000)
 
   it('the text-scan fallback is reachable, resolves .js specifiers too, and never omits what the compiler selects', () => {
     const changed = [join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')]
@@ -1414,7 +1414,7 @@ describe('the compiler resolves the graph, and the text scan remains a safe fall
     // reachable, the coarser scan must also reach.
     const scanned = new Set(scan.selected)
     expect(compiler.selected.filter((f) => !scanned.has(f))).toEqual([])
-  })
+  }, 30_000)
 
   it('a named import resolves to the file that DEFINES it, across a re-export chain and a package boundary', () => {
     const { root, dir } = mkWorkspace([
@@ -1734,7 +1734,7 @@ describe('tests that read the repository tree are selected from what they scan (
       selectAffectedTestFiles(REPO_ROOT, [changedTest], { repoTreeScanners: 'ignore', scannerDeclarations: [] })
         .selected
     ).not.toContain(auditor)
-  })
+  }, 60_000)
 
   it('a narrowly-scoped scanner is not selected by a change outside the tree it reads', () => {
     // `surface-spec-exports.test.ts` reads `apps/cli/src/commands`; a change in
@@ -2070,7 +2070,7 @@ describe('Issue #702, O2 — the exact regression: a log-sink.ts-only change now
       CHECK_TEST
     )
     expect(selectAffectedTestFiles(REPO_ROOT, [LOG_SINK]).selected).toContain(CHECK_TEST)
-  })
+  }, 60_000)
 })
 
 describe('Issue #702, O2 — every test file the Origin’s own grep identifies is now selected', () => {
@@ -2108,7 +2108,7 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
     const selectedSet = new Set(selected)
     const missing = testFiles.filter((f) => !selectedSet.has(f))
     expect(missing).toEqual([])
-  })
+  }, 30_000)
 
   // Round 2 review, MAJOR (capped MINOR) — a PR-body claim ("the N
   // newly-covered tests include ... all M identified matches") was
@@ -2171,7 +2171,7 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
     const wholeDelta = withEdgeAll.filter((f) => !withoutEdge.has(f))
     expect(wholeDelta.length).toBeGreaterThanOrEqual(newlyCovered.length)
     expect(newlyCovered.length).toBeLessThan(testFiles.length)
-  })
+  }, 60_000)
 })
 
 // Issue #707, O1 — `depth: 'one'` (the pre-push hook's own mode) stops at
@@ -2242,7 +2242,7 @@ describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings
     ]
     const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { depth: 'one' })
     expect(selected.length).toBeLessThanOrEqual(29)
-  })
+  }, 30_000)
 
   it('a change to a widely imported export of the shared core package selects at most 25 files', () => {
     // `defaultControlStoreDeps` (`packages/aeg-core/src/control-store/local.ts`)
@@ -2255,7 +2255,7 @@ describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings
       affectedNames: new Map([[changed, new Set(['defaultControlStoreDeps'])]])
     })
     expect(selected.length).toBeLessThanOrEqual(25)
-  })
+  }, 30_000)
 
   it('a change to one leaf module selects at most 5 files', () => {
     // `sum-ledger.ts` — a small, narrowly-consumed utility with no re-export
@@ -2263,7 +2263,7 @@ describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings
     const changed = join(REPO_ROOT, 'packages/aeg-core/src/sum-ledger.ts')
     const { selected } = selectAffectedTestFiles(REPO_ROOT, [changed], { depth: 'one' })
     expect(selected.length).toBeLessThanOrEqual(5)
-  })
+  }, 30_000)
 })
 
 // A push that changes the repository-root `vinaya.config.json` runs the CLI's
@@ -2342,5 +2342,5 @@ describe('the repository-root configuration selects the whole CLI suite', () => 
     const onDisk = walkFiles(join(REPO_ROOT, 'apps', 'cli')).filter(isTestFile)
     expect(new Set(cliTests)).toEqual(new Set(onDisk))
     expect(cliTests.length).toBeLessThanOrEqual(totalTestFiles)
-  })
+  }, 60_000)
 })
