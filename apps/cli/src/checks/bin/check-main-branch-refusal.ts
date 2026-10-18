@@ -16,9 +16,12 @@
  *     on detached HEAD (every CI checkout), never a false name.
  *   - default branch: `symbolic-ref --quiet --short refs/remotes/origin/HEAD`
  *     stripped of its `origin/` prefix — the local ref a `git clone` sets
- *     automatically and `git remote set-head origin -a` (re)computes; no
- *     forge CLI or network call, so this stays evaluable with zero network
- *     and zero token, same constraint as `workspace-escape`'s `env: {}`.
+ *     automatically and `git remote set-head origin -a` (re)computes. When
+ *     it does not resolve, `resolveDefaultBranch` falls back to an existing
+ *     `refs/remotes/origin/main`, then `refs/remotes/origin/master`, then
+ *     the `init.defaultBranch` setting. No forge CLI, fetch or network call,
+ *     so this stays evaluable with zero network and zero token, same
+ *     constraint as `workspace-escape`'s `env: {}`.
  *
  * Real failure (`error`, exit 1) on a genuine refusal — this is an action
  * refusal, not a doctrine-parity report; warn-only would be the check
@@ -36,7 +39,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { checkMainBranchRefusal } from '@attalabs/aeg-core'
+import { checkMainBranchRefusal, resolveDefaultBranch } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'main-branch-refusal'
@@ -55,11 +58,24 @@ function currentSymbolicBranch(): string | null {
 }
 
 /** `refs/remotes/origin/HEAD` resolves to e.g. `origin/main` — strip the leading `origin/` segment. `null` when the ref doesn't exist (never fetched, or a remote other than `origin`). */
-function defaultBranch(): string | null {
+function originHeadBranch(): string | null {
   const ref = git(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'])
   if (ref === null || ref === '') return null
   const branch = ref.slice('origin/'.length)
   return branch === '' ? null : branch
+}
+
+function hasRef(ref: string): boolean {
+  return git(['rev-parse', '--verify', '--quiet', ref]) !== null
+}
+
+function defaultBranch(): string | null {
+  return resolveDefaultBranch({
+    originHead: originHeadBranch(),
+    hasOriginMain: hasRef('refs/remotes/origin/main'),
+    hasOriginMaster: hasRef('refs/remotes/origin/master'),
+    initDefaultBranch: git(['config', '--get', 'init.defaultBranch'])
+  })
 }
 
 function main(): void {
@@ -100,9 +116,9 @@ function main(): void {
     check: CHECK_NAME,
     severity: 'warning',
     message:
-      "main-branch-refusal: could not determine this repo's default branch (no resolvable `origin/HEAD`) — skipping the refusal check rather than risk a false block.",
+      "main-branch-refusal: could not determine this repo's default branch (no `origin/HEAD`, no remote-tracking `origin/main` or `origin/master`, no `init.defaultBranch`) — skipping the refusal check rather than risk a false block.",
     agent_recovery_prompt:
-      'Run `git remote set-head origin -a` (requires network) so `origin/HEAD` resolves locally, then re-run `vinaya check main-branch-refusal`.'
+      'Run `git remote set-head origin -a` (requires network) so `origin/HEAD` resolves locally, or set `git config init.defaultBranch <name>`, then re-run `vinaya check main-branch-refusal`.'
   })
   process.exit(0)
 }

@@ -926,11 +926,14 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
     {
       name: 'main-branch-refusal',
       run: bin('check-main-branch-refusal'),
-      scope: 'full',
+      scope: 'diff',
       timeoutMs: 15_000,
-      // Local-only: both facts (`symbolic-ref --short HEAD`,
-      // `symbolic-ref --short refs/remotes/origin/HEAD`) read already-local
-      // git state — no forge call, no PR content, same `env: {}` shape as
+      // Diff scope with no `include`: the commit hook's `--skip-full` skips
+      // only full-scope checks and `--diff-only` never skips a diff-scope
+      // check without `include` globs, so a commit on the default branch is
+      // refused too. Local-only: the facts (`symbolic-ref --short HEAD`, the
+      // remote-tracking refs of origin, `init.defaultBranch`) read
+      // already-local git state — no forge call, no PR content, same `env: {}` shape as
       // `workspace-escape` above. `VINAYA_PUSH_REFS` is the
       // one exception: the generated pre-push hook sets it from git's own
       // pre-push stdin before spawning `check --all --local`, and without
