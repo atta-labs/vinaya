@@ -26,6 +26,7 @@
  *     bun apps/cli/tests/eval/recut-generic-cases.ts development
  *     bun apps/cli/tests/eval/recut-generic-cases.ts held-out --approve-developer <sha256> --approve-reviewer <sha256>
  */
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -53,8 +54,12 @@ import {
   CASES_PATH as SOURCE_CITATION_CASES_PATH,
   type SourceCitationCase
 } from './source-citation-suite'
+import { stripVinayaEnv } from '../lib/process-fixture'
 
 const REPO_ROOT = join(import.meta.dir, '../../../..')
+
+/** Longest one git or formatter call may run before it is killed. */
+const SPAWN_BUDGET_MS = 120_000
 
 /** The repository every committed case is cut from. */
 export const REPOSITORY = 'atta-labs/vinaya'
@@ -120,14 +125,15 @@ export type Git = (args: readonly string[], options?: { env?: Record<string, str
 
 /** Git in the repository the cases are cut from; refuses when the command fails. */
 export const repositoryGit: Git = (args, options = {}) => {
-  const run = Bun.spawnSync(['git', ...args], {
+  const run = spawnSync('git', [...args], {
     cwd: REPO_ROOT,
-    env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: tmpdir(), ...options.env },
-    stdin: options.input === undefined ? 'ignore' : Buffer.from(options.input),
-    stdout: 'pipe',
-    stderr: 'pipe'
+    env: { ...stripVinayaEnv({ PATH: process.env.PATH ?? '/usr/bin:/bin' }), HOME: tmpdir(), ...options.env },
+    input: options.input,
+    maxBuffer: 256 * 1024 * 1024,
+    timeout: SPAWN_BUDGET_MS,
+    killSignal: 'SIGKILL'
   })
-  if (run.exitCode !== 0) throw new RecutRefused(`git ${args[0]} failed`)
+  if (run.status !== 0) throw new RecutRefused(`git ${args[0]} failed`)
   return run.stdout
 }
 
@@ -349,14 +355,17 @@ export interface Recut {
 /** Formats JSON as the repository's formatter, which its commit hook runs, would leave it. */
 export function formatJson(path: string, value: unknown): string {
   const biome = join(REPO_ROOT, 'node_modules', '.bin', 'biome')
-  const run = Bun.spawnSync([biome, 'format', `--stdin-file-path=${path}`], {
+  const run = spawnSync(biome, ['format', `--stdin-file-path=${path}`], {
     cwd: REPO_ROOT,
-    stdin: Buffer.from(`${JSON.stringify(value, null, 2)}\n`),
-    stdout: 'pipe',
-    stderr: 'pipe'
+    env: stripVinayaEnv(process.env),
+    input: `${JSON.stringify(value, null, 2)}\n`,
+    encoding: 'utf8',
+    maxBuffer: 256 * 1024 * 1024,
+    timeout: SPAWN_BUDGET_MS,
+    killSignal: 'SIGKILL'
   })
-  if (run.exitCode !== 0) throw new RecutRefused(`biome could not format ${path}`)
-  return Buffer.from(run.stdout).toString('utf8')
+  if (run.status !== 0) throw new RecutRefused(`biome could not format ${path}`)
+  return run.stdout
 }
 
 const relative = (path: string) => path.slice(REPO_ROOT.length + 1)
