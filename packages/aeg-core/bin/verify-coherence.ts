@@ -72,6 +72,7 @@ import {
   isEntryPoint
 } from '../src/index'
 import type { CheckResult, ForgeFacts, TrancheFile, TaskEntry } from '../src/index'
+import { readConfigPrincipals } from '../src/principals-config'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')
 process.chdir(REPO_ROOT)
@@ -659,6 +660,18 @@ export async function runCoherenceChecks(
   options: RunCoherenceChecksOptions = {}
 ): Promise<{ results: CheckResult[]; forgeUnavailable: boolean }> {
   const { prContext = null, isPlanPr = false } = options
+
+  // A1 decides who counts as a Principal; a config without a Principal list
+  // refuses the run before any forge read, as a report so `--json` stdout
+  // stays parseable and the exit is non-zero.
+  const principals = readConfigPrincipals()
+  if (!principals.ok) {
+    return {
+      results: [{ check: 'PRINCIPALS', status: 'fail', failures: [], note: principals.reason }],
+      forgeUnavailable: false
+    }
+  }
+
   const sweep = await loadTrancheSweep(prContext)
   const { files } = sweep
   const results: CheckResult[] = []
@@ -787,7 +800,7 @@ export async function runCoherenceChecks(
   const availableEntries = enrichedEntries.filter((e) => snapshotsBySlug.has(e.trancheSlug))
 
   // A1 / A3 checks
-  results.push(checkA1(availableEntries))
+  results.push(checkA1(availableEntries, principals.principals))
   results.push(checkA3(availableEntries))
 
   // A2 — needs closing PR numbers + comment check (separate batch query)

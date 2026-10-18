@@ -352,7 +352,8 @@ describe('check-dispatch-readiness: Conflicts-with named only by a sibling', () 
       dependsOn: [],
       conflictsWith,
       priorTask: null,
-      priorTrancheArchival: []
+      priorTrancheArchival: [],
+      principalAllowlist: ['daniboomerang']
     }
     return checkDispatchReadiness(input)
   }

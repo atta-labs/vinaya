@@ -185,6 +185,7 @@ describe('publish-then-gate agreement on resolved findings (O3)', () => {
       labels: [],
       waiverLabelActor: null,
       headSha: HEAD_SHA,
+      principalAllowlist: ['daniboomerang'],
       objectivesVersion: null,
       rulingOrdinal: 0,
       policy: MAJOR_HIGH_POLICY

@@ -7,7 +7,7 @@
  * now gated pre-merge and blocking instead of post-merge and advisory-only.
  *
  * Verdict comments are ONLY counted when their author is on the same
- * `PRINCIPAL_ALLOWLIST` the waiver actor-check trusts (a security finding):
+ * Principal list the waiver actor-check trusts (a security finding):
  * body-shape alone is never sufficient on a public repo. Unverified
  * comments are ignored, not fatal.
  *
@@ -73,7 +73,7 @@
  * head sha via `gh` and calls `checkReviewGate`.
  */
 
-import { isPrincipal, isWaiverLabelActorVerified, PRINCIPAL_ALLOWLIST, WAIVER_LABEL_REVIEW } from './waiver-label'
+import { isPrincipal, isWaiverLabelActorVerified, WAIVER_LABEL_REVIEW } from './waiver-label'
 import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from './verdict-extraction'
 import {
   consequentialFindings,
@@ -127,17 +127,16 @@ export type ReviewGateInput = {
    */
   headSha: string
   /**
-   * Overrides `PRINCIPAL_ALLOWLIST` for this evaluation when provided — an
-   * adopter repo's own `vinaya.config.json` `principals` field, resolved by
-   * the CLI bin before calling in (never read from here; this stays pure).
-   * Defaults to `PRINCIPAL_ALLOWLIST` when omitted, so every existing caller
-   * (this repo's own `bin/verify-review-gate.ts` included) is unaffected.
-   * `PRINCIPAL_ALLOWLIST` hardcoding this repo's own principal made the gate
-   * structurally unpassable on any adopter repo — found live on a real
-   * client repo's first dispatched task, the reviewer/security verdicts it
-   * already had counted for nobody.
+   * The Principal list for this evaluation — the repository's own
+   * `vinaya.config.json` `principals` field, resolved by the caller before
+   * calling in (never read from here; this stays pure). REQUIRED, with no
+   * built-in fallback: a hardcoded Principal made the gate structurally
+   * unpassable on any adopter repo — found live on a real client repo's
+   * first dispatched task, the reviewer/security verdicts it already had
+   * counted for nobody — so a caller that supplies no list is a compile
+   * error, not a silent default.
    */
-  principalAllowlist?: string[]
+  principalAllowlist: string[]
   /**
    * The PATCH IDENTITY of a commit — `git diff <base>...<sha> | git patch-id
    * --stable`, truncated — or `null` when git cannot answer for that sha
@@ -203,8 +202,7 @@ export type ReviewGateInput = {
    * never from here (this stays pure) and never from the PR's own checkout,
    * so a change cannot lower its own threshold. Defaults to
    * `DEFAULT_REVIEW_POLICY` (`BLOCKER`/`HIGH`) when omitted — every existing
-   * caller that predates this field is unaffected, the same optional-with-
-   * fallback shape `principalAllowlist` already uses above.
+   * caller that predates this field is unaffected.
    */
   policy?: ReviewPolicy
   /**
@@ -275,7 +273,7 @@ export function isReviewGateExemptBranch(_branch: string): boolean {
 
 /**
  * `pass` when either (a) `vinaya/waiver:review` is present and actor-verified against
- * `PRINCIPAL_ALLOWLIST`, or (b) both verdicts are clean AND bound — code-reviewer
+ * `input.principalAllowlist`, or (b) both verdicts are clean AND bound — code-reviewer
  * `APPROVE` (not `REQUEST_CHANGES`, not missing, not unclear) covering the PR's
  * current `headSha` — by that sha, or by an equal patch identity when
  * `patchIdOf` is supplied — and security-review `PASS` (not `FAIL`, not
@@ -300,7 +298,7 @@ export function isReviewGateExemptBranch(_branch: string): boolean {
  * overrides the evaluator.
  */
 export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
-  const principalAllowlist = input.principalAllowlist ?? PRINCIPAL_ALLOWLIST
+  const { principalAllowlist } = input
   const waived = isWaiverLabelActorVerified({
     label: WAIVER_LABEL_REVIEW,
     labels: input.labels,
@@ -319,7 +317,7 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   // repo any GitHub account can post a `VERDICT: APPROVE`-shaped comment, and
   // most-recent-clear-hit-wins extraction would let a forged later APPROVE
   // override a real earlier REQUEST CHANGES. Only comments whose author is on
-  // the same `PRINCIPAL_ALLOWLIST` the waiver's actor check already trusts
+  // the same Principal list the waiver's actor check already trusts
   // participate in verdict extraction; everything else — unknown authors and
   // unresolvable (`null`) ones alike — is IGNORED, never fatal, so a drive-by
   // comment cannot brick evaluation, only fail to count. Dispatched reviewer

@@ -106,10 +106,10 @@ import {
   DOC_OWNERS_PATH,
   issueBranchName,
   parsePremiseBlock,
-  PRINCIPAL_ALLOWLIST,
   resolveNewestFrozenBrief,
   isEntryPoint
 } from '../src/index'
+import { readConfigPrincipals } from '../src/principals-config'
 import type { Tranche, Task } from '../src/types'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')
@@ -1014,6 +1014,20 @@ function countErrorLines(output: string): number {
 export type ResolvePremiseBriefTextResult = { ok: true; text: string } | { ok: false; message: string }
 
 /**
+ * The repository's configured Principal list, or a non-zero exit naming the
+ * fix — every mode that decides who counts as a Principal calls this before
+ * touching the forge.
+ */
+function principalsOrExit(mode: string): string[] {
+  const principals = readConfigPrincipals()
+  if (!principals.ok) {
+    console.error(`verify-dispatch${mode}: ${principals.reason}`)
+    process.exit(1)
+  }
+  return principals.principals
+}
+
+/**
  * Resolves the newest principal-authored frozen brief's content out of an
  * Issue's raw `gh issue view --json comments` payload — via
  * `resolveNewestFrozenBrief` (task 4, Issue #483, O3), the same single
@@ -1022,14 +1036,16 @@ export type ResolvePremiseBriefTextResult = { ok: true; text: string } | { ok: f
  * mode is unit-testable without spawning `gh` or the forge — the exact gap
  * that let a v1-only match ship here silently (security review, PR #503
  * round 2, BLOCKER: after `--supersede`, this refused every dispatch of the
- * corrected task at Step 0).
+ * corrected task at Step 0). `principalAllowlist` is the caller's resolved
+ * Principal list — no built-in fallback.
  */
 export function resolvePremiseBriefText(
   comments: Array<{ body: string; author?: { login?: string } | null }>,
-  issueNumber: number
+  issueNumber: number,
+  principalAllowlist: string[]
 ): ResolvePremiseBriefTextResult {
   const normalized = comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
-  const briefComment = resolveNewestFrozenBrief(normalized, PRINCIPAL_ALLOWLIST)
+  const briefComment = resolveNewestFrozenBrief(normalized, principalAllowlist)
   if (!briefComment) {
     return { ok: false, message: `not dispatched — no \`aeg:brief:v<k>\` comment on Issue #${issueNumber}.` }
   }
@@ -1037,6 +1053,7 @@ export function resolvePremiseBriefText(
 }
 
 async function runPremiseModeFromIssue(trancheSlug: string, taskId: string): Promise<void> {
+  const principalAllowlist = principalsOrExit(' --premise')
   const repo = await resolveRepo()
   if (!repo) {
     console.error(
@@ -1071,7 +1088,7 @@ async function runPremiseModeFromIssue(trancheSlug: string, taskId: string): Pro
     '--json',
     'comments'
   ])
-  const resolved = resolvePremiseBriefText(commentsJson?.comments ?? [], task.issue)
+  const resolved = resolvePremiseBriefText(commentsJson?.comments ?? [], task.issue, principalAllowlist)
   if (!resolved.ok) {
     console.error(`verify-dispatch --premise: ${resolved.message}`)
     process.exit(1)
@@ -1251,6 +1268,7 @@ function runCheckBaselineMode(baselineFile: string): void {
 }
 
 async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
+  const principalAllowlist = principalsOrExit('')
   // Still needed here: computeLeftover() below compares against the local
   // origin/main ref (git rev-list origin/main..origin/<branch>) — freshness
   // that used to be a side effect of the file-based tranche read above,
@@ -1309,7 +1327,8 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
     dependsOn,
     conflictsWith,
     priorTask,
-    priorTrancheArchival: archival.facts
+    priorTrancheArchival: archival.facts,
+    principalAllowlist
   })
 
   // A bare edge id is ambiguous once this Issue's Milestone
@@ -1382,6 +1401,7 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
  * job.
  */
 async function runGateModeForIssue(issueNumber: number): Promise<void> {
+  const principalAllowlist = principalsOrExit('')
   sh('git', ['fetch', 'origin', 'main', '--quiet'])
 
   const repo = await resolveRepo()
@@ -1433,7 +1453,8 @@ async function runGateModeForIssue(issueNumber: number): Promise<void> {
     dependsOn,
     conflictsWith,
     priorTask: null,
-    priorTrancheArchival: []
+    priorTrancheArchival: [],
+    principalAllowlist
   })
 
   // This mode's doc comment says "no Milestone" as the

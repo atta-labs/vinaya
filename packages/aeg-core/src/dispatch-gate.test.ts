@@ -32,6 +32,7 @@ function makeInput(overrides: Partial<DispatchGateInput> = {}): DispatchGateInpu
     conflictsWith: [],
     priorTask: null,
     priorTrancheArchival: [],
+    principalAllowlist: ['daniboomerang'],
     ...overrides
   }
 }
@@ -262,7 +263,7 @@ describe('checkDispatchReadiness', () => {
     expect(result.ready).toBe(false)
   })
 
-  it('respects an overridden principalAllowlist over the hardcoded default', () => {
+  it('recognizes a hand-close only by an author on the list the caller passed', () => {
     const result = checkDispatchReadiness(
       makeInput({
         dependsOn: [
@@ -279,6 +280,25 @@ describe('checkDispatchReadiness', () => {
       })
     )
     expect(result.ready).toBe(true)
+  })
+
+  it('does not recognize a hand-close by an author left off the passed list — no built-in Principal', () => {
+    const result = checkDispatchReadiness(
+      makeInput({
+        dependsOn: [
+          {
+            id: '1',
+            issue: 890,
+            merged: false,
+            issueState: 'closed',
+            stateReason: 'completed',
+            closedByActor: 'daniboomerang'
+          }
+        ],
+        principalAllowlist: ['adopter-principal']
+      })
+    )
+    expect(result.ready).toBe(false)
   })
 
   it('still blocks an unresolved edge with no hand-close facts (unchanged pre-task-21 behavior)', () => {

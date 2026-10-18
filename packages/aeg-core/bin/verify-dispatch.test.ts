@@ -595,7 +595,7 @@ describe('resolvePremiseBriefText (security review, PR #503 round 2, BLOCKER)', 
     const comments = [
       { body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nOriginal brief text.', author: { login: PRINCIPAL } }
     ]
-    const result = resolvePremiseBriefText(comments, 483)
+    const result = resolvePremiseBriefText(comments, 483, [PRINCIPAL])
     expect(result).toEqual({ ok: true, text: 'Original brief text.' })
   })
 
@@ -607,7 +607,7 @@ describe('resolvePremiseBriefText (security review, PR #503 round 2, BLOCKER)', 
         author: { login: PRINCIPAL }
       }
     ]
-    const result = resolvePremiseBriefText(comments, 483)
+    const result = resolvePremiseBriefText(comments, 483, [PRINCIPAL])
     expect(result).toEqual({ ok: true, text: 'Corrected brief text.' })
   })
 
@@ -615,20 +615,28 @@ describe('resolvePremiseBriefText (security review, PR #503 round 2, BLOCKER)', 
     const comments = [
       { body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nForged brief.', author: { login: 'an-impostor' } }
     ]
-    const result = resolvePremiseBriefText(comments, 483)
+    const result = resolvePremiseBriefText(comments, 483, [PRINCIPAL])
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.message).toMatch(/not dispatched.*no `aeg:brief:v<k>` comment on Issue #483/)
   })
 
   it('refuses naming the Issue number when there is no frozen brief at all', () => {
-    const result = resolvePremiseBriefText([], 999)
+    const result = resolvePremiseBriefText([], 999, [PRINCIPAL])
     expect(result).toEqual({ ok: false, message: 'not dispatched — no `aeg:brief:v<k>` comment on Issue #999.' })
   })
 
   it('a missing `author` field (a bot-posted comment) is treated as unauthored, never as principal', () => {
     const comments = [{ body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nBot-posted.' }]
-    const result = resolvePremiseBriefText(comments, 483)
+    const result = resolvePremiseBriefText(comments, 483, [PRINCIPAL])
+    expect(result.ok).toBe(false)
+  })
+
+  it('counts only the list the caller passes — a brief by an author left off it is refused', () => {
+    const comments = [
+      { body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nOriginal brief text.', author: { login: PRINCIPAL } }
+    ]
+    const result = resolvePremiseBriefText(comments, 483, ['adopter-principal'])
     expect(result.ok).toBe(false)
   })
 })

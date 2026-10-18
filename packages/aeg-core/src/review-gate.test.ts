@@ -15,6 +15,9 @@ import type { ReviewGateComment } from './review-gate'
  */
 const DEFAULT_POLICY_DIGEST = policyDigest(DEFAULT_REVIEW_POLICY)
 
+/** The Principal list every evaluation in this file passes, unless a test is about the list itself. */
+const PRINCIPALS = ['daniboomerang']
+
 /** Principal-authored comment — the allowlisted author every legitimate verdict flows through. */
 const principal = (body: string): ReviewGateComment => ({ body, author: 'daniboomerang' })
 /** Forged comment — an arbitrary GitHub account (a security finding). */
@@ -40,6 +43,7 @@ const FAIL_COMMENT = principal(`VERDICT: FAIL\n\nJudged head: ${HEAD_SHA}\n\nhar
 describe('checkReviewGate', () => {
   it('passes when both verdicts are clean (APPROVE + PASS) and both cover the current head', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [APPROVE_COMMENT, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
@@ -53,6 +57,7 @@ describe('checkReviewGate', () => {
 
   it('fails when no review comments exist at all (the historical-PR case, e.g. PR #435)', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [],
       labels: [],
       waiverLabelActor: null,
@@ -67,6 +72,7 @@ describe('checkReviewGate', () => {
 
   it('fails when code review is REQUEST_CHANGES even though security is PASS', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [REQUEST_CHANGES_COMMENT, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
@@ -80,6 +86,7 @@ describe('checkReviewGate', () => {
 
   it('fails when security is FAIL even though code review is APPROVE', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [APPROVE_COMMENT, FAIL_COMMENT],
       labels: [],
       waiverLabelActor: null,
@@ -93,6 +100,7 @@ describe('checkReviewGate', () => {
 
   it('fails when only one of the two verdicts is present', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [APPROVE_COMMENT],
       labels: [],
       waiverLabelActor: null,
@@ -106,6 +114,7 @@ describe('checkReviewGate', () => {
 
   it('passes when both verdicts are clean, regardless of comment order', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [PASS_COMMENT, APPROVE_COMMENT],
       labels: [],
       waiverLabelActor: null,
@@ -120,6 +129,7 @@ describe('checkReviewGate', () => {
     it('fails when a clean APPROVE names a superseded head — the exact attalabs#664 failure mode', () => {
       const staleSha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
       const result = checkReviewGate({
+        principalAllowlist: PRINCIPALS,
         comments: [principal(`VERDICT: APPROVE\n\nJudged head: ${staleSha}`), PASS_COMMENT],
         labels: [],
         waiverLabelActor: null,
@@ -133,6 +143,7 @@ describe('checkReviewGate', () => {
 
     it('fails when a clean PASS carries no reviewed-commit binding at all (pre-fix hand-typed prose, no Judged head: line)', () => {
       const result = checkReviewGate({
+        principalAllowlist: PRINCIPALS,
         comments: [APPROVE_COMMENT, principal(`VERDICT: PASS\n\nreviewed at head ${HEAD_SHA.slice(0, 8)}.`)],
         labels: [],
         waiverLabelActor: null,
@@ -149,6 +160,7 @@ describe('checkReviewGate', () => {
     it('passes when both verdicts bind against an abbreviated form of the current head', () => {
       const shortSha = HEAD_SHA.slice(0, 7)
       const result = checkReviewGate({
+        principalAllowlist: PRINCIPALS,
         comments: [
           principal(`VERDICT: APPROVE\n\nJudged head: ${shortSha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`),
           principal(`VERDICT: PASS\n\nJudged head: ${shortSha}\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`)
@@ -165,6 +177,7 @@ describe('checkReviewGate', () => {
     it('a push that changes the head reopens a previously-clean gate — same comments, new headSha', () => {
       const newHeadAfterPush = 'ffffffffffffffffffffffffffffffffffffff'
       const result = checkReviewGate({
+        principalAllowlist: PRINCIPALS,
         comments: [APPROVE_COMMENT, PASS_COMMENT],
         labels: [],
         waiverLabelActor: null,
@@ -182,6 +195,7 @@ describe('checkReviewGate', () => {
     it('a re-cast verdict at the new head clears the gate again', () => {
       const newHeadAfterPush = 'ffffffffffffffffffffffffffffffffffffff'
       const result = checkReviewGate({
+        principalAllowlist: PRINCIPALS,
         comments: [
           APPROVE_COMMENT,
           PASS_COMMENT,
@@ -205,6 +219,7 @@ describe('checkReviewGate', () => {
   describe('vinaya/waiver:review actor verification', () => {
     it('label absent → gate still evaluates verdicts normally (fails on empty comments)', () => {
       const result = checkReviewGate({
+        principalAllowlist: PRINCIPALS,
         comments: [],
         labels: ['vinaya/tier:1'],
         waiverLabelActor: 'daniboomerang',
@@ -218,6 +233,7 @@ describe('checkReviewGate', () => {
 
     it('label present, actor not in allowlist → ignored, gate still fails on missing verdicts', () => {
       const result = checkReviewGate({
+        principalAllowlist: PRINCIPALS,
         comments: [],
         labels: ['vinaya/waiver:review'],
         waiverLabelActor: 'some-agent-bot',
@@ -231,6 +247,7 @@ describe('checkReviewGate', () => {
 
     it('label present, actor null (no labeling event found) → ignored, gate fails', () => {
       const result = checkReviewGate({
+        principalAllowlist: PRINCIPALS,
         comments: [],
         labels: ['vinaya/waiver:review'],
         waiverLabelActor: null,
@@ -244,6 +261,7 @@ describe('checkReviewGate', () => {
 
     it('label present, actor in allowlist → passes without any review comments', () => {
       const result = checkReviewGate({
+        principalAllowlist: PRINCIPALS,
         comments: [],
         labels: ['vinaya/waiver:review'],
         waiverLabelActor: 'daniboomerang',
@@ -257,6 +275,7 @@ describe('checkReviewGate', () => {
 
     it('a different label (vinaya/waiver:docs) applied by the principal does not waive the review gate', () => {
       const result = checkReviewGate({
+        principalAllowlist: PRINCIPALS,
         comments: [],
         labels: ['vinaya/waiver:docs'],
         waiverLabelActor: 'daniboomerang',
@@ -275,6 +294,7 @@ describe('checkReviewGate', () => {
   // answer. The PR modelled below carries both.
   it('passes on clean, bound verdicts even though a sibling check is red and a principal Test Plan item is unticked', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [
         APPROVE_COMMENT,
         PASS_COMMENT,
@@ -302,6 +322,7 @@ describe('checkReviewGate — extended manifest binding', () => {
     labels: [] as string[],
     waiverLabelActor: null,
     headSha: HEAD_SHA,
+    principalAllowlist: PRINCIPALS,
     objectivesVersion: null,
     rulingOrdinal: 0,
     manifestVersion: 2 as const,
@@ -334,6 +355,7 @@ describe('checkReviewGate — base identity binding (#555, O1/O3)', () => {
 
   const gate = (comments: ReviewGateComment[], baseSha: string | null) =>
     checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments,
       labels: [],
       waiverLabelActor: null,
@@ -360,6 +382,7 @@ describe('checkReviewGate — base identity binding (#555, O1/O3)', () => {
     // bypassed. Now the base move is tolerated directly when both base SHAs are
     // full-length, regardless of patchIdOf.
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [codeReviewAtBase(BASE_A), securityAtBase(BASE_A)],
       labels: [],
       waiverLabelActor: null,
@@ -407,6 +430,7 @@ describe('isReviewGateExemptBranch', () => {
 describe('checkReviewGate — verdict-author verification (security finding, PR #806)', () => {
   it('ignores a forged APPROVE + PASS pair from a non-allowlisted author (gate stays failed)', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [
         forged(`VERDICT: APPROVE\n\nlooks great!\n\nJudged head: ${HEAD_SHA}`),
         forged(`VERDICT: PASS\n\nno findings.\n\nJudged head: ${HEAD_SHA}`)
@@ -425,6 +449,7 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
 
   it('a forged later APPROVE does not override a real REQUEST_CHANGES', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [
         REQUEST_CHANGES_COMMENT,
         PASS_COMMENT,
@@ -442,6 +467,7 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
 
   it('a null-author comment is ignored, not fatal', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [{ body: `VERDICT: APPROVE\n\nJudged head: ${HEAD_SHA}`, author: null }, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
@@ -454,6 +480,7 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
 
   it('non-verdict bot chatter is not counted as ignored', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [
         { body: 'Deployment failed for project herald-ai', author: 'vercel[bot]' },
         REQUEST_CHANGES_COMMENT,
@@ -471,6 +498,7 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
 
   it('verified verdicts still pass with forged noise present', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [forged(`VERDICT: FAIL\n\nchaos\n\nJudged head: ${HEAD_SHA}`), APPROVE_COMMENT, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
@@ -492,17 +520,30 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
     author
   })
 
-  it('a caller with no principalAllowlist keeps the default PRINCIPAL_ALLOWLIST behavior (backward compatible)', () => {
+  it('a verdict from an author outside the passed list counts for nobody — the gate has no built-in Principal to fall back on', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [adopterApprove('someone-else'), adopterPass('someone-else')],
       labels: [],
       waiverLabelActor: null,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
-      // no principalAllowlist passed
     })
-    expect(result.verdict).toBe('fail') // 'someone-else' isn't the hardcoded default
+    expect(result.verdict).toBe('fail') // 'someone-else' isn't on the list the caller passed
+  })
+
+  it('a caller that supplies no list does not compile, and gets no default at run time', () => {
+    const input = {
+      comments: [adopterApprove('daniboomerang'), adopterPass('daniboomerang')],
+      labels: [],
+      waiverLabelActor: null,
+      headSha: HEAD_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: 0
+    }
+    // @ts-expect-error principalAllowlist is a required input
+    expect(() => checkReviewGate(input)).toThrow()
   })
 
   it('an overridden principalAllowlist counts a verdict from an adopter-trusted author', () => {
@@ -612,6 +653,7 @@ describe('checkReviewGate — verdicts are bound to the head they judged (#73, f
 
   it('rejects a security PASS that names a superseded head (attalabs#953, corrected)', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [
         principal(`VERDICT: APPROVE\n\nJudged head: ${PR_HEAD}`),
         principal(
@@ -640,6 +682,7 @@ describe('checkReviewGate — verdicts are bound to the head they judged (#73, f
     // is that an unbound verdict no longer counts as covering anything.
     const newHead = '945b3af0000000000000000000000000000000'
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [
         principal('VERDICT: APPROVE\n\nreviewed at 52107b3'),
         principal('VERDICT: PASS\n\nreviewed at 52107b3')
@@ -662,6 +705,7 @@ describe('checkReviewGate — verdicts are bound to the head they judged (#73, f
     // discipline substituting for a mechanism, which the binding above now
     // makes structural instead of optional.
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [
         principal(`VERDICT: APPROVE\n\nJudged head: ${PR_HEAD}`),
         principal(`VERDICT: PASS\n\nReviewed at head \`${SUPERSEDED_HEAD}\`.\n\nJudged head: ${SUPERSEDED_HEAD}`),
@@ -691,6 +735,7 @@ describe('checkReviewGate — objectives-version binding (dev-review-loop-v1 tas
 
   it('passes when both verdicts carry the current objectives version', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [boundComment('APPROVE', VERSION_A), boundComment('PASS', VERSION_A)],
       labels: [],
       waiverLabelActor: null,
@@ -703,6 +748,7 @@ describe('checkReviewGate — objectives-version binding (dev-review-loop-v1 tas
 
   it('fails, naming both versions, when a clean code-review verdict was cast against a superseded objectives version', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [boundComment('APPROVE', VERSION_A), boundComment('PASS', VERSION_B)],
       labels: [],
       waiverLabelActor: null,
@@ -718,6 +764,7 @@ describe('checkReviewGate — objectives-version binding (dev-review-loop-v1 tas
 
   it('fails, naming "none", when a clean verdict carries no Objectives version: line at all', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [APPROVE_COMMENT, boundComment('PASS', VERSION_A)],
       labels: [],
       waiverLabelActor: null,
@@ -733,6 +780,7 @@ describe('checkReviewGate — objectives-version binding (dev-review-loop-v1 tas
 
   it('a null current objectives version skips the binding entirely — pre-cutover PR stock keeps passing', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [APPROVE_COMMENT, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
@@ -745,6 +793,7 @@ describe('checkReviewGate — objectives-version binding (dev-review-loop-v1 tas
 
   it('an objectives edit alone (head unchanged) still voids a verdict cast against the old version', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [boundComment('APPROVE', VERSION_A), boundComment('PASS', VERSION_A)],
       labels: [],
       waiverLabelActor: null,
@@ -766,6 +815,7 @@ describe('checkReviewGate — ruling-freshness binding (review-validity-v1 task 
 
   it('passes when both verdicts carry the current newest ruling ordinal', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [boundComment('APPROVE', 1), boundComment('PASS', 1)],
       labels: [],
       waiverLabelActor: null,
@@ -778,6 +828,7 @@ describe('checkReviewGate — ruling-freshness binding (review-validity-v1 task 
 
   it('fails, naming the newer ruling, when a clean verdict was cast against an older ruling ordinal — a ruling posted after approval turns the gate red', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [boundComment('APPROVE', 1), boundComment('PASS', 1)],
       labels: [],
       waiverLabelActor: null,
@@ -796,6 +847,7 @@ describe('checkReviewGate — ruling-freshness binding (review-validity-v1 task 
 
   it('fails, naming "none", when a clean verdict carries no Ruling ordinal: line at all but the PR now has a ruling', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [APPROVE_COMMENT, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
@@ -811,6 +863,7 @@ describe('checkReviewGate — ruling-freshness binding (review-validity-v1 task 
 
   it('a verdict with no Ruling ordinal: line still binds when the PR has never had a ruling (pre-cutover stock, current ordinal 0)', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [APPROVE_COMMENT, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
@@ -823,6 +876,7 @@ describe('checkReviewGate — ruling-freshness binding (review-validity-v1 task 
 
   it('an explicit Ruling ordinal: 0 verdict still binds against a PR with no rulings', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [boundComment('APPROVE', 0), boundComment('PASS', 0)],
       labels: [],
       waiverLabelActor: null,
@@ -958,6 +1012,7 @@ describe('checkReviewGate — brief-hash binding', () => {
 
   it('passes when both verdicts carry the current brief hash', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [boundComment('APPROVE', HASH_A), boundComment('PASS', HASH_A)],
       labels: [],
       waiverLabelActor: null,
@@ -971,6 +1026,7 @@ describe('checkReviewGate — brief-hash binding', () => {
 
   it('fails, naming both hashes, when a clean verdict was cast against a superseded frozen brief', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [boundComment('APPROVE', HASH_A), boundComment('PASS', HASH_A)],
       labels: [],
       waiverLabelActor: null,
@@ -990,6 +1046,7 @@ describe('checkReviewGate — brief-hash binding', () => {
 
   it('omitting briefHash entirely (every caller predating this field) skips the binding — the two new fixtures above are the only behavior change', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [boundComment('APPROVE', HASH_A), boundComment('PASS', HASH_A)],
       labels: [],
       waiverLabelActor: null,
@@ -1002,6 +1059,7 @@ describe('checkReviewGate — brief-hash binding', () => {
 
   it('a null current briefHash (no frozen brief resolvable) skips the binding, even against a stale echoed hash', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [boundComment('APPROVE', HASH_A), boundComment('PASS', HASH_A)],
       labels: [],
       waiverLabelActor: null,
@@ -1015,6 +1073,7 @@ describe('checkReviewGate — brief-hash binding', () => {
 
   it('fails, naming "none", when a clean verdict carries no Brief hash: line at all but a brief is now resolvable', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [APPROVE_COMMENT, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
@@ -1044,6 +1103,7 @@ describe('checkReviewGate — policy-digest binding', () => {
     // deliberate mismatch (below) rather than importing the hash function,
     // so the test does not silently drift if the digest algorithm changes.
     const mismatch = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [boundComment('APPROVE', '1'.repeat(64)), boundComment('PASS', '1'.repeat(64))],
       labels: [],
       waiverLabelActor: null,
@@ -1056,6 +1116,7 @@ describe('checkReviewGate — policy-digest binding', () => {
     expect(currentDigest).toMatch(/^[0-9a-f]{64}$/)
 
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [boundComment('APPROVE', currentDigest), boundComment('PASS', currentDigest)],
       labels: [],
       waiverLabelActor: null,
@@ -1068,6 +1129,7 @@ describe('checkReviewGate — policy-digest binding', () => {
 
   it('fails when a clean verdict was cast against a policy digest that no longer matches the current one', () => {
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [boundComment('APPROVE', '1'.repeat(64)), boundComment('PASS', '1'.repeat(64))],
       labels: [],
       waiverLabelActor: null,
@@ -1085,6 +1147,7 @@ describe('checkReviewGate — policy-digest binding', () => {
     )
     const legacyPass = principal(`VERDICT: PASS\n\nJudged head: ${HEAD_SHA}\n\nFINDINGS: none.`)
     const result = checkReviewGate({
+      principalAllowlist: PRINCIPALS,
       comments: [legacyApprove, legacyPass],
       labels: [],
       waiverLabelActor: null,
@@ -1124,6 +1187,7 @@ describe('checkReviewGate — policy evaluation (O2/O3)', () => {
     labels: [],
     waiverLabelActor: null,
     headSha: HEAD_SHA,
+    principalAllowlist: PRINCIPALS,
     objectivesVersion: null,
     rulingOrdinal: 0
   }
@@ -1235,6 +1299,7 @@ describe('checkReviewGate — resolved findings never block (O1/O2)', () => {
     labels: [],
     waiverLabelActor: null,
     headSha: HEAD_SHA,
+    principalAllowlist: PRINCIPALS,
     objectivesVersion: null,
     rulingOrdinal: 0
   }
@@ -1345,6 +1410,7 @@ describe('checkReviewGate — deferral context (O2/O3/O4)', () => {
     labels: [] as string[],
     waiverLabelActor: null,
     headSha: HEAD_SHA,
+    principalAllowlist: PRINCIPALS,
     objectivesVersion: null,
     rulingOrdinal: 0
   }

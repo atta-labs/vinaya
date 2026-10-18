@@ -210,15 +210,18 @@ describe('checkClosesNTopology', () => {
 
 // ---------- A1: closed-without-merge -----------------------------------------
 
+/** The Principal list every A1 case passes, unless a case is about the list itself. */
+const PRINCIPALS = ['daniboomerang']
+
 describe('A1: closed-without-merge', () => {
   it('pass — closed issue with merged PR', () => {
     const entries = [makeEntry('iter-1', '1', 101, makeFacts({ issueState: 'closed', prState: 'merged' }))]
-    passesWithNoFailures(checkA1(entries))
+    passesWithNoFailures(checkA1(entries, PRINCIPALS))
   })
 
   it('fail — closed issue with no PR (prState: none)', () => {
     const entries = [makeEntry('iter-1', '1', 101, makeFacts({ issueState: 'closed', prState: 'none' }))]
-    const r = checkA1(entries)
+    const r = checkA1(entries, PRINCIPALS)
     expect(r.status).toBe('fail')
     expect(r.failures).toHaveLength(1)
     expect(r.failures[0]!.issue).toBe(101)
@@ -228,17 +231,17 @@ describe('A1: closed-without-merge', () => {
 
   it('fail — closed issue with open PR (unusual but checkable)', () => {
     const entries = [makeEntry('iter-1', '1', 101, makeFacts({ issueState: 'closed', prState: 'open' }))]
-    expect(checkA1(entries).status).toBe('fail')
+    expect(checkA1(entries, PRINCIPALS).status).toBe('fail')
   })
 
   it('skip — open issue is not an A1 concern', () => {
     const entries = [makeEntry('iter-1', '1', 101, makeFacts({ issueState: 'open', prState: 'none' }))]
-    passesWithNoFailures(checkA1(entries))
+    passesWithNoFailures(checkA1(entries, PRINCIPALS))
   })
 
   it('skip — entry with no facts (forge unavailable)', () => {
     const entries = [makeEntry('iter-1', '1', 101, undefined)]
-    passesWithNoFailures(checkA1(entries))
+    passesWithNoFailures(checkA1(entries, PRINCIPALS))
   })
 
   it('info — closed-without-merge before COHERENCE_ENFORCED_FROM is grandfathered', () => {
@@ -250,7 +253,7 @@ describe('A1: closed-without-merge', () => {
         makeFacts({ issueState: 'closed', prState: 'none', closedAt: '2026-06-30T23:59:59Z' })
       )
     ]
-    const r = checkA1(entries)
+    const r = checkA1(entries, PRINCIPALS)
     expect(r.status).toBe('info')
     expect(r.failures[0]!.grandfathered).toBe(true)
   })
@@ -264,7 +267,7 @@ describe('A1: closed-without-merge', () => {
         makeFacts({ issueState: 'closed', prState: 'none', closedAt: '2026-07-01T00:00:00Z' })
       )
     ]
-    const r = checkA1(entries)
+    const r = checkA1(entries, PRINCIPALS)
     expect(r.status).toBe('fail')
     expect(r.failures[0]!.grandfathered).toBe(false)
   })
@@ -273,14 +276,14 @@ describe('A1: closed-without-merge', () => {
     const entries = [
       makeEntry('iter-1', '1', 101, makeFacts({ issueState: 'closed', prState: 'none', stateReason: 'not_planned' }))
     ]
-    passesWithNoFailures(checkA1(entries))
+    passesWithNoFailures(checkA1(entries, PRINCIPALS))
   })
 
   it('fail — closed COMPLETED with no merged PR still fails (done-but-unprovable)', () => {
     const entries = [
       makeEntry('iter-1', '1', 101, makeFacts({ issueState: 'closed', prState: 'none', stateReason: 'completed' }))
     ]
-    const r = checkA1(entries)
+    const r = checkA1(entries, PRINCIPALS)
     expect(r.status).toBe('fail')
     expect(r.failures).toHaveLength(1)
   })
@@ -351,7 +354,7 @@ describe('A1: closed-without-merge', () => {
     passesWithNoFailures(checkA1(entries, ['daniboomerang']))
   })
 
-  it('defaults to PRINCIPAL_ALLOWLIST when no principalAllowlist is passed', () => {
+  it('fail — a hand-close by an author left off the passed list: there is no built-in Principal to fall back on', () => {
     const entries = [
       makeEntry(
         'iter-1',
@@ -365,7 +368,9 @@ describe('A1: closed-without-merge', () => {
         })
       )
     ]
-    passesWithNoFailures(checkA1(entries))
+    const r = checkA1(entries, ['someone-else'])
+    expect(r.status).toBe('fail')
+    expect(r.failures).toHaveLength(1)
   })
 })
 

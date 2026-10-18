@@ -20,7 +20,7 @@ describe('resolveNewestFrozenBriefCommentUrl (security review, PR #503 round 2, 
         author: { login: PRINCIPAL }
       }
     ]
-    expect(resolveNewestFrozenBriefCommentUrl(comments)).toBe(
+    expect(resolveNewestFrozenBriefCommentUrl(comments, [PRINCIPAL])).toBe(
       'https://github.com/acme/widget/issues/309#issuecomment-1'
     )
   })
@@ -38,7 +38,7 @@ describe('resolveNewestFrozenBriefCommentUrl (security review, PR #503 round 2, 
         author: { login: PRINCIPAL }
       }
     ]
-    expect(resolveNewestFrozenBriefCommentUrl(comments)).toBe(
+    expect(resolveNewestFrozenBriefCommentUrl(comments, [PRINCIPAL])).toBe(
       'https://github.com/acme/widget/issues/309#issuecomment-2'
     )
   })
@@ -51,10 +51,21 @@ describe('resolveNewestFrozenBriefCommentUrl (security review, PR #503 round 2, 
         author: { login: 'an-impostor' }
       }
     ]
-    expect(resolveNewestFrozenBriefCommentUrl(comments)).toBeNull()
+    expect(resolveNewestFrozenBriefCommentUrl(comments, [PRINCIPAL])).toBeNull()
+  })
+
+  it('counts only the list the caller passes — a brief by an author left off it resolves to null', () => {
+    const comments = [
+      {
+        body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nOriginal brief.',
+        url: 'https://github.com/acme/widget/issues/309#issuecomment-1',
+        author: { login: PRINCIPAL }
+      }
+    ]
+    expect(resolveNewestFrozenBriefCommentUrl(comments, ['adopter-principal'])).toBeNull()
   })
 
   it('returns null when there is no frozen brief at all', () => {
-    expect(resolveNewestFrozenBriefCommentUrl([])).toBeNull()
+    expect(resolveNewestFrozenBriefCommentUrl([], [PRINCIPAL])).toBeNull()
   })
 })
