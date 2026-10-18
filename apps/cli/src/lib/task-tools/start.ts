@@ -1278,7 +1278,7 @@ export function createTaskStartHandler(
         ok: false,
         error: taskToolError(
           'precondition',
-          'task_start requires `dispatch.agent` to be configured (vinaya.config.json) — none is set, and this tool carries no agent input field of its own to fall back from. Set `dispatch.agent` to `claude`, `codex` or `gemini`.'
+          'task_start requires `dispatch.agent` to be configured (vinaya.config.json) — none is set, and this tool carries no agent input field of its own to fall back from. Set `dispatch.agent` to `claude` or `codex`.'
         )
       }
     }

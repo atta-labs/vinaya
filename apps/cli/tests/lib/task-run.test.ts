@@ -164,7 +164,7 @@ describe('runTask — O1: fresh task, one developer started', () => {
   it('propagates whatever devReviewLoop returns (publish or pause) unchanged, plus prUrl', async () => {
     const pauseResult: LoopResult = { finalDecision: { type: 'pause', reason: 'max_rounds' }, prNumber: 5, task: 1 }
     const result = await runTask(
-      { tranche: 't', n: 1, agent: 'gemini' },
+      { tranche: 't', n: 1, agent: 'codex' },
       deps({
         prepareTask: async () => ({ issue: 1, brief: '', commentUrl: '', version: 1 }),
         developerBranchFor: () => 'task/t/1',

@@ -47,13 +47,12 @@ describe('vinaya task dispatch — argv parsing', () => {
     expect(r.stderr).toContain('task id must be numeric')
   })
 
-  it('refuses an --agent value outside claude|codex|gemini', () => {
-    const r = runCli(['task', 'dispatch', 'plan-brief-v1', '427', '--agent', 'skills'])
+  it('refuses an --agent value outside claude|codex', () => {
+    const r = runCli(['task', 'dispatch', 'plan-brief-v1', '427', '--agent', 'gemini'])
     expect(r.status).toBe(2)
     expect(r.stderr).toContain('--agent must be one of')
     expect(r.stderr).toContain('claude')
     expect(r.stderr).toContain('codex')
-    expect(r.stderr).toContain('gemini')
   })
 
   it('refuses --agent with no value', () => {

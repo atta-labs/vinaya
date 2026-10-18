@@ -88,7 +88,7 @@ function harness(
   overrides: {
     launch?: (target: LaunchRecord, meta: { requestId: string; caller: string }) => LaunchResult | Promise<LaunchResult>
     repoRoot?: string | null
-    agent?: 'claude' | 'codex' | 'gemini' | null
+    agent?: 'claude' | 'codex' | null
     resolveIssue?: (ref: TaskToolRef) => number | null
     issueFacts?: (issue: number) => TaskIssueFacts
     isRunAlive?: (issue: number) => boolean

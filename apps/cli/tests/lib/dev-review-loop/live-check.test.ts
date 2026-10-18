@@ -311,7 +311,6 @@ describe('the live check’s parts', () => {
     }
     expect(vendorSignedIn('claude', sources)).toBe(true)
     expect(vendorSignedIn('codex', sources)).toBe(true)
-    expect(vendorSignedIn('gemini', sources)).toBe(false)
     const empty = { ...sources, fileExists: () => false }
     expect(vendorSignedIn('claude', empty)).toBe(false)
     expect(vendorSignedIn('codex', empty)).toBe(false)

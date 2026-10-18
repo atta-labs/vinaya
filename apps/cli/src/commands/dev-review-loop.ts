@@ -1,5 +1,5 @@
 /**
- * `vinaya dev-review-loop --task <n> --agent claude|codex|gemini`,
+ * `vinaya dev-review-loop --task <n> --agent claude|codex`,
  * `vinaya dev-review-loop --resume <pr> --agent …`, or `vinaya
  * dev-review-loop --cancel <pr> --agent …`. A thin
  * argv-parsing shim over `devReviewLoop`/`cancelDevReviewLoop`
@@ -71,12 +71,12 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
   const agentRaw = parsed.agent ?? (parsed.resumePr === undefined ? loadConfig()?.dispatch?.agent : undefined)
   if (!agentRaw && parsed.resumePr === undefined) {
     process.stderr.write(
-      'vinaya dev-review-loop: --agent <claude|codex|gemini> is required (or set dispatch.agent in vinaya.config.json)\n'
+      'vinaya dev-review-loop: --agent <claude|codex> is required (or set dispatch.agent in vinaya.config.json)\n'
     )
     process.exit(1)
   }
   if (agentRaw !== undefined && !isAgentVendor(agentRaw)) {
-    process.stderr.write(`vinaya dev-review-loop: invalid vendor '${agentRaw}' — expected claude, codex, or gemini\n`)
+    process.stderr.write(`vinaya dev-review-loop: invalid vendor '${agentRaw}' — expected claude or codex\n`)
     process.exit(1)
   }
   const agent: AgentVendor | undefined = agentRaw

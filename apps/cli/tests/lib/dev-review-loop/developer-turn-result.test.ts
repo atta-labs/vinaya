@@ -622,7 +622,7 @@ describe('devReviewLoop — the Developer turn result in a real round (O1–O4)'
 
   it('pauses at once, with no correction turn, for a vendor with no native structured output', async () => {
     const world = makeWorld({ developerTurnOutput: () => ({ adapter: null, raw: null, event: null }) })
-    const result = await runLoopInProcess(world, { task: world.task, agent: 'gemini' })
+    const result = await runLoopInProcess(world, { task: world.task, agent: 'claude' })
     expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
     expect((result.finalDecision as { detail: string }).detail).toContain('no native structured output')
     expect(developerPrompts(world, 1)).toHaveLength(1)

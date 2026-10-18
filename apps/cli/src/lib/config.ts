@@ -682,7 +682,7 @@ const VinayaConfigObjectSchema = z.object({
       timeoutMs: z.number().int().positive().optional(),
       reviewerTimeoutMs: z.number().int().positive().optional(),
       killGraceMs: z.number().int().positive().optional(),
-      agent: z.enum(['claude', 'codex', 'gemini']).optional()
+      agent: z.enum(['claude', 'codex']).optional()
     })
     .optional(),
   // Which severities block is repository policy — two separate thresholds,

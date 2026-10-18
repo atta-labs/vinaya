@@ -1,5 +1,5 @@
 /**
- * `vinaya task dispatch <tranche> <n> [--agent claude | codex | gemini]`
+ * `vinaya task dispatch <tranche> <n> [--agent claude | codex]`
  * — argv parsing only, around `dispatchTask` (`lib/dispatch-task.ts`), the
  * one lib function this command calls. `@deprecated` in favor of
  * `vinaya task brief` (preparation only, below) and `vinaya task run` (the

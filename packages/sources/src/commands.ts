@@ -174,9 +174,7 @@ export const COMMANDS: readonly Command[] = [
     needs: ['forge', 'operator-seat'],
     description:
       'Deprecated — render, pin, and post the brief on the Issue as the frozen original; start the developer',
-    flags: [
-      { flag: '--agent <claude|codex|gemini>', description: 'Start the developer through dispatchRole once posted' }
-    ],
+    flags: [{ flag: '--agent <claude|codex>', description: 'Start the developer through dispatchRole once posted' }],
     details: [
       // AEG:CLAIM: packages/aeg-core/src/brief-validation.ts contains:export const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
       "Renders the brief from the Issue and the tree (the same assembly `brief render` uses) and posts it once as an Issue comment whose first line is `<!-- aeg:brief:v1 -->` and whose second line is `Brief hash: <sha256>` — the hash covers only the body below those two lines, so any reader recomputes it. Refuses outright, naming the existing comment's URL, when a `v1` comment already exists on the Issue — the brief is frozen by design, never overwritten or silently reissued.",
@@ -203,7 +201,7 @@ export const COMMANDS: readonly Command[] = [
     description: 'One command from a planned Issue to a reviewed pull request — exactly one developer started',
     flags: [
       {
-        flag: '--agent <claude|codex|gemini>',
+        flag: '--agent <claude|codex>',
         description: 'Vendor for the developer and both reviewers this run dispatches'
       },
       {
@@ -838,11 +836,11 @@ export const COMMANDS: readonly Command[] = [
     name: 'dispatch',
     needs: ['operator-seat'],
     description:
-      "Start a role's headless agent session (claude/codex/gemini) with attribution set on its environment, recording the outcome through the Vinaya Log",
+      "Start a role's headless agent session (claude/codex) with attribution set on its environment, recording the outcome through the Vinaya Log",
     flags: [
       {
         flag: '--agent',
-        description: 'Vendor to start: `claude`, `codex`, or `gemini` (falls back to `dispatch.agent` in config)'
+        description: 'Vendor to start: `claude` or `codex` (falls back to `dispatch.agent` in config)'
       },
       { flag: '--prompt-file', description: 'Path to the prompt text sent to the agent (never on argv)' },
       { flag: '--task', description: "This dispatch's task Issue number — mutually exclusive with `--pr`" },
@@ -864,8 +862,8 @@ export const COMMANDS: readonly Command[] = [
       'Runs no flush of its own after the dispatch returns: every log line `dispatchRole` emits reaches its configured `logs` destination live, as it is emitted, so there is nothing left to ship in a trailing step. `--task`/`--pr` are attribution only, and remain mutually exclusive.',
       // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:'-r',
       // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:resumeArgs: (id, model) => [
-      // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:'--resume',
-      "A successful dispatch's `DispatchHandle` carries `resumeId` — the vendor's own session/thread identifier (claude/gemini: `session_id`; codex: `thread_id`), parsed from its stdout, `null` on any failure. Passing that value as `--resume <id>` on a later call swaps in that vendor's own resume invocation (`claude -p -r <id> ...`; `codex exec resume <id> ...`; `gemini ... --resume <id> ...`) in place of its first-dispatch args."
+      // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:parseResumeId: parseCodexResumeId,
+      "A successful dispatch's `DispatchHandle` carries `resumeId` — the vendor's own session/thread identifier (claude: `session_id`; codex: `thread_id`), parsed from its stdout, `null` on any failure. Passing that value as `--resume <id>` on a later call swaps in that vendor's own resume invocation (`claude -p -r <id> ...`; `codex exec resume <id> ...`) in place of its first-dispatch args."
     ],
     status: 'shipped'
   },
@@ -877,7 +875,7 @@ export const COMMANDS: readonly Command[] = [
     flags: [
       { flag: '--task <n>', description: "This task's Issue number — its frozen `aeg:brief:v1` comment is the brief" },
       {
-        flag: '--agent <claude|codex|gemini>',
+        flag: '--agent <claude|codex>',
         description: 'Vendor for every dispatch this loop makes (falls back to `dispatch.agent` in config)'
       },
       { flag: '--json', description: 'Enveloped JSON output (schema: 1)' }

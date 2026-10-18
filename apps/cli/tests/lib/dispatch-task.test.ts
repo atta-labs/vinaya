@@ -921,7 +921,6 @@ describe('resolveModelFromRationale (O3/MAJOR 2, #456 round 1) — the real reso
     // (`dispatch.ts`'s own `classModels` doc comment) — `undefined`, never a
     // guessed, version-pinned name.
     expect(resolveModelFromRationale('codex', MID_RATIONALE, undefined)).toBeUndefined()
-    expect(resolveModelFromRationale('gemini', MID_RATIONALE, undefined)).toBeUndefined()
   })
 
   it('no rationale field at all, and no explicit model, resolves to undefined rather than guessing', () => {

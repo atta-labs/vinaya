@@ -57,7 +57,7 @@ export { AEG_BRIEF_V1_MARKER, briefHash, contentAfterTwoLines } from '@attalabs/
  * artifact format, so this is a deliberately separate, same-shaped type
  * rather than a reuse that would silently accept `--agent skills`.
  */
-export const DISPATCH_AGENTS = ['claude', 'codex', 'gemini'] as const
+export const DISPATCH_AGENTS = ['claude', 'codex'] as const
 export type DispatchAgent = (typeof DISPATCH_AGENTS)[number]
 
 export type DispatchTaskInput = { tranche: string; n: number; agent?: DispatchAgent; model?: string }

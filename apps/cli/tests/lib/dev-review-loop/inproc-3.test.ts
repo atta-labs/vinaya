@@ -48,7 +48,7 @@ function escalationRecordPath(world: LoopWorld, round: number, head: string): st
 }
 
 /** `cancelDevReviewLoop` in-process against `world` — every dep wired to the same world fields `makeInProcessDeps` uses for `devReviewLoop`, so a cancel sees exactly the ruling/PR-body state a resume would. */
-function cancelInProcess(world: LoopWorld, agent: 'claude' | 'codex' | 'gemini' = 'claude') {
+function cancelInProcess(world: LoopWorld, agent: 'claude' | 'codex' = 'claude') {
   return withWorldEnv(world, () =>
     cancelDevReviewLoop(
       { cancelPr: world.prNumber, agent },

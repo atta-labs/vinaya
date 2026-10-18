@@ -104,8 +104,7 @@ const REAL_SIGN_IN_SOURCES: SignInSources = {
  * cached session file or Keychain entry. Only the keys a run is handed
  * (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) move where it looks, so a line judged
  * runnable finds the same login when it runs; a token held only in the
- * driver's environment is never counted. Gemini has no subscription sign-in in
- * Vinaya, so never. Asks presence only; calls no vendor.
+ * driver's environment is never counted. Asks presence only; calls no vendor.
  */
 export function vendorSignedIn(vendor: AgentVendor, sources: SignInSources = REAL_SIGN_IN_SOURCES): boolean {
   if (vendor === 'claude') {
