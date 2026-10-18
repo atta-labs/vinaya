@@ -13,6 +13,7 @@ const {
   hasExplicitMilestoneFlag,
   hasTrancheIntentsSection,
   indexTrancheMilestonesAsync,
+  indexTrancheMilestonesForSlugAsync,
   listActiveTrancheSlugs,
   listArchivedTrancheSlugs,
   intentGoalForSlug,
@@ -818,4 +819,62 @@ describe('tranchesAttachedToMilestone', () => {
     ])
     expect((await tranchesAttachedToMilestone(OWNER, REPO, 15)).sort()).toEqual(['tranche-a', 'tranche-b', 'tranche-c'])
   })
+})
+
+describe('indexTrancheMilestonesForSlugAsync', () => {
+  const BRANCH = 'branch-tranche-v1'
+  const NOISE_LABELS = Array.from({ length: 47 }, (_, n) => ({ name: `vinaya/tranche:noise-${n}-v1` }))
+
+  function mockForge(
+    milestones: unknown[],
+    labelNames: string[],
+    issuesByLabel: Record<string, ReturnType<typeof issue>[]>
+  ) {
+    vi.mocked(ghApiGetAllPagesAsync).mockImplementation(async (path: string) =>
+      path.includes('/labels') ? [...NOISE_LABELS, ...labelNames.map((name) => ({ name }))] : milestones
+    )
+    vi.mocked(ghIssueListByLabelAsync).mockClear()
+    vi.mocked(ghIssueListByLabelAsync).mockImplementation(async (_o, _r, label: string) => issuesByLabel[label] ?? [])
+  }
+
+  const shapes: Array<{ name: string; milestones: unknown[]; labels: string[]; issues: ReturnType<typeof issue>[] }> = [
+    { name: 'a label-only tranche', milestones: [], labels: [`vinaya/tranche:${BRANCH}`], issues: [issue('OPEN')] },
+    {
+      name: 'a legacy-titled tranche',
+      milestones: [{ title: BRANCH, description: 'Legacy goal.', state: 'open' }],
+      labels: [],
+      issues: []
+    },
+    {
+      name: 'an archived tranche',
+      milestones: [{ title: 'holder', description: `### Tranche intents\n- ${BRANCH}: Done goal.`, state: 'open' }],
+      labels: [`vinaya/tranche:${BRANCH}`],
+      issues: [issue('CLOSED')]
+    },
+    {
+      name: 'a closed legacy tranche whose Issues are still open',
+      milestones: [{ title: BRANCH, description: 'Adopted away.', state: 'closed' }],
+      labels: [`vinaya/tranche:${BRANCH}`],
+      issues: [issue('OPEN')]
+    },
+    { name: 'a planned tranche with no Issues', milestones: [], labels: [`vinaya/tranche:${BRANCH}`], issues: [] },
+    { name: 'a tranche with no label and no slug-titled Milestone', milestones: [], labels: [], issues: [] }
+  ]
+
+  for (const shape of shapes) {
+    it(`matches the repository-wide index for ${shape.name}, with one Issue read for its own label`, async () => {
+      mockForge(shape.milestones, shape.labels, { [`vinaya/tranche:${BRANCH}`]: shape.issues })
+      const full = await indexTrancheMilestonesAsync(OWNER, REPO)
+
+      mockForge(shape.milestones, shape.labels, { [`vinaya/tranche:${BRANCH}`]: shape.issues })
+      const scoped = await indexTrancheMilestonesForSlugAsync(OWNER, REPO, BRANCH)
+
+      expect(vi.mocked(ghIssueListByLabelAsync).mock.calls.map((c) => c[2])).toEqual([`vinaya/tranche:${BRANCH}`])
+      expect(scoped.facts.get(BRANCH)).toEqual(full.facts.get(BRANCH))
+      expect(scoped.active).toEqual(full.active.filter((r) => r.slug === BRANCH))
+      expect(scoped.archived).toEqual(full.archived.filter((r) => r.slug === BRANCH))
+      expect(scoped.legacySlugs.has(BRANCH)).toBe(full.legacySlugs.has(BRANCH))
+      expect([...scoped.facts.keys()].every((k) => k === BRANCH)).toBe(true)
+    })
+  }
 })

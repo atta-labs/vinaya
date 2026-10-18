@@ -9,6 +9,7 @@ export {
   hasExplicitMilestoneFlag,
   hasTrancheIntentsSection,
   indexTrancheMilestonesAsync,
+  indexTrancheMilestonesForSlugAsync,
   intentGoalForSlug,
   intentLines,
   listActiveTrancheSlugs,

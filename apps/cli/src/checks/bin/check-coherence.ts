@@ -16,7 +16,7 @@
  * Runs A1, A3, T1, T2, T3, D1, R1, L1, L3 and the report-only lifecycle
  * rules L2 and L4. L2 and L4 print as `warning` check-error lines and never
  * change the exit code. Their facts come from the Milestone index
- * (`indexTrancheMilestonesAsync`) and, for L4 only, the branch tranche's
+ * (`indexTrancheMilestonesForSlugAsync`) and, for L4 only, the branch tranche's
  * labeled Issue list. It does NOT run A2 or L5 — a narrower scope than
  * `verify-coherence.ts`.
  *
@@ -27,7 +27,7 @@ import { isEntryPoint } from '@attalabs/aeg-core'
 import {
   deriveTrancheFromForge,
   fetchTrancheIssuesAsync,
-  indexTrancheMilestonesAsync,
+  indexTrancheMilestonesForSlugAsync,
   issueMilestonesFromIssues
 } from '@attalabs/aeg-forge-state'
 import type { GhIssue, TrancheMilestoneIndex } from '@attalabs/aeg-forge-state'
@@ -327,7 +327,7 @@ async function main(): Promise<void> {
   // this process's stderr) is never reached.
   let index: TrancheMilestoneIndex
   try {
-    index = await indexTrancheMilestonesAsync(repo.owner, repo.repo)
+    index = await indexTrancheMilestonesForSlugAsync(repo.owner, repo.repo, slug)
   } catch (err) {
     emitLifecycleUnevaluated(slug, errorText(err))
     emitCheckError({
