@@ -225,11 +225,11 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // `vinaya/waiver:docs` label + its labeling actor, so
       // GITHUB_TOKEN/GH_TOKEN must reach it on a CI runner, where `gh`
       // authenticates only from those env vars. GITHUB_REPOSITORY/
-      // GITHUB_TOKEN/GH_TOKEN also feed the trust-anchor read
-      // (`loadTrustAnchorConfig`, lib/config.ts) — a `gh api` fetch of
+      // GITHUB_TOKEN/GH_TOKEN also feed the Principal read
+      // (`resolveTrustedPrincipals`, lib/config.ts) — a `gh api` fetch of
       // `principals` from the DEFAULT BRANCH, never local git. All optional:
-      // absent, the fetch fails and the allowlist falls back to the hardcoded
-      // `PRINCIPAL_ALLOWLIST`, the safe direction.
+      // absent, the read fails and the waiver check refuses, naming the
+      // reason — never a fallback to a built-in Principal.
       // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
       // `brief-shape` above.
       env: {
@@ -603,8 +603,9 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // them the allowlist strips the workflow-provided token and every
       // `gh pr view` fails. Optional because local runs use `gh`'s own
       // keyring auth with no env var at all. GITHUB_REPOSITORY addresses the
-      // trust-anchor read (`loadTrustAnchorConfig`, lib/config.ts) — a `gh
-      // api` fetch of `principals` from the DEFAULT BRANCH.
+      // Principal read (`resolveTrustedPrincipals`, lib/config.ts) — a `gh
+      // api` fetch of `principals` from the DEFAULT BRANCH, which refuses
+      // the gate when no list is configured or the read fails.
       //
       // Deliberately NO `BASE_SHA` here, and no other ref-shaped knob: a
       // `BASE_SHA` declaration was tried and reverted (a security-review

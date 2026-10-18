@@ -63,6 +63,11 @@ if (args[0] === 'pr' && args[1] === 'view') {
   }))
   process.exit(0)
 }
+// The default branch's \`vinaya.config.json\` — the review gate's Principal list.
+if (args[0] === 'api' && String(args[1]).includes('/contents/vinaya.config.json')) {
+  process.stdout.write(${JSON.stringify(Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64'))})
+  process.exit(0)
+}
 if (args[0] === 'api' && String(args[1]).includes('/check-runs')) {
   writeFileSync(${JSON.stringify(checkRunsProbe)}, args.join(' '))
   process.stdout.write('{"id":1,"name":"Vinaya CI","status":"completed","conclusion":"failure"}\\n')
@@ -80,7 +85,7 @@ process.exit(1)
       stderr
     } = await spawnBudgetedAsync(['bun', BIN], {
       cwd: dir,
-      env: { ...stripVinayaEnv(), PATH: `${ghDir}:${process.env.PATH}`, PR_NUMBER: '1' }
+      env: { ...stripVinayaEnv(), PATH: `${ghDir}:${process.env.PATH}`, PR_NUMBER: '1', GITHUB_REPOSITORY: 'o/r' }
     })
 
     // The red sibling check is never even fetched.

@@ -56,9 +56,16 @@ function quote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`
 }
 
+/** The default branch's `vinaya.config.json`, as the contents API returns it — the Principal list a check resolves. */
+const DEFAULT_BRANCH_CONFIG: FakeCall = {
+  pattern: '"api repos/"*"/contents/vinaya.config.json "*',
+  stdout: Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64'),
+  exit: 0
+}
+
 function fakeGh(calls: FakeCall[]): string {
   const binDir = tempDir('rate-limit-fake-gh-')
-  const arms = calls
+  const arms = [DEFAULT_BRANCH_CONFIG, ...calls]
     .map((c) => {
       const out = c.stdout === undefined ? '' : `printf '%s' ${quote(c.stdout)}; `
       const err = c.stderr === undefined ? '' : `printf '%s\\n' ${quote(c.stderr)} >&2; `

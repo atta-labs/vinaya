@@ -171,39 +171,65 @@ describe('registry env declarations', () => {
   // trust-anchor read; round 3 hardcoded a local `origin/main`, which the PR's
   // own workflow YAML could still `git update-ref`. `review-gate` must never
   // regain a ref-shaped env knob, and no bin may resolve `principals` from
-  // any local/env source — only `loadTrustAnchorConfig()` (GitHub API).
+  // any local/env source — only the default-branch read through the GitHub
+  // API (`resolveTrustedPrincipals()`, over the same fetch as
+  // `loadTrustAnchorConfig()`).
   it('review-gate never declares BASE_SHA — its trust anchor is never caller-suppliable', () => {
     const reviewGate = specs.find((s) => s.name === 'review-gate')
     expect(reviewGate?.env).toBeDefined()
     expect(Object.keys(reviewGate?.env ?? {})).not.toContain('BASE_SHA')
   })
 
-  it('every principals-resolving source calls loadTrustAnchorConfig() with NO arguments, and never a local-git/env-derived config', () => {
-    const sources = [
+  it('every check-side Principal source calls resolveTrustedPrincipals() with NO arguments, and never a local-git/env-derived config', () => {
+    // Each source that decides who counts as a Principal, with the number of
+    // `resolveTrustedPrincipals()` calls it makes — the refusing resolver,
+    // never the `resolvePrincipalAllowlist` fallback.
+    const sources: Array<[string, number]> = [
       // The review gate's own input assembly — the `review-gate` check bin is
-      // now the thin contract adapter over it, and the dev-review-loop
-      // driver's "is this review concluded?" read calls the SAME assembly, so
-      // this rule binds where the resolution actually happens. The bin itself
-      // is asserted to hold no copy of it, just below.
-      join('lib', 'review-gate-input.ts'),
-      join('checks', 'bin', 'check-doc-coverage.ts'),
-      join('checks', 'bin', 'check-doc-coverage-push.ts'),
-      join('checks', 'bin', 'check-body-bare-digits.ts'),
+      // the thin contract adapter over it, and the dev-review-loop driver's
+      // "is this review concluded?" read calls the SAME assembly, so this
+      // rule binds where the resolution actually happens. The bin itself is
+      // asserted to hold no copy of it, just below.
+      [join('lib', 'review-gate-input.ts'), 1],
+      [join('checks', 'bin', 'check-doc-coverage.ts'), 1],
+      [join('checks', 'bin', 'check-doc-coverage-push.ts'), 1],
+      [join('checks', 'bin', 'check-evidence-fresh.ts'), 1],
+      [join('checks', 'bin', 'check-coherence.ts'), 1],
+      [join('checks', 'bin', 'check-first-push-dispatch.ts'), 1],
+      [join('checks', 'bin', 'check-dispatch-readiness.ts'), 1],
+      [join('checks', 'bin', 'check-brief-shape.ts'), 1],
       // `test-plan` and `principal-test-plan-wait` resolve principals, through
       // this shared module, to pick the task Issue's frozen brief for its
       // `[live]` lines.
-      join('checks', 'frozen-brief.ts')
+      [join('checks', 'frozen-brief.ts'), 1]
     ]
-    for (const name of sources) {
+    for (const [name, expected] of sources) {
       const src = readSource(name)
-      const calls = src.match(/loadTrustAnchorConfig\(([^)]*)\)/g) ?? []
-      expect(calls.length, `${name} should call loadTrustAnchorConfig exactly once`).toBe(1)
-      expect(calls[0], `${name} must pass no argument — the fetcher param is test-only`).toBe('loadTrustAnchorConfig()')
+      const calls = src.match(/resolveTrustedPrincipals\(([^)]*)\)/g) ?? []
+      expect(calls.length, `${name} should call resolveTrustedPrincipals exactly ${expected} time(s)`).toBe(expected)
+      for (const call of calls) {
+        expect(call, `${name} must pass no argument — the fetcher param is test-only`).toBe(
+          'resolveTrustedPrincipals()'
+        )
+      }
+      expect(src, `${name} must not fall back to a built-in Principal`).not.toContain('resolvePrincipalAllowlist')
       // The retired, PR-rewritable sources must not reappear for this purpose.
       expect(src, `${name} must not resolve principals from local git`).not.toContain('loadConfigFromRef')
       expect(src, `${name} must not resolve principals from the working tree`).not.toMatch(
         /resolvePrincipalAllowlist\(\s*loadConfig\(\)/
       )
+    }
+  })
+
+  it('every remaining trust-anchor source calls loadTrustAnchorConfig() with NO arguments, exactly once', () => {
+    // The review-gate assembly reads its review policy and cutovers from the
+    // trust anchor; `body-bare-digits` resolves the release actor from it.
+    for (const name of [join('lib', 'review-gate-input.ts'), join('checks', 'bin', 'check-body-bare-digits.ts')]) {
+      const src = readSource(name)
+      const calls = src.match(/loadTrustAnchorConfig\(([^)]*)\)/g) ?? []
+      expect(calls.length, `${name} should call loadTrustAnchorConfig exactly once`).toBe(1)
+      expect(calls[0], `${name} must pass no argument — the fetcher param is test-only`).toBe('loadTrustAnchorConfig()')
+      expect(src, `${name} must not resolve from local git`).not.toContain('loadConfigFromRef')
     }
   })
 
@@ -221,7 +247,7 @@ describe('registry env declarations', () => {
   it('doc-coverage-push short-circuits on the waiver label BEFORE the network-bound trust-anchor read', () => {
     const src = readCode('check-doc-coverage-push.ts')
     const guardAt = src.indexOf('if (!labels.includes(WAIVER_LABEL)) return false')
-    const fetchAt = src.indexOf('loadTrustAnchorConfig()')
+    const fetchAt = src.indexOf('resolveTrustedPrincipals()')
     expect(guardAt, 'must guard on the waiver label before fetching').toBeGreaterThan(-1)
     expect(guardAt, 'label guard must come BEFORE the trust-anchor fetch').toBeLessThan(fetchAt)
   })
@@ -250,7 +276,7 @@ describe('registry env declarations', () => {
     const guardAt = src.indexOf('if (!prNumberStr) return false')
     const fetchLabelsAt = src.indexOf('fetchPrLabels(prNumber)')
     const fetchActorAt = src.indexOf('fetchWaiverLabelActor(prNumber, WAIVER_LABEL)')
-    const trustAnchorAt = src.indexOf('loadTrustAnchorConfig()')
+    const trustAnchorAt = src.indexOf('resolveTrustedPrincipals()')
     expect(guardAt, 'must guard on PR_NUMBER before any network read').toBeGreaterThan(-1)
     expect(guardAt, 'PR_NUMBER guard must come BEFORE fetching labels').toBeLessThan(fetchLabelsAt)
     expect(guardAt, 'PR_NUMBER guard must come BEFORE fetching the waiver actor').toBeLessThan(fetchActorAt)

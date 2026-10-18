@@ -51,7 +51,8 @@ import {
 } from '@attalabs/aeg-core'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolvePrincipalAllowlist } from '../../lib/config'
+import { emitPrincipalsRefusal } from '../principals-refusal'
+import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../lib/config'
 
 const CHECK_NAME = 'coherence'
 
@@ -256,6 +257,18 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
+  // Whose hand-close of an Issue counts (rule A1) needs the Principal list,
+  // resolved before any forge read so its refusal is never hidden behind one:
+  // with none configured the check refuses; a failed read is one warning and
+  // A1 is not evaluated, while every other rule still runs.
+  let principalAllowlist: string[] | null
+  try {
+    principalAllowlist = resolveTrustedPrincipals()
+  } catch (err) {
+    if (emitPrincipalsRefusal(CHECK_NAME, err, 'warning') === 'not-configured') process.exit(1)
+    principalAllowlist = null
+  }
+
   const source = createForgeSource({ owner: repo.owner, repo: repo.repo })
   const tranche = await source.getTranche(slug)
   const file: TrancheFile = { slug, archived: false, tranche }
@@ -291,7 +304,7 @@ async function main(): Promise<void> {
     facts: snapshot.facts.get(t.id)
   }))
 
-  results.push(checkA1(enrichedEntries, resolvePrincipalAllowlist(loadTrustAnchorConfig())))
+  if (principalAllowlist !== null) results.push(checkA1(enrichedEntries, principalAllowlist))
   results.push(checkA3(enrichedEntries))
   results.push(checkT1(enrichedEntries))
   results.push(checkD1(enrichedEntries, issueToEntry(enrichedEntries), taskToEntry(enrichedEntries, slug)))

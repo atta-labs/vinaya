@@ -40,7 +40,8 @@ import {
 } from '@attalabs/aeg-core'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { resolveTrustedPrincipals } from '../../lib/config'
+import { emitPrincipalsRefusal } from '../principals-refusal'
 import { resolveEdge } from '../edge-resolve'
 
 const CHECK_NAME = 'first-push-dispatch'
@@ -84,10 +85,23 @@ function prExistsFor(branch: string): boolean {
   }
 }
 
-/** Best-effort readiness classification — any forge failure degrades to `UNKNOWN` (fail-open), never a thrown error. */
+/** Best-effort readiness classification — any forge failure degrades to `UNKNOWN` (fail-open), never a thrown error; only an unconfigured Principal list refuses the push. */
 async function classifyReadiness(trancheSlug: string, taskId: string): Promise<DispatchReadinessFact> {
   const repo = resolveRepo()
   if (!repo) return 'UNKNOWN'
+
+  // The readiness gate needs the Principal list, resolved before any forge
+  // read so its refusal is never hidden behind one, and outside the catch
+  // below so a refusal is never folded into `UNKNOWN`: with none configured
+  // the push is refused; a failed read is one warning and readiness is
+  // `UNKNOWN`, so the push proceeds.
+  let principalAllowlist: string[]
+  try {
+    principalAllowlist = resolveTrustedPrincipals()
+  } catch (err) {
+    if (emitPrincipalsRefusal(CHECK_NAME, err, 'warning') === 'not-configured') process.exit(1)
+    return 'UNKNOWN'
+  }
 
   try {
     const source = createForgeSource({ owner: repo.owner, repo: repo.repo })
@@ -149,7 +163,7 @@ async function classifyReadiness(trancheSlug: string, taskId: string): Promise<D
       conflictsWith,
       priorTask: null,
       priorTrancheArchival: [],
-      principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig())
+      principalAllowlist
     }
 
     return checkDispatchReadiness(input).ready ? 'READY' : 'NOT_READY'

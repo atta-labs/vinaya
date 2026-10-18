@@ -24,7 +24,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { DOC_OWNERS_PATH, evaluateC5, isWaiverLabelActorVerified, WAIVER_LABEL } from '@attalabs/aeg-core'
 import { fileDiffAgainst } from '../../lib/diff-evidence'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { emitPrincipalsRefusal } from '../principals-refusal'
+import { resolveTrustedPrincipals } from '../../lib/config'
 import { exitOnIncompleteForgeSnapshot, snapshotPullRequest } from '../../lib/forge-snapshot'
 
 // No chdir: `DOC_OWNERS_PATH` (`.vinaya/doc-owners`) and the `git diff` below
@@ -130,13 +131,22 @@ function waiverActive(): boolean {
   const labels = fetchPrLabels(prNumber)
   if (!labels?.includes(WAIVER_LABEL)) return false
   // Trust anchor: GitHub-API default-branch read, never the PR's own
-  // checkout. See `loadTrustAnchorConfig` in lib/config.ts.
+  // checkout. See `loadTrustAnchorConfig` in lib/config.ts. Whose label
+  // counts is a trust decision, so a list that cannot be resolved — not
+  // configured, or the read failed — refuses the check rather than guessing.
+  let principalAllowlist: string[]
+  try {
+    principalAllowlist = resolveTrustedPrincipals()
+  } catch (err) {
+    emitPrincipalsRefusal(CHECK_NAME, err, 'error')
+    process.exit(1)
+  }
   const labelActor = fetchWaiverLabelActor(prNumber, WAIVER_LABEL)
   return isWaiverLabelActorVerified({
     label: WAIVER_LABEL,
     labels,
     labelActor,
-    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig())
+    principalAllowlist
   })
 }
 

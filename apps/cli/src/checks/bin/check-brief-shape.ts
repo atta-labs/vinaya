@@ -35,7 +35,7 @@ import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { resolveTaskFrozenBrief } from '../frozen-brief'
 import { readIssueBody, readIssueComments } from '../../lib/forge-read'
 import { exitOnIncompleteForgeSnapshot } from '../../lib/forge-snapshot'
-import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolvePrincipalAllowlist } from '../../lib/config'
+import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../lib/config'
 
 const CHECK_NAME = 'brief-shape'
 
@@ -59,7 +59,7 @@ function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResol
   const resolved = resolveTaskFrozenBrief(
     prBody,
     (issue) => readIssueComments(issue, `Issue #${issue}`),
-    () => resolvePrincipalAllowlist(loadTrustAnchorConfig()),
+    () => resolveTrustedPrincipals(),
     'grade the dispatched brief'
   )
   if (resolved.ok) return { ok: true, body: resolved.content }

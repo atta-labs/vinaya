@@ -368,6 +368,10 @@ describe('the check refuses a placeholder body once a developer round has alread
     return { dir, head }
   }
 
+  // The default branch's `vinaya.config.json`, as the contents API returns it:
+  // the Principal list the check resolves, never a built-in fallback.
+  const DEFAULT_BRANCH_CONFIG = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
+
   function writeGhStub(
     dir: string,
     head: string,
@@ -379,6 +383,10 @@ describe('the check refuses a placeholder body once a developer round has alread
     writeFileSync(
       ghPath,
       `#!/bin/sh
+if [ "$1" = "api" ] && [ "$2" = "repos/\${GITHUB_REPOSITORY}/contents/vinaya.config.json" ]; then
+  echo '${DEFAULT_BRANCH_CONFIG}'
+  exit 0
+fi
 if [ "$5" = "headRefOid,baseRefName" ]; then
   echo '{"headRefOid":"${head}","baseRefName":"main"}'
   exit 0
@@ -395,6 +403,19 @@ exit 1
     return ghDir
   }
 
+  function placeholderEnv(ghDir: string): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: `${ghDir}:${process.env.PATH}`,
+      GITHUB_REPOSITORY: 'o/r',
+      BASE_SHA: 'main',
+      PR_BODY: placeholderBody(),
+      PR_NUMBER: '1'
+    }
+    delete env.VINAYA_CI_CONFIG_PROBE_REF
+    return env
+  }
+
   function placeholderBody(): string {
     return ['<!-- AEG:EVIDENCE:START -->', EVIDENCE_PLACEHOLDER_TEXT, '<!-- AEG:EVIDENCE:END -->'].join('\n')
   }
@@ -405,13 +426,7 @@ exit 1
       const ghDir = writeGhStub(dir, head, [])
       const proc = Bun.spawn(['bun', BIN], {
         cwd: dir,
-        env: {
-          ...process.env,
-          PATH: `${ghDir}:${process.env.PATH}`,
-          BASE_SHA: 'main',
-          PR_BODY: placeholderBody(),
-          PR_NUMBER: '1'
-        },
+        env: placeholderEnv(ghDir),
         stdout: 'pipe',
         stderr: 'pipe'
       })
@@ -429,13 +444,7 @@ exit 1
       ])
       const proc = Bun.spawn(['bun', BIN], {
         cwd: dir,
-        env: {
-          ...process.env,
-          PATH: `${ghDir}:${process.env.PATH}`,
-          BASE_SHA: 'main',
-          PR_BODY: placeholderBody(),
-          PR_NUMBER: '1'
-        },
+        env: placeholderEnv(ghDir),
         stdout: 'pipe',
         stderr: 'pipe'
       })
@@ -457,13 +466,7 @@ exit 1
       ])
       const proc = Bun.spawn(['bun', BIN], {
         cwd: dir,
-        env: {
-          ...process.env,
-          PATH: `${ghDir}:${process.env.PATH}`,
-          BASE_SHA: 'main',
-          PR_BODY: placeholderBody(),
-          PR_NUMBER: '1'
-        },
+        env: placeholderEnv(ghDir),
         stdout: 'pipe',
         stderr: 'pipe'
       })
@@ -483,13 +486,7 @@ exit 1
       const ghDir = writeGhStub(dir, head, [{ body: '<!-- aeg:developer:round-1 --> Head: deadbeef' }])
       const proc = Bun.spawn(['bun', BIN], {
         cwd: dir,
-        env: {
-          ...process.env,
-          PATH: `${ghDir}:${process.env.PATH}`,
-          BASE_SHA: 'main',
-          PR_BODY: placeholderBody(),
-          PR_NUMBER: '1'
-        },
+        env: placeholderEnv(ghDir),
         stdout: 'pipe',
         stderr: 'pipe'
       })

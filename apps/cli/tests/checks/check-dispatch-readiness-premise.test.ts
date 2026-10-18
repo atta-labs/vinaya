@@ -42,14 +42,22 @@ async function run(env: Record<string, string>, args: string[] = []): Promise<{ 
  * answers `gh issue view <n> --json number,state,body,labels`; no other
  * forge call happens for a rationale-empty Issue with no dependency edges
  * (`resolveEdge`/`resolveToken` are never reached), so no live network is
- * needed to exercise the three routing branches below.
+ * needed to exercise the three routing branches below. It also answers the
+ * default branch's `vinaya.config.json` read with a configured `principals`
+ * list, the one source the readiness gate's Principal list comes from.
  */
+const DEFAULT_BRANCH_CONFIG = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
+
 function writeFakeGh(dir: string, issueJson: Record<string, unknown> | null): void {
   const p = join(dir, 'gh')
   const body = issueJson === null ? null : JSON.stringify(issueJson)
   writeFileSync(
     p,
     `#!/bin/sh
+if [ "$1" = "api" ] && [ "$2" = "repos/\${GITHUB_REPOSITORY}/contents/vinaya.config.json" ]; then
+  echo '${DEFAULT_BRANCH_CONFIG}'
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
 ${body === null ? '  exit 1' : `  printf '%s' '${body.replace(/'/g, "'\\''")}'\n  exit 0`}
 fi
@@ -61,8 +69,15 @@ exit 1
 }
 
 async function runBin(binDir: string, env: Record<string, string>): Promise<{ exitCode: number; stderr: string }> {
+  const spawnEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: `${binDir}:${process.env.PATH}`,
+    GITHUB_REPOSITORY: 'atta-labs/vinaya-fixture',
+    ...env
+  }
+  delete spawnEnv.VINAYA_CI_CONFIG_PROBE_REF
   const proc = Bun.spawn(['bun', BIN], {
-    env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, ...env },
+    env: spawnEnv,
     cwd: REPO_ROOT,
     stdout: 'ignore',
     stderr: 'pipe'

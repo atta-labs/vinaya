@@ -6,7 +6,7 @@ import {
   parseLiveTestPlanItems,
   resolveNewestFrozenBrief
 } from '@attalabs/aeg-core'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../lib/config'
+import { PrincipalsUnresolvedError, resolveTrustedPrincipals } from '../lib/config'
 import { isForgeReadOversize, readIssueComments } from '../lib/forge-read'
 import { incompleteForgeSnapshot } from '../lib/forge-snapshot'
 
@@ -55,9 +55,20 @@ export function resolveTaskFrozenBrief(
       message: `could not fetch Issue #${issue}'s comments to ${purpose}: ${err instanceof Error ? err.message : String(err)}`
     }
   }
+  // Which comment is the frozen brief is a trust decision: with no Principal
+  // list the default branch can vouch for — not configured, or the read
+  // failed — the brief cannot be resolved, and the refusal's message, naming
+  // the fix or the reason, is the failure.
+  let allowlist: readonly string[]
+  try {
+    allowlist = principalAllowlist()
+  } catch (err) {
+    if (!(err instanceof PrincipalsUnresolvedError)) throw err
+    return { ok: false, notFound: false, message: err.message }
+  }
   const resolved = resolveNewestFrozenBrief(
     comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
-    principalAllowlist()
+    allowlist
   )
   if (!resolved) {
     return { ok: false, notFound: false, message: `not dispatched — no \`aeg:brief:v<k>\` comment on Issue #${issue}.` }
@@ -80,7 +91,7 @@ export type LiveCheckDeps = {
 
 export const defaultLiveCheckDeps: LiveCheckDeps = {
   fetchIssueComments: (issue) => readIssueComments(issue, `Issue #${issue}`),
-  principalAllowlist: () => resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  principalAllowlist: () => resolveTrustedPrincipals()
 }
 
 /**

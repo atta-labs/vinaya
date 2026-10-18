@@ -1739,6 +1739,95 @@ export function loadTrustAnchorConfigOrThrow(
   return parseTrustAnchorContent(base64)
 }
 
+/** The fix every `not-configured` refusal names, so no caller words it differently. */
+export const PRINCIPALS_NOT_CONFIGURED_FIX = 'add "principals": [...] to vinaya.config.json on the default branch'
+
+/**
+ * Why `resolveTrustedPrincipals` could not return a Principal list:
+ *
+ *   - `not-configured` — the repository has no `principals` the forge can vouch
+ *     for: no repository resolves for the read, the default branch carries no
+ *     `vinaya.config.json`, the file has no `principals`, or it fails the
+ *     configuration schema. The message names the fix.
+ *   - `read-failed` — the forge read itself failed (no `gh` authentication, an
+ *     empty CI token, the network). The message names the reason.
+ *
+ * A check reports either as a `CheckError` line, never as plain stderr text or
+ * an uncaught throw, which `checks/runner.ts` marks as malformed output.
+ */
+export class PrincipalsUnresolvedError extends Error {
+  readonly kind: 'not-configured' | 'read-failed'
+
+  constructor(kind: 'not-configured' | 'read-failed', message: string) {
+    super(message)
+    this.name = 'PrincipalsUnresolvedError'
+    this.kind = kind
+  }
+}
+
+/**
+ * The refusing Principal resolver: the `principals` list of
+ * `vinaya.config.json` on the repository's DEFAULT BRANCH, read through the
+ * same forge fetch as `loadTrustAnchorConfig` — never from local git, the
+ * working tree or an environment variable (see `loadTrustAnchorConfig`'s doc
+ * comment for why). Unlike `resolvePrincipalAllowlist`, it never falls back to
+ * a built-in Principal: it returns the configured list or throws
+ * `PrincipalsUnresolvedError`.
+ *
+ * The missing-file test is `loadTrustAnchorConfigOrThrow`'s: a 404 anywhere in
+ * the error is "not configured", and so is the fetcher's own "no repository
+ * identity" refusal; every other fetch failure is "read failed".
+ *
+ * `fetcher` is injectable for tests ONLY; production callers pass nothing.
+ */
+export function resolveTrustedPrincipals(fetcher: TrustAnchorFetcher = ghFetchTrustAnchorConfig): string[] {
+  let content: string
+  try {
+    content = fetcher()
+  } catch (err) {
+    if (isMissingFileError(err)) {
+      throw principalsNotConfigured('the default branch has no vinaya.config.json')
+    }
+    if (/could not resolve repo identity/.test((err as Error)?.message ?? '')) {
+      throw principalsNotConfigured('no repository resolves for the default-branch read')
+    }
+    throw new PrincipalsUnresolvedError(
+      'read-failed',
+      `could not read \`principals\` from vinaya.config.json on the default branch: ${failedReadReason(err)}`
+    )
+  }
+  let why = 'vinaya.config.json on the default branch does not satisfy the config schema'
+  const config = parseTrustAnchorContent(content, (reason) => {
+    why = `vinaya.config.json on the default branch: ${reason}`
+  })
+  if (!config) throw principalsNotConfigured(content.trim() ? why : 'vinaya.config.json on the default branch is empty')
+  if (!config.principals) throw principalsNotConfigured('vinaya.config.json on the default branch sets no `principals`')
+  return config.principals
+}
+
+/**
+ * Why a forge read failed, in one line: the last line the failed command
+ * wrote to stderr (where `gh` names the reason — bad credentials, a rate
+ * limit — after any warnings), else the error's first line. `execFileSync`'s
+ * first line only names the command that failed.
+ */
+function failedReadReason(err: unknown): string {
+  const stderr = (err as { stderr?: Buffer | string })?.stderr
+  const text = typeof stderr === 'string' ? stderr : (stderr?.toString() ?? '')
+  const lines = text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+  return lines.at(-1) ?? firstLine(err)
+}
+
+function principalsNotConfigured(why: string): PrincipalsUnresolvedError {
+  return new PrincipalsUnresolvedError(
+    'not-configured',
+    `no Principal is configured (${why}) — ${PRINCIPALS_NOT_CONFIGURED_FIX}`
+  )
+}
+
 /**
  * `loadTrustAnchorConfig` for a caller that must never block the event loop
  * — the log sink, whose first event can land while a batch of async check

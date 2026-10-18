@@ -85,7 +85,8 @@ import {
 import { fetchForgeFactsByIssue, parseRationaleDeps, resolveDuplicateTasks } from '@attalabs/aeg-forge-state'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { resolveTrustedPrincipals } from '../../lib/config'
+import { emitPrincipalsRefusal } from '../principals-refusal'
 import { exitOnIncompleteForgeSnapshot, snapshotIssue } from '../../lib/forge-snapshot'
 import { containedAbs } from '../../lib/ops'
 import { dependsOnFactFromEdge, type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../edge-resolve'
@@ -93,6 +94,20 @@ import { resolveSiblingConflictFacts } from '../sibling-conflict-facts'
 import { reassertPremiseFile } from '../premise-reassert-logic'
 
 const CHECK_NAME = 'dispatch-readiness'
+
+/**
+ * The Principal list the readiness gate needs, from the default branch. With
+ * none configured the check refuses (one `error` line, exit 1); a failed read
+ * is one `warning` line and `null` — the gate's verdict is then unknown.
+ */
+function resolveGatePrincipals(): string[] | null {
+  try {
+    return resolveTrustedPrincipals()
+  } catch (err) {
+    if (emitPrincipalsRefusal(CHECK_NAME, err, 'warning') === 'not-configured') process.exit(1)
+    return null
+  }
+}
 
 // No chdir: the only cwd-dependent work here is `git(...)` shelling out for
 // the caller's own remote/branch, and the runner's spawn already inherits
@@ -324,32 +339,37 @@ async function runIssueMode(issueNumber: number): Promise<void> {
     rationaleMarkdown: ''
   }
 
-  const input: DispatchGateInput = {
-    trancheSlug: `issue-${issueNumber}`,
-    task,
-    issue: { number: issueNumber, state: issueJson.state === 'OPEN' ? 'open' : 'closed' },
-    issueRationalePass,
-    dependsOn,
-    conflictsWith,
-    priorTask: null,
-    priorTrancheArchival: [],
-    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig())
-  }
-
-  const result = checkDispatchReadiness(input)
-
+  // The gate's verdict needs the Principal list: unresolvable for a failed
+  // read, it is unknown (one warning) and the exit is the premise
+  // re-assertion's alone; with none configured the check has already refused.
+  const principalAllowlist = resolveGatePrincipals()
   let ready = true
-  if (!result.ready) {
-    for (const detail of result.blockerDetails) {
-      emitCheckError({
-        schema: CHECK_SCHEMA_VERSION,
-        check: CHECK_NAME,
-        severity: 'error',
-        message: detail.message,
-        agent_recovery_prompt: recoveryPromptFor(detail.class)
-      })
+  if (principalAllowlist !== null) {
+    const input: DispatchGateInput = {
+      trancheSlug: `issue-${issueNumber}`,
+      task,
+      issue: { number: issueNumber, state: issueJson.state === 'OPEN' ? 'open' : 'closed' },
+      issueRationalePass,
+      dependsOn,
+      conflictsWith,
+      priorTask: null,
+      priorTrancheArchival: [],
+      principalAllowlist
     }
-    ready = false
+
+    const result = checkDispatchReadiness(input)
+    if (!result.ready) {
+      for (const detail of result.blockerDetails) {
+        emitCheckError({
+          schema: CHECK_SCHEMA_VERSION,
+          check: CHECK_NAME,
+          severity: 'error',
+          message: detail.message,
+          agent_recovery_prompt: recoveryPromptFor(detail.class)
+        })
+      }
+      ready = false
+    }
   }
 
   if (!checkPremiseReassertion()) ready = false
@@ -470,32 +490,37 @@ async function runTrancheMode(trancheSlug: string, taskId: string): Promise<void
 
   const priorTrancheArchival: DispatchPriorTrancheFact[] = []
 
-  const input: DispatchGateInput = {
-    trancheSlug,
-    task,
-    issue,
-    issueRationalePass,
-    dependsOn,
-    conflictsWith,
-    priorTask: null,
-    priorTrancheArchival,
-    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig())
-  }
-
-  const result = checkDispatchReadiness(input)
-
+  // The gate's verdict needs the Principal list: unresolvable for a failed
+  // read, it is unknown (one warning) and the exit is the premise
+  // re-assertion's alone; with none configured the check has already refused.
+  const principalAllowlist = resolveGatePrincipals()
   let ready = true
-  if (!result.ready) {
-    for (const detail of result.blockerDetails) {
-      emitCheckError({
-        schema: CHECK_SCHEMA_VERSION,
-        check: CHECK_NAME,
-        severity: 'error',
-        message: detail.message,
-        agent_recovery_prompt: recoveryPromptFor(detail.class)
-      })
+  if (principalAllowlist !== null) {
+    const input: DispatchGateInput = {
+      trancheSlug,
+      task,
+      issue,
+      issueRationalePass,
+      dependsOn,
+      conflictsWith,
+      priorTask: null,
+      priorTrancheArchival,
+      principalAllowlist
     }
-    ready = false
+
+    const result = checkDispatchReadiness(input)
+    if (!result.ready) {
+      for (const detail of result.blockerDetails) {
+        emitCheckError({
+          schema: CHECK_SCHEMA_VERSION,
+          check: CHECK_NAME,
+          severity: 'error',
+          message: detail.message,
+          agent_recovery_prompt: recoveryPromptFor(detail.class)
+        })
+      }
+      ready = false
+    }
   }
 
   // Additive, not a short-circuit: runs (and reports) regardless of the

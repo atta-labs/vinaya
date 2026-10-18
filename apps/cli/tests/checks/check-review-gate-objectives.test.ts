@@ -120,6 +120,11 @@ describe('check-review-gate — objectives-version binding (O3)', () => {
     return { dir: d, sha }
   }
 
+  // The default branch's `vinaya.config.json`, as the contents API returns it.
+  const DEFAULT_BRANCH_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] }), 'utf8').toString(
+    'base64'
+  )
+
   function writeGhStub(d: string): string {
     const ghDir = join(d, 'fakebin')
     execFileSync('mkdir', ['-p', ghDir])
@@ -155,16 +160,13 @@ if (args[0] === 'api' && String(args[1]).includes('/timeline')) {
   process.exit(0)
 }
 // The trust-anchor config read (\`gh api repos/<repo>/contents/vinaya.config.json --jq .content\`)
-// — where \`review-gate\` resolves \`gateCutovers.objectivesSinceIssue\`. A test
-// sets STUB_TRUST_ANCHOR_CONFIG_B64 (base64 of the config JSON) to make a
-// cutover active; unset, the read fails and resolves to no cutover (O1).
+// — where \`review-gate\` resolves its Principal list and
+// \`gateCutovers.objectivesSinceIssue\`. A test sets STUB_TRUST_ANCHOR_CONFIG_B64
+// (base64 of the config JSON) to make a cutover active; unset, the default
+// branch carries \`principals\` alone, which resolves to no cutover (O1).
 if (args[0] === 'api' && String(args[1]).includes('/contents/')) {
-  if (process.env.STUB_TRUST_ANCHOR_CONFIG_B64) {
-    process.stdout.write(process.env.STUB_TRUST_ANCHOR_CONFIG_B64)
-    process.exit(0)
-  }
-  process.stderr.write('gh stub: no trust-anchor config\\n')
-  process.exit(1)
+  process.stdout.write(process.env.STUB_TRUST_ANCHOR_CONFIG_B64 ?? ${JSON.stringify(DEFAULT_BRANCH_CONFIG_B64)})
+  process.exit(0)
 }
 process.stderr.write('gh stub: unhandled invocation: ' + args.join(' ') + '\\n')
 process.exit(1)
@@ -174,6 +176,11 @@ process.exit(1)
     return ghDir
   }
 
+  function withoutConfigProbe(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+    delete env.VINAYA_CI_CONFIG_PROBE_REF
+    return env
+  }
+
   async function run(
     d: string,
     ghDir: string,
@@ -181,7 +188,13 @@ process.exit(1)
   ): Promise<{ exitCode: number; stderr: string }> {
     const proc = Bun.spawn(['bun', BIN], {
       cwd: d,
-      env: { ...process.env, PATH: `${ghDir}:${process.env.PATH}`, PR_NUMBER: '1', ...env },
+      env: withoutConfigProbe({
+        ...process.env,
+        PATH: `${ghDir}:${process.env.PATH}`,
+        PR_NUMBER: '1',
+        GITHUB_REPOSITORY: 'atta-labs/vinaya',
+        ...env
+      }),
       stdout: 'pipe',
       stderr: 'pipe'
     })
@@ -465,7 +478,7 @@ process.exit(1)
     // behaviour this test asserts. `GITHUB_REPOSITORY` lets the trust-anchor
     // read resolve the repo identity so the stubbed `contents` call is reached.
     const trustAnchorConfigB64 = Buffer.from(
-      JSON.stringify({ gateCutovers: { objectivesSinceIssue: 404 } }),
+      JSON.stringify({ principals: ['daniboomerang'], gateCutovers: { objectivesSinceIssue: 404 } }),
       'utf8'
     ).toString('base64')
     const { exitCode } = await run(d, ghDir, {

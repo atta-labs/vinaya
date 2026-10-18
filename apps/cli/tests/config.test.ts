@@ -21,6 +21,9 @@ import {
   loadConfigChecked as loadConfigCheckedStatic,
   loadTrustAnchorConfig,
   loadTrustAnchorConfigOrThrow,
+  PRINCIPALS_NOT_CONFIGURED_FIX,
+  PrincipalsUnresolvedError,
+  resolveTrustedPrincipals,
   readRepoCiSetup,
   resolveCiTrustAnchorProbeRef,
   resolveAgentVendors,
@@ -1569,6 +1572,60 @@ describe('loadTrustAnchorConfigOrThrow (issue #945) — a failed read is distinc
     const config = loadTrustAnchorConfigOrThrow(() => b64({ principals: ['someone'] }))
     expect(config).not.toBeNull()
     expect(config?.reviewPolicy).toBeUndefined()
+  })
+})
+
+describe('resolveTrustedPrincipals — the refusing Principal resolver', () => {
+  const b64 = (obj: unknown): string => Buffer.from(JSON.stringify(obj), 'utf8').toString('base64')
+  const execFileLikeError = (stderr: string): Error =>
+    Object.assign(new Error('Command failed: gh api repos/o/r/contents/vinaya.config.json --jq .content'), { stderr })
+  const refusal = (fetcher: () => string): PrincipalsUnresolvedError => {
+    try {
+      resolveTrustedPrincipals(fetcher)
+    } catch (err) {
+      expect(err).toBeInstanceOf(PrincipalsUnresolvedError)
+      return err as PrincipalsUnresolvedError
+    }
+    throw new Error('expected resolveTrustedPrincipals to refuse')
+  }
+  const throwing = (err: Error) => () => {
+    throw err
+  }
+
+  it('returns the configured list', () => {
+    expect(resolveTrustedPrincipals(() => b64({ principals: ['alice', 'bob'] }))).toEqual(['alice', 'bob'])
+  })
+
+  it('no resolvable repository is not-configured, naming the fix', () => {
+    const err = refusal(throwing(new Error('could not resolve repo identity for the trust-anchor read')))
+    expect(err.kind).toBe('not-configured')
+    expect(err.message).toContain(PRINCIPALS_NOT_CONFIGURED_FIX)
+  })
+
+  it('a missing file (HTTP 404, reported only on stderr) is not-configured, naming the fix', () => {
+    const err = refusal(throwing(execFileLikeError('gh: Not Found (HTTP 404)')))
+    expect(err.kind).toBe('not-configured')
+    expect(err.message).toContain(PRINCIPALS_NOT_CONFIGURED_FIX)
+  })
+
+  it('a file with no `principals` is not-configured, naming the fix', () => {
+    const err = refusal(() => b64({ reviewPolicy: { codeReviewThreshold: 'MAJOR' } }))
+    expect(err.kind).toBe('not-configured')
+    expect(err.message).toContain(PRINCIPALS_NOT_CONFIGURED_FIX)
+  })
+
+  it('a file that fails the configuration schema is not-configured, naming the fix', () => {
+    const err = refusal(() => b64({ principals: 'alice' }))
+    expect(err.kind).toBe('not-configured')
+    expect(err.message).toContain('schema')
+    expect(err.message).toContain(PRINCIPALS_NOT_CONFIGURED_FIX)
+  })
+
+  it('any other fetch failure is read-failed, naming the reason', () => {
+    const err = refusal(throwing(execFileLikeError('gh: API rate limit exceeded (HTTP 403)')))
+    expect(err.kind).toBe('read-failed')
+    expect(err.message).toContain('API rate limit exceeded')
+    expect(err.message).not.toContain(PRINCIPALS_NOT_CONFIGURED_FIX)
   })
 })
 

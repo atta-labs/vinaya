@@ -57,7 +57,14 @@ import {
   type ReviewGateFact,
   type ReviewGateInput
 } from '@attalabs/aeg-core'
-import { loadTrustAnchorConfig, resolveGateCutovers, resolvePrincipalAllowlist, resolveReviewPolicy } from './config.js'
+import {
+  loadTrustAnchorConfig,
+  PRINCIPALS_NOT_CONFIGURED_FIX,
+  PrincipalsUnresolvedError,
+  resolveGateCutovers,
+  resolveReviewPolicy,
+  resolveTrustedPrincipals
+} from './config.js'
 import { incompleteForgeSnapshot, snapshotComments, snapshotIssue, snapshotPullRequest } from './forge-snapshot.js'
 import { patchIdAt } from './patch-id.js'
 
@@ -465,8 +472,23 @@ export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssemb
   // PR metadata is input data, never the source of the gate implementation or
   // its trust anchors. See `loadTrustAnchorConfig` in lib/config.ts for the
   // three failed attempts that established the config half of this boundary.
+  //
+  // The list resolves before the waiver is judged, because the waiver's actor
+  // check needs it: a repository with no `principals` on its default branch,
+  // or whose read failed, can neither pass the gate nor waive it.
+  let principalAllowlist: string[]
+  try {
+    principalAllowlist = resolveTrustedPrincipals()
+  } catch (err) {
+    if (!(err instanceof PrincipalsUnresolvedError)) throw err
+    return failure(
+      `review-gate severity:infra — ${err.message}`,
+      err.kind === 'not-configured'
+        ? `Fix: ${PRINCIPALS_NOT_CONFIGURED_FIX}, then re-run \`vinaya check review-gate\`.`
+        : 'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya check review-gate`.'
+    )
+  }
   const trustAnchorConfig = loadTrustAnchorConfig()
-  const principalAllowlist = resolvePrincipalAllowlist(trustAnchorConfig)
 
   // Which severities block is repository policy — resolved from the SAME
   // default-branch trust-anchor read as `principals`, never from the PR's own

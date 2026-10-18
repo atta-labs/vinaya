@@ -50,7 +50,8 @@ import {
 } from '@attalabs/aeg-core'
 import { fileDiffAgainst } from '../../lib/diff-evidence'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { emitPrincipalsRefusal } from '../principals-refusal'
+import { resolveTrustedPrincipals } from '../../lib/config'
 
 const CHECK_NAME = 'doc-coverage-push'
 
@@ -91,12 +92,22 @@ function waiverActiveFromEnv(): boolean {
   // local push, where PR_LABELS is empty and no waiver can be active.
   if (!labels.includes(WAIVER_LABEL)) return false
   // GitHub-API default-branch read — see check-doc-coverage.ts's identical
-  // comment / `loadTrustAnchorConfig`'s doc comment in lib/config.ts.
+  // comment / `loadTrustAnchorConfig`'s doc comment in lib/config.ts. With
+  // no `principals` configured the check refuses (exit 1, the one exit this
+  // check ever fails on); a failed read is one warning and the waiver is
+  // treated as not active, so the push still proceeds.
+  let principalAllowlist: string[]
+  try {
+    principalAllowlist = resolveTrustedPrincipals()
+  } catch (err) {
+    if (emitPrincipalsRefusal(CHECK_NAME, err, 'warning') === 'not-configured') process.exit(1)
+    return false
+  }
   return isWaiverLabelActorVerified({
     label: WAIVER_LABEL,
     labels,
     labelActor: process.env.WAIVER_LABEL_ACTOR || null,
-    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig())
+    principalAllowlist
   })
 }
 
