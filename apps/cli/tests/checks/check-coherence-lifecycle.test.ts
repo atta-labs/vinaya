@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'bun:test'
 import type { GhIssue, TrancheMilestoneIndex } from '@attalabs/aeg-forge-state'
-import { spawnSync } from 'node:child_process'
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture'
 import { evaluateLifecycleAdvisories, l4Applies } from '../../src/checks/bin/check-coherence'
 
 const SLUG = 'fixture-tranche'
@@ -89,7 +89,7 @@ describe('check-coherence bin under a failing forge', () => {
     mkdirSync(binDir, { recursive: true })
     mkdirSync(repo, { recursive: true })
     try {
-      const git = (...args: string[]) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' })
+      const git = (...args: string[]) => spawnSyncBudgeted('git', args, { cwd: repo, encoding: 'utf8' })
       git('init', '-q', '-b', 'main')
       git('config', 'user.email', 'test@example.com')
       git('config', 'user.name', 'Test')
@@ -100,10 +100,11 @@ describe('check-coherence bin under a failing forge', () => {
       const gh = join(binDir, 'gh')
       writeFileSync(gh, `#!/bin/sh\n${stubBody}\n`)
       chmodSync(gh, 0o755)
-      const result = spawnSync('bun', [binPath], {
+      const result = spawnSyncBudgeted('bun', [binPath], {
         cwd: repo,
         encoding: 'utf8',
         env: {
+          ...stripVinayaEnv(),
           PATH: `${binDir}:${process.env.PATH ?? ''}`,
           HOME: process.env.HOME ?? root,
           AEG_REPO: 'fixture-owner/fixture-repo',
