@@ -110,7 +110,8 @@ export function runsUnderAll(spec: CheckSpec): boolean {
  * documents this as the normal, accepted shape ("Same checks, same
  * strictness, at ring 0 and ring 1 — the runner is one codebase invoked from
  * both"), not a contradiction: `ring` here names the EARLIEST enforcement
- * point (ring 0 wins when a check is hook-eligible at all), not an
+ * point (ring 0 also covers body checks enforced by pre-write validation,
+ * even when hooks skip them without a body), not an
  * exhaustive list of every ring a check happens to also run under.
  *
  * Deliberately NOT a field on `CheckSpec` (or on the objects
@@ -155,6 +156,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
     {
       name: 'brief-shape',
       validates: 'body',
+      requiresOpenPr: true,
       run: bin('check-brief-shape'),
       scope: 'diff',
       timeoutMs: 15_000,
@@ -190,12 +192,11 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   ],
   [
     {
-      // Density is checkable against a DRAFT body before the PR exists —
-      // same reasoning as `brief-shape` above, not `closes-n`/`test-plan`'s
-      // `requiresOpenPr`: `PR_BODY="$(cat draft.md)" vinaya check
-      // pr-report-density` is the intended pre-`pr create` dry run.
+      // Hooks have no body to grade. Pre-write validation still grades the
+      // outgoing draft before a pull request exists, as does a named run.
       name: 'pr-report-density',
       validates: 'body',
+      requiresOpenPr: true,
       run: bin('check-pr-report-density'),
       scope: 'diff',
       timeoutMs: 15_000,
@@ -280,6 +281,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // no branch condition anywhere in this check.
       name: 'pr-premise-reassert',
       validates: 'body',
+      requiresOpenPr: true,
       run: bin('check-pr-premise-reassert'),
       scope: 'diff',
       timeoutMs: 15_000,

@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'bun:test'
 import { join } from 'node:path'
+import { coreCheckRegistry } from '../../src/checks/registry'
 import type { CheckSpec } from '../../src/checks/contract'
 import { buildCheckEnv, runChecks } from '../../src/checks/runner'
 import { createLogSink } from '../../src/lib/log-sink'
@@ -155,6 +156,20 @@ describe('runChecks', () => {
     })
     expect(outcome?.status).toBe('skipped')
     expect(outcome?.skipReason).toBe('no-matching-include-glob')
+  })
+
+  it('reports the core PR-body checks as skipped at both local hooks', async () => {
+    const names = ['brief-shape', 'pr-report-density', 'pr-premise-reassert']
+    const specs = coreCheckRegistry().filter((spec) => names.includes(spec.name))
+    expect(specs.map((spec) => spec.name).sort()).toEqual([...names].sort())
+    for (const skipFull of [true, false]) {
+      const outcomes = await runChecks(specs, { ...BASE_OPTS, localOnly: true, skipFull })
+      for (const outcome of outcomes) {
+        expect(outcome.status).toBe('skipped')
+        expect(outcome.exitCode).toBeNull()
+        expect(outcome.skipReason).toBe('requires-open-pr, local-only')
+      }
+    }
   })
 
   it('skips a requiresOpenPr check under localOnly, even though the fixture would fail', async () => {

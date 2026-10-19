@@ -8,6 +8,7 @@ import type { BriefSection } from '../src/lib/config'
 import { resetTrustAnchorConfigMemo } from '../src/lib/log-sink.js'
 import {
   ForgeArgError,
+  collectBodyCheckErrors,
   extractLabels,
   extractTitle,
   locateBody,
@@ -782,6 +783,91 @@ describe('resolveSections — rings.ring1_forgeWriteInterception', () => {
 describe('runBodyChecks — the ONE registry-runner call every forge-write path shares (O1)', () => {
   it("resolves without refusing on a body the registered `validates: 'body'` checks all pass, PR not yet created", async () => {
     await expect(runBodyChecks(validPr, 'fix/some-branch', undefined, 'vinaya pr create')).resolves.toBeUndefined()
+  })
+
+  it('refuses a draft with a multi-paragraph Summary before a PR exists', async () => {
+    const body = validPr.replace(
+      'Ships the validated forge-write path for the Vinaya CLI.',
+      'First paragraph.\n\nSecond paragraph.'
+    )
+    // The canonical report uses Decisions; Summary remains in this fixture
+    // to exercise the draft shape named by the caller.
+    const report = `${body}\n\n## Decisions\n\nFirst choice.\n\nSecond choice.\n`
+    const errors = await collectBodyCheckErrors(report, 'fix/some-branch', undefined)
+    expect(errors.some((error) => error.check === 'pr-report-density')).toBe(true)
+  })
+
+  it('still reasserts draft premise pins before a PR exists', async () => {
+    const body = `${validPr}\n\nPremise:\n- apps/cli/src/checks/contract.ts contains: deliberately-missing-draft-pin\n`
+    const errors = await collectBodyCheckErrors(body, 'fix/some-branch', undefined)
+    expect(errors.some((error) => error.check === 'pr-premise-reassert')).toBe(true)
+  })
+
+  it('grades a task draft brief but leaves test-plan excluded before a PR exists', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-draft-gh-'))
+    const originalPath = process.env.PATH
+    const config = Buffer.from(JSON.stringify({ principals: ['fixture-principal'] })).toString('base64')
+    const comments = [
+      { body: `<!-- aeg:brief:v1 -->\nBrief hash: fixture\n${validPr}`, user: { login: 'fixture-principal' } }
+    ]
+    writeFileSync(
+      join(dir, 'gh'),
+      `#!${process.execPath}
+const args = process.argv.slice(2)
+if (args.some((arg) => arg.includes('contents/vinaya.config.json'))) console.log(${JSON.stringify(config)})
+else if (args.some((arg) => arg.includes('/comments'))) console.log(${JSON.stringify(JSON.stringify(comments))})
+else if (args[0] === 'issue' && args.includes('body')) console.log(JSON.stringify({body: ''}))
+else process.exit(1)
+`,
+      { mode: 0o755 }
+    )
+    process.env.PATH = `${dir}:${originalPath ?? ''}`
+    try {
+      // The fixture's unticked principal item must not invoke test-plan's
+      // pull-request-head requirement during creation.
+      const errors = await collectBodyCheckErrors(validPr, 'task/fixture/1', undefined)
+      expect(errors.filter((error) => error.check === 'test-plan')).toEqual([])
+      expect(errors.filter((error) => error.check === 'brief-shape')).toEqual([])
+      const invalidBrief = validPr.replace('Closes #385', 'No linked issue')
+      const invalidErrors = await collectBodyCheckErrors(invalidBrief, 'task/fixture/1', undefined)
+      expect(invalidErrors.some((error) => error.check === 'brief-shape')).toBe(true)
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH
+      else process.env.PATH = originalPath
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('excludes adopter PR-bound body checks only until a PR number exists', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-adopter-body-'))
+    const originalCwd = process.cwd()
+    const check = join(dir, 'requires-pr.ts')
+    writeFileSync(
+      check,
+      `#!${process.execPath}
+console.error(JSON.stringify({schema: 1, check: 'fixture/pr-bound', severity: 'error', message: 'PR-bound check ran', agent_recovery_prompt: 'Fix the body.'}))
+process.exit(1)
+`,
+      { mode: 0o755 }
+    )
+    writeFileSync(
+      join(dir, 'vinaya.config.json'),
+      JSON.stringify({
+        checks: {
+          'fixture/pr-bound': { run: check, scope: 'full', validates: 'body', requiresOpenPr: true }
+        }
+      })
+    )
+    process.chdir(dir)
+    try {
+      const before = await collectBodyCheckErrors('## Summary\n\nA draft.', 'fix/fixture', undefined)
+      expect(before.filter((error) => error.check === 'fixture/pr-bound')).toEqual([])
+      const after = await collectBodyCheckErrors('## Summary\n\nA draft.', 'fix/fixture', 123)
+      expect(after.some((error) => error.check === 'fixture/pr-bound')).toBe(true)
+    } finally {
+      process.chdir(originalCwd)
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   describe('rings.ring1_forgeWriteInterception: false', () => {

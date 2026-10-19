@@ -83,18 +83,15 @@ export type CheckSpec = {
    */
   env?: Record<string, true | { optional: true } | { anyOf: string[] } | string>
   /**
-   * True for a check that can only meaningfully evaluate once a pull request
-   * exists (it reads `PR_BODY`/`PR_NUMBER` from the open PR, not from local
-   * git state) — `closes-n` and `test-plan` are the two core examples. The
-   * runner's `localOnly` mode (set by the generated `pre-commit`/`pre-push`
-   * hooks, never by CI) skips these entirely rather than running them with
-   * nothing to evaluate: before a PR exists, `closes-n` cannot find the
-   * `Closes #N` it requires and `test-plan` cannot find a merge-ready state,
-   * so running them locally is not a stricter gate, it is an unsatisfiable
-   * one — found live: the first commit on a fresh task branch could never
-   * land, because the local hook enforced two pre-merge-only predicates
-   * before the PR that would satisfy them could possibly exist. CI (which
-   * only ever runs after a PR is open) always runs these for real.
+   * True for a check that needs pull-request context or a supplied body.
+   * The generated commit/push hooks pass `localOnly` and skip these checks
+   * with reason `requires-open-pr, local-only`, rather than reporting a pass
+   * for a body they never saw. CI omits `localOnly` and runs them normally.
+   * Pre-write validation supplies the outgoing body and runs ring-0 body
+   * checks (including brief-shape, pr-report-density, pr-premise-reassert)
+   * even before a PR exists; other requiresOpenPr checks remain excluded
+   * until a real PR number is available. Running a check by name without
+   * `localOnly` still evaluates it, including against a draft body.
    */
   requiresOpenPr?: boolean
   /**
@@ -183,11 +180,10 @@ export type CheckOutcome = {
   errors: CheckError[]
   durationMs: number
   /**
-   * Present only for `status: 'skipped'` when the skip reason is worth
-   * naming beyond the bare status — today, only `runner.ts`'s `--skip-full`
-   * reason: `'full-scope, pre-commit'`. Absent for the pre-existing
-   * `scope: 'diff'`/`include`-mismatch skip, whose reason is already
-   * self-evident from `--diff-only` + the changed-files list.
+   * Present for `status: 'skipped'` to name the runner's reason:
+   * `excluded-by-caller`, `requires-open-pr, local-only`,
+   * `full-scope, pre-commit`, or `no-matching-include-glob`.
+   * Caller exclusions precede local-only skips, which precede scope skips.
    */
   skipReason?: string
 }
