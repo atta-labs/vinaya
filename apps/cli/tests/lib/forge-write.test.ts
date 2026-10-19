@@ -58,6 +58,33 @@ const FAKE_PRINCIPAL_OWED_CHECK = join(CLI_ROOT, 'tests', 'fixtures', 'forge', '
 const DORMANT_COMMAND_REFERENCE = { file: null, binary: 'vinaya', commands: [], text: '' }
 const DORMANT_CONFIG_REFERENCE = { files: [], keys: [], text: '' }
 
+/** The default branch's `vinaya.config.json` the Principal read (`gh api repos/<owner>/<repo>/contents/vinaya.config.json`) is served, base64-encoded as the contents API returns it. */
+const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
+
+/** The `gh` stub line answering that read; every stub below that reaches a Principal-deciding path carries it. */
+const PRINCIPALS_GH_LINE = `if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then echo '${PRINCIPALS_CONFIG_B64}'; exit 0; fi`
+
+/**
+ * Puts a `gh` on `PATH` that answers only the Principal read, and names the
+ * repository through `GITHUB_REPOSITORY`, for a fixture that stubs no other
+ * `gh` call; returns the function that restores both.
+ */
+function servePrincipalsConfig(): () => void {
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-principals-gh-'))
+  writeFileSync(join(dir, 'gh'), `#!/bin/sh\n${PRINCIPALS_GH_LINE}\nexit 1\n`)
+  execFileSync('chmod', ['+x', join(dir, 'gh')])
+  const originalPath = process.env.PATH
+  const originalRepository = process.env.GITHUB_REPOSITORY
+  process.env.PATH = `${dir}:${process.env.PATH ?? ''}`
+  process.env.GITHUB_REPOSITORY = 'test-owner/test-repo'
+  return () => {
+    process.env.PATH = originalPath
+    if (originalRepository === undefined) delete process.env.GITHUB_REPOSITORY
+    else process.env.GITHUB_REPOSITORY = originalRepository
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
 describe('collectTaskIssueErrors — one gate sequence, every group, one refusal (O1)', () => {
   let cwd: string
   let originalCwd: string
@@ -428,6 +455,8 @@ describe('the real (non-injected) rendered-brief-shape group also names its own 
     RATIONALE
   ].join('\n')
 
+  let restorePrincipals: () => void = () => {}
+
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), 'vinaya-real-render-'))
     writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ briefSchema: { issue: { sections: [] } } }), 'utf8')
@@ -446,9 +475,11 @@ describe('the real (non-injected) rendered-brief-shape group also names its own 
     process.env.AEG_REPO = 'test-owner/test-repo'
     originalCwd = process.cwd()
     process.chdir(cwd)
+    restorePrincipals = servePrincipalsConfig()
   })
 
   afterEach(() => {
+    restorePrincipals()
     process.chdir(originalCwd)
     process.env.AEG_REPO = originalAegRepo
     rmSync(cwd, { recursive: true, force: true })
@@ -551,6 +582,8 @@ describe('the plan-time gate renders as dispatch does — adopter with no aeg-ro
   // dispatch's own message, which this gate must now reproduce.
   const PREMISE_PINS_MESSAGE = 'the Boundary names none of them to pin'
 
+  let restorePrincipals: () => void = () => {}
+
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), 'vinaya-adopter-no-aeg-root-'))
     writeFileSync(
@@ -574,9 +607,11 @@ describe('the plan-time gate renders as dispatch does — adopter with no aeg-ro
     process.env.AEG_REPO = 'test-owner/test-repo'
     originalCwd = process.cwd()
     process.chdir(cwd)
+    restorePrincipals = servePrincipalsConfig()
   })
 
   afterEach(() => {
+    restorePrincipals()
     process.chdir(originalCwd)
     if (originalAegRepo === undefined) delete process.env.AEG_REPO
     else process.env.AEG_REPO = originalAegRepo
@@ -657,6 +692,7 @@ describe('an unmerged Depends-on folds into the write gate as informational, nev
   let originalCwd: string
   let originalAegRepo: string | undefined
   let originalPath: string | undefined
+  let originalRepository: string | undefined
 
   const RATIONALE_WITH_OPEN_DEPENDENCY = [
     "## Task Issue — Planner's rationale",
@@ -771,6 +807,7 @@ describe('an unmerged Depends-on folds into the write gate as informational, nev
     writeFileSync(
       gh,
       `#!/bin/sh
+${PRINCIPALS_GH_LINE}
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
   echo '{"state":"OPEN","stateReason":null,"closedByPullRequestsReferences":[]}'
   exit 0
@@ -786,6 +823,8 @@ exit 1
 
     originalAegRepo = process.env.AEG_REPO
     process.env.AEG_REPO = 'test-owner/test-repo'
+    originalRepository = process.env.GITHUB_REPOSITORY
+    process.env.GITHUB_REPOSITORY = 'test-owner/test-repo'
     originalPath = process.env.PATH
     process.env.PATH = `${localDir}:${process.env.PATH ?? ''}`
     originalCwd = process.cwd()
@@ -795,6 +834,8 @@ exit 1
   afterEach(() => {
     process.chdir(originalCwd)
     process.env.AEG_REPO = originalAegRepo
+    if (originalRepository === undefined) delete process.env.GITHUB_REPOSITORY
+    else process.env.GITHUB_REPOSITORY = originalRepository
     process.env.PATH = originalPath
     rmSync(tmpDir, { recursive: true, force: true })
   })
@@ -1145,10 +1186,8 @@ describe('the Developer-runnable rule reads the command reference, never a typed
 // `reconcileGhComment` (security review, round 2, HIGH) — the `gh`-backed
 // `EffectReconciler` `apps/cli/src/lib/effects.ts`'s `EffectExecutor` calls
 // on recovery. A fake `gh` answers `{issue,pr} view --json comments` with a
-// fixed comment list; the trust-anchor `vinaya.config.json` fetch is left
-// unanswered (exits 1), so `loadTrustAnchorConfig` falls back to the real
-// `PRINCIPAL_ALLOWLIST` default (`['daniboomerang']`) — the same fallback
-// every other principal-gated path in this file already exercises.
+// fixed comment list, and the default branch's `vinaya.config.json` with
+// `principals: ['daniboomerang']` — the Principal list the reconciler reads.
 // ---------------------------------------------------------------------------
 
 describe('reconcileGhComment (security review, round 2, HIGH: principal-authored match only)', () => {
@@ -1169,6 +1208,7 @@ describe('reconcileGhComment (security review, round 2, HIGH: principal-authored
     writeFileSync(
       gh,
       `#!/bin/sh
+${PRINCIPALS_GH_LINE}
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
   cat "${commentsFile}"
   exit 0

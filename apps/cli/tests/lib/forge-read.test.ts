@@ -32,7 +32,10 @@ const FAKE_GH = `#!/usr/bin/env bun
 import { readFileSync } from 'node:fs'
 const a = process.argv.slice(2)
 const dir = process.env.FAKE_GH_DIR
-if (a[0] === 'api') {
+if (a[0] === 'api' && a[1].endsWith('/contents/vinaya.config.json')) {
+  // The default branch's configuration, naming the Principals.
+  process.stdout.write(${JSON.stringify(Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64'))})
+} else if (a[0] === 'api') {
   const page = Number(/[?&]page=(\\d+)/.exec(a[1])[1])
   const all = JSON.parse(readFileSync(dir + '/comments.json', 'utf8'))
   if (process.env.FAKE_GH_HUGE) process.stdout.write('[' + '"' + 'y'.repeat(Number(process.env.FAKE_GH_HUGE)) + '"]')

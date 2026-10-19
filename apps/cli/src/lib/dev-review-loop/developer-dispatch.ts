@@ -41,8 +41,8 @@ import {
   loadConfigChecked,
   loadTrustAnchorConfig,
   loadTrustAnchorConfigOrThrow,
-  resolvePrincipalAllowlist,
   resolveReviewPolicy,
+  resolveTrustedPrincipals,
   type VinayaConfig
 } from '../config.js'
 import {
@@ -111,12 +111,14 @@ export function markerComments(raw: string): MarkerComment[] {
  * straight into the resumed developer's prompt every round, in this fully
  * unattended, commit-pushing loop. Both now require the matching comment's
  * author to resolve as a principal — the SAME `isPrincipal`/
- * `resolvePrincipalAllowlist` machinery `review-post.ts`'s own
+ * `resolveTrustedPrincipals` machinery `review-post.ts`'s own
  * `principalBodies` already uses for exactly this kind of forge-read trust
- * boundary, reused rather than re-derived.
+ * boundary, reused rather than re-derived. A list that does not resolve
+ * throws `PrincipalsUnresolvedError` to the caller — never an empty list,
+ * which would read as "no rulings yet" rather than "misconfigured".
  */
 export function principalAllowlist(): string[] {
-  return resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  return resolveTrustedPrincipals()
 }
 
 /**

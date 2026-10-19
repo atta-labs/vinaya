@@ -5,6 +5,9 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'bun:test'
 
+/** The default branch's `vinaya.config.json` every `gh` stub here serves to the Principal read (`gh api repos/<owner>/<repo>/contents/vinaya.config.json`), base64-encoded as the contents API returns it. */
+const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
+
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const REPO_ROOT = join(CLI_ROOT, '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -169,6 +172,7 @@ function stubGh(opts: {
   writeFileSync(
     gh,
     `#!/bin/sh
+if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then echo '${PRINCIPALS_CONFIG_B64}'; exit 0; fi
 if [ "$1" = "api" ] && [ "$2" = "user" ]; then
   echo "${login}"
   exit 0
@@ -215,7 +219,11 @@ exit 1
 `
   )
   chmodSync(gh, 0o755)
-  return { path: { PATH: `${dir}:${process.env.PATH ?? ''}` }, editedBodyLogPath, commentsLogPath }
+  return {
+    path: { PATH: `${dir}:${process.env.PATH ?? ''}`, GITHUB_REPOSITORY: 'acme/widget' },
+    editedBodyLogPath,
+    commentsLogPath
+  }
 }
 
 describe('vinaya issue objectives edit', () => {
@@ -630,6 +638,7 @@ describe('vinaya issue objectives edit \u2014 re-renders and re-validates the br
     writeFileSync(
       gh,
       `#!/bin/sh
+if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then echo '${PRINCIPALS_CONFIG_B64}'; exit 0; fi
 if [ "$1" = "api" ] && [ "$2" = "user" ]; then
   echo "daniboomerang"
   exit 0
@@ -666,7 +675,11 @@ exit 1
 `
     )
     chmodSync(gh, 0o755)
-    return { path: { PATH: `${dir}:${process.env.PATH ?? ''}` }, editedBodyLogPath, commentsLogPath }
+    return {
+      path: { PATH: `${dir}:${process.env.PATH ?? ''}`, GITHUB_REPOSITORY: 'acme/widget' },
+      editedBodyLogPath,
+      commentsLogPath
+    }
   }
 
   function gitCmd(cwd: string, args: string[]): string {
@@ -821,6 +834,10 @@ function readState() {
   return JSON.parse(readFileSync(statePath, 'utf8'))
 }
 
+if (args[0] === 'api' && String(args[1]).endsWith('/contents/vinaya.config.json')) {
+  console.log('${PRINCIPALS_CONFIG_B64}')
+  process.exit(0)
+}
 if (args[0] === 'api' && args[1] === 'user') {
   console.log('daniboomerang')
   process.exit(0)
@@ -876,7 +893,12 @@ process.exit(1)
 `
     )
     chmodSync(gh, 0o755)
-    return { path: { PATH: `${dir}:${process.env.PATH ?? ''}` }, editedBodyLogPath, commentsLogPath, statePath }
+    return {
+      path: { PATH: `${dir}:${process.env.PATH ?? ''}`, GITHUB_REPOSITORY: 'acme/widget' },
+      editedBodyLogPath,
+      commentsLogPath,
+      statePath
+    }
   }
 
   it('issueObjectivesEdit --add supersedes a backlog brief: one added objective, one v2 brief, one command', () => {

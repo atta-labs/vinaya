@@ -14,7 +14,6 @@ import {
   isKnownSeverity,
   NO_GATE_CUTOVERS,
   normalizeSpecPath,
-  PRINCIPAL_ALLOWLIST,
   type ReviewPolicy,
   SECURITY_SEVERITY_ORDER
 } from '@attalabs/aeg-core'
@@ -455,9 +454,9 @@ const VinayaConfigObjectSchema = z.object({
   managed: ManagedManifestSchema.optional(),
   // GitHub logins trusted as this repo's own principals for review-gate
   // verdict-author verification and actor-verified waiver labels
-  // (`vinaya/waiver:docs`, `vinaya/waiver:review`) — overrides the hardcoded
-  // `PRINCIPAL_ALLOWLIST` (this monorepo's own principal) when set. Repo-local
-  // only, same as `checks` — stripped from a global config below, since who
+  // (`vinaya/waiver:docs`, `vinaya/waiver:review`). There is no built-in
+  // default: without it every Principal-deciding check and command refuses
+  // (`resolveTrustedPrincipals`). Repo-local only, same as `checks` — stripped from a global config below, since who
   // counts as a trusted approver must come from the reviewed, committed
   // per-repo file, never a machine-wide personal config.
   principals: z.array(z.string()).min(1).optional(),
@@ -1135,29 +1134,10 @@ function stripGlobalOnlyKeys(config: VinayaConfig, path: string): VinayaConfig {
 }
 
 /**
- * Resolves the trusted-principal allowlist for this repo: the repo-local
- * `principals` field when set, else `PRINCIPAL_ALLOWLIST` (this monorepo's
- * own hardcoded default — unaffected when no config sets `principals`, the
- * every-existing-install-stays-identical case). Kept for the command and
- * library callers only: every check resolves the list through
- * `resolveTrustedPrincipals`, which refuses where this falls back.
- *
- * **Callers MUST pass `loadTrustAnchorConfig()`, never `loadConfig()`, and
- * never any config derived from local git or the working tree.** `principals`
- * names who is trusted to approve a merge; anything the PR being evaluated can
- * reach is something it can rewrite. See `loadTrustAnchorConfig`'s own doc
- * comment for the three failed attempts that established this rule, and for
- * why branch protection — not this function — is the actual boundary.
- */
-export function resolvePrincipalAllowlist(config: VinayaConfig | null): string[] {
-  return config?.principals ?? PRINCIPAL_ALLOWLIST
-}
-
-/**
  * Resolves the expected author of this repo's Changesets release PR: the
  * repo-local `releaseActor` when set, else `DEFAULT_RELEASE_ACTOR` (the
  * stock `changesets/action` identity). Same sourcing rule as
- * `resolvePrincipalAllowlist` — callers MUST pass `loadTrustAnchorConfig()`,
+ * `resolveTrustedPrincipals` — callers MUST pass `loadTrustAnchorConfig()`,
  * never `loadConfig()` or anything env/local-git-derived, since this gates
  * the same class of merge-authority exemption `principals` gates.
  */
@@ -1176,7 +1156,7 @@ export function resolveReleaseActor(config: VinayaConfig | null): string {
  * numeric fields (`maxRounds`, `maxTaskMinutes`) follow the identical rule,
  * each with its own legal range — `maxTaskMinutes` accepts `0`, which turns
  * the task's wall-clock budget off. Same sourcing
- * rule as `resolvePrincipalAllowlist`/`resolveReleaseActor`: callers MUST
+ * rule as `resolveTrustedPrincipals`/`resolveReleaseActor`: callers MUST
  * pass `loadTrustAnchorConfig()` (the default branch), never `loadConfig()`
  * or anything PR-checkout-derived, so a change cannot lower its own
  * threshold — the gate and the loop read the identical source.
@@ -1232,7 +1212,7 @@ export function resolveReviewPolicy(config: VinayaConfig | null): ReviewPolicy {
  * before dispatching the security pass, on the head-verified candidate copy,
  * appending the directory to scan as a final argument (`decideSecurityScan`).
  *
- * Same sourcing rule as `resolveReviewPolicy`/`resolvePrincipalAllowlist`: an
+ * Same sourcing rule as `resolveReviewPolicy`/`resolveTrustedPrincipals`: an
  * unattended caller MUST pass `loadTrustAnchorConfig()` (the default branch),
  * never `loadConfig()` or anything PR-checkout-derived — the command names a
  * subprocess that runs in the driver's own environment, so a pull request must
@@ -1639,17 +1619,15 @@ async function ghFetchTrustAnchorConfigAsync(): Promise<string> {
 /**
  * The trust-anchor config — `vinaya.config.json` as it exists on the
  * repository's default branch per GitHub's own API, never the PR's checkout.
- * The ONLY sanctioned input to `resolvePrincipalAllowlist`. A check never
- * calls that fallback resolver: it resolves the Principal list through
- * `resolveTrustedPrincipals`, which makes this same read and refuses instead
- * of falling back.
+ * The ONLY sanctioned input to the resolvers of a trust-sensitive key
+ * (`resolveReleaseActor`, `resolveReviewPolicy`). The Principal list is never
+ * read through it: `resolveTrustedPrincipals` makes this same read and refuses
+ * where this function swallows a failure.
  *
  * Every failure mode (no repo identity, `gh` unauthenticated or unreachable,
  * file absent on the default branch, malformed JSON, schema mismatch) returns
- * `null`, which `resolvePrincipalAllowlist` turns into the hardcoded
- * `PRINCIPAL_ALLOWLIST` — never into trusting unreviewed content. A local run
- * with no `gh` auth therefore behaves exactly as it did before `principals`
- * existed.
+ * `null`, which each resolver turns into its own built-in default — never
+ * into trusting unreviewed content.
  *
  * The `gh` this read invokes by name is resolved through the process PATH, and
  * a `gh` that cannot even START (rather than one that is merely unauthenticated)
@@ -1662,9 +1640,8 @@ async function ghFetchTrustAnchorConfigAsync(): Promise<string> {
  * launching PATH lacked its folder.
  *
  * That fallback announces itself rather than degrading silently: an adopter
- * whose `principals` failed to resolve would otherwise see their own
- * reviewers' verdicts ignored for no visible reason — precisely the baffling
- * gate failure this field exists to eliminate (a review finding). Two
+ * whose configuration failed to resolve would otherwise see their own
+ * settings ignored for no visible reason (a review finding). Two
  * deliberate constraints on that message:
  *
  *   - It goes to **stdout, never stderr.** A check bin's stderr IS the
@@ -1791,17 +1768,18 @@ function principalsNotConfigured(why: string): PrincipalsUnresolvedError {
  * The Principal list, read from `principals` in the default branch's
  * `vinaya.config.json` through the same forge read as `loadTrustAnchorConfig`
  * (see its doc comment for why it is never local git, the working tree or an
- * environment variable) — with no built-in fallback. Where
- * `resolvePrincipalAllowlist` falls back to vinaya's own Principal, this
- * throws `PrincipalsUnresolvedError`, so a check that decides who counts as a
- * Principal refuses rather than trusting someone the repository never named.
+ * environment variable) — with no built-in fallback. Where no list resolves,
+ * this throws `PrincipalsUnresolvedError`, so every check, command and library
+ * path that decides who counts as a Principal refuses rather than trusting
+ * someone the repository never named.
  *
  * It follows `loadTrustAnchorConfigOrThrow`'s distinction: a missing file
  * (`isMissingFileError`), no resolvable repository, a file with no
  * `principals` and a file that fails the configuration schema are
  * `not-configured`; any other fetch failure is `read-failed`. It never writes
- * a warning itself — each caller turns the error into its own `CheckError`
- * line or failure result.
+ * a warning itself — a check turns the error into its own `CheckError` line
+ * or failure result, a forge-write gate into its refusal, and a command or
+ * library lets it propagate.
  *
  * `fetcher` is injectable for tests ONLY; production callers pass nothing.
  */

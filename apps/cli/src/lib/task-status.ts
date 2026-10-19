@@ -41,7 +41,7 @@ import {
   type TaskPhaseHistory
 } from '@attalabs/aeg-core'
 import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
+import { resolveTrustedPrincipals } from './config.js'
 import { findOpenPrForBranch, runtimeDir } from './dev-review-loop.js'
 import { DRIVER_LOCK_FILENAME, runPath, tasksExecutionRoot } from './run-paths.js'
 import { loopLogPathFor, loopsRoot, type LoopLogRepo } from './loop-log.js'
@@ -217,9 +217,9 @@ function fetchIssueComments(issue: number): { body: string; author: string | nul
   return parsed.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
 }
 
-/** Computed once per command invocation and threaded through — not re-fetched per task, unlike a naive per-task `loadTrustAnchorConfig()` call, which would cost one redundant forge round trip (and warning line, on failure) per open task Issue. */
+/** Computed once per command invocation and threaded through — not re-fetched per task, which would cost one redundant forge round trip per open task Issue. Throws `PrincipalsUnresolvedError` when no list resolves, never an empty list: an empty list trusts nobody and would read every task as having no frozen brief. */
 function principalAllowlist(): string[] {
-  return resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  return resolveTrustedPrincipals()
 }
 
 /** True iff the Issue carries a principal-authored, frozen `aeg:brief:v<k>` comment — the same resolver `dev-review-loop.ts`'s own `fetchFrozenBrief` uses, read here for its presence rather than its content. */

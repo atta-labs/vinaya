@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { deriveReviewStatus, renderReviewStatus } from '@attalabs/aeg-core'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../lib/config'
+import { resolveTrustedPrincipals } from '../lib/config'
 import { reviewPolicy } from '../lib/dev-review-loop/developer-dispatch.js'
 
 /**
@@ -79,7 +79,7 @@ export async function reviewStatusCommand(args: string[]): Promise<void> {
   const status = deriveReviewStatus({
     comments: pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
     headSha: pr.headRefOid,
-    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig()),
+    principalAllowlist: resolveTrustedPrincipals(),
     maxRounds: reviewPolicy().maxRounds
   })
 
@@ -103,5 +103,5 @@ export async function reviewStatusCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'review status': { date: '2026-09-13', callsToday: 3, retiresVia: 'devReviewLoop' }
+  'review status': { date: '2026-09-13', callsToday: 2, retiresVia: 'devReviewLoop' }
 }

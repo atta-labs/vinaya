@@ -42,7 +42,7 @@ import {
 } from '@attalabs/aeg-core'
 import { dispatchRole, isAgentClass, resolveClassModel, type AgentClass } from './dispatch.js'
 import { assembleAndRenderBrief, assembleAndRenderBriefForIssue } from './brief-assembly.js'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
+import { resolveTrustedPrincipals } from './config.js'
 import { collectTaskIssueErrors, currentGhLogin, postMarkedComment } from './forge-write.js'
 import { isForgeReadOversize, readIssueComments } from './forge-read.js'
 import { emitCheckError } from '../checks/contract'
@@ -106,9 +106,9 @@ export function fetchIssueComments(n: number): IssueComment[] {
   }
 }
 
-/** Same allowlist machinery every principal-authored-comment reader in this codebase shares (`dev-review-loop.ts`'s identical `principalAllowlist`). */
+/** Same allowlist machinery every principal-authored-comment reader in this codebase shares (`dev-review-loop.ts`'s identical `principalAllowlist`); throws `PrincipalsUnresolvedError` when no list resolves. */
 function principalAllowlist(): string[] {
-  return resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  return resolveTrustedPrincipals()
 }
 
 function fetchIssueBody(n: number): string {
@@ -476,7 +476,7 @@ export type DispatchAuthorization = { authorized: boolean; login: string | null 
  */
 export function resolveDispatchAuthorization(): DispatchAuthorization {
   const login = currentGhLogin()
-  const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  const allowlist = resolveTrustedPrincipals()
   return { authorized: login !== null && isPrincipal(login, allowlist), login }
 }
 

@@ -238,11 +238,18 @@ export function buildSandbox(): Sandbox {
   // `tests/commands/task-status.test.ts`'s own stub satisfies, not just the
   // bare `issue list` the launch path used to need. (Restored: the sandbox
   // configuration comment above replaced this rationale instead of joining it —
-  // round 5 review, MINOR.)
+  // round 5 review, MINOR.) That task-status read resolves the Principals
+  // too, so the stub also serves the default branch's `vinaya.config.json`
+  // with `principals`.
+  const principalsConfigB64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
   const gh = join(binDir, 'gh')
   writeFileSync(
     gh,
     `#!/bin/sh
+if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
+  echo '${principalsConfigB64}'
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
   cat <<'JSON'
 [{"number":9301,"title":"[conformance] 1 — Clean result fixture task","labels":[{"name":"vinaya/tranche:conformance"}]}]
@@ -296,6 +303,7 @@ fi
     HOME: home,
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
     AEG_REPO: 'attalabs/vinaya',
+    GITHUB_REPOSITORY: 'attalabs/vinaya',
     VINAYA_MCP_CALLER: 'operator-1',
     VINAYA_RUNTIME_DIR: runtimeDir,
     VINAYA_TASK_RUN_COMMAND: launcher,

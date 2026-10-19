@@ -145,10 +145,10 @@ import {
   VinayaConfigSchema,
   loadConfig,
   loadConfigChecked,
-  loadTrustAnchorConfig,
+  PrincipalsUnresolvedError,
   resolveCollisionThreshold,
   resolveGateCutovers,
-  resolvePrincipalAllowlist
+  resolveTrustedPrincipals
 } from './config'
 import { printJson } from './envelope'
 import type { EffectIdentity, EffectReconcileResult } from './effects.js'
@@ -275,6 +275,30 @@ export function makeCheckError(
 export function refuse(errors: CheckError[]): never {
   for (const e of errors) emitCheckError(e)
   process.exit(1)
+}
+
+/**
+ * The Principal list from the default branch (`resolveTrustedPrincipals`), or
+ * a refusal: a gate or command that decides who counts as a Principal and
+ * cannot resolve the list refuses with one `CheckError` under `check`, whose
+ * message is the resolver's own — naming the fix, or why the read failed —
+ * rather than deciding against a list the repository never configured.
+ */
+export function resolvePrincipalsOrRefuse(check: string, retryCommand: string): string[] {
+  try {
+    return resolveTrustedPrincipals()
+  } catch (err) {
+    if (!(err instanceof PrincipalsUnresolvedError)) throw err
+    refuse([
+      makeCheckError(
+        check,
+        err.message,
+        err.kind === 'not-configured'
+          ? `Commit \`"principals": [...]\` to vinaya.config.json on the default branch, then re-run \`${retryCommand}\`.`
+          : `Make the default branch's vinaya.config.json readable through \`gh\` (\`gh auth status\`), then re-run \`${retryCommand}\`.`
+      )
+    ])
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2036,7 +2060,7 @@ export function refuseFrozenSectionChange(
 ): void {
   if (skipCheck || newBody === null) return
   const { body: oldBody, comments } = fetchForgeIssueContext(issueRef, retryCommand)
-  const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  const allowlist = resolvePrincipalsOrRefuse('issue-frozen-brief', retryCommand)
   const frozen = resolveNewestFrozenBrief(comments, allowlist)
   if (frozen === null) return
   const changed = frozenSectionsChanged(oldBody, newBody)
@@ -3036,8 +3060,9 @@ export async function writeValidatedIssueEdit(input: {
 // classify the AUTHOR of an existing comment); what was missing is checking
 // it against the CURRENT actor before a Principal-only write, which is what
 // this gate adds. Reads `principals` from the DEFAULT branch
-// (`loadTrustAnchorConfig`) — never a task branch's own `vinaya.config.json`,
-// which the actor being checked could otherwise edit to add themselves.
+// (`resolveTrustedPrincipals`) — never a task branch's own `vinaya.config.json`,
+// which the actor being checked could otherwise edit to add themselves — and
+// refuses when that list does not resolve.
 // ---------------------------------------------------------------------------
 
 /** The login `gh` is currently authenticated as, or `null` if it cannot be resolved. */
@@ -3057,10 +3082,12 @@ export function currentGhLogin(): string | null {
  * Refuses unless the identity `gh` is authenticated as resolves to an
  * allowlisted principal. An unresolvable identity refuses the same as a
  * disallowed one — fail-closed, never "no identity found, so let it through".
+ * A Principal list that does not resolve refuses the same way
+ * (`resolvePrincipalsOrRefuse`).
  */
 export function refuseUnlessPrincipal(retryCommand: string): void {
   const login = currentGhLogin()
-  const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  const allowlist = resolvePrincipalsOrRefuse('principal-only', retryCommand)
   if (login !== null && isPrincipal(login, allowlist)) return
   refuse([
     makeCheckError(
@@ -3147,7 +3174,7 @@ export function postMarkedComment(kind: 'issue' | 'pr', ref: string, marker: str
  * `verifyPostedEscalation` already makes (`comments.find((c) => c.body ===
  * postedBody)`) for a re-fetched comment against what this process itself
  * posted, but author-filtered first through the SAME `isPrincipal`/
- * `resolvePrincipalAllowlist` machinery `principalBodies` (`review-post.ts`)
+ * `resolveTrustedPrincipals` machinery `principalBodies` (`review-post.ts`)
  * already uses for exactly this trust boundary (security review, round 2,
  * HIGH): every effect this reconciler is wired to reconciles a comment THIS
  * process itself posted as an allowlisted principal, so a byte-identical
@@ -3157,7 +3184,9 @@ export function postMarkedComment(kind: 'issue' | 'pr', ref: string, marker: str
  * real post entirely. A `gh` failure, or JSON this shape does not parse, is
  * reported `'ambiguous'` — never treated as "confirmed absent," since a
  * failed read proves nothing about the remote. Only a SUCCESSFUL read with
- * no matching principal-authored body is `'absent'`.
+ * no matching principal-authored body is `'absent'`. A Principal list that
+ * does not resolve throws `PrincipalsUnresolvedError` out of the reconciler,
+ * never an outcome: no list means no body can be matched to a Principal.
  */
 export function reconcileGhComment(
   kind: 'issue' | 'pr',
@@ -3195,7 +3224,7 @@ export function reconcileGhComment(
         reason: `could not parse ${kind} ${ref}'s comments JSON: ${err instanceof Error ? err.message : String(err)}`
       }
     }
-    const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+    const allowlist = resolveTrustedPrincipals()
     const match = parsed.comments.find(
       (c) => isPrincipal(c.author?.login ?? null, allowlist) && sha256Hex(c.body) === identity.payloadDigest
     )

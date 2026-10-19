@@ -24,6 +24,9 @@ import {
 import type { RestWorkflowRun } from '../../../src/lib/dev-review-loop/gate-reading.js'
 import { type PrReadForge, taskPrReadHandler } from '../../../src/lib/task-tools/pr-read.js'
 
+/** The default branch's `vinaya.config.json` every `gh` stub here serves to the Principal read (`gh api repos/<owner>/<repo>/contents/vinaya.config.json`), base64-encoded as the contents API returns it. */
+const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
+
 /**
  * The forge-touching composition inside `taskStatusHandler`/
  * `taskEscalationReadHandler` (a `{ tranche, id }` ref, or no ref at all)
@@ -105,6 +108,7 @@ describe('task_status lists an unfrozen task as not started; task_escalation_rea
   // planned one as `not started` (O4) — while `task_escalation_read`'s resolver
   // resolves ONLY the frozen one.
   const stubbedGh = `#!/bin/sh
+if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then echo '${PRINCIPALS_CONFIG_B64}'; exit 0; fi
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
   cat <<'JSON'
 [
@@ -131,9 +135,6 @@ if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
   echo '[]'
   exit 0
 fi
-# Anything else (e.g. the trust-anchor config fetch) fails, and the caller
-# falls back to the built-in principal allowlist — the same graceful path a
-# real \`gh\` stub triggers in tests/commands/task-status.test.ts.
 echo "gh stub: unhandled: $*" >&2
 exit 1
 `
@@ -168,7 +169,8 @@ process.stdout.write('O3_RESULT:' + JSON.stringify({ status, frozen, planned }) 
           ...stripVinayaEnv(process.env),
           HOME: home,
           PATH: `${binDir}:${process.env.PATH ?? ''}`,
-          AEG_REPO: 'attalabs/vinaya'
+          AEG_REPO: 'attalabs/vinaya',
+          GITHUB_REPOSITORY: 'attalabs/vinaya'
         }
       })
       const line = stdout.split('\n').find((l) => l.startsWith('O3_RESULT:'))
@@ -1004,6 +1006,7 @@ describe('a named task_status read spends its budget on the row it named (F1)', 
 
   const stubbedGh = `#!/bin/sh
 COUNT_FILE="$VINAYA_TEST_COUNT_FILE"
+if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then echo '${PRINCIPALS_CONFIG_B64}'; exit 0; fi
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
   cat <<'JSON'
 ${ISSUE_LIST}
@@ -1075,6 +1078,7 @@ process.stdout.write('F1_RESULT:' + JSON.stringify({ listing, named, escalation 
           HOME: home,
           PATH: `${binDir}:${process.env.PATH ?? ''}`,
           AEG_REPO: 'attalabs/vinaya',
+          GITHUB_REPOSITORY: 'attalabs/vinaya',
           VINAYA_TEST_COUNT_FILE: countFile
         }
       })

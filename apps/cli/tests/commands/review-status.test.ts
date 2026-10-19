@@ -48,24 +48,18 @@ function runCli(args: string[], env: Record<string, string | undefined>): CliRes
   }
 }
 
+/** The default branch's `vinaya.config.json` every stub below serves unless a test names another — `principals` only, so every other key resolves to its default. */
+const PRINCIPALS_CONFIG = { principals: ['daniboomerang'] }
+
 /**
- * A `gh` + `git` pair on `PATH`, serving one canned `pr view` payload and one
- * canned `rev-list --count`. Stubbing `git` too is what makes the behind-main
- * line testable at all: the real repo's own distance from `origin/main` is
- * not a fact a unit test may depend on.
+ * A `gh` + `git` pair on `PATH`, serving one canned `pr view` payload, one
+ * canned `rev-list --count`, and the default branch's configuration with
+ * `principals` (`stubPathWithConfig`). Stubbing `git` too is what makes the
+ * behind-main line testable at all: the real repo's own distance from
+ * `origin/main` is not a fact a unit test may depend on.
  */
 function stubPath(pr: unknown, behind: number): Record<string, string> {
-  const dir = tempDir('fake-forge-')
-  const gh = join(dir, 'gh')
-  writeFileSync(
-    gh,
-    `#!/bin/sh\nif [ "$1" = "pr" ] && [ "$2" = "view" ]; then\n  cat <<'JSON'\n${JSON.stringify(pr)}\nJSON\n  exit 0\nfi\necho "gh stub: unhandled: $*" >&2\nexit 1\n`
-  )
-  chmodSync(gh, 0o755)
-  const git = join(dir, 'git')
-  writeFileSync(git, `#!/bin/sh\nif [ "$1" = "rev-list" ]; then\n  echo ${behind}\n  exit 0\nfi\nexit 1\n`)
-  chmodSync(git, 0o755)
-  return { PATH: `${dir}:${process.env.PATH ?? ''}` }
+  return stubPathWithConfig(pr, behind, PRINCIPALS_CONFIG)
 }
 
 /**
@@ -160,9 +154,10 @@ describe('vinaya review status', () => {
     const dir = tempDir('fake-forge-nogit-')
     const gh = join(dir, 'gh')
     const pr = { comments: [], headRefOid: HEAD, baseRefName: 'main' }
+    const configB64 = Buffer.from(JSON.stringify(PRINCIPALS_CONFIG), 'utf-8').toString('base64')
     writeFileSync(
       gh,
-      `#!/bin/sh\nif [ "$1" = "pr" ] && [ "$2" = "view" ]; then\n  cat <<'JSON'\n${JSON.stringify(pr)}\nJSON\n  exit 0\nfi\nexit 1\n`
+      `#!/bin/sh\nif [ "$1" = "pr" ] && [ "$2" = "view" ]; then\n  cat <<'JSON'\n${JSON.stringify(pr)}\nJSON\n  exit 0\nfi\nif [ "$1" = "api" ]; then\n  echo '${configB64}'\n  exit 0\nfi\nexit 1\n`
     )
     chmodSync(gh, 0o755)
     // `git rev-list` fails here — an unfetched base, a shallow clone. The
@@ -170,7 +165,10 @@ describe('vinaya review status', () => {
     const git = join(dir, 'git')
     writeFileSync(git, '#!/bin/sh\nexit 128\n')
     chmodSync(git, 0o755)
-    const result = runCli(['review', 'status', '381'], { PATH: `${dir}:${process.env.PATH ?? ''}` })
+    const result = runCli(['review', 'status', '381'], {
+      PATH: `${dir}:${process.env.PATH ?? ''}`,
+      GITHUB_REPOSITORY: 'acme/repo'
+    })
     expect(statusLines(result.stdout)).toEqual(['CONTINUE', 'behind main: unknown — fetch origin/main first'])
     expect(result.status).toBe(1)
   })
@@ -225,9 +223,9 @@ describe('vinaya review status', () => {
     ]
     const pr = { comments: threeRoundHistory, headRefOid: HEAD, baseRefName: 'main' }
 
-    // No config on the default branch (the `gh` stub 404s the `api` call
-    // exactly like `stubPath`'s does): the default `DEFAULT_MAX_ROUNDS` of 3
-    // applies, and a 3-round history PAUSEs.
+    // No `reviewPolicy` in the default branch's config (`stubPath` serves
+    // `principals` only): the default `DEFAULT_MAX_ROUNDS` of 3 applies, and a
+    // 3-round history PAUSEs.
     const defaultResult = runCli(['review', 'status', '381'], stubPath(pr, 0))
     expect(statusLines(defaultResult.stdout)).toEqual(['PAUSE: max-rounds'])
     expect(defaultResult.status).toBe(1)
@@ -237,7 +235,7 @@ describe('vinaya review status', () => {
     // proving this command reads the resolved policy, not a retired constant.
     const configuredResult = runCli(
       ['review', 'status', '381'],
-      stubPathWithConfig(pr, 0, { reviewPolicy: { maxRounds: 5, maxTaskMinutes: 180 } })
+      stubPathWithConfig(pr, 0, { ...PRINCIPALS_CONFIG, reviewPolicy: { maxRounds: 5, maxTaskMinutes: 180 } })
     )
     expect(statusLines(configuredResult.stdout)).toEqual(['CONTINUE'])
     expect(configuredResult.status).toBe(0)

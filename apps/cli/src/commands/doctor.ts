@@ -1164,10 +1164,10 @@ function diagnoseVinayaOnPath(agents: ReadonlySet<string>): Finding[] {
 // ---------------------------------------------------------------------------
 // principals — report-only. `info`, matching CODEOWNERS/branch-protection
 // above, not `warn`: an unset `principals` is a real, high-consequence gap
-// (review-gate silently trusts nobody's verdicts on this repo —
-// `resolvePrincipalAllowlist` in lib/config.ts falls back to the hardcoded
-// `PRINCIPAL_ALLOWLIST`, this monorepo's own maintainer, whenever the field
-// is absent, and `vinaya init` never sets it itself — see `PRINCIPALS_NOTE`,
+// (there is no built-in Principal — `resolveTrustedPrincipals` in
+// lib/config.ts refuses whenever the field is absent from the default
+// branch, so every Principal-deciding gate and command refuses, and
+// `vinaya init` never sets it itself — see `PRINCIPALS_NOTE`,
 // lib/artifacts.ts, for why not), but `warn`/`error` flip `healthy` to false
 // and doctor's exit code to 1 for EVERY existing adopter that hasn't set
 // this, whether or not review-gate applies to them — the same blast-radius
@@ -1183,9 +1183,9 @@ function diagnosePrincipals(config: VinayaConfig): Finding {
   }
   return info(
     'principals',
-    'vinaya.config.json has no "principals" — review-gate and the waiver-label actor check both fall back to a ' +
-      "hardcoded placeholder allowlist that will not include anyone on this repo. Every reviewer's verdict is " +
-      'silently ignored (DANGLING) until you add `"principals": ["<your-github-login>", ...]` to vinaya.config.json.'
+    'vinaya.config.json has no "principals" — there is no built-in Principal, so every gate and command that ' +
+      'decides who counts as a Principal (review-gate, the waiver-label actor check, the Principal-only commands) ' +
+      'refuses until you add `"principals": ["<your-github-login>", ...]` to vinaya.config.json on the default branch.'
   )
 }
 

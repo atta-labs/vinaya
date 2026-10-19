@@ -2614,14 +2614,25 @@ describe('gatherTaskStatusList — planned backlog tasks', () => {
   }
   const chatter = { body: 'quotes aeg:brief in passing', author: { login: 'daniboomerang' } }
 
-  function run(selector: string): { rows: Array<{ issue: number; state: { kind: string } }>; calls: string[] } {
+  // `principals` is what the default branch's vinaya.config.json carries;
+  // `null` answers its read with a 404, as a repository without the file does.
+  function spawnReader(
+    selector: string,
+    principals: string[] | null = ['daniboomerang']
+  ): { child: ReturnType<typeof spawnSyncBudgeted>; calls: string } {
     const home = tempDir()
     const bin = join(home, 'bin')
     mkdirSync(bin, { recursive: true })
     const calls = join(home, 'gh-calls')
     const issues = [701, 702, 703, 704].map((number) => ({ number, title: `Backlog ${number}`, labels: [] }))
+    const configAnswer = principals
+      ? `echo '${Buffer.from(JSON.stringify({ principals })).toString('base64')}'; exit 0`
+      : 'echo "gh: Not Found (HTTP 404)" >&2; exit 1'
     const script = `#!/bin/sh
 echo "$*" >> "${calls}"
+if [ "$1" = "api" ] && [ "$2" = "repos/acme/widget/contents/vinaya.config.json" ]; then
+  ${configAnswer}
+fi
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
   case "$*" in
     *--search*) echo '[{"number":701},{"number":702}]' ;;
@@ -2652,7 +2663,8 @@ exit 1
       ...stripVinayaEnv(),
       HOME: home,
       PATH: `${bin}:${process.env.PATH ?? ''}`,
-      AEG_REPO: 'acme/widget'
+      AEG_REPO: 'acme/widget',
+      GITHUB_REPOSITORY: 'acme/widget'
     }
     const child = spawnSyncBudgeted(
       'bun',
@@ -2664,6 +2676,11 @@ console.log('ROWS:' + JSON.stringify(view.rows.map((r) => ({ issue: r.issue, sta
       ],
       { cwd: CLI_ROOT, env, encoding: 'utf8' }
     )
+    return { child, calls }
+  }
+
+  function run(selector: string): { rows: Array<{ issue: number; state: { kind: string } }>; calls: string[] } {
+    const { child, calls } = spawnReader(selector)
     const line = String(child.stdout)
       .split('\n')
       .find((l) => l.startsWith('ROWS:'))
@@ -2693,5 +2710,13 @@ console.log('ROWS:' + JSON.stringify(view.rows.map((r) => ({ issue: r.issue, sta
     expect(calls.filter((c) => c.includes('--search'))).toHaveLength(1)
     // 703 is no search hit, so its comments are never read.
     expect(calls.some((c) => c.startsWith('issue view 703'))).toBe(false)
+  })
+
+  it('throws the typed error, naming the fix, when the default branch configures no principals — never an empty listing', () => {
+    const { child } = spawnReader('null', null)
+    expect(child.status).not.toBe(0)
+    expect(String(child.stdout)).not.toContain('ROWS:')
+    expect(String(child.stderr)).toContain('PrincipalsUnresolvedError')
+    expect(String(child.stderr)).toContain('add "principals": [...] to vinaya.config.json on the default branch')
   })
 })

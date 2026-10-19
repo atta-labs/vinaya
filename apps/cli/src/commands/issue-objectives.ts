@@ -11,7 +11,6 @@ import {
   resolveNewestFrozenBrief
 } from '@attalabs/aeg-core'
 import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../lib/config.js'
 import { prepareTaskOrIssue } from '../lib/dispatch-task.js'
 import { isForgeReadOversize, readIssueComments, readIssueFields } from '../lib/forge-read.js'
 import { printJson } from '../lib/envelope'
@@ -22,6 +21,7 @@ import {
   postMarkedComment,
   refuse,
   refuseUnlessPrincipal,
+  resolvePrincipalsOrRefuse,
   writeValidatedIssueEdit
 } from '../lib/forge-write'
 
@@ -350,6 +350,9 @@ export async function issueObjectivesEditCommand(args: string[]): Promise<void> 
   refuseUnlessPrincipal(RETRY)
 
   const { number, body, title, labels, comments } = fetchIssueBodyAndComments(issueRef)
+  // Resolved before the edit below is written, so a Principal list that does
+  // not resolve refuses with nothing changed on the forge.
+  const allowlist = resolvePrincipalsOrRefuse('principal-only', RETRY)
   const parsed = objectivesOf(body)
   if (!parsed.ok) {
     refuse([
@@ -438,7 +441,6 @@ export async function issueObjectivesEditCommand(args: string[]): Promise<void> 
   // `prepareIssueTask` here and re-deriving that same branch a second time.
   // Dormant when the brief was never frozen — nothing to supersede yet.
   let supersedeUrl: string | null = null
-  const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
   const frozen = resolveNewestFrozenBrief(comments, allowlist)
   if (frozen !== null) {
     const taskRef = resolveTaskIssueRef(title, labels)
@@ -478,5 +480,5 @@ export async function issueObjectivesEditCommand(args: string[]): Promise<void> 
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'issue objectives edit': { date: '2026-09-14', callsToday: 14, retiresVia: 'forgeWrite' }
+  'issue objectives edit': { date: '2026-09-14', callsToday: 13, retiresVia: 'forgeWrite' }
 }

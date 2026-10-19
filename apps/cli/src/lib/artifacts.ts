@@ -2070,24 +2070,24 @@ Then add this flag to the branch-protection command above:
   -F required_pull_request_reviews.require_code_owner_reviews=true`
 
 // review-gate and the actor-verified doc/review waivers trust
-// `vinaya.config.json`'s `principals` array (`resolvePrincipalAllowlist`,
-// lib/config.ts) — when it is unset, EVERY repo falls back to the same
-// hardcoded placeholder (`PRINCIPAL_ALLOWLIST`, this monorepo's own
-// maintainer). A fresh `vinaya init` never sets `principals` itself — same
+// `vinaya.config.json`'s `principals` array (`resolveTrustedPrincipals`,
+// lib/config.ts), read from the default branch — when it is unset there is no
+// built-in Principal, and every Principal-deciding gate and command refuses
+// until it lands. A fresh `vinaya init` never sets `principals` itself — same
 // "vinaya never guesses an identity into committed config" reasoning as
 // BRANCH_PROTECTION_NOTE/CODEOWNERS_NOTE above — which means every adopter's
-// very first PR fails review-gate silently: two clean human verdicts land,
-// neither counts, and the only signal is a cryptic DANGLING reason on the
-// gate itself (found live: a first-time adopter's PR #6, two real APPROVE/
-// PASS verdicts both ignored, zero warning anywhere in `init`'s output).
-const PRINCIPALS_NOTE = `Recommended: without this, review-gate trusts nobody's verdicts on this repo.
+// very first PR is refused by every Principal-deciding gate until the key is
+// on the default branch — so this note names it at install time rather than
+// leaving the first refusal as the only signal.
+const PRINCIPALS_NOTE = `Required: without this, every gate and command that decides who counts as a
+Principal (review-gate, the waiver labels, the Principal-only commands) refuses.
 
-  Add to vinaya.config.json:
+  Add to vinaya.config.json, in the install commit:
     "principals": ["<your-github-login>"]
 
-Anyone reviewing a PR here (code-reviewer/security verdicts, the
-vinaya/waiver:review label) must be listed, or their comments are ignored
-and every PR reads as unreviewed. \`vinaya doctor\` reports when this is unset.`
+It is read from the default branch only. Anyone reviewing a PR here
+(code-reviewer/security verdicts, the vinaya/waiver:review label) must be
+listed, or their comments do not count. \`vinaya doctor\` reports when this is unset.`
 
 // ---------------------------------------------------------------------------
 // Op builders

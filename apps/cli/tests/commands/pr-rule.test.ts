@@ -40,22 +40,33 @@ function runCli(args: string[], cwd: string, env: Record<string, string | undefi
  * A `gh` stub answering `pr view <n> --json comments` from a fixture JSON
  * file (never inline-echoed — avoids shell-quoting a JSON string) and
  * `pr comment <n> --body-file <path>` by appending the posted body to a log,
- * one entry per call, then printing `commentUrl`.
+ * one entry per call, then printing `commentUrl`. The default branch's
+ * `vinaya.config.json` (`gh api repos/<owner>/<repo>/contents/...`) answers
+ * with `principals`, or with a 404 when `principals` is `null`; the returned
+ * env names the repository through `GITHUB_REPOSITORY`, so the read resolves
+ * one without a git remote.
  */
 function stubGh(
   commentsJson: unknown,
   commentUrl: string,
-  login = 'daniboomerang'
+  login = 'daniboomerang',
+  principals: string[] | null = ['daniboomerang']
 ): { path: Record<string, string>; commentsLogPath: string } {
   const dir = tempDir('pr-rule-stub-')
   const commentsJsonPath = join(dir, 'comments.json')
   const commentsLogPath = join(dir, 'posted.log')
   writeFileSync(commentsJsonPath, JSON.stringify(commentsJson))
   writeFileSync(commentsLogPath, '')
+  const configAnswer = principals
+    ? `echo '${Buffer.from(JSON.stringify({ principals })).toString('base64')}'; exit 0`
+    : 'echo "gh: Not Found (HTTP 404)" >&2; exit 1'
   const gh = join(dir, 'gh')
   writeFileSync(
     gh,
     `#!/bin/sh
+if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
+  ${configAnswer}
+fi
 if [ "$1" = "api" ] && [ "$2" = "user" ]; then
   echo "${login}"
   exit 0
@@ -76,7 +87,7 @@ exit 1
 `
   )
   chmodSync(gh, 0o755)
-  return { path: { PATH: `${dir}:${process.env.PATH ?? ''}` }, commentsLogPath }
+  return { path: { PATH: `${dir}:${process.env.PATH ?? ''}`, GITHUB_REPOSITORY: 'acme/widget' }, commentsLogPath }
 }
 
 function writeFixture(dir: string, name: string, content: string): string {
@@ -192,6 +203,24 @@ describe('vinaya pr rule', () => {
     const r = runCli(['pr', 'rule', '1', '--file', filePath], repo, path)
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('Principal-only')
+    expect(readFileSync(commentsLogPath, 'utf-8')).toBe('')
+  })
+
+  it('refuses when the default branch configures no principals — names the fix, nothing posted', () => {
+    const repo = tempDir('pr-rule-repo-')
+    const filePath = writeFixture(repo, 'ruling.md', 'Scope clarified.\n')
+    const { path, commentsLogPath } = stubGh(
+      { comments: [] },
+      'https://github.com/acme/widget/pull/1#issuecomment-1',
+      'daniboomerang',
+      null
+    )
+
+    const r = runCli(['pr', 'rule', '1', '--file', filePath], repo, path)
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('"check":"principal-only"')
+    expect(r.stderr).toContain('no Principal is configured')
+    expect(r.stderr).toContain('add \\"principals\\": [...] to vinaya.config.json on the default branch')
     expect(readFileSync(commentsLogPath, 'utf-8')).toBe('')
   })
 })
