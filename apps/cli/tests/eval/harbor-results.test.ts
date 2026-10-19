@@ -124,7 +124,7 @@ describe('Harbor job results', () => {
         out
       ])
     ).toBe(0)
-    expect(readFileSync(out)).toEqual(readFileSync(join(fixtures, 'expected-report.json')))
+    expect(readFileSync(out)).toEqual(readFileSync(join(fixtures, 'expected-report.txt')))
   })
 
   it('contains none of the forbidden feasibility-job material', () => {
