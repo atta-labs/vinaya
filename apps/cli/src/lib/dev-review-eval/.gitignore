@@ -1,0 +1,2 @@
+# Bytecode py_compile writes beside the Harbor agent when the test plan checks it.
+__pycache__/
