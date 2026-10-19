@@ -17,7 +17,7 @@ import { TASK_TOOLS_MCP_SERVER_NAME } from '../../../src/lib/task-tools/server.j
  * run, a duplicate start, and a tool not in the catalog. A separate scenario
  * proves a disconnect leaves no second run.
  *
- * Hermetic: a fake `gh` (empty issue list), `AEG_REPO`, an isolated `HOME` (the
+ * Hermetic: a fake `gh` (a configuration naming `principals`, an issue list), `AEG_REPO`, an isolated `HOME` (the
  * durable task-start store), an authenticated caller in the environment, and a
  * recording launcher in place of a real detached `vinaya task run` — so the
  * transport, discovery, dispatch, validation, idempotency and disconnect are
@@ -30,6 +30,9 @@ const ABS_BIN = join(REPO_ROOT, 'apps', 'cli', 'dist', 'index.js')
 const SELF_HOST: VendoredVinaya = { dir: 'apps/cli', bin: ABS_BIN } as VendoredVinaya
 
 const CALLER = 'operator-1'
+
+/** The default branch's `vinaya.config.json` the fake `gh` serves to the Principal read (`gh api repos/<owner>/<repo>/contents/vinaya.config.json`), base64-encoded as the contents API returns it. */
+const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
 
 /**
  * Issue #660, O3 round 4 (security HIGH) — `baseEnv` spread `...process.env`
@@ -64,7 +67,9 @@ beforeAll(() => {
   mkdirSync(home, { recursive: true })
   launchFile = join(sandbox, 'launches.log')
 
-  // Fake gh: `task_status`'s forge read needs only an empty issue list, but
+  // Fake gh: `task_status` reads the default branch's `principals` first, so
+  // the stub serves a `vinaya.config.json` naming one. Its forge read then
+  // needs only an empty issue list, but
   // `task_start` (O1) now confirms its launch alive on the task's own driver
   // lock before reporting `started: true`, resolved through the SAME
   // `{tranche, id}` → Issue read `task_resume`/`task_status` already use
@@ -76,6 +81,7 @@ beforeAll(() => {
   writeFileSync(
     gh,
     `#!/bin/sh
+if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then echo '${PRINCIPALS_CONFIG_B64}'; exit 0; fi
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
   cat <<'JSON'
 [
