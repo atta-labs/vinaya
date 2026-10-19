@@ -131,6 +131,40 @@ describe('resolveChangedFiles — the normal case', () => {
   })
 })
 
+// CI checks out the pull request merged into the base branch's tip as that
+// merge was built, while the event's base commit stays where the pull
+// request was last updated. Once the base branch moves past it, only the
+// merge's first parent diffs to the pull request's own files.
+describe('resolveChangedFiles — a merge built on a moved base', () => {
+  it("against the merge's first parent reports only the pull request's files; against the stale event base, the base branch's later commit too", () => {
+    const root = newRoot('moved-base')
+    initRepo(root)
+    writeFileSync(join(root, 'a.md'), '# a\n')
+    git(root, ['add', 'a.md'])
+    git(root, ['commit', '-q', '-m', 'Chore: initial'])
+    git(root, ['checkout', '-q', '-b', 'feature'])
+    writeFileSync(join(root, 'pr.md'), '# pr\n')
+    git(root, ['add', 'pr.md'])
+    git(root, ['commit', '-q', '-m', 'Feat: the pull request'])
+    git(root, ['checkout', '-q', 'main'])
+    const staleBase = git(root, ['rev-parse', 'HEAD'])
+    writeFileSync(join(root, 'later.md'), '# later\n')
+    git(root, ['add', 'later.md'])
+    git(root, ['commit', '-q', '-m', 'Feat: later on main'])
+    git(root, ['merge', '-q', '--no-ff', '-m', 'Merge feature into main', 'feature'])
+    const firstParent = git(root, ['rev-parse', 'HEAD^1'])
+
+    const cwd = process.cwd()
+    try {
+      process.chdir(root)
+      expect(resolveChangedFiles(staleBase)).toContain(join(root, 'later.md'))
+      expect(resolveChangedFiles(firstParent)).toEqual([join(root, 'pr.md')])
+    } finally {
+      process.chdir(cwd)
+    }
+  })
+})
+
 describe('resolveChangedFiles — pre-commit staged evidence', () => {
   it('unions staged paths and line ranges with the committed branch diff only under the hook marker', () => {
     const root = newRoot('staged-union')

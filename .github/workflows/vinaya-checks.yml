@@ -174,6 +174,23 @@ jobs:
             echo
             echo "$DELIM"
           } >> "$GITHUB_ENV"
+      - name: Resolve the diff base
+        env:
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git rev-parse --verify -q HEAD^2 > /dev/null; then
+            BASE="$(git rev-parse HEAD^1)"
+            SOURCE="the checked-out merge commit's first parent"
+          else
+            BASE="$EVENT_BASE_SHA"
+            SOURCE="the event's base commit, because HEAD is not a merge commit"
+          fi
+          if [[ ! "$BASE" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::The diff base from $SOURCE is not a full commit id." >&2
+            exit 1
+          fi
+          echo "Diff base: $BASE, from $SOURCE."
+          echo "BASE_SHA=$BASE" >> "$GITHUB_ENV"
       - name: Run checks
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -188,9 +205,8 @@ jobs:
           # a pull_request run is the merge ref — at which `test-plan` demands
           # a passed `AEG:LIVE` entry for each `[live]` line of the brief.
           PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          # The commit the pull request targets: checks that resolve a merge-base
-          # read it instead of assuming the default branch.
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # BASE_SHA comes from the job environment `Resolve the diff base`
+          # wrote — never set here, where a step-level entry would override it.
           # O3: this job's gate events deliver live to the `logs.url` server
           # destination the default branch's own `vinaya.config.json`
           # declares — never a fork PR's own working-tree copy
