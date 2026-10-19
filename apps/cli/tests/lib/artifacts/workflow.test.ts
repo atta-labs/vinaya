@@ -38,10 +38,43 @@ describe('generated vinaya-checks.yml: no log artifact, no collector', () => {
     expect(ops.find((o) => o.kind === 'create-file' && o.path.includes('task-log-collector'))).toBeUndefined()
   })
 
-  it('the Run checks step carries BASE_SHA from the pull request base commit', () => {
+  function stepOf(workflow: string, name: string): string {
+    const start = workflow.indexOf(`      - name: ${name}\n`)
+    if (start === -1) throw new Error(`expected a step named ${name}`)
+    const next = workflow.indexOf('\n      - ', start + 1)
+    return next === -1 ? workflow.slice(start) : workflow.slice(start, next + 1)
+  }
+
+  it('a Resolve the diff base step runs after the forge snapshot and before Run checks', () => {
     const checks = contentOf(opsFor(null), CHECKS_WORKFLOW_PATH)
-    const step = checks.slice(checks.indexOf('- name: Run checks'))
-    expect(step).toContain('BASE_SHA: ${{ github.event.pull_request.base.sha }}')
+    const snapshot = checks.indexOf('      - name: Write the forge snapshot\n')
+    const resolve = checks.indexOf('      - name: Resolve the diff base\n')
+    const run = checks.indexOf('      - name: Run checks\n')
+    expect(snapshot).toBeGreaterThan(-1)
+    expect(resolve).toBeGreaterThan(snapshot)
+    expect(run).toBeGreaterThan(resolve)
+  })
+
+  it('the resolving step takes the merge commit first parent, falls back to the event base, validates and exports BASE_SHA', () => {
+    const step = stepOf(contentOf(opsFor(null), CHECKS_WORKFLOW_PATH), 'Resolve the diff base')
+    expect(step).toContain('EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}')
+    expect(step).toContain('git rev-parse --verify -q HEAD^2')
+    expect(step).toContain('git rev-parse HEAD^1')
+    expect(step).toContain('BASE="$EVENT_BASE_SHA"')
+    expect(step).toContain('=~ ^[0-9a-f]{40}$ ]]')
+    expect(step).toContain('::error::')
+    expect(step).toContain('echo "Diff base: $BASE, from $SOURCE."')
+    expect(step).toContain('echo "BASE_SHA=$BASE" >> "$GITHUB_ENV"')
+    // The validation runs before the value reaches $GITHUB_ENV.
+    expect(step.indexOf('=~ ^[0-9a-f]{40}$')).toBeLessThan(step.indexOf('>> "$GITHUB_ENV"'))
+  })
+
+  it('the Run checks step sets no BASE_SHA of its own, so the resolved job value reaches the checks', () => {
+    const checks = contentOf(opsFor(null), CHECKS_WORKFLOW_PATH)
+    expect(stepOf(checks, 'Run checks')).not.toMatch(/^\s+BASE_SHA:/m)
+    // The event's base commit appears only as the resolving step's fallback.
+    const uses = checks.split('\n').filter((l) => l.includes('github.event.pull_request.base.sha'))
+    expect(uses).toEqual(['          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}'])
   })
 
   it('vinaya-checks.yml still holds no forge-write credential', () => {

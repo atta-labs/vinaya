@@ -525,6 +525,38 @@ const FORGE_SNAPSHOT_CHECK_ENV = `          # The run's forge snapshot (\`lib/fo
           PR_BODY_FILE: ${FORGE_SNAPSHOT_DIR}/body.md
 `
 
+/**
+ * The step that resolves the diff base for the checks job. On a
+ * \`pull_request\` run the checkout is the pull request merged into the base
+ * branch's tip as that merge was built, so the merge's first parent is the
+ * exact commit the checked-out tree diffs against; the event's own base commit
+ * goes stale as soon as the base branch moves past it, and a diff against it
+ * counts the base branch's later commits as the pull request's own. A \`HEAD\`
+ * that is not a merge commit falls back to the event's base. The value is
+ * validated as a full commit id before it reaches \`$GITHUB_ENV\`, so no
+ * value can carry a second variable in on a newline.
+ */
+function diffBaseStep(): string {
+  return `      - name: Resolve the diff base
+        env:
+          EVENT_BASE_SHA: \${{ github.event.pull_request.base.sha }}
+        run: |
+          if git rev-parse --verify -q HEAD^2 > /dev/null; then
+            BASE="$(git rev-parse HEAD^1)"
+            SOURCE="the checked-out merge commit's first parent"
+          else
+            BASE="$EVENT_BASE_SHA"
+            SOURCE="the event's base commit, because HEAD is not a merge commit"
+          fi
+          if [[ ! "$BASE" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::The diff base from $SOURCE is not a full commit id." >&2
+            exit 1
+          fi
+          echo "Diff base: $BASE, from $SOURCE."
+          echo "BASE_SHA=$BASE" >> "$GITHUB_ENV"
+`
+}
+
 function checksWorkflow(selfHost: VendoredVinaya | null, ciSetup: string | null): string {
   return `# ${MANAGED_NOTE}
 #
@@ -597,7 +629,7 @@ ${vinayaSetupSteps(selfHost)}${adopterSetupStep(ciSetup)}      # PR_BODY is what
       # closes and that Issue's comments are read once, over REST, into the
       # forge snapshot the checks read — see \`pullRequestReadStep\`'s own doc
       # comment for why the read is live and re-reads with a bounded backoff.
-${pullRequestReadStep({ name: 'Read the pull request over REST', prNumber: '${{ github.event.pull_request.number }}', waitForCloses: true })}${forgeSnapshotStep(selfHost, { exportBody: true })}      - name: Run checks
+${pullRequestReadStep({ name: 'Read the pull request over REST', prNumber: '${{ github.event.pull_request.number }}', waitForCloses: true })}${forgeSnapshotStep(selfHost, { exportBody: true })}${diffBaseStep()}      - name: Run checks
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: \${{ github.event.pull_request.number }}
@@ -606,9 +638,8 @@ ${FORGE_SNAPSHOT_CHECK_ENV}          BRANCH: \${{ github.head_ref }}
           # a pull_request run is the merge ref — at which \`test-plan\` demands
           # a passed \`AEG:LIVE\` entry for each \`[live]\` line of the brief.
           PULL_REQUEST_HEAD_SHA: \${{ github.event.pull_request.head.sha }}
-          # The commit the pull request targets: checks that resolve a merge-base
-          # read it instead of assuming the default branch.
-          BASE_SHA: \${{ github.event.pull_request.base.sha }}
+          # BASE_SHA comes from the job environment \`Resolve the diff base\`
+          # wrote — never set here, where a step-level entry would override it.
           # O3: this job's gate events deliver live to the \`logs.url\` server
           # destination the default branch's own \`vinaya.config.json\`
           # declares — never a fork PR's own working-tree copy
