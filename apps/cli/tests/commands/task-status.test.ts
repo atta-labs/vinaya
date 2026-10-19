@@ -252,7 +252,13 @@ function stubGh(home: string): string {
       return `    ${pr}) cat <<'JSON'\n${JSON.stringify(payload)}\nJSON\n    ;;`
     })
     .join('\n')
+  const configB64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
   const script = `#!/bin/sh
+# The default branch's vinaya.config.json, naming the Principals.
+if [ "$1" = "api" ] && [ "$2" = "repos/acme/widget/contents/vinaya.config.json" ]; then
+  echo '${configB64}'
+  exit 0
+fi
 # The head's workflow runs: none, so the table judges its check runs alone.
 if [ "$1" = "api" ]; then
   exit 0
@@ -324,7 +330,12 @@ function setUp(): { home: string; env: Record<string, string> } {
   const forgeDir = stubGh(home)
   return {
     home,
-    env: { HOME: home, PATH: `${forgeDir}:${process.env.PATH ?? ''}`, AEG_REPO: 'acme/widget' }
+    env: {
+      HOME: home,
+      PATH: `${forgeDir}:${process.env.PATH ?? ''}`,
+      AEG_REPO: 'acme/widget',
+      GITHUB_REPOSITORY: 'acme/widget'
+    }
   }
 }
 

@@ -59,9 +59,9 @@
  * claim never depends on the caller having gotten the ordering right.
  *
  * Self-verification (the part that actually closes the gap): after posting,
- * this command re-fetches the PR's comments, filters them to the same
- * `PRINCIPAL_ALLOWLIST`/`principals`-derived author set `checkReviewGate`
- * itself filters to (a verdict-author-verification fix — a
+ * this command re-fetches the PR's comments, filters them to the same author
+ * set — the default branch's `principals` — that `checkReviewGate` itself
+ * filters to (a verdict-author-verification fix — a
  * non-allowlisted "VERDICT:"-shaped comment must never count, in either
  * direction), and runs the survivors through the exact gate-side extractors.
  * A single fetch-and-check, deliberately with no retry loop — a retry here
@@ -107,16 +107,10 @@ import {
   securityBlockingSeverities,
   type VerdictExtraction
 } from '@attalabs/aeg-core'
-import {
-  loadConfig,
-  loadTrustAnchorConfig,
-  resolveGateCutovers,
-  resolvePrincipalAllowlist,
-  resolveReviewPolicy
-} from '../lib/config'
+import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolveReviewPolicy } from '../lib/config'
 import { printJson } from '../lib/envelope'
 import { isForgeReadOversize, readIssueComments } from '../lib/forge-read'
-import { makeCheckError, refuse } from '../lib/forge-write'
+import { makeCheckError, refuse, resolvePrincipalsOrRefuse } from '../lib/forge-write'
 
 // --- shared finding grammar ---------------------------------------------------
 
@@ -1181,6 +1175,11 @@ function refuseCmd(message: string, recovery: string): never {
   refuse([makeCheckError('review-post', message, recovery)])
 }
 
+/** The default branch's Principal list, or this command's refusal naming why it did not resolve. */
+function principalsOrRefuse(): string[] {
+  return resolvePrincipalsOrRefuse('review-post', 'vinaya review post ...')
+}
+
 function requireFlag(flags: Map<string, string>, name: string): string {
   const v = flags.get(name)
   if (v === undefined || v === '') {
@@ -1457,7 +1456,7 @@ function resolveRulingOrdinalForPr(pr: string): number {
       'Confirm `gh auth status` passes, then re-run.'
     )
   }
-  return newestPrincipalRulingOrdinal(comments, resolvePrincipalAllowlist(loadTrustAnchorConfig()))
+  return newestPrincipalRulingOrdinal(comments, principalsOrRefuse())
 }
 
 /**
@@ -1919,7 +1918,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     const escalationObjectivesVersion =
       escalationObjectivesResolution.kind === 'list' ? escalationObjectivesResolution.version : null
     const escalationRulingOrdinal = resolveRulingOrdinalForPr(pr)
-    const escalationPrincipalAllowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+    const escalationPrincipalAllowlist = principalsOrRefuse()
     const escalationBriefHash = resolveBriefHashForPr(pr, escalationPrincipalAllowlist)
     const escalationBaseSha = resolveBaseShaForPr(pr)
     const body = renderEscalationComment({
@@ -1996,7 +1995,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       }
     }
 
-    const principalAllowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+    const principalAllowlist = principalsOrRefuse()
 
     const headSha = resolveHeadSha(pr)
 
@@ -2133,7 +2132,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       `Put the \`${SECRET_SCAN_CHECK}\` check's name and its passing conclusion in the evidence file beside the judged head sha ${headSha} — and no other commit's sha — then re-run.`
     )
   }
-  const principalAllowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  const principalAllowlist = principalsOrRefuse()
 
   const objectivesResolution = resolveObjectivesForPr(pr)
   const { objectivesVersion: resolvedObjectivesVersion, objectiveResults } = resolveObjectiveResultsForCommand(

@@ -20,7 +20,6 @@ import { label as labelFor } from '@attalabs/aeg-forge-state'
 
 export const WAIVER_LABEL = labelFor('waiver-docs')
 export const WAIVER_LABEL_REVIEW = labelFor('waiver-review')
-export const PRINCIPAL_ALLOWLIST = ['daniboomerang']
 
 /**
  * Membership test for a principal allowlist. **Case-insensitive, because

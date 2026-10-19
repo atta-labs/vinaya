@@ -130,6 +130,9 @@ const INDEX = join(CLI_ROOT, 'src', 'index.ts')
  */
 const DEFAULT_POLICY_DIGEST = policyDigest(DEFAULT_REVIEW_POLICY)
 
+/** The default branch's `vinaya.config.json` every fixture's `gh` stub serves for `api repos/<owner>/<repo>/contents/vinaya.config.json`, base64-encoded as the contents API's `--jq .content` returns it. */
+const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
+
 const TASK = 9001
 
 /**
@@ -271,14 +274,14 @@ function writeFakeGh(dir: string): void {
     'gh',
     `#!/bin/sh
 if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
-  # #668: every fixture's principalAllowlist()/reviewPolicy() call reaches
+  # Every fixture's principalAllowlist()/reviewPolicy() call reaches
   # loadTrustAnchorConfig() with no injected fetcher (it runs inside this
-  # spawned driver subprocess, past any in-process seam) — declaring the
-  # read unavailable here, 404-shaped, keeps it on loadTrustAnchorConfig's
-  # SILENT path (isMissingFileError), never its stdout warning, which no
-  # fixture's captured output expects.
-  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
-  exit 1
+  # spawned driver subprocess, past any in-process seam), so the stub serves
+  # the default branch's vinaya.config.json naming the Principal, base64 as
+  # the contents API returns it — the configured path every Principal-deciding
+  # reader now requires.
+  echo '${PRINCIPALS_CONFIG_B64}'
+  exit 0
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
@@ -367,14 +370,14 @@ function writeFakeGhReviewGateOwnCheckFails(dir: string): void {
     'gh',
     `#!/bin/sh
 if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
-  # #668: every fixture's principalAllowlist()/reviewPolicy() call reaches
+  # Every fixture's principalAllowlist()/reviewPolicy() call reaches
   # loadTrustAnchorConfig() with no injected fetcher (it runs inside this
-  # spawned driver subprocess, past any in-process seam) — declaring the
-  # read unavailable here, 404-shaped, keeps it on loadTrustAnchorConfig's
-  # SILENT path (isMissingFileError), never its stdout warning, which no
-  # fixture's captured output expects.
-  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
-  exit 1
+  # spawned driver subprocess, past any in-process seam), so the stub serves
+  # the default branch's vinaya.config.json naming the Principal, base64 as
+  # the contents API returns it — the configured path every Principal-deciding
+  # reader now requires.
+  echo '${PRINCIPALS_CONFIG_B64}'
+  exit 0
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
@@ -588,14 +591,14 @@ function writeFakeGhCrashOnceThenReattach(dir: string): void {
     'gh',
     `#!/bin/sh
 if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
-  # #668: every fixture's principalAllowlist()/reviewPolicy() call reaches
+  # Every fixture's principalAllowlist()/reviewPolicy() call reaches
   # loadTrustAnchorConfig() with no injected fetcher (it runs inside this
-  # spawned driver subprocess, past any in-process seam) — declaring the
-  # read unavailable here, 404-shaped, keeps it on loadTrustAnchorConfig's
-  # SILENT path (isMissingFileError), never its stdout warning, which no
-  # fixture's captured output expects.
-  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
-  exit 1
+  # spawned driver subprocess, past any in-process seam), so the stub serves
+  # the default branch's vinaya.config.json naming the Principal, base64 as
+  # the contents API returns it — the configured path every Principal-deciding
+  # reader now requires.
+  echo '${PRINCIPALS_CONFIG_B64}'
+  exit 0
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 ISSUE_STATE_DIR="$HOME/.fake-gh-posted-issue-comments"
@@ -693,14 +696,14 @@ function writeFakeGhReattachSucceeds(dir: string): void {
     'gh',
     `#!/bin/sh
 if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
-  # #668: every fixture's principalAllowlist()/reviewPolicy() call reaches
+  # Every fixture's principalAllowlist()/reviewPolicy() call reaches
   # loadTrustAnchorConfig() with no injected fetcher (it runs inside this
-  # spawned driver subprocess, past any in-process seam) — declaring the
-  # read unavailable here, 404-shaped, keeps it on loadTrustAnchorConfig's
-  # SILENT path (isMissingFileError), never its stdout warning, which no
-  # fixture's captured output expects.
-  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
-  exit 1
+  # spawned driver subprocess, past any in-process seam), so the stub serves
+  # the default branch's vinaya.config.json naming the Principal, base64 as
+  # the contents API returns it — the configured path every Principal-deciding
+  # reader now requires.
+  echo '${PRINCIPALS_CONFIG_B64}'
+  exit 0
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 ISSUE_STATE_DIR="$HOME/.fake-gh-posted-issue-comments"
@@ -2126,12 +2129,9 @@ function writeFakeGhPauseCommentFailsOnce(dir: string): void {
     'gh',
     `#!/bin/sh
 if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
-  # issue #945: this read must be 404-shaped (a MISSING config file → the
-  # defaults path), never a generic failure — \`reviewPolicy\` now treats a
-  # non-404 read failure as an infrastructure pause, which would mask this
-  # scenario's own escalation pause. See \`writeFakeGh\`'s #668 note.
-  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
-  exit 1
+  # Served with \`principals\`, as \`writeFakeGh\`'s note explains.
+  echo '${PRINCIPALS_CONFIG_B64}'
+  exit 0
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
@@ -2216,12 +2216,9 @@ function writeFakeGhPauseCommentNeverSucceeds(dir: string): void {
     'gh',
     `#!/bin/sh
 if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
-  # issue #945: this read must be 404-shaped (a MISSING config file → the
-  # defaults path), never a generic failure — \`reviewPolicy\` now treats a
-  # non-404 read failure as an infrastructure pause, which would mask this
-  # scenario's own escalation pause. See \`writeFakeGh\`'s #668 note.
-  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
-  exit 1
+  # Served with \`principals\`, as \`writeFakeGh\`'s note explains.
+  echo '${PRINCIPALS_CONFIG_B64}'
+  exit 0
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
@@ -2738,14 +2735,14 @@ function writeFakeGhSupersededCiFailure(dir: string): void {
     'gh',
     `#!/bin/sh
 if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
-  # #668: every fixture's principalAllowlist()/reviewPolicy() call reaches
+  # Every fixture's principalAllowlist()/reviewPolicy() call reaches
   # loadTrustAnchorConfig() with no injected fetcher (it runs inside this
-  # spawned driver subprocess, past any in-process seam) — declaring the
-  # read unavailable here, 404-shaped, keeps it on loadTrustAnchorConfig's
-  # SILENT path (isMissingFileError), never its stdout warning, which no
-  # fixture's captured output expects.
-  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
-  exit 1
+  # spawned driver subprocess, past any in-process seam), so the stub serves
+  # the default branch's vinaya.config.json naming the Principal, base64 as
+  # the contents API returns it — the configured path every Principal-deciding
+  # reader now requires.
+  echo '${PRINCIPALS_CONFIG_B64}'
+  exit 0
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
@@ -3016,14 +3013,14 @@ function writeFakeGhAlwaysRedCi(dir: string): void {
     'gh',
     `#!/bin/sh
 if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
-  # #668: every fixture's principalAllowlist()/reviewPolicy() call reaches
+  # Every fixture's principalAllowlist()/reviewPolicy() call reaches
   # loadTrustAnchorConfig() with no injected fetcher (it runs inside this
-  # spawned driver subprocess, past any in-process seam) — declaring the
-  # read unavailable here, 404-shaped, keeps it on loadTrustAnchorConfig's
-  # SILENT path (isMissingFileError), never its stdout warning, which no
-  # fixture's captured output expects.
-  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
-  exit 1
+  # spawned driver subprocess, past any in-process seam), so the stub serves
+  # the default branch's vinaya.config.json naming the Principal, base64 as
+  # the contents API returns it — the configured path every Principal-deciding
+  # reader now requires.
+  echo '${PRINCIPALS_CONFIG_B64}'
+  exit 0
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
@@ -3097,14 +3094,14 @@ function writeFakeGhSupersededSuccessThenCurrentFailure(dir: string): void {
     'gh',
     `#!/bin/sh
 if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
-  # #668: every fixture's principalAllowlist()/reviewPolicy() call reaches
+  # Every fixture's principalAllowlist()/reviewPolicy() call reaches
   # loadTrustAnchorConfig() with no injected fetcher (it runs inside this
-  # spawned driver subprocess, past any in-process seam) — declaring the
-  # read unavailable here, 404-shaped, keeps it on loadTrustAnchorConfig's
-  # SILENT path (isMissingFileError), never its stdout warning, which no
-  # fixture's captured output expects.
-  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
-  exit 1
+  # spawned driver subprocess, past any in-process seam), so the stub serves
+  # the default branch's vinaya.config.json naming the Principal, base64 as
+  # the contents API returns it — the configured path every Principal-deciding
+  # reader now requires.
+  echo '${PRINCIPALS_CONFIG_B64}'
+  exit 0
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
@@ -4716,14 +4713,14 @@ function writeFakeGhCiGreenReviewGateRed(dir: string): void {
     'gh',
     `#!/bin/sh
 if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
-  # #668: every fixture's principalAllowlist()/reviewPolicy() call reaches
+  # Every fixture's principalAllowlist()/reviewPolicy() call reaches
   # loadTrustAnchorConfig() with no injected fetcher (it runs inside this
-  # spawned driver subprocess, past any in-process seam) — declaring the
-  # read unavailable here, 404-shaped, keeps it on loadTrustAnchorConfig's
-  # SILENT path (isMissingFileError), never its stdout warning, which no
-  # fixture's captured output expects.
-  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
-  exit 1
+  # spawned driver subprocess, past any in-process seam), so the stub serves
+  # the default branch's vinaya.config.json naming the Principal, base64 as
+  # the contents API returns it — the configured path every Principal-deciding
+  # reader now requires.
+  echo '${PRINCIPALS_CONFIG_B64}'
+  exit 0
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
@@ -4923,8 +4920,8 @@ function writeFakeGhSweepBlocksUntilDevInvoked(dir: string, blockedIssue: number
     'gh',
     `#!/bin/sh
 if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
-  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
-  exit 1
+  echo '${PRINCIPALS_CONFIG_B64}'
+  exit 0
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
@@ -5024,8 +5021,8 @@ function writeFakeGhSweepRevivedBetweenChecks(dir: string, revivedIssue: number)
     'gh',
     `#!/bin/sh
 if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
-  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
-  exit 1
+  echo '${PRINCIPALS_CONFIG_B64}'
+  exit 0
 fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"

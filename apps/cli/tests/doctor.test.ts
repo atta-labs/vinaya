@@ -764,13 +764,14 @@ describe('vinaya doctor — agent-vendor emitters (--agents)', () => {
 // flips `healthy`/exit code for every existing adopter that hasn't set
 // `principals` or doesn't have `vinaya` globally installed.
 describe('vinaya doctor — principals and vinaya-on-PATH (PR #279 review)', () => {
-  it('principals: reports info naming the DANGLING risk when vinaya.config.json has no "principals"', async () => {
+  it('principals: reports info naming the refusal when vinaya.config.json has no "principals"', async () => {
     await runInit(['--yes'], initDeps())
     const report = await runDoctorJson()
     const principals = report.findings.find((f) => f.check === 'principals')
     expect(principals?.severity).toBe('info')
     expect(principals?.message).toContain('no "principals"')
-    expect(principals?.message).toContain('DANGLING')
+    expect(principals?.message).toContain('refuses')
+    expect(principals?.message).not.toContain('placeholder')
     expect(report.healthy).toBe(true) // info severity never flips the exit code
   })
 

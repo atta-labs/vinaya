@@ -42,6 +42,9 @@ import {
   verifyPostedSecurity
 } from '../../src/commands/review-post'
 
+/** The default branch's `vinaya.config.json` every `gh` stub here serves to the Principal read (`gh api repos/<owner>/<repo>/contents/vinaya.config.json`), base64-encoded as the contents API returns it. */
+const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
+
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
 const HEAD = 'a'.repeat(40)
@@ -96,7 +99,7 @@ function brokenGhPath(): { dir: string; env: Record<string, string> } {
   const gh = join(dir, 'gh')
   writeFileSync(gh, '#!/bin/sh\necho "gh: unreachable (test stub)" >&2\nexit 1\n')
   chmodSync(gh, 0o755)
-  return { dir, env: { PATH: `${dir}:${process.env.PATH ?? ''}` } }
+  return { dir, env: { PATH: `${dir}:${process.env.PATH ?? ''}`, GITHUB_REPOSITORY: 'acme/widget' } }
 }
 
 /**
@@ -135,6 +138,10 @@ function workingGhPath(
     `#!/usr/bin/env bun
 import { readFileSync, writeFileSync } from 'node:fs'
 const args = process.argv.slice(2)
+if (args[0] === 'api' && String(args[1]).endsWith('/contents/vinaya.config.json')) {
+  process.stdout.write('${PRINCIPALS_CONFIG_B64}')
+  process.exit(0)
+}
 const commentsPath = ${JSON.stringify(join(stateDir, 'comments.json'))}
 function readComments() {
   try { return JSON.parse(readFileSync(commentsPath, 'utf8')) } catch { return [] }
@@ -186,7 +193,7 @@ process.exit(1)
 `
   )
   chmodSync(gh, 0o755)
-  return { dir, env: { PATH: `${dir}:${process.env.PATH ?? ''}` } }
+  return { dir, env: { PATH: `${dir}:${process.env.PATH ?? ''}`, GITHUB_REPOSITORY: 'acme/widget' } }
 }
 
 function seedComments(stateDir: string, comments: Array<{ body: string; author: string }>): void {
@@ -219,6 +226,10 @@ function workingGhPathWithObjectives(
     `#!/usr/bin/env bun
 import { readFileSync, writeFileSync } from 'node:fs'
 const args = process.argv.slice(2)
+if (args[0] === 'api' && String(args[1]).endsWith('/contents/vinaya.config.json')) {
+  process.stdout.write('${PRINCIPALS_CONFIG_B64}')
+  process.exit(0)
+}
 const commentsPath = ${JSON.stringify(join(stateDir, 'comments.json'))}
 function readComments() {
   try { return JSON.parse(readFileSync(commentsPath, 'utf8')) } catch { return [] }
@@ -275,7 +286,7 @@ process.exit(1)
 `
   )
   chmodSync(gh, 0o755)
-  return { dir, env: { PATH: `${dir}:${process.env.PATH ?? ''}` } }
+  return { dir, env: { PATH: `${dir}:${process.env.PATH ?? ''}`, GITHUB_REPOSITORY: 'acme/widget' } }
 }
 
 describe('deriveCodeReviewVerdict — the command decides, not the caller', () => {
@@ -860,6 +871,10 @@ describe('review post — verdict binds to the true branch head, not a stale hea
       `#!/usr/bin/env bun
 import { readFileSync, writeFileSync } from 'node:fs'
 const args = process.argv.slice(2)
+if (args[0] === 'api' && String(args[1]).endsWith('/contents/vinaya.config.json')) {
+  process.stdout.write('${PRINCIPALS_CONFIG_B64}')
+  process.exit(0)
+}
 const commentsPath = ${JSON.stringify(join(stateDir, 'comments.json'))}
 function readComments() {
   try { return JSON.parse(readFileSync(commentsPath, 'utf8')) } catch { return [] }
@@ -907,7 +922,7 @@ process.exit(1)
 `
     )
     chmodSync(gh, 0o755)
-    const env = { PATH: `${dir}:${process.env.PATH ?? ''}` }
+    const env = { PATH: `${dir}:${process.env.PATH ?? ''}`, GITHUB_REPOSITORY: 'acme/widget' }
     try {
       // `spawnSync`, not `runCli`: `runCli` discards stderr on a successful
       // (exit 0) run, and the headRefOid-disagreement warning below is

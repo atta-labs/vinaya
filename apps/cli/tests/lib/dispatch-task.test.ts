@@ -20,6 +20,33 @@ import {
   widenSurfaceInLine
 } from '../../src/lib/dispatch-task.js'
 
+/** The default branch's `vinaya.config.json` the Principal read (`gh api repos/<owner>/<repo>/contents/vinaya.config.json`) is served, base64-encoded as the contents API returns it. */
+const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
+
+/**
+ * Puts a `gh` on `PATH` that answers only the Principal read, and names the
+ * repository through `GITHUB_REPOSITORY`, for a fixture that stubs no other
+ * `gh` call; returns the function that restores both.
+ */
+function servePrincipalsConfig(): () => void {
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-principals-gh-'))
+  writeFileSync(
+    join(dir, 'gh'),
+    `#!/bin/sh\nif [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then echo '${PRINCIPALS_CONFIG_B64}'; exit 0; fi\nexit 1\n`
+  )
+  execFileSync('chmod', ['+x', join(dir, 'gh')])
+  const originalPath = process.env.PATH
+  const originalRepository = process.env.GITHUB_REPOSITORY
+  process.env.PATH = `${dir}:${process.env.PATH ?? ''}`
+  process.env.GITHUB_REPOSITORY = 'test-owner/test-repo'
+  return () => {
+    process.env.PATH = originalPath
+    if (originalRepository === undefined) delete process.env.GITHUB_REPOSITORY
+    else process.env.GITHUB_REPOSITORY = originalRepository
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
 const BRIEF_TEXT = '**For:** Sonnet\n**Tier:** 1\n\nCloses #427\n\nYou are the AEG Developer.'
 const CLI_ROOT = join(import.meta.dir, '..', '..')
 const REPO_ROOT = join(CLI_ROOT, '..', '..')
@@ -1085,6 +1112,8 @@ describe('validateIssueWriteGate (O2) — the real Issue write gate, exercised a
     RATIONALE
   ].join('\n')
 
+  let restorePrincipals: () => void = () => {}
+
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), 'vinaya-write-gate-'))
     writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ briefSchema: { issue: { sections: [] } } }), 'utf8')
@@ -1108,9 +1137,11 @@ describe('validateIssueWriteGate (O2) — the real Issue write gate, exercised a
     process.env.AEG_REPO = 'test-owner/test-repo'
     originalCwd = process.cwd()
     process.chdir(cwd)
+    restorePrincipals = servePrincipalsConfig()
   })
 
   afterEach(() => {
+    restorePrincipals()
     process.chdir(originalCwd)
     process.env.AEG_REPO = originalAegRepo
     rmSync(cwd, { recursive: true, force: true })

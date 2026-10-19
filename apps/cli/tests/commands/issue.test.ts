@@ -6,6 +6,9 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { parseIssueNumberFromRef } from '../../src/commands/issue'
 
+/** The default branch's `vinaya.config.json` every `gh` stub here serves to the Principal read (`gh api repos/<owner>/<repo>/contents/vinaya.config.json`), base64-encoded as the contents API returns it. */
+const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
+
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
 const FORGE_FIXTURES = join(CLI_ROOT, 'tests', 'fixtures', 'forge')
@@ -72,6 +75,7 @@ function fakeGhLabelsPath(dir: string): string {
     gh,
     `#!/bin/sh
 case "$*" in
+  api*contents/vinaya.config.json*) echo '${PRINCIPALS_CONFIG_B64}' ;;
   api*) echo '[]' ;;
   *labels*) echo '{"labels":[{"name":"vinaya/tranche:demo"}]}' ;;
   *) echo '{"body":"","comments":[]}' ;;
@@ -407,7 +411,7 @@ describe('vinaya issue edit --validate-only — URL-form ref reaches the Objecti
         join(FORGE_FIXTURES, 'issue-valid.md')
       ],
       cwd,
-      { PATH: fakeGhLabelsPath(ghDir) }
+      { PATH: fakeGhLabelsPath(ghDir), GITHUB_REPOSITORY: 'acme/widget' }
     )
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('## Objectives')
@@ -424,7 +428,7 @@ describe('vinaya issue edit --validate-only — URL-form ref reaches the Objecti
         join(FORGE_FIXTURES, 'issue-valid.md')
       ],
       cwd,
-      { PATH: fakeGhLabelsPath(ghDir) }
+      { PATH: fakeGhLabelsPath(ghDir), GITHUB_REPOSITORY: 'acme/widget' }
     )
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('PASS')
@@ -563,7 +567,7 @@ describe('vinaya issue edit --validate-only — briefSections builtin reaches th
         join(FORGE_FIXTURES, 'issue-valid-with-objectives.md')
       ],
       cwd,
-      { PATH: fakeGhLabelsPath(ghDir) }
+      { PATH: fakeGhLabelsPath(ghDir), GITHUB_REPOSITORY: 'acme/widget' }
     )
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('PASS')
@@ -573,7 +577,7 @@ describe('vinaya issue edit --validate-only — briefSections builtin reaches th
     const r = runCli(
       ['issue', 'edit', '426', '--validate-only', '--body-file', join(FORGE_FIXTURES, 'issue-valid.md')],
       cwd,
-      { PATH: fakeGhLabelsPath(ghDir) }
+      { PATH: fakeGhLabelsPath(ghDir), GITHUB_REPOSITORY: 'acme/widget' }
     )
     expect(r.status).toBe(1)
     expect(r.stderr).toMatch(/Surface/)
@@ -591,7 +595,8 @@ describe('vinaya issue edit --validate-only — briefSections builtin reaches th
     const bodyPath = join(cwd, 'body-below-documentation-cutover.md')
     writeFileSync(bodyPath, withoutDocumentation)
     const r = runCli(['issue', 'edit', '625', '--validate-only', '--body-file', bodyPath], cwd, {
-      PATH: fakeGhLabelsPath(ghDir)
+      PATH: fakeGhLabelsPath(ghDir),
+      GITHUB_REPOSITORY: 'acme/widget'
     })
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('PASS')
@@ -605,7 +610,8 @@ describe('vinaya issue edit --validate-only — briefSections builtin reaches th
     const bodyPath = join(cwd, 'body-at-documentation-cutover.md')
     writeFileSync(bodyPath, withoutDocumentation)
     const r = runCli(['issue', 'edit', '626', '--validate-only', '--body-file', bodyPath], cwd, {
-      PATH: fakeGhLabelsPath(ghDir)
+      PATH: fakeGhLabelsPath(ghDir),
+      GITHUB_REPOSITORY: 'acme/widget'
     })
     expect(r.status).toBe(1)
     expect(r.stderr).toMatch(/Documentation/)
@@ -673,6 +679,7 @@ describe('vinaya issue edit (real write) — O3 frozen-brief section lock', () =
       gh,
       `#!/bin/sh
 case "$*" in
+  api*contents/vinaya.config.json*) echo '${PRINCIPALS_CONFIG_B64}' ;;
   api*) cat "${restCommentsPath}" ;;
   *labels*) echo '{"labels":[{"name":"vinaya/tranche:demo"}]}' ;;
   *"--json body") cat "${bodyOnlyPath}" ;;
@@ -689,7 +696,10 @@ esac
     const newBody = OLD_BODY.replace('O1. Do the thing.', 'O1. Do a different thing.')
     const bodyPath = join(cwd, 'new-body.md')
     writeFileSync(bodyPath, newBody)
-    const r = runCli(['issue', 'edit', '999', '--body-file', bodyPath], cwd, { PATH: fakeGhFrozenPath(ghDir) })
+    const r = runCli(['issue', 'edit', '999', '--body-file', bodyPath], cwd, {
+      PATH: fakeGhFrozenPath(ghDir),
+      GITHUB_REPOSITORY: 'acme/widget'
+    })
     expect(r.status).toBe(1)
     expect(r.stderr).toMatch(/already frozen/)
     expect(r.stderr).toContain('issue objectives edit')
@@ -701,7 +711,8 @@ esac
     const bodyPath = join(cwd, 'new-body.md')
     writeFileSync(bodyPath, newBody)
     const r = runCli(['issue', 'edit', '999', '--validate-only', '--body-file', bodyPath], cwd, {
-      PATH: fakeGhFrozenPath(ghDir)
+      PATH: fakeGhFrozenPath(ghDir),
+      GITHUB_REPOSITORY: 'acme/widget'
     })
     expect(r.status).toBe(1)
     expect(r.stderr).toMatch(/already frozen/)

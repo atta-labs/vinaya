@@ -5,6 +5,9 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'bun:test'
 
+/** The default branch's `vinaya.config.json` every `gh` stub here serves to the Principal read (`gh api repos/<owner>/<repo>/contents/vinaya.config.json`), base64-encoded as the contents API returns it. */
+const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
+
 // `vinaya review post --print-only` (task 6, #397): renders and
 // self-verifies the comment, exactly like a real post, but never calls `gh
 // pr comment` — closing atta-labs/vinaya#184 (a reviewer guessed this flag
@@ -58,6 +61,7 @@ function stubGhNoPost(headSha: string): { dir: string; env: Record<string, strin
   writeFileSync(
     gh,
     `#!/bin/sh
+if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then echo '${PRINCIPALS_CONFIG_B64}'; exit 0; fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   case "$*" in
     *headRefName*) echo "stub-branch"; exit 0 ;;
@@ -89,7 +93,7 @@ exit 1
 `
   )
   chmodSync(gh, 0o755)
-  return { dir, env: { PATH: `${dir}:${process.env.PATH ?? ''}` } }
+  return { dir, env: { PATH: `${dir}:${process.env.PATH ?? ''}`, GITHUB_REPOSITORY: 'acme/widget' } }
 }
 
 const tempDirs: string[] = []

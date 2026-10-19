@@ -79,7 +79,6 @@ export type { C5Result, DocAck, DocNeutral, DocOwnersBinding, DocOwnersManifestS
 export {
   isPrincipal,
   isWaiverLabelActorVerified,
-  PRINCIPAL_ALLOWLIST,
   WAIVER_LABEL,
   WAIVER_LABEL_REVIEW
 } from './waiver-label'

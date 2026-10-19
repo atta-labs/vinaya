@@ -46,6 +46,8 @@ const ISSUE_NUMBER = 9001
 const OWNER = 'fake-owner'
 const REPO = 'fake-repo'
 const TRANCHE_LABEL = `vinaya/tranche:${TRANCHE_SLUG}`
+/** The default branch's `vinaya.config.json` the Principal read (`gh api repos/<owner>/<repo>/contents/vinaya.config.json`) is served, base64-encoded as the contents API returns it. */
+const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
 
 const ISSUE_BODY = `[${TRANCHE_SLUG}] ${TASK_ID} — synthetic fixture issue for a bundle integration test
 
@@ -146,8 +148,23 @@ function worktreeScratchDir(prefix: string): string {
  * write gate `prepareTask` now runs before ever freezing a brief — the same
  * synthetic body and tranche label every other read in this fixture already
  * uses, `cat`-ed from a file for the same reason `issue list`'s answer is.
+ *
+ * `contents/vinaya.config.json` answers the Principal read dispatch now
+ * requires: the default branch's configuration naming the Principal, or —
+ * with `principalsConfigured` false — a 404, no configuration on the
+ * default branch at all.
  */
-function writeFakeGh(dir: string, issueListPath: string, issueBodyPath: string, issueLabelsPath: string): void {
+function writeFakeGh(
+  dir: string,
+  issueListPath: string,
+  issueBodyPath: string,
+  issueLabelsPath: string,
+  principalsConfigured: boolean
+): void {
+  const configAnswer = principalsConfigured
+    ? `echo '${PRINCIPALS_CONFIG_B64}'`
+    : `echo "gh: 404 Not Found" >&2
+    exit 1`
   const gh = join(dir, 'gh')
   writeFileSync(
     gh,
@@ -158,8 +175,7 @@ case "$ARGS" in
     echo "daniboomerang"
     ;;
   *"contents/vinaya.config.json"*)
-    echo "gh: 404 Not Found" >&2
-    exit 1
+    ${configAnswer}
     ;;
   *"milestones?state=all&per_page=100"*)
     echo "[]"
@@ -311,7 +327,7 @@ function writeIssueLabels(dir: string): string {
 
 type Fixture = { binDir: string; home: string; callLog: string; preload: string; path: string }
 
-function buildFixture(): Fixture {
+function buildFixture({ principalsConfigured = true }: { principalsConfigured?: boolean } = {}): Fixture {
   const binDir = tempDir('vinaya-dispatch-task-bin-')
   // This fixture tests dispatch wiring, so make the Linux confinement
   // prerequisites discoverable before the fake vendor is launched.
@@ -325,7 +341,7 @@ function buildFixture(): Fixture {
   const issueListPath = writeIssueList(dataDir)
   const issueBodyPath = writeIssueBody(dataDir)
   const issueLabelsPath = writeIssueLabels(dataDir)
-  writeFakeGh(binDir, issueListPath, issueBodyPath, issueLabelsPath)
+  writeFakeGh(binDir, issueListPath, issueBodyPath, issueLabelsPath, principalsConfigured)
   const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
   writeFakeGit(binDir, realGit)
   const callLog = join(worktreeScratchDir('vinaya-dispatch-task-call-'), 'vendor-call.log')
@@ -467,6 +483,20 @@ describe('vinaya task dispatch --agent — reaches the real developer, on the pu
 
       const vendorCall = Bun.file(fixture.callLog)
       expect(await vendorCall.exists()).toBe(true)
+    },
+    30_000
+  )
+
+  it.skipIf(process.platform === 'darwin')(
+    'with no vinaya.config.json on the default branch, dispatch refuses naming the fix — nothing posted, the developer never spawned',
+    async () => {
+      const fixture = buildFixture({ principalsConfigured: false })
+      const r = await runTaskDispatch('bun', SRC_INDEX, fixture)
+      expect(r.status).not.toBe(0)
+      expect(r.stderr).toContain('no Principal is configured')
+      expect(r.stderr).toContain('add "principals": [...] to vinaya.config.json on the default branch')
+      expect(r.stdout).not.toContain('Posted:')
+      expect(await Bun.file(fixture.callLog).exists()).toBe(false)
     },
     30_000
   )

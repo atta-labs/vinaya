@@ -20,6 +20,33 @@ import {
   taskNotFoundMessage
 } from '../../src/lib/brief-assembly.js'
 
+/** The default branch's `vinaya.config.json` the Principal read (`gh api repos/<owner>/<repo>/contents/vinaya.config.json`) is served, base64-encoded as the contents API returns it. */
+const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
+
+/**
+ * Puts a `gh` on `PATH` that answers only the Principal read, and names the
+ * repository through `GITHUB_REPOSITORY`, for a fixture that stubs no other
+ * `gh` call; returns the function that restores both.
+ */
+function servePrincipalsConfig(): () => void {
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-principals-gh-'))
+  writeFileSync(
+    join(dir, 'gh'),
+    `#!/bin/sh\nif [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then echo '${PRINCIPALS_CONFIG_B64}'; exit 0; fi\nexit 1\n`
+  )
+  execFileSync('chmod', ['+x', join(dir, 'gh')])
+  const originalPath = process.env.PATH
+  const originalRepository = process.env.GITHUB_REPOSITORY
+  process.env.PATH = `${dir}:${process.env.PATH ?? ''}`
+  process.env.GITHUB_REPOSITORY = 'test-owner/test-repo'
+  return () => {
+    process.env.PATH = originalPath
+    if (originalRepository === undefined) delete process.env.GITHUB_REPOSITORY
+    else process.env.GITHUB_REPOSITORY = originalRepository
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const REPO_ROOT = join(CLI_ROOT, '..', '..')
 
@@ -329,6 +356,8 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
   let originalCwd: string
   let originalAegRepo: string | undefined
 
+  let restorePrincipals: () => void = () => {}
+
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'vinaya-brief-override-'))
     remoteDir = join(tmpDir, 'remote')
@@ -354,9 +383,11 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
     originalAegRepo = process.env.AEG_REPO
     process.chdir(localDir)
     process.env.AEG_REPO = 'test-owner/test-repo'
+    restorePrincipals = servePrincipalsConfig()
   })
 
   afterEach(() => {
+    restorePrincipals()
     process.chdir(originalCwd)
     if (originalAegRepo === undefined) delete process.env.AEG_REPO
     else process.env.AEG_REPO = originalAegRepo

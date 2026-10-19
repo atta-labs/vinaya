@@ -54,7 +54,7 @@ import {
 import { parseRationaleDeps } from '@attalabs/aeg-forge-state'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { dependsOnFactFromEdge, type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../checks/edge-resolve.js'
-import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolvePrincipalAllowlist } from './config.js'
+import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from './config.js'
 import { briefCliInvocation } from './own-version.js'
 import { packageRoot } from './package-root.js'
 import { detectVendoredVinaya } from './self-host.js'
@@ -828,7 +828,7 @@ export async function assembleAndRenderBrief(
     conflictsWith,
     priorTask: null,
     priorTrancheArchival,
-    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig())
+    principalAllowlist: resolveTrustedPrincipals()
   }
   const gate = checkDispatchReadiness(gateInput)
 
@@ -1135,7 +1135,7 @@ export async function assembleAndRenderBriefForIssue(
     conflictsWith,
     priorTask: null,
     priorTrancheArchival,
-    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig())
+    principalAllowlist: resolveTrustedPrincipals()
   }
   const gate = checkDispatchReadiness(gateInput)
 
