@@ -82,6 +82,10 @@ function deps(overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
     // fallback for an unresolvable repo, same as `resolvePrUrl`'s own
     // `.catch(() => null)`.
     resolveRepo: async () => null,
+    // Not `neverCalled`: `runTask` calls this on every run that passes the
+    // live-driver refusal; the refusal tests below override it to prove a
+    // refused run never touches the Issue.
+    assignIssue: () => {},
     ...overrides
   }
 }
@@ -132,6 +136,10 @@ describe('runTask — O1: fresh task, one developer started', () => {
           expect(branch).toBe('task/task-run-v1/2')
           return null
         },
+        assignIssue: (issueNumber) => {
+          calls.push('assignIssue')
+          expect(issueNumber).toBe(480)
+        },
         devReviewLoop: async (input) => {
           calls.push('devReviewLoop')
           expect(input).toEqual({ task: 480, agent: 'claude' })
@@ -140,7 +148,7 @@ describe('runTask — O1: fresh task, one developer started', () => {
       })
     )
 
-    expect(calls).toEqual(['prepareTask', 'developerBranchFor', 'findOpenPrForBranch', 'devReviewLoop'])
+    expect(calls).toEqual(['prepareTask', 'developerBranchFor', 'findOpenPrForBranch', 'assignIssue', 'devReviewLoop'])
     expect(result).toEqual({ ...PUBLISH_RESULT, prUrl: null, branch: 'task/task-run-v1/2' })
   })
 
@@ -460,7 +468,8 @@ describe('runTask — O3: a refused preparation refuses before any agent starts'
         deps({
           prepareTask: async () => {
             throw new DispatchTaskError('cannot dispatch — brief render refused:\n  - missing ## Objectives')
-          }
+          },
+          assignIssue: neverCalled('assignIssue')
         })
       )
     ).rejects.toThrow(/brief render refused/)
@@ -493,6 +502,7 @@ describe('runTask — O3: an open developer pull request refuses a second start'
             expect(branch).toBe('task/task-run-v1/2')
             return { number: 501, branch }
           },
+          assignIssue: neverCalled('assignIssue'),
           devReviewLoop: async () => {
             loopCalled = true
             return PUBLISH_RESULT
@@ -528,6 +538,7 @@ describe('runTask — O3: an open developer pull request refuses a second start'
           assembleAndRenderBrief: async () => ({ ok: true, brief: '', issue: 480 }),
           developerBranchFor: () => 'task/task-run-v1/2',
           findOpenPrForBranch: () => ({ number: 501, branch: 'task/task-run-v1/2' }),
+          assignIssue: neverCalled('assignIssue'),
           devReviewLoop: async () => {
             loopCalled = true
             return PUBLISH_RESULT
@@ -536,6 +547,52 @@ describe('runTask — O3: an open developer pull request refuses a second start'
       )
     ).rejects.toThrow(RunTaskError)
     expect(loopCalled).toBe(false)
+  })
+})
+
+describe('runTask — the Issue is assigned when the run starts', () => {
+  it('assigns on the already-frozen path too, once, with the re-resolved Issue, before the loop starts', async () => {
+    const calls: string[] = []
+    await runTask(
+      { tranche: 't', n: 2, agent: 'claude' },
+      deps({
+        prepareTask: async () => {
+          throw new DispatchTaskError('Task 2 in tranche `t` is already dispatched — see some-url')
+        },
+        assembleAndRenderBrief: async () => ({ ok: true, brief: '', issue: 480 }),
+        developerBranchFor: () => 'task/t/2',
+        findOpenPrForBranch: () => null,
+        assignIssue: (issueNumber) => {
+          calls.push(`assignIssue:${issueNumber}`)
+        },
+        devReviewLoop: async () => {
+          calls.push('devReviewLoop')
+          return PUBLISH_RESULT
+        }
+      })
+    )
+    expect(calls).toEqual(['assignIssue:480', 'devReviewLoop'])
+  })
+
+  it('assigns on a dead-lock takeover of an open pull request, before the loop resumes it', async () => {
+    const calls: string[] = []
+    await runTask(
+      { issue: 480, agent: 'claude' },
+      deps({
+        prepareIssueTask: async () => ({ issue: 480, brief: '', commentUrl: '', version: 1 }),
+        developerBranchFor: () => 'task/t/2',
+        findOpenPrForBranch: () => ({ number: 501, branch: 'task/t/2' }),
+        isDriverAlive: () => false,
+        assignIssue: () => {
+          calls.push('assignIssue')
+        },
+        devReviewLoop: async () => {
+          calls.push('devReviewLoop')
+          return PUBLISH_RESULT
+        }
+      })
+    )
+    expect(calls).toEqual(['assignIssue', 'devReviewLoop'])
   })
 })
 

@@ -157,8 +157,8 @@ describe('registry-gates G7 — anything that can block or write to the forge re
       const reached = blockingFiles.filter((f) => reachesProducer(f, producers, imports))
       expect(crossingFiles).toHaveLength(0)
       expect(blockingFiles).toHaveLength(16)
-      expect(reached).toHaveLength(3)
-      expect(Object.keys(G7_EXEMPTIONS)).toHaveLength(13)
+      expect(reached).toHaveLength(4)
+      expect(Object.keys(G7_EXEMPTIONS)).toHaveLength(12)
       const result = checkG7({
         enforcementMapPresent: true,
         crossingFiles,

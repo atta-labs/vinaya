@@ -14,7 +14,8 @@
  * A NEW failure mode exists post-cutover that didn't exist when this read a
  * local file: forge/network unreachability. Treated fail-closed (refuse),
  * matching `verify-dispatch.ts`'s precedent for hard dispatch/push gates —
- * this is a real gate, not a fail-open nicety like `assign-task-issue.ts`.
+ * this is a real gate, not a fail-open nicety like the Issue self-assignment
+ * a task run makes when it starts.
  *
  * Usage: bun packages/aeg-core/bin/check-branch-topology.ts <branch>
  * Exit code: 0 = allow (push proceeds), 1 = refuse.

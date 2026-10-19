@@ -112,7 +112,6 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
         'evidence-fresh',
         'exec-bits',
         'first-push-dispatch',
-        'issue-assignment',
         'issue-milestone-attach',
         'issue-objectives-numbering',
         'issue-parts-coverage',
