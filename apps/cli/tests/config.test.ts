@@ -21,12 +21,14 @@ import {
   loadConfigChecked as loadConfigCheckedStatic,
   loadTrustAnchorConfig,
   loadTrustAnchorConfigOrThrow,
+  PrincipalsUnresolvedError,
   readRepoCiSetup,
   resolveCiTrustAnchorProbeRef,
   resolveAgentVendors,
   resolvePrincipalAllowlist as resolvePrincipalAllowlistStatic,
   resolveReviewPolicy,
   resolveSecurityScanCommand,
+  resolveTrustedPrincipals,
   trustAnchorRepo,
   VinayaConfigSchema
 } from '../src/lib/config'
@@ -1569,6 +1571,79 @@ describe('loadTrustAnchorConfigOrThrow (issue #945) — a failed read is distinc
     const config = loadTrustAnchorConfigOrThrow(() => b64({ principals: ['someone'] }))
     expect(config).not.toBeNull()
     expect(config?.reviewPolicy).toBeUndefined()
+  })
+})
+
+/**
+ * The refusing Principal resolver every check uses: no built-in fallback, and
+ * a typed error that tells "nothing is configured" (the fix is to add
+ * `principals`) apart from "the forge read failed" (the reason is named).
+ */
+describe('resolveTrustedPrincipals — the refusing Principal resolver', () => {
+  const b64 = (obj: unknown): string => Buffer.from(JSON.stringify(obj), 'utf8').toString('base64')
+  const execFileLikeError = (stderr: string): Error =>
+    Object.assign(new Error('Command failed: gh api repos/o/r/contents/vinaya.config.json --jq .content'), { stderr })
+
+  function refusal(fetcher: () => string): PrincipalsUnresolvedError {
+    try {
+      resolveTrustedPrincipals(fetcher)
+    } catch (err) {
+      expect(err).toBeInstanceOf(PrincipalsUnresolvedError)
+      return err as PrincipalsUnresolvedError
+    }
+    throw new Error('resolveTrustedPrincipals returned instead of refusing')
+  }
+
+  const FIX = 'add "principals": [...] to vinaya.config.json on the default branch'
+
+  it('no resolvable repository is not-configured, naming the fix', () => {
+    const err = refusal(() => {
+      throw new Error('could not resolve repo identity for the trust-anchor read')
+    })
+    expect(err.kind).toBe('not-configured')
+    expect(err.message).toContain(FIX)
+    expect(err.message).toContain('no repository resolves')
+  })
+
+  it('a default branch with no vinaya.config.json (HTTP 404) is not-configured, naming the fix', () => {
+    const err = refusal(() => {
+      throw execFileLikeError('gh: Not Found (HTTP 404)')
+    })
+    expect(err.kind).toBe('not-configured')
+    expect(err.message).toContain(FIX)
+  })
+
+  it('a file with no principals is not-configured, naming the fix', () => {
+    const err = refusal(() => b64({ reviewPolicy: { codeReviewThreshold: 'MAJOR' } }))
+    expect(err.kind).toBe('not-configured')
+    expect(err.message).toContain(FIX)
+  })
+
+  it('a file that fails the configuration schema is not-configured, naming the fix', () => {
+    const empty = refusal(() => b64({ principals: [] }))
+    expect(empty.kind).toBe('not-configured')
+    expect(empty.message).toContain(FIX)
+    const notJson = refusal(() => Buffer.from('{ not json', 'utf8').toString('base64'))
+    expect(notJson.kind).toBe('not-configured')
+  })
+
+  it('any other fetch failure is read-failed, naming the reason and not the fix', () => {
+    const err = refusal(() => {
+      throw execFileLikeError('gh: API rate limit exceeded (HTTP 403)')
+    })
+    expect(err.kind).toBe('read-failed')
+    expect(err.message).toContain('could not read "principals"')
+    expect(err.message).toContain('API rate limit exceeded (HTTP 403)')
+    expect(err.message).not.toContain(FIX)
+    const unauthenticated = refusal(() => {
+      throw new Error('gh auth login required')
+    })
+    expect(unauthenticated.kind).toBe('read-failed')
+    expect(unauthenticated.message).toContain('gh auth login required')
+  })
+
+  it('a configured list is returned as-is — never the built-in Principal', () => {
+    expect(resolveTrustedPrincipals(() => b64({ principals: ['alice', 'bob'] }))).toEqual(['alice', 'bob'])
   })
 })
 

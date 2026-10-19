@@ -85,12 +85,13 @@ import {
 import { fetchForgeFactsByIssue, parseRationaleDeps, resolveDuplicateTasks } from '@attalabs/aeg-forge-state'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { resolveTrustedPrincipals } from '../../lib/config'
 import { exitOnIncompleteForgeSnapshot, snapshotIssue } from '../../lib/forge-snapshot'
 import { containedAbs } from '../../lib/ops'
 import { dependsOnFactFromEdge, type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../edge-resolve'
 import { resolveSiblingConflictFacts } from '../sibling-conflict-facts'
 import { reassertPremiseFile } from '../premise-reassert-logic'
+import { warnOnUnreadPrincipals } from '../principals-refusal'
 
 const CHECK_NAME = 'dispatch-readiness'
 
@@ -263,6 +264,54 @@ function fetchIssueJson(issueNumber: number): IssueJson | null {
 }
 
 /**
+ * The Principal list the dispatch gate judges hand-closed edges against, or
+ * `null` when its read failed: no Principal configured refuses the check
+ * (one `error` line, exit 1); a failed read is one warning, and the caller
+ * treats the gate's result as unknown, leaving its exit to the premise
+ * re-assertion alone.
+ */
+function resolveGatePrincipals(): string[] | null {
+  try {
+    return resolveTrustedPrincipals()
+  } catch (err) {
+    warnOnUnreadPrincipals(CHECK_NAME, err)
+    return null
+  }
+}
+
+/**
+ * The gate's verdict on `input` plus the premise re-assertion, as the exit
+ * code — the gate is skipped (its result unknown) when the Principal list
+ * could not be read.
+ */
+function exitWithGateVerdict(input: Omit<DispatchGateInput, 'principalAllowlist'>): never {
+  const principalAllowlist = resolveGatePrincipals()
+  let ready = true
+  if (principalAllowlist !== null) {
+    const result = checkDispatchReadiness({ ...input, principalAllowlist })
+    if (!result.ready) {
+      for (const detail of result.blockerDetails) {
+        emitCheckError({
+          schema: CHECK_SCHEMA_VERSION,
+          check: CHECK_NAME,
+          severity: 'error',
+          message: detail.message,
+          agent_recovery_prompt: recoveryPromptFor(detail.class)
+        })
+      }
+      ready = false
+    }
+  }
+
+  // Additive, not a short-circuit: runs (and reports) regardless of the
+  // forge-derived verdict above, and never suppresses it either — see
+  // `checkPremiseReassertion`'s own doc comment.
+  if (!checkPremiseReassertion()) ready = false
+
+  process.exit(ready ? 0 : 1)
+}
+
+/**
  * `--issue <n>` gate: O2. Same `checkDispatchReadiness`
  * evaluation as the tranche path, sourced from a backlog Issue directly — no
  * topology row, no Milestone, `dependsOn`/`conflictsWith` parsed straight
@@ -324,7 +373,7 @@ async function runIssueMode(issueNumber: number): Promise<void> {
     rationaleMarkdown: ''
   }
 
-  const input: DispatchGateInput = {
+  exitWithGateVerdict({
     trancheSlug: `issue-${issueNumber}`,
     task,
     issue: { number: issueNumber, state: issueJson.state === 'OPEN' ? 'open' : 'closed' },
@@ -332,29 +381,8 @@ async function runIssueMode(issueNumber: number): Promise<void> {
     dependsOn,
     conflictsWith,
     priorTask: null,
-    priorTrancheArchival: [],
-    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig())
-  }
-
-  const result = checkDispatchReadiness(input)
-
-  let ready = true
-  if (!result.ready) {
-    for (const detail of result.blockerDetails) {
-      emitCheckError({
-        schema: CHECK_SCHEMA_VERSION,
-        check: CHECK_NAME,
-        severity: 'error',
-        message: detail.message,
-        agent_recovery_prompt: recoveryPromptFor(detail.class)
-      })
-    }
-    ready = false
-  }
-
-  if (!checkPremiseReassertion()) ready = false
-
-  process.exit(ready ? 0 : 1)
+    priorTrancheArchival: []
+  })
 }
 
 /**
@@ -470,7 +498,7 @@ async function runTrancheMode(trancheSlug: string, taskId: string): Promise<void
 
   const priorTrancheArchival: DispatchPriorTrancheFact[] = []
 
-  const input: DispatchGateInput = {
+  exitWithGateVerdict({
     trancheSlug,
     task,
     issue,
@@ -478,32 +506,8 @@ async function runTrancheMode(trancheSlug: string, taskId: string): Promise<void
     dependsOn,
     conflictsWith,
     priorTask: null,
-    priorTrancheArchival,
-    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig())
-  }
-
-  const result = checkDispatchReadiness(input)
-
-  let ready = true
-  if (!result.ready) {
-    for (const detail of result.blockerDetails) {
-      emitCheckError({
-        schema: CHECK_SCHEMA_VERSION,
-        check: CHECK_NAME,
-        severity: 'error',
-        message: detail.message,
-        agent_recovery_prompt: recoveryPromptFor(detail.class)
-      })
-    }
-    ready = false
-  }
-
-  // Additive, not a short-circuit: runs (and reports) regardless of the
-  // forge-derived verdict above, and never suppresses it either — see
-  // `checkPremiseReassertion`'s own doc comment.
-  if (!checkPremiseReassertion()) ready = false
-
-  process.exit(ready ? 0 : 1)
+    priorTrancheArchival
+  })
 }
 
 /**

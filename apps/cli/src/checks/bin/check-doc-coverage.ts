@@ -24,8 +24,9 @@ import { existsSync, readFileSync } from 'node:fs'
 import { DOC_OWNERS_PATH, evaluateC5, isWaiverLabelActorVerified, WAIVER_LABEL } from '@attalabs/aeg-core'
 import { fileDiffAgainst } from '../../lib/diff-evidence'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { resolveTrustedPrincipals } from '../../lib/config'
 import { exitOnIncompleteForgeSnapshot, snapshotPullRequest } from '../../lib/forge-snapshot'
+import { refuseUnresolvedPrincipals } from '../principals-refusal'
 
 // No chdir: `DOC_OWNERS_PATH` (`.vinaya/doc-owners`) and the `git diff` below
 // must resolve relative to the CALLER's cwd — the repo `vinaya check` is
@@ -130,13 +131,21 @@ function waiverActive(): boolean {
   const labels = fetchPrLabels(prNumber)
   if (!labels?.includes(WAIVER_LABEL)) return false
   // Trust anchor: GitHub-API default-branch read, never the PR's own
-  // checkout. See `loadTrustAnchorConfig` in lib/config.ts.
+  // checkout. See `loadTrustAnchorConfig` in lib/config.ts. It resolves
+  // before the waiver's actor is read: with no Principal list nobody can
+  // waive, so either refusal fails the check rather than the waiver alone.
+  let principalAllowlist: string[]
+  try {
+    principalAllowlist = resolveTrustedPrincipals()
+  } catch (err) {
+    refuseUnresolvedPrincipals(CHECK_NAME, err)
+  }
   const labelActor = fetchWaiverLabelActor(prNumber, WAIVER_LABEL)
   return isWaiverLabelActorVerified({
     label: WAIVER_LABEL,
     labels,
     labelActor,
-    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig())
+    principalAllowlist
   })
 }
 

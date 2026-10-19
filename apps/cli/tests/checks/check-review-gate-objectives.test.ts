@@ -13,15 +13,18 @@ import {
 import { resolveFrozenPauseBoundRuling } from '../../src/lib/review-gate-input.js'
 
 /**
- * The digest `check-review-gate.ts` resolves when no `vinaya.config.json` is
- * reachable (none of these throwaway repos have one) — it falls back to
- * `DEFAULT_REVIEW_POLICY`. Every comment fixture here that expects `pass`
+ * The digest `check-review-gate.ts` resolves when the default branch's
+ * `vinaya.config.json` sets no `reviewPolicy` (the `gh` stub below serves one
+ * carrying only `principals`) — it falls back to `DEFAULT_REVIEW_POLICY`. Every comment fixture here that expects `pass`
  * now needs this line too: `isBoundToPolicy` no longer grandfathers a
  * missing `Policy digest:` line (`#478` round 4, security MEDIUM).
  */
 const DEFAULT_POLICY_DIGEST = policyDigest(DEFAULT_REVIEW_POLICY)
 
 const BIN = join(import.meta.dir, '../../src/checks/bin/check-review-gate.ts')
+
+/** The default branch's `vinaya.config.json` every spawned gate reads: it names the verdict authors below as Principals. */
+const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] }), 'utf8').toString('base64')
 
 const ISSUE_OBJECTIVES_BODY = '## Objectives\n\nO1. Does the thing observably.\n'
 const ISSUE_VERSION = objectivesVersion(
@@ -155,16 +158,13 @@ if (args[0] === 'api' && String(args[1]).includes('/timeline')) {
   process.exit(0)
 }
 // The trust-anchor config read (\`gh api repos/<repo>/contents/vinaya.config.json --jq .content\`)
-// — where \`review-gate\` resolves \`gateCutovers.objectivesSinceIssue\`. A test
-// sets STUB_TRUST_ANCHOR_CONFIG_B64 (base64 of the config JSON) to make a
-// cutover active; unset, the read fails and resolves to no cutover (O1).
+// — where \`review-gate\` resolves the Principal list and
+// \`gateCutovers.objectivesSinceIssue\`. A test sets STUB_TRUST_ANCHOR_CONFIG_B64
+// (base64 of the config JSON) to make a cutover active; unset, the default
+// branch carries only \`principals\` — no cutover (O1).
 if (args[0] === 'api' && String(args[1]).includes('/contents/')) {
-  if (process.env.STUB_TRUST_ANCHOR_CONFIG_B64) {
-    process.stdout.write(process.env.STUB_TRUST_ANCHOR_CONFIG_B64)
-    process.exit(0)
-  }
-  process.stderr.write('gh stub: no trust-anchor config\\n')
-  process.exit(1)
+  process.stdout.write(process.env.STUB_TRUST_ANCHOR_CONFIG_B64 ?? ${JSON.stringify(PRINCIPALS_CONFIG_B64)})
+  process.exit(0)
 }
 process.stderr.write('gh stub: unhandled invocation: ' + args.join(' ') + '\\n')
 process.exit(1)
@@ -181,7 +181,17 @@ process.exit(1)
   ): Promise<{ exitCode: number; stderr: string }> {
     const proc = Bun.spawn(['bun', BIN], {
       cwd: d,
-      env: { ...process.env, PATH: `${ghDir}:${process.env.PATH}`, PR_NUMBER: '1', ...env },
+      env: {
+        ...process.env,
+        PATH: `${ghDir}:${process.env.PATH}`,
+        PR_NUMBER: '1',
+        // The Principal read addresses the stubbed \`contents\` call through
+        // this repository identity (the throwaway \`origin\` is a local path),
+        // never the pre-merge probe's local ref.
+        GITHUB_REPOSITORY: 'atta-labs/vinaya',
+        VINAYA_CI_CONFIG_PROBE_REF: '',
+        ...env
+      },
       stdout: 'pipe',
       stderr: 'pipe'
     })
@@ -465,7 +475,7 @@ process.exit(1)
     // behaviour this test asserts. `GITHUB_REPOSITORY` lets the trust-anchor
     // read resolve the repo identity so the stubbed `contents` call is reached.
     const trustAnchorConfigB64 = Buffer.from(
-      JSON.stringify({ gateCutovers: { objectivesSinceIssue: 404 } }),
+      JSON.stringify({ principals: ['daniboomerang'], gateCutovers: { objectivesSinceIssue: 404 } }),
       'utf8'
     ).toString('base64')
     const { exitCode } = await run(d, ghDir, {

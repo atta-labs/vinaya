@@ -6,7 +6,7 @@ import {
   parseLiveTestPlanItems,
   resolveNewestFrozenBrief
 } from '@attalabs/aeg-core'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../lib/config'
+import { PrincipalsUnresolvedError, resolveTrustedPrincipals } from '../lib/config'
 import { isForgeReadOversize, readIssueComments } from '../lib/forge-read'
 import { incompleteForgeSnapshot } from '../lib/forge-snapshot'
 
@@ -27,7 +27,9 @@ export type FrozenBriefResolution = { ok: true; content: string } | { ok: false;
  * newest principal-authored version picked by `@attalabs/aeg-core`'s
  * `resolveNewestFrozenBrief`, the same single resolver the review loop uses,
  * so a supersession is picked up here too. `purpose` finishes the fetch
- * failure's message ("… to <purpose>").
+ * failure's message ("… to <purpose>"). A Principal list that does not
+ * resolve (`PrincipalsUnresolvedError`, either kind) is a failure carrying
+ * that error's message — the fix, or why the read failed.
  */
 export function resolveTaskFrozenBrief(
   prBody: string,
@@ -55,9 +57,19 @@ export function resolveTaskFrozenBrief(
       message: `could not fetch Issue #${issue}'s comments to ${purpose}: ${err instanceof Error ? err.message : String(err)}`
     }
   }
+  // Read only once the Issue's comments are in hand, so an Issue that does not
+  // resolve keeps its `notFound` answer; past that point no frozen brief can
+  // be picked without the list.
+  let principals: readonly string[]
+  try {
+    principals = principalAllowlist()
+  } catch (err) {
+    if (err instanceof PrincipalsUnresolvedError) return { ok: false, notFound: false, message: err.message }
+    throw err
+  }
   const resolved = resolveNewestFrozenBrief(
     comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
-    principalAllowlist()
+    principals
   )
   if (!resolved) {
     return { ok: false, notFound: false, message: `not dispatched — no \`aeg:brief:v<k>\` comment on Issue #${issue}.` }
@@ -80,7 +92,7 @@ export type LiveCheckDeps = {
 
 export const defaultLiveCheckDeps: LiveCheckDeps = {
   fetchIssueComments: (issue) => readIssueComments(issue, `Issue #${issue}`),
-  principalAllowlist: () => resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  principalAllowlist: () => resolveTrustedPrincipals()
 }
 
 /**

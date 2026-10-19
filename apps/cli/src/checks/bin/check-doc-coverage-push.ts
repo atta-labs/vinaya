@@ -5,8 +5,11 @@
  * evaluator (`evaluateC5`) run with PUSH semantics — mirrors
  * `packages/aeg-core/bin/verify-docs.ts --push`'s `runPushMode` exactly:
  * `vinaya/override:docs`/`OVERRIDE_DOCS=1` is honored (via `overrideActive`)
- * BEFORE evaluating C5 at all, and the check NEVER hard-fails — findings
- * are emitted as `severity: 'warning'` and the process always exits 0.
+ * BEFORE evaluating C5 at all, and the check never hard-fails on a finding
+ * — findings are emitted as `severity: 'warning'` and the process exits 0.
+ * Its one refusal is a configuration one: a `vinaya/waiver:docs` label on a
+ * repository that names no Principal (`resolveTrustedPrincipals`'s
+ * `not-configured`) is one `error` line and exit 1.
  *
  * Registered as a SEPARATE check from the already-registered `doc-coverage`
  * (a Developer's call), not the same `CheckSpec` reused at
@@ -53,7 +56,8 @@ import {
 } from '@attalabs/aeg-core'
 import { fileDiffAgainst } from '../../lib/diff-evidence'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { resolveTrustedPrincipals } from '../../lib/config'
+import { warnOnUnreadPrincipals } from '../principals-refusal'
 
 const CHECK_NAME = 'doc-coverage-push'
 
@@ -107,12 +111,21 @@ function waiverActiveFromEnv(): boolean {
   // local push, where PR_LABELS is empty and no waiver can be active.
   if (!labels.includes(WAIVER_LABEL)) return false
   // GitHub-API default-branch read — see check-doc-coverage.ts's identical
-  // comment / `loadTrustAnchorConfig`'s doc comment in lib/config.ts.
+  // comment / `loadTrustAnchorConfig`'s doc comment in lib/config.ts. No
+  // Principal configured is this check's one refusal (exit 1); a failed read
+  // is one warning, and the waiver counts as not active.
+  let principalAllowlist: string[]
+  try {
+    principalAllowlist = resolveTrustedPrincipals()
+  } catch (err) {
+    warnOnUnreadPrincipals(CHECK_NAME, err)
+    return false
+  }
   return isWaiverLabelActorVerified({
     label: WAIVER_LABEL,
     labels,
     labelActor: process.env.WAIVER_LABEL_ACTOR || null,
-    principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig())
+    principalAllowlist
   })
 }
 
@@ -149,8 +162,8 @@ function main(): void {
     fileDiffAgainst(ref, p)
   )
 
-  // Ring 0: warn-with-declared-intent, never a hard block — the push always
-  // succeeds; the PR (once opened, `doc-coverage`) is where this actually
+  // Ring 0: warn-with-declared-intent, never a hard block on a finding — the
+  // push succeeds; the PR (once opened, `doc-coverage`) is where this actually
   // gates.
   for (const message of result.errors) {
     emitCheckError({

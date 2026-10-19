@@ -55,11 +55,12 @@
 import { execFileSync } from 'node:child_process'
 import { isPrincipal } from '@attalabs/aeg-core'
 import { agentCommandText, extractAgentCommandLines } from '../../commands/pr-report'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { resolveTrustedPrincipals } from '../../lib/config'
 import { exitOnIncompleteForgeSnapshot, snapshotComments, snapshotPullRequest } from '../../lib/forge-snapshot'
 import { patchIdAt } from '../../lib/patch-id'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { compareEvidenceBlock, EVIDENCE_PLACEHOLDER_TEXT } from '../evidence-fresh-logic'
+import { refuseUnresolvedPrincipals } from '../principals-refusal'
 import { ScanContext, resolveAnchoredRegion } from '../scan-context'
 
 /** The exact marker `developerRoundMarker` (`dev-review-loop/round-assess.ts`) renders into every round's own comment — posted the first time this PR's gate ever goes green, the SAME moment the driver's automatic evidence report first runs. */
@@ -80,16 +81,22 @@ const DEVELOPER_ROUND_MARKER = /<!--\s*aeg:developer:round-\d+\s*-->/i
  * checked against the same principal allowlist `filterPrincipalRulings`/
  * `filterDeveloperStops` (`dev-review-loop/developer-dispatch.ts`) already
  * trust for the identical class of marker-comment forgery — read from the
- * default branch (`loadTrustAnchorConfig`), never from this PR's own
+ * default branch (`resolveTrustedPrincipals`), never from this PR's own
  * checkout, so a change on this branch cannot add itself to the list. A
  * marker-shaped comment from anyone else is no signal at all, exactly as if
- * it were never posted. A read failure still fails CLOSED (`true` — "assume
- * a round may have happened").
+ * it were never posted. A comment read failure still fails CLOSED (`true` —
+ * "assume a round may have happened"); a Principal list that does not
+ * resolve refuses the check outright, naming the fix or the failed read.
  */
 function fetchHasPriorDeveloperRound(prNumber: number): boolean {
+  let allowlist: string[]
+  try {
+    allowlist = resolveTrustedPrincipals()
+  } catch (err) {
+    refuseUnresolvedPrincipals(CHECK_NAME, err)
+  }
   try {
     const comments = snapshotComments(prNumber) ?? fetchPrComments(prNumber)
-    const allowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
     return comments.some(
       (c) => DEVELOPER_ROUND_MARKER.test(c.body ?? '') && isPrincipal(c.author?.login ?? null, allowlist)
     )

@@ -226,11 +226,12 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // `vinaya/waiver:docs` label + its labeling actor, so
       // GITHUB_TOKEN/GH_TOKEN must reach it on a CI runner, where `gh`
       // authenticates only from those env vars. GITHUB_REPOSITORY/
-      // GITHUB_TOKEN/GH_TOKEN also feed the trust-anchor read
-      // (`loadTrustAnchorConfig`, lib/config.ts) — a `gh api` fetch of
-      // `principals` from the DEFAULT BRANCH, never local git. All optional:
-      // absent, the fetch fails and the allowlist falls back to the hardcoded
-      // `PRINCIPAL_ALLOWLIST`, the safe direction.
+      // GITHUB_TOKEN/GH_TOKEN also feed the Principal read
+      // (`resolveTrustedPrincipals`, lib/config.ts) — a `gh api` fetch of
+      // `principals` from the DEFAULT BRANCH, never local git. All optional,
+      // but there is no built-in Principal to fall back to: once a waiver
+      // label is on the pull request, a failed read or a default branch that
+      // names no Principal refuses the check, naming the reason or the fix.
       // VINAYA_FORGE_SNAPSHOT_DIR/GITHUB_ACTIONS: the forge snapshot — see
       // `brief-shape` above.
       env: {
@@ -605,8 +606,10 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // them the allowlist strips the workflow-provided token and every
       // `gh pr view` fails. Optional because local runs use `gh`'s own
       // keyring auth with no env var at all. GITHUB_REPOSITORY addresses the
-      // trust-anchor read (`loadTrustAnchorConfig`, lib/config.ts) — a `gh
-      // api` fetch of `principals` from the DEFAULT BRANCH.
+      // Principal read (`resolveTrustedPrincipals`, lib/config.ts) — a `gh
+      // api` fetch of `principals` from the DEFAULT BRANCH, which refuses the
+      // check when it fails or names no Principal — and the trust-anchor read
+      // of the review policy (`loadTrustAnchorConfig`).
       //
       // Deliberately NO `BASE_SHA` here, and no other ref-shaped knob: a
       // `BASE_SHA` declaration was tried and reverted (a security-review

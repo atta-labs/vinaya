@@ -35,7 +35,7 @@ import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { resolveTaskFrozenBrief } from '../frozen-brief'
 import { readIssueBody, readIssueComments } from '../../lib/forge-read'
 import { exitOnIncompleteForgeSnapshot } from '../../lib/forge-snapshot'
-import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolvePrincipalAllowlist } from '../../lib/config'
+import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../lib/config'
 
 const CHECK_NAME = 'brief-shape'
 
@@ -59,7 +59,7 @@ function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResol
   const resolved = resolveTaskFrozenBrief(
     prBody,
     (issue) => readIssueComments(issue, `Issue #${issue}`),
-    () => resolvePrincipalAllowlist(loadTrustAnchorConfig()),
+    () => resolveTrustedPrincipals(),
     'grade the dispatched brief'
   )
   if (resolved.ok) return { ok: true, body: resolved.content }
@@ -67,7 +67,9 @@ function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResol
   // unresolvable Issue number just below (a fixture's placeholder
   // `Closes #NNN`, a deleted Issue): additive exemption, never a new
   // hard-failure mode for a resource nothing required before this task.
-  // A DIFFERENT fetch failure (network, auth, rate-limit) still hard-fails.
+  // A DIFFERENT fetch failure (network, auth, rate-limit) still hard-fails,
+  // and so does a Principal list that does not resolve: with none, no frozen
+  // brief can be trusted.
   if (resolved.notFound) return { ok: true, body: prBody }
   return { ok: false, message: resolved.message }
 }
@@ -201,7 +203,8 @@ function main(): void {
       severity: 'error',
       message: `brief-shape: ${gradedBodyResolution.message}`,
       agent_recovery_prompt:
-        'Dispatch this task with `vinaya task dispatch <tranche> <n>` (posts the `aeg:brief:v1` Issue comment), or check `gh auth status`/network, then re-run `vinaya check brief-shape`.'
+        'Dispatch this task with `vinaya task dispatch <tranche> <n>` (posts the `aeg:brief:v1` Issue comment), or check `gh auth status`/network, then re-run `vinaya check brief-shape`. ' +
+        'When the message says no Principal is configured, apply the fix it names instead.'
     })
     process.exit(1)
   }

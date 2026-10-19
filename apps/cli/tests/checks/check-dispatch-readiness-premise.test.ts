@@ -41,9 +41,13 @@ async function run(env: Record<string, string>, args: string[] = []): Promise<{ 
  * Issue itself — no topology row, no Milestone. A fake `gh` on `PATH`
  * answers `gh issue view <n> --json number,state,body,labels`; no other
  * forge call happens for a rationale-empty Issue with no dependency edges
- * (`resolveEdge`/`resolveToken` are never reached), so no live network is
- * needed to exercise the three routing branches below.
+ * (`resolveEdge`/`resolveToken` are never reached) beyond the Principal read
+ * of the default branch's `vinaya.config.json`, which the fake answers with a
+ * configured list, so no live network is needed to exercise the three
+ * routing branches below.
  */
+const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
+
 function writeFakeGh(dir: string, issueJson: Record<string, unknown> | null): void {
   const p = join(dir, 'gh')
   const body = issueJson === null ? null : JSON.stringify(issueJson)
@@ -52,6 +56,11 @@ function writeFakeGh(dir: string, issueJson: Record<string, unknown> | null): vo
     `#!/bin/sh
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
 ${body === null ? '  exit 1' : `  printf '%s' '${body.replace(/'/g, "'\\''")}'\n  exit 0`}
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    repos/*/contents/vinaya.config.json) echo '${PRINCIPALS_CONFIG_B64}'; exit 0 ;;
+  esac
 fi
 echo "unhandled fake gh call in dispatch-readiness issue-mode test: $*" >&2
 exit 1
@@ -62,7 +71,15 @@ exit 1
 
 async function runBin(binDir: string, env: Record<string, string>): Promise<{ exitCode: number; stderr: string }> {
   const proc = Bun.spawn(['bun', BIN], {
-    env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, ...env },
+    env: {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH}`,
+      // The Principal read addresses the fake's \`contents\` answer, never the
+      // pre-merge probe's local ref.
+      GITHUB_REPOSITORY: 'atta-labs/vinaya',
+      VINAYA_CI_CONFIG_PROBE_REF: '',
+      ...env
+    },
     cwd: REPO_ROOT,
     stdout: 'ignore',
     stderr: 'pipe'
