@@ -1,0 +1,56 @@
+{
+  "kind": "development-standalone-step-one",
+  "split": "development",
+  "backend": "standalone",
+  "purpose": "practice",
+  "trialsPerTask": 1,
+  "runs": [
+    {
+      "suite": "code-reviewer-quality-neutral.l5",
+      "split": "development",
+      "backend": "standalone",
+      "adapter": "claude-code",
+      "layer": "G",
+      "rendererVersion": "fixture-renderer-v1",
+      "agent": "vinaya",
+      "model": "claude-opus-5-5",
+      "auth": "subscription",
+      "evidence": "never",
+      "taskCount": 3,
+      "trialsPerTask": 1,
+      "tasks": [
+        {
+          "taskId": "error",
+          "successes": 0,
+          "trials": 1,
+          "unavailable": ["RuntimeError: agent exited before grading"]
+        },
+        {
+          "taskId": "failure",
+          "successes": 0,
+          "trials": 1,
+          "unavailable": []
+        },
+        {
+          "taskId": "success",
+          "successes": 1,
+          "trials": 1,
+          "unavailable": []
+        }
+      ],
+      "mean": 0.3333333333333333,
+      "interval": {
+        "lower": 0,
+        "upper": 0.6666666666666666
+      },
+      "usage": {
+        "wallTimeMs": 180000,
+        "inputTokens": 350,
+        "outputTokens": 60,
+        "subscriptionQuota": 0.30000000000000004,
+        "estimatedCostUsd": 0.035
+      },
+      "quotaUnavailableTrials": 1
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "id": "redacted-failure-trial",
+  "task_name": "failure",
+  "trial_name": "failure__trial",
+  "trial_uri": "redacted://failure",
+  "started_at": "2026-10-19T01:02:00Z",
+  "finished_at": "2026-10-19T01:03:00Z",
+  "agent_info": { "name": "vinaya", "version": "fixture", "model_info": { "name": "claude-opus-5-5" } },
+  "verifier_result": { "rewards": { "reward": 0 } },
+  "exception_info": null
+}

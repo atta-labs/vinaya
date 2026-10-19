@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "task": {
+    "name": "error",
+    "type": "local",
+    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "path": "tasks/error"
+  },
+  "agent": { "name": "vinaya", "model_name": "claude-opus-5-5" }
+}

@@ -1,0 +1,16 @@
+{
+  "id": "redacted-error-trial",
+  "task_name": "error",
+  "trial_name": "error__trial",
+  "trial_uri": "redacted://error",
+  "started_at": "2026-10-19T01:04:00Z",
+  "finished_at": "2026-10-19T01:05:00Z",
+  "agent_info": { "name": "vinaya", "version": "fixture", "model_info": { "name": "claude-opus-5-5" } },
+  "verifier_result": null,
+  "exception_info": {
+    "exception_type": "RuntimeError",
+    "exception_message": "agent exited before grading",
+    "exception_traceback": "redacted",
+    "occurred_at": "2026-10-19T01:05:30Z"
+  }
+}

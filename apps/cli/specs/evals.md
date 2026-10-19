@@ -732,6 +732,20 @@ The binary grader first passes the structured output and the controller's role, 
 
 A live layer-`G` role trial runs as a trial of Harbor `0.24.0`, the evaluation framework installed with `uv tool install harbor`, with the `vinaya` agent: Harbor builds the case's container, the agent runs the Vinaya role for the case inside it, and Harbor's verifier grades the result with the generic graders. Every case of the four layer-`G` role suites — `developer-capability-neutral.l5`, `code-reviewer-quality-neutral.l5`, `security-reviewer-quality-neutral.l5` and `source-delivery-neutral.l5` — runs this way.
 
+Practice runs of these layer-`G` role suites are read from completed Harbor
+jobs, not run by the host step-one command. Run
+`apps/cli/src/lib/dev-review-eval/harbor-results.ts` with the job directory,
+`--suite`, the required `--subscription-auth` declaration, `--bootstrap`,
+`--seed`, `--resamples`, `--confidence`, and optionally `--out`. The reader
+accepts one Harbor `0.24.0` job of the `vinaya` agent, one trial per task and
+one suite per job. It refuses another Harbor version or agent, duplicate task
+trials, mixed suites, and a task without the converter's `task.toml`. Its
+step-one result has purpose `practice` and evidence `never`; it records the
+exact model id, subscription authentication, the suite's renderer version,
+per-task outcomes, bootstrap estimate, and the usage and wall time synced from
+each trial. The in-container `executeLayerGTrial` path remains the path the
+Harbor `vinaya` agent invokes.
+
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/harbor-tasks.ts contains:export const HARBOR_VERSION = '0.24.0' -->
 
 ### The converter

@@ -1,0 +1,255 @@
+/** Reads one completed Harbor 0.24.0 job into a step-one practice result. */
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { isAbsolute, join, resolve } from 'node:path'
+import { suiteMean, type BootstrapMethod } from './estimators'
+import type { StepOneAdapter, StepOneResult, StepOneRunSuite, StepOneTrialResult, StepOneUsage } from './step-one'
+
+export const HARBOR_RESULTS_VERSION = '0.24.0'
+
+export type HarborResultRefusalCode =
+  | 'invalid_input'
+  | 'unsupported_harbor_version'
+  | 'unsupported_agent'
+  | 'multiple_trials_per_task'
+  | 'mixed_suites'
+  | 'missing_task_metadata'
+
+export class HarborResultsRefused extends Error {
+  constructor(
+    readonly code: HarborResultRefusalCode,
+    message: string
+  ) {
+    super(message)
+    this.name = 'HarborResultsRefused'
+  }
+}
+
+export interface HarborPracticeRun extends StepOneResult {
+  purpose: 'practice'
+  trialsPerTask: 1
+  runs: Array<
+    StepOneResult['runs'][number] & {
+      agent: 'vinaya'
+      model: string
+      auth: 'subscription'
+      evidence: 'never'
+    }
+  >
+}
+
+export interface HarborResultsOptions {
+  jobDirectory: string
+  suite: StepOneRunSuite
+  subscriptionAuth: true
+  bootstrap: { method: BootstrapMethod; seed: number; resamples: number; confidence: number }
+}
+
+type Json = Record<string, any>
+const json = (path: string): Json => JSON.parse(readFileSync(path, 'utf8')) as Json
+const text = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
+const number = (value: unknown, fallback = 0): number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
+
+function taskPath(jobDirectory: string, trialDirectory: string, trialConfig: Json, trialLock: Json): string {
+  const raw = text(trialLock.task?.path) ?? text(trialConfig.task?.path)
+  if (raw === undefined)
+    throw new HarborResultsRefused('missing_task_metadata', `${trialDirectory} does not name its task folder`)
+  if (isAbsolute(raw)) return raw
+  const fromJob = resolve(jobDirectory, raw)
+  return existsSync(fromJob) ? fromJob : resolve(trialDirectory, raw)
+}
+
+function metadata(path: string): { suite: string; rendererVersion: string } {
+  if (!existsSync(path))
+    throw new HarborResultsRefused('missing_task_metadata', `${path} is missing the converter's task.toml`)
+  const parsed = Bun.TOML.parse(readFileSync(path, 'utf8')) as Json
+  const suite = text(parsed.metadata?.suite)
+  const rendererVersion = text(parsed.metadata?.vinaya_renderer_version)
+  if (suite === undefined || rendererVersion === undefined)
+    throw new HarborResultsRefused('missing_task_metadata', `${path} lacks converter metadata`)
+  return { suite, rendererVersion }
+}
+
+function agentIdentity(config: Json): { agent: string; model: string } {
+  const agents = Array.isArray(config.agents) ? config.agents : config.agent ? [config.agent] : []
+  if (agents.length !== 1) throw new HarborResultsRefused('unsupported_agent', 'the job must name exactly one agent')
+  const agent =
+    text(agents[0]?.name) ??
+    text(agents[0]?.import_path)
+      ?.split(':')
+      .at(-1)
+      ?.replace(/Agent$/, '')
+      .toLowerCase()
+  if (agent !== 'vinaya')
+    throw new HarborResultsRefused('unsupported_agent', `job agent is ${agent ?? 'missing'}, not vinaya`)
+  const model = text(agents[0]?.model_name)
+  if (model === undefined || model.length === 0)
+    throw new HarborResultsRefused('invalid_input', 'the job config does not carry an exact model id')
+  return { agent, model }
+}
+
+function wallTime(result: Json): number {
+  const start = Date.parse(text(result.started_at) ?? '')
+  const finish = Date.parse(text(result.finished_at) ?? '')
+  return Number.isFinite(start) && Number.isFinite(finish) && finish >= start ? finish - start : 0
+}
+
+function unavailable(result: Json, reward: unknown): string | undefined {
+  const exception = result.exception_info
+  if (exception !== null && typeof exception === 'object')
+    return `${text(exception.exception_type) ?? 'trial error'}: ${text(exception.exception_message) ?? 'no message'}`
+  return typeof reward === 'number' ? undefined : 'trial has no verifier reward'
+}
+
+/** Read and validate one Harbor job. A refusal is typed and no partial report is returned. */
+export function readHarborPracticeRun(options: HarborResultsOptions): {
+  result: HarborPracticeRun
+  trials: Readonly<Record<string, StepOneTrialResult>>
+} {
+  if (options.subscriptionAuth !== true)
+    throw new HarborResultsRefused('invalid_input', 'subscription authentication must be declared')
+  const lock = json(join(options.jobDirectory, 'lock.json'))
+  if (lock.harbor?.version !== HARBOR_RESULTS_VERSION)
+    throw new HarborResultsRefused(
+      'unsupported_harbor_version',
+      `job uses Harbor ${String(lock.harbor?.version)}, not ${HARBOR_RESULTS_VERSION}`
+    )
+  const { model } = agentIdentity(json(join(options.jobDirectory, 'config.json')))
+  // A trial directory is a direct child with Harbor's terminal result file.
+  const directories = readdirSync(options.jobDirectory, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(options.jobDirectory, entry.name, 'result.json')))
+    .map((entry) => join(options.jobDirectory, entry.name))
+    .sort()
+  if (directories.length === 0) throw new HarborResultsRefused('invalid_input', 'the job has no completed trial')
+
+  const seen = new Set<string>()
+  const suites = new Set<string>()
+  const renderers = new Set<string>()
+  const tallies: Array<{ taskId: string; successes: number; trials: number; unavailable: string[] }> = []
+  const trials: Record<string, StepOneTrialResult> = {}
+  const usage: StepOneUsage = {
+    wallTimeMs: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    subscriptionQuota: 0,
+    estimatedCostUsd: 0
+  }
+  let quotaUnavailableTrials = 0
+  for (const directory of directories) {
+    const result = json(join(directory, 'result.json'))
+    const config = existsSync(join(directory, 'config.json'))
+      ? json(join(directory, 'config.json'))
+      : (result.config ?? {})
+    const trialLock = existsSync(join(directory, 'lock.json')) ? json(join(directory, 'lock.json')) : {}
+    const taskId = text(result.task_name) ?? text(config.task?.name)
+    if (taskId === undefined) throw new HarborResultsRefused('invalid_input', `${directory} has no task name`)
+    if (seen.has(taskId))
+      throw new HarborResultsRefused('multiple_trials_per_task', `job has more than one trial for ${taskId}`)
+    seen.add(taskId)
+    const task = taskPath(options.jobDirectory, directory, config, trialLock)
+    const taskMetadata = metadata(join(task, 'task.toml'))
+    suites.add(taskMetadata.suite)
+    renderers.add(taskMetadata.rendererVersion)
+    const reward = result.verifier_result?.rewards?.reward
+    const reason = unavailable(result, reward)
+    const trialUsage = json(join(directory, 'agent', 'vinaya-usage.json')) as unknown as StepOneUsage
+    const measuredUsage: StepOneUsage = {
+      wallTimeMs: wallTime(result),
+      inputTokens: number(trialUsage.inputTokens),
+      outputTokens: number(trialUsage.outputTokens),
+      subscriptionQuota: trialUsage.subscriptionQuota === null ? null : number(trialUsage.subscriptionQuota),
+      estimatedCostUsd: number(trialUsage.estimatedCostUsd)
+    }
+    const trial: StepOneTrialResult = {
+      success: reward === 1 && reason === undefined,
+      ...(reason === undefined ? {} : { unavailableReason: reason }),
+      layer: 'G',
+      rendererVersion: taskMetadata.rendererVersion,
+      usage: measuredUsage
+    }
+    trials[taskId] = trial
+    tallies.push({ taskId, successes: trial.success ? 1 : 0, trials: 1, unavailable: reason ? [reason] : [] })
+    usage.wallTimeMs += measuredUsage.wallTimeMs
+    usage.inputTokens += measuredUsage.inputTokens
+    usage.outputTokens += measuredUsage.outputTokens
+    usage.estimatedCostUsd += measuredUsage.estimatedCostUsd
+    if (measuredUsage.subscriptionQuota === null) quotaUnavailableTrials++
+    else usage.subscriptionQuota = (usage.subscriptionQuota ?? 0) + measuredUsage.subscriptionQuota
+  }
+  if (suites.size !== 1) throw new HarborResultsRefused('mixed_suites', `job contains ${[...suites].sort().join(', ')}`)
+  if (!suites.has(options.suite))
+    throw new HarborResultsRefused('mixed_suites', `job suite is ${[...suites][0]}, not ${options.suite}`)
+  if (renderers.size !== 1)
+    throw new HarborResultsRefused('mixed_suites', 'job tasks do not share one renderer version')
+  const estimate = suiteMean(tallies, options.bootstrap)
+  if (!estimate.ok) throw new HarborResultsRefused('invalid_input', estimate.refusal.detail)
+  const run: HarborPracticeRun['runs'][number] = {
+    suite: options.suite,
+    split: 'development',
+    backend: 'standalone',
+    adapter: 'claude-code' as StepOneAdapter,
+    layer: 'G',
+    rendererVersion: [...renderers][0] as string,
+    agent: 'vinaya',
+    model,
+    auth: 'subscription',
+    evidence: 'never',
+    taskCount: tallies.length,
+    trialsPerTask: 1,
+    tasks: tallies,
+    mean: estimate.value.mean,
+    interval: estimate.value.interval,
+    usage: { ...usage, subscriptionQuota: quotaUnavailableTrials === tallies.length ? null : usage.subscriptionQuota },
+    quotaUnavailableTrials
+  }
+  return {
+    trials,
+    result: {
+      kind: 'development-standalone-step-one',
+      split: 'development',
+      backend: 'standalone',
+      purpose: 'practice',
+      trialsPerTask: 1,
+      runs: [run]
+    }
+  }
+}
+
+function value(argv: readonly string[], name: string): string | undefined {
+  const at = argv.indexOf(`--${name}`)
+  return at < 0 ? undefined : argv[at + 1]
+}
+
+export function harborResultsMain(argv: readonly string[]): number {
+  try {
+    const jobDirectory = argv[0]
+    const suite = value(argv, 'suite') as StepOneRunSuite | undefined
+    const method = value(argv, 'bootstrap') as BootstrapMethod | undefined
+    const seed = Number(value(argv, 'seed'))
+    const resamples = Number(value(argv, 'resamples'))
+    const confidence = Number(value(argv, 'confidence'))
+    if (!jobDirectory || !suite || !method || !argv.includes('--subscription-auth'))
+      throw new HarborResultsRefused(
+        'invalid_input',
+        'job directory, suite, subscription auth and bootstrap flags are required'
+      )
+    const report = readHarborPracticeRun({
+      jobDirectory,
+      suite,
+      subscriptionAuth: true,
+      bootstrap: { method, seed, resamples, confidence }
+    }).result
+    const output = `${JSON.stringify(report, null, 2)}\n`
+    const out = value(argv, 'out')
+    if (out) writeFileSync(out, output)
+    else process.stdout.write(output)
+    return 0
+  } catch (error) {
+    const refusal =
+      error instanceof HarborResultsRefused ? error : new HarborResultsRefused('invalid_input', String(error))
+    process.stderr.write(`${refusal.code}: ${refusal.message}\n`)
+    return 2
+  }
+}
+
+if (import.meta.main) process.exit(harborResultsMain(process.argv.slice(2)))

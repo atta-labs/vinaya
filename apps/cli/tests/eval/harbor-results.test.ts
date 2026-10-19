@@ -1,0 +1,143 @@
+import { afterEach, describe, expect, it } from 'bun:test'
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  HarborResultsRefused,
+  harborResultsMain,
+  readHarborPracticeRun
+} from '../../src/lib/dev-review-eval/harbor-results'
+
+const fixtures = join(import.meta.dir, 'fixtures', 'harbor-jobs')
+const suite = 'code-reviewer-quality-neutral.l5' as const
+const bootstrap = { method: 'percentile' as const, seed: 1, resamples: 100, confidence: 0.95 }
+const scratch: string[] = []
+afterEach(() =>
+  scratch.splice(0).forEach((path) => {
+    rmSync(path, { recursive: true, force: true })
+  })
+)
+
+function copyJob(): string {
+  const root = mkdtempSync(join(tmpdir(), 'vinaya-harbor-results-'))
+  scratch.push(root)
+  const job = join(root, 'job')
+  cpSync(join(fixtures, 'vinaya'), job, { recursive: true })
+  return job
+}
+
+function read(jobDirectory = join(fixtures, 'vinaya')) {
+  return readHarborPracticeRun({ jobDirectory, suite, subscriptionAuth: true, bootstrap })
+}
+
+function refusal(job: string, code: HarborResultsRefused['code']) {
+  try {
+    read(job)
+    throw new Error('reader accepted refused fixture')
+  } catch (error) {
+    expect(error).toBeInstanceOf(HarborResultsRefused)
+    expect((error as HarborResultsRefused).code).toBe(code)
+  }
+}
+
+describe('Harbor job results', () => {
+  it('maps success, failure, error, metadata, usage, wall time, and the practice run', () => {
+    const output = read()
+    expect(output.trials.success?.success).toBe(true)
+    expect(output.trials.failure?.success).toBe(false)
+    expect(output.trials.failure?.unavailableReason).toBeUndefined()
+    expect(output.trials.error).toMatchObject({
+      success: false,
+      unavailableReason: 'RuntimeError: agent exited before grading'
+    })
+    expect(output.result).toMatchObject({ purpose: 'practice', trialsPerTask: 1 })
+    expect(output.result.runs[0]).toMatchObject({
+      suite,
+      layer: 'G',
+      rendererVersion: 'fixture-renderer-v1',
+      backend: 'standalone',
+      adapter: 'claude-code',
+      agent: 'vinaya',
+      model: 'claude-opus-5-5',
+      auth: 'subscription',
+      evidence: 'never',
+      taskCount: 3,
+      mean: 1 / 3
+    })
+    expect(output.result.runs[0]?.usage).toMatchObject({
+      wallTimeMs: 180_000,
+      inputTokens: 350,
+      outputTokens: 60,
+      estimatedCostUsd: 0.035
+    })
+    expect(output.result.runs[0]?.usage.subscriptionQuota).toBeCloseTo(0.3)
+  })
+
+  it('refuses the original Claude Code job', () => refusal(join(fixtures, 'claude-code-job'), 'unsupported_agent'))
+
+  it('refuses another Harbor version', () => {
+    const job = copyJob()
+    const path = join(job, 'lock.json')
+    const lock = JSON.parse(readFileSync(path, 'utf8'))
+    lock.harbor.version = '0.23.0'
+    writeFileSync(path, JSON.stringify(lock))
+    refusal(job, 'unsupported_harbor_version')
+  })
+
+  it('refuses more than one trial per task', () => {
+    const job = copyJob()
+    cpSync(join(job, 'success__trial'), join(job, 'success__second'), { recursive: true })
+    refusal(job, 'multiple_trials_per_task')
+  })
+
+  it('refuses trials from more than one suite', () => {
+    const job = copyJob()
+    const path = join(job, 'tasks', 'error', 'task.toml')
+    writeFileSync(path, readFileSync(path, 'utf8').replace(suite, 'security-reviewer-quality-neutral.l5'))
+    refusal(job, 'mixed_suites')
+  })
+
+  it('refuses a task without converter task metadata', () => {
+    const job = copyJob()
+    rmSync(join(job, 'tasks', 'error', 'task.toml'))
+    refusal(job, 'missing_task_metadata')
+  })
+
+  it('prints the expected report byte for byte and writes an optional output file', () => {
+    const out = join(mkdtempSync(join(tmpdir(), 'vinaya-harbor-report-')), 'report.json')
+    scratch.push(join(out, '..'))
+    expect(
+      harborResultsMain([
+        join(fixtures, 'vinaya'),
+        '--suite',
+        suite,
+        '--subscription-auth',
+        '--bootstrap',
+        'percentile',
+        '--seed',
+        '1',
+        '--resamples',
+        '100',
+        '--confidence',
+        '0.95',
+        '--out',
+        out
+      ])
+    ).toBe(0)
+    expect(readFileSync(out)).toEqual(readFileSync(join(fixtures, 'expected-report.json')))
+  })
+
+  it('contains none of the forbidden feasibility-job material', () => {
+    const files: string[] = []
+    const visit = (directory: string) => {
+      for (const entry of new Bun.Glob('**/*').scanSync({ cwd: directory, onlyFiles: true })) files.push(entry)
+    }
+    visit(fixtures)
+    const body = files.map((path) => readFileSync(join(fixtures, path), 'utf8')).join('\n')
+    expect(body).not.toMatch(/\/Users\//)
+    expect(body).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i)
+    expect(body).not.toMatch(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/)
+    expect(body).not.toMatch(/mcp/i)
+    expect(files.some((path) => /trajectory|session/i.test(path))).toBe(false)
+  })
+})

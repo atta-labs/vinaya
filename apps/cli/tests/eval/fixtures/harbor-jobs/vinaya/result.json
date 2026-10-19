@@ -1,0 +1,6 @@
+{
+  "id": "redacted-job",
+  "started_at": "2026-10-19T01:00:00Z",
+  "finished_at": "2026-10-19T01:06:00Z",
+  "stats": { "n_completed_trials": 3, "n_errored_trials": 1 }
+}

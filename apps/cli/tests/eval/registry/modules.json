@@ -272,7 +272,7 @@
           "processLayer": "G"
         }
       ],
-      "contract": "The Developer, isolated, completes real tasks correctly within its tools and authority.",
+      "contract": "The Developer, isolated, completes real tasks correctly within its tools and authority; layer-G practice results are read from one Harbor 0.24.0 vinaya-agent job per suite and adapter and remain non-evidence.",
       "owner": "adapter",
       "officialBasis": "Jimenez et al. — SWE-bench §2.1–2.2 (fail-to-pass and pass-to-pass resolution); Anthropic — Writing tools for agents (diagnostic metrics, held-out sets).",
       "suite": ["developer-capability.l5@1", "developer-capability-neutral.l5@1"],
