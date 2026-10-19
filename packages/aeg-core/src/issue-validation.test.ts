@@ -2233,6 +2233,40 @@ describe('globCoversPath — the root glob `*` (#826, O1/O2/O3)', () => {
   })
 })
 
+describe('checkSurfaceScope — a protected administrative path needs an in: glob that names it', () => {
+  it('fails an uncovered protected path even when the record lists it', () => {
+    const result = checkSurfaceScope(['aeg-root/enforcement.md'], { in: ['apps/cli/src'], out: [] }, [
+      'aeg-root/enforcement.md'
+    ])
+    expect(result).toEqual({ ok: false, violation: { path: 'aeg-root/enforcement.md', reason: 'protected' } })
+  })
+
+  it('an empty in: covers no protected path', () => {
+    const result = checkSurfaceScope(['.github/workflows/ci.yml'], { in: [], out: [] }, [])
+    expect(result).toEqual({ ok: false, violation: { path: '.github/workflows/ci.yml', reason: 'protected' } })
+  })
+
+  it('passes a protected path an in: glob covers', () => {
+    expect(checkSurfaceScope(['aeg-root/enforcement.md'], { in: ['aeg-root'], out: [] }, []).ok).toBe(true)
+  })
+
+  it('an out: glob does not decide a protected path', () => {
+    expect(
+      checkSurfaceScope(['vinaya.config.json'], { in: ['vinaya.config.json'], out: ['vinaya.config.json'] }, [
+        'vinaya.config.json'
+      ]).ok
+    ).toBe(true)
+  })
+
+  it.each(['./.github/x', '/aeg-root/x', 'foo/../.github/x', '../../aeg-root/x'])(
+    'recognizes the disguised %s',
+    (path) => {
+      const result = checkSurfaceScope([path], { in: ['apps'], out: [] }, [path])
+      expect(result).toEqual({ ok: false, violation: { path, reason: 'protected' } })
+    }
+  )
+})
+
 describe('checkSurfaceScope — a beyond-Surface path passes only when the body records it', () => {
   it('passes when no changed file is beyond the Surface', () => {
     const result = checkSurfaceScope(
@@ -2278,7 +2312,7 @@ describe('checkSurfaceScope — a beyond-Surface path passes only when the body 
   it('names the first matching out: glob when a file falls under more than one', () => {
     const result = checkSurfaceScope(['a/b/c.ts'], { in: [], out: ['a/**', 'a/b/**'] }, [])
     expect(result.ok).toBe(false)
-    if (result.ok) return
+    if (result.ok || result.violation.reason === 'protected') return
     expect(result.violation.glob).toBe('a/**')
   })
 })
