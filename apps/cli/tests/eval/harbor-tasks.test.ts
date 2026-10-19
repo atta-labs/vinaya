@@ -50,6 +50,7 @@ import { type HarborCaseFile, runHarborTrial } from '../../src/lib/dev-review-ev
 import type { NeutralCase } from '../../src/lib/dev-review-eval/neutral-case'
 import { PRODUCTION_VINAYA_PROCESS_STEPS, type VinayaProcessSteps } from '../../src/lib/dev-review-eval/step-one'
 import { renderCase, VINAYA_RENDERER_VERSION } from '../../src/lib/dev-review-eval/vinaya-renderer'
+import { stripVinayaEnv } from '../lib/process-fixture'
 import { DEV_TOOLS_MCP_SERVER_NAME } from '../../src/lib/task-tools/dev-tools-names'
 import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server'
 import { developmentCases } from './generic-suites'
@@ -75,9 +76,12 @@ const tempDir = (prefix: string) => {
 function run(command: string, args: readonly string[], options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}) {
   const result = spawnSync(command, [...args], {
     cwd: options.cwd ?? REPOSITORY_ROOT,
-    env: options.env ?? process.env,
+    env: stripVinayaEnv(options.env ?? process.env),
     encoding: 'utf8',
-    maxBuffer: 256 * 1024 * 1024
+    maxBuffer: 256 * 1024 * 1024,
+    // A clone of the case repository or an archive of the whole tree, killed if it hangs.
+    timeout: 300_000,
+    killSignal: 'SIGKILL'
   })
   return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
 }
