@@ -55,8 +55,8 @@ The normative graph and transitions are in `dev-review-engine-state-machine.md`.
 | Role | Callable tools | Reads | Never |
 | -- | -- | -- | -- |
 | Developer | The seven tools in §4.1 | Its own task worktree; required sources through `fetch_documentation` | Forge credentials, a direct push (publication goes only through the brokered `publish_changes`), any `gh` call, review publication, rulings, merge |
-| Code reviewer | `read_source` (planned, §4.2) | The staged read-only checkout, diff and manifest | Version-control metadata, any git or `gh` command, forge credentials, arbitrary network fetches |
-| Security reviewer | `read_source` (planned) | Same as the code reviewer | Same as the code reviewer |
+| Code reviewer | `read_source` (§4.2) | The staged read-only checkout, diff and manifest | Version-control metadata, any git or `gh` command, forge credentials, arbitrary network fetches |
+| Security reviewer | `read_source` (§4.2) | Same as the code reviewer | Same as the code reviewer |
 | Operator | The five Operator tools | Task status and escalations | Acting inside a round |
 | Controller | — | Everything it needs | Delegating a gate to an agent |
 
@@ -89,7 +89,7 @@ The callable-tools column is one table in code, `ROLE_TOOL_GRANTS` in `apps/cli/
 
 Every canonical catalog entry carries: name; namespace and semantic version; purpose; realistic usage examples; approval requirement; token and size limits on input and output; selection boundary; input schema; success-output schema; refusal schema; infrastructure-error schema; required authority; idempotency and replay behaviour; timeout and cancellation; preconditions; verified postconditions; redaction; telemetry events; annotations. The provider-neutral catalog lives in `apps/cli/src/lib/task-tools/tool-catalog.ts`; the Developer server derives its description, input schema, success-output schema and annotations from that catalog. A missing limit or protocol behavior is stated explicitly: most current tools enforce no tool-level token or byte limit, and the current MCP server ignores cancellation notifications. `read_pull_request` continues to return handler-owned checks and reviews, whose catalog schemas enumerate the forge fields the tool exposes and refuse unknown properties.
 
-### 4.2 Planned tool (reviewers)
+### 4.2 Built tool (reviewers)
 
 `read_source({ sourceId, offset })` returns controller-pinned content for one entry of the run's required-source manifest: the content, final URL and digest the controller recorded. Reviewers judge exactly the source revision the Developer was given. Reviewers get no URL-based fetch. A reviewer need for history or remote context the staged checkout cannot provide is added later as its own justified, bounded capability.
 
