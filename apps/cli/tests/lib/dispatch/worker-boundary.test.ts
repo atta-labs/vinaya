@@ -19,6 +19,10 @@ import { addCodexWritableDirs } from '../../../src/lib/dispatch'
 import { devToolsSocketRoot } from '../../../src/lib/task-tools/dev-tools-registration'
 import {
   buildWorkerEnv,
+  CLAUDE_CONTAINER_TOKEN_ENV,
+  containerBoundaryRefusal,
+  containerClaudeLogin,
+  type ContainerBoundaryProbe,
   resolveCodexAccessToken,
   resolveOAuthConfigSourceDir,
   stageCodexPolicyHome,
@@ -154,6 +158,63 @@ describe('buildWorkerEnv — O2 allowlist, never a spread', () => {
 describe('SUBSCRIPTION_LOGIN_AGENTS — no agent authenticates with an API key', () => {
   it('names exactly the agents whose subscription login this module can stage', () => {
     expect([...SUBSCRIPTION_LOGIN_AGENTS]).toEqual(['claude', 'codex'])
+  })
+})
+
+describe('container mode — the subscription token, and a one-task container as the boundary', () => {
+  it('reads the subscription token only in container mode, passes it by name, and never an API key', () => {
+    const env = {
+      [CLAUDE_CONTAINER_TOKEN_ENV]: 'subscription-token-fixture',
+      ANTHROPIC_API_KEY: 'api-key-fixture',
+      ANTHROPIC_AUTH_TOKEN: 'auth-token-fixture'
+    }
+    expect(containerClaudeLogin(env, true)).toEqual({
+      CLAUDE_CODE_OAUTH_TOKEN: 'subscription-token-fixture',
+      CLAUDE_FORCE_OAUTH: '1'
+    })
+    // Outside container mode the token is ignored: the staged login or the Keychain stays the only route.
+    expect(containerClaudeLogin(env, false)).toBeNull()
+    expect(containerClaudeLogin({ ANTHROPIC_API_KEY: 'api-key-fixture' }, true)).toBeNull()
+    expect(containerClaudeLogin({ [CLAUDE_CONTAINER_TOKEN_ENV]: '' }, true)).toBeNull()
+    // The confined child's environment carries the token named, and nothing else credential-shaped.
+    const child = buildWorkerEnv(env, containerClaudeLogin(env, true) ?? {})
+    expect(child.CLAUDE_CODE_OAUTH_TOKEN).toBe('subscription-token-fixture')
+    expect(child.ANTHROPIC_API_KEY).toBeUndefined()
+    expect(child.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+    expect(buildWorkerEnv(env, {}).CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
+  })
+
+  const probe = (over: Partial<{ platform: NodeJS.Platform; dockerEnv: boolean; dirs: string[] }> = {}) =>
+    ({
+      platform: () => over.platform ?? 'linux',
+      dockerEnvPresent: () => over.dockerEnv ?? true,
+      socketDirectories: () => over.dirs ?? []
+    }) satisfies ContainerBoundaryProbe
+  const own = join(devToolsSocketRoot(), 'own')
+
+  it('makes the container the boundary only when every condition holds', () => {
+    expect(containerBoundaryRefusal({ containerMode: true, ownSocketDir: null }, probe())).toBeNull()
+    expect(containerBoundaryRefusal({ containerMode: true, ownSocketDir: own }, probe({ dirs: [own] }))).toBeNull()
+  })
+
+  it('refuses on each condition failing alone', () => {
+    expect(containerBoundaryRefusal({ containerMode: false, ownSocketDir: null }, probe())).toBe(
+      'container mode was not set by the trial entry'
+    )
+    expect(containerBoundaryRefusal({ containerMode: true, ownSocketDir: null }, probe({ platform: 'darwin' }))).toBe(
+      'container mode needs Linux, and this process runs on darwin'
+    )
+    expect(containerBoundaryRefusal({ containerMode: true, ownSocketDir: null }, probe({ dockerEnv: false }))).toBe(
+      'container mode needs /.dockerenv, which is absent'
+    )
+    const other = join(devToolsSocketRoot(), 'other')
+    expect(
+      containerBoundaryRefusal({ containerMode: true, ownSocketDir: own }, probe({ dirs: [own, other] }))
+    ).toContain(`another driver-run socket directory exists (${other})`)
+    // Without a bridge of its own, any socket directory is another task's.
+    expect(containerBoundaryRefusal({ containerMode: true, ownSocketDir: null }, probe({ dirs: [own] }))).toContain(
+      'is not the only task in the container'
+    )
   })
 })
 

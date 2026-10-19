@@ -1,16 +1,20 @@
 import { describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { type CloneStaging, git } from '../../src/lib/dev-review-eval/staging'
+import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server'
+import { DEV_TOOLS_MCP_SERVER_NAME } from '../../src/lib/task-tools/dev-tools-names'
 import { spawnBudgetedAsync } from '../lib/process-fixture'
 import type { NeutralCase } from '../../src/lib/dev-review-eval/neutral-case'
 import {
+  commitInWorkingTree,
   commitTrialInSandbox,
   importTrialBundle,
   NO_DEVELOPMENT,
   openGradingSandbox,
   PRODUCTION_STEP_ONE_RUNTIME,
+  PRODUCTION_VINAYA_PROCESS_STEPS,
   rendererVersionOf,
   resolveGradingCodex,
   runStepOne,
@@ -27,8 +31,10 @@ import {
   TRIAL_COMMIT_SCRIPT,
   unavailableReason,
   verifyTrialCommit,
+  vinayaProcess,
   type VinayaProcessRequest,
-  type VinayaProcessRun
+  type VinayaProcessRun,
+  type VinayaProcessSteps
 } from '../../src/lib/dev-review-eval/step-one'
 import { LIVE_SUITE_LAYERS } from '../../src/lib/dev-review-eval/freeze-record'
 import {
@@ -870,5 +876,411 @@ describe('development-only step one', () => {
     )
     expect(requested.ok && requested.value.purpose).toBe('practice')
     expect(practice).toHaveLength(14)
+  })
+})
+
+describe('container mode: a layer-G trial in a container that is its own sandbox, on fake process runs', () => {
+  const loading = PRODUCTION_STEP_ONE_RUNTIME.loadDevelopment()
+  const SKIPPED_IN_CONTAINER = [
+    'stageTrial',
+    'hiddenInputs',
+    'testContamination',
+    'openGradingSandbox',
+    'warmPackageCache',
+    'sandbox.run',
+    'commitTrialInSandbox',
+    'importTrialBundle',
+    'prepareGradingCopy',
+    'gradeInSandbox'
+  ]
+  const tempDir = (prefix: string) => realpathSync(mkdtempSync(join(tmpdir(), prefix)))
+  const commitAll = (dir: string, message: string) => {
+    git(dir, ['add', '-A'])
+    git(dir, ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--quiet', '--allow-empty', '-m', message])
+    return git(dir, ['rev-parse', 'HEAD']).trim()
+  }
+
+  /** The same fake process run for both modes: the role's transcript, and for a Developer its change and publication. */
+  const fakeRun = (kind: NeutralCase['kind'], world: { context: DevToolContext } | null) => {
+    const items =
+      kind === 'change'
+        ? [
+            { id: 'c1', type: 'command_execution', command: 'bun run typecheck' },
+            {
+              id: 'm1',
+              type: 'mcp_tool_call',
+              server: DEV_TOOLS_MCP_SERVER_NAME,
+              tool: 'publish_changes',
+              arguments: { header: 'Feat(cli): Add the solution' }
+            },
+            {
+              id: 'm2',
+              type: 'mcp_tool_call',
+              server: DEV_TOOLS_MCP_SERVER_NAME,
+              tool: 'open_pull_request',
+              arguments: { title: 't' }
+            }
+          ]
+        : [{ id: 'c1', type: 'command_execution', command: 'git diff' }]
+    return {
+      lines: items.map((item) => JSON.stringify({ type: 'item.completed', item })),
+      async act(cwd: string, issue: number) {
+        if (kind !== 'change' || world === null) return
+        writeFileSync(join(cwd, 'solution.ts'), 'export const solved = true\n')
+        await world.context.publishChanges('Feat(cli): Add the solution')
+        await world.context.openPullRequest('t', `Closes #${issue}\n\nThe change.`)
+      }
+    }
+  }
+
+  /** Every step as a recording fake; the fake stage clones the source repository, and the fake import hands that clone back. */
+  function recordingSteps(kind: NeutralCase['kind'], issue: number) {
+    const calls: string[] = []
+    const dispatched: Array<{ cwd: string | undefined; containerMode: boolean | undefined }> = []
+    const turns: Array<{ workspace: string; claudeEnv: NodeJS.ProcessEnv | undefined }> = []
+    let world: { context: DevToolContext } | null = null
+    let lastStaged: string | null = null
+    const scratch = tempDir('step-one-fake-sandbox-')
+    const steps: VinayaProcessSteps = {
+      ...PRODUCTION_VINAYA_PROCESS_STEPS,
+      dispatch: async (_role, _agent, _prompt, opts) => {
+        calls.push('dispatch')
+        dispatched.push({ cwd: opts.cwd, containerMode: opts.containerMode })
+        const run = fakeRun(kind, world)
+        await run.act(opts.cwd as string, issue)
+        for (const line of run.lines) opts.observeStdoutLine?.(line)
+        return {
+          exitCode: 0,
+          durationMs: 5,
+          usage: { input: 3, output: 2 },
+          resumeId: 's',
+          timedOut: false,
+          ...(kind === 'review'
+            ? { reviewOutput: { raw: { reviewResult: { verdict: 'approve' } } } }
+            : { turnOutput: { raw: { turnResult: { status: 'completed' } } } })
+        } as never
+      },
+      readOnlyTurn: async (_adapter, _dir, workspace, _bridge, _schema, options) => {
+        calls.push('readOnlyTurn')
+        turns.push({ workspace, claudeEnv: options.claudeEnv })
+        return async () => `${fakeRun(kind, null).lines.join('\n')}\n`
+      },
+      startToolHost: async (opts) => {
+        calls.push('startToolHost')
+        world = { context: opts.context }
+        return { socketPath: opts.socketPath, close: async () => {} }
+      },
+      stageTrial: (request) => {
+        calls.push('stageTrial')
+        const root = tempDir('step-one-fake-stage-')
+        const workspace = join(root, 'workspace')
+        if (request.mode === 'clone') git(root, ['clone', '--quiet', request.sourceRepository, workspace])
+        else mkdirSync(workspace)
+        lastStaged = workspace
+        return {
+          kind: request.mode,
+          trialId: request.trialId,
+          baseCommit: request.baseCommit,
+          workspace,
+          gitDir: join(workspace, '.git'),
+          root: { path: root }
+        } as never
+      },
+      hiddenInputs: () => {
+        calls.push('hiddenInputs')
+        return { failToPassTests: {}, referenceSolution: {}, pinnedPassToPassTests: {} }
+      },
+      testContamination: () => {
+        calls.push('testContamination')
+        return { clean: true, findings: [] } as never
+      },
+      openGradingSandbox: () => {
+        calls.push('openGradingSandbox')
+        return {
+          scratch,
+          launch: () => ({ command: [], env: {} }),
+          run: async () => {
+            calls.push('sandbox.run')
+            return ''
+          },
+          dispose: () => {}
+        }
+      },
+      warmPackageCache: async () => {
+        calls.push('warmPackageCache')
+      },
+      commitTrialInSandbox: async (_sandbox, staging, message) => {
+        calls.push('commitTrialInSandbox')
+        return `trial-commit ${commitAll(staging.workspace, message)}\n`
+      },
+      importTrialBundle: () => {
+        calls.push('importTrialBundle')
+        return lastStaged as string
+      },
+      prepareGradingCopy: () => {
+        calls.push('prepareGradingCopy')
+        return { path: tempDir('step-one-fake-grading-') } as never
+      },
+      gradeInSandbox: async () => {
+        calls.push('gradeInSandbox')
+        return []
+      }
+    }
+    return { steps, calls, dispatched, turns }
+  }
+
+  const caseOf = async (suite: StepOneRunSuite, kind: NeutralCase['kind']) => {
+    const cases = (await loading).neutralCases[suite as keyof Awaited<typeof loading>['neutralCases']] ?? []
+    const chosen = cases.find((c) => c.kind === kind && (c.kind !== 'change' || c.deliveredDocuments.length > 0))
+    if (chosen === undefined) throw new Error(`${suite} has no ${kind} case`)
+    return chosen
+  }
+
+  /**
+   * A source repository whose base commit holds the change case's delivered
+   * documents as the real repository holds them at the case's base, so the
+   * fake host stage clones it and a container working tree checks it out.
+   */
+  async function changeFixture(c: NeutralCase) {
+    const loaded = await loading
+    const item = loaded.developerCases.find((entry) => entry.id === c.id)
+    if (item === undefined) throw new Error(`${c.id} has no layer-P case`)
+    const rendered = renderCase(c)
+    if (!rendered.ok) throw new Error('the change case does not render')
+    const source = tempDir('step-one-fake-source-')
+    git(source, ['init', '--quiet'])
+    for (const document of rendered.input.sources) {
+      const path = join(source, document.sourceId)
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, git('.', ['show', `${item.baseCommit}:${document.sourceId}`]))
+    }
+    const base = commitAll(source, 'base')
+    return {
+      base,
+      source,
+      loaded: {
+        ...loaded,
+        developerCases: loaded.developerCases.map((entry) =>
+          entry.id === c.id ? { ...entry, baseCommit: base } : entry
+        )
+      },
+      issue: item.pullRequest
+    }
+  }
+
+  const KINDS: { suite: StepOneRunSuite; kind: NeutralCase['kind'] }[] = [
+    { suite: 'developer-capability-neutral.l5', kind: 'change' },
+    { suite: 'code-reviewer-quality-neutral.l5', kind: 'review' },
+    { suite: 'source-delivery-neutral.l5', kind: 'answer' }
+  ]
+
+  for (const { suite, kind } of KINDS) {
+    it(`a ${kind} case records what the host records, in the given tree, and calls none of the skipped steps`, async () => {
+      const c = await caseOf(suite, kind)
+      const rendered = renderCase(c)
+      if (!rendered.ok) throw new Error('the case does not render')
+      const fixture = kind === 'change' ? await changeFixture(c) : null
+      const issue = fixture?.issue ?? 1
+      const request = {
+        trial: { suite, adapter: 'codex' as const, taskId: c.id, attempt: 1 },
+        neutralCase: c,
+        input: rendered.input
+      }
+      const context: StepOneCommandContext = {
+        repository: fixture?.source ?? '.',
+        developerBriefs: new Map(),
+        models: {},
+        timeoutMs: 1000,
+        loaded: fixture?.loaded ?? (await loading)
+      }
+
+      const host = recordingSteps(kind, issue)
+      const onHost = await vinayaProcess(host.steps)(request, context)
+
+      const tree = tempDir('step-one-container-app-')
+      if (fixture !== null) git(tree, ['clone', '--quiet', fixture.source, '.'])
+      const recordPath = join(tempDir('step-one-container-record-'), 'record.json')
+      const inContainer = recordingSteps(kind, issue)
+      const contained = await vinayaProcess(inContainer.steps)(request, {
+        ...context,
+        container: { workingTree: tree, recordPath }
+      })
+
+      expect(onHost.ok).toBe(true)
+      expect(contained.ok).toBe(true)
+      if (!onHost.ok || !contained.ok) return
+      // Every agent-produced field equals the host's for the same fake run.
+      const agentFields = (record: VinayaTrialRecord) => ({
+        rendererVersion: record.rendererVersion,
+        input: record.input,
+        pullRequestBody: record.pullRequest?.body ?? null,
+        checks: record.checks,
+        reviews: record.reviews,
+        readyForMerge: record.readyForMerge,
+        developerTurnResult: record.developerTurnResult,
+        receipts: record.receipts,
+        trace: record.trace,
+        effects: record.effects
+      })
+      expect(agentFields(contained.record)).toEqual(agentFields(onHost.record))
+      // The verifier fills these two.
+      expect(contained.record.hiddenTests).toBeNull()
+      expect(contained.record.measuredChange).toBeNull()
+      expect(JSON.parse(readFileSync(recordPath, 'utf8'))).toEqual(contained.record)
+      expect(inContainer.calls.filter((call) => SKIPPED_IN_CONTAINER.includes(call))).toEqual([])
+
+      if (kind === 'answer') {
+        expect(inContainer.turns.map((turn) => turn.workspace)).toEqual([tree])
+        expect(host.turns[0]?.workspace).not.toBe(tree)
+        expect(inContainer.calls).toEqual(['startToolHost', 'readOnlyTurn'])
+        expect(host.calls).toEqual(['startToolHost', 'readOnlyTurn'])
+        return
+      }
+      expect(inContainer.dispatched).toEqual([{ cwd: tree, containerMode: true }])
+      expect(host.dispatched[0]?.cwd).not.toBe(tree)
+      expect(host.dispatched[0]?.containerMode).toBeUndefined()
+      if (kind === 'review') {
+        expect(contained.record).toEqual(onHost.record)
+        expect(host.calls).toEqual(['stageTrial', 'testContamination', 'dispatch'])
+        expect(inContainer.calls).toEqual(['dispatch'])
+        return
+      }
+      // A change case: the role's commit lands on the tree's HEAD, and the tree's diff against the base is its work.
+      expect(onHost.record.pullRequest?.body).toContain(`Closes #${issue}`)
+      expect(onHost.record.effects?.map((effect) => effect.kind)).toEqual(['publish_changes', 'open_pull_request'])
+      const head = git(tree, ['rev-parse', 'HEAD']).trim()
+      expect(head).not.toBe(fixture?.base)
+      expect(git(tree, ['diff', '--name-only', fixture?.base as string, head]).trim()).toBe('solution.ts')
+      expect(contained.record.pullRequest?.headSha).toBe(head)
+      expect(contained.record.pullRequest?.baseSha).toBe(fixture?.base)
+      expect(onHost.record.measuredChange?.changedPaths).toEqual(['solution.ts'])
+      expect(onHost.record.hiddenTests?.revision).toBe(onHost.record.measuredChange?.head)
+      expect(inContainer.calls).toEqual(['startToolHost', 'dispatch'])
+      // Outside container mode the same fakes record every step as today.
+      expect(host.calls).toEqual([
+        'hiddenInputs',
+        'stageTrial',
+        'testContamination',
+        'openGradingSandbox',
+        'warmPackageCache',
+        'sandbox.run',
+        'startToolHost',
+        'dispatch',
+        'commitTrialInSandbox',
+        'importTrialBundle',
+        'prepareGradingCopy',
+        'sandbox.run',
+        'gradeInSandbox'
+      ])
+    }, 60_000)
+  }
+
+  it('authenticates a Claude answer turn in container mode from the subscription token alone, never an API key', async () => {
+    const c = await caseOf('source-delivery-neutral.l5', 'answer')
+    const rendered = renderCase(c)
+    if (!rendered.ok) throw new Error('the case does not render')
+    const request = {
+      trial: {
+        suite: 'source-delivery-neutral.l5' as const,
+        adapter: 'claude-code' as const,
+        taskId: c.id,
+        attempt: 1
+      },
+      neutralCase: c,
+      input: rendered.input
+    }
+    const context: StepOneCommandContext = {
+      repository: '.',
+      developerBriefs: new Map(),
+      models: {},
+      timeoutMs: 1000,
+      loaded: await loading
+    }
+    const saved = { token: process.env.CLAUDE_CODE_OAUTH_TOKEN, key: process.env.ANTHROPIC_API_KEY }
+    try {
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = 'subscription-token-fixture'
+      process.env.ANTHROPIC_API_KEY = 'api-key-fixture'
+      const container = {
+        workingTree: tempDir('step-one-container-app-'),
+        recordPath: join(tempDir('step-one-container-record-'), 'record.json')
+      }
+      const inContainer = recordingSteps('answer', 1)
+      await vinayaProcess(inContainer.steps)(request, { ...context, container })
+      const env = inContainer.turns[0]?.claudeEnv ?? {}
+      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('subscription-token-fixture')
+      expect(env.CLAUDE_FORCE_OAUTH).toBe('1')
+      expect(env.ANTHROPIC_API_KEY).toBeUndefined()
+      // On the host the token is never read: the turn keeps its stripped parent environment.
+      const host = recordingSteps('answer', 1)
+      await vinayaProcess(host.steps)(request, context)
+      expect(host.turns[0]?.claudeEnv).toBeUndefined()
+      // Without the token, container mode refuses rather than reaching for another login.
+      delete process.env.CLAUDE_CODE_OAUTH_TOKEN
+      await expect(
+        vinayaProcess(recordingSteps('answer', 1).steps)(request, { ...context, container })
+      ).rejects.toThrow('CLAUDE_CODE_OAUTH_TOKEN')
+    } finally {
+      for (const [name, value] of [
+        ['CLAUDE_CODE_OAUTH_TOKEN', saved.token],
+        ['ANTHROPIC_API_KEY', saved.key]
+      ] as const) {
+        if (value === undefined) delete process.env[name]
+        else process.env[name] = value
+      }
+    }
+  })
+
+  it('commits a container trial on the working tree HEAD, and refuses a trial with no commit ahead of its base', () => {
+    const tree = tempDir('step-one-container-commit-')
+    git(tree, ['init', '--quiet'])
+    const base = commitAll(tree, 'base')
+    expect(commitInWorkingTree(tree, 'Eval(developer): nothing', base)).toEqual({
+      ok: false,
+      reason: 'Developer trial has no commit ahead of its base'
+    })
+    writeFileSync(join(tree, 'work.ts'), 'export {}\n')
+    const committed = commitInWorkingTree(tree, 'Eval(developer): work', base)
+    expect(committed).toEqual({ ok: true, commit: git(tree, ['rev-parse', 'HEAD']).trim() })
+    expect(git(tree, ['status', '--porcelain'])).toBe('')
+  })
+
+  it('takes container mode as two flags given together, and runs no layer-P suite in it', async () => {
+    const args = (...extra: string[]) => [
+      'run',
+      '--split',
+      'development',
+      '--backend',
+      'standalone',
+      '--trials',
+      '1',
+      '--bootstrap',
+      'percentile',
+      '--seed',
+      '1',
+      '--resamples',
+      '20',
+      '--confidence',
+      '0.95',
+      '--input-cost-per-million',
+      '0',
+      '--output-cost-per-million',
+      '0',
+      ...extra
+    ]
+    await expect(runStepOneCommand(args('--container-tree', '/app'))).rejects.toThrow('given together')
+    const context: StepOneCommandContext = {
+      repository: '.',
+      developerBriefs: new Map(),
+      models: {},
+      timeoutMs: 1,
+      loaded: await loading,
+      container: { workingTree: '/app', recordPath: '/app/record.json' }
+    }
+    await expect(
+      PRODUCTION_STEP_ONE_RUNTIME.execute(
+        { suite: 'developer-capability.l5', adapter: 'codex', taskId: 'any', attempt: 1 },
+        context
+      )
+    ).rejects.toThrow('container mode runs no layer-P suite')
   })
 })

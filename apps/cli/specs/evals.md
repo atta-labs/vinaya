@@ -543,6 +543,54 @@ ahead of its base or a bundle that does not verify is unavailable. An
 unavailable trial's reason is redacted with the Log's redaction helper and
 truncated before it is stored.
 
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/step-one.ts contains:export interface StepOneContainer { -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/step-one.ts contains:export function vinayaProcess(steps: VinayaProcessSteps): VinayaProcessRunner { -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/step-one.ts contains:export function commitInWorkingTree(workingTree: string, message: string, baseCommit: string): TrialCommit { -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/step-one.ts contains:if (context.container !== undefined) throw new Error(`container mode runs no layer-P suite: ${input.suite}`) -->
+
+**Container mode.** A layer-`G` trial can instead run inside a container
+that is its own sandbox, holding one task. The trial entry sets it
+explicitly, with `--container-tree <dir>` and `--container-record <file>`
+given together (`StepOneCommandContext.container`); it is off by default, and
+without it every step above runs as described. Container mode runs only
+layer-`G` suites; a layer-`P` trial in it is refused, and a layer-`P` trial
+always runs on the host. The dispatch's side of container mode, its
+subscription-token login and the rule under which the container is the
+boundary, is `apps/cli/specs/isolation.md` §4e.
+
+The role runs directly in the given working tree (`/app` in a trial
+container), at the base commit already checked out there; that commit is the
+trial's base. There is no temporary clone, no staging copy and no trial-bundle
+import. A `change` case's Developer commits on that tree's `HEAD`
+(`commitInWorkingTree`: any uncommitted change is committed with hooks and the
+filesystem monitor off), so a diff of the tree against the base commit is the
+role's work. Its delivered documents are read from the tree at that base. A
+`review` case's reviewer runs in the same tree. An `answer` case's read-only
+turn works in the tree too, with each injected document the tree does not
+already hold written into it. The run writes its trial record to the record
+path for the verifier outside the container, which grades the trial.
+
+Container mode skips these host steps, each for its own reason:
+
+- `hiddenInputs` — the hidden tests and the reference commit are not in the
+  container; the verifier measures them.
+- the contamination check — no hidden input exists in the container to
+  contaminate the workspace.
+- the grading-sandbox open, the package-cache warm and the sandboxed installs
+  — nothing is graded in the container, and the container is the sandbox.
+- host hidden-test grading — grading is the verifier's job.
+- the trial-bundle import — there is no host copy to import into.
+
+The record's `hiddenTests` and `measuredChange` are left unset (`null`) for
+the verifier to fill; every other field is produced as on the host. Each step
+a live trial takes is a seam (`VinayaProcessSteps`, run through
+`vinayaProcess`; production passes `PRODUCTION_VINAYA_PROCESS_STEPS`), so
+`apps/cli/tests/eval/step-one.test.ts` runs one case of each kind on fake
+process runs and no Docker in both modes: in container mode the record's
+agent-produced fields equal the host's for the same fake run, the role works
+in the given tree, and none of the skipped steps is called; outside container
+mode the same fakes record every step.
+
 Subscription quota use is read per trial from the vendor's own rate-limit
 readings in that trial's stream, of one window only (Codex's primary window,
 Claude Code's five-hour window): the after reading minus the before reading.
@@ -557,7 +605,7 @@ graders for a layer-`G` suite. `--adapter` selects one adapter and `--cases`
 selects cases, a single count or case ids, repeated or comma-separated:
 
 ```text
-bun apps/cli/src/lib/dev-review-eval/step-one.ts run --split development --backend standalone [--purpose <development-only|practice|comparison>] [--suite <name>]... [--adapter <claude-code|codex>] [--cases <n>|--cases <id>...] --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> [--developer-snapshot <merged-task-prs.jsonl>] --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--out <file>]
+bun apps/cli/src/lib/dev-review-eval/step-one.ts run --split development --backend standalone [--purpose <development-only|practice|comparison>] [--suite <name>]... [--adapter <claude-code|codex>] [--cases <n>|--cases <id>...] --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> [--developer-snapshot <merged-task-prs.jsonl>] --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--container-tree <dir> --container-record <file>] [--out <file>]
 ```
 
 For example, a practice run of the first case of the layer-`G` developer

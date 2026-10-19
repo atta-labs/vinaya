@@ -493,7 +493,13 @@ export function readOnlyDeveloperTurn(
   workspace: string,
   bridge: ReturnType<typeof driverDevBridgeInvocation>,
   schema: unknown,
-  options: { claudeModel?: string; codexModel?: string; timeoutSec: number }
+  options: {
+    claudeModel?: string
+    codexModel?: string
+    timeoutSec: number
+    /** The Claude turn's whole environment in place of the stripped parent one; container mode passes its named login. */
+    claudeEnv?: NodeJS.ProcessEnv
+  }
 ): (prompt: string, resumeId: string | null) => Promise<string> {
   const schemaPath = join(dir, 'turn.schema.json')
   writeFileSync(schemaPath, `${JSON.stringify(schema, null, 2)}\n`)
@@ -518,7 +524,7 @@ export function readOnlyDeveloperTurn(
             JSON.stringify(schema)
           ],
           workspace,
-          { ...stripVinayaEnv(), ...CLAUDE_DEV_TOOLS_ENV },
+          { ...(options.claudeEnv ?? stripVinayaEnv()), ...CLAUDE_DEV_TOOLS_ENV },
           options.timeoutSec
         )
       ).stdout
