@@ -152,6 +152,15 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     example: `{ "validates": "body" }`
   },
   {
+    key: 'checks.advisory',
+    type: 'true (optional)',
+    semantics: [
+      'Marks a check whose findings are reported as warnings and never fail a run — its own code exits 0 on every finding; only a configuration refusal (no Principal configured) can still exit non-zero. `vinaya check --plan` shows it in an `ADVISORY` column (and as `advisory: true` in `--plan --json`), and each result line `vinaya check` prints ends with ` — advisory`, so a passing advisory check is never read as a gate that held.',
+      "A label only: it changes nothing about how the check runs or how a run's exit code is computed. Same no-privileged-field discipline as `principalOwed`/`validates` — a config-registered check declares this exactly like the core `doc-coverage-push`, `quoted-command`, `doctrine-portability` and `workspace-escape` checks do."
+    ],
+    example: `{ "advisory": true }`
+  },
+  {
     key: 'checks.env',
     type: 'Record<string, EnvEntry> (optional)',
     semantics: [

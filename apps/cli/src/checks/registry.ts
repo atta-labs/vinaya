@@ -700,6 +700,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
     {
       name: 'doc-coverage-push',
       validates: 'body',
+      advisory: true,
       run: bin('check-doc-coverage-push'),
       scope: 'diff',
       timeoutMs: 15_000,
@@ -839,6 +840,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   [
     {
       name: 'doctrine-portability',
+      advisory: true,
       run: bin('check-doctrine-portability'),
       scope: 'full',
       timeoutMs: 30_000,
@@ -929,6 +931,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   [
     {
       name: 'workspace-escape',
+      advisory: true,
       run: bin('check-workspace-escape'),
       scope: 'full',
       timeoutMs: 30_000,
@@ -970,6 +973,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   [
     {
       name: 'quoted-command',
+      advisory: true,
       run: bin('check-quoted-command'),
       scope: 'full',
       timeoutMs: 15_000,
