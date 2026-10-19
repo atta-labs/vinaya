@@ -135,7 +135,8 @@ export async function issueEditCommand(args: string[]): Promise<void> {
         parseIssueNumberFromRef(issueRef),
         {
           kind: 'edit',
-          issueRef
+          issueRef,
+          ghArgs
         }
       ))
     }

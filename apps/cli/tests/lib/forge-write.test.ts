@@ -9,6 +9,7 @@ import { sha256Hex } from '../../src/lib/effects'
 import {
   DEFAULT_COLLISION_THRESHOLD,
   checkIntroducedCommandsCovered,
+  checkMilestoneAttach,
   checkIntroducedConfigKeysCovered,
   checkTestPlanDeveloperRunnable
 } from '@attalabs/aeg-core'
@@ -30,6 +31,7 @@ import {
   validateIssueContent
 } from '../../src/lib/forge-write'
 import { readFileSync } from 'node:fs'
+import { resolveMilestoneAttachTarget } from '@attalabs/aeg-forge-state'
 import { COMMANDS } from '@attalabs/vinaya-sources'
 
 const CLI_ROOT = join(import.meta.dir, '..', '..')
@@ -1909,5 +1911,122 @@ describe('readPinnedFileImporters — through a workspace package name', () => {
   it('lists a caller of a package subpath that targets the pinned module itself', () => {
     const [result] = readPinnedFileImporters(bodyPinning('packages/sub/src/leaf.ts'), fixture)
     expect(result?.importers).toEqual(['apps/cli/src/uses-leaf.ts'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The Milestone-attach rule runs on the edit path only. The registry runner is
+// a spy so the test reads exactly the two Milestone inputs it receives; the
+// real rule is then applied to them with `checkMilestoneAttach`.
+// ---------------------------------------------------------------------------
+describe('collectTaskIssueErrors — Milestone attach on edit', () => {
+  const TASK_LABELS = ['vinaya/tranche:adopted-v1', 'vinaya/type:fix']
+  const TARGET = 'Adopted tranche'
+  // Shaped the way `milestone adopt` leaves the forge: legacy Milestone titled
+  // with the slug is closed, the target is open and declares the intent line.
+  const ADOPTED_MILESTONES = [
+    { number: 1, title: 'adopted-v1', description: null, state: 'closed' as const },
+    {
+      number: 2,
+      title: TARGET,
+      description: '### Tranche intents\n\n- adopted-v1: ship the adopted work',
+      state: 'open' as const
+    }
+  ]
+
+  let cwd: string
+  let originalCwd: string
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-milestone-attach-edit-'))
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ briefSchema: { issue: { sections: [] } } }), 'utf8')
+    execFileSync('git', ['init', '-q'], { cwd })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd })
+    writeFileSync(join(cwd, 'seed.txt'), '')
+    execFileSync('git', ['add', '.'], { cwd })
+    execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd })
+    originalCwd = process.cwd()
+    process.chdir(cwd)
+  })
+  afterEach(() => {
+    process.chdir(originalCwd)
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  async function run(
+    source: Parameters<typeof collectTaskIssueErrors>[5],
+    live: { ok: true; title: string | null } | { ok: false },
+    resolved: string | null
+  ) {
+    const seen: Array<{ current: string | null; resolved: string | null }> = []
+    const deps: TaskIssueValidationDeps = {
+      computeRenderedBriefErrors: async () => ({ errors: [], skipped: null }),
+      runIssueChecks: async (input) => {
+        seen.push({ current: input.currentMilestoneTitle, resolved: input.resolvedMilestoneTitle })
+        return checkMilestoneAttach(input.labels, input.currentMilestoneTitle, input.resolvedMilestoneTitle).errors.map(
+          (message) => ({
+            schema: CHECK_SCHEMA_VERSION,
+            check: 'issue-milestone-attach',
+            severity: 'error' as const,
+            message,
+            agent_recovery_prompt: ''
+          })
+        )
+      },
+      readIssueMilestone: () => live,
+      resolveLabelMilestone: () => resolved
+    }
+    const { errors } = await collectTaskIssueErrors('', 'Fix(cli): x', TASK_LABELS, 'retry', 7, source, deps)
+    return { seen: seen[0], attach: errors.filter((e) => e.check === 'issue-milestone-attach') }
+  }
+
+  it('refuses an Issue in no Milestone, naming the target', async () => {
+    const { attach } = await run({ kind: 'edit', issueRef: '7' }, { ok: true, title: null }, TARGET)
+    expect(attach).toHaveLength(1)
+    expect(attach[0]?.message).toContain(`"${TARGET}"`)
+  })
+
+  it('refuses an Issue in a different Milestone', async () => {
+    const { attach } = await run({ kind: 'edit', issueRef: '7' }, { ok: true, title: 'Other' }, TARGET)
+    expect(attach).toHaveLength(1)
+  })
+
+  it('passes an Issue already in the resolved Milestone', async () => {
+    const { attach } = await run({ kind: 'edit', issueRef: '7' }, { ok: true, title: TARGET }, TARGET)
+    expect(attach).toEqual([])
+  })
+
+  it('passes an edit that sets the resolved Milestone itself', async () => {
+    const { attach, seen } = await run(
+      { kind: 'edit', issueRef: '7', ghArgs: ['--milestone', TARGET] },
+      { ok: true, title: null },
+      TARGET
+    )
+    expect(attach).toEqual([])
+    expect(seen?.current).toBe(TARGET)
+  })
+
+  it('passes a tranche with no open Milestone', async () => {
+    const { attach } = await run({ kind: 'edit', issueRef: '7' }, { ok: true, title: null }, null)
+    expect(attach).toEqual([])
+  })
+
+  it('stays dormant when the live Milestone read fails', async () => {
+    const { attach, seen } = await run({ kind: 'edit', issueRef: '7' }, { ok: false }, TARGET)
+    expect(attach).toEqual([])
+    expect(seen?.resolved).toBeNull()
+  })
+
+  it('never runs the comparison on create', async () => {
+    const { attach, seen } = await run({ kind: 'create', ghArgs: [] }, { ok: true, title: null }, TARGET)
+    expect(attach).toEqual([])
+    expect(seen).toEqual({ current: null, resolved: null })
+  })
+
+  it('an adopted tranche, Issue in the open target, passes with the real resolver', async () => {
+    const target = resolveMilestoneAttachTarget(ADOPTED_MILESTONES, 'adopted-v1')
+    expect(target?.title).toBe(TARGET)
+    const { attach } = await run({ kind: 'edit', issueRef: '7' }, { ok: true, title: TARGET }, target?.title ?? null)
+    expect(attach).toEqual([])
   })
 })
