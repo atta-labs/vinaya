@@ -109,6 +109,9 @@ describe('check-coherence bin under a failing forge', () => {
           PATH: `${binDir}:${process.env.PATH ?? ''}`,
           HOME: process.env.HOME ?? root,
           AEG_REPO: 'fixture-owner/fixture-repo',
+          // The Principal read resolves its repository from the runner's
+          // variable, not `AEG_REPO`; the stub answers it as `gh --jq .content` would.
+          GITHUB_REPOSITORY: 'fixture-owner/fixture-repo',
           GITHUB_TOKEN: 'dummy',
           BRANCH: `task/${SLUG}/1`,
           GH_CALL_LOG: callLog
@@ -150,7 +153,7 @@ describe('check-coherence bin under a failing forge', () => {
       [
         'case "$*" in',
         '  *"repos/fixture-owner/fixture-repo/milestones"*) echo "raw gh failure: milestones" >&2; exit 1 ;;',
-        `  *"repos/fixture-owner/fixture-repo/contents/vinaya.config.json"*) echo '{"content":"${config}","encoding":"base64"}' ;;`,
+        `  *"repos/fixture-owner/fixture-repo/contents/vinaya.config.json"*) echo '${config}' ;;`,
         '  *) echo "[]" ;;',
         'esac'
       ].join('\n')
@@ -174,7 +177,7 @@ describe('check-coherence bin under a failing forge', () => {
         '  *"issue list"*) echo "[]" ;;',
         '  *"repos/fixture-owner/fixture-repo/milestones"*) echo "[]" ;;',
         `  *"repos/fixture-owner/fixture-repo/labels"*) echo '${labels}' ;;`,
-        `  *"repos/fixture-owner/fixture-repo/contents/vinaya.config.json"*) echo '{"content":"${config}","encoding":"base64"}' ;;`,
+        `  *"repos/fixture-owner/fixture-repo/contents/vinaya.config.json"*) echo '${config}' ;;`,
         '  *) echo "[]" ;;',
         'esac'
       ].join('\n')
