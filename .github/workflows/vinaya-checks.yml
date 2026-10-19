@@ -187,6 +187,9 @@ jobs:
           # a pull_request run is the merge ref — at which `test-plan` demands
           # a passed `AEG:LIVE` entry for each `[live]` line of the brief.
           PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # The commit the pull request targets: checks that resolve a merge-base
+          # read it instead of assuming the default branch.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           # O3: this job's gate events deliver live to the `logs.url` server
           # destination the default branch's own `vinaya.config.json`
           # declares — never a fork PR's own working-tree copy
