@@ -9,7 +9,7 @@
   "config": {
     "job_id": "redacted-job",
     "trial_name": "error__trial",
-    "task": { "path": "tasks/error", "name": "error" },
+    "task": { "path": "tasks/error" },
     "agent": { "name": "vinaya", "model_name": "claude-opus-5-5" },
     "environment": { "type": "docker" },
     "verifier": {}

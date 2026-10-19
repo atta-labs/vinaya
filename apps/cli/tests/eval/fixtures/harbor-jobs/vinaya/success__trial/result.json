@@ -9,7 +9,7 @@
   "config": {
     "job_id": "redacted-job",
     "trial_name": "success__trial",
-    "task": { "path": "tasks/success", "name": "success" },
+    "task": { "path": "tasks/success" },
     "agent": { "name": "vinaya", "model_name": "claude-opus-5-5" },
     "environment": { "type": "docker" },
     "verifier": {}

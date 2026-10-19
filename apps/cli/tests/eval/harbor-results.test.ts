@@ -106,6 +106,7 @@ describe('Harbor job results', () => {
           ])
         )
         expect(Object.keys(result.config)).toEqual(expect.arrayContaining(['task', 'agent', 'environment', 'verifier']))
+        expect(result.config.task).toEqual({ path: `tasks/${result.task_name}` })
         expect(readFileSync(join(job, trialName, 'verifier', 'reward.txt'), 'utf8')).toBeDefined()
       }
       expect(taskDigests.size).toBe(trialNames.length)

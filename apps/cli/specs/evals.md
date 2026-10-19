@@ -608,17 +608,17 @@ selects cases, a single count or case ids, repeated or comma-separated:
 bun apps/cli/src/lib/dev-review-eval/step-one.ts run --split development --backend standalone [--purpose <development-only|practice|comparison>] [--suite <name>]... [--adapter <claude-code|codex>] [--cases <n>|--cases <id>...] --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> [--developer-snapshot <merged-task-prs.jsonl>] --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--container-tree <dir> --container-record <file>] [--out <file>]
 ```
 
-For example, a practice run of the first case of the layer-`G` developer
-suite on Claude Code alone:
+For example, after Harbor completes a one-trial practice job for the layer-`G`
+Developer suite, read that job into its step-one practice report with:
 
 ```text
-bun apps/cli/src/lib/dev-review-eval/step-one.ts run --split development --backend standalone --purpose practice --suite developer-capability-neutral.l5 --adapter claude-code --cases 1 --trials 1 --bootstrap percentile --seed 1 --resamples 100 --confidence 0.95 --input-cost-per-million 0 --output-cost-per-million 0
+bun apps/cli/src/lib/dev-review-eval/harbor-results.ts <job-directory> --suite developer-capability-neutral.l5 --subscription-auth --bootstrap percentile --seed 1 --resamples 100 --confidence 0.95 [--task-root <harbor-working-directory>] [--out <file>]
 ```
 
 The snapshot supplies the frozen layer-`P` Developer briefs whose committed corpus
 entries intentionally retain only digests. Only a `developer-capability.l5`
-trial needs it; a run of layer-`G` and reviewer suites alone, like the example
-above, leaves it out. The command verifies each brief
+trial needs it; a host run of layer-`G` and reviewer suites alone leaves it
+out. The command verifies each brief
 against that digest. Pricing is explicit because subscription CLIs report
 tokens but do not provide one portable cost schedule.
 

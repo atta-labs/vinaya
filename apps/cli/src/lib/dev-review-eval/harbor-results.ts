@@ -159,7 +159,7 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
       ? json(join(directory, 'config.json'))
       : (result.config ?? {})
     const trialLock = existsSync(join(directory, 'lock.json')) ? json(join(directory, 'lock.json')) : {}
-    const taskId = text(result.task_name) ?? text(config.task?.name)
+    const taskId = text(result.task_name)
     if (taskId === undefined) throw new HarborResultsRefused('invalid_input', `${directory} has no task name`)
     if (seen.has(taskId))
       throw new HarborResultsRefused('multiple_trials_per_task', `job has more than one trial for ${taskId}`)
@@ -173,7 +173,6 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
       throw new HarborResultsRefused('missing_task_metadata', `the job lock has no path for ${taskId}`)
     same(result.trial_name, trialName, `${directory} result trial name`)
     same(config.trial_name, trialName, `${directory} config trial name`)
-    same(config.task?.name, taskId, `${directory} config task name`)
     same(trialLock.task?.name, taskId, `${directory} trial lock task name`)
     same(config.task?.path, lockedPath, `${directory} config task path`)
     same(trialLock.task?.path, lockedPath, `${directory} trial lock task path`)
