@@ -147,7 +147,11 @@ the tip, and the old and new heads. A rebase that conflicts is aborted and the
 head checked back where it was; that, a range holding a merge commit, or a
 rejected lease pushes nothing and returns a `conflict` refusal naming the files
 and the tip, with the `git merge --no-commit <tip>` instruction, carried by the
-failed-push path. A protected path the task changed is refused as before, an
+failed-push path. A push that does not land after a clean rebase — a rejected
+lease or a pre-push hook refusal — moves the branch back to the head the
+Developer published from (`restoreWorktreeHead`) before refusing, so the
+recorded head and base still hold and the next publication starts over. A
+protected path the task changed is refused as before, an
 unreadable tip or classification keeps every path counted, and the
 `surface-scope` check likewise drops a changed path whose content equals its
 base.

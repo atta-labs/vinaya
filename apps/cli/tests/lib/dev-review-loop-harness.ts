@@ -261,6 +261,8 @@ export type LoopWorld = {
   rebaseResult: RebaseOntoTipResult
   /** Each rebase the driver made (`rebaseOntoDefaultTip`). */
   rebases: Array<{ tip: string }>
+  /** Each head the driver moved the worktree back to after a rebase whose push did not land (`restoreWorktreeHead`). */
+  restores: string[]
   /** Each lease push the driver made (`pushTaskBranchWithLease`); `leasePushRejected` refuses them as a moved remote branch. */
   leasePushes: Array<{ sha: string; expectedRemoteHead: string; touchedPaths: string[] }>
   leasePushRejected: boolean
@@ -419,6 +421,7 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     tipClassification: null,
     rebaseResult: { ok: true, head: sha('r') },
     rebases: [],
+    restores: [],
     leasePushes: [],
     leasePushRejected: false,
     prOpens: [],
@@ -834,6 +837,11 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       world.rebases.push({ tip })
       if (world.rebaseResult.ok) world.worktreeHead = world.rebaseResult.head
       return world.rebaseResult
+    },
+    restoreWorktreeHead: (_worktreePath, head) => {
+      world.restores.push(head)
+      world.worktreeHead = head
+      return true
     },
     pushTaskBranchWithLease: (input) => {
       if (world.pushRefusal !== null) return { ok: false, refusal: world.pushRefusal, hook: true, lease: false }

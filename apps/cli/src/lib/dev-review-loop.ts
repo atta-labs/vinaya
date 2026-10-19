@@ -849,6 +849,13 @@ export type LoopDeps = {
    */
   rebaseOntoDefaultTip: (worktreePath: string, tip: string, remoteUrl: string | null) => RebaseOntoTipResult
   /**
+   * Moves the worktree's branch back to `head` after the driver's own rebase
+   * whose push did not land (`git reset --keep <head>`, which refuses rather
+   * than discard an uncommitted change). `false` when the head is not back at
+   * `head` afterwards.
+   */
+  restoreWorktreeHead: (worktreePath: string, head: string) => boolean
+  /**
    * Pushes the task branch with `--force-with-lease` against
    * `expectedRemoteHead` — the remote head read before the publish — through
    * the Broker's `branch-lease-push` operation, authenticated like
@@ -1528,6 +1535,16 @@ export function defaultRebaseOntoDefaultTip(
       : `the rebase onto ${tip} failed: ${firstErrorLine(output, rebased.error?.message ?? `exit ${rebased.status ?? 'unknown'}`)}`,
     conflictFiles
   )
+}
+
+/**
+ * Puts the worktree's branch back at `head` after a rebase whose push did not
+ * land: the rebased commits are copies of the ones at `head`, so nothing is
+ * lost, and `--keep` refuses rather than discard an uncommitted change.
+ */
+export function defaultRestoreWorktreeHead(worktreePath: string, head: string): boolean {
+  gitOk(worktreePath, ['reset', '-q', '--keep', head])
+  return gitOk(worktreePath, ['rev-parse', 'HEAD']) === head
 }
 
 /** The exclusive lower bound for paths attributed to one branch push. */
@@ -2730,6 +2747,7 @@ function defaultDeps(): LoopDeps {
     readMergedDefaultCommit: defaultReadMergedDefaultCommit,
     classifyAgainstDefaultTip: defaultClassifyAgainstDefaultTip,
     rebaseOntoDefaultTip: defaultRebaseOntoDefaultTip,
+    restoreWorktreeHead: defaultRestoreWorktreeHead,
     pushTaskBranchWithLease: defaultPushTaskBranchWithLease,
     gitWorktreeDiffText: defaultGitWorktreeDiffText,
     buildVendoredCliIfMissing: defaultBuildVendoredCliIfMissing,
@@ -5546,14 +5564,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             if (tip !== null && blocking.length > 0 && blocking.every((path) => mainDrift.has(path))) {
               const rebased = d.rebaseOntoDefaultTip(worktree, tip, defaultRemoteUrl)
               if (!rebased.ok) return mainDriftConflict(tip, rebased.conflictFiles, rebased.reason)
-              // The rebased head now sits on the tip: re-record the head and
-              // the base there, as the fast-forward rule does, so the next
-              // publication check compares against them.
-              turnPreHead = rebased.head
-              publicationExpectedBase = tip
-              publicationFastForwardBase = tip
-              driverUnpushedCommit = null
-              driverUnpushedCommitBase = null
               const rebasedInput = {
                 ...pushInput,
                 sha: rebased.head,
@@ -5564,15 +5574,29 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                   ? { ...d.pushTaskBranch(rebasedInput), lease: false }
                   : d.pushTaskBranchWithLease({ ...rebasedInput, expectedRemoteHead: remoteHeadBefore })
               if (!push.ok) {
+                // Nothing landed: the branch goes back to the head the
+                // Developer published from, so the recorded head and base
+                // still describe it and the next publication starts over.
+                const restored = d.restoreWorktreeHead(worktree, localHead)
+                const restoreNote = restored
+                  ? ''
+                  : `; the worktree could not be moved back from the rebased ${rebased.head} to ${localHead}, so run \`git reset --keep ${localHead}\` before publishing again`
                 if (push.lease) {
                   return mainDriftConflict(
                     tip,
                     [],
-                    `the lease push was refused because the remote branch is no longer at ${remoteHeadBefore}: ${push.refusal}`
+                    `the lease push was refused because the remote branch is no longer at ${remoteHeadBefore}: ${push.refusal}${restoreNote}`
                   )
                 }
+                if (!restored && push.hook) return pushRefused({ ...push, refusal: `${push.refusal}${restoreNote}` })
                 return pushRefused(push)
               }
+              // The rebased head landed on the tip: re-record the head and the
+              // base there, as the fast-forward rule does, so the next
+              // publication check compares against them.
+              turnPreHead = rebased.head
+              publicationExpectedBase = tip
+              publicationFastForwardBase = tip
               appendDriverLine(
                 loopLogPath,
                 `Rebased ${branch} onto main ${tip} (${localHead} → ${rebased.head}) and pushed${remoteHeadBefore === null ? '' : ' with lease'}`,

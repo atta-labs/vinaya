@@ -19,6 +19,7 @@ import {
   defaultGitWorktreeUntrackedPaths,
   defaultReadMergedDefaultCommit,
   defaultRebaseOntoDefaultTip,
+  defaultRestoreWorktreeHead,
   pushBranchClassified
 } from '../../../src/lib/dev-review-loop.js'
 import { ProtectedPathError } from '../../../src/lib/broker.js'
@@ -896,6 +897,16 @@ describe('main drift on a protected path, against a real repository', () => {
     expect(git(dir, 'rev-parse', 'HEAD')).toBe(head)
   })
 
+  it('moves a rebased worktree back to the head it was rebased from', () => {
+    const { dir, remote, pushed, tip } = fixture()
+    const rebased = defaultRebaseOntoDefaultTip(dir, tip, remote)
+    expect(rebased.ok).toBe(true)
+    expect(defaultRestoreWorktreeHead(dir, pushed)).toBe(true)
+    expect(git(dir, 'rev-parse', 'HEAD')).toBe(pushed)
+    expect(git(dir, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('task/t/1')
+    expect(git(dir, 'show', `HEAD:${CI}`)).toBe('v1')
+  })
+
   it('refuses a worktree with uncommitted tracked changes without rebasing', () => {
     const { dir, remote, pushed, tip } = fixture()
     writeFileSync(join(dir, 'own.txt'), 'edited\n')
@@ -916,12 +927,22 @@ describe('main drift on a protected path, through the driver', () => {
     world: ReturnType<typeof makeWorld>,
     overrides: Partial<LoopDeps> = {}
   ): Promise<Outcome | null> {
+    return (await publishAttempts(world, [() => {}], overrides))[0] ?? null
+  }
+
+  /** One Developer turn that changes `OWN`, then runs each of `attempts` before one `publish_changes` call; returns every outcome. */
+  async function publishAttempts(
+    world: ReturnType<typeof makeWorld>,
+    attempts: (() => void)[],
+    overrides: Partial<LoopDeps> = {}
+  ): Promise<Outcome[]> {
     mkdirSync(join(world.repoRoot, '.worktrees', world.branch), { recursive: true })
     world.surface = { in: ['apps/cli/**'], out: ['packages/**'] }
     world.worktreeChangedPaths = [CI, OWN]
     world.defaultBranchTip = tip
     const baseDeps = makeInProcessDeps(world)
-    let outcome: Outcome | null = null
+    const outcomes: Outcome[] = []
+    let dispatched = false
     await runLoopInProcess(
       world,
       { task: world.task, agent: 'codex' },
@@ -932,18 +953,26 @@ describe('main drift on a protected path, through the driver', () => {
         ...overrides,
         dispatchRole: async (role, agent, prompt, opts) => {
           if (role !== 'developer') return baseDeps.dispatchRole!(role, agent, prompt, opts)
-          if (outcome === null) {
+          if (!dispatched) {
+            dispatched = true
             world.worktreeDirty = [OWN]
-            const result = await world.devToolContext!.publishChanges('Fix(cli): publish the turn')
-            outcome = result.ok
-              ? { ok: true }
-              : {
-                  ok: false,
-                  errorClass: result.error.errorClass,
-                  check: result.error.check,
-                  output: result.error.output
-                }
-            if (result.ok) await world.devToolContext!.openPullRequest(world.issueTitle, '## Scope\n\n**Tier:** 3\n')
+            for (const prepare of attempts) {
+              prepare()
+              const result = await world.devToolContext!.publishChanges('Fix(cli): publish the turn')
+              outcomes.push(
+                result.ok
+                  ? { ok: true }
+                  : {
+                      ok: false,
+                      errorClass: result.error.errorClass,
+                      check: result.error.check,
+                      output: result.error.output
+                    }
+              )
+            }
+            if (outcomes.some((o) => o.ok)) {
+              await world.devToolContext!.openPullRequest(world.issueTitle, '## Scope\n\n**Tier:** 3\n')
+            }
           }
           return {
             exitCode: 0,
@@ -957,7 +986,7 @@ describe('main drift on a protected path, through the driver', () => {
         }
       }
     )
-    return outcome
+    return outcomes
   }
 
   const driverLog = (world: ReturnType<typeof makeWorld>): Promise<string> =>
@@ -1005,6 +1034,34 @@ describe('main drift on a protected path, through the driver', () => {
     expect(outcome).toMatchObject({ ok: false, errorClass: 'conflict', check: 'main-drift-rebase' })
     expect(world.pushes).toEqual([])
     expect(world.leasePushes).toEqual([])
+    // The worktree is back at the head it published from, so merging the tip there means something.
+    expect(world.restores).toEqual([world.nextCommitSha])
+    expect(world.worktreeHead).toBe(world.nextCommitSha)
+  })
+
+  it('moves the worktree back when the pre-push hook refuses the lease push, and the next publish rebases and lands', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    const remoteHeadBefore = world.base
+    world.tipClassification = { sameAsTip: [], mainDrift: [CI], taskChanged: [OWN] }
+    world.pushRefusal = 'pre-push: a test failed'
+    const outcomes = await publishAttempts(world, [
+      () => {},
+      () => {
+        // The refused head is back in the worktree, unchanged; the hook now passes.
+        expect(world.worktreeHead).toBe(world.nextCommitSha)
+        world.pushRefusal = null
+      }
+    ])
+
+    expect(outcomes[0]).toMatchObject({ ok: false, check: 'pre-push-hook', output: 'pre-push: a test failed' })
+    expect(outcomes[1]).toEqual({ ok: true })
+    expect(world.restores).toEqual([world.nextCommitSha])
+    expect(world.rebases).toEqual([{ tip }, { tip }])
+    expect(world.leasePushes).toEqual([
+      { sha: 'r'.repeat(40), expectedRemoteHead: remoteHeadBefore, touchedPaths: [OWN] }
+    ])
+    expect(world.pushes).toEqual([])
+    expect(world.commits).toHaveLength(1)
   })
 
   it('still refuses a protected path the task changed, with no rebase and no lease push', async () => {
