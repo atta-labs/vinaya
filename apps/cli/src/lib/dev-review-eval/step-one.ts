@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { isAbsolute, join, relative } from 'node:path'
-import { redact } from '@attalabs/aeg-core'
+import { dirname, isAbsolute, join, relative } from 'node:path'
+import { beyondSurfacePaths, redact, withBeyondSurfaceBlock } from '@attalabs/aeg-core'
 import {
   addCodexWritableDirs,
   buildCodexExecpolicyRules,
@@ -15,7 +15,17 @@ import { devToolsSocketPath, driverDevBridgeInvocation } from '../task-tools/dev
 import { stageCodexPolicyHome } from '../worker-boundary'
 import { prepareGradingCopy, testContamination, type Attribution, type HiddenInputs } from './contamination'
 import { suiteMean, type BootstrapMethod } from './estimators'
+import { GENERIC_GRADERS } from './generic-graders'
+import type { NeutralCase } from './neutral-case'
+import type { TestResult as NeutralTestResult } from './neutral-outcomes'
 import { type CloneStaging, git, stageTrial } from './staging'
+import {
+  extractOutcomes,
+  renderCase,
+  VINAYA_RENDERER_VERSION,
+  type VinayaProcessInput,
+  type VinayaTrialRecord
+} from './vinaya-renderer'
 
 export const STEP_ONE_SUITES = [
   'developer-capability.l5',
@@ -57,9 +67,12 @@ export type StepOneRefusalCode =
   | 'invalid_input'
   | 'layer_p_comparison'
   | 'comparison_forbidden'
+  | 'case_selection_forbidden'
+
+export type StepOneProcessLayer = 'G' | 'P'
 
 /** Each suite step one may run, by its process layer as the module registry declares it. */
-export const STEP_ONE_SUITE_LAYERS: Readonly<Record<StepOneRunSuite, 'G' | 'P'>> = {
+export const STEP_ONE_SUITE_LAYERS: Readonly<Record<StepOneRunSuite, StepOneProcessLayer>> = {
   'developer-capability.l5': 'P',
   'code-reviewer-quality.l5': 'P',
   'security-reviewer-quality.l5': 'P',
@@ -69,6 +82,20 @@ export const STEP_ONE_SUITE_LAYERS: Readonly<Record<StepOneRunSuite, 'G' | 'P'>>
   'source-delivery-neutral.l5': 'G'
 }
 export type StepOneRefusal = { code: StepOneRefusalCode; detail: string }
+
+/**
+ * The renderer version a suite's trial records are made under: the current
+ * Vinaya renderer version for a layer-`G` suite, and an empty string for a
+ * layer-`P` suite, which has no renderer.
+ */
+export function rendererVersionOf(suite: StepOneRunSuite): string {
+  return STEP_ONE_SUITE_LAYERS[suite] === 'G' ? VINAYA_RENDERER_VERSION : ''
+}
+
+const processOf = (suite: StepOneRunSuite) => ({
+  layer: STEP_ONE_SUITE_LAYERS[suite],
+  rendererVersion: rendererVersionOf(suite)
+})
 
 export interface StepOneUsage {
   wallTimeMs: number
@@ -361,8 +388,17 @@ export async function gradeInSandbox(
 export interface StepOneTrialResult {
   success: boolean
   unavailableReason?: string
+  /** The trial's process layer and the renderer version its record was made under (see `rendererVersionOf`). */
+  layer: StepOneProcessLayer
+  rendererVersion: string
   usage: StepOneUsage
 }
+
+/**
+ * Which tasks of each suite a practice run runs: the first `count` development
+ * tasks in the suite's pinned order, or the named development task ids.
+ */
+export type StepOneCaseSelection = { count: number } | { ids: readonly string[] }
 
 export interface StepOneSuiteInput {
   suite: StepOneRunSuite
@@ -376,6 +412,10 @@ export interface StepOneOptions {
   purpose?: StepOnePurpose
   /** The suites to run; when absent, the comparison suites for `comparison` and `STEP_ONE_SUITES` otherwise. */
   suites?: readonly string[]
+  /** The adapters to run; both of `STEP_ONE_ADAPTERS` when absent. */
+  adapters?: readonly string[]
+  /** The tasks to run, accepted only on a practice run; every development task when absent. */
+  cases?: StepOneCaseSelection
   trialsPerTask: number
   bootstrap: {
     method: BootstrapMethod
@@ -397,6 +437,9 @@ export interface StepOneResult {
     split: 'development'
     backend: 'standalone'
     adapter: StepOneAdapter
+    /** The suite's process layer and the renderer version its trial records were made under. */
+    layer: StepOneProcessLayer
+    rendererVersion: string
     taskCount: number
     trialsPerTask: number
     tasks: Array<{
@@ -463,12 +506,69 @@ export function selectStepOneSuites(
 }
 
 /**
- * Runs milestone step one only. The split, backend and suite checks precede
- * every access to suite inputs, so a refused invocation cannot open held-out data.
+ * The adapters a step-one request runs, or its refusal. Both adapters run
+ * when none is named. A case selection is accepted only on a practice run,
+ * and a count must be a whole number of at least 1; both checks read no
+ * suite input.
+ */
+export function selectStepOneTrials(
+  purpose: StepOnePurpose,
+  adapters: readonly string[] | undefined,
+  cases: StepOneCaseSelection | undefined
+): { ok: true; adapters: StepOneAdapter[] } | { ok: false; refusal: StepOneRefusal } {
+  const fail = (code: StepOneRefusalCode, detail: string) => ({ ok: false as const, refusal: { code, detail } })
+  const requested = adapters ?? STEP_ONE_ADAPTERS
+  if (requested.length === 0) return fail('invalid_input', 'a step-one run names at least one adapter')
+  for (const adapter of requested) {
+    if (!(STEP_ONE_ADAPTERS as readonly string[]).includes(adapter)) {
+      return fail('invalid_input', `${adapter} is not a step-one adapter; use one of ${STEP_ONE_ADAPTERS.join(', ')}`)
+    }
+  }
+  if (cases !== undefined) {
+    if (purpose !== 'practice') {
+      return fail('case_selection_forbidden', `a case selection is accepted only on a practice run, not ${purpose}`)
+    }
+    if ('count' in cases && (!Number.isInteger(cases.count) || cases.count < 1)) {
+      return fail('invalid_input', 'a case count must be a whole number of at least 1')
+    }
+    if ('ids' in cases && cases.ids.length === 0) return fail('invalid_input', 'a case selection names at least one id')
+  }
+  return {
+    ok: true,
+    adapters: STEP_ONE_ADAPTERS.filter((adapter) => (requested as readonly string[]).includes(adapter))
+  }
+}
+
+/**
+ * The tasks of one suite a selection runs, in the suite's pinned order, or
+ * the refusal naming a case id outside the suite's development split.
+ */
+function selectedTaskIds(
+  suite: StepOneRunSuite,
+  taskIds: readonly string[],
+  cases: StepOneCaseSelection | undefined
+): { ok: true; taskIds: string[] } | { ok: false; refusal: StepOneRefusal } {
+  if (cases === undefined) return { ok: true, taskIds: [...taskIds] }
+  if ('count' in cases) return { ok: true, taskIds: taskIds.slice(0, cases.count) }
+  for (const id of cases.ids) {
+    if (!taskIds.includes(id)) {
+      return {
+        ok: false,
+        refusal: { code: 'invalid_input', detail: `${id} is not a development case of ${suite}` }
+      }
+    }
+  }
+  return { ok: true, taskIds: taskIds.filter((id) => cases.ids.includes(id)) }
+}
+
+/**
+ * Runs milestone step one only. The split, backend, suite, adapter and case
+ * selection checks precede every access to suite inputs, so a refused
+ * invocation cannot open held-out data.
  */
 export async function runStepOne(
   options: StepOneOptions,
-  loadDevelopmentSuites: () => readonly StepOneSuiteInput[],
+  loadDevelopmentSuites: () => readonly StepOneSuiteInput[] | Promise<readonly StepOneSuiteInput[]>,
   execute: StepOneExecutor
 ): Promise<StepOneOutcome> {
   if (options.split !== 'development') return refusal('held_out_forbidden', 'step one may read only development splits')
@@ -479,14 +579,24 @@ export async function runStepOne(
   const purpose = options.purpose ?? 'development-only'
   const selected = selectStepOneSuites(purpose, options.suites, options.trialsPerTask)
   if (!selected.ok) return selected
+  const trials = selectStepOneTrials(purpose, options.adapters, options.cases)
+  if (!trials.ok) return trials
 
-  const suites = loadDevelopmentSuites()
-  const runs: StepOneResult['runs'] = []
+  const suites = await loadDevelopmentSuites()
+  // Every suite's tasks are resolved before any trial runs, so a refused
+  // selection runs nothing.
+  const planned: Array<{ suite: StepOneRunSuite; taskIds: string[] }> = []
   for (const suite of selected.suites) {
     const input = suites.find((entry) => entry.suite === suite)
     if (input === undefined || input.taskIds.length === 0)
       return refusal('empty_development_split', `${suite} has no reconstructable development task`)
-    for (const adapter of STEP_ONE_ADAPTERS) {
+    const taskIds = selectedTaskIds(suite, input.taskIds, options.cases)
+    if (!taskIds.ok) return taskIds
+    planned.push({ suite, taskIds: taskIds.taskIds })
+  }
+  const runs: StepOneResult['runs'] = []
+  for (const { suite, taskIds } of planned) {
+    for (const adapter of trials.adapters) {
       const tasks: Array<{
         taskId: string
         successes: number
@@ -501,7 +611,7 @@ export async function runStepOne(
         estimatedCostUsd: 0
       }
       let quotaUnavailableTrials = 0
-      for (const taskId of input.taskIds) {
+      for (const taskId of taskIds) {
         let successes = 0
         const unavailable: string[] = []
         for (let attempt = 1; attempt <= options.trialsPerTask; attempt++) {
@@ -533,6 +643,7 @@ export async function runStepOne(
         split: 'development',
         backend: 'standalone',
         adapter,
+        ...processOf(suite),
         taskCount: tasks.length,
         trialsPerTask: options.trialsPerTask,
         tasks,
@@ -562,11 +673,32 @@ export async function runStepOne(
 
 type DeveloperCase = import('../../../tests/eval/developer-capability-suite').DeveloperCapabilityCase
 type ReviewCase = import('../../../tests/eval/reviewer-quality-suite').ReviewCase
+type SourceCitationCase = import('../../../tests/eval/source-citation-suite').SourceCitationCase
+type WorldState = ReturnType<import('../../../tests/eval/tool-selection-suite').World['state']>
+type TestOutcomes = import('../../../tests/eval/developer-capability-suite').TestOutcomes
+type LayerGSuite = StepOneComparisonSuite | (typeof STEP_ONE_PRACTICE_SUITES)[number]
 
-interface LoadedDevelopment {
+/**
+ * The development inputs step one runs on. Each layer-`G` suite's neutral
+ * cases come with the layer-`P` cases of the same ids, which hold what a live
+ * trial needs and a neutral case does not carry: a change case's hidden tests,
+ * a review case's patch, an answer case's document contents.
+ */
+export interface LoadedDevelopment {
   suites: StepOneSuiteInput[]
   developerCases: DeveloperCase[]
   reviewerCases: ReviewCase[]
+  neutralCases: Partial<Record<LayerGSuite, NeutralCase[]>>
+  sourceCitationCases: SourceCitationCase[]
+}
+
+/** Development inputs with nothing loaded. */
+export const NO_DEVELOPMENT: LoadedDevelopment = {
+  suites: [],
+  developerCases: [],
+  reviewerCases: [],
+  neutralCases: {},
+  sourceCitationCases: []
 }
 
 export interface StepOneCommandRuntime {
@@ -589,6 +721,7 @@ async function loadProductionDevelopment(): Promise<LoadedDevelopment> {
   const developer = await import('../../../tests/eval/developer-capability-suite')
   const reviewers = await import('../../../tests/eval/reviewer-quality-suite')
   const generic = await import('../../../tests/eval/generic-suites')
+  const citation = await import('../../../tests/eval/source-citation-suite')
   const developerFile = developer.loadCaseFile()
   const developerSuite = developer.suiteFor(developerFile)
   const developerCases = developerFile.cases
@@ -601,6 +734,12 @@ async function loadProductionDevelopment(): Promise<LoadedDevelopment> {
   if (!codeSuite.ok) throw new Error(`code reviewer harness suite refused: ${JSON.stringify(codeSuite.refusal)}`)
   if (!securitySuite.ok)
     throw new Error(`security reviewer harness suite refused: ${JSON.stringify(securitySuite.refusal)}`)
+  const neutralSuites = [
+    ['developer-capability-neutral.l5', 'developer'],
+    ['code-reviewer-quality-neutral.l5', 'codeReviewer'],
+    ['security-reviewer-quality-neutral.l5', 'securityReviewer'],
+    ['source-delivery-neutral.l5', 'sourceCitation']
+  ] as const
   return {
     suites: [
       {
@@ -615,17 +754,12 @@ async function loadProductionDevelopment(): Promise<LoadedDevelopment> {
         suite: 'security-reviewer-quality.l5',
         taskIds: securitySuite.value.splits.development
       },
-      ...(
-        [
-          ['developer-capability-neutral.l5', 'developer'],
-          ['code-reviewer-quality-neutral.l5', 'codeReviewer'],
-          ['security-reviewer-quality-neutral.l5', 'securityReviewer'],
-          ['source-delivery-neutral.l5', 'sourceCitation']
-        ] as const
-      ).map(([suite, key]) => ({ suite, taskIds: generic.genericSuite(key).splits.development }))
+      ...neutralSuites.map(([suite, key]) => ({ suite, taskIds: generic.genericSuite(key).splits.development }))
     ],
     developerCases,
-    reviewerCases: [...code, ...security]
+    reviewerCases: [...code, ...security],
+    neutralCases: Object.fromEntries(neutralSuites.map(([suite, key]) => [suite, generic.developmentCases(key)])),
+    sourceCitationCases: citation.loadCaseFile().cases
   }
 }
 
@@ -860,23 +994,24 @@ function trialUsage(
   }
 }
 
-async function executeDeveloper(
-  input: Parameters<StepOneExecutor>[0],
-  context: StepOneCommandContext,
-  item: DeveloperCase
-): Promise<StepOneTrialResult> {
-  const suite = await import('../../../tests/eval/developer-capability-suite')
-  const brief = context.developerBriefs.get(item.pullRequest)
-  if (brief === undefined || suite.sha256(brief) !== item.brief.digest.replace(/^sha256:/, ''))
-    throw new Error(`developer brief for pull request ${item.pullRequest} is absent or differs from its pinned digest`)
-  const parent = mkdtempSync(join(tmpdir(), 'step-one-developer-'))
-  const submissionParent = mkdtempSync(join(tmpdir(), 'step-one-submission-'))
-  const gradingParent = mkdtempSync(join(tmpdir(), 'step-one-grading-'))
-  const hidden = hiddenInputs(context.repository, item)
+/** A trial with no usage measured: nothing was dispatched. */
+const NO_USAGE: StepOneUsage = {
+  wallTimeMs: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  subscriptionQuota: null,
+  estimatedCostUsd: 0
+}
+
+/**
+ * Documents a Developer trial is delivered by injection: each one's content at
+ * the base commit, its prepared source entry and the controller's receipt.
+ */
+async function injectedSources(repository: string, baseCommit: string, sourceIds: readonly string[]) {
   const sourceManifest = await import('../source-manifest')
   const preparedAt = new Date(0).toISOString()
-  const preparedSources = item.requiredSources.map((sourceId) => {
-    const content = fileAt(context.repository, item.baseCommit, sourceId)
+  const sources = sourceIds.map((sourceId) => {
+    const content = fileAt(repository, baseCommit, sourceId)
     return {
       sourceId,
       canonicalUri: `repository:${sourceId}`,
@@ -884,7 +1019,7 @@ async function executeDeveloper(
       governs: 'the mechanism named by the frozen brief',
       objectiveIds: [],
       retrievedAt: preparedAt,
-      versionOrRevision: item.baseCommit,
+      versionOrRevision: baseCommit,
       contentDigest: sourceManifest.sha256Digest(content),
       mediaType: 'text/plain',
       deliveryMode: 'injected' as const,
@@ -893,19 +1028,7 @@ async function executeDeveloper(
       trustClassification: 'repository' as const
     }
   })
-  const manifestBody = {
-    schemaVersion: 1 as const,
-    round: 1,
-    base: item.baseCommit,
-    briefDigest: item.brief.digest,
-    preparedAt,
-    sources: preparedSources
-  }
-  const manifest = {
-    ...manifestBody,
-    digest: sourceManifest.manifestDigest(manifestBody)
-  }
-  const receipts = preparedSources.map((source) => ({
+  const receipts = sources.map((source) => ({
     schemaVersion: 1 as const,
     sourceId: source.sourceId,
     source: source.sourceId,
@@ -918,13 +1041,47 @@ async function executeDeveloper(
     revision: 'match' as const,
     decision: 'counted' as const
   }))
-  const prompt = [
-    brief,
-    ...preparedSources.map((source) => {
-      const content = Buffer.from(fileAt(context.repository, item.baseCommit, source.sourceId)).toString('utf8')
-      return `Required source ${source.sourceId}:\n\n${content}`
-    })
-  ].join('\n\n')
+  const contents = new Map(
+    sourceIds.map((sourceId) => [sourceId, Buffer.from(fileAt(repository, baseCommit, sourceId)).toString('utf8')])
+  )
+  return { preparedAt, sources, receipts, contents }
+}
+
+/** What one Developer trial recorded, once its commit was imported and its hidden tests ran in the sandbox. */
+interface DeveloperRun {
+  handle: Awaited<ReturnType<typeof dispatchRole>>
+  trace: TraceCall[]
+  toolState: WorldState
+  commit: string
+  /** The fresh repository the trial's commit was imported into. */
+  submitted: string
+  outcomes: TestOutcomes
+  changedPaths: string[]
+}
+
+type Staged<T> =
+  | { ok: true; value: T; usage: StepOneUsage }
+  | { ok: false; unavailableReason: string; usage: StepOneUsage }
+
+/**
+ * Runs one Developer trial of `item` with `prompt`: stages a clone at the
+ * base commit, installs dependencies in the sandbox, dispatches the Developer
+ * with the driver-run tools, commits its work in the sandbox, imports the
+ * commit into a fresh repository, and runs the hidden and pass-to-pass tests
+ * in the sandbox. `finish` reads the run while its directories still exist.
+ */
+async function runDeveloperTrial<T>(
+  input: Parameters<StepOneExecutor>[0],
+  context: StepOneCommandContext,
+  item: DeveloperCase,
+  prompt: string,
+  finish: (run: DeveloperRun) => T
+): Promise<Staged<T>> {
+  const suite = await import('../../../tests/eval/developer-capability-suite')
+  const parent = mkdtempSync(join(tmpdir(), 'step-one-developer-'))
+  const submissionParent = mkdtempSync(join(tmpdir(), 'step-one-submission-'))
+  const gradingParent = mkdtempSync(join(tmpdir(), 'step-one-grading-'))
+  const hidden = hiddenInputs(context.repository, item)
   const staging = stageTrial({
     trialId: `${item.id}.${input.adapter}.${input.attempt}`,
     sourceRepository: context.repository,
@@ -938,8 +1095,8 @@ async function executeDeveloper(
   let sandbox: GradingSandbox | null = null
   const transcript: string[] = []
   let handle: Awaited<ReturnType<typeof dispatchRole>> | null = null
-  const unavailable = (prefix: string, error: unknown): StepOneTrialResult => ({
-    success: false,
+  const unavailable = (prefix: string, error: unknown): Staged<T> => ({
+    ok: false,
     unavailableReason: unavailableReason(prefix, error),
     usage: trialUsage(input.adapter, handle, transcript)
   })
@@ -992,7 +1149,7 @@ async function executeDeveloper(
       return unavailable('Developer trial could not be committed', error)
     }
     if (!committed.ok) return unavailable('Developer trial unavailable', committed.reason)
-    let outcomes: ReturnType<typeof suite.outcomesOf>
+    let outcomes: TestOutcomes
     let submitted: string
     try {
       submitted = importTrialBundle({
@@ -1042,30 +1199,9 @@ async function executeDeveloper(
     const changedPaths = git(submitted, ['diff', '--name-only', item.baseCommit, committed.commit])
       .split('\n')
       .filter(Boolean)
-    const grade = suite.gradeDeveloperTrial(item, {
-      caseId: item.id,
-      testOutcomes: outcomes,
-      changedPaths,
-      pullRequestBody: toolState.pullRequest?.body ?? null,
-      manifest,
-      receipts,
-      trace,
-      turnResults: [{ attempt: 1, raw: handle.turnOutput?.raw ?? null }],
-      effects: performedEffects(trace, {
-        publish_changes: toolState.pushes,
-        open_pull_request: toolState.pullRequestsOpened,
-        update_pull_request_body: toolState.bodyWrites,
-        refresh_evidence: toolState.evidenceRefreshes
-      }),
-      usage: {
-        toolErrors: handle.failureReason === undefined ? 0 : 1,
-        wallMs: handle.durationMs,
-        inputTokens: handle.usage?.input ?? 0,
-        outputTokens: handle.usage?.output ?? 0
-      }
-    })
     return {
-      success: grade.verdict === 'pass',
+      ok: true,
+      value: finish({ handle, trace, toolState, commit: committed.commit, submitted, outcomes, changedPaths }),
       usage: trialUsage(input.adapter, handle, transcript)
     }
   } finally {
@@ -1077,12 +1213,77 @@ async function executeDeveloper(
   }
 }
 
-async function executeReviewer(
+/** The driver-run publication tools a Developer trial called, by how many effects each performed. */
+function publicationCounts(toolState: WorldState): Record<string, number> {
+  return {
+    publish_changes: toolState.pushes,
+    open_pull_request: toolState.pullRequestsOpened,
+    update_pull_request_body: toolState.bodyWrites,
+    refresh_evidence: toolState.evidenceRefreshes
+  }
+}
+
+async function executeDeveloper(
   input: Parameters<StepOneExecutor>[0],
   context: StepOneCommandContext,
-  item: ReviewCase
+  item: DeveloperCase
 ): Promise<StepOneTrialResult> {
-  const suite = await import('../../../tests/eval/reviewer-quality-suite')
+  const suite = await import('../../../tests/eval/developer-capability-suite')
+  const brief = context.developerBriefs.get(item.pullRequest)
+  if (brief === undefined || suite.sha256(brief) !== item.brief.digest.replace(/^sha256:/, ''))
+    throw new Error(`developer brief for pull request ${item.pullRequest} is absent or differs from its pinned digest`)
+  const sourceManifest = await import('../source-manifest')
+  const delivered = await injectedSources(context.repository, item.baseCommit, item.requiredSources)
+  const manifestBody = {
+    schemaVersion: 1 as const,
+    round: 1,
+    base: item.baseCommit,
+    briefDigest: item.brief.digest,
+    preparedAt: delivered.preparedAt,
+    sources: delivered.sources
+  }
+  const manifest = {
+    ...manifestBody,
+    digest: sourceManifest.manifestDigest(manifestBody)
+  }
+  const prompt = [
+    brief,
+    ...delivered.sources.map(
+      (source) => `Required source ${source.sourceId}:\n\n${delivered.contents.get(source.sourceId) ?? ''}`
+    )
+  ].join('\n\n')
+  const run = await runDeveloperTrial(input, context, item, prompt, (trial) =>
+    suite.gradeDeveloperTrial(item, {
+      caseId: item.id,
+      testOutcomes: trial.outcomes,
+      changedPaths: trial.changedPaths,
+      pullRequestBody: trial.toolState.pullRequest?.body ?? null,
+      manifest,
+      receipts: delivered.receipts,
+      trace: trial.trace,
+      turnResults: [{ attempt: 1, raw: trial.handle.turnOutput?.raw ?? null }],
+      effects: performedEffects(trial.trace, publicationCounts(trial.toolState)),
+      usage: {
+        toolErrors: trial.handle.failureReason === undefined ? 0 : 1,
+        wallMs: trial.handle.durationMs,
+        inputTokens: trial.handle.usage?.input ?? 0,
+        outputTokens: trial.handle.usage?.output ?? 0
+      }
+    })
+  )
+  if (!run.ok)
+    return { success: false, unavailableReason: run.unavailableReason, ...processOf(input.suite), usage: run.usage }
+  return { success: run.value.verdict === 'pass', ...processOf(input.suite), usage: run.usage }
+}
+
+/** Stages a reviewer trial's snapshot at `baseCommit`, dispatches `role` with `prompt`, and cleans up after `finish`. */
+async function runReviewerTrial<T>(
+  input: Parameters<StepOneExecutor>[0],
+  context: StepOneCommandContext,
+  item: ReviewCase,
+  prompt: string,
+  finish: (handle: Awaited<ReturnType<typeof dispatchRole>>, transcript: readonly string[]) => Promise<T> | T
+): Promise<T> {
   const parent = mkdtempSync(join(tmpdir(), 'step-one-reviewer-'))
   const staging = stageTrial({
     trialId: `${item.id}.${input.adapter}.${input.attempt}`,
@@ -1097,23 +1298,6 @@ async function executeReviewer(
       referenceSolution: {}
     })
     if (!contamination.clean) throw new Error(`trial contamination: ${JSON.stringify(contamination.findings)}`)
-    const patch = suite.patchBytes(item)
-    const headSha = item.patch.source === 'git' ? item.patch.changedCommit : digest(patch)
-    const manifestDigest = digest(JSON.stringify({ item: item.id, patch: item.patch.digest }))
-    const binding = {
-      role: item.role,
-      headSha,
-      manifestDigest,
-      objectiveIds: item.objectives
-    }
-    const prompt = [
-      `Review the following pinned patch as the ${item.role}.`,
-      `Bind reviewResult to headSha ${headSha} and manifestDigest ${manifestDigest}.`,
-      `Return one objectiveResult for each of: ${item.objectives.join(', ')}.`,
-      '```diff',
-      patch,
-      '```'
-    ].join('\n\n')
     const promptPath = join(staging.root.path, 'prompt.md')
     writeFileSync(promptPath, prompt)
     const transcript: string[] = []
@@ -1129,29 +1313,413 @@ async function executeReviewer(
         observeStdoutLine: (line) => transcript.push(line)
       }
     )
-    const grade = suite.gradeItem(item, handle.reviewOutput?.raw ?? null, binding)
-    return {
-      success: grade.pass,
-      usage: {
-        wallTimeMs: handle.durationMs,
-        inputTokens: handle.usage?.input ?? 0,
-        outputTokens: handle.usage?.output ?? 0,
-        subscriptionQuota: subscriptionQuotaOf(input.adapter, transcript),
-        estimatedCostUsd: 0
-      }
-    }
+    return await finish(handle, transcript)
   } finally {
     rmSync(parent, { recursive: true, force: true })
   }
 }
 
-async function executeProduction(input: Parameters<StepOneExecutor>[0], context: StepOneCommandContext) {
-  // A layer-G trial runs the rendered neutral case through the Vinaya process
-  // and is graded on the outcomes the renderer extracts; no live executor for
-  // one exists yet, so such a trial is refused rather than graded another way.
-  if (STEP_ONE_SUITE_LAYERS[input.suite] === 'G') {
-    throw new Error(`no live executor runs ${input.suite} trials yet`)
+async function executeReviewer(
+  input: Parameters<StepOneExecutor>[0],
+  context: StepOneCommandContext,
+  item: ReviewCase
+): Promise<StepOneTrialResult> {
+  const suite = await import('../../../tests/eval/reviewer-quality-suite')
+  const patch = suite.patchBytes(item)
+  const headSha = item.patch.source === 'git' ? item.patch.changedCommit : digest(patch)
+  const manifestDigest = digest(JSON.stringify({ item: item.id, patch: item.patch.digest }))
+  const binding = {
+    role: item.role,
+    headSha,
+    manifestDigest,
+    objectiveIds: item.objectives
   }
+  const prompt = [
+    `Review the following pinned patch as the ${item.role}.`,
+    `Bind reviewResult to headSha ${headSha} and manifestDigest ${manifestDigest}.`,
+    `Return one objectiveResult for each of: ${item.objectives.join(', ')}.`,
+    '```diff',
+    patch,
+    '```'
+  ].join('\n\n')
+  return runReviewerTrial(input, context, item, prompt, (handle, transcript) => ({
+    success: suite.gradeItem(item, handle.reviewOutput?.raw ?? null, binding).pass,
+    ...processOf(input.suite),
+    usage: {
+      wallTimeMs: handle.durationMs,
+      inputTokens: handle.usage?.input ?? 0,
+      outputTokens: handle.usage?.output ?? 0,
+      subscriptionQuota: subscriptionQuotaOf(input.adapter, transcript),
+      estimatedCostUsd: 0
+    }
+  }))
+}
+
+// ── Layer G ─────────────────────────────────────────────────────────────────
+
+/** What one live run of a rendered neutral case recorded: its Vinaya trial record, or why it has none. */
+export type VinayaProcessRun =
+  | { ok: true; record: VinayaTrialRecord; usage: StepOneUsage }
+  | { ok: false; unavailableReason: string; usage: StepOneUsage }
+
+/** One rendered neutral case to run through the Vinaya process. */
+export interface VinayaProcessRequest {
+  trial: Parameters<StepOneExecutor>[0]
+  neutralCase: NeutralCase
+  input: VinayaProcessInput
+}
+
+/**
+ * The seam between dispatch and record: runs the rendered input and returns
+ * the trial record. Production dispatches the role on the selected adapter;
+ * a test returns a fixture record and calls no model.
+ */
+export type VinayaProcessRunner = (
+  request: VinayaProcessRequest,
+  context: StepOneCommandContext
+) => Promise<VinayaProcessRun>
+
+/** Each performed effect as the trial record names it: its operation is its kind, its key its idempotency key. */
+function recordedEffects(trace: readonly TraceCall[], counts: Readonly<Record<string, number>>) {
+  return performedEffects(trace, counts).map(({ operation, key }) => ({ kind: operation, idempotencyKey: key }))
+}
+
+/**
+ * Runs one layer-`G` trial: renders the neutral case with the Vinaya
+ * renderer, runs it through `run`, extracts the neutral outcomes from the
+ * trial record, and counts the trial a success exactly when every generic
+ * grader passes. A case the renderer refuses, a run that fails or records no
+ * record, and a record that cannot be extracted or is of another case make
+ * the trial unavailable, with the reason; it is never graded another way.
+ */
+export async function executeLayerGTrial(
+  trial: Parameters<StepOneExecutor>[0],
+  neutralCase: NeutralCase,
+  run: (request: VinayaProcessRequest) => Promise<VinayaProcessRun>
+): Promise<StepOneTrialResult> {
+  const layerG = { layer: 'G' as const, rendererVersion: VINAYA_RENDERER_VERSION }
+  const unavailable = (reason: string, usage: StepOneUsage): StepOneTrialResult => ({
+    success: false,
+    unavailableReason: reason,
+    ...layerG,
+    usage
+  })
+  const rendered = renderCase(neutralCase)
+  if (!rendered.ok) {
+    const { code, field, detail } = rendered.refusal
+    return unavailable(
+      unavailableReason('the Vinaya renderer refused the case', `${code} at ${field}: ${detail}`),
+      NO_USAGE
+    )
+  }
+  let ran: VinayaProcessRun
+  try {
+    ran = await run({ trial, neutralCase, input: rendered.input })
+  } catch (error) {
+    return unavailable(unavailableReason('the Vinaya process run failed', error), NO_USAGE)
+  }
+  if (!ran.ok) return unavailable(ran.unavailableReason, ran.usage)
+  if (ran.record?.input?.caseDigest !== rendered.input.caseDigest) {
+    return unavailable(unavailableReason('the trial record is unusable', 'it records another case'), ran.usage)
+  }
+  const extracted = extractOutcomes(ran.record)
+  if (!extracted.ok) {
+    const { code, field, detail } = extracted.refusal
+    return unavailable(
+      unavailableReason('the trial record could not be extracted', `${code} at ${field}: ${detail}`),
+      ran.usage
+    )
+  }
+  let success = true
+  for (const grader of GENERIC_GRADERS) {
+    const verdict = await grader.grade({ case: neutralCase, outcomes: extracted.outcomes })
+    if (verdict.verdict !== 'pass') success = false
+  }
+  return { success, ...layerG, usage: ran.usage }
+}
+
+/** Each hidden test of a change case with its result in the run, named as the case names it; a test that did not run is `not-run`. */
+async function neutralTestResults(
+  c: Extract<NeutralCase, { kind: 'change' }>,
+  outcomes: TestOutcomes
+): Promise<NeutralTestResult[]> {
+  const suite = await import('../../../tests/eval/developer-capability-suite')
+  return c.hiddenTests.map((test) => {
+    // A pass-to-pass test is named by its name digest, a fail-to-pass test by its name.
+    const name = test.expectation === 'fail-to-pass' ? suite.testDigest(test.name) : test.name
+    const outcome = outcomes[suite.outcomeKey(test.path, name)]
+    const result = outcome === undefined ? 'not-run' : outcome === 'skip' ? 'skipped' : outcome
+    return { path: test.path, name: test.name, result }
+  })
+}
+
+/**
+ * A `change` case: the Developer is dispatched with the rendered brief and
+ * its delivered documents, on the layer-`P` developer case of the same id,
+ * and the hidden tests run on the trial's commit. The pull request is the
+ * one the Developer opened, on that commit, its body carrying the
+ * beyond-Surface record the review-loop driver writes.
+ */
+async function runChangeCase(
+  request: VinayaProcessRequest,
+  context: StepOneCommandContext,
+  item: DeveloperCase
+): Promise<VinayaProcessRun> {
+  const { trial, neutralCase: c, input } = request
+  if (c.kind !== 'change') throw new Error(`${c.id} is not a change case`)
+  const delivered = await injectedSources(
+    context.repository,
+    item.baseCommit,
+    input.sources.map((source) => source.sourceId)
+  )
+  for (const source of input.sources) {
+    if (digest(delivered.contents.get(source.sourceId) ?? '') !== source.contentDigest)
+      throw new Error(`delivered document ${source.sourceId} differs from its pinned content digest`)
+  }
+  const prompt = [
+    input.brief,
+    ...input.sources.map(
+      (source) =>
+        `${source.required ? 'Required source' : 'Delivered document'} ${source.sourceId}:\n\n${delivered.contents.get(source.sourceId) ?? ''}`
+    )
+  ].join('\n\n')
+  const run = await runDeveloperTrial(trial, context, item, prompt, (developer) => {
+    const patchDigest = digest(git(developer.submitted, ['diff', '--binary', item.baseCommit, developer.commit]))
+    const opened = developer.toolState.pullRequest
+    return {
+      rendererVersion: input.rendererVersion,
+      input,
+      pullRequest:
+        opened === null
+          ? null
+          : {
+              headSha: developer.commit,
+              baseSha: item.baseCommit,
+              diffDigest: patchDigest,
+              body: withBeyondSurfaceBlock(
+                opened.body,
+                beyondSurfacePaths(developer.changedPaths, input.surface ?? { in: [], out: [] })
+              )
+            },
+      measuredChange: {
+        base: item.baseCommit,
+        head: developer.commit,
+        patchDigest,
+        changedPaths: developer.changedPaths
+      },
+      outcomes: developer.outcomes,
+      checks: null,
+      reviews: null,
+      readyForMerge: null,
+      developerTurnResult: developer.handle.turnOutput?.raw ?? null,
+      receipts: delivered.receipts,
+      trace: developer.trace.map((call) => ({ tool: call.tool })),
+      effects: recordedEffects(developer.trace, publicationCounts(developer.toolState))
+    }
+  })
+  if (!run.ok) return run
+  const { outcomes, ...recorded } = run.value
+  const record: VinayaTrialRecord = {
+    ...recorded,
+    hiddenTests: { revision: recorded.measuredChange.head, results: await neutralTestResults(c, outcomes) }
+  }
+  return { ok: true, record, usage: run.usage }
+}
+
+/**
+ * A `review` case: the suite's reviewer is dispatched on the change under
+ * review, the patch of the layer-`P` reviewer case of the same id, and its
+ * result is bound to the rendered brief's hash and that change's head.
+ */
+async function runReviewCase(
+  request: VinayaProcessRequest,
+  context: StepOneCommandContext,
+  item: ReviewCase
+): Promise<VinayaProcessRun> {
+  const { trial, input } = request
+  const change = input.changeUnderReview
+  if (change === null) throw new Error(`${input.caseId} has no change under review`)
+  // A reviewer reports no source use, so a review case's documents could never be shown used.
+  if (input.sources.length > 0) throw new Error(`${input.caseId} delivers documents to a reviewer`)
+  const suite = await import('../../../tests/eval/reviewer-quality-suite')
+  const prompt = [
+    input.brief,
+    `Review the following change as the ${item.role}: base ${change.base}, head ${change.head}.`,
+    `Bind reviewResult to headSha ${change.head} and manifestDigest ${input.briefHash}.`,
+    `Return one objectiveResult for each of: ${input.objectives.map((objective) => objective.id).join(', ')}.`,
+    '```diff',
+    suite.patchBytes(item),
+    '```'
+  ].join('\n\n')
+  return runReviewerTrial(trial, context, item, prompt, async (handle, transcript) => {
+    const trace = await traceOf(trial.adapter, transcript)
+    const record: VinayaTrialRecord = {
+      rendererVersion: input.rendererVersion,
+      input,
+      pullRequest: null,
+      measuredChange: null,
+      hiddenTests: null,
+      checks: null,
+      reviews: [
+        {
+          reviewId: `${input.caseId}.${trial.adapter}.${trial.attempt}.${item.role}`,
+          role: item.role,
+          binding: {
+            headSha: change.head,
+            baseSha: change.base,
+            briefHash: input.briefHash,
+            diffDigest: change.patchDigest
+          },
+          output: handle.reviewOutput?.raw ?? null
+        }
+      ],
+      readyForMerge: null,
+      developerTurnResult: null,
+      receipts: [],
+      trace: trace.map((call) => ({ tool: call.tool })),
+      // A reviewer holds no driver-run tool, so it performs no effect.
+      effects: recordedEffects(trace, {})
+    }
+    return { ok: true as const, record, usage: trialUsage(trial.adapter, handle, transcript) }
+  })
+}
+
+/**
+ * An `answer` case, run as the source-citation suite's live trial runs: the
+ * Developer is dispatched in an empty workspace holding only the injected
+ * documents of the layer-`P` source-citation case of the same id, the others
+ * served by `fetch_documentation`, told to change nothing; nothing is
+ * committed, and the record carries no change.
+ */
+async function runAnswerCase(
+  request: VinayaProcessRequest,
+  context: StepOneCommandContext,
+  item: SourceCitationCase
+): Promise<VinayaProcessRun> {
+  const { trial, input } = request
+  for (const source of input.sources) {
+    const spec = item.sources.find((entry) => entry.sourceId === source.sourceId)
+    if (spec === undefined || digest(spec.content) !== source.contentDigest)
+      throw new Error(`delivered document ${source.sourceId} differs from its pinned content digest`)
+  }
+  const citation = await import('../../../tests/eval/source-citation-suite')
+  const sourceManifest = await import('../source-manifest')
+  const { manifest, receipts } = citation.evidenceFor(item)
+  const required = new Set(input.sources.filter((source) => source.required).map((source) => source.sourceId))
+  const alsoDelivered = manifest.sources.filter((source) => !required.has(source.sourceId))
+  const prompt = [
+    input.brief,
+    'Answer from the delivered documents. This task changes nothing: you cannot edit a file, and you publish nothing.',
+    sourceManifest.requiredSourcesPromptBlock({
+      ...manifest,
+      sources: manifest.sources.filter((source) => required.has(source.sourceId))
+    }) ?? 'This task has no required sources.',
+    ...(alsoDelivered.length === 0
+      ? []
+      : [
+          `Also delivered, not required: ${alsoDelivered
+            .map((source) =>
+              source.deliveryMode === 'injected'
+                ? `\`${source.sourceId}\` in your worktree`
+                : `\`${source.sourceId}\` via \`fetch_documentation\``
+            )
+            .join(', ')}.`
+        ]),
+    'Return status completed, addressedFindingIds [], reportedChecks null, and sourceUses that cites only the delivered documents you used.'
+  ].join('\n\n')
+  const parent = mkdtempSync(join(tmpdir(), 'step-one-answer-'))
+  const workspace = join(parent, 'workspace')
+  mkdirSync(workspace)
+  for (const source of item.sources.filter((entry) => entry.deliveryMode === 'injected')) {
+    const path = join(workspace, source.sourceId)
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, source.content)
+  }
+  const world = citation.worldFor(item, (source) => source.content)
+  const socketPath = devToolsSocketPath(`step-one:${item.id}:${trial.adapter}:${trial.attempt}`)
+  const toolHost = await startDevToolsHost({
+    socketPath,
+    serverVersion: 'step-one-1',
+    context: world.context,
+    role: 'developer'
+  })
+  try {
+    const { developerTurnResultJsonSchema } = await import('../developer-turn-result')
+    const { readClaudeTurnOutput, readCodexTurnOutput } = await import('../dev-review-loop/turn-result')
+    const tools = await import('../../../tests/eval/tool-selection-suite')
+    // The read-only turn the source-citation suite's live trial runs: Claude
+    // Code holds only the served driver-run tools and Codex runs read-only, so
+    // the Developer cannot write a file whatever the prompt says.
+    const runTurn = citation.readOnlyDeveloperTurn(
+      trial.adapter,
+      parent,
+      workspace,
+      driverDevBridgeInvocation(socketPath, join(import.meta.dir, '../../index.ts')),
+      developerTurnResultJsonSchema({ knownFindingIds: [], requiredSources: [...required] }),
+      {
+        ...(context.models['claude-code'] === undefined ? {} : { claudeModel: context.models['claude-code'] }),
+        ...(context.models.codex === undefined ? {} : { codexModel: context.models.codex }),
+        timeoutSec: Math.ceil(context.timeoutMs / 1000)
+      }
+    )
+    const started = Date.now()
+    const stdout = await runTurn(prompt, null)
+    const wallTimeMs = Date.now() - started
+    const transcript = stdout.split('\n').filter(Boolean)
+    const turn = trial.adapter === 'claude-code' ? readClaudeTurnOutput(stdout) : readCodexTurnOutput(stdout)
+    const tokens = tools.usageOf(trial.adapter, transcript)
+    const trace = await traceOf(trial.adapter, transcript)
+    const record: VinayaTrialRecord = {
+      rendererVersion: input.rendererVersion,
+      input,
+      pullRequest: null,
+      measuredChange: null,
+      hiddenTests: null,
+      checks: null,
+      reviews: null,
+      readyForMerge: null,
+      developerTurnResult: turn.raw ?? null,
+      receipts: [...receipts, ...citation.fetchedReceipts(manifest, world, (source) => source.content, item.sources)],
+      trace: trace.map((call) => ({ tool: call.tool })),
+      effects: recordedEffects(trace, publicationCounts(world.state()))
+    }
+    const usage: StepOneUsage = {
+      wallTimeMs,
+      inputTokens: tokens.inputTokens,
+      outputTokens: tokens.outputTokens,
+      subscriptionQuota: subscriptionQuotaOf(trial.adapter, transcript),
+      estimatedCostUsd: 0
+    }
+    return { ok: true, record, usage }
+  } finally {
+    await toolHost.close()
+    rmSync(parent, { recursive: true, force: true })
+  }
+}
+
+/** Production's run of a rendered case: each kind dispatched its own way, on its layer-`P` counterpart. */
+export const runVinayaProcess: VinayaProcessRunner = async (request, context) => {
+  const c = request.neutralCase
+  if (c.kind === 'change') {
+    const item = context.loaded.developerCases.find((entry) => entry.id === c.id)
+    if (item === undefined) throw new Error(`${c.id} has no layer-P developer case`)
+    return runChangeCase(request, context, item)
+  }
+  if (c.kind === 'review') {
+    const role = request.trial.suite === 'security-reviewer-quality-neutral.l5' ? 'security-reviewer' : 'code-reviewer'
+    const item = context.loaded.reviewerCases.find((entry) => entry.id === c.id && entry.role === role)
+    if (item === undefined) throw new Error(`${c.id} has no layer-P ${role} case`)
+    return runReviewCase(request, context, item)
+  }
+  if (c.kind === 'answer') {
+    const item = context.loaded.sourceCitationCases.find((entry) => entry.id === c.id)
+    if (item === undefined) throw new Error(`${c.id} has no layer-P source-citation case`)
+    return runAnswerCase(request, context, item)
+  }
+  throw new Error(`step one runs no ${c.kind} case`)
+}
+
+async function executeLayerP(input: Parameters<StepOneExecutor>[0], context: StepOneCommandContext) {
   if (input.suite === 'developer-capability.l5') {
     const item = context.loaded.developerCases.find((entry) => entry.id === input.taskId)
     if (item === undefined) throw new Error(`unknown Developer task ${input.taskId}`)
@@ -1166,10 +1734,26 @@ async function executeProduction(input: Parameters<StepOneExecutor>[0], context:
   return executeReviewer(input, context, item)
 }
 
-export const PRODUCTION_STEP_ONE_RUNTIME: StepOneCommandRuntime = {
-  loadDevelopment: loadProductionDevelopment,
-  execute: executeProduction
+/**
+ * The step-one runtime whose layer-`G` trials run through `run`: a layer-`G`
+ * trial renders its development neutral case and is graded by the generic
+ * graders alone, a layer-`P` trial by its suite's own grader.
+ */
+export function stepOneRuntime(run: VinayaProcessRunner): StepOneCommandRuntime {
+  return {
+    loadDevelopment: loadProductionDevelopment,
+    async execute(input, context) {
+      if (STEP_ONE_SUITE_LAYERS[input.suite] === 'P') return executeLayerP(input, context)
+      const neutralCase = context.loaded.neutralCases[input.suite as LayerGSuite]?.find(
+        (entry) => entry.id === input.taskId
+      )
+      if (neutralCase === undefined) throw new Error(`unknown ${input.suite} task ${input.taskId}`)
+      return executeLayerGTrial(input, neutralCase, (request) => run(request, context))
+    }
+  }
 }
+
+export const PRODUCTION_STEP_ONE_RUNTIME: StepOneCommandRuntime = stepOneRuntime(runVinayaProcess)
 
 const flag = (args: readonly string[], name: string): string | undefined => {
   const index = args.indexOf(`--${name}`)
@@ -1188,6 +1772,18 @@ function numberFlag(args: readonly string[], name: string): number {
   return value
 }
 
+/**
+ * The `--cases` selection: one whole number alone is a count; otherwise each
+ * value, given once per flag or comma-separated, is a case id.
+ */
+function caseSelection(args: readonly string[]): StepOneCaseSelection | undefined {
+  const values = flags(args, 'cases').flatMap((value) => value.split(',').filter((part) => part !== ''))
+  if (values.length === 0) return undefined
+  const only = values.length === 1 ? (values[0] as string) : undefined
+  if (only !== undefined && /^-?\d+$/.test(only)) return { count: Number(only) }
+  return { ids: [...new Set(values)] }
+}
+
 function briefsFromSnapshot(path: string): Map<number, string> {
   const briefs = new Map<number, string>()
   for (const line of readFileSync(path, 'utf8').split('\n')) {
@@ -1204,11 +1800,10 @@ export async function runStepOneCommand(
 ): Promise<StepOneOutcome> {
   if (argv[0] !== 'run')
     throw new Error(
-      'usage: step-one.ts run --split development --backend standalone [--purpose <development-only|practice|comparison>] [--suite <name>]... --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> --developer-snapshot <jsonl> --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--out <file>]'
+      'usage: step-one.ts run --split development --backend standalone [--purpose <development-only|practice|comparison>] [--suite <name>]... [--adapter <claude-code|codex>] [--cases <n>|--cases <id>...] --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> [--developer-snapshot <jsonl>] --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--out <file>]'
     )
   const split = flag(argv, 'split')
   const backend = flag(argv, 'backend')
-  const loaded = split === 'development' && backend === 'standalone' ? await runtime.loadDevelopment() : null
   const snapshot = flag(argv, 'developer-snapshot')
   const claudeModel = flag(argv, 'claude-model')
   const codexModel = flag(argv, 'codex-model')
@@ -1220,14 +1815,17 @@ export async function runStepOneCommand(
       ...(codexModel === undefined ? {} : { codex: codexModel })
     },
     timeoutMs: Number(flag(argv, 'timeout-sec') ?? '1800') * 1000,
-    loaded: loaded ?? { suites: [], developerCases: [], reviewerCases: [] }
+    loaded: NO_DEVELOPMENT
   }
+  const cases = caseSelection(argv)
   const outcome = await runStepOne(
     {
       split: split as StepOneOptions['split'],
       backend: backend as StepOneOptions['backend'],
       purpose: (flag(argv, 'purpose') ?? 'development-only') as StepOnePurpose,
       ...(flags(argv, 'suite').length === 0 ? {} : { suites: flags(argv, 'suite') }),
+      ...(flags(argv, 'adapter').length === 0 ? {} : { adapters: flags(argv, 'adapter') }),
+      ...(cases === undefined ? {} : { cases }),
       trialsPerTask: numberFlag(argv, 'trials'),
       bootstrap: {
         method: flag(argv, 'bootstrap') as BootstrapMethod,
@@ -1240,7 +1838,11 @@ export async function runStepOneCommand(
         outputUsdPerMillion: numberFlag(argv, 'output-cost-per-million')
       }
     },
-    () => loaded?.suites ?? [],
+    // Loaded only once every check that reads no suite input has passed.
+    async () => {
+      context.loaded = await runtime.loadDevelopment()
+      return context.loaded.suites
+    },
     (input) => runtime.execute(input, context)
   )
   const text = `${JSON.stringify(outcome, null, 2)}\n`

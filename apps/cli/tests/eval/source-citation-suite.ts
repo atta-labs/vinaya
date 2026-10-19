@@ -404,7 +404,7 @@ function switchableContext(initial: World): { context: DevToolContext; use: (wor
 }
 
 /** The fetched-source receipts one turn's world records, decided by the production revision policy. */
-function fetchedReceipts(
+export function fetchedReceipts(
   manifest: RequiredSourceManifest,
   world: World,
   content: (source: SourceSpec) => string,
@@ -434,7 +434,7 @@ function fetchedReceipts(
     })
 }
 
-function worldFor(testCase: SourceCitationCase, content: (source: SourceSpec) => string): World {
+export function worldFor(testCase: SourceCitationCase, content: (source: SourceSpec) => string): World {
   const worldCase: ToolSelectionCase = {
     id: testCase.id,
     tool: 'fetch_documentation',
@@ -482,41 +482,22 @@ export function citationPrompt(testCase: SourceCitationCase, manifest: RequiredS
 const MUTATION_TURN =
   'Continue the same task. A delivered source may have changed since your last turn; return your result for the revision each source holds now.'
 
-/** Runs one real subscription-authenticated CLI with native structured output. */
-export async function liveTrial(
-  testCase: SourceCitationCase,
+/**
+ * A Developer turn that can change nothing: Claude Code holds only the served
+ * driver-run tools, and Codex runs with `sandbox_mode = "read-only"`. Returns
+ * the turn's structured stdout; a `resumeId` continues that session.
+ */
+export function readOnlyDeveloperTurn(
   adapter: Adapter,
-  trial: number,
+  dir: string,
+  workspace: string,
+  bridge: ReturnType<typeof driverDevBridgeInvocation>,
+  schema: unknown,
   options: { claudeModel?: string; codexModel?: string; timeoutSec: number }
-): Promise<TrialObservation> {
-  const initial = evidenceFor(testCase)
-  const original = (source: SourceSpec) => source.content
-  const revised = (source: SourceSpec) => source.revisedContent ?? source.content
-  const mutates = testCase.sources.some((source) => source.revisedContent !== undefined)
-  const firstWorld = worldFor(testCase, original)
-  const switchable = switchableContext(firstWorld)
-  const dir = mkdtempSync(join(tmpdir(), 'source-citation-'))
-  const workspace = join(dir, 'workspace')
-  mkdirSync(workspace)
-  for (const source of testCase.sources.filter((entry) => entry.deliveryMode === 'injected')) {
-    const path = join(workspace, source.sourceId)
-    mkdirSync(dirname(path), { recursive: true })
-    writeFileSync(path, source.content)
-  }
-  const socketPath = devToolsSocketPath(`source-citation:${adapter}:${testCase.id}:${trial}`)
-  const host = await startDevToolsHost({
-    socketPath,
-    serverVersion: 'source-citation-1',
-    context: switchable.context,
-    role: 'developer'
-  })
-  const bridge = driverDevBridgeInvocation(socketPath, CLI_ENTRY)
-  const required = requiredSourcesFor(testCase)
-  const schema = developerTurnResultJsonSchema({ knownFindingIds: [], requiredSources: required })
+): (prompt: string, resumeId: string | null) => Promise<string> {
   const schemaPath = join(dir, 'turn.schema.json')
   writeFileSync(schemaPath, `${JSON.stringify(schema, null, 2)}\n`)
-  const started = Date.now()
-  const runTurn = async (prompt: string, resumeId: string | null): Promise<string> => {
+  return async (prompt: string, resumeId: string | null): Promise<string> => {
     if (adapter === 'claude-code') {
       const config = join(dir, 'mcp.json')
       writeFileSync(config, devToolsMcpConfigFileBody(bridge))
@@ -586,6 +567,41 @@ export async function liveTrial(
       )
     ).stdout
   }
+}
+
+/** Runs one real subscription-authenticated CLI with native structured output. */
+export async function liveTrial(
+  testCase: SourceCitationCase,
+  adapter: Adapter,
+  trial: number,
+  options: { claudeModel?: string; codexModel?: string; timeoutSec: number }
+): Promise<TrialObservation> {
+  const initial = evidenceFor(testCase)
+  const original = (source: SourceSpec) => source.content
+  const revised = (source: SourceSpec) => source.revisedContent ?? source.content
+  const mutates = testCase.sources.some((source) => source.revisedContent !== undefined)
+  const firstWorld = worldFor(testCase, original)
+  const switchable = switchableContext(firstWorld)
+  const dir = mkdtempSync(join(tmpdir(), 'source-citation-'))
+  const workspace = join(dir, 'workspace')
+  mkdirSync(workspace)
+  for (const source of testCase.sources.filter((entry) => entry.deliveryMode === 'injected')) {
+    const path = join(workspace, source.sourceId)
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, source.content)
+  }
+  const socketPath = devToolsSocketPath(`source-citation:${adapter}:${testCase.id}:${trial}`)
+  const host = await startDevToolsHost({
+    socketPath,
+    serverVersion: 'source-citation-1',
+    context: switchable.context,
+    role: 'developer'
+  })
+  const bridge = driverDevBridgeInvocation(socketPath, CLI_ENTRY)
+  const required = requiredSourcesFor(testCase)
+  const schema = developerTurnResultJsonSchema({ knownFindingIds: [], requiredSources: required })
+  const started = Date.now()
+  const runTurn = readOnlyDeveloperTurn(adapter, dir, workspace, bridge, schema, options)
   const readTurn = (stdout: string) =>
     adapter === 'claude-code' ? readClaudeTurnOutput(stdout) : readCodexTurnOutput(stdout)
   try {

@@ -4,11 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type CloneStaging, git } from '../../src/lib/dev-review-eval/staging'
 import { spawnBudgetedAsync } from '../lib/process-fixture'
+import type { NeutralCase } from '../../src/lib/dev-review-eval/neutral-case'
 import {
   commitTrialInSandbox,
   importTrialBundle,
+  NO_DEVELOPMENT,
   openGradingSandbox,
   PRODUCTION_STEP_ONE_RUNTIME,
+  rendererVersionOf,
   resolveGradingCodex,
   runStepOne,
   runStepOneCommand,
@@ -17,12 +20,24 @@ import {
   STEP_ONE_PRACTICE_SUITES,
   STEP_ONE_SUITE_LAYERS,
   STEP_ONE_SUITES,
+  type StepOneCommandContext,
+  type StepOneRunSuite,
+  stepOneRuntime,
   subscriptionQuotaOf,
   TRIAL_COMMIT_SCRIPT,
   unavailableReason,
-  verifyTrialCommit
+  verifyTrialCommit,
+  type VinayaProcessRequest,
+  type VinayaProcessRun
 } from '../../src/lib/dev-review-eval/step-one'
 import { LIVE_SUITE_LAYERS } from '../../src/lib/dev-review-eval/freeze-record'
+import {
+  renderCase,
+  VINAYA_RENDERER_VERSION,
+  type VinayaTrialRecord
+} from '../../src/lib/dev-review-eval/vinaya-renderer'
+import { developerReferenceCases, type GenericSuiteKey, referenceEntry } from './generic-suites'
+import { KNOWN_BAD_VARIANTS, referenceRecord } from './vinaya-trial-records'
 import { expectGradingSandboxDenies, proveGradingSandbox } from './grading-sandbox-proof'
 
 const options = {
@@ -45,6 +60,11 @@ const usage = {
   subscriptionQuota: 0.1,
   estimatedCostUsd: 0.01
 }
+/** A fake trial of `suite`, carrying its suite's process layer and renderer version. */
+const stamp = (input: { suite: StepOneRunSuite }) => ({
+  layer: STEP_ONE_SUITE_LAYERS[input.suite],
+  rendererVersion: rendererVersionOf(input.suite)
+})
 
 describe('development-only step one', () => {
   it('charges a trial the increase between the before and after readings of one window only', () => {
@@ -99,8 +119,9 @@ describe('development-only step one', () => {
 
   it('keeps measured quota when another trial has no reading pair, and counts the unavailable trials', async () => {
     let calls = 0
-    const result = await runStepOne(options, suites, async () => ({
+    const result = await runStepOne(options, suites, async (input) => ({
       success: true,
+      ...stamp(input),
       usage: { ...usage, subscriptionQuota: calls++ % 2 === 0 ? 0.25 : null }
     }))
     expect(result.ok).toBe(true)
@@ -109,8 +130,9 @@ describe('development-only step one', () => {
       expect(run.usage.subscriptionQuota).toBeCloseTo(0.25)
       expect(run.quotaUnavailableTrials).toBe(1)
     }
-    const none = await runStepOne(options, suites, async () => ({
+    const none = await runStepOne(options, suites, async (input) => ({
       success: true,
+      ...stamp(input),
       usage: { ...usage, subscriptionQuota: null }
     }))
     if (none.ok) expect(none.value.runs.every((run) => run.usage.subscriptionQuota === null)).toBe(true)
@@ -348,7 +370,7 @@ describe('development-only step one', () => {
     const calls: string[] = []
     const result = await runStepOne(options, suites, async (input) => {
       calls.push(`${input.suite}:${input.adapter}:${input.taskId}:${input.attempt}`)
-      return { success: input.attempt === 1, usage }
+      return { success: input.attempt === 1, ...stamp(input), usage }
     })
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -377,7 +399,7 @@ describe('development-only step one', () => {
       reads++
       return suites()
     }
-    const execute = async () => ({ success: true, usage })
+    const execute = async (input: { suite: StepOneRunSuite }) => ({ success: true, ...stamp(input), usage })
     const heldOut = await runStepOne({ ...options, split: 'held-out' }, load, execute)
     const engine = await runStepOne({ ...options, backend: 'engine' }, load, execute)
     expect(heldOut).toEqual({
@@ -404,7 +426,7 @@ describe('development-only step one', () => {
     const calls = new Set<string>()
     const result = await runStepOne({ ...options, purpose: 'comparison' }, suites, async (input) => {
       calls.add(input.suite)
-      return { success: true, usage }
+      return { success: true, ...stamp(input), usage }
     })
     expect(result.ok && result.value.purpose).toBe('comparison')
     expect([...calls]).toEqual([
@@ -420,7 +442,7 @@ describe('development-only step one', () => {
       reads++
       return suites()
     }
-    const execute = async () => ({ success: true, usage })
+    const execute = async (input: { suite: StepOneRunSuite }) => ({ success: true, ...stamp(input), usage })
     for (const suite of STEP_ONE_SUITES) {
       const refused = await runStepOne({ ...options, purpose: 'comparison', suites: [suite] }, load, execute)
       expect(refused).toEqual({ ok: false, refusal: { code: 'layer_p_comparison', detail: expect.any(String) } })
@@ -445,7 +467,7 @@ describe('development-only step one', () => {
   })
 
   it('admits the layer-G source-citation suite for development-only runs and a one-trial practice run', async () => {
-    const execute = async () => ({ success: true, usage })
+    const execute = async (input: { suite: StepOneRunSuite }) => ({ success: true, ...stamp(input), usage })
     const practice = await runStepOne(
       { ...options, trialsPerTask: 1, purpose: 'practice', suites: ['source-delivery-neutral.l5'] },
       suites,
@@ -469,14 +491,295 @@ describe('development-only step one', () => {
     expect(twoTrials.ok || twoTrials.refusal.code).toBe('invalid_input')
   })
 
-  it('refuses to grade a layer-G trial it has no live executor for', async () => {
-    const loaded = { suites: [], developerCases: [], reviewerCases: [] }
-    const context = { repository: '.', developerBriefs: new Map(), models: {}, timeoutMs: 1, loaded }
-    for (const suite of [...STEP_ONE_COMPARISON_SUITES, ...STEP_ONE_PRACTICE_SUITES]) {
-      await expect(
-        PRODUCTION_STEP_ONE_RUNTIME.execute({ suite, adapter: 'codex', taskId: 'any', attempt: 1 }, context)
-      ).rejects.toThrow(`no live executor runs ${suite} trials yet`)
+  describe('a layer-G trial run live through the Vinaya process, on fake process runs', () => {
+    const developerCases = developerReferenceCases('development')
+    const loading = PRODUCTION_STEP_ONE_RUNTIME.loadDevelopment()
+    const contextOf = async (): Promise<StepOneCommandContext> => ({
+      repository: '.',
+      developerBriefs: new Map(),
+      models: {},
+      timeoutMs: 1,
+      loaded: await loading
+    })
+    /** One development case of each kind, by its suite. */
+    const KINDS: { suite: StepOneRunSuite; key: GenericSuiteKey; kind: NeutralCase['kind'] }[] = [
+      { suite: 'developer-capability-neutral.l5', key: 'developer', kind: 'change' },
+      { suite: 'code-reviewer-quality-neutral.l5', key: 'codeReviewer', kind: 'review' },
+      { suite: 'source-delivery-neutral.l5', key: 'sourceCitation', kind: 'answer' }
+    ]
+    const caseOf = async (suite: StepOneRunSuite, kind: NeutralCase['kind']) => {
+      const cases = (await loading).neutralCases[suite as keyof Awaited<typeof loading>['neutralCases']] ?? []
+      // A case some known-bad variant applies to beyond the ungranted call, so each kind plants a defect of its own.
+      const chosen = cases.find((c) => (c.kind === 'review' ? !c.adjudication.clean : c.deliveredDocuments.length > 0))
+      if (chosen === undefined || chosen.kind !== kind) throw new Error(`${suite} has no ${kind} case to run`)
+      return chosen
     }
+    const trial = (suite: StepOneRunSuite, taskId: string) => ({ suite, adapter: 'codex' as const, taskId, attempt: 1 })
+    const ran = (record: VinayaTrialRecord): VinayaProcessRun => ({ ok: true, record, usage })
+
+    for (const { suite, key, kind } of KINDS) {
+      it(`counts a ${kind} case's reference record a success and each known-bad variant of it a failure`, async () => {
+        const c = await caseOf(suite, kind)
+        const entry = referenceEntry(
+          key,
+          c,
+          developerCases.find((p) => p.id === c.id)
+        )
+        const requests: VinayaProcessRequest[] = []
+        const runWith = async (plant: (reference: VinayaTrialRecord) => VinayaTrialRecord) =>
+          stepOneRuntime(async (request) => {
+            requests.push(request)
+            return ran(plant(referenceRecord(entry, request.input)))
+          }).execute(trial(suite, c.id), await contextOf())
+
+        const reference = await runWith((record) => record)
+        expect(reference).toEqual({ success: true, layer: 'G', rendererVersion: VINAYA_RENDERER_VERSION, usage })
+        // The run is handed the case's own rendering, never another brief.
+        const rendered = renderCase(c)
+        expect(rendered.ok && requests[0]?.input).toEqual(rendered.ok ? rendered.input : false)
+        expect(requests[0]?.neutralCase.id).toBe(c.id)
+
+        let planted = 0
+        for (const variant of KNOWN_BAD_VARIANTS) {
+          if (variant.plant(referenceRecord(entry, requests[0]?.input as never), entry) === null) continue
+          planted++
+          const bad = await runWith((record) => variant.plant(record, entry) as VinayaTrialRecord)
+          expect({ variant: variant.name, success: bad.success, unavailable: bad.unavailableReason }).toEqual({
+            variant: variant.name,
+            success: false,
+            unavailable: undefined
+          })
+        }
+        expect(planted).toBeGreaterThan(1)
+      })
+    }
+
+    it('records a trial unavailable when the renderer refuses its case, without running it', async () => {
+      const c = await caseOf('developer-capability-neutral.l5', 'change')
+      const unexpressible = { ...c, taskStatement: `${c.taskStatement}\nA second line.` }
+      let runs = 0
+      const result = await stepOneRuntime(async () => {
+        runs++
+        throw new Error('never run')
+      }).execute(trial('developer-capability-neutral.l5', c.id), {
+        ...(await contextOf()),
+        loaded: { ...(await loading), neutralCases: { 'developer-capability-neutral.l5': [unexpressible] } }
+      })
+      expect(runs).toBe(0)
+      expect(result.success).toBe(false)
+      expect(result.unavailableReason).toContain('unexpressible at taskStatement')
+      expect(result.layer).toBe('G')
+    })
+
+    it('records a trial unavailable when its record is from another renderer version, or its run fails', async () => {
+      const c = await caseOf('code-reviewer-quality-neutral.l5', 'review')
+      const entry = referenceEntry('codeReviewer', c)
+      const stale = await stepOneRuntime(async (request) =>
+        ran({ ...referenceRecord(entry, request.input), rendererVersion: '1:another' })
+      ).execute(trial('code-reviewer-quality-neutral.l5', c.id), await contextOf())
+      expect(stale.success).toBe(false)
+      expect(stale.unavailableReason).toContain('stale_renderer at rendererVersion')
+      const failed = await stepOneRuntime(async () => {
+        throw new Error('the adapter exited 1')
+      }).execute(trial('code-reviewer-quality-neutral.l5', c.id), await contextOf())
+      expect(failed.success).toBe(false)
+      expect(failed.unavailableReason).toContain('the adapter exited 1')
+    })
+
+    it('no longer throws for a layer-G suite, and still refuses a task its suite does not hold', async () => {
+      for (const suite of [...STEP_ONE_COMPARISON_SUITES, ...STEP_ONE_PRACTICE_SUITES]) {
+        await expect(
+          PRODUCTION_STEP_ONE_RUNTIME.execute(
+            { suite, adapter: 'codex', taskId: 'any', attempt: 1 },
+            { ...(await contextOf()), loaded: NO_DEVELOPMENT }
+          )
+        ).rejects.toThrow(`unknown ${suite} task any`)
+      }
+    })
+  })
+
+  it("carries each run's process layer and renderer version beside its usage", async () => {
+    const result = await runStepOne(options, suites, async (input) => ({ success: true, ...stamp(input), usage }))
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    for (const run of result.value.runs) {
+      expect({ suite: run.suite, layer: run.layer, rendererVersion: run.rendererVersion }).toEqual({
+        suite: run.suite,
+        layer: STEP_ONE_SUITE_LAYERS[run.suite],
+        rendererVersion: STEP_ONE_SUITE_LAYERS[run.suite] === 'G' ? VINAYA_RENDERER_VERSION : ''
+      })
+    }
+  })
+
+  describe('a practice run selecting adapters and cases', () => {
+    const practice = { ...options, trialsPerTask: 1, purpose: 'practice' as const }
+    const threeTasks = () => ALL_SUITES.map((suite) => ({ suite, taskIds: ['a', 'b', 'c'] }))
+
+    it('runs only the selected adapter and the first n cases in pinned order, or the named ones', async () => {
+      const calls: string[] = []
+      const execute = async (input: { suite: StepOneRunSuite; adapter: string; taskId: string }) => {
+        calls.push(`${input.suite}:${input.adapter}:${input.taskId}`)
+        return { success: true, ...stamp(input), usage }
+      }
+      const suitesRun = ['developer-capability-neutral.l5', 'developer-capability.l5']
+      const counted = await runStepOne(
+        { ...practice, suites: suitesRun, adapters: ['claude-code'], cases: { count: 2 } },
+        threeTasks,
+        execute
+      )
+      expect(counted.ok).toBe(true)
+      expect(calls).toEqual([
+        'developer-capability-neutral.l5:claude-code:a',
+        'developer-capability-neutral.l5:claude-code:b',
+        'developer-capability.l5:claude-code:a',
+        'developer-capability.l5:claude-code:b'
+      ])
+      calls.length = 0
+      const named = await runStepOne(
+        { ...practice, suites: ['source-delivery-neutral.l5'], adapters: ['codex'], cases: { ids: ['c', 'a'] } },
+        threeTasks,
+        execute
+      )
+      expect(named.ok && named.value.runs.map((run) => [run.adapter, run.taskCount])).toEqual([['codex', 2]])
+      expect(calls).toEqual(['source-delivery-neutral.l5:codex:a', 'source-delivery-neutral.l5:codex:c'])
+      calls.length = 0
+      const both = await runStepOne({ ...practice, suites: ['source-delivery-neutral.l5'] }, threeTasks, execute)
+      expect(both.ok && both.value.runs.map((run) => run.adapter)).toEqual(['claude-code', 'codex'])
+    })
+
+    it('refuses a case selection on a development-only or comparison run, before loading any split', async () => {
+      let reads = 0
+      const load = () => {
+        reads++
+        return threeTasks()
+      }
+      const execute = async (input: { suite: StepOneRunSuite }) => ({ success: true, ...stamp(input), usage })
+      for (const purpose of ['development-only', 'comparison'] as const) {
+        for (const cases of [{ count: 1 }, { ids: ['a'] }]) {
+          const refused = await runStepOne(
+            { ...options, purpose, suites: ['developer-capability-neutral.l5'], cases },
+            load,
+            execute
+          )
+          expect(refused).toEqual({
+            ok: false,
+            refusal: { code: 'case_selection_forbidden', detail: expect.any(String) }
+          })
+        }
+      }
+      expect(reads).toBe(0)
+    })
+
+    it('refuses an unknown adapter and a count below 1 before loading, and a case outside the split before any trial', async () => {
+      let reads = 0
+      let trials = 0
+      const load = () => {
+        reads++
+        return threeTasks()
+      }
+      const execute = async (input: { suite: StepOneRunSuite }) => {
+        trials++
+        return { success: true, ...stamp(input), usage }
+      }
+      for (const request of [
+        { adapters: ['gemini'] },
+        { adapters: [] },
+        { cases: { count: 0 } },
+        { cases: { count: 1.5 } }
+      ]) {
+        const refused = await runStepOne({ ...practice, ...request }, load, execute)
+        expect(refused.ok || refused.refusal.code).toBe('invalid_input')
+      }
+      expect(reads).toBe(0)
+      const outside = await runStepOne(
+        {
+          ...practice,
+          suites: ['developer-capability.l5', 'source-delivery-neutral.l5'],
+          cases: { ids: ['a', 'held-out-id'] }
+        },
+        load,
+        execute
+      )
+      expect(outside).toEqual({
+        ok: false,
+        refusal: { code: 'invalid_input', detail: 'held-out-id is not a development case of developer-capability.l5' }
+      })
+      expect(trials).toBe(0)
+    })
+
+    it('takes the selections as --adapter and --cases flags of the step-one command', async () => {
+      const loaded = await PRODUCTION_STEP_ONE_RUNTIME.loadDevelopment()
+      let loads = 0
+      const calls: string[] = []
+      const runtime = {
+        loadDevelopment: async () => {
+          loads++
+          return loaded
+        },
+        execute: async (input: { suite: StepOneRunSuite; adapter: string; taskId: string }) => {
+          calls.push(`${input.suite}:${input.adapter}:${input.taskId}`)
+          return { success: true, ...stamp(input), usage }
+        }
+      }
+      const common = [
+        '--trials',
+        '1',
+        '--bootstrap',
+        'percentile',
+        '--seed',
+        '1',
+        '--resamples',
+        '20',
+        '--confidence',
+        '0.95'
+      ]
+      const prices = ['--input-cost-per-million', '0', '--output-cost-per-million', '0']
+      const out = join(mkdtempSync(join(tmpdir(), 'step-one-selection-')), 'result.json')
+      const run = (...flags: string[]) =>
+        runStepOneCommand(
+          ['run', '--split', 'development', '--backend', 'standalone', ...flags, ...common, ...prices, '--out', out],
+          runtime
+        )
+      const refused = await run(
+        '--purpose',
+        'development-only',
+        '--suite',
+        'developer-capability-neutral.l5',
+        '--cases',
+        '1'
+      )
+      expect(refused.ok || refused.refusal.code).toBe('case_selection_forbidden')
+      expect(loads).toBe(0)
+      const counted = await run(
+        '--purpose',
+        'practice',
+        '--suite',
+        'developer-capability-neutral.l5',
+        '--adapter',
+        'codex',
+        '--cases',
+        '1'
+      )
+      expect(counted.ok).toBe(true)
+      expect(calls).toEqual(['developer-capability-neutral.l5:codex:pr-987'])
+      calls.length = 0
+      const named = await run(
+        '--purpose',
+        'practice',
+        '--suite',
+        'code-reviewer-quality-neutral.l5',
+        '--adapter',
+        'claude-code',
+        '--cases',
+        'code-clean,code-logic'
+      )
+      expect(named.ok).toBe(true)
+      expect(calls).toEqual([
+        'code-reviewer-quality-neutral.l5:claude-code:code-logic',
+        'code-reviewer-quality-neutral.l5:claude-code:code-clean'
+      ])
+      expect(loads).toBe(2)
+    })
   })
 
   it('the executable command loads the real development corpora and dispatches every real task', async () => {
@@ -520,7 +823,7 @@ describe('development-only step one', () => {
         loadDevelopment: async () => loaded,
         execute: async (input) => {
           calls.push(`${input.suite}:${input.adapter}:${input.taskId}`)
-          return { success: true, usage: { ...usage, estimatedCostUsd: 0 } }
+          return { success: true, ...stamp(input), usage: { ...usage, estimatedCostUsd: 0 } }
         }
       }
     )
@@ -561,7 +864,7 @@ describe('development-only step one', () => {
         loadDevelopment: async () => loaded,
         execute: async (input) => {
           practice.push(`${input.suite}:${input.adapter}:${input.taskId}`)
-          return { success: true, usage }
+          return { success: true, ...stamp(input), usage }
         }
       }
     )
