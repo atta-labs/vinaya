@@ -407,7 +407,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'proseGates.doctrineRoot',
     type: 'string (optional, min 1)',
     semantics: [
-      'The doctrine directory both checks sweep in full — every `.md` under it counts as "ships" prose. Defaults to `"aeg-root"`, this repo\'s own doctrine root. An adopter who names their installed doctrine tree differently sets this once; both checks read the same value.'
+      'The doctrine directory both checks sweep in full — every `.md` under it counts as "ships" prose. Defaults to `"aeg-root"`, this repo\'s own doctrine root. An adopter who names their installed doctrine tree differently sets this once; both checks read the same value, and so do `quoted-command` and `doc-claims`, which sweeps the tracked pages under it for claim markers (a root outside the repository leaves that half of its sweep empty).'
     ],
     example: `{ "doctrineRoot": "governance-docs" }`
   },

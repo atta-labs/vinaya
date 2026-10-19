@@ -878,7 +878,9 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       env: {},
       // See `reader-resolvable-prose`'s identical `include` comment above.
       // The corpus the bin sweeps; a binding goes stale when its CITED file
-      // changes, which may sit anywhere in the repository.
+      // changes, which may sit anywhere in the repository. The registry is
+      // static and never reads configuration, so this lists the default
+      // doctrine root; the bin derives the configured one.
       include: ['aeg-root/**/*.md', 'apps/**/*.ts', 'apps/**/*.md', 'packages/**/*.ts', 'packages/**/*.md']
     },
     0
@@ -966,7 +968,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
     {
       name: 'quoted-command',
       run: bin('check-quoted-command'),
-      scope: 'diff',
+      scope: 'full',
       timeoutMs: 15_000,
       // Local-only: sweeps `<doctrineRoot>/**` (and any configured
       // reader-facing pages) for `AEG:QUOTES-FILE` markers, then reads each
@@ -974,8 +976,11 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // tree — no forge call, no PR content. Report-only (severity: warning,
       // exit 0 always — see the bin's own module doc), same rollout
       // precedent as changeset-coverage/reader-resolvable-prose above:
-      // registering it must not newly redden any existing install.
-      env: {}
+      // registering it must not newly redden any existing install. Full
+      // scope: the sweep covers the whole doctrine tree whatever the diff.
+      env: {},
+      // See `reader-resolvable-prose`'s identical `include` comment above.
+      include: ['aeg-root/**/*.md']
     },
     0
   ],

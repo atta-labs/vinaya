@@ -41,15 +41,22 @@ describe('sweeps declare include (task 12, #387)', () => {
     expect(missing).toEqual([])
   })
 
-  it('the four doctrine-root-reading sweeps this pins are exactly this set — a guard on the test itself', () => {
+  it('the six doctrine-root-reading sweeps this pins are exactly this set — a guard on the test itself', () => {
     const specs = coreCheckRegistry().filter((s) => s.scope === 'full')
     const readers = specs.filter((s) => /\bDOCTRINE_ROOT\b/.test(readBinSource(s.name))).map((s) => s.name)
     expect(new Set(readers)).toEqual(
-      new Set(['reader-resolvable-prose', 'retired-vocabulary', 'doctrine-portability', 'doctrine-no-procedures'])
+      new Set([
+        'reader-resolvable-prose',
+        'retired-vocabulary',
+        'doctrine-portability',
+        'doctrine-no-procedures',
+        'doc-claims',
+        'quoted-command'
+      ])
     )
   })
 
-  it('the five named sweeps (the four doctrine-root readers, plus workspace-escape) all declare the include', () => {
+  it('the seven named sweeps (the six doctrine-root readers, plus workspace-escape) all declare the include', () => {
     const specs = coreCheckRegistry()
     // `reader-resolvable-prose` alone widened its `include` (Issue #435): its
     // one blocking class, `product`, sweeps `PRODUCT_SLUG_SCOPE` alongside
@@ -67,6 +74,7 @@ describe('sweeps declare include (task 12, #387)', () => {
       'retired-vocabulary': ['aeg-root/**/*.md'],
       'doctrine-portability': ['aeg-root/**/*.md'],
       'doctrine-no-procedures': ['aeg-root/**/*.md'],
+      'quoted-command': ['aeg-root/**/*.md'],
       'workspace-escape': ['aeg-root/**/*.md']
     }
     for (const [name, include] of Object.entries(expectedInclude)) {

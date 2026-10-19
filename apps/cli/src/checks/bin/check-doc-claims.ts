@@ -8,9 +8,10 @@
  * are both `severity: error`, exit 1: a sentence that reads as checked and is
  * not is the exact defect this check exists to catch, so it blocks.
  *
- * **The corpus is the standalone documentation verifier's, unchanged** —
- * every tracked doctrine page under `aeg-root/` and every tracked `.ts`/`.md`
- * file under `apps/` and `packages/`. Discovery goes through `git ls-files`,
+ * **The corpus is the standalone documentation verifier's, with the doctrine
+ * root read from configuration** — every tracked doctrine page under
+ * `proseGates.doctrineRoot` (`aeg-root` when unset) and every tracked
+ * `.ts`/`.md` file under `apps/` and `packages/`. Discovery goes through `git ls-files`,
  * never a directory walk, so a scratch file nobody committed is never swept.
  *
  * **A cited file is read only when git tracks it.** A crafted `contains:`
@@ -29,13 +30,31 @@
 
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
+import { isAbsolute, relative, resolve } from 'node:path'
 import { checkDocClaims } from '@attalabs/aeg-core'
+import { loadConfig } from '../../lib/config'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 
 const CHECK_NAME = 'doc-claims'
 
-/** The same pathspecs the standalone documentation verifier sweeps for its doc-claim bindings. */
-const CORPUS_PATHSPECS = ['aeg-root/*.md', 'apps/*.ts', 'apps/*.md', 'packages/*.ts', 'packages/*.md']
+const DOCTRINE_ROOT = loadConfig()?.proseGates?.doctrineRoot ?? 'aeg-root'
+
+/** The apps and packages pathspecs the standalone documentation verifier sweeps for its doc-claim bindings. */
+const SOURCE_PATHSPECS = ['apps/*.ts', 'apps/*.md', 'packages/*.ts', 'packages/*.md']
+
+/**
+ * The doctrine pathspec for a root, relative to the repository (`process.cwd()`),
+ * or `null` when the root resolves outside it: `git ls-files` exits non-zero on
+ * a path outside the repository. Plain pathspecs: `*` crosses `/`, so nested pages are reached.
+ */
+function doctrinePathspec(root: string): string | null {
+  const rel = relative(process.cwd(), resolve(process.cwd(), root))
+  if (rel === '..' || rel.startsWith('../') || isAbsolute(rel)) return null
+  return rel === '' ? '*.md' : `${rel.replace(/\\/g, '/')}/*.md`
+}
+
+const DOCTRINE_PATHSPEC = doctrinePathspec(DOCTRINE_ROOT)
+const CORPUS_PATHSPECS = DOCTRINE_PATHSPEC === null ? SOURCE_PATHSPECS : [DOCTRINE_PATHSPEC, ...SOURCE_PATHSPECS]
 
 function gitLsFiles(pathspecs: readonly string[]): string[] {
   return execFileSync('git', ['ls-files', '--', ...pathspecs], {
