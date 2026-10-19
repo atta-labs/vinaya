@@ -115,9 +115,10 @@ beforeAll(async () => {
   await convertHarborTasks({ out: second, print: quiet, warn: quiet })
 }, 300_000)
 
+// Removing every converted tree and every clone outlasts the default hook budget.
 afterAll(() => {
   for (const dir of temporary) rmSync(dir, { recursive: true, force: true })
-})
+}, 120_000)
 
 /** Every converted case folder, with its suite and case. */
 function folders(): { suite: string; dir: string; caseFile: HarborCaseFile }[] {
