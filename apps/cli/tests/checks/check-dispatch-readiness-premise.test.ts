@@ -3,7 +3,14 @@ import { createHash } from 'node:crypto'
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, sep } from 'node:path'
-import { checkDispatchReadiness, type DispatchConflictsWithFact, type DispatchGateInput } from '@attalabs/aeg-core'
+import {
+  checkDispatchReadiness,
+  checkFirstPushDispatchGate,
+  type DispatchConflictsWithFact,
+  type DispatchGateInput
+} from '@attalabs/aeg-core'
+import { firstPushArchivalReadiness } from '../../src/checks/bin/check-first-push-dispatch'
+import { priorTrancheArchivalFindings } from '../../src/checks/bin/check-dispatch-readiness'
 import { resolveSiblingConflictFacts } from '../../src/checks/sibling-conflict-facts'
 import { reassertPremiseFile } from '../../src/checks/premise-reassert-logic'
 import { containedAbs } from '../../src/lib/ops'
@@ -408,5 +415,55 @@ describe('check-dispatch-readiness: Conflicts-with named only by a sibling', () 
     expect(
       await resolveSiblingConflictFacts({ issue: null, conflictsWith: [] }, [sibling(1255, '#1264')], [], forge(state))
     ).toEqual([])
+  })
+})
+
+describe('prior-tranche archival: dispatch-readiness and first-push', () => {
+  const gateInput = (priorTrancheArchival: DispatchGateInput['priorTrancheArchival']): DispatchGateInput => ({
+    trancheSlug: 't',
+    task: { id: '1', title: '', issue: 1, projects: ['cli'], dependsOn: [], conflictsWith: [], rationaleMarkdown: '' },
+    issue: { number: 1, state: 'open' },
+    issueRationalePass: true,
+    dependsOn: [],
+    conflictsWith: [],
+    priorTask: null,
+    priorTrancheArchival,
+    principalAllowlist: ['daniboomerang']
+  })
+  const firstPush = (readiness: ReturnType<typeof firstPushArchivalReadiness>) =>
+    checkFirstPushDispatchGate({ branch: 'task/t/1', prExists: false, readiness })
+
+  it('an infraFailure is one severity:infra-class error line naming the read; a clean resolution is none', () => {
+    expect(priorTrancheArchivalFindings({ infraFailure: null })).toEqual([])
+    const [finding, ...rest] = priorTrancheArchivalFindings({
+      infraFailure: 'severity:infra — could not read the open Issues of tranche `p`; unknown.'
+    })
+    expect(rest).toEqual([])
+    expect(finding?.message).toContain('severity:infra')
+    expect(finding?.message).toContain('open Issues of tranche `p`')
+  })
+
+  it('an unarchived prior-tranche fact is NOT_READY and refuses the first push', () => {
+    const readiness = firstPushArchivalReadiness(
+      gateInput([{ project: 'cli', priorTrancheSlug: 'prior-v1', archived: false }]),
+      null
+    )
+    expect(readiness).toBe('NOT_READY')
+    expect(firstPush(readiness).verdict).toBe('refuse')
+  })
+
+  it('no prior tranche is READY and allows the first push', () => {
+    const readiness = firstPushArchivalReadiness(
+      gateInput([{ project: 'cli', priorTrancheSlug: null, archived: false }]),
+      null
+    )
+    expect(readiness).toBe('READY')
+    expect(firstPush(readiness).verdict).toBe('allow')
+  })
+
+  it('an infraFailure is UNKNOWN and allows the first push (fail-open)', () => {
+    const readiness = firstPushArchivalReadiness(gateInput([]), 'severity:infra — could not read x')
+    expect(readiness).toBe('UNKNOWN')
+    expect(firstPush(readiness).verdict).toBe('allow')
   })
 })

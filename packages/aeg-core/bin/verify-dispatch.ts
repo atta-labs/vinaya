@@ -79,8 +79,8 @@ import {
   deriveTrancheFromForge,
   fetchProvenance,
   trancheLabel,
-  listActiveTrancheSlugs,
   parseRationaleDeps,
+  resolvePriorTrancheArchival,
   requireTrancheQualifiedEdges,
   resolveGithubToken,
   resolveRepo,
@@ -99,7 +99,6 @@ import {
   compareToBaseline,
   type DispatchConflictsWithFact,
   type DispatchDependsOnFact,
-  type DispatchPriorTrancheFact,
   type DispatchPriorTaskFact,
   deriveSection7,
   classifyDocOwnersManifest,
@@ -650,121 +649,6 @@ function resolvePriorTask(
     issueClosed: issueJson?.state === 'CLOSED',
     prMerged: pr?.state === 'MERGED',
     hasProvenance: prior.issue !== null ? (provenanceByIssue.get(prior.issue) ?? false) : false
-  }
-}
-
-/**
- * Label-aware candidate discovery (aeg-review-gate-v1 task 1, #474,
- * amendment; re-keyed off the derived tranche lifecycle by
- * vinaya-milestone-model-v1 task 1): "active" is every tranche whose
- * `vinaya/tranche:<slug>` label resolves to lifecycle `active` — a Milestone
- * titled exactly the slug and open (the legacy regime, unchanged) OR, for a
- * label with no such Milestone, at least one open Issue. The SAME
- * `listActiveTrancheSlugs` Studio's `readOtherActiveTranches`
- * (`apps/vinaya/web/src/lib/forge/dispatch-readiness.ts`, task 5, #429)
- * already calls, shared rather than duplicated per this task's own "no
- * parallel implementation" discipline. Before aeg-review-gate-v1 task 1 this
- * read the local `aeg-root/tranches/*.md` file listing — file-based and
- * unaware of Milestone state, so closing a tranche's topology file to
- * `completed/` WITHOUT also closing its Milestone left this CLI saying READY
- * while Studio correctly said BLOCKED (reproduced live on
- * `aeg-forge-state-v1`/`aeg-review-gate-v1`, 2026-07-08). "The Milestone is
- * open" stopped being the whole story once one Milestone could hold several
- * tranches (a Milestone closing no longer implies every tranche it held is
- * finished) — `listActiveTrancheSlugs` now answers from the derived
- * lifecycle directly, so this call site needed no change of its own.
- */
-function otherActiveTrancheSlugs(excludeSlug: string, repo: RepoRef): string[] {
-  return listActiveTrancheSlugs(repo.owner, repo.repo)
-    .map((m) => m.slug)
-    .filter((slug) => slug !== excludeSlug)
-}
-
-/**
- * A candidate tranche's open Issues, or `null` when the query failed — a
- * failed `gh` call is never an empty answer.
- */
-function listOpenTrancheIssues(slug: string, repo: RepoRef): Array<{ number: number }> | null {
-  // Not routed through `ghIssueListByAnyLabel`: that helper is internal to
-  // `@attalabs/aeg-forge-state`'s `gh.ts` (not exported) and issues a
-  // `--state all` query with the full Issue JSON, where this site wants
-  // open Issues and their numbers only.
-  return shJson<Array<{ number: number }>>('gh', [
-    'issue',
-    'list',
-    '-R',
-    `${repo.owner}/${repo.repo}`,
-    '--label',
-    trancheLabel(slug),
-    '--state',
-    'open',
-    '--json',
-    'number',
-    '--limit',
-    '100'
-  ])
-}
-
-/** The forge reads `resolvePriorTrancheArchival` makes — injectable so a test can fail one. */
-export type PriorTrancheArchivalDeps = {
-  activeTrancheSlugs: (excludeSlug: string, repo: RepoRef) => string[]
-  deriveTranche: (slug: string, repo: RepoRef) => Promise<Tranche>
-  openIssues: (slug: string, repo: RepoRef) => Array<{ number: number }> | null
-}
-
-const defaultPriorTrancheArchivalDeps: PriorTrancheArchivalDeps = {
-  activeTrancheSlugs: otherActiveTrancheSlugs,
-  deriveTranche: (slug, repo) => deriveTrancheFromForge(repo.owner, repo.repo, slug),
-  openIssues: listOpenTrancheIssues
-}
-
-/**
- * The prior-tranche archival facts, and whether any of them could not be
- * read. `facts` holds one entry per project whose answer is known: the first
- * active, all-Issues-closed prior tranche found, or a null-slug pass-through
- * when none is found. A project whose open-Issues query failed for a
- * candidate tranche has no entry — its fact is unknown, so it never reads as
- * an unarchived prior tranche — and `infraFailure` names the failed read as a
- * `severity:infra` blocker instead.
- */
-export async function resolvePriorTrancheArchival(
-  projects: string[],
-  excludeSlug: string,
-  repo: RepoRef,
-  deps: PriorTrancheArchivalDeps = defaultPriorTrancheArchivalDeps
-): Promise<{ facts: DispatchPriorTrancheFact[]; infraFailure: string | null }> {
-  const candidates = deps.activeTrancheSlugs(excludeSlug, repo)
-  const facts: DispatchPriorTrancheFact[] = []
-  const unreadable: string[] = []
-
-  for (const project of projects) {
-    let found: DispatchPriorTrancheFact | null = null
-    let unknown = false
-    for (const slug of candidates) {
-      const candidateTranche = await deps.deriveTranche(slug, repo)
-      const touchesProject = candidateTranche.tasks.some((t) => t.projects.includes(project))
-      if (!touchesProject) continue
-
-      const openIssues = deps.openIssues(slug, repo)
-      if (openIssues === null) {
-        unknown = true
-        unreadable.push(`\`${slug}\` (project \`${project}\`)`)
-        break
-      }
-      if (openIssues.length === 0) {
-        found = { project, priorTrancheSlug: slug, archived: false }
-        break
-      }
-    }
-    if (!unknown) facts.push(found ?? { project, priorTrancheSlug: null, archived: false })
-  }
-
-  return {
-    facts,
-    infraFailure:
-      unreadable.length === 0
-        ? null
-        : `verify-dispatch severity:infra — could not read the open Issues of tranche ${unreadable.join(', ')}; whether a prior tranche is archived is unknown.`
   }
 }
 
