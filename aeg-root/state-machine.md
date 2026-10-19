@@ -609,7 +609,7 @@ The seam between **a task's dispatch preconditions** (row-existence, Issue-exist
 
 Sibling to `verify-docs.ts`/`verify-coherence.ts`, same thin-CLI-shim discipline: resolves args, fetches git/forge state, and calls the pure evaluators in `packages/aeg-core/src/` (`dispatch-gate.ts`, `leftover-detection.ts`, `baseline-capture.ts`, `premise-check.ts`). No check logic lives in the `bin/` file.
 
-**The default-mode composite ships as the `dispatch-readiness` check** (`vinaya check dispatch-readiness`, branch-scoped) — see `enforcement.md`'s dispatch row for its known parity gap (prior-tranche-archival always reports empty). The `--premise`/`--simulate`/`--check-baseline` modes below have no shipped `vinaya` equivalent yet.
+**The default-mode composite ships as the `dispatch-readiness` check** (`vinaya check dispatch-readiness`, branch-scoped) — see `enforcement.md`'s dispatch row for how it resolves the prior-tranche-archival predicate. The `--premise`/`--simulate`/`--check-baseline` modes below have no shipped `vinaya` equivalent yet.
 
 **Usage (this repo's toolchain)** — five independent invocation forms, not a sequence:
 - Default mode: `bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n>`

@@ -26,13 +26,11 @@
  * (an aeg-core-purity fix) and this module's dependency boundary is
  * `@attalabs/aeg-core` + `@attalabs/vinaya-sources` only.
  *
- * Known scope gap (recorded in the PR body): `priorTrancheArchival` is
- * always reported empty. Resolving it for real requires
- * `listActiveTrancheSlugs` to discover candidate prior tranches per
- * project — not among the forge primitives this task's boundary re-exports.
- * Passing an empty list makes that one predicate trivially pass rather than
- * re-typing the fact via a second implementation; it is a real (if narrow)
- * parity gap versus `bin/verify-dispatch.ts`, not silently equivalent to it.
+ * The prior-tranche-archival predicate is resolved in tranche mode by
+ * `resolvePriorTrancheArchival` (`@attalabs/aeg-forge-state`), the same
+ * resolution `packages/aeg-core/bin/verify-dispatch.ts` calls. A read it could
+ * not complete is a `severity:infra` error with exit `1`, never a pass by
+ * default. Backlog-Issue mode names no project, so it passes an empty list.
  *
  * Second known gap (issue-661, O2; escalated severity:strategy — see the PR
  * body's Decisions section): off a task branch with no `<tranche> <n>`
@@ -79,10 +77,14 @@ import {
   type DispatchConflictsWithFact,
   type DispatchDependsOnFact,
   type DispatchGateInput,
-  type DispatchPriorTrancheFact,
   type Task
 } from '@attalabs/aeg-core'
-import { fetchForgeFactsByIssue, parseRationaleDeps, resolveDuplicateTasks } from '@attalabs/aeg-forge-state'
+import {
+  fetchForgeFactsByIssue,
+  parseRationaleDeps,
+  resolveDuplicateTasks,
+  resolvePriorTrancheArchival
+} from '@attalabs/aeg-forge-state'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { resolveTrustedPrincipals } from '../../lib/config'
@@ -280,13 +282,38 @@ function resolveGatePrincipals(): string[] | null {
 }
 
 /**
+ * The check-error lines for a prior-tranche archival resolution: one
+ * `severity:infra` error naming the failed read when `infraFailure` is set,
+ * none otherwise. A read that could not complete never passes the predicate.
+ */
+export function priorTrancheArchivalFindings(resolution: {
+  infraFailure: string | null
+}): Array<{ message: string; agent_recovery_prompt: string }> {
+  if (resolution.infraFailure === null) return []
+  return [
+    {
+      message: `dispatch-gate prior-tranche-archival ${resolution.infraFailure}`,
+      agent_recovery_prompt:
+        'Confirm `gh auth status` passes and the forge is reachable, then re-run this check. This is a read failure, not an archived or unarchived prior tranche.'
+    }
+  ]
+}
+
+/**
  * The gate's verdict on `input` plus the premise re-assertion, as the exit
  * code — the gate is skipped (its result unknown) when the Principal list
  * could not be read.
  */
-function exitWithGateVerdict(input: Omit<DispatchGateInput, 'principalAllowlist'>): never {
+function exitWithGateVerdict(
+  input: Omit<DispatchGateInput, 'principalAllowlist'>,
+  archival: { infraFailure: string | null } = { infraFailure: null }
+): never {
   const principalAllowlist = resolveGatePrincipals()
   let ready = true
+  for (const finding of priorTrancheArchivalFindings(archival)) {
+    emitCheckError({ schema: CHECK_SCHEMA_VERSION, check: CHECK_NAME, severity: 'error', ...finding })
+    ready = false
+  }
   if (principalAllowlist !== null) {
     const result = checkDispatchReadiness({ ...input, principalAllowlist })
     if (!result.ready) {
@@ -496,18 +523,21 @@ async function runTrancheMode(trancheSlug: string, taskId: string): Promise<void
   )
   const conflictsWith: DispatchConflictsWithFact[] = [...ownConflictFacts, ...siblingConflictFacts]
 
-  const priorTrancheArchival: DispatchPriorTrancheFact[] = []
+  const archival = await resolvePriorTrancheArchival(task.projects, trancheSlug, repo)
 
-  exitWithGateVerdict({
-    trancheSlug,
-    task,
-    issue,
-    issueRationalePass,
-    dependsOn,
-    conflictsWith,
-    priorTask: null,
-    priorTrancheArchival
-  })
+  exitWithGateVerdict(
+    {
+      trancheSlug,
+      task,
+      issue,
+      issueRationalePass,
+      dependsOn,
+      conflictsWith,
+      priorTask: null,
+      priorTrancheArchival: archival.facts
+    },
+    archival
+  )
 }
 
 /**
