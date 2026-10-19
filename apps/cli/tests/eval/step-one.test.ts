@@ -24,6 +24,7 @@ import {
   type StepOneRunSuite,
   stepOneRuntime,
   subscriptionQuotaOf,
+  traceOf,
   TRIAL_COMMIT_SCRIPT,
   unavailableReason,
   verifyTrialCommit,
@@ -33,9 +34,11 @@ import {
 import { LIVE_SUITE_LAYERS } from '../../src/lib/dev-review-eval/freeze-record'
 import {
   renderCase,
+  TOOL_CAPABILITIES,
   VINAYA_RENDERER_VERSION,
   type VinayaTrialRecord
 } from '../../src/lib/dev-review-eval/vinaya-renderer'
+import { renderClaudeStream, renderCodexStream } from './tool-selection-suite'
 import { developerReferenceCases, type GenericSuiteKey, referenceEntry } from './generic-suites'
 import { KNOWN_BAD_VARIANTS, referenceRecord } from './vinaya-trial-records'
 import { expectGradingSandboxDenies, proveGradingSandbox } from './grading-sandbox-proof'
@@ -870,5 +873,31 @@ describe('development-only step one', () => {
     )
     expect(requested.ok && requested.value.purpose).toBe('practice')
     expect(practice).toHaveLength(14)
+  })
+})
+
+describe('traceOf — a read-only trial records its shell as read_shell', () => {
+  const calls = [
+    { tool: 'Read', args: { file_path: 'src/a.ts' } },
+    { tool: 'shell', args: { command: 'git log -1' } }
+  ]
+
+  it('records a Claude Bash call and a Codex command_execution item as read_shell only for a read-only trial', async () => {
+    const claude = renderClaudeStream(calls)
+    expect(claude[1]).toContain('"name":"Bash"')
+    const codex = renderCodexStream(calls.filter((call) => call.tool === 'shell'))
+    expect(codex[0]).toContain('"type":"command_execution"')
+
+    expect((await traceOf('claude-code', claude, true)).map((call) => call.tool)).toEqual(['Read', 'read_shell'])
+    expect((await traceOf('codex', codex, true)).map((call) => call.tool)).toEqual(['read_shell'])
+    expect((await traceOf('claude-code', claude)).map((call) => call.tool)).toEqual(['Read', 'shell'])
+    expect((await traceOf('codex', codex, false)).map((call) => call.tool)).toEqual(['shell'])
+  })
+
+  it('keeps the command a read-only shell call ran, and maps it to the read-only capability', async () => {
+    const [call] = await traceOf('claude-code', renderClaudeStream([calls[1] as (typeof calls)[number]]), true)
+    expect(call).toEqual({ tool: 'read_shell', args: { command: 'git log -1' } })
+    expect(TOOL_CAPABILITIES.read_shell).toBe('read_commands')
+    expect(TOOL_CAPABILITIES.shell).toBe('run_commands')
   })
 })

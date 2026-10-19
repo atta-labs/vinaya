@@ -188,9 +188,20 @@ export function unavailableReason(prefix: string, error: unknown): string {
   return text.length <= UNAVAILABLE_REASON_LIMIT ? text : `${text.slice(0, UNAVAILABLE_REASON_LIMIT)}…`
 }
 
-async function traceOf(adapter: StepOneAdapter, lines: readonly string[]): Promise<TraceCall[]> {
+/**
+ * A trial's tool calls as the tool-selection suite traces them. A read-only
+ * trial's shell runs in a sandbox that cannot write, so its Claude `Bash` call
+ * and its Codex `command_execution` item, traced as `shell`, are recorded as
+ * `read_shell`.
+ */
+export async function traceOf(
+  adapter: StepOneAdapter,
+  lines: readonly string[],
+  readOnly = false
+): Promise<TraceCall[]> {
   const suite = await import('../../../tests/eval/tool-selection-suite')
-  return adapter === 'claude-code' ? suite.claudeTrace(lines) : suite.codexTrace(lines)
+  const trace = adapter === 'claude-code' ? suite.claudeTrace(lines) : suite.codexTrace(lines)
+  return readOnly ? trace.map((call) => (call.tool === 'shell' ? { ...call, tool: 'read_shell' } : call)) : trace
 }
 
 function performedEffects(
@@ -1276,13 +1287,17 @@ async function executeDeveloper(
   return { success: run.value.verdict === 'pass', ...processOf(input.suite), usage: run.usage }
 }
 
-/** Stages a reviewer trial's snapshot at `baseCommit`, dispatches `role` with `prompt`, and cleans up after `finish`. */
+/**
+ * Stages a reviewer trial's snapshot at `baseCommit`, dispatches `role` with
+ * `prompt`, read-only when `readOnly` is set, and cleans up after `finish`.
+ */
 async function runReviewerTrial<T>(
   input: Parameters<StepOneExecutor>[0],
   context: StepOneCommandContext,
   item: ReviewCase,
   prompt: string,
-  finish: (handle: Awaited<ReturnType<typeof dispatchRole>>, transcript: readonly string[]) => Promise<T> | T
+  finish: (handle: Awaited<ReturnType<typeof dispatchRole>>, transcript: readonly string[]) => Promise<T> | T,
+  readOnly = false
 ): Promise<T> {
   const parent = mkdtempSync(join(tmpdir(), 'step-one-reviewer-'))
   const staging = stageTrial({
@@ -1309,6 +1324,7 @@ async function runReviewerTrial<T>(
         promptFile: promptPath,
         cwd: staging.workspace,
         unattended: true,
+        ...(readOnly ? { readOnly: true } : {}),
         ...(context.models[input.adapter] === undefined ? {} : { model: context.models[input.adapter] }),
         observeStdoutLine: (line) => transcript.push(line)
       }
@@ -1551,37 +1567,46 @@ async function runReviewCase(
     suite.patchBytes(item),
     '```'
   ].join('\n\n')
-  return runReviewerTrial(trial, context, item, prompt, async (handle, transcript) => {
-    const trace = await traceOf(trial.adapter, transcript)
-    const record: VinayaTrialRecord = {
-      rendererVersion: input.rendererVersion,
-      input,
-      pullRequest: null,
-      measuredChange: null,
-      hiddenTests: null,
-      checks: null,
-      reviews: [
-        {
-          reviewId: `${input.caseId}.${trial.adapter}.${trial.attempt}.${item.role}`,
-          role: item.role,
-          binding: {
-            headSha: change.head,
-            baseSha: change.base,
-            briefHash: input.briefHash,
-            diffDigest: change.patchDigest
-          },
-          output: handle.reviewOutput?.raw ?? null
-        }
-      ],
-      readyForMerge: null,
-      developerTurnResult: null,
-      receipts: [],
-      trace: trace.map((call) => ({ tool: call.tool })),
-      // A reviewer holds no driver-run tool, so it performs no effect.
-      effects: recordedEffects(trace, {})
-    }
-    return { ok: true as const, record, usage: trialUsage(trial.adapter, handle, transcript) }
-  })
+  // A layer-`G` review trial runs read-only: the reviewer reads and runs
+  // commands, and its sandbox keeps every command from writing.
+  return runReviewerTrial(
+    trial,
+    context,
+    item,
+    prompt,
+    async (handle, transcript) => {
+      const trace = await traceOf(trial.adapter, transcript, true)
+      const record: VinayaTrialRecord = {
+        rendererVersion: input.rendererVersion,
+        input,
+        pullRequest: null,
+        measuredChange: null,
+        hiddenTests: null,
+        checks: null,
+        reviews: [
+          {
+            reviewId: `${input.caseId}.${trial.adapter}.${trial.attempt}.${item.role}`,
+            role: item.role,
+            binding: {
+              headSha: change.head,
+              baseSha: change.base,
+              briefHash: input.briefHash,
+              diffDigest: change.patchDigest
+            },
+            output: handle.reviewOutput?.raw ?? null
+          }
+        ],
+        readyForMerge: null,
+        developerTurnResult: null,
+        receipts: [],
+        trace: trace.map((call) => ({ tool: call.tool })),
+        // A reviewer holds no driver-run tool, so it performs no effect.
+        effects: recordedEffects(trace, {})
+      }
+      return { ok: true as const, record, usage: trialUsage(trial.adapter, handle, transcript) }
+    },
+    true
+  )
 }
 
 /**

@@ -257,6 +257,11 @@ A glob with no wildcard covers that path and everything under it; `*` matches wi
 | `O-decision` | The loop's ready-for-merge result — both reviewers approved on the current head and every required check green; none is `absent`, no Decision |
 | `O-effects` | Each governed effect, by idempotency key |
 
+`TOOL_CAPABILITIES` maps a shell command, traced as `shell`, to `run_commands`, and a read-only trial's shell command, traced as `read_shell`, to `read_commands`: a shell whose sandbox keeps it from writing. `read_shell` is one of the read-only built-ins every role may hold (`READ_ONLY_BUILTINS`, beside `Read`, `Grep` and `Glob`); `shell` is the Developer's alone, so a reviewer granted `read_commands` holds `read_shell`, and a review case granting `run_commands` is refused as unexpressible.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/vinaya-renderer.ts contains:read_shell: 'read_commands', -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/vinaya-renderer.ts contains:export const READ_ONLY_BUILTINS: readonly string[] = ['Read', 'Grep', 'Glob', 'read_shell'] -->
+
 `SEVERITY_BLOCKING` is read once from each role's severity scale by rank: a severity among the scale's two most severe ranks blocks (today `BLOCKER` and `MAJOR`; `CRITICAL` and `HIGH`), the rank rule the reviewer-quality suites apply. A fact the record does not carry is `unavailable`, one it records as missing is `absent`, and a fact of another kind of case is `inapplicable`; none is ever given a passing value.
 
 `VINAYA_RENDERER_VERSION` is the renderer's schema version and a SHA-256 over its mapping tables (the tool catalog's names among them), every render and extract function, and the whole text of every source file the mapping depends on (`MAPPING_SOURCE_PATHS`: the renderer, the neutral case and its validator, the review-result and turn-result parsers and schemas, the role grants, and the beyond-Surface reader with its helpers), so any change to the mapping changes it. Every process input and trial record carries the version it was made under, and `extractOutcomes` refuses one of another version as `stale_renderer`; every extraction returns the version it ran under.
@@ -272,7 +277,9 @@ A glob with no wildcard covers that path and everything under it; `*` matches wi
 <!-- AEG:CLAIM: apps/cli/tests/eval/recut-generic-cases.ts contains:export function recutDevelopment(git: Git = repositoryGit): Recut { -->
 
 - **Developer capability** — each case becomes a `change` case. The issue, pull request and brief are dropped. The scope's `in:` becomes the authorized scope's `in` and its `out:` the scope's `excluded`, each entry written as the paths the Surface entry covers (a trailing `/**` or `/*` dropped; a file path and `*` kept); `protected` is empty. Each required source becomes a relevant delivered document pinned by the SHA-256 of its content at the base commit; a web source, whose content the corpus does not hold, cannot be pinned, so it is not delivered, and the re-cut counts it in its summary. The base commit, the reference solution's digest and the hidden tests are kept: each fail-to-pass test by name, each pass-to-pass test by its name digest. The case grants the capabilities the suite's Developer holds.
-- **Code and security reviewer** — each case becomes a `review` case whose scope is the changed file. Its expected defect becomes a planted one, `blocking` by its severity's rank and `critical` exactly for a seeded critical or high security defect; its objectives are dropped. A historical or clean change keeps its head commit; a seeded patch's head is the commit that applies it to the base with a fixed author, committer and date (`SEEDED_COMMIT_IDENTITY`), made in a scratch object directory so it is reproducible and the repository gains nothing. A clean case's adjudicators are its two recorded adjudications. A case whose defect kind is `beyond-surface` or `objective-unmet` states a Vinaya Surface or objective, so it stays layer-`P` only, with no layer-`G` counterpart.
+- **Code and security reviewer** — each case becomes a `review` case whose scope is the changed file. Its expected defect becomes a planted one, `blocking` by its severity's rank and `critical` exactly for a seeded critical or high security defect; its objectives are dropped. A historical or clean change keeps its head commit; a seeded patch's head is the commit that applies it to the base with a fixed author, committer and date (`SEEDED_COMMIT_IDENTITY`), made in a scratch object directory so it is reproducible and the repository gains nothing. A clean case's adjudicators are its two recorded adjudications. A case whose defect kind is `beyond-surface` or `objective-unmet` states a Vinaya Surface or objective, so it stays layer-`P` only, with no layer-`G` counterpart. Every review case grants `read_file` and `read_commands` (`REVIEWER_CAPABILITIES`): a reviewer reads the change and runs commands that cannot write.
+
+<!-- AEG:CLAIM: apps/cli/tests/eval/recut-generic-cases.ts contains:export const REVIEWER_CAPABILITIES: readonly string[] = ['read_file', 'read_commands'] -->
 - **Source citation** — each development case becomes an `answer` case at the case file's repository commit, its scope empty, each source a delivered document pinned by the SHA-256 of its content with its own `relevant` flag, and `read_document` granted exactly when a source is delivered by retrieval tool.
 
 A development case's task statement is the one `generic-task-statements.json` holds for its id, committed verbatim; a missing statement refuses the re-cut. A held-out case's statement is generated by the script from the case's own fields — its withheld tests' count and its scope, or the file its change touches — leaving out any field that would carry a banned term. The held-out run needs the pinned digest of each layer-`P` held-out file, reads each case by field, writes only the derived files and prints only case counts, ids and digests; a derived case that is not valid and renderable is reported by id and digest only, and nothing is written.
@@ -486,7 +493,14 @@ does not carry, and each kind of case runs its own way:
   review-loop driver writes.
 - A `review` case dispatches the suite's reviewer on the change under review,
   the patch of the layer-`P` reviewer case of the same id, and binds its result
-  to the rendered brief's hash and that change's head.
+  to the rendered brief's hash and that change's head. The reviewer runs
+  read-only, with the read-only shell (`dispatchRole`'s `readOnly` option,
+  `apps/cli/specs/isolation.md` §4e): Claude Code holds `Read`, `Grep`, `Glob`
+  and `Bash` and loads no MCP server, its sandbox writing only the dispatch's
+  scratch directory, and Codex runs in its `read-only` sandbox mode. Its trace
+  records each Claude `Bash` call and Codex `command_execution` item as
+  `read_shell`, which the renderer maps to `read_commands`; a layer-`P`
+  reviewer trial runs without the option and still records them as `shell`.
 - An `answer` case runs as the source-citation suite's live trial runs, as a
   read-only turn (`readOnlyDeveloperTurn`): Claude Code holds only the served
   driver-run tools and Codex runs with a read-only sandbox. The Developer works
@@ -506,6 +520,7 @@ dispatch (`runVinayaProcess`), and the tests pass fixture reference and
 known-bad records, calling no model.
 
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/step-one.ts contains:export async function executeLayerGTrial( -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/step-one.ts contains:const trace = await traceOf(trial.adapter, transcript, true) -->
 
 Nothing a trial's workspace controls runs on the host. Every step that runs
 in or over it — the dependency install before the agent starts, staging and

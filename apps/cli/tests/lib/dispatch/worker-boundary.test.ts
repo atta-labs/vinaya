@@ -28,7 +28,9 @@ import {
   WORKER_ENV_ALLOWLIST_KEYS,
   readRealClaudeKeychainCredential,
   buildClaudeSandboxSettings,
+  buildReadOnlyClaudeSandboxSettings,
   resolveClaudeConfinement,
+  reuseStagedCodexHome,
   checkLinuxSandboxTools,
   CLAUDE_SANDBOX_ALLOWED_DOMAINS,
   CLAUDE_SANDBOX_EXCLUDED_COMMANDS,
@@ -1715,5 +1717,172 @@ describe('resolveGitFirstPath — O2', () => {
     expect(resolveGitFirstPath({}, '/Library/Developer/CommandLineTools')).toBe(
       '/Library/Developer/CommandLineTools/usr/bin'
     )
+  })
+})
+
+// --- A read-only dispatch: Claude writes only its scratch directory, Codex runs read-only ---
+
+describe('read-only confinement — the sandbox of a dispatch that may read and run, but not write', () => {
+  const DARWIN = { platform: 'darwin' as const, linuxTools: { available: false, missing: [] }, developerDir: null }
+  const LINUX = {
+    platform: 'linux' as const,
+    linuxTools: { available: true, missing: [] },
+    developerDir: null,
+    unixSocketFilterOptIn: true
+  }
+
+  function request(agent: string, overrides: Partial<ConfinementRequest> = {}): ConfinementRequest {
+    return {
+      role: 'code-reviewer',
+      agent,
+      worktreeDir: tempDir('vinaya-read-only-wt-'),
+      scratchDir: tempDir('vinaya-read-only-scratch-'),
+      allowedHosts: [...CLAUDE_SANDBOX_ALLOWED_DOMAINS],
+      extraWritableDirs: [tempDir('vinaya-read-only-handoff-')],
+      controllerOwnedDirs: [tempDir('vinaya-read-only-store-')],
+      ...overrides
+    }
+  }
+
+  /** The settings `buildClaudeSandboxSettings` wrote before the read-only option existed, spelled out key by key. */
+  function fullSettingsAsBefore(req: ConfinementRequest, allowAllUnixSockets: boolean) {
+    const realHome = realpathSync(homedir())
+    return {
+      sandbox: {
+        enabled: true,
+        failIfUnavailable: true,
+        allowUnsandboxedCommands: false,
+        excludedCommands: [],
+        network: {
+          allowedDomains: [...CLAUDE_SANDBOX_ALLOWED_DOMAINS],
+          ...(allowAllUnixSockets ? { allowAllUnixSockets: true } : {})
+        },
+        filesystem: {
+          denyRead: [devToolsSocketRoot()],
+          allowRead: [],
+          allowWrite: [req.worktreeDir, req.scratchDir, resolveBunInstallCacheDir(), ...(req.extraWritableDirs ?? [])],
+          denyWrite: [...(req.controllerOwnedDirs ?? [])]
+        },
+        credentials: {
+          files: [
+            join(realHome, '.ssh'),
+            join(realHome, '.aws'),
+            join(realHome, '.config', 'gh', 'hosts.yml'),
+            join(realHome, '.codex', 'auth.json'),
+            join(realHome, '.claude', '.credentials.json')
+          ].map((path) => ({ path, mode: 'deny' }))
+        }
+      },
+      permissionsDeny: []
+    }
+  }
+
+  /** The `config.toml` `buildCodexSandboxConfigToml` wrote before the read-only option existed. */
+  function codexConfigAsBefore(hosts: readonly string[]): string {
+    return [
+      'sandbox_mode = "workspace-write"',
+      'web_search = "live"',
+      '',
+      '[sandbox_workspace_write]',
+      'network_access = true',
+      '',
+      '[features.network_proxy]',
+      'enabled = true',
+      '',
+      '[features.network_proxy.domains]',
+      ...[...new Set([...hosts, ...DOCUMENTATION_HOSTS])].map((host) => `"${host}" = "allow"`),
+      ''
+    ].join('\n')
+  }
+
+  it('buildReadOnlyClaudeSandboxSettings grants writes on exactly the scratch directory and runs no command unsandboxed', () => {
+    const scratchDir = tempDir('vinaya-read-only-builder-')
+    const settings = buildReadOnlyClaudeSandboxSettings(scratchDir)
+    expect(settings.sandbox.filesystem.allowWrite).toEqual([scratchDir])
+    expect(settings.sandbox.allowUnsandboxedCommands).toBe(false)
+    expect(settings.sandbox.failIfUnavailable).toBe(true)
+    expect(settings.sandbox.excludedCommands).toEqual([])
+    expect(settings.sandbox.filesystem.denyWrite).toBeUndefined()
+    expect(resolveBunInstallCacheDir().length).toBeGreaterThan(0)
+    expect(settings.sandbox.filesystem.allowWrite).not.toContain(resolveBunInstallCacheDir())
+  })
+
+  it('canonicalizes the scratch directory it is given, as the full builder does', () => {
+    const scratchDir = tempDir('vinaya-read-only-alias-')
+    const alias = join(tempDir('vinaya-read-only-alias-parent-'), 'scratch-link')
+    symlinkSync(scratchDir, alias)
+    expect(buildReadOnlyClaudeSandboxSettings(alias).sandbox.filesystem.allowWrite).toEqual([scratchDir])
+  })
+
+  for (const deps of [DARWIN, LINUX]) {
+    it(`a read-only request resolves on ${deps.platform} to the read-only settings — no worktree, no bun cache, no extra directory`, () => {
+      const req = request('claude', { readOnly: true })
+      const result = resolveClaudeConfinement(req, deps)
+      expect(result.confined).toBe(true)
+      if (!result.confined) return
+      expect(result.settings.sandbox.filesystem.allowWrite).toEqual([req.scratchDir])
+      expect(result.settings.sandbox.allowUnsandboxedCommands).toBe(false)
+      expect(JSON.stringify(result.settings)).toBe(
+        JSON.stringify(
+          buildReadOnlyClaudeSandboxSettings(req.scratchDir, { allowAllUnixSockets: deps.platform === 'linux' })
+        )
+      )
+    })
+
+    it(`with the option off or absent, ${deps.platform} resolves byte-for-byte to the full settings it resolved before`, () => {
+      const req = request('claude')
+      const expected = JSON.stringify(fullSettingsAsBefore(req, deps.platform === 'linux'))
+      for (const variant of [req, { ...req, readOnly: false }]) {
+        const result = resolveClaudeConfinement(variant, deps)
+        expect(result.confined).toBe(true)
+        if (result.confined) expect(JSON.stringify(result.settings)).toBe(expected)
+        expect(
+          JSON.stringify(buildClaudeSandboxSettings(variant, { allowAllUnixSockets: deps.platform === 'linux' }))
+        ).toBe(expected)
+      }
+    })
+  }
+
+  it('Codex: a read-only config.toml sets sandbox_mode to read-only and is otherwise the full config', () => {
+    const req = request('codex', { allowedHosts: ['github.com'] })
+    const readOnly = buildCodexSandboxConfigToml({ ...req, readOnly: true })
+    expect(readOnly.split('\n')[0]).toBe('sandbox_mode = "read-only"')
+    expect(readOnly).not.toContain('workspace-write"')
+    expect(readOnly).not.toContain('writable_roots')
+    expect(readOnly.split('\n').slice(1)).toEqual(codexConfigAsBefore(['github.com']).split('\n').slice(1))
+  })
+
+  it('Codex: with the option off or absent, the config.toml is byte-for-byte the workspace-write config', () => {
+    const req = request('codex', { allowedHosts: ['github.com', 'registry.npmjs.org'] })
+    for (const variant of [req, { ...req, readOnly: false }]) {
+      expect(buildCodexSandboxConfigToml(variant)).toBe(codexConfigAsBefore(['github.com', 'registry.npmjs.org']))
+    }
+    const resolved = resolveCodexConfinement(req, DARWIN)
+    expect(resolved.ok && resolved.configToml).toBe(codexConfigAsBefore(['github.com', 'registry.npmjs.org']))
+  })
+
+  it('Codex: the staged CODEX_HOME carries the read-only config.toml, and a resumed turn reuses that same file', () => {
+    const realHome = tempDir('vinaya-read-only-codex-op-')
+    mkdirSync(join(realHome, '.codex'), { recursive: true })
+    writeFileSync(join(realHome, '.codex', 'auth.json'), '{"tokens":{"access_token":"operator-token"}}')
+    const codexHome = join(tempDir('vinaya-read-only-codex-home-'), 'codex-home')
+    const req = request('codex', { readOnly: true })
+    const configToml = buildCodexSandboxConfigToml(req)
+    const resolved = resolveCodexConfinement(req, DARWIN)
+    expect(resolved.ok && resolved.configToml).toBe(configToml)
+
+    // The first turn stages the home; a resumed turn finds it staged and reuses it.
+    expect(reuseStagedCodexHome({ realHome, codexHome })).toBeNull()
+    const staged = stageCodexPolicyHome({
+      targetDir: codexHome,
+      realHome,
+      execpolicyRules: '',
+      sandboxConfigToml: configToml
+    })
+    expect(staged?.codexHome).toBe(codexHome)
+    expect(reuseStagedCodexHome({ realHome, codexHome })).toBe(codexHome)
+    const read = readFileSync(join(codexHome, 'config.toml'), 'utf8')
+    expect(read).toBe(configToml)
+    expect(read.split('\n')[0]).toBe('sandbox_mode = "read-only"')
   })
 })

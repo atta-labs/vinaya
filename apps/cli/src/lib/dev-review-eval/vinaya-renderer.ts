@@ -54,8 +54,10 @@ import type { CheckResult, Fact, NeutralOutcomes, Review, SourceReceipt, TestRes
  * The one table from a trace's tool name to the neutral capability it
  * exercises. A trace names a driver-run tool by its catalog name, a shell
  * command as `shell`, and any other built-in by the agent's own name for it —
- * the convention the tool-selection suite records traces in. A traced tool
- * missing from this table makes the capability outcome `invalid`.
+ * the convention the tool-selection suite records traces in. A read-only
+ * trial's shell command, which its sandbox keeps from writing, is recorded as
+ * `read_shell` instead. A traced tool missing from this table makes the
+ * capability outcome `invalid`.
  */
 export const TOOL_CAPABILITIES: Readonly<Record<string, string>> = {
   Read: 'read_file',
@@ -64,6 +66,7 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, string>> = {
   Edit: 'write_file',
   Write: 'write_file',
   shell: 'run_commands',
+  read_shell: 'read_commands',
   fetch_documentation: 'read_document',
   read_source: 'read_document',
   run_checks: 'run_checks',
@@ -93,8 +96,11 @@ export const SEVERITY_BLOCKING: Readonly<Record<ReviewerRole, Readonly<Record<st
   })
 ) as Record<ReviewerRole, Record<string, boolean>>
 
-/** The agent built-ins a reviewer may hold: reviewers read the change and never write or run anything. */
-export const READ_ONLY_BUILTINS: readonly string[] = ['Read', 'Grep', 'Glob']
+/**
+ * The agent built-ins every role may hold: reviewers read the change and run
+ * only commands their sandbox keeps from writing, and never write anything.
+ */
+export const READ_ONLY_BUILTINS: readonly string[] = ['Read', 'Grep', 'Glob', 'read_shell']
 
 /** The roles the Vinaya process dispatches for each kind of case, by their name in the role grants. */
 export const ROLES_BY_KIND: Readonly<Record<NeutralCaseKind, readonly GrantedRole[]>> = {

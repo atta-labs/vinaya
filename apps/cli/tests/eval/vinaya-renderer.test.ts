@@ -134,6 +134,21 @@ describe('render', () => {
     }
   })
 
+  it('grants a reviewer the read-only shell for read_commands, and never the shell that writes', () => {
+    expect(TOOL_CAPABILITIES.read_shell).toBe('read_commands')
+    expect(READ_ONLY_BUILTINS).toContain('read_shell')
+    expect(READ_ONLY_BUILTINS).not.toContain('shell')
+    const review = renderOrThrow(withCase(reviewEntry, { grantedCapabilities: ['read_file', 'read_commands'] }))
+    expect(review.roleToolGrants).toEqual({
+      'code-reviewer': ['Glob', 'Grep', 'Read', 'read_shell'],
+      security: ['Glob', 'Grep', 'Read', 'read_shell']
+    })
+    // A reviewer granted `run_commands` holds no tool for it: only the Developer may hold `shell`.
+    expect(refusalOf(withCase(reviewEntry, { grantedCapabilities: ['read_file', 'run_commands'] })).field).toBe(
+      'grantedCapabilities.1'
+    )
+  })
+
   it('pins the case, its intent and the renderer version in the process input', () => {
     const input = renderOrThrow(reviewEntry.case)
     expect(input.rendererVersion).toBe(VINAYA_RENDERER_VERSION)
@@ -417,6 +432,10 @@ describe('extract', () => {
       }
     })
     expect(outcomesOf({ ...record, trace: [{ tool: 'WebFetch' }] })['O-capability'].status).toBe('invalid')
+    expect(outcomesOf({ ...record, trace: [{ tool: 'Read' }, { tool: 'read_shell' }] })['O-capability']).toEqual({
+      status: 'known',
+      value: { used: ['read_file', 'read_commands'] }
+    })
   })
 
   it('reads the ready-for-merge result as the decision, and its absence as no decision', () => {

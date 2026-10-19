@@ -961,6 +961,15 @@ export type ConfinementRequest = {
    * writable roots would reach them (`controllerStoreReachableBy`).
    */
   readonly controllerOwnedDirs?: readonly string[]
+  /**
+   * A read-only dispatch: its commands may read and run, but write nothing
+   * outside the dispatch's own scratch directory. Claude's sandbox then
+   * grants writes on the scratch directory alone
+   * (`buildReadOnlyClaudeSandboxSettings`) and Codex runs in its own
+   * `read-only` sandbox mode (`buildCodexSandboxConfigToml`). Absent reads
+   * as off.
+   */
+  readonly readOnly?: boolean
 }
 
 export type ClaudeSandboxSettings = {
@@ -1121,21 +1130,61 @@ export function buildClaudeSandboxSettings(
   request: ConfinementRequest,
   options: { readonly allowAllUnixSockets?: boolean } = {}
 ): ClaudeSandboxSettings {
+  prepareClaudeSandbox()
+  const worktreeDir = realOrSelf(request.worktreeDir)
+  const scratchDir = realOrSelf(request.scratchDir)
+  return claudeSandboxSettingsWith(
+    [worktreeDir, scratchDir, resolveBunInstallCacheDir(), ...(request.extraWritableDirs ?? []).map(realOrSelf)],
+    (request.controllerOwnedDirs ?? []).map(realOrSelf),
+    options
+  )
+}
+
+/**
+ * The sandbox settings of a read-only Claude dispatch: the same block
+ * `buildClaudeSandboxSettings` writes, with `filesystem.allowWrite` exactly
+ * the dispatch's own scratch directory. The scratch directory is the
+ * child's `TMPDIR` and holds the dispatch's own MCP configuration and turn
+ * files, so it stays writable. The worktree is not granted, because it is
+ * the code under review; the bun install cache is not granted, because the
+ * real loop's installs and the evaluation's grading share it; and no
+ * hand-off directory is granted, because a read-only dispatch writes no
+ * result file. Commands still run inside the sandbox only
+ * (`allowUnsandboxedCommands: false`), so none of them can write anywhere
+ * else.
+ */
+export function buildReadOnlyClaudeSandboxSettings(
+  scratchDir: string,
+  options: { readonly allowAllUnixSockets?: boolean } = {}
+): ClaudeSandboxSettings {
+  prepareClaudeSandbox()
+  return claudeSandboxSettingsWith([realOrSelf(scratchDir)], [], options)
+}
+
+/** A path's real path, or the path itself when it cannot be resolved. */
+function realOrSelf(p: string): string {
+  try {
+    return realpathSync(p)
+  } catch {
+    return p
+  }
+}
+
+function prepareClaudeSandbox(): void {
   // The denied parent must exist before any Claude Bash sandbox starts. A
   // missing denyRead path can be skipped by the runtime at command launch;
   // creating it only when a later Developer starts its host leaves a race.
   mkdirSync(devToolsSocketRoot(), { recursive: true, mode: 0o700 })
   chmodSync(devToolsSocketRoot(), 0o700)
-  const real = (p: string): string => {
-    try {
-      return realpathSync(p)
-    } catch {
-      return p
-    }
-  }
-  const worktreeDir = real(request.worktreeDir)
-  const scratchDir = real(request.scratchDir)
-  const realHome = real(homedir())
+}
+
+/** The Claude sandbox block over the given write grant and write-deny list, every path already real. */
+function claudeSandboxSettingsWith(
+  allowWrite: string[],
+  denyWrite: string[],
+  options: { readonly allowAllUnixSockets?: boolean }
+): ClaudeSandboxSettings {
+  const realHome = realOrSelf(homedir())
   return {
     sandbox: {
       enabled: true,
@@ -1151,15 +1200,8 @@ export function buildClaudeSandboxSettings(
       filesystem: {
         denyRead: [devToolsSocketRoot()],
         allowRead: [],
-        allowWrite: [
-          worktreeDir,
-          scratchDir,
-          resolveBunInstallCacheDir(),
-          ...(request.extraWritableDirs ?? []).map(real)
-        ],
-        ...((request.controllerOwnedDirs ?? []).length > 0
-          ? { denyWrite: (request.controllerOwnedDirs ?? []).map(real) }
-          : {})
+        allowWrite,
+        ...(denyWrite.length > 0 ? { denyWrite } : {})
       },
       credentials: { files: claudeCredentialDenyFiles(realHome) }
     },
@@ -1205,6 +1247,16 @@ export function realConfinementPlatformDeps(): ConfinementPlatformDeps {
   }
 }
 
+/** A request's sandbox settings: the read-only block for a read-only request, the full one otherwise. */
+function claudeSettingsFor(
+  request: ConfinementRequest,
+  options: { readonly allowAllUnixSockets?: boolean }
+): ClaudeSandboxSettings {
+  return request.readOnly === true
+    ? buildReadOnlyClaudeSandboxSettings(request.scratchDir, options)
+    : buildClaudeSandboxSettings(request, options)
+}
+
 /**
  * O1/O2/O5 — the Claude half of the provider-neutral confinement interface:
  * takes a role, its task worktree, its scratch directory and the hosts it
@@ -1230,7 +1282,7 @@ export function resolveClaudeConfinement(
     return {
       ok: true,
       confined: true,
-      settings: buildClaudeSandboxSettings(request),
+      settings: claudeSettingsFor(request, {}),
       scratchDir: request.scratchDir,
       pathOverride,
       unixSocketFilterOff: false
@@ -1242,7 +1294,7 @@ export function resolveClaudeConfinement(
       return {
         ok: true,
         confined: true,
-        settings: buildClaudeSandboxSettings(request, { allowAllUnixSockets: unixSocketFilterOff }),
+        settings: claudeSettingsFor(request, { allowAllUnixSockets: unixSocketFilterOff }),
         scratchDir: request.scratchDir,
         pathOverride,
         unixSocketFilterOff
@@ -1640,7 +1692,10 @@ function tomlString(value: string): string {
  *
  * - `sandbox_mode = "workspace-write"` — the top-level config key `-s,
  *   --sandbox` sets per-invocation; this is its config.toml equivalent, the
- *   only route a resumed run has to it.
+ *   only route a resumed run has to it. A read-only request
+ *   (`ConfinementRequest.readOnly`) writes `sandbox_mode = "read-only"`
+ *   instead, so a resumed turn, which accepts no `--sandbox` flag, runs
+ *   read-only as its first turn did; every other line is the same.
  * - `[sandbox_workspace_write] network_access = true` — confirmed as the
  *   ONLY network-related field `SandboxWorkspaceWrite` carries (the other
  *   three are `writable_roots`/`exclude_tmpdir_env_var`/`exclude_slash_tmp`,
@@ -1697,7 +1752,7 @@ export function buildCodexSandboxConfigToml(request: ConfinementRequest): string
   const hosts = [...new Set([...request.allowedHosts, ...DOCUMENTATION_HOSTS])]
   const domainLines = hosts.map((host) => `${tomlString(host)} = "allow"`)
   return [
-    'sandbox_mode = "workspace-write"',
+    request.readOnly === true ? 'sandbox_mode = "read-only"' : 'sandbox_mode = "workspace-write"',
     'web_search = "live"',
     '',
     '[sandbox_workspace_write]',

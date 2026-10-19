@@ -66,6 +66,11 @@ import {
   buildWriteAccessScope,
   writeAccessHookScript,
   addCodexWritableDirs,
+  dispatchBaseArgs,
+  codexStagedConfigName,
+  readOnlyClaudeArgs,
+  READ_ONLY_CLAUDE_TOOLS,
+  NO_SERVER_MCP_CONFIG_BODY,
   PERMISSION_POLICY_VERSION,
   codexSpawnEnvExtras,
   missingSubscriptionLoginReason,
@@ -76,7 +81,13 @@ import {
   developerWrittenTextFromVendorOutput,
   type DispatchTeeRecoveryDeps
 } from '../../src/lib/dispatch.js'
-import { addedDiffLines, agentConfigProtectedSubpaths, findCredentialPatterns } from '../../src/lib/worker-boundary.js'
+import {
+  addedDiffLines,
+  agentConfigProtectedSubpaths,
+  findCredentialPatterns,
+  resolveBunInstallCacheDir
+} from '../../src/lib/worker-boundary.js'
+import { FAKE_CLAUDE_PROBE_ANSWER } from './dispatch/fake-sandbox-probe.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -655,6 +666,220 @@ describe('addCodexWritableDirs — reviewer hand-off directories', () => {
       '-'
     ])
   })
+})
+
+describe('a read-only dispatch — its argv, beside the unchanged argv of every other dispatch', () => {
+  const CLAUDE_FIRST = ['-p', '--verbose', '--output-format', 'stream-json']
+  const CODEX_FIRST = [
+    'exec',
+    '--sandbox',
+    'workspace-write',
+    '--strict-config',
+    '--dangerously-bypass-hook-trust',
+    '--skip-git-repo-check'
+  ]
+  const CODEX_RESUME = [
+    'exec',
+    'resume',
+    'thread-1',
+    '--strict-config',
+    '--dangerously-bypass-hook-trust',
+    '--skip-git-repo-check'
+  ]
+
+  it('Claude holds only Read, Grep, Glob and Bash, and loads an MCP configuration that names no server', () => {
+    expect(READ_ONLY_CLAUDE_TOOLS).toEqual(['Read', 'Grep', 'Glob', 'Bash'])
+    expect(readOnlyClaudeArgs('/scratch/read-only.mcp.json')).toEqual([
+      '--tools',
+      'Read,Grep,Glob,Bash',
+      '--strict-mcp-config',
+      '--mcp-config',
+      '/scratch/read-only.mcp.json'
+    ])
+    expect(JSON.parse(NO_SERVER_MCP_CONFIG_BODY)).toEqual({ mcpServers: {} })
+    expect(readOnlyClaudeArgs('/x')).not.toContain('--allowedTools')
+  })
+
+  it('Claude: the base argv is the same with the option on or off, first turn and resume — the read-only flags ride separately', () => {
+    for (const readOnly of [false, true]) {
+      expect(dispatchBaseArgs('claude', {}, ['/tmp/ignored'], readOnly)).toEqual(CLAUDE_FIRST)
+      expect(dispatchBaseArgs('claude', { model: 'opus' }, [], readOnly)).toEqual([...CLAUDE_FIRST, '--model', 'opus'])
+      expect(dispatchBaseArgs('claude', { resumeId: 'sess-1' }, [], readOnly)).toEqual([
+        '-p',
+        '-r',
+        'sess-1',
+        '--verbose',
+        '--output-format',
+        'stream-json'
+      ])
+    }
+  })
+
+  it('Codex read-only: the first turn runs --sandbox read-only and adds no writable root', () => {
+    const worktree = tempDir('vinaya-read-only-codex-wt-')
+    const args = dispatchBaseArgs(
+      'codex',
+      { developerFiles: [join(worktree, 'f.json')] },
+      [worktree, resolveBunInstallCacheDir()],
+      true
+    )
+    expect(args).toEqual([
+      'exec',
+      '--sandbox',
+      'read-only',
+      '--strict-config',
+      '--dangerously-bypass-hook-trust',
+      '--skip-git-repo-check',
+      '--json',
+      '-'
+    ])
+    expect(args).not.toContain('workspace-write')
+    expect(args).not.toContain('--add-dir')
+  })
+
+  it('Codex read-only: a resumed turn passes no --sandbox and no writable root, reading its mode from the staged config.toml', () => {
+    const dir = tempDir('vinaya-read-only-codex-resume-')
+    const args = dispatchBaseArgs('codex', { resumeId: 'thread-1', model: 'gpt-x' }, [dir], true)
+    expect(args).toEqual([...CODEX_RESUME, '--model', 'gpt-x', '--json', '-'])
+    expect(args).not.toContain('--sandbox')
+    expect(args).not.toContain('--config')
+    // The first turn and the resumed turn stage and read one home, kept apart from a writable dispatch's.
+    expect(codexStagedConfigName('code-reviewer', 'codex', true)).toBe('code-reviewer-codex-read-only-config')
+    expect(codexStagedConfigName('code-reviewer', 'codex', true)).not.toBe(
+      codexStagedConfigName('code-reviewer', 'codex', false)
+    )
+  })
+
+  it('Codex with the option off: first turn and resume are byte-for-byte the argv dispatched before it existed', () => {
+    const a = tempDir('vinaya-read-only-off-a-')
+    const b = tempDir('vinaya-read-only-off-b-')
+    const fileDir = tempDir('vinaya-read-only-off-files-')
+    expect(dispatchBaseArgs('codex', {}, [a, b], false)).toEqual([
+      ...CODEX_FIRST,
+      '--add-dir',
+      a,
+      '--add-dir',
+      b,
+      '--json',
+      '-'
+    ])
+    expect(dispatchBaseArgs('codex', { model: 'gpt-x' }, [], false)).toEqual([
+      ...CODEX_FIRST,
+      '--model',
+      'gpt-x',
+      '--json',
+      '-'
+    ])
+    expect(
+      dispatchBaseArgs('codex', { resumeId: 'thread-1', developerFiles: [join(fileDir, 'turn.json')] }, [a], false)
+    ).toEqual([
+      ...CODEX_RESUME,
+      '--config',
+      `sandbox_workspace_write.writable_roots=${JSON.stringify([a, fileDir])}`,
+      '--json',
+      '-'
+    ])
+    expect(codexStagedConfigName('developer', 'codex', false)).toBe('developer-codex-config')
+  })
+
+  /**
+   * One unattended Claude reviewer dispatch through `dispatchRole`, in a child
+   * process with a scratch `HOME`; the fake `claude` answers the sandbox probe
+   * and records the real dispatch's argv, settings file and MCP configuration.
+   */
+  function reviewerDispatch(readOnly: boolean): {
+    cwd: string
+    argv: string[]
+    settings: { sandbox: { allowUnsandboxedCommands: boolean; filesystem: { allowWrite: string[] } } }
+    mcp: string | null
+    bunCache: string
+  } {
+    const home = tempDir('vinaya-read-only-home-')
+    const cwd = tempDir('vinaya-read-only-cwd-')
+    const binDir = tempDir('vinaya-read-only-bin-')
+    const out = tempDir('vinaya-read-only-out-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, 'review')
+    for (const tool of ['bwrap', 'socat']) writeFakeBinary(binDir, tool, '#!/bin/sh\nexit 0\n')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      [
+        '#!/bin/sh',
+        FAKE_CLAUDE_PROBE_ANSWER.trimEnd(),
+        `for a in "$@"; do printf '%s\\n' "$a"; done > "${out}/argv"`,
+        'prev=""',
+        'for a in "$@"; do',
+        `  if [ "$prev" = "--settings" ]; then cp "$a" "${out}/settings.json"; fi`,
+        `  if [ "$prev" = "--mcp-config" ]; then cp "$a" "${out}/mcp.json"; fi`,
+        '  prev="$a"',
+        'done',
+        'cat > /dev/null',
+        `printf '%s\\n' '{"type":"result","session_id":"sess-r","usage":{"input_tokens":1,"output_tokens":1}}'`,
+        ''
+      ].join('\n')
+    )
+    const script = join(cwd, 'dispatch-read-only.ts')
+    writeFileSync(
+      script,
+      [
+        `import { dispatchRole } from ${JSON.stringify(join(CLI_ROOT, 'src', 'lib', 'dispatch.ts'))}`,
+        "await dispatchRole('code-reviewer', 'claude', 'review', {",
+        `  promptFile: ${JSON.stringify(promptFile)},`,
+        `  cwd: ${JSON.stringify(cwd)},`,
+        '  unattended: true,',
+        ...(readOnly ? ['  readOnly: true,'] : []),
+        '})'
+      ].join('\n')
+    )
+    const env = stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` })
+    runScriptWithBudget(script, cwd, env)
+    return {
+      cwd,
+      // The cwd holds no package.json, so `bun pm cache` fails there and the
+      // child resolves the documented default under its own HOME.
+      bunCache: join(home, '.bun', 'install', 'cache'),
+      argv: readArgv(join(out, 'argv')),
+      settings: JSON.parse(readFileSync(join(out, 'settings.json'), 'utf8')),
+      mcp: existsSync(join(out, 'mcp.json')) ? readFileSync(join(out, 'mcp.json'), 'utf8') : null
+    }
+  }
+
+  it.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')(
+    'an unattended Claude reviewer dispatched read-only passes --tools and strict MCP, and its sandbox writes only the scratch directory',
+    () => {
+      const run = reviewerDispatch(true)
+      const tools = run.argv.indexOf('--tools')
+      expect(run.argv[tools + 1]).toBe('Read,Grep,Glob,Bash')
+      expect(run.argv).toContain('--strict-mcp-config')
+      expect(run.argv).not.toContain('--allowedTools')
+      expect(run.argv).not.toContain('--permission-mode')
+      expect(run.argv).not.toContain('--setting-sources')
+      expect(run.mcp).not.toBeNull()
+      expect(JSON.parse(run.mcp as string)).toEqual({ mcpServers: {} })
+      expect(run.settings.sandbox.allowUnsandboxedCommands).toBe(false)
+      const allowWrite = run.settings.sandbox.filesystem.allowWrite
+      expect(allowWrite).toHaveLength(1)
+      expect(allowWrite[0]).toContain('vinaya-claude-sandbox-')
+      expect(allowWrite).not.toContain(run.cwd)
+      expect(allowWrite).not.toContain(run.bunCache)
+    }
+  )
+
+  it.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')(
+    'an unattended Claude reviewer dispatched without the option keeps the argv and writable roots it had before',
+    () => {
+      const run = reviewerDispatch(false)
+      expect(withoutTurnResultFlag(run.argv.slice(0, -2), '--json-schema')).toEqual(CLAUDE_FIRST)
+      expect(run.argv.at(-2)).toBe('--settings')
+      expect(run.mcp).toBeNull()
+      const allowWrite = run.settings.sandbox.filesystem.allowWrite
+      expect(allowWrite[0]).toBe(run.cwd)
+      expect(allowWrite[1]).toContain('vinaya-claude-sandbox-')
+      expect(allowWrite[2]).toBe(run.bunCache)
+      expect(allowWrite).toHaveLength(3)
+    }
+  )
 })
 
 describe('dispatchRole — a crashing child', () => {

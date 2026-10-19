@@ -358,6 +358,19 @@ export type DispatchOpts = {
    * which registers no dev-tools server and changes no argv.
    */
   devToolsBridge?: { command: string; args: readonly string[] }
+  /**
+   * A read-only dispatch: the agent reads the worktree and runs commands, and
+   * its own sandbox keeps every command from writing outside the dispatch's
+   * scratch directory. Honored on an unattended dispatch, the only kind that
+   * runs inside a vendor sandbox. Claude then holds only the built-ins
+   * `READ_ONLY_CLAUDE_TOOLS` (`--tools`), loads an MCP configuration that
+   * names no server (`--strict-mcp-config`, so a dev-tools bridge is not
+   * registered), and its sandbox writes only the scratch directory
+   * (`buildReadOnlyClaudeSandboxSettings`); Codex runs `--sandbox read-only`
+   * on its first turn and, through its staged `config.toml`, on every resumed
+   * turn, with no writable root added. Absent or `false` changes nothing.
+   */
+  readOnly?: boolean
 }
 
 /**
@@ -509,6 +522,59 @@ export function addCodexWritableDirs(
     ? ['--config', `sandbox_workspace_write.writable_roots=${JSON.stringify(uniqueDirs)}`]
     : uniqueDirs.flatMap((dir) => ['--add-dir', dir])
   return [...args.slice(0, insertionIndex), ...writableArgs, ...args.slice(insertionIndex)]
+}
+
+/** The built-in tools a read-only Claude dispatch holds: no `Edit` and no `Write`. */
+export const READ_ONLY_CLAUDE_TOOLS: readonly string[] = ['Read', 'Grep', 'Glob', 'Bash']
+
+/** An MCP configuration that names no server, the one a read-only Claude dispatch loads. */
+export const NO_SERVER_MCP_CONFIG_BODY = `${JSON.stringify({ mcpServers: {} }, null, 2)}\n`
+
+/**
+ * The Claude flags of a read-only dispatch: `--tools` removes every built-in
+ * outside `READ_ONLY_CLAUDE_TOOLS`, and `--strict-mcp-config` with
+ * `mcpConfigPath` (holding `NO_SERVER_MCP_CONFIG_BODY`) loads no MCP server,
+ * the worktree's committed `.mcp.json` included.
+ */
+export function readOnlyClaudeArgs(mcpConfigPath: string): string[] {
+  return ['--tools', READ_ONLY_CLAUDE_TOOLS.join(','), '--strict-mcp-config', '--mcp-config', mcpConfigPath]
+}
+
+/**
+ * The argv every dispatch starts from, before its turn-result, MCP and
+ * settings flags: the vendor's first-turn or resume argv, plus, for Codex,
+ * the writable roots `addCodexWritableDirs` adds. A read-only Codex dispatch
+ * adds no writable root and replaces `--sandbox workspace-write` with
+ * `--sandbox read-only` on its first turn; a resumed turn takes no
+ * `--sandbox` flag and reads the mode from the staged `config.toml`.
+ */
+export function dispatchBaseArgs(
+  agent: AgentVendor,
+  opts: Pick<DispatchOpts, 'resumeId' | 'model' | 'developerFiles'>,
+  codexWritableDirs: readonly string[],
+  readOnly: boolean
+): string[] {
+  const vendor = VENDOR_TABLE[agent]
+  const vendorArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
+  if (agent !== 'codex') return vendorArgs
+  if (readOnly) {
+    const sandboxIndex = vendorArgs.indexOf('--sandbox')
+    return sandboxIndex === -1
+      ? vendorArgs
+      : [...vendorArgs.slice(0, sandboxIndex + 1), 'read-only', ...vendorArgs.slice(sandboxIndex + 2)]
+  }
+  return addCodexWritableDirs(vendorArgs, codexWritableDirs, opts.resumeId !== undefined, opts.developerFiles ?? [])
+}
+
+/**
+ * The file, under the task's `sessions` area, that holds an unattended Codex
+ * dispatch's staged `CODEX_HOME`, reused by every later turn of the same role
+ * and agent. A read-only dispatch stages its own, so a resumed read-only turn
+ * reads the same read-only `config.toml` its first turn staged, and never a
+ * home staged for a writable dispatch.
+ */
+export function codexStagedConfigName(role: Role, agent: AgentVendor, readOnly: boolean): string {
+  return readOnly ? `${role}-${agent}-read-only-config` : `${role}-${agent}-config`
 }
 
 /**
@@ -3771,7 +3837,7 @@ export type HostSandboxProbeOutcome =
 export function claudeConfinementRequest(
   role: Role,
   agent: AgentVendor,
-  opts: Pick<DispatchOpts, 'cwd' | 'extraWritableDirs'>,
+  opts: Pick<DispatchOpts, 'cwd' | 'extraWritableDirs' | 'readOnly'>,
   scratchDir: string,
   controllerOwnedDirs: readonly string[] = []
 ): ConfinementRequest {
@@ -3782,7 +3848,8 @@ export function claudeConfinementRequest(
     scratchDir,
     allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS,
     extraWritableDirs: opts.extraWritableDirs ?? [],
-    ...(controllerOwnedDirs.length > 0 ? { controllerOwnedDirs } : {})
+    ...(controllerOwnedDirs.length > 0 ? { controllerOwnedDirs } : {}),
+    ...(opts.readOnly === true ? { readOnly: true } : {})
   }
 }
 
@@ -4244,21 +4311,19 @@ export async function dispatchRole(
   // own metadata, now closed for bun's cache too, only when this dispatch
   // actually enforces Codex's own sandbox.
   const codexBunCacheDir = codexRequireIsolation ? resolveBunInstallCacheDir() : null
-  const vendorArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
-  const baseArgs =
-    agent === 'codex'
-      ? addCodexWritableDirs(
-          vendorArgs,
-          [
-            ...(opts.extraWritableDirs ?? []),
-            ...(codexScratchDir !== null ? [codexScratchDir] : []),
-            ...(codexGitCommonDir !== null ? [codexGitCommonDir] : []),
-            ...(codexBunCacheDir !== null ? [codexBunCacheDir] : [])
-          ],
-          opts.resumeId !== undefined,
-          opts.developerFiles ?? []
-        )
-      : vendorArgs
+  // A read-only dispatch is honored only where a vendor sandbox enforces it.
+  const readOnly = opts.readOnly === true && opts.unattended === true
+  const baseArgs = dispatchBaseArgs(
+    agent,
+    opts,
+    [
+      ...(opts.extraWritableDirs ?? []),
+      ...(codexScratchDir !== null ? [codexScratchDir] : []),
+      ...(codexGitCommonDir !== null ? [codexGitCommonDir] : []),
+      ...(codexBunCacheDir !== null ? [codexBunCacheDir] : [])
+    ],
+    readOnly
+  )
   // O1/O2/O4 (task 4): Codex's own confinement decision — resolved through
   // the SAME provider-neutral interface Claude already uses
   // (`ConfinementRequest`/`resolveCodexConfinement`, `worker-boundary.ts`)
@@ -4294,7 +4359,13 @@ export async function dispatchRole(
   const claudeConfinement =
     agent === 'claude' && opts.unattended === true && claudeScratchDir !== null
       ? resolveClaudeConfinement(
-          claudeConfinementRequest(role, agent, opts, claudeScratchDir, role === 'developer' ? [sourceStore] : [])
+          claudeConfinementRequest(
+            role,
+            agent,
+            { ...opts, readOnly },
+            claudeScratchDir,
+            role === 'developer' ? [sourceStore] : []
+          )
         )
       : null
   if (claudeConfinement !== null && !claudeConfinement.confined) {
@@ -4337,7 +4408,8 @@ export async function dispatchRole(
           // included, before an unattended Codex dispatch starts.
           worktreeDir: opts.cwd ?? process.cwd(),
           scratchDir: codexScratchDir,
-          allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS
+          allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS,
+          ...(readOnly ? { readOnly: true } : {})
         })
       : null
   // O6: a CONFINED dispatch's own log-spool directory, inside its granted
@@ -4446,7 +4518,7 @@ export async function dispatchRole(
   const codexStagedConfigDir = codexRequireIsolation
     ? runPath(runtimeDirForRepo(repo), scopeOf(opts.task, opts.pr), {
         area: 'sessions',
-        file: `${role}-${agent}-config`
+        file: codexStagedConfigName(role, agent, readOnly)
       })
     : undefined
   const codexHomeTargetDir =
@@ -4559,15 +4631,18 @@ export async function dispatchRole(
           ...(opts.cwd !== undefined ? [resolveGitCommonDir(opts.cwd)].filter((d): d is string => d !== null) : [])
         ]
       : codexRequireIsolation && codexConfinement?.ok === true && codexUnattendedFailureReason === null
-        ? [
-            '/tmp',
-            opts.cwd ?? process.cwd(),
-            ...(opts.extraWritableDirs ?? []),
-            ...(codexScratchDir !== null ? [codexScratchDir] : []),
-            ...(codexGitCommonDir !== null ? [codexGitCommonDir] : []),
-            ...(codexBunCacheDir !== null ? [codexBunCacheDir] : []),
-            ...(opts.developerFiles ?? []).map((file) => dirname(file))
-          ]
+        ? // Codex's read-only mode writes nowhere, `/tmp` included.
+          readOnly
+          ? []
+          : [
+              '/tmp',
+              opts.cwd ?? process.cwd(),
+              ...(opts.extraWritableDirs ?? []),
+              ...(codexScratchDir !== null ? [codexScratchDir] : []),
+              ...(codexGitCommonDir !== null ? [codexGitCommonDir] : []),
+              ...(codexBunCacheDir !== null ? [codexBunCacheDir] : []),
+              ...(opts.developerFiles ?? []).map((file) => dirname(file))
+            ]
         : []
   const sourceStoreWritableRoot =
     role === 'developer' && opts.unattended === true
@@ -4604,7 +4679,7 @@ export async function dispatchRole(
     // policy — so the log reads the same whenever the floor is in force.
     const sandboxNote =
       codexRequireIsolation && codexConfinement?.ok === true
-        ? " — Codex's own workspace-write sandbox and network proxy are confining this dispatch"
+        ? ` — Codex's own ${readOnly ? 'read-only' : 'workspace-write'} sandbox and network proxy are confining this dispatch`
         : ''
     writeLifecycle(
       `[vinaya dispatch ${effectId}] ${role} via ${agent}: permission policy ${PERMISSION_POLICY_VERSION} — machine-state commands (keychain, services, global settings) denied via Codex execpolicy staged into this run's CODEX_HOME/rules${sandboxNote}`
@@ -4764,15 +4839,17 @@ export async function dispatchRole(
               }),
               configToml: codexConfinement.configToml,
               withWritableDirs: (args) =>
-                addCodexWritableDirs(
-                  args,
-                  [
-                    ...(codexScratchDir !== null ? [codexScratchDir] : []),
-                    ...(codexGitCommonDir !== null ? [codexGitCommonDir] : []),
-                    ...(codexBunCacheDir !== null ? [codexBunCacheDir] : [])
-                  ],
-                  true
-                )
+                readOnly
+                  ? [...args]
+                  : addCodexWritableDirs(
+                      args,
+                      [
+                        ...(codexScratchDir !== null ? [codexScratchDir] : []),
+                        ...(codexGitCommonDir !== null ? [codexGitCommonDir] : []),
+                        ...(codexBunCacheDir !== null ? [codexBunCacheDir] : [])
+                      ],
+                      true
+                    )
             }
           : null
     if (plan !== null) {
@@ -4872,14 +4949,22 @@ export async function dispatchRole(
   // from inside the sandbox on macOS. No `--allowedTools` narrowing: the
   // driver-run server itself lists and accepts only the dispatched role's
   // granted tools (`task-tools/role-grants.ts`).
+  // A read-only Claude dispatch instead holds only `READ_ONLY_CLAUDE_TOOLS`
+  // and loads an MCP configuration that names no server.
   const devToolsClaudeArgs =
-    agent === 'claude' && devToolsBridge !== null && claudeScratchDir !== null
+    agent === 'claude' && readOnly && claudeScratchDir !== null
       ? (() => {
-          const mcpConfigPath = join(claudeScratchDir, 'dev-tools.mcp.json')
-          writeFileSync(mcpConfigPath, devToolsMcpConfigFileBody(devToolsBridge), { mode: 0o600 })
-          return claudeDevToolsArgs(mcpConfigPath)
+          const mcpConfigPath = join(claudeScratchDir, 'read-only.mcp.json')
+          writeFileSync(mcpConfigPath, NO_SERVER_MCP_CONFIG_BODY, { mode: 0o600 })
+          return readOnlyClaudeArgs(mcpConfigPath)
         })()
-      : []
+      : agent === 'claude' && devToolsBridge !== null && claudeScratchDir !== null
+        ? (() => {
+            const mcpConfigPath = join(claudeScratchDir, 'dev-tools.mcp.json')
+            writeFileSync(mcpConfigPath, devToolsMcpConfigFileBody(devToolsBridge), { mode: 0o600 })
+            return claudeDevToolsArgs(mcpConfigPath)
+          })()
+        : []
   // O1: every Developer dispatch, first and resumed alike, asks for its turn
   // result as the CLI's own native structured final output — Claude Code
   // `--json-schema <schema>`, Codex `--output-schema <file>` — with the one

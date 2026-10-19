@@ -44,8 +44,8 @@ export const DERIVED_FILE_DIGESTS = {
     heldOut: '63c4609c88a113606cba68c3866431d40c2094274c7f11280a3114896c252214'
   },
   reviewer: {
-    development: '7c210d65a4c8471f9de17ce37b48008c2ced881ce708978e3bd202872abdfacd',
-    heldOut: '9351aca5884b7eb3cf4b8b221f56140b1838f8684a1c0d2c6c396ee8ffbceaaa'
+    development: 'de312d152bb31e507ad357c0f495b4402d8252ac6513b1daad0eece36bc29f77',
+    heldOut: 'a52c735154ca643efbca8f2427dcce8540763a7d47425ea199b2be1f73d6f436'
   },
   sourceCitation: { development: 'd913e995ba891830f744cea1c1beca799bff0b46bee4fc00a1850e6e1b324f0f' }
 } as const

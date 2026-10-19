@@ -104,8 +104,8 @@ export const DEVELOPER_CAPABILITIES: readonly string[] = [
   'read_change_request'
 ]
 
-/** A reviewer reads the change and never writes or runs anything. */
-export const REVIEWER_CAPABILITIES: readonly string[] = ['read_file']
+/** A reviewer reads the change and runs only commands that cannot write; it never writes anything. */
+export const REVIEWER_CAPABILITIES: readonly string[] = ['read_file', 'read_commands']
 
 /**
  * The fixed author and committer of a seeded change's head commit, so the
