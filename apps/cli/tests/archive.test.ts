@@ -5,6 +5,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ArchiveDeps } from '../src/commands/archive.js'
+import { PrincipalsUnresolvedError } from '../src/lib/config.js'
 import { milestoneCloseDecision } from '../src/lib/milestone-close-hold.js'
 import {
   appendRetrospectiveSection,
@@ -50,6 +51,7 @@ function archiveDeps(overrides: Partial<ArchiveDeps> = {}): ArchiveDeps {
     // A declared tranche nothing has been cut for yet — the default a test
     // that declares no lifecycles at all should see.
     trancheLifecycle: async () => 'planned',
+    principalAllowlist: () => ['principal'],
     ...overrides
   }
 }
@@ -118,7 +120,10 @@ describe('renderArchiveTokensLine', () => {
 // subprocess calls.
 function withFakeGh<T>(
   prView: unknown,
-  fn: (calls: () => string[], postedBody: () => string | null) => Promise<T>
+  fn: (calls: () => string[], postedBody: () => string | null) => Promise<T>,
+  // The answer to `gh issue view --json comments`: a comments payload, or
+  // `'fail'` for a read that exits non-zero.
+  issueComments: unknown[] | 'fail' = []
 ): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-archive-fakegh-'))
   const logPath = join(dir, 'calls.log')
@@ -126,6 +131,9 @@ function withFakeGh<T>(
   const postedPath = join(dir, 'posted.txt')
   writeFileSync(prViewPath, JSON.stringify(prView))
   writeFileSync(logPath, '')
+  const commentsPath = join(dir, 'issue-comments.json')
+  writeFileSync(commentsPath, JSON.stringify({ comments: issueComments === 'fail' ? [] : issueComments }))
+  const commentsAnswer = issueComments === 'fail' ? 'exit 1' : `cat "${commentsPath}"`
   const script = `#!/usr/bin/env bash
 echo "$*" >> "${logPath}"
 case "$1 $2" in
@@ -139,7 +147,10 @@ case "$1 $2" in
     cat > "${postedPath}"
     ;;
   "issue view")
-    echo '{"state":"CLOSED"}'
+    case "$*" in
+      *"--json comments"*) ${commentsAnswer} ;;
+      *) echo '{"state":"CLOSED"}' ;;
+    esac
     ;;
   "issue close")
     ;;
@@ -1224,4 +1235,92 @@ describe('runArchiveTranches', () => {
   it('refuses when not a git repository', async () => {
     expect(await runArchiveTranches(['--yes'], archiveDeps({ detectRepo: async () => null }))).toBe(1)
   })
+})
+
+const BRIEF_URL_V1 = 'https://github.com/acme/widget/issues/99#issuecomment-1'
+const BRIEF_URL_V2 = 'https://github.com/acme/widget/issues/99#issuecomment-2'
+const briefComment = (version: number, url: string, login: string) => ({
+  body: `<!-- aeg:brief:v${version} -->\n# Brief`,
+  url,
+  author: { login }
+})
+
+describe('vinaya archive — frozen brief link (fake `gh` on PATH)', () => {
+  it('links the newest-version brief comment a configured Principal authored', async () => {
+    const comments = [briefComment(2, BRIEF_URL_V2, 'principal'), briefComment(1, BRIEF_URL_V1, 'principal')]
+    await withFakeGh(
+      PR_WITHOUT_PROVENANCE,
+      async (_calls, postedBody) => {
+        expect(await runArchive(['--merge-sha=deadbeef'], archiveDeps())).toBe(0)
+        expect(postedBody()).toContain(`Brief:        ${BRIEF_URL_V2}`)
+      },
+      comments
+    )
+  })
+
+  it('ignores a brief comment a non-Principal authored: Brief line is DANGLING, still posts and closes', async () => {
+    await withFakeGh(
+      PR_WITHOUT_PROVENANCE,
+      async (calls, postedBody) => {
+        expect(await runArchive(['--merge-sha=deadbeef'], archiveDeps())).toBe(0)
+        expect(postedBody()).toContain('Brief:        DANGLING')
+        expect(postedBody()).not.toContain(BRIEF_URL_V1)
+        expect(calls().some((c) => c.startsWith('issue close'))).toBe(true)
+      },
+      [briefComment(1, BRIEF_URL_V1, 'stranger')]
+    )
+  })
+
+  it('a failed comment read still posts and closes, Brief line DANGLING', async () => {
+    await withFakeGh(
+      PR_WITHOUT_PROVENANCE,
+      async (calls, postedBody) => {
+        expect(await runArchive(['--merge-sha=deadbeef'], archiveDeps())).toBe(0)
+        expect(postedBody()).toContain('Brief:        DANGLING')
+        expect(calls().some((c) => c.startsWith('pr comment'))).toBe(true)
+        expect(calls().some((c) => c.startsWith('issue close'))).toBe(true)
+      },
+      'fail'
+    )
+  })
+
+  it('names the repository on the comment read', async () => {
+    await withFakeGh(PR_WITHOUT_PROVENANCE, async (calls) => {
+      await runArchive(['--merge-sha=deadbeef'], archiveDeps())
+      expect(calls()).toContain('issue view 99 -R acme/widget --json comments')
+    })
+  })
+})
+
+describe('vinaya archive — unresolved Principal list (fake `gh` on PATH)', () => {
+  for (const kind of ['not-configured', 'read-failed'] as const) {
+    it(`${kind}: exits non-zero, posts nothing, closes nothing, and a re-run once it resolves completes`, async () => {
+      const message = `principals ${kind} — fix it`
+      await withFakeGh(PR_WITHOUT_PROVENANCE, async (calls, postedBody) => {
+        const refuse = archiveDeps({
+          principalAllowlist: () => {
+            throw new PrincipalsUnresolvedError(kind, message)
+          }
+        })
+        const errors: string[] = []
+        const originalError = console.error
+        console.error = (...a: unknown[]) => void errors.push(a.join(' '))
+        let exit: number
+        try {
+          exit = await runArchive(['--merge-sha=deadbeef'], refuse)
+        } finally {
+          console.error = originalError
+        }
+        expect(exit).toBe(1)
+        expect(errors.join('\n')).toContain(message)
+        expect(calls().some((c) => c.startsWith('pr comment'))).toBe(false)
+        expect(calls().some((c) => c.startsWith('issue close'))).toBe(false)
+        expect(postedBody()).toBeNull()
+
+        expect(await runArchive(['--merge-sha=deadbeef'], archiveDeps())).toBe(0)
+        expect(calls().some((c) => c.startsWith('pr comment'))).toBe(true)
+        expect(calls().some((c) => c.startsWith('issue close'))).toBe(true)
+      })
+    })
+  }
 })

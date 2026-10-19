@@ -63,7 +63,7 @@ This is your only hard precondition, and it is forge-derived: you query the PR's
 
 Items 1 (Issue close) and 8 (provenance block) below now run **automatically,
 post-merge**, via `.github/workflows/vinaya-archivist.yml::post-merge`
-(`packages/aeg-core/bin/archive-task.ts`) — triggered by the merge event
+(`bun apps/cli/src/index.ts archive`) — triggered by the merge event
 itself, not by a dispatched Archivist turn. The job resolves the merged PR
 from the merge commit, skips non-task branches, and skips PRs that already
 carry a provenance comment (idempotent, scoped **per-PR** — an Issue can
