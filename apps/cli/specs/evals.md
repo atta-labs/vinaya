@@ -608,12 +608,20 @@ selects cases, a single count or case ids, repeated or comma-separated:
 bun apps/cli/src/lib/dev-review-eval/step-one.ts run --split development --backend standalone [--purpose <development-only|practice|comparison>] [--suite <name>]... [--adapter <claude-code|codex>] [--cases <n>|--cases <id>...] --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> [--developer-snapshot <merged-task-prs.jsonl>] --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--container-tree <dir> --container-record <file>] [--out <file>]
 ```
 
-For example, after Harbor completes a one-trial practice job for the layer-`G`
-Developer suite, read that job into its step-one practice report with:
+For example, run one development task and one trial for the layer-`G`
+Developer suite through Harbor, then read the completed job into its step-one
+practice report:
 
 ```text
+PYTHONPATH=apps/cli/src/lib/dev-review-eval harbor run --path <harbor-task-directory>/developer-capability-neutral.l5 --include-task-name <case-id> --agent vinaya_harbor_agent:VinayaAgent --ak archive=<file.tar> --model <exact-model-id> --n-attempts 1 --job-name <job-name> --jobs-dir <jobs-directory>
 bun apps/cli/src/lib/dev-review-eval/harbor-results.ts <job-directory> --suite developer-capability-neutral.l5 --subscription-auth --bootstrap percentile --seed 1 --resamples 100 --confidence 0.95 [--task-root <harbor-working-directory>] [--out <file>]
 ```
+
+Repeat the Harbor job once per layer-`G` role suite and subscription adapter,
+as required by the evaluation program's practice-run order; each reader
+invocation accepts exactly one suite's job. Relative task paths are resolved
+from the reader's current working directory, which must be the directory from
+which Harbor ran; use `--task-root` when reading the job from somewhere else.
 
 The snapshot supplies the frozen layer-`P` Developer briefs whose committed corpus
 entries intentionally retain only digests. Only a `developer-capability.l5`

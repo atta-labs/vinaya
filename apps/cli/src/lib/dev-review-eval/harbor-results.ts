@@ -52,8 +52,8 @@ const text = (value: unknown): string | undefined => (typeof value === 'string' 
 const number = (value: unknown, fallback = 0): number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
 
-function taskPath(jobDirectory: string, taskRoot: string | undefined, raw: string): string {
-  const root = resolve(taskRoot ?? jobDirectory)
+function taskPath(taskRoot: string | undefined, raw: string): string {
+  const root = resolve(taskRoot ?? process.cwd())
   const path = resolve(root, raw)
   const fromRoot = relative(root, path)
   if (isAbsolute(raw) || fromRoot === '..' || fromRoot.startsWith(`..${sep}`))
@@ -77,7 +77,7 @@ function metadata(path: string): { suite: string; rendererVersion: string } {
   return { suite, rendererVersion }
 }
 
-function agentIdentity(config: Json): { agent: string; model: string } {
+function agentIdentity(config: Json): { agent: string; importPath: string | undefined; model: string } {
   const agents = Array.isArray(config.agents) ? config.agents : config.agent ? [config.agent] : []
   if (agents.length !== 1) throw new HarborResultsRefused('unsupported_agent', 'the job must name exactly one agent')
   const agent =
@@ -92,7 +92,18 @@ function agentIdentity(config: Json): { agent: string; model: string } {
   const model = text(agents[0]?.model_name)
   if (model === undefined || model.length === 0)
     throw new HarborResultsRefused('invalid_input', 'the job config does not carry an exact model id')
-  return { agent, model }
+  return { agent, importPath: text(agents[0]?.import_path), model }
+}
+
+function sameAgent(
+  value: unknown,
+  expected: { agent: string; importPath: string | undefined; model: string },
+  subject: string
+): void {
+  const record = value as Json | null | undefined
+  same(record?.name, expected.agent, `${subject} agent`)
+  same(record?.model_name, expected.model, `${subject} model`)
+  if (expected.importPath !== undefined) same(record?.import_path, expected.importPath, `${subject} import path`)
 }
 
 function wallTime(result: Json): number {
@@ -121,7 +132,7 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
       'unsupported_harbor_version',
       `job uses Harbor ${String(lock.harbor?.version)}, not ${HARBOR_RESULTS_VERSION}`
     )
-  const { model } = agentIdentity(json(join(options.jobDirectory, 'config.json')))
+  const identity = agentIdentity(json(join(options.jobDirectory, 'config.json')))
   const lockedTrials = Array.isArray(lock.trials) ? lock.trials : []
   if (lockedTrials.length === 0) throw new HarborResultsRefused('invalid_input', 'the job lock has no trials')
   const lockedByTask = new Map<string, Json>()
@@ -173,12 +184,17 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
       throw new HarborResultsRefused('missing_task_metadata', `the job lock has no path for ${taskId}`)
     same(result.trial_name, trialName, `${directory} result trial name`)
     same(config.trial_name, trialName, `${directory} config trial name`)
+    sameAgent(locked.agent, identity, `${directory} job lock`)
+    sameAgent(config.agent, identity, `${directory} config`)
+    sameAgent(trialLock.agent, identity, `${directory} trial lock`)
+    same(result.agent_info?.name, identity.agent, `${directory} result agent`)
+    same(result.agent_info?.model_info?.name, identity.model, `${directory} result model`)
     same(trialLock.task?.name, taskId, `${directory} trial lock task name`)
     same(config.task?.path, lockedPath, `${directory} config task path`)
     same(trialLock.task?.path, lockedPath, `${directory} trial lock task path`)
     same(result.task_id?.path, lockedPath, `${directory} result task path`)
     same(result.task_checksum, text(locked.task?.digest) ?? '', `${directory} task checksum`)
-    const task = taskPath(options.jobDirectory, options.taskRoot, lockedPath)
+    const task = taskPath(options.taskRoot, lockedPath)
     const taskMetadata = metadata(join(task, 'task.toml'))
     suites.add(taskMetadata.suite)
     renderers.add(taskMetadata.rendererVersion)
@@ -229,7 +245,7 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
     layer: 'G',
     rendererVersion: [...renderers][0] as string,
     agent: 'vinaya',
-    model,
+    model: identity.model,
     auth: 'subscription',
     evidence: 'never',
     taskCount: tallies.length,

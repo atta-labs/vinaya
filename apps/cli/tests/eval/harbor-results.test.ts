@@ -26,7 +26,7 @@ function copyJob(): string {
   return job
 }
 
-function read(jobDirectory = join(fixtures, 'vinaya'), taskRoot?: string) {
+function read(jobDirectory = join(fixtures, 'vinaya'), taskRoot: string | undefined = jobDirectory) {
   return readHarborPracticeRun({ jobDirectory, taskRoot, suite, subscriptionAuth: true, bootstrap })
 }
 
@@ -146,6 +146,14 @@ describe('Harbor job results', () => {
     expect(read(job, root).trials.success?.success).toBe(true)
   })
 
+  it('defaults relative native task paths to the reader process working directory, not the job directory', () => {
+    const job = copyJob()
+    expect(() => readHarborPracticeRun({ jobDirectory: job, suite, subscriptionAuth: true, bootstrap })).toThrow(
+      HarborResultsRefused
+    )
+    expect(read(job, job).trials.success?.success).toBe(true)
+  })
+
   it('refuses another Harbor version', () => {
     const job = copyJob()
     const path = join(job, 'lock.json')
@@ -174,6 +182,21 @@ describe('Harbor job results', () => {
     result.task_checksum = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
     writeFileSync(path, JSON.stringify(result))
     refusal(job, 'invalid_input')
+  })
+
+  it('refuses a trial whose agent or model differs from the job identity', () => {
+    for (const [file, mutate] of [
+      ['config.json', (record: any) => (record.agent.model_name = 'different-model')],
+      ['lock.json', (record: any) => (record.agent.name = 'different-agent')],
+      ['result.json', (record: any) => (record.agent_info.model_info.name = 'different-model')]
+    ] as const) {
+      const job = copyJob()
+      const path = join(job, 'success__trial', file)
+      const record = JSON.parse(readFileSync(path, 'utf8'))
+      mutate(record)
+      writeFileSync(path, JSON.stringify(record))
+      refusal(job, 'invalid_input')
+    }
   })
 
   it('refuses a locked task path outside the declared task root', () => {
@@ -222,6 +245,8 @@ describe('Harbor job results', () => {
         '100',
         '--confidence',
         '0.95',
+        '--task-root',
+        join(fixtures, 'vinaya'),
         '--out',
         out
       ])
