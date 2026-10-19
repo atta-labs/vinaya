@@ -676,6 +676,7 @@ describe('an unmerged Depends-on folds into the write gate as informational, nev
       'doctrine-portability',
       'doctrine-no-procedures',
       'doc-claims',
+      'quoted-command',
       'workspace-escape'
     ].map((c) => `- \`${c}\`: the fixture edits no prose, so it satisfies this check.`),
     '',
