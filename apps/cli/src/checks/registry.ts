@@ -700,6 +700,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
     {
       name: 'doc-coverage-push',
       validates: 'body',
+      advisory: true,
       run: bin('check-doc-coverage-push'),
       scope: 'diff',
       timeoutMs: 15_000,
@@ -721,26 +722,6 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
         PR_LABELS: { optional: true },
         WAIVER_LABEL_ACTOR: { optional: true },
         GITHUB_REPOSITORY: { optional: true },
-        GITHUB_TOKEN: { optional: true },
-        GH_TOKEN: { optional: true }
-      }
-    },
-    0
-  ],
-  [
-    {
-      name: 'issue-assignment',
-      run: bin('check-issue-assignment'),
-      scope: 'full',
-      timeoutMs: 30_000,
-      // AEG_REPO/BRANCH both fall back to git. Every other fact this bin
-      // needs (remote-ref existence, assignees, the authenticated login)
-      // comes from `gh` subprocess calls gated behind `parsed &&
-      // !remoteRefExists`, never a raw env read — tokens forwarded so
-      // those calls authenticate on CI runners instead of null-skipping.
-      env: {
-        AEG_REPO: { optional: true },
-        BRANCH: { optional: true },
         GITHUB_TOKEN: { optional: true },
         GH_TOKEN: { optional: true }
       }
@@ -839,6 +820,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   [
     {
       name: 'doctrine-portability',
+      advisory: true,
       run: bin('check-doctrine-portability'),
       scope: 'full',
       timeoutMs: 30_000,
@@ -929,6 +911,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   [
     {
       name: 'workspace-escape',
+      advisory: true,
       run: bin('check-workspace-escape'),
       scope: 'full',
       timeoutMs: 30_000,
@@ -970,6 +953,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   [
     {
       name: 'quoted-command',
+      advisory: true,
       run: bin('check-quoted-command'),
       scope: 'full',
       timeoutMs: 15_000,

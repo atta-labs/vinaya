@@ -77,7 +77,11 @@ const CheckEntrySchema = z
     // forge-write body/Issue declares this exactly like a core one — see
     // `CheckSpec.validates`'s doc comment for the write-path/coherence-sweep
     // wiring this unlocks.
-    validates: z.enum(['body', 'issue']).optional()
+    validates: z.enum(['body', 'issue']).optional(),
+    // Same discipline again: an adopter's own warning-only check declares
+    // itself advisory exactly like a core one — see `CheckSpec.advisory`'s
+    // doc comment; it is a label and changes nothing about how a run gates.
+    advisory: z.literal(true).optional()
   })
   // `anyOf` is keyed BY the variable name it expands to (`{"GITHUB_TOKEN":
   // {"anyOf":["GITHUB_TOKEN","GH_TOKEN"]}}`) — the key must be one of its own

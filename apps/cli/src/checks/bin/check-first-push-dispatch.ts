@@ -34,12 +34,14 @@ import {
   checkIssueRationale,
   fetchForgeFacts,
   fetchOpenIssuesByLabel,
+  isEntryPoint,
   parseTaskBranch,
   type DispatchConflictsWithFact,
   type DispatchDependsOnFact,
   type DispatchGateInput,
   type DispatchReadinessFact
 } from '@attalabs/aeg-core'
+import { resolvePriorTrancheArchival } from '@attalabs/aeg-forge-state'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { resolveTrustedPrincipals } from '../../lib/config'
@@ -100,6 +102,20 @@ function warn(message: string, recovery: string): void {
     message: `${CHECK_NAME}: ${message}`,
     agent_recovery_prompt: recovery
   })
+}
+
+/**
+ * The first push's readiness from the assembled gate input and the archival
+ * resolution's failure: `UNKNOWN` (fail-open, like any unreachable forge) when
+ * a read the archival answer depends on failed, otherwise `READY` or
+ * `NOT_READY` from the gate.
+ */
+export function firstPushArchivalReadiness(
+  input: DispatchGateInput,
+  infraFailure: string | null
+): DispatchReadinessFact {
+  if (infraFailure !== null) return 'UNKNOWN'
+  return checkDispatchReadiness(input).ready ? 'READY' : 'NOT_READY'
 }
 
 /**
@@ -173,6 +189,8 @@ async function classifyReadiness(trancheSlug: string, taskId: string): Promise<D
       })
     )
 
+    const archival = await resolvePriorTrancheArchival(task.projects, trancheSlug, repo)
+
     const input: DispatchGateInput = {
       trancheSlug,
       task,
@@ -181,11 +199,11 @@ async function classifyReadiness(trancheSlug: string, taskId: string): Promise<D
       dependsOn,
       conflictsWith,
       priorTask: null,
-      priorTrancheArchival: [],
+      priorTrancheArchival: archival.facts,
       principalAllowlist
     }
 
-    return checkDispatchReadiness(input).ready ? 'READY' : 'NOT_READY'
+    return firstPushArchivalReadiness(input, archival.infraFailure)
   } catch {
     return 'UNKNOWN'
   }
@@ -236,4 +254,6 @@ async function main(): Promise<void> {
   process.exit(0)
 }
 
-main()
+if (isEntryPoint(import.meta.url, 'check-first-push-dispatch')) {
+  main()
+}

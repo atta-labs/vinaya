@@ -37,7 +37,6 @@ export const G7_EXEMPTIONS: Readonly<Record<string, string>> = {
   'packages/aeg-core/bin/check-branch-topology.ts': NOT_REACHED_STANDALONE_SCRIPT,
   'packages/aeg-core/bin/check-push-target.ts': NOT_REACHED_STANDALONE_SCRIPT,
   'packages/aeg-core/bin/check-first-push-dispatch.ts': NOT_REACHED_STANDALONE_SCRIPT,
-  'packages/aeg-core/bin/assign-task-issue.ts': NOT_REACHED_STANDALONE_SCRIPT,
   'packages/aeg-core/src/brief-validation.ts':
     'a pure library outside the CLI package: it makes no call of its own, and the import resolution does not follow a workspace package'
 }

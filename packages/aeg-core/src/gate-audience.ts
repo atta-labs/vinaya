@@ -137,7 +137,6 @@ export const CLI_CHECK_RING: Readonly<Record<string, 0 | 1 | 2>> = {
   'dead-branch-push': 0,
   'first-push-dispatch': 0,
   'doc-coverage-push': 0,
-  'issue-assignment': 0,
   'evidence-fresh': 1,
   'reader-resolvable-prose': 0,
   'doc-claims': 0,
@@ -168,7 +167,6 @@ export const CLI_CHECK_RING: Readonly<Record<string, 0 | 1 | 2>> = {
  */
 export const NON_GATE_BINS = [
   'archive-task',
-  'assign-task-issue',
   'dead-branch-audit',
   'eval-agent-compliance',
   'open-issue',

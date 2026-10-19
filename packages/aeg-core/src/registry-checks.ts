@@ -144,16 +144,14 @@ const NON_GATE_BIN_NAMES: readonly string[] = NON_GATE_BINS
  * maintained rather than folded into `GATE_AUDIENCE`, because each would
  * break an existing invariant that map enforces:
  *
- * - `check-dead-branch-push.ts` / `check-issue-assignment.ts`: their aeg-core
- *   twins (`check-push-target.ts`, `assign-task-issue.ts`) are genuinely NOT
- *   the same mechanism, only a closely related one an existing row's own
- *   prose already cross-references — `check-push-target.ts` is a lower-level
- *   helper `dead-branch-push`'s row already names as `implementation` (a
- *   single-purpose forge query, not a second copy of the check), and
- *   `assign-task-issue.ts` WRITES the assignment `issue-assignment` only
- *   verifies. `GATE_AUDIENCE`/`NON_GATE_BINS` correctly keep both classified
- *   by what they actually do; forcing a `shippedAs` claim onto either to
- *   satisfy G2 would misdescribe them.
+ * - `check-dead-branch-push.ts`: its aeg-core twin (`check-push-target.ts`)
+ *   is genuinely NOT the same mechanism, only a closely related one an
+ *   existing row's own prose already cross-references —
+ *   `check-push-target.ts` is a lower-level helper `dead-branch-push`'s row
+ *   already names as `implementation` (a single-purpose forge query, not a
+ *   second copy of the check). `GATE_AUDIENCE` correctly keeps it classified
+ *   by what it actually does; forcing a `shippedAs` claim onto it to satisfy
+ *   G2 would misdescribe it.
  * - `check-closes-n.ts`: its twin, `verify-coherence.ts`, already ships as
  *   `coherence` (ring 0) via `GATE_AUDIENCE` — but `closes-n` is ring 1
  *   (`CLI_CHECK_RING`), and `ShippedGate` has exactly one `ring` per bin
@@ -169,8 +167,6 @@ const NON_GATE_BIN_NAMES: readonly string[] = NON_GATE_BINS
 const TWIN_CANDIDATE_EXCEPTIONS: Readonly<Record<string, string>> = {
   'apps/cli/src/checks/bin/check-dead-branch-push.ts':
     'Ring 0 "Pushing to a branch whose pull request already resolved" (implementation: check-push-target.ts)',
-  'apps/cli/src/checks/bin/check-issue-assignment.ts':
-    'Ring 0 "A task branch\'s first push (Issue self-assignment)" (implementation: assign-task-issue.ts)',
   'apps/cli/src/checks/bin/check-closes-n.ts': 'Ring 1 "Closes linkage" (implementation: verify-coherence.ts)'
 }
 

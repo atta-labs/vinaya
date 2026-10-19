@@ -34,6 +34,7 @@ import {
   AEG_BRIEF_V1_MARKER,
   briefHash,
   briefMarkerFor,
+  decideIssueAssignment,
   isPrincipal,
   parseIssueSurface,
   parseRationaleFields,
@@ -477,6 +478,62 @@ export function resolveDispatchAuthorization(): DispatchAuthorization {
   const login = currentGhLogin()
   const allowlist = resolveTrustedPrincipals()
   return { authorized: login !== null && isPrincipal(login, allowlist), login }
+}
+
+export type IssueAssignmentDeps = {
+  /** The Issue's current assignee logins, or `null` when they cannot be read. */
+  fetchAssignees: (issue: number) => string[] | null
+  /** The identity `gh` is authenticated as, or `null` when unresolvable. */
+  currentLogin: () => string | null
+  /** Adds `login` as an assignee; throws on failure. */
+  addAssignee: (issue: number, login: string) => void
+  warn: (message: string) => void
+}
+
+function fetchIssueAssignees(issue: number): string[] | null {
+  try {
+    const parsed = JSON.parse(sh('gh', ['issue', 'view', String(issue), '--json', 'assignees'])) as {
+      assignees?: Array<{ login?: string }>
+    }
+    return (parsed.assignees ?? []).map((a) => a.login ?? '').filter(Boolean)
+  } catch {
+    return null
+  }
+}
+
+const defaultIssueAssignmentDeps: IssueAssignmentDeps = {
+  fetchAssignees: fetchIssueAssignees,
+  currentLogin: currentGhLogin,
+  addAssignee: (issue, login) => {
+    sh('gh', ['issue', 'edit', String(issue), '--add-assignee', login])
+  },
+  warn: (message) => console.error(message)
+}
+
+/**
+ * Assigns the task's Issue to the identity `gh` is authenticated as when a
+ * task run starts and the Issue has no assignee yet — the dispatch-visibility
+ * signal Studio reads. Joins `prepareTask`'s Issue writes: by the time
+ * `runTask` calls this, preparation has already refused a non-Principal
+ * identity. An Issue with any assignee is left as it is. Never throws: a
+ * failed read, an unresolvable identity or a failed write prints one warning
+ * and the run continues, since a missing assignee blocks nothing.
+ */
+export function assignIssueAtRunStart(issue: number, deps: IssueAssignmentDeps = defaultIssueAssignmentDeps): void {
+  try {
+    const assignees = deps.fetchAssignees(issue)
+    const login = assignees !== null && assignees.length === 0 ? deps.currentLogin() : null
+    const decision = decideIssueAssignment({ issue, assignees, login })
+    if (decision.action === 'skip') {
+      if (decision.missingFact) deps.warn(`vinaya task run: warning — Issue not self-assigned. ${decision.reason}`)
+      return
+    }
+    deps.addAssignee(decision.issue, decision.login)
+  } catch (err) {
+    deps.warn(
+      `vinaya task run: warning — could not assign Issue #${issue} to the authenticated identity (\`gh issue edit\`): ${err instanceof Error ? err.message : String(err)}`
+    )
+  }
 }
 
 /**

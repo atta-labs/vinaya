@@ -200,6 +200,54 @@ describe('vinaya check — substitution is announced on the surface that enforce
   }, 120000)
 })
 
+describe('vinaya check — an advisory check is labelled, never gated differently', () => {
+  /** A real spawnable check that reports nothing and passes. */
+  function passingStub(repo: string, file: string): void {
+    const path = join(repo, file)
+    writeFileSync(path, '#!/bin/sh\nexit 0\n', 'utf-8')
+    chmodSync(path, 0o755)
+  }
+
+  it('a configured advisory check is shown by `--plan`, and its result line ends with the marker after the duration', async () => {
+    const { repo, home } = fixture({
+      checks: {
+        'myteam/advice': { run: './advice.sh', scope: 'full', advisory: true },
+        'myteam/gate': { run: './gate.sh', scope: 'full' }
+      }
+    })
+    passingStub(repo, 'advice.sh')
+    passingStub(repo, 'gate.sh')
+
+    const plan = JSON.parse((await runCli(['check', '--plan', '--json'], repo, home)).stdout)
+    expect(plan.checks['myteam/advice']).toMatchObject({ advisory: true })
+    expect(plan.checks['myteam/gate']).not.toHaveProperty('advisory')
+
+    const table = (await runCli(['check', '--plan'], repo, home)).stdout
+    expect(table).toContain('ADVISORY')
+    expect(table).toMatch(/myteam\/advice\s+\S+\s+\S+\s+yes\s/)
+    expect(table).toMatch(/myteam\/gate\s+\S+\s+\S+\s+—\s/)
+
+    const advice = await runCli(['check', 'myteam/advice'], repo, home)
+    expect(advice.code).toBe(0)
+    expect(advice.stdout).toMatch(/^✓ myteam\/advice: pass \(\d+ms\) — advisory$/m)
+
+    const gate = await runCli(['check', 'myteam/gate'], repo, home)
+    expect(gate.code).toBe(0)
+    expect(gate.stdout).toMatch(/^✓ myteam\/gate: pass \(\d+ms\)$/m)
+  }, 120000)
+
+  it('the label changes nothing about the exit code — an advisory check that exits 1 still fails the run', async () => {
+    const { repo, home } = fixture({
+      checks: { 'myteam/advice': { run: './advice.sh', scope: 'full', advisory: true } }
+    })
+    stubCheck(repo, 'advice.sh', 'myteam/advice')
+
+    const run = await runCli(['check', 'myteam/advice'], repo, home)
+    expect(run.code).toBe(1)
+    expect(run.stdout).toMatch(/^✗ myteam\/advice: fail \(\d+ms\) — advisory$/m)
+  }, 120000)
+})
+
 describe('duplicateIdFailures — the execution-boundary invariant', () => {
   const entry = (name: string) =>
     ({

@@ -18,6 +18,7 @@
  * line per failure, naming the exact task/Issue/PR involved.
  */
 
+import type { PriorTrancheArchivalFact } from '@attalabs/aeg-forge-state'
 import { edgesNameEachOther } from './issue-validation'
 
 /** The one edge reader both gates use — the write gate's own function, re-exposed so a test can assert identity. */
@@ -132,12 +133,8 @@ export type DispatchPriorTaskFact = {
   hasProvenance: boolean
 }
 
-export type DispatchPriorTrancheFact = {
-  project: string
-  /** null when this project has no prior tranche at all — the gate passes trivially for it. */
-  priorTrancheSlug: string | null
-  archived: boolean
-}
+/** One entry per project a task names — the shape `resolvePriorTrancheArchival` returns, defined beside the reads that produce it. */
+export type DispatchPriorTrancheFact = PriorTrancheArchivalFact
 
 export type DispatchGateInput = {
   trancheSlug: string

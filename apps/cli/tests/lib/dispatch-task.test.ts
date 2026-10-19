@@ -5,12 +5,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   AEG_BRIEF_V1_MARKER,
+  assignIssueAtRunStart,
   briefHash,
   contentAfterTwoLines,
   type DispatchTaskDeps,
   DispatchTaskError,
   dispatchTask,
   extractAgentClass,
+  type IssueAssignmentDeps,
   type PrepareIssueTaskDeps,
   type PrepareTaskDeps,
   prepareIssueTask,
@@ -1151,5 +1153,71 @@ describe('validateIssueWriteGate (O2) — the real Issue write gate, exercised a
     await expect(
       validateIssueWriteGate(bodyWithWholeSuiteTestPlan, [], 427, 'vinaya task brief backlog --issue 427')
     ).rejects.toThrow(/runs a test runner with no test-file argument/)
+  })
+})
+
+describe('assignIssueAtRunStart — the Issue is assigned when its task run starts', () => {
+  function world(overrides: Partial<IssueAssignmentDeps> = {}) {
+    const added: Array<{ issue: number; login: string }> = []
+    const warnings: string[] = []
+    const deps: IssueAssignmentDeps = {
+      fetchAssignees: () => [],
+      currentLogin: () => 'principal-login',
+      addAssignee: (issue, login) => {
+        added.push({ issue, login })
+      },
+      warn: (message) => {
+        warnings.push(message)
+      },
+      ...overrides
+    }
+    return { deps, added, warnings }
+  }
+
+  it('assigns an unassigned Issue to the authenticated identity, warning nothing', () => {
+    const w = world()
+    assignIssueAtRunStart(427, w.deps)
+    expect(w.added).toEqual([{ issue: 427, login: 'principal-login' }])
+    expect(w.warnings).toEqual([])
+  })
+
+  it('leaves an Issue with any assignee as it is, without resolving the identity or warning', () => {
+    const w = world({
+      fetchAssignees: () => ['someone-else'],
+      currentLogin: () => {
+        throw new Error('the identity is not needed for an assigned Issue')
+      }
+    })
+    assignIssueAtRunStart(427, w.deps)
+    expect(w.added).toEqual([])
+    expect(w.warnings).toEqual([])
+  })
+
+  it('prints one warning and writes nothing when the assignees cannot be read', () => {
+    const w = world({ fetchAssignees: () => null })
+    assignIssueAtRunStart(427, w.deps)
+    expect(w.added).toEqual([])
+    expect(w.warnings).toHaveLength(1)
+    expect(w.warnings[0]).toContain('current assignees')
+  })
+
+  it('prints one warning and writes nothing when the identity cannot be resolved', () => {
+    const w = world({ currentLogin: () => null })
+    assignIssueAtRunStart(427, w.deps)
+    expect(w.added).toEqual([])
+    expect(w.warnings).toHaveLength(1)
+    expect(w.warnings[0]).toContain('authenticated')
+  })
+
+  it('prints one warning and never throws when the write fails', () => {
+    const w = world({
+      addAssignee: () => {
+        throw new Error('HTTP 403')
+      }
+    })
+    expect(() => assignIssueAtRunStart(427, w.deps)).not.toThrow()
+    expect(w.warnings).toHaveLength(1)
+    expect(w.warnings[0]).toContain('Issue #427')
+    expect(w.warnings[0]).toContain('HTTP 403')
   })
 })

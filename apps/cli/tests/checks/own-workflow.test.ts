@@ -78,10 +78,6 @@ describe('ownWorkflow — checks reported by their own workflow', () => {
     ]) {
       expect(runnable.some((s) => s.name === name)).toBe(false)
     }
-    // issue-assignment is NOT ownWorkflow (pre-existing, visibility-only) —
-    // confirms the withholding above is scoped to the five named checks, not
-    // an accidental blanket "issue-" prefix match.
-    expect(runnable.some((s) => s.name === 'issue-assignment')).toBe(true)
     // Spot-check that the withholding is not accidentally broad.
     for (const name of ['closes-n', 'test-plan', 'doc-coverage', 'branch-topology']) {
       expect(runnable.some((s) => s.name === name)).toBe(true)

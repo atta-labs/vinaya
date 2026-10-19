@@ -112,7 +112,8 @@ function runTaskDeps(world: LoopWorld, deps: Partial<LoopDeps>, watch: Partial<D
     hasPauseState: (task) => readPauseState(world.runtimeDir, task) !== null,
     resolveModelForDispatch: () => undefined,
     devReviewLoop: (input) => runDriverLoopInProcess(world, input, deps, watch),
-    resolveRepo: async () => null
+    resolveRepo: async () => null,
+    assignIssue: () => {}
   }
 }
 

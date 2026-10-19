@@ -20,6 +20,7 @@ import {
   isEligibleForProvenance,
   parseDeveloperRoundMarker,
   resolveMeteringCapability,
+  resolveNewestFrozenBrief,
   taskRefFromBranch,
   trancheLabel,
   trancheSlugOf,
@@ -30,7 +31,7 @@ import {
 import { deriveTrancheFromForge, hasTrancheIntentsSection } from '@attalabs/aeg-forge-state'
 import { detectGitRepo, type RepoInfo } from '../lib/detect.js'
 import { closeStdin, promptYesNo } from '../lib/prompt.js'
-import { loadConfig } from '../lib/config.js'
+import { loadConfig, PrincipalsUnresolvedError, resolveTrustedPrincipals } from '../lib/config.js'
 import { declaredTranches, milestoneCloseDecision, type TrancheLifecycle } from '../lib/milestone-close-hold.js'
 import { realDeps as meteringRealDeps } from './tokens.js'
 
@@ -59,13 +60,16 @@ export type ArchiveDeps = {
    * ahead of the real one would silently hit the real forge here.
    */
   trancheLifecycle: (owner: string, repo: string, slug: string) => Promise<TrancheLifecycle>
+  /** The configured Principal list, read from the default branch; throws `PrincipalsUnresolvedError` when it cannot be resolved. Injected so tests never reach the forge. */
+  principalAllowlist: () => string[]
 }
 
 function realDeps(): ArchiveDeps {
   return {
     detectRepo: detectGitRepo,
     meteringCapability: () => resolveMeteringCapability(meteringRealDeps()),
-    trancheLifecycle: async (owner, repo, slug) => (await deriveTrancheFromForge(owner, repo, slug)).lifecycle
+    trancheLifecycle: async (owner, repo, slug) => (await deriveTrancheFromForge(owner, repo, slug)).lifecycle,
+    principalAllowlist: () => resolveTrustedPrincipals()
   }
 }
 
@@ -178,6 +182,24 @@ function parseMergeSha(args: string[]): string | null {
   return null
 }
 
+/**
+ * The newest Principal-authored frozen brief comment's URL on the task's
+ * Issue, or `null`. Best-effort: a failed read or parse leaves `null`, which
+ * the provenance block reports as DANGLING — a missing brief link never costs
+ * the provenance post or the Issue close.
+ */
+function readBriefCommentUrl(issue: number, repoFlag: string, principals: string[]): string | null {
+  try {
+    const { comments } = shJson<{
+      comments: { body: string; url: string; author?: { login?: string } | null }[]
+    }>(['gh', 'issue', 'view', String(issue), '-R', repoFlag, '--json', 'comments'])
+    const candidates = comments.map((c) => ({ body: c.body, url: c.url, author: c.author?.login ?? null }))
+    return resolveNewestFrozenBrief(candidates, principals)?.url ?? null
+  } catch {
+    return null
+  }
+}
+
 export async function runArchive(args: string[], deps: ArchiveDeps): Promise<number> {
   if (ring2AsyncAuditsDisabled()) {
     process.stdout.write('[vinaya archive] rings.ring2_asyncAudits is `false` — skipping, nothing changed.\n')
@@ -220,9 +242,9 @@ export async function runArchive(args: string[], deps: ArchiveDeps): Promise<num
   // `vinaya/tranche:*` label — branch-name-only detection silently skips a
   // real task closure otherwise.
   const ref = taskRefFromBranch(pr.headRefName)
+  const { issue: candidateIssue } = extractIssue(pr.body)
   let issueLabels: string[] = []
   if (ref === null) {
-    const { issue: candidateIssue } = extractIssue(pr.body)
     if (candidateIssue !== null) {
       issueLabels = shJson<{ labels: { name: string }[] }>([
         'gh',
@@ -250,13 +272,30 @@ export async function runArchive(args: string[], deps: ArchiveDeps): Promise<num
     return 0
   }
 
+  // Frozen-brief resolution is a trust decision: resolve the Principal list
+  // before any write, so a refusal never leaves a half-done close-out that the
+  // idempotency skip above would then hide on a re-run.
+  let principals: string[]
+  try {
+    principals = deps.principalAllowlist()
+  } catch (err) {
+    if (err instanceof PrincipalsUnresolvedError) {
+      console.error(`Error: ${err.message}`)
+      return 1
+    }
+    throw err
+  }
+
+  const briefCommentUrl = candidateIssue === null ? null : readBriefCommentUrl(candidateIssue, repoFlag, principals)
+
   const facts: MergedPrFacts = {
     number: pr.number,
     headRefName: pr.headRefName,
     body: pr.body,
     mergedAt: pr.mergedAt,
     mergeSha,
-    comments
+    comments,
+    briefCommentUrl
   }
 
   const { block, issue, dangling } = buildProvenanceBlock(facts)
@@ -871,7 +910,7 @@ export async function archiveTranchesCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  archive: { date: '2026-09-05', callsToday: 2, retiresVia: 'collectTokens' },
-  'archive tranche': { date: '2026-09-05', callsToday: 5, retiresVia: 'collectTokens' },
-  'archive tranches': { date: '2026-09-30', callsToday: 5, retiresVia: 'collectTokens' }
+  archive: { date: '2026-09-05', callsToday: 3, retiresVia: 'collectTokens' },
+  'archive tranche': { date: '2026-09-05', callsToday: 6, retiresVia: 'collectTokens' },
+  'archive tranches': { date: '2026-09-30', callsToday: 6, retiresVia: 'collectTokens' }
 }

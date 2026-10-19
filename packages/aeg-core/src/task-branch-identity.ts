@@ -9,10 +9,8 @@
  *
  * Deliberately NOT the same export as `first-push-dispatch-gate.ts`'s
  * `parseTaskBranch` — that function (and its flat `{tranche, taskId}` return
- * shape) is shared by `first-push-dispatch`/`issue-assignment`/
- * `assign-task-issue`, none of which are in this task's Surface or Boundary;
- * widening its return type would ripple into checks this task has no brief
- * coverage for. This module is the new, additional shape-parser named in the
+ * shape) is shared by `first-push-dispatch` and its gate; widening its
+ * return type would ripple into checks that read the flat shape. This module is the new, additional shape-parser named in the
  * Traps to avoid: "`task/issue-<n>` is its own shape, parsed by one function
  * next to `task/<tranche>/<n>`."
  */

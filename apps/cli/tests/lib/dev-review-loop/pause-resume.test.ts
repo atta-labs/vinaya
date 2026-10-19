@@ -847,7 +847,8 @@ describe('a sandbox capability refusal pauses once for the Operator and is never
       hasPauseState: (task) => readPauseState(world.runtimeDir, task) !== null,
       resolveModelForDispatch: () => undefined,
       devReviewLoop: (input) => runDriverLoopInProcess(world, input),
-      resolveRepo: async () => null
+      resolveRepo: async () => null,
+      assignIssue: () => {}
     }
 
     const result = await withWorldEnv(world, () => runTask({ issue: world.task, agent: 'claude' }, runTaskDeps))

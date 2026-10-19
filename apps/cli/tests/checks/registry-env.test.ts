@@ -54,7 +54,6 @@ describe('registry env declarations', () => {
         'evidence-fresh',
         'exec-bits',
         'first-push-dispatch',
-        'issue-assignment',
         'issue-milestone-attach',
         'issue-objectives-numbering',
         'issue-parts-coverage',
@@ -118,7 +117,7 @@ describe('registry env declarations', () => {
     // GITHUB_TOKEN/GH_TOKEN — a bin that shells to `gh` without forwarding
     // them runs unauthenticated there: hard-fail (review-gate, pre-fix) or
     // silently vacuous fail-open (single-plan-pr, dead-branch-push,
-    // issue-assignment, pre-fix). Coupling: read each bin's source, detect
+    // pre-fix). Coupling: read each bin's source, detect
     // the `gh` shell-out, demand both token declarations.
     const SRC_BIN_DIR = join(import.meta.dir, '..', '..', 'src', 'checks', 'bin')
     const offenders: string[] = []
@@ -157,13 +156,60 @@ describe('registry env declarations', () => {
       'principalOwed',
       // Same reason (review-validity-v1 17, O1/O2): expressible in config
       // (CheckEntrySchema) exactly like `ownWorkflow`/`principalOwed`.
-      'validates'
+      'validates',
+      // Same reason: expressible in config (CheckEntrySchema) and documented
+      // as `checks.advisory` in CONFIG_REFERENCE.
+      'advisory'
     ])
     for (const spec of specs) {
       const extra = (Object.keys(spec) as Array<keyof CheckSpec>).filter((k) => !ALLOWED_KEYS.has(k))
       expect(extra, `check "${spec.name}" carries an unexpected field: ${extra.join(', ')}`).toEqual([])
     }
   })
+
+  // `advisory` is a label, so it must stay true of the code it labels: the
+  // findings of an advisory check never fail a run. The only non-zero exit
+  // allowed is the no-Principal-configured refusal, which `doc-coverage-push`
+  // reaches through the shared `warnOnUnreadPrincipals` alone.
+  const ADVISORY_BINS: Record<string, string> = {
+    'doc-coverage-push': 'check-doc-coverage-push.ts',
+    'quoted-command': 'check-quoted-command.ts',
+    'doctrine-portability': 'check-doctrine-portability.ts',
+    'workspace-escape': 'check-workspace-escape.ts'
+  }
+
+  it('the advisory core checks are exactly these four', () => {
+    expect(
+      specs
+        .filter((s) => s.advisory)
+        .map((s) => s.name)
+        .sort()
+    ).toEqual(Object.keys(ADVISORY_BINS).sort())
+  })
+
+  for (const [name, binFile] of Object.entries(ADVISORY_BINS)) {
+    it(`advisory check "${name}" has no non-zero exit of its own and reports only warnings`, () => {
+      const code = readCode(binFile)
+      const exits = code.match(/process\.exit\s*\([^)]*\)/g) ?? []
+      expect(
+        exits.filter((e) => e.replace(/\s+/g, '') !== 'process.exit(0)'),
+        `${binFile} exits non-zero in its own code — an advisory check's findings must never fail a run`
+      ).toEqual([])
+      expect(code, `${binFile} touches process.exitCode`).not.toContain('process.exitCode')
+      const severities = code.match(/severity:\s*[^,\n}]+/g) ?? []
+      expect(severities.length, `${binFile} emits no finding at all`).toBeGreaterThan(0)
+      for (const s of severities) expect(s.replace(/\s+/g, '')).toBe("severity:'warning'")
+      if (name === 'doc-coverage-push') {
+        // Its one refusal (no Principal configured) is the shared helper's,
+        // reached through this call — never an exit written in the bin.
+        expect(code).toContain('warnOnUnreadPrincipals(CHECK_NAME, err)')
+        expect(code).not.toContain('refuseUnresolvedPrincipals')
+      } else {
+        expect(code).not.toContain('warnOnUnreadPrincipals')
+        expect(code).not.toContain('refuseUnresolvedPrincipals')
+      }
+    })
+  }
 
   // Security regression, PR #862 rounds 2-3. Round 2 added a `BASE_SHA` env
   // declaration to review-gate, forwarding an attacker-steerable ref into the
