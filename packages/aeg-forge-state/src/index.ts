@@ -26,6 +26,7 @@ export type {
   MilestoneAttachTarget,
   MilestoneFacts,
   MilestoneIntentLine,
+  SlugMilestoneIndex,
   TrancheMilestoneIndex
 } from './fetch-milestone'
 export type { GhIssue } from './gh'

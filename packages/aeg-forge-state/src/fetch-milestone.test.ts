@@ -877,4 +877,24 @@ describe('indexTrancheMilestonesForSlugAsync', () => {
       expect([...scoped.facts.keys()].every((k) => k === BRANCH)).toBe(true)
     })
   }
+
+  it('names every other open slug-titled Milestone, in list order, from the same Milestone list', async () => {
+    mockForge(
+      [
+        { title: 'other-open-v2', description: null, state: 'open' },
+        { title: BRANCH, description: 'Legacy goal.', state: 'open' },
+        { title: 'other-closed-v1', description: null, state: 'closed' },
+        { title: 'Improve onboarding flow', description: null, state: 'open' },
+        { title: 'another-open-v1', description: null, state: 'open' }
+      ],
+      [],
+      { [`vinaya/tranche:${BRANCH}`]: [issue('OPEN')] }
+    )
+    const scoped = await indexTrancheMilestonesForSlugAsync(OWNER, REPO, BRANCH)
+
+    expect(scoped.otherOpenLegacySlugs).toEqual(['other-open-v2', 'another-open-v1'])
+    expect(vi.mocked(ghIssueListByLabelAsync).mock.calls.map((c) => c[2])).toEqual([`vinaya/tranche:${BRANCH}`])
+    expect(scoped.active).toEqual([{ slug: BRANCH, goal: 'Legacy goal.' }])
+    expect([...scoped.facts.keys()]).toEqual([BRANCH])
+  })
 })

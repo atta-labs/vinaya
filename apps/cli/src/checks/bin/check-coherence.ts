@@ -13,12 +13,22 @@
  * task's boundary re-exports from `@attalabs/aeg-core`: `fetchForgeFacts` and
  * `fetchOpenIssuesByLabel`.
  *
- * Runs A1, A3, T1, T2, T3, D1, R1, L1, L3 and the report-only lifecycle
- * rules L2 and L4. L2 and L4 print as `warning` check-error lines and never
- * change the exit code. Their facts come from the Milestone index
+ * Runs A1, A2, A3, T1, T2, T3, D1, R1, L1, L3 and L5 over the branch tranche,
+ * each blocking on a `fail`, and the report-only lifecycle rules L2 and L4.
+ * L2 and L4 print as `warning` check-error lines and never change the exit
+ * code. Their facts come from the Milestone index
  * (`indexTrancheMilestonesForSlugAsync`) and, for L4 only, the branch tranche's
- * labeled Issue list. It does NOT run A2 or L5 — a narrower scope than
- * `verify-coherence.ts`.
+ * labeled Issue list.
+ *
+ * A2 judges the branch tranche's closed tasks whose closing pull request
+ * merged; a candidate the provenance read gave no answer for, or a missing
+ * token, fails it as `severity:infra`, never a pass. L5 blocks only for the
+ * branch tranche, from the index's active list — a task pull request can
+ * neither cause nor cure another tranche's archival. L5 also sweeps every
+ * other open legacy-titled tranche the index names, one Issue-list read
+ * each, and prints those findings, and any slug whose read failed, as
+ * `warning` lines that never change the exit code. A label-only tranche is
+ * never swept: the index derives "every Issue closed" as complete for it.
  *
  * scope: full — reads the live forge, not the local diff.
  */
@@ -26,23 +36,27 @@
 import { isEntryPoint } from '@attalabs/aeg-core'
 import {
   deriveTrancheFromForge,
+  fetchProvenance,
   fetchTrancheIssuesAsync,
   indexTrancheMilestonesForSlugAsync,
-  issueMilestonesFromIssues
+  issueMilestonesFromIssues,
+  tasksFromIssues
 } from '@attalabs/aeg-forge-state'
-import type { GhIssue, TrancheMilestoneIndex } from '@attalabs/aeg-forge-state'
+import type { GhIssue, SlugMilestoneIndex, TrancheMilestoneIndex } from '@attalabs/aeg-forge-state'
 import { execFile, execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import {
   checkA1,
+  checkA2,
   checkA3,
   checkD1,
   checkL1,
   checkL2,
   checkL3,
   checkL4,
+  checkL5,
   checkR1,
   checkT1,
   checkT2,
@@ -288,6 +302,161 @@ function emitAdvisories(results: CheckResult[]): void {
   }
 }
 
+/** Reads, for each closed Issue number, whether its closing PR carries a provenance block. */
+export type ProvenanceReader = (issueNums: number[]) => Promise<Map<number, boolean>>
+
+/**
+ * A2 over the branch tranche. Its candidates are the tasks whose Issue is
+ * closed and whose closing PR merged, keyed `<slug>/<task id>` for `checkA2`.
+ * The provenance read answers an empty map on a network or token failure, and
+ * `checkA2` skips a key it is missing, so a lost read would pass silently: a
+ * missing token, or a candidate the read gave no answer for, fails the result
+ * as `severity:infra` instead.
+ */
+export async function evaluateA2(
+  slug: string,
+  entries: TaskEntry[],
+  token: string,
+  readProvenance: ProvenanceReader
+): Promise<CheckResult> {
+  const candidates = entries.filter(
+    (e) => e.facts?.issueState === 'closed' && e.facts.prState === 'merged' && e.task.issue !== null
+  )
+  if (candidates.length === 0) return checkA2(entries, new Map())
+
+  const unread = (reason: string, issues: Array<number | null>): CheckResult => ({
+    check: 'A2',
+    status: 'fail',
+    failures: issues.map((issue) => ({ code: 'forge-read-unavailable' as const, tranche: slug, issue, reason })),
+    note: 'severity:infra'
+  })
+  if (!token) {
+    return unread(
+      'severity:infra — no forge token, so the provenance of this closed task was not read and A2 did not evaluate it',
+      candidates.map((e) => e.task.issue)
+    )
+  }
+
+  const byIssue = await readProvenance(candidates.map((e) => e.task.issue as number))
+  const provenanceByKey = new Map<string, boolean>()
+  const missing: number[] = []
+  for (const e of candidates) {
+    const issue = e.task.issue as number
+    const has = byIssue.get(issue)
+    if (has === undefined) missing.push(issue)
+    else provenanceByKey.set(`${slug}/${e.task.id}`, has)
+  }
+  if (missing.length > 0) {
+    return unread(
+      `severity:infra — the provenance read returned no answer for #${missing.join(', #')}, so A2 did not evaluate it`,
+      missing
+    )
+  }
+  return checkA2(entries, provenanceByKey)
+}
+
+/**
+ * L5 over the branch tranche only, from the index's active list — the one
+ * active-tranche authority this check has. Pure; `entries` carry the forge
+ * facts already read for the branch tranche.
+ */
+export function evaluateBranchL5(slug: string, index: SlugMilestoneIndex, entries: TaskEntry[]): CheckResult {
+  const active = index.active.some((r) => r.slug === slug) ? [slug] : []
+  return checkL5(active, new Map([[slug, entries]]))
+}
+
+/** Reads one tranche's labeled Issues, every state. */
+export type TrancheIssueReader = (slug: string) => Promise<GhIssue[]>
+
+/** The other-tranche L5 sweep's findings, plus every swept slug it could not read. */
+export type OtherTrancheL5Sweep = {
+  result: CheckResult
+  unevaluated: Array<{ slug: string; detail: string }>
+}
+
+/** A task Issue as an L5 entry: its Issue state, and neutral defaults for every other fact. */
+function sweptEntry(slug: string, issue: GhIssue, task: TaskEntry['task']): TaskEntry {
+  return {
+    trancheSlug: slug,
+    archived: false,
+    task,
+    facts: {
+      issueState: issue.state === 'CLOSED' ? 'closed' : 'open',
+      assigned: false,
+      branchExists: false,
+      prState: 'none',
+      reviewDecision: 'none',
+      blockedLabel: false,
+      stateReason: null,
+      closedAt: null,
+      mergedAt: null,
+      closedByActor: null
+    }
+  }
+}
+
+/**
+ * L5 over every other open legacy-titled tranche the index names, for the
+ * report-only sweep. One Issue-list read per slug, through `readIssues`, and
+ * no other forge read: the index is passed in, never re-read. A slug whose
+ * read failed is returned in `unevaluated`, never dropped. Never rejects.
+ */
+export async function sweepOtherTranchesL5(
+  index: SlugMilestoneIndex,
+  readIssues: TrancheIssueReader
+): Promise<OtherTrancheL5Sweep> {
+  const slugs = index.otherOpenLegacySlugs
+  const reads = await Promise.all(
+    slugs.map(async (slug) => {
+      try {
+        return { slug, issues: await readIssues(slug), detail: '' }
+      } catch (err) {
+        return { slug, issues: null, detail: errorText(err) }
+      }
+    })
+  )
+  const entriesBySlug = new Map<string, TaskEntry[]>()
+  const evaluated: string[] = []
+  const unevaluated: OtherTrancheL5Sweep['unevaluated'] = []
+  for (const { slug, issues, detail } of reads) {
+    if (issues === null) {
+      unevaluated.push({ slug, detail })
+      continue
+    }
+    const byNumber = new Map(issues.map((i) => [i.number, i]))
+    const entries: TaskEntry[] = []
+    for (const task of tasksFromIssues(issues)) {
+      const issue = task.issue === null ? undefined : byNumber.get(task.issue)
+      if (issue) entries.push(sweptEntry(slug, issue, task))
+    }
+    entriesBySlug.set(slug, entries)
+    evaluated.push(slug)
+  }
+  return { result: checkL5(evaluated, entriesBySlug), unevaluated }
+}
+
+function emitOtherTrancheL5(sweep: OtherTrancheL5Sweep): void {
+  for (const failure of sweep.result.failures) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'warning',
+      message: `L5: tranche "${failure.tranche}" (not this branch's tranche, so report-only): ${failure.reason}`,
+      agent_recovery_prompt: recoveryPromptFor(failure.code)
+    })
+  }
+  for (const { slug, detail } of sweep.unevaluated) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'warning',
+      message: `coherence: L5 did not evaluate for tranche "${slug}" — a forge read failed while reading its Issue list: ${detail}`,
+      agent_recovery_prompt:
+        'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya check coherence` so L5 evaluates this tranche.'
+    })
+  }
+}
+
 function emitLifecycleUnevaluated(slug: string, detail: string): void {
   emitCheckError({
     schema: CHECK_SCHEMA_VERSION,
@@ -337,7 +506,7 @@ async function main(): Promise<void> {
   // The index read comes first: it supplies the branch tranche's own facts, so
   // the synchronous Milestone reader (whose `gh` child writes raw lines to
   // this process's stderr) is never reached.
-  let index: TrancheMilestoneIndex
+  let index: SlugMilestoneIndex
   try {
     index = await indexTrancheMilestonesForSlugAsync(repo.owner, repo.repo, slug)
   } catch (err) {
@@ -351,6 +520,10 @@ async function main(): Promise<void> {
     })
     process.exit(1)
   }
+
+  // The report-only L5 sweep of other tranches runs beside the branch
+  // tranche's own reads; it never rejects, so nothing here can be lost.
+  const otherTranchesL5 = sweepOtherTranchesL5(index, (s) => fetchTrancheIssuesAsync(repo.owner, repo.repo, s))
 
   const tranche = await deriveTrancheFromForge(
     repo.owner,
@@ -391,12 +564,20 @@ async function main(): Promise<void> {
     facts: snapshot.facts.get(t.id)
   }))
 
+  const token = (await resolveToken()) ?? ''
+
   if (a1Principals !== null) results.push(checkA1(enrichedEntries, a1Principals))
+  results.push(
+    await evaluateA2(slug, enrichedEntries, token, (nums) => fetchProvenance(nums, repo.owner, repo.repo, token))
+  )
   results.push(checkA3(enrichedEntries))
   results.push(checkT1(enrichedEntries))
   results.push(checkD1(enrichedEntries, issueToEntry(enrichedEntries), taskToEntry(enrichedEntries, slug)))
   results.push(checkT3(baseEntries, slug, enrichedEntries, new Set()))
   results.push(checkL1([file], new Map([[slug, enrichedEntries]])))
+  // L5 has no active-tranche authority but the index; a failed index read
+  // already failed the check above, so this never runs without it.
+  results.push(evaluateBranchL5(slug, index, enrichedEntries))
 
   // L2/L4: report-only. A failed Issue-list read is reported, never a pass.
   let slugIssues: GhIssue[] | null = []
@@ -410,8 +591,8 @@ async function main(): Promise<void> {
   }
   if (slugIssues !== null)
     emitAdvisories(evaluateLifecycleAdvisories(slug, tranche, enrichedEntries, index, slugIssues))
+  emitOtherTrancheL5(await otherTranchesL5)
 
-  const token = (await resolveToken()) ?? ''
   const openIssuesBySlug = await fetchOpenIssuesByLabel([slug], repo.owner, repo.repo, token)
   const topologyIssues = new Set(tranche.tasks.map((t) => t.issue).filter((n): n is number => n !== null))
   const openNums = (openIssuesBySlug.get(slug) ?? []).map((i) => i.number)
