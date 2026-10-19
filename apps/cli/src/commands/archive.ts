@@ -910,7 +910,7 @@ export async function archiveTranchesCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  archive: { date: '2026-09-05', callsToday: 2, retiresVia: 'collectTokens' },
-  'archive tranche': { date: '2026-09-05', callsToday: 5, retiresVia: 'collectTokens' },
-  'archive tranches': { date: '2026-09-30', callsToday: 5, retiresVia: 'collectTokens' }
+  archive: { date: '2026-09-05', callsToday: 3, retiresVia: 'collectTokens' },
+  'archive tranche': { date: '2026-09-05', callsToday: 6, retiresVia: 'collectTokens' },
+  'archive tranches': { date: '2026-09-30', callsToday: 6, retiresVia: 'collectTokens' }
 }
