@@ -22,7 +22,7 @@
       "task": {
         "name": "failure",
         "type": "local",
-        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "path": "tasks/failure"
       },
       "agent": { "name": "vinaya", "import_path": "vinaya_harbor_agent:VinayaAgent", "model_name": "claude-opus-5-5" },
@@ -34,7 +34,7 @@
       "task": {
         "name": "error",
         "type": "local",
-        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         "path": "tasks/error"
       },
       "agent": { "name": "vinaya", "import_path": "vinaya_harbor_agent:VinayaAgent", "model_name": "claude-opus-5-5" },

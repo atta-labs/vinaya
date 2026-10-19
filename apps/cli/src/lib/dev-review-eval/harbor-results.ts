@@ -1,6 +1,6 @@
 /** Reads one completed Harbor 0.24.0 job into a step-one practice result. */
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { isAbsolute, join, resolve } from 'node:path'
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { suiteMean, type BootstrapMethod } from './estimators'
 import type { StepOneAdapter, StepOneResult, StepOneRunSuite, StepOneTrialResult, StepOneUsage } from './step-one'
 
@@ -52,20 +52,18 @@ const text = (value: unknown): string | undefined => (typeof value === 'string' 
 const number = (value: unknown, fallback = 0): number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
 
-function taskPath(
-  jobDirectory: string,
-  trialDirectory: string,
-  taskRoot: string,
-  trialConfig: Json,
-  trialLock: Json
-): string {
-  const raw = text(trialLock.task?.path) ?? text(trialConfig.task?.path)
-  if (raw === undefined)
-    throw new HarborResultsRefused('missing_task_metadata', `${trialDirectory} does not name its task folder`)
-  if (isAbsolute(raw)) return raw
-  const fromTaskRoot = resolve(taskRoot, raw)
-  const candidates = [fromTaskRoot, resolve(jobDirectory, raw), resolve(trialDirectory, raw)]
-  return candidates.find(existsSync) ?? fromTaskRoot
+function taskPath(jobDirectory: string, taskRoot: string | undefined, raw: string): string {
+  const root = resolve(taskRoot ?? jobDirectory)
+  const path = resolve(root, raw)
+  const fromRoot = relative(root, path)
+  if (isAbsolute(raw) || fromRoot === '..' || fromRoot.startsWith(`..${sep}`))
+    throw new HarborResultsRefused('missing_task_metadata', `task path ${raw} escapes its declared task root`)
+  return path
+}
+
+function same(value: unknown, expected: string, subject: string): void {
+  if (text(value) !== expected)
+    throw new HarborResultsRefused('invalid_input', `${subject} does not match the job lock`)
 }
 
 function metadata(path: string): { suite: string; rendererVersion: string } {
@@ -124,13 +122,24 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
       `job uses Harbor ${String(lock.harbor?.version)}, not ${HARBOR_RESULTS_VERSION}`
     )
   const { model } = agentIdentity(json(join(options.jobDirectory, 'config.json')))
+  const lockedTrials = Array.isArray(lock.trials) ? lock.trials : []
+  if (lockedTrials.length === 0) throw new HarborResultsRefused('invalid_input', 'the job lock has no trials')
+  const lockedByTask = new Map<string, Json>()
+  for (const trial of lockedTrials) {
+    const taskId = text(trial.task?.name)
+    if (taskId === undefined || lockedByTask.has(taskId))
+      throw new HarborResultsRefused('multiple_trials_per_task', 'the job lock must name each task exactly once')
+    lockedByTask.set(taskId, trial)
+  }
   // A trial directory is a direct child with Harbor's terminal result file.
   const directories = readdirSync(options.jobDirectory, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && existsSync(join(options.jobDirectory, entry.name, 'result.json')))
     .map((entry) => join(options.jobDirectory, entry.name))
     .sort()
   if (directories.length === 0) throw new HarborResultsRefused('invalid_input', 'the job has no completed trial')
-
+  const discoveredTaskIds = directories.map((directory) => text(json(join(directory, 'result.json')).task_name))
+  if (new Set(discoveredTaskIds).size !== discoveredTaskIds.length)
+    throw new HarborResultsRefused('multiple_trials_per_task', 'the job has more than one trial for one task')
   const seen = new Set<string>()
   const suites = new Set<string>()
   const renderers = new Set<string>()
@@ -155,7 +164,22 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
     if (seen.has(taskId))
       throw new HarborResultsRefused('multiple_trials_per_task', `job has more than one trial for ${taskId}`)
     seen.add(taskId)
-    const task = taskPath(options.jobDirectory, directory, options.taskRoot ?? process.cwd(), config, trialLock)
+    const locked = lockedByTask.get(taskId)
+    if (locked === undefined)
+      throw new HarborResultsRefused('invalid_input', `${directory} names a task absent from the job lock`)
+    const trialName = basename(directory)
+    const lockedPath = text(locked.task?.path)
+    if (lockedPath === undefined)
+      throw new HarborResultsRefused('missing_task_metadata', `the job lock has no path for ${taskId}`)
+    same(result.trial_name, trialName, `${directory} result trial name`)
+    same(config.trial_name, trialName, `${directory} config trial name`)
+    same(config.task?.name, taskId, `${directory} config task name`)
+    same(trialLock.task?.name, taskId, `${directory} trial lock task name`)
+    same(config.task?.path, lockedPath, `${directory} config task path`)
+    same(trialLock.task?.path, lockedPath, `${directory} trial lock task path`)
+    same(result.task_id?.path, lockedPath, `${directory} result task path`)
+    same(result.task_checksum, text(locked.task?.digest) ?? '', `${directory} task checksum`)
+    const task = taskPath(options.jobDirectory, options.taskRoot, lockedPath)
     const taskMetadata = metadata(join(task, 'task.toml'))
     suites.add(taskMetadata.suite)
     renderers.add(taskMetadata.rendererVersion)
@@ -189,6 +213,8 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
     if (measuredUsage.subscriptionQuota === null) quotaUnavailableTrials++
     else usage.subscriptionQuota = (usage.subscriptionQuota ?? 0) + measuredUsage.subscriptionQuota
   }
+  if (seen.size !== lockedByTask.size || [...lockedByTask.keys()].some((taskId) => !seen.has(taskId)))
+    throw new HarborResultsRefused('invalid_input', 'completed trials do not match the job lock')
   if (suites.size !== 1) throw new HarborResultsRefused('mixed_suites', `job contains ${[...suites].sort().join(', ')}`)
   if (!suites.has(options.suite))
     throw new HarborResultsRefused('mixed_suites', `job suite is ${[...suites][0]}, not ${options.suite}`)

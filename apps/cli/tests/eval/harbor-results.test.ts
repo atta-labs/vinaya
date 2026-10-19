@@ -83,8 +83,12 @@ describe('Harbor job results', () => {
       const job = join(fixtures, jobName)
       const lock = JSON.parse(readFileSync(join(job, 'lock.json'), 'utf8'))
       expect(lock.trials).toHaveLength(trialNames.length)
+      const taskDigests = new Set<string>()
       for (const trialName of trialNames) {
         const result = JSON.parse(readFileSync(join(job, trialName, 'result.json'), 'utf8'))
+        const locked = lock.trials.find((trial: any) => trial.task.name === result.task_name)
+        expect(result.task_checksum).toBe(locked?.task.digest)
+        taskDigests.add(result.task_checksum)
         expect(Object.keys(result)).toEqual(
           expect.arrayContaining([
             'id',
@@ -104,6 +108,7 @@ describe('Harbor job results', () => {
         expect(Object.keys(result.config)).toEqual(expect.arrayContaining(['task', 'agent', 'environment', 'verifier']))
         expect(readFileSync(join(job, trialName, 'verifier', 'reward.txt'), 'utf8')).toBeDefined()
       }
+      expect(taskDigests.size).toBe(trialNames.length)
     }
   })
 
@@ -119,6 +124,7 @@ describe('Harbor job results', () => {
   it('resolves a native relative task path from Harbor’s original working directory', () => {
     const job = copyJob()
     const root = join(job, '..', 'harbor-working-directory')
+    cpSync(join(job, 'tasks'), join(root, 'tasks'), { recursive: true })
     const task = join(root, 'tasks', suite, 'success')
     cpSync(join(job, 'tasks', 'success'), task, { recursive: true })
     for (const file of ['config.json', 'lock.json']) {
@@ -127,6 +133,14 @@ describe('Harbor job results', () => {
       record.task.path = `tasks/${suite}/success`
       writeFileSync(path, JSON.stringify(record))
     }
+    const jobLockPath = join(job, 'lock.json')
+    const jobLock = JSON.parse(readFileSync(jobLockPath, 'utf8'))
+    jobLock.trials[0].task.path = `tasks/${suite}/success`
+    writeFileSync(jobLockPath, JSON.stringify(jobLock))
+    const resultPath = join(job, 'success__trial', 'result.json')
+    const result = JSON.parse(readFileSync(resultPath, 'utf8'))
+    result.task_id.path = `tasks/${suite}/success`
+    writeFileSync(resultPath, JSON.stringify(result))
     rmSync(join(job, 'tasks', 'success'), { recursive: true })
     expect(read(job, root).trials.success?.success).toBe(true)
   })
@@ -144,6 +158,37 @@ describe('Harbor job results', () => {
     const job = copyJob()
     cpSync(join(job, 'success__trial'), join(job, 'success__second'), { recursive: true })
     refusal(job, 'multiple_trials_per_task')
+  })
+
+  it('refuses an incomplete job instead of reporting a biased practice mean', () => {
+    const job = copyJob()
+    rmSync(join(job, 'failure__trial'), { recursive: true })
+    refusal(job, 'invalid_input')
+  })
+
+  it('refuses a result whose identity is not bound to its locked trial', () => {
+    const job = copyJob()
+    const path = join(job, 'success__trial', 'result.json')
+    const result = JSON.parse(readFileSync(path, 'utf8'))
+    result.task_checksum = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    writeFileSync(path, JSON.stringify(result))
+    refusal(job, 'invalid_input')
+  })
+
+  it('refuses a locked task path outside the declared task root', () => {
+    const job = copyJob()
+    const path = join(job, 'lock.json')
+    const lock = JSON.parse(readFileSync(path, 'utf8'))
+    lock.trials[0].task.path = '../success'
+    writeFileSync(path, JSON.stringify(lock))
+    for (const file of ['config.json', 'lock.json', 'result.json']) {
+      const trialPath = join(job, 'success__trial', file)
+      const record = JSON.parse(readFileSync(trialPath, 'utf8'))
+      if (file === 'result.json') record.task_id.path = '../success'
+      else record.task.path = '../success'
+      writeFileSync(trialPath, JSON.stringify(record))
+    }
+    refusal(job, 'missing_task_metadata')
   })
 
   it('refuses trials from more than one suite', () => {
