@@ -41,7 +41,21 @@ const EXEMPT: Readonly<Record<string, string>> = {
   'apps/cli/tests/fixtures/atta-engine/atta-adapter-langgraph-0.0.1.tgz': 'packed test-only runtime tarball',
   'apps/cli/tests/fixtures/atta-engine/atta-agents-0.1.0.tgz': 'packed test-only runtime tarball',
   'apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz': 'packed test-only runtime tarball',
-  'apps/cli/tests/fixtures/atta-engine/atta-models-0.1.0.tgz': 'packed test-only runtime tarball'
+  'apps/cli/tests/fixtures/atta-engine/atta-models-0.1.0.tgz': 'packed test-only runtime tarball',
+  'apps/vinaya-portal/public/studio/backlog-light.png': 'portal screenshot image served as a static asset',
+  'apps/vinaya-portal/public/studio/backlog.png': 'portal screenshot image served as a static asset',
+  'apps/vinaya-portal/public/studio/dashboard-light.png': 'portal screenshot image served as a static asset',
+  'apps/vinaya-portal/public/studio/dashboard.png': 'portal screenshot image served as a static asset',
+  'apps/vinaya-portal/public/studio/projects-light.png': 'portal screenshot image served as a static asset',
+  'apps/vinaya-portal/public/studio/projects.png': 'portal screenshot image served as a static asset',
+  'apps/vinaya-portal/public/studio/task-light.png': 'portal screenshot image served as a static asset',
+  'apps/vinaya-portal/public/studio/task.png': 'portal screenshot image served as a static asset',
+  'apps/vinaya-portal/public/studio/token-ledger-light.png': 'portal screenshot image served as a static asset',
+  'apps/vinaya-portal/public/studio/token-ledger.png': 'portal screenshot image served as a static asset',
+  'apps/vinaya-portal/public/studio/tranche-board-light.png': 'portal screenshot image served as a static asset',
+  'apps/vinaya-portal/public/studio/tranche-board.png': 'portal screenshot image served as a static asset',
+  'apps/vinaya-portal/public/studio/tranches-light.png': 'portal screenshot image served as a static asset',
+  'apps/vinaya-portal/public/studio/tranches.png': 'portal screenshot image served as a static asset'
 }
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
