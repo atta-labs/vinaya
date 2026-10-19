@@ -1609,7 +1609,7 @@ async function runAnswerCase(
   const alsoDelivered = manifest.sources.filter((source) => !required.has(source.sourceId))
   const prompt = [
     input.brief,
-    'Answer from the delivered documents. Do not edit any file and do not publish anything: this task changes nothing.',
+    'Answer from the delivered documents. This task changes nothing: you cannot edit a file, and you publish nothing.',
     sourceManifest.requiredSourcesPromptBlock({
       ...manifest,
       sources: manifest.sources.filter((source) => required.has(source.sourceId))
@@ -1643,19 +1643,31 @@ async function runAnswerCase(
     context: world.context,
     role: 'developer'
   })
-  const transcript: string[] = []
   try {
-    const promptPath = join(parent, 'prompt.md')
-    writeFileSync(promptPath, prompt)
-    const handle = await dispatchRole('developer', adapterVendor(trial.adapter), prompt, {
-      promptFile: promptPath,
-      cwd: workspace,
-      unattended: true,
-      ...(context.models[trial.adapter] === undefined ? {} : { model: context.models[trial.adapter] }),
-      turnResultKnownFindingIds: [],
-      devToolsBridge: driverDevBridgeInvocation(socketPath, join(import.meta.dir, '../../index.ts')),
-      observeStdoutLine: (line) => transcript.push(line)
-    })
+    const { developerTurnResultJsonSchema } = await import('../developer-turn-result')
+    const { readClaudeTurnOutput, readCodexTurnOutput } = await import('../dev-review-loop/turn-result')
+    const tools = await import('../../../tests/eval/tool-selection-suite')
+    // The read-only turn the source-citation suite's live trial runs: Claude
+    // Code holds only the served driver-run tools and Codex runs read-only, so
+    // the Developer cannot write a file whatever the prompt says.
+    const runTurn = citation.readOnlyDeveloperTurn(
+      trial.adapter,
+      parent,
+      workspace,
+      driverDevBridgeInvocation(socketPath, join(import.meta.dir, '../../index.ts')),
+      developerTurnResultJsonSchema({ knownFindingIds: [], requiredSources: [...required] }),
+      {
+        ...(context.models['claude-code'] === undefined ? {} : { claudeModel: context.models['claude-code'] }),
+        ...(context.models.codex === undefined ? {} : { codexModel: context.models.codex }),
+        timeoutSec: Math.ceil(context.timeoutMs / 1000)
+      }
+    )
+    const started = Date.now()
+    const stdout = await runTurn(prompt, null)
+    const wallTimeMs = Date.now() - started
+    const transcript = stdout.split('\n').filter(Boolean)
+    const turn = trial.adapter === 'claude-code' ? readClaudeTurnOutput(stdout) : readCodexTurnOutput(stdout)
+    const tokens = tools.usageOf(trial.adapter, transcript)
     const trace = await traceOf(trial.adapter, transcript)
     const record: VinayaTrialRecord = {
       rendererVersion: input.rendererVersion,
@@ -1666,12 +1678,19 @@ async function runAnswerCase(
       checks: null,
       reviews: null,
       readyForMerge: null,
-      developerTurnResult: handle.turnOutput?.raw ?? null,
+      developerTurnResult: turn.raw ?? null,
       receipts: [...receipts, ...citation.fetchedReceipts(manifest, world, (source) => source.content, item.sources)],
       trace: trace.map((call) => ({ tool: call.tool })),
       effects: recordedEffects(trace, publicationCounts(world.state()))
     }
-    return { ok: true, record, usage: trialUsage(trial.adapter, handle, transcript) }
+    const usage: StepOneUsage = {
+      wallTimeMs,
+      inputTokens: tokens.inputTokens,
+      outputTokens: tokens.outputTokens,
+      subscriptionQuota: subscriptionQuotaOf(trial.adapter, transcript),
+      estimatedCostUsd: 0
+    }
+    return { ok: true, record, usage }
   } finally {
     await toolHost.close()
     rmSync(parent, { recursive: true, force: true })
@@ -1781,7 +1800,7 @@ export async function runStepOneCommand(
 ): Promise<StepOneOutcome> {
   if (argv[0] !== 'run')
     throw new Error(
-      'usage: step-one.ts run --split development --backend standalone [--purpose <development-only|practice|comparison>] [--suite <name>]... [--adapter <claude-code|codex>] [--cases <n>|--cases <id>...] --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> --developer-snapshot <jsonl> --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--out <file>]'
+      'usage: step-one.ts run --split development --backend standalone [--purpose <development-only|practice|comparison>] [--suite <name>]... [--adapter <claude-code|codex>] [--cases <n>|--cases <id>...] --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> [--developer-snapshot <jsonl>] --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--out <file>]'
     )
   const split = flag(argv, 'split')
   const backend = flag(argv, 'backend')

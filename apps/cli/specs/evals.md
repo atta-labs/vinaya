@@ -487,11 +487,12 @@ does not carry, and each kind of case runs its own way:
 - A `review` case dispatches the suite's reviewer on the change under review,
   the patch of the layer-`P` reviewer case of the same id, and binds its result
   to the rendered brief's hash and that change's head.
-- An `answer` case runs as the source-citation suite's live trial runs: the
-  Developer, told to change nothing, works in an empty workspace holding the
-  injected documents of the layer-`P` source-citation case of the same id, with
-  the others served by `fetch_documentation`; nothing is committed and no
-  change is recorded.
+- An `answer` case runs as the source-citation suite's live trial runs, as a
+  read-only turn (`readOnlyDeveloperTurn`): Claude Code holds only the served
+  driver-run tools and Codex runs with a read-only sandbox. The Developer works
+  in an empty workspace holding the injected documents of the layer-`P`
+  source-citation case of the same id, with the others served by
+  `fetch_documentation`; nothing is committed and no change is recorded.
 
 The record's effects are the performed publication calls, each operation its
 `kind` and each call's arguments its `idempotencyKey`; its tool trace is the
@@ -556,7 +557,7 @@ graders for a layer-`G` suite. `--adapter` selects one adapter and `--cases`
 selects cases, a single count or case ids, repeated or comma-separated:
 
 ```text
-bun apps/cli/src/lib/dev-review-eval/step-one.ts run --split development --backend standalone [--purpose <development-only|practice|comparison>] [--suite <name>]... [--adapter <claude-code|codex>] [--cases <n>|--cases <id>...] --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> --developer-snapshot <merged-task-prs.jsonl> --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--out <file>]
+bun apps/cli/src/lib/dev-review-eval/step-one.ts run --split development --backend standalone [--purpose <development-only|practice|comparison>] [--suite <name>]... [--adapter <claude-code|codex>] [--cases <n>|--cases <id>...] --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> [--developer-snapshot <merged-task-prs.jsonl>] --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--out <file>]
 ```
 
 For example, a practice run of the first case of the layer-`G` developer
@@ -567,7 +568,9 @@ bun apps/cli/src/lib/dev-review-eval/step-one.ts run --split development --backe
 ```
 
 The snapshot supplies the frozen layer-`P` Developer briefs whose committed corpus
-entries intentionally retain only digests. The command verifies each brief
+entries intentionally retain only digests. Only a `developer-capability.l5`
+trial needs it; a run of layer-`G` and reviewer suites alone, like the example
+above, leaves it out. The command verifies each brief
 against that digest. Pricing is explicit because subscription CLIs report
 tokens but do not provide one portable cost schedule.
 
