@@ -480,5 +480,5 @@ export async function issueObjectivesEditCommand(args: string[]): Promise<void> 
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'issue objectives edit': { date: '2026-09-14', callsToday: 14, retiresVia: 'forgeWrite' }
+  'issue objectives edit': { date: '2026-09-14', callsToday: 13, retiresVia: 'forgeWrite' }
 }
