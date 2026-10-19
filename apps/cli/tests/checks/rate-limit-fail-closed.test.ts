@@ -31,6 +31,9 @@ const RATE_LIMIT_REPLY = JSON.stringify({
   }
 })
 
+// The default branch's `vinaya.config.json` as `gh --jq .content` prints it, so the Principal read resolves.
+const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['fixture-principal'] })).toString('base64')
+
 const TASK_ISSUE = 4242
 const RATE_LIMITED_DEP = 77
 const MISSING_DEP = 78
@@ -177,7 +180,8 @@ function issueModeGh(depNumber: number, depReply: FakeCall): string {
       exit: 0
     },
     { ...depReply, pattern: `"issue view ${depNumber} "*` },
-    { pattern: '"api rate_limit"', stdout: RATE_LIMIT_REPLY, exit: 0 }
+    { pattern: '"api rate_limit"', stdout: RATE_LIMIT_REPLY, exit: 0 },
+    { pattern: '"api repos/"*"/contents/vinaya.config.json --jq .content"', stdout: PRINCIPALS_CONFIG_B64, exit: 0 }
   ])
 }
 
@@ -187,7 +191,11 @@ describe('dispatch-readiness (Issue mode): a dependency that cannot be read is u
     const result = await runBin(
       DISPATCH_BIN,
       REPO_ROOT,
-      childEnv(binDir, { BRANCH: `task/issue-${TASK_ISSUE}`, AEG_REPO: 'atta-labs/vinaya-fixture' })
+      childEnv(binDir, {
+        BRANCH: `task/issue-${TASK_ISSUE}`,
+        AEG_REPO: 'atta-labs/vinaya-fixture',
+        GITHUB_REPOSITORY: 'atta-labs/vinaya-fixture'
+      })
     )
     expect(result.exitCode).toBe(1)
     const dep = result.errors.find((e) => e.message.includes(`#${RATE_LIMITED_DEP}`))
@@ -205,7 +213,11 @@ describe('dispatch-readiness (Issue mode): a dependency that cannot be read is u
     const result = await runBin(
       DISPATCH_BIN,
       REPO_ROOT,
-      childEnv(binDir, { BRANCH: `task/issue-${TASK_ISSUE}`, AEG_REPO: 'atta-labs/vinaya-fixture' })
+      childEnv(binDir, {
+        BRANCH: `task/issue-${TASK_ISSUE}`,
+        AEG_REPO: 'atta-labs/vinaya-fixture',
+        GITHUB_REPOSITORY: 'atta-labs/vinaya-fixture'
+      })
     )
     expect(result.exitCode).toBe(1)
     const dep = result.errors.find((e) => e.message.includes(`#${MISSING_DEP}`))

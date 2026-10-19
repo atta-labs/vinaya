@@ -54,7 +54,8 @@ function principalsGhEnv(root: string): NodeJS.ProcessEnv {
     ].join('\n') + '\n'
   )
   chmodSync(join(binDir, 'gh'), 0o755)
-  return { ...process.env, PATH: `${binDir}:${path}` }
+  // An inherited `AEG_REPO` would point the Principal read at another repository than the fixture's.
+  return { ...process.env, PATH: `${binDir}:${path}`, AEG_REPO: undefined }
 }
 
 describe('RC1 — packageRoot() resolves regardless of the calling module’s depth', () => {
