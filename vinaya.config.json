@@ -166,5 +166,11 @@
       "vinaya/needs:principal-input",
       "project:vinaya"
     ]
-  }
+  },
+  "projects": [
+    {
+      "name": "vinaya-portal",
+      "path": "apps/vinaya-portal/web"
+    }
+  ]
 }
