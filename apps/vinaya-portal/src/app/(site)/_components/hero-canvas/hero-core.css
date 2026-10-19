@@ -1,0 +1,57 @@
+/* The menu sheet's color scheme toggle is portalled outside the topbar, so `TopBarChromeHost`'s
+   own selector can't reach it. Same rule: hidden while the lockup is undocked (`data-bare` on
+   the bar is `true` only on landing before the dock). */
+body:has([data-bare="true"])
+  [role="dialog"]
+  :is(button:has([title^="Switch"][title$="mode"]), [title^="Switch"][title$="mode"]) {
+  visibility: hidden;
+}
+
+/* "loop" in the hero's subline: its two o's are the infinity (hero-scene.js LOOP_GLYPH). The
+   base hairlines take the text's own colour so the word still reads; the packets run the
+   theme's warning → destructive → success ramp, one loop per 1 / 0.07 s like the 3D current.
+   The three packet layers share one head (delays offset by the tail lengths). */
+.hero-loop {
+  display: inline-block;
+  width: 1.08em;
+  height: 0.46em;
+  margin: 0 0.02em;
+  vertical-align: 0.02em;
+  overflow: visible;
+}
+.hero-loop path {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+}
+.hero-loop-base {
+  stroke: currentColor;
+  stroke-width: 1px;
+  opacity: 0.55;
+}
+.hero-loop-packet {
+  stroke: url(#hero-loop-ink);
+  stroke-width: 1.5px;
+  animation: hero-loop-flow 14.3s linear infinite;
+}
+.hero-loop-tail {
+  opacity: 0.25;
+}
+.hero-loop-mid {
+  opacity: 0.5;
+  animation-delay: -1.29s;
+}
+.hero-loop-head {
+  opacity: 0.95;
+  animation-delay: -2.15s;
+}
+@keyframes hero-loop-flow {
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-loop-packet {
+    animation: none;
+  }
+}

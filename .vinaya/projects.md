@@ -23,7 +23,7 @@ is derived from the folder tree.
 | aeg-types | `packages/aeg-types` | `packages/aeg-types/specs/` | (state tracked globally for now) |
 | sources | `packages/sources` | `packages/sources/specs/` | (state tracked globally for now) |
 | vinaya | `.` | `specs/` | (state tracked globally) |
-| vinaya-portal | `apps/vinaya-portal/web` | `apps/vinaya-portal/web/specs/` | (state tracked globally) |
+| vinaya-portal | `apps/vinaya-portal` | `apps/vinaya-portal/specs/` | (state tracked globally) |
 
 Each workspace package that is a work surface gets its own row, so a task's
 `Project:` names the package it actually touches rather than the repository

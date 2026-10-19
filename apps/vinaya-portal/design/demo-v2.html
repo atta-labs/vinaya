@@ -1,0 +1,506 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vinaya Process Interactive</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: narrative and simulations on the left, a full-height 3D scene pinned on the right with the Log rail docked over its foot. Dark-first. Stage palette from the document. */
+:root{
+  --bg:#0a0a0b; --panel:#131316; --sunk:#1b1b1f; --fg:#f4f4f5; --muted:#a1a1aa; --line:#27272a; --strong:#52525b;
+  --primary:#38bdf8; --think:#38bdf8; --exec:#fb923c; --retro:#a3e635; --hot:#fb7185; --ok:#4ade80;
+  --sans:"Inter",ui-sans-serif,system-ui,-apple-system,sans-serif;
+  --mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --r:10px; --top:52px; color-scheme:dark;
+}
+@media (prefers-color-scheme: light){ :root:not([data-theme="dark"]){
+  --bg:#ffffff; --panel:#fafafa; --sunk:#f4f4f5; --fg:#0a0a0a; --muted:#6b6b73; --line:#e4e4e7; --strong:#a1a1aa;
+  --primary:#0284c7; --think:#0369a1; --exec:#c2410c; --retro:#4d7c0f; --hot:#be123c; --ok:#15803d; color-scheme:light }}
+:root[data-theme="light"]{
+  --bg:#ffffff; --panel:#fafafa; --sunk:#f4f4f5; --fg:#0a0a0a; --muted:#6b6b73; --line:#e4e4e7; --strong:#a1a1aa;
+  --primary:#0284c7; --think:#0369a1; --exec:#c2410c; --retro:#4d7c0f; --hot:#be123c; --ok:#15803d; color-scheme:light }
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:15px;line-height:1.5}
+h1,h2,h3{text-wrap:balance;margin:0}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.mono{font-family:var(--mono)}
+.btn{font:inherit;font-size:13px;font-weight:500;padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--fg);cursor:pointer;display:inline-flex;gap:8px;align-items:center}
+.btn:hover{border-color:var(--strong)}
+.btn.primary{background:var(--c,var(--primary));border-color:transparent;color:#0a0a0b}
+.btn.small{font-size:12px;padding:5px 10px}
+.btn:focus-visible,.choice:focus-visible,.seg button:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.btn:disabled{opacity:.5;cursor:default}
+
+header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:color-mix(in srgb,var(--bg) 80%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+header.top .in{display:flex;align-items:center;gap:14px;height:var(--top);padding-inline:16px}
+.wordmark{display:flex;align-items:baseline;gap:8px;font-weight:700;letter-spacing:.02em}
+.wordmark small{font-family:var(--mono);font-weight:500;font-size:10px;letter-spacing:.18em;color:var(--muted)}
+.spacer{flex:1}
+.crumbs{display:none;gap:6px;font-family:var(--mono);font-size:11px;color:var(--muted)}
+@media(min-width:900px){.crumbs{display:flex}}
+.crumbs span{padding:3px 8px;border-radius:999px;border:1px solid var(--line)}
+.crumbs span.on{color:var(--c);border-color:var(--c)}
+
+/* two-column shell */
+.shell{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);min-height:calc(100dvh - var(--top))}
+.left{padding:0 16px 0 16px;min-width:0}
+.right{position:sticky;top:calc(var(--top) + env(safe-area-inset-top,0px));height:calc(100dvh - var(--top) - env(safe-area-inset-top,0px));min-width:0;border-left:1px solid var(--line);background:var(--panel);overflow:hidden}
+.right canvas{display:block;width:100%;height:100%}
+.hud{position:absolute;left:14px;top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.pill{font-family:var(--mono);font-size:11px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:color-mix(in srgb,var(--bg) 70%,transparent);color:var(--muted)}
+.pill.lit{color:var(--c);border-color:var(--c)}
+.rail{position:absolute;left:14px;right:14px;bottom:14px;background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;height:176px;overflow:hidden}
+.rail .eyebrow{display:flex;justify-content:space-between}
+.rail ol{list-style:none;margin:8px 0 0;padding:0;font-family:var(--mono);font-size:11.5px;display:grid;gap:3px}
+.rail li{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:10px;opacity:0;transform:translateY(6px);animation:in .3s forwards}
+.rail li b{font-weight:500;color:var(--c,var(--fg));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rail li span{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+@keyframes in{to{opacity:1;transform:none}}
+.gates3{position:absolute;right:14px;top:12px;display:grid;gap:6px}
+.gate{font-family:var(--mono);font-size:11px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:color-mix(in srgb,var(--bg) 70%,transparent);color:var(--muted);display:flex;gap:8px;align-items:center}
+.gate i{width:8px;height:8px;border-radius:50%;background:var(--strong);display:inline-block}
+.gate.on{color:var(--ok);border-color:var(--ok)}.gate.on i{background:var(--ok);box-shadow:0 0 10px var(--ok)}
+.gate.run{color:var(--exec);border-color:var(--exec)}.gate.run i{background:var(--exec);animation:blink .6s infinite alternate}
+@keyframes blink{to{opacity:.3}}
+
+/* scenes on the left */
+.scene{min-height:calc(100dvh - var(--top));display:grid;align-content:center;gap:16px;padding-block:48px;max-width:620px;opacity:.35;transition:opacity .35s}
+.scene.on{opacity:1}
+.scene.done{opacity:.6}
+.scene h2{font-size:clamp(24px,3vw,34px);line-height:1.12;font-weight:700;letter-spacing:-.02em}
+.scene p{margin:0;color:var(--muted);max-width:58ch}
+.scene .eyebrow{color:var(--c)}
+.actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.intro h1{font-size:clamp(30px,4.4vw,46px);line-height:1.06;font-weight:700;letter-spacing:-.02em}
+.choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}
+.choice{text-align:left;font:inherit;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px;color:var(--fg);cursor:pointer;display:grid;gap:6px;transition:border-color .2s,transform .2s}
+.choice:hover{border-color:var(--strong);transform:translateY(-1px)}
+.choice[aria-pressed="true"]{border-color:var(--c);box-shadow:inset 0 0 0 1px var(--c)}
+.choice .tag{font-family:var(--mono);font-size:11px;color:var(--c);letter-spacing:.08em;text-transform:uppercase}
+.choice b{font-weight:600}.choice span{font-size:13px;color:var(--muted)}
+
+/* simulated surfaces */
+.win{background:var(--sunk);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-family:var(--mono);font-size:12.5px}
+.win .bar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);color:var(--muted);font-size:11px}
+.win .bar i{width:10px;height:10px;border-radius:50%;background:var(--strong);display:inline-block}
+.win .bar .t{margin-left:6px}
+.win .body{padding:12px;display:grid;gap:5px;min-height:120px;max-height:380px;overflow:auto}
+.ln{opacity:0;animation:in .25s forwards;white-space:pre-wrap;word-break:break-word;min-width:0}
+.ln.cmd{color:var(--fg)}.ln.cmd::before{content:"$ ";color:var(--muted)}
+.ln.skill{color:var(--think)}
+.ln.me{color:var(--fg)}.ln.me::before{content:"you  ";color:var(--muted)}
+.ln.ag{color:var(--muted)}.ln.ag::before{content:attr(data-who) "  ";color:var(--c)}
+.ln.out{color:var(--muted)}
+.ln.ok{color:var(--ok)}.ln.ok::before{content:"✓ "}
+.ln.hook{color:var(--exec)}
+.ln.ev{color:var(--primary)}
+.ln.hl{color:var(--fg)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px;font-family:var(--mono);font-size:12px;display:grid;gap:6px}
+.card .k{color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+.card table{width:100%;border-collapse:collapse}
+.card th,.card td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line);font-weight:400}
+.card th{color:var(--muted);font-size:11px}
+.card td.s{color:var(--c)}
+.tasks{display:flex;flex-wrap:wrap;gap:6px}
+.tasks i{font-style:normal;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:6px;border:1px solid var(--line);color:var(--muted)}
+.tasks i.run{border-color:var(--exec);color:var(--exec)}.tasks i.done{border-color:var(--retro);color:var(--retro)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+.seg button{font:inherit;font-size:12px;padding:6px 12px;background:transparent;border:0;color:var(--muted);cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--sunk);color:var(--fg)}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stats div{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px}
+.stats b{display:block;font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
+.stats span{font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em}
+.proposal{display:grid;gap:8px}
+.proposal .card{grid-template-columns:1fr auto;align-items:center}
+.proposal .card.ok{border-color:var(--retro)}
+.note{font-size:12px;color:var(--muted)}
+.banner{border:1px solid var(--c);border-radius:var(--r);padding:12px 14px;background:color-mix(in srgb,var(--c) 10%,var(--panel));display:grid;gap:4px}
+.banner b{font-weight:600}
+.overlay{position:fixed;inset:0;z-index:40;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(6px);display:grid;place-items:center;padding:16px}
+.sheet{width:min(960px,100%);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+.sheet header{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.map{width:100%;height:auto;font-family:var(--mono)}
+.map text{fill:var(--muted);font-size:10px}
+.map .box{fill:var(--sunk);stroke:var(--line)}
+.map .box.path{stroke:var(--c);stroke-width:1.6}
+.map .box.now{fill:color-mix(in srgb,var(--c) 18%,var(--sunk));stroke:var(--c);stroke-width:2}
+.map .box.now + text,.map .box.path + text{fill:var(--fg)}
+.map .edge{stroke:var(--line);fill:none}.map .edge.path{stroke:var(--c);stroke-width:1.6}
+.map .lane{fill:none;stroke:var(--line);stroke-dasharray:3 3}
+table.studio{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px}
+.studio th,.studio td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line)}
+.studio th{color:var(--muted);font-weight:500;font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+.studio td.s{color:var(--c)}
+@media (max-width:900px){
+  .shell{grid-template-columns:1fr}
+  .right{position:sticky;top:calc(var(--top) + env(safe-area-inset-top,0px));height:38dvh;border-left:0;border-bottom:1px solid var(--line);z-index:5;order:-1}
+  .rail{height:96px;left:8px;right:8px;bottom:8px}
+  .scene{min-height:auto;padding-block:36px}
+}
+@media (prefers-reduced-motion:reduce){ .rail li,.ln{animation:none;opacity:1;transform:none} html{scroll-behavior:auto} }
+</style>
+
+<header class="top"><div class="in">
+  <div class="wordmark">Vinaya <small>PROCESS · INTERACTIVE</small></div>
+  <div class="crumbs" id="crumbs"></div>
+  <div class="spacer"></div>
+  <button class="btn small" id="btnMap">Map</button>
+  <button class="btn small" id="btnStudio">Studio</button>
+</div></header>
+
+<div class="shell">
+  <div class="left" id="left"></div>
+  <div class="right" id="right">
+    <canvas id="c"></canvas>
+    <div class="hud"><span class="pill lit" id="hudStage">upstream</span><span class="pill" id="hudFlow">pick a size</span></div>
+    <div class="gates3"><span class="gate" id="g0"><i></i>Ring 0 · hooks</span><span class="gate" id="g1"><i></i>Ring 1 · CI</span><span class="gate" id="g2"><i></i>Ring 2 · audit</span></div>
+    <div class="rail"><div class="eyebrow"><span>The Log · live</span><span id="railCount">0 events</span></div><ol id="rail"></ol></div>
+  </div>
+</div>
+
+<div class="overlay" id="mapOverlay" hidden><div class="sheet">
+  <header><strong>Map</strong><span class="note" id="mapNote"></span><div class="spacer"></div><button class="btn small" data-close>Close</button></header>
+  <svg class="map" id="map" viewBox="0 0 900 330" aria-label="The Vinaya process, current path highlighted"></svg>
+</div></div>
+<div class="overlay" id="studioOverlay" hidden><div class="sheet">
+  <header><strong>Studio · Mission Control</strong><span class="note">what it shows at this moment · example data</span><div class="spacer"></div><button class="btn small" data-close>Close</button></header>
+  <table class="studio"><thead><tr><th>Task</th><th>Issue</th><th>PR</th><th>State</th><th>Round</th><th>Phase</th><th>Gate</th></tr></thead><tbody id="studioBody"></tbody></table>
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.158.0/three.min.js"></script>
+<script>
+/* =========================================================
+   DATA · one flow per choice; every scene renders from data
+   ========================================================= */
+const COL={think:'--think',exec:'--exec',retro:'--retro',hot:'--hot',log:'--primary'};
+const cssVar=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+let SPEED=1;
+
+/* --- chat scripts (accelerated conversations). who: me | ag | skill | cmd | out --- */
+const architectChat=[
+  ['cmd','claude'],['out','Claude Code · atta-labs/shop · main'],
+  ['cmd','/vinaya architect'],['skill','▸ doctrine loaded: architect · reads Project specs, sets the execution Milestone, drafts tranche intents, never plans tasks'],
+  ['me','Project: Checkout v2. Specs are in Linear. Retried webhooks double-charge customers today.'],
+  ['ag','Read the three specs and billing/. The webhook handler has no idempotency; the retry ledger spec and the receipts spec both depend on it.'],
+  ['ag','Code direction: one execution Milestone, checkout-v2, integration branch milestone/checkout-v2. Two tranches: idempotent webhooks first, retry ledger and receipts behind it.'],
+  ['me','Receipts can wait. Keep two tranches, move receipts to the second.'],
+  ['ag','Done. Milestone opened on the forge with two tranche intents. Nothing planned yet; that is the Planner’s.'],
+];
+const plannerChat=(intent,tranche,tasks)=>[
+  ['cmd','claude'],['cmd','/vinaya planner'],['skill','▸ doctrine loaded: planner · reads real specs and real code, declares Surface, dependencies and conflicts, asks before writing'],
+  ['me',intent],
+  ['ag','Read the code first. '+tasks.length+' tasks, each with a Surface it owns and a test plan the Developer can run. Two of them touch billing/charge.ts, so they run serially.'],
+  ['ag','Every claim about the code is a file:line excerpt. Dispatch order follows the dependency edges.'],
+  ['me','Approved. Write them.'],
+  ['ag','Tranche '+tranche+' written: '+tasks.map(t=>'#'+t.issue).join(', ')+'. Briefs frozen. Ready for the Operator.'],
+];
+const backlogChat=[
+  ['cmd','claude'],['cmd','/vinaya planner'],['skill','▸ doctrine loaded: planner · backlog Issue: lighter planning, no tranche'],
+  ['me','Found while working: resume accepts kept work from a previous run. It should refuse it.'],
+  ['ag','Read apps/cli/src/commands/resume.ts. One objective, one Surface, one test. No tranche needed; it goes to the backlog.'],
+  ['ag','Issue #1000 written with its brief. Dispatchable on its own.'],
+];
+const hotChat=(agent)=>[
+  ['cmd',agent==='Codex'?'codex':'claude'],['out',(agent==='Codex'?'Codex':'Claude Code')+' · atta-labs/shop · hot/1001-flaky-cli-test'],
+  ['me','The CLI test is flaky on CI. Fix it. Hot Issue #1001 is open with the files.'],
+  ['ag','Race on the temp dir: two tests share TMPDIR. Patched to a per-test directory. Tests green locally.'],
+  ['me','Looks right. Commit and push.'],
+];
+const hotExec=[
+  ['cmd','git commit -m "Fix(cli): A flaky test gets its own temp dir"'],
+  ['hook','pre-commit · biome check --staged'],['ok','biome · 2 files'],
+  ['hook','pre-commit · turbo typecheck --affected'],['ok','typecheck · 1 package'],
+  ['hook','pre-commit · vinaya check --all --diff-only --local'],['ok','31 checks · 0 failed'],
+  ['cmd','git push -u origin hot/1001-flaky-cli-test'],
+  ['hook','pre-push · vinaya check --all --local'],['ok','38 checks · 0 failed · Ring 0 green'],
+  ['hook','pre-push · selected tests'],['ok','12 tests · 0 failed'],
+  ['out','Pull request #1472 opened · Closes #1001'],
+  ['hook','CI · vinaya-checks · Ring 1'],['ok','38 checks · 0 failed · merge unblocked'],
+  ['out','review: waived by the Principal for this Issue'],
+  ['ok','merged by the Principal · #1472 → main'],
+];
+/* --- execution: one reusable script per task; type planned | backlog --- */
+const execScript=(t,agent)=>[
+  ['cmd',t.tranche?`vinaya task run ${t.tranche} ${t.n} --agent ${agent}`:`vinaya task run --issue ${t.issue} --agent ${agent}`,{log:['dev_review_loop.loop_started',`#${t.issue}`]}],
+  ['out',`brief frozen · #${t.issue} · ${t.title}`,{log:['forge_write.written','op=issue.comment · brief']}],
+  ['ev',`round 1 · dispatch developer (${agent}, sandboxed)`,{log:['dispatch.dispatched','role=developer'],s3:{orbit:1,round:1}}],
+  ['out',`  tool · Read ${t.file}`],['out',`  tool · Edit ${t.file}`],['out','  tool · Bash bun test'],
+  ['hook','  pre-commit · biome · typecheck · check --diff-only'],['ok','  commit · 31 checks · 0 failed',{log:['gate.summary','host=hook ran=31 failed=0'],g:[1,0,0]}],
+  ['hook','  pre-push · check --all --local · typecheck --affected · selected tests'],['ok','  push · Ring 0 green',{log:['gate.summary','host=hook ran=38 failed=0'],g:[2,0,0]}],
+  ['out',`  pull request opened · Closes #${t.issue}`,{log:['dev_review_loop.round_started','round=1 · pr opened'],g:[2,1,0]}],
+  ['ok','  CI · Ring 1 · 38 checks green',{log:['gate.summary','host=ci ran=38 failed=0'],g:[2,2,0]}],
+  ['ev','  reviewers · 2 fresh, parallel, judging the head',{log:['dispatch.dispatched','role=reviewer ×2']}],
+  ['out','  reviewer-1 · APPROVE · 0 findings',{log:['dev_review_loop.verdicts_read','APPROVE · APPROVE']}],
+  ['out','  reviewer-2 · APPROVE · 1 minor, outside Surface'],
+  ['ok',`  round 1 ended · green`,{log:['dev_review_loop.round_ended','outcome=green'],s3:{orbit:0}}],
+  ['ok',`  merged by the Principal · #${t.issue} → ${t.base}`,{log:['forge_write.written','op=pr.merge'],g:[2,2,1]}],
+  ['out',`  Ring 2 · audit scheduled · archivist closes #${t.issue}`,{log:['forge_write.written','op=archive · task_closed'],g:[2,2,2]}],
+];
+
+const T=(issue,n,title,file,tranche,base)=>({issue,n,title,file,tranche,base});
+const FLOWS={
+  feature:{label:'A new, large feature',tag:'Architect + Planner',color:'think',desc:'Specs from a Project or Epic. An execution Milestone, then tranches of tasks.',
+    tranches:[{name:'checkout-v2/1',intent:'Tranche intent 1: idempotent webhooks. Milestone checkout-v2.',tasks:[T(418,1,'Idempotency key on the webhook','billing/webhook.ts','checkout-v2/1','milestone/checkout-v2'),T(419,2,'Store the key: migration + column','billing/charge.ts','checkout-v2/1','milestone/checkout-v2'),T(420,3,'Refuse a replayed charge','billing/charge.ts','checkout-v2/1','milestone/checkout-v2')]},
+              {name:'checkout-v2/2',intent:'Tranche intent 2: retry ledger and receipts. Milestone checkout-v2.',tasks:[T(422,1,'Retry ledger table','billing/ledger.ts','checkout-v2/2','milestone/checkout-v2'),T(423,2,'Receipt per settled charge','billing/receipt.ts','checkout-v2/2','milestone/checkout-v2'),T(424,3,'Ledger view in the admin','admin/ledger.tsx','checkout-v2/2','milestone/checkout-v2')]}]},
+  medium:{label:'Medium work',tag:'Planner · standalone tranche',color:'think',desc:'A refactor or a small feature. Several tasks, no Milestone above it.',
+    tranches:[{name:'resume-hardening/1',intent:'Engineering need: resume must read the record, not memory. Three tasks, no Milestone.',tasks:[T(610,1,'Resume reads the record','apps/cli/src/commands/resume.ts','resume-hardening/1','main'),T(611,2,'A pause names who must act','packages/aeg-core/src/loop/pause.ts','resume-hardening/1','main'),T(612,3,'A ruling binds to the head it judged','packages/aeg-core/src/loop/ruling.ts','resume-hardening/1','main')]}]},
+  backlog:{label:'A backlog Issue',tag:'Planner · one Issue',color:'think',desc:'Found while working. One fix, lighter planning, no tranche.',
+    tranches:[{name:null,tasks:[T(1000,null,'Resume refuses kept work','apps/cli/src/commands/resume.ts',null,'main')]}]},
+  hot:{label:'A hot fix, on main now',tag:'No Planner',color:'hot',desc:'You and one agent, live. Light brief. Same gates.'},
+};
+
+/* =========================================================
+   SCENE BUILDERS · each returns {el, play()}; play resolves when done
+   ========================================================= */
+let flowKey=null, agent='claude', scenes=[], current=0;
+const left=document.getElementById('left');
+const h=(tag,cls,html)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(html!==undefined)e.innerHTML=html;return e};
+function win(title,kind){const w=h('div','win');w.innerHTML=`<div class="bar"><i></i><i></i><i></i><span class="t">${title}</span></div><div class="body"></div>`;w.body=w.querySelector('.body');w.dataset.kind=kind||'';return w}
+async function type(w,lines,speed,onLine){
+  for(const [cls,text,meta] of lines){
+    const l=h('div','ln '+cls,text);if(cls==='ag')l.dataset.who=agent==='codex'?'codex':'claude';
+    w.body.appendChild(l);w.body.scrollTop=w.body.scrollHeight;
+    if(meta&&onLine)onLine(meta);
+    await sleep((cls==='me'||cls==='ag'?520:cls==='cmd'?420:220)/SPEED);
+  }
+}
+function scene({stage,eyebrow,title,text,color,build}){
+  const el=h('section','scene');el.style.setProperty('--c',`var(${COL[color]})`);el.dataset.stage=stage;
+  el.innerHTML=`<div class="eyebrow">${eyebrow}</div><h2>${title}</h2><p>${text}</p>`;
+  const body=h('div','body');body.style.display='grid';body.style.gap='12px';el.appendChild(body);
+  const actions=h('div','actions');el.appendChild(actions);
+  const s={el,body,actions,stage,color,play:null,played:false};
+  build(s);
+  return s;
+}
+function playButton(s,label,fn){
+  const b=h('button','btn primary',label);b.style.setProperty('--c',`var(${COL[s.color]})`);
+  const skip=h('button','btn small','Skip ahead');skip.hidden=true;
+  b.addEventListener('click',async()=>{b.disabled=true;skip.hidden=false;SPEED=1;await fn();skip.hidden=true;s.played=true;s.el.classList.add('done');showContinue(s)});
+  skip.addEventListener('click',()=>{SPEED=12});
+  s.actions.append(b,skip);
+}
+function showContinue(s){
+  const i=scenes.indexOf(s);if(i<0||i===scenes.length-1)return;
+  const c=h('button','btn','Continue →');c.addEventListener('click',()=>goto(i+1));s.actions.appendChild(c);c.focus({preventScroll:true});
+  setTimeout(()=>{if(current===i)goto(i+1)},2600);
+}
+function goto(i){current=i;const s=scenes[i];s.el.scrollIntoView({behavior:reduced?'auto':'smooth',block:'start'});setActive(i)}
+function setActive(i){
+  scenes.forEach((s,j)=>s.el.classList.toggle('on',j===i));
+  const s=scenes[i];if(!s)return;
+  const hud=document.getElementById('hudStage');hud.textContent=s.stage;hud.style.setProperty('--c',`var(${COL[s.color]})`);
+  s3.focus(s.stage,s.color);
+  if(s.stage==='planner'||s.stage==='architect')gates([0,0,0]);
+  crumbs(s.stage);
+  if(!document.getElementById('mapOverlay').hidden)drawMap();
+}
+
+/* --- Log rail --- */
+const rail=document.getElementById('rail');let railN=0;
+function log(k,v,color){const li=h('li','',`<b>${k}</b><span>${v}</span>`);li.style.setProperty('--c',`var(${COL[color||'log']})`);rail.appendChild(li);railN++;while(rail.children.length>8)rail.removeChild(rail.firstChild);document.getElementById('railCount').textContent=railN+' events'}
+function railReset(){rail.innerHTML='';railN=0;document.getElementById('railCount').textContent='0 events'}
+const gatesEl=[0,1,2].map(i=>document.getElementById('g'+i));
+function gates(g){g.forEach((v,i)=>{gatesEl[i].className='gate '+(v===2?'on':v===1?'run':'')});s3.gates(g)}
+
+/* --- shared "meta" handler for typed lines --- */
+const onMeta=color=>m=>{if(m.log)log(m.log[0],m.log[1],color);if(m.g)gates(m.g);if(m.s3)s3.set(m.s3)};
+
+/* =========================================================
+   FLOW ASSEMBLY
+   ========================================================= */
+function buildFlow(key){
+  flowKey=key;const F=FLOWS[key];scenes=[];left.innerHTML='';railReset();gates([0,0,0]);s3.reset();
+  document.getElementById('hudFlow').textContent=F.label;
+  // 0 · intro with choices
+  scenes.push(scene({stage:'upstream',eyebrow:'Outside Vinaya · product',title:'You are an engineer. Something needs to get done. How big is it?',text:'Pick one, then follow it through the four stages. The same components run for every choice; only the data changes.',color:F.color,build:s=>{
+    s.el.classList.add('intro');const ch=h('div','choices');
+    for(const [k,f] of Object.entries(FLOWS)){const b=h('button','choice',`<span class="tag">${f.tag}</span><b>${f.label}</b><span>${f.desc}</span>`);b.style.setProperty('--c',`var(${COL[f.color]})`);b.setAttribute('aria-pressed',k===key);b.addEventListener('click',()=>{buildFlow(k);goto(1)});ch.appendChild(b)}
+    s.body.appendChild(ch);
+    if(key==='hot'){const seg=h('div','seg',`<button id="agClaude" aria-pressed="${agent==='claude'}">Claude Code</button><button id="agCodex" aria-pressed="${agent==='codex'}">Codex</button>`);s.body.appendChild(h('div','note','Vinaya supports both. Pick the agent you work with:'));s.body.appendChild(seg);
+      seg.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{agent=b.id==='agCodex'?'codex':'claude';seg.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b))}))}
+    const go=h('button','btn primary','Start →');go.style.setProperty('--c',`var(${COL[F.color]})`);go.addEventListener('click',()=>goto(1));s.actions.appendChild(go);
+  }}));
+
+  if(key==='feature'){
+    scenes.push(scene({stage:'architect',eyebrow:'Stage 1 · Thinking',title:'The Architect sets the execution Milestone.',text:'Code direction, not product. In your own Claude Code or Codex, the role is one slash command. Press play: a long conversation, accelerated.',color:'think',build:s=>{
+      const w=win('Claude Code · desktop','chat');s.body.appendChild(w);const out=h('div','card');out.hidden=true;s.body.appendChild(out);
+      playButton(s,'▶ Run /vinaya architect',async()=>{await type(w,architectChat,1,onMeta('think'));
+        log('forge_write.written','op=milestone.create · checkout-v2','think');log('forge_write.written','op=branch · milestone/checkout-v2','think');
+        out.innerHTML=`<span class="k">Execution Milestone</span><b>checkout-v2</b><span>branch milestone/checkout-v2</span><span class="k">Tranche intents</span><div class="tasks"><i>1 · idempotent webhooks</i><i>2 · retry ledger + receipts</i></div>`;out.hidden=false;s3.set({milestone:1})});
+    }}));
+    F.tranches.forEach((tr,ti)=>{
+      scenes.push(scene({stage:'planner',eyebrow:`Stage 1 · Thinking · tranche ${ti+1} of ${F.tranches.length}`,title:`A Planner turns intent ${ti+1} into tasks.`,text:'Reads real specs and real code, materialises intent into task Issues with briefs: Surface, objectives, test plan. The contract the loop executes.',color:'think',build:s=>{
+        const w=win('Claude Code · desktop','chat');s.body.appendChild(w);const out=h('div','card');out.hidden=true;s.body.appendChild(out);
+        playButton(s,'▶ Run /vinaya planner',async()=>{await type(w,plannerChat(tr.intent,tr.name,tr.tasks),1,onMeta('think'));
+          tr.tasks.forEach(t=>log('forge_write.written',`op=issue.create · #${t.issue}`,'think'));
+          out.innerHTML=`<span class="k">Tranche ${tr.name} · ${tr.tasks.length} tasks</span><table><tr><th>#</th><th>Issue</th><th>Title</th><th>Surface</th></tr>${tr.tasks.map(t=>`<tr><td>${t.n}</td><td>#${t.issue}</td><td>${t.title}</td><td>${t.file}</td></tr>`).join('')}</table>`;out.hidden=false;s3.set({tasks:tr.tasks.length,done:0})});
+      }}));
+      scenes.push(execScene(tr,ti,F.tranches.length));
+    });
+  }
+  if(key==='medium'){
+    const tr=F.tranches[0];
+    scenes.push(scene({stage:'planner',eyebrow:'Stage 1 · Thinking',title:'The Planner plans one standalone tranche.',text:'An internal multi-task need. No Milestone above it. Same Planner, same briefs.',color:'think',build:s=>{
+      const w=win('Claude Code · desktop','chat');s.body.appendChild(w);const out=h('div','card');out.hidden=true;s.body.appendChild(out);
+      playButton(s,'▶ Run /vinaya planner',async()=>{await type(w,plannerChat(tr.intent,tr.name,tr.tasks),1,onMeta('think'));tr.tasks.forEach(t=>log('forge_write.written',`op=issue.create · #${t.issue}`,'think'));
+        out.innerHTML=`<span class="k">Tranche ${tr.name} · ${tr.tasks.length} tasks</span><table><tr><th>#</th><th>Issue</th><th>Title</th><th>Surface</th></tr>${tr.tasks.map(t=>`<tr><td>${t.n}</td><td>#${t.issue}</td><td>${t.title}</td><td>${t.file}</td></tr>`).join('')}</table>`;out.hidden=false;s3.set({tasks:tr.tasks.length,done:0})});
+    }}));
+    scenes.push(execScene(tr,0,1));
+  }
+  if(key==='backlog'){
+    const tr=F.tranches[0];
+    scenes.push(scene({stage:'planner',eyebrow:'Stage 1 · Thinking',title:'The Planner writes one backlog Issue.',text:'Lighter planning, no tranche. Still a brief, still dispatchable by the same loop.',color:'think',build:s=>{
+      const w=win('Claude Code · desktop','chat');s.body.appendChild(w);const out=h('div','card');out.hidden=true;s.body.appendChild(out);
+      playButton(s,'▶ Run /vinaya planner',async()=>{await type(w,backlogChat,1,onMeta('think'));log('forge_write.written','op=issue.create · #1000','think');
+        out.innerHTML=`<span class="k">Backlog Issue</span><b>#1000 · Resume refuses kept work</b><span>Surface apps/cli/src/commands/resume.ts · 1 objective · test plan</span>`;out.hidden=false;s3.set({tasks:1,done:0})});
+    }}));
+    scenes.push(execScene(tr,0,1));
+  }
+  if(key==='hot'){
+    scenes.push(scene({stage:'architect',eyebrow:'Hot mode · no Planner',title:'An Issue is still opened, marked hot, with a light brief.',text:'One objective, the files, the facts read. No rounds. You drive, one agent works, in any chat surface.',color:'hot',build:s=>{
+      const w=win((agent==='codex'?'Codex':'Claude Code')+' · desktop','chat');s.body.appendChild(w);const out=h('div','card');out.hidden=true;s.body.appendChild(out);
+      playButton(s,'▶ Open the hot Issue and work it',async()=>{log('forge_write.written','op=issue.create · #1001 · hot','hot');await type(w,hotChat(agent==='codex'?'Codex':'Claude Code'),1,onMeta('hot'));
+        out.innerHTML=`<span class="k">Hot Issue</span><b>#1001 · Fix flaky CLI test</b><span>objective: the test passes on CI · files: apps/cli/test/tmp.test.ts · review: Principal decides per Issue</span>`;out.hidden=false;s3.set({tasks:1,done:0,hot:1})});
+    }}));
+    scenes.push(scene({stage:'loop',eyebrow:'Stage 2 · Executing · hot',title:'No loop, no engine. The gates still apply.',text:'Commit and push run Ring 0 on your machine. The pull request runs Ring 1. The Principal merges. Same Log.',color:'hot',build:s=>{
+      const w=win('Terminal','term');s.body.appendChild(w);
+      playButton(s,'▶ Commit, push, merge',async()=>{await type(w,hotExec.map(l=>{const m={};if(l[1].includes('31 checks'))Object.assign(m,{log:['gate.summary','host=hook ran=31 failed=0'],g:[1,0,0]});if(l[1].includes('Ring 0'))Object.assign(m,{log:['gate.summary','host=hook ran=38 failed=0'],g:[2,0,0]});if(l[1].includes('opened'))Object.assign(m,{log:['forge_write.written','op=pr.open · #1472'],g:[2,1,0]});if(l[1].includes('Ring 1'))Object.assign(m,{log:['gate.summary','host=ci ran=38 failed=0'],g:[2,2,0]});if(l[1].includes('waived'))Object.assign(m,{log:['review.decision','waived · Principal']});if(l[1].includes('merged'))Object.assign(m,{log:['forge_write.written','op=pr.merge · hot.commit'],g:[2,2,2]});return [l[0],l[1],m]}),1,onMeta('hot'));s3.set({done:1})});
+    }}));
+  }
+  // stage 3
+  const what={feature:'your Milestone',medium:'your tranche',backlog:'your backlog Issue',hot:'your hot Issue'}[key];
+  scenes.push(scene({stage:'archive',eyebrow:'Stage 3 · Retrospecting',title:`At this point ${what} is done.`,text:'The Archivist closes each task on merge. The Tranche Archivist closes the tranche when its last task lands. The Milestone closes when its tranches have closed. What shipped and why stays in the record.',color:'retro',build:s=>{
+    const w=win('Log · archive','term');s.body.appendChild(w);const b=h('div','banner');b.hidden=true;s.body.appendChild(b);
+    const lines=[];
+    if(key==='feature'){F.tranches.forEach(tr=>{tr.tasks.forEach(t=>lines.push(['ok',`archivist · #${t.issue} closed · merged`,{log:['forge_write.written',`op=archive · #${t.issue}`]}]));lines.push(['ok',`tranche archivist · ${tr.name} closed`,{log:['forge_write.written',`op=archive · tranche ${tr.name}`]}])});lines.push(['ok','milestone checkout-v2 closed · 2 tranches · 6 tasks',{log:['forge_write.written','op=milestone.close · checkout-v2']}])}
+    if(key==='medium'){F.tranches[0].tasks.forEach(t=>lines.push(['ok',`archivist · #${t.issue} closed`,{log:['forge_write.written',`op=archive · #${t.issue}`]}]));lines.push(['ok','tranche archivist · resume-hardening/1 closed',{log:['forge_write.written','op=archive · tranche']}])}
+    if(key==='backlog')lines.push(['ok','archivist · #1000 closed · merged',{log:['forge_write.written','op=archive · #1000']}]);
+    if(key==='hot')lines.push(['ok','archivist · #1001 closed · hot · review waived',{log:['forge_write.written','op=archive · #1001']}]);
+    lines.push(['out','retrospective record kept · what shipped and why']);
+    playButton(s,'▶ Close and record',async()=>{await type(w,lines,1,onMeta('retro'));b.innerHTML=`<b>${what[0].toUpperCase()+what.slice(1)} is closed.</b><span>Every act above is in the Log. Studio already shows it. Open Map to see the whole path you just took.</span>`;b.hidden=false;s3.set({closed:1})});
+  }}));
+  // stage 4
+  scenes.push(scene({stage:'improve',eyebrow:'Stage 4 · Self-improvement',title:'The Log teaches the process.',text:'Stats computed from every run. The Improver studies them and drafts the projects that would fix them. A human approves; they go back to product.',color:'retro',build:s=>{
+    const st={feature:['34 min','6 of 6','4'],medium:['29 min','3 of 3','2'],backlog:['21 min','1 of 1','1'],hot:['9 min','—','0']}[key];
+    s.body.appendChild(h('div','stats',`<div><b>${st[0]}</b><span>time per task</span></div><div><b>${st[1]}</b><span>green first round</span></div><div><b>${st[2]}</b><span>problems caught</span></div>`));
+    s.body.appendChild(h('div','note','Example figures. Where the time goes: Developer 84%, Reviewers 16%. Most extra rounds come from one gate; a vague Surface doubles the rounds.'));
+    const w=win('Claude Code · /vinaya improver','chat');s.body.appendChild(w);const pr=h('div','proposal');pr.hidden=true;s.body.appendChild(pr);
+    playButton(s,'▶ Ask the Improver',async()=>{await type(w,[['cmd','/vinaya improver'],['skill','▸ doctrine loaded: improver · reads the stats, proposes projects, never changes the process itself'],['ag','Two proposals from this run. Shall I open them as projects in Linear or Jira?']],1,onMeta('retro'));
+      pr.innerHTML=`<div class="card"><div><span class="k">Fix</span><b>Run the doc gate before push</b><span>cuts an expected 0.7 rounds per task</span></div><button class="btn small" data-p>Create in Linear</button></div><div class="card"><div><span class="k">New feature</span><b>Resume preview in Studio</b><span>shows what a ruling will change</span></div><button class="btn small" data-p>Create in Jira</button></div>`;pr.hidden=false;
+      pr.querySelectorAll('[data-p]').forEach(b=>b.addEventListener('click',()=>{b.textContent='Created · back to product';b.disabled=true;b.closest('.card').classList.add('ok');log('forge_write.written','op=project.create · proposed by Improver','retro');s3.set({proposed:1})}))});
+  }}));
+  scenes.forEach(s=>left.appendChild(s.el));
+  setActive(0);
+}
+
+/* --- the reusable execution scene: a tranche (or one Issue) through the dev-review loop --- */
+function execScene(tr,ti,count){
+  const single=!tr.name;
+  return scene({stage:'loop',eyebrow:single?'Stage 2 · Executing':`Stage 2 · Executing · tranche ${ti+1} of ${count}`,title:single?'Dispatch the Issue. One brief in, one reviewed pull request out.':`Dispatch tranche ${tr.name}. ${tr.tasks.length} tasks, the same loop each.`,
+    text:'The Operator starts each task. The driver sends the work to the Developer in its sandbox on the Engine, reads the result, runs the gates, dispatches fresh reviewers, decides the next step. Rounds until green or a ruling. Watch the rings on the right.',color:'exec',build:s=>{
+    const w=win('Terminal · vinaya task run','term');s.body.appendChild(w);
+    const board=h('div','card',`<span class="k">${single?'Issue':'Tranche '+tr.name}</span><div class="tasks">${tr.tasks.map(t=>`<i id="tk${t.issue}">#${t.issue}</i>`).join('')}</div>`);s.body.appendChild(board);
+    playButton(s,single?'▶ vinaya task run --issue '+tr.tasks[0].issue:'▶ Run the tranche',async()=>{
+      for(let i=0;i<tr.tasks.length;i++){const t=tr.tasks[i];const chip=document.getElementById('tk'+t.issue);chip.className='run';
+        if(i>0){SPEED=Math.max(SPEED,4);w.body.appendChild(h('div','ln hl',`── task ${t.n} · #${t.issue} · ${t.title}`))}
+        gates([0,0,0]);await type(w,execScript(t,agent),1,onMeta('exec'));chip.className='done';s3.set({done:i+1});await sleep(300/SPEED)}
+      if(!single){w.body.appendChild(h('div','ln ok',`tranche ${tr.name} · ${tr.tasks.length} of ${tr.tasks.length} merged`));log('forge_write.written',`op=archive · tranche ${tr.name}`,'retro')}
+      SPEED=1});
+  }});
+}
+
+/* --- crumbs --- */
+const STAGES=['upstream','architect','planner','loop','archive','improve'];
+const crumbsEl=document.getElementById('crumbs');
+function crumbs(stage){crumbsEl.innerHTML=['Upstream','Thinking','Executing','Retrospecting','Improve'].map((l,i)=>{const on=(i===0&&stage==='upstream')||(i===1&&(stage==='architect'||stage==='planner'))||(i===2&&stage==='loop')||(i===3&&stage==='archive')||(i===4&&stage==='improve');return `<span class="${on?'on':''}">${l}</span>`}).join('');crumbsEl.style.setProperty('--c',`var(${COL[scenes[current]?.color||'think']})`)}
+
+/* --- scroll keeps the active scene in sync when the reader scrolls by hand --- */
+let tick=false;addEventListener('scroll',()=>{if(tick)return;tick=true;requestAnimationFrame(()=>{tick=false;const y=innerHeight*.45;let cur=0;scenes.forEach((s,i)=>{if(s.el.getBoundingClientRect().top<y)cur=i});if(cur!==current){current=cur;setActive(cur)}})},{passive:true});
+
+/* =========================================================
+   3D SCENE · right column, full height
+   ========================================================= */
+const s3=(()=>{
+  const canvas=document.getElementById('c');
+  const r=new THREE.WebGLRenderer({canvas,antialias:true,alpha:true});r.setPixelRatio(Math.min(devicePixelRatio,2));
+  const sc=new THREE.Scene();const cam=new THREE.PerspectiveCamera(40,1,.1,100);
+  const hex=k=>new THREE.Color(cssVar(COL[k]||k));
+  const P={upstream:[-7,0,0],architect:[-5,1.2,-1],planner:[-3,.4,-2.4],loop:[0,0,-1.5],gates:[2.6,0,-.2],merge:[4.2,.3,1.4],archive:[5.8,1.3,.4],observed:[3.2,2.8,-2.8],improve:[-2,3.2,-3.6]};
+  const order=Object.keys(P);const pts=order.map(k=>new THREE.Vector3(...P[k]));
+  const curve=new THREE.CatmullRomCurve3(pts,false,'catmullrom',.4);
+  const ret=new THREE.CatmullRomCurve3([pts[8],new THREE.Vector3(-6,3,-2.4),pts[0]],false);
+  const line=(c,op)=>{const g=new THREE.BufferGeometry().setFromPoints(c.getPoints(140));return new THREE.Line(g,new THREE.LineBasicMaterial({color:0x52525b,transparent:true,opacity:op}))};
+  sc.add(line(curve,.9),line(ret,.35));
+  const grid=new THREE.GridHelper(44,44,0x27272a,0x1b1b1f);grid.position.y=-2.2;sc.add(grid);
+  const nodes={};const nodeGeo=new THREE.SphereGeometry(.22,24,24);
+  order.forEach((k,i)=>{const s=new THREE.Mesh(nodeGeo,new THREE.MeshBasicMaterial({color:0x52525b}));s.position.copy(pts[i]);sc.add(s);const ring=new THREE.Mesh(new THREE.RingGeometry(.34,.38,40),new THREE.MeshBasicMaterial({color:0x52525b,side:THREE.DoubleSide,transparent:true,opacity:0}));ring.position.copy(s.position);sc.add(ring);nodes[k]={s,ring}});
+  // gate rings (Ring 0/1/2) around the gates node
+  const gateM=[0,1,2].map(i=>{const t=new THREE.Mesh(new THREE.TorusGeometry(.45+i*.24,.04,10,56),new THREE.MeshBasicMaterial({color:0x52525b,transparent:true,opacity:.55}));t.position.copy(pts[4]);t.rotation.y=Math.PI/2;sc.add(t);return t});
+  // loop: developer + reviewers orbit
+  const loopG=new THREE.Group();loopG.position.copy(pts[3]);sc.add(loopG);
+  const sat=(col,rad,a)=>{const m=new THREE.Mesh(new THREE.SphereGeometry(.09,12,12),new THREE.MeshBasicMaterial({color:col}));m.userData={rad,a};loopG.add(m);return m};
+  const sats=[sat(0xfb923c,.75,0),sat(0xa1a1aa,.95,2.1),sat(0xa1a1aa,.95,4.2)];
+  const orbit=new THREE.Mesh(new THREE.RingGeometry(.73,.77,48),new THREE.MeshBasicMaterial({color:0xfb923c,side:THREE.DoubleSide,transparent:true,opacity:0}));orbit.rotation.x=Math.PI/2;loopG.add(orbit);
+  // sandbox box around the loop
+  const box=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(2.4,1.4,2.4)),new THREE.LineBasicMaterial({color:0x52525b,transparent:true,opacity:0}));box.position.copy(pts[3]);sc.add(box);
+  // milestone plane above architect
+  const mile=new THREE.Mesh(new THREE.PlaneGeometry(.9,.5),new THREE.MeshBasicMaterial({color:0x38bdf8,transparent:true,opacity:0,side:THREE.DoubleSide}));mile.position.copy(pts[1]).add(new THREE.Vector3(0,1.1,0));sc.add(mile);
+  // task particles
+  const travG=new THREE.Group();sc.add(travG);const travGeo=new THREE.SphereGeometry(.075,10,10);let trav=[];
+  function setTasks(n){while(travG.children.length)travG.remove(travG.children[0]);trav=[];for(let i=0;i<n;i++){const m=new THREE.Mesh(travGeo,new THREE.MeshBasicMaterial({color:0x38bdf8}));travG.add(m);trav.push({m,i,ph:Math.random()*6})}}
+  sc.fog=new THREE.Fog(0x0a0a0b,14,32);
+  const S={stage:'upstream',color:'think',orbit:0,gates:[0,0,0],tasks:0,done:0,hot:0,milestone:0,closed:0,proposed:0,round:0};
+  const T={pos:new THREE.Vector3(-4,3.5,9),look:pts[0].clone()};const cur={pos:T.pos.clone(),look:T.look.clone()};
+  function focus(stage,color){S.stage=stage==='loop'?'loop':stage;S.color=color;const idx=Math.max(0,order.indexOf(stage==='archive'?'archive':stage));const p=pts[idx];T.look.copy(p);T.pos.set(p.x-2.2,p.y+2.8,p.z+6.4);
+    order.forEach((k,j)=>{const lit=j<=idx;nodes[k].s.material.color.copy(lit?hex(k==='loop'||k==='gates'||k==='merge'?'exec':k==='archive'||k==='improve'?'retro':k==='observed'?'log':S.hot?'hot':'think'):new THREE.Color(0x52525b));nodes[k].ring.material.copy(nodes[k].s.material);nodes[k].ring.material.transparent=true;nodes[k].ring.material.opacity=j===idx?1:0});
+    sc.fog.color=new THREE.Color(cssVar('--bg'));grid.material.color=new THREE.Color(cssVar('--line'));
+  }
+  function set(o){Object.assign(S,o);if(o.tasks!==undefined)setTasks(o.tasks);orbit.material.opacity=S.orbit?.9:0;box.material.opacity=S.orbit?.8:0;mile.material.opacity=S.milestone?.35:0;sats[0].material.color.copy(S.hot?hex('hot'):hex('exec'))}
+  function gatesSet(g){S.gates=g;g.forEach((v,i)=>{gateM[i].material.color.copy(v===2?hex('--ok'):v===1?hex('exec'):new THREE.Color(0x52525b));gateM[i].material.opacity=v?1:.55})}
+  function reset(){set({orbit:0,tasks:0,done:0,hot:0,milestone:0,closed:0,proposed:0});gatesSet([0,0,0])}
+  let t=0;
+  function render(dt,once){t+=dt;const k=once?1:.05;cur.pos.lerp(T.pos,k);cur.look.lerp(T.look,k*1.2);cam.position.copy(cur.pos);cam.lookAt(cur.look);
+    const loopU=order.indexOf('loop')/(order.length-1),archU=order.indexOf('archive')/(order.length-1),planU=order.indexOf('planner')/(order.length-1);
+    trav.forEach(tr=>{let u;const done=tr.i<S.done;if(S.stage==='planner'||S.stage==='architect')u=planU-tr.i*.015;else if(S.stage==='loop')u=done?archU:(tr.i===S.done?loopU+Math.sin(t*1.5+tr.ph)*.02:planU+ .04-tr.i*.015);else u=archU+(S.closed?.02:0)-tr.i*.012;
+      u=Math.max(0,Math.min(1,u));const p=curve.getPointAt(u);tr.m.position.copy(p).add(new THREE.Vector3(0,.3+Math.sin(t*2+tr.ph)*.05,0));tr.m.material.color.copy(done||S.closed?hex('retro'):S.hot?hex('hot'):hex('think'))});
+    const sp=S.orbit?2.2:.12;sats.forEach(s=>{s.userData.a+=sp*dt;s.position.set(Math.cos(s.userData.a)*s.userData.rad,0,Math.sin(s.userData.a)*s.userData.rad)});
+    const n=nodes[S.stage]||nodes.upstream;const kk=1+Math.sin(t*4)*.15;n.ring.scale.set(kk,kk,kk);Object.values(nodes).forEach(x=>x.ring.lookAt(cam.position));
+    gateM.forEach((g,j)=>{g.rotation.z+=dt*(.25+j*.12)*(S.gates[j]===1?4:1)});
+    mile.lookAt(cam.position);box.rotation.y+=dt*.15;
+    r.render(sc,cam)}
+  function resize(){const w=canvas.clientWidth,h=canvas.clientHeight;r.setSize(w,h,false);cam.aspect=w/h;cam.updateProjectionMatrix()}
+  addEventListener('resize',resize);resize();
+  let last=performance.now();(function loop(now){const dt=Math.min(.05,(now-last)/1000);last=now;render(dt);requestAnimationFrame(loop)})(last);
+  return{focus,set,gates:gatesSet,reset};
+})();
+
+/* =========================================================
+   MAP + STUDIO overlays (read the same state)
+   ========================================================= */
+const MAP=[{k:'upstream',x:20,y:130,w:110,h:60,l:'Linear / Jira / need'},{k:'architect',x:160,y:40,w:120,h:56,l:'Architect · Milestone'},{k:'planner',x:160,y:116,w:120,h:56,l:'Planner · tranche / Issue'},{k:'hot',x:160,y:196,w:120,h:56,l:'Hot Issue · no Planner'},{k:'loop',x:320,y:70,w:150,h:70,l:'Dev–Review loop · Engine'},{k:'hotmode',x:320,y:180,w:150,h:56,l:'Hot mode · dev + agent'},{k:'gates',x:500,y:110,w:120,h:70,l:'Ring 0 · 1 · 2'},{k:'merge',x:650,y:110,w:90,h:70,l:'Merge · Principal'},{k:'archive',x:770,y:110,w:110,h:70,l:'Archivist · close'},{k:'observed',x:320,y:270,w:300,h:44,l:'The Log · Studio · Mission Control'},{k:'improve',x:650,y:270,w:230,h:44,l:'Improver · proposals back to product'}];
+const EDGES=[['upstream','architect'],['upstream','planner'],['upstream','hot'],['architect','planner'],['planner','loop'],['hot','hotmode'],['loop','gates'],['hotmode','gates'],['gates','merge'],['merge','archive'],['archive','improve'],['improve','upstream']];
+const pathFor={feature:['upstream','architect','planner','loop','gates','merge','archive','observed','improve'],medium:['upstream','planner','loop','gates','merge','archive','observed','improve'],backlog:['upstream','planner','loop','gates','merge','archive','observed','improve'],hot:['upstream','hot','hotmode','gates','merge','archive','observed','improve']};
+function drawMap(){const svg=document.getElementById('map');const path=pathFor[flowKey];const s=scenes[current];let now=s.stage;if(flowKey==='hot'){if(now==='architect')now='hot';if(now==='loop')now='hotmode'}
+  svg.style.setProperty('--c',`var(${COL[FLOWS[flowKey].color]})`);const c=k=>MAP.find(m=>m.k===k);let out='';
+  out+=`<rect class="lane" x="150" y="20" width="140" height="240" rx="8"/><text x="156" y="14">STAGE 1 · THINKING</text><rect class="lane" x="310" y="20" width="440" height="240" rx="8"/><text x="316" y="14">STAGE 2 · EXECUTING</text><rect class="lane" x="760" y="20" width="130" height="240" rx="8"/><text x="766" y="14">STAGE 3</text>`;
+  EDGES.forEach(([a,b])=>{const A=c(a),B=c(b);const on=(path.indexOf(b)===path.indexOf(a)+1)||(a==='improve'&&b==='upstream');const x1=A.x+A.w,y1=A.y+A.h/2,x2=B.x,y2=B.y+B.h/2;const d=a==='improve'?`M${A.x} ${A.y+A.h/2} C ${A.x-40} ${A.y+60}, ${B.x+B.w/2} 330, ${B.x+B.w/2} ${B.y+B.h}`:`M${x1} ${y1} C ${x1+20} ${y1}, ${x2-20} ${y2}, ${x2} ${y2}`;out+=`<path class="edge ${on?'path':''}" d="${d}"/>`});
+  MAP.forEach(m=>{const st=m.k===now?'now':path.includes(m.k)?'path':'';out+=`<rect class="box ${st}" x="${m.x}" y="${m.y}" width="${m.w}" height="${m.h}" rx="6"/><text x="${m.x+8}" y="${m.y+m.h/2+4}">${m.l}</text>`});
+  svg.innerHTML=out;document.getElementById('mapNote').textContent=`${FLOWS[flowKey].label} · now: ${now}`}
+function drawStudio(){const tb=document.getElementById('studioBody');const F=FLOWS[flowKey];const col=`var(${COL[F.color]})`;const rows=[];
+  const st=scenes[current].stage;const chips={};document.querySelectorAll('.tasks i[id]').forEach(i=>chips[i.id.slice(2)]=i.className);
+  (F.tranches||[{name:'hot',tasks:[{issue:1001,n:null,title:'Fix flaky CLI test'}]}]).forEach(tr=>tr.tasks.forEach(t=>{const c=chips[t.issue]||'';const state=c==='done'?'published · merged':c==='run'?'running':st==='upstream'?'—':'frozen · not started';rows.push(`<tr><td>${tr.name?'['+tr.name+'] '+t.n:'—'}</td><td>#${t.issue}</td><td>${c==='done'?'#'+(t.issue+1050):'—'}</td><td class="s" style="--c:${col}">${state}</td><td>${c?'1':'—'}</td><td>${c==='run'?'developing':c==='done'?'done':'—'}</td><td>${c==='done'?'green':c==='run'?'ring 0':'—'}</td></tr>`)}));
+  tb.innerHTML=rows.join('')}
+const mapO=document.getElementById('mapOverlay'),stO=document.getElementById('studioOverlay');
+document.getElementById('btnMap').addEventListener('click',()=>{mapO.hidden=false;drawMap()});
+document.getElementById('btnStudio').addEventListener('click',()=>{stO.hidden=false;drawStudio()});
+document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>{mapO.hidden=true;stO.hidden=true}));
+[mapO,stO].forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.hidden=true}));
+addEventListener('keydown',e=>{if(e.key==='Escape'){mapO.hidden=true;stO.hidden=true}});
+
+buildFlow('feature');
+</script>

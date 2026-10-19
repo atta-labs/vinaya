@@ -15,7 +15,7 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["@atta/typescript-config", "@attalabs/log-server"],
+  "ignore": ["@atta/typescript-config", "@attalabs/log-server", "@vinaya/portal"],
   "privatePackages": {
     "version": true,
     "tag": true

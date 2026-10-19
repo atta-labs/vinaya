@@ -1,0 +1,119 @@
+import Link from 'next/link'
+import type * as React from 'react'
+import { AttaMark } from './marks/atta-mark'
+import { AttalabsMark } from './marks/attalabs-mark'
+import { GithubMark } from './marks/github-mark'
+import { HeraldMark } from './marks/herald-mark'
+import { VadaMark } from './marks/vada-mark'
+import { VinayaMark } from './marks/vinaya-mark'
+
+export type ProductId = 'attalabs' | 'atta' | 'vada' | 'herald' | 'vinaya'
+
+export interface FooterLink {
+  label: string
+  href: string
+  external?: boolean
+}
+
+export interface FooterProps {
+  product: ProductId
+  tagline?: string
+  links?: FooterLink[]
+  /** Overrides the default mark + product name block entirely — for a consumer whose
+   * header uses a real uploaded logo asset (not the built-in glyph) and wants the
+   * footer to show the exact same mark and text instead of the generic product name. */
+  logo?: React.ReactNode
+}
+
+const PRODUCT_NAMES: Record<ProductId, string> = {
+  attalabs: 'AttaLabs',
+  atta: 'Atta',
+  vada: 'Vāda',
+  herald: 'Herald',
+  vinaya: 'Vinaya'
+}
+
+type MarkComponent = React.ComponentType<{ className?: string }>
+const MARKS: Record<ProductId, MarkComponent> = {
+  attalabs: AttalabsMark,
+  atta: AttaMark,
+  vada: VadaMark,
+  herald: HeraldMark,
+  vinaya: VinayaMark
+}
+
+export function Footer({ product, tagline, links = [], logo }: FooterProps) {
+  const Mark = MARKS[product]
+  const currentYear = new Date().getFullYear()
+
+  return (
+    <footer className='border-t border-border px-6 py-12'>
+      <div className='mx-auto flex max-w-4xl flex-col gap-8'>
+        {/* Row 2 — Mark + product name + tagline | links */}
+        <div className='flex flex-col gap-6 md:flex-row md:items-start md:justify-between'>
+          <div>
+            {logo ?? (
+              <div className='flex items-center gap-2'>
+                <Mark className='h-8 w-8 text-foreground' />
+                <p className='font-serif text-lg text-foreground'>{PRODUCT_NAMES[product]}</p>
+              </div>
+            )}
+            {tagline && <p className='text-sm text-muted-foreground'>{tagline}</p>}
+          </div>
+          {links.length > 0 && (
+            <nav className='flex flex-wrap items-center gap-y-1'>
+              {links.map((link, i) => (
+                <span key={link.href} className='flex items-center'>
+                  {i > 0 && (
+                    <span className='mx-2 font-mono text-xs text-muted-foreground' aria-hidden='true'>
+                      ·
+                    </span>
+                  )}
+                  {link.external ? (
+                    <a
+                      href={link.href}
+                      target='_blank'
+                      rel='noreferrer'
+                      className='font-mono text-xs uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground'
+                    >
+                      {link.label}
+                    </a>
+                  ) : (
+                    <Link
+                      href={link.href}
+                      className='font-mono text-xs uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground'
+                    >
+                      {link.label}
+                    </Link>
+                  )}
+                </span>
+              ))}
+            </nav>
+          )}
+        </div>
+
+        {/* Row 3 — Attribution + copyright */}
+        <div className='flex items-end justify-between'>
+          <span className='text-xs italic text-muted-foreground/60'>An AttaLabs product</span>
+          <div className='flex flex-col items-end gap-1 leading-tight'>
+            <span className='text-xs text-muted-foreground/60'>
+              © {currentYear} AttaLabs ·{' '}
+              <a href='https://attalabs.dev' className='transition-colors hover:text-muted-foreground'>
+                attalabs.dev
+              </a>
+            </span>
+            <a
+              href='https://github.com/atta-labs'
+              target='_blank'
+              rel='noreferrer'
+              className='flex items-center gap-1.5 text-xs text-muted-foreground/60 transition-colors hover:text-foreground'
+            >
+              <GithubMark className='size-3.5' />
+              github.com/atta-labs
+            </a>
+          </div>
+        </div>
+      </div>
+    </footer>
+  )
+}

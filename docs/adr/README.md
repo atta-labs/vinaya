@@ -13,3 +13,4 @@ One file per decision, numbered in order; a number is never reused. A record tha
 | [0007](0007-logs-never-on-the-forge.md) | Logs never on the forge | Accepted |
 | [0008](0008-doctrine-ships-in-the-package.md) | Doctrine ships in the package | Accepted |
 | [0009](0009-evaluation-before-migration.md) | Evaluation before migration | Accepted |
+| [0010](0010-the-portal-lives-in-this-repository.md) | The portal lives in this repository | Accepted |

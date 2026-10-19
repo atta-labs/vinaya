@@ -1,0 +1,73 @@
+/* Site styles. No colour tokens here: every colour is a shadcn theme token the CMS renders. The stage palette
+   is a class map in code (src/process/tone.ts). */
+
+@keyframes site-in {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.site-in {
+  opacity: 0;
+  transform: translateY(6px);
+  animation: site-in 0.3s forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .site-in {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes site-blink {
+  to {
+    opacity: 0.3;
+  }
+}
+.site-blink {
+  animation: site-blink 0.6s infinite alternate;
+}
+/* A terminal cursor: on, off, on — resting at the end of what was typed. */
+@keyframes site-cursor {
+  50% {
+    opacity: 0;
+  }
+}
+.site-cursor {
+  animation: site-cursor 1.1s steps(1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .site-cursor {
+    animation: none;
+  }
+}
+
+/* Diagram edges (react-archer paths): state as opacity, a current dashed edge marches toward its arrowhead. */
+@keyframes site-dash {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+.diagram-edge {
+  transition: opacity 0.3s;
+}
+.edge-future {
+  opacity: 0.25;
+}
+.edge-done {
+  opacity: 0.7;
+}
+.edge-now.edge-dashed {
+  animation: site-dash 0.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .edge-now.edge-dashed {
+    animation: none;
+  }
+}
+
+/* Thin scrollbars in the theme's own ink, everywhere: the windows, the Log, the page. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--muted-foreground) 35%, transparent) transparent;
+}
