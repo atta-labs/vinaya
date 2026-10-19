@@ -5,6 +5,7 @@ tests/checks/bin-permissions.test.ts
 tests/checks/body-bare-digits.test.ts
 tests/checks/branch-topology.test.ts
 tests/checks/changeset-coverage.test.ts
+tests/checks/check-coherence-blocking.test.ts
 tests/checks/check-coherence-lifecycle.test.ts
 tests/checks/check-exec-bits.test.ts
 tests/checks/check-pr-premise-reassert-own-body.test.ts

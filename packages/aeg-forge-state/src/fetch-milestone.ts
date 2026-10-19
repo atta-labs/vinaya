@@ -391,6 +391,20 @@ export type TrancheMilestoneIndex = {
   legacySlugs: Set<string>
 }
 
+/**
+ * The per-slug reader's index: `TrancheMilestoneIndex` holding only the given
+ * slug, plus the other open legacy-titled tranches it can name for free.
+ */
+export type SlugMilestoneIndex = TrancheMilestoneIndex & {
+  /**
+   * The title of every OTHER open Milestone whose title is slug-shaped, in
+   * the order the Milestone list returned them — taken from the list the
+   * reader already holds, so naming them costs no forge read. A closed
+   * legacy-titled Milestone is left out: its tranche is already complete.
+   */
+  otherOpenLegacySlugs: string[]
+}
+
 /** Every `vinaya/tranche:*`-prefixed label the repo carries, mapped to its slug. */
 function trancheSlugsFromLabels(labels: GhLabel[]): string[] {
   const slugs: string[] = []
@@ -598,12 +612,15 @@ export async function tranchesAttachedToMilestone(
  * `vinaya/tranche:<slug>` label is absent from the result, as it is from the
  * repository-wide index. The Issue read still runs concurrently with the
  * other two so the call count does not depend on that shape.
+ *
+ * `otherOpenLegacySlugs` names the other open legacy-titled tranches from the
+ * same Milestone list, so a caller can sweep them without re-reading it.
  */
 export async function indexTrancheMilestonesForSlugAsync(
   owner: string,
   repo: string,
   slug: string
-): Promise<TrancheMilestoneIndex> {
+): Promise<SlugMilestoneIndex> {
   const [milestones, labels, issues] = await Promise.all([
     ghApiGetAllPagesAsync<GhMilestone>(`repos/${owner}/${repo}/milestones?state=all&per_page=100`),
     ghApiGetAllPagesAsync<GhLabel>(`repos/${owner}/${repo}/labels?per_page=100`),
@@ -631,5 +648,8 @@ export async function indexTrancheMilestonesForSlugAsync(
     else if (lifecycle === 'complete') archived.push({ slug, goal })
   }
 
-  return { active, archived, facts, legacySlugs }
+  const openLegacyTitles = new Set(slugShapedTitles(milestones.filter((m) => m.state === 'open')))
+  const otherOpenLegacySlugs = [...openLegacyTitles].filter((t) => t !== slug)
+
+  return { active, archived, facts, legacySlugs, otherOpenLegacySlugs }
 }
