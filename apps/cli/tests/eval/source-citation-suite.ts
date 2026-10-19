@@ -404,7 +404,7 @@ function switchableContext(initial: World): { context: DevToolContext; use: (wor
 }
 
 /** The fetched-source receipts one turn's world records, decided by the production revision policy. */
-function fetchedReceipts(
+export function fetchedReceipts(
   manifest: RequiredSourceManifest,
   world: World,
   content: (source: SourceSpec) => string,
@@ -434,7 +434,7 @@ function fetchedReceipts(
     })
 }
 
-function worldFor(testCase: SourceCitationCase, content: (source: SourceSpec) => string): World {
+export function worldFor(testCase: SourceCitationCase, content: (source: SourceSpec) => string): World {
   const worldCase: ToolSelectionCase = {
     id: testCase.id,
     tool: 'fetch_documentation',

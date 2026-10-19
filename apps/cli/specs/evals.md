@@ -438,20 +438,73 @@ bun apps/cli/tests/eval/source-citation-suite.ts run --split held-out --approve-
 ## Development-only step-one run and freeze record
 
 `runStepOne` orchestrates the Developer capability, code reviewer quality and
-security reviewer quality development splits on both supported adapters. It
-accepts only the standalone backend and checks the backend, the split and the
-requested suites before loading suite inputs. A request names its purpose —
+security reviewer quality development splits on both supported adapters
+unless a request selects one. It accepts only the standalone backend and checks
+the backend, the split, the requested suites, adapters and case selection
+before loading suite inputs. A request names its purpose —
 `development-only` (the default), `practice` (exactly one trial per task) or
 `comparison` — and may name its suites. Comparison evidence comes only from
 `STEP_ONE_COMPARISON_SUITES`, the layer-`G` developer capability, code reviewer
 and security reviewer suites: a layer-`P` suite named as comparison evidence is
 refused (`layer_p_comparison`), and the layer-`G` source-citation suite, which
 step one admits for development-only and practice runs, is refused as
-comparison evidence (`comparison_forbidden`). No live executor yet runs a
-layer-`G` trial, so the production runtime refuses one rather than grade it
-another way. Each suite-and-adapter result records task count,
-trials and successes per task, the seeded bootstrap suite mean and interval,
-wall time, tokens, reported subscription quota use and estimated cost.
+comparison evidence (`comparison_forbidden`). Each suite-and-adapter result
+records task count, trials and successes per task, the seeded bootstrap suite
+mean and interval, wall time, tokens, reported subscription quota use and
+estimated cost, and beside them the suite's process layer (`layer`) and
+`rendererVersion`: the current Vinaya renderer version for a layer-`G` suite,
+an empty string for a layer-`P` suite. Every trial result carries the same two
+fields beside its own usage.
+
+A request may also select adapters and cases. The adapter selection is
+`claude-code` or `codex`, both when absent; any other adapter is refused
+(`invalid_input`). A case selection is a count n, the first n development cases
+of each suite in its pinned order, or one or more case ids. Practice is the only
+purpose that accepts a case selection: on a development-only or comparison run
+it is refused (`case_selection_forbidden`) before any suite input is loaded, and
+so is a count below 1 (`invalid_input`). A case id outside a selected suite's
+development split is refused (`invalid_input`) before any trial runs. A
+practice run that names one adapter is one invocation; a practice run on both
+adapters may be one invocation per adapter.
+
+A layer-`G` trial runs live through the Vinaya process (`executeLayerGTrial`).
+The suite's development neutral case is rendered with the Vinaya renderer; the
+role the rendered input names runs on the selected adapter, through the same
+staging, dispatch, sandboxed commit and sandboxed hidden-test steps as the
+layer-`P` Developer and reviewer trials; the trial record is assembled from what
+that run recorded, and the neutral outcomes the renderer extracts from it are
+graded by the generic graders alone. The trial succeeds exactly when every
+generic grader passes; no layer-`P` grader judges it. Every development neutral
+case has a layer-`P` case of the same id, which supplies what the neutral case
+does not carry, and each kind of case runs its own way:
+
+- A `change` case dispatches the Developer with the rendered brief and its
+  delivered documents' contents, on the layer-`P` developer case of the same id,
+  with no `--developer-snapshot` brief. Its hidden tests are that case's, run in
+  the sandbox on the trial's commit. The pull request the Developer opened is
+  recorded on that commit, its body carrying the beyond-Surface record the
+  review-loop driver writes.
+- A `review` case dispatches the suite's reviewer on the change under review,
+  the patch of the layer-`P` reviewer case of the same id, and binds its result
+  to the rendered brief's hash and that change's head.
+- An `answer` case runs as the source-citation suite's live trial runs: the
+  Developer, told to change nothing, works in an empty workspace holding the
+  injected documents of the layer-`P` source-citation case of the same id, with
+  the others served by `fetch_documentation`; nothing is committed and no
+  change is recorded.
+
+The record's effects are the performed publication calls, each operation its
+`kind` and each call's arguments its `idempotencyKey`; its tool trace is the
+adapter transcript's; its turn result is the Developer's raw structured output.
+A trial whose case the renderer refuses, whose run fails, or whose record cannot
+be extracted — one made under another renderer version among them — is
+unavailable with its reason, and is never graded another way. The run is the
+seam between dispatch and record: `stepOneRuntime` takes the function that runs
+a rendered case and returns its trial record, production passes the real
+dispatch (`runVinayaProcess`), and the tests pass fixture reference and
+known-bad records, calling no model.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/step-one.ts contains:export async function executeLayerGTrial( -->
 
 Nothing a trial's workspace controls runs on the host. Every step that runs
 in or over it — the dependency install before the agent starts, staging and
@@ -496,15 +549,24 @@ Equal readings consume zero. A trial without both readings, or whose window
 reset between them, has unavailable (`null`) quota, never inferred from other
 numbers; a suite-and-adapter run sums the measured trials and counts the
 unavailable ones in `quotaUnavailableTrials`.
-The executable entry point loads the three pinned development corpora, stages
+The executable entry point loads the pinned development corpora, stages
 each task through the harness isolation boundary, launches the production
-subscription adapter, and applies the suite's pinned grader:
+subscription adapter, and applies the suite's pinned grader — the generic
+graders for a layer-`G` suite. `--adapter` selects one adapter and `--cases`
+selects cases, a single count or case ids, repeated or comma-separated:
 
 ```text
-bun apps/cli/src/lib/dev-review-eval/step-one.ts run --split development --backend standalone [--purpose <development-only|practice|comparison>] [--suite <name>]... --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> --developer-snapshot <merged-task-prs.jsonl> --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--out <file>]
+bun apps/cli/src/lib/dev-review-eval/step-one.ts run --split development --backend standalone [--purpose <development-only|practice|comparison>] [--suite <name>]... [--adapter <claude-code|codex>] [--cases <n>|--cases <id>...] --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> --developer-snapshot <merged-task-prs.jsonl> --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--out <file>]
 ```
 
-The snapshot supplies the frozen Developer briefs whose committed corpus
+For example, a practice run of the first case of the layer-`G` developer
+suite on Claude Code alone:
+
+```text
+bun apps/cli/src/lib/dev-review-eval/step-one.ts run --split development --backend standalone --purpose practice --suite developer-capability-neutral.l5 --adapter claude-code --cases 1 --trials 1 --bootstrap percentile --seed 1 --resamples 100 --confidence 0.95 --input-cost-per-million 0 --output-cost-per-million 0
+```
+
+The snapshot supplies the frozen layer-`P` Developer briefs whose committed corpus
 entries intentionally retain only digests. The command verifies each brief
 against that digest. Pricing is explicit because subscription CLIs report
 tokens but do not provide one portable cost schedule.
