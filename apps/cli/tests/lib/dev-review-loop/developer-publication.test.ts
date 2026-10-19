@@ -8,16 +8,22 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { recordedBeyondSurfacePaths } from '@attalabs/aeg-core'
 import {
   type LoopDeps,
+  defaultClassifyAgainstDefaultTip,
   defaultGitWorktreeChangedPaths,
   defaultGitWorktreeUntrackedPaths,
-  defaultReadMergedDefaultCommit
+  defaultReadMergedDefaultCommit,
+  defaultRebaseOntoDefaultTip,
+  defaultRestoreWorktreeHead,
+  pushBranchClassified
 } from '../../../src/lib/dev-review-loop.js'
+import { ProtectedPathError } from '../../../src/lib/broker.js'
+import { loopLogPathFor } from '../../../src/lib/loop-log.js'
 import {
   checkPublicationPreconditions,
   fastForwardedOntoDefaultTip,
@@ -28,7 +34,8 @@ import {
   makeInProcessDeps,
   makeWorld,
   runLoopInProcess,
-  defaultDeveloperTurnOutput
+  defaultDeveloperTurnOutput,
+  withWorldEnv
 } from '../dev-review-loop-harness.js'
 
 afterEach(cleanupWorlds)
@@ -782,4 +789,334 @@ describe('the beyond-Surface record when an input cannot be read', () => {
       expect(body).not.toContain('src/sneaked.ts')
     })
   }
+})
+
+describe('main drift on a protected path, against a real repository', () => {
+  const git = (cwd: string, ...args: string[]): string =>
+    execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  const CI = '.github/workflows/ci.yml'
+
+  const commit = (dir: string, file: string, content: string, message: string): string => {
+    mkdirSync(join(dir, file, '..'), { recursive: true })
+    writeFileSync(join(dir, file), content)
+    git(dir, 'add', '.')
+    git(dir, 'commit', '-q', '-m', message)
+    return git(dir, 'rev-parse', 'HEAD')
+  }
+
+  /**
+   * A bare `origin` and a clone whose task branch was cut, committed `own.txt`
+   * and pushed before main changed the CI workflow — the branch never touched it.
+   */
+  const fixture = (): { dir: string; remote: string; base: string; pushed: string; tip: string } => {
+    const dir = mkdtempSync(join(tmpdir(), 'drift-'))
+    const remote = mkdtempSync(join(tmpdir(), 'drift-origin-'))
+    git(remote, 'init', '-q', '--bare', '-b', 'main')
+    git(dir, 'init', '-q', '-b', 'main')
+    git(dir, 'config', 'user.name', 't')
+    git(dir, 'config', 'user.email', 't@t')
+    git(dir, 'remote', 'add', 'origin', remote)
+    writeFileSync(join(dir, 'a.txt'), 'a\n')
+    const base = commit(dir, CI, 'v1\n', 'base')
+    git(dir, 'push', '-q', 'origin', 'main')
+    git(dir, 'checkout', '-q', '-b', 'task/t/1')
+    const pushed = commit(dir, 'own.txt', 'own\n', 'own')
+    git(dir, 'push', '-q', 'origin', 'HEAD:refs/heads/task/t/1')
+    git(dir, 'checkout', '-q', 'main')
+    const tip = commit(dir, CI, 'v2\n', 'main moves ci')
+    git(dir, 'push', '-q', 'origin', 'main')
+    git(dir, 'checkout', '-q', 'task/t/1')
+    return { dir, remote, base, pushed, tip }
+  }
+  const rebaseInProgress = (dir: string): boolean =>
+    ['rebase-merge', 'rebase-apply'].some((name) => existsSync(join(dir, git(dir, 'rev-parse', '--git-path', name))))
+
+  it("classifies a path only main changed as main drift, the task's own file as a task change, and an untouched one as the tip's", () => {
+    const { dir, remote, pushed, tip } = fixture()
+    expect(defaultClassifyAgainstDefaultTip(dir, pushed, tip, [CI, 'own.txt', 'a.txt'], remote)).toEqual({
+      sameAsTip: ['a.txt'],
+      mainDrift: [CI],
+      taskChanged: ['own.txt']
+    })
+  })
+
+  it('fetches a missing tip from the repository URL it is given, and answers null without one', () => {
+    const { remote, tip } = fixture()
+    const clone = mkdtempSync(join(tmpdir(), 'drift-clone-'))
+    git(clone, 'clone', '-q', '--single-branch', '-b', 'task/t/1', `file://${remote}`, '.')
+    const head = git(clone, 'rev-parse', 'HEAD')
+    expect(defaultClassifyAgainstDefaultTip(clone, head, tip, [CI], null)).toBeNull()
+    expect(defaultClassifyAgainstDefaultTip(clone, head, tip, [CI], remote)?.mainDrift).toEqual([CI])
+  })
+
+  it("rebases the task's one commit onto the tip, rewriting nothing reachable from it, and the lease push lands it", () => {
+    const { dir, remote, pushed, tip } = fixture()
+    const rebased = defaultRebaseOntoDefaultTip(dir, tip, remote)
+    if (!rebased.ok) throw new Error(rebased.reason)
+    expect(git(dir, 'rev-parse', 'HEAD')).toBe(rebased.head)
+    expect(git(dir, 'rev-list', `${tip}..${rebased.head}`).split('\n')).toHaveLength(1)
+    expect(git(dir, 'rev-parse', `${rebased.head}^`)).toBe(tip)
+    expect(git(dir, 'show', `${rebased.head}:${CI}`)).toBe('v2')
+    pushBranchClassified(dir, 'task/t/1', pushed)
+    expect(git(remote, 'rev-parse', 'refs/heads/task/t/1')).toBe(rebased.head)
+    expect(git(remote, 'rev-parse', 'refs/heads/main')).toBe(tip)
+  })
+
+  it('refuses a lease whose expected head is stale, and the remote branch keeps its head', () => {
+    const { dir, remote, base, tip } = fixture()
+    const remoteHead = git(remote, 'rev-parse', 'refs/heads/task/t/1')
+    const rebased = defaultRebaseOntoDefaultTip(dir, tip, remote)
+    expect(rebased.ok).toBe(true)
+    expect(() => pushBranchClassified(dir, 'task/t/1', base)).toThrow(/stale info|rejected/)
+    expect(git(remote, 'rev-parse', 'refs/heads/task/t/1')).toBe(remoteHead)
+  })
+
+  it('aborts a conflicting rebase, naming the file, with the head unchanged and no rebase in progress', () => {
+    const { dir, remote, pushed: head, tip } = fixture()
+    git(dir, 'checkout', '-q', 'main')
+    const conflictingTip = commit(dir, 'own.txt', 'main\n', 'main writes own.txt')
+    git(dir, 'push', '-q', 'origin', 'main')
+    git(dir, 'checkout', '-q', 'task/t/1')
+    expect(conflictingTip).not.toBe(tip)
+    const rebased = defaultRebaseOntoDefaultTip(dir, conflictingTip, remote)
+    expect(rebased).toMatchObject({ ok: false, conflictFiles: ['own.txt'] })
+    expect(git(dir, 'rev-parse', 'HEAD')).toBe(head)
+    expect(rebaseInProgress(dir)).toBe(false)
+    expect(git(dir, 'status', '--porcelain', '--untracked-files=no')).toBe('')
+  })
+
+  it('refuses a range holding a merge commit without rebasing', () => {
+    const { dir, remote, tip } = fixture()
+    git(dir, 'checkout', '-q', '-b', 'side')
+    commit(dir, 'side.txt', 'side\n', 'side')
+    git(dir, 'checkout', '-q', 'task/t/1')
+    git(dir, 'merge', '-q', '--no-ff', '-m', 'merge side', 'side')
+    const head = git(dir, 'rev-parse', 'HEAD')
+    const rebased = defaultRebaseOntoDefaultTip(dir, tip, remote)
+    expect(rebased).toMatchObject({ ok: false, conflictFiles: [], reason: expect.stringContaining('merge commit') })
+    expect(git(dir, 'rev-parse', 'HEAD')).toBe(head)
+  })
+
+  it('moves a rebased worktree back to the head it was rebased from', () => {
+    const { dir, remote, pushed, tip } = fixture()
+    const rebased = defaultRebaseOntoDefaultTip(dir, tip, remote)
+    expect(rebased.ok).toBe(true)
+    expect(defaultRestoreWorktreeHead(dir, pushed)).toBe(true)
+    expect(git(dir, 'rev-parse', 'HEAD')).toBe(pushed)
+    expect(git(dir, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('task/t/1')
+    expect(git(dir, 'show', `HEAD:${CI}`)).toBe('v1')
+  })
+
+  it('refuses a worktree with uncommitted tracked changes without rebasing', () => {
+    const { dir, remote, pushed, tip } = fixture()
+    writeFileSync(join(dir, 'own.txt'), 'edited\n')
+    const rebased = defaultRebaseOntoDefaultTip(dir, tip, remote)
+    expect(rebased).toMatchObject({ ok: false, reason: expect.stringContaining('uncommitted') })
+    expect(git(dir, 'rev-parse', 'HEAD')).toBe(pushed)
+  })
+})
+
+describe('main drift on a protected path, through the driver', () => {
+  const CI = '.github/workflows/ci.yml'
+  const OWN = 'apps/cli/src/lib/x.ts'
+  const tip = 't'.repeat(40)
+  type Outcome = { ok: true } | { ok: false; errorClass: string; check: string; output: string }
+
+  /** One Developer turn that changes `OWN` and calls `publish_changes` once; returns its outcome. */
+  async function publishOnce(
+    world: ReturnType<typeof makeWorld>,
+    overrides: Partial<LoopDeps> = {}
+  ): Promise<Outcome | null> {
+    return (await publishAttempts(world, [() => {}], overrides))[0] ?? null
+  }
+
+  /** One Developer turn that changes `OWN`, then runs each of `attempts` before one `publish_changes` call; returns every outcome. */
+  async function publishAttempts(
+    world: ReturnType<typeof makeWorld>,
+    attempts: (() => void)[],
+    overrides: Partial<LoopDeps> = {}
+  ): Promise<Outcome[]> {
+    mkdirSync(join(world.repoRoot, '.worktrees', world.branch), { recursive: true })
+    world.surface = { in: ['apps/cli/**'], out: ['packages/**'] }
+    world.worktreeChangedPaths = [CI, OWN]
+    world.defaultBranchTip = tip
+    const baseDeps = makeInProcessDeps(world)
+    const outcomes: Outcome[] = []
+    let dispatched = false
+    await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'codex' },
+      {
+        ...baseDeps,
+        // From the tip, only the task's own file differs.
+        gitWorktreeChangedPaths: (_worktree, base) => (base === tip ? [OWN] : [...world.worktreeChangedPaths]),
+        ...overrides,
+        dispatchRole: async (role, agent, prompt, opts) => {
+          if (role !== 'developer') return baseDeps.dispatchRole!(role, agent, prompt, opts)
+          if (!dispatched) {
+            dispatched = true
+            world.worktreeDirty = [OWN]
+            for (const prepare of attempts) {
+              prepare()
+              const result = await world.devToolContext!.publishChanges('Fix(cli): publish the turn')
+              outcomes.push(
+                result.ok
+                  ? { ok: true }
+                  : {
+                      ok: false,
+                      errorClass: result.error.errorClass,
+                      check: result.error.check,
+                      output: result.error.output
+                    }
+              )
+            }
+            if (outcomes.some((o) => o.ok)) {
+              await world.devToolContext!.openPullRequest(world.issueTitle, '## Scope\n\n**Tier:** 3\n')
+            }
+          }
+          return {
+            exitCode: 0,
+            durationMs: 1,
+            usage: null,
+            resumeId: 'dev',
+            timedOut: false,
+            effectId: 'dev',
+            turnOutput: defaultDeveloperTurnOutput(prompt)
+          }
+        }
+      }
+    )
+    return outcomes
+  }
+
+  const driverLog = (world: ReturnType<typeof makeWorld>): Promise<string> =>
+    withWorldEnv(world, () => readFileSync(loopLogPathFor(null, world.task), 'utf8'))
+
+  it('rebases a drift-only publish, pushes it with a lease against the remote head before the publish, and lands', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    const remoteHeadBefore = world.base
+    world.tipClassification = { sameAsTip: [], mainDrift: [CI], taskChanged: [OWN] }
+    const outcome = await publishOnce(world)
+
+    expect(outcome).toEqual({ ok: true })
+    expect(world.rebases).toEqual([{ tip }])
+    expect(world.leasePushes).toEqual([
+      { sha: 'r'.repeat(40), expectedRemoteHead: remoteHeadBefore, touchedPaths: [OWN] }
+    ])
+    expect(world.pushes).toEqual([])
+    const rebasedLines = (await driverLog(world)).split('\n').filter((line) => line.includes('Rebased '))
+    expect(rebasedLines).toHaveLength(1)
+    expect(rebasedLines[0]).toContain(
+      `Rebased ${world.branch} onto main ${tip} (${world.nextCommitSha} → ${'r'.repeat(40)}) and pushed with lease`
+    )
+  })
+
+  it('returns a conflict refusal naming the file and the tip when the rebase conflicts, and pushes nothing', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    world.tipClassification = { sameAsTip: [], mainDrift: [CI], taskChanged: [OWN] }
+    world.rebaseResult = { ok: false, conflictFiles: [OWN], reason: `the rebase onto ${tip} conflicts` }
+    const outcome = await publishOnce(world)
+
+    expect(outcome).toMatchObject({ ok: false, errorClass: 'conflict', check: 'main-drift-rebase' })
+    const output = (outcome as { output: string }).output
+    expect(output).toContain(`- ${OWN}`)
+    expect(output).toContain(`git merge --no-commit ${tip}`)
+    expect(world.pushes).toEqual([])
+    expect(world.leasePushes).toEqual([])
+  })
+
+  it('returns a conflict refusal when the lease is rejected after a clean rebase', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    world.tipClassification = { sameAsTip: [], mainDrift: [CI], taskChanged: [OWN] }
+    world.leasePushRejected = true
+    const outcome = await publishOnce(world)
+
+    expect(outcome).toMatchObject({ ok: false, errorClass: 'conflict', check: 'main-drift-rebase' })
+    expect(world.pushes).toEqual([])
+    expect(world.leasePushes).toEqual([])
+    // The worktree is back at the head it published from, so merging the tip there means something.
+    expect(world.restores).toEqual([world.nextCommitSha])
+    expect(world.worktreeHead).toBe(world.nextCommitSha)
+  })
+
+  it('moves the worktree back when the pre-push hook refuses the lease push, and the next publish rebases and lands', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    const remoteHeadBefore = world.base
+    world.tipClassification = { sameAsTip: [], mainDrift: [CI], taskChanged: [OWN] }
+    world.pushRefusal = 'pre-push: a test failed'
+    const outcomes = await publishAttempts(world, [
+      () => {},
+      () => {
+        // The refused head is back in the worktree, unchanged; the hook now passes.
+        expect(world.worktreeHead).toBe(world.nextCommitSha)
+        world.pushRefusal = null
+      }
+    ])
+
+    expect(outcomes[0]).toMatchObject({ ok: false, check: 'pre-push-hook', output: 'pre-push: a test failed' })
+    expect(outcomes[1]).toEqual({ ok: true })
+    expect(world.restores).toEqual([world.nextCommitSha])
+    expect(world.rebases).toEqual([{ tip }, { tip }])
+    expect(world.leasePushes).toEqual([
+      { sha: 'r'.repeat(40), expectedRemoteHead: remoteHeadBefore, touchedPaths: [OWN] }
+    ])
+    expect(world.pushes).toEqual([])
+    expect(world.commits).toHaveLength(1)
+  })
+
+  it('still refuses a protected path the task changed, with no rebase and no lease push', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    world.tipClassification = { sameAsTip: [], mainDrift: [], taskChanged: [CI, OWN] }
+    const touched: string[][] = []
+    const outcome = await publishOnce(world, {
+      // The Broker's own protected-path refusal, as the real push returns it.
+      pushTaskBranch: (input) => {
+        touched.push([...input.touchedPaths])
+        return { ok: false, refusal: new ProtectedPathError(CI).message, hook: false }
+      }
+    })
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      output: expect.stringContaining('protected administrative policy path')
+    })
+    expect(touched).toEqual([[CI, OWN]])
+    expect(world.rebases).toEqual([])
+    expect(world.leasePushes).toEqual([])
+  })
+
+  it('drops a path equal to the tip from the touched paths, and pushes the rest plainly', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    world.tipClassification = { sameAsTip: [CI], mainDrift: [], taskChanged: [OWN] }
+    const baseDeps = makeInProcessDeps(world)
+    const touched: string[][] = []
+    const outcome = await publishOnce(world, {
+      pushTaskBranch: (input) => {
+        touched.push([...input.touchedPaths])
+        return baseDeps.pushTaskBranch!(input)
+      }
+    })
+
+    expect(outcome).toEqual({ ok: true })
+    expect(touched).toEqual([[OWN]])
+    expect(world.rebases).toEqual([])
+  })
+
+  it('keeps every path counted when the tip cannot be read', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    world.tipClassification = { sameAsTip: [CI], mainDrift: [], taskChanged: [OWN] }
+    const touched: string[][] = []
+    const baseDeps = makeInProcessDeps(world)
+    const outcome = await publishOnce(world, {
+      readDefaultBranchTip: () => null,
+      pushTaskBranch: (input) => {
+        touched.push([...input.touchedPaths])
+        return baseDeps.pushTaskBranch!(input)
+      }
+    })
+
+    expect(outcome).toEqual({ ok: true })
+    expect(touched).toEqual([[CI, OWN]])
+    expect(world.rebases).toEqual([])
+  })
 })

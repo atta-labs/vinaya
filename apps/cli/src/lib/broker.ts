@@ -251,8 +251,14 @@ export function authenticateOperatorInvocation(
 
 // --- operations and the grant table (O2, O3) --------------------------------
 
-/** Branch and change operations — what O2 calls "required branch and change operations." */
-export const WORKER_OPERATIONS = ['branch-push', 'pr-open', 'pr-comment'] as const
+/**
+ * Branch and change operations — what O2 calls "required branch and change
+ * operations." `branch-lease-push` is the force-with-lease push of the task's
+ * own branch after the driver rebased it onto the default branch; only the
+ * driver's own publication code requests it (no Developer tool names it), and
+ * `requestEffect` refuses it for any target outside `refs/heads/task/`.
+ */
+export const WORKER_OPERATIONS = ['branch-push', 'branch-lease-push', 'pr-open', 'pr-comment'] as const
 export type WorkerOperation = (typeof WORKER_OPERATIONS)[number]
 
 /** Selected-task execution and observation only — O3's own words. */
@@ -349,6 +355,22 @@ function assertTargetScopedToTask(task: number, target: string): void {
   if (match === null || Number.parseInt(match[1] as string, 10) !== task) {
     throw new UnboundTargetError(task, target)
   }
+}
+
+export class LeasePushTargetError extends Error {
+  constructor(readonly target: string) {
+    super(
+      `broker: refusing a 'branch-lease-push' to ${JSON.stringify(target)} — a lease push may only target the task's own refs/heads/task/ branch`
+    )
+    this.name = 'LeasePushTargetError'
+  }
+}
+
+/** A lease push rewrites a ref, so its target identity must be a task branch — never the default branch or any other ref, whatever task prefix it carries. */
+function assertLeasePushTarget(operation: string, target: string): void {
+  if (operation !== 'branch-lease-push') return
+  const identity = SCOPED_TARGET.exec(target)?.[2] ?? ''
+  if (!identity.startsWith('refs/heads/task/') || identity.includes('..')) throw new LeasePushTargetError(target)
 }
 
 export class ProtectedPathError extends Error {
@@ -459,6 +481,7 @@ export function requestEffect(
     assertAuthenticatedContext(context)
     assertGranted(context.role, request.operation)
     assertTargetScopedToTask(context.task, request.target)
+    assertLeasePushTarget(request.operation, request.target)
     assertNoProtectedPaths(request.touchedPaths, request.surfaceCoversPath)
     assertNoReplayedInputVersion(deps, context.task, request.key, request.inputVersion)
   } catch (err) {

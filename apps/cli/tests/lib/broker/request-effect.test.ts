@@ -14,6 +14,7 @@ import type { DispatchTeeRecoveryDeps } from '../../../src/lib/dispatch'
 import {
   acquireOwnership,
   authenticateWorkerInvocation,
+  LeasePushTargetError,
   ProtectedPathError,
   ReplayedInputVersionError,
   requestEffect,
@@ -137,6 +138,55 @@ describe('requestEffect', () => {
         reconcile: neverReconcile
       })
     ).toThrow(UnboundTargetError)
+  })
+
+  it.each([
+    ['refs/heads/main', 'the default branch'],
+    ['task/worker-isolation-v1/2', 'a bare branch name with no refs/heads/ prefix'],
+    ['refs/heads/release', 'a non-task branch'],
+    ['refs/heads/task/../main', 'a task prefix that climbs out of refs/heads/task/'],
+    ['refs/tags/task/x', 'a tag']
+  ])('refuses a branch-lease-push targeting %s (%s) before any poster runs', (identity) => {
+    let posts = 0
+    expect(() =>
+      requestEffect(deps, worker, {
+        operation: 'branch-lease-push',
+        target: scopeTarget(2, identity),
+        inputVersion: 1,
+        key: `lease-${identity}`,
+        payload: 'x',
+        poster: () => {
+          posts++
+          return 'https://example.com'
+        },
+        reconcile: neverReconcile
+      })
+    ).toThrow(LeasePushTargetError)
+    expect(posts).toBe(0)
+  })
+
+  it('accepts a branch-lease-push to the task branch, and still refuses one touching an uncovered protected path', () => {
+    let posts = 0
+    const request = (key: string, touchedPaths: string[]) => ({
+      operation: 'branch-lease-push',
+      target: scopeTarget(2, 'refs/heads/task/worker-isolation-v1/2'),
+      inputVersion: 1,
+      key,
+      payload: 'x',
+      touchedPaths,
+      surfaceCoversPath: () => false,
+      poster: () => {
+        posts++
+        return 'pushed'
+      },
+      reconcile: neverReconcile
+    })
+    expect(() => requestEffect(deps, worker, request('lease-protected', ['.github/workflows/ci.yml']))).toThrow(
+      ProtectedPathError
+    )
+    expect(posts).toBe(0)
+    expect(requestEffect(deps, worker, request('lease-ok', ['apps/cli/src/x.ts']))).toBe('pushed')
+    expect(posts).toBe(1)
   })
 
   it('refuses an operation touching a protected administrative policy path, regardless of role', () => {

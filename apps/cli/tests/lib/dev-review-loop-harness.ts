@@ -39,12 +39,14 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
+  type DefaultTipClassification,
   devReviewLoop,
   type DriverResult,
   type DriverWatchDeps,
   type LoopDeps,
   type LoopInput,
   type LoopResult,
+  type RebaseOntoTipResult,
   runDriverLoop
 } from '../../src/lib/dev-review-loop.js'
 import { resetDefaultLogSinkContext, resetTrustAnchorConfigMemo } from '../../src/lib/log-sink.js'
@@ -251,6 +253,19 @@ export type LoopWorld = {
   commits: Array<{ header: string; sha: string }>
   /** Each push the driver's publication step made (`pushTaskBranch`). */
   pushes: Array<{ sha: string }>
+  /** `readDefaultBranchTip` — the default branch's tip as the remote reports it; default `null` (unreadable). */
+  defaultBranchTip: string | null
+  /** `classifyAgainstDefaultTip`'s answer; default `null` (git cannot classify). */
+  tipClassification: DefaultTipClassification | null
+  /** `rebaseOntoDefaultTip`'s answer; a clean rebase also moves the worktree head to its `head`. Default a clean rebase onto `sha('r')`. */
+  rebaseResult: RebaseOntoTipResult
+  /** Each rebase the driver made (`rebaseOntoDefaultTip`). */
+  rebases: Array<{ tip: string }>
+  /** Each head the driver moved the worktree back to after a rebase whose push did not land (`restoreWorktreeHead`). */
+  restores: string[]
+  /** Each lease push the driver made (`pushTaskBranchWithLease`); `leasePushRejected` refuses them as a moved remote branch. */
+  leasePushes: Array<{ sha: string; expectedRemoteHead: string; touchedPaths: string[] }>
+  leasePushRejected: boolean
   /** Each pull-request open the driver's publication step made (`openTaskPullRequest`). */
   prOpens: Array<{ title: string; body: string }>
   // --- dev-tools (O2–O5): the gate-backed context the driver hosts per turn ---
@@ -402,6 +417,13 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     issueTitle: `[task ${task}] do the thing`,
     commits: [],
     pushes: [],
+    defaultBranchTip: null,
+    tipClassification: null,
+    rebaseResult: { ok: true, head: sha('r') },
+    rebases: [],
+    restores: [],
+    leasePushes: [],
+    leasePushRejected: false,
     prOpens: [],
     devToolContext: null,
     prBodyUpdates: [],
@@ -808,8 +830,35 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     // --- developer publication (agent-confinement-v1/1) ---
     readWorktreeBranch: (_worktreePath) => world.worktreeBranchName ?? world.branch,
     gitWorktreeChangedPaths: (_worktreePath, _base) => [...world.worktreeChangedPaths],
-    readDefaultBranchTip: () => null,
+    readDefaultBranchTip: () => world.defaultBranchTip,
     readMergedDefaultCommit: () => null,
+    classifyAgainstDefaultTip: () => world.tipClassification,
+    rebaseOntoDefaultTip: (_worktreePath, tip) => {
+      world.rebases.push({ tip })
+      if (world.rebaseResult.ok) world.worktreeHead = world.rebaseResult.head
+      return world.rebaseResult
+    },
+    restoreWorktreeHead: (_worktreePath, head) => {
+      world.restores.push(head)
+      world.worktreeHead = head
+      return true
+    },
+    pushTaskBranchWithLease: (input) => {
+      if (world.pushRefusal !== null) return { ok: false, refusal: world.pushRefusal, hook: true, lease: false }
+      if (world.leasePushRejected) {
+        return { ok: false, refusal: '! [rejected] HEAD -> task (stale info)', hook: false, lease: true }
+      }
+      world.leasePushes.push({
+        sha: input.sha,
+        expectedRemoteHead: input.expectedRemoteHead,
+        touchedPaths: [...input.touchedPaths]
+      })
+      world.head = input.sha
+      world.worktreeAhead = 0
+      world.remoteBranchExists = true
+      world.branchAtBaseTip = false
+      return { ok: true }
+    },
     // This fake world never models diff CONTENT, only changed-path lists —
     // the O1/O2 after-turn credential scan then simply has nothing to read
     // from the worktree side in a harness-driven test, the same fidelity
