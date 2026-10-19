@@ -13,4 +13,4 @@ workspace="${1:?usage: vercel-ignore-build.sh <workspace-package-name>}"
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-VERCEL=1 exec npx --yes turbo-ignore "$workspace" --fallback=HEAD^
+VERCEL=1 exec npx --yes turbo-ignore@2.11.9 "$workspace" --fallback=HEAD^
