@@ -17,10 +17,12 @@
  * this directory already keeps. Same fail-open contract as the reference:
  * any forge-reachability failure classifies as `UNKNOWN`, which the pure
  * gate evaluator maps to `allow` — a transient outage must never block a
- * first push. `prExists` is self-derived via `gh pr list --head <branch>`
- * (the reference script instead trusts a caller-supplied flag; this adapter
- * has no such caller to trust, so it derives the same fact `dead-branch-push`
- * already derives the same way).
+ * first push, and never passes silently: each unknown writes one `warning`
+ * finding and the check still exits 0. `prExists` is self-derived via
+ * `gh pr list --head <branch>` (the reference script instead trusts a
+ * caller-supplied flag; this adapter has no such caller to trust, so it
+ * derives the same fact `dead-branch-push` already derives the same way). A
+ * failed read of it is its own third answer, never "no pull request".
  *
  * scope: full — reads the live forge, not the local diff.
  */
@@ -68,7 +70,9 @@ function resolveRepo(): { owner: string; repo: string } | null {
   return null
 }
 
-function prExistsFor(branch: string): boolean {
+type PrExists = 'EXISTS' | 'NONE' | 'UNKNOWN'
+
+function prExistsFor(branch: string): PrExists {
   try {
     const out = execFileSync(
       'gh',
@@ -79,10 +83,23 @@ function prExistsFor(branch: string): boolean {
       }
     )
     const entries = JSON.parse(out) as Array<{ number: number }>
-    return entries.length > 0
+    return entries.length > 0 ? 'EXISTS' : 'NONE'
   } catch {
-    return false
+    return 'UNKNOWN'
   }
+}
+
+/** True once a Principal-read warning has been written, so a readiness `UNKNOWN` it caused adds no second warning. */
+let principalWarned = false
+
+function warn(message: string, recovery: string): void {
+  emitCheckError({
+    schema: CHECK_SCHEMA_VERSION,
+    check: CHECK_NAME,
+    severity: 'warning',
+    message: `${CHECK_NAME}: ${message}`,
+    agent_recovery_prompt: recovery
+  })
 }
 
 /**
@@ -101,6 +118,7 @@ async function classifyReadiness(trancheSlug: string, taskId: string): Promise<D
     principalAllowlist = resolveTrustedPrincipals()
   } catch (err) {
     warnOnUnreadPrincipals(CHECK_NAME, err)
+    principalWarned = true
     return 'UNKNOWN'
   }
 
@@ -181,8 +199,24 @@ async function main(): Promise<void> {
   let prExists = false
 
   if (parsed) {
-    prExists = prExistsFor(branch)
-    if (!prExists) readiness = await classifyReadiness(parsed.tranche, parsed.taskId)
+    const found = prExistsFor(branch)
+    if (found === 'EXISTS') {
+      prExists = true
+    } else if (found === 'UNKNOWN') {
+      readiness = 'UNKNOWN'
+      warn(
+        `the forge could not say whether \`${branch}\` already has a pull request (the \`gh pr list\` read failed), so dispatch readiness was not checked and the push is allowed.`,
+        'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya check first-push-dispatch`.'
+      )
+    } else {
+      readiness = await classifyReadiness(parsed.tranche, parsed.taskId)
+      if (readiness === 'UNKNOWN' && !principalWarned) {
+        warn(
+          `dispatch readiness for \`${branch}\` is unknown (the forge could not be read or the repository could not be resolved), so the push is allowed unchecked.`,
+          'Confirm `gh auth status` passes, the forge is reachable and `origin` names the GitHub repository, then re-run `vinaya check first-push-dispatch`.'
+        )
+      }
+    }
   }
 
   const result = checkFirstPushDispatchGate({ branch, prExists, readiness })

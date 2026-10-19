@@ -8,7 +8,9 @@
  *
  * Fail-open by design (same as the reference script): any failure to reach
  * the forge maps to `UNKNOWN`, which the pure evaluator treats as `allow` —
- * a transient forge-reachability issue must never block a push.
+ * a transient forge-reachability issue must never block a push. Fail-open is
+ * never silent: an `UNKNOWN` state writes one `warning` finding carrying the
+ * evaluator's own reason and still exits 0.
  *
  * scope: full — a property of the branch's PR history, not the local diff.
  */
@@ -68,6 +70,17 @@ function main(): void {
         'Push to a fresh task branch instead of this already-resolved one, then re-run `vinaya check dead-branch-push`.'
     })
     process.exit(1)
+  }
+
+  if (state === 'UNKNOWN') {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'warning',
+      message: `${CHECK_NAME}: the forge could not vouch for this push — ${result.reason}`,
+      agent_recovery_prompt:
+        'Confirm `gh auth status` passes and the forge is reachable, then re-run `vinaya check dead-branch-push` to learn whether this branch already has a merged or closed pull request.'
+    })
   }
 
   process.exit(0)
