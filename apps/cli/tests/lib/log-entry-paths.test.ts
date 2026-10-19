@@ -122,6 +122,7 @@ const workflowWithoutProducers = [
   'workflow:vinaya-checks.yml:vinaya-checks:Build the vendored Vinaya CLI',
   'workflow:vinaya-checks.yml:vinaya-checks:Adopter CI setup',
   'workflow:vinaya-checks.yml:vinaya-checks:Per-check summary',
+  'workflow:vinaya-checks.yml:vinaya-checks:Resolve the diff base',
   'workflow:vinaya-review-verdict.yml:evaluate:Resolve PR head',
   'workflow:vinaya-review-verdict.yml:evaluate:Build the trusted Vinaya CLI',
   'workflow:vinaya-review-verdict.yml:retrigger:Re-run the required review gate for this branch',
@@ -376,7 +377,7 @@ describe('log entry-path producer inventory', () => {
 
   it("keeps today's no-producer list explicit and shrinking", () => {
     const noProducer = inventory.filter((row) => row.noProducer)
-    expect(noProducer).toHaveLength(98)
+    expect(noProducer).toHaveLength(99)
     expect(noProducer.every((row) => row.noProducer!.trim().length > 0)).toBe(true)
   })
 })
