@@ -730,26 +730,6 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   ],
   [
     {
-      name: 'issue-assignment',
-      run: bin('check-issue-assignment'),
-      scope: 'full',
-      timeoutMs: 30_000,
-      // AEG_REPO/BRANCH both fall back to git. Every other fact this bin
-      // needs (remote-ref existence, assignees, the authenticated login)
-      // comes from `gh` subprocess calls gated behind `parsed &&
-      // !remoteRefExists`, never a raw env read — tokens forwarded so
-      // those calls authenticate on CI runners instead of null-skipping.
-      env: {
-        AEG_REPO: { optional: true },
-        BRANCH: { optional: true },
-        GITHUB_TOKEN: { optional: true },
-        GH_TOKEN: { optional: true }
-      }
-    },
-    0
-  ],
-  [
-    {
       name: 'evidence-fresh',
       validates: 'body',
       run: bin('check-evidence-fresh'),

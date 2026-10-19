@@ -54,7 +54,6 @@ describe('registry env declarations', () => {
         'evidence-fresh',
         'exec-bits',
         'first-push-dispatch',
-        'issue-assignment',
         'issue-milestone-attach',
         'issue-objectives-numbering',
         'issue-parts-coverage',
@@ -118,7 +117,7 @@ describe('registry env declarations', () => {
     // GITHUB_TOKEN/GH_TOKEN — a bin that shells to `gh` without forwarding
     // them runs unauthenticated there: hard-fail (review-gate, pre-fix) or
     // silently vacuous fail-open (single-plan-pr, dead-branch-push,
-    // issue-assignment, pre-fix). Coupling: read each bin's source, detect
+    // pre-fix). Coupling: read each bin's source, detect
     // the `gh` shell-out, demand both token declarations.
     const SRC_BIN_DIR = join(import.meta.dir, '..', '..', 'src', 'checks', 'bin')
     const offenders: string[] = []

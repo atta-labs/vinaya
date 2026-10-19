@@ -47,6 +47,7 @@ import { runtimeDir } from './dev-review-loop/reviewer-dispatch.js'
 import { readTurnResultRecords, type TurnResultRecord } from './dev-review-loop/turn-result.js'
 import { markProcessUnattended, tasksExecutionRoot } from './run-paths.js'
 import {
+  assignIssueAtRunStart as realAssignIssueAtRunStart,
   type DispatchAuthorization,
   DispatchTaskError,
   gradeWidenedSurface as realGradeWidenedSurface,
@@ -192,6 +193,12 @@ export type RunTaskDeps = {
    */
   devReviewLoop: (input: LoopInput) => Promise<DriverResult>
   resolveRepo: () => Promise<RepoRef | null>
+  /**
+   * Assigns the task's Issue to the authenticated identity when it has no
+   * assignee (`dispatch-task.ts`'s `assignIssueAtRunStart`). Called once,
+   * after the live-driver refusal and before the loop starts; never throws.
+   */
+  assignIssue: (issue: number) => void
   /** The widen-surface continuation's own seams, read only when `RunTaskInput.widenSurface` is given; absent, the real ones. */
   widen?: WidenSurfaceDeps
 }
@@ -286,6 +293,7 @@ export const defaultRunTaskDeps: RunTaskDeps = {
   resolveModelForDispatch: realResolveModelForDispatch,
   devReviewLoop: realRunDriverLoop,
   resolveRepo: () => realResolveRepo(),
+  assignIssue: (issue) => realAssignIssueAtRunStart(issue),
   widen: defaultWidenSurfaceDeps
 }
 
@@ -309,7 +317,10 @@ async function resolvePrUrl(resolveRepo: () => Promise<RepoRef | null>, prNumber
  *    separate dispatch (the deprecated `task dispatch --agent`, or a prior
  *    `task run`) already started a developer outside this call — `runTask`
  *    refuses rather than silently taking it over (O3's third refusal).
- * 3. `deps.devReviewLoop` is called exactly once — the loop's own round-1
+ * 3. `deps.assignIssue` assigns the Issue to the authenticated identity when
+ *    it has no assignee — after the refusal above, so a refused run never
+ *    touches the Issue, and before any developer starts.
+ * 4. `deps.devReviewLoop` is called exactly once — the loop's own round-1
  *    entry is what actually starts (or attaches to) the developer; this
  *    function makes no dispatch decision of its own (Traps to avoid).
  */
@@ -430,6 +441,10 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
   // (`bindPauseToPullRequest`) and continues from it. With no pull request
   // open yet, such a pause continues through the fresh-attach route below.
   const shouldResumeFromPause = existingPr !== null && deps.hasPauseState(issue)
+  // Every start path reaches this one call: the foreground command, the
+  // detached child a `--background` start launches, and the Operator's
+  // `task_start` tool all run `runTask` itself.
+  deps.assignIssue(issue)
   const loopResult = await deps.devReviewLoop(
     shouldResumeFromPause
       ? { resumePr: existingPr.number, agent, ...(resolvedModel ? { model: resolvedModel } : {}) }

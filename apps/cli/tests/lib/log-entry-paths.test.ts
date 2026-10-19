@@ -208,7 +208,6 @@ const checkNames = [
   'dead-branch-push',
   'first-push-dispatch',
   'doc-coverage-push',
-  'issue-assignment',
   'evidence-fresh',
   'reader-resolvable-prose',
   'doc-claims',
