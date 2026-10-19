@@ -76,6 +76,14 @@ const workflowRoutes: Record<string, Route> = {
   'workflow:vinaya-review.yml:vinaya-review:Write the forge snapshot': {
     producer: 'operation',
     commandToken: 'pr snapshot'
+  },
+  'workflow:vinaya-review.yml:vinaya-evidence-fresh:Write the forge snapshot': {
+    producer: 'operation',
+    commandToken: 'pr snapshot'
+  },
+  'workflow:vinaya-review.yml:vinaya-evidence-fresh:Evidence freshness': {
+    producer: 'gate',
+    commandToken: 'check evidence-fresh'
   }
 }
 
@@ -170,7 +178,13 @@ const workflowWithoutProducers = [
   'workflow:vinaya-review-verdict.yml:retrigger:Record the GraphQL budget at job end',
   'workflow:vinaya-review.yml:vinaya-review:Record the GraphQL budget at job start',
   'workflow:vinaya-review.yml:vinaya-review:Read the pull request over REST',
-  'workflow:vinaya-review.yml:vinaya-review:Record the GraphQL budget at job end'
+  'workflow:vinaya-review.yml:vinaya-review:Record the GraphQL budget at job end',
+  'workflow:vinaya-review.yml:vinaya-evidence-fresh:Record the GraphQL budget at job start',
+  'workflow:vinaya-review.yml:vinaya-evidence-fresh:Build the trusted Vinaya CLI',
+  'workflow:vinaya-review.yml:vinaya-evidence-fresh:Read the pull request over REST',
+  'workflow:vinaya-review.yml:vinaya-evidence-fresh:Fetch the pull request head as git objects',
+  'workflow:vinaya-review.yml:vinaya-evidence-fresh:Record the GraphQL budget at job end',
+  "workflow:vinaya-review.yml:vinaya-evidence-fresh:Report this job's GitHub token budget"
 ] as const
 
 const checkNames = [
@@ -362,7 +376,7 @@ describe('log entry-path producer inventory', () => {
 
   it("keeps today's no-producer list explicit and shrinking", () => {
     const noProducer = inventory.filter((row) => row.noProducer)
-    expect(noProducer).toHaveLength(92)
+    expect(noProducer).toHaveLength(98)
     expect(noProducer.every((row) => row.noProducer!.trim().length > 0)).toBe(true)
   })
 })

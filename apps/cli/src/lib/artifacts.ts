@@ -432,12 +432,13 @@ ${at === 'end' ? '        if: ${{ !cancelled() }}\n' : ''}        env:
  * exhaustion: names exactly what it waited for rather than quietly running
  * the check suite against a body it already knows may be stale.
  *
- * No longer waits for the \`AEG:EVIDENCE\` block's \`Head:\` to catch up: the
- * workflows this step feeds trigger on \`opened\`/\`reopened\`/\`edited\` only,
- * never \`synchronize\` (see each workflow's own \`on:\` block), so a push
- * landing after this run started can no longer race it. \`evidence-fresh\` at
- * the merge gate remains the sole guard against a body whose recorded head
- * lags the branch.
+ * Never waits for the \`AEG:EVIDENCE\` block's \`Head:\` to catch up. The
+ * checks and body-checks workflows trigger on \`opened\`/\`reopened\`/\`edited\`
+ * only, never \`synchronize\` (see each workflow's own \`on:\` block), so a
+ * push landing after their run started cannot race it. The review workflow's
+ * \`evidence-fresh\` job does run on \`synchronize\`, and a red there is the
+ * point: a body whose recorded head lags the branch fails that check until
+ * the body edit naming the pushed head re-runs it on \`edited\`.
  */
 function pullRequestReadStep(opts: { name: string; id?: string; prNumber: string; waitForCloses: boolean }): string {
   const read = `gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER" > "$RAW/pull.json" 2> "$RAW/read-error.txt" || fail_read "pull request #$PR_NUMBER"`
@@ -539,8 +540,9 @@ on:
 # report --push\` always follows it with a body edit (\`gh pr edit\`) carrying
 # that push's real head, which fires \`edited\` — the only trigger left this
 # workflow needs, against a body that already names the new head. A push
-# with no following edit simply produces no run, by design; \`evidence-fresh\`
-# at the merge gate is what still catches that case.
+# with no following edit produces no run of this workflow, by design;
+# \`evidence-fresh\` still runs on every push, as its own job in
+# \`vinaya-review.yml\`, which triggers on \`synchronize\` and \`edited\`.
 #
 # Several \`types:\` above can still fire in the same instant — \`vinaya pr
 # create\` opens the PR and applies its tranche label immediately after, so
@@ -664,10 +666,14 @@ function reviewWorkflow(selfHost: VendoredVinaya | null): string {
   const verdictMarkerForJq = jqStringEscape(VERDICT_MARKER_SOURCE)
   return `# ${MANAGED_NOTE}
 #
-# The required review gate. \`pull_request_target\` is the trust boundary:
-# GitHub loads this workflow and its default checkout from the repository's
-# default branch, never from the pull request being judged. The job does not
-# fetch, check out, install, build, or execute pull-request content.
+# The required review gate, and the push-time run of \`evidence-fresh\`.
+# \`pull_request_target\` is the trust boundary: GitHub loads this workflow
+# and its default checkout from the repository's default branch, never from
+# the pull request being judged. Neither job checks out, installs, builds, or
+# executes pull-request content. The review job fetches none of it; the
+# \`evidence-fresh\` job fetches the pull request head's commits as git
+# objects only, so \`git diff\` and \`git merge-base\` can read them, and
+# runs the CLI built from the default-branch checkout over them.
 #
 # The verdict-comment
 # half lives in its own workflow (vinaya-review-verdict.yml): a new PR
@@ -679,8 +685,16 @@ function reviewWorkflow(selfHost: VendoredVinaya | null): string {
 # natively with no manual rerun.
 #
 # Nothing re-runs this workflow when CI completes, and nothing needs to:
-# this gate answers for the review verdicts alone, and no other check's
-# result can change its answer, so a CI run finishing tells it nothing.
+# the review gate answers for the review verdicts, \`evidence-fresh\` for
+# the body's \`AEG:EVIDENCE\` block against the pushed head, and no other
+# check's result can change either answer, so a CI run finishing tells
+# neither anything.
+#
+# \`synchronize\` is what runs \`evidence-fresh\` on every push, so a push
+# with no following body edit turns its check-run red instead of producing
+# no run at all; \`edited\` re-runs it on the body edit \`vinaya pr report
+# --push\` makes after that push, so a body naming the pushed head turns the
+# same check-run green with no manual rerun.
 #
 # The job's first steps never build: they read the PR, its comments and its
 # labels through the REST API alone — the same read the forge snapshot the
@@ -688,7 +702,7 @@ function reviewWorkflow(selfHost: VendoredVinaya | null): string {
 # fast, without checkout or build, whenever
 # neither a \`VERDICT:\` comment nor a (presence-only, unverified) waiver
 # label exists yet — the ordinary state on \`opened\`/\`synchronize\`/
-# \`reopened\`/\`labeled\`/\`unlabeled\`. The build runs once that step finds
+# \`reopened\`/\`edited\`/\`labeled\`/\`unlabeled\`. The build runs once that step finds
 # either: a verdict, which in practice is the state a rerun finds it in (the
 # verdict-comment workflow re-runs THIS run, and by the time it fires, the
 # verdict this job is looking for already exists) — or a \`labeled\` event
@@ -704,7 +718,7 @@ run-name: "${REVIEW_GATE_WORKFLOW_NAME} PR #\${{ github.event.pull_request.numbe
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
 
 # One run per pull request COMMIT, always. Several \`types:\` above can fire in the
 # same instant — \`vinaya pr create\` opens the PR and applies its tranche
@@ -747,9 +761,10 @@ ${graphqlBudgetStep('start')}      # No checkout, no build: read whether a verdi
       # read just above. Absent both, THIS step fails — the job's own single
       # check-run ("vinaya review gate") goes red with the reason below and
       # every step after it is skipped, so an ordinary push (opened /
-      # synchronize / reopened / labeled / unlabeled) never pays for a build
-      # it cannot use. Deliberately one job, not two: a second job would
-      # report a second check-run name, and \`REVIEW_GATE_CHECK_RUN_NAME\`
+      # synchronize / reopened / edited / labeled / unlabeled) never pays for
+      # a build it cannot use. Deliberately a step of this job, never a job of
+      # its own: a pre-check job would report a second review check-run name,
+      # and \`REVIEW_GATE_CHECK_RUN_NAME\`
       # (this repo's own \`check-review-gate.ts\`/\`dev-review-loop.ts\`) is
       # the one required name every other mechanism already keys on.
       #
@@ -822,7 +837,76 @@ ${vinayaSetupSteps(selfHost, 'trusted')}${forgeSnapshotStep(selfHost, { exportBo
           # the gate is green regardless of review state.
           PR_NUMBER: \${{ github.event.pull_request.number }}
 ${FORGE_SNAPSHOT_CHECK_ENV}        run: ${vinayaRun(selfHost, 'check review-gate')}
+${graphqlBudgetStep('end')}${budgetMarkerStep()}
+  # \`evidence-fresh\` on every push, under its own check-run name. The
+  # checks workflow never triggers on \`synchronize\`, so without this job a
+  # push followed by no body edit produced no \`evidence-fresh\` run at all.
+  # It carries no \`if:\`: a skipped job reports success for the same head,
+  # which would replace a red result.
+  #
+  # Default-branch code only: the checkout is the default branch, the CLI is
+  # built from it, and the pull request head's commits are fetched as git
+  # objects for \`git diff\` and \`git merge-base\` to read — never checked
+  # out, installed, built or executed. The check reads the head from the same
+  # forge snapshot the fetch step read it from, so both name one commit.
+  vinaya-evidence-fresh:
+    name: vinaya check evidence-fresh
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+${graphqlBudgetStep('start')}      - uses: actions/checkout@v4
+        with:
+          # Explicit trusted ref: never use the PR head/merge ref in this job.
+          ref: \${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+${vinayaSetupSteps(selfHost, 'trusted')}${pullRequestReadStep({ name: 'Read the pull request over REST', prNumber: '${{ github.event.pull_request.number }}', waitForCloses: true })}${forgeSnapshotStep(selfHost, { exportBody: true })}${pullRequestHeadFetchStep()}      - name: Evidence freshness
+        env:
+          # \`principals\` is read from the default branch over the forge, so
+          # this step needs the token even with the snapshot in hand.
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          # PR_NUMBER is what makes evidence-fresh EVALUATE: without it the
+          # check reads "no PR yet" and exits 0.
+          PR_NUMBER: \${{ github.event.pull_request.number }}
+          # The commit the pull request targets, for the merge-base the diff
+          # stat is recomputed from.
+          BASE_SHA: \${{ github.event.pull_request.base.sha }}
+${FORGE_SNAPSHOT_CHECK_ENV}        run: ${vinayaRun(selfHost, 'check evidence-fresh')}
 ${graphqlBudgetStep('end')}${budgetMarkerStep()}`
+}
+
+/**
+ * Fetches the pull request head the forge snapshot recorded, by sha, as git
+ * objects into the default-branch checkout — nothing is checked out. The
+ * job's read-only token authenticates this one \`git fetch\` through
+ * \`GIT_CONFIG_*\` variables scoped to the command, so it never reaches
+ * \`.git/config\` or the command line. Fails when the commit is still absent
+ * afterwards, so the check never recomputes a diff against a head it cannot
+ * read.
+ */
+function pullRequestHeadFetchStep(): string {
+  return `      - name: Fetch the pull request head as git objects
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -o pipefail
+          HEAD_SHA="$(jq -r '.head.sha // ""' "$RUNNER_TEMP/vinaya-forge-snapshot/raw/pull.json")"
+          if ! [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::The pull request read recorded no head commit sha." >&2
+            exit 1
+          fi
+          AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$AUTH"
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $AUTH" \\
+            git fetch --no-tags --quiet origin "$HEAD_SHA"
+          git cat-file -e "$HEAD_SHA^{commit}"
+`
 }
 
 function bodyChecksWorkflow(selfHost: VendoredVinaya | null): string {
