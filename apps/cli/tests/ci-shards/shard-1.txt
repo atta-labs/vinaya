@@ -97,3 +97,4 @@ tests/lib/dev-review-loop/stall-current-head.test.ts
 tests/lib/dev-review-loop/live-gate-fail-closed.test.ts
 tests/conformance/adapter-contract.test.ts
 tests/lib/task-worktree-install.test.ts
+tests/eval/harbor-tasks.test.ts

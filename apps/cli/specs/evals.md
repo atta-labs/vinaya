@@ -727,3 +727,68 @@ The code suite has five planted defect kinds, snapshot-backed historical rounds,
 Both development splits are content-digested at creation. Held-out content is in `reviewer-quality-held-out.json`; ordinary loading does not open it, and its sole reader requires the pinned byte digest before opening it. Development tests use only public held-out identifiers.
 
 The binary grader first passes the structured output and the controller's role, head, manifest and objective binding through production `ReviewResult` validation. It then requires a planted defect at the expected file and blocking severity, treats an unjustified beyond-Surface edit as a defect while leaving a justified one unblocked, refuses a blocking finding on a clean item, and requires one disposition for every objective. Its identity hashes the grader module, the production result validator and the severity scales rather than descriptive prose. The validated harness report carries task tallies and transcript digests; its companion quality report includes recall, false-blocking rate, objective-disposition accuracy, and whether every seeded critical or high security defect was found. A blocking finding on a clean item leaves the false-blocking rate pending until adjudication either counts it as a false block or moves the real defect to history.
+
+## Layer-G role trials in Harbor
+
+A live layer-`G` role trial runs as a trial of Harbor `0.24.0`, the evaluation framework installed with `uv tool install harbor`, with the `vinaya` agent: Harbor builds the case's container, the agent runs the Vinaya role for the case inside it, and Harbor's verifier grades the result with the generic graders. Every case of the four layer-`G` role suites — `developer-capability-neutral.l5`, `code-reviewer-quality-neutral.l5`, `security-reviewer-quality-neutral.l5` and `source-delivery-neutral.l5` — runs this way.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/harbor-tasks.ts contains:export const HARBOR_VERSION = '0.24.0' -->
+
+### The converter
+
+`apps/cli/src/lib/dev-review-eval/harbor-tasks.ts`, run with Bun, reads every development case of the four suites through `developmentCases` and writes one Harbor task folder per case at `<out>/<suite>/<case id>/`, so each suite folder is one Harbor dataset. A case the Vinaya renderer refuses is listed on standard error with its refusal and gets no folder.
+
+```text
+bun apps/cli/src/lib/dev-review-eval/harbor-tasks.ts --out <dir> [--archive <file.tar>] [--held-out-approval <sha256>]... [--repository-url <url>]
+```
+
+A folder holds:
+
+- `task.toml` — Harbor `0.24.0`, the suite and the Vinaya renderer version under `[metadata]`, and a network policy per phase: the agent phase is an allowlist of `api.anthropic.com` alone, the host Claude Code's subscription inference calls, with `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` so it makes no telemetry or update call; the verifier phase, which runs in the agent's container, has no network; the image build and the agent's install step run on the public network. No allowlist names `github.com` or `codeload.github.com`.
+- `instruction.md` — the case's statement from `generic-task-statements.json`.
+- `environment/Dockerfile` — Bun `1.4.2`, Node 22 and Claude Code, then the case repository at `/app`, built by `environment/prepare-repository.sh`: a depth-1 partial clone of the case's real base commit with no blob fetched up front, a non-cone sparse checkout that leaves out every `apps/cli/tests/eval/*.json` and every `*held-out*.json` (a cone pattern cannot leave out a file pattern), so those files' contents are in neither the working tree nor the object store, then, for a `change` case only, `bun install --frozen-lockfile` in `/app` while the remote still exists, then the remote removed so no blob can be fetched later. A `change` case installs because its verifier has no network and runs the hidden tests with vitest from `/app/node_modules`; a `review` or `answer` case runs no hidden test and its role runs no repository code, so its image installs no workspace dependencies. `HEAD` stays the real base commit, which the change-bound grader compares with the case's base revision; a rebuilt repository would have another id. A `review` case then commits the change under review as `HEAD` (`environment/commit-review.sh`): its head commit, fetched by the clone, or, for a seeded change whose head commit no repository holds, the case's inline patch applied with `git apply --unidiff-zero` and committed with the seeded identity, which reproduces the head commit's id.
+- `environment/case.json` — the neutral case and only what the run needs from the layer-`P` case of the same id: a `change` case's pull request number, a `review` case's patch, an `answer` case's documents. It holds no hidden test and no reference outcome; those are written only under `tests/` and `solution/`, which the role never sees.
+- `tests/test.sh`, `tests/grade.js`, `tests/grading.json` and `tests/hidden/` — the verifier, below.
+- `solution/solve.sh`, `solution/oracle.js` and `solution/reference.json` — the oracle: `solve.sh` applies and commits the reference change (from `solution/files/`), or writes nothing for a `review` or `answer` case, then runs `oracle.js`, which writes the agent part of the reference record with its pull request's head, base and diff digest bound to the commit just made, so the oracle scores `1`.
+
+`--archive` also writes the Vinaya CLI at the evaluated commit, `HEAD`, as a tar archive for the agent. The archive leaves out every file that carries a hidden test, a reference patch or a held-out case: every `apps/cli/tests/eval/*.json` file and every `*held-out*.json` anywhere. The run needs none of them, since it reads its case only from the case file.
+
+Task folders are written only under `--out` and never committed: they derive byte for byte from committed files — a re-run with the same inputs writes an identical tree, with sorted JSON keys, no timestamps and fixed file modes — a committed copy would duplicate every hidden test and could drift from its source, and a held-out folder must never reach a public tree.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/harbor-tasks.ts contains:export const AGENT_ALLOWED_HOSTS = ['api.anthropic.com'] as const -->
+
+### The `vinaya` agent
+
+`apps/cli/src/lib/dev-review-eval/vinaya_harbor_agent.py` is a Harbor installed agent, a subclass of `BaseInstalledAgent` named `vinaya`:
+
+```text
+PYTHONPATH=apps/cli/src/lib/dev-review-eval harbor run --path <out>/<suite> --agent vinaya_harbor_agent:VinayaAgent --ak archive=<file.tar> --model <exact model id>
+```
+
+Its install step uploads the archive, unpacks it at `/opt/vinaya` and runs `bun install --frozen-lockfile` there; Claude Code is already in the image. Its run step runs `apps/cli/src/lib/dev-review-eval/harbor-trial.ts` on `/case/case.json` in container mode, with the backend `standalone` (the only value accepted now), the adapter `claude-code` and the exact model id it is given, since an alias is not resolved. It forwards only `CLAUDE_FORCE_OAUTH` and `CLAUDE_CODE_OAUTH_TOKEN`, the subscription login, read from the environment of the `harbor run` process and refused from an agent-env flag, whose values Harbor writes into the job's configuration; no API key is read or forwarded. After the run it sets Harbor's input, cache and output tokens and cost from the run's usage file; the usage records no cache figure, so the cache count is `0`. The agent is the repository's only Python file: Biome neither lints nor formats it, and its check is `python3 -m py_compile`.
+
+`harbor-trial.ts` renders the case with `renderCase` and runs the case kind's live path in container mode, in `/app`: a `change` case's Developer through `dispatchRole` with the driver-run tool host and its fake forge, a `review` case's reviewer through `dispatchRole`, an `answer` case through `readOnlyDeveloperTurn`. It reads the case file once and removes it before the role starts, since the neutral case carries fields only grading reads, and writes the agent part of the Vinaya trial record to `/logs/agent/vinaya-trial-record.json` and the run's `StepOneUsage` to `/logs/agent/vinaya-usage.json`.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/harbor-trial.ts contains:export async function runHarborTrial( -->
+
+### Each outcome's source and the reward
+
+`tests/grade.js` and `solution/oracle.js` are `apps/cli/src/lib/dev-review-eval/harbor-grade.ts` bundled once with the renderer version computed from the renderer's mapping sources and written in as a literal, so the bundle reads no repository file and never refuses a record as stale. The record it grades has three sources:
+
+| Fields | Source |
+| -- | -- |
+| `pullRequest` (the fake forge's pull request, its body carrying the beyond-Surface record), `reviews` (a review result bound to the brief hash, head and diff digest), `developerTurnResult` (with its `sourceUses`), `receipts` (the tool host's delivery receipts), `trace` (catalog tool names from the transcript, mapped by `TOOL_CAPABILITIES`, never Harbor's trajectory tool names), `effects` (the performed publication calls over the fake forge), `checks` and `readyForMerge` (both `null`, as the live path records them) | The agent's Vinaya record |
+| `measuredChange` (the `git diff` of `/app` against the base commit: its patch digest and changed paths) and `hiddenTests` (the case's hidden test files and pinned pass-to-pass files written into `/app` and run with their packages' own runners — vitest as `node node_modules/vitest/vitest.mjs`, never under the Bun runtime — mapped to the neutral test names as the host maps them) | Measured in the container by `tests/test.sh` |
+| `rendererVersion`, and the process input, which the agent part must equal | Stated by the harness |
+
+`tests/grade.js` merges the three into one `VinayaTrialRecord`, runs `extractOutcomes` and `GENERIC_GRADERS` unchanged, and writes `/logs/verifier/reward.txt` as `1` exactly when every generic grader passes and `0` otherwise, with every verdict and reason in `/logs/verifier/grades.json`. A missing agent record, one whose process input differs from the harness's, or one the renderer cannot extract rewards `0` with its reason.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/harbor-grade.ts contains:export async function gradeTrial(spec: GradingSpec, agent: unknown, measured: MeasuredPart): Promise<TrialGrade> { -->
+
+### Held-out cases
+
+Held-out cases convert only through `heldOutCases`, with `--held-out-approval` naming a pinned held-out digest of the layer-`G` re-cut; an approval naming none is refused before any held-out file is opened. The converter then prints only case ids and counts, never a case's contents, statement, patch or test.
+
+### What the test proves
+
+`apps/cli/tests/eval/harbor-tasks.test.ts`, with no Docker and no model, proves that every development case converts and the converted count equals the development count; that each folder holds the required files, keeps every hidden test under `tests/` and names Harbor `0.24.0`; that two runs write byte-identical trees; that every agent policy is an allowlist of `api.anthropic.com` alone; that each clone script, run against a local bare mirror of this repository through a `file://` URL, leaves `HEAD` at the case's base, every excluded file out of the tree and the object store, and no remote, and that each review step reproduces its head; that, for one case of each kind, the reference record split into its agent and measured parts rewards `1` and each applicable known-bad variant `0`, the oracle's agent part bound to a fake commit rewards `1`, and the trial entry on a fake process records an agent part the verifier grades; that the bundled script carries the current renderer version and grades a case with no repository beside it; that the archive holds no excluded path; that a held-out conversion without its approval opens no held-out file; and that the agent file parses.
