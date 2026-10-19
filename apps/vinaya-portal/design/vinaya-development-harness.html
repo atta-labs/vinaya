@@ -1,0 +1,842 @@
+<title>Vinaya Development Harness</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one vertical pipeline. Upstream band → Stage 1 → 2 → 3 → observed band → Stage 4 → back upstream.
+   Labeled connectors between stages carry what flows; reference tables close the page. */
+:root{
+  --bg:#ffffff; --panel:#fafafa; --sunk:#f4f4f5; --fg:#0a0a0a; --muted:#6b6b73; --line:#e4e4e7; --strong:#a1a1aa;
+  --primary:#0284c7;
+  --think:#0369a1; --exec:#c2410c; --retro:#4d7c0f; --hot:#be123c;
+  --sans:"Inter",ui-sans-serif,system-ui,-apple-system,sans-serif;
+  --mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --r:10px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0a0a0b; --panel:#131316; --sunk:#1b1b1f; --fg:#f4f4f5; --muted:#a1a1aa; --line:#27272a; --strong:#52525b;
+  --primary:#38bdf8; --think:#38bdf8; --exec:#fb923c; --retro:#a3e635; --hot:#fb7185; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0a0a0b; --panel:#131316; --sunk:#1b1b1f; --fg:#f4f4f5; --muted:#a1a1aa; --line:#27272a; --strong:#52525b;
+  --primary:#38bdf8; --think:#38bdf8; --exec:#fb923c; --retro:#a3e635; --hot:#fb7185; color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1120px;margin:0 auto;padding-left:max(20px,env(safe-area-inset-left,0px));padding-right:max(20px,env(safe-area-inset-right,0px));padding-block:56px 80px;display:flex;flex-direction:column;gap:0}
+h1,h2,h3,p{margin:0}
+h1{font-size:clamp(30px,4.6vw,46px);font-weight:700;letter-spacing:-.03em;line-height:1.08;text-wrap:balance;max-width:24ch}
+h2{font-size:clamp(22px,2.6vw,28px);font-weight:600;letter-spacing:-.02em;line-height:1.2;text-wrap:balance}
+h3{font-size:16px;font-weight:600;line-height:1.3}
+p{max-width:68ch}
+.muted{color:var(--muted)}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.small{font-size:13.5px}
+code,.br{font-family:var(--mono);font-size:12.5px}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:4px}
+
+/* header */
+.hero{display:flex;flex-direction:column;gap:16px;padding-bottom:40px}
+.hero .lede{font-size:17px;color:var(--muted);max-width:62ch}
+.index{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.index a{display:inline-flex;align-items:center;gap:8px;text-decoration:none;font-size:13px;font-weight:500;padding:6px 12px;border:1px solid var(--line);border-radius:999px;background:var(--bg)}
+.index a:hover{background:var(--sunk)}
+.dot{width:8px;height:8px;border-radius:999px;background:var(--c,var(--muted));flex:none}
+
+/* stages */
+.stage{--c:var(--muted);display:flex;flex-direction:column;gap:20px;padding:28px;border:1px solid var(--line);border-radius:14px;background:var(--bg)}
+.stage-head{display:flex;flex-direction:column;gap:8px}
+.stage-tag{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:18px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--c)}
+.stage-tag .live{margin-left:auto;font-size:12px;font-weight:400;color:var(--muted);letter-spacing:.04em;text-transform:none;display:inline-flex;align-items:center;gap:6px}
+.stage-tag .live::before{content:"";width:6px;height:6px;border-radius:999px;background:var(--retro);box-shadow:0 0 0 3px color-mix(in srgb,var(--retro) 25%,transparent)}
+.s-up{--c:var(--muted);border-style:dashed;background:var(--panel)}
+.s-think{--c:var(--think)} .s-exec{--c:var(--exec)} .s-retro{--c:var(--retro)} .s-obs{--c:var(--fg);border-color:var(--strong)} .s-improve{--c:var(--hot);border-color:color-mix(in srgb,var(--hot) 45%,var(--line))}
+
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr))}
+.grid-2{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr))}
+.card{display:flex;flex-direction:column;gap:8px;padding:18px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg);min-width:0}
+.card.k{border-top:2px solid var(--c)}
+.card.hot{--c:var(--hot);border-style:dashed;border-color:color-mix(in srgb,var(--hot) 55%,var(--line))}
+.card .role{font-family:var(--mono);font-size:12px;color:var(--c)}
+.card p{font-size:14px;color:var(--muted)}
+.from{display:inline-flex;align-self:flex-start;font-size:12px;font-family:var(--mono);color:var(--muted);background:var(--sunk);padding:3px 8px;border-radius:6px}
+.br{color:var(--muted)}
+.br::before{content:"⎇ ";color:var(--c)}
+
+/* connector between stages */
+.flow{display:flex;align-items:center;gap:12px;padding:10px 0 10px 28px;color:var(--muted);font-size:13.5px}
+.flow svg{flex:none;color:var(--strong)}
+.flow b{color:var(--fg);font-weight:500}
+
+/* upstream sources */
+.src{display:flex;flex-direction:column;gap:6px;padding:16px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg);min-width:0}
+.src-h{display:flex;align-items:center;gap:10px;font-weight:600}
+.src-h svg{width:20px;height:20px;flex:none}
+.chain{font-size:13.5px;color:var(--muted)}
+.chain b{color:var(--fg);font-weight:500}
+
+/* mini widgets */
+.mini{margin-top:auto;background:var(--sunk);border-radius:8px;padding:10px 12px;font-family:var(--mono);font-size:12px;display:flex;flex-direction:column;gap:6px;font-variant-numeric:tabular-nums}
+.mini .row{display:grid;grid-template-columns:42px 1fr;align-items:center;gap:10px;color:var(--muted)}
+.mini .bar{height:4px;border-radius:2px;background:var(--line)}
+.mini .top{display:flex;justify-content:space-between;color:var(--fg);font-weight:500}
+.pill{font-family:var(--mono);font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid currentColor;line-height:1.5;white-space:nowrap}
+.p-merged{color:var(--retro)} .p-run{color:var(--exec)} .p-q{color:var(--muted)} .p-block{color:var(--hot)} .p-back{color:var(--think)}
+
+/* executing */
+.loop{display:flex;flex-direction:column;gap:14px}
+.steps{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px}
+.step{flex:1 1 150px;display:flex;flex-direction:column;gap:2px;padding:12px 14px;border-radius:8px;background:var(--sunk);min-width:0}
+.step b{font-size:14px;font-weight:600}
+.step span{font-size:13px;color:var(--muted)}
+.loop .br{margin-top:auto}
+.pair{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));grid-auto-rows:auto;gap:0 14px}
+.subrows{row-gap:0}
+.subrows>.card{display:grid;grid-template-rows:subgrid;grid-row:span var(--n);row-gap:8px;margin-bottom:14px;align-content:start}
+.subrows>.card .mini{margin-top:0;align-self:end}
+.runbox{display:flex;flex-direction:column}
+.under{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.engine{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;padding:10px 14px;background:var(--sunk);border-bottom:1px solid var(--line)}
+.engine b{font-size:14px;font-weight:600}.engine span{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.runtime.in{border:0;border-radius:0;grid-template-columns:1fr 1fr}
+.runtime.in .rt{padding:10px 14px}
+.surface{gap:4px;padding:12px 14px;background:var(--sunk);border-style:dashed}
+.surface b{font-size:14px;font-weight:600}.surface span:last-child{font-size:13px;color:var(--muted)}
+.pair>.card{grid-row:span 7;display:grid;grid-template-rows:subgrid;row-gap:10px;margin-bottom:14px}
+.runbox .runtime{margin-top:-1px;border-top-left-radius:0;border-top-right-radius:0;border-color:var(--strong)}
+@media (max-width:860px){.pair>.card{margin-bottom:14px;border-radius:var(--r)}.runbox .runtime{margin-top:0;border-radius:var(--r)}}
+.pair .visual{align-self:stretch}
+.pair .again{align-self:center}
+.orch{display:flex;flex-direction:column}
+.driver{display:flex;flex-direction:column;gap:2px;padding:10px 14px;border-radius:8px;border:1.5px solid var(--exec);background:color-mix(in srgb,var(--exec) 7%,var(--bg))}
+.driver b{font-family:var(--mono);font-size:14px}
+.driver span:last-child{font-size:13px;color:var(--muted)}
+.orch{gap:0}
+.agents{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding-top:30px;flex:1}
+.agents .step{position:relative}
+.agents .bi{position:absolute;top:-30px;left:50%;width:12px;height:30px;transform:translateX(-50%);color:var(--exec)}
+.chat{display:flex;flex-direction:column;justify-content:center;gap:8px;padding:12px;border-radius:8px;background:var(--sunk)}
+.msg{display:flex;flex-direction:column;gap:2px;max-width:82%;padding:8px 12px;border-radius:12px;font-size:13.5px}
+.msg i{font-style:normal;font-family:var(--mono);font-size:11px;color:var(--muted)}
+.msg.me{align-self:flex-end;background:var(--bg);border:1px solid var(--line);border-bottom-right-radius:4px}
+.msg.ag{align-self:flex-start;background:color-mix(in srgb,var(--hot) 10%,var(--bg));border-bottom-left-radius:4px}
+.hotline{color:var(--hot)}
+.arrow{align-self:center;color:var(--strong);font-family:var(--mono)}
+.again{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--exec)}
+.note{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;color:var(--muted);padding:10px 12px;border:1px dashed var(--line);border-radius:8px}
+.note b{color:var(--fg);font-weight:500}
+.runtime{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.rt{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);min-width:0}
+.rt svg{width:20px;height:20px;flex:none}
+.rt b{font-weight:600;font-size:14px}
+.rt .tag{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:nowrap}
+.rt .tag.sb{color:var(--fg);font-weight:700;font-size:12.5px}
+.gates{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));border:1.5px solid var(--fg);border-radius:var(--r);overflow:hidden}
+.gates .g{display:flex;flex-direction:column;gap:2px;padding:12px 16px;min-width:0}
+.gates .g + .g{border-left:1px solid var(--line)}
+.gates .g b{font-size:14px;font-weight:600}
+.gates .g span{font-size:13px;color:var(--muted)}
+.rt-label{grid-column:1/-1;padding:8px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+
+/* retro chain */
+.chainrow{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr))}
+
+/* observed */
+.events{background:var(--sunk);border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:12.5px;display:grid;grid-template-columns:auto 1fr;gap:6px 18px;overflow-x:auto}
+.events .t{color:var(--muted);text-align:right}
+.ev-think{color:var(--think)} .ev-exec{color:var(--exec)} .ev-hot{color:var(--hot)} .ev-retro{color:var(--retro)}
+.dest{display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--muted)}
+.dest svg{width:28px;height:28px;flex:none}
+.studio{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--bg);font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums}
+.studio-bar{display:flex;align-items:center;gap:6px;padding:7px 10px;background:var(--sunk);border-bottom:1px solid var(--line);color:var(--muted)}
+.studio-bar i{width:7px;height:7px;border-radius:999px;background:var(--line)}
+.studio-bar span{margin-left:8px}
+.studio-body{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:0}
+.studio-body > div{padding:10px 12px;min-width:0}
+.studio-body > div + div{border-left:1px solid var(--line)}
+.st-table{width:100%;border-collapse:collapse}
+.st-table th{font-weight:400;color:var(--muted);text-align:left;padding:0 0 4px;border-bottom:1px solid var(--line)}
+.st-table td{padding:4px 0;white-space:nowrap}
+.tl{position:relative;display:flex;flex-direction:column;gap:7px;padding-top:20px}
+.tl .lbl{position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;color:var(--muted)}
+.tl .lrow{display:grid;grid-template-columns:48px 1fr;align-items:center;gap:8px;color:var(--muted)}
+.tl .lane{position:relative;height:13px;background:color-mix(in srgb,var(--line) 50%,transparent);border-radius:2px}
+.tl .seg{position:absolute;top:2px;height:9px;border-radius:2px}
+.tl .now{position:absolute;top:18px;bottom:0;left:calc(56px + (100% - 56px)*.86);border-left:1px dashed var(--hot)}
+.foot{color:var(--muted);padding:8px 12px;border-top:1px solid var(--line)}
+.studio-body + .foot{font-size:11.5px}
+.mantra{font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+@media (max-width:560px){.studio-body{grid-template-columns:1fr}.studio-body > div + div{border-left:0;border-top:1px solid var(--line)}}
+
+/* improve */
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.stat{background:var(--sunk);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:2px}
+.stat b{font-family:var(--mono);font-size:26px;font-weight:500;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.stat span{font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.stat.hl b{color:var(--hot)}
+.split{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+.bar2{display:flex;height:10px;border-radius:999px;overflow:hidden}
+.leg{display:flex;gap:16px;font-size:13px;color:var(--muted)}
+.leg i{display:inline-block;width:8px;height:8px;border-radius:999px;margin-right:6px}
+ul.concl li{color:var(--fg);font-weight:500}
+ul.concl li::before{content:"→";color:var(--hot)}
+ul.plain{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;font-size:14px;color:var(--muted)}
+ul.plain li{display:flex;gap:8px}
+ul.plain li::before{content:"–";color:var(--strong)}
+.proposal{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border-radius:8px;background:var(--sunk)}
+.proposal b{font-size:14px;font-weight:600}
+.proposal span{font-size:13px;color:var(--muted)}
+.kind{font-family:var(--mono);font-size:11px;color:var(--hot)}
+.ex{font-family:var(--mono);font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 6px;margin-left:8px;vertical-align:2px}
+.backflow{display:flex;align-items:center;gap:12px;padding:12px 16px;border-radius:var(--r);background:color-mix(in srgb,var(--hot) 9%,var(--bg));color:var(--fg);font-size:14px}
+.backflow svg{color:var(--hot);flex:none}
+
+/* reference */
+.ref{display:flex;flex-direction:column;gap:14px;padding-top:64px}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r)}
+table.t{border-collapse:collapse;width:100%;min-width:600px;font-size:14px}
+table.t th,table.t td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+table.t tr:last-child td{border-bottom:0}
+table.t th{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;background:var(--panel)}
+.k-think{color:var(--think)} .k-exec{color:var(--exec)} .k-retro{color:var(--retro)} .k-hot{color:var(--hot)}
+td.k-think,td.k-exec,td.k-retro,td.k-hot{font-weight:500;white-space:nowrap}
+
+@media (max-width:640px){.stage{padding:18px}.flow{padding-left:18px}.stats{grid-template-columns:1fr 1fr}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* shared: doc switcher + diagram */
+.docs{display:flex;flex-wrap:wrap;gap:6px;padding:4px;border:1px solid var(--line);border-radius:999px;background:var(--panel);align-self:flex-start;margin-bottom:28px}
+.docs a{font-size:13px;font-weight:500;text-decoration:none;padding:6px 14px;border-radius:999px;color:var(--muted)}
+.docs a:hover{color:var(--fg)}
+.docs a[aria-current="page"]{background:var(--fg);color:var(--bg)}
+.figure{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:clamp(8px,2vw,20px)}
+svg.dia{display:block;width:100%;height:auto}
+svg.dia text{font-family:var(--sans);fill:var(--fg)}
+svg.dia .t{font-size:13px;font-weight:600}
+svg.dia .s{font-size:11px;fill:var(--muted)}
+svg.dia .m{font-family:var(--mono);font-size:10.5px;fill:var(--muted);letter-spacing:.06em}
+.lk{margin-top:auto;font-family:var(--mono);font-size:12px;color:var(--primary);text-decoration:none}
+.lk:hover{text-decoration:underline}
+.num{font-family:var(--mono);font-size:12px;color:var(--c)}
+.s-feat{--c:var(--primary)}
+.s-engine{--c:var(--muted);border-style:dashed;background:var(--panel)}
+.intro{display:flex;flex-direction:column;gap:20px;padding-bottom:48px}
+.iblock{display:grid;gap:24px;padding:clamp(24px,4vw,48px);border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+.ihead{display:flex;flex-direction:column;gap:8px}
+.ihead h2{font-size:clamp(28px,4vw,44px);letter-spacing:-.03em}
+.isub{font-size:clamp(17px,1.8vw,20px);color:var(--muted);max-width:none}
+.ilead{font-size:clamp(17px,1.7vw,20px);line-height:1.6;max-width:none;color:var(--fg)}
+.icols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:24px 48px}
+.icols p{font-size:16px;line-height:1.7;max-width:none;color:var(--muted)}
+.foot-note{margin-top:48px;padding-top:18px;border-top:1px solid var(--line);color:var(--muted);font-size:13.5px}
+
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:10;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.topbar-in{max-width:1120px;margin:0 auto;padding:10px max(20px,env(safe-area-inset-left,0px));display:flex;flex-wrap:wrap;align-items:center;gap:10px 20px}
+.brand{font-weight:700;letter-spacing:-.01em;margin-right:auto}
+.topbar .docs{margin:0}
+.panel{padding-top:40px}
+</style>
+<div class="topbar"><div class="topbar-in"><span class="brand">Vinaya Development Harness</span><nav class="docs" role="tablist" aria-label="Pages"><a href="#intro" role="tab" data-tab="intro">Introduction</a><a href="#diagram" role="tab" data-tab="diagram">Process diagram</a><a href="#guide" role="tab" data-tab="guide">Process guide</a></nav></div></div>
+<div class="wrap" style="padding-top:0">
+<main class="panel" id="p-intro" role="tabpanel" data-panel="intro"><section class="intro" id="intro" aria-label="Introduction">
+<div class="iblock" id="i0">
+    <div class="ihead"><div class="eyebrow">Overview</div><h2>Who this is for</h2><p class="isub">Teams where several people direct coding agents in one repository</p></div>
+    <p class="ilead">Vinaya is for teams past the point where one developer and one agent can hold a task in their head: where one agent's output starts breaking another's, and where nobody can say what an agent did or why. It connects task contracts, human decisions, checks, recovery and the record into one shared development process, with the same controls on planned and urgent work.</p>
+    <div class="grid"><article class="card k" style="--c:var(--think)"><span class="role">Why now</span><p>Teams have capable agents and real controls in each tool. What they lack is one process that connects them, so a second person can pick up where the first stopped.</p></article><article class="card k" style="--c:var(--exec)"><span class="role">What it adds</span><p>Branch protection and CI govern the push. Vinaya governs the task: a brief a reviewer can check against, a named pause when work stops, and a record a second person can resume from.</p></article><article class="card k" style="--c:var(--retro)"><span class="role">What it keeps</span><p>Your agents, your forge, your tracker, your CI. One file turns the harness on. Every decision that binds the codebase is made by a named human: the Principal, whichever engineer is driving that work at the time.</p></article></div>
+  </div>
+  <div class="iblock" id="i1">
+    <div class="ihead"><div class="eyebrow">Introduction</div><h2>Harness engineering</h2><p class="isub">The shift from coding agents to shared engineering</p></div>
+    <p class="ilead">Coding agents now take on whole pieces of work: they inspect repositories, edit files, run tests and prepare pull requests. In a shared codebase several people direct several agents at once, and the hard problems move to the harness around the agent: the context it receives, the boundaries it works within, the checks on its output, and the record people correct the system from.</p>
+    <div class="icols"><p>Each agent can finish its own task while its changes conflict with another, rely on a mistaken assumption, or satisfy a request that was never clear enough to review. Tests pass without proving the assembled feature meets the goal; that judgment stays with product, and Vinaya gives it a complete record to judge from. Decisions made in individual chats are hard for the rest of the team to find, understand and carry forward. Coding agents have their own runtimes and tools; a team also needs these controls across tasks, reviewers, repositories and people.</p><p><b style="color:var(--fg);font-weight:500;display:block;font-size:17px;margin-bottom:6px">Vinaya: a development process teams can govern</b>Vinaya is that layer: an agent harness for software teams. It works with the agents a team already uses and adds shared controls around their work: configuration, gates, a record of governed actions, and a live view in Studio. A team can declare its own process; the Vinaya process is the default. In it, every role is an agent except one: the Principal, the engineer driving the work at that time, who approves plans, posts rulings and merges. Any engineer can hold the seat; every decision is attributed to the one who made it.</p></div>
+  </div>
+<div class="iblock" id="i0b">
+    <div class="ihead"><div class="eyebrow">Walkthrough · how the process works</div><h2>One task, brief to merge</h2></div>
+    <div class="icols"><p><b style="color:var(--fg);font-weight:500">Planned.</b> Issue #419 arrives with a brief: Surface is <code>billing/charge.ts</code> and its tests; objective, a retried webhook must not charge the customer twice. The Operator starts the loop. Round 1: the Developer adds an idempotency key; a Reviewer flags that the brief assumed the key is stored, but the table has no column for it. The loop pauses, named for the Principal. Ruling posted: add the column in this task, extend the Surface to the migration. Round 2 is green at Ring 0 and Ring 1; the planned task's reviews report; the Principal merges. The Archivist closes #419 with the ruling in the record.</p><p><b style="color:var(--fg);font-weight:500">Hot.</b> A CLI test is flaky on CI. The Principal opens #1001 hot with a light brief, one objective and the files, and works the fix with one agent in their own CLI. No rounds. The Principal decides no review is needed for this Issue, pushes, Ring 0 and Ring 1 run as always, and merges. Same gates, same Log. The record keeps the decision as well as the work: <code>review.decision waived</code>, <code>hot.commit</code>, <code>gate.result green</code> at each ring, <code>archive.task_closed</code>. Both paths are visible side by side in Mission Control.</p></div>
+  </div>
+  <div class="iblock" id="i3">
+    <div class="ihead"><div class="eyebrow">Authority</div><h2>Where the human decides</h2><p class="isub">Five decision points, one named engineer at each</p></div>
+    <div class="tbl"><table class="t" style="min-width:520px">
+      <thead><tr><th>Decision point</th><th>Who decides</th><th>Who performs</th></tr></thead>
+      <tbody>
+        <tr><td>Plan approved for dispatch</td><td><b>Principal</b></td><td>Architect, Planner · agents</td></tr>
+        <tr><td>Ruling at a pause</td><td><b>Principal</b></td><td>Operator resumes the loop · agent</td></tr>
+        <tr><td>Review required on a hot Issue</td><td><b>Principal</b>, per Issue</td><td>Reviewer agents, when asked</td></tr>
+        <tr><td>Merge</td><td><b>Principal</b>, nobody else</td><td>Gates must already be green</td></tr>
+        <tr><td>Improvement project adopted</td><td><b>Principal</b></td><td>Improver proposes · agent</td></tr>
+      </tbody>
+    </table></div>
+    <p class="muted" style="font-size:14px">In the default process every role except the Principal is an agent. The Principal is not a fixed person but a seat: the engineer working on a task occupies it while they do, across as many repositories and projects as they touch, and the Log attributes each decision to them by name. Authority sits at these five points, not in the roles.</p>
+  </div>
+</section>
+<section class="iblock" aria-labelledby="h-what"><div class="ihead"><div class="eyebrow">What you get</div><h2 id="h-what">Five features, one default process</h2></div><div class="grid"><article class="card k"><span class="num">Feature</span><h3>Configuration</h3><p>One file, <code>vinaya.config.json</code>, declares which process, agents, forge, log destination and gates a repository uses. Empty file, full harness.</p></article><article class="card k"><span class="num">Feature</span><h3>Gates</h3><p>Deterministic checks that block commits and merges failing tests, typecheck, lint or policy, on your machine and at the forge; audits that detect drift after merge.</p></article><article class="card k"><span class="num">Feature</span><h3>Log</h3><p>Every governed act kept as a typed, attributed event, delivered live to the destination you configure.</p></article><article class="card k"><span class="num">Feature</span><h3>Studio</h3><p>The readers of the record: the dashboard and Mission Control. You do not configure it; you get it.</p></article><article class="card k"><span class="num">Feature</span><h3>Dev Process</h3><p>The socket: what a development process must declare to run on the harness. The Vinaya process is the default.</p></article></div><p class="muted">Underneath the loop runs <b style="color:var(--fg);font-weight:500">Atta Engine</b>, the generic workflow runtime on LangGraph: checkpoints, halt and resume, recovery. It holds no Vinaya policy.</p></section></main><main class="panel" id="p-diagram" role="tabpanel" data-panel="diagram" hidden><header class="hero"><div class="eyebrow">Process diagram</div><h1>The Vinaya process at a glance</h1><p class="lede">From product specs to merged, archived code, and back. Thinking, executing and retrospecting, observed end to end.</p></header><section class="stage" aria-label="Diagram"><div class="figure"><svg class="dia" viewBox="0 0 1084 1832" role="img" aria-label="Vinaya process architecture">
+    <defs>
+      <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+    </defs>
+    <!-- product band -->
+    <rect x="10" y="10" width="1060" height="160" rx="4" fill="none" stroke="var(--prod)" stroke-dasharray="4 4"/>
+    <text x="24" y="32" class="m">OUTSIDE VINAYA · PRODUCT MANAGEMENT · defines the what, hands specs to engineering</text>
+    <!-- Linear -->
+    <rect x="24" y="44" width="340" height="114" rx="4" fill="var(--panel)" stroke="var(--line)"/>
+    <g transform="translate(36,56) scale(.833)"><path fill="#5E6AD2" d="M2.886 4.18A11.982 11.982 0 0 1 11.99 0C18.624 0 24 5.376 24 12.009c0 3.64-1.62 6.903-4.18 9.105L2.887 4.18ZM1.817 5.626l16.556 16.556c-.524.33-1.075.62-1.65.866L.951 7.277c.247-.575.537-1.126.866-1.65ZM.322 9.163l14.515 14.515c-.71.172-1.443.282-2.195.322L0 11.358a12 12 0 0 1 .322-2.195Zm-.17 4.862 9.823 9.824a12.02 12.02 0 0 1-9.824-9.824Z"/></g>
+    <text x="64" y="71" class="t">Linear</text>
+    <text x="36" y="96" class="s">Initiative  →  Project  →  Project milestone  →  Issue</text>
+    <text x="36" y="116" class="s">Project = the specced feature</text>
+    <text x="36" y="134" class="s">Teams own Issues; Cycles time-box them</text>
+    <!-- Jira -->
+    <rect x="380" y="44" width="400" height="114" rx="4" fill="var(--panel)" stroke="var(--line)"/>
+    <g transform="translate(392,56) scale(.833)"><path fill="#0052CC" d="M11.571 11.513H0a5.218 5.218 0 0 0 5.232 5.215h2.13v2.057A5.215 5.215 0 0 0 12.575 24V12.518a1.005 1.005 0 0 0-1.005-1.005zm5.723-5.756H5.736a5.215 5.215 0 0 0 5.215 5.214h2.129v2.058a5.218 5.218 0 0 0 5.215 5.214V6.758a1.001 1.001 0 0 0-1.001-1.001zM23.013 0H11.455a5.215 5.215 0 0 0 5.215 5.215h2.129v2.057A5.215 5.215 0 0 0 24 12.483V1.005A1.001 1.001 0 0 0 23.013 0Z"/></g>
+    <text x="420" y="71" class="t">Jira</text>
+    <text x="392" y="96" class="s">Initiative  →  Epic  →  Story / Task / Bug  →  Sub-task</text>
+    <text x="392" y="116" class="s">Epic = the specced feature · Release (Fix version)</text>
+    <text x="392" y="134" class="s">Jira Project = container, like a Linear Team · Sprints</text>
+    <!-- engineering -->
+    <rect x="796" y="44" width="260" height="114" rx="4" fill="var(--panel)" stroke="var(--line)"/>
+    <text x="808" y="71" class="t">Engineering need</text>
+    <text x="808" y="96" class="s">No product project behind it:</text>
+    <text x="808" y="116" class="s">tech debt, orchestration fixes,</text>
+    <text x="808" y="134" class="s">bugs found while working</text>
+    <g transform="translate(0,90)">
+
+    <!-- lane labels -->
+    <text x="24" y="112" class="m" font-size="18" font-weight="700" style="fill:var(--think)">STAGE 1 · THINKING  ◉ live in Studio</text>
+    <text x="24" y="482" class="m" font-size="18" font-weight="700" style="fill:var(--exec)">STAGE 2 · EXECUTING  ◉ live in Studio</text>
+    <text x="24" y="1102" class="m" font-size="18" font-weight="700" style="fill:var(--retro)">STAGE 3 · RETROSPECTING  ◉ live in Studio</text>
+    <line x1="10" y1="462" x2="1070" y2="462" stroke="var(--line)"/>
+    <line x1="10" y1="1082" x2="1070" y2="1082" stroke="var(--line)"/>
+
+    <!-- Path A: milestone -->
+    <rect x="24" y="124" width="250" height="78" rx="4" fill="var(--panel)" stroke="var(--think)" stroke-width="1.5"/>
+    <text x="36" y="146" class="t">Architect</text>
+    <text x="36" y="164" class="s">Execution Milestone: code direction</text>
+    <text x="36" y="179" class="s">+ tranche intents (drafts)</text>
+    <text x="36" y="194" class="m">⎇ milestone integration branch</text>
+
+    <rect x="24" y="230" width="250" height="168" rx="4" fill="var(--panel)" stroke="var(--think)" stroke-width="1.5"/>
+    <text x="36" y="252" class="t">Planner · per tranche</text>
+    <text x="36" y="270" class="s">Reads real specs + real code,</text>
+    <text x="36" y="285" class="s">materialises intent into tasks</text>
+    <text x="36" y="300" class="m">⎇ tranche branch → milestone branch</text>
+
+    <!-- Path B: standalone tranche -->
+    <rect x="300" y="230" width="230" height="168" rx="4" fill="var(--panel)" stroke="var(--think)" stroke-width="1.5"/>
+    <text x="312" y="252" class="t">Planner · standalone tranche</text>
+    <text x="312" y="270" class="s">Multi-task internal need,</text>
+    <text x="312" y="285" class="s">no Milestone above it</text>
+    <text x="312" y="300" class="m">⎇ optional tranche branch</text>
+
+    <!-- Path C: backlog / add to tranche -->
+    <rect x="556" y="230" width="230" height="168" rx="4" fill="var(--panel)" stroke="var(--think)" stroke-width="1.5"/>
+    <text x="568" y="252" class="t">Planner · backlog Issue</text>
+    <text x="568" y="270" class="s">One-off found while working;</text>
+    <text x="568" y="285" class="s">or added to an open tranche</text>
+    <text x="568" y="300" class="m">lighter planning, no tranche</text>
+
+    <!-- Path D: hot -->
+    <rect x="812" y="230" width="244" height="168" rx="4" fill="var(--panel)" stroke="var(--hot)" stroke-width="1.5" stroke-dasharray="5 3"/>
+    <text x="824" y="252" class="t">Hot Issue</text>
+    <text x="824" y="270" class="s">No planner. Issue opened hot,</text>
+    <text x="824" y="285" class="s">light brief</text>
+    <text x="824" y="300" class="m">same gates, still recorded</text>
+
+    <g font-family="Geist Mono, ui-monospace, monospace" font-size="9">
+    <rect x="36" y="312" width="226" height="78" rx="3" fill="var(--bg)" stroke="var(--line)"/>
+    <text x="44" y="325" font-weight="600" style="fill:var(--fg)">TR-02</text><text x="254" y="325" text-anchor="end" style="fill:var(--think)">planned</text>
+    <text x="44" y="340" style="fill:var(--muted)">#418</text><rect x="80" y="334" width="170" height="4" rx="2" fill="var(--line)"/>
+    <text x="44" y="355" style="fill:var(--muted)">#419</text><rect x="80" y="349" width="170" height="4" rx="2" fill="var(--line)"/>
+    <text x="44" y="370" style="fill:var(--muted)">#420</text><rect x="80" y="364" width="170" height="4" rx="2" fill="var(--line)"/>
+    <text x="44" y="385" style="fill:var(--muted)">#421</text><rect x="80" y="379" width="170" height="4" rx="2" fill="var(--line)"/>
+    </g>
+    <g font-family="Geist Mono, ui-monospace, monospace" font-size="9">
+    <rect x="312" y="312" width="206" height="78" rx="3" fill="var(--bg)" stroke="var(--line)"/>
+    <text x="320" y="325" font-weight="600" style="fill:var(--fg)">TR-07</text><text x="510" y="325" text-anchor="end" style="fill:var(--think)">planned</text>
+    <text x="320" y="340" style="fill:var(--muted)">#610</text><rect x="356" y="334" width="150" height="4" rx="2" fill="var(--line)"/>
+    <text x="320" y="355" style="fill:var(--muted)">#611</text><rect x="356" y="349" width="150" height="4" rx="2" fill="var(--line)"/>
+    <text x="320" y="370" style="fill:var(--muted)">#612</text><rect x="356" y="364" width="150" height="4" rx="2" fill="var(--line)"/>
+    <text x="320" y="385" style="fill:var(--muted)">#613</text><rect x="356" y="379" width="150" height="4" rx="2" fill="var(--line)"/>
+    </g>
+    <g font-family="Geist Mono, ui-monospace, monospace" font-size="10"><rect x="568" y="312" width="206" height="78" rx="3" fill="var(--bg)" stroke="var(--line)"/><circle cx="584" cy="334" r="6" fill="none" stroke="var(--think)" stroke-width="1.6"/><circle cx="584" cy="334" r="1.8" fill="var(--think)"/><text x="598" y="338" font-weight="600" style="fill:var(--fg)">#1000</text><rect x="708" y="327" width="56" height="14" rx="7" fill="none" stroke="var(--think)"/><text x="736" y="337.5" text-anchor="middle" style="fill:var(--think)">backlog</text><text x="580" y="362" font-family="Inter, system-ui, sans-serif" font-size="11" style="fill:var(--fg)">Resume refuses kept work</text><text x="580" y="379" style="fill:var(--muted)">opened · no tranche</text></g>
+    <g font-family="Geist Mono, ui-monospace, monospace" font-size="10"><rect x="824" y="312" width="220" height="78" rx="3" fill="var(--bg)" stroke="var(--line)"/><circle cx="840" cy="334" r="6" fill="none" stroke="var(--hot)" stroke-width="1.6"/><circle cx="840" cy="334" r="1.8" fill="var(--hot)"/><text x="854" y="338" font-weight="600" style="fill:var(--fg)">#1001</text><rect x="978" y="327" width="56" height="14" rx="7" fill="none" stroke="var(--hot)"/><text x="1006" y="337.5" text-anchor="middle" style="fill:var(--hot)">hot</text><text x="836" y="362" font-family="Inter, system-ui, sans-serif" font-size="11" style="fill:var(--fg)">Fix flaky CLI test now</text><text x="836" y="379" style="fill:var(--muted)">opened · no tranche</text></g>
+    <!-- tasks row -->
+    <rect x="24" y="418" width="762" height="30" rx="4" fill="none" stroke="var(--think)" stroke-dasharray="2 3"/>
+    <text x="36" y="438" class="s">Planned tasks: each an Issue with a brief (Surface, objectives, test plan) — the contract the loop executes</text>
+
+
+    <!-- Added process paths; original illustration retained above and below -->
+    <text x="24" y="890" class="m" style="fill:var(--exec)">BEFORE CLOSURE · REPLAN, RECOVER, MERGE</text>
+    <rect x="24" y="906" width="330" height="140" rx="4" fill="var(--panel)" stroke="var(--think)" stroke-width="1.5"/>
+    <text x="38" y="930" class="t">Brief no longer fits? → Replan</text>
+    <text x="38" y="953" class="s">Pause affected work. The Planner repairs</text>
+    <text x="38" y="970" class="s">the plan: brief, dependencies, conflicts.</text>
+    <text x="38" y="992" class="s">Nothing runs on a stale brief.</text>
+    <text x="38" y="1014" class="s">Return to execution with the repaired brief.</text>
+    <text x="38" y="1033" class="m">↻ BACK TO THINKING → EXECUTING</text>
+    <rect x="370" y="906" width="330" height="140" rx="4" fill="var(--panel)" stroke="var(--exec)" stroke-width="1.5"/>
+    <text x="384" y="930" class="t">Interrupted or stuck? → Recover</text>
+    <text x="384" y="953" class="s">Execution stops at an explicit pause</text>
+    <text x="384" y="970" class="s">that names who must act.</text>
+    <text x="384" y="992" class="s">A ruling is posted; the loop resumes</text>
+    <text x="384" y="1014" class="s">from the record, not from memory.</text>
+    <text x="384" y="1033" class="m">↻ BACK TO EXECUTING</text>
+    <rect x="716" y="906" width="340" height="140" rx="4" fill="var(--panel)" stroke="var(--retro)" stroke-width="1.5"/>
+    <text x="730" y="930" class="t">Ready? → Review and merge</text>
+    <text x="730" y="953" class="s">Gates green on the pull request.</text>
+    <text x="730" y="970" class="s">Required reviews report.</text>
+    <text x="730" y="992" class="s">The Principal merges. Nobody else does.</text>
+    <text x="730" y="1014" class="s">Operator never plans, rules or merges.</text>
+    <text x="730" y="1033" class="m">MERGED → ARCHIVE · REFUSED → EXECUTE / REPLAN</text>
+    <path d="M886 1046V1064H144V1114" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+    <g transform="translate(0,180)">
+    <!-- retro -->
+    <rect x="24" y="934" width="240" height="70" rx="4" fill="var(--panel)" stroke="var(--retro)" stroke-width="1.5"/>
+    <text x="36" y="956" class="t">Archivist</text>
+    <text x="36" y="974" class="s">Closes each task on merge</text>
+    <text x="36" y="991" class="s">Records what shipped and why</text>
+    <rect x="290" y="934" width="240" height="70" rx="4" fill="var(--panel)" stroke="var(--retro)" stroke-width="1.5"/>
+    <text x="302" y="956" class="t">Tranche Archivist</text>
+    <text x="302" y="974" class="s">Closes the tranche when its last task lands</text>
+    <rect x="556" y="934" width="230" height="70" rx="4" fill="var(--panel)" stroke="var(--retro)" stroke-width="1.5"/>
+    <text x="568" y="956" class="t">Milestone close</text>
+    <text x="568" y="974" class="s">When its tranches have closed</text>
+    <text x="568" y="991" class="s"></text>
+    <rect x="812" y="934" width="244" height="70" rx="4" fill="var(--panel)" stroke="var(--retro)" stroke-width="1.5"/>
+    <text x="824" y="956" class="t">Retrospective record</text>
+    <text x="824" y="974" class="s">What shipped and why</text>
+
+    <!-- observability band -->
+    <line x1="10" y1="1024" x2="1070" y2="1024" stroke="var(--line)"/>
+    <text x="24" y="1044" class="m" font-size="18" font-weight="700" style="fill:var(--think)">ACROSS EVERY STAGE · OBSERVED</text>
+    <rect x="24" y="1056" width="1032" height="230" rx="4" fill="var(--panel)" stroke="var(--fg)" stroke-width="2"/>
+    <line x1="540" y1="1072" x2="540" y2="1270" stroke="var(--line)"/>
+    <!-- Log -->
+    <text x="40" y="1082" class="t">The Log: every execution recorded</text>
+    <text x="40" y="1100" class="s">Every plan, loop round, gate, review,</text>
+    <text x="40" y="1116" class="s">hot commit and archive. Typed, attributed, live.</text>
+    <g font-family="Geist Mono, ui-monospace, monospace" font-size="9.5">
+      <rect x="40" y="1132" width="300" height="122" rx="3" fill="var(--bg)" stroke="var(--line)"/>
+      <text x="50" y="1152" style="fill:var(--think)">plan.task_created    tranche/3</text>
+      <text x="50" y="1170" style="fill:var(--exec)">loop.round_started   round 2</text>
+      <text x="50" y="1188" style="fill:var(--exec)">gate.result          green</text>
+      <text x="50" y="1206" style="fill:var(--exec)">review.verdict       approve</text>
+      <text x="50" y="1224" style="fill:var(--hot)">hot.commit           pushed</text>
+      <text x="50" y="1242" style="fill:var(--retro)">archive.task_closed  merged</text>
+    </g>
+    <path d="M344 1192H392" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+    <g transform="translate(400,1170) scale(1.4)"><path fill="#F38020" d="M16.5088 16.8447c.1475-.5068.0908-.9707-.1553-1.3154-.2246-.3164-.6045-.499-1.0615-.5205l-8.6592-.1123a.1559.1559 0 0 1-.1333-.0713c-.0283-.042-.0351-.0986-.021-.1553.0278-.084.1123-.1484.2036-.1562l8.7359-.1123c1.0351-.0489 2.1601-.8868 2.5537-1.9136l.499-1.3013c.0215-.0561.0293-.1128.0147-.168-.5625-2.5463-2.835-4.4453-5.5499-4.4453-2.5039 0-4.6284 1.6177-5.3876 3.8614-.4927-.3658-1.1187-.5625-1.794-.499-1.2026.119-2.1665 1.083-2.2861 2.2856-.0283.31-.0069.6128.0635.894C1.5683 13.171 0 14.7754 0 16.752c0 .1748.0142.3515.0352.5273.0141.083.0844.1475.1689.1475h15.9814c.0909 0 .1758-.0645.2032-.1553l.12-.4268zm2.7568-5.5634c-.0771 0-.1611 0-.2383.0112-.0566 0-.1054.0415-.127.0976l-.3378 1.1744c-.1475.5068-.0918.9707.1543 1.3164.2256.3164.6055.498 1.0625.5195l1.8437.1133c.0557 0 .1055.0263.1329.0703.0283.043.0351.1074.0214.1562-.0283.084-.1132.1485-.204.1553l-1.921.1123c-1.041.0488-2.1582.8867-2.5527 1.914l-.1406.3585c-.0283.0713.0215.1416.0986.1416h6.5977c.0771 0 .1474-.0489.169-.126.1122-.4082.1757-.837.1757-1.2803 0-2.6025-2.125-4.727-4.7344-4.727"/></g><g transform="translate(442,1170) scale(1.4)"><path fill="#632CA6" d="M19.57 17.04l-1.997-1.316-1.665 2.782-1.937-.567-1.706 2.604.087.82 9.274-1.71-.538-5.794zm-8.649-2.498l1.488-.204c.241.108.409.15.697.223.45.117.97.23 1.741-.16.18-.088.553-.43.704-.625l6.096-1.106.622 7.527-10.444 1.882zm11.325-2.712l-.602.115L20.488 0 .789 2.285l2.427 19.693 2.306-.334c-.184-.263-.471-.581-.96-.989-.68-.564-.44-1.522-.039-2.127.53-1.022 3.26-2.322 3.106-3.956-.056-.594-.15-1.368-.702-1.898-.02.22.017.432.017.432s-.227-.289-.34-.683c-.112-.15-.2-.199-.319-.4-.085.233-.073.503-.073.503s-.186-.437-.216-.807c-.11.166-.137.48-.137.48s-.241-.69-.186-1.062c-.11-.323-.436-.965-.343-2.424.6.421 1.924.321 2.44-.439.171-.251.288-.939-.086-2.293-.24-.868-.835-2.16-1.066-2.651l-.028.02c.122.395.374 1.223.47 1.625.293 1.218.372 1.642.234 2.204-.116.488-.397.808-1.107 1.165-.71.358-1.653-.514-1.713-.562-.69-.55-1.224-1.447-1.284-1.883-.062-.477.275-.763.445-1.153-.243.07-.514.192-.514.192s.323-.334.722-.624c.165-.109.262-.178.436-.323a9.762 9.762 0 0 0-.456.003s.42-.227.855-.392c-.318-.014-.623-.003-.623-.003s.937-.419 1.678-.727c.509-.208 1.006-.147 1.286.257.367.53.752.817 1.569.996.501-.223.653-.337 1.284-.509.554-.61.99-.688.99-.688s-.216.198-.274.51c.314-.249.66-.455.66-.455s-.134.164-.259.426l.03.043c.366-.22.797-.394.797-.394s-.123.156-.268.358c.277-.002.838.012 1.056.037 1.285.028 1.552-1.374 2.045-1.55.618-.22.894-.353 1.947.68.903.888 1.609 2.477 1.259 2.833-.294.295-.874-.115-1.516-.916a3.466 3.466 0 0 1-.716-1.562 1.533 1.533 0 0 0-.497-.85s.23.51.23.96c0 .246.03 1.165.424 1.68-.039.076-.057.374-.1.43-.458-.554-1.443-.95-1.604-1.067.544.445 1.793 1.468 2.273 2.449.453.927.186 1.777.416 1.997.065.063.976 1.197 1.15 1.767.306.994.019 2.038-.381 2.685l-1.117.174c-.163-.045-.273-.068-.42-.153.08-.143.241-.5.243-.572l-.063-.111c-.348.492-.93.97-1.414 1.245-.633.359-1.363.304-1.838.156-1.348-.415-2.623-1.327-2.93-1.566 0 0-.01.191.048.234.34.383 1.119 1.077 1.872 1.56l-1.605.177.759 5.908c-.337.048-.39.071-.757.124-.325-1.147-.946-1.895-1.624-2.332-.599-.384-1.424-.47-2.214-.314l-.05.059a2.851 2.851 0 0 1 1.863.444c.654.413 1.181 1.481 1.375 2.124.248.822.42 1.7-.248 2.632-.476.662-1.864 1.028-2.986.237.3.481.705.876 1.25.95.809.11 1.577-.03 2.106-.574.452-.464.69-1.434.628-2.456l.714-.104.258 1.834 11.827-1.424zM15.05 6.848c-.034.075-.085.125-.007.37l.004.014.013.032.032.073c.14.287.295.558.552.696.067-.011.136-.019.207-.023.242-.01.395.028.492.08.009-.048.01-.119.005-.222-.018-.364.072-.982-.626-1.308-.264-.122-.634-.084-.757.068a.302.302 0 0 1 .058.013c.186.066.06.13.027.207m1.958 3.392c-.092-.05-.52-.03-.821.005-.574.068-1.193.267-1.328.372-.247.191-.135.523.047.66.511.382.96.638 1.432.575.29-.038.546-.497.728-.914.124-.288.124-.598-.058-.698m-5.077-2.942c.162-.154-.805-.355-1.556.156-.554.378-.571 1.187-.041 1.646.053.046.096.078.137.104a4.77 4.77 0 0 1 1.396-.412c.113-.125.243-.345.21-.745-.044-.542-.455-.456-.146-.749"/></g><g transform="translate(484,1170) scale(1.4)"><path fill="#F46800" d="M23.02 10.59a8.578 8.578 0 0 0-.862-3.034 8.911 8.911 0 0 0-1.789-2.445c.337-1.342-.413-2.505-.413-2.505-1.292-.08-2.113.4-2.416.62-.052-.02-.102-.044-.154-.064-.22-.089-.446-.172-.677-.247-.231-.073-.47-.14-.711-.197a9.867 9.867 0 0 0-.875-.161C14.557.753 12.94 0 12.94 0c-1.804 1.145-2.147 2.744-2.147 2.744l-.018.093c-.098.029-.2.057-.298.088-.138.042-.275.094-.413.143-.138.055-.275.107-.41.166a8.869 8.869 0 0 0-1.557.87l-.063-.029c-2.497-.955-4.716.195-4.716.195-.203 2.658.996 4.33 1.235 4.636a11.608 11.608 0 0 0-.607 2.635C1.636 12.677.953 15.014.953 15.014c1.926 2.214 4.171 2.351 4.171 2.351.003-.002.006-.002.006-.005.285.509.615.994.986 1.446.156.19.32.371.488.548-.704 2.009.099 3.68.099 3.68 2.144.08 3.553-.937 3.849-1.173a9.784 9.784 0 0 0 3.164.501h.08l.055-.003.107-.002.103-.005.003.002c1.01 1.44 2.788 1.646 2.788 1.646 1.264-1.332 1.337-2.653 1.337-2.94v-.058c0-.02-.003-.039-.003-.06.265-.187.52-.387.758-.6a7.875 7.875 0 0 0 1.415-1.7c1.43.083 2.437-.885 2.437-.885-.236-1.49-1.085-2.216-1.264-2.354l-.018-.013-.016-.013a.217.217 0 0 1-.031-.02c.008-.092.016-.18.02-.27.011-.162.016-.323.016-.48v-.253l-.005-.098-.008-.135a1.891 1.891 0 0 0-.01-.13c-.003-.042-.008-.083-.013-.125l-.016-.124-.018-.122a6.215 6.215 0 0 0-2.032-3.73 6.015 6.015 0 0 0-3.222-1.46 6.292 6.292 0 0 0-.85-.048l-.107.002h-.063l-.044.003-.104.008a4.777 4.777 0 0 0-3.335 1.695c-.332.4-.592.84-.768 1.297a4.594 4.594 0 0 0-.312 1.817l.003.091c.005.055.007.11.013.164a3.615 3.615 0 0 0 .698 1.82 3.53 3.53 0 0 0 1.827 1.282c.33.098.66.14.971.137.039 0 .078 0 .114-.002l.063-.003c.02 0 .041-.003.062-.003.034-.002.065-.007.099-.01.007 0 .018-.003.028-.003l.031-.005.06-.008a1.18 1.18 0 0 0 .112-.02c.036-.008.072-.013.109-.024a2.634 2.634 0 0 0 .914-.415c.028-.02.056-.041.085-.065a.248.248 0 0 0 .039-.35.244.244 0 0 0-.309-.06l-.078.042c-.09.044-.184.083-.283.116a2.476 2.476 0 0 1-.475.096c-.028.003-.054.006-.083.006l-.083.002c-.026 0-.054 0-.08-.002l-.102-.006h-.012l-.024.006c-.016-.003-.031-.003-.044-.006-.031-.002-.06-.007-.091-.01a2.59 2.59 0 0 1-.724-.213 2.557 2.557 0 0 1-.667-.438 2.52 2.52 0 0 1-.805-1.475 2.306 2.306 0 0 1-.029-.444l.006-.122v-.023l.002-.031c.003-.021.003-.04.005-.06a3.163 3.163 0 0 1 1.352-2.29 3.12 3.12 0 0 1 .937-.43 2.946 2.946 0 0 1 .776-.101h.06l.07.002.045.003h.026l.07.005a4.041 4.041 0 0 1 1.635.49 3.94 3.94 0 0 1 1.602 1.662 3.77 3.77 0 0 1 .397 1.414l.005.076.003.075c.002.026.002.05.002.075 0 .024.003.052 0 .07v.065l-.002.073-.008.174a6.195 6.195 0 0 1-.08.639 5.1 5.1 0 0 1-.267.927 5.31 5.31 0 0 1-.624 1.13 5.052 5.052 0 0 1-3.237 2.014 4.82 4.82 0 0 1-.649.066l-.039.003h-.287a6.607 6.607 0 0 1-1.716-.265 6.776 6.776 0 0 1-3.4-2.274 6.75 6.75 0 0 1-.746-1.15 6.616 6.616 0 0 1-.714-2.596l-.005-.083-.002-.02v-.056l-.003-.073v-.096l-.003-.104v-.07l.003-.163c.008-.22.026-.45.054-.678a8.707 8.707 0 0 1 .28-1.355c.128-.444.286-.872.473-1.277a7.04 7.04 0 0 1 1.456-2.1 5.925 5.925 0 0 1 .953-.763c.169-.111.343-.213.524-.306.089-.05.182-.091.273-.135.047-.02.093-.042.138-.062a7.177 7.177 0 0 1 .714-.267l.145-.045c.049-.015.098-.026.148-.041.098-.029.197-.052.296-.076.049-.013.1-.02.15-.033l.15-.032.151-.028.076-.013.075-.01.153-.024c.057-.01.114-.013.171-.023l.169-.021c.036-.003.073-.008.106-.01l.073-.008.036-.003.042-.002c.057-.003.114-.008.171-.01l.086-.006h.023l.037-.003.145-.007a7.999 7.999 0 0 1 1.708.125 7.917 7.917 0 0 1 2.048.68 8.253 8.253 0 0 1 1.672 1.09l.09.077.089.078c.06.052.114.107.171.159.057.052.112.106.166.16.052.055.107.107.159.164a8.671 8.671 0 0 1 1.41 1.978c.012.026.028.052.04.078l.04.078.075.156c.023.051.05.1.07.153l.065.15a8.848 8.848 0 0 1 .45 1.34.19.19 0 0 0 .201.142.186.186 0 0 0 .172-.184c.01-.246.002-.532-.024-.856z"/></g>
+    <text x="400" y="1228" class="s">Any log server</text>
+    <text x="400" y="1244" class="m">CONFIGURABLE</text>
+    <!-- Studio dashboard -->
+    <text x="556" y="1082" class="t">Studio: all execution monitored</text>
+    <text x="556" y="1100" class="s">Mission Control reads the Log live</text>
+    <g font-family="Geist Mono, ui-monospace, monospace" font-size="9">
+      <rect x="556" y="1112" width="484" height="160" rx="4" fill="var(--bg)" stroke="var(--line)"/>
+      <rect x="556" y="1112" width="484" height="14" rx="4" fill="var(--line)"/>
+      <text x="566" y="1122" style="fill:var(--muted)">Studio · Mission Control</text>
+      <text x="566" y="1144" style="fill:var(--muted)">EXECUTION, LIVE</text><text x="1000" y="1144" text-anchor="middle" style="fill:var(--hot)">now</text>
+      <line x1="1000" y1="1150" x2="1000" y2="1246" stroke="var(--hot)" stroke-dasharray="2 2"/>
+      <text x="566" y="1170" style="fill:var(--muted)">loop 1</text><rect x="620" y="1162" width="380" height="10" rx="2" fill="var(--line)" opacity=".5"/>
+      <rect x="620" y="1162" width="160" height="10" rx="2" fill="var(--retro)" opacity="1"/>
+      <text x="566" y="1187" style="fill:var(--muted)">loop 2</text><rect x="620" y="1179" width="380" height="10" rx="2" fill="var(--line)" opacity=".5"/>
+      <rect x="660" y="1179" width="190" height="10" rx="2" fill="var(--exec)" opacity="0.5"/>
+      <rect x="850" y="1179" width="150" height="10" rx="2" fill="var(--exec)" opacity="1"/>
+      <text x="566" y="1204" style="fill:var(--muted)">loop 3</text><rect x="620" y="1196" width="380" height="10" rx="2" fill="var(--line)" opacity=".5"/>
+      <rect x="700" y="1196" width="300" height="10" rx="2" fill="var(--exec)" opacity="1"/>
+      <text x="566" y="1221" style="fill:var(--muted)">loop 4</text><rect x="620" y="1213" width="380" height="10" rx="2" fill="var(--line)" opacity=".5"/>
+      <rect x="640" y="1213" width="220" height="10" rx="2" fill="var(--exec)" opacity="0.5"/>
+      <rect x="860" y="1213" width="140" height="10" rx="2" fill="var(--hot)" opacity="1"/>
+      <text x="566" y="1238" style="fill:var(--muted)">hot</text><rect x="620" y="1230" width="380" height="10" rx="2" fill="var(--line)" opacity=".5"/>
+      <rect x="760" y="1230" width="240" height="10" rx="2" fill="var(--hot)" opacity="0.5"/>
+      <text x="566" y="1262" style="fill:var(--muted)">develop · review · ruling · done</text>
+    </g>
+    <text x="40" y="1276" class="m">NOTHING RUNS UNRECORDED · PLANNED, BACKLOG AND HOT ALIKE</text>
+
+    </g>
+    <!-- arrows -->
+    <path d="M149 80V124" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+    <path d="M149 202V230" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+    <path d="M880 80C880 160 415 140 415 230" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+    <path d="M910 80C910 160 700 150 700 230" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+    <path d="M934 80V230" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+    <path d="M149 398V418" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+    <path d="M415 398V418" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+    <path d="M671 398V418" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+    <path d="M405 448V494" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+    <path d="M934 398V494" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+    <path d="M144 866V906" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+    <path d="M410 866V906" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+    <path d="M264 1149H290" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+    <path d="M530 1149H556" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+    <path d="M934 866V906" stroke="var(--muted)" fill="none" marker-end="url(#a)"/><path d="M934 1184V1236" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+    <!-- side note: found-while-working -->
+    <g transform="translate(0,180)">
+    <!-- self-improvement loop -->
+    <line x1="10" y1="1306" x2="1070" y2="1306" stroke="var(--line)"/>
+    <text x="24" y="1326" class="m" font-size="18" font-weight="700" style="fill:var(--hot)">STAGE 4 · SELF-IMPROVEMENT LOOP · the Log teaches the process</text>
+    <rect x="24" y="1338" width="1032" height="214" rx="4" fill="var(--panel)" stroke="var(--hot)" stroke-width="2"/>
+    <text x="40" y="1364" class="t">Stats: what the Log says</text>
+    <text x="40" y="1380" class="s">Computed from every run. Example figures.</text>
+    <rect x="40" y="1392" width="150" height="50" rx="3" fill="var(--bg)" stroke="var(--line)"/><text x="50" y="1420" font-family="Inter, system-ui, sans-serif" font-weight="700" font-size="22" style="fill:var(--fg)">34 min</text><text x="50" y="1435" class="m" font-size="9">TIME PER TASK</text>
+    <rect x="198" y="1392" width="150" height="50" rx="3" fill="var(--bg)" stroke="var(--line)"/><text x="208" y="1420" font-family="Inter, system-ui, sans-serif" font-weight="700" font-size="22" style="fill:var(--fg)">11 of 32</text><text x="208" y="1435" class="m" font-size="9">SECOND ROUNDS</text>
+    <rect x="356" y="1392" width="150" height="50" rx="3" fill="var(--bg)" stroke="var(--line)"/><text x="366" y="1420" font-family="Inter, system-ui, sans-serif" font-weight="700" font-size="22" style="fill:var(--hot)">103</text><text x="366" y="1435" class="m" font-size="9">PROBLEMS CAUGHT</text>
+    <text x="40" y="1460" class="m">WHERE THE TIME GOES</text>
+    <rect x="40" y="1466" width="466" height="9" rx="4.5" fill="#0ea5e9"/><rect x="431" y="1466" width="75" height="9" rx="4.5" fill="#f59e0b"/>
+    <circle cx="44" cy="1108" r="4" fill="#0ea5e9"/><text x="54" y="1492" class="s">Developer 84%</text><circle cx="160" cy="1108" r="4" fill="#f59e0b"/><text x="170" y="1492" class="s">Reviewers 16%</text>
+    <text x="40" y="1516" class="t" font-size="12">→ Most extra rounds come from one gate</text>
+    <text x="40" y="1534" class="t" font-size="12">→ Vague Surface doubles the rounds</text>
+    <line x1="530" y1="1354" x2="530" y2="1538" stroke="var(--line)"/>
+    <path d="M512 1440H546" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+    <text x="556" y="1364" class="t">Improver agent</text>
+    <text x="556" y="1380" class="s">Studies the stats, drafts the projects that would fix them</text>
+    <rect x="556" y="1392" width="484" height="40" rx="3" fill="var(--bg)" stroke="var(--line)"/>
+    <text x="568" y="1410" class="t" font-size="12">Project: run the doc gate before push</text>
+    <text x="568" y="1425" class="s">Fix · cuts an expected 0.7 rounds per task</text>
+    <rect x="556" y="1438" width="484" height="40" rx="3" fill="var(--bg)" stroke="var(--line)"/>
+    <text x="568" y="1456" class="t" font-size="12">Project: Surface check at planning time</text>
+    <text x="568" y="1471" class="s">Fix · catches vague briefs before dispatch</text>
+    <rect x="556" y="1484" width="484" height="40" rx="3" fill="var(--bg)" stroke="var(--line)"/>
+    <text x="568" y="1502" class="t" font-size="12">Project: resume preview in Studio</text>
+    <text x="568" y="1517" class="s">New feature · shows what a ruling will change</text>
+    <text x="556" y="1542" class="m">PROPOSED TO LINEAR / JIRA · A HUMAN APPROVES</text>
+    <path d="M280 1286V1338" stroke="var(--muted)" fill="none" marker-end="url(#a)"/>
+    </g>
+    <!-- loop back to product -->
+    <path d="M1056 1625H1075V-40H1074" stroke="var(--hot)" stroke-width="2" fill="none"/>
+    <path d="M1075 -40V-46H1062" stroke="var(--hot)" stroke-width="2" fill="none" marker-end="url(#a)"/>
+    <text x="1068" y="980" class="m" style="fill:var(--hot)" transform="rotate(-90 1068 980)">NEW PROJECTS BACK TO PRODUCT</text>
+    <!-- feeds into the Log -->
+    <path d="M1064 160V1236" stroke="var(--fg)" stroke-width="1.5" stroke-dasharray="2 4" fill="none" marker-end="url(#a)"/>
+    <path d="M14 160V1236" stroke="var(--fg)" stroke-width="1.5" stroke-dasharray="2 4" fill="none" marker-end="url(#a)"/>
+    <defs><marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--exec)"/></marker></defs>
+    <rect x="24" y="494" width="762" height="186" rx="4" fill="var(--panel)" stroke="var(--exec)" stroke-width="1.5"/>
+    <text x="40" y="518" class="t">Developer–Review Loop</text><text x="770" y="518" text-anchor="end" class="m">DRIVEN BY THE OPERATOR</text>
+    <rect x="40" y="530" width="730" height="46" rx="4" fill="color-mix(in srgb,var(--exec) 8%,var(--panel))" stroke="var(--exec)" stroke-width="1.5"/>
+    <text x="54" y="547" class="m" style="fill:var(--exec)">MULTI-AGENT ORCHESTRATION · THE DRIVER</text><text x="54" y="566" font-family="Geist Mono, ui-monospace, monospace" font-size="13" font-weight="700" style="fill:var(--fg)">dev-review-loop.ts</text>
+    <text x="756" y="562" text-anchor="end" class="s">sends the work, reads the result, decides the next step</text>
+    <path d="M222 578V602" stroke="var(--exec)" stroke-width="1.5" fill="none" marker-start="url(#b)" marker-end="url(#b)"/>
+    <path d="M588 578V602" stroke="var(--exec)" stroke-width="1.5" fill="none" marker-start="url(#b)" marker-end="url(#b)"/>
+    <rect x="40" y="604" width="364" height="42" rx="4" fill="var(--bg)" stroke="var(--line)"/><text x="54" y="622" class="t" font-size="12.5">Developer agent</text><text x="54" y="638" class="s">implements the brief</text>
+    <rect x="406" y="604" width="364" height="42" rx="4" fill="var(--bg)" stroke="var(--line)"/><text x="420" y="622" class="t" font-size="12.5">Reviewer agents</text><text x="420" y="638" class="s">judge it against its Surface and objectives</text>
+    <text x="40" y="668" class="m" style="fill:var(--exec)">↻ ROUNDS UNTIL GREEN, OR A RULING</text><text x="770" y="668" text-anchor="end" class="m">BRIEF: SURFACE + OBJECTIVES</text>
+    <rect x="812" y="494" width="244" height="306" rx="4" fill="var(--panel)" stroke="var(--hot)" stroke-width="1.5" stroke-dasharray="5 3"/>
+    <text x="824" y="518" class="t">Hot Mode</text><text x="1044" y="518" text-anchor="end" class="m">DEV + ONE AGENT</text>
+    <rect x="824" y="530" width="220" height="116" rx="4" fill="var(--bg)" stroke="var(--line)"/>
+    <rect x="896" y="538" width="140" height="24" rx="10" fill="var(--panel)" stroke="var(--line)"/><text x="906" y="554" class="s" style="fill:var(--fg)">Flaky CLI test. Fix it.</text>
+    <rect x="832" y="568" width="168" height="24" rx="10" fill="color-mix(in srgb,var(--hot) 12%,var(--panel))" stroke="var(--line)"/><text x="842" y="584" class="s" style="fill:var(--fg)">Race on temp dir. Patched.</text>
+    <rect x="964" y="598" width="72" height="24" rx="10" fill="var(--panel)" stroke="var(--line)"/><text x="974" y="614" class="s" style="fill:var(--fg)">Push it.</text>
+    <text x="832" y="638" class="m">DIRECT CHAT</text>
+    <text x="824" y="668" class="m" style="fill:var(--hot)">LIGHT BRIEF · DEV DRIVES</text>
+    <rect x="24" y="680" width="762" height="40" fill="color-mix(in srgb,var(--muted) 10%,var(--panel))" stroke="var(--strong, var(--muted))" stroke-width="1.5"/>
+    <text x="40" y="705" class="t" font-size="13">Atta Engine · LangGraph runtime</text><text x="770" y="705" text-anchor="end" class="m">CHECKPOINTS · HALT AND RESUME · RECOVERY</text>
+    <rect x="24" y="720" width="762" height="80" rx="4" fill="var(--panel)" stroke="var(--exec)" stroke-width="1.5"/>
+    <line x1="24" y1="760" x2="786" y2="760" stroke="var(--exec)"/><line x1="405" y1="720" x2="405" y2="800" stroke="var(--line)"/>
+    <g transform="translate(38,728) scale(.84)"><path fill="#D97757" d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/></g><text x="68" y="744" class="t" font-size="13.5" font-weight="700">Claude Code</text><text x="389" y="744" text-anchor="end" class="t" font-size="12" font-weight="700">SANDBOXED</text>
+    <g transform="translate(419,728) scale(.84)"><path fill="var(--fg)" d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></g><text x="449" y="744" class="t" font-size="13.5" font-weight="700">Codex</text><text x="770" y="744" text-anchor="end" class="t" font-size="12" font-weight="700">SANDBOXED</text>
+    <g transform="translate(38,768) scale(.84)"><path fill="var(--fg)" d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></g><text x="68" y="784" class="t" font-size="13.5" font-weight="700">macOS</text><text x="389" y="784" text-anchor="end" class="m">sandbox: Seatbelt</text>
+    <g transform="translate(419,768) scale(.84)"><path fill="var(--fg)" d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139zm.529 3.405h.013c.213 0 .396.062.584.198.19.135.33.332.438.533.105.259.158.459.166.724 0-.02.006-.04.006-.06v.105a.086.086 0 01-.004-.021l-.004-.024a1.807 1.807 0 01-.15.706.953.953 0 01-.213.335.71.71 0 00-.088-.042c-.104-.045-.198-.064-.284-.133a1.312 1.312 0 00-.22-.066c.05-.06.146-.133.183-.198.053-.128.082-.264.088-.402v-.02a1.21 1.21 0 00-.061-.4c-.045-.134-.101-.2-.183-.333-.084-.066-.167-.132-.267-.132h-.016c-.093 0-.176.03-.262.132a.8.8 0 00-.205.334 1.18 1.18 0 00-.09.4v.019c.002.089.008.179.02.267-.193-.067-.438-.135-.607-.202a1.635 1.635 0 01-.018-.2v-.02a1.772 1.772 0 01.15-.768c.082-.22.232-.406.43-.533a.985.985 0 01.594-.2zm-2.962.059h.036c.142 0 .27.048.399.135.146.129.264.288.344.465.09.199.14.4.153.667v.004c.007.134.006.2-.002.266v.08c-.03.007-.056.018-.083.024-.152.055-.274.135-.393.2.012-.09.013-.18.003-.267v-.015c-.012-.133-.04-.2-.082-.333a.613.613 0 00-.166-.267.248.248 0 00-.183-.064h-.021c-.071.006-.13.04-.186.132a.552.552 0 00-.12.27.944.944 0 00-.023.33v.015c.012.135.037.2.08.334.046.134.098.2.166.268.01.009.02.018.034.024-.07.057-.117.07-.176.136a.304.304 0 01-.131.068 2.62 2.62 0 01-.275-.402 1.772 1.772 0 01-.155-.667 1.759 1.759 0 01.08-.668 1.43 1.43 0 01.283-.535c.128-.133.26-.2.418-.2zm1.37 1.706c.332 0 .733.065 1.216.399.293.2.523.269 1.052.468h.003c.255.136.405.266.478.399v-.131a.571.571 0 01.016.47c-.123.31-.516.643-1.063.842v.002c-.268.135-.501.333-.775.465-.276.135-.588.292-1.012.267a1.139 1.139 0 01-.448-.067 3.566 3.566 0 01-.322-.198c-.195-.135-.363-.332-.612-.465v-.005h-.005c-.4-.246-.616-.512-.686-.71-.07-.268-.005-.47.193-.6.224-.135.38-.271.483-.336.104-.074.143-.102.176-.131h.002v-.003c.169-.202.436-.47.839-.601.139-.036.294-.065.466-.065zm2.8 2.142c.358 1.417 1.196 3.475 1.735 4.473.286.534.855 1.659 1.102 3.024.156-.005.33.018.513.064.646-1.671-.546-3.467-1.089-3.966-.22-.2-.232-.335-.123-.335.59.534 1.365 1.572 1.646 2.757.13.535.16 1.104.021 1.67.067.028.135.06.205.067 1.032.534 1.413.938 1.23 1.537v-.043c-.06-.003-.12 0-.18 0h-.016c.151-.467-.182-.825-1.065-1.224-.915-.4-1.646-.336-1.77.465-.008.043-.013.066-.018.135-.068.023-.139.053-.209.064-.43.268-.662.669-.793 1.187-.13.533-.17 1.156-.205 1.869v.003c-.02.334-.17.838-.319 1.35-1.5 1.072-3.58 1.538-5.348.334a2.645 2.645 0 00-.402-.533 1.45 1.45 0 00-.275-.333c.182 0 .338-.03.465-.067a.615.615 0 00.314-.334c.108-.267 0-.697-.345-1.163-.345-.467-.931-.995-1.788-1.521-.63-.4-.986-.87-1.15-1.396-.165-.534-.143-1.085-.015-1.645.245-1.07.873-2.11 1.274-2.763.107-.065.037.135-.408.974-.396.751-1.14 2.497-.122 3.854a8.123 8.123 0 01.647-2.876c.564-1.278 1.743-3.504 1.836-5.268.048.036.217.135.289.202.218.133.38.333.59.465.21.201.477.335.876.335.039.003.075.006.11.006.412 0 .73-.134.997-.268.29-.134.52-.334.74-.4h.005c.467-.135.835-.402 1.044-.7zm2.185 8.958c.037.6.343 1.245.882 1.377.588.134 1.434-.333 1.791-.765l.211-.01c.315-.007.577.01.847.268l.003.003c.208.199.305.53.391.876.085.4.154.78.409 1.066.486.527.645.906.636 1.14l.003-.007v.018l-.003-.012c-.015.262-.185.396-.498.595-.63.401-1.746.712-2.457 1.57-.618.737-1.37 1.14-2.036 1.191-.664.053-1.237-.2-1.574-.898l-.005-.003c-.21-.4-.12-1.025.056-1.69.176-.668.428-1.344.463-1.897.037-.714.076-1.335.195-1.814.12-.465.308-.797.641-.984l.045-.022zm-10.814.049h.01c.053 0 .105.005.157.014.376.055.706.333 1.023.752l.91 1.664.003.003c.243.533.754 1.064 1.189 1.637.434.598.77 1.131.729 1.57v.006c-.057.744-.48 1.148-1.125 1.294-.645.135-1.52.002-2.395-.464-.968-.536-2.118-.469-2.857-.602-.369-.066-.61-.2-.723-.4-.11-.2-.113-.602.123-1.23v-.004l.002-.003c.117-.334.03-.752-.027-1.118-.055-.401-.083-.71.043-.94.16-.334.396-.4.69-.533.294-.135.64-.202.915-.47h.002v-.002c.256-.268.445-.601.668-.838.19-.201.38-.336.663-.336zm7.159-9.074c-.435.201-.945.535-1.488.535-.542 0-.97-.267-1.28-.466-.154-.134-.28-.268-.373-.335-.164-.134-.144-.333-.074-.333.109.016.129.134.199.2.096.066.215.2.36.333.292.2.68.467 1.167.467.485 0 1.053-.267 1.398-.466.195-.135.445-.334.648-.467.156-.136.149-.267.279-.267.128.016.034.134-.147.332a8.097 8.097 0 01-.69.468zm-1.082-1.583V5.64c-.006-.02.013-.042.029-.05.074-.043.18-.027.26.004.063 0 .16.067.15.135-.006.049-.085.066-.135.066-.055 0-.092-.043-.141-.068-.052-.018-.146-.008-.163-.065zm-.551 0c-.02.058-.113.049-.166.066-.047.025-.086.068-.14.068-.05 0-.13-.02-.136-.068-.01-.066.088-.133.15-.133.08-.031.184-.047.259-.005.019.009.036.03.03.05v.02h.003z"/></g><text x="449" y="784" class="t" font-size="13.5" font-weight="700">Linux / Unix</text><text x="770" y="784" text-anchor="end" class="m">sandbox: seccomp</text>
+    <line x1="824" y1="690" x2="1044" y2="690" stroke="var(--line)"/>
+    <text x="824" y="712" class="m" style="fill:var(--hot)">ANY CHAT SURFACE</text>
+    <text x="824" y="734" class="t" font-size="13">CLI · desktop app · IDE</text>
+    <text x="824" y="756" class="s">No loop, no engine.</text>
+    <text x="824" y="772" class="s">Sandbox is the agent's own setting.</text>
+    <text x="824" y="788" class="s">The gates still apply.</text>
+    <text x="36" y="818" class="m" style="fill:var(--exec)">GATES · after the work, the doors to GitHub · same for planned and hot · cannot be skipped</text>
+    <rect x="24" y="826" width="1032" height="40" rx="4" fill="var(--panel)" stroke="var(--fg)" stroke-width="1.5"/>
+    <text x="38" y="851" class="t" font-size="13">Ring 0 · commit + push hooks</text><text x="232" y="851" class="s">last door before GitHub</text>
+    <line x1="384" y1="834" x2="384" y2="858" stroke="var(--line)"/><text x="398" y="851" class="t" font-size="13">Ring 1 · CI on the PR</text><text x="548" y="851" class="s">same checks, merge blocked while red</text>
+    <line x1="764" y1="834" x2="764" y2="858" stroke="var(--line)"/><text x="778" y="851" class="t" font-size="13">Ring 2 · audits</text><text x="880" y="851" class="s">after merge, always on</text>
+    </g>
+  </svg></div></section>
+<div class="flow"><svg width="16" height="28" viewBox="0 0 16 28" aria-hidden="true"><path d="M8 0v24M3 19l5 6 5-6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span><b>What keeps it grounded</b></span></div>
+<section class="stage" aria-labelledby="h-gr">
+  <div class="stage-head"><div class="stage-tag">Notes on the diagram</div><h2 id="h-gr">What keeps the process grounded</h2></div>
+  <div class="grid subrows" style="--n:3"><article class="card k" style="--c:var(--think)"><span class="role">Planning</span><h3>Facts the product checks</h3><p>The Planner reads the code first, declares dependencies and conflicts, and asks before writing. Each claim the Planner makes about the code is checked against the repository before the brief is dispatched.</p></article><article class="card k" style="--c:var(--hot)"><span class="role">Hot mode</span><h3>A light brief, live</h3><p>No Planner. The hot Issue keeps one objective, the files and the facts read. No development rounds. Whether reviewers run is the Principal's decision for that Issue; the same gates apply; the Principal merges.</p></article><article class="card k" style="--c:var(--exec)"><span class="role">Recovery</span><h3>Resume from reality</h3><p>When execution cannot continue safely it stops at a recoverable pause that says who must act. A ruling is posted and the loop resumes from the record.</p></article><article class="card k" style="--c:var(--retro)"><span class="role">Retrospecting</span><h3>The record answers</h3><p>Studio answers from the record: did a cheaper model finish, are the reviewers strict, what did a task cost, where did the time go, which check catches most, which findings recur.</p></article><article class="card k" style="--c:var(--hot)"><span class="role">Improvement</span><h3>Propose, then a human approves</h3><p>The Improver reads those answers and proposes new projects. A human approves them; they go back to product.</p></article></div>
+</section>
+</main><main class="panel" id="p-guide" role="tabpanel" data-panel="guide" hidden><header class="hero"><div class="eyebrow">Process guide</div><h1>The Vinaya process, stage by stage</h1><p class="lede">Product management decides <em>what</em> to build. Vinaya starts once a feature has specs and runs everything after: thinking the work through, executing it with agents, and closing it with a record.</p><nav class="index" aria-label="Stages">
+    <a href="#upstream"><span class="dot"></span>Upstream</a>
+    <a href="#thinking" style="--c:var(--think)"><span class="dot"></span>1 · Thinking</a>
+    <a href="#executing" style="--c:var(--exec)"><span class="dot"></span>2 · Executing</a>
+    <a href="#retrospecting" style="--c:var(--retro)"><span class="dot"></span>3 · Retrospecting</a>
+    <a href="#observed" style="--c:var(--fg)"><span class="dot"></span>Observed</a>
+    <a href="#improve" style="--c:var(--hot)"><span class="dot"></span>4 · Self-improvement</a>
+  </nav></header>
+
+
+
+<!-- UPSTREAM -->
+<section class="stage s-up" id="upstream" aria-labelledby="h-up">
+  <div class="stage-head">
+    <div class="stage-tag">Outside Vinaya · product management</div>
+    <h2 id="h-up">Where work comes from</h2>
+  </div>
+  <div class="grid">
+    <div class="src">
+      <div class="src-h"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#5E6AD2" d="M2.886 4.18A11.982 11.982 0 0 1 11.99 0C18.624 0 24 5.376 24 12.009c0 3.64-1.62 6.903-4.18 9.105L2.887 4.18ZM1.817 5.626l16.556 16.556c-.524.33-1.075.62-1.65.866L.951 7.277c.247-.575.537-1.126.866-1.65ZM.322 9.163l14.515 14.515c-.71.172-1.443.282-2.195.322L0 11.358a12 12 0 0 1 .322-2.195Zm-.17 4.862 9.823 9.824a12.02 12.02 0 0 1-9.824-9.824Z"/></svg>Linear</div>
+      <p class="chain">Initiative → <b>Project</b> → Project milestone → Issue</p>
+      <p class="chain">The Project is the specced feature. Teams own Issues; Cycles time-box them.</p>
+    </div>
+    <div class="src">
+      <div class="src-h"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#2684FF" d="M11.571 11.513H0a5.218 5.218 0 0 0 5.232 5.215h2.13v2.057A5.215 5.215 0 0 0 12.575 24V12.518a1.005 1.005 0 0 0-1.005-1.005zm5.723-5.756H5.736a5.215 5.215 0 0 0 5.215 5.214h2.129v2.058a5.218 5.218 0 0 0 5.215 5.214V6.758a1.001 1.001 0 0 0-1.001-1.001zM23.013 0H11.455a5.215 5.215 0 0 0 5.215 5.215h2.129v2.057A5.215 5.215 0 0 0 24 12.483V1.005A1.001 1.001 0 0 0 23.013 0Z"/></svg>Jira</div>
+      <p class="chain">Initiative → <b>Epic</b> → Story / Task / Bug → Sub-task</p>
+      <p class="chain">The Epic is the specced feature. Releases (Fix versions), Sprints; a Jira Project is a container, like a Linear Team.</p>
+    </div>
+    <div class="src">
+      <div class="src-h"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/></svg>Engineering need</div>
+      <p class="chain">No product project behind it: tech debt, orchestration fixes, bugs found while working.</p>
+    </div>
+  </div>
+</section>
+
+<div class="flow"><svg width="16" height="28" viewBox="0 0 16 28" aria-hidden="true"><path d="M8 0v24M3 19l5 6 5-6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span><b>Specs or a need</b> enter Vinaya through one of four paths</span></div>
+
+<!-- STAGE 1 -->
+<section class="stage s-think" id="thinking" aria-labelledby="h-think">
+  <div class="stage-head">
+    <div class="stage-tag"><span class="dot"></span>Stage 1 · Thinking<span class="live">live in Studio</span></div>
+    <h2 id="h-think">Four ways work enters</h2>
+  </div>
+  <div class="grid subrows" style="--n:6">
+    <article class="card k">
+      <span class="from">from a Project / Epic</span>
+      <span class="role">Architect → Planner per tranche</span>
+      <h3>Feature with product specs</h3>
+      <p>The Architect sets the execution Milestone (code direction) and drafts tranche intents. A Planner reads the real specs and real code and turns each intent into tasks.</p>
+      <span class="br">tranche branch → milestone branch → main</span>
+      <div class="mini" aria-label="Example tranche">
+        <div class="top"><span>TR-02</span><span class="p-back">planned</span></div>
+        <div class="row"><span>#418</span><span class="bar"></span></div>
+        <div class="row"><span>#419</span><span class="bar"></span></div>
+        <div class="row"><span>#420</span><span class="bar"></span></div>
+        <div class="row"><span>#421</span><span class="bar"></span></div>
+      </div>
+    </article>
+    <article class="card k">
+      <span class="from">from an engineering need</span>
+      <span class="role">Planner · standalone tranche</span>
+      <h3>Internal multi-task need</h3>
+      <p>Tech debt or an orchestration fix that needs several tasks but has no product project. One planned tranche, no Milestone above it.</p>
+      <span class="br">optional tranche branch</span>
+      <div class="mini" aria-label="Example tranche">
+        <div class="top"><span>TR-07</span><span class="p-back">planned</span></div>
+        <div class="row"><span>#610</span><span class="bar"></span></div>
+        <div class="row"><span>#611</span><span class="bar"></span></div>
+        <div class="row"><span>#612</span><span class="bar"></span></div>
+        <div class="row"><span>#613</span><span class="bar"></span></div>
+      </div>
+    </article>
+    <article class="card k">
+      <span class="from">found while working</span>
+      <span class="role">Planner · backlog Issue</span>
+      <h3>A single fix</h3>
+      <p>Lighter planning, lives in the backlog. If it belongs to a running tranche, a Planner adds it there instead.</p>
+      <span class="br">no tranche</span>
+      <div class="mini" aria-label="Example backlog Issue">
+        <div class="top"><span>#1000</span><span class="pill p-back">backlog</span></div>
+        <div style="font-family:var(--sans);font-size:13px;color:var(--fg)">Resume refuses kept work</div>
+        <div>opened · no tranche</div>
+      </div>
+    </article>
+    <article class="card k hot">
+      <span class="from">needed now</span>
+      <span class="role">No Planner</span>
+      <h3>Hot Issue</h3>
+      <p>The Principal works live with one agent on their own subscription. An Issue is still opened, marked hot, with a light brief: one objective, the files, the facts read. Review is the Principal's call per Issue. Gates still run.</p>
+      <span class="br">same gates, still recorded</span>
+      <div class="mini" aria-label="Example hot Issue">
+        <div class="top"><span>#1001</span><span class="pill p-block">hot</span></div>
+        <div style="font-family:var(--sans);font-size:13px;color:var(--fg)">Fix flaky CLI test now</div>
+        <div>opened · no tranche</div>
+      </div>
+    </article>
+  </div>
+</section>
+
+<div class="flow"><svg width="16" height="28" viewBox="0 0 16 28" aria-hidden="true"><path d="M8 0v24M3 19l5 6 5-6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span><b>Planned tasks</b>: each an Issue with a brief (Surface, objectives, test plan), the contract the loop executes</span></div>
+
+<!-- STAGE 2 -->
+<section class="stage s-exec" id="executing" aria-labelledby="h-exec">
+  <div class="stage-head">
+    <div class="stage-tag"><span class="dot"></span>Stage 2 · Executing<span class="live">live in Studio</span></div>
+    <h2 id="h-exec">One brief in, one reviewed pull request out</h2>
+  </div>
+  <div class="runbox">
+  <div class="pair">
+    <article class="card k loop">
+      <span class="role">Driven by the Operator</span>
+      <h3>Developer–Review Loop</h3>
+      <p>Agents develop and review against the brief. Loops run in parallel within a tranche; the planned Surface keeps conflicts down.</p>
+      <div class="visual orch" aria-label="Multi-agent orchestration">
+        <div class="driver"><span class="eyebrow">Multi-agent orchestration</span><b>dev-review-loop.ts</b><span>The driver talks to each agent: sends the work, reads the result, decides the next step</span></div>
+        <div class="agents">
+          <div class="step"><svg class="bi" viewBox="0 0 12 30" aria-hidden="true"><path d="M6 2v26M2 6l4-4 4 4M2 24l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><b>Developer agent</b><span>Implements the brief</span></div>
+          <div class="step"><svg class="bi" viewBox="0 0 12 30" aria-hidden="true"><path d="M6 2v26M2 6l4-4 4 4M2 24l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><b>Reviewer agents</b><span>Judge it against its Surface and objectives</span></div>
+        </div>
+      </div>
+      <div class="under">
+      <div class="engine"><b>Atta Engine · LangGraph runtime</b><span>Checkpoints, halt and resume, recovery</span></div>
+  <div class="runtime in" aria-label="Runs the loop">
+        <div class="rt"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#D97757" d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/></svg><b>Claude Code</b><span class="tag sb">SANDBOXED</span></div>
+        <div class="rt"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg><b>Codex</b><span class="tag sb">SANDBOXED</span></div>
+        <div class="rt"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg><b>macOS</b><span class="tag">sandbox: Seatbelt</span></div>
+        <div class="rt"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139zm.529 3.405h.013c.213 0 .396.062.584.198.19.135.33.332.438.533.105.259.158.459.166.724 0-.02.006-.04.006-.06v.105a.086.086 0 01-.004-.021l-.004-.024a1.807 1.807 0 01-.15.706.953.953 0 01-.213.335.71.71 0 00-.088-.042c-.104-.045-.198-.064-.284-.133a1.312 1.312 0 00-.22-.066c.05-.06.146-.133.183-.198.053-.128.082-.264.088-.402v-.02a1.21 1.21 0 00-.061-.4c-.045-.134-.101-.2-.183-.333-.084-.066-.167-.132-.267-.132h-.016c-.093 0-.176.03-.262.132a.8.8 0 00-.205.334 1.18 1.18 0 00-.09.4v.019c.002.089.008.179.02.267-.193-.067-.438-.135-.607-.202a1.635 1.635 0 01-.018-.2v-.02a1.772 1.772 0 01.15-.768c.082-.22.232-.406.43-.533a.985.985 0 01.594-.2zm-2.962.059h.036c.142 0 .27.048.399.135.146.129.264.288.344.465.09.199.14.4.153.667v.004c.007.134.006.2-.002.266v.08c-.03.007-.056.018-.083.024-.152.055-.274.135-.393.2.012-.09.013-.18.003-.267v-.015c-.012-.133-.04-.2-.082-.333a.613.613 0 00-.166-.267.248.248 0 00-.183-.064h-.021c-.071.006-.13.04-.186.132a.552.552 0 00-.12.27.944.944 0 00-.023.33v.015c.012.135.037.2.08.334.046.134.098.2.166.268.01.009.02.018.034.024-.07.057-.117.07-.176.136a.304.304 0 01-.131.068 2.62 2.62 0 01-.275-.402 1.772 1.772 0 01-.155-.667 1.759 1.759 0 01.08-.668 1.43 1.43 0 01.283-.535c.128-.133.26-.2.418-.2zm1.37 1.706c.332 0 .733.065 1.216.399.293.2.523.269 1.052.468h.003c.255.136.405.266.478.399v-.131a.571.571 0 01.016.47c-.123.31-.516.643-1.063.842v.002c-.268.135-.501.333-.775.465-.276.135-.588.292-1.012.267a1.139 1.139 0 01-.448-.067 3.566 3.566 0 01-.322-.198c-.195-.135-.363-.332-.612-.465v-.005h-.005c-.4-.246-.616-.512-.686-.71-.07-.268-.005-.47.193-.6.224-.135.38-.271.483-.336.104-.074.143-.102.176-.131h.002v-.003c.169-.202.436-.47.839-.601.139-.036.294-.065.466-.065zm2.8 2.142c.358 1.417 1.196 3.475 1.735 4.473.286.534.855 1.659 1.102 3.024.156-.005.33.018.513.064.646-1.671-.546-3.467-1.089-3.966-.22-.2-.232-.335-.123-.335.59.534 1.365 1.572 1.646 2.757.13.535.16 1.104.021 1.67.067.028.135.06.205.067 1.032.534 1.413.938 1.23 1.537v-.043c-.06-.003-.12 0-.18 0h-.016c.151-.467-.182-.825-1.065-1.224-.915-.4-1.646-.336-1.77.465-.008.043-.013.066-.018.135-.068.023-.139.053-.209.064-.43.268-.662.669-.793 1.187-.13.533-.17 1.156-.205 1.869v.003c-.02.334-.17.838-.319 1.35-1.5 1.072-3.58 1.538-5.348.334a2.645 2.645 0 00-.402-.533 1.45 1.45 0 00-.275-.333c.182 0 .338-.03.465-.067a.615.615 0 00.314-.334c.108-.267 0-.697-.345-1.163-.345-.467-.931-.995-1.788-1.521-.63-.4-.986-.87-1.15-1.396-.165-.534-.143-1.085-.015-1.645.245-1.07.873-2.11 1.274-2.763.107-.065.037.135-.408.974-.396.751-1.14 2.497-.122 3.854a8.123 8.123 0 01.647-2.876c.564-1.278 1.743-3.504 1.836-5.268.048.036.217.135.289.202.218.133.38.333.59.465.21.201.477.335.876.335.039.003.075.006.11.006.412 0 .73-.134.997-.268.29-.134.52-.334.74-.4h.005c.467-.135.835-.402 1.044-.7zm2.185 8.958c.037.6.343 1.245.882 1.377.588.134 1.434-.333 1.791-.765l.211-.01c.315-.007.577.01.847.268l.003.003c.208.199.305.53.391.876.085.4.154.78.409 1.066.486.527.645.906.636 1.14l.003-.007v.018l-.003-.012c-.015.262-.185.396-.498.595-.63.401-1.746.712-2.457 1.57-.618.737-1.37 1.14-2.036 1.191-.664.053-1.237-.2-1.574-.898l-.005-.003c-.21-.4-.12-1.025.056-1.69.176-.668.428-1.344.463-1.897.037-.714.076-1.335.195-1.814.12-.465.308-.797.641-.984l.045-.022zm-10.814.049h.01c.053 0 .105.005.157.014.376.055.706.333 1.023.752l.91 1.664.003.003c.243.533.754 1.064 1.189 1.637.434.598.77 1.131.729 1.57v.006c-.057.744-.48 1.148-1.125 1.294-.645.135-1.52.002-2.395-.464-.968-.536-2.118-.469-2.857-.602-.369-.066-.61-.2-.723-.4-.11-.2-.113-.602.123-1.23v-.004l.002-.003c.117-.334.03-.752-.027-1.118-.055-.401-.083-.71.043-.94.16-.334.396-.4.69-.533.294-.135.64-.202.915-.47h.002v-.002c.256-.268.445-.601.668-.838.19-.201.38-.336.663-.336zm7.159-9.074c-.435.201-.945.535-1.488.535-.542 0-.97-.267-1.28-.466-.154-.134-.28-.268-.373-.335-.164-.134-.144-.333-.074-.333.109.016.129.134.199.2.096.066.215.2.36.333.292.2.68.467 1.167.467.485 0 1.053-.267 1.398-.466.195-.135.445-.334.648-.467.156-.136.149-.267.279-.267.128.016.034.134-.147.332a8.097 8.097 0 01-.69.468zm-1.082-1.583V5.64c-.006-.02.013-.042.029-.05.074-.043.18-.027.26.004.063 0 .16.067.15.135-.006.049-.085.066-.135.066-.055 0-.092-.043-.141-.068-.052-.018-.146-.008-.163-.065zm-.551 0c-.02.058-.113.049-.166.066-.047.025-.086.068-.14.068-.05 0-.13-.02-.136-.068-.01-.066.088-.133.15-.133.08-.031.184-.047.259-.005.019.009.036.03.03.05v.02h.003z"/></svg><b>Linux / Unix</b><span class="tag">sandbox: seccomp</span></div>
+      </div>
+    
+      </div>
+      <div class="again"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2v3h-3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>rounds repeat until green, or until a ruling is needed</div>
+      <span class="br">brief: Surface + objectives</span>
+    </article>
+    <article class="card k hot loop">
+      <span class="role">Developer + one agent</span>
+      <h3>Hot Mode</h3>
+      <p>The Principal works live with one agent on the task branch. Light brief; no autonomous rounds; review as the Principal decides, per Issue; same gates; the Principal merges.</p>
+      <div class="visual chat" aria-label="Example hot-mode chat">
+        <div class="msg me"><i>Dev</i><span>The CLI test is flaky on CI. Fix it.</span></div>
+        <div class="msg ag"><i>Agent</i><span>Race on the temp dir. Patched, tests green locally.</span></div>
+        <div class="msg me"><i>Dev</i><span>Looks right. Push it.</span></div>
+      </div>
+      <div class="under surface"><span class="eyebrow" style="color:var(--hot)">Any chat surface</span><b>CLI · desktop app · IDE</b><span>No loop, no engine. The sandbox is the agent's own setting. The gates still apply.</span></div>
+      <div class="again hotline"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12v8H6l-3 3V3z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>no autonomous rounds: the developer drives</div>
+      <span class="br">light brief: one objective, the files, the facts read</span>
+    </article>
+  </div>
+  </div>
+  <div class="gates" aria-label="Gates">
+    <div class="rt-label eyebrow">Gates · after the work, the doors to GitHub · same for planned and hot · cannot be skipped</div>
+    <div class="g"><b>Ring 0 · commit and push hooks</b><span>The last door before GitHub. Break tests, typecheck or lint and nothing leaves the machine.</span></div>
+    <div class="g"><b>Ring 1 · CI on the pull request</b><span>The same checks again. Merge stays blocked while any is red.</span></div>
+    <div class="g"><b>Ring 2 · audits</b><span>After merge, always on. Drift is reported whoever wrote it.</span></div>
+  </div>
+</section>
+
+<div class="flow"><svg width="16" height="28" viewBox="0 0 16 28" aria-hidden="true"><path d="M8 0v24M3 19l5 6 5-6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span><b>Merged work</b> is closed and recorded</span></div>
+
+<!-- STAGE 3 -->
+<section class="stage s-retro" id="retrospecting" aria-labelledby="h-retro">
+  <div class="stage-head">
+    <div class="stage-tag"><span class="dot"></span>Stage 3 · Retrospecting<span class="live">live in Studio</span></div>
+    <h2 id="h-retro">Closing work so the next round starts from reality</h2>
+  </div>
+  <div class="chainrow subrows" style="--n:3">
+    <article class="card k"><span class="role">On each merge</span><h3>Archivist</h3><p>Closes the task.</p></article>
+    <article class="card k"><span class="role">When the last task lands</span><h3>Tranche Archivist</h3><p>Closes the tranche.</p></article>
+    <article class="card k"><span class="role">When every tranche is archived</span><h3>Milestone close</h3><p>The execution goal is done: every tranche has landed. Whether the feature meets its spec is judged upstream, by product.</p></article>
+    <article class="card k"><span class="role">Kept</span><h3>Retrospective record</h3><p>What shipped and why.</p></article>
+  </div>
+</section>
+
+<div class="flow"><svg width="16" height="28" viewBox="0 0 16 28" aria-hidden="true"><path d="M8 0v24M3 19l5 6 5-6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span><b>Every stage</b> writes to the Log as it happens</span></div>
+
+<!-- OBSERVED -->
+<section class="stage s-obs" id="observed" aria-labelledby="h-obs">
+  <div class="stage-head">
+    <div class="stage-tag">Across every stage · observed</div>
+    <h2 id="h-obs">Nothing runs unrecorded</h2>
+  </div>
+  <div class="grid-2">
+    <article class="card">
+      <h3>The Log: every execution recorded</h3>
+      <p>Every plan, loop round, gate, review, hot commit and archive. Typed, attributed, live.</p>
+      <div class="events" aria-label="Example Log events">
+        <span class="ev-think">plan.task_created</span><span class="t">tranche/3</span>
+        <span class="ev-exec">loop.round_started</span><span class="t">round 2</span>
+        <span class="ev-exec">gate.result</span><span class="t">green</span>
+        <span class="ev-exec">review.verdict</span><span class="t">approve</span>
+        <span class="ev-hot">hot.commit</span><span class="t">pushed</span>
+        <span class="ev-retro">archive.task_closed</span><span class="t">merged</span>
+      </div>
+      <div class="dest"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#F38020" d="M16.5088 16.8447c.1475-.5068.0908-.9707-.1553-1.3154-.2246-.3164-.6045-.499-1.0615-.5205l-8.6592-.1123a.1559.1559 0 0 1-.1333-.0713c-.0283-.042-.0351-.0986-.021-.1553.0278-.084.1123-.1484.2036-.1562l8.7359-.1123c1.0351-.0489 2.1601-.8868 2.5537-1.9136l.499-1.3013c.0215-.0561.0293-.1128.0147-.168-.5625-2.5463-2.835-4.4453-5.5499-4.4453-2.5039 0-4.6284 1.6177-5.3876 3.8614-.4927-.3658-1.1187-.5625-1.794-.499-1.2026.119-2.1665 1.083-2.2861 2.2856-.0283.31-.0069.6128.0635.894C1.5683 13.171 0 14.7754 0 16.752c0 .1748.0142.3515.0352.5273.0141.083.0844.1475.1689.1475h15.9814c.0909 0 .1758-.0645.2032-.1553l.12-.4268zm2.7568-5.5634c-.0771 0-.1611 0-.2383.0112-.0566 0-.1054.0415-.127.0976l-.3378 1.1744c-.1475.5068-.0918.9707.1543 1.3164.2256.3164.6055.498 1.0625.5195l1.8437.1133c.0557 0 .1055.0263.1329.0703.0283.043.0351.1074.0214.1562-.0283.084-.1132.1485-.204.1553l-1.921.1123c-1.041.0488-2.1582.8867-2.5527 1.914l-.1406.3585c-.0283.0713.0215.1416.0986.1416h6.5977c.0771 0 .1474-.0489.169-.126.1122-.4082.1757-.837.1757-1.2803 0-2.6025-2.125-4.727-4.7344-4.727"/></svg><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#632CA6" d="M19.57 17.04l-1.997-1.316-1.665 2.782-1.937-.567-1.706 2.604.087.82 9.274-1.71-.538-5.794zm-8.649-2.498l1.488-.204c.241.108.409.15.697.223.45.117.97.23 1.741-.16.18-.088.553-.43.704-.625l6.096-1.106.622 7.527-10.444 1.882zm11.325-2.712l-.602.115L20.488 0 .789 2.285l2.427 19.693 2.306-.334c-.184-.263-.471-.581-.96-.989-.68-.564-.44-1.522-.039-2.127.53-1.022 3.26-2.322 3.106-3.956-.056-.594-.15-1.368-.702-1.898-.02.22.017.432.017.432s-.227-.289-.34-.683c-.112-.15-.2-.199-.319-.4-.085.233-.073.503-.073.503s-.186-.437-.216-.807c-.11.166-.137.48-.137.48s-.241-.69-.186-1.062c-.11-.323-.436-.965-.343-2.424.6.421 1.924.321 2.44-.439.171-.251.288-.939-.086-2.293-.24-.868-.835-2.16-1.066-2.651l-.028.02c.122.395.374 1.223.47 1.625.293 1.218.372 1.642.234 2.204-.116.488-.397.808-1.107 1.165-.71.358-1.653-.514-1.713-.562-.69-.55-1.224-1.447-1.284-1.883-.062-.477.275-.763.445-1.153-.243.07-.514.192-.514.192s.323-.334.722-.624c.165-.109.262-.178.436-.323a9.762 9.762 0 0 0-.456.003s.42-.227.855-.392c-.318-.014-.623-.003-.623-.003s.937-.419 1.678-.727c.509-.208 1.006-.147 1.286.257.367.53.752.817 1.569.996.501-.223.653-.337 1.284-.509.554-.61.99-.688.99-.688s-.216.198-.274.51c.314-.249.66-.455.66-.455s-.134.164-.259.426l.03.043c.366-.22.797-.394.797-.394s-.123.156-.268.358c.277-.002.838.012 1.056.037 1.285.028 1.552-1.374 2.045-1.55.618-.22.894-.353 1.947.68.903.888 1.609 2.477 1.259 2.833-.294.295-.874-.115-1.516-.916a3.466 3.466 0 0 1-.716-1.562 1.533 1.533 0 0 0-.497-.85s.23.51.23.96c0 .246.03 1.165.424 1.68-.039.076-.057.374-.1.43-.458-.554-1.443-.95-1.604-1.067.544.445 1.793 1.468 2.273 2.449.453.927.186 1.777.416 1.997.065.063.976 1.197 1.15 1.767.306.994.019 2.038-.381 2.685l-1.117.174c-.163-.045-.273-.068-.42-.153.08-.143.241-.5.243-.572l-.063-.111c-.348.492-.93.97-1.414 1.245-.633.359-1.363.304-1.838.156-1.348-.415-2.623-1.327-2.93-1.566 0 0-.01.191.048.234.34.383 1.119 1.077 1.872 1.56l-1.605.177.759 5.908c-.337.048-.39.071-.757.124-.325-1.147-.946-1.895-1.624-2.332-.599-.384-1.424-.47-2.214-.314l-.05.059a2.851 2.851 0 0 1 1.863.444c.654.413 1.181 1.481 1.375 2.124.248.822.42 1.7-.248 2.632-.476.662-1.864 1.028-2.986.237.3.481.705.876 1.25.95.809.11 1.577-.03 2.106-.574.452-.464.69-1.434.628-2.456l.714-.104.258 1.834 11.827-1.424zM15.05 6.848c-.034.075-.085.125-.007.37l.004.014.013.032.032.073c.14.287.295.558.552.696.067-.011.136-.019.207-.023.242-.01.395.028.492.08.009-.048.01-.119.005-.222-.018-.364.072-.982-.626-1.308-.264-.122-.634-.084-.757.068a.302.302 0 0 1 .058.013c.186.066.06.13.027.207m1.958 3.392c-.092-.05-.52-.03-.821.005-.574.068-1.193.267-1.328.372-.247.191-.135.523.047.66.511.382.96.638 1.432.575.29-.038.546-.497.728-.914.124-.288.124-.598-.058-.698m-5.077-2.942c.162-.154-.805-.355-1.556.156-.554.378-.571 1.187-.041 1.646.053.046.096.078.137.104a4.77 4.77 0 0 1 1.396-.412c.113-.125.243-.345.21-.745-.044-.542-.455-.456-.146-.749"/></svg><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#F46800" d="M23.02 10.59a8.578 8.578 0 0 0-.862-3.034 8.911 8.911 0 0 0-1.789-2.445c.337-1.342-.413-2.505-.413-2.505-1.292-.08-2.113.4-2.416.62-.052-.02-.102-.044-.154-.064-.22-.089-.446-.172-.677-.247-.231-.073-.47-.14-.711-.197a9.867 9.867 0 0 0-.875-.161C14.557.753 12.94 0 12.94 0c-1.804 1.145-2.147 2.744-2.147 2.744l-.018.093c-.098.029-.2.057-.298.088-.138.042-.275.094-.413.143-.138.055-.275.107-.41.166a8.869 8.869 0 0 0-1.557.87l-.063-.029c-2.497-.955-4.716.195-4.716.195-.203 2.658.996 4.33 1.235 4.636a11.608 11.608 0 0 0-.607 2.635C1.636 12.677.953 15.014.953 15.014c1.926 2.214 4.171 2.351 4.171 2.351.003-.002.006-.002.006-.005.285.509.615.994.986 1.446.156.19.32.371.488.548-.704 2.009.099 3.68.099 3.68 2.144.08 3.553-.937 3.849-1.173a9.784 9.784 0 0 0 3.164.501h.08l.055-.003.107-.002.103-.005.003.002c1.01 1.44 2.788 1.646 2.788 1.646 1.264-1.332 1.337-2.653 1.337-2.94v-.058c0-.02-.003-.039-.003-.06.265-.187.52-.387.758-.6a7.875 7.875 0 0 0 1.415-1.7c1.43.083 2.437-.885 2.437-.885-.236-1.49-1.085-2.216-1.264-2.354l-.018-.013-.016-.013a.217.217 0 0 1-.031-.02c.008-.092.016-.18.02-.27.011-.162.016-.323.016-.48v-.253l-.005-.098-.008-.135a1.891 1.891 0 0 0-.01-.13c-.003-.042-.008-.083-.013-.125l-.016-.124-.018-.122a6.215 6.215 0 0 0-2.032-3.73 6.015 6.015 0 0 0-3.222-1.46 6.292 6.292 0 0 0-.85-.048l-.107.002h-.063l-.044.003-.104.008a4.777 4.777 0 0 0-3.335 1.695c-.332.4-.592.84-.768 1.297a4.594 4.594 0 0 0-.312 1.817l.003.091c.005.055.007.11.013.164a3.615 3.615 0 0 0 .698 1.82 3.53 3.53 0 0 0 1.827 1.282c.33.098.66.14.971.137.039 0 .078 0 .114-.002l.063-.003c.02 0 .041-.003.062-.003.034-.002.065-.007.099-.01.007 0 .018-.003.028-.003l.031-.005.06-.008a1.18 1.18 0 0 0 .112-.02c.036-.008.072-.013.109-.024a2.634 2.634 0 0 0 .914-.415c.028-.02.056-.041.085-.065a.248.248 0 0 0 .039-.35.244.244 0 0 0-.309-.06l-.078.042c-.09.044-.184.083-.283.116a2.476 2.476 0 0 1-.475.096c-.028.003-.054.006-.083.006l-.083.002c-.026 0-.054 0-.08-.002l-.102-.006h-.012l-.024.006c-.016-.003-.031-.003-.044-.006-.031-.002-.06-.007-.091-.01a2.59 2.59 0 0 1-.724-.213 2.557 2.557 0 0 1-.667-.438 2.52 2.52 0 0 1-.805-1.475 2.306 2.306 0 0 1-.029-.444l.006-.122v-.023l.002-.031c.003-.021.003-.04.005-.06a3.163 3.163 0 0 1 1.352-2.29 3.12 3.12 0 0 1 .937-.43 2.946 2.946 0 0 1 .776-.101h.06l.07.002.045.003h.026l.07.005a4.041 4.041 0 0 1 1.635.49 3.94 3.94 0 0 1 1.602 1.662 3.77 3.77 0 0 1 .397 1.414l.005.076.003.075c.002.026.002.05.002.075 0 .024.003.052 0 .07v.065l-.002.073-.008.174a6.195 6.195 0 0 1-.08.639 5.1 5.1 0 0 1-.267.927 5.31 5.31 0 0 1-.624 1.13 5.052 5.052 0 0 1-3.237 2.014 4.82 4.82 0 0 1-.649.066l-.039.003h-.287a6.607 6.607 0 0 1-1.716-.265 6.776 6.776 0 0 1-3.4-2.274 6.75 6.75 0 0 1-.746-1.15 6.616 6.616 0 0 1-.714-2.596l-.005-.083-.002-.02v-.056l-.003-.073v-.096l-.003-.104v-.07l.003-.163c.008-.22.026-.45.054-.678a8.707 8.707 0 0 1 .28-1.355c.128-.444.286-.872.473-1.277a7.04 7.04 0 0 1 1.456-2.1 5.925 5.925 0 0 1 .953-.763c.169-.111.343-.213.524-.306.089-.05.182-.091.273-.135.047-.02.093-.042.138-.062a7.177 7.177 0 0 1 .714-.267l.145-.045c.049-.015.098-.026.148-.041.098-.029.197-.052.296-.076.049-.013.1-.02.15-.033l.15-.032.151-.028.076-.013.075-.01.153-.024c.057-.01.114-.013.171-.023l.169-.021c.036-.003.073-.008.106-.01l.073-.008.036-.003.042-.002c.057-.003.114-.008.171-.01l.086-.006h.023l.037-.003.145-.007a7.999 7.999 0 0 1 1.708.125 7.917 7.917 0 0 1 2.048.68 8.253 8.253 0 0 1 1.672 1.09l.09.077.089.078c.06.052.114.107.171.159.057.052.112.106.166.16.052.055.107.107.159.164a8.671 8.671 0 0 1 1.41 1.978c.012.026.028.052.04.078l.04.078.075.156c.023.051.05.1.07.153l.065.15a8.848 8.848 0 0 1 .45 1.34.19.19 0 0 0 .201.142.186.186 0 0 0 .172-.184c.01-.246.002-.532-.024-.856z"/></svg><span>Delivered live to <b style="color:var(--fg);font-weight:500">any log server</b>. Configurable.</span></div>
+    </article>
+    <article class="card">
+      <h3>Studio: all execution monitored</h3>
+      <p>Mission Control reads the Log live. Stages marked “live in Studio” show here.</p>
+      <div class="studio" aria-label="Example Studio screen">
+        <div class="studio-bar"><i></i><i></i><i></i><span>Studio · Mission Control</span></div>
+        <div style="padding:10px 12px"><div class="tl" aria-label="Live execution timeline"><div class="lbl"><span>Execution, live</span><span>now</span></div><div class="now"></div><div class="lrow"><span>loop 1</span><div class="lane"><span class="seg" style="left:0%;width:39%;background:var(--retro);opacity:1"></span></div></div><div class="lrow"><span>loop 2</span><div class="lane"><span class="seg" style="left:11%;width:39%;background:var(--exec);opacity:0.45"></span><span class="seg" style="left:50%;width:36%;background:var(--exec);opacity:1"></span></div></div><div class="lrow"><span>loop 3</span><div class="lane"><span class="seg" style="left:20%;width:66%;background:var(--exec);opacity:1"></span></div></div><div class="lrow"><span>loop 4</span><div class="lane"><span class="seg" style="left:5%;width:53%;background:var(--exec);opacity:0.45"></span><span class="seg" style="left:58%;width:28%;background:var(--hot);opacity:1"></span></div></div><div class="lrow"><span>hot</span><div class="lane"><span class="seg" style="left:35%;width:51%;background:var(--hot);opacity:0.45"></span></div></div></div></div>
+        <div class="foot">develop · review · ruling · done</div>
+      </div>
+    </article>
+  </div>
+  <div class="mantra">Planned, backlog and hot alike</div>
+</section>
+
+<div class="flow"><svg width="16" height="28" viewBox="0 0 16 28" aria-hidden="true"><path d="M8 0v24M3 19l5 6 5-6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span><b>The Log</b> teaches the process</span></div>
+
+<!-- STAGE 4 -->
+<section class="stage s-improve" id="improve" aria-labelledby="h-imp">
+  <div class="stage-head">
+    <div class="stage-tag"><span class="dot"></span>Stage 4 · Self-improvement loop</div>
+    <h2 id="h-imp">The record proposes the next fixes</h2>
+  </div>
+  <div class="grid-2">
+    <article class="card">
+      <h3>Stats: what the Log says <span class="ex">example figures</span></h3>
+      <div class="stats">
+        <div class="stat"><b>34 min</b><span>Time per task</span></div>
+        <div class="stat"><b>11 of 32</b><span>Second rounds</span></div>
+        <div class="stat hl"><b>103</b><span>Problems caught</span></div>
+      </div>
+      <div class="split"><span class="eyebrow">Where the time goes</span><div class="bar2"><i style="width:84%;background:#0ea5e9"></i><i style="width:16%;background:#f59e0b"></i></div><div class="leg"><span><i style="background:#0ea5e9"></i>Developer 84%</span><span><i style="background:#f59e0b"></i>Reviewers 16%</span></div></div>
+      <ul class="plain concl">
+        <li>Most extra rounds come from one gate</li>
+        <li>A vague Surface doubles the rounds</li>
+      </ul>
+    </article>
+    <article class="card">
+      <h3>Improver agent</h3>
+      <p>Studies the stats and drafts the projects that would fix them.</p>
+      <div class="proposal"><span class="kind">Fix</span><b>Run the doc gate before push</b><span>Cuts an expected 0.7 rounds per task</span></div>
+      <div class="proposal"><span class="kind">Fix</span><b>Surface check at planning time</b><span>Catches vague briefs before dispatch</span></div>
+      <div class="proposal"><span class="kind">New feature</span><b>Resume preview in Studio</b><span>Shows what a ruling will change</span></div>
+    </article>
+  </div>
+  <div class="backflow"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M16 15V5H5M9 1 5 5l4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Proposed to Linear or Jira as new projects. <b>A human approves</b>, and they go <a href="#upstream">back to product</a>.</span></div>
+</section>
+
+<!-- REFERENCE -->
+<section class="ref" aria-labelledby="h-who">
+  <h2 id="h-who">Who does what</h2>
+  <div class="tbl"><table class="t">
+    <thead><tr><th>Stage</th><th>Role</th><th>Kind</th><th>Input</th><th>Output</th></tr></thead>
+    <tbody>
+      <tr><td>Every stage</td><td>Principal</td><td><b>Human</b> — the engineer driving at the time</td><td>Plans, pauses, hot Issues, green PRs, proposals</td><td>Approves plans, posts rulings, sets hot review, merges, adopts improvements</td></tr>
+      <tr><td class="k-think">Thinking</td><td>Architect</td><td>Agent</td><td>Project / Epic specs</td><td>Execution Milestone, tranche intents, integration branch</td></tr>
+      <tr><td class="k-think">Thinking</td><td>Planner</td><td>Agent</td><td>Tranche intent or found issue, real code</td><td>Task Issues with briefs; backlog Issues</td></tr>
+      <tr><td class="k-exec">Executing</td><td>Operator</td><td>Agent</td><td>Planned task</td><td>Starts, watches, resumes the loop; never plans, rules or merges</td></tr>
+      <tr><td class="k-exec">Executing</td><td>Developer + Reviewers</td><td>Agents</td><td>Task brief</td><td>Green, reviewed PR</td></tr>
+      <tr><td class="k-hot">Executing</td><td>Principal + one agent (hot)</td><td>Human + agent</td><td>Hot Issue</td><td>PR through the same gates</td></tr>
+      <tr><td class="k-retro">Retrospecting</td><td>Archivist / Tranche Archivist</td><td>Agent</td><td>Merged work</td><td>Closed task, tranche, Milestone; the record</td></tr>
+      <tr><td class="k-hot">Self-improvement</td><td>Improver</td><td>Agent</td><td>Stats from the Log</td><td>Proposed projects; the Principal adopts</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section class="ref" aria-labelledby="h-voc" style="padding-top:48px">
+  <h2 id="h-voc">Vocabulary across tools</h2>
+  <div class="tbl"><table class="t">
+    <thead><tr><th>Linear</th><th>Jira</th><th>Vinaya</th></tr></thead>
+    <tbody>
+      <tr><td>Initiative</td><td>Initiative (Premium hierarchy above Epic)</td><td>Product direction, upstream</td></tr>
+      <tr><td>Project</td><td>Epic</td><td>The specced input the Architect reads</td></tr>
+      <tr><td>Project milestone</td><td>Version / Fix version</td><td>Execution Milestone (code direction, not product)</td></tr>
+      <tr><td class="muted">none</td><td class="muted">none</td><td>Tranche (grouped, parallel-safe tasks)</td></tr>
+      <tr><td>Issue</td><td>Story / Task</td><td>Task Issue with brief</td></tr>
+      <tr><td>Team</td><td>Project (container)</td><td>Repository</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+</main>
+<p class="foot-note">Vinaya Development Harness · Introduction, process diagram and process guide.</p>
+</div>
+<script>
+(function(){
+  var keys=["intro","diagram","guide"];
+  function show(k,scroll){
+    if(keys.indexOf(k)<0)k="intro";
+    document.querySelectorAll("[data-panel]").forEach(function(p){p.hidden=p.dataset.panel!==k});
+    document.querySelectorAll("[data-tab]").forEach(function(t){if(t.dataset.tab===k)t.setAttribute("aria-current","page");else t.removeAttribute("aria-current")});
+    if(scroll)window.scrollTo(0,0);
+  }
+  document.querySelectorAll("[data-tab]").forEach(function(t){t.addEventListener("click",function(e){e.preventDefault();show(t.dataset.tab,true);try{history.replaceState(null,"","#"+t.dataset.tab)}catch(_){}})});
+  var h=(location.hash||"").slice(1);
+  show(keys.indexOf(h)>=0?h:"intro",false);
+})();
+</script>

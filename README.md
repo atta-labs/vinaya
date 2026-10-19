@@ -113,7 +113,8 @@ ships as the default — nothing you add or replace ever touches a second file.
 ```
 vinaya/
 ├── apps/
-│   └── cli/                  # Vinaya CLI (@attalabs/vinaya)
+│   ├── cli/                  # Vinaya CLI (@attalabs/vinaya)
+│   └── vinaya-portal/        # The Vinaya portal site (@vinaya/portal)
 ├── packages/
 │   ├── aeg-core/             # Pure gate evaluators
 │   ├── aeg-forge-state/      # Forge-derived tranche/task state

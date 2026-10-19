@@ -16,7 +16,16 @@
       "!apps/cli/studio-standalone",
       "!**/public",
       "!**/tsconfig*.json",
-      "!.worktrees"
+      "!.worktrees",
+      "!apps/vinaya-portal/src/ui/components/table/installed.tsx",
+      "!apps/vinaya-portal/src/ui/libraries/*/installed",
+      "!apps/vinaya-portal/src/process/lifecycle/lifecycle-scene.js",
+      "!apps/vinaya-portal/src/process/flows/**/*.js",
+      "!apps/vinaya-portal/src/app/**/hero-canvas/*.js",
+      "!apps/vinaya-portal/src/app/**/canvas/*.js",
+      "!apps/vinaya-portal/src/app/**/fabric-wall.js",
+      "!apps/vinaya-portal/design/**/*.js",
+      "!apps/vinaya-portal/next-env.d.ts"
     ]
   },
   "linter": {

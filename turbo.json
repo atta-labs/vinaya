@@ -10,6 +10,18 @@
       "dependsOn": ["typecheck", "^build"],
       "outputs": ["dist/**"]
     },
+    "@vinaya/portal#build": {
+      "dependsOn": ["typecheck", "^build"],
+      "env": [
+        "SANITY_DATASET",
+        "NEXT_PUBLIC_SANITY_DATASET",
+        "PORTAL_THEME_ID",
+        "PORTAL_COLOR_SCHEME",
+        "GITHUB_TOKEN",
+        "GH_TOKEN"
+      ],
+      "outputs": [".next/**", "!.next/cache/**"]
+    },
     "dev": {
       "dependsOn": ["generate"],
       "cache": false,

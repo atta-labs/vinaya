@@ -1,0 +1,92 @@
+import type { SanityClient } from '@sanity/client'
+import { createProductClient, type ProductKey } from '../client'
+import type { PortalUiConfig } from '../types'
+
+const THEME_PROJECTION = `{
+  _id,
+  name,
+  light,
+  dark,
+  typography,
+  spacing,
+  shadows,
+  neobrutalist
+}`
+
+const LIBRARY_PROJECTION = `{
+  _id,
+  id,
+  name,
+  description,
+  style,
+  order
+}`
+
+/** Fetch a product UI config singleton with dynamically resolved theme and library from Atta */
+async function getProductUiConfig(
+  client: SanityClient,
+  documentType: string,
+  documentId: string
+): Promise<PortalUiConfig | null> {
+  // Bypass Sanity CDN so theme changes from the admin are visible immediately.
+  const liveClient = client.withConfig({ useCdn: false })
+
+  // 1. Fetch local config (containing string IDs)
+  const config = await liveClient.fetch(
+    `*[_type == $documentType && _id == $documentId][0] {
+      _id,
+      userInterface {
+        theme,
+        colorScheme,
+        library
+      }
+    }`,
+    { documentType, documentId }
+  )
+
+  if (!config?.userInterface) {
+    return config
+  }
+
+  const ui = config.userInterface
+  const themeId = typeof ui.theme === 'string' ? ui.theme : ui.theme?._ref
+  const libraryId = typeof ui.library === 'string' ? ui.library : ui.library?._ref
+
+  const attaClient = createProductClient('attalabs', { useCdn: false })
+
+  // 2. Fetch full details from Attalabs project if theme/library are string or reference IDs
+  const [themeDoc, libraryDoc] = await Promise.all([
+    themeId
+      ? attaClient.fetch(`*[_type == "uiTheme" && _id == $id][0] ${THEME_PROJECTION}`, { id: themeId })
+      : Promise.resolve(null),
+    libraryId
+      ? attaClient.fetch(`*[_type == "library" && _id == $id][0] ${LIBRARY_PROJECTION}`, { id: libraryId })
+      : Promise.resolve(null)
+  ])
+
+  // 3. Reconstruct standard PortalUiConfig shape so layout consumers require zero changes
+  if (themeDoc) {
+    config.userInterface.theme = themeDoc
+  } else if (themeId) {
+    config.userInterface.theme = null
+  }
+
+  if (libraryDoc) {
+    config.userInterface.library = libraryDoc
+  } else if (libraryId) {
+    config.userInterface.library = null
+  }
+
+  return config
+}
+
+/**
+ * Fetch a product's UI config singleton from that product's own Sanity project.
+ *
+ * The project is resolved from the product key, so a caller cannot accidentally
+ * read one product's config document out of another product's project.
+ */
+export async function getProductConfig(product: ProductKey): Promise<PortalUiConfig | null> {
+  const docId = `${product}Config`
+  return getProductUiConfig(createProductClient(product), docId, docId)
+}
