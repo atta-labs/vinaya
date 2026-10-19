@@ -25,7 +25,8 @@ const ALLOWED_KEYS = new Set<keyof CheckSpec>([
   // CONFIG_REFERENCE, so it is not a privileged core-only field.
   'ownWorkflow',
   'principalOwed',
-  'validates'
+  'validates',
+  'advisory'
 ])
 
 describe('no-privileged-api', () => {

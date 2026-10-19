@@ -57,6 +57,7 @@ type PlanJsonOutput = {
       env: Record<string, EnvLabel>
       envAnyOf?: Record<string, string[]>
       scope: CheckSpec['scope']
+      advisory?: true
     }
   >
   roles:
@@ -106,7 +107,15 @@ function renderPlanJson(result: ResolveResult, rolePlan: RolePlan, proseRules: P
         envAnyOf[key] = value.anyOf
       }
     }
-    checks[entry.name] = { state: entry.state, source: entry.source, env, envAnyOf, scope: entry.spec.scope }
+    checks[entry.name] = {
+      state: entry.state,
+      source: entry.source,
+      env,
+      envAnyOf,
+      scope: entry.spec.scope,
+      // Present only when set, so every existing consumer's columns are unchanged.
+      ...(entry.spec.advisory ? { advisory: true as const } : {})
+    }
   }
 
   const roles: PlanJsonOutput['roles'] = rolePlan.available
@@ -156,9 +165,15 @@ function envCellFor(spec: CheckSpec): string {
 }
 
 function renderPlanTable(result: ResolveResult): string {
-  const header = ['NAME', 'STATE', 'SOURCE', 'ENV']
-  const rows = result.resolved.map((entry) => [entry.name, entry.state, entry.source, envCellFor(entry.spec)])
-  const failureRows = result.failures.map((f) => [f.key, 'FAILED', '—', f.reason])
+  const header = ['NAME', 'STATE', 'SOURCE', 'ADVISORY', 'ENV']
+  const rows = result.resolved.map((entry) => [
+    entry.name,
+    entry.state,
+    entry.source,
+    entry.spec.advisory ? 'yes' : '—',
+    envCellFor(entry.spec)
+  ])
+  const failureRows = result.failures.map((f) => [f.key, 'FAILED', '—', '—', f.reason])
   const table = [header, ...rows, ...failureRows]
   const widths = header.map((_, col) => Math.max(...table.map((row) => row[col]?.length ?? 0)))
   return table.map((row) => row.map((cell, col) => (cell ?? '').padEnd(widths[col] ?? 0)).join('  ')).join('\n')
@@ -416,10 +431,14 @@ export async function checkCommand(args: string[]): Promise<void> {
   if (jsonOutput) {
     printJson({ checks: outcomes })
   } else {
+    // Appended after the duration, never between name and status, so a reader
+    // keyed on `<name>: <status>` still matches an advisory check's line.
+    const advisoryNames = new Set(specsToRun.filter((s) => s.advisory).map((s) => s.name))
     for (const o of outcomes) {
       const symbol = o.status === 'pass' ? '✓' : o.status === 'skipped' ? '·' : '✗'
       const statusText = o.skipReason ? `${o.status} (${o.skipReason})` : o.status
-      process.stdout.write(`${symbol} ${o.name}: ${statusText} (${Math.round(o.durationMs)}ms)\n`)
+      const advisoryMark = advisoryNames.has(o.name) ? ' — advisory' : ''
+      process.stdout.write(`${symbol} ${o.name}: ${statusText} (${Math.round(o.durationMs)}ms)${advisoryMark}\n`)
       for (const e of o.errors) process.stdout.write(`    ${e.severity}: ${e.message}\n`)
     }
   }

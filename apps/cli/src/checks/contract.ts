@@ -163,6 +163,22 @@ export type CheckSpec = {
    * `CheckSpec` field.
    */
   validates?: 'body' | 'issue'
+  /**
+   * True for a check whose findings are reported as warnings and never fail
+   * a run — its bin exits 0 on every finding. A configuration refusal (no
+   * Principal configured) can still exit non-zero; nothing else in its own
+   * code can. `doc-coverage-push`, `quoted-command`, `doctrine-portability`
+   * and `workspace-escape` are the core examples.
+   *
+   * A label, never a behaviour: the runner spawns an advisory check exactly
+   * like any other, and the run's exit code (`isRunFailed`) never reads this
+   * field. `vinaya check --plan` shows it, and each human result line
+   * `vinaya check` prints ends with ` — advisory`, so a passing advisory check
+   * is never read as a gate that held. Plain adopter-facing data, same
+   * discipline as `principalOwed`/`validates`: an adopter's own
+   * `vinaya.config.json` check entry may declare it too.
+   */
+  advisory?: true
 }
 
 /**
