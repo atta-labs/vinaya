@@ -26,4 +26,4 @@ The site always renders the harness at the commit it is built from, and one chan
 
 ## Where it is applied
 
-The portal is `apps/vinaya-portal`. `scripts/vercel-ignore-build.sh` is the Vercel ignored-build command, run as `bash scripts/vercel-ignore-build.sh @vinaya/portal`. `.changeset/config.json` ignores the package and `turbo.json` declares its build output and environment variables.
+The portal is `apps/vinaya-portal`. `scripts/vercel-ignore-build.sh` is the Vercel ignored-build command, run as `bash scripts/vercel-ignore-build.sh @vinaya/portal`. `.changeset/config.json` ignores the package and `turbo.json` declares its build output and environment variables. The portal's tracked screenshot images are the only binary assets in the repository outside the test fixtures, so they are listed as exemptions in the binary-source sweep, `packages/aeg-core/src/no-binary-sources.test.ts`.
