@@ -658,6 +658,78 @@ export function buildWorkerEnv(
   return { ...env, ...attribution }
 }
 
+// --- Container mode: a one-task container is the boundary -------------------
+
+/**
+ * The variable a Claude dispatch in container mode authenticates from: the
+ * subscription token `claude setup-token` prints, never an API key. Read only
+ * in container mode; on a host the staged `.credentials.json` or the Keychain
+ * stays the only Claude login, and this variable is ignored.
+ */
+export const CLAUDE_CONTAINER_TOKEN_ENV = 'CLAUDE_CODE_OAUTH_TOKEN'
+
+/**
+ * Container mode's Claude login, as the child-environment entries that carry
+ * it: the subscription token in `CLAUDE_CODE_OAUTH_TOKEN`, named, with
+ * `CLAUDE_FORCE_OAUTH=1` so Claude Code takes it as a subscription login.
+ * `null` outside container mode and when the token is unset or empty. Only
+ * that one variable is read; no API-key variable is read or forwarded.
+ */
+export function containerClaudeLogin(
+  sourceEnv: Readonly<Record<string, string | undefined>>,
+  containerMode: boolean
+): Record<string, string> | null {
+  if (!containerMode) return null
+  const token = sourceEnv[CLAUDE_CONTAINER_TOKEN_ENV]
+  if (token === undefined || token === '') return null
+  return { [CLAUDE_CONTAINER_TOKEN_ENV]: token, CLAUDE_FORCE_OAUTH: '1' }
+}
+
+/** The host facts container mode's boundary rule reads; a test passes fakes. */
+export interface ContainerBoundaryProbe {
+  platform(): NodeJS.Platform
+  /** Whether `/.dockerenv`, the marker Docker writes into every container's root, exists. */
+  dockerEnvPresent(): boolean
+  /** Every directory under the driver-run dev-tools socket root (`devToolsSocketRoot`). */
+  socketDirectories(): string[]
+}
+
+export const REAL_CONTAINER_BOUNDARY_PROBE: ContainerBoundaryProbe = {
+  platform: () => process.platform,
+  dockerEnvPresent: () => existsSync('/.dockerenv'),
+  socketDirectories: () => {
+    try {
+      return readdirSync(devToolsSocketRoot()).map((name) => join(devToolsSocketRoot(), name))
+    } catch {
+      return []
+    }
+  }
+}
+
+/**
+ * Why the container is not this dispatch's boundary, or `null` when it is.
+ * An unattended Claude dispatch is refused unconfined so that its worker
+ * cannot reach another task's driver-run socket; a container holding one task
+ * has no such socket, so the container itself confines the worker. That holds
+ * only when every condition does: the trial entry set container mode on the
+ * dispatch (an environment variable never sets it), the process runs on
+ * Linux with `/.dockerenv` present, and no driver-run socket directory exists
+ * other than this dispatch's own (`ownSocketDir`, `null` when it has none).
+ */
+export function containerBoundaryRefusal(
+  input: { containerMode: boolean; ownSocketDir: string | null },
+  probe: ContainerBoundaryProbe = REAL_CONTAINER_BOUNDARY_PROBE
+): string | null {
+  if (!input.containerMode) return 'container mode was not set by the trial entry'
+  const platform = probe.platform()
+  if (platform !== 'linux') return `container mode needs Linux, and this process runs on ${platform}`
+  if (!probe.dockerEnvPresent()) return 'container mode needs /.dockerenv, which is absent'
+  const others = probe.socketDirectories().filter((dir) => dir !== input.ownSocketDir)
+  if (others.length > 0)
+    return `another driver-run socket directory exists (${others.join(', ')}), so this dispatch is not the only task in the container`
+  return null
+}
+
 export type WorkerBoundaryDeps = {
   /**
    * O1: reads the OAuth session credential file at an already-resolved

@@ -114,7 +114,11 @@ import {
   controllerStoreReachableBy,
   buildCodexHooksMarketplace,
   buildWorkerEnv,
+  containerBoundaryRefusal,
+  containerClaudeLogin,
+  type ContainerBoundaryProbe,
   LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV,
+  REAL_CONTAINER_BOUNDARY_PROBE,
   probeAgentSandbox,
   REAL_WORKER_BOUNDARY_DEPS,
   runRealSandboxProbe,
@@ -358,6 +362,17 @@ export type DispatchOpts = {
    * which registers no dev-tools server and changes no argv.
    */
   devToolsBridge?: { command: string; args: readonly string[] }
+  /**
+   * Container mode, set only by the evaluation's layer-`G` trial entry when
+   * the trial runs inside a container that is its own sandbox; no command and
+   * no environment variable sets it. In container mode a Claude dispatch
+   * authenticates from the subscription token in `CLAUDE_CODE_OAUTH_TOKEN`
+   * (`containerClaudeLogin`), and an unattended Claude dispatch without its
+   * own sandbox is not refused as unconfined when the container is the
+   * boundary (`containerBoundaryRefusal`). Omitted, every dispatch behaves as
+   * it always has.
+   */
+  containerMode?: boolean
 }
 
 /**
@@ -3755,6 +3770,52 @@ export const LINUX_SANDBOX_PROBE_DEPS: { platform: NodeJS.Platform; run: Sandbox
   run: runRealSandboxProbe
 }
 
+/**
+ * The host facts container mode's boundary rule reads (`containerBoundaryRefusal`).
+ * A test swaps the probe to prove each condition without a container.
+ */
+export const CONTAINER_BOUNDARY_PROBE_DEPS: { probe: ContainerBoundaryProbe } = {
+  probe: REAL_CONTAINER_BOUNDARY_PROBE
+}
+
+/** The socket directory of a dispatch's own driver-run dev-tools bridge (`--socket <path>`), or `null` without one. */
+export function bridgeSocketDir(bridge: { args: readonly string[] } | null | undefined): string | null {
+  const index = bridge?.args.indexOf('--socket') ?? -1
+  const socket = index < 0 ? undefined : bridge?.args[index + 1]
+  return socket === undefined ? null : dirname(socket)
+}
+
+/**
+ * Whether an unattended Claude dispatch whose own sandbox is unavailable is
+ * refused as unconfined, and whether a container is its boundary instead.
+ * A confined dispatch, or any other agent, is never refused here. An
+ * unconfined one is refused exactly as on a host unless container mode holds
+ * (`containerBoundaryRefusal`); `reason` names the failing container-mode
+ * condition when the dispatch asked for container mode, else `null`. The
+ * Linux sandbox probe runs only for a confined dispatch, so a dispatch the
+ * container confines runs no probe.
+ */
+export function claudeUnconfinedVerdict(
+  input: {
+    agent: AgentVendor
+    confinement: { confined: boolean } | null
+    containerMode: boolean
+    ownSocketDir: string | null
+  },
+  probe: ContainerBoundaryProbe = CONTAINER_BOUNDARY_PROBE_DEPS.probe
+): { refused: boolean; containerIsBoundary: boolean; runsSandboxProbe: boolean; reason: string | null } {
+  const runsSandboxProbe = input.confinement?.confined === true
+  if (input.agent !== 'claude' || input.confinement?.confined !== false) {
+    return { refused: false, containerIsBoundary: false, runsSandboxProbe, reason: null }
+  }
+  const refusal = containerBoundaryRefusal(
+    { containerMode: input.containerMode, ownSocketDir: input.ownSocketDir },
+    probe
+  )
+  if (refusal === null) return { refused: false, containerIsBoundary: true, runsSandboxProbe, reason: null }
+  return { refused: true, containerIsBoundary: false, runsSandboxProbe, reason: input.containerMode ? refusal : null }
+}
+
 /** What the dispatch's pre-spawn Claude sandbox probe found on this host, run outside any dispatch. */
 export type HostSandboxProbeOutcome =
   | { readonly kind: 'unconfined'; readonly warning: string }
@@ -4711,7 +4772,32 @@ export async function dispatchRole(
   // unconfined, same-UID worker can reach ANOTHER task's Unix socket even when
   // it was not given a bridge of its own. Refuse every unattended Claude
   // dispatch without confinement, before spawning any agent process.
-  const unconfinedClaude = agent === 'claude' && claudeConfinement?.confined === false
+  // Container mode: a container holding this one task is the boundary in
+  // place of Claude's own sandbox, only when every condition of
+  // `containerBoundaryRefusal` holds; otherwise this refusal applies as on a
+  // host.
+  const claudeVerdict = claudeUnconfinedVerdict({
+    agent,
+    confinement: claudeConfinement,
+    containerMode: opts.containerMode === true,
+    ownSocketDir: bridgeSocketDir(devToolsBridge)
+  })
+  const containerIsBoundary = claudeVerdict.containerIsBoundary
+  const unconfinedClaude = agent === 'claude' && claudeConfinement?.confined === false && claudeVerdict.refused
+  // Container mode's only Claude login is the subscription token named in
+  // `CLAUDE_CODE_OAUTH_TOKEN`; outside container mode it is `null` and the
+  // token is never read.
+  const containerLogin = containerClaudeLogin(process.env, opts.containerMode === true && agent === 'claude')
+  const containerLoginError =
+    opts.containerMode === true && agent === 'claude' && opts.unattended === true && containerLogin === null
+      ? 'container mode authenticates Claude only from the subscription token in CLAUDE_CODE_OAUTH_TOKEN, which is unset'
+      : null
+  if (containerIsBoundary) {
+    writeLifecycle(
+      `[vinaya dispatch ${effectId}] ${role} via ${agent}: container mode — this one-task container is the boundary, ` +
+        "so the dispatch runs without Claude Code's own sandbox and no driver-run socket of another task exists"
+    )
+  }
   if (claudeConfinement?.confined === true && claudeConfinement.unixSocketFilterOff) {
     writeLifecycle(
       `[vinaya dispatch ${effectId}] ${role} via ${agent}: the sandbox's Unix-socket filter is off on this host ` +
@@ -4737,6 +4823,7 @@ export async function dispatchRole(
   if (
     agentControlsError === null &&
     !unconfinedClaude &&
+    containerLoginError === null &&
     codexUnattendedFailureReason === null &&
     sourceStoreReachError === null
   ) {
@@ -4749,7 +4836,8 @@ export async function dispatchRole(
             cwd: probeCwd,
             env: buildWorkerEnv(process.env, {
               GH_TELEMETRY: '0',
-              ...confinedClaudeEnvExtras(claudeConfinement.scratchDir, claudeConfinement.pathOverride)
+              ...confinedClaudeEnvExtras(claudeConfinement.scratchDir, claudeConfinement.pathOverride),
+              ...(containerLogin ?? {})
             }),
             settingsPath: dispatchSettingsPath
           }
@@ -4794,12 +4882,14 @@ export async function dispatchRole(
   if (
     codexUnattendedFailureReason !== null ||
     unconfinedClaude ||
+    containerLoginError !== null ||
     sandboxProbeError !== null ||
     agentControlsError !== null ||
     sourceStoreReachError !== null
   ) {
+    const storeOrLoginError = sourceStoreReachError !== null || containerLoginError !== null
     const failureReason: DispatchFailureReason =
-      unconfinedClaude || sandboxProbeError !== null || agentControlsError !== null || sourceStoreReachError !== null
+      unconfinedClaude || sandboxProbeError !== null || agentControlsError !== null || storeOrLoginError
         ? 'refused'
         : codexBoundaryFailureReason(agent, codexUnattendedFailureReason!)
     const durationMs = Date.now() - start
@@ -4818,15 +4908,17 @@ export async function dispatchRole(
     })
     writeLifecycle(
       unconfinedClaude
-        ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended Claude requires a confined worker sandbox while driver-run dev-tools are available; ${claudeConfinement?.warning ?? 'confinement unavailable'}`
-        : sourceStoreReachError !== null && codexUnattendedFailureReason === null
-          ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — ${sourceStoreReachError}`
-          : agentControlsError !== null
-            ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — a required enforcement control is inactive, so the agent was not started:\n${agentControlsError}`
-            : sandboxProbeError !== null
-              ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — ${agent}'s sandbox could not run a probe command on this host, so the agent was not started: ${sandboxProbeError}`
-              : `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires Codex's own sandbox ` +
-                `and network proxy plus this task's staged CODEX_HOME, which are unavailable: ${codexUnattendedFailureReason}`
+        ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended Claude requires a confined worker sandbox while driver-run dev-tools are available; ${claudeConfinement?.warning ?? 'confinement unavailable'}${claudeVerdict.reason === null ? '' : ` The container is not the boundary: ${claudeVerdict.reason}.`}`
+        : containerLoginError !== null
+          ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — ${containerLoginError}`
+          : sourceStoreReachError !== null && codexUnattendedFailureReason === null
+            ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — ${sourceStoreReachError}`
+            : agentControlsError !== null
+              ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — a required enforcement control is inactive, so the agent was not started:\n${agentControlsError}`
+              : sandboxProbeError !== null
+                ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — ${agent}'s sandbox could not run a probe command on this host, so the agent was not started: ${sandboxProbeError}`
+                : `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires Codex's own sandbox ` +
+                  `and network proxy plus this task's staged CODEX_HOME, which are unavailable: ${codexUnattendedFailureReason}`
     )
     // O1: never leak the scratch directory minted for Codex's own
     // confinement (above) on this early refusal.
@@ -4849,7 +4941,11 @@ export async function dispatchRole(
     // The probe's refusal travels typed, beside the shared `'refused'`
     // reason, only when it is the cause the refusal line above names.
     const sandboxProbeRefusal =
-      !unconfinedClaude && sourceStoreReachError === null && agentControlsError === null && sandboxProbeError !== null
+      !unconfinedClaude &&
+      containerLoginError === null &&
+      sourceStoreReachError === null &&
+      agentControlsError === null &&
+      sandboxProbeError !== null
         ? { sandboxProbeRefusal: { agent, error: sandboxProbeError } }
         : {}
     return {
@@ -5033,22 +5129,34 @@ export async function dispatchRole(
               ...(devToolsClaudeArgs.length > 0 ? CLAUDE_DEV_TOOLS_ENV : {}),
               // O6: spool this confined dispatch's log events into its granted
               // scratch; the driver delivers them after the turn (`finish()`).
-              ...(logSpoolDir !== null ? { VINAYA_LOG_SPOOL_DIR: logSpoolDir } : {})
+              ...(logSpoolDir !== null ? { VINAYA_LOG_SPOOL_DIR: logSpoolDir } : {}),
+              // Container mode's subscription token, by name; `null` on a host.
+              ...(containerLogin ?? {})
             })
-          : {
-              ...process.env,
-              ...attribution,
-              // O1 (round 2 review, F1, unchanged by this task): an attended
-              // Codex dispatch points at the run-scoped `CODEX_HOME`
-              // `stageCodexPolicyHome` built (the operator's `~/.codex`
-              // symlinked through, plus this run's rules), so the
-              // machine-state floor is discovered even with no sandbox
-              // policy applied. Omitted (child keeps the inherited/operator
-              // home) when nothing was staged — a non-Codex dispatch, or no
-              // re-homable login.
-              ...(codexHomeDir ? { CODEX_HOME: codexHomeDir } : {}),
-              ...(devToolsClaudeArgs.length > 0 ? CLAUDE_DEV_TOOLS_ENV : {})
-            }
+          : containerIsBoundary
+            ? // Container mode with the container as the boundary: the same
+              // named allowlist as a confined dispatch, never the parent's
+              // whole environment, plus the subscription token by name — so
+              // no API-key variable the container holds reaches the child.
+              buildWorkerEnv(process.env, {
+                ...attribution,
+                ...(devToolsClaudeArgs.length > 0 ? CLAUDE_DEV_TOOLS_ENV : {}),
+                ...(containerLogin ?? {})
+              })
+            : {
+                ...process.env,
+                ...attribution,
+                // O1 (round 2 review, F1, unchanged by this task): an attended
+                // Codex dispatch points at the run-scoped `CODEX_HOME`
+                // `stageCodexPolicyHome` built (the operator's `~/.codex`
+                // symlinked through, plus this run's rules), so the
+                // machine-state floor is discovered even with no sandbox
+                // policy applied. Omitted (child keeps the inherited/operator
+                // home) when nothing was staged — a non-Codex dispatch, or no
+                // re-homable login.
+                ...(codexHomeDir ? { CODEX_HOME: codexHomeDir } : {}),
+                ...(devToolsClaudeArgs.length > 0 ? CLAUDE_DEV_TOOLS_ENV : {})
+              }
     })
 
     // O1/O3: bind the child's own identity onto the launch record right

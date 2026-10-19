@@ -12,7 +12,7 @@ import {
 } from '../dispatch'
 import { startDevToolsHost } from '../task-tools/dev-tools-host'
 import { devToolsSocketPath, driverDevBridgeInvocation } from '../task-tools/dev-tools-registration'
-import { stageCodexPolicyHome } from '../worker-boundary'
+import { buildWorkerEnv, containerClaudeLogin, stageCodexPolicyHome } from '../worker-boundary'
 import { prepareGradingCopy, testContamination, type Attribution, type HiddenInputs } from './contamination'
 import { suiteMean, type BootstrapMethod } from './estimators'
 import { GENERIC_GRADERS } from './generic-graders'
@@ -712,6 +712,23 @@ export interface StepOneCommandContext {
   models: Partial<Record<StepOneAdapter, string>>
   timeoutMs: number
   loaded: LoadedDevelopment
+  /** Container mode for layer-`G` trials; absent, every trial runs on the host as it always has. */
+  container?: StepOneContainer
+}
+
+/**
+ * Container mode: a layer-`G` trial runs inside a container that is its own
+ * sandbox, as one task. The role runs directly in `workingTree`, at the base
+ * commit already checked out there, and its commit lands on that tree's
+ * `HEAD`; the hidden tests and the reference commit are not in the container,
+ * so the verifier outside it grades the trial, from the tree's diff against
+ * the base commit and from the trial record written to `recordPath`.
+ */
+export interface StepOneContainer {
+  /** The working tree the role runs in: `/app` in a trial container. */
+  workingTree: string
+  /** Where the run writes the trial record it produced, for the verifier. */
+  recordPath: string
 }
 
 const adapterVendor = (adapter: StepOneAdapter): AgentVendor => (adapter === 'claude-code' ? 'claude' : 'codex')
@@ -1063,6 +1080,45 @@ type Staged<T> =
   | { ok: true; value: T; usage: StepOneUsage }
   | { ok: false; unavailableReason: string; usage: StepOneUsage }
 
+type ReadOnlyDeveloperTurn = typeof import('../../../tests/eval/source-citation-suite').readOnlyDeveloperTurn
+
+/**
+ * The steps a live trial takes, each a seam: production passes the real ones
+ * (`PRODUCTION_VINAYA_PROCESS_STEPS`), and a test passes recording fakes, so
+ * which steps a run calls is observable without a model, a sandbox or a
+ * container.
+ */
+export interface VinayaProcessSteps {
+  dispatch: typeof dispatchRole
+  readOnlyTurn: (...args: Parameters<ReadOnlyDeveloperTurn>) => Promise<ReturnType<ReadOnlyDeveloperTurn>>
+  startToolHost: typeof startDevToolsHost
+  stageTrial: typeof stageTrial
+  hiddenInputs: typeof hiddenInputs
+  testContamination: typeof testContamination
+  openGradingSandbox: typeof openGradingSandbox
+  warmPackageCache: typeof warmPackageCache
+  commitTrialInSandbox: typeof commitTrialInSandbox
+  importTrialBundle: typeof importTrialBundle
+  prepareGradingCopy: typeof prepareGradingCopy
+  gradeInSandbox: typeof gradeInSandbox
+}
+
+export const PRODUCTION_VINAYA_PROCESS_STEPS: VinayaProcessSteps = {
+  dispatch: dispatchRole,
+  readOnlyTurn: async (...args) =>
+    (await import('../../../tests/eval/source-citation-suite')).readOnlyDeveloperTurn(...args),
+  startToolHost: startDevToolsHost,
+  stageTrial,
+  hiddenInputs,
+  testContamination,
+  openGradingSandbox,
+  warmPackageCache,
+  commitTrialInSandbox,
+  importTrialBundle,
+  prepareGradingCopy,
+  gradeInSandbox
+}
+
 /**
  * Runs one Developer trial of `item` with `prompt`: stages a clone at the
  * base commit, installs dependencies in the sandbox, dispatches the Developer
@@ -1075,14 +1131,15 @@ async function runDeveloperTrial<T>(
   context: StepOneCommandContext,
   item: DeveloperCase,
   prompt: string,
-  finish: (run: DeveloperRun) => T
+  finish: (run: DeveloperRun) => T,
+  steps: VinayaProcessSteps = PRODUCTION_VINAYA_PROCESS_STEPS
 ): Promise<Staged<T>> {
   const suite = await import('../../../tests/eval/developer-capability-suite')
   const parent = mkdtempSync(join(tmpdir(), 'step-one-developer-'))
   const submissionParent = mkdtempSync(join(tmpdir(), 'step-one-submission-'))
   const gradingParent = mkdtempSync(join(tmpdir(), 'step-one-grading-'))
-  const hidden = hiddenInputs(context.repository, item)
-  const staging = stageTrial({
+  const hidden = steps.hiddenInputs(context.repository, item)
+  const staging = steps.stageTrial({
     trialId: `${item.id}.${input.adapter}.${input.attempt}`,
     sourceRepository: context.repository,
     baseCommit: item.baseCommit,
@@ -1101,11 +1158,11 @@ async function runDeveloperTrial<T>(
     usage: trialUsage(input.adapter, handle, transcript)
   })
   try {
-    const contamination = testContamination(staging, hidden)
+    const contamination = steps.testContamination(staging, hidden)
     if (!contamination.clean) throw new Error(`trial contamination: ${JSON.stringify(contamination.findings)}`)
     try {
-      sandbox = openGradingSandbox()
-      await warmPackageCache(sandbox, context.repository, item.baseCommit)
+      sandbox = steps.openGradingSandbox()
+      await steps.warmPackageCache(sandbox, context.repository, item.baseCommit)
       await sandbox.run(INSTALL_COMMAND, staging.workspace, [staging.workspace], SANDBOX_STEP_BUDGET_MS)
     } catch (error) {
       return unavailable('Codex trial sandbox unavailable before the trial', error)
@@ -1115,14 +1172,14 @@ async function runDeveloperTrial<T>(
     const tools = await import('../../../tests/eval/tool-selection-suite')
     const world = tools.createWorld({ issue: item.pullRequest }, 'developer')
     const socketPath = devToolsSocketPath(`step-one:${item.id}:${input.adapter}:${input.attempt}`)
-    toolHost = await startDevToolsHost({
+    toolHost = await steps.startToolHost({
       socketPath,
       serverVersion: 'step-one-1',
       context: world.context,
       role: 'developer'
     })
     const devToolsBridge = driverDevBridgeInvocation(socketPath, join(import.meta.dir, '../../index.ts'))
-    handle = await dispatchRole('developer', adapterVendor(input.adapter), prompt, {
+    handle = await steps.dispatch('developer', adapterVendor(input.adapter), prompt, {
       promptFile: promptPath,
       cwd: staging.workspace,
       unattended: true,
@@ -1138,7 +1195,7 @@ async function runDeveloperTrial<T>(
     try {
       committed = verifyTrialCommit(
         staging,
-        await commitTrialInSandbox(
+        await steps.commitTrialInSandbox(
           sandbox,
           staging,
           `Eval(developer): Commit ${item.id} trial ${input.attempt}`,
@@ -1152,7 +1209,7 @@ async function runDeveloperTrial<T>(
     let outcomes: TestOutcomes
     let submitted: string
     try {
-      submitted = importTrialBundle({
+      submitted = steps.importTrialBundle({
         repository: context.repository,
         baseCommit: item.baseCommit,
         reportedCommit: committed.commit,
@@ -1174,7 +1231,7 @@ async function runDeveloperTrial<T>(
         missing: [],
         attributable: true
       }
-      const grading = prepareGradingCopy({
+      const grading = steps.prepareGradingCopy({
         staging: trustedStaging,
         attribution,
         hidden,
@@ -1192,7 +1249,7 @@ async function runDeveloperTrial<T>(
           ...item.passToPassFiles.map((entry) => entry.path)
         ])
       ]
-      outcomes = suite.outcomesOf(await gradeInSandbox(sandbox, grading.path, testFiles, context.timeoutMs))
+      outcomes = suite.outcomesOf(await steps.gradeInSandbox(sandbox, grading.path, testFiles, context.timeoutMs))
     } catch (error) {
       return unavailable('Codex grading sandbox unavailable', error)
     }
@@ -1210,6 +1267,129 @@ async function runDeveloperTrial<T>(
     rmSync(parent, { recursive: true, force: true })
     rmSync(submissionParent, { recursive: true, force: true })
     rmSync(gradingParent, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Commits a container-mode trial's work on the working tree's own `HEAD`: any
+ * uncommitted change is staged and committed, with hooks and the filesystem
+ * monitor off; a trial whose agent already committed is left as it is. No
+ * bundle is written, since the verifier reads the tree itself.
+ */
+export function commitInWorkingTree(workingTree: string, message: string, baseCommit: string): TrialCommit {
+  const g = (args: readonly string[]) =>
+    git(workingTree, ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=', '--no-optional-locks', ...args])
+  if (g(['status', '--porcelain']).trim() !== '') {
+    g(['add', '-A'])
+    g([
+      '-c',
+      'user.name=Vinaya Evaluation',
+      '-c',
+      'user.email=eval@invalid.local',
+      'commit',
+      '--quiet',
+      '--no-verify',
+      '-m',
+      message
+    ])
+  }
+  return verifyTrialCommit({ baseCommit }, `trial-commit ${g(['rev-parse', 'HEAD']).trim()}\n`)
+}
+
+/** What one container-mode Developer trial recorded: its run and its commit on the working tree. */
+interface DeveloperInTreeRun {
+  handle: Awaited<ReturnType<typeof dispatchRole>>
+  trace: TraceCall[]
+  toolState: WorldState
+  base: string
+  commit: string
+  changedPaths: string[]
+  patchDigest: string
+}
+
+/**
+ * Runs one container-mode Developer trial of `item` with `prompt`, directly
+ * in the container's working tree at the base commit checked out there, and
+ * commits the work on that tree's `HEAD`. Each host step it leaves out, and
+ * why:
+ *
+ * - `hiddenInputs`: the hidden tests and the reference commit are not in the
+ *   container; the verifier measures them.
+ * - the contamination check: no hidden input exists in the container to
+ *   contaminate the workspace.
+ * - the temporary clone and the staging copy: the role works in the given
+ *   tree, so its diff against the base commit is the role's work.
+ * - the grading-sandbox open, the package-cache warm and the sandboxed
+ *   installs: nothing is graded here, and the container is the sandbox.
+ * - the trial-bundle import and host hidden-test grading: there is no host
+ *   copy to import into; grading is the verifier's job.
+ */
+async function runDeveloperInTree(
+  input: Parameters<StepOneExecutor>[0],
+  context: StepOneCommandContext,
+  container: StepOneContainer,
+  item: DeveloperCase,
+  prompt: string,
+  steps: VinayaProcessSteps
+): Promise<Staged<DeveloperInTreeRun>> {
+  const tree = container.workingTree
+  const base = git(tree, ['rev-parse', 'HEAD']).trim()
+  // The prompt file lives outside the working tree, so it is never part of the role's diff.
+  const parent = mkdtempSync(join(tmpdir(), 'step-one-container-'))
+  let toolHost: Awaited<ReturnType<typeof startDevToolsHost>> | null = null
+  const transcript: string[] = []
+  let handle: Awaited<ReturnType<typeof dispatchRole>> | null = null
+  try {
+    const promptPath = join(parent, 'prompt.md')
+    writeFileSync(promptPath, prompt)
+    const tools = await import('../../../tests/eval/tool-selection-suite')
+    const world = tools.createWorld({ issue: item.pullRequest }, 'developer')
+    const socketPath = devToolsSocketPath(`step-one:${item.id}:${input.adapter}:${input.attempt}`)
+    toolHost = await steps.startToolHost({
+      socketPath,
+      serverVersion: 'step-one-1',
+      context: world.context,
+      role: 'developer'
+    })
+    handle = await steps.dispatch('developer', adapterVendor(input.adapter), prompt, {
+      promptFile: promptPath,
+      cwd: tree,
+      unattended: true,
+      containerMode: true,
+      ...(context.models[input.adapter] === undefined ? {} : { model: context.models[input.adapter] }),
+      turnResultKnownFindingIds: [],
+      devToolsBridge: driverDevBridgeInvocation(socketPath, join(import.meta.dir, '../../index.ts')),
+      observeStdoutLine: (line) => transcript.push(line)
+    })
+    const trace = await traceOf(input.adapter, transcript)
+    const toolState = world.state()
+    let committed: TrialCommit
+    try {
+      committed = commitInWorkingTree(tree, `Eval(developer): Commit ${item.id} trial ${input.attempt}`, base)
+    } catch (error) {
+      return {
+        ok: false,
+        unavailableReason: unavailableReason('Developer trial could not be committed', error),
+        usage: trialUsage(input.adapter, handle, transcript)
+      }
+    }
+    if (!committed.ok) {
+      return {
+        ok: false,
+        unavailableReason: unavailableReason('Developer trial unavailable', committed.reason),
+        usage: trialUsage(input.adapter, handle, transcript)
+      }
+    }
+    const changedPaths = git(tree, ['diff', '--name-only', base, committed.commit]).split('\n').filter(Boolean)
+    const patchDigest = digest(git(tree, ['diff', '--binary', base, committed.commit]))
+    return {
+      ok: true,
+      value: { handle, trace, toolState, base, commit: committed.commit, changedPaths, patchDigest },
+      usage: trialUsage(input.adapter, handle, transcript)
+    }
+  } finally {
+    await toolHost?.close()
+    rmSync(parent, { recursive: true, force: true })
   }
 }
 
@@ -1276,16 +1456,42 @@ async function executeDeveloper(
   return { success: run.value.verdict === 'pass', ...processOf(input.suite), usage: run.usage }
 }
 
-/** Stages a reviewer trial's snapshot at `baseCommit`, dispatches `role` with `prompt`, and cleans up after `finish`. */
+/**
+ * Stages a reviewer trial's snapshot at `baseCommit`, dispatches `role` with
+ * `prompt`, and cleans up after `finish`. In container mode the reviewer runs
+ * directly in the container's working tree instead: no snapshot is staged, and
+ * the contamination check is skipped because no hidden input exists there.
+ */
 async function runReviewerTrial<T>(
   input: Parameters<StepOneExecutor>[0],
   context: StepOneCommandContext,
   item: ReviewCase,
   prompt: string,
-  finish: (handle: Awaited<ReturnType<typeof dispatchRole>>, transcript: readonly string[]) => Promise<T> | T
+  finish: (handle: Awaited<ReturnType<typeof dispatchRole>>, transcript: readonly string[]) => Promise<T> | T,
+  steps: VinayaProcessSteps = PRODUCTION_VINAYA_PROCESS_STEPS
 ): Promise<T> {
   const parent = mkdtempSync(join(tmpdir(), 'step-one-reviewer-'))
-  const staging = stageTrial({
+  const role = item.role === 'security-reviewer' ? 'security' : 'code-reviewer'
+  if (context.container !== undefined) {
+    try {
+      // The prompt file lives outside the working tree, so it is never part of the tree's diff.
+      const promptPath = join(parent, 'prompt.md')
+      writeFileSync(promptPath, prompt)
+      const transcript: string[] = []
+      const handle = await steps.dispatch(role, adapterVendor(input.adapter), prompt, {
+        promptFile: promptPath,
+        cwd: context.container.workingTree,
+        unattended: true,
+        containerMode: true,
+        ...(context.models[input.adapter] === undefined ? {} : { model: context.models[input.adapter] }),
+        observeStdoutLine: (line) => transcript.push(line)
+      })
+      return await finish(handle, transcript)
+    } finally {
+      rmSync(parent, { recursive: true, force: true })
+    }
+  }
+  const staging = steps.stageTrial({
     trialId: `${item.id}.${input.adapter}.${input.attempt}`,
     sourceRepository: context.repository,
     baseCommit: item.baseCommit,
@@ -1293,7 +1499,7 @@ async function runReviewerTrial<T>(
     mode: 'snapshot'
   })
   try {
-    const contamination = testContamination(staging, {
+    const contamination = steps.testContamination(staging, {
       failToPassTests: {},
       referenceSolution: {}
     })
@@ -1301,18 +1507,13 @@ async function runReviewerTrial<T>(
     const promptPath = join(staging.root.path, 'prompt.md')
     writeFileSync(promptPath, prompt)
     const transcript: string[] = []
-    const handle = await dispatchRole(
-      item.role === 'security-reviewer' ? 'security' : 'code-reviewer',
-      adapterVendor(input.adapter),
-      prompt,
-      {
-        promptFile: promptPath,
-        cwd: staging.workspace,
-        unattended: true,
-        ...(context.models[input.adapter] === undefined ? {} : { model: context.models[input.adapter] }),
-        observeStdoutLine: (line) => transcript.push(line)
-      }
-    )
+    const handle = await steps.dispatch(role, adapterVendor(input.adapter), prompt, {
+      promptFile: promptPath,
+      cwd: staging.workspace,
+      unattended: true,
+      ...(context.models[input.adapter] === undefined ? {} : { model: context.models[input.adapter] }),
+      observeStdoutLine: (line) => transcript.push(line)
+    })
     return await finish(handle, transcript)
   } finally {
     rmSync(parent, { recursive: true, force: true })
@@ -1453,25 +1654,86 @@ async function neutralTestResults(
   })
 }
 
+/** The record of a `change` case's run, but for its hidden tests, from what the Developer produced. */
+function changeRecord(
+  input: VinayaProcessInput,
+  developer: {
+    handle: Awaited<ReturnType<typeof dispatchRole>>
+    trace: TraceCall[]
+    toolState: WorldState
+    base: string
+    commit: string
+    changedPaths: string[]
+    patchDigest: string
+  },
+  receipts: VinayaTrialRecord['receipts'],
+  measured: boolean
+): Omit<VinayaTrialRecord, 'hiddenTests'> {
+  const opened = developer.toolState.pullRequest
+  return {
+    rendererVersion: input.rendererVersion,
+    input,
+    pullRequest:
+      opened === null
+        ? null
+        : {
+            headSha: developer.commit,
+            baseSha: developer.base,
+            diffDigest: developer.patchDigest,
+            body: withBeyondSurfaceBlock(
+              opened.body,
+              beyondSurfacePaths(developer.changedPaths, input.surface ?? { in: [], out: [] })
+            )
+          },
+    measuredChange: measured
+      ? {
+          base: developer.base,
+          head: developer.commit,
+          patchDigest: developer.patchDigest,
+          changedPaths: developer.changedPaths
+        }
+      : null,
+    checks: null,
+    reviews: null,
+    readyForMerge: null,
+    developerTurnResult: developer.handle.turnOutput?.raw ?? null,
+    receipts,
+    trace: developer.trace.map((call) => ({ tool: call.tool })),
+    effects: recordedEffects(developer.trace, publicationCounts(developer.toolState))
+  }
+}
+
 /**
  * A `change` case: the Developer is dispatched with the rendered brief and
  * its delivered documents, on the layer-`P` developer case of the same id,
  * and the hidden tests run on the trial's commit. The pull request is the
  * one the Developer opened, on that commit, its body carrying the
- * beyond-Surface record the review-loop driver writes.
+ * beyond-Surface record the review-loop driver writes. In container mode the
+ * Developer runs in the container's working tree, whose files at the base
+ * commit deliver the documents, and the record's `measuredChange` and
+ * `hiddenTests` stay unset for the verifier to fill.
  */
 async function runChangeCase(
   request: VinayaProcessRequest,
   context: StepOneCommandContext,
-  item: DeveloperCase
+  item: DeveloperCase,
+  steps: VinayaProcessSteps
 ): Promise<VinayaProcessRun> {
   const { trial, neutralCase: c, input } = request
   if (c.kind !== 'change') throw new Error(`${c.id} is not a change case`)
-  const delivered = await injectedSources(
-    context.repository,
-    item.baseCommit,
-    input.sources.map((source) => source.sourceId)
-  )
+  const container = context.container
+  const delivered =
+    container === undefined
+      ? await injectedSources(
+          context.repository,
+          item.baseCommit,
+          input.sources.map((source) => source.sourceId)
+        )
+      : await injectedSources(
+          container.workingTree,
+          git(container.workingTree, ['rev-parse', 'HEAD']).trim(),
+          input.sources.map((source) => source.sourceId)
+        )
   for (const source of input.sources) {
     if (digest(delivered.contents.get(source.sourceId) ?? '') !== source.contentDigest)
       throw new Error(`delivered document ${source.sourceId} differs from its pinned content digest`)
@@ -1483,45 +1745,42 @@ async function runChangeCase(
         `${source.required ? 'Required source' : 'Delivered document'} ${source.sourceId}:\n\n${delivered.contents.get(source.sourceId) ?? ''}`
     )
   ].join('\n\n')
-  const run = await runDeveloperTrial(trial, context, item, prompt, (developer) => {
-    const patchDigest = digest(git(developer.submitted, ['diff', '--binary', item.baseCommit, developer.commit]))
-    const opened = developer.toolState.pullRequest
-    return {
-      rendererVersion: input.rendererVersion,
-      input,
-      pullRequest:
-        opened === null
-          ? null
-          : {
-              headSha: developer.commit,
-              baseSha: item.baseCommit,
-              diffDigest: patchDigest,
-              body: withBeyondSurfaceBlock(
-                opened.body,
-                beyondSurfacePaths(developer.changedPaths, input.surface ?? { in: [], out: [] })
-              )
-            },
-      measuredChange: {
-        base: item.baseCommit,
-        head: developer.commit,
-        patchDigest,
-        changedPaths: developer.changedPaths
-      },
-      outcomes: developer.outcomes,
-      checks: null,
-      reviews: null,
-      readyForMerge: null,
-      developerTurnResult: developer.handle.turnOutput?.raw ?? null,
-      receipts: delivered.receipts,
-      trace: developer.trace.map((call) => ({ tool: call.tool })),
-      effects: recordedEffects(developer.trace, publicationCounts(developer.toolState))
+  if (container !== undefined) {
+    const run = await runDeveloperInTree(trial, context, container, item, prompt, steps)
+    if (!run.ok) return run
+    // The hidden tests are not in the container: the verifier runs them on the tree's commit.
+    const record: VinayaTrialRecord = {
+      ...changeRecord(input, run.value, delivered.receipts, false),
+      hiddenTests: null
     }
-  })
+    return { ok: true, record, usage: run.usage }
+  }
+  const run = await runDeveloperTrial(
+    trial,
+    context,
+    item,
+    prompt,
+    (developer) => ({
+      ...changeRecord(
+        input,
+        {
+          ...developer,
+          base: item.baseCommit,
+          patchDigest: digest(git(developer.submitted, ['diff', '--binary', item.baseCommit, developer.commit]))
+        },
+        delivered.receipts,
+        true
+      ),
+      outcomes: developer.outcomes
+    }),
+    steps
+  )
   if (!run.ok) return run
   const { outcomes, ...recorded } = run.value
+  const head = recorded.measuredChange?.head ?? ''
   const record: VinayaTrialRecord = {
     ...recorded,
-    hiddenTests: { revision: recorded.measuredChange.head, results: await neutralTestResults(c, outcomes) }
+    hiddenTests: { revision: head, results: await neutralTestResults(c, outcomes) }
   }
   return { ok: true, record, usage: run.usage }
 }
@@ -1534,7 +1793,8 @@ async function runChangeCase(
 async function runReviewCase(
   request: VinayaProcessRequest,
   context: StepOneCommandContext,
-  item: ReviewCase
+  item: ReviewCase,
+  steps: VinayaProcessSteps
 ): Promise<VinayaProcessRun> {
   const { trial, input } = request
   const change = input.changeUnderReview
@@ -1551,37 +1811,44 @@ async function runReviewCase(
     suite.patchBytes(item),
     '```'
   ].join('\n\n')
-  return runReviewerTrial(trial, context, item, prompt, async (handle, transcript) => {
-    const trace = await traceOf(trial.adapter, transcript)
-    const record: VinayaTrialRecord = {
-      rendererVersion: input.rendererVersion,
-      input,
-      pullRequest: null,
-      measuredChange: null,
-      hiddenTests: null,
-      checks: null,
-      reviews: [
-        {
-          reviewId: `${input.caseId}.${trial.adapter}.${trial.attempt}.${item.role}`,
-          role: item.role,
-          binding: {
-            headSha: change.head,
-            baseSha: change.base,
-            briefHash: input.briefHash,
-            diffDigest: change.patchDigest
-          },
-          output: handle.reviewOutput?.raw ?? null
-        }
-      ],
-      readyForMerge: null,
-      developerTurnResult: null,
-      receipts: [],
-      trace: trace.map((call) => ({ tool: call.tool })),
-      // A reviewer holds no driver-run tool, so it performs no effect.
-      effects: recordedEffects(trace, {})
-    }
-    return { ok: true as const, record, usage: trialUsage(trial.adapter, handle, transcript) }
-  })
+  return runReviewerTrial(
+    trial,
+    context,
+    item,
+    prompt,
+    async (handle, transcript) => {
+      const trace = await traceOf(trial.adapter, transcript)
+      const record: VinayaTrialRecord = {
+        rendererVersion: input.rendererVersion,
+        input,
+        pullRequest: null,
+        measuredChange: null,
+        hiddenTests: null,
+        checks: null,
+        reviews: [
+          {
+            reviewId: `${input.caseId}.${trial.adapter}.${trial.attempt}.${item.role}`,
+            role: item.role,
+            binding: {
+              headSha: change.head,
+              baseSha: change.base,
+              briefHash: input.briefHash,
+              diffDigest: change.patchDigest
+            },
+            output: handle.reviewOutput?.raw ?? null
+          }
+        ],
+        readyForMerge: null,
+        developerTurnResult: null,
+        receipts: [],
+        trace: trace.map((call) => ({ tool: call.tool })),
+        // A reviewer holds no driver-run tool, so it performs no effect.
+        effects: recordedEffects(trace, {})
+      }
+      return { ok: true as const, record, usage: trialUsage(trial.adapter, handle, transcript) }
+    },
+    steps
+  )
 }
 
 /**
@@ -1589,12 +1856,16 @@ async function runReviewCase(
  * Developer is dispatched in an empty workspace holding only the injected
  * documents of the layer-`P` source-citation case of the same id, the others
  * served by `fetch_documentation`, told to change nothing; nothing is
- * committed, and the record carries no change.
+ * committed, and the record carries no change. In container mode the
+ * Developer works in the container's working tree instead, with each injected
+ * document the tree does not already hold written into it; a Claude turn
+ * there authenticates from the container's subscription token alone.
  */
 async function runAnswerCase(
   request: VinayaProcessRequest,
   context: StepOneCommandContext,
-  item: SourceCitationCase
+  item: SourceCitationCase,
+  steps: VinayaProcessSteps
 ): Promise<VinayaProcessRun> {
   const { trial, input } = request
   for (const source of input.sources) {
@@ -1627,17 +1898,24 @@ async function runAnswerCase(
         ]),
     'Return status completed, addressedFindingIds [], reportedChecks null, and sourceUses that cites only the delivered documents you used.'
   ].join('\n\n')
+  const container = context.container
   const parent = mkdtempSync(join(tmpdir(), 'step-one-answer-'))
-  const workspace = join(parent, 'workspace')
-  mkdirSync(workspace)
+  const workspace = container?.workingTree ?? join(parent, 'workspace')
+  if (container === undefined) mkdirSync(workspace)
   for (const source of item.sources.filter((entry) => entry.deliveryMode === 'injected')) {
     const path = join(workspace, source.sourceId)
+    if (container !== undefined && existsSync(path)) continue
     mkdirSync(dirname(path), { recursive: true })
     writeFileSync(path, source.content)
   }
+  // In container mode a Claude turn gets the named worker allowlist and the
+  // subscription token, never the container's whole environment.
+  const containerLogin = containerClaudeLogin(process.env, container !== undefined && trial.adapter === 'claude-code')
+  if (container !== undefined && trial.adapter === 'claude-code' && containerLogin === null)
+    throw new Error('container mode authenticates Claude only from the subscription token in CLAUDE_CODE_OAUTH_TOKEN')
   const world = citation.worldFor(item, (source) => source.content)
   const socketPath = devToolsSocketPath(`step-one:${item.id}:${trial.adapter}:${trial.attempt}`)
-  const toolHost = await startDevToolsHost({
+  const toolHost = await steps.startToolHost({
     socketPath,
     serverVersion: 'step-one-1',
     context: world.context,
@@ -1650,7 +1928,7 @@ async function runAnswerCase(
     // The read-only turn the source-citation suite's live trial runs: Claude
     // Code holds only the served driver-run tools and Codex runs read-only, so
     // the Developer cannot write a file whatever the prompt says.
-    const runTurn = citation.readOnlyDeveloperTurn(
+    const runTurn = await steps.readOnlyTurn(
       trial.adapter,
       parent,
       workspace,
@@ -1659,6 +1937,7 @@ async function runAnswerCase(
       {
         ...(context.models['claude-code'] === undefined ? {} : { claudeModel: context.models['claude-code'] }),
         ...(context.models.codex === undefined ? {} : { codexModel: context.models.codex }),
+        ...(containerLogin === null ? {} : { claudeEnv: buildWorkerEnv(process.env, containerLogin) }),
         timeoutSec: Math.ceil(context.timeoutMs / 1000)
       }
     )
@@ -1697,26 +1976,48 @@ async function runAnswerCase(
   }
 }
 
-/** Production's run of a rendered case: each kind dispatched its own way, on its layer-`P` counterpart. */
-export const runVinayaProcess: VinayaProcessRunner = async (request, context) => {
+/**
+ * The run of a rendered case through `steps`: each kind dispatched its own
+ * way, on its layer-`P` counterpart. In container mode the record a run
+ * produced is also written to the container's `recordPath` for the verifier.
+ */
+export function vinayaProcess(steps: VinayaProcessSteps): VinayaProcessRunner {
+  return async (request, context) => {
+    const ran = await runKind(request, context, steps)
+    if (context.container !== undefined && ran.ok)
+      writeFileSync(context.container.recordPath, `${JSON.stringify(ran.record, null, 2)}\n`)
+    return ran
+  }
+}
+
+function runKind(
+  request: VinayaProcessRequest,
+  context: StepOneCommandContext,
+  steps: VinayaProcessSteps
+): Promise<VinayaProcessRun> {
   const c = request.neutralCase
   if (c.kind === 'change') {
     const item = context.loaded.developerCases.find((entry) => entry.id === c.id)
     if (item === undefined) throw new Error(`${c.id} has no layer-P developer case`)
-    return runChangeCase(request, context, item)
+    return runChangeCase(request, context, item, steps)
   }
   if (c.kind === 'review') {
     const role = request.trial.suite === 'security-reviewer-quality-neutral.l5' ? 'security-reviewer' : 'code-reviewer'
     const item = context.loaded.reviewerCases.find((entry) => entry.id === c.id && entry.role === role)
     if (item === undefined) throw new Error(`${c.id} has no layer-P ${role} case`)
-    return runReviewCase(request, context, item)
+    return runReviewCase(request, context, item, steps)
   }
   if (c.kind === 'answer') {
     const item = context.loaded.sourceCitationCases.find((entry) => entry.id === c.id)
     if (item === undefined) throw new Error(`${c.id} has no layer-P source-citation case`)
-    return runAnswerCase(request, context, item)
+    return runAnswerCase(request, context, item, steps)
   }
   throw new Error(`step one runs no ${c.kind} case`)
+}
+
+/** Production's run of a rendered case: each kind dispatched its own way, on its layer-`P` counterpart. */
+export const runVinayaProcess: VinayaProcessRunner = async (request, context) => {
+  return vinayaProcess(PRODUCTION_VINAYA_PROCESS_STEPS)(request, context)
 }
 
 async function executeLayerP(input: Parameters<StepOneExecutor>[0], context: StepOneCommandContext) {
@@ -1743,7 +2044,11 @@ export function stepOneRuntime(run: VinayaProcessRunner): StepOneCommandRuntime 
   return {
     loadDevelopment: loadProductionDevelopment,
     async execute(input, context) {
-      if (STEP_ONE_SUITE_LAYERS[input.suite] === 'P') return executeLayerP(input, context)
+      if (STEP_ONE_SUITE_LAYERS[input.suite] === 'P') {
+        // Container mode is for layer-`G` trials only; a layer-`P` trial always runs on the host.
+        if (context.container !== undefined) throw new Error(`container mode runs no layer-P suite: ${input.suite}`)
+        return executeLayerP(input, context)
+      }
       const neutralCase = context.loaded.neutralCases[input.suite as LayerGSuite]?.find(
         (entry) => entry.id === input.taskId
       )
@@ -1800,13 +2105,18 @@ export async function runStepOneCommand(
 ): Promise<StepOneOutcome> {
   if (argv[0] !== 'run')
     throw new Error(
-      'usage: step-one.ts run --split development --backend standalone [--purpose <development-only|practice|comparison>] [--suite <name>]... [--adapter <claude-code|codex>] [--cases <n>|--cases <id>...] --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> [--developer-snapshot <jsonl>] --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--out <file>]'
+      'usage: step-one.ts run --split development --backend standalone [--purpose <development-only|practice|comparison>] [--suite <name>]... [--adapter <claude-code|codex>] [--cases <n>|--cases <id>...] --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> [--developer-snapshot <jsonl>] --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--container-tree <dir> --container-record <file>] [--out <file>]'
     )
   const split = flag(argv, 'split')
   const backend = flag(argv, 'backend')
   const snapshot = flag(argv, 'developer-snapshot')
   const claudeModel = flag(argv, 'claude-model')
   const codexModel = flag(argv, 'codex-model')
+  // Container mode is this trial entry's explicit choice, both flags or neither.
+  const containerTree = flag(argv, 'container-tree')
+  const containerRecord = flag(argv, 'container-record')
+  if ((containerTree === undefined) !== (containerRecord === undefined))
+    throw new Error('--container-tree and --container-record are given together or not at all')
   const context: StepOneCommandContext = {
     repository: join(import.meta.dir, '../../../../..'),
     developerBriefs: snapshot === undefined || !existsSync(snapshot) ? new Map() : briefsFromSnapshot(snapshot),
@@ -1815,7 +2125,10 @@ export async function runStepOneCommand(
       ...(codexModel === undefined ? {} : { codex: codexModel })
     },
     timeoutMs: Number(flag(argv, 'timeout-sec') ?? '1800') * 1000,
-    loaded: NO_DEVELOPMENT
+    loaded: NO_DEVELOPMENT,
+    ...(containerTree === undefined || containerRecord === undefined
+      ? {}
+      : { container: { workingTree: containerTree, recordPath: containerRecord } })
   }
   const cases = caseSelection(argv)
   const outcome = await runStepOne(

@@ -35,6 +35,8 @@ import { randomUUID } from 'node:crypto'
 import { readdirSync, statSync } from 'node:fs'
 import {
   AGENT_VENDOR_NAMES,
+  bridgeSocketDir,
+  claudeUnconfinedVerdict,
   DEFAULT_TIMEOUT_MS,
   DEFAULT_REVIEWER_TIMEOUT_MS,
   identifyVendorFromModelShape,
@@ -77,6 +79,7 @@ import {
   type DispatchTeeRecoveryDeps
 } from '../../src/lib/dispatch.js'
 import { addedDiffLines, agentConfigProtectedSubpaths, findCredentialPatterns } from '../../src/lib/worker-boundary.js'
+import { devToolsSocketRoot } from '../../src/lib/task-tools/dev-tools-registration.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -5740,4 +5743,182 @@ describe('dispatchRole — an agent usage limit is its own outcome, never a cras
     expect(failed?.reason).toBe('usage_limit')
     expect(failed?.usage_limit).toEqual({ agent: 'claude', reset_at: new Date(1789783200 * 1000).toISOString() })
   })
+})
+
+describe('claudeUnconfinedVerdict — container mode, with fake probes', () => {
+  const probe = (over: Partial<{ platform: NodeJS.Platform; dockerEnv: boolean; dirs: string[] }> = {}) => ({
+    platform: () => over.platform ?? ('linux' as NodeJS.Platform),
+    dockerEnvPresent: () => over.dockerEnv ?? true,
+    socketDirectories: () => over.dirs ?? []
+  })
+  const unconfined = { confined: false }
+  const own = join(devToolsSocketRoot(), 'own')
+
+  it('lets an unconfined Claude dispatch run, with no sandbox probe, only when every condition holds', () => {
+    expect(
+      claudeUnconfinedVerdict(
+        { agent: 'claude', confinement: unconfined, containerMode: true, ownSocketDir: own },
+        probe({ dirs: [own] })
+      )
+    ).toEqual({ refused: false, containerIsBoundary: true, runsSandboxProbe: false, reason: null })
+  })
+
+  it('refuses as today when any one condition fails, naming it only when container mode was asked for', () => {
+    const verdict = (containerMode: boolean, p: ReturnType<typeof probe>) =>
+      claudeUnconfinedVerdict({ agent: 'claude', confinement: unconfined, containerMode, ownSocketDir: own }, p)
+    expect(verdict(false, probe())).toEqual({
+      refused: true,
+      containerIsBoundary: false,
+      runsSandboxProbe: false,
+      reason: null
+    })
+    for (const [failing, reason] of [
+      [probe({ platform: 'darwin' }), 'needs Linux'],
+      [probe({ dockerEnv: false }), '/.dockerenv'],
+      [probe({ dirs: [own, join(devToolsSocketRoot(), 'other')] }), 'not the only task in the container']
+    ] as const) {
+      const refused = verdict(true, failing)
+      expect(refused).toMatchObject({ refused: true, containerIsBoundary: false, runsSandboxProbe: false })
+      expect(refused.reason).toContain(reason)
+    }
+  })
+
+  it('leaves a confined Claude dispatch and every Codex dispatch exactly as today', () => {
+    expect(
+      claudeUnconfinedVerdict(
+        { agent: 'claude', confinement: { confined: true }, containerMode: true, ownSocketDir: null },
+        probe()
+      )
+    ).toEqual({ refused: false, containerIsBoundary: false, runsSandboxProbe: true, reason: null })
+    expect(
+      claudeUnconfinedVerdict({ agent: 'codex', confinement: null, containerMode: true, ownSocketDir: null }, probe())
+    ).toEqual({ refused: false, containerIsBoundary: false, runsSandboxProbe: false, reason: null })
+  })
+
+  it("reads a dispatch's own socket directory from its bridge", () => {
+    expect(bridgeSocketDir({ args: ['entry', 'task-tools', 'dev-bridge', '--socket', join(own, 's.sock')] })).toBe(own)
+    expect(bridgeSocketDir(null)).toBeNull()
+  })
+})
+
+describe('dispatchRole — container mode on a faked Linux host with no bubblewrap', () => {
+  const DISPATCH_LIB = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+  /** Links to the host tools the fixture runs, so no `bwrap` or `socat` the host holds is on the child's PATH. */
+  const toolsPath = () => {
+    const dir = tempDir('vinaya-container-tools-')
+    const real = (process.env.PATH ?? '').split(':').filter(Boolean)
+    for (const tool of ['bun', 'git', 'sh', 'cat', 'which', 'node']) {
+      const found = real.map((d) => join(d, tool)).find((p) => existsSync(p))
+      if (found) symlinkSync(found, join(dir, tool))
+    }
+    return dir
+  }
+
+  function runContained(
+    probe: { dockerEnv: boolean; dirs: string[] },
+    options: { containerMode: boolean; token?: string }
+  ) {
+    const home = tempDir('vinaya-container-home-')
+    const cwd = tempDir('vinaya-container-cwd-')
+    const binDir = tempDir('vinaya-container-bin-')
+    const calls = join(cwd, 'calls.log')
+    const childEnv = join(cwd, 'child.env')
+    const promptFile = join(cwd, 'prompt.txt')
+    const resultFile = join(cwd, 'result.json')
+    writeFileSync(promptFile, 'do the thing')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncase "$*" in *vinaya-sandbox-probe*) echo probe >> "${calls}";; esac\necho spawn >> "${calls}"\n/usr/bin/env > "${childEnv}"\ncat > /dev/null\nprintf '%s' '{"session_id":"s","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
+    )
+    const script = join(cwd, 'dispatch.ts')
+    writeFileSync(
+      script,
+      [
+        "import { writeFileSync } from 'node:fs'",
+        "Object.defineProperty(process, 'platform', { value: 'linux' })",
+        `const dispatch = await import(${JSON.stringify(DISPATCH_LIB)})`,
+        'dispatch.CONTAINER_BOUNDARY_PROBE_DEPS.probe = {',
+        "  platform: () => 'linux',",
+        `  dockerEnvPresent: () => ${probe.dockerEnv},`,
+        `  socketDirectories: () => ${JSON.stringify(probe.dirs)}`,
+        '}',
+        "const result = await dispatch.dispatchRole('developer', 'claude', 'do the thing', {",
+        `  promptFile: ${JSON.stringify(promptFile)},`,
+        `  cwd: ${JSON.stringify(cwd)},`,
+        '  unattended: true,',
+        `  containerMode: ${options.containerMode}`,
+        '})',
+        `writeFileSync(${JSON.stringify(resultFile)}, JSON.stringify(result))`
+      ].join('\n')
+    )
+    const env: NodeJS.ProcessEnv = {
+      ...stripVinayaEnv(process.env),
+      HOME: home,
+      PATH: `${binDir}:${toolsPath()}`,
+      ANTHROPIC_API_KEY: 'api-key-fixture'
+    }
+    delete env.CLAUDE_CODE_OAUTH_TOKEN
+    if (options.token !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = options.token
+    const child = spawnBudgeted([script], { cwd, encoding: 'utf8', env }, 'container-mode dispatch')
+    expect(child.status, child.stderr).toBe(0)
+    return {
+      stderr: child.stderr,
+      result: JSON.parse(readFileSync(resultFile, 'utf8')) as { failureReason?: string },
+      calls: existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n') : [],
+      childEnv: existsSync(childEnv)
+        ? Object.fromEntries(
+            readFileSync(childEnv, 'utf8')
+              .split('\n')
+              .filter((line) => line.includes('='))
+              .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)])
+          )
+        : null
+    }
+  }
+  const holds = { dockerEnv: true, dirs: [] as string[] }
+
+  it('dispatches with no sandbox probe, authenticated from the token by name and never an API key, when every condition holds', () => {
+    const run = runContained(holds, { containerMode: true, token: 'subscription-token-fixture' })
+    expect(run.result.failureReason).toBeUndefined()
+    expect(run.calls).toEqual(['spawn'])
+    expect(run.stderr).toContain('container mode — this one-task container is the boundary')
+    expect(run.childEnv?.CLAUDE_CODE_OAUTH_TOKEN).toBe('subscription-token-fixture')
+    expect(run.childEnv?.CLAUDE_FORCE_OAUTH).toBe('1')
+    expect(run.childEnv?.ANTHROPIC_API_KEY).toBeUndefined()
+  }, 40_000)
+
+  it('refuses unconfined, as today, when the trial entry did not set container mode', () => {
+    const run = runContained(holds, { containerMode: false, token: 'subscription-token-fixture' })
+    expect(run.result.failureReason).toBe('refused')
+    expect(run.calls).toEqual([])
+    expect(run.stderr).toContain('refused — unattended Claude requires a confined worker sandbox')
+    expect(run.stderr).not.toContain('The container is not the boundary')
+  }, 40_000)
+
+  it('refuses unconfined when /.dockerenv is absent, or another driver-run socket directory exists', () => {
+    for (const [probe, reason] of [
+      [{ dockerEnv: false, dirs: [] }, '/.dockerenv'],
+      [{ dockerEnv: true, dirs: [join(devToolsSocketRoot(), 'other')] }, 'not the only task in the container']
+    ] as const) {
+      const run = runContained(
+        { dockerEnv: probe.dockerEnv, dirs: [...probe.dirs] },
+        {
+          containerMode: true,
+          token: 'subscription-token-fixture'
+        }
+      )
+      expect(run.result.failureReason).toBe('refused')
+      expect(run.calls).toEqual([])
+      expect(run.stderr).toContain('refused — unattended Claude requires a confined worker sandbox')
+      expect(run.stderr).toContain(reason)
+    }
+  }, 60_000)
+
+  it('refuses a container-mode Claude dispatch with no subscription token, before any spawn', () => {
+    const run = runContained(holds, { containerMode: true })
+    expect(run.result.failureReason).toBe('refused')
+    expect(run.calls).toEqual([])
+    expect(run.stderr).toContain('CLAUDE_CODE_OAUTH_TOKEN, which is unset')
+  }, 40_000)
 })
