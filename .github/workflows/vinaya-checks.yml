@@ -12,8 +12,9 @@ on:
 # report --push` always follows it with a body edit (`gh pr edit`) carrying
 # that push's real head, which fires `edited` — the only trigger left this
 # workflow needs, against a body that already names the new head. A push
-# with no following edit simply produces no run, by design; `evidence-fresh`
-# at the merge gate is what still catches that case.
+# with no following edit produces no run of this workflow, by design;
+# `evidence-fresh` still runs on every push, as its own job in
+# `vinaya-review.yml`, which triggers on `synchronize` and `edited`.
 #
 # Several `types:` above can still fire in the same instant — `vinaya pr
 # create` opens the PR and applies its tranche label immediately after, so

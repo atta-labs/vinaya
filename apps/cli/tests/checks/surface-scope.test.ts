@@ -144,6 +144,27 @@ describe('surface-scope check-bin — a beyond-Surface path passes only when the
   })
 })
 
+describe('surface-scope check-bin — a protected administrative path the Surface does not name', () => {
+  it('fails even when the body block records it, saying the Surface must name it', () => {
+    const fixture = issueBranchFixture(
+      ['aeg-root/enforcement.md'],
+      '## Surface\n\nin: apps/cli/src\nout: packages/aeg-forge-state\n'
+    )
+    try {
+      const body = `## Scope\n\n${renderBeyondSurfaceBlock([{ path: 'aeg-root/enforcement.md', reason: 'in', glob: null }])}\n`
+      const result = runIssueBranch(fixture, body)
+      expect(result.exitCode).toBe(1)
+      const error = JSON.parse(result.stderr.toString().trim())
+      expect(error.file).toBe('aeg-root/enforcement.md')
+      expect(error.message).toContain('protected administrative path')
+      expect(error.message).toContain('Surface must name it')
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true })
+      rmSync(fixture.binDir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('surface-scope check-bin — dormancy is narrowed to ONE reason: not a task branch at all', () => {
   it('a branch not shaped like task/<tranche>/<n> stays dormant — exit 0, no output, no network/forge call attempted', () => {
     const root = join(tmpdir(), `vinaya-surface-scope-${Date.now()}-${Math.random().toString(36).slice(2)}`)

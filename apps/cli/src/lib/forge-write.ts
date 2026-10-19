@@ -2081,7 +2081,9 @@ export function parseIssueNumberFromRef(ref: string): number | null {
  * the adopter repo on disk, not threaded through from argv.
  */
 /** How `validateTaskIssue` resolves O5's target Milestone — an edit reads the Issue's own current Milestone from the forge; a create has none yet, so `resolveMilestoneTitleForCreate` reads an explicit `--milestone` flag or, absent one, the same label-driven auto-attach target `resolveMilestoneAttachArgs` itself resolves at write time. */
-export type MilestoneSource = { kind: 'edit'; issueRef: string } | { kind: 'create'; ghArgs: string[] }
+export type MilestoneSource =
+  | { kind: 'edit'; issueRef: string; ghArgs?: string[] }
+  | { kind: 'create'; ghArgs: string[] }
 
 /** Extracts `--milestone`/`-m`'s value from argv, or `null` if absent — the value half of `hasExplicitMilestoneFlag`'s presence check. */
 function extractMilestoneFlagValue(args: string[]): string | null {
@@ -2093,25 +2095,65 @@ function extractMilestoneFlagValue(args: string[]): string | null {
   return null
 }
 
-/**
- * The subject Issue's current Milestone title, best-effort — `null` on any
- * fetch/parse failure or when no Milestone is attached. Same
- * dormant-on-absence posture `docOwnersContent`/`sharedPackages` already use
- * elsewhere in this file: a Milestone this process cannot determine has no
- * known peer group for O5 to protect, so the overlap check goes dormant
- * rather than blocking every edit on an unrelated `gh` hiccup.
- */
-function fetchForgeMilestoneBestEffort(issueRef: string): string | null {
+/** The live Milestone read, with a failed read told apart from an Issue that has none — `{ ok: false }` is a lookup failure, never "unset". */
+export type IssueMilestoneRead = { ok: true; title: string | null } | { ok: false }
+
+/** Reads the subject Issue's live Milestone from the forge; a fetch or parse failure is `{ ok: false }`, a missing Milestone is `{ ok: true, title: null }`. */
+function readIssueMilestoneFromForge(issueRef: string): IssueMilestoneRead {
   try {
     const out = execFileSync('gh', ['issue', 'view', issueRef, '--json', 'milestone'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
     })
     const parsed = JSON.parse(out) as { milestone: { title: string } | null }
-    return parsed.milestone?.title ?? null
+    return { ok: true, title: parsed.milestone?.title ?? null }
+  } catch {
+    return { ok: false }
+  }
+}
+
+/**
+ * The repository's Milestone list, fetched with piped standard error —
+ * `null` on any fetch or parse failure. Piped deliberately, rather than
+ * reusing `findMilestoneAttachTargetForSlug`: that helper's underlying `gh
+ * api` call inherits the real `gh` stderr straight through to THIS process's
+ * own stderr (Node's `execFileSync` default), bypassing the caller's
+ * try/catch entirely, so a raw `gh` error line (e.g. no git remote in a test
+ * fixture) would land on the same stderr stream every reader parses as one
+ * `CheckError` JSON per line, tripping `malformed`. Handed to the pure
+ * `resolveMilestoneAttachTarget` matcher by each caller.
+ */
+function fetchForgeMilestoneList(): Array<{
+  number: number
+  title: string
+  description: string | null
+  state: 'open' | 'closed'
+}> | null {
+  try {
+    const out = execFileSync('gh', ['api', 'repos/{owner}/{repo}/milestones?state=all&per_page=100'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    return JSON.parse(out) as Array<{
+      number: number
+      title: string
+      description: string | null
+      state: 'open' | 'closed'
+    }>
   } catch {
     return null
   }
+}
+
+/** The title of the open Milestone a task Issue's tranche label resolves to, or `null` when the labels name no tranche, no open Milestone matches, or the lookup fails. */
+function resolveLabelMilestoneFromForge(labels: string[]): string | null {
+  if (!isTaskIssueLabelSet(labels)) return null
+  const slug = findTrancheSlug(labels)
+  if (!slug) return null
+  const milestones = fetchForgeMilestoneList()
+  if (milestones === null) return null
+  const target = resolveMilestoneAttachTarget(milestones, slug)
+  return target ? target.title : null
 }
 
 /**
@@ -2136,35 +2178,7 @@ function resolveMilestoneTitleForCreate(ghArgs: string[], labels: string[]): str
   if (!isTaskIssueLabelSet(labels)) return null
   const slug = findTrancheSlug(labels)
   if (!slug) return null
-  // `stdio: ['ignore', 'pipe', 'pipe']` deliberately, rather than reusing
-  // `findMilestoneAttachTargetForSlug` directly: that helper's underlying
-  // `gh api` call inherits the real `gh` stderr straight through to THIS
-  // process's own stderr (Node's `execFileSync` default), bypassing the
-  // try/catch below entirely. Harmless on the real-write path this task
-  // does not touch (`resolveMilestoneAttachArgs`, run inside a real repo
-  // with a real remote), but this call now also runs on `--validate-only` —
-  // a raw `gh` error line (e.g. no git remote in a test fixture) would land
-  // on the same stderr stream every reader parses as one `CheckError` JSON
-  // per line, tripping `malformed` the way `check-coherence.ts`'s own
-  // `git()` helper is annotated against. Fetched and parsed here, then
-  // handed to the same pure `resolveMilestoneAttachTarget` matcher, so
-  // behaviour is unchanged — only the stderr leak is closed.
-  try {
-    const out = execFileSync('gh', ['api', 'repos/{owner}/{repo}/milestones?state=all&per_page=100'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-    const milestones = JSON.parse(out) as Array<{
-      number: number
-      title: string
-      description: string | null
-      state: 'open' | 'closed'
-    }>
-    const target = resolveMilestoneAttachTarget(milestones, slug)
-    return target ? target.title : null
-  } catch {
-    return null
-  }
+  return resolveLabelMilestoneFromForge(labels)
 }
 
 /**
@@ -2740,11 +2754,17 @@ async function validateRenderedBriefForIssue(input: {
 export type TaskIssueValidationDeps = {
   computeRenderedBriefErrors: typeof validateRenderedBriefForIssue
   runIssueChecks: typeof runIssueChecks
+  /** The edited Issue's live Milestone; defaults to the forge read. */
+  readIssueMilestone?: (issueRef: string) => IssueMilestoneRead
+  /** The open Milestone the labels' tranche resolves to; defaults to the forge lookup. */
+  resolveLabelMilestone?: (labels: string[]) => string | null
 }
 
-const defaultTaskIssueValidationDeps: TaskIssueValidationDeps = {
+const defaultTaskIssueValidationDeps: Required<TaskIssueValidationDeps> = {
   computeRenderedBriefErrors: validateRenderedBriefForIssue,
-  runIssueChecks
+  runIssueChecks,
+  readIssueMilestone: readIssueMilestoneFromForge,
+  resolveLabelMilestone: resolveLabelMilestoneFromForge
 }
 
 /**
@@ -2771,9 +2791,10 @@ export async function collectTaskIssueErrors(
   retryCommand: string,
   issueNumber: number | null,
   milestoneSource?: MilestoneSource,
-  deps: TaskIssueValidationDeps = defaultTaskIssueValidationDeps,
+  depsIn: TaskIssueValidationDeps = defaultTaskIssueValidationDeps,
   collisionScope: CollisionScope = 'issues-and-pull-requests'
 ): Promise<{ errors: CheckError[]; renderSkipped: string | null }> {
+  const deps: Required<TaskIssueValidationDeps> = { ...defaultTaskIssueValidationDeps, ...depsIn }
   const errors: CheckError[] = []
 
   const sections = resolveSections('issue', retryCommand)
@@ -2789,11 +2810,15 @@ export async function collectTaskIssueErrors(
     })
   )
 
+  const liveMilestone: IssueMilestoneRead | null =
+    milestoneSource?.kind === 'edit' ? deps.readIssueMilestone(milestoneSource.issueRef) : null
   const milestoneTitle =
     milestoneSource === undefined
       ? null
       : milestoneSource.kind === 'edit'
-        ? fetchForgeMilestoneBestEffort(milestoneSource.issueRef)
+        ? liveMilestone?.ok
+          ? liveMilestone.title
+          : null
         : resolveMilestoneTitleForCreate(milestoneSource.ghArgs, labels)
   // O1 — a fetch failure here folds into the SAME union every other group
   // contributes to, rather than refusing immediately and discarding the
@@ -2868,30 +2893,42 @@ export async function collectTaskIssueErrors(
   })
   errors.push(...rendered.errors)
 
-  // The five write-only rules, through the SAME registry
-  // runner `runBodyChecks` uses. `checkMilestoneAttach` stays dormant on
-  // EVERY write-path call (both `currentMilestoneTitle`/`resolvedMilestoneTitle`
-  // null): `create`'s auto-attach action happens as part of THIS SAME write,
-  // once validation passes, so there is nothing to compare against yet
-  // (flagging an attach that has not happened YET as one that never will is
-  // exactly the false positive this must not produce); `edit` never
-  // re-attaches at all, by this system's own design
-  // (`packages/aeg-core/bin/open-issue.ts`'s `resolveMilestoneToAttach`:
-  // "edit never force-attaches retroactively" — `vinaya milestone adopt` is
-  // the sanctioned way to move a tranche's Milestone, and comparing an
-  // adopted Issue's live Milestone against its label's DEFAULT resolution
-  // would flag every legitimately-adopted tranche as a violation). The check
-  // is still registered and directly invocable (`vinaya check
-  // issue-milestone-attach`) — it simply has no write-path moment that is
-  // both meaningful and free of that false-positive risk.
+  // The five write-only rules, through the SAME registry runner
+  // `runBodyChecks` uses. `checkMilestoneAttach` runs on an edit only. A
+  // create keeps both Milestone inputs null: its auto-attach happens as part
+  // of THIS SAME write, once validation passes, so there is nothing to
+  // compare against yet (flagging an attach that has not happened yet as one
+  // that never will is exactly the false positive this must not produce).
+  // An edit compares the Issue's Milestone AFTER the edit — an explicit
+  // `--milestone` on the edit's own arguments, else the live one — against
+  // the open Milestone its tranche label resolves to. That is safe for an
+  // adopted tranche: `vinaya milestone adopt` closes the legacy Milestone and
+  // moves the Issues into the target, and `resolveMilestoneAttachTarget`
+  // falls through a closed legacy match to that target, so an adopted Issue
+  // already sits in the Milestone its label resolves to. Any failed lookup
+  // leaves the resolved side null, which keeps the rule dormant: a failed
+  // live read is never read as "no Milestone".
+  let currentMilestoneTitle: string | null = null
+  let resolvedMilestoneTitle: string | null = null
+  if (milestoneSource?.kind === 'edit' && isTaskIssueLabelSet(labels)) {
+    const explicit = extractMilestoneFlagValue(milestoneSource.ghArgs ?? [])
+    const live = explicit === null ? liveMilestone : ({ ok: true, title: explicit } as const)
+    if (live?.ok) {
+      const resolved = deps.resolveLabelMilestone(labels)
+      if (resolved !== null) {
+        currentMilestoneTitle = live.title
+        resolvedMilestoneTitle = resolved
+      }
+    }
+  }
   errors.push(
     ...(await deps.runIssueChecks({
       body,
       labels,
       title,
       issueNumber,
-      currentMilestoneTitle: null,
-      resolvedMilestoneTitle: null,
+      currentMilestoneTitle,
+      resolvedMilestoneTitle,
       retryCommand
     }))
   )
@@ -2977,7 +3014,8 @@ export async function writeValidatedIssueEdit(input: {
     refuseFrozenSectionChange(issueRef, body, retryCommand, skipFrozenSectionsCheck ?? false)
     await validateTaskIssue(body, title, labels, retryCommand, parseIssueNumberFromRef(issueRef), {
       kind: 'edit',
-      issueRef
+      issueRef,
+      ghArgs
     })
   }
 

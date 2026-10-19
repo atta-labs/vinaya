@@ -34,6 +34,7 @@ import { type ClaimBinding, type ClaimVoice, evaluateClaimBindings } from './doc
 import { DOC_OWNERS_PATH, isUrlPointer, parseDocOwners, pointerToPath } from './doc-owners'
 import { globsOverlap } from './derive-section7'
 import { objectivesOf, objectivesVersion } from './objectives'
+import { isProtectedAdminPath, normalizeTouchedPath } from './protected-paths'
 import { isValidCitedFilePath } from './quoted-command'
 import { locateTestPlanSection } from './test-plan-section'
 
@@ -497,7 +498,13 @@ export function recordedBeyondSurfacePaths(body: string): string[] {
   return paths
 }
 
-export type SurfaceScopeResult = { ok: true } | { ok: false; violation: BeyondSurfacePath }
+/** A changed path that is a protected administrative path no `in:` glob of the Surface covers. */
+export type ProtectedPathViolation = { path: string; reason: 'protected' }
+
+export type SurfaceScopeResult =
+  | { ok: true }
+  | { ok: false; violation: BeyondSurfacePath }
+  | { ok: false; violation: ProtectedPathViolation }
 
 /**
  * **A task-branch PR's changed files outside its Issue's Surface must be
@@ -508,6 +515,12 @@ export type SurfaceScopeResult = { ok: true } | { ok: false; violation: BeyondSu
  * Surface and not recorded, with the `out:` glob it crosses or the `in:` list
  * it misses.
  *
+ * Decided first, and never excused by the record: a changed path that, once
+ * normalized, is a protected administrative path and is covered by no `in:`
+ * glob. An empty `in:` list covers no protected path — the broker's rule —
+ * unlike `beyondSurfacePaths`, where an empty `in:` covers everything. The
+ * `out:` globs play no part, as in the broker.
+ *
  * Pure: the caller (a check-bin adapter) resolves every input.
  */
 export function checkSurfaceScope(
@@ -515,6 +528,13 @@ export function checkSurfaceScope(
   surface: Pick<IssueSurface, 'in' | 'out'>,
   recorded: readonly string[]
 ): SurfaceScopeResult {
+  for (const path of changedFiles) {
+    if (!isProtectedAdminPath(path)) continue
+    const normalized = normalizeTouchedPath(path)
+    if (!surface.in.some((glob) => globCoversPath(glob, normalized))) {
+      return { ok: false, violation: { path, reason: 'protected' } }
+    }
+  }
   const listed = new Set(recorded)
   const violation = beyondSurfacePaths(changedFiles, surface).find((entry) => !listed.has(entry.path))
   return violation ? { ok: false, violation } : { ok: true }

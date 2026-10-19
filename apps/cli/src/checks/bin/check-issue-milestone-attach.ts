@@ -8,13 +8,13 @@
  * the Issue itself, never a pull request.
  *
  * Every fact this needs (`CURRENT_MILESTONE_TITLE`/`RESOLVED_MILESTONE_TITLE`)
- * is precomputed by the caller (`runIssueChecks`) rather than re-fetched here
- * — the caller already resolved both while running its own gates.
+ * is precomputed by the caller (`runIssueChecks`) rather than re-fetched here.
  *
  * scope: full, ownWorkflow: true — invoked by name from
- * `apps/cli/src/lib/forge-write.ts`'s `runIssueChecks` (Issue write time) and
- * from `packages/aeg-core/bin/verify-coherence.ts`'s open-Issue sweep, never
- * from `vinaya check --all`.
+ * `apps/cli/src/lib/forge-write.ts`'s `runIssueChecks`, which both callers
+ * of the edit-path gate reach: the Issue edit gate (`vinaya issue edit`) and
+ * the dispatch write gate (`vinaya task run`/`task brief`). Never from
+ * `vinaya check --all`, and never on create.
  */
 
 import { checkMilestoneAttach } from '@attalabs/aeg-core'

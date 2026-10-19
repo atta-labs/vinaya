@@ -13,6 +13,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
+import { parse } from 'yaml'
 import { DOC_OWNERS_PATH, LABELS, parseRegistry, VERDICT_MARKER_SOURCE, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
 import { AGENT_VENDORS, type AgentVendor } from '../src/lib/agent-vendors.js'
 import {
@@ -730,11 +731,11 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const files = generated()
 
-    // Twelve invocations (the archivist's issue-closed job and its daily catch-up add one each, and the checks, review and verdict jobs each write their forge snapshot with `pr snapshot`) — the "Export task-log artifact" step task-log-v1
+    // Fourteen invocations (the archivist's issue-closed job and its daily catch-up add one each, the checks, review and verdict jobs each write their forge snapshot with `pr snapshot`, and the review workflow's evidence-fresh job writes its own and runs `check evidence-fresh`) — the "Export task-log artifact" step task-log-v1
     // task 4 added is deleted outright (task-files-v1 6, O1/O2): telemetry
     // delivers live to a configured server destination now, so there is no
     // artifact left to export.
-    expect(occurrences(files, `${PUBLISHED_RUN} `)).toBe(12)
+    expect(occurrences(files, `${PUBLISHED_RUN} `)).toBe(14)
     // …and none of them unpinned. An unpinned `npx` is NOT "latest". Where
     // the generated checks workflow carries an install step — only when the
     // adopter declares `ci.setup` — a repo carrying `@attalabs/vinaya` as a
@@ -768,13 +769,14 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     }
     // Count, not just uniqueness: a set-only assertion would still pass if the
     // workflows lost their pin entirely and the hook alone contributed the
-    // single value. Twelve workflow invocations (O4, issue-545: the
+    // single value. Fourteen workflow invocations (O4, issue-545: the
     // archivist's post-merge job now also self-archives the tranche; its
     // issue-closed job does the same for a hand-closed task; the checks,
-    // review and verdict jobs each write their forge snapshot) plus one
-    // hook — the "Export task-log artifact" step task-log-v1 task 4 added is
+    // review and verdict jobs each write their forge snapshot; the review
+    // workflow's evidence-fresh job writes its own and runs the check) plus
+    // one hook — the "Export task-log artifact" step task-log-v1 task 4 added is
     // deleted outright (task-files-v1 6, O1/O2).
-    expect(specs).toHaveLength(13)
+    expect(specs).toHaveLength(15)
     expect([...new Set(specs)]).toEqual([OWN_VERSION])
   })
 
@@ -969,21 +971,22 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // its own setup-bun. `files`/`occurrences` cover the five paths in
     // `WORKFLOWS` above — body-checks.yml is not one of them (see the O2
     // boundary test, which reads it directly for that reason) — so:
-    // checks(1) + review(1) + verdict(1) + archivist(4) = 7.
+    // checks(1) + review(2: the review gate and evidence-fresh jobs) +
+    // verdict(1) + archivist(4) = 8.
     expect(occurrences(files, 'oven-sh/setup-bun@v2')).toBe(0)
-    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(7)
+    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(8)
 
     // The install runs against the PR's own dependency manifest.
-    expect(occurrences(files, 'bun install --frozen-lockfile --ignore-scripts')).toBe(7)
+    expect(occurrences(files, 'bun install --frozen-lockfile --ignore-scripts')).toBe(8)
     expect(occurrences(files, 'bun install --frozen-lockfile\n')).toBe(0)
 
     // O1: every install is preceded by a restore of Bun's own install cache,
     // keyed on the lockfile — so a second workflow on the same commit
     // installs nothing it doesn't already have. `vinaya-checks.yml`'s
     // install (O2, above) gets one too.
-    expect(occurrences(files, 'Restore Bun install cache')).toBe(7)
-    expect(occurrences(files, 'actions/cache@v4')).toBe(7)
-    expect(occurrences(files, `key: bun-\${{ runner.os }}-\${{ hashFiles('bun.lock', 'bun.lockb') }}`)).toBe(7)
+    expect(occurrences(files, 'Restore Bun install cache')).toBe(8)
+    expect(occurrences(files, 'actions/cache@v4')).toBe(8)
+    expect(occurrences(files, `key: bun-\${{ runner.os }}-\${{ hashFiles('bun.lock', 'bun.lockb') }}`)).toBe(8)
 
     // Default checkout writes GITHUB_TOKEN into .git/config as an http
     // extraheader — in the same workspace the build then executes.
@@ -1000,15 +1003,15 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const files = generated()
 
-    // All twelve invocations move — none left on the broken path. The
+    // All fourteen invocations move — none left on the broken path. The
     // "Export task-log artifact" step task-log-v1 task 4 added is deleted
     // outright (task-files-v1 6, O1/O2).
     expect(occurrences(files, 'npx --yes @attalabs/vinaya')).toBe(0)
-    expect(occurrences(files, VENDORED_BIN)).toBe(12)
-    // Every job in `WORKFLOWS` installs and builds its own copy (7 — see
+    expect(occurrences(files, VENDORED_BIN)).toBe(14)
+    // Every job in `WORKFLOWS` installs and builds its own copy (8 — see
     // the setup-bun count above).
-    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(7)
-    expect(occurrences(files, 'bun run --cwd apps/cli build')).toBe(7)
+    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(8)
+    expect(occurrences(files, 'bun run --cwd apps/cli build')).toBe(8)
 
     // Per-file: the exact subcommands, in the built-binary shape.
     const checks = files.get(CHECKS_WORKFLOW_PATH) ?? ''
@@ -1083,20 +1086,29 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       expect(review).toContain(expr('PR_NUMBER', 'github.event.pull_request.number'))
       expect(verdict).toContain(expr('PR_NUMBER', 'steps.pr.outputs.number'))
       expect(verdict).toContain(expr('PR_NUMBER', 'needs.evaluate.outputs.number'))
-      expect(review).not.toContain('BRANCH:')
+      // The review gate job never sees the head ref. The evidence-fresh job
+      // carries it once, on the shared pull request read, where it only
+      // decides whether that read waits for the body's `Closes #N`; the
+      // check step itself never receives it.
+      const [reviewGateJob = '', evidenceFreshJob = ''] = review.split('\n  vinaya-evidence-fresh:')
+      expect(reviewGateJob).not.toContain('BRANCH:')
+      expect(evidenceFreshJob.split('BRANCH:').length - 1).toBe(1)
+      expect(evidenceFreshJob.slice(evidenceFreshJob.indexOf('- name: Evidence freshness'))).not.toContain('BRANCH:')
       expect(verdict).not.toContain('BRANCH:')
       expect(verdict).not.toContain('headRefName')
       // GH_TOKEN on every step that talks to the forge: checks 3 (read the
-      // pull request over REST, write the forge snapshot, run checks), review 3 (read the
-      // pull request over REST, write the forge snapshot, review gate),
+      // pull request over REST, write the forge snapshot, run checks), review 7 (read the
+      // pull request over REST, write the forge snapshot, review gate; and
+      // for evidence-fresh: read the pull request over REST, write the forge
+      // snapshot, fetch the head's commits, evidence freshness),
       // verdict 4 (read the pull request over REST, write the forge
       // snapshot, evaluate, retrigger), archivist 6 (archive, the O4
       // self-archive step, the issue-closed self-archive step, dead-branch
       // audit, the daily tranche catch-up, direct-push audit), plus each
       // job's failure-only budget step and its two GraphQL budget steps
-      // (start and end): checks 1 + 2, review 1 + 2, verdict 2 + 4,
+      // (start and end): checks 1 + 2, review 2 + 4, verdict 2 + 4,
       // archivist 4 + 8.
-      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(40)
+      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(47)
     }
   })
 
@@ -1159,6 +1171,89 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // One job, one required check-run name — never a second job/name.
     expect(occurrences(new Map([[REVIEW_WORKFLOW_PATH, review]]), '\n  vinaya-review:')).toBe(1)
     expect(occurrences(new Map([[REVIEW_WORKFLOW_PATH, review]]), 'name: vinaya review gate')).toBe(1)
+  })
+
+  it('the review workflow runs evidence-fresh on every push and body edit, from default-branch code only, in BOTH shapes', async () => {
+    for (const vendored of [false, true]) {
+      rmSync(root, { recursive: true, force: true })
+      mkdirSync(root, { recursive: true })
+      if (vendored) vendorVinaya()
+      await captureStdout(() => runInit(['--yes'], makeDeps()))
+      const review = generated().get(REVIEW_WORKFLOW_PATH) ?? ''
+      const only = new Map([[REVIEW_WORKFLOW_PATH, review]])
+
+      // One review gate job and name, one evidence-fresh job and name.
+      expect(occurrences(only, '\n  vinaya-review:')).toBe(1)
+      expect(occurrences(only, 'name: vinaya review gate')).toBe(1)
+      expect(occurrences(only, '\n  vinaya-evidence-fresh:')).toBe(1)
+      expect(occurrences(only, 'name: vinaya check evidence-fresh')).toBe(1)
+
+      // A push runs it; the body edit that names the pushed head re-runs it.
+      const parsed = parse(review) as {
+        on: { pull_request_target: { types: string[] } }
+        jobs: Record<
+          string,
+          {
+            if?: unknown
+            steps: Array<{
+              name?: string
+              uses?: string
+              run?: string
+              with?: Record<string, unknown>
+              env?: Record<string, string>
+            }>
+          }
+        >
+      }
+      expect(parsed.on.pull_request_target.types).toContain('synchronize')
+      expect(parsed.on.pull_request_target.types).toContain('edited')
+
+      // No `if:`: a skipped job reports success for the same head.
+      const job = parsed.jobs['vinaya-evidence-fresh']
+      expect(job).toBeDefined()
+      expect(job?.if).toBeUndefined()
+      const steps = job?.steps ?? []
+
+      // Default-branch checkout only — never the head or merge ref.
+      const checkouts = steps.filter((step) => step.uses === 'actions/checkout@v4')
+      expect(checkouts).toHaveLength(1)
+      expect(checkouts[0]?.with?.ref).toBe(`${SIGIL}{{ github.event.repository.default_branch }}`)
+      expect(checkouts[0]?.with?.['persist-credentials']).toBe(false)
+      const [, evidenceFreshJob = ''] = review.split('\n  vinaya-evidence-fresh:')
+      expect(evidenceFreshJob).not.toContain('refs/pull/')
+      expect(evidenceFreshJob).not.toContain(expr('ref', 'github.event.pull_request.head.sha'))
+      expect(evidenceFreshJob).not.toContain('git checkout')
+      expect(evidenceFreshJob).not.toContain('git config')
+
+      // The head is fetched by sha as git objects, with the token scoped to
+      // that one command.
+      const fetch = steps.find((step) => step.name === 'Fetch the pull request head as git objects')
+      expect(fetch?.run).toContain('git fetch --no-tags --quiet origin "$HEAD_SHA"')
+      expect(fetch?.run).toContain('GIT_CONFIG_COUNT=1')
+      expect(fetch?.run).toContain('git cat-file -e "$HEAD_SHA^{commit}"')
+
+      // The body comes from the same read the checks workflow uses, exported
+      // as PR_BODY before the check runs.
+      const names = steps.map((step) => step.name ?? step.uses ?? '')
+      const readIdx = names.indexOf('Read the pull request over REST')
+      const snapshotIdx = names.indexOf('Write the forge snapshot')
+      const fetchIdx = names.indexOf('Fetch the pull request head as git objects')
+      const checkIdx = names.indexOf('Evidence freshness')
+      expect(readIdx).toBeGreaterThan(-1)
+      expect(readIdx).toBeLessThan(snapshotIdx)
+      expect(snapshotIdx).toBeLessThan(fetchIdx)
+      expect(fetchIdx).toBeLessThan(checkIdx)
+      expect(steps[snapshotIdx]?.run).toContain('echo "PR_BODY<<$DELIM"')
+
+      const check = steps[checkIdx]
+      expect(check?.run).toBe(
+        vendored ? `${VENDORED_BIN} check evidence-fresh` : `${PUBLISHED_RUN} check evidence-fresh`
+      )
+      expect(check?.env?.PR_NUMBER).toBe(`${SIGIL}{{ github.event.pull_request.number }}`)
+      expect(check?.env?.BASE_SHA).toBe(`${SIGIL}{{ github.event.pull_request.base.sha }}`)
+      expect(check?.env?.GH_TOKEN).toBe(`${SIGIL}{{ secrets.GITHUB_TOKEN }}`)
+      expect(check?.env).not.toHaveProperty('BRANCH')
+    }
   })
 
   it('O1/O2 (task-run-v1 18, #525): the pre-check honours the review waiver, its label and verdict-marker conditions derived from the same constants `check-review-gate.ts` uses', async () => {
