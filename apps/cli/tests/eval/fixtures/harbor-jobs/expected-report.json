@@ -45,10 +45,10 @@
       },
       "usage": {
         "wallTimeMs": 180000,
-        "inputTokens": 350,
-        "outputTokens": 60,
+        "inputTokens": 300,
+        "outputTokens": 50,
         "subscriptionQuota": 0.30000000000000004,
-        "estimatedCostUsd": 0.035
+        "estimatedCostUsd": 0.03
       },
       "quotaUnavailableTrials": 1
     }

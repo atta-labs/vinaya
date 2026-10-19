@@ -2,5 +2,9 @@
   "job_name": "redacted-feasibility-job",
   "n_attempts": 1,
   "agents": [{ "name": "vinaya", "import_path": "vinaya_harbor_agent:VinayaAgent", "model_name": "claude-opus-5-5" }],
-  "tasks": []
+  "tasks": [
+    { "path": "tasks/success", "name": "success" },
+    { "path": "tasks/failure", "name": "failure" },
+    { "path": "tasks/error", "name": "error" }
+  ]
 }

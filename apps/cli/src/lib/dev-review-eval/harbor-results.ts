@@ -39,6 +39,8 @@ export interface HarborPracticeRun extends StepOneResult {
 
 export interface HarborResultsOptions {
   jobDirectory: string
+  /** Directory Harbor resolved relative local-task paths from; defaults to this process's working directory. */
+  taskRoot?: string
   suite: StepOneRunSuite
   subscriptionAuth: true
   bootstrap: { method: BootstrapMethod; seed: number; resamples: number; confidence: number }
@@ -50,13 +52,20 @@ const text = (value: unknown): string | undefined => (typeof value === 'string' 
 const number = (value: unknown, fallback = 0): number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
 
-function taskPath(jobDirectory: string, trialDirectory: string, trialConfig: Json, trialLock: Json): string {
+function taskPath(
+  jobDirectory: string,
+  trialDirectory: string,
+  taskRoot: string,
+  trialConfig: Json,
+  trialLock: Json
+): string {
   const raw = text(trialLock.task?.path) ?? text(trialConfig.task?.path)
   if (raw === undefined)
     throw new HarborResultsRefused('missing_task_metadata', `${trialDirectory} does not name its task folder`)
   if (isAbsolute(raw)) return raw
-  const fromJob = resolve(jobDirectory, raw)
-  return existsSync(fromJob) ? fromJob : resolve(trialDirectory, raw)
+  const fromTaskRoot = resolve(taskRoot, raw)
+  const candidates = [fromTaskRoot, resolve(jobDirectory, raw), resolve(trialDirectory, raw)]
+  return candidates.find(existsSync) ?? fromTaskRoot
 }
 
 function metadata(path: string): { suite: string; rendererVersion: string } {
@@ -146,19 +155,23 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
     if (seen.has(taskId))
       throw new HarborResultsRefused('multiple_trials_per_task', `job has more than one trial for ${taskId}`)
     seen.add(taskId)
-    const task = taskPath(options.jobDirectory, directory, config, trialLock)
+    const task = taskPath(options.jobDirectory, directory, options.taskRoot ?? process.cwd(), config, trialLock)
     const taskMetadata = metadata(join(task, 'task.toml'))
     suites.add(taskMetadata.suite)
     renderers.add(taskMetadata.rendererVersion)
     const reward = result.verifier_result?.rewards?.reward
     const reason = unavailable(result, reward)
-    const trialUsage = json(join(directory, 'agent', 'vinaya-usage.json')) as unknown as StepOneUsage
+    const usagePath = join(directory, 'agent', 'vinaya-usage.json')
+    if (!existsSync(usagePath) && reason === undefined)
+      throw new HarborResultsRefused('invalid_input', `${directory} has no synced vinaya-usage.json`)
+    const trialUsage = existsSync(usagePath) ? json(usagePath) : null
     const measuredUsage: StepOneUsage = {
       wallTimeMs: wallTime(result),
-      inputTokens: number(trialUsage.inputTokens),
-      outputTokens: number(trialUsage.outputTokens),
-      subscriptionQuota: trialUsage.subscriptionQuota === null ? null : number(trialUsage.subscriptionQuota),
-      estimatedCostUsd: number(trialUsage.estimatedCostUsd)
+      inputTokens: number(trialUsage?.inputTokens),
+      outputTokens: number(trialUsage?.outputTokens),
+      subscriptionQuota:
+        trialUsage === null || trialUsage.subscriptionQuota === null ? null : number(trialUsage.subscriptionQuota),
+      estimatedCostUsd: number(trialUsage?.estimatedCostUsd)
     }
     const trial: StepOneTrialResult = {
       success: reward === 1 && reason === undefined,
@@ -235,6 +248,7 @@ export function harborResultsMain(argv: readonly string[]): number {
       )
     const report = readHarborPracticeRun({
       jobDirectory,
+      taskRoot: value(argv, 'task-root'),
       suite,
       subscriptionAuth: true,
       bootstrap: { method, seed, resamples, confidence }

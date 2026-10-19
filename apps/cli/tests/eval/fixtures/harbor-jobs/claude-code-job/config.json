@@ -2,5 +2,5 @@
   "job_name": "redacted-original-job",
   "n_attempts": 1,
   "agents": [{ "name": "claude-code", "model_name": "claude-opus-5-5" }],
-  "tasks": []
+  "tasks": [{ "path": "tasks/success", "name": "success" }]
 }

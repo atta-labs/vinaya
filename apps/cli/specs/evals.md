@@ -736,7 +736,9 @@ Practice runs of these layer-`G` role suites are read from completed Harbor
 jobs, not run by the host step-one command. Run
 `apps/cli/src/lib/dev-review-eval/harbor-results.ts` with the job directory,
 `--suite`, the required `--subscription-auth` declaration, `--bootstrap`,
-`--seed`, `--resamples`, `--confidence`, and optionally `--out`. The reader
+`--seed`, `--resamples`, `--confidence`, optionally `--task-root` for the
+working directory Harbor used to resolve relative local-task paths, and
+optionally `--out`. The reader
 accepts one Harbor `0.24.0` job of the `vinaya` agent, one trial per task and
 one suite per job. It refuses another Harbor version or agent, duplicate task
 trials, mixed suites, and a task without the converter's `task.toml`. Its

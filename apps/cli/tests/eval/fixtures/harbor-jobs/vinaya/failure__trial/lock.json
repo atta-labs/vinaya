@@ -6,5 +6,7 @@
     "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "path": "tasks/failure"
   },
-  "agent": { "name": "vinaya", "model_name": "claude-opus-5-5" }
+  "agent": { "name": "vinaya", "import_path": "vinaya_harbor_agent:VinayaAgent", "model_name": "claude-opus-5-5" },
+  "environment": { "type": "docker" },
+  "verifier": { "environment_mode": "shared" }
 }

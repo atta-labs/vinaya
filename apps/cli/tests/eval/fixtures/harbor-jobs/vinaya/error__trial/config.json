@@ -1,1 +1,8 @@
-{ "job_id": "redacted-job", "trial_name": "error__trial", "task": { "path": "tasks/error", "name": "error" } }
+{
+  "job_id": "redacted-job",
+  "trial_name": "error__trial",
+  "task": { "path": "tasks/error", "name": "error" },
+  "agent": { "name": "vinaya", "import_path": "vinaya_harbor_agent:VinayaAgent", "model_name": "claude-opus-5-5" },
+  "environment": { "type": "docker" },
+  "verifier": {}
+}

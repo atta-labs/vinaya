@@ -3,9 +3,21 @@
   "task_name": "failure",
   "trial_name": "failure__trial",
   "trial_uri": "redacted://failure",
+  "task_id": { "path": "tasks/failure" },
+  "source": "code-reviewer-quality-neutral.l5",
+  "task_checksum": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "config": {
+    "job_id": "redacted-job",
+    "trial_name": "failure__trial",
+    "task": { "path": "tasks/failure", "name": "failure" },
+    "agent": { "name": "vinaya", "model_name": "claude-opus-5-5" },
+    "environment": { "type": "docker" },
+    "verifier": {}
+  },
   "started_at": "2026-10-19T01:02:00Z",
   "finished_at": "2026-10-19T01:03:00Z",
   "agent_info": { "name": "vinaya", "version": "fixture", "model_info": { "name": "claude-opus-5-5" } },
+  "agent_result": { "n_input_tokens": 200, "n_cache_tokens": 0, "n_output_tokens": 30, "cost_usd": 0.02 },
   "verifier_result": { "rewards": { "reward": 0 } },
   "exception_info": null
 }

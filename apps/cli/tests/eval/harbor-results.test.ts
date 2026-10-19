@@ -26,8 +26,8 @@ function copyJob(): string {
   return job
 }
 
-function read(jobDirectory = join(fixtures, 'vinaya')) {
-  return readHarborPracticeRun({ jobDirectory, suite, subscriptionAuth: true, bootstrap })
+function read(jobDirectory = join(fixtures, 'vinaya'), taskRoot?: string) {
+  return readHarborPracticeRun({ jobDirectory, taskRoot, suite, subscriptionAuth: true, bootstrap })
 }
 
 function refusal(job: string, code: HarborResultsRefused['code']) {
@@ -66,14 +66,70 @@ describe('Harbor job results', () => {
     })
     expect(output.result.runs[0]?.usage).toMatchObject({
       wallTimeMs: 180_000,
-      inputTokens: 350,
-      outputTokens: 60,
-      estimatedCostUsd: 0.035
+      inputTokens: 300,
+      outputTokens: 50,
+      estimatedCostUsd: 0.03
     })
     expect(output.result.runs[0]?.usage.subscriptionQuota).toBeCloseTo(0.3)
   })
 
   it('refuses the original Claude Code job', () => refusal(join(fixtures, 'claude-code-job'), 'unsupported_agent'))
+
+  it('retains the native Harbor job and trial structures in both agent fixtures', () => {
+    for (const [jobName, trialNames] of [
+      ['vinaya', ['success__trial', 'failure__trial', 'error__trial']],
+      ['claude-code-job', ['success__trial']]
+    ] as const) {
+      const job = join(fixtures, jobName)
+      const lock = JSON.parse(readFileSync(join(job, 'lock.json'), 'utf8'))
+      expect(lock.trials).toHaveLength(trialNames.length)
+      for (const trialName of trialNames) {
+        const result = JSON.parse(readFileSync(join(job, trialName, 'result.json'), 'utf8'))
+        expect(Object.keys(result)).toEqual(
+          expect.arrayContaining([
+            'id',
+            'task_name',
+            'trial_name',
+            'trial_uri',
+            'task_id',
+            'task_checksum',
+            'config',
+            'agent_info',
+            'verifier_result',
+            'exception_info',
+            'started_at',
+            'finished_at'
+          ])
+        )
+        expect(Object.keys(result.config)).toEqual(expect.arrayContaining(['task', 'agent', 'environment', 'verifier']))
+        expect(readFileSync(join(job, trialName, 'verifier', 'reward.txt'), 'utf8')).toBeDefined()
+      }
+    }
+  })
+
+  it('returns an early errored trial unavailable when no usage file was written', () => {
+    const job = copyJob()
+    expect(read(job).trials.error).toMatchObject({
+      success: false,
+      unavailableReason: 'RuntimeError: agent exited before grading',
+      usage: { inputTokens: 0, outputTokens: 0, subscriptionQuota: null, estimatedCostUsd: 0 }
+    })
+  })
+
+  it('resolves a native relative task path from Harbor’s original working directory', () => {
+    const job = copyJob()
+    const root = join(job, '..', 'harbor-working-directory')
+    const task = join(root, 'tasks', suite, 'success')
+    cpSync(join(job, 'tasks', 'success'), task, { recursive: true })
+    for (const file of ['config.json', 'lock.json']) {
+      const path = join(job, 'success__trial', file)
+      const record = JSON.parse(readFileSync(path, 'utf8'))
+      record.task.path = `tasks/${suite}/success`
+      writeFileSync(path, JSON.stringify(record))
+    }
+    rmSync(join(job, 'tasks', 'success'), { recursive: true })
+    expect(read(job, root).trials.success?.success).toBe(true)
+  })
 
   it('refuses another Harbor version', () => {
     const job = copyJob()

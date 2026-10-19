@@ -1,0 +1,6 @@
+schema_version = "1.4"
+[metadata]
+case_id = "success"
+harbor_version = "0.24.0"
+suite = "code-reviewer-quality-neutral.l5"
+vinaya_renderer_version = "fixture-renderer-v1"
