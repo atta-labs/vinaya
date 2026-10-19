@@ -40,8 +40,9 @@ import {
 } from '@attalabs/aeg-core'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { resolveTrustedPrincipals } from '../../lib/config'
 import { resolveEdge } from '../edge-resolve'
+import { warnOnUnreadPrincipals } from '../principals-refusal'
 
 const CHECK_NAME = 'first-push-dispatch'
 
@@ -84,10 +85,24 @@ function prExistsFor(branch: string): boolean {
   }
 }
 
-/** Best-effort readiness classification — any forge failure degrades to `UNKNOWN` (fail-open), never a thrown error. */
+/**
+ * Best-effort readiness classification — any forge failure degrades to
+ * `UNKNOWN` (fail-open), never a thrown error. The one exception is the
+ * Principal list, resolved right after the repository and before any forge
+ * read, outside the catch-all: no Principal configured refuses the push (one
+ * `error` line, exit 1); a failed read is one warning and readiness `UNKNOWN`.
+ */
 async function classifyReadiness(trancheSlug: string, taskId: string): Promise<DispatchReadinessFact> {
   const repo = resolveRepo()
   if (!repo) return 'UNKNOWN'
+
+  let principalAllowlist: string[]
+  try {
+    principalAllowlist = resolveTrustedPrincipals()
+  } catch (err) {
+    warnOnUnreadPrincipals(CHECK_NAME, err)
+    return 'UNKNOWN'
+  }
 
   try {
     const source = createForgeSource({ owner: repo.owner, repo: repo.repo })
@@ -149,7 +164,7 @@ async function classifyReadiness(trancheSlug: string, taskId: string): Promise<D
       conflictsWith,
       priorTask: null,
       priorTrancheArchival: [],
-      principalAllowlist: resolvePrincipalAllowlist(loadTrustAnchorConfig())
+      principalAllowlist
     }
 
     return checkDispatchReadiness(input).ready ? 'READY' : 'NOT_READY'

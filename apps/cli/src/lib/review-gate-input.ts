@@ -57,7 +57,14 @@ import {
   type ReviewGateFact,
   type ReviewGateInput
 } from '@attalabs/aeg-core'
-import { loadTrustAnchorConfig, resolveGateCutovers, resolvePrincipalAllowlist, resolveReviewPolicy } from './config.js'
+import {
+  loadTrustAnchorConfig,
+  PRINCIPALS_FIX,
+  PrincipalsUnresolvedError,
+  resolveGateCutovers,
+  resolveReviewPolicy,
+  resolveTrustedPrincipals
+} from './config.js'
 import { incompleteForgeSnapshot, snapshotComments, snapshotIssue, snapshotPullRequest } from './forge-snapshot.js'
 import { patchIdAt } from './patch-id.js'
 
@@ -400,7 +407,8 @@ function fetchWaiverLabelActor(prNumber: number, label: string): string | null {
  * Every fact `checkReviewGate` judges PR `prNumber` on, assembled in the one
  * order the resolvers' own fail-closed guards depend on: the PR read, the
  * waiver label's actor, the true head, the base tip, the default-branch trust
- * anchor (principals and policy), then — only when the waiver is NOT
+ * anchor (the Principal list, refusing when it does not resolve, then the
+ * policy), then — only when the waiver is NOT
  * actor-verified — the objectives version and the frozen brief hash.
  *
  * The waiver pre-check sits in front of those last two deliberately: both fail
@@ -465,8 +473,22 @@ export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssemb
   // PR metadata is input data, never the source of the gate implementation or
   // its trust anchors. See `loadTrustAnchorConfig` in lib/config.ts for the
   // three failed attempts that established the config half of this boundary.
+  // The list has no built-in fallback: a repository that names no Principal,
+  // or whose list cannot be read, cannot have a verdict or a waiver trusted,
+  // so the gate fails closed here, before the waiver is checked.
+  let principalAllowlist: string[]
+  try {
+    principalAllowlist = resolveTrustedPrincipals()
+  } catch (err) {
+    if (!(err instanceof PrincipalsUnresolvedError)) throw err
+    return failure(
+      `review-gate severity:infra — ${err.message}`,
+      err.kind === 'not-configured'
+        ? `Ask a Principal to ${PRINCIPALS_FIX}, then re-run \`vinaya check review-gate\`.`
+        : "Confirm `gh auth status` passes (in CI, that the job's token is not empty) and the forge is reachable, then re-run `vinaya check review-gate`."
+    )
+  }
   const trustAnchorConfig = loadTrustAnchorConfig()
-  const principalAllowlist = resolvePrincipalAllowlist(trustAnchorConfig)
 
   // Which severities block is repository policy — resolved from the SAME
   // default-branch trust-anchor read as `principals`, never from the PR's own

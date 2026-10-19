@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -27,6 +27,35 @@ function initFixture(name: string): string {
   git(root, ['add', 'README.md'])
   git(root, ['commit', '-q', '-m', 'Chore: initial commit'])
   return root
+}
+
+/**
+ * Env for a spawned check that resolves the Principal list: a fake `gh` first
+ * on `PATH` answers the default-branch `vinaya.config.json` read with a
+ * configured `principals` (as `gh --jq .content` would print it) and hands
+ * every other invocation to the real `gh`, so the check reaches the same
+ * forge reads it does without the stub.
+ */
+function principalsGhEnv(root: string): NodeJS.ProcessEnv {
+  // Inside `.git`, so the stub never shows in the fixture's own working tree.
+  const binDir = join(root, '.git', 'fake-gh-bin')
+  mkdirSync(binDir, { recursive: true })
+  const config = Buffer.from(JSON.stringify({ principals: ['fixture-principal'] })).toString('base64')
+  const path = process.env.PATH ?? ''
+  writeFileSync(
+    join(binDir, 'gh'),
+    [
+      '#!/bin/sh',
+      'case "$*" in',
+      `  "api repos/"*"/contents/vinaya.config.json --jq .content") echo '${config}'; exit 0 ;;`,
+      'esac',
+      `real=$(PATH='${path}' command -v gh) || { echo "gh: command not found" >&2; exit 127; }`,
+      'exec "$real" "$@"'
+    ].join('\n') + '\n'
+  )
+  chmodSync(join(binDir, 'gh'), 0o755)
+  // An inherited `AEG_REPO` would point the Principal read at another repository than the fixture's.
+  return { ...process.env, PATH: `${binDir}:${path}`, AEG_REPO: undefined }
 }
 
 describe('RC1 — packageRoot() resolves regardless of the calling module’s depth', () => {
@@ -189,7 +218,7 @@ describe('RC2 — coherence/dispatch-readiness evaluate the CALLER’s repo, nev
       git(root, ['checkout', '-b', 'task/fixture-tranche-xyz/1'])
 
       const binPath = join(import.meta.dir, '..', '..', 'src', 'checks', 'bin', 'check-dispatch-readiness.ts')
-      const result = spawnSync('bun', [binPath], { cwd: root, encoding: 'utf8', env: { ...process.env } })
+      const result = spawnSync('bun', [binPath], { cwd: root, encoding: 'utf8', env: principalsGhEnv(root) })
       const combined = `${result.stdout}\n${result.stderr}`
 
       // Positive proof: the check resolved and acted on the FIXTURE's own
@@ -217,7 +246,7 @@ describe('RC2 — coherence/dispatch-readiness evaluate the CALLER’s repo, nev
       git(root, ['checkout', '-b', 'task/fixture-tranche-abc/1'])
 
       const binPath = join(import.meta.dir, '..', '..', 'src', 'checks', 'bin', 'check-coherence.ts')
-      const result = spawnSync('bun', [binPath], { cwd: root, encoding: 'utf8', env: { ...process.env } })
+      const result = spawnSync('bun', [binPath], { cwd: root, encoding: 'utf8', env: principalsGhEnv(root) })
       const combined = `${result.stdout}\n${result.stderr}`
 
       // Positive proof: the underlying `gh api` call it shells out to
@@ -258,7 +287,7 @@ describe('RC2 — coherence/dispatch-readiness evaluate the CALLER’s repo, nev
       const result = spawnSync('bun', [binPath], {
         cwd: root,
         encoding: 'utf8',
-        env: { ...process.env, BASE_SHA: baseSha, PR_BODY: undefined }
+        env: { ...principalsGhEnv(root), BASE_SHA: baseSha, PR_BODY: undefined }
       })
       const combined = `${result.stdout}\n${result.stderr}`
 

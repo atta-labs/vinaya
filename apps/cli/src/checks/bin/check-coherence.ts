@@ -58,7 +58,8 @@ import {
   type TaskEntry
 } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolvePrincipalAllowlist } from '../../lib/config'
+import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../lib/config'
+import { warnOnUnreadPrincipals } from '../principals-refusal'
 
 const CHECK_NAME = 'coherence'
 
@@ -322,6 +323,17 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
+  // The Principal list resolves before any forge read, so its refusal is never
+  // hidden behind a failed tranche read. Only rule A1 (whose hand-close of an
+  // Issue counts) needs it: no Principal configured refuses the check, while a
+  // failed read is one warning and A1 alone goes unevaluated.
+  let a1Principals: string[] | null = null
+  try {
+    a1Principals = resolveTrustedPrincipals()
+  } catch (err) {
+    warnOnUnreadPrincipals(CHECK_NAME, err)
+  }
+
   // The index read comes first: it supplies the branch tranche's own facts, so
   // the synchronous Milestone reader (whose `gh` child writes raw lines to
   // this process's stderr) is never reached.
@@ -379,7 +391,7 @@ async function main(): Promise<void> {
     facts: snapshot.facts.get(t.id)
   }))
 
-  results.push(checkA1(enrichedEntries, resolvePrincipalAllowlist(loadTrustAnchorConfig())))
+  if (a1Principals !== null) results.push(checkA1(enrichedEntries, a1Principals))
   results.push(checkA3(enrichedEntries))
   results.push(checkT1(enrichedEntries))
   results.push(checkD1(enrichedEntries, issueToEntry(enrichedEntries), taskToEntry(enrichedEntries, slug)))

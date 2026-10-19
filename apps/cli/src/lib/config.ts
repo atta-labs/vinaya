@@ -1134,9 +1134,9 @@ function stripGlobalOnlyKeys(config: VinayaConfig, path: string): VinayaConfig {
  * Resolves the trusted-principal allowlist for this repo: the repo-local
  * `principals` field when set, else `PRINCIPAL_ALLOWLIST` (this monorepo's
  * own hardcoded default — unaffected when no config sets `principals`, the
- * every-existing-install-stays-identical case). Shared by every check bin
- * that verifies a review verdict or a waiver-label actor, so they can never
- * resolve this differently from each other.
+ * every-existing-install-stays-identical case). Kept for the command and
+ * library callers only: every check resolves the list through
+ * `resolveTrustedPrincipals`, which refuses where this falls back.
  *
  * **Callers MUST pass `loadTrustAnchorConfig()`, never `loadConfig()`, and
  * never any config derived from local git or the working tree.** `principals`
@@ -1586,6 +1586,9 @@ function readTrustAnchorConfigAtRef(ref: string): string {
   return Buffer.from(raw, 'utf-8').toString('base64')
 }
 
+/** What both fetchers throw when `trustAnchorRepo()` resolves no repository — `resolveTrustedPrincipals` reads it as "not configured", never as a failed read. */
+const NO_TRUST_ANCHOR_REPO_MESSAGE = 'could not resolve repo identity for the trust-anchor read'
+
 /**
  * Fetches `vinaya.config.json` from the repository's DEFAULT BRANCH via the
  * GitHub API — no `ref` parameter, so GitHub itself picks the default branch
@@ -1597,7 +1600,7 @@ function ghFetchTrustAnchorConfig(): string {
   const probeRef = resolveCiTrustAnchorProbeRef()
   if (probeRef) return readTrustAnchorConfigAtRef(probeRef)
   const repo = trustAnchorRepo()
-  if (!repo) throw new Error('could not resolve repo identity for the trust-anchor read')
+  if (!repo) throw new Error(NO_TRUST_ANCHOR_REPO_MESSAGE)
   return execFileSync('gh', ['api', `repos/${repo}/contents/${LOCAL_CONFIG_FILENAME}`, '--jq', '.content'], {
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe']
@@ -1615,7 +1618,7 @@ async function ghFetchTrustAnchorConfigAsync(): Promise<string> {
     return Buffer.from(stdout, 'utf-8').toString('base64')
   }
   const repo = await trustAnchorRepoAsync()
-  if (!repo) throw new Error('could not resolve repo identity for the trust-anchor read')
+  if (!repo) throw new Error(NO_TRUST_ANCHOR_REPO_MESSAGE)
   const { stdout } = await execFileAsync(
     'gh',
     ['api', `repos/${repo}/contents/${LOCAL_CONFIG_FILENAME}`, '--jq', '.content'],
@@ -1632,7 +1635,10 @@ async function ghFetchTrustAnchorConfigAsync(): Promise<string> {
 /**
  * The trust-anchor config — `vinaya.config.json` as it exists on the
  * repository's default branch per GitHub's own API, never the PR's checkout.
- * The ONLY sanctioned input to `resolvePrincipalAllowlist` in any check.
+ * The ONLY sanctioned input to `resolvePrincipalAllowlist`. A check never
+ * calls that fallback resolver: it resolves the Principal list through
+ * `resolveTrustedPrincipals`, which makes this same read and refuses instead
+ * of falling back.
  *
  * Every failure mode (no repo identity, `gh` unauthenticated or unreachable,
  * file absent on the default branch, malformed JSON, schema mismatch) returns
@@ -1737,6 +1743,89 @@ export function loadTrustAnchorConfigOrThrow(
     throw new Error(`could not read the trust-anchor config from the default branch: ${firstLine(err)}`)
   }
   return parseTrustAnchorContent(base64)
+}
+
+/**
+ * Why `resolveTrustedPrincipals` found no Principal list: `not-configured` —
+ * no repository resolves for the read, the default branch has no
+ * `vinaya.config.json`, or the file sets no valid `principals` — or
+ * `read-failed` — the forge read itself failed (no `gh` authentication, an
+ * empty CI token, the network).
+ */
+export type PrincipalsUnresolvedKind = 'not-configured' | 'read-failed'
+
+/** The one error `resolveTrustedPrincipals` throws; `message` names the fix (`not-configured`) or the reason (`read-failed`). */
+export class PrincipalsUnresolvedError extends Error {
+  readonly kind: PrincipalsUnresolvedKind
+
+  constructor(kind: PrincipalsUnresolvedKind, message: string) {
+    super(message)
+    this.name = 'PrincipalsUnresolvedError'
+    this.kind = kind
+  }
+}
+
+/** The fix every `not-configured` refusal names. */
+export const PRINCIPALS_FIX = 'add "principals": [...] to vinaya.config.json on the default branch'
+
+/**
+ * Why a fetch failed, in one line: `gh`'s own first stderr line when it wrote
+ * one — `execFileSync`'s message line 1 is only "Command failed: <command>",
+ * which names no reason — else the message's first line.
+ */
+function fetchFailureReason(err: unknown): string {
+  const stderr = (err as { stderr?: Buffer | string })?.stderr
+  const text = (typeof stderr === 'string' ? stderr : (stderr?.toString() ?? '')).trim()
+  return text.split('\n')[0]?.trim() || firstLine(err)
+}
+
+function principalsNotConfigured(why: string): PrincipalsUnresolvedError {
+  return new PrincipalsUnresolvedError('not-configured', `no Principal is configured (${why}) — ${PRINCIPALS_FIX}.`)
+}
+
+/**
+ * The Principal list, read from `principals` in the default branch's
+ * `vinaya.config.json` through the same forge read as `loadTrustAnchorConfig`
+ * (see its doc comment for why it is never local git, the working tree or an
+ * environment variable) — with no built-in fallback. Where
+ * `resolvePrincipalAllowlist` falls back to vinaya's own Principal, this
+ * throws `PrincipalsUnresolvedError`, so a check that decides who counts as a
+ * Principal refuses rather than trusting someone the repository never named.
+ *
+ * It follows `loadTrustAnchorConfigOrThrow`'s distinction: a missing file
+ * (`isMissingFileError`), no resolvable repository, a file with no
+ * `principals` and a file that fails the configuration schema are
+ * `not-configured`; any other fetch failure is `read-failed`. It never writes
+ * a warning itself — each caller turns the error into its own `CheckError`
+ * line or failure result.
+ *
+ * `fetcher` is injectable for tests ONLY; production callers pass nothing.
+ */
+export function resolveTrustedPrincipals(fetcher: TrustAnchorFetcher = ghFetchTrustAnchorConfig): string[] {
+  let content: string
+  try {
+    content = fetcher()
+  } catch (err) {
+    if ((err as Error)?.message === NO_TRUST_ANCHOR_REPO_MESSAGE) {
+      throw principalsNotConfigured('no repository resolves for the read')
+    }
+    if (isMissingFileError(err)) throw principalsNotConfigured('the default branch has no vinaya.config.json')
+    throw new PrincipalsUnresolvedError(
+      'read-failed',
+      `could not read "principals" from vinaya.config.json on the default branch: ${fetchFailureReason(err)}`
+    )
+  }
+  const unusable = { why: '' }
+  const config = parseTrustAnchorContent(content, (why) => {
+    unusable.why = why
+  })
+  if (config === null) {
+    throw principalsNotConfigured(
+      `vinaya.config.json on the default branch ${unusable.why ? `is unusable: ${unusable.why}` : 'is empty'}`
+    )
+  }
+  if (!config.principals) throw principalsNotConfigured('vinaya.config.json on the default branch sets no "principals"')
+  return config.principals
 }
 
 /**

@@ -355,6 +355,13 @@ describe('the check refuses when the diff cannot be recomputed', () => {
 describe('the check refuses a placeholder body once a developer round has already posted (security review, HIGH)', () => {
   const BIN = join(import.meta.dir, '../../src/checks/bin/check-evidence-fresh.ts')
 
+  // The developer-round marker counts only from a Principal, read from the
+  // default branch's `vinaya.config.json`: the stub serves one naming
+  // `daniboomerang`, addressed through this repository identity, never the
+  // pre-merge probe's local ref.
+  const TRUST_ANCHOR_ENV = { GITHUB_REPOSITORY: 'atta-labs/vinaya', VINAYA_CI_CONFIG_PROBE_REF: '' }
+  const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
+
   function fixtureRepo(): { dir: string; head: string } {
     const dir = mkdtempSync(join(tmpdir(), 'ef-placeholder-'))
     const g = (args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
@@ -379,6 +386,10 @@ describe('the check refuses a placeholder body once a developer round has alread
     writeFileSync(
       ghPath,
       `#!/bin/sh
+if [ "$1" = "api" ] && [ "$2" = "repos/atta-labs/vinaya/contents/vinaya.config.json" ]; then
+  echo '${PRINCIPALS_CONFIG_B64}'
+  exit 0
+fi
 if [ "$5" = "headRefOid,baseRefName" ]; then
   echo '{"headRefOid":"${head}","baseRefName":"main"}'
   exit 0
@@ -408,6 +419,7 @@ exit 1
         env: {
           ...process.env,
           PATH: `${ghDir}:${process.env.PATH}`,
+          ...TRUST_ANCHOR_ENV,
           BASE_SHA: 'main',
           PR_BODY: placeholderBody(),
           PR_NUMBER: '1'
@@ -432,6 +444,7 @@ exit 1
         env: {
           ...process.env,
           PATH: `${ghDir}:${process.env.PATH}`,
+          ...TRUST_ANCHOR_ENV,
           BASE_SHA: 'main',
           PR_BODY: placeholderBody(),
           PR_NUMBER: '1'
@@ -460,6 +473,7 @@ exit 1
         env: {
           ...process.env,
           PATH: `${ghDir}:${process.env.PATH}`,
+          ...TRUST_ANCHOR_ENV,
           BASE_SHA: 'main',
           PR_BODY: placeholderBody(),
           PR_NUMBER: '1'
@@ -486,6 +500,7 @@ exit 1
         env: {
           ...process.env,
           PATH: `${ghDir}:${process.env.PATH}`,
+          ...TRUST_ANCHOR_ENV,
           BASE_SHA: 'main',
           PR_BODY: placeholderBody(),
           PR_NUMBER: '1'
