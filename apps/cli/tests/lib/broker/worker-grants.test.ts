@@ -53,7 +53,14 @@ describe('Worker grant matrix', () => {
       let posts = 0
       const url = requestEffect(deps, worker, {
         operation,
-        target: scopeTarget(2, operation === 'branch-push' ? 'task/worker-isolation-v1/2' : 'pr:1234'),
+        target: scopeTarget(
+          2,
+          operation === 'branch-push'
+            ? 'task/worker-isolation-v1/2'
+            : operation === 'branch-lease-push'
+              ? 'refs/heads/task/worker-isolation-v1/2'
+              : 'pr:1234'
+        ),
         inputVersion: 1,
         key: `matrix-${operation}`,
         payload: operation,
@@ -92,6 +99,11 @@ describe('Worker grant matrix', () => {
       expect(posts).toBe(0)
     })
   }
+
+  it("grants 'branch-lease-push' after 'branch-push', which stays the first Worker operation", () => {
+    expect(WORKER_OPERATIONS[0]).toBe('branch-push')
+    expect(WORKER_OPERATIONS.indexOf('branch-lease-push')).toBe(1)
+  })
 
   it('WORKER_OPERATIONS and NEVER_GRANTED_OPERATIONS share no operation name', () => {
     const denied = new Set<string>(NEVER_GRANTED_OPERATIONS)

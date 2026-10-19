@@ -44,7 +44,7 @@ permitted/forbidden lists and the security rationale behind each.
 | Reviewer | Reads the repository at a judged head; writes findings to a driver-chosen work directory; never holds any forge-write credential | Same `worker-boundary.ts` profile, with every forge-write grant denied |
 | Operator | The task-scoped external client described in Section A | `packages/aeg-core/src/task-tools.ts`'s `OPERATOR_TOOL_GRANT` + `apps/cli/src/lib/task-tools/router.ts`'s `refuseUngrantedTool` |
 | Repository subprocess | Reads/writes only what the Controller explicitly constructs into its environment | `apps/cli/src/checks/runner.ts`'s `buildCheckEnv` (never `{ ...process.env }` spread) |
-| Broker | Grants Worker `branch-push`/`pr-open`/`pr-comment` and Operator `task-execute`/`task-observe`; refuses `ruling-post`/`criteria-edit`/`protected-merge`/`review-publish` unconditionally to both | `apps/cli/src/lib/broker.ts` |
+| Broker | Grants Worker `branch-push`/`branch-lease-push`/`pr-open`/`pr-comment` (a `branch-lease-push` only to a `refs/heads/task/` target, and requested only by the driver's own publication) and Operator `task-execute`/`task-observe`; refuses `ruling-post`/`criteria-edit`/`protected-merge`/`review-publish` unconditionally to both | `apps/cli/src/lib/broker.ts` |
 
 `dispatchRole` (`dispatch.ts`) is the one chokepoint every Worker/Reviewer
 subprocess launch passes through, regardless of vendor — the process

@@ -129,6 +129,32 @@ driver's conflict-retry path uses the same rule, and measures against
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:export function defaultReadMergedDefaultCommit( -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:['ls-remote', remoteUrl, 'refs/heads/main'] -->
 
+**Main drift on a protected path is the driver's to rebase.** A protected
+administrative path the task's Surface does not cover would refuse the push in
+the Broker. Before that push, `publish_changes` reads the default branch's tip
+as the remote reports it (`readDefaultBranchTip`) and sorts each changed path
+against it (`classifyAgainstDefaultTip`): a path whose content at the head
+equals the tip's is no task change and leaves the push's `touchedPaths`; a path
+whose content equals the merge base of the head and the tip, and differs from
+the tip, is main drift — the default branch moved it, the task never did.
+When every blocking path is main drift, the driver rebases the task's own
+commits onto the tip in the worktree (`rebaseOntoDefaultTip`), re-records the
+head and the base at the tip the way the fast-forward rule does, and pushes
+with `--force-with-lease` against the remote head read before the publish,
+through the Broker's `branch-lease-push` operation (`pushTaskBranchWithLease`);
+the same `publish_changes` call lands, and the driver log names the branch,
+the tip, and the old and new heads. A rebase that conflicts is aborted and the
+head checked back where it was; that, a range holding a merge commit, or a
+rejected lease pushes nothing and returns a `conflict` refusal naming the files
+and the tip, with the `git merge --no-commit <tip>` instruction, carried by the
+failed-push path. A protected path the task changed is refused as before, an
+unreadable tip or classification keeps every path counted, and the
+`surface-scope` check likewise drops a changed path whose content equals its
+base.
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:export function defaultClassifyAgainstDefaultTip( -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:export function defaultRebaseOntoDefaultTip( -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:`--force-with-lease=refs/heads/${branch}:${lease}` -->
+
 `vinaya task run <tranche> <n> --agent <claude|codex>` (`apps/cli/src/commands/task-run.ts`, `taskRunCommand`) is the normal entry: it composes `task brief`'s own preparation (renders and freezes the brief, starts no agent) with this loop, so one command runs the whole way from a planned Issue — `n` a tranche task ordinal there, resolved to its real forge Issue by preparation — to a reviewed pull request, exactly one developer started. `dev-review-loop` below is `task run`'s own debug/direct entry, kept for resuming a paused run and for driving the loop straight off an Issue number without going through preparation:
 
 ```

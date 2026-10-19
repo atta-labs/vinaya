@@ -12,7 +12,12 @@
  *
  * `scope: diff` — a branch's own changed-file list decides this, the same
  * `git diff --name-only <base>...HEAD` every sibling diff-scoped adapter
- * here uses (`single-plan-pr`, `closes-n`, …). `requiresOpenPr`: the record
+ * here uses (`single-plan-pr`, `closes-n`, …), kept only where the path's
+ * content at HEAD also differs from that base (`git diff --name-only <base>
+ * HEAD`): a path the branch holds exactly as the base does is no change of
+ * the task's, so a branch level with the default branch never trips the
+ * protected-path rule. When that second read fails, the list is used
+ * unfiltered. `requiresOpenPr`: the record
  * lives in the pull request body (`PR_BODY`, or the file `PR_BODY_FILE`
  * names), which exists only once the pull request is open, so the local
  * hooks skip this check and CI, which passes the body, runs it.
@@ -76,6 +81,24 @@ function changedFiles(base: string): string[] {
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean)
+}
+
+/** Paths whose content at HEAD differs from `base`, or `null` when git cannot answer — never an empty list standing in for a failed read. */
+function pathsDifferingFromBase(base: string): Set<string> | null {
+  try {
+    const out = execFileSync('git', ['diff', '--name-only', base, 'HEAD'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    return new Set(
+      out
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    )
+  } catch {
+    return null
+  }
 }
 
 /** Same shape every other check-bin adapter here resolves the repo with — see `check-branch-topology.ts`'s identical helper. */
@@ -204,8 +227,14 @@ async function checkAgainstIssue(issue: number): Promise<void> {
   }
 
   const base = process.env.BASE_SHA || 'origin/main'
+  let diffBase = base
   let files = changedFiles(base)
-  if (files.length === 0) files = changedFiles('main')
+  if (files.length === 0) {
+    diffBase = 'main'
+    files = changedFiles(diffBase)
+  }
+  const differing = pathsDifferingFromBase(diffBase)
+  if (differing !== null) files = files.filter((file) => differing.has(file))
 
   const result = checkSurfaceScope(files, surface.value, recordedBeyondSurfacePaths(resolvePrBody()))
   if (!result.ok) {

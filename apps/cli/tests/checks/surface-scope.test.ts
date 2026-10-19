@@ -165,6 +165,49 @@ describe('surface-scope check-bin — a protected administrative path the Surfac
   })
 })
 
+describe('surface-scope check-bin — a changed path whose content equals the base is not counted', () => {
+  const surface = '## Surface\n\nin: apps/cli/src\nout: packages/aeg-forge-state\n'
+
+  /** The fixture's branch changed `aeg-root/enforcement.md`; the default branch then lands `mainContent` there. */
+  function withMainChange(files: string[], mainContent: string): { root: string; binDir: string } {
+    const fixture = issueBranchFixture(files, surface)
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: fixture.root })
+    mkdirSync(join(fixture.root, 'aeg-root'), { recursive: true })
+    writeFileSync(join(fixture.root, 'aeg-root', 'enforcement.md'), mainContent)
+    execFileSync('git', ['add', '-A'], { cwd: fixture.root })
+    execFileSync('git', ['commit', '-q', '-m', 'Chore: main changes enforcement'], { cwd: fixture.root })
+    execFileSync('git', ['checkout', '-q', 'task/issue-541'], { cwd: fixture.root })
+    return fixture
+  }
+
+  it('passes a branch whose only protected-path difference holds exactly the content the base holds', () => {
+    // The fixture writes `export {}\n` into every changed file.
+    const fixture = withMainChange(['aeg-root/enforcement.md', 'apps/cli/src/in-scope.ts'], 'export {}\n')
+    try {
+      const result = runIssueBranch(fixture, '## Scope\n')
+      expect(result.stderr.toString()).toBe('')
+      expect(result.exitCode).toBe(0)
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true })
+      rmSync(fixture.binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('still fails a branch that changed a protected path to content the base does not hold', () => {
+    const fixture = withMainChange(['aeg-root/enforcement.md', 'apps/cli/src/in-scope.ts'], '# main\n')
+    try {
+      const result = runIssueBranch(fixture, '## Scope\n')
+      expect(result.exitCode).toBe(1)
+      const error = JSON.parse(result.stderr.toString().trim())
+      expect(error.file).toBe('aeg-root/enforcement.md')
+      expect(error.message).toContain('protected administrative path')
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true })
+      rmSync(fixture.binDir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('surface-scope check-bin — dormancy is narrowed to ONE reason: not a task branch at all', () => {
   it('a branch not shaped like task/<tranche>/<n> stays dormant — exit 0, no output, no network/forge call attempted', () => {
     const root = join(tmpdir(), `vinaya-surface-scope-${Date.now()}-${Math.random().toString(36).slice(2)}`)

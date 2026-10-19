@@ -46,7 +46,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { guardedSpawnSync } from './driver-tool-guard.js'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import { configPath, loadTrustAnchorConfig, resolveSecurityScanCommand } from './config.js'
 import { buildDeveloperDeltaPacket, buildDeveloperFullPacket, renderContextPacket } from './context-packet.js'
@@ -81,7 +81,9 @@ import {
   isConcludedJournal,
   type IssueSurface,
   globCoversPath,
+  isProtectedAdminPath,
   manifestAsEchoed,
+  normalizeTouchedPath,
   nextRoundNumber,
   pauseBoundRulingFromResolution,
   parseIssueSurface,
@@ -824,6 +826,39 @@ export type LoopDeps = {
     sinceBase: string | null,
     remoteUrl: string | null
   ) => MergedDefaultCommit | null
+  /**
+   * Sorts `paths` by how `head` relates to the default branch's `tip`:
+   * `sameAsTip` when the path's content at `head` equals the tip's,
+   * `mainDrift` when it equals the merge base of `head` and `tip` and differs
+   * from the tip (the default branch changed it, the task did not), else
+   * `taskChanged`. `null` when git cannot answer — never read as drift.
+   */
+  classifyAgainstDefaultTip: (
+    worktreePath: string,
+    head: string,
+    tip: string,
+    paths: readonly string[],
+    remoteUrl: string | null
+  ) => DefaultTipClassification | null
+  /**
+   * Rebases the worktree's own commits onto `tip` (`git rebase <tip>`). On a
+   * conflict the rebase is aborted and the head checked back at its old value
+   * before `{ ok: false }` returns the conflicting files; a worktree with
+   * uncommitted tracked changes, or a range from the merge base to the head
+   * holding a merge commit, is refused without rebasing.
+   */
+  rebaseOntoDefaultTip: (worktreePath: string, tip: string, remoteUrl: string | null) => RebaseOntoTipResult
+  /**
+   * Pushes the task branch with `--force-with-lease` against
+   * `expectedRemoteHead` — the remote head read before the publish — through
+   * the Broker's `branch-lease-push` operation, authenticated like
+   * `pushTaskBranch`. Only the driver's own publication calls it, after its
+   * own rebase. `lease: true` marks a push git refused because the remote
+   * branch is no longer at `expectedRemoteHead`.
+   */
+  pushTaskBranchWithLease: (
+    input: Parameters<LoopDeps['pushTaskBranch']>[0] & { expectedRemoteHead: string }
+  ) => { ok: true } | { ok: false; refusal: string; hook: boolean; lease: boolean }
   /** O1/O2: the worktree's own diff text since `base`, for the after-turn credential scan. `null` when unreadable. */
   gitWorktreeDiffText: (worktreePath: string, base: string) => string | null
   /** Builds this repository's vendored CLI before the driver's commit when its ignored bin is absent; ordinary adopters are a no-op. */
@@ -1309,10 +1344,7 @@ export function defaultReadMergedDefaultCommit(
 ): MergedDefaultCommit | null {
   const head = defaultReadDefaultBranchTip(remoteUrl)
   if (!remoteUrl || head === null) return null
-  if (gitOk(worktreePath, ['cat-file', '-e', `${head}^{commit}`]) === null) {
-    gitOk(worktreePath, ['fetch', '-q', remoteUrl, 'refs/heads/main'])
-    if (gitOk(worktreePath, ['cat-file', '-e', `${head}^{commit}`]) === null) return null
-  }
+  if (!ensureDefaultTipObject(worktreePath, head, remoteUrl)) return null
   const lines = (args: string[]): string[] =>
     (gitOk(worktreePath, args) ?? '').split('\n').filter((l) => l.trim().length > 0)
   const vetted = (sha: string): MergedDefaultCommit | null => {
@@ -1356,6 +1388,146 @@ export function defaultReadDefaultBranchTip(remoteUrl: string | null): string | 
   }
   const head = remote.split(/\s+/)[0]
   return head && /^[0-9a-f]{40,64}$/.test(head) ? head : null
+}
+
+/**
+ * Makes the default branch's `tip` commit present in the worktree's
+ * repository, fetching the default branch from the driver-built `remoteUrl`
+ * when it is missing — never through the worktree's own `origin`. The fetched
+ * object is only used under the hash the remote reported. `false` when it
+ * stays missing.
+ */
+function ensureDefaultTipObject(worktreePath: string, tip: string, remoteUrl: string | null): boolean {
+  if (gitOk(worktreePath, ['cat-file', '-e', `${tip}^{commit}`]) !== null) return true
+  if (!remoteUrl) return false
+  gitOk(worktreePath, ['fetch', '-q', remoteUrl, 'refs/heads/main'])
+  return gitOk(worktreePath, ['cat-file', '-e', `${tip}^{commit}`]) !== null
+}
+
+/** How each changed path relates to the default branch's tip (`classifyAgainstDefaultTip`). */
+export type DefaultTipClassification = { sameAsTip: string[]; mainDrift: string[]; taskChanged: string[] }
+
+/** Each path's `<mode> <object>` at `commit`, absent when the commit has no such path; `null` when git cannot answer. */
+function treeEntriesAt(worktreePath: string, commit: string, paths: readonly string[]): Map<string, string> | null {
+  const out = gitOk(worktreePath, ['--literal-pathspecs', 'ls-tree', '-r', '-z', '--full-tree', commit, '--', ...paths])
+  if (out === null) return null
+  const entries = new Map<string, string>()
+  for (const record of out.split('\0')) {
+    const tab = record.indexOf('\t')
+    if (tab < 0) continue
+    const [mode, , object] = record.slice(0, tab).split(' ')
+    entries.set(record.slice(tab + 1), `${mode} ${object}`)
+  }
+  return entries
+}
+
+/**
+ * Sorts `paths` by their content at `head`, at the default branch's `tip`, and
+ * at the merge base of the two: equal to the tip is `sameAsTip`; equal to the
+ * merge base and not the tip is `mainDrift` (the default branch moved the path
+ * after the task branched, the task never touched it); anything else is
+ * `taskChanged`. `null` when the tip cannot be fetched or git cannot answer.
+ */
+export function defaultClassifyAgainstDefaultTip(
+  worktreePath: string,
+  head: string,
+  tip: string,
+  paths: readonly string[],
+  remoteUrl: string | null
+): DefaultTipClassification | null {
+  const classified: DefaultTipClassification = { sameAsTip: [], mainDrift: [], taskChanged: [] }
+  if (paths.length === 0) return classified
+  if (!ensureDefaultTipObject(worktreePath, tip, remoteUrl)) return null
+  const base = gitOk(worktreePath, ['merge-base', head, tip])
+  if (!base) return null
+  const atHead = treeEntriesAt(worktreePath, head, paths)
+  const atTip = treeEntriesAt(worktreePath, tip, paths)
+  const atBase = treeEntriesAt(worktreePath, base, paths)
+  if (atHead === null || atTip === null || atBase === null) return null
+  for (const path of paths) {
+    const content = atHead.get(path) ?? null
+    if (content === (atTip.get(path) ?? null)) classified.sameAsTip.push(path)
+    else if (content === (atBase.get(path) ?? null)) classified.mainDrift.push(path)
+    else classified.taskChanged.push(path)
+  }
+  return classified
+}
+
+/** The driver's rebase of the task's own commits onto the default branch's tip. */
+export type RebaseOntoTipResult = { ok: true; head: string } | { ok: false; conflictFiles: string[]; reason: string }
+
+/** Whether the worktree is stopped inside a rebase. */
+function rebaseInProgress(worktreePath: string): boolean {
+  return ['rebase-merge', 'rebase-apply'].some((name) => {
+    const path = gitOk(worktreePath, ['rev-parse', '--git-path', name])
+    return path !== null && existsSync(resolve(worktreePath, path))
+  })
+}
+
+/**
+ * Rebases the worktree's own commits onto `tip` with `git rebase <tip>`. Refuses
+ * without rebasing when the worktree has uncommitted tracked changes, or when
+ * the range from the merge base to the head holds a merge commit, which a
+ * rebase would drop along with any resolution made inside it. A rebase that
+ * stops is aborted, and the head is checked back at its old value with no
+ * rebase in progress, before the conflicting files are returned.
+ */
+export function defaultRebaseOntoDefaultTip(
+  worktreePath: string,
+  tip: string,
+  remoteUrl: string | null
+): RebaseOntoTipResult {
+  const refuse = (reason: string, conflictFiles: string[] = []): RebaseOntoTipResult => ({
+    ok: false,
+    conflictFiles,
+    reason
+  })
+  const oldHead = gitOk(worktreePath, ['rev-parse', 'HEAD'])
+  if (!oldHead) return refuse('the worktree head could not be read')
+  const dirty = gitOk(worktreePath, ['status', '--porcelain', '--untracked-files=no'])
+  if (dirty === null) return refuse('the worktree status could not be read')
+  if (dirty.length > 0) return refuse('the worktree has uncommitted tracked changes')
+  if (!ensureDefaultTipObject(worktreePath, tip, remoteUrl))
+    return refuse(`the default branch tip ${tip} could not be fetched`)
+  const base = gitOk(worktreePath, ['merge-base', 'HEAD', tip])
+  if (!base) return refuse(`the worktree head has no merge base with ${tip}`)
+  const merges = gitOk(worktreePath, ['rev-list', '--merges', `${base}..HEAD`])
+  if (merges === null) return refuse(`the commits since ${base} could not be listed`)
+  if (merges.length > 0) {
+    return refuse(`the branch's own commits since ${base} include a merge commit, which a rebase would drop`)
+  }
+  const rebased = spawnSync(
+    'git',
+    ['-C', worktreePath, '-c', 'rebase.updateRefs=false', 'rebase', '--no-autostash', tip],
+    {
+      encoding: 'utf8',
+      env: { ...process.env, GIT_EDITOR: 'true' },
+      stdio: ['ignore', 'pipe', 'pipe']
+    }
+  )
+  if (!rebased.error && rebased.status === 0 && !rebaseInProgress(worktreePath)) {
+    const head = gitOk(worktreePath, ['rev-parse', 'HEAD'])
+    if (head) return { ok: true, head }
+  }
+  const conflictFiles = (gitOk(worktreePath, ['diff', '--name-only', '--diff-filter=U']) ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  if (rebaseInProgress(worktreePath)) gitOk(worktreePath, ['rebase', '--abort'])
+  const after = gitOk(worktreePath, ['rev-parse', 'HEAD'])
+  if (after !== oldHead || rebaseInProgress(worktreePath)) {
+    return refuse(
+      `the rebase onto ${tip} stopped and could not be undone: the head is at ${after ?? 'an unreadable commit'}, not ${oldHead}`,
+      conflictFiles
+    )
+  }
+  const output = `${rebased.stdout ?? ''}\n${rebased.stderr ?? ''}`
+  return refuse(
+    conflictFiles.length > 0
+      ? `the rebase onto ${tip} conflicts`
+      : `the rebase onto ${tip} failed: ${firstErrorLine(output, rebased.error?.message ?? `exit ${rebased.status ?? 'unknown'}`)}`,
+    conflictFiles
+  )
 }
 
 /** The exclusive lower bound for paths attributed to one branch push. */
@@ -1656,6 +1828,17 @@ function developerRunIdFor(
   return parsed.status === 'ok' ? parsed.record.runId : null
 }
 
+/** A lease push git refused because the remote branch is no longer at the expected head. */
+class LeasePushRejected extends Error {
+  constructor(readonly output: string) {
+    super(output)
+    this.name = 'LeasePushRejected'
+  }
+}
+
+/** git's own words for a push it refused because the remote ref moved. */
+const LEASE_REJECTED = /\(stale info\)|\[rejected\]|\(fetch first\)|non-fast-forward/
+
 class PushHookRefusal extends Error {
   constructor(readonly output: string) {
     super(firstErrorLine(output, 'pre-push hook refused with no captured output'))
@@ -1702,18 +1885,26 @@ export function boundedPushOutput(output: string, mode: 'failing' | 'tail'): str
  * file. A push the repository's own pre-push hook refused throws
  * `PushHookRefusal` carrying the hook's failing lines; any other failure
  * throws an error naming the git exit and the push's own bounded error output.
+ * With `lease`, the push is `--force-with-lease=refs/heads/<branch>:<lease>`,
+ * and a push git refused because the remote branch moved off `lease` throws
+ * `LeasePushRejected` — a refusal, never retried.
  */
-export function pushBranchClassified(worktreePath: string, branch: string): void {
+export function pushBranchClassified(worktreePath: string, branch: string, lease?: string): void {
   const traceDir = mkdtempSync(join(tmpdir(), 'vinaya-push-trace-'))
   const tracePath = join(traceDir, 'trace.jsonl')
   try {
     // Through the driver-tool guard: the push runs the pre-push hook and its
     // tests, and a stopped driver must not leave that run behind.
-    const pushed = guardedSpawnSync('git', ['-C', worktreePath, 'push', 'origin', `HEAD:refs/heads/${branch}`], {
-      env: { ...process.env, GIT_TRACE2_EVENT: tracePath },
-      maxBuffer: PUSH_OUTPUT_MAX_BUFFER,
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
+    const leaseArgs = lease === undefined ? [] : [`--force-with-lease=refs/heads/${branch}:${lease}`]
+    const pushed = guardedSpawnSync(
+      'git',
+      ['-C', worktreePath, 'push', 'origin', `HEAD:refs/heads/${branch}`, ...leaseArgs],
+      {
+        env: { ...process.env, GIT_TRACE2_EVENT: tracePath },
+        maxBuffer: PUSH_OUTPUT_MAX_BUFFER,
+        stdio: ['ignore', 'pipe', 'pipe']
+      }
+    )
     if (pushed.error || pushed.status !== 0) {
       throw Object.assign(pushed.error ?? new Error(`git push exited ${pushed.status}`), {
         stdout: pushed.stdout,
@@ -1730,6 +1921,9 @@ export function pushBranchClassified(worktreePath: string, branch: string): void
     const trace = existsSync(tracePath) ? readFileSync(tracePath, 'utf8') : ''
     if (traceHasRefusingHook(trace, new Set(['pre-push']))) {
       throw new PushHookRefusal(boundedPushOutput(output, 'failing'))
+    }
+    if (lease !== undefined && LEASE_REJECTED.test(output)) {
+      throw new LeasePushRejected(boundedPushOutput(output, 'tail'))
     }
     const exit =
       typeof raw.status === 'number' ? `git exit ${raw.status}` : `git failed (${String(raw.code ?? 'no exit status')})`
@@ -1749,23 +1943,49 @@ export function pushBranchClassified(worktreePath: string, branch: string): void
  * once did; a hook that refuses makes `execFileSync` throw, and its own
  * refusal text (stderr) is returned as `refusal` (O4), never raised.
  */
-function defaultPushTaskBranch(input: {
-  task: number
-  branch: string
-  sha: string
-  touchedPaths: readonly string[]
-  surface: IssueSurface | null
-  round: number
-  agent: AgentVendor
-  repo: { owner: string; repo: string } | null
-  worktreePath: string
-}): { ok: true } | { ok: false; refusal: string; hook: boolean } {
+function defaultPushTaskBranch(
+  input: Parameters<LoopDeps['pushTaskBranch']>[0]
+): { ok: true } | { ok: false; refusal: string; hook: boolean } {
+  const result = pushTaskBranchThroughBroker(input, 'branch-push')
+  return result.ok ? { ok: true } : { ok: false, refusal: result.refusal, hook: result.hook }
+}
+
+/**
+ * O2: the driver's own force-with-lease push of the task branch after it
+ * rebased that branch onto the default branch's tip, through the Broker's
+ * `branch-lease-push` operation — authenticated from the Developer's launch
+ * record exactly like `defaultPushTaskBranch`, and refused by the Broker for
+ * any target outside `refs/heads/task/`. The lease names the remote head read
+ * before the publish, so a remote branch that moved since is never
+ * overwritten. No Developer tool reaches this.
+ */
+function defaultPushTaskBranchWithLease(
+  input: Parameters<LoopDeps['pushTaskBranchWithLease']>[0]
+): { ok: true } | { ok: false; refusal: string; hook: boolean; lease: boolean } {
+  const result = pushTaskBranchThroughBroker(input, 'branch-lease-push', input.expectedRemoteHead)
+  return result.ok ? { ok: true } : result
+}
+
+/**
+ * Both task-branch pushes through the Broker: authenticated from the
+ * Developer's own launch record — never a hand-built context — so the push is
+ * authorized for this task and recorded as an effect. The push runs from the
+ * task worktree so the repository's own pre-push hook runs exactly where a
+ * Developer's push once did; a hook refusal is returned with its own text
+ * (O4), never raised.
+ */
+function pushTaskBranchThroughBroker(
+  input: Parameters<LoopDeps['pushTaskBranch']>[0],
+  operation: 'branch-push' | 'branch-lease-push',
+  lease?: string
+): { ok: true } | { ok: false; refusal: string; hook: boolean; lease: boolean } {
   const runId = developerRunIdFor(input.agent, input.repo, input.task)
   if (runId === null) {
     return {
       ok: false,
       refusal: `no developer launch record for task ${input.task} to authenticate the push against`,
-      hook: false
+      hook: false,
+      lease: false
     }
   }
   let context: ReturnType<typeof authenticateWorkerInvocation>
@@ -1775,19 +1995,19 @@ function defaultPushTaskBranch(input: {
       realDispatchTeeRecoveryDeps()
     )
   } catch (err) {
-    return { ok: false, refusal: err instanceof Error ? err.message : String(err), hook: false }
+    return { ok: false, refusal: err instanceof Error ? err.message : String(err), hook: false, lease: false }
   }
   try {
     requestEffect(defaultControlStoreDeps(controlStoreRoot), context, {
-      operation: 'branch-push',
+      operation,
       target: scopeTarget(input.task, `refs/heads/${input.branch}`),
       inputVersion: input.round,
       touchedPaths: input.touchedPaths,
       surfaceCoversPath: (path) => input.surface?.in.some((glob) => globCoversPath(glob, path)) ?? false,
-      key: `branch-push-${input.sha}`,
+      key: `${operation}-${input.sha}`,
       payload: input.sha,
       poster: () => {
-        pushBranchClassified(input.worktreePath, input.branch)
+        pushBranchClassified(input.worktreePath, input.branch, lease)
         return input.sha
       },
       reconcile: () => {
@@ -1802,15 +2022,21 @@ function defaultPushTaskBranch(input: {
     })
     return { ok: true }
   } catch (err) {
-    // A pre-push hook refusal surfaces as the poster's `execFileSync` throwing
-    // with the hook's own stderr on the error; any broker/credential refusal
-    // surfaces the same way. Either is a failed push, returned for the
-    // existing mechanical-failure path to carry (O4), never raised.
-    const message = err instanceof PushHookRefusal ? err.output : err instanceof Error ? err.message : String(err)
+    // A pre-push hook refusal surfaces as the poster's push throwing with the
+    // hook's own output on the error; any broker/credential refusal surfaces
+    // the same way. Either is a failed push, returned for the existing
+    // mechanical-failure path to carry (O4), never raised.
+    const message =
+      err instanceof PushHookRefusal || err instanceof LeasePushRejected
+        ? err.output
+        : err instanceof Error
+          ? err.message
+          : String(err)
     return {
       ok: false,
       refusal: message.trim() || 'the push was refused with no captured output',
-      hook: err instanceof PushHookRefusal
+      hook: err instanceof PushHookRefusal,
+      lease: err instanceof LeasePushRejected
     }
   }
 }
@@ -2502,6 +2728,9 @@ function defaultDeps(): LoopDeps {
     gitWorktreeChangedPaths: defaultGitWorktreeChangedPaths,
     readDefaultBranchTip: defaultReadDefaultBranchTip,
     readMergedDefaultCommit: defaultReadMergedDefaultCommit,
+    classifyAgainstDefaultTip: defaultClassifyAgainstDefaultTip,
+    rebaseOntoDefaultTip: defaultRebaseOntoDefaultTip,
+    pushTaskBranchWithLease: defaultPushTaskBranchWithLease,
     gitWorktreeDiffText: defaultGitWorktreeDiffText,
     buildVendoredCliIfMissing: defaultBuildVendoredCliIfMissing,
     installWorktreeDependencies: defaultInstallWorktreeDependencies,
@@ -5117,6 +5346,56 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         }
         return { sha: tip, recordedHeadIsAncestor }
       }
+      // The protected administrative paths among `paths` the task's Surface
+      // does not cover — exactly what the Broker's protected-path check refuses.
+      const blockingPaths = (paths: readonly string[], surface: IssueSurface | null): string[] =>
+        paths.filter(
+          (path) =>
+            isProtectedAdminPath(path) &&
+            !(surface?.in.some((glob) => globCoversPath(glob, normalizeTouchedPath(path))) ?? false)
+        )
+      // A main-drift rebase or lease push that could not land: nothing was
+      // pushed, and the Developer is told to merge the default branch at that
+      // tip, the same instruction a merge conflict carries.
+      const mainDriftConflict = (tip: string, files: readonly string[], reason: string) => {
+        const fileList =
+          files.length > 0 ? files.map((file) => `- ${file}`).join('\n') : '(no specific file could be determined)'
+        const text = [
+          `The default branch moved a protected path this task never changed, so the driver tried to rebase \`${branch}\` onto main ${tip} and could not: ${reason}. Nothing was pushed.`,
+          `Merge the default branch at that tip without committing it: run \`git merge --no-commit ${tip}\` from this worktree, resolve the conflicting file(s) below, then call \`publish_changes\` again — it makes the merge commit. Conflicting file(s):`,
+          fileList
+        ].join('\n\n')
+        lastPushRefusal = text
+        return {
+          ok: false as const,
+          error: devToolError(
+            'conflict',
+            'same_attempt',
+            'not_committed',
+            'main-drift-rebase',
+            text,
+            `Run \`git merge --no-commit ${tip}\`, resolve the conflicting file(s), then call publish_changes again.`
+          )
+        }
+      }
+      // A refused push: the pre-push hook's own text goes back to the
+      // Developer; any other refusal (a Broker refusal, a git failure) is
+      // raised, as it always was.
+      const pushRefused = (push: { refusal: string; hook: boolean }) => {
+        if (!push.hook) throw new Error(`task branch push failed outside the pre-push hook: ${push.refusal}`)
+        lastPushRefusal = push.refusal
+        return {
+          ok: false as const,
+          error: devToolError(
+            'policy_refusal',
+            'same_attempt',
+            'not_committed',
+            'pre-push-hook',
+            push.refusal,
+            'Fix what the pre-push hook refused, then call publish_changes again.'
+          )
+        }
+      }
       const deps: DeveloperDevToolDeps = {
         readPublicationCheckInput: async () => {
           const worktreeHead = d.readWorktreeHead(worktree)
@@ -5235,32 +5514,73 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               driverUnpushedCommit = { sha: localHead, parent: remoteHeadBefore }
               driverUnpushedCommitBase = await readPublicationBase(localHead)
             }
-            const changedPaths = publicationChangedPaths(publicationRange(remoteHeadBefore))
-            const push = d.pushTaskBranch({
+            const surface = d.resolveTaskSurface ? d.resolveTaskSurface(task) : null
+            let changedPaths = publicationChangedPaths(publicationRange(remoteHeadBefore))
+            // Measured against the default branch's tip as the remote reports
+            // it: a path equal to that tip is no task change, and a blocking
+            // protected path only the default branch moved is drift the driver
+            // rebases away rather than refusing. An unreadable tip, or a
+            // classification git cannot answer, keeps every path counted.
+            const tip = d.readDefaultBranchTip(defaultRemoteUrl)
+            const classified =
+              tip === null
+                ? null
+                : d.classifyAgainstDefaultTip(worktree, localHead, tip, changedPaths, defaultRemoteUrl)
+            if (classified !== null) {
+              const sameAsTip = new Set(classified.sameAsTip)
+              changedPaths = changedPaths.filter((path) => !sameAsTip.has(path))
+            }
+            const blocking = blockingPaths(changedPaths, surface)
+            const mainDrift = new Set(classified?.mainDrift ?? [])
+            const pushInput = {
               task,
               branch,
               sha: localHead,
               touchedPaths: changedPaths,
-              surface: d.resolveTaskSurface ? d.resolveTaskSurface(task) : null,
+              surface,
               round: roundNum,
               agent: dispatchAgent,
               repo,
               worktreePath: worktree
-            })
-            if (!push.ok) {
-              if (!push.hook) throw new Error(`task branch push failed outside the pre-push hook: ${push.refusal}`)
-              lastPushRefusal = push.refusal
-              return {
-                ok: false,
-                error: devToolError(
-                  'policy_refusal',
-                  'same_attempt',
-                  'not_committed',
-                  'pre-push-hook',
-                  push.refusal,
-                  'Fix what the pre-push hook refused, then call publish_changes again.'
-                )
+            }
+            if (tip !== null && blocking.length > 0 && blocking.every((path) => mainDrift.has(path))) {
+              const rebased = d.rebaseOntoDefaultTip(worktree, tip, defaultRemoteUrl)
+              if (!rebased.ok) return mainDriftConflict(tip, rebased.conflictFiles, rebased.reason)
+              // The rebased head now sits on the tip: re-record the head and
+              // the base there, as the fast-forward rule does, so the next
+              // publication check compares against them.
+              turnPreHead = rebased.head
+              publicationExpectedBase = tip
+              publicationFastForwardBase = tip
+              driverUnpushedCommit = null
+              driverUnpushedCommitBase = null
+              const rebasedInput = {
+                ...pushInput,
+                sha: rebased.head,
+                touchedPaths: d.gitWorktreeChangedPaths(worktree, tip)
               }
+              const push =
+                remoteHeadBefore === null
+                  ? { ...d.pushTaskBranch(rebasedInput), lease: false }
+                  : d.pushTaskBranchWithLease({ ...rebasedInput, expectedRemoteHead: remoteHeadBefore })
+              if (!push.ok) {
+                if (push.lease) {
+                  return mainDriftConflict(
+                    tip,
+                    [],
+                    `the lease push was refused because the remote branch is no longer at ${remoteHeadBefore}: ${push.refusal}`
+                  )
+                }
+                return pushRefused(push)
+              }
+              appendDriverLine(
+                loopLogPath,
+                `Rebased ${branch} onto main ${tip} (${localHead} → ${rebased.head}) and pushed${remoteHeadBefore === null ? '' : ' with lease'}`,
+                'done'
+              )
+            } else {
+              const push = d.pushTaskBranch(pushInput)
+              if (!push.ok) return pushRefused(push)
             }
             lastPushRefusal = null
           }
