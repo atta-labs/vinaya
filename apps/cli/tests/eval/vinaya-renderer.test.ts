@@ -416,7 +416,12 @@ describe('extract', () => {
         used: ['read_file', 'read_document', 'write_file', 'run_commands', 'publish_change', 'open_change_request']
       }
     })
-    expect(outcomesOf({ ...record, trace: [{ tool: 'WebFetch' }] })['O-capability'].status).toBe('invalid')
+    expect(outcomesOf({ ...record, trace: [{ tool: 'NotebookEdit' }] })['O-capability'].status).toBe('invalid')
+    // A web fetch or search reads an undelivered source: the capability no case grants, never an invalid outcome.
+    expect(outcomesOf({ ...record, trace: [{ tool: 'WebFetch' }, { tool: 'WebSearch' }] })['O-capability']).toEqual({
+      status: 'known',
+      value: { used: ['read_web'] }
+    })
   })
 
   it('reads the ready-for-merge result as the decision, and its absence as no decision', () => {

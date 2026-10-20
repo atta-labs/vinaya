@@ -120,8 +120,13 @@ export const REVIEW_QUALITY_GRADER: CodeGraderIdentity = {
   logicDigest: sha256(Buffer.concat(graderImplementation))
 }
 export type PatchResolver = (parent: string, changed: string, file: string) => string
+// A fixed abbreviation keeps the `index` line the same in a full clone and in a depth-1, blob-less clone,
+// where git's default abbreviation is shorter.
 const gitPatch: PatchResolver = (parent, changed, file) => {
-  const run = spawnSync('git', ['diff', parent, changed, '--', file], { cwd: REPO_ROOT, encoding: 'utf8' })
+  const run = spawnSync('git', ['diff', '--abbrev=8', parent, changed, '--', file], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8'
+  })
   if (run.status !== 0) throw new Error(`reviewer cases: cannot reconstruct ${parent}..${changed}:${file}`)
   return run.stdout
 }

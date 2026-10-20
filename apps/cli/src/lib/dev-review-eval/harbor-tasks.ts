@@ -13,6 +13,8 @@
  *    base commit, with every evaluation case file and every held-out file left
  *    out of its working tree and object store, and `case.json`, the neutral
  *    case with what the run needs from the layer-`P` case of the same id;
+ *    with `--archive`, also the Vinaya CLI archive, which the image unpacks at
+ *    `/opt/vinaya` and installs the workspace dependencies of at build;
  *  - `tests/` — the verifier: `test.sh`, the bundled `grade.js`, the grading
  *    spec and the hidden test files;
  *  - `solution/` — the oracle: `solve.sh`, the bundled `oracle.js` and the
@@ -319,7 +321,41 @@ exit 0
  */
 export const CHANGE_CASE_INSTALL = 'bun install --frozen-lockfile'
 
-function dockerfile(c: NeutralCase, url: string, head: string | null, reviewMessage: string | null): string {
+/** Where a task image unpacks the Vinaya CLI archive and installs its workspace dependencies. */
+export const VINAYA_HOME = '/opt/vinaya'
+/** The Vinaya CLI archive's file name in a task's `environment/` folder. */
+export const ARCHIVE_FILE = 'vinaya.tar'
+/**
+ * Where a task image records the SHA-256 of the archive it installed. The
+ * `vinaya` agent's install step refuses an archive whose digest differs, and
+ * refuses an image with no such file, one converted without `--archive`.
+ */
+export const ARCHIVE_DIGEST_PATH = '/harbor/vinaya-archive.sha256'
+
+/**
+ * The image-build step that installs the Vinaya CLI: unpacks the archive at
+ * `/opt/vinaya`, installs its workspace dependencies with the frozen lockfile
+ * while the build still has the public network, and records the archive's
+ * digest. The agent's install step, which Harbor times, then runs no network step.
+ */
+export function vinayaInstallStep(): string {
+  const archive = `/harbor/${ARCHIVE_FILE}`
+  return [
+    `mkdir -p ${VINAYA_HOME}`,
+    `tar -xf ${archive} -C ${VINAYA_HOME}`,
+    `(cd ${VINAYA_HOME} && ${CHANGE_CASE_INSTALL})`,
+    `sha256sum ${archive} | cut -d ' ' -f 1 > ${ARCHIVE_DIGEST_PATH}`,
+    `rm ${archive}`
+  ].join(' && ')
+}
+
+function dockerfile(
+  c: NeutralCase,
+  url: string,
+  head: string | null,
+  reviewMessage: string | null,
+  withArchive: boolean
+): string {
   const install = c.kind === 'change' ? `PREPARE_INSTALL=${shellQuote(CHANGE_CASE_INSTALL)} ` : ''
   const lines = [
     '# A layer-G Harbor task image, written by harbor-tasks.ts: the case repository at /app.',
@@ -328,6 +364,7 @@ function dockerfile(c: NeutralCase, url: string, head: string | null, reviewMess
     'COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun',
     `RUN npm install --global ${CLAUDE_CODE_PACKAGE} && claude --version && bun --version && node --version`,
     'ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
+    ...(withArchive ? [`COPY ${ARCHIVE_FILE} /harbor/${ARCHIVE_FILE}`, `RUN ${vinayaInstallStep()}`] : []),
     'COPY prepare-repository.sh /harbor/prepare-repository.sh',
     `RUN ${install}sh /harbor/prepare-repository.sh ${[url, '/app', c.baseRevision, ...(head === null ? [] : [head])].map(shellQuote).join(' ')}`,
     'COPY case.json /case/case.json'
@@ -401,7 +438,12 @@ function counterpartOf(sources: CaseSources): HarborCounterpart {
  * Every file of one case's task folder. The bundled script is written twice,
  * as the verifier's `grade.js` and the oracle's `oracle.js`.
  */
-export function taskFiles(sources: CaseSources, script: string, url: RepositoryUrl): Map<string, TaskFile> {
+export function taskFiles(
+  sources: CaseSources,
+  script: string,
+  url: RepositoryUrl,
+  archive: Uint8Array | null = null
+): Map<string, TaskFile> {
   const c = sources.case
   const suite = GENERIC_SUITE_IDS[sources.key]
   const files = new Map<string, TaskFile>()
@@ -420,7 +462,8 @@ export function taskFiles(sources: CaseSources, script: string, url: RepositoryU
 
   add('task.toml', taskToml(suite, c))
   add('instruction.md', `${sources.statement}\n`)
-  add('environment/Dockerfile', dockerfile(c, url(c.repository), reviewHead, `Seeded change ${c.id}`))
+  add('environment/Dockerfile', dockerfile(c, url(c.repository), reviewHead, `Seeded change ${c.id}`, archive !== null))
+  if (archive !== null) add(`environment/${ARCHIVE_FILE}`, archive)
   add('environment/prepare-repository.sh', PREPARE_REPOSITORY_SCRIPT, 0o755)
   add('environment/case.json', stableJson(caseFile))
   if (c.kind === 'review') add('environment/commit-review.sh', COMMIT_REVIEW_SCRIPT, 0o755)
@@ -543,6 +586,13 @@ export async function convertHarborTasks(options: ConvertOptions): Promise<Conve
   const statements = split === 'development' ? statementsOf() : {}
   const layerP = counterparts(split, keys)
   const url = options.repositoryUrl ?? GITHUB_REPOSITORY_URL
+  // The archive is written first: every task image installs the Vinaya CLI from it at build.
+  let archive: Uint8Array | null = null
+  if (options.archive !== undefined) {
+    mkdirSync(dirname(options.archive), { recursive: true })
+    writeArchive(options.archive)
+    archive = readFileSync(options.archive)
+  }
   const results: ConvertedSuite[] = []
   for (const key of keys) {
     const suite = suiteName(key)
@@ -570,18 +620,14 @@ export async function convertHarborTasks(options: ConvertOptions): Promise<Conve
         citation: layerP.citation.find((p) => p.id === c.id)
       }
       if (sources.statement === '') throw new HarborTasksRefused(`${c.id} has no task statement`)
-      writeTaskFolder(join(options.out, suite, c.id), taskFiles(sources, script, url))
+      writeTaskFolder(join(options.out, suite, c.id), taskFiles(sources, script, url, archive))
       result.converted.push(c.id)
     }
     print(`${suite} (${split}): ${result.converted.length} of ${result.cases} converted`)
     if (split === 'held-out') print(`  ids: ${result.converted.join(', ')}`)
     results.push(result)
   }
-  if (options.archive !== undefined) {
-    mkdirSync(dirname(options.archive), { recursive: true })
-    writeArchive(options.archive)
-    print(`Vinaya archive at HEAD: ${options.archive}`)
-  }
+  if (options.archive !== undefined) print(`Vinaya archive at HEAD: ${options.archive}`)
   return results
 }
 

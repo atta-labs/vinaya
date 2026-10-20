@@ -55,7 +55,11 @@ import type { CheckResult, Fact, NeutralOutcomes, Review, SourceReceipt, TestRes
  * exercises. A trace names a driver-run tool by its catalog name, a shell
  * command as `shell`, and any other built-in by the agent's own name for it —
  * the convention the tool-selection suite records traces in. A traced tool
- * missing from this table makes the capability outcome `invalid`.
+ * missing from this table makes the capability outcome `invalid`. A web fetch
+ * or search reads a source nobody delivered and leaves no harness receipt, so
+ * it maps to `read_web`, a capability no case grants and no role grant holds:
+ * a trace that reaches the web fails the granted-capabilities grader instead
+ * of making the outcome `invalid`.
  */
 export const TOOL_CAPABILITIES: Readonly<Record<string, string>> = {
   Read: 'read_file',
@@ -71,7 +75,9 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, string>> = {
   open_pull_request: 'open_change_request',
   update_pull_request_body: 'update_change_request',
   refresh_evidence: 'refresh_evidence',
-  read_pull_request: 'read_change_request'
+  read_pull_request: 'read_change_request',
+  WebFetch: 'read_web',
+  WebSearch: 'read_web'
 }
 
 /**

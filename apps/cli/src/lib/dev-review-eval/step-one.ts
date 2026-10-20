@@ -10,6 +10,7 @@ import {
   dispatchRole,
   type AgentVendor
 } from '../dispatch'
+import { publishingInstructionLine } from '../dev-review-loop'
 import { startDevToolsHost } from '../task-tools/dev-tools-host'
 import { devToolsSocketPath, driverDevBridgeInvocation } from '../task-tools/dev-tools-registration'
 import { buildWorkerEnv, containerClaudeLogin, stageCodexPolicyHome } from '../worker-boundary'
@@ -191,6 +192,30 @@ export function unavailableReason(prefix: string, error: unknown): string {
 async function traceOf(adapter: StepOneAdapter, lines: readonly string[]): Promise<TraceCall[]> {
   const suite = await import('../../../tests/eval/tool-selection-suite')
   return adapter === 'claude-code' ? suite.claudeTrace(lines) : suite.codexTrace(lines)
+}
+
+/**
+ * Claude Code's own harness tools, which exercise no neutral capability: the
+ * turn-result emission, deferred-tool schema loading and the agent's own task
+ * list. A layer-`G` trial record's trace leaves them out.
+ */
+export const CLAUDE_HARNESS_INTERNAL_TOOLS: readonly string[] = ['StructuredOutput', 'ToolSearch', 'TodoWrite']
+
+/**
+ * The trace a layer-`G` trial record carries: `trace` without Claude Code's
+ * harness-internal tools on the `claude-code` adapter, unchanged on Codex.
+ * None of the dropped tools performs an effect, so the effects step one counts
+ * are the same with or without them.
+ */
+export function layerGTrace(adapter: StepOneAdapter, trace: readonly TraceCall[]): TraceCall[] {
+  return adapter === 'claude-code'
+    ? trace.filter((call) => !CLAUDE_HARNESS_INTERNAL_TOOLS.includes(call.tool))
+    : [...trace]
+}
+
+/** Step one's trace reader for a layer-`G` trial: the adapter transcript's calls, through `layerGTrace`. */
+export async function layerGTraceOf(adapter: StepOneAdapter, lines: readonly string[]): Promise<TraceCall[]> {
+  return layerGTrace(adapter, await traceOf(adapter, lines))
 }
 
 function performedEffects(
@@ -1656,6 +1681,7 @@ async function neutralTestResults(
 
 /** The record of a `change` case's run, but for its hidden tests, from what the Developer produced. */
 function changeRecord(
+  adapter: StepOneAdapter,
   input: VinayaProcessInput,
   developer: {
     handle: Awaited<ReturnType<typeof dispatchRole>>
@@ -1698,16 +1724,17 @@ function changeRecord(
     readyForMerge: null,
     developerTurnResult: developer.handle.turnOutput?.raw ?? null,
     receipts,
-    trace: developer.trace.map((call) => ({ tool: call.tool })),
+    trace: layerGTrace(adapter, developer.trace).map((call) => ({ tool: call.tool })),
     effects: recordedEffects(developer.trace, publicationCounts(developer.toolState))
   }
 }
 
 /**
- * A `change` case: the Developer is dispatched with the rendered brief and
- * its delivered documents, on the layer-`P` developer case of the same id,
- * and the hidden tests run on the trial's commit. The pull request is the
- * one the Developer opened, on that commit, its body carrying the
+ * A `change` case: the Developer is dispatched with the rendered brief, its
+ * delivered documents and the review loop's publishing instruction, on the
+ * layer-`P` developer case of the same id, and the hidden tests run on the
+ * trial's commit. The pull request is the one the Developer opened through
+ * `open_pull_request`, never one made for it, on that commit, its body carrying the
  * beyond-Surface record the review-loop driver writes. In container mode the
  * Developer runs in the container's working tree, whose files at the base
  * commit deliver the documents, and the record's `measuredChange` and
@@ -1738,19 +1765,21 @@ async function runChangeCase(
     if (digest(delivered.contents.get(source.sourceId) ?? '') !== source.contentDigest)
       throw new Error(`delivered document ${source.sourceId} differs from its pinned content digest`)
   }
+  // The prompt ends with the review loop's own publishing instruction: the Developer opens its pull request itself.
   const prompt = [
     input.brief,
     ...input.sources.map(
       (source) =>
         `${source.required ? 'Required source' : 'Delivered document'} ${source.sourceId}:\n\n${delivered.contents.get(source.sourceId) ?? ''}`
-    )
+    ),
+    `When your work is ready, ${publishingInstructionLine()}`
   ].join('\n\n')
   if (container !== undefined) {
     const run = await runDeveloperInTree(trial, context, container, item, prompt, steps)
     if (!run.ok) return run
     // The hidden tests are not in the container: the verifier runs them on the tree's commit.
     const record: VinayaTrialRecord = {
-      ...changeRecord(input, run.value, delivered.receipts, false),
+      ...changeRecord(trial.adapter, input, run.value, delivered.receipts, false),
       hiddenTests: null
     }
     return { ok: true, record, usage: run.usage }
@@ -1762,6 +1791,7 @@ async function runChangeCase(
     prompt,
     (developer) => ({
       ...changeRecord(
+        trial.adapter,
         input,
         {
           ...developer,
@@ -1817,7 +1847,7 @@ async function runReviewCase(
     item,
     prompt,
     async (handle, transcript) => {
-      const trace = await traceOf(trial.adapter, transcript)
+      const trace = await layerGTraceOf(trial.adapter, transcript)
       const record: VinayaTrialRecord = {
         rendererVersion: input.rendererVersion,
         input,
@@ -1947,7 +1977,7 @@ async function runAnswerCase(
     const transcript = stdout.split('\n').filter(Boolean)
     const turn = trial.adapter === 'claude-code' ? readClaudeTurnOutput(stdout) : readCodexTurnOutput(stdout)
     const tokens = tools.usageOf(trial.adapter, transcript)
-    const trace = await traceOf(trial.adapter, transcript)
+    const trace = await layerGTraceOf(trial.adapter, transcript)
     const record: VinayaTrialRecord = {
       rendererVersion: input.rendererVersion,
       input,
