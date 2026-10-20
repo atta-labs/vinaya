@@ -308,11 +308,11 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PULL_REQUEST_BASE: ${{ github.event.pull_request.base.sha }}
         run: |
-          SCOPE=$(bun apps/cli/src/lib/ci-test-selection.ts --base "$BASE_SHA" --packages) || SCOPE=all
+          SCOPE=$(bun apps/cli/src/lib/ci-test-selection.ts --base "$PULL_REQUEST_BASE" --packages) || SCOPE=all
           if [ "$SCOPE" = "affected" ]; then
-            TURBO_SCM_BASE="$BASE_SHA" bunx turbo test --affected --filter='!@attalabs/vinaya' --filter='!@attalabs/aeg-core' --concurrency=1
+            TURBO_SCM_BASE="$PULL_REQUEST_BASE" bunx turbo test --affected --filter='!@attalabs/vinaya' --filter='!@attalabs/aeg-core' --concurrency=1
             bunx turbo test --filter=@attalabs/aeg-core --concurrency=1
           else
             bunx turbo test --filter='!@attalabs/vinaya' --concurrency=1
@@ -378,12 +378,12 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PULL_REQUEST_BASE: ${{ github.event.pull_request.base.sha }}
           SHARD_LIST: tests/ci-shards/shard-${{ matrix.shard }}.txt
         working-directory: apps/cli
         run: |
           SELECTED="$RUNNER_TEMP/selected-tests.txt"
-          if ! (cd ../.. && bun apps/cli/src/lib/ci-test-selection.ts --base "$BASE_SHA" --shard-list "apps/cli/$SHARD_LIST") > "$SELECTED"; then
+          if ! (cd ../.. && bun apps/cli/src/lib/ci-test-selection.ts --base "$PULL_REQUEST_BASE" --shard-list "apps/cli/$SHARD_LIST") > "$SELECTED"; then
             echo "The selection failed; this shard runs its whole list." >&2
             cp "$SHARD_LIST" "$SELECTED"
           fi
@@ -391,7 +391,12 @@ jobs:
             echo "No file in shard ${{ matrix.shard }} is selected for this pull request; no test ran." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          bun test --timeout=30000 $(tr '\n' ' ' < "$SELECTED")
+          # The tests run under the same environment as on `main`: several read
+          # a base-commit override from the environment, so the selection's own
+          # variables never reach them.
+          FILES=$(tr '\n' ' ' < "$SELECTED")
+          unset PULL_REQUEST_BASE SHARD_LIST
+          bun test --timeout=30000 $FILES
       - name: Test shard ${{ matrix.shard }}
         if: github.event_name != 'pull_request'
         env:
