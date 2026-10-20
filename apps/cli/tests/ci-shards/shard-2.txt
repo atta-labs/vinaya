@@ -1,6 +1,7 @@
 src/commands/quickstart-metering-io.test.ts
 src/commands/release.test.ts
 tests/agents-skills-emitter.test.ts
+tests/checks/bin-permissions.test.ts
 tests/checks/body-bare-digits.test.ts
 tests/checks/branch-topology.test.ts
 tests/checks/changeset-coverage.test.ts
