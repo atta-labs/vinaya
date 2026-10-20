@@ -10,10 +10,6 @@ Badges: Complex work · Architect · Planner · Operator
 - The product work is specified upstream, for example as projects in Linear or epics in Jira.
 - You are the Principal: you approve the plan, rule when a run pauses for you, and merge.
 
-```callout-tip
-Try it first in the interactive demo: [Complex work](/vinaya-process/demo/complex).
-```
-
 ## The flow
 
 ```flow-diagram

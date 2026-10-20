@@ -73,9 +73,6 @@ export function ProcessStripSection() {
           ))}
         </ol>
         <div className='flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:gap-4'>
-          <ButtonLink href='/vinaya-process/demo' variant='inverse' size='xl' className='w-full sm:w-auto'>
-            Play the interactive demo
-          </ButtonLink>
           <ButtonLink href='/vinaya-process/diagram' variant='inverse-outline' size='xl' className='w-full sm:w-auto'>
             See the whole diagram
           </ButtonLink>
