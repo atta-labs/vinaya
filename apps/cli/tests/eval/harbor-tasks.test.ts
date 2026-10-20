@@ -33,15 +33,21 @@ import {
   underNode,
   writeGrade
 } from '../../src/lib/dev-review-eval/harbor-grade'
+import { QUARANTINE_METADATA, quarantineAdjudicationDigest } from '../../src/lib/dev-review-eval/harbor-results'
 import {
   AGENT_ALLOWED_HOSTS,
   CHANGE_CASE_INSTALL,
+  CLAUDE_BIN_DIRECTORY,
   type ConvertedSuite,
   convertHarborTasks,
+  HARBOR_QUARANTINE_PATH,
   HARBOR_SUITE_KEYS,
   HARBOR_VERSION,
+  HarborTasksRefused,
   harborTasksCommand,
   isExcludedPath,
+  loadHarborQuarantine,
+  PREPARE_REPOSITORY_SCRIPT,
   REPOSITORY_ROOT,
   suiteName,
   writeArchive
@@ -223,6 +229,142 @@ describe('the converter', () => {
     }
   })
 
+  it('puts claude in a directory of its own, first on PATH, and leaves none in /usr/local/bin', () => {
+    expect(CLAUDE_BIN_DIRECTORY).toBe('/opt/claude/bin')
+    for (const { dir } of folders()) {
+      const lines = readFileSync(join(dir, 'environment/Dockerfile'), 'utf8').split('\n')
+      const link = lines.find((line) => line.startsWith('RUN ') && line.includes(' /opt/claude/bin/claude'))
+      expect(link).toContain(
+        'ln -s "$(npm root --global)/@anthropic-ai/claude-code/bin/claude.exe" /opt/claude/bin/claude'
+      )
+      expect(link).toContain('rm /usr/local/bin/claude')
+      expect(link?.indexOf('npm install --global')).toBeLessThan(link?.indexOf('rm /usr/local/bin/claude') ?? -1)
+      expect(lines.filter((line) => line.startsWith('ENV PATH='))).toEqual(['ENV PATH=/opt/claude/bin:$PATH'])
+      // The only line naming claude in /usr/local/bin is the one that removes it.
+      expect(lines.filter((line) => line.includes('/usr/local/bin/claude'))).toEqual([link as string])
+      expect(lines.some((line) => /ln\b.*\/usr\/local\/bin\b/.test(line))).toBe(false)
+    }
+  })
+
+  it('installs gh and ends as the non-root tester user, after the clone and the review commit', () => {
+    for (const { dir, caseFile } of folders()) {
+      const lines = readFileSync(join(dir, 'environment/Dockerfile'), 'utf8').trimEnd().split('\n')
+      const index = (find: (line: string) => boolean) => {
+        const at = lines.findIndex(find)
+        expect(at).toBeGreaterThan(-1)
+        return at
+      }
+      const gh = lines[index((line) => line.includes('apt-get install'))] as string
+      expect(gh).toMatch(
+        /^RUN apt-get update && apt-get install --yes --no-install-recommends gh && .* && gh --version$/
+      )
+      expect(lines).toContain('RUN useradd -m -u 1001 tester')
+      const users = lines.filter((line) => line.startsWith('USER '))
+      expect(users.at(-1)).toBe('USER tester')
+      const user = lines.lastIndexOf('USER tester')
+      const owned = index((line) => line.startsWith('RUN ') && line.includes('chown -R tester:tester'))
+      expect(lines[owned]).toContain('chown -R tester:tester /app /case /logs')
+      expect(lines[owned]).toContain('mkdir -p /logs/agent /logs/verifier')
+      expect(owned).toBeLessThan(user)
+      expect(lines).toContain('ENV HOME=/home/tester')
+      expect(index((line) => line.includes('sh /harbor/prepare-repository.sh'))).toBeLessThan(user)
+      if (caseFile.case.kind === 'review')
+        expect(index((line) => line.includes('sh /harbor/commit-review.sh'))).toBeLessThan(user)
+      // Every instruction after the user switch needs no root.
+      expect(lines.slice(user + 1).every((line) => /^(ENV|WORKDIR) /.test(line))).toBe(true)
+    }
+  })
+
+  it('writes each solution file with its git file mode at the reference commit', () => {
+    const developer = summary.find((s) => s.suite === suiteName('developer')) as ConvertedSuite
+    const executable: string[] = []
+    let files = 0
+    for (const id of developer.converted) {
+      const solution = join(first, developer.suite, id, 'solution/files')
+      if (!existsSync(solution)) continue
+      for (const path of walk(solution)) {
+        files++
+        const mode = statSync(join(solution, path)).mode & 0o777
+        expect([0o644, 0o755]).toContain(mode)
+        if (mode === 0o755) executable.push(`${id} ${path}`)
+      }
+    }
+    expect(files).toBeGreaterThan(executable.length)
+    expect(executable.sort()).toEqual([
+      'pr-1240 apps/cli/src/checks/bin/check-doc-claims.ts',
+      'pr-1277 apps/cli/src/checks/bin/check-retired-vocabulary.ts',
+      'pr-990 apps/cli/src/index.ts'
+    ])
+  })
+
+  it('fetches the base with its full history and no blob up front, and the head unchanged', () => {
+    const fetches = PREPARE_REPOSITORY_SCRIPT.split('\n').filter((line) => line.trim().startsWith('git fetch'))
+    expect(fetches.map((line) => line.trim())).toEqual([
+      'git fetch --quiet --filter=blob:none origin "$base"',
+      'git fetch --quiet --depth 1 --filter=blob:none origin "$head"'
+    ])
+  })
+
+  it('writes every quarantined developer folder, with its quarantine in task.toml', () => {
+    const developer = summary.find((s) => s.suite === suiteName('developer')) as ConvertedSuite
+    expect(developer.converted.length).toBe(28)
+    expect(readdirSync(join(first, developer.suite)).length).toBe(28)
+    const record = loadHarborQuarantine()
+    const quarantines = record.get(developer.suite) ?? []
+    expect(quarantines.map((q) => q.taskId).sort()).toEqual(['pr-1002', 'pr-1077', 'pr-1271'])
+    expect([...record.keys()]).toEqual([developer.suite])
+    const withMetadata: string[] = []
+    for (const { suite, dir, caseFile } of folders()) {
+      const metadata = (
+        Bun.TOML.parse(readFileSync(join(dir, 'task.toml'), 'utf8')) as { metadata: Record<string, unknown> }
+      ).metadata
+      const quarantine = suite === developer.suite ? quarantines.find((q) => q.taskId === caseFile.case.id) : undefined
+      if (quarantine === undefined) {
+        for (const key of Object.values(QUARANTINE_METADATA)) expect(metadata[key]).toBeUndefined()
+        continue
+      }
+      withMetadata.push(caseFile.case.id)
+      expect(quarantine.cause).toBe('environment')
+      expect(quarantine.reasonVersion).toBe(1)
+      expect(metadata).toMatchObject({
+        quarantine_cause: quarantine.cause,
+        quarantine_reason: quarantine.reason,
+        quarantine_reason_version: quarantine.reasonVersion,
+        quarantine_adjudication_digest: quarantine.adjudicationDigest
+      })
+      expect(walk(dir)).toEqual(expect.arrayContaining(REQUIRED_FILES))
+    }
+    expect(withMetadata.sort()).toEqual(['pr-1002', 'pr-1077', 'pr-1271'])
+  })
+
+  it('refuses a quarantine record with a stale digest or naming a case its suite does not hold, writing no folder', async () => {
+    const record = readJson<{ schemaVersion: 1; suites: Record<string, Record<string, unknown>[]> }>(
+      HARBOR_QUARANTINE_PATH
+    )
+    const suite = suiteName('developer')
+    const write = (suites: typeof record.suites) => {
+      const path = join(tempDir('harbor-tasks-quarantine-'), 'quarantine.json')
+      writeFileSync(path, JSON.stringify({ ...record, suites }))
+      return path
+    }
+    const entry = record.suites[suite]?.[0] as Record<string, unknown>
+    const stale = write({ [suite]: [{ ...entry, reason: `${entry.reason} Edited.` }] })
+    expect(() => loadHarborQuarantine(stale)).toThrow('stale adjudication digest')
+    const absent = { taskId: 'pr-1', cause: 'environment', reason: 'No such case.', reasonVersion: 1 } as const
+    const unknown = write({ [suite]: [{ ...absent, adjudicationDigest: quarantineAdjudicationDigest(absent) }] })
+    const out = tempDir('harbor-tasks-quarantine-out-')
+    const quiet = () => {}
+    for (const quarantine of [stale, unknown]) {
+      await expect(convertHarborTasks({ out, quarantine, print: quiet, warn: quiet })).rejects.toBeInstanceOf(
+        HarborTasksRefused
+      )
+    }
+    await expect(convertHarborTasks({ out, quarantine: unknown, print: quiet, warn: quiet })).rejects.toThrow(
+      'names pr-1, which developer-capability-neutral.l5 does not hold'
+    )
+    expect(readdirSync(out)).toEqual([])
+  })
+
   it('refuses a held-out conversion without the pinned approval, opening no held-out file', async () => {
     const opened: string[] = []
     const out = tempDir('harbor-tasks-held-out-')
@@ -306,6 +448,8 @@ describe('the case repository built from a local mirror', () => {
       const tree = cloneOf(dir)
       const base = caseFile.case.baseRevision
       expect(git(tree, ['rev-parse', 'HEAD']).trim()).toBe(base)
+      // The base comes with its history: its parent commit is in the clone.
+      expect(Number(git(tree, ['rev-list', '--count', 'HEAD']).trim())).toBeGreaterThan(1)
       expect(git(tree, ['remote']).trim()).toBe('')
       expect(walk(tree).filter((path) => !path.startsWith('.git/') && isExcludedPath(path))).toEqual([])
       const entries = git(REPOSITORY_ROOT, ['ls-tree', '-r', base])

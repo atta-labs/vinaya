@@ -158,7 +158,10 @@ function judgeHiddenTests(c: NeutralCase, facts: KnownFacts): string[] {
   for (const hidden of c.hiddenTests) {
     const ran = tests.results.find((r) => r.path === hidden.path && r.name === hidden.name)
     const result = ran?.result ?? 'not-run'
-    if (result !== 'pass') reasons.push(`hidden test ${hidden.path} "${hidden.name}" is ${result}`)
+    // A pass-to-pass test the runner skips where it runs (one gated to another
+    // platform) was not broken by the change; a skipped fail-to-pass test proves nothing.
+    if (result === 'pass' || (result === 'skipped' && hidden.expectation === 'pass-to-pass')) continue
+    reasons.push(`hidden test ${hidden.path} "${hidden.name}" is ${result}`)
   }
   return reasons
 }

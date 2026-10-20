@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "suites": {
+    "developer-capability-neutral.l5": [
+      {
+        "taskId": "pr-1002",
+        "cause": "environment",
+        "reason": "Its fail-to-pass hidden tests run only on macOS and skip on Linux, where the task image runs; the case is to be re-made to run on any platform.",
+        "reasonVersion": 1,
+        "adjudicationDigest": "9543c440df53e5fb998eaf13ef5b17a15781fb6f2ef42f766796395915475545"
+      },
+      {
+        "taskId": "pr-1077",
+        "cause": "environment",
+        "reason": "Its fail-to-pass hidden tests run only on macOS and skip on Linux, where the task image runs; the case is to be re-made to run on any platform.",
+        "reasonVersion": 1,
+        "adjudicationDigest": "f148b449e30ba102f006c24fbf4e7464073c43e7922d91e64524b7360a038f51"
+      },
+      {
+        "taskId": "pr-1271",
+        "cause": "environment",
+        "reason": "The hidden test apps/cli/tests/conformance/dev-review-engine-architecture-exit.test.ts 6a4dc500b240 still fails in the task container with the base commit's history present (Harbor oracle job 2026-10-20__18-04-10); its cause is not yet diagnosed.",
+        "reasonVersion": 1,
+        "adjudicationDigest": "ef26b9e62b6fc89afcf556c61371d63d43f569082027145bc9d459dbeea8ab03"
+      }
+    ]
+  }
+}

@@ -123,10 +123,22 @@ export function underNode(command: readonly string[]): string[] {
 }
 
 /**
- * Runs the case's hidden tests on the tree's head: writes each test file from
- * `testsDirectory/hidden/<path>` into the tree, runs them with their packages'
- * own runners as the host grading copy does, and maps the results as the host
- * maps them.
+ * Whether a file of `testFiles` is a test file a runner is handed, by its
+ * path: `.test.`, `_test_`, `.spec.` or `_spec_`. Every other file — a shard
+ * list, a helper, a fixture — is only written into the tree, where the tests
+ * read it.
+ */
+export function isTestFile(path: string): boolean {
+  return ['.test.', '_test_', '.spec.', '_spec_'].some((marker) => path.includes(marker))
+}
+
+/**
+ * Runs the case's hidden tests on the tree's head: writes each file from
+ * `testsDirectory/hidden/<path>` into the tree, then runs each test file in a
+ * runner of its own, with its package's own runner as the host grading copy
+ * does, within what is left of the budget, and maps the joined results as the
+ * host maps them. One runner per file keeps one file's state, and a runner
+ * that loads no file, from deciding another file's results.
  */
 export async function runHiddenTests(
   tree: string,
@@ -141,10 +153,18 @@ export async function runHiddenTests(
     rmSync(target, { force: true })
     writeFileSync(target, readFileSync(join(testsDirectory, 'hidden', path)))
   }
-  const results = await runTests(tree, spec.testFiles, budgetMs, (command) => ({
-    command: underNode(command),
-    env: stripVinayaEnv()
-  }))
+  const deadline = Date.now() + budgetMs
+  const results: Awaited<ReturnType<typeof runTests>> = []
+  for (const path of spec.testFiles.filter(isTestFile)) {
+    const left = deadline - Date.now()
+    if (left <= 0) throw new Error(`the hidden tests ran past their ${budgetMs} ms budget`)
+    results.push(
+      ...(await runTests(tree, [path], left, (command) => ({
+        command: underNode(command),
+        env: stripVinayaEnv()
+      })))
+    )
+  }
   return {
     revision: git(tree, ['rev-parse', 'HEAD']).trim(),
     results: neutralTestResults(spec.case, outcomesOf(results))

@@ -38,6 +38,7 @@
           "unavailable": []
         }
       ],
+      "quarantined": [],
       "mean": 0.3333333333333333,
       "interval": {
         "lower": 0,

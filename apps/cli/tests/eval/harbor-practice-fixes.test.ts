@@ -10,7 +10,11 @@
  *  - a task image installs the Vinaya CLI's dependencies at build, and the
  *    agent's install step only checks the archive's digest;
  *  - a `change` trial's Developer is told what the review loop tells it, and
- *    a pull request is recorded only when the Developer opened one.
+ *    a pull request is recorded only when the Developer opened one;
+ *  - the verifier runs each hidden test file in a runner of its own and hands
+ *    no runner a file that is not a test;
+ *  - the image's non-root user owns what the `vinaya` agent's run reads and
+ *    writes, and the run names no other path.
  */
 import { afterAll, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
@@ -18,12 +22,20 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { publishingInstructionLine } from '../../src/lib/dev-review-loop'
-import { type GradingSpec, gradeTrial, measureChange, splitRecord } from '../../src/lib/dev-review-eval/harbor-grade'
+import {
+  type GradingSpec,
+  gradeTrial,
+  isTestFile,
+  measureChange,
+  runHiddenTests,
+  splitRecord
+} from '../../src/lib/dev-review-eval/harbor-grade'
 import {
   ARCHIVE_DIGEST_PATH,
   ARCHIVE_FILE,
   CHANGE_CASE_INSTALL,
   REPOSITORY_ROOT,
+  TASK_USER_HOME,
   taskFiles,
   VINAYA_HOME
 } from '../../src/lib/dev-review-eval/harbor-tasks'
@@ -41,7 +53,7 @@ import { claudeDevToolName } from '../../src/lib/task-tools/dev-tools-registrati
 import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server'
 import { DEV_TOOL_NAMES } from '../../src/lib/task-tools/tool-catalog'
 import { stripVinayaEnv } from '../lib/process-fixture'
-import { loadCaseFile as loadDeveloperCaseFile } from './developer-capability-suite'
+import { loadCaseFile as loadDeveloperCaseFile, runTests } from './developer-capability-suite'
 import { developmentCases, type GenericSuiteKey, referenceEntry } from './generic-suites'
 import { GENERIC_SUITE_IDS } from './recut-generic-cases'
 import { loadDevelopment, patchBytes, type ReviewCase } from './reviewer-quality-suite'
@@ -241,6 +253,15 @@ describe('the reviewer suite in a depth-1, blob-less clone', () => {
   }, 600_000)
 })
 
+/** Python lines that stand in for Harbor's modules, so the agent file imports without Harbor installed. */
+const HARBOR_STUBS = [
+  'import sys, types',
+  "for name in ['harbor', 'harbor.agents', 'harbor.agents.installed', 'harbor.agents.installed.base', 'harbor.environments', 'harbor.environments.base', 'harbor.models', 'harbor.models.agent', 'harbor.models.agent.context']: sys.modules[name] = types.ModuleType(name)",
+  "sys.modules['harbor.agents.installed.base'].BaseInstalledAgent = object",
+  "sys.modules['harbor.environments.base'].BaseEnvironment = object",
+  "sys.modules['harbor.models.agent.context'].AgentContext = object"
+]
+
 describe('the Vinaya CLI installed at image build', () => {
   const citation = loadCitationCaseFile().cases.find((entry) => entry.id === 'dev-correct-citation')
   const answer = developmentCases('sourceCitation').find((entry) => entry.id === 'dev-correct-citation')
@@ -283,12 +304,8 @@ describe('the Vinaya CLI installed at image build', () => {
       [
         '-c',
         [
-          'import sys, types',
+          ...HARBOR_STUBS,
           'from pathlib import PurePosixPath',
-          "for name in ['harbor', 'harbor.agents', 'harbor.agents.installed', 'harbor.agents.installed.base', 'harbor.environments', 'harbor.environments.base', 'harbor.models', 'harbor.models.agent', 'harbor.models.agent.context']: sys.modules[name] = types.ModuleType(name)",
-          "sys.modules['harbor.agents.installed.base'].BaseInstalledAgent = object",
-          "sys.modules['harbor.environments.base'].BaseEnvironment = object",
-          "sys.modules['harbor.models.agent.context'].AgentContext = object",
           'sys.path.insert(0, sys.argv[1])',
           'import vinaya_harbor_agent as agent',
           'print(agent.install_command(PurePosixPath(sys.argv[2]), PurePosixPath(sys.argv[3])))'
@@ -322,6 +339,135 @@ describe('the Vinaya CLI installed at image build', () => {
     expect(matches.status).toBe(0)
     expect(matches.stdout).toContain('claude-fake')
   })
+
+  it('gives the non-root user the Vinaya CLI after its install, and the case, the tree and the logs', () => {
+    const lines = String(
+      taskFiles(sources, '', url, new TextEncoder().encode('a')).get('environment/Dockerfile')?.content
+    )
+      .trimEnd()
+      .split('\n')
+    const install = lines.findIndex((line) => line.includes(`tar -xf /harbor/${ARCHIVE_FILE}`))
+    const owned = lines.findIndex((line) => line.includes('chown -R tester:tester'))
+    expect(install).toBeGreaterThan(-1)
+    expect(owned).toBeGreaterThan(install)
+    expect(lines[owned]).toContain(`chown -R tester:tester /app /case /logs ${VINAYA_HOME}`)
+    expect(lines[owned]).toContain('mkdir -p /logs/agent /logs/verifier')
+    expect(lines.slice(owned + 1)).toEqual([
+      `ENV HOME=${TASK_USER_HOME}`,
+      'USER tester',
+      'ENV GIT_NO_LAZY_FETCH=1',
+      'WORKDIR /app'
+    ])
+  })
+
+  it("runs the agent as the image's user, in its home, naming only paths that user owns", () => {
+    const printed = run(
+      'python3',
+      [
+        '-c',
+        [
+          ...HARBOR_STUBS,
+          'import asyncio, json, os',
+          'from pathlib import PurePosixPath',
+          'sys.path.insert(0, sys.argv[1])',
+          'import vinaya_harbor_agent as module',
+          'agent = object.__new__(module.VinayaAgent)',
+          "agent.model_name = 'claude-test-model'",
+          "agent.environment_logs_dir = PurePosixPath('/logs/agent')",
+          'calls = []',
+          'async def exec_as_agent(environment, command, env=None): calls.append({"command": command, "env": env})',
+          'agent.exec_as_agent = exec_as_agent',
+          "os.environ['CLAUDE_CODE_OAUTH_TOKEN'] = 'test-token'",
+          'asyncio.run(agent.run("instruction", None, None))',
+          'print(json.dumps(calls))'
+        ].join('\n'),
+        join(REPOSITORY_ROOT, 'apps/cli/src/lib/dev-review-eval')
+      ],
+      { env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } }
+    )
+    expect(printed.stderr).toBe('')
+    const calls = JSON.parse(printed.stdout) as { command: string; env: Record<string, string> }[]
+    expect(calls).toHaveLength(1)
+    const [call] = calls as [{ command: string; env: Record<string, string> }]
+    expect(call.env.HOME).toBe(TASK_USER_HOME)
+    // Every absolute path the command names is one the user owns: the CLI, the case, the tree and the agent logs.
+    const owned = [VINAYA_HOME, '/case', '/app', '/logs/agent']
+    const paths = [...call.command.matchAll(/(?<![\w.])\/[\w./-]+/g)].map((m) => m[0])
+    expect(paths.length).toBeGreaterThan(0)
+    for (const path of paths) expect(owned.some((dir) => path === dir || path.startsWith(`${dir}/`))).toBe(true)
+    expect(call.command).toContain(`cd ${VINAYA_HOME} && bun apps/cli/src/lib/dev-review-eval/harbor-trial.ts`)
+    expect(call.command).toContain('--case /case/case.json --tree /app')
+    expect(call.command).toContain('--record /logs/agent/vinaya-trial-record.json')
+    expect(call.command).toContain('--usage /logs/agent/vinaya-usage.json')
+  })
+})
+
+describe("the verifier's hidden-test runs", () => {
+  it('names a test file by .test., _test_, .spec. or _spec_ in its path', () => {
+    for (const path of ['a/b.test.ts', 'a/b_test_x.py', 'a/b.spec.ts', 'a/b_spec_x.rb'])
+      expect(isTestFile(path)).toBe(true)
+    for (const path of ['tests/ci-shards/shard-1.txt', 'tests/helpers/world.ts', 'tests/fixtures/x.json'])
+      expect(isTestFile(path)).toBe(false)
+  })
+
+  it('runs each test file in a runner of its own and hands no runner a non-test file', async () => {
+    const tree = tempDir('harbor-practice-hidden-')
+    const tests = tempDir('harbor-practice-hidden-tests-')
+    // Each test file refuses a marker its own process left, then leaves one: in one runner the second file fails.
+    const marker = "join(import.meta.dir, 'marker-' + process.pid)"
+    const testFile = (name: string) =>
+      [
+        "import { expect, test } from 'bun:test'",
+        "import { existsSync, readFileSync, writeFileSync } from 'node:fs'",
+        "import { join } from 'node:path'",
+        `test(${JSON.stringify(name)}, () => {`,
+        `  expect(readFileSync(join(import.meta.dir, 'notes.txt'), 'utf8')).toBe('read by the tests\\n')`,
+        `  expect(existsSync(${marker})).toBe(false)`,
+        `  writeFileSync(${marker}, 'x')`,
+        '})',
+        ''
+      ].join('\n')
+    const files: Record<string, string> = {
+      'tests/a.test.ts': testFile('first leaves a marker'),
+      'tests/b.test.ts': testFile('second finds no marker'),
+      'tests/notes.txt': 'read by the tests\n'
+    }
+    writeFileSync(join(tree, 'package.json'), '{ "name": "hidden-fixture", "private": true }\n')
+    for (const [path, content] of Object.entries(files)) {
+      mkdirSync(join(tests, 'hidden', 'tests'), { recursive: true })
+      writeFileSync(join(tests, 'hidden', path), content)
+    }
+    git(tree, ['init', '--quiet'])
+    git(tree, ['add', '-A'])
+    git(tree, ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--quiet', '-m', 'base'])
+    const c = developmentCases('developer').find((entry) => entry.id === 'pr-1003') as Extract<
+      NeutralCase,
+      { kind: 'change' }
+    >
+    const spec: GradingSpec = {
+      schemaVersion: 1,
+      suite: GENERIC_SUITE_IDS.developer,
+      case: {
+        ...c,
+        hiddenTests: [
+          { path: 'tests/a.test.ts', name: 'first leaves a marker', expectation: 'fail-to-pass' },
+          { path: 'tests/b.test.ts', name: 'second finds no marker', expectation: 'fail-to-pass' }
+        ]
+      },
+      testFiles: Object.keys(files).sort()
+    }
+    const measured = await runHiddenTests(tree, tests, spec, 120_000)
+    expect(measured.revision).toBe(git(tree, ['rev-parse', 'HEAD']).trim())
+    expect(measured.results).toEqual([
+      { path: 'tests/a.test.ts', name: 'first leaves a marker', result: 'pass' },
+      { path: 'tests/b.test.ts', name: 'second finds no marker', result: 'pass' }
+    ])
+    // The non-test file is written into the tree, where the tests read it.
+    expect(readFileSync(join(tree, 'tests/notes.txt'), 'utf8')).toBe('read by the tests\n')
+    // The same two files in one runner: the second finds the first's marker.
+    const together = await runTests(tree, ['tests/a.test.ts', 'tests/b.test.ts'], 120_000)
+    expect(together.map((r) => r.outcome).sort()).toEqual(['fail', 'pass'])
+  }, 300_000)
 })
 
 describe("a change trial's publishing instruction and its pull request", () => {
