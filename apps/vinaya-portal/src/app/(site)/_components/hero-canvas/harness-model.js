@@ -167,6 +167,11 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
   const CORE = { ramp: 'flat', wire: 0, contact: false, lift: 0.13, ...(opts.core || {}) }
   // where the hero's derived colours (heroColor) are resolved from
   const tokenRoot = opts.tokenRoot ?? document.documentElement
+  /* The outer ring: its four bands, their rungs, the electric arcs across its gaps and their
+     socket pins. `ring: false` keeps every part built but never shows them: the bands stay
+     at zero span, the arcs never strike, and the bolts' band-junction lines (drawn where
+     each hex meets a band) hide with the bands they would trace. Default: shown. */
+  const RING = opts.ring ?? true
   const group = new THREE.Group()
   group.name = 'vinaya-harness'
 
@@ -945,15 +950,16 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
   let lastMicroTime = 0
   function update(state) {
     const screw = clamp01(state.screw ?? 1)
-    const deploy = clamp01(state.deploy ?? 1)
+    const deploy = RING ? clamp01(state.deploy ?? 1) : 0
     const clampP = clamp01(state.clamp ?? 1)
-    const spark = clamp01(state.spark ?? 1)
+    const spark = RING ? clamp01(state.spark ?? 1) : 0
 
     // stage 1 — the four bolts rise together, in place
     for (const s of parts.screws) {
       const sc = easeOutCubic(screw)
       s.pivot.visible = sc > 0.001
       s.pivot.scale.setScalar(Math.max(0.001, sc))
+      s.meshes[3].visible = RING // the band-junction lines
     }
 
     // stage 2 — each band deploys out of its bolt, rungs and rivets riding the ends

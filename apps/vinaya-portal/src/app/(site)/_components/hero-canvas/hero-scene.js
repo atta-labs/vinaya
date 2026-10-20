@@ -13,11 +13,21 @@ import { buildBeam } from './underworld-beam'
  * `.claude/skills/vinaya-architecture/SKILL.md`).
  *
  * DO NOT retune the timeline below: its relative rhythm is the design. Main's arrival opens
- * it — an `open` ramp at the head, every later beat 0.75 s behind it.
+ * it — an `open` ramp at the head, every later beat 0.75 s behind it. With the outer ring
+ * switched off (RING) its two beats are skipped and everything after them moves up, so the
+ * columns close 0.75 s after the bolts rise, the same step as every other beat.
  * Every `document`/`window`/`getComputedStyle` read lives inside `mountHeroScene`.
  */
 
+/* The outer ring — its four bands deploying out of the bolts, and the electric arcs that strike
+   across its gaps. Off, the harness is bolts, columns and main: the ring's parts are still built
+   (harness-model.js `ring`), never shown, and the timeline skips their beats. */
+const RING = false
+
 /* ── the timeline. Build beats are seconds; everything else is scroll progress 0–1 ── */
+const RING_BEATS = ['deploy', 'spark']
+const RING_SPAN = 3.85 - 2.05 // from the ring's first beat to `clamp`, the beat after its last
+const afterRing = (s) => (RING || s < 2.05 ? s : s - RING_SPAN)
 const BUILD = [
   ['open', 0.25, 0.9], // main's aperture — the sheet is empty until it opens
   ['screw', 1.3, 0.5],
@@ -27,13 +37,16 @@ const BUILD = [
   ['mainPulse', 4.6, 0.62],
   ['merge', 4.73, 0.55]
 ]
-const WAVE_T = 4.73 // fires with `merge`
-const FLOW_T = WAVE_T + 0.35 // the infinity leaves the north-east column just behind the shock wave's front
+  .filter(([key]) => RING || !RING_BEATS.includes(key))
+  .map(([key, start, dur]) => [key, afterRing(start), dur])
+const WAVE_T = afterRing(4.73) // fires with `merge`
+const FLOW_T = WAVE_T + 0.35 // the infinity leaves main just behind the shock wave's front
 const ARRIVAL_T = 0.2 // the small ripple that precedes main's opening
-const FLASH_T = 5.35 // the build flash trails the latch
-/* the intro plays INTRO_SPEED times faster than the beats above are written: the scene clock (and the field's
-   step) runs at that rate until INTRO_END, the end of the build flash, then at real time, with no jump */
-const INTRO_SPEED = 1.5
+const FLASH_T = afterRing(5.35) // the build flash trails the latch
+/* the scene clock (and the field's step) runs INTRO_SPEED times the rate the beats above are written at
+   until INTRO_END, the end of the build flash, then at real time, with no jump. Without the ring the
+   intro plays at the speed it is written at; with it, 1.5 times faster, as it always has */
+const INTRO_SPEED = RING ? 1.5 : 1
 const INTRO_END = FLASH_T + 2.2
 const TIP_FROM = 0.02
 const TIP_TO = 0.72
@@ -363,7 +376,7 @@ function startHeroScene({ canvas, root, labelClass, frameShiftRem = 0, onReady =
     // main-core options — the 1c fix for the core reading as an egg in light mode: wire net
     // at 0.07 alpha, per-fragment cel terminator, collar contact, centre lifted 0.13R → 0.22R.
     // See harness-model.js's main block for what each does. Defaults there are inert.
-    const harnessOpts = { tokenRoot: hero, core: { wire: 0.07, ramp: 'deep', contact: true, lift: 0.22 } }
+    const harnessOpts = { tokenRoot: hero, ring: RING, core: { wire: 0.07, ramp: 'deep', contact: true, lift: 0.22 } }
     const building = buildHarness(THREE, harnessOpts).then((harness) => {
       if (cancelled || disposed) return
       const field = buildField(THREE, {
@@ -395,7 +408,8 @@ function startHeroScene({ canvas, root, labelClass, frameShiftRem = 0, onReady =
         seatY,
         dishDepth: DISH,
         dishR: 2.15,
-        colors: flow
+        colors: flow,
+        fabric: field // the strands lie on the sheet and ride its waves
       })
       scene.add(infinity.group)
       /* the drifting squares: floating above the fabric all round the harness, from the first frame */
@@ -547,7 +561,7 @@ function startHeroScene({ canvas, root, labelClass, frameShiftRem = 0, onReady =
           if (rayc.ray.intersectPlane(groundPlane, hit)) field.setCursor(hit)
         }
         beam.update(t, camera)
-        infinity.update(t, reduced ? 0 : firedWave ? FLOW_T : null)
+        infinity.update(t, reduced ? 0 : firedWave ? FLOW_T : null, reduced)
         floaters.update(reduced ? 0 : t)
         setCopy(p, buildDone)
 
