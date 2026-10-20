@@ -7,9 +7,12 @@ Harbor (version 0.24.0) runs it on a task folder the converter
         --path <out>/<suite> --agent vinaya_harbor_agent:VinayaAgent \\
         --ak archive=<vinaya.tar> --model <exact model id>
 
-`install` uploads the Vinaya CLI archive the converter wrote with its
-`--archive` flag, unpacks it at /opt/vinaya and installs its dependencies;
-Claude Code, Bun and Node are already in the task image. `run` runs
+The task image already holds the Vinaya CLI at /opt/vinaya with its workspace
+dependencies, installed at image build from the archive the converter wrote
+with its `--archive` flag, and the digest of that archive; Claude Code, Bun and
+Node are in the image too. `install` uploads this agent's archive and refuses
+unless its SHA-256 equals the digest the image recorded, so the run uses the
+CLI it was given; it runs no network step. `run` runs
 `harbor-trial.ts` on the task's case in container mode, which dispatches the
 Vinaya role and writes the agent part of the Vinaya trial record and the run's
 usage to the agent log directory, where the task's verifier and this agent read
@@ -20,6 +23,8 @@ The Claude login is the subscription token alone: `CLAUDE_CODE_OAUTH_TOKEN` and
 never from an agent-env flag, whose values Harbor writes into the job's
 configuration. No API key is read or forwarded.
 """
+
+from __future__ import annotations
 
 import json
 import os
@@ -33,6 +38,8 @@ from harbor.models.agent.context import AgentContext
 
 VINAYA_HOME = PurePosixPath("/opt/vinaya")
 ARCHIVE_IN_CONTAINER = PurePosixPath("/tmp/vinaya.tar")
+# Written by the task image's build, which installed the archive; see harbor-tasks.ts.
+ARCHIVE_DIGEST_FILE = PurePosixPath("/harbor/vinaya-archive.sha256")
 CASE_FILE = PurePosixPath("/case/case.json")
 CASE_TREE = PurePosixPath("/app")
 TRIAL_ENTRY = "apps/cli/src/lib/dev-review-eval/harbor-trial.ts"
@@ -42,6 +49,28 @@ TRANSCRIPT_FILE = "vinaya-trial.txt"
 
 # The only variables forwarded to the run for its login.
 SUBSCRIPTION_ENV = ("CLAUDE_FORCE_OAUTH", "CLAUDE_CODE_OAUTH_TOKEN")
+
+
+def install_command(
+    archive_path: PurePosixPath = ARCHIVE_IN_CONTAINER, digest_path: PurePosixPath = ARCHIVE_DIGEST_FILE
+) -> str:
+    """The install step: checks the uploaded archive against the one the image installed; no network."""
+    archive = shlex.quote(archive_path.as_posix())
+    recorded = shlex.quote(digest_path.as_posix())
+    missing = shlex.quote(
+        f"the task image holds no Vinaya CLI ({digest_path} is missing): "
+        "convert the tasks with harbor-tasks.ts --archive <file.tar> and pass the same archive"
+    )
+    differs = shlex.quote(
+        "the Vinaya CLI archive differs from the one the task image installed: "
+        "pass the archive harbor-tasks.ts --archive wrote for these tasks"
+    )
+    return (
+        f"if [ ! -s {recorded} ]; then echo {missing} >&2; exit 1; fi && "
+        f"if [ \"$(sha256sum {archive} | awk '{{print $1}}')\" != \"$(cat {recorded})\" ]; "
+        f"then echo {differs} >&2; exit 1; fi && "
+        f"rm -f {archive} && claude --version"
+    )
 
 
 class VinayaAgent(BaseInstalledAgent):
@@ -67,15 +96,7 @@ class VinayaAgent(BaseInstalledAgent):
 
     async def install(self, environment: BaseEnvironment) -> None:
         await environment.upload_file(self._archive, ARCHIVE_IN_CONTAINER.as_posix())
-        home = shlex.quote(VINAYA_HOME.as_posix())
-        await self.exec_as_root(
-            environment,
-            command=(
-                f"rm -rf {home} && mkdir -p {home} && "
-                f"tar -xf {shlex.quote(ARCHIVE_IN_CONTAINER.as_posix())} -C {home} && "
-                f"cd {home} && bun install --frozen-lockfile && claude --version"
-            ),
-        )
+        await self.exec_as_root(environment, command=install_command())
 
     def _subscription_env(self) -> dict[str, str]:
         """The run's login, from the environment of the harbor run process only."""

@@ -14,7 +14,7 @@ import {
   MAPPING_SOURCE_PATHS,
   MAPPING_SOURCES,
   MAPPING_TABLES,
-  READ_ONLY_BUILTINS,
+  REVIEWER_BUILTINS,
   renderCase,
   rendererVersionOf,
   SEVERITY_BLOCKING,
@@ -129,7 +129,7 @@ describe('render', () => {
       for (const tool of tools ?? []) {
         expect(loopEntry.case.grantedCapabilities).toContain(TOOL_CAPABILITIES[tool] as string)
         if (role !== 'developer')
-          expect(ROLE_TOOL_GRANTS.security.includes(tool) || READ_ONLY_BUILTINS.includes(tool)).toBe(true)
+          expect(ROLE_TOOL_GRANTS.security.includes(tool) || REVIEWER_BUILTINS.includes(tool)).toBe(true)
       }
     }
   })
@@ -416,7 +416,12 @@ describe('extract', () => {
         used: ['read_file', 'read_document', 'write_file', 'run_commands', 'publish_change', 'open_change_request']
       }
     })
-    expect(outcomesOf({ ...record, trace: [{ tool: 'WebFetch' }] })['O-capability'].status).toBe('invalid')
+    expect(outcomesOf({ ...record, trace: [{ tool: 'NotebookEdit' }] })['O-capability'].status).toBe('invalid')
+    // A web fetch or search reads an undelivered source: the capability no case grants, never an invalid outcome.
+    expect(outcomesOf({ ...record, trace: [{ tool: 'WebFetch' }, { tool: 'WebSearch' }] })['O-capability']).toEqual({
+      status: 'known',
+      value: { used: ['read_web'] }
+    })
   })
 
   it('reads the ready-for-merge result as the decision, and its absence as no decision', () => {

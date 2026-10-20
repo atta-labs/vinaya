@@ -2961,6 +2961,18 @@ export function surfaceCoversAgentConfig(surface: IssueSurface | null, agent: st
   return representativePaths.some((p) => surface.in.some((glob) => globCoversPath(glob, p)))
 }
 
+/**
+ * The publishing-instruction clause every Developer prompt and re-ask of the
+ * review loop ends with — the same for both agents: the Developer publishes
+ * only through the driver-run tools, holding no forge credential of its own.
+ * The driver hosts the tools and runs every gate; it never commits, pushes or
+ * opens on the Developer's behalf. The evaluation harness's change trials give
+ * their Developer this same clause.
+ */
+export function publishingInstructionLine(): string {
+  return 'publish only through the driver-run tools, which run outside your sandbox and hold the gates: `publish_changes` (pass your one-line `Type(scope): Description` commit header) to commit and push the task branch, `open_pull_request` (pass the full PR-report body) to open the pull request when none is open, `update_pull_request_body`/`refresh_evidence` for a body-only change, `read_pull_request` to read its state, its checks and the job-log tail of each failed check, and `run_checks` to run `vinaya check --all`; you hold no `gh`/`git push` credential and the driver does not commit, push or open on your behalf.'
+}
+
 export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = {}): Promise<LoopResult> {
   // Round 2 review (MAJOR) / security review (MEDIUM): a driver runs with no
   // human watching, so it must resolve `runtimeDir` through the
@@ -5122,17 +5134,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
     /** O7: at most this many times the publication step re-asks the same Developer session to fix a missing header or a failed check before leaving the unmoved head to the poll/`no_push` safety net. */
     const MAX_PUBLISH_REASKS = 2
-
-    /**
-     * O4: the publishing-instruction clause every reask prompt in this file
-     * ends with — the SAME for both agents now: the Developer publishes only
-     * through the driver-run tools, holding no forge credential of its own. The
-     * driver hosts the tools and runs every gate; it never commits, pushes or
-     * opens on the Developer's behalf.
-     */
-    function publishingInstructionLine(): string {
-      return 'publish only through the driver-run tools, which run outside your sandbox and hold the gates: `publish_changes` (pass your one-line `Type(scope): Description` commit header) to commit and push the task branch, `open_pull_request` (pass the full PR-report body) to open the pull request when none is open, `update_pull_request_body`/`refresh_evidence` for a body-only change, `read_pull_request` to read its state, its checks and the job-log tail of each failed check, and `run_checks` to run `vinaya check --all`; you hold no `gh`/`git push` credential and the driver does not commit, push or open on your behalf.'
-    }
 
     /**
      * O7: read the task branch's base (its merge base with the default

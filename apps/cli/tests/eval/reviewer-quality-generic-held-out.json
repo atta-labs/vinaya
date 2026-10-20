@@ -24,7 +24,7 @@
             "protected": []
           },
           "deliveredDocuments": [],
-          "grantedCapabilities": ["read_file"],
+          "grantedCapabilities": ["read_file", "run_commands"],
           "plantedDefects": [],
           "changeUnderReview": {
             "base": "3e33601c52c9b23c618f817c44a0e67b70c46413",
@@ -55,7 +55,7 @@
             "protected": []
           },
           "deliveredDocuments": [],
-          "grantedCapabilities": ["read_file"],
+          "grantedCapabilities": ["read_file", "run_commands"],
           "plantedDefects": [],
           "changeUnderReview": {
             "base": "3e33601c52c9b23c618f817c44a0e67b70c46413",
