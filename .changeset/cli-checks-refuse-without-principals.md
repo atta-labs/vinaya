@@ -1,9 +1,0 @@
----
-'@attalabs/vinaya': minor
----
-
-The CLI's checks no longer trust a built-in Principal. Every check that decides who counts as a Principal — the review gate, evidence freshness, brief shape, the Test Plan check and the Principal Test Plan wait, both documentation-coverage checks, coherence, dispatch readiness and first-push dispatch — reads `principals` from `vinaya.config.json` on the repository's default branch and nothing else. When the default branch names no Principal (no repository resolves for the read, no `vinaya.config.json`, no `principals`, or a file that fails the configuration schema), each writes one error naming the fix — add `"principals": [...]` to `vinaya.config.json` on the default branch — and fails. The list resolves before a documentation or review waiver is checked, because the waiver's actor check needs the same list: a repository with no `principals` cannot waive either.
-
-When the read itself fails (no `gh` authentication, an empty CI token, the network), the trust decisions — the review gate, evidence freshness, the frozen-brief pick behind brief shape and the Test Plan checks, and the pull-request documentation-coverage waiver — fail the same way, naming the reason. The push-time checks instead write one warning naming the failed read and treat the result that needed the list as unknown: first-push dispatch allows the push, coherence skips rule A1 and runs every other rule, dispatch readiness leaves its exit to the premise re-assertion, and push-mode documentation coverage treats the waiver as not active.
-
-Inside the Developer sandbox `gh` cannot authenticate, so a Principal read there fails: the trust-decision checks refuse there (each already needed another forge read that fails the same way) and the push-time checks warn. A fork pull request's CI token is empty, so on a fork pull request every trust-decision check refuses, naming the reason, while the push-time checks warn.

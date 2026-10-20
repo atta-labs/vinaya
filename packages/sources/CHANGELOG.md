@@ -1,5 +1,50 @@
 # @atta/vinaya-sources
 
+## 0.40.0
+
+### Minor Changes
+
+- 01c44d7: A repository configures its own writing rules. `proseGates.rules` switches a default prose rule off, retunes its scopes, severity or exemptions, and adds custom rules whose findings print the rule's id, the file and line, the matched text and its message; `proseGates.productPaths` replaces the product class's file set, and `proseGates.published.allow` replaces the published pass's allowed mechanics. Every key is validated at load and a malformed one refuses the run, naming the key. `reader-resolvable-prose` runs the reader-resolvable group and `retired-vocabulary` the retired group of the one rule set, and `vinaya check --plan` prints which rules each runs. With none of the keys set, every finding is unchanged.
+- a78e728: Restrict dispatch to Claude Code and Codex, removing Gemini dispatch adapters and rejecting Gemini configuration by name. Keep Gemini installation, doctor and upgrade scaffolding unchanged.
+- 5d192b7: A repository opts into decision records. `decisionRecords.path` names a folder of the repository; load refuses one outside the repository or inside the doctrine tree, naming the key. With it set, the folder joins the writing rules' `spec` scope, the `decision-record-citation` rule blocks `ADR` followed by a number and any path to a numbered record everywhere but the folder itself (including the published pass), and `vinaya new adr <title>` writes the next numbered record from the shipped decision-record template with status Proposed and adds it to the folder's index page. With the key absent, every check, command and finding is unchanged.
+
+### Patch Changes
+
+- 4753377: The built-in Principal is gone. `@attalabs/aeg-core` no longer exports `PRINCIPAL_ALLOWLIST`: a caller that imported it fails to compile and must read the `principals` list from the repository's `vinaya.config.json`. Every `vinaya` command and library path that decides who counts as a Principal — dispatch and brief assembly, the review loop's ruling and frozen-brief readers, `vinaya task status` and the task-tools server, `vinaya pr rule`, `vinaya issue objectives edit`, the frozen-section lock on `vinaya issue edit`, `vinaya review post` and `vinaya review status` — now reads `principals` from the default branch and refuses when it is missing, naming the fix (`add "principals": [...] to vinaya.config.json on the default branch`), or when the default-branch read fails, naming why. A repository with `principals` on its default branch behaves as before. `vinaya doctor`, `vinaya init`'s Principal note and the shipped configuration reference's `principals` row now say that without the key every Principal-deciding gate and command refuses.
+- ca652e8: The generated doctrine pointer, the CLI README, the Log specification and the package READMEs now describe what the code does: `rings.ring2_asyncAudits: false` skips both the post-merge task archive and dead-branch-push bookkeeping, the redactor's twelve secret classes and its home-directory rewrite, the ten Log families, the declared dispatch outcomes that have no producer yet, and the two commands that write to the forge directly rather than through the effect executor. The `dispatch` failure help text now names `usage_limit`. No behaviour changes.
+- 981e565: `vinaya milestone close` refuses to close a Milestone whose `### Tranche intents` section declares a tranche that is not complete, naming each unfinished tranche and its lifecycle, and a dry run with `--validate-only` refuses with the same reasons; it shares that decision with `vinaya archive tranche`.
+- 448554b: Refuse release before any plan step when a fixed-group working-tree version is already published or its registry status cannot be established, including during dry runs.
+- f8a0190: Add a separate, twenty-minute default timeout for code-reviewer and security dispatches, configurable with `dispatch.reviewerTimeoutMs`.
+- Updated dependencies [b62bca3]
+- Updated dependencies [3beae79]
+- Updated dependencies [222eb90]
+- Updated dependencies [900ff4e]
+- Updated dependencies [4753377]
+- Updated dependencies [6eac756]
+- Updated dependencies [d9acb2a]
+- Updated dependencies [01c44d7]
+- Updated dependencies [7ec77b7]
+- Updated dependencies [b827e80]
+- Updated dependencies [9bbbeed]
+- Updated dependencies [ca652e8]
+- Updated dependencies [0599a6f]
+- Updated dependencies [a9b0c7a]
+- Updated dependencies [8760d2f]
+- Updated dependencies [542fc14]
+- Updated dependencies [912ae82]
+- Updated dependencies [27bf508]
+- Updated dependencies [5d192b7]
+- Updated dependencies [04b8f9e]
+- Updated dependencies [ff4a2e9]
+- Updated dependencies [75fafb8]
+- Updated dependencies [206c8b6]
+- Updated dependencies [0a3464b]
+- Updated dependencies [ee3e9ee]
+- Updated dependencies [0e19c68]
+  - @attalabs/aeg-core@0.40.0
+  - @attalabs/aeg-forge-state@0.40.0
+  - @attalabs/aeg-types@0.40.0
+
 ## 0.39.0
 
 ### Minor Changes
