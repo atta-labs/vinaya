@@ -10,6 +10,7 @@ import {
   VinayaHarnessIcon,
   VinayaProcessIcon
 } from './icons'
+import { ConfigScene, ImproveScene, LogScene, StudioScene, TelemetryScene } from './menu-previews'
 
 /**
  * The site's one navigation, shared by every top bar: the site's own, the docs
@@ -24,7 +25,6 @@ const group = (name: string): ReactNode => (
 )
 
 const LIST_ICON = 'size-9'
-const ART = 'size-24'
 
 /** The Product menu: the five features as a list, and a preview of the one pointed at. Each opens its feature page. */
 const PRODUCT_SECTIONS: TopBarGroupSection[] = [
@@ -41,7 +41,7 @@ const PRODUCT_SECTIONS: TopBarGroupSection[] = [
         preview: {
           title: 'Every check, review and decision, written down',
           line: 'Typed events with who made them, delivered live to a folder or your own log server.',
-          art: <LogIcon className={ART} />
+          art: <LogScene />
         }
       },
       {
@@ -52,7 +52,7 @@ const PRODUCT_SECTIONS: TopBarGroupSection[] = [
         preview: {
           title: 'What the Log adds up to',
           line: 'Time per task, second rounds, problems caught and where the time goes, for every milestone.',
-          art: <TelemetryIcon className={ART} />
+          art: <TelemetryScene />
         }
       },
       {
@@ -63,7 +63,7 @@ const PRODUCT_SECTIONS: TopBarGroupSection[] = [
         preview: {
           title: 'See every agent and every task, live',
           line: 'Mission Control, the dashboard and every repository you govern. It reads; it never decides.',
-          art: <StudioIcon className={ART} />
+          art: <StudioScene />
         }
       },
       {
@@ -74,7 +74,7 @@ const PRODUCT_SECTIONS: TopBarGroupSection[] = [
         preview: {
           title: 'The process gets better by itself',
           line: 'The Improver reads the reports and proposes changes. You approve them; they go back to product.',
-          art: <SelfImprovementIcon className={ART} />
+          art: <ImproveScene />
         }
       },
       {
@@ -85,7 +85,7 @@ const PRODUCT_SECTIONS: TopBarGroupSection[] = [
         preview: {
           title: 'One file turns the harness on',
           line: 'vinaya.config.json declares the process, agents, forge and log destination. It never runs code.',
-          art: <ConfigurationIcon className={ART} />
+          art: <ConfigScene />
         }
       }
     ]

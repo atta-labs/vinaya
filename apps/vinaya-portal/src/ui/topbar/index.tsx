@@ -314,25 +314,26 @@ function SectionPanel({
           </ul>
           {shown && (
             <NextLink
+              key={shown.href}
               variant='unstyled'
               href={shown.href}
               tabIndex={-1}
               aria-hidden='true'
-              className='flex flex-col justify-between gap-6 rounded-xl border border-border bg-card p-6 text-foreground transition-colors hover:border-foreground/30'
+              onClick={() => closeNavigationMenus()}
+              className='flex animate-in flex-col justify-between gap-4 rounded-xl border border-border bg-card p-6 text-foreground transition-colors duration-150 fade-in hover:border-foreground/30 motion-reduce:animate-none'
             >
               <span className='flex flex-col gap-2.5'>
                 <span className='font-mono text-xs uppercase tracking-widest text-ring'>{shown.label}</span>
-                <span className='text-2xl leading-tight tracking-tight'>{shown.preview?.title ?? shown.label}</span>
+                <span className='whitespace-nowrap text-[22px] leading-tight tracking-tight'>
+                  {shown.preview?.title ?? shown.label}
+                </span>
                 {(shown.preview?.line ?? shown.description) && (
                   <span className='text-sm leading-normal text-muted-foreground'>
                     {shown.preview?.line ?? shown.description}
                   </span>
                 )}
               </span>
-              <span className='flex items-end justify-between gap-4'>
-                <span className='text-sm font-medium'>Open {shown.label} →</span>
-                {shown.preview?.art}
-              </span>
+              {shown.preview?.art}
             </NextLink>
           )}
         </div>
@@ -432,7 +433,7 @@ function DesktopNavGroup({
               item.sections.some((section) => section.layout === 'cards')
                 ? 'w-[min(44rem,calc(100vw-2rem))]'
                 : item.sections.some((section) => section.layout === 'preview')
-                  ? 'w-[min(46rem,calc(100vw-2rem))]'
+                  ? 'w-[min(49.25rem,calc(100vw-2rem))]'
                   : 'w-[min(52rem,calc(100vw-2rem))]',
               panelClassName
             )}
