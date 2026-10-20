@@ -11,12 +11,12 @@
     },
     {
       "commentId": 6245835283,
-      "bytes": 41198,
-      "sha256": "4c9d661bffcc47f5121b1f6e6d967663551529a99d4f95abb0073ea98337a5a2"
+      "bytes": 41341,
+      "sha256": "506cfe7f47a3f32c253f797ef92037fc5913979aa81bcf7d94bbf453f02f0aa9"
     }
   ],
-  "totalBytes": 101006,
-  "sha256": "db3876c8ecb20446e5f93c8751b22f83df703570554d29511354a49d3ff1ad71",
+  "totalBytes": 101149,
+  "sha256": "505c714e5e8c36f748b5e3971c6680d28d40729804eb66f10abea39bd9b010b2",
   "documents": {
     "Tech spec — Developer-review on Atta Engine": {
       "path": "apps/cli/specs/dev-review-engine-state-machine.md",

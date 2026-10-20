@@ -1,0 +1,8 @@
+{
+  "job_id": "redacted-job",
+  "trial_name": "failure__trial",
+  "task": { "path": "tasks/failure" },
+  "agent": { "name": "vinaya", "import_path": "vinaya_harbor_agent:VinayaAgent", "model_name": "claude-opus-5-5" },
+  "environment": { "type": "docker" },
+  "verifier": {}
+}

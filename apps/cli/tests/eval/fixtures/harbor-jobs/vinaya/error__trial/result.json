@@ -1,0 +1,28 @@
+{
+  "id": "redacted-error-trial",
+  "task_name": "error",
+  "trial_name": "error__trial",
+  "trial_uri": "redacted://error",
+  "task_id": { "path": "tasks/error" },
+  "source": "code-reviewer-quality-neutral.l5",
+  "task_checksum": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "config": {
+    "job_id": "redacted-job",
+    "trial_name": "error__trial",
+    "task": { "path": "tasks/error" },
+    "agent": { "name": "vinaya", "model_name": "claude-opus-5-5" },
+    "environment": { "type": "docker" },
+    "verifier": {}
+  },
+  "started_at": "2026-10-19T01:04:00Z",
+  "finished_at": "2026-10-19T01:05:00Z",
+  "agent_info": { "name": "vinaya", "version": "fixture", "model_info": { "name": "claude-opus-5-5" } },
+  "agent_result": null,
+  "verifier_result": null,
+  "exception_info": {
+    "exception_type": "RuntimeError",
+    "exception_message": "agent exited before grading",
+    "exception_traceback": "redacted",
+    "occurred_at": "2026-10-19T01:05:30Z"
+  }
+}

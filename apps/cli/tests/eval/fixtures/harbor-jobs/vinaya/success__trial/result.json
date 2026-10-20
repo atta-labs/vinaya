@@ -1,0 +1,23 @@
+{
+  "id": "redacted-success-trial",
+  "task_name": "success",
+  "trial_name": "success__trial",
+  "trial_uri": "redacted://success",
+  "task_id": { "path": "tasks/success" },
+  "source": "code-reviewer-quality-neutral.l5",
+  "task_checksum": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "config": {
+    "job_id": "redacted-job",
+    "trial_name": "success__trial",
+    "task": { "path": "tasks/success" },
+    "agent": { "name": "vinaya", "model_name": "claude-opus-5-5" },
+    "environment": { "type": "docker" },
+    "verifier": {}
+  },
+  "started_at": "2026-10-19T01:00:00Z",
+  "finished_at": "2026-10-19T01:01:00Z",
+  "agent_info": { "name": "vinaya", "version": "fixture", "model_info": { "name": "claude-opus-5-5" } },
+  "agent_result": { "n_input_tokens": 100, "n_cache_tokens": 0, "n_output_tokens": 20, "cost_usd": 0.01 },
+  "verifier_result": { "rewards": { "reward": 1 } },
+  "exception_info": null
+}

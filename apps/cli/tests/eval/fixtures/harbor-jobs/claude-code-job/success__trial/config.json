@@ -1,0 +1,8 @@
+{
+  "job_id": "redacted-original-job",
+  "trial_name": "success__trial",
+  "task": { "path": "tasks/success" },
+  "agent": { "name": "claude-code", "model_name": "claude-opus-5-5" },
+  "environment": { "type": "docker" },
+  "verifier": {}
+}

@@ -608,17 +608,25 @@ selects cases, a single count or case ids, repeated or comma-separated:
 bun apps/cli/src/lib/dev-review-eval/step-one.ts run --split development --backend standalone [--purpose <development-only|practice|comparison>] [--suite <name>]... [--adapter <claude-code|codex>] [--cases <n>|--cases <id>...] --trials <n> --bootstrap <percentile|basic> --seed <n> --resamples <n> --confidence <x> [--developer-snapshot <merged-task-prs.jsonl>] --input-cost-per-million <usd> --output-cost-per-million <usd> [--claude-model <m>] [--codex-model <m>] [--timeout-sec <n>] [--container-tree <dir> --container-record <file>] [--out <file>]
 ```
 
-For example, a practice run of the first case of the layer-`G` developer
-suite on Claude Code alone:
+For example, run one development task and one trial for the layer-`G`
+Developer suite through Harbor, then read the completed job into its step-one
+practice report:
 
 ```text
-bun apps/cli/src/lib/dev-review-eval/step-one.ts run --split development --backend standalone --purpose practice --suite developer-capability-neutral.l5 --adapter claude-code --cases 1 --trials 1 --bootstrap percentile --seed 1 --resamples 100 --confidence 0.95 --input-cost-per-million 0 --output-cost-per-million 0
+PYTHONPATH=apps/cli/src/lib/dev-review-eval harbor run --path <harbor-task-directory>/developer-capability-neutral.l5 --include-task-name <case-id> --agent vinaya_harbor_agent:VinayaAgent --ak archive=<file.tar> --model <exact-model-id> --n-attempts 1 --job-name <job-name> --jobs-dir <jobs-directory>
+bun apps/cli/src/lib/dev-review-eval/harbor-results.ts <job-directory> --suite developer-capability-neutral.l5 --subscription-auth --bootstrap percentile --seed 1 --resamples 100 --confidence 0.95 [--task-root <harbor-working-directory>] [--out <file>]
 ```
+
+Repeat the Harbor job once per layer-`G` role suite and subscription adapter,
+as required by the evaluation program's practice-run order; each reader
+invocation accepts exactly one suite's job. Relative task paths are resolved
+from the reader's current working directory, which must be the directory from
+which Harbor ran; use `--task-root` when reading the job from somewhere else.
 
 The snapshot supplies the frozen layer-`P` Developer briefs whose committed corpus
 entries intentionally retain only digests. Only a `developer-capability.l5`
-trial needs it; a run of layer-`G` and reviewer suites alone, like the example
-above, leaves it out. The command verifies each brief
+trial needs it; a host run of layer-`G` and reviewer suites alone leaves it
+out. The command verifies each brief
 against that digest. Pricing is explicit because subscription CLIs report
 tokens but do not provide one portable cost schedule.
 
@@ -731,6 +739,22 @@ The binary grader first passes the structured output and the controller's role, 
 ## Layer-G role trials in Harbor
 
 A live layer-`G` role trial runs as a trial of Harbor `0.24.0`, the evaluation framework installed with `uv tool install harbor`, with the `vinaya` agent: Harbor builds the case's container, the agent runs the Vinaya role for the case inside it, and Harbor's verifier grades the result with the generic graders. Every case of the four layer-`G` role suites — `developer-capability-neutral.l5`, `code-reviewer-quality-neutral.l5`, `security-reviewer-quality-neutral.l5` and `source-delivery-neutral.l5` — runs this way.
+
+Practice runs of these layer-`G` role suites are read from completed Harbor
+jobs, not run by the host step-one command. Run
+`apps/cli/src/lib/dev-review-eval/harbor-results.ts` with the job directory,
+`--suite`, the required `--subscription-auth` declaration, `--bootstrap`,
+`--seed`, `--resamples`, `--confidence`, optionally `--task-root` for the
+working directory Harbor used to resolve relative local-task paths, and
+optionally `--out`. The reader
+accepts one Harbor `0.24.0` job of the `vinaya` agent, one trial per task and
+one suite per job. It refuses another Harbor version or agent, duplicate task
+trials, mixed suites, and a task without the converter's `task.toml`. Its
+step-one result has purpose `practice` and evidence `never`; it records the
+exact model id, subscription authentication, the suite's renderer version,
+per-task outcomes, bootstrap estimate, and the usage and wall time synced from
+each trial. The in-container `executeLayerGTrial` path remains the path the
+Harbor `vinaya` agent invokes.
 
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/harbor-tasks.ts contains:export const HARBOR_VERSION = '0.24.0' -->
 
