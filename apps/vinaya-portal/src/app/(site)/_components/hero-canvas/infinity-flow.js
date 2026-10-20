@@ -1,18 +1,22 @@
 import { smoothstep } from '@/ui/lib/math'
 
-/* The infinity: a subtle current that leaves the north-east column with the shock wave and
-   traces a figure-eight around the harness. Outside the ring it is a few hairline strands
-   with bright packets running along them (orange → red → green); inside the ring it is never
-   drawn — it never crosses main — and the columns carry it instead, charging as it passes.
+/* The infinity: a subtle current that leaves main with the shock wave, runs up the north-east
+   column and traces a figure-eight around the harness. Outside the harness it is a few hairline
+   strands with packets running along them (orange → red → green), lying on the fabric and
+   riding its waves; inside it is never drawn — it never crosses main — and the columns carry
+   it instead. One speed from first to last: the current is never drawn out faster than it
+   flows.
 
    Plan view: screen-up is world −z, so the screen angle `deg` lands at (cos, 0, −sin), the
    same mapping harness-model.js's plates use. Runs on the scene clock, not the scroll. */
 
 const SAMPLES = 900
 const PACKETS = 3
-const SPEED = 0.07 // loops per second for the packets
-const DRAW = 0.32 // loops per second while the current is first drawn out
-const CHARGE_S = 0.7 // the north-east column fills before anything leaves it
+/* world units per second, for the current's front and for its packets alike: a touch faster
+   than the shock wave's leading front (field-3d.js FRONTS[0].speed, 2.2), so the light keeps
+   up with the wave it leaves with */
+const FLOW_U = 2.6
+const RIDE = 0.07 // how far above the fabric's live surface a strand lies
 const COLUMN_DEG = [45, 135, 225, 315]
 const LOBE = 2.6 // lemniscate half-width in ring radii
 const SQUASH = 1.28 // fattens the lobes vertically, like the sketch
@@ -52,8 +56,11 @@ const columnOf = (deg) => {
   return -1
 }
 
-export function buildInfinityFlow(THREE, { dims, seatY, dishDepth, dishR, colors }) {
+export function buildInfinityFlow(THREE, { dims, seatY, dishDepth, dishR, colors, fabric }) {
   const { rOut, rIn, k, gripR } = dims
+  // packets run at FLOW_U along the lead strand's own length
+  const loopLen = sampleStrand(STRANDS[0], rOut).at(-1).len
+  const SPEED = FLOW_U / loopLen // loops per second
   const group = new THREE.Group()
   group.name = 'infinity-flow'
 
@@ -111,6 +118,7 @@ export function buildInfinityFlow(THREE, { dims, seatY, dishDepth, dishR, colors
       name: `infinity-strand-${si}`,
       transparent: true,
       depthWrite: false,
+      depthTest: false, // a shock-wave crest lifts the sheet toward the strand: it must never cut the light
       side: THREE.DoubleSide,
       uniforms: {
         ...shared,
@@ -155,10 +163,10 @@ export function buildInfinityFlow(THREE, { dims, seatY, dishDepth, dishR, colors
           if (uBorn < 0.5) {
             if (rel > uHead) discard;
             float d = uHead - rel;
-            I += max(0.0, 1.0 - d / 0.07) * 1.3;
+            I += max(0.0, 1.0 - d / 0.035) * 0.55; // a short soft tip on the line, never a glow ahead of it
           }
           for (int k = 0; k < ${PACKETS}; k++) {
-            float f = 1.0 - fract(vU - uTime * ${SPEED.toFixed(3)} - uPhase - float(k) / ${PACKETS}.0);
+            float f = 1.0 - fract(vU - uTime * ${SPEED.toFixed(4)} - uPhase - float(k) / ${PACKETS}.0);
             if (f < 0.24) { float q = 1.0 - f / 0.24; I += q * q * q * 1.1; }
           }
           float soft = 1.0 - smoothstep(0.35, 1.0, abs(vSide));
@@ -180,7 +188,12 @@ export function buildInfinityFlow(THREE, { dims, seatY, dishDepth, dishR, colors
       while (i < n - 1 && pts[i].u < b / 1000) i++
       lut[b] = i
     }
-    return { cfg, pts, mesh, mat, exit, lut }
+    /* rest heights, kept so riding the fabric can only ever lift a strand above them */
+    const restY = Float32Array.from(pts, (p) => heightAt(p.r))
+    const rideY = new Float32Array(n)
+    const rideX = new Float32Array(n)
+    const rideZ = new Float32Array(n)
+    return { cfg, pts, mesh, mat, exit, lut, restY, rideX, rideY, rideZ }
   })
 
   const lead = strands[0]
@@ -245,7 +258,7 @@ export function buildInfinityFlow(THREE, { dims, seatY, dishDepth, dishR, colors
               // the north-east column fills from main outward before the current leaves it
               if (uHead <= 0.0) {
                 if (s > uFill) discard;
-                boost = max(0.0, 1.0 - (uFill - s) / 0.35) * 1.1;
+                boost = max(0.0, 1.0 - (uFill - s) / 0.35) * 0.32;
               }
             } else {
               float rel = fract(u - uExit);
@@ -265,7 +278,7 @@ export function buildInfinityFlow(THREE, { dims, seatY, dishDepth, dishR, colors
             float line = 1.0 - smoothstep(aa * 0.15, aa * 1.1, abs(vP.y - y));
             float I = 0.24 + boost; // a touch above the strands: the columns hold the charge
             for (int k = 0; k < ${PACKETS}; k++) {
-              float f = 1.0 - fract(u - uTime * ${SPEED.toFixed(3)} - phase - float(k) / ${PACKETS}.0);
+              float f = 1.0 - fract(u - uTime * ${SPEED.toFixed(4)} - phase - float(k) / ${PACKETS}.0);
               if (f < 0.24) { float q = 1.0 - f / 0.24; I += q * q * q * 1.1; }
             }
             float a = line * min(1.0, I * weight) * ends;
@@ -282,7 +295,7 @@ export function buildInfinityFlow(THREE, { dims, seatY, dishDepth, dishR, colors
     mesh.renderOrder = 7
     mesh.visible = false
     group.add(mesh)
-    return { mesh, mat }
+    return { mesh, mat, u1, len }
   })
 
   function retheme(next) {
@@ -293,16 +306,60 @@ export function buildInfinityFlow(THREE, { dims, seatY, dishDepth, dishR, colors
   }
   retheme(colors)
 
-  /* t: scene seconds; start: when the current is released (null = not yet) */
-  function update(t, start) {
+  /* One clock for the whole current. From its release it has travelled d = FLOW_U · age:
+     first up the north-east column, from main outward; then the stretch under the bolt, from
+     the column's end to where the strand first shows; then round the loop. The column fill and
+     the strands' head are both read off d, so the front never changes speed on the way out. */
+  const lead0 = strands[0]
+  const ne = columns[0]
+  const underBolt = Math.max(0, lead0.exit - ne.u1) * loopLen
+
+  /* Every strand point lies on the fabric's live surface: the sheet's in-plane push and its
+     height under the point, never below the point's rest height. A shock wave passing under a
+     strand bends it outward and lifts it, then lets it go. */
+  const disp = [0, 0, 0]
+  function ride() {
+    for (const st of strands) {
+      if (!st.mesh.visible) continue
+      const { pts, restY, rideX, rideY, rideZ } = st
+      const n = pts.length
+      for (let i = 0; i < n; i++) {
+        const p = pts[i]
+        fabric.sample(p.x, p.z, disp)
+        rideX[i] = p.x + disp[0]
+        rideY[i] = Math.max(restY[i], disp[1] + RIDE)
+        rideZ[i] = p.z + disp[2]
+      }
+      const pos = st.mesh.geometry.attributes.position
+      const next = st.mesh.geometry.attributes.nextPos
+      for (let i = 0; i < n; i++) {
+        const q = i === n - 1 ? 1 : i + 1
+        for (let j = 0; j < 2; j++) {
+          const o = (i * 2 + j) * 3
+          pos.array[o] = rideX[i]
+          pos.array[o + 1] = rideY[i]
+          pos.array[o + 2] = rideZ[i]
+          next.array[o] = rideX[q]
+          next.array[o + 1] = rideY[q]
+          next.array[o + 2] = rideZ[q]
+        }
+      }
+      pos.needsUpdate = true
+      next.needsUpdate = true
+    }
+  }
+
+  /* t: scene seconds; start: when the current is released (null = not yet); settled: show the
+     current already round the whole loop (reduced motion) */
+  function update(t, start, settled = false) {
     if (start == null || t < start) {
       group.visible = false
       return
     }
     group.visible = true
-    const age = t - start
-    const charge0 = Math.min(1, age / CHARGE_S)
-    const head = Math.max(0, (age - CHARGE_S) * DRAW)
+    const d = settled ? Number.POSITIVE_INFINITY : (t - start) * FLOW_U
+    const fill = Math.min(1, d / ne.len)
+    const head = Math.max(0, (d - ne.len - underBolt) / loopLen)
     const born = head >= 1
     for (const s of strands) s.mesh.visible = head > 0
     shared.uTime.value = t
@@ -310,9 +367,10 @@ export function buildInfinityFlow(THREE, { dims, seatY, dishDepth, dishR, colors
     shared.uBorn.value = born ? 1 : 0
 
     for (const col of columns) {
-      col.mat.uniforms.uFill.value = charge0
+      col.mat.uniforms.uFill.value = fill
       col.mesh.visible = true
     }
+    if (fabric) ride()
   }
 
   function setResolution(w, h, pr) {
