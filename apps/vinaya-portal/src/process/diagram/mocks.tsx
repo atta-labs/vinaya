@@ -106,7 +106,6 @@ export function EventList({ fill }: { fill?: boolean } = {}) {
   const total = live?.length ?? 42
   // The newest event stays in view when the box is shorter than its rows.
   const box = useRef<HTMLDivElement>(null)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `total` is the trigger: each new event scrolls the box to the bottom
   useEffect(() => {
     const el = box.current
     if (el) el.scrollTop = el.scrollHeight
@@ -126,7 +125,6 @@ export function EventList({ fill }: { fill?: boolean } = {}) {
       </div>
       {rows.length === 0 && <span className='text-muted-foreground'>nothing recorded yet</span>}
       {rows.map(([name, detail, tone], i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: Log rows repeat names and never reorder; position is their identity
         <span key={`${i}-${name}`} className='grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] gap-2'>
           <span className={cn('truncate', toneText[tone])}>{name}</span>
           <span className='truncate text-muted-foreground'>{detail}</span>

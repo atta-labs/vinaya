@@ -161,7 +161,6 @@ export function LogRail({
         <ol className='grid gap-0.5 font-mono text-xs'>
           {shown.map((e, i) => (
             <li
-              // biome-ignore lint/suspicious/noArrayIndexKey: the key is the event's absolute position in the append-only Log, not the window slot
               key={`${events.length - shown.length + i}-${e.name}`}
               className='site-in grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)] gap-2.5'
             >

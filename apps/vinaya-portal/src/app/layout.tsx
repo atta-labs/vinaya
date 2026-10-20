@@ -29,7 +29,8 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
     >
       <PreviewThemeListener />
       {children}
-      <Analytics />
+      {/* Vercel serves the analytics script only on its own deployments; elsewhere it would 404. */}
+      {process.env.VERCEL ? <Analytics /> : null}
     </NextWebShell>
   )
 }

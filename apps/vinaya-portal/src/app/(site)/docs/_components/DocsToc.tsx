@@ -13,7 +13,6 @@ export function DocsToc() {
   const [headings, setHeadings] = useState<Heading[]>([])
   const [active, setActive] = useState<string | null>(null)
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-read the headings whenever the page changes
   useEffect(() => {
     const found = [...document.querySelectorAll<HTMLElement>('[data-doc-article] h2[id]')].map((h) => ({
       id: h.id,

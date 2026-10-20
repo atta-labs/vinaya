@@ -31,7 +31,6 @@ const Text = React.forwardRef<HTMLElement, TextProps>(
     const resolvedSize = sizeFor(variant, size)
     return (
       <Tag
-        // biome-ignore lint/suspicious/noExplicitAny: polymorphic `as` tag; TS cannot type one ref across the intrinsic element union
         ref={ref as any}
         className={cn(
           variant && variantClasses[variant],

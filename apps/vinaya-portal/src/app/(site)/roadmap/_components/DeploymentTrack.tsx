@@ -309,7 +309,6 @@ function MilestoneVisual({ artwork }: { artwork: MilestoneArtwork }) {
         // gets for free; this mirrors it for the inlined-SVG path by hand.
         <div
           className='absolute inset-0 [&>svg]:absolute [&>svg]:inset-0 [&>svg]:size-full'
-          // biome-ignore lint/security/noDangerouslySetInnerHtml: CMS SVG sanitized server-side by DOMPurify (`_lib/sanitize-svg.ts`)
           dangerouslySetInnerHTML={{ __html: artwork.markup }}
         />
       ) : artwork.kind === 'image' ? (

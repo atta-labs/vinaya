@@ -20,18 +20,18 @@ function oklchToHex(str) {
      `oklch(1 0 none)` for --background. */
   const m = str.trim().match(/^oklch\(\s*([\d.]+%?|none)\s+([\d.]+%?|none)\s+([\d.]+|none)/i)
   if (!m) return null
-  const num = (v) => (v.toLowerCase() === 'none' ? 0 : parseFloat(v))
+  const num = (v) => (v.toLowerCase() === 'none' ? 0 : Number.parseFloat(v))
   const L = m[1].endsWith('%') ? num(m[1]) / 100 : num(m[1])
   const C = m[2].endsWith('%') ? (num(m[2]) / 100) * 0.4 : num(m[2])
   const h = (num(m[3]) * Math.PI) / 180
-  const a = C * Math.cos(h),
-    b = C * Math.sin(h)
+  const a = C * Math.cos(h)
+  const b = C * Math.sin(h)
   const l_ = L + 0.3963377774 * a + 0.2158037573 * b
   const m_ = L - 0.1055613458 * a - 0.0638541728 * b
   const s_ = L - 0.0894841775 * a - 1.291485548 * b
-  const l = l_ ** 3,
-    mm = m_ ** 3,
-    s = s_ ** 3
+  const l = l_ ** 3
+  const mm = m_ ** 3
+  const s = s_ ** 3
   const lin = [
     4.0767416621 * l - 3.3077115913 * mm + 0.2309699292 * s,
     -1.2684380046 * l + 2.6097574011 * mm - 0.3413193965 * s,
@@ -45,12 +45,12 @@ function oklchToHex(str) {
   return (r << 16) | (g << 8) | bl
 }
 function mixHex(a, b, t) {
-  const ar = (a >> 16) & 255,
-    ag = (a >> 8) & 255,
-    ab = a & 255
-  const br = (b >> 16) & 255,
-    bg = (b >> 8) & 255,
-    bb = b & 255
+  const ar = (a >> 16) & 255
+  const ag = (a >> 8) & 255
+  const ab = a & 255
+  const br = (b >> 16) & 255
+  const bg = (b >> 8) & 255
+  const bb = b & 255
   return (Math.round(ar + (br - ar) * t) << 16) | (Math.round(ag + (bg - ag) * t) << 8) | Math.round(ab + (bb - ab) * t)
 }
 /* Resolve a CSS colour to a hex THROUGH the cascade: a probe element under `root` gets it as
@@ -67,9 +67,9 @@ function probeColor(root, css) {
     const rgb = raw.match(/^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i)
     const srgb = raw.match(/^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/i)
     const c = rgb
-      ? rgb.slice(1, 4).map((v) => Math.round(parseFloat(v)))
+      ? rgb.slice(1, 4).map((v) => Math.round(Number.parseFloat(v)))
       : srgb
-        ? srgb.slice(1, 4).map((v) => Math.round(parseFloat(v) * 255))
+        ? srgb.slice(1, 4).map((v) => Math.round(Number.parseFloat(v) * 255))
         : null
     if (c) hex = (c[0] << 16) | (c[1] << 8) | c[2]
   }
@@ -152,8 +152,8 @@ const WAVE_VARIANTS = [
   { samples: 22, amplitude: 0.6, width: 1.6, speed: 0.09, dir: 1, opacity: 0.9, seed: 0, band: -1 },
   { samples: 20, amplitude: 0.55, width: 1.2, speed: 0.12, dir: -1, opacity: 0.68, seed: 40, band: 1 }
 ]
-const PULL_RANGE_PX = 265,
-  MAX_PULL_PX = 30
+const PULL_RANGE_PX = 265
+const MAX_PULL_PX = 30
 const PULL_RANGE = PULL_RANGE_PX * k // the source's cursor pull, in world units
 const MAX_PULL = MAX_PULL_PX * k
 const hash01 = (n) => {
@@ -228,14 +228,14 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
   const bboxOf = (poly) =>
     poly.reduce(
       (b, [x, y]) => [Math.min(b[0], x), Math.min(b[1], y), Math.max(b[2], x), Math.max(b[3], y)],
-      [Infinity, Infinity, -Infinity, -Infinity]
+      [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY]
     )
   const insidePoly = (poly, bb, x, y) => {
     if (x < bb[0] || x > bb[2] || y < bb[1] || y > bb[3]) return false
     let inside = false
     for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-      const [xi, yi] = poly[i],
-        [xj, yj] = poly[j]
+      const [xi, yi] = poly[i]
+      const [xj, yj] = poly[j]
       if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside
     }
     return inside
@@ -246,15 +246,15 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
   /* shape XY → world: plate() rotates the extrusion, so (X, Y) lands at (X, ·, −Y).
      Corner polygons and a fixed subdivision — the cost must not scale with unit size. */
   const plateJunction = (guestShape, hostShape, yPlane, name) => {
-    const g = polyOf(guestShape),
-      h = polyOf(hostShape),
-      bb = bboxOf(h)
+    const g = polyOf(guestShape)
+    const h = polyOf(hostShape)
+    const bb = bboxOf(h)
     const pts = []
     for (let e = 0; e < g.length; e++) {
-      const a0 = g[e],
-        a1 = g[(e + 1) % g.length]
-      let prev = a0,
-        prevIn = insidePoly(h, bb, a0[0], a0[1])
+      const a0 = g[e]
+      const a1 = g[(e + 1) % g.length]
+      let prev = a0
+      let prevIn = insidePoly(h, bb, a0[0], a0[1])
       for (let t = 1; t <= 24; t++) {
         const p = [a0[0] + (a1[0] - a0[0]) * (t / 24), a0[1] + (a1[1] - a0[1]) * (t / 24)]
         const isIn = insidePoly(h, bb, p[0], p[1])
@@ -281,15 +281,15 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
 
   const hexShape = (deg, R) => {
     const th0 = -rad(deg)
-    const cs = Math.cos(th0),
-      sn = Math.sin(th0)
-    const Px = Math.cos(rad(deg)) * rMid,
-      Pz = Math.sin(rad(deg)) * rMid
+    const cs = Math.cos(th0)
+    const sn = Math.sin(th0)
+    const Px = Math.cos(rad(deg)) * rMid
+    const Pz = Math.sin(rad(deg)) * rMid
     const pts = []
     for (let i = 0; i < 6; i++) {
       const th = (i / 6) * Math.PI * 2
-      const lx = Math.sin(th) * R,
-        lz = Math.cos(th) * R
+      const lx = Math.sin(th) * R
+      const lz = Math.cos(th) * R
       pts.push(new THREE_.Vector2(lx * cs + lz * sn + Px, -lx * sn + lz * cs + Pz))
     }
     return new THREE_.Shape(pts)
@@ -347,10 +347,10 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
     const jsegs = []
     for (let e = 0; e < 6; e++) {
       const corner = (th) => new THREE_.Vector3(Math.sin(th) * 20.4 * k, 0.3 * k, Math.cos(th) * 20.4 * k)
-      const p0 = corner((e / 6) * Math.PI * 2),
-        p1 = corner(((e + 1) / 6) * Math.PI * 2)
-      let prev = p0.clone(),
-        prevIn = inBand(prev)
+      const p0 = corner((e / 6) * Math.PI * 2)
+      const p1 = corner(((e + 1) / 6) * Math.PI * 2)
+      let prev = p0.clone()
+      let prevIn = inBand(prev)
       for (let t = 1; t <= 48; t++) {
         const p = p0.clone().lerp(p1, t / 48)
         const isIn = inBand(p)
@@ -914,10 +914,10 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
     return s
   }
   const shaftShape = (d, gR) => {
-    const rO = rIn - 1 * k,
-      rO2 = rO - 15 * k,
-      footW = 14 * k,
-      shaftW = 9 * k
+    const rO = rIn - 1 * k
+    const rO2 = rO - 15 * k
+    const footW = 14 * k
+    const shaftW = 9 * k
     return new THREE_.Shape([
       ray(rO, d, footW),
       ray(rO2, d, footW),
@@ -1042,13 +1042,13 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
       /* Cursor attraction: each conduit within PULL_RANGE
          bulges toward the pointer, strength by proximity, and the pull switches off while
          the pointer is inside the harness metal. Source values are px at c = 190. */
-      let pullX = 0,
-        pullZ = 0
+      let pullX = 0
+      let pullZ = 0
       if (cur) {
-        const ax = Math.cos(mid) * rMid,
-          az = Math.sin(mid) * rMid
-        const dx = cur.x - ax,
-          dz = cur.z - az
+        const ax = Math.cos(mid) * rMid
+        const az = Math.sin(mid) * rMid
+        const dx = cur.x - ax
+        const dz = cur.z - az
         const dist = Math.hypot(dx, dz) || 1
         if (dist < PULL_RANGE) {
           const distC = Math.hypot(cur.x, cur.z)
@@ -1063,8 +1063,8 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
         const t = i / v.samples
         const env = Math.sin(Math.min(1, t) * Math.PI)
         const seed = v.seed + s.deg * 0.13
-        const h1 = hash01(i + seed),
-          h2 = hash01(i + seed + 97)
+        const h1 = hash01(i + seed)
+        const h2 = hash01(i + seed + 97)
         const off =
           Math.sin(i * 1.5 - times[s.w] + h1 * 6.283) * 0.62 + Math.sin(i * 5.3 - times[s.w] * 1.9 + h2 * 6.283) * 0.38
         /* the out-of-plane motion needs its OWN, higher frequency: reusing the radial
@@ -1110,8 +1110,8 @@ export async function buildHarness(THREE_ = THREE, opts = {}) {
       for (let j = 0; j <= v.samples; j++) {
         const tt = j / v.samples
         const env = Math.sin(tt * Math.PI)
-        const h1 = hash01(j + v.seed + s.deg),
-          h2 = hash01(j + v.seed + s.deg + 97)
+        const h1 = hash01(j + v.seed + s.deg)
+        const h2 = hash01(j + v.seed + s.deg + 97)
         const off =
           Math.sin(j * 1.5 - innerTimes[s.i] + h1 * 6.283) * 0.62 +
           Math.sin(j * 5.3 - innerTimes[s.i] * 1.9 + h2 * 6.283) * 0.38

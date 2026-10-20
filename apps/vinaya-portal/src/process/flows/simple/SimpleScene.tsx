@@ -340,7 +340,6 @@ export function SimpleScene() {
           </text>
           {Array.from({ length: ticks }, (_, i) => (
             <rect
-              // biome-ignore lint/suspicious/noArrayIndexKey: ticks are positions, not items
               key={i}
               x={PANEL.x + PANEL.w - 28 - 0.72 * labelPx(k) * `LOG · ${records}`.length - 5 * (ticks - i)}
               y={panelY + 16}

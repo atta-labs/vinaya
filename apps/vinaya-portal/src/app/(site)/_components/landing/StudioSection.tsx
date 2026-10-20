@@ -208,7 +208,6 @@ export function StudioMock({
  */
 function useNaturalHeights(on: boolean, ...panels: React.RefObject<HTMLDivElement | null>[]): [number, number] | null {
   const [heights, setHeights] = useState<[number, number] | null>(null)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the refs are stable; measuring once wires the observer
   useLayoutEffect(() => {
     if (!on) return
     const els = panels.map((r) => r.current)

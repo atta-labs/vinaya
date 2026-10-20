@@ -68,13 +68,11 @@ export function LetterReveal({
       {words.map((word, wordIndex) => {
         const chars = [...word]
         const rendered = (
-          // biome-ignore lint/suspicious/noArrayIndexKey: words of a fixed string never reorder; position is their identity
           <span key={wordIndex} className='inline-block whitespace-nowrap'>
             {chars.map((ch, i) => {
               const delay = (charIndex + i) * delayStepMs
               return (
                 <span
-                  // biome-ignore lint/suspicious/noArrayIndexKey: letters of a fixed word never reorder; position is their identity
                   key={i}
                   className={`inline-block transition-all duration-300 ease-out ${
                     revealed ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'
@@ -89,7 +87,6 @@ export function LetterReveal({
         )
         charIndex += chars.length + 1 // +1 for the space that follows this word
         return (
-          // biome-ignore lint/suspicious/noArrayIndexKey: words of a fixed string never reorder; position is their identity
           <span key={`w-${wordIndex}`}>
             {rendered}
             {wordIndex < words.length - 1 ? ' ' : ''}

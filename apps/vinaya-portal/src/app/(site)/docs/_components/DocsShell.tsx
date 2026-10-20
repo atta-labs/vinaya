@@ -72,7 +72,6 @@ function SidebarDrawer({ label, children }: SidebarDrawerProps) {
   const [open, setOpen] = useState(false)
 
   // Closes when the pathname changes: a doc link landed.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `pathname` is the trigger, not a value the effect reads
   useEffect(() => {
     setOpen(false)
   }, [pathname])
@@ -139,8 +138,6 @@ function SidebarDrawer({ label, children }: SidebarDrawerProps) {
            * ring) room. */}
           {contentHost &&
             createPortal(
-              // biome-ignore lint/a11y/noStaticElementInteractions: observes clicks bubbling from the links inside; it is not itself a control
-              // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard activation of a link dispatches the same click
               <div className='flex h-full min-h-0 w-full flex-col' onClick={closeOnLink}>
                 <SidebarProvider className='h-full min-h-0 w-full flex-col pt-2'>{children}</SidebarProvider>
               </div>,

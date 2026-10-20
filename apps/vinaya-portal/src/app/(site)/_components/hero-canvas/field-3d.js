@@ -60,8 +60,8 @@ export function buildField(THREE_ = THREE, opts = {}) {
   const acRipple = new Float32Array(AC)
   for (let n = 0; n < AC; n++) {
     const i = acIdx[n]
-    const x = base[i * 2],
-      z = base[i * 2 + 1]
+    const x = base[i * 2]
+    const z = base[i * 2 + 1]
     const d = Math.hypot(x, z)
     acX[n] = x
     acZ[n] = z
@@ -293,13 +293,13 @@ export function buildField(THREE_ = THREE, opts = {}) {
     }
     mat.uniforms.uTime.value = time
 
-    const ph1 = -time * 0.6,
-      ph2 = -time * 0.5
+    const ph1 = -time * 0.6
+    const ph2 = -time * 0.5
     for (let n = 0; n < AC; n++) {
       const i = acIdx[n]
-      const x = acX[n],
-        z = acZ[n],
-        d = acD[n]
+      const x = acX[n]
+      const z = acZ[n]
+      const d = acD[n]
       let y = floor * acWell[n]
       // shimmer, in-plane so it reads from any angle
       let radial = Math.sin(acP1[n] + ph1) * 0.02
@@ -320,8 +320,8 @@ export function buildField(THREE_ = THREE, opts = {}) {
       }
       crests[i] = Math.min(1, crest)
       for (const dn of dents) {
-        const ddx = x - dn.x,
-          ddz = z - dn.z
+        const ddx = x - dn.x
+        const ddz = z - dn.z
         const q = ddx * ddx + ddz * ddz
         y -= Math.exp(-q / 0.5) * dn.depth * dn.env
       }

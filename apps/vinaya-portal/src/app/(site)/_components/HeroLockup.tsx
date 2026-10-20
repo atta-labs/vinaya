@@ -16,7 +16,6 @@ import { useHeroLockupRegister } from './hero-lockup-context'
 function Letters({ text, delayStep }: { text: string; delayStep: number }) {
   return [...text].map((ch, i) => (
     <span
-      // biome-ignore lint/suspicious/noArrayIndexKey: letters of a fixed string never reorder; position is their identity
       key={i}
       data-letter
       className='inline-block translate-y-0 opacity-100 transition-[opacity,transform] duration-500 ease-out [[data-bare=true]_&]:translate-y-0.5 [[data-bare=true]_&]:opacity-0'
