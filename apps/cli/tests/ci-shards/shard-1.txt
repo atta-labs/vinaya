@@ -99,3 +99,4 @@ tests/conformance/adapter-contract.test.ts
 tests/lib/task-worktree-install.test.ts
 tests/eval/harbor-tasks.test.ts
 tests/eval/harbor-practice-fixes.test.ts
+tests/lib/ci-test-selection.test.ts

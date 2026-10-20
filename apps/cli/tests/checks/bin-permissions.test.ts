@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, readdirSync, readFileSync, statSync, utimesSync } from 'node:fs'
-import { join } from 'node:path'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmdirSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync
+} from 'node:fs'
+import { dirname, join } from 'node:path'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture'
 
 /**
@@ -19,6 +30,19 @@ import { spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture'
 
 const REPO_ROOT = join(import.meta.dir, '../../../..')
 
+/** Removes `dir` and its parents up to and including `top`, stopping at the first one that is not empty. */
+function removeEmptyDirs(dir: string, top: string | undefined): void {
+  if (!top) return
+  for (let current = dir; current.startsWith(top); current = dirname(current)) {
+    try {
+      rmdirSync(current)
+    } catch {
+      return
+    }
+    if (current === top) return
+  }
+}
+
 describe('every checks/bin executable carries mode 100755 in the git index', () => {
   it('git ls-files -s reports no non-executable entry', () => {
     const output = execFileSync('git', ['ls-files', '-s', 'apps/cli/src/checks/bin'], {
@@ -34,6 +58,11 @@ describe('every checks/bin executable carries mode 100755 in the git index', () 
 
   it('the source CLI executes a source check even beside an older unusable dist check (Issue #1036, O2)', () => {
     const staleDistCheck = join(REPO_ROOT, 'apps/cli/dist/checks/bin/check-pr-report-density.js')
+    // A checkout with no build has no dist check to stand beside the source one, so the test
+    // writes its own and removes it, and every folder it had to create, afterwards.
+    const provided = !existsSync(staleDistCheck)
+    const createdDir = provided ? mkdirSync(dirname(staleDistCheck), { recursive: true }) : undefined
+    if (provided) writeFileSync(staleDistCheck, 'throw new Error("stale dist check")\n')
     const original = statSync(staleDistCheck)
     try {
       chmodSync(staleDistCheck, 0o000)
@@ -49,8 +78,13 @@ describe('every checks/bin executable carries mode 100755 in the git index', () 
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0)
       expect(result.stdout).toContain('pr-report-density: pass')
     } finally {
-      chmodSync(staleDistCheck, original.mode)
-      utimesSync(staleDistCheck, original.atime, original.mtime)
+      if (provided) {
+        rmSync(staleDistCheck, { force: true })
+        removeEmptyDirs(dirname(staleDistCheck), createdDir)
+      } else {
+        chmodSync(staleDistCheck, original.mode)
+        utimesSync(staleDistCheck, original.atime, original.mtime)
+      }
     }
   })
 })

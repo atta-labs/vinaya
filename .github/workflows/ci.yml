@@ -3,8 +3,19 @@
 # The four vinaya-*.yml workflows in this directory run `vinaya check` /
 # `archive` / `audit`; none of them ever ran a test or a typecheck (#933).
 #
-# Runs unscoped (no --affected, no --filter): the suite is ~1-2 minutes and
-# scoping has hidden failures here before.
+# A push to `main` runs everything: every shard's whole list, every package
+# and sandbox conformance, so a test a pull request's selection missed still
+# runs once the pull request merges. A pull request runs only what its diff
+# can affect: each `test-cli` shard runs the files in its list that the
+# repository's test selector picks for the diff against the base, and the
+# shared-packages job runs the packages `turbo --affected` picks plus
+# `@attalabs/aeg-core`. The selector sees TypeScript imports and declared
+# folder scans only, so a pull request that changes anything outside the
+# portal and `.changeset/` other than a TypeScript file in a package's own
+# `src/` or `tests/` — a spec, a fixture, JSON, a workflow, a script, the test
+# preload — runs everything as `main` does
+# (`apps/cli/src/lib/ci-test-selection.ts`). The root-config probe job always
+# runs whole shard lists.
 #
 # The apps/cli suite (by far the largest — 123 files, on
 # the order of 2000 tests) is sharded across three jobs (`test-cli`, a
@@ -285,7 +296,31 @@ jobs:
             bun-${{ runner.os }}-
       - name: Install dependencies
         run: bun install --frozen-lockfile
+      # On a pull request, the packages the diff affects (`turbo --affected`
+      # against the pull request's base) plus `@attalabs/aeg-core`, whose tests
+      # read files across the whole repository and which the CLI's selector
+      # never picks. The same fallback as the CLI shards decides it
+      # (`apps/cli/src/lib/ci-test-selection.ts`): any changed path the
+      # selector cannot judge, an unresolved base or a failed selection runs
+      # every package. `--affected` intersects with the filters, so
+      # `@attalabs/aeg-core` is left out of it and run once on its own. A push
+      # to `main` skips this step and runs every package in the next one.
+      - name: Test the packages the pull request affects
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PULL_REQUEST_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # The selection reads only local git, so it runs without the job token.
+          SCOPE=$(env -u GH_TOKEN bun apps/cli/src/lib/ci-test-selection.ts --base "$PULL_REQUEST_BASE" --packages) || SCOPE=all
+          if [ "$SCOPE" = "affected" ]; then
+            TURBO_SCM_BASE="$PULL_REQUEST_BASE" bunx turbo test --affected --filter='!@attalabs/vinaya' --filter='!@attalabs/aeg-core' --concurrency=1
+            bunx turbo test --filter=@attalabs/aeg-core --concurrency=1
+          else
+            bunx turbo test --filter='!@attalabs/vinaya' --concurrency=1
+          fi
       - name: Test
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bunx turbo test --filter='!@attalabs/vinaya' --concurrency=1
@@ -333,7 +368,40 @@ jobs:
             bun-${{ runner.os }}-
       - name: Install dependencies
         run: bun install --frozen-lockfile
+      # On a pull request, only this shard's files the repository's test
+      # selector picks for the diff against the base, walked to its full
+      # transitive depth (`apps/cli/src/lib/ci-test-selection.ts`). A changed
+      # path the selector cannot judge, an unresolved base or a failed
+      # selection runs the whole list instead. Never `bun test` with no file
+      # argument: in `apps/cli` that runs the whole tree, so a shard with
+      # nothing selected runs nothing and passes. A push to `main` skips this
+      # step and runs the whole list in the next one.
+      - name: Test shard ${{ matrix.shard }}'s selected files
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PULL_REQUEST_BASE: ${{ github.event.pull_request.base.sha }}
+          SHARD_LIST: tests/ci-shards/shard-${{ matrix.shard }}.txt
+        working-directory: apps/cli
+        run: |
+          SELECTED="$RUNNER_TEMP/selected-tests.txt"
+          # The selection reads only local git, so it runs without the job token.
+          if ! (cd ../.. && env -u GH_TOKEN bun apps/cli/src/lib/ci-test-selection.ts --base "$PULL_REQUEST_BASE" --shard-list "apps/cli/$SHARD_LIST") > "$SELECTED"; then
+            echo "The selection failed; this shard runs its whole list." >&2
+            cp "$SHARD_LIST" "$SELECTED"
+          fi
+          if ! grep -q . "$SELECTED"; then
+            echo "No file in shard ${{ matrix.shard }} is selected for this pull request; no test ran." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # The tests run under the same environment as on `main`, the job
+          # token included: several read a base-commit override from the
+          # environment, so the selection's own variables never reach them.
+          FILES=$(tr '\n' ' ' < "$SELECTED")
+          unset PULL_REQUEST_BASE SHARD_LIST
+          bun test --timeout=30000 $FILES
       - name: Test shard ${{ matrix.shard }}
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         working-directory: apps/cli

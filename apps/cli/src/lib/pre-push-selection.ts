@@ -12,15 +12,21 @@ import {
   removedFilesSinceRemoteBaseAbsolute,
   resolveRemoteBase
 } from './remote-base.js'
-import { type SelectionResult, selectAffectedTestFiles } from './test-selector.js'
+import { type SelectionOptions, type SelectionResult, selectAffectedTestFiles } from './test-selector.js'
 import { loadTypeScript } from './ts-module-graph.js'
 
 /**
  * What pre-push selects for the diff between `base` and `HEAD` — by default
  * the base the hook itself resolves (the branch's upstream, then
- * `origin/main`).
+ * `origin/main`). `depth` defaults to the hook's own `'one'`; a pull
+ * request's CI run passes `'transitive'` for the same selection walked to
+ * its full closure.
  */
-export function prePushSelection(repoRoot: string, base = resolveRemoteBase(repoRoot)): SelectionResult {
+export function prePushSelection(
+  repoRoot: string,
+  base = resolveRemoteBase(repoRoot),
+  depth: NonNullable<SelectionOptions['depth']> = 'one'
+): SelectionResult {
   const changed = changedFilesSinceRemoteBaseAbsolute(repoRoot, base)
   const addedOrRenamed = addedOrRenamedFilesSinceRemoteBaseAbsolute(repoRoot, base)
   const removed = removedFilesSinceRemoteBaseAbsolute(repoRoot, base)
@@ -31,18 +37,18 @@ export function prePushSelection(repoRoot: string, base = resolveRemoteBase(repo
   const diffs = typescript ? changedFileDiffsSinceRemoteBase(repoRoot, base) : undefined
   const names = typescript && diffs ? affectedNames(typescript, diffs) : undefined
   const changedRanges = diffs ? new Map(diffs.map((d) => [d.file, d.afterRanges])) : undefined
-  // Never the full transitive closure a push away from
-  // main can grow to — that stays CI's job (every shard still runs every
-  // test). Depth-one keeps a push to a widely-imported module small: the
-  // test files this diff changed, the test files that import a changed
-  // name directly, the folder-scanning tests whose declared kind of change
-  // this is, and `prePush.alwaysRun`.
+  // The hook never walks the full transitive closure a push away from
+  // main can grow to — that stays CI's job (a pull request's shards walk it,
+  // and `main` still runs every test). Depth-one keeps a push to a
+  // widely-imported module small: the test files this diff changed, the test
+  // files that import a changed name directly, the folder-scanning tests
+  // whose declared kind of change this is, and `prePush.alwaysRun`.
   return selectAffectedTestFiles(repoRoot, changed, {
     alwaysRun,
     addedOrRenamed,
     removed,
     changedRanges,
     affectedNames: names,
-    depth: 'one'
+    depth
   })
 }

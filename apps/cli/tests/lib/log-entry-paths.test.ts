@@ -96,8 +96,10 @@ const workflowWithoutProducers = [
   'workflow:ci.yml:build:Typecheck',
   'workflow:ci.yml:build:Docs-only skip report',
   'workflow:ci.yml:test-shared-packages:Install dependencies',
+  'workflow:ci.yml:test-shared-packages:Test the packages the pull request affects',
   'workflow:ci.yml:test-shared-packages:Test',
   'workflow:ci.yml:test-cli:Install dependencies',
+  'workflow:ci.yml:test-cli:Test shard $' + "{{ matrix.shard }}'s selected files",
   'workflow:ci.yml:test-cli:Test shard $' + '{{ matrix.shard }}',
   'workflow:ci.yml:test-cli-config-anchor:Install dependencies',
   'workflow:ci.yml:test-cli-config-anchor:Test shard $' + "{{ matrix.shard }} with the PR's config as the trust anchor",
@@ -377,7 +379,7 @@ describe('log entry-path producer inventory', () => {
 
   it("keeps today's no-producer list explicit and shrinking", () => {
     const noProducer = inventory.filter((row) => row.noProducer)
-    expect(noProducer).toHaveLength(99)
+    expect(noProducer).toHaveLength(101)
     expect(noProducer.every((row) => row.noProducer!.trim().length > 0)).toBe(true)
   })
 })
