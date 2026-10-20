@@ -226,7 +226,8 @@ const checkNames = [
   'issue-parts-coverage',
   'issue-surface-globs',
   'issue-milestone-attach',
-  'atta-labs/secret-scan'
+  'atta-labs/secret-scan',
+  'atta-labs/ui-rules'
 ] as const
 
 function workflowEntries(directory = join(ROOT, '.github', 'workflows')): Map<string, string> {
@@ -297,7 +298,7 @@ const inventory: InventoryRow[] = [
   },
   ...checkNames.map((name) => ({
     id: `check:${name}`,
-    route: { producer: 'gate' as const, commandToken: name === 'atta-labs/secret-scan' ? 'secret-scan' : name }
+    route: { producer: 'gate' as const, commandToken: name.replace(/^atta-labs\//, '') }
   }))
 ]
 
