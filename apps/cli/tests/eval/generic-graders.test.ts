@@ -297,6 +297,20 @@ describe('each grader rejects its planted bad outcome', () => {
     }
   })
 
+  it('hidden tests: a skipped pass-to-pass test passes; a skipped fail-to-pass, or a failing or unrun pass-to-pass, fails', async () => {
+    for (const c of [change(), loop()]) {
+      const passToPass = (result: string) => (o: Record<string, any>) => (o['O-tests'].value.results[1].result = result)
+      expect(await withEdit(HIDDEN_TESTS_GRADER, c, passToPass('skipped'))).toBe('pass')
+      expect(
+        await withEdit(HIDDEN_TESTS_GRADER, c, (o) => (o['O-tests'].value.results[0].result = 'skipped'))
+      ).toContain('parses 2026-W03-4" is skipped')
+      expect(await withEdit(HIDDEN_TESTS_GRADER, c, passToPass('fail'))).toContain('parses 2026-01-15" is fail')
+      expect(await withEdit(HIDDEN_TESTS_GRADER, c, (o) => o['O-tests'].value.results.splice(1, 1))).toContain(
+        'parses 2026-01-15" is not-run'
+      )
+    }
+  })
+
   it('scope: a protected path outside the scope, an unrecorded path or a stray record fails', async () => {
     const c = change()
     expect(

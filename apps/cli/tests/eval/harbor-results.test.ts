@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import {
   HarborResultsRefused,
   harborResultsMain,
+  quarantineAdjudicationDigest,
   readHarborPracticeRun
 } from '../../src/lib/dev-review-eval/harbor-results'
 
@@ -71,6 +72,67 @@ describe('Harbor job results', () => {
       estimatedCostUsd: 0.03
     })
     expect(output.result.runs[0]?.usage.subscriptionQuota).toBeCloseTo(0.3)
+  })
+
+  /** The fixture job with its `failure` task quarantined, its task.toml's metadata extended by `lines`. */
+  function quarantinedJob(edit: (lines: string[]) => string[] = (lines) => lines): string {
+    const job = copyJob()
+    const quarantine = {
+      taskId: 'failure',
+      cause: 'environment' as const,
+      reason: 'Its hidden tests run only on another platform.',
+      reasonVersion: 1
+    }
+    const path = join(job, 'tasks', 'failure', 'task.toml')
+    const lines = edit([
+      `quarantine_adjudication_digest = "${quarantineAdjudicationDigest(quarantine)}"`,
+      `quarantine_cause = "${quarantine.cause}"`,
+      `quarantine_reason = "${quarantine.reason}"`,
+      `quarantine_reason_version = ${quarantine.reasonVersion}`
+    ])
+    writeFileSync(path, readFileSync(path, 'utf8').replace('harbor_version', `${lines.join('\n')}\nharbor_version`))
+    return job
+  }
+
+  it('reports a quarantined task under quarantined, with its tally, and estimates over the other tasks', () => {
+    const plain = read()
+    const output = read(quarantinedJob())
+    const run = output.result.runs[0]
+    expect(run?.quarantined).toEqual([
+      {
+        quarantine: {
+          taskId: 'failure',
+          cause: 'environment',
+          reason: 'Its hidden tests run only on another platform.',
+          reasonVersion: 1,
+          adjudicationDigest: quarantineAdjudicationDigest({
+            taskId: 'failure',
+            cause: 'environment',
+            reason: 'Its hidden tests run only on another platform.',
+            reasonVersion: 1
+          })
+        },
+        tally: { taskId: 'failure', successes: 0, trials: 1, unavailable: [] }
+      }
+    ])
+    expect(run?.tasks.map((task) => task.taskId)).toEqual(['error', 'success'])
+    expect(run?.taskCount).toBe(2)
+    expect(run?.mean).toBe(1 / 2)
+    // A quarantined trial's usage still counts.
+    expect(run?.usage).toEqual(plain.result.runs[0]?.usage as NonNullable<typeof run>['usage'])
+    expect(output.trials.failure?.success).toBe(false)
+    expect(plain.result.runs[0]?.quarantined).toEqual([])
+  })
+
+  it('refuses a quarantine with a stale adjudication digest or only part of its fields', () => {
+    refusal(
+      quarantinedJob((lines) => lines.map((line) => line.replace('another platform', 'one platform'))),
+      'invalid_input'
+    )
+    refusal(
+      quarantinedJob((lines) => lines.slice(1)),
+      'missing_task_metadata'
+    )
   })
 
   it('refuses the original Claude Code job', () => refusal(join(fixtures, 'claude-code-job'), 'unsupported_agent'))

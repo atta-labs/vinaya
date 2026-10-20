@@ -901,6 +901,10 @@ export function validateReport(input: unknown): Validated<Report> {
   return run(input, (value) => report(value, ''))
 }
 
+export function validateQuarantine(input: unknown): Validated<Quarantine> {
+  return run(input, (value) => quarantine(value, ''))
+}
+
 export function validateTaskTally(input: unknown): Validated<TaskTally> {
   return run(input, (value) => tally(value, ''))
 }

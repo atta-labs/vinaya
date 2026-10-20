@@ -1,7 +1,10 @@
 /** Reads one completed Harbor 0.24.0 job into a step-one practice result. */
+import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, join, relative, resolve, sep } from 'node:path'
-import { suiteMean, type BootstrapMethod } from './estimators'
+import { type Quarantine, validateQuarantine } from './contracts'
+import { type BootstrapMethod, separateQuarantined, suiteMean } from './estimators'
+import { canonicalJson } from './neutral-case'
 import type { StepOneAdapter, StepOneResult, StepOneRunSuite, StepOneTrialResult, StepOneUsage } from './step-one'
 
 export const HARBOR_RESULTS_VERSION = '0.24.0'
@@ -24,6 +27,14 @@ export class HarborResultsRefused extends Error {
   }
 }
 
+/** One task's trials in a Harbor practice run. */
+export interface HarborTaskTally {
+  taskId: string
+  successes: number
+  trials: number
+  unavailable: string[]
+}
+
 export interface HarborPracticeRun extends StepOneResult {
   purpose: 'practice'
   trialsPerTask: 1
@@ -33,8 +44,35 @@ export interface HarborPracticeRun extends StepOneResult {
       model: string
       auth: 'subscription'
       evidence: 'never'
+      /**
+       * The quarantined tasks, each with its quarantine and its tally: shown,
+       * and counted apart from `tasks`, `taskCount`, `mean` and `interval`;
+       * their usage is still counted.
+       */
+      quarantined: { quarantine: Quarantine; tally: HarborTaskTally }[]
     }
   >
+}
+
+/** The SHA-256 of the canonical JSON of a quarantine's other four fields, which binds its adjudication. */
+export function quarantineAdjudicationDigest(q: Omit<Quarantine, 'adjudicationDigest'>): string {
+  const { taskId, cause, reason, reasonVersion } = q
+  return createHash('sha256').update(canonicalJson({ taskId, cause, reason, reasonVersion })).digest('hex')
+}
+
+/**
+ * A quarantine, validated as the `Quarantine` contract and refused when its
+ * adjudication digest is stale: not the digest of its other four fields.
+ */
+export function checkedQuarantine(input: unknown, subject: string): Quarantine {
+  const validated = validateQuarantine(input)
+  if (!validated.ok) {
+    const { path, detail } = validated.refusal
+    throw new HarborResultsRefused('invalid_input', `${subject} is not a quarantine at ${path}: ${detail}`)
+  }
+  if (validated.value.adjudicationDigest !== quarantineAdjudicationDigest(validated.value))
+    throw new HarborResultsRefused('invalid_input', `${subject} carries a stale adjudication digest`)
+  return validated.value
 }
 
 export interface HarborResultsOptions {
@@ -66,7 +104,18 @@ function same(value: unknown, expected: string, subject: string): void {
     throw new HarborResultsRefused('invalid_input', `${subject} does not match the job lock`)
 }
 
-function metadata(path: string): { suite: string; rendererVersion: string } {
+/** The `[metadata]` fields of `task.toml` the converter writes for a quarantined case, by `Quarantine` field. */
+export const QUARANTINE_METADATA = {
+  cause: 'quarantine_cause',
+  reason: 'quarantine_reason',
+  reasonVersion: 'quarantine_reason_version',
+  adjudicationDigest: 'quarantine_adjudication_digest'
+} as const satisfies Record<Exclude<keyof Quarantine, 'taskId'>, string>
+
+function metadata(
+  path: string,
+  taskId: string
+): { suite: string; rendererVersion: string; quarantine: Quarantine | null } {
   if (!existsSync(path))
     throw new HarborResultsRefused('missing_task_metadata', `${path} is missing the converter's task.toml`)
   const parsed = Bun.TOML.parse(readFileSync(path, 'utf8')) as Json
@@ -74,7 +123,13 @@ function metadata(path: string): { suite: string; rendererVersion: string } {
   const rendererVersion = text(parsed.metadata?.vinaya_renderer_version)
   if (suite === undefined || rendererVersion === undefined)
     throw new HarborResultsRefused('missing_task_metadata', `${path} lacks converter metadata`)
-  return { suite, rendererVersion }
+  const fields = Object.entries(QUARANTINE_METADATA).map(([field, key]) => [field, parsed.metadata?.[key]] as const)
+  const present = fields.filter(([, value]) => value !== undefined)
+  if (present.length === 0) return { suite, rendererVersion, quarantine: null }
+  if (present.length !== fields.length)
+    throw new HarborResultsRefused('missing_task_metadata', `${path} carries only part of a quarantine`)
+  const quarantine = checkedQuarantine({ taskId, ...Object.fromEntries(fields) }, `${path}'s quarantine`)
+  return { suite, rendererVersion, quarantine }
 }
 
 /**
@@ -161,7 +216,8 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
   const seen = new Set<string>()
   const suites = new Set<string>()
   const renderers = new Set<string>()
-  const tallies: Array<{ taskId: string; successes: number; trials: number; unavailable: string[] }> = []
+  const tallies: HarborTaskTally[] = []
+  const quarantines: Quarantine[] = []
   const trials: Record<string, StepOneTrialResult> = {}
   const usage: StepOneUsage = {
     wallTimeMs: 0,
@@ -205,7 +261,8 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
     // Harbor's result `task_checksum` is a different hash from the lock digest, so only the two locks are bound.
     same(trialLock.task?.digest, text(locked.task?.digest) ?? '', `${directory} trial lock task digest`)
     const task = taskPath(options.taskRoot, lockedPath)
-    const taskMetadata = metadata(join(task, 'task.toml'))
+    const taskMetadata = metadata(join(task, 'task.toml'), taskId)
+    if (taskMetadata.quarantine !== null) quarantines.push(taskMetadata.quarantine)
     suites.add(taskMetadata.suite)
     renderers.add(taskMetadata.rendererVersion)
     const reward = result.verifier_result?.rewards?.reward
@@ -250,7 +307,16 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
     throw new HarborResultsRefused('mixed_suites', `job suite is ${[...suites][0]}, not ${options.suite}`)
   if (renderers.size !== 1)
     throw new HarborResultsRefused('mixed_suites', 'job tasks do not share one renderer version')
-  const estimate = suiteMean(tallies, options.bootstrap)
+  // A quarantined task is shown with its tally and counted apart: it never enters the estimate.
+  const split = separateQuarantined(tallies, quarantines)
+  if (!split.ok) throw new HarborResultsRefused('invalid_input', split.refusal.detail)
+  const quarantinedIds = new Set(quarantines.map((q) => q.taskId))
+  const estimated = tallies.filter((t) => !quarantinedIds.has(t.taskId))
+  const quarantined = split.value.quarantined.map(({ quarantine }) => ({
+    quarantine,
+    tally: tallies.find((t) => t.taskId === quarantine.taskId) as HarborTaskTally
+  }))
+  const estimate = suiteMean(estimated, options.bootstrap)
   if (!estimate.ok) throw new HarborResultsRefused('invalid_input', estimate.refusal.detail)
   const run: HarborPracticeRun['runs'][number] = {
     suite: options.suite,
@@ -263,9 +329,10 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
     model: identity.model,
     auth: 'subscription',
     evidence: 'never',
-    taskCount: tallies.length,
+    taskCount: estimated.length,
     trialsPerTask: 1,
-    tasks: tallies,
+    tasks: estimated,
+    quarantined,
     mean: estimate.value.mean,
     interval: estimate.value.interval,
     usage: { ...usage, subscriptionQuota: quotaUnavailableTrials === tallies.length ? null : usage.subscriptionQuota },

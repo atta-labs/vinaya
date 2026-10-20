@@ -10,7 +10,10 @@ Harbor (version 0.24.0) runs it on a task folder the converter
 The task image already holds the Vinaya CLI at /opt/vinaya with its workspace
 dependencies, installed at image build from the archive the converter wrote
 with its `--archive` flag, and the digest of that archive; Claude Code, Bun and
-Node are in the image too. `install` uploads this agent's archive and refuses
+Node are in the image too, `claude` linked in /opt/claude/bin. The image ends
+as its non-root user `tester`, which owns /opt/vinaya, /app, /case and /logs:
+the run, which Harbor executes as the image's user, works as `tester` with its
+home at /home/tester. `install` uploads this agent's archive and refuses
 unless its SHA-256 equals the digest the image recorded, so the run uses the
 CLI it was given; it runs no network step. `run` runs
 `harbor-trial.ts` on the task's case in container mode, which dispatches the
@@ -42,6 +45,8 @@ ARCHIVE_IN_CONTAINER = PurePosixPath("/tmp/vinaya.tar")
 ARCHIVE_DIGEST_FILE = PurePosixPath("/harbor/vinaya-archive.sha256")
 CASE_FILE = PurePosixPath("/case/case.json")
 CASE_TREE = PurePosixPath("/app")
+# The home of the image's non-root user, which the run works as; see harbor-tasks.ts.
+AGENT_HOME = PurePosixPath("/home/tester")
 TRIAL_ENTRY = "apps/cli/src/lib/dev-review-eval/harbor-trial.ts"
 RECORD_FILE = "vinaya-trial-record.json"
 USAGE_FILE = "vinaya-usage.json"
@@ -137,7 +142,11 @@ class VinayaAgent(BaseInstalledAgent):
                 f"2>&1 | tee {shlex.quote(f'{logs}/{TRANSCRIPT_FILE}')}",
             ]
         )
-        env = {**self._subscription_env(), "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
+        env = {
+            **self._subscription_env(),
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            "HOME": AGENT_HOME.as_posix(),
+        }
         await self.exec_as_agent(environment, command=f"mkdir -p {shlex.quote(logs)} && {command}", env=env)
 
     def populate_context_post_run(self, context: AgentContext) -> None:

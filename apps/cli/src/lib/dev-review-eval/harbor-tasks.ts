@@ -56,7 +56,9 @@ import {
   type SourceCitationCase
 } from '../../../tests/eval/source-citation-suite'
 import type { ReviewerRole } from '../review-result'
+import type { Quarantine } from './contracts'
 import type { GradingSpec, OracleSpec } from './harbor-grade'
+import { checkedQuarantine, HarborResultsRefused, QUARANTINE_METADATA } from './harbor-results'
 import type { HarborCaseFile, HarborCounterpart } from './harbor-trial'
 import type { NeutralCase } from './neutral-case'
 import type { StepOneRunSuite } from './step-one'
@@ -69,6 +71,18 @@ export const HARBOR_VERSION = '0.24.0'
 export const BUN_IMAGE = 'oven/bun:1.4.2'
 export const NODE_IMAGE = 'node:22-bookworm'
 export const CLAUDE_CODE_PACKAGE = '@anthropic-ai/claude-code@2.1.300'
+
+/**
+ * The directory of its own that holds the `claude` link, first on `PATH`: a
+ * test that drops every `PATH` directory holding `claude`, `codex` or `gemini`
+ * still finds `bun` and `node` in `/usr/local/bin`.
+ */
+export const CLAUDE_BIN_DIRECTORY = '/opt/claude/bin'
+
+/** The image's non-root user, which the role, the verifier and the oracle run as, and its home. */
+export const TASK_USER = 'tester'
+export const TASK_USER_ID = 1001
+export const TASK_USER_HOME = `/home/${TASK_USER}`
 
 /**
  * The only host the agent phase reaches: the Anthropic API that Claude Code's
@@ -167,6 +181,22 @@ function repositoryGit(args: readonly string[]): Buffer {
 const blob = (id: string) => repositoryGit(['cat-file', 'blob', id])
 
 /**
+ * The mode each of `paths` is written with, from its git file mode at
+ * `commit`: `0o755` for an executable file (`100755`), `0o644` otherwise.
+ */
+export function gitFileModes(commit: string, paths: readonly string[]): Map<string, TaskFile['mode']> {
+  const modes = new Map<string, TaskFile['mode']>(paths.map((path) => [path, 0o644]))
+  if (paths.length === 0) return modes
+  const listing = repositoryGit(['ls-tree', '-z', commit, '--', ...paths]).toString('utf8')
+  for (const entry of listing.split('\0').filter(Boolean)) {
+    const tab = entry.indexOf('\t')
+    const path = entry.slice(tab + 1)
+    if (modes.has(path) && entry.startsWith('100755 ')) modes.set(path, 0o755)
+  }
+  return modes
+}
+
+/**
  * Writes the Vinaya CLI at the evaluated commit, `HEAD`, as a tar archive,
  * leaving out every evaluation case file and every held-out file: the run in
  * the container reads its case only from the case file.
@@ -229,8 +259,8 @@ export type RepositoryUrl = (repository: string) => string
 export const GITHUB_REPOSITORY_URL: RepositoryUrl = (repository) => `https://github.com/${repository}.git`
 
 /**
- * The clone script: a depth-1 partial clone of the base commit with no blob
- * fetched up front, checked out through a non-cone sparse checkout that leaves
+ * The clone script: a partial clone of the base commit with its full commit
+ * history and no blob fetched up front, checked out through a non-cone sparse checkout that leaves
  * the excluded paths out, so their blobs are never fetched; then the install
  * command `PREPARE_INSTALL` names, when it names one, while the remote still
  * exists; then the remote removed, so no blob can be fetched later. A review case whose head commit the repository holds fetches it too,
@@ -254,7 +284,7 @@ git config core.sparseCheckout true
 git config core.sparseCheckoutCone false
 mkdir -p .git/info
 printf '%s\\n' ${SPARSE_CHECKOUT_PATTERNS.map(shellQuote).join(' ')} > .git/info/sparse-checkout
-git fetch --quiet --depth 1 --filter=blob:none origin "$base"
+git fetch --quiet --filter=blob:none origin "$base"
 if [ -n "$head" ]; then
   git fetch --quiet --depth 1 --filter=blob:none origin "$head"
   git checkout --quiet --detach "$head"
@@ -349,6 +379,40 @@ export function vinayaInstallStep(): string {
   ].join(' && ')
 }
 
+/**
+ * The image-build step that installs Claude Code: the global install's
+ * `/usr/local/bin/claude` removed, and `claude` linked in a directory of its
+ * own to the installed package's `bin/claude.exe`.
+ */
+export function claudeInstallStep(): string {
+  const packageName = CLAUDE_CODE_PACKAGE.slice(0, CLAUDE_CODE_PACKAGE.lastIndexOf('@'))
+  return [
+    `npm install --global ${CLAUDE_CODE_PACKAGE}`,
+    'rm /usr/local/bin/claude',
+    `mkdir -p ${CLAUDE_BIN_DIRECTORY}`,
+    `ln -s "$(npm root --global)/${packageName}/bin/claude.exe" ${CLAUDE_BIN_DIRECTORY}/claude`
+  ].join(' && ')
+}
+
+/** The image-build step that installs `gh` from the Debian package. */
+export const GH_INSTALL_STEP =
+  'apt-get update && apt-get install --yes --no-install-recommends gh && rm -rf /var/lib/apt/lists/* && gh --version'
+
+/**
+ * The last root step of every image: the directories the role, the verifier
+ * and the oracle write — the case repository, the case file's directory and
+ * Harbor's log directories, and the Vinaya CLI when the image holds it —
+ * owned by the non-root user, and `/app` trusted by git for any user.
+ */
+export function taskUserStep(withArchive: boolean): string {
+  const owned = ['/app', '/case', '/logs', ...(withArchive ? [VINAYA_HOME] : [])]
+  return [
+    'mkdir -p /logs/agent /logs/verifier',
+    `chown -R ${TASK_USER}:${TASK_USER} ${owned.join(' ')}`,
+    'git config --system --add safe.directory /app'
+  ].join(' && ')
+}
+
 function dockerfile(
   c: NeutralCase,
   url: string,
@@ -362,8 +426,12 @@ function dockerfile(
     `FROM ${BUN_IMAGE} AS bun`,
     `FROM ${NODE_IMAGE}`,
     'COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun',
-    `RUN npm install --global ${CLAUDE_CODE_PACKAGE} && claude --version && bun --version && node --version`,
+    `RUN ${GH_INSTALL_STEP}`,
+    `RUN ${claudeInstallStep()}`,
+    `ENV PATH=${CLAUDE_BIN_DIRECTORY}:$PATH`,
+    'RUN claude --version && bun --version && node --version',
     'ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
+    `RUN useradd -m -u ${TASK_USER_ID} ${TASK_USER}`,
     ...(withArchive ? [`COPY ${ARCHIVE_FILE} /harbor/${ARCHIVE_FILE}`, `RUN ${vinayaInstallStep()}`] : []),
     'COPY prepare-repository.sh /harbor/prepare-repository.sh',
     `RUN ${install}sh /harbor/prepare-repository.sh ${[url, '/app', c.baseRevision, ...(head === null ? [] : [head])].map(shellQuote).join(' ')}`,
@@ -375,11 +443,18 @@ function dockerfile(
       `RUN sh /harbor/commit-review.sh ${['/app', '/case/case.json', c.changeUnderReview.head, reviewMessage].map(shellQuote).join(' ')}`
     )
   }
-  lines.push('ENV GIT_NO_LAZY_FETCH=1', 'WORKDIR /app')
+  // Every step that needs root is above; the role, the verifier and the oracle run as the non-root user.
+  lines.push(
+    `RUN ${taskUserStep(withArchive)}`,
+    `ENV HOME=${TASK_USER_HOME}`,
+    `USER ${TASK_USER}`,
+    'ENV GIT_NO_LAZY_FETCH=1',
+    'WORKDIR /app'
+  )
   return `${lines.join('\n')}\n`
 }
 
-function taskToml(suite: string, c: NeutralCase): string {
+function taskToml(suite: string, c: NeutralCase, quarantine: Quarantine | null): string {
   return [
     'schema_version = "1.4"',
     '',
@@ -387,6 +462,15 @@ function taskToml(suite: string, c: NeutralCase): string {
     `case_id = ${tomlString(c.id)}`,
     `case_kind = ${tomlString(c.kind)}`,
     `harbor_version = ${tomlString(HARBOR_VERSION)}`,
+    // A quarantined case keeps its folder; the results reader counts its trial apart.
+    ...(quarantine === null
+      ? []
+      : [
+          `${QUARANTINE_METADATA.adjudicationDigest} = ${tomlString(quarantine.adjudicationDigest)}`,
+          `${QUARANTINE_METADATA.cause} = ${tomlString(quarantine.cause)}`,
+          `${QUARANTINE_METADATA.reason} = ${tomlString(quarantine.reason)}`,
+          `${QUARANTINE_METADATA.reasonVersion} = ${quarantine.reasonVersion}`
+        ]),
     `suite = ${tomlString(suite)}`,
     `vinaya_renderer_version = ${tomlString(VINAYA_RENDERER_VERSION)}`,
     '',
@@ -419,6 +503,8 @@ export interface CaseSources {
   developer?: DeveloperCapabilityCase
   reviewer?: ReviewCase
   citation?: SourceCitationCase
+  /** The case's quarantine in the Harbor quarantine record, when it has one. */
+  quarantine?: Quarantine
 }
 
 /** The layer-`P` part of the case file, holding only what the container run reads. */
@@ -460,7 +546,7 @@ export function taskFiles(
   if (reviewHead !== null && c.kind === 'review' && reviewHead !== c.changeUnderReview.head)
     throw new HarborTasksRefused(`${c.id}: the layer-P change under review is not the neutral case's`)
 
-  add('task.toml', taskToml(suite, c))
+  add('task.toml', taskToml(suite, c, sources.quarantine ?? null))
   add('instruction.md', `${sources.statement}\n`)
   add('environment/Dockerfile', dockerfile(c, url(c.repository), reviewHead, `Seeded change ${c.id}`, archive !== null))
   if (archive !== null) add(`environment/${ARCHIVE_FILE}`, archive)
@@ -495,7 +581,13 @@ export function taskFiles(
     'set -eu'
   ]
   if (c.kind === 'change' && developer !== undefined) {
-    for (const file of developer.referenceSolution.files) add(`solution/files/${file.path}`, blob(file.blob))
+    // Each file keeps its git file mode at the reference commit, so an executable script stays executable.
+    const modes = gitFileModes(
+      developer.referenceCommit,
+      developer.referenceSolution.files.map((file) => file.path)
+    )
+    for (const file of developer.referenceSolution.files)
+      add(`solution/files/${file.path}`, blob(file.blob), modes.get(file.path))
     solve.push('cd /app')
     if (developer.referenceSolution.files.length > 0) solve.push('cp -R /solution/files/. /app/')
     for (const path of developer.referenceSolution.deleted) solve.push(`rm -f -- ${shellQuote(path)}`)
@@ -509,6 +601,39 @@ export function taskFiles(
   return files
 }
 
+// ── Quarantine ──────────────────────────────────────────────────────────────
+
+/**
+ * The committed Harbor quarantine record: by suite, the cases whose task
+ * folders are still written but whose trials the results reader counts apart,
+ * each a `Quarantine` with a current adjudication digest.
+ */
+export const HARBOR_QUARANTINE_PATH = join(REPOSITORY_ROOT, 'apps/cli/tests/eval/harbor-quarantine.json')
+
+/** The Harbor quarantine record by suite name, every entry validated; a stale or repeated entry is refused. */
+export function loadHarborQuarantine(path: string = HARBOR_QUARANTINE_PATH): Map<string, Quarantine[]> {
+  const raw = JSON.parse(readFileSync(path, 'utf8')) as { schemaVersion?: unknown; suites?: unknown }
+  if (raw.schemaVersion !== 1 || typeof raw.suites !== 'object' || raw.suites === null || Array.isArray(raw.suites))
+    throw new HarborTasksRefused(`${path} is not a schema-version-1 quarantine record`)
+  const bySuite = new Map<string, Quarantine[]>()
+  for (const [suite, entries] of Object.entries(raw.suites as Record<string, unknown>)) {
+    if (!Array.isArray(entries)) throw new HarborTasksRefused(`${path}: ${suite} does not list quarantines`)
+    const quarantines: Quarantine[] = []
+    for (const [i, entry] of entries.entries()) {
+      try {
+        quarantines.push(checkedQuarantine(entry, `${suite} quarantine ${i}`))
+      } catch (error) {
+        if (error instanceof HarborResultsRefused) throw new HarborTasksRefused(`${path}: ${error.message}`)
+        throw error
+      }
+    }
+    const ids = quarantines.map((q) => q.taskId)
+    if (new Set(ids).size !== ids.length) throw new HarborTasksRefused(`${path}: ${suite} quarantines a case twice`)
+    bySuite.set(suite, quarantines)
+  }
+  return bySuite
+}
+
 // ── Conversion ──────────────────────────────────────────────────────────────
 
 export interface ConvertOptions {
@@ -517,6 +642,8 @@ export interface ConvertOptions {
   heldOutApprovals?: readonly string[]
   archive?: string
   repositoryUrl?: RepositoryUrl
+  /** The Harbor quarantine record; the committed one by default. */
+  quarantine?: string
   /** Reads the derived case files; a test injects one that records every path. */
   read?: ReadBytes
   /** Standard output and standard error. */
@@ -582,6 +709,16 @@ export async function convertHarborTasks(options: ConvertOptions): Promise<Conve
   const keys = HARBOR_SUITE_KEYS.filter(
     (key) => split === 'development' || approvals.includes(HELD_OUT_FAMILY[key] as string)
   )
+  // A quarantine naming a case its suite's development split does not hold is refused before any folder is written.
+  const quarantines = loadHarborQuarantine(options.quarantine)
+  for (const [suite, entries] of quarantines) {
+    const key = HARBOR_SUITE_KEYS.find((k) => suiteName(k) === suite)
+    if (key === undefined) throw new HarborTasksRefused(`the quarantine record names ${suite}, not a converted suite`)
+    const held = new Set(developmentCases(key, options.read).map((c) => c.id))
+    const stray = entries.find((q) => !held.has(q.taskId))
+    if (stray !== undefined)
+      throw new HarborTasksRefused(`the quarantine record names ${stray.taskId}, which ${suite} does not hold`)
+  }
   const script = await bundleGradeScript()
   const statements = split === 'development' ? statementsOf() : {}
   const layerP = counterparts(split, keys)
@@ -617,7 +754,8 @@ export async function convertHarborTasks(options: ConvertOptions): Promise<Conve
         statement: split === 'development' ? (statements[c.id] ?? '') : c.taskStatement,
         developer: layerP.developer.find((p) => p.id === c.id),
         reviewer: layerP.reviewer.find((p) => p.id === c.id && p.role === role),
-        citation: layerP.citation.find((p) => p.id === c.id)
+        citation: layerP.citation.find((p) => p.id === c.id),
+        quarantine: quarantines.get(suite)?.find((q) => q.taskId === c.id)
       }
       if (sources.statement === '') throw new HarborTasksRefused(`${c.id} has no task statement`)
       writeTaskFolder(join(options.out, suite, c.id), taskFiles(sources, script, url, archive))
