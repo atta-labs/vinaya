@@ -9,10 +9,6 @@ Badges: Medium work · Planner · Operator
 - Vinaya is installed in the repository. See [Get started](/docs/start/get-started).
 - The work is one feature or engineering need, small enough to plan in one go.
 
-```callout-tip
-Try it first in the interactive demo: [Medium work](/vinaya-process/demo/medium).
-```
-
 ## The flow
 
 ```flow-diagram

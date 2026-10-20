@@ -9,10 +9,6 @@ Badges: Hot issue · Principal
 - You are the Principal. Hot mode is yours to enter.
 - The change is urgent and small: one objective, a few files.
 
-```callout-tip
-Try it first in the interactive demo: [Hot issue](/vinaya-process/demo/hot).
-```
-
 ## The flow
 
 ```flow-diagram

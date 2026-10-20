@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowDown, ArrowRight, CircleCheck, Lightbulb, Play } from 'lucide-react'
+import { ArrowDown, ArrowRight, CircleCheck, Lightbulb } from 'lucide-react'
 import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from 'react'
 import { BrandIcon } from '@/process/components/BrandIcon'
 import { toneText } from '@/process/tone'
@@ -350,18 +350,6 @@ function Hero() {
             Vinaya plans the work, checks every change before it merges, and measures every deploy, so the process gets
             better each time.
           </Text>
-          <div
-            className={cn(
-              'flex w-full flex-wrap justify-center gap-3.5 pt-2 delay-850 motion-reduce:delay-0',
-              ENTER,
-              up
-            )}
-          >
-            <ButtonLink href='/vinaya-process/demo' size='xl' className={ACTION}>
-              <Play className='size-4' aria-hidden />
-              Play the interactive demo
-            </ButtonLink>
-          </div>
         </div>
       </div>
     </section>
@@ -763,23 +751,6 @@ function Stage({
   )
 }
 
-// A thin band after stage 4 that points to the four ways work enters, played as the interactive demo.
-function DiscoverFlows() {
-  return (
-    <section className='bg-accent py-20 text-accent-foreground'>
-      <div className={cn(WRAP, 'flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between')}>
-        <Heading level={2} weight='normal' variant='title'>
-          Discover more about the Vinaya development process flows
-        </Heading>
-        <ButtonLink href='/vinaya-process/demo' className='w-full shrink-0 sm:w-auto'>
-          <Play aria-hidden />
-          Play the interactive demo
-        </ButtonLink>
-      </div>
-    </section>
-  )
-}
-
 // Gates: the three rings as steps, the way the stages draw theirs, beside the counts.
 /**
  * A figure that counts up from 0 once `start` turns true, after `delay` ms: fast at first, slowing to a gentle stop
@@ -979,7 +950,6 @@ export function ProcessLanding({ logoUrl }: { logoUrl: string | null }) {
         reverse
         background='bg-secondary'
       />
-      <DiscoverFlows />
       <Gates />
       <Roles />
       <Cta />

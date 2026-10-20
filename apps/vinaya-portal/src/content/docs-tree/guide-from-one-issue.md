@@ -9,10 +9,6 @@ Badges: Simple task · Planner
 - Vinaya is installed in the repository.
 - You have one small change in mind: a fix, a chore, a small feature, with no sibling task to plan against.
 
-```callout-tip
-Try it first in the interactive demo: [Simple task](/vinaya-process/demo/simple).
-```
-
 ## The flow
 
 ```flow-diagram
