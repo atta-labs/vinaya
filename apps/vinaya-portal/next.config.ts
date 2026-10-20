@@ -3,6 +3,8 @@ import type { NextConfig } from 'next'
 const config: NextConfig = {
   // The portal's docs read the installed doctrine at build time; @attalabs packages ship raw .ts
   transpilePackages: ['@attalabs/aeg-core', '@attalabs/aeg-forge-state', '@attalabs/vinaya-sources'],
+  // The docs read their Markdown from disk with a computed path, which tracing cannot see.
+  outputFileTracingIncludes: { '/docs/**': ['./src/content/docs-tree/**'] },
   images: { remotePatterns: [{ protocol: 'https', hostname: 'cdn.sanity.io' }] },
   // The old docs and the old life-cycle page land on their new homes.
   async redirects() {

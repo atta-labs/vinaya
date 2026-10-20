@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "dev": "next dev --port 3010",
+    "dev": "bun scripts/dev.ts",
     "build": "next build",
     "start": "next start",
     "typecheck": "next typegen && tsc --noEmit"
@@ -13,6 +13,7 @@
     "@attalabs/vinaya-sources": "workspace:*",
     "@sanity/client": "^7.20.0",
     "@tailwindcss/postcss": "^4.0.0",
+    "@vercel/analytics": "^2.0.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "culori": "^4.0.2",

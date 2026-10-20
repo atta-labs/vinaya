@@ -1,3 +1,4 @@
+import { Analytics } from '@vercel/analytics/next'
 import type { Metadata } from 'next'
 import type { ReactNode } from 'react'
 import { buildFaviconIcons } from '@/cms'
@@ -28,6 +29,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
     >
       <PreviewThemeListener />
       {children}
+      <Analytics />
     </NextWebShell>
   )
 }
