@@ -1,0 +1,39 @@
+{
+  "schema_version": 2,
+  "task": {
+    "name": "code-contract",
+    "type": "local",
+    "digest": "sha256:4c99c99db5edadf74d8ea7c79405b86c1ab9834ddb24f94a411916bc60cf3c90",
+    "source": "code-reviewer-quality-neutral.l5",
+    "path": "tasks/code-contract"
+  },
+  "install_only": false,
+  "timeout_multiplier": 1.0,
+  "agent": {
+    "name": "vinaya_harbor_agent:VinayaAgent",
+    "model_name": "claude-opus-5-5",
+    "skills": [],
+    "resume_trajectory": false,
+    "extra_allowed_hosts": [],
+    "kwargs": {
+      "archive": "/redacted/vinaya.tar"
+    }
+  },
+  "bridge_inputs": {},
+  "skills": [],
+  "environment": {
+    "type": "docker",
+    "force_build": false,
+    "delete": true,
+    "stream": false,
+    "cpu_enforcement_policy": "auto",
+    "memory_enforcement_policy": "auto",
+    "extra_docker_compose": [],
+    "kwargs": {},
+    "extra_allowed_hosts": []
+  },
+  "verifier": {
+    "disable": false,
+    "environment_mode": "shared"
+  }
+}

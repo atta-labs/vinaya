@@ -1,0 +1,18 @@
+{
+  "job_name": "2026-10-20__12-06-33",
+  "jobs_dir": "/redacted",
+  "agents": [
+    {
+      "name": "vinaya_harbor_agent:VinayaAgent",
+      "model_name": "claude-opus-5-5",
+      "kwargs": {
+        "archive": "/redacted/vinaya.tar"
+      }
+    }
+  ],
+  "datasets": [
+    {
+      "path": "tasks"
+    }
+  ]
+}

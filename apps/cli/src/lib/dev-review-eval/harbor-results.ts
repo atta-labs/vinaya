@@ -77,7 +77,19 @@ function metadata(path: string): { suite: string; rendererVersion: string } {
   return { suite, rendererVersion }
 }
 
-function agentIdentity(config: Json): { agent: string; importPath: string | undefined; model: string } {
+/**
+ * The job's one agent. `configuredName` and `importPath` are exactly what the job config carries, which Harbor
+ * copies into every lock and trial config; `agent` is the normalized `vinaya` identity that only a trial result's
+ * `agent_info` name and the report carry.
+ */
+interface AgentIdentity {
+  agent: string
+  configuredName: string
+  importPath: string | undefined
+  model: string
+}
+
+function agentIdentity(config: Json): AgentIdentity {
   const agents = Array.isArray(config.agents) ? config.agents : config.agent ? [config.agent] : []
   if (agents.length !== 1) throw new HarborResultsRefused('unsupported_agent', 'the job must name exactly one agent')
   const configuredName = text(agents[0]?.name)
@@ -86,21 +98,17 @@ function agentIdentity(config: Json): { agent: string; importPath: string | unde
     configuredName === 'vinaya_harbor_agent:VinayaAgent' || importPath === 'vinaya_harbor_agent:VinayaAgent'
       ? 'vinaya'
       : configuredName
-  if (agent !== 'vinaya')
+  if (agent !== 'vinaya' || configuredName === undefined)
     throw new HarborResultsRefused('unsupported_agent', `job agent is ${agent ?? 'missing'}, not vinaya`)
   const model = text(agents[0]?.model_name)
   if (model === undefined || model.length === 0)
     throw new HarborResultsRefused('invalid_input', 'the job config does not carry an exact model id')
-  return { agent, importPath, model }
+  return { agent, configuredName, importPath, model }
 }
 
-function sameAgent(
-  value: unknown,
-  expected: { agent: string; importPath: string | undefined; model: string },
-  subject: string
-): void {
+function sameAgent(value: unknown, expected: AgentIdentity, subject: string): void {
   const record = value as Json | null | undefined
-  same(record?.name, expected.agent, `${subject} agent`)
+  same(record?.name, expected.configuredName, `${subject} agent`)
   same(record?.model_name, expected.model, `${subject} model`)
   if (expected.importPath !== undefined) same(record?.import_path, expected.importPath, `${subject} import path`)
 }
@@ -192,7 +200,8 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
     same(config.task?.path, lockedPath, `${directory} config task path`)
     same(trialLock.task?.path, lockedPath, `${directory} trial lock task path`)
     same(result.task_id?.path, lockedPath, `${directory} result task path`)
-    same(result.task_checksum, text(locked.task?.digest) ?? '', `${directory} task checksum`)
+    // Harbor's result `task_checksum` is a different hash from the lock digest, so only the two locks are bound.
+    same(trialLock.task?.digest, text(locked.task?.digest) ?? '', `${directory} trial lock task digest`)
     const task = taskPath(options.taskRoot, lockedPath)
     const taskMetadata = metadata(join(task, 'task.toml'))
     suites.add(taskMetadata.suite)

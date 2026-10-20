@@ -631,14 +631,17 @@ practice report:
 
 ```text
 PYTHONPATH=apps/cli/src/lib/dev-review-eval harbor run --path <harbor-task-directory>/developer-capability-neutral.l5 --include-task-name <case-id> --agent vinaya_harbor_agent:VinayaAgent --ak archive=<file.tar> --model <exact-model-id> --n-attempts 1 --job-name <job-name> --jobs-dir <jobs-directory>
-bun apps/cli/src/lib/dev-review-eval/harbor-results.ts <job-directory> --suite developer-capability-neutral.l5 --subscription-auth --bootstrap percentile --seed 1 --resamples 100 --confidence 0.95 [--task-root <harbor-working-directory>] [--out <file>]
+bun apps/cli/src/lib/dev-review-eval/harbor-results.ts <job-directory> --suite developer-capability-neutral.l5@1 --subscription-auth --bootstrap percentile --seed 1 --resamples 100 --confidence 0.95 --task-root <directory-holding-the-converted-tasks> [--out <file>]
 ```
 
 Repeat the Harbor job once per layer-`G` role suite and subscription adapter,
 as required by the evaluation program's practice-run order; each reader
-invocation accepts exactly one suite's job. Relative task paths are resolved
-from the reader's current working directory, which must be the directory from
-which Harbor ran; use `--task-root` when reading the job from somewhere else.
+invocation accepts exactly one suite's job. `--suite` is the suite id the
+task's `task.toml` carries in its `metadata.suite`, version included (here
+`developer-capability-neutral.l5@1`). Relative task paths are resolved from
+`--task-root`, the directory holding the converted tasks, or else from the
+reader's current working directory, which must then be the directory from
+which Harbor ran; a task path that resolves outside that root is refused.
 
 The snapshot supplies the frozen layer-`P` Developer briefs whose committed corpus
 entries intentionally retain only digests. Only a `developer-capability.l5`
@@ -766,7 +769,21 @@ working directory Harbor used to resolve relative local-task paths, and
 optionally `--out`. The reader
 accepts one Harbor `0.24.0` job of the `vinaya` agent, one trial per task and
 one suite per job. It refuses another Harbor version or agent, duplicate task
-trials, mixed suites, and a task without the converter's `task.toml`. Its
+trials, mixed suites, and a task without the converter's `task.toml`.
+
+The reader accepts the job shape Harbor `0.24.0` writes for the `vinaya`
+agent. The job config names the agent as Harbor was given it,
+`vinaya_harbor_agent:VinayaAgent`, with no `import_path`, and Harbor writes
+that same configured name into the job lock's trial `agent`, each trial's
+`config.json` `agent` and each trial's `lock.json` `agent`; the reader
+compares each of those agent records' `name` and `model_name` with the job
+config's own, and their `import_path` only when the job config carries one.
+The name `vinaya` appears only as the `agent_info` name of each trial's
+`result.json`, which the reader compares with `vinaya`, the agent its report
+names. Each trial lock's task `digest` must equal the job lock's task `digest`
+for that task. The result's `task_checksum` is not compared: Harbor `0.24.0`
+writes it as a different hash of the task from the lock `digest`. A mismatch
+in any compared field refuses the job with `invalid_input`. Its
 step-one result has purpose `practice` and evidence `never`; it records the
 exact model id, subscription authentication, the suite's renderer version,
 per-task outcomes, bootstrap estimate, and the usage and wall time synced from
