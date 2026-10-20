@@ -345,6 +345,16 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
   { test: 'apps/cli/tests/run-paths-only.test.ts', roots: ['.'], trigger: 'content' },
   { test: 'apps/cli/tests/surface-index.test.ts', roots: ['apps/cli/src/commands/'], trigger: 'content' },
   { test: 'apps/cli/tests/surface-spec-exports.test.ts', roots: ['apps/cli/src/commands/'], trigger: 'content' },
+  {
+    test: 'apps/vinaya-portal/src/lib/docs/private-source-links.test.ts',
+    roots: ['apps/vinaya-portal/src/app/(site)/docs/'],
+    trigger: 'content'
+  },
+  {
+    test: 'apps/vinaya-portal/src/lib/import-boundary.test.ts',
+    roots: ['apps/vinaya-portal/src/'],
+    trigger: 'content'
+  },
   { test: 'packages/aeg-core/src/actions.test.ts', roots: ['aeg-root/roles/'], trigger: 'content' },
   { test: 'packages/aeg-core/src/diagram-model.test.ts', roots: ['.'], trigger: 'content' },
   {
