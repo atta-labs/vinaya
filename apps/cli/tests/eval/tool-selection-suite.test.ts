@@ -27,6 +27,7 @@ import {
   HELD_OUT_PATH,
   HeldOutRefused,
   LIVE_SUITE,
+  createWorld,
   loadCaseFile,
   loadHeldOutCases,
   main,
@@ -301,6 +302,19 @@ describe('the code graders (O3)', () => {
   })
 })
 
+describe('the pull-request body gate', () => {
+  it('accepts a first line closing the world’s own issue and refuses any other number', async () => {
+    const issue = 1010
+    const other = createWorld({ issue, published: true }, 'developer')
+    const refusal = await other.context.openPullRequest('t', `Closes #${issue + 1}\n\nThe change.`)
+    expect(refusal).toMatchObject({ ok: false, error: { check: 'pr-body-gate' } })
+    expect(other.state().pullRequest).toBeNull()
+    const own = createWorld({ issue, published: true }, 'developer')
+    expect(await own.context.openPullRequest('t', `Closes #${issue}\n\nThe change.`)).toMatchObject({ ok: true })
+    expect(own.state().pullRequest?.body).toStartWith(`Closes #${issue}`)
+  })
+})
+
 describe('the adapters’ transcripts', () => {
   const trace: TraceCall[] = [
     { tool: 'publish_changes', args: { header: 'Fix(cli): Quote "paths" with $HOME' } },
@@ -343,13 +357,26 @@ describe('the adapters’ transcripts', () => {
           usage: { input_tokens: 10, cache_read_input_tokens: 90, output_tokens: 7 }
         })
       ])
-    ).toEqual({ reportedSpendUsd: 0.0123, inputTokens: 100, outputTokens: 7 })
+    ).toEqual({
+      reportedSpendUsd: 0.0123,
+      inputTokens: 100,
+      outputTokens: 7,
+      cacheReadTokens: 90,
+      cacheCreationTokens: 0
+    })
     expect(
-      usageOf('codex', [JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 40, output_tokens: 5 } })])
+      usageOf('codex', [
+        JSON.stringify({
+          type: 'turn.completed',
+          usage: { input_tokens: 40, cached_input_tokens: 30, output_tokens: 5 }
+        })
+      ])
     ).toEqual({
       reportedSpendUsd: null,
       inputTokens: 40,
-      outputTokens: 5
+      outputTokens: 5,
+      cacheReadTokens: 30,
+      cacheCreationTokens: 0
     })
   })
 })

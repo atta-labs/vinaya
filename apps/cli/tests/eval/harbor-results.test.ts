@@ -341,6 +341,33 @@ describe('Harbor job results', () => {
       const report = JSON.parse(out.join(''))
       expect(report.runs[0]).toMatchObject({ suite: realSuite, agent: 'vinaya', model: 'claude-opus-5-5', mean: 1 })
       expect(report.runs[0].tasks.map((task: any) => task.taskId)).toEqual(['code-clean', 'code-contract'])
+      // Its usage files predate the cache fields, so both read as 0.
+      expect(report.runs[0].usage).toMatchObject({ cacheReadTokens: 0, cacheCreationTokens: 0 })
+    })
+
+    it('reports the cache tokens a usage file carries, per trial and summed', () => {
+      const job = copyRealJob()
+      const cache: Record<string, { cacheReadTokens: number; cacheCreationTokens: number }> = {
+        'code-clean__9Zd3QD4': { cacheReadTokens: 41_000, cacheCreationTokens: 3_200 },
+        'code-contract__h3AQcdj': { cacheReadTokens: 52_500, cacheCreationTokens: 1_100 }
+      }
+      for (const [trial, fields] of Object.entries(cache)) {
+        const path = join(job, trial, 'agent', 'vinaya-usage.json')
+        writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), ...fields }))
+      }
+      const output = readHarborPracticeRun({
+        jobDirectory: job,
+        taskRoot: job,
+        suite: realSuite as any,
+        subscriptionAuth: true,
+        bootstrap
+      })
+      expect(output.trials['code-clean']?.usage).toMatchObject({ cacheReadTokens: 41_000, cacheCreationTokens: 3_200 })
+      expect(output.trials['code-contract']?.usage).toMatchObject({
+        cacheReadTokens: 52_500,
+        cacheCreationTokens: 1_100
+      })
+      expect(output.result.runs[0]?.usage).toMatchObject({ cacheReadTokens: 93_500, cacheCreationTokens: 4_300 })
     })
 
     it('refuses a trial lock whose agent name differs from the job lock', () => {

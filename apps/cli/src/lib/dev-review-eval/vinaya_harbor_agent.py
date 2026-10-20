@@ -147,7 +147,7 @@ class VinayaAgent(BaseInstalledAgent):
             return
         usage = json.loads(path.read_text())
         context.n_input_tokens = int(usage.get("inputTokens", 0))
-        # The run's usage reports no cache figure of its own.
-        context.n_cache_tokens = 0
+        # The run's usage counts cache reads and cache creations apart from its uncached input.
+        context.n_cache_tokens = int(usage.get("cacheReadTokens", 0)) + int(usage.get("cacheCreationTokens", 0))
         context.n_output_tokens = int(usage.get("outputTokens", 0))
         context.cost_usd = float(usage.get("estimatedCostUsd", 0))

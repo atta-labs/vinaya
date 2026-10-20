@@ -302,7 +302,7 @@ export interface AdapterReport {
   sourceRequiringRate: number
   balanceRate: number
   meetsFloor: boolean
-  cost: Usage & { wallMs: number }
+  cost: Omit<Usage, 'cacheReadTokens' | 'cacheCreationTokens'> & { wallMs: number }
 }
 export interface SourceCitationReport {
   suite: 'source-delivery.l5@1'

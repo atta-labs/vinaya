@@ -265,7 +265,7 @@ describe('source citation report', () => {
         refusal: null,
         manifest: evidence.manifest,
         receipts: evidence.receipts,
-        usage: { reportedSpendUsd: 0.01, inputTokens: 10, outputTokens: 4 },
+        usage: { reportedSpendUsd: 0.01, inputTokens: 10, outputTokens: 4, cacheReadTokens: 0, cacheCreationTokens: 0 },
         wallMs: 20
       }))
     )
@@ -287,7 +287,7 @@ describe('source citation report', () => {
       refusal: 'codex returned no valid DeveloperTurnResult: sourceUses: unexpected source',
       manifest: evidence.manifest,
       receipts: evidence.receipts,
-      usage: { reportedSpendUsd: null, inputTokens: 10, outputTokens: 4 },
+      usage: { reportedSpendUsd: null, inputTokens: 10, outputTokens: 4, cacheReadTokens: 0, cacheCreationTokens: 0 },
       wallMs: 20
     }))
     const report = reportSourceCitation('development', [testCase], observations)

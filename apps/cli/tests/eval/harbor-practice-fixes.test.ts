@@ -368,7 +368,9 @@ describe("a change trial's publishing instruction and its pull request", () => {
         if (world !== null) {
           writeFileSync(join(opts.cwd as string, 'apps/cli/src/lib/harbor-fake.ts'), 'export const fake = true\n')
           await world.context.publishChanges('Feat(cli): Add it')
-          if (opensPullRequest) await world.context.openPullRequest('t', 'Closes #1\n\nThe change.')
+          // The world's own issue number, as the change trial's prompt names it.
+          const issue = /Closes #(\d+)/.exec(prompt)?.[1]
+          if (opensPullRequest) await world.context.openPullRequest('t', `Closes #${issue}\n\nThe change.`)
         }
         for (const line of transcript) opts.observeStdoutLine?.(line)
         return {

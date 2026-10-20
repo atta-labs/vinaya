@@ -63,6 +63,8 @@ const usage = {
   wallTimeMs: 10,
   inputTokens: 3,
   outputTokens: 2,
+  cacheReadTokens: 5,
+  cacheCreationTokens: 1,
   subscriptionQuota: 0.1,
   estimatedCostUsd: 0.01
 }
@@ -386,7 +388,7 @@ describe('development-only step one', () => {
       expect(run).toMatchObject({
         taskCount: 1,
         mean: 0.5,
-        usage: { wallTimeMs: 20, inputTokens: 6, outputTokens: 4 }
+        usage: { wallTimeMs: 20, inputTokens: 6, outputTokens: 4, cacheReadTokens: 10, cacheCreationTokens: 2 }
       })
       expect(run.tasks).toEqual([
         {
@@ -937,14 +939,16 @@ describe('container mode: a layer-G trial in a container that is its own sandbox
   function recordingSteps(kind: NeutralCase['kind'], issue: number) {
     const calls: string[] = []
     const dispatched: Array<{ cwd: string | undefined; containerMode: boolean | undefined }> = []
+    const prompts: string[] = []
     const turns: Array<{ workspace: string; claudeEnv: NodeJS.ProcessEnv | undefined }> = []
     let world: { context: DevToolContext } | null = null
     let lastStaged: string | null = null
     const scratch = tempDir('step-one-fake-sandbox-')
     const steps: VinayaProcessSteps = {
       ...PRODUCTION_VINAYA_PROCESS_STEPS,
-      dispatch: async (_role, _agent, _prompt, opts) => {
+      dispatch: async (_role, _agent, prompt, opts) => {
         calls.push('dispatch')
+        prompts.push(prompt)
         dispatched.push({ cwd: opts.cwd, containerMode: opts.containerMode })
         const run = fakeRun(kind, world)
         await run.act(opts.cwd as string, issue)
@@ -953,6 +957,7 @@ describe('container mode: a layer-G trial in a container that is its own sandbox
           exitCode: 0,
           durationMs: 5,
           usage: { input: 3, output: 2 },
+          cacheUsage: { read: 2, creation: 0 },
           resumeId: 's',
           timedOut: false,
           ...(kind === 'review'
@@ -1026,7 +1031,7 @@ describe('container mode: a layer-G trial in a container that is its own sandbox
         return []
       }
     }
-    return { steps, calls, dispatched, turns }
+    return { steps, calls, dispatched, prompts, turns }
   }
 
   const caseOf = async (suite: StepOneRunSuite, kind: NeutralCase['kind']) => {
@@ -1146,6 +1151,16 @@ describe('container mode: a layer-G trial in a container that is its own sandbox
         return
       }
       // A change case: the role's commit lands on the tree's HEAD, and the tree's diff against the base is its work.
+      // The prompt names the issue the trial's world is created with, on the host and in the container alike.
+      for (const prompt of [...host.prompts, ...inContainer.prompts]) expect(prompt).toContain(`Closes #${issue}`)
+      expect(issue).not.toBe(1)
+      // Codex counts its cached input inside `input_tokens`; the trial's usage keeps it apart.
+      expect(onHost.usage).toMatchObject({
+        inputTokens: 1,
+        outputTokens: 2,
+        cacheReadTokens: 2,
+        cacheCreationTokens: 0
+      })
       expect(onHost.record.pullRequest?.body).toContain(`Closes #${issue}`)
       expect(onHost.record.effects?.map((effect) => effect.kind)).toEqual(['publish_changes', 'open_pull_request'])
       const head = git(tree, ['rev-parse', 'HEAD']).trim()

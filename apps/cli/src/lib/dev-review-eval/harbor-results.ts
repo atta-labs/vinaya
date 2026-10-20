@@ -167,6 +167,8 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
     wallTimeMs: 0,
     inputTokens: 0,
     outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
     subscriptionQuota: 0,
     estimatedCostUsd: 0
   }
@@ -216,6 +218,9 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
       wallTimeMs: wallTime(result),
       inputTokens: number(trialUsage?.inputTokens),
       outputTokens: number(trialUsage?.outputTokens),
+      // A usage file written before cache was counted has neither field: it reads as `0`.
+      cacheReadTokens: number(trialUsage?.cacheReadTokens),
+      cacheCreationTokens: number(trialUsage?.cacheCreationTokens),
       subscriptionQuota:
         trialUsage === null || trialUsage.subscriptionQuota === null ? null : number(trialUsage.subscriptionQuota),
       estimatedCostUsd: number(trialUsage?.estimatedCostUsd)
@@ -232,6 +237,8 @@ export function readHarborPracticeRun(options: HarborResultsOptions): {
     usage.wallTimeMs += measuredUsage.wallTimeMs
     usage.inputTokens += measuredUsage.inputTokens
     usage.outputTokens += measuredUsage.outputTokens
+    usage.cacheReadTokens += measuredUsage.cacheReadTokens
+    usage.cacheCreationTokens += measuredUsage.cacheCreationTokens
     usage.estimatedCostUsd += measuredUsage.estimatedCostUsd
     if (measuredUsage.subscriptionQuota === null) quotaUnavailableTrials++
     else usage.subscriptionQuota = (usage.subscriptionQuota ?? 0) + measuredUsage.subscriptionQuota

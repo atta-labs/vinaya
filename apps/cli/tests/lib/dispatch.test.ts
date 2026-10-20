@@ -1336,6 +1336,59 @@ describe('dispatchRole — stderr content never decides the outcome', () => {
   })
 })
 
+describe('dispatchRole — usage is read from the end of the stream', () => {
+  /** Runs one in-process `dispatchRole` against the given fake `claude` and returns its handle. */
+  function dispatchHandle(fakeClaude: string): {
+    usage: { input: number; output: number } | null
+    cacheUsage: { read: number; creation: number } | null
+  } {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    writeFakeBinary(binDir, 'claude', fakeClaude)
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const handleOut = join(cwd, 'handle.json')
+    const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+    const script = join(cwd, 'one-dispatch.ts')
+    writeFileSync(
+      script,
+      [
+        `import { writeFileSync } from 'node:fs'`,
+        `import { dispatchRole } from ${JSON.stringify(dispatchLib)}`,
+        `const handle = await dispatchRole('developer', 'claude', 'p', { promptFile: ${JSON.stringify(promptFile)} })`,
+        `writeFileSync(${JSON.stringify(handleOut)}, JSON.stringify({ usage: handle.usage, cacheUsage: handle.cacheUsage ?? null }))`
+      ].join('\n')
+    )
+    runScriptWithBudget(
+      script,
+      cwd,
+      stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` })
+    )
+    return JSON.parse(readFileSync(handleOut, 'utf8'))
+  }
+
+  const USAGE_LINE =
+    '{"type":"result","usage":{"input_tokens":12,"output_tokens":34,"cache_read_input_tokens":560,"cache_creation_input_tokens":78}}'
+
+  it('a stream longer than the capture limit still reports the usage on its last line', () => {
+    // 12,000 lines of 100 padding characters each: about 1,400,000 bytes
+    // printed before the terminal usage line.
+    const pad = 'x'.repeat(100)
+    const handle = dispatchHandle(
+      `#!/bin/sh\ncat > /dev/null\nyes '{"type":"assistant","pad":"${pad}"}' | head -n 12000\necho '${USAGE_LINE}'\nexit 0\n`
+    )
+    expect(handle.usage).toEqual({ input: 12, output: 34 })
+    expect(handle.cacheUsage).toEqual({ read: 560, creation: 78 })
+  })
+
+  it('a short stream reports its usage as before', () => {
+    const handle = dispatchHandle(`#!/bin/sh\ncat > /dev/null\necho '${USAGE_LINE}'\nexit 0\n`)
+    expect(handle.usage).toEqual({ input: 12, output: 34 })
+    expect(handle.cacheUsage).toEqual({ read: 560, creation: 78 })
+  })
+})
+
 describe('dispatchRole — two dispatches in the same process', () => {
   it('each gets its own run_id via its own createLogSink call, with no shared mutable state', () => {
     // Calls `dispatchRole` twice from ONE dedicated subprocess (not two CLI

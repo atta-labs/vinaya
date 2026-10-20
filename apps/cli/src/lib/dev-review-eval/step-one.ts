@@ -98,10 +98,13 @@ const processOf = (suite: StepOneRunSuite) => ({
   rendererVersion: rendererVersionOf(suite)
 })
 
+/** A trial's measured cost. `inputTokens` is uncached input for every adapter; cache reads and creations are counted apart. */
 export interface StepOneUsage {
   wallTimeMs: number
   inputTokens: number
   outputTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
   subscriptionQuota: number | null
   estimatedCostUsd: number
 }
@@ -632,6 +635,8 @@ export async function runStepOne(
         wallTimeMs: 0,
         inputTokens: 0,
         outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
         subscriptionQuota: 0,
         estimatedCostUsd: 0
       }
@@ -646,6 +651,8 @@ export async function runStepOne(
           usage.wallTimeMs += trial.usage.wallTimeMs
           usage.inputTokens += trial.usage.inputTokens
           usage.outputTokens += trial.usage.outputTokens
+          usage.cacheReadTokens += trial.usage.cacheReadTokens
+          usage.cacheCreationTokens += trial.usage.cacheCreationTokens
           usage.estimatedCostUsd +=
             trial.usage.estimatedCostUsd ||
             (trial.usage.inputTokens * (options.pricing?.inputUsdPerMillion ?? 0) +
@@ -1019,18 +1026,43 @@ export function importTrialBundle(request: {
   return target
 }
 
+/**
+ * A dispatch's tokens as step-one usage. Codex counts its cached input inside
+ * `input_tokens`, which the handle's `usage.input` keeps raw, so the cache read
+ * is subtracted here to leave uncached input; Claude's `input_tokens` already
+ * excludes cache.
+ */
+function tokensOf(
+  adapter: StepOneAdapter,
+  handle: {
+    usage: { input: number; output: number } | null
+    cacheUsage?: { read: number; creation: number } | null
+  }
+): Pick<StepOneUsage, 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheCreationTokens'> {
+  const input = handle.usage?.input ?? 0
+  const cacheReadTokens = handle.cacheUsage?.read ?? 0
+  return {
+    inputTokens: adapter === 'codex' ? Math.max(0, input - cacheReadTokens) : input,
+    outputTokens: handle.usage?.output ?? 0,
+    cacheReadTokens,
+    cacheCreationTokens: handle.cacheUsage?.creation ?? 0
+  }
+}
+
 function trialUsage(
   adapter: StepOneAdapter,
   handle: {
     durationMs: number
     usage: { input: number; output: number } | null
+    cacheUsage?: { read: number; creation: number } | null
   } | null,
   transcript: readonly string[]
 ): StepOneUsage {
   return {
     wallTimeMs: handle?.durationMs ?? 0,
-    inputTokens: handle?.usage?.input ?? 0,
-    outputTokens: handle?.usage?.output ?? 0,
+    ...(handle === null
+      ? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }
+      : tokensOf(adapter, handle)),
     subscriptionQuota: handle === null ? 0 : subscriptionQuotaOf(adapter, transcript),
     estimatedCostUsd: 0
   }
@@ -1041,6 +1073,8 @@ const NO_USAGE: StepOneUsage = {
   wallTimeMs: 0,
   inputTokens: 0,
   outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
   subscriptionQuota: null,
   estimatedCostUsd: 0
 }
@@ -1573,8 +1607,7 @@ async function executeReviewer(
     ...processOf(input.suite),
     usage: {
       wallTimeMs: handle.durationMs,
-      inputTokens: handle.usage?.input ?? 0,
-      outputTokens: handle.usage?.output ?? 0,
+      ...tokensOf(input.adapter, handle),
       subscriptionQuota: subscriptionQuotaOf(input.adapter, transcript),
       estimatedCostUsd: 0
     }
@@ -1765,13 +1798,15 @@ async function runChangeCase(
     if (digest(delivered.contents.get(source.sourceId) ?? '') !== source.contentDigest)
       throw new Error(`delivered document ${source.sourceId} differs from its pinned content digest`)
   }
-  // The prompt ends with the review loop's own publishing instruction: the Developer opens its pull request itself.
+  // The prompt ends with the review loop's own publishing instruction: the Developer opens its pull request itself,
+  // closing the issue number the trial's fake forge world is created with, as the real loop's brief names it.
   const prompt = [
     input.brief,
     ...input.sources.map(
       (source) =>
         `${source.required ? 'Required source' : 'Delivered document'} ${source.sourceId}:\n\n${delivered.contents.get(source.sourceId) ?? ''}`
     ),
+    `This task's issue is #${item.pullRequest}: the pull request body's first line is \`Closes #${item.pullRequest}\`.`,
     `When your work is ready, ${publishingInstructionLine()}`
   ].join('\n\n')
   if (container !== undefined) {
@@ -1994,8 +2029,11 @@ async function runAnswerCase(
     }
     const usage: StepOneUsage = {
       wallTimeMs,
-      inputTokens: tokens.inputTokens,
+      // `usageOf` folds cache into its input figure; step-one usage counts it apart.
+      inputTokens: Math.max(0, tokens.inputTokens - tokens.cacheReadTokens - tokens.cacheCreationTokens),
       outputTokens: tokens.outputTokens,
+      cacheReadTokens: tokens.cacheReadTokens,
+      cacheCreationTokens: tokens.cacheCreationTokens,
       subscriptionQuota: subscriptionQuotaOf(trial.adapter, transcript),
       estimatedCostUsd: 0
     }
