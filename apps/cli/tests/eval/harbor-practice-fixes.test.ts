@@ -3,8 +3,8 @@
  * before grading, proved with no Docker and no model:
  *
  *  - step one's trace reader drops Claude Code's harness-internal tools, so
- *    the real traces of `vinaya-trial-traces.json` grade on their neutral
- *    capabilities alone, and a web fetch fails as an ungranted `read_web`;
+ *    the real traces of `vinaya-trial-traces.json` grade reward `1` on their
+ *    neutral capabilities alone, and a web fetch fails as an ungranted `read_web`;
  *  - the reviewer suite rebuilds every git-sourced patch to its pinned digest
  *    in a depth-1, blob-less clone, the case repository a task image holds;
  *  - a task image installs the Vinaya CLI's dependencies at build, and the
@@ -106,18 +106,13 @@ function claudeTranscript(tools: readonly string[]): string[] {
   )
 }
 
-/** Each fixture trial's kind, the case of that kind it ran on, and the capabilities it used that its case does not grant. */
+/** Each fixture trial's kind and the case of that kind it ran on. */
 const TRIALS = [
-  { kind: 'change', key: 'developer', caseId: 'pr-1003', ungranted: [] },
-  // The reviewer ran two shell commands, and a review case grants only `read_file`: a genuine agent result.
-  { kind: 'review', key: 'codeReviewer', caseId: 'code-contract', ungranted: ['run_commands'] },
-  { kind: 'answer', key: 'sourceCitation', caseId: 'dev-correct-citation', ungranted: [] }
-] as const satisfies readonly {
-  kind: NeutralCase['kind']
-  key: GenericSuiteKey
-  caseId: string
-  ungranted: readonly string[]
-}[]
+  { kind: 'change', key: 'developer', caseId: 'pr-1003' },
+  // The reviewer read the change with two shell commands, which a review case grants as `run_commands`.
+  { kind: 'review', key: 'codeReviewer', caseId: 'code-contract' },
+  { kind: 'answer', key: 'sourceCitation', caseId: 'dev-correct-citation' }
+] as const satisfies readonly { kind: NeutralCase['kind']; key: GenericSuiteKey; caseId: string }[]
 
 const fixture = JSON.parse(readFileSync(FIXTURE, 'utf8')) as {
   schemaVersion: 1
@@ -150,7 +145,7 @@ describe('the real trial traces, read through step one', () => {
     }
   })
 
-  for (const { kind, key, caseId, ungranted } of TRIALS) {
+  for (const { kind, key, caseId } of TRIALS) {
     it(`grades a ${kind} reference carrying the real ${kind} trace on its neutral capabilities alone`, async () => {
       const real = fixture.trials.find((trial) => trial.kind === kind)?.trace ?? []
       // The real trace carries Claude Code's own harness tools, which made the capability outcome invalid.
@@ -165,14 +160,9 @@ describe('the real trial traces, read through step one', () => {
       const graded = await grade(spec, withTrace)
       expect(graded.reason).toBeNull()
       for (const [id, verdict] of Object.entries(graded.verdicts)) {
-        if (id === 'generic-capabilities-granted' && ungranted.length > 0) {
-          expect(verdict.verdict).toBe('fail')
-          expect(verdict.reason).toBe(ungranted.map((used) => `capability ${used} was not granted`).join('; '))
-        } else {
-          expect({ id, ...verdict }).toEqual({ id, verdict: 'pass' })
-        }
+        expect({ id, ...verdict }).toEqual({ id, verdict: 'pass' })
       }
-      expect(graded.reward).toBe(ungranted.length === 0 ? 1 : 0)
+      expect(graded.reward).toBe(1)
 
       // A web fetch is an ungranted `read_web`, never an invalid capability outcome.
       const fetched = await layerGTraceOf('claude-code', claudeTranscript([...real, 'WebFetch']))
@@ -182,6 +172,14 @@ describe('the real trial traces, read through step one', () => {
       expect(web.verdicts['generic-capabilities-granted']?.verdict).toBe('fail')
       expect(web.verdicts['generic-capabilities-granted']?.reason).toContain('capability read_web was not granted')
       expect(web.verdicts['generic-capabilities-granted']?.reason).not.toContain('invalid')
+
+      // A reviewer runs shell commands to read the change, and still never writes it.
+      if (kind === 'review') {
+        const edited = await layerGTraceOf('claude-code', claudeTranscript([...real, 'Edit']))
+        const wrote = await grade(spec, { ...record, trace: edited.map((call) => ({ tool: call.tool })) })
+        expect(wrote.reward).toBe(0)
+        expect(wrote.verdicts['generic-capabilities-granted']?.reason).toBe('capability write_file was not granted')
+      }
 
       let planted = 0
       for (const variant of KNOWN_BAD_VARIANTS) {

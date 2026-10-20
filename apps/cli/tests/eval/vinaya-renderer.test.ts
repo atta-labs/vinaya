@@ -14,7 +14,7 @@ import {
   MAPPING_SOURCE_PATHS,
   MAPPING_SOURCES,
   MAPPING_TABLES,
-  READ_ONLY_BUILTINS,
+  REVIEWER_BUILTINS,
   renderCase,
   rendererVersionOf,
   SEVERITY_BLOCKING,
@@ -129,7 +129,7 @@ describe('render', () => {
       for (const tool of tools ?? []) {
         expect(loopEntry.case.grantedCapabilities).toContain(TOOL_CAPABILITIES[tool] as string)
         if (role !== 'developer')
-          expect(ROLE_TOOL_GRANTS.security.includes(tool) || READ_ONLY_BUILTINS.includes(tool)).toBe(true)
+          expect(ROLE_TOOL_GRANTS.security.includes(tool) || REVIEWER_BUILTINS.includes(tool)).toBe(true)
       }
     }
   })

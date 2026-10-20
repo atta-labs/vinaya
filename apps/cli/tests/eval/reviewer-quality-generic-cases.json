@@ -32,7 +32,7 @@
             "protected": []
           },
           "deliveredDocuments": [],
-          "grantedCapabilities": ["read_file"],
+          "grantedCapabilities": ["read_file", "run_commands"],
           "plantedDefects": [
             {
               "file": "apps/cli/src/lib/dev-review-eval/estimators.ts",
@@ -65,7 +65,7 @@
             "protected": []
           },
           "deliveredDocuments": [],
-          "grantedCapabilities": ["read_file"],
+          "grantedCapabilities": ["read_file", "run_commands"],
           "plantedDefects": [
             {
               "file": "apps/cli/src/lib/review-result.ts",
@@ -98,7 +98,7 @@
             "protected": []
           },
           "deliveredDocuments": [],
-          "grantedCapabilities": ["read_file"],
+          "grantedCapabilities": ["read_file", "run_commands"],
           "plantedDefects": [
             {
               "file": "apps/cli/tests/eval/developer-capability-suite.ts",
@@ -131,7 +131,7 @@
             "protected": []
           },
           "deliveredDocuments": [],
-          "grantedCapabilities": ["read_file"],
+          "grantedCapabilities": ["read_file", "run_commands"],
           "plantedDefects": [
             {
               "file": "apps/cli/src/lib/dispatch.ts",
@@ -164,7 +164,7 @@
             "protected": []
           },
           "deliveredDocuments": [],
-          "grantedCapabilities": ["read_file"],
+          "grantedCapabilities": ["read_file", "run_commands"],
           "plantedDefects": [
             {
               "file": "apps/cli/src/lib/agents-skills-emitter.ts",
@@ -197,7 +197,7 @@
             "protected": []
           },
           "deliveredDocuments": [],
-          "grantedCapabilities": ["read_file"],
+          "grantedCapabilities": ["read_file", "run_commands"],
           "plantedDefects": [],
           "changeUnderReview": {
             "base": "cab406d2caaf4b6b372b176681e2ff655fe383be",
@@ -228,7 +228,7 @@
             "protected": []
           },
           "deliveredDocuments": [],
-          "grantedCapabilities": ["read_file"],
+          "grantedCapabilities": ["read_file", "run_commands"],
           "plantedDefects": [
             {
               "file": "apps/cli/src/lib/task-tools/dev-tools-names.ts",
@@ -261,7 +261,7 @@
             "protected": []
           },
           "deliveredDocuments": [],
-          "grantedCapabilities": ["read_file"],
+          "grantedCapabilities": ["read_file", "run_commands"],
           "plantedDefects": [
             {
               "file": "apps/cli/src/lib/run-paths.ts",
@@ -294,7 +294,7 @@
             "protected": []
           },
           "deliveredDocuments": [],
-          "grantedCapabilities": ["read_file"],
+          "grantedCapabilities": ["read_file", "run_commands"],
           "plantedDefects": [
             {
               "file": "apps/cli/src/lib/patch-id.ts",
@@ -327,7 +327,7 @@
             "protected": []
           },
           "deliveredDocuments": [],
-          "grantedCapabilities": ["read_file"],
+          "grantedCapabilities": ["read_file", "run_commands"],
           "plantedDefects": [
             {
               "file": ".github/workflows/vinaya-checks.yml",
@@ -360,7 +360,7 @@
             "protected": []
           },
           "deliveredDocuments": [],
-          "grantedCapabilities": ["read_file"],
+          "grantedCapabilities": ["read_file", "run_commands"],
           "plantedDefects": [
             {
               "file": "apps/cli/specs/evals.md",
@@ -393,7 +393,7 @@
             "protected": []
           },
           "deliveredDocuments": [],
-          "grantedCapabilities": ["read_file"],
+          "grantedCapabilities": ["read_file", "run_commands"],
           "plantedDefects": [],
           "changeUnderReview": {
             "base": "cab406d2caaf4b6b372b176681e2ff655fe383be",

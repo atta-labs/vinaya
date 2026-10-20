@@ -99,8 +99,8 @@ export const SEVERITY_BLOCKING: Readonly<Record<ReviewerRole, Readonly<Record<st
   })
 ) as Record<ReviewerRole, Record<string, boolean>>
 
-/** The agent built-ins a reviewer may hold: reviewers read the change and never write or run anything. */
-export const READ_ONLY_BUILTINS: readonly string[] = ['Read', 'Grep', 'Glob']
+/** The agent built-ins a reviewer may hold: reviewers read the change, with its files and with shell commands, and never write it. */
+export const REVIEWER_BUILTINS: readonly string[] = ['Read', 'Grep', 'Glob', 'shell']
 
 /** The roles the Vinaya process dispatches for each kind of case, by their name in the role grants. */
 export const ROLES_BY_KIND: Readonly<Record<NeutralCaseKind, readonly GrantedRole[]>> = {
@@ -253,11 +253,9 @@ const sha256 = (text: string): Digest => createHash('sha256').update(text).diges
 /** Whether a catalog tool, which the role grants govern, rather than an agent built-in. */
 const isCatalogTool = (tool: string): boolean => AGENT_TOOL_CATALOG.some((entry) => entry.name === tool)
 
-/** A catalog tool as the role grants say; a built-in for the Developer, or a read-only one for any role. */
+/** A catalog tool as the role grants say; a built-in for the Developer, or a reviewer's built-in for any role. */
 const mayHold = (role: GrantedRole, tool: string): boolean =>
-  isCatalogTool(tool)
-    ? ROLE_TOOL_GRANTS[role].includes(tool)
-    : role === 'developer' || READ_ONLY_BUILTINS.includes(tool)
+  isCatalogTool(tool) ? ROLE_TOOL_GRANTS[role].includes(tool) : role === 'developer' || REVIEWER_BUILTINS.includes(tool)
 
 /**
  * The path a neutral glob covers when Vinaya's `## Surface` can say the same
@@ -713,7 +711,7 @@ export const RENDERER_SCHEMA_VERSION = 1
 /** The mapping tables the renderer version covers. */
 export const MAPPING_TABLES = {
   TOOL_CAPABILITIES,
-  READ_ONLY_BUILTINS,
+  REVIEWER_BUILTINS,
   BLOCKING_RANKS,
   CATALOG_TOOL_NAMES: AGENT_TOOL_CATALOG.map((tool) => tool.name),
   SEVERITY_BLOCKING,
