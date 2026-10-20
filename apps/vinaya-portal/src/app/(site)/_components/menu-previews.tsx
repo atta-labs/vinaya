@@ -1,10 +1,12 @@
 'use client'
 
 import { Code, Eye, FileText, GitPullRequest, Shield } from 'lucide-react'
+import { motion, useReducedMotion } from 'motion/react'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { improveStats } from '@/process/fixtures/lifecycle'
 import { cn } from '@/ui/lib/utils'
 import { colorHex } from '@/ui/lib/theme-color'
+import { Text } from '@/ui/shared'
 import { LOG_LINES } from './landing/FeatureSections'
 import { Terminal } from './landing/Terminal'
 
@@ -14,41 +16,51 @@ import { Terminal } from './landing/Terminal'
 
 const START_MS = 180
 
-// What has already played in this opening. Switching items unmounts one scene and mounts the next at once, so the
-// count only stays at zero once the menu has closed; then the set clears and the next opening plays again.
+// What has already played in this opening. React runs an outgoing scene's cleanup and the incoming scene's effect in
+// the same turn, so the microtask sees another scene mounted during item switches. A closed menu leaves none mounted,
+// and clears before another pointer event can reopen it.
 const played = new Set<string>()
 let mounted = 0
-let clearTimer: ReturnType<typeof setTimeout> | undefined
+
+function enterPlaybackSession() {
+  mounted++
+}
+
+function leavePlaybackSession() {
+  mounted--
+  queueMicrotask(() => {
+    if (mounted === 0) played.clear()
+  })
+}
 
 function usePlayOnce(key: string, durationMs: number) {
+  const reduced = useReducedMotion()
   const [elapsed, setElapsed] = useState(0)
   useEffect(() => {
-    mounted++
-    clearTimeout(clearTimer)
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    enterPlaybackSession()
     let raf = 0
     if (reduced || played.has(key)) setElapsed(Number.POSITIVE_INFINITY)
     else {
+      played.add(key)
       const t0 = performance.now()
       const tick = (now: number) => {
         const e = now - t0 - START_MS
         setElapsed(e)
         if (e < durationMs) raf = requestAnimationFrame(tick)
-        else played.add(key)
       }
       raf = requestAnimationFrame(tick)
     }
     return () => {
       cancelAnimationFrame(raf)
-      mounted--
-      if (mounted === 0) clearTimer = setTimeout(() => played.clear(), 300)
+      leavePlaybackSession()
     }
-  }, [key, durationMs])
+  }, [key, durationMs, reduced])
   return elapsed
 }
 
 const ease = (p: number) => 1 - (1 - Math.min(1, Math.max(0, p))) ** 3
 const AREA = 'h-[176px] w-full'
+const MotionText = motion.create(Text)
 
 /* ── Log: the merge of checkout-v2 arriving in the `vinaya log --follow` terminal ── */
 
@@ -63,11 +75,13 @@ export function LogScene() {
       <Terminal
         header={
           <>
-            <span>$ vinaya log --follow</span>
-            <span className='inline-flex items-center gap-2'>
+            <Text as='span' size='xs'>
+              $ vinaya log --follow
+            </Text>
+            <Text as='span' size='xs' className='inline-flex items-center gap-2'>
               <i className='inline-block size-[7px] rounded-full bg-success' />
               live
-            </span>
+            </Text>
           </>
         }
         headerClassName='whitespace-nowrap text-muted-foreground'
@@ -93,22 +107,30 @@ const COUNT_TO: Record<string, [number, (n: number) => string]> = {
 
 export function TelemetryScene() {
   const e = usePlayOnce('telemetry', 350 + 120 * 3 + 700)
+  const reduced = useReducedMotion()
   return (
     <span aria-hidden='true' className={cn(AREA, 'flex flex-col')}>
       <span className='flex flex-col gap-2 border-b border-border/50 pb-3.5'>
-        <span className='font-mono text-xs uppercase tracking-widest text-muted-foreground'>Milestone report</span>
+        <Text as='span' variant='eyebrow' size='xs' tone='muted'>
+          Milestone report
+        </Text>
         <span className='flex items-baseline justify-between gap-3'>
-          <span className='text-lg leading-snug'>Checkout v2</span>
-          <span className='text-sm tabular-nums'>
-            {Math.round(52 * ease(e / 800))} of 52 <span className='text-muted-foreground'>tasks merged</span>
-          </span>
+          <Text as='span' size='lg' leading='snug'>
+            Checkout v2
+          </Text>
+          <Text as='span' size='sm' className='tabular-nums'>
+            {Math.round(52 * ease(e / 800))} of 52{' '}
+            <Text as='span' size='sm' tone='muted'>
+              tasks merged
+            </Text>
+          </Text>
         </span>
         <span className='block h-1.5 bg-border/50'>
-          <span
-            className={cn(
-              'block h-full w-full origin-left bg-success transition-transform duration-[800ms] ease-out motion-reduce:transition-none',
-              e >= 0 ? 'scale-x-100' : 'scale-x-0'
-            )}
+          <motion.span
+            initial={false}
+            animate={{ scaleX: e >= 0 ? 1 : 0 }}
+            transition={{ duration: reduced ? 0 : 0.8, ease: 'easeOut' }}
+            className='block h-full w-full origin-left bg-success'
           />
         </span>
       </span>
@@ -117,20 +139,20 @@ export function TelemetryScene() {
           const at = 350 + i * 120
           const [to, fmt] = COUNT_TO[stat.label] ?? [0, String]
           return (
-            <span
+            <motion.span
               key={stat.label}
-              className={cn(
-                'flex flex-col justify-center gap-2.5 border-r border-border/50 pl-3 transition-[opacity,transform] duration-[400ms] first:pl-0 last:border-r-0 motion-reduce:transition-none',
-                e >= at ? 'translate-y-0 opacity-100' : 'translate-y-[3px] opacity-0'
-              )}
+              initial={false}
+              animate={{ y: e >= at ? 0 : 3, opacity: e >= at ? 1 : 0 }}
+              transition={{ duration: reduced ? 0 : 0.4, ease: 'easeOut' }}
+              className='flex flex-col justify-center gap-2.5 border-r border-border/50 pl-3 first:pl-0 last:border-r-0'
             >
-              <span className='h-8 font-mono text-[11px] uppercase leading-tight tracking-widest text-muted-foreground'>
+              <Text as='span' variant='eyebrow' tone='muted' leading='tight' className='h-8 text-[11px]'>
                 {stat.label}
-              </span>
-              <span className='whitespace-nowrap text-[28px] leading-none tracking-tighter tabular-nums'>
+              </Text>
+              <Text as='span' className='whitespace-nowrap text-[28px] leading-none tracking-tighter tabular-nums'>
                 {Number.isFinite(e) ? fmt(Math.round(to * ease((e - at) / 700))) : stat.value}
-              </span>
-            </span>
+              </Text>
+            </motion.span>
           )
         })}
       </span>
@@ -217,13 +239,19 @@ export function StudioScene() {
     <span aria-hidden='true' className={cn(AREA, 'flex flex-col justify-between')}>
       <span className='block'>
         <span className={cn(LOOP_GRID, 'mb-1 h-4')}>
-          <span className='whitespace-nowrap font-mono text-[11px] uppercase tracking-widest text-muted-foreground'>
+          <Text as='span' variant='eyebrow' tone='muted' className='whitespace-nowrap text-[11px]'>
             dev review loop monitor
-          </span>
-          <span className='justify-self-center font-mono text-[11px] uppercase text-muted-foreground'>r1</span>
-          <span className='justify-self-center font-mono text-[11px] uppercase text-muted-foreground'>r2</span>
+          </Text>
+          <Text as='span' variant='eyebrow' tone='muted' className='justify-self-center text-[11px]'>
+            r1
+          </Text>
+          <Text as='span' variant='eyebrow' tone='muted' className='justify-self-center text-[11px]'>
+            r2
+          </Text>
           <span />
-          <span className='justify-self-center font-mono text-[11px] uppercase text-muted-foreground'>pr</span>
+          <Text as='span' variant='eyebrow' tone='muted' className='justify-self-center text-[11px]'>
+            pr
+          </Text>
         </span>
         {LOOP_TASKS.map((task, ti) => {
           const taskRounds = rounds[ti] ?? []
@@ -232,8 +260,12 @@ export function StudioScene() {
           return (
             <span key={task.name} className={cn(LOOP_GRID, 'h-[58px] border-t border-border')}>
               <span className='flex min-w-0 flex-col'>
-                <span className='truncate text-base leading-tight'>{task.name}</span>
-                <span className='whitespace-nowrap font-mono text-xs text-muted-foreground'>{task.meta}</span>
+                <Text as='span' size='md' leading='tight' className='truncate'>
+                  {task.name}
+                </Text>
+                <Text as='span' size='xs' family='mono' tone='muted' className='whitespace-nowrap'>
+                  {task.meta}
+                </Text>
               </span>
               {taskRounds.map((round, ri) => (
                 <span key={ri} className='flex items-center gap-[5px] justify-self-center'>
@@ -266,9 +298,18 @@ export function StudioScene() {
           )
         })}
       </span>
-      <span className='flex h-7 items-center justify-between gap-3 border border-border bg-background px-3 font-mono text-[11px] tracking-wider text-muted-foreground'>
-        <span className={cn('truncate', done && 'text-success')}>{status}</span>
-        <span className='whitespace-nowrap'>vinaya log --follow</span>
+      <span className='flex h-7 items-center justify-between gap-3 border border-border bg-background px-3'>
+        <Text
+          as='span'
+          family='mono'
+          tone='muted'
+          className={cn('truncate text-[11px] tracking-wider', done && 'text-success')}
+        >
+          {status}
+        </Text>
+        <Text as='span' family='mono' tone='muted' className='whitespace-nowrap text-[11px] tracking-wider'>
+          vinaya log --follow
+        </Text>
       </span>
     </span>
   )
@@ -316,10 +357,15 @@ function readRamp() {
 
 export function ImproveScene() {
   const canvas = useRef<HTMLCanvasElement>(null)
+  const reduced = useReducedMotion()
   useEffect(() => {
+    enterPlaybackSession()
     const el = canvas.current
     const ctx = el?.getContext('2d')
-    if (!el || !ctx) return
+    if (!el || !ctx) {
+      leavePlaybackSession()
+      return
+    }
     const dpr = window.devicePixelRatio || 1
     el.width = Math.round(INF.w * dpr)
     el.height = Math.round(INF.h * dpr)
@@ -373,19 +419,20 @@ export function ImproveScene() {
         }
       })
     }
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (reduced) {
       draw(2, 1, true)
-      return () => observer.disconnect()
+      return () => {
+        observer.disconnect()
+        leavePlaybackSession()
+      }
     }
-    mounted++
-    clearTimeout(clearTimer)
     const skipDraw = played.has('improve')
+    played.add('improve')
     const t0 = performance.now() / 1000 - (skipDraw ? START_MS / 1000 + 1 / INF.draw : 0)
     let raf = 0
     const tick = () => {
       const age = performance.now() / 1000 - t0
       const head = Math.max(0, (age - START_MS / 1000) * INF.draw)
-      if (head >= 1) played.add('improve')
       draw(age, Math.min(1, head), head >= 1)
       raf = requestAnimationFrame(tick)
     }
@@ -393,10 +440,9 @@ export function ImproveScene() {
     return () => {
       cancelAnimationFrame(raf)
       observer.disconnect()
-      mounted--
-      if (mounted === 0) clearTimer = setTimeout(() => played.clear(), 300)
+      leavePlaybackSession()
     }
-  }, [])
+  }, [reduced])
   return <canvas ref={canvas} className={cn(AREA, 'block')} />
 }
 
@@ -425,45 +471,59 @@ const CONFIG_ROW = 17
 
 export function ConfigScene() {
   const e = usePlayOnce('config', CONFIG.length * CONFIG_STEP + 400)
+  const reduced = useReducedMotion()
   const n = Math.min(CONFIG.length, Math.max(0, Math.floor(e / CONFIG_STEP) + 1))
   return (
     <span aria-hidden='true' className={cn(AREA, 'flex flex-col overflow-hidden border border-border bg-card')}>
-      <span className='flex h-[33px] flex-none items-center justify-between gap-4 border-b border-border bg-background px-3.5 font-mono text-[0.667rem] tracking-wider text-muted-foreground'>
-        <span className='inline-flex items-center gap-2'>
+      <span className='flex h-[33px] flex-none items-center justify-between gap-4 border-b border-border bg-background px-3.5'>
+        <Text
+          as='span'
+          family='mono'
+          tone='muted'
+          className='inline-flex items-center gap-2 text-[0.667rem] tracking-wider'
+        >
           <FileText className='size-[13px]' />
           vinaya.config.json
-        </span>
-        <span>rings · checks · logs</span>
+        </Text>
+        <Text as='span' family='mono' tone='muted' className='text-[0.667rem] tracking-wider'>
+          rings · checks · logs
+        </Text>
       </span>
       <span className='block flex-1 px-3.5 py-[11px]'>
         <span className='block h-[119px] overflow-hidden'>
-          <span
-            className='block transition-transform duration-300 ease-out motion-reduce:transition-none'
-            style={{ transform: `translateY(${-Math.max(0, n - CONFIG_ROWS) * CONFIG_ROW}px)` }}
+          <motion.span
+            initial={false}
+            animate={{ y: -Math.max(0, n - CONFIG_ROWS) * CONFIG_ROW }}
+            transition={{ duration: reduced ? 0 : 0.3, ease: 'easeOut' }}
+            className='block'
           >
             {CONFIG.map((line, i) => {
               const match = /^(\s*)("[^"]+")(:.*)$/.exec(line)
               return (
-                <span
+                <MotionText
                   key={i}
-                  className={cn(
-                    'block h-[17px] whitespace-pre font-mono text-[0.667rem] leading-[17px] text-foreground transition-[opacity,transform] duration-[400ms] ease-out motion-reduce:transition-none',
-                    i < n ? 'translate-y-0 opacity-100' : 'translate-y-[6px] opacity-0'
-                  )}
+                  as='span'
+                  family='mono'
+                  initial={false}
+                  animate={{ y: i < n ? 0 : 6, opacity: i < n ? 1 : 0 }}
+                  transition={{ duration: reduced ? 0 : 0.4, ease: 'easeOut' }}
+                  className='block h-[17px] whitespace-pre text-[0.667rem] leading-[17px] text-foreground'
                 >
                   {match ? (
                     <>
                       {match[1]}
-                      <span className='text-muted-foreground'>{match[2]}</span>
+                      <Text as='span' family='mono' tone='muted' className='text-[0.667rem]'>
+                        {match[2]}
+                      </Text>
                       {match[3]}
                     </>
                   ) : (
                     line
                   )}
-                </span>
+                </MotionText>
               )
             })}
-          </span>
+          </motion.span>
         </span>
       </span>
     </span>
