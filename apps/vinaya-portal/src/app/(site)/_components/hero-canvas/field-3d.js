@@ -370,6 +370,33 @@ export function buildField(THREE_ = THREE, opts = {}) {
   geo.attributes.aAlpha.needsUpdate = true
   surfGeo.attributes.aSurf.needsUpdate = true
 
+  /* The sheet's live displacement under a plan point (x, z), as of the last update():
+     the in-plane push and the height, bilinear over the grid. Written into `out` as
+     [dx, y, dz] so a caller riding the sheet allocates nothing per frame. Off the sheet: 0. */
+  function sample(x, z, out) {
+    const pos = geo.attributes.position.array
+    const cx = (x + R) / step
+    const rz = (z + R) / step
+    const c0 = Math.floor(cx)
+    const r0 = Math.floor(rz)
+    out[0] = 0
+    out[1] = 0
+    out[2] = 0
+    if (c0 < 0 || r0 < 0 || c0 >= N || r0 >= N) return out
+    const fx = cx - c0
+    const fz = rz - r0
+    for (let q = 0; q < 4; q++) {
+      const c = c0 + (q & 1)
+      const r = r0 + (q >> 1)
+      const w = (q & 1 ? fx : 1 - fx) * (q >> 1 ? fz : 1 - fz)
+      const j = (r * (N + 1) + c) * 3
+      out[0] += (pos[j] - (-R + c * step)) * w
+      out[1] += pos[j + 1] * w
+      out[2] += (pos[j + 2] - (-R + r * step)) * w
+    }
+    return out
+  }
+
   update(0, { mass: 1, time: 0 })
   /* theme switch: repaint the two colour uniforms in place — never rebuild (see hero-scene.js) */
   function retheme({ ink, surface, opacity }) {
@@ -382,6 +409,7 @@ export function buildField(THREE_ = THREE, opts = {}) {
     surface,
     update,
     pulse,
+    sample,
     setCursor,
     setFade,
     setEffects,
