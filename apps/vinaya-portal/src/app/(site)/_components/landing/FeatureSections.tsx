@@ -444,7 +444,6 @@ export function ConfigFile({ filled }: { filled: number }) {
           const first = CONFIG_BLOCK.indexOf(block as (typeof CONFIG_BLOCK)[number])
           return (
             <ConfigLine
-              // biome-ignore lint/suspicious/noArrayIndexKey: a fixed file, its lines never move
               key={index}
               line={line}
               on={block < 0 || filled > block}

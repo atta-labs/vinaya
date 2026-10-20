@@ -10,7 +10,6 @@ import { Code } from '@/ui/components'
 export function renderProse(paragraph: string): ReactNode[] {
   return paragraph.split('`').map((segment, index) =>
     index % 2 === 1 ? (
-      // biome-ignore lint/suspicious/noArrayIndexKey: segments of a fixed string never reorder; position is their identity
       <Code key={index} className='mx-0.5'>
         {segment}
       </Code>

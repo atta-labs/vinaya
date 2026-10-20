@@ -90,7 +90,6 @@ export function DemoWalk({
   )
 
   // A new start begins at the top of the page.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the reader starts, stops or changes flow
   useEffect(() => {
     scrollTo({ top: 0 })
   }, [state.started, state.flow])
@@ -106,7 +105,6 @@ export function DemoWalk({
     last.current = c
     scrollTo({ top: top + c.progress * travel })
   }
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs only when the view switches
   useEffect(() => {
     if (state.started && state.view === 'sections') scrollToCursor(cursor)
   }, [state.view])
@@ -205,7 +203,6 @@ export function DemoWalk({
           <div className={cn('min-w-0 xl:pl-10 xl:pr-6', edgeToEdge ? 'max-xl:px-0' : 'px-4 md:pl-6 md:pr-4')}>
             {steps.map((step, i) => (
               <div
-                // biome-ignore lint/suspicious/noArrayIndexKey: a flow's steps are a fixed list, never reordered
                 key={`${state.flow}-${i}`}
                 ref={(el) => {
                   refs.current[i] = el

@@ -13,7 +13,6 @@ function StepSegments({ n }: { n: number }) {
   return (
     <span aria-hidden='true' className='flex gap-[0.333rem]'>
       {Array.from({ length: SETUP_STEPS }, (_, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: one segment per step, never reordered
         <span key={i} className='relative h-[3px] w-[1.778rem] bg-border/40 md:w-[2.222rem]'>
           <span
             className={cn(

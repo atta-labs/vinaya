@@ -160,7 +160,6 @@ function TaskRow({
       >
         {rounds.map((round, roundIndex) => (
           <div
-            // biome-ignore lint/suspicious/noArrayIndexKey: the round number is the round's identity; rounds are only appended
             key={roundIndex}
             data-round={roundIndex}
             className='flex shrink-0 snap-start items-center gap-[7px] @[34rem]:justify-self-center'

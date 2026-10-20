@@ -86,14 +86,12 @@ export async function NextWebShell({
       <head>
         {staticColorScheme && (
           <script
-            // biome-ignore lint/security/noDangerouslySetInnerHtml: inline script built from our own constants, no user input
             dangerouslySetInnerHTML={{
               __html: buildColorSchemeCorrectionScript(cookieName, COLOR_SCHEME_ATTRIBUTE)
             }}
           />
         )}
         {process.env.NODE_ENV === 'development' && (
-          // biome-ignore lint/security/noDangerouslySetInnerHtml: a constant dev-only script, no user input
           <script dangerouslySetInnerHTML={{ __html: EXTENSION_FILTER_SCRIPT }} />
         )}
         {fontsUrl && (
@@ -107,10 +105,7 @@ export async function NextWebShell({
         {branding?.appleTouchIcon?.url && <link rel='apple-touch-icon' href={branding.appleTouchIcon.url} />}
       </head>
       <body className='min-h-screen bg-background text-foreground'>
-        {themeCSS && (
-          // biome-ignore lint/security/noDangerouslySetInnerHtml: theme CSS generated from typed CMS tokens; a <style> needs raw text
-          <style id={styleId} dangerouslySetInnerHTML={{ __html: themeCSS }} />
-        )}
+        {themeCSS && <style id={styleId} dangerouslySetInnerHTML={{ __html: themeCSS }} />}
         <ThemeProvider theme={theme as CMSTheme | null} styleId={styleId}>
           <CookieNameProvider cookieName={cookieName}>{children}</CookieNameProvider>
         </ThemeProvider>

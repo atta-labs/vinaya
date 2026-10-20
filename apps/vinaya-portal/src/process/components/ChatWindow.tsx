@@ -186,10 +186,11 @@ function Clawd() {
   return (
     <div className='grid shrink-0 grid-cols-10 gap-px' aria-hidden>
       {rows.flatMap((r, y) =>
-        r.split('').map((c, x) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: a fixed pixel grid; row and column are each cell's identity
-          <i key={`${y}-${x}`} className={cn('size-[3px]', c === 'X' ? 'bg-chart-1' : 'bg-transparent')} />
-        ))
+        r
+          .split('')
+          .map((c, x) => (
+            <i key={`${y}-${x}`} className={cn('size-[3px]', c === 'X' ? 'bg-chart-1' : 'bg-transparent')} />
+          ))
       )}
     </div>
   )

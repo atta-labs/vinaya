@@ -38,7 +38,6 @@ const LOCKUP_BARE_CLASS = '[&[data-bare=true]_[data-hero-lockup]]:pointer-events
  * Nothing is prevented, so clicks, taps and hover menus behave as before.
  */
 function useForwardScrollToPage(barRef: { current: HTMLElement | null }, pathname: string) {
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `pathname` is a dependency on purpose: the bar unmounts on docs routes, so the listeners follow the route
   useEffect(() => {
     const bar = barRef.current
     if (!bar) return

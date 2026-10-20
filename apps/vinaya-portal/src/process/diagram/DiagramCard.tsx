@@ -65,7 +65,6 @@ export function DiagramCard({
               const mono = l.startsWith('#')
               return (
                 <Text
-                  // biome-ignore lint/suspicious/noArrayIndexKey: a node's lines are fixed copy and may repeat; position is their identity
                   key={`${i}-${l}`}
                   as='span'
                   size='xs'

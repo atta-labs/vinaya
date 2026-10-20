@@ -50,8 +50,6 @@ function BreadcrumbLink({ asChild, className, children, ...props }: React.Compon
 function BreadcrumbPage({ className, ...props }: React.ComponentProps<'span'>) {
   // shadcn's canonical current-page crumb: a disabled link, read as the page you are on.
   return (
-    // biome-ignore lint/a11y/useFocusableInteractive: the current page is deliberately not focusable
-    // biome-ignore lint/a11y/useSemanticElements: an <a> without href is the same thing, less explicit
     <span
       data-slot='breadcrumb-page'
       role='link'

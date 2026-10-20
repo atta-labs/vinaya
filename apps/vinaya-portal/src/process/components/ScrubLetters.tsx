@@ -31,7 +31,6 @@ export function ScrubLetters({ text, progress }: { text: string; progress: numbe
                 const t = reveal(at + j)
                 return (
                   <span
-                    // biome-ignore lint/suspicious/noArrayIndexKey: a letter's place in the text is its identity
                     key={`c${at + j}`}
                     className='inline-block'
                     style={{ opacity: t, transform: `translateY(${((1 - t) * 4).toFixed(2)}px)` }}
