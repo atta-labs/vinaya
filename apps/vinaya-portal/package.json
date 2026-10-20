@@ -6,7 +6,8 @@
     "dev": "next dev --port 3010",
     "build": "next build",
     "start": "next start",
-    "typecheck": "next typegen && tsc --noEmit"
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "bun test"
   },
   "dependencies": {
     "@ariakit/react": "0.4.40",
@@ -38,6 +39,7 @@
   "devDependencies": {
     "@types/culori": "^4.0.0",
     "@types/d3-shape": "^3.2.0",
+    "@types/jsdom": "^30.0.0",
     "@types/node": "^26.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
