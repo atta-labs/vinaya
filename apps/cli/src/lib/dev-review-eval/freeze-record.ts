@@ -45,8 +45,11 @@ export interface MeasuredResult {
   interval: { lower: number; upper: number }
   usage: {
     wallTimeMs: number
+    /** Uncached input tokens. */
     inputTokens: number
     outputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
     subscriptionQuota: number | null
     estimatedCostUsd: number
   }
@@ -66,18 +69,34 @@ export interface EngineHeldOutResult extends MeasuredResult {
   recordedAt: string
 }
 
+/** The layer-`G` reviewer suites, whose floors also bound the adjudicated false-blocking rate. */
+const REVIEWER_COMPARISON_SUITES: readonly string[] = [
+  'code-reviewer-quality-neutral.l5',
+  'security-reviewer-quality-neutral.l5'
+]
+/** The whole-loop suite, whose floor also bounds spend and wall time per task. */
+const WHOLE_LOOP_SUITE = 'whole-loop.l6'
+
 /**
- * One backend-comparison floor per layer-`G` suite. Its value stays absent
- * until the Principal rules on it; a recorded value is refused until then.
+ * One backend-comparison floor per layer-`G` suite, valued by the Principal
+ * from product risk. The reviewer suites add a maximum adjudicated
+ * false-blocking rate; the whole loop adds its spend and wall-time bounds.
  */
 export interface BackendComparisonFloor {
   suite: string
   layer: 'G'
+  value: number
+  basis: 'principal-product-risk'
+  maximumAdjudicatedFalseBlockingRate?: number
+  maximumSpendUsd?: number
+  maximumWallTimeMs?: number
 }
 
 /**
- * The comparison parameters, recorded before any Engine held-out result so
- * the standalone layer-`G` baseline may be observed first.
+ * The comparison parameters, recorded from the paired development pilot
+ * before any Engine held-out result, so the standalone layer-`G` baseline may
+ * be observed first. Absent until that pilot runs; an Engine held-out result
+ * is refused while they are absent.
  */
 export interface ComparisonParameters {
   recordedAt: string
@@ -124,7 +143,7 @@ export interface FreezeRecord {
   developmentRuns: MeasuredResult[]
   backendComparisonFloors: BackendComparisonFloor[]
   practiceRuns: PracticeRunResult[]
-  comparisonParameters: ComparisonParameters
+  comparisonParameters?: ComparisonParameters
   engineHeldOut: EngineHeldOutResult[]
   heldOut: {
     toolSelection: {
@@ -268,11 +287,26 @@ function measuredResult(
   if (!object(input.usage)) return fail(`${path}.usage`, 'usage object is required')
   const usageShape = exact(
     input.usage,
-    ['wallTimeMs', 'inputTokens', 'outputTokens', 'subscriptionQuota', 'estimatedCostUsd'],
+    [
+      'wallTimeMs',
+      'inputTokens',
+      'outputTokens',
+      'cacheReadTokens',
+      'cacheCreationTokens',
+      'subscriptionQuota',
+      'estimatedCostUsd'
+    ],
     `${path}.usage`
   )
   if (usageShape !== null) return usageShape
-  for (const key of ['wallTimeMs', 'inputTokens', 'outputTokens', 'estimatedCostUsd'])
+  for (const key of [
+    'wallTimeMs',
+    'inputTokens',
+    'outputTokens',
+    'cacheReadTokens',
+    'cacheCreationTokens',
+    'estimatedCostUsd'
+  ])
     if (!nonNegative(input.usage[key])) return fail(`${path}.usage.${key}`, 'non-negative number is required')
   if (input.usage.subscriptionQuota !== null && !nonNegative(input.usage.subscriptionQuota))
     return fail(`${path}.usage.subscriptionQuota`, 'must be null or a non-negative number')
@@ -282,6 +316,9 @@ function measuredResult(
 /** Validates the complete record before any authoritative held-out run. */
 export function validateFreezeRecord(input: unknown): FreezeRecordValidation {
   if (!object(input)) return fail('', 'record is required')
+  // The comparison parameters are the one optional root value: they are
+  // recorded only from the paired development pilot.
+  const hasParameters = 'comparisonParameters' in input
   const root = exact(
     input,
     [
@@ -294,7 +331,7 @@ export function validateFreezeRecord(input: unknown): FreezeRecordValidation {
       'developmentRuns',
       'backendComparisonFloors',
       'practiceRuns',
-      'comparisonParameters',
+      ...(hasParameters ? ['comparisonParameters'] : []),
       'engineHeldOut',
       'heldOut',
       'owed'
@@ -368,9 +405,6 @@ export function validateFreezeRecord(input: unknown): FreezeRecordValidation {
       return fail(`cadence.${key}`, 'value is required')
 
   if (!Array.isArray(input.developmentRuns)) return fail('developmentRuns', 'array is required')
-  const expectedDevelopment = STEP_ONE_SUITES.flatMap((suite) =>
-    STEP_ONE_ADAPTERS.map((adapter) => `${suite}:${adapter}`)
-  )
   const seenDevelopment: string[] = []
   for (const [index, result] of input.developmentRuns.entries()) {
     const invalid = measuredResult(result, `developmentRuns[${index}]`, {
@@ -381,28 +415,44 @@ export function validateFreezeRecord(input: unknown): FreezeRecordValidation {
     })
     if (invalid !== null) return invalid
     const value = result as MeasuredResult
-    seenDevelopment.push(`${value.suite}:${value.adapter}`)
+    const key = `${value.suite}:${value.adapter}`
+    if (seenDevelopment.includes(key))
+      return fail(`developmentRuns[${index}]`, 'at most one result per suite and adapter is permitted')
+    seenDevelopment.push(key)
   }
-  if (
-    new Set(seenDevelopment).size !== expectedDevelopment.length ||
-    expectedDevelopment.some((key) => !seenDevelopment.includes(key))
-  )
-    return fail('developmentRuns', 'exactly one result per suite and adapter is required')
 
   if (!Array.isArray(input.backendComparisonFloors)) return fail('backendComparisonFloors', 'array is required')
   const floored: string[] = []
   for (const [index, floor] of input.backendComparisonFloors.entries()) {
     const path = `backendComparisonFloors[${index}]`
     if (!object(floor)) return fail(path, 'floor object is required')
-    if ('value' in floor) return fail(`${path}.value`, 'a floor value stays absent until the Principal rules on it')
-    const floorShape = exact(floor, ['suite', 'layer'], path)
-    if (floorShape !== null) return floorShape
     const declared = LIVE_SUITE_LAYERS[floor.suite as LiveSuite] as GraderLayer | undefined
     if (declared === 'P') return fail(`${path}.suite`, 'a backend-comparison floor attaches only to a layer-G suite')
     if (declared === undefined) return fail(`${path}.suite`, 'unknown live suite')
+    const suite = floor.suite as string
+    const floorShape = exact(
+      floor,
+      [
+        'suite',
+        'layer',
+        'value',
+        'basis',
+        ...(REVIEWER_COMPARISON_SUITES.includes(suite) ? ['maximumAdjudicatedFalseBlockingRate'] : []),
+        ...(suite === WHOLE_LOOP_SUITE ? ['maximumSpendUsd', 'maximumWallTimeMs'] : [])
+      ],
+      path
+    )
+    if (floorShape !== null) return floorShape
     if (floor.layer !== 'G') return fail(`${path}.layer`, 'must equal G')
-    if (floored.includes(floor.suite as string)) return fail(`${path}.suite`, 'one floor per suite')
-    floored.push(floor.suite as string)
+    if (!bounded(floor.value)) return fail(`${path}.value`, 'must be between 0 and 1')
+    if (floor.basis !== 'principal-product-risk')
+      return fail(`${path}.basis`, 'floors must come from Principal product risk, never a standalone score')
+    if ('maximumAdjudicatedFalseBlockingRate' in floor && !bounded(floor.maximumAdjudicatedFalseBlockingRate))
+      return fail(`${path}.maximumAdjudicatedFalseBlockingRate`, 'must be between 0 and 1')
+    for (const key of ['maximumSpendUsd', 'maximumWallTimeMs'])
+      if (key in floor && !nonNegative(floor[key])) return fail(`${path}.${key}`, 'non-negative number is required')
+    if (floored.includes(suite)) return fail(`${path}.suite`, 'one floor per suite')
+    floored.push(suite)
   }
   const unfloored = BACKEND_COMPARISON_SUITES.find((suite) => !floored.includes(suite))
   if (unfloored !== undefined) return fail('backendComparisonFloors', `layer-G suite ${unfloored} has no floor entry`)
@@ -424,37 +474,41 @@ export function validateFreezeRecord(input: unknown): FreezeRecordValidation {
   }
 
   const parameters = input.comparisonParameters
-  if (!object(parameters)) return fail('comparisonParameters', 'object is required')
-  const parametersShape = exact(
-    parameters,
-    ['recordedAt', 'margin', 'trialsPerTask', 'minimumTaskCount'],
-    'comparisonParameters'
-  )
-  if (parametersShape !== null) return parametersShape
-  if (!timestamp(parameters.recordedAt))
-    return fail('comparisonParameters.recordedAt', 'UTC ISO-8601 timestamp is required')
-  if (!finite(parameters.margin) || !(parameters.margin > 0 && parameters.margin <= 1))
-    return fail('comparisonParameters.margin', 'must lie in (0, 1]')
-  if (!positiveInteger(parameters.trialsPerTask))
-    return fail('comparisonParameters.trialsPerTask', 'positive integer is required')
-  if (!positiveInteger(parameters.minimumTaskCount))
-    return fail('comparisonParameters.minimumTaskCount', 'positive integer is required')
+  if (hasParameters && !object(parameters)) return fail('comparisonParameters', 'object is required')
+  if (object(parameters)) {
+    const parametersShape = exact(
+      parameters,
+      ['recordedAt', 'margin', 'trialsPerTask', 'minimumTaskCount'],
+      'comparisonParameters'
+    )
+    if (parametersShape !== null) return parametersShape
+    if (!timestamp(parameters.recordedAt))
+      return fail('comparisonParameters.recordedAt', 'UTC ISO-8601 timestamp is required')
+    if (!finite(parameters.margin) || !(parameters.margin > 0 && parameters.margin <= 1))
+      return fail('comparisonParameters.margin', 'must lie in (0, 1]')
+    if (!positiveInteger(parameters.trialsPerTask))
+      return fail('comparisonParameters.trialsPerTask', 'positive integer is required')
+    if (!positiveInteger(parameters.minimumTaskCount))
+      return fail('comparisonParameters.minimumTaskCount', 'positive integer is required')
+  }
 
   if (!Array.isArray(input.engineHeldOut)) return fail('engineHeldOut', 'array is required')
   for (const [index, result] of input.engineHeldOut.entries()) {
     const path = `engineHeldOut[${index}]`
+    if (!object(parameters))
+      return fail(path, 'an Engine held-out result needs comparison parameters recorded before it')
     const invalid = measuredResult(result, path, {
       suites: BACKEND_COMPARISON_SUITES,
       split: 'held-out',
       backends: ['engine'],
-      trials: parameters.trialsPerTask,
+      trials: parameters.trialsPerTask as number,
       trialsDetail: 'does not match the comparison parameters',
       extraKeys: ['recordedAt']
     })
     if (invalid !== null) return invalid
     const recordedAt = (result as Record<string, unknown>).recordedAt
     if (!timestamp(recordedAt)) return fail(`${path}.recordedAt`, 'UTC ISO-8601 timestamp is required')
-    if (Date.parse(parameters.recordedAt) > Date.parse(recordedAt))
+    if (Date.parse(parameters.recordedAt as string) > Date.parse(recordedAt))
       return fail(
         'comparisonParameters.recordedAt',
         `must not be dated after the Engine held-out result recorded at ${recordedAt}`
@@ -484,13 +538,11 @@ export function validateFreezeRecord(input: unknown): FreezeRecordValidation {
         trials
       })
       if (invalid !== null) return invalid
-      adapters.push((result as MeasuredResult).adapter)
+      const adapter = (result as MeasuredResult).adapter
+      if (adapters.includes(adapter))
+        return fail(`${path}.results[${index}]`, 'at most one held-out result per adapter is permitted')
+      adapters.push(adapter)
     }
-    if (
-      new Set(adapters).size !== STEP_ONE_ADAPTERS.length ||
-      STEP_ONE_ADAPTERS.some((adapter) => !adapters.includes(adapter))
-    )
-      return fail(`${path}.results`, 'exactly one held-out result per adapter is required')
   }
 
   if (!object(input.owed)) return fail('owed', 'object is required')

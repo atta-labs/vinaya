@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   BACKEND_COMPARISON_SUITES,
   LIVE_SUITE_LAYERS,
@@ -32,10 +34,14 @@ const measured = (
     wallTimeMs: 10,
     inputTokens: 4,
     outputTokens: 2,
+    cacheReadTokens: 5,
+    cacheCreationTokens: 1,
     subscriptionQuota: null,
     estimatedCostUsd: 0
   }
 })
+
+const REVIEWERS: readonly string[] = ['code-reviewer-quality-neutral.l5', 'security-reviewer-quality-neutral.l5']
 
 // Deliberately arbitrary test-only values prove shape and provenance; they are not proposed floors or budgets.
 const complete = () => ({
@@ -77,7 +83,17 @@ const complete = () => ({
   developmentRuns: STEP_ONE_SUITES.flatMap((suite) =>
     STEP_ONE_ADAPTERS.map((adapter) => measured(suite, 'development', adapter))
   ),
-  backendComparisonFloors: BACKEND_COMPARISON_SUITES.map((suite) => ({ suite, layer: 'G' }) as Record<string, unknown>),
+  backendComparisonFloors: BACKEND_COMPARISON_SUITES.map(
+    (suite) =>
+      ({
+        suite,
+        layer: 'G',
+        value: 0.45,
+        basis: 'principal-product-risk',
+        ...(REVIEWERS.includes(suite) ? { maximumAdjudicatedFalseBlockingRate: 0.46 } : {}),
+        ...(suite === 'whole-loop.l6' ? { maximumSpendUsd: 12.5, maximumWallTimeMs: 4567 } : {})
+      }) as Record<string, unknown>
+  ),
   practiceRuns: BACKEND_COMPARISON_SUITES.map(
     (suite) => ({ ...measured(suite, 'development', 'codex', 1), evidence: 'never' }) as Record<string, unknown>
   ),
@@ -148,8 +164,8 @@ describe('milestone-two freeze record', () => {
     }
   })
 
-  it('refuses every missing top-level value', () => {
-    for (const key of Object.keys(complete())) {
+  it('refuses every missing top-level value but the comparison parameters', () => {
+    for (const key of Object.keys(complete()).filter((key) => key !== 'comparisonParameters')) {
       const value = complete() as Record<string, unknown>
       delete value[key]
       expect(validateFreezeRecord(value)).toMatchObject({
@@ -278,9 +294,14 @@ describe('every measured result names its layer and renderer version', () => {
 })
 
 describe('backend-comparison floors, practice runs and comparison parameters', () => {
-  it('holds one unset floor per layer-G suite and refuses a floor on a layer-P suite', () => {
+  it('holds one valued floor per layer-G suite and refuses a floor on a layer-P suite', () => {
     const p = complete()
-    p.backendComparisonFloors.push({ suite: 'developer-capability.l5', layer: 'G' })
+    p.backendComparisonFloors.push({
+      suite: 'developer-capability.l5',
+      layer: 'G',
+      value: 0.5,
+      basis: 'principal-product-risk'
+    })
     expect(validateFreezeRecord(p)).toMatchObject({
       ok: false,
       refusal: { path: `backendComparisonFloors[${BACKEND_COMPARISON_SUITES.length}].suite` }
@@ -293,12 +314,95 @@ describe('backend-comparison floors, practice runs and comparison parameters', (
       refusal: { path: 'backendComparisonFloors' }
     })
 
-    const valued = complete()
-    valued.backendComparisonFloors[0]!.value = 0.5
-    expect(validateFreezeRecord(valued)).toMatchObject({
+    const duplicate = complete()
+    duplicate.backendComparisonFloors.push({ ...duplicate.backendComparisonFloors[0]! })
+    expect(validateFreezeRecord(duplicate)).toMatchObject({
       ok: false,
-      refusal: { path: 'backendComparisonFloors[0].value' }
+      refusal: { path: `backendComparisonFloors[${BACKEND_COMPARISON_SUITES.length}].suite` }
     })
+  })
+
+  const floorOf = (value: ReturnType<typeof complete>, suite: string) => {
+    const index = value.backendComparisonFloors.findIndex((floor) => floor.suite === suite)
+    return [index, value.backendComparisonFloors[index]!] as const
+  }
+
+  it('requires every backend-comparison floor to carry a value between 0 and 1 from product risk', () => {
+    for (const suite of BACKEND_COMPARISON_SUITES) {
+      for (const bad of [undefined, -0.01, 1.01, '0.5']) {
+        const value = complete()
+        const [index, floor] = floorOf(value, suite)
+        if (bad === undefined) delete floor.value
+        else floor.value = bad
+        expect(validateFreezeRecord(value)).toMatchObject({
+          ok: false,
+          refusal: { path: `backendComparisonFloors[${index}].value` }
+        })
+      }
+      for (const bad of [undefined, 'standalone-score']) {
+        const value = complete()
+        const [index, floor] = floorOf(value, suite)
+        if (bad === undefined) delete floor.basis
+        else floor.basis = bad
+        expect(validateFreezeRecord(value)).toMatchObject({
+          ok: false,
+          refusal: { path: `backendComparisonFloors[${index}].basis` }
+        })
+      }
+    }
+    for (const bound of [0, 1]) {
+      const value = complete()
+      for (const floor of value.backendComparisonFloors) floor.value = bound
+      expect(validateFreezeRecord(value).ok).toBe(true)
+    }
+  })
+
+  it('requires a maximum adjudicated false-blocking rate on the code and security reviewer floors only', () => {
+    for (const suite of REVIEWERS) {
+      for (const bad of [undefined, -0.1, 1.5]) {
+        const value = complete()
+        const [index, floor] = floorOf(value, suite)
+        if (bad === undefined) delete floor.maximumAdjudicatedFalseBlockingRate
+        else floor.maximumAdjudicatedFalseBlockingRate = bad
+        expect(validateFreezeRecord(value)).toMatchObject({
+          ok: false,
+          refusal: { path: `backendComparisonFloors[${index}].maximumAdjudicatedFalseBlockingRate` }
+        })
+      }
+    }
+    const other = complete()
+    const [index, floor] = floorOf(other, 'developer-capability-neutral.l5')
+    floor.maximumAdjudicatedFalseBlockingRate = 0.1
+    expect(validateFreezeRecord(other)).toMatchObject({
+      ok: false,
+      refusal: { path: `backendComparisonFloors[${index}].maximumAdjudicatedFalseBlockingRate` }
+    })
+  })
+
+  it('requires a maximum spend and wall time on the whole-loop floor only', () => {
+    for (const key of ['maximumSpendUsd', 'maximumWallTimeMs']) {
+      for (const bad of [undefined, -1, '10']) {
+        const value = complete()
+        const [index, floor] = floorOf(value, 'whole-loop.l6')
+        if (bad === undefined) delete floor[key]
+        else floor[key] = bad
+        expect(validateFreezeRecord(value)).toMatchObject({
+          ok: false,
+          refusal: { path: `backendComparisonFloors[${index}].${key}` }
+        })
+      }
+      const other = complete()
+      const [index, floor] = floorOf(other, 'source-delivery-neutral.l5')
+      floor[key] = 0
+      expect(validateFreezeRecord(other)).toMatchObject({
+        ok: false,
+        refusal: { path: `backendComparisonFloors[${index}].${key}` }
+      })
+    }
+    const zero = complete()
+    const [, floor] = floorOf(zero, 'whole-loop.l6')
+    floor.maximumSpendUsd = 0
+    expect(validateFreezeRecord(zero).ok).toBe(true)
   })
 
   it('refuses a practice run with more than one trial per task, or not marked as never evidence', () => {
@@ -335,6 +439,33 @@ describe('backend-comparison floors, practice runs and comparison parameters', (
       ok: false,
       refusal: { path: 'practiceRuns[0].usage.estimatedCostUsd' }
     })
+  })
+
+  it('accepts a record without comparison parameters while no Engine held-out result exists', () => {
+    const value = complete() as Partial<ReturnType<typeof complete>>
+    delete value.comparisonParameters
+    value.engineHeldOut = []
+    expect(validateFreezeRecord(value).ok).toBe(true)
+  })
+
+  it('refuses any Engine held-out result in a record without comparison parameters', () => {
+    const value = complete() as Partial<ReturnType<typeof complete>>
+    delete value.comparisonParameters
+    expect(validateFreezeRecord(value)).toMatchObject({
+      ok: false,
+      refusal: { path: 'engineHeldOut[0]' }
+    })
+  })
+
+  it('refuses comparison parameters present but not an object', () => {
+    for (const bad of [null, [], 'later']) {
+      const value = complete() as Record<string, unknown>
+      value.comparisonParameters = bad
+      expect(validateFreezeRecord(value)).toMatchObject({
+        ok: false,
+        refusal: { path: 'comparisonParameters' }
+      })
+    }
   })
 
   it('requires dated comparison parameters', () => {
@@ -394,5 +525,98 @@ describe('backend-comparison floors, practice runs and comparison parameters', (
       ok: false,
       refusal: { path: 'engineHeldOut[0].suite' }
     })
+  })
+})
+
+describe('measured-only results', () => {
+  it('accepts empty or partial development runs and fixed-floor held-out results', () => {
+    const empty = complete()
+    empty.developmentRuns = []
+    empty.heldOut.toolSelection.results = []
+    empty.heldOut.sourceCitation.results = []
+    expect(validateFreezeRecord(empty).ok).toBe(true)
+
+    const partial = complete()
+    partial.developmentRuns = partial.developmentRuns.slice(0, 1)
+    partial.heldOut.toolSelection.results = partial.heldOut.toolSelection.results.slice(0, 1)
+    partial.heldOut.sourceCitation.results = partial.heldOut.sourceCitation.results.slice(1)
+    expect(validateFreezeRecord(partial).ok).toBe(true)
+  })
+
+  it('refuses a second result for one suite and adapter', () => {
+    const development = complete()
+    development.developmentRuns.push(measured(STEP_ONE_SUITES[0]!, 'development', STEP_ONE_ADAPTERS[0]!))
+    const last = development.developmentRuns.length - 1
+    expect(validateFreezeRecord(development)).toMatchObject({
+      ok: false,
+      refusal: { path: `developmentRuns[${last}]` }
+    })
+
+    const held = complete()
+    held.heldOut.sourceCitation.results = [
+      measured('source-delivery.l5', 'held-out', 'codex'),
+      measured('source-delivery.l5', 'held-out', 'codex')
+    ]
+    expect(validateFreezeRecord(held)).toMatchObject({
+      ok: false,
+      refusal: { path: 'heldOut.sourceCitation.results[1]' }
+    })
+  })
+
+  it('still fully validates each partial result', () => {
+    const development = complete()
+    development.developmentRuns = [{ ...measured(STEP_ONE_SUITES[0]!, 'development', 'codex'), trialsPerTask: 1 }]
+    expect(validateFreezeRecord(development)).toMatchObject({
+      ok: false,
+      refusal: { path: 'developmentRuns[0].trialsPerTask' }
+    })
+
+    const held = complete()
+    held.heldOut.toolSelection.results = [{ ...measured('tool-catalog.l5', 'held-out', 'codex'), split: 'development' }]
+    expect(validateFreezeRecord(held)).toMatchObject({
+      ok: false,
+      refusal: { path: 'heldOut.toolSelection.results[0].split' }
+    })
+  })
+
+  it('requires non-negative cache read and cache creation tokens on every usage', () => {
+    for (const key of ['cacheReadTokens', 'cacheCreationTokens']) {
+      for (const bad of [undefined, -1, '3']) {
+        const value = complete()
+        const usage = value.practiceRuns[0]!.usage as Record<string, unknown>
+        if (bad === undefined) delete usage[key]
+        else usage[key] = bad
+        expect(validateFreezeRecord(value)).toMatchObject({
+          ok: false,
+          refusal: { path: `practiceRuns[0].usage.${key}` }
+        })
+      }
+    }
+  })
+})
+
+describe('the committed freeze record', () => {
+  const record = JSON.parse(readFileSync(join(import.meta.dir, 'freeze-record.json'), 'utf8')) as Record<
+    string,
+    unknown
+  > & {
+    practiceRuns: Array<Record<string, unknown>>
+    heldOut: Record<string, { results: unknown[] }>
+  }
+
+  it('is accepted by the validator', () => expect(validateFreezeRecord(record).ok).toBe(true))
+
+  it('holds practice runs only, and no comparison parameters or scored result', () => {
+    expect('comparisonParameters' in record).toBe(false)
+    expect(record.developmentRuns).toEqual([])
+    expect(record.engineHeldOut).toEqual([])
+    expect(record.heldOut.toolSelection!.results).toEqual([])
+    expect(record.heldOut.sourceCitation!.results).toEqual([])
+    expect(record.practiceRuns.map((run) => [run.suite, run.layer, run.adapter, run.evidence])).toEqual([
+      ['developer-capability-neutral.l5', 'G', 'claude-code', 'never'],
+      ['code-reviewer-quality-neutral.l5', 'G', 'claude-code', 'never'],
+      ['security-reviewer-quality-neutral.l5', 'G', 'claude-code', 'never'],
+      ['source-delivery-neutral.l5', 'G', 'claude-code', 'never']
+    ])
   })
 })
