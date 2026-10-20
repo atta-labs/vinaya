@@ -75,12 +75,26 @@ describe('Harbor job results', () => {
 
   it('refuses the original Claude Code job', () => refusal(join(fixtures, 'claude-code-job'), 'unsupported_agent'))
 
+  it('accepts the documented vinaya agent import string as the job agent identity', () => {
+    const job = copyJob()
+    const path = join(job, 'config.json')
+    const config = JSON.parse(readFileSync(path, 'utf8'))
+    config.agents[0].name = 'vinaya_harbor_agent:VinayaAgent'
+    delete config.agents[0].import_path
+    writeFileSync(path, JSON.stringify(config))
+    expect(read(job).trials.success?.success).toBe(true)
+  })
+
   it('retains the native Harbor job and trial structures in both agent fixtures', () => {
     for (const [jobName, trialNames] of [
       ['vinaya', ['success__trial', 'failure__trial', 'error__trial']],
       ['claude-code-job', ['success__trial']]
     ] as const) {
       const job = join(fixtures, jobName)
+      const config = JSON.parse(readFileSync(join(job, 'config.json'), 'utf8'))
+      expect(config.tasks.every((task: any) => Object.keys(task).length === 1 && typeof task.path === 'string')).toBe(
+        true
+      )
       const lock = JSON.parse(readFileSync(join(job, 'lock.json'), 'utf8'))
       expect(lock.trials).toHaveLength(trialNames.length)
       const taskDigests = new Set<string>()
@@ -199,20 +213,39 @@ describe('Harbor job results', () => {
     }
   })
 
-  it('refuses a locked task path outside the declared task root', () => {
+  it('refuses an absolute locked task path outside the declared task root', () => {
     const job = copyJob()
+    const outsideTask = join(job, '..', 'outside-task')
+    cpSync(join(job, 'tasks', 'success'), outsideTask, { recursive: true })
     const path = join(job, 'lock.json')
     const lock = JSON.parse(readFileSync(path, 'utf8'))
-    lock.trials[0].task.path = '../success'
+    lock.trials[0].task.path = outsideTask
     writeFileSync(path, JSON.stringify(lock))
     for (const file of ['config.json', 'lock.json', 'result.json']) {
       const trialPath = join(job, 'success__trial', file)
       const record = JSON.parse(readFileSync(trialPath, 'utf8'))
-      if (file === 'result.json') record.task_id.path = '../success'
-      else record.task.path = '../success'
+      if (file === 'result.json') record.task_id.path = outsideTask
+      else record.task.path = outsideTask
       writeFileSync(trialPath, JSON.stringify(record))
     }
     refusal(job, 'missing_task_metadata')
+  })
+
+  it('accepts an absolute task path inside the declared task root', () => {
+    const job = copyJob()
+    const absoluteTask = join(job, 'tasks', 'success')
+    const jobLockPath = join(job, 'lock.json')
+    const jobLock = JSON.parse(readFileSync(jobLockPath, 'utf8'))
+    jobLock.trials[0].task.path = absoluteTask
+    writeFileSync(jobLockPath, JSON.stringify(jobLock))
+    for (const file of ['config.json', 'lock.json', 'result.json']) {
+      const path = join(job, 'success__trial', file)
+      const record = JSON.parse(readFileSync(path, 'utf8'))
+      if (file === 'result.json') record.task_id.path = absoluteTask
+      else record.task.path = absoluteTask
+      writeFileSync(path, JSON.stringify(record))
+    }
+    expect(read(job).trials.success?.success).toBe(true)
   })
 
   it('refuses trials from more than one suite', () => {

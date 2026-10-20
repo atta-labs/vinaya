@@ -1,6 +1,6 @@
 /** Reads one completed Harbor 0.24.0 job into a step-one practice result. */
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, join, relative, resolve, sep } from 'node:path'
 import { suiteMean, type BootstrapMethod } from './estimators'
 import type { StepOneAdapter, StepOneResult, StepOneRunSuite, StepOneTrialResult, StepOneUsage } from './step-one'
 
@@ -56,7 +56,7 @@ function taskPath(taskRoot: string | undefined, raw: string): string {
   const root = resolve(taskRoot ?? process.cwd())
   const path = resolve(root, raw)
   const fromRoot = relative(root, path)
-  if (isAbsolute(raw) || fromRoot === '..' || fromRoot.startsWith(`..${sep}`))
+  if (fromRoot === '..' || fromRoot.startsWith(`..${sep}`))
     throw new HarborResultsRefused('missing_task_metadata', `task path ${raw} escapes its declared task root`)
   return path
 }
@@ -80,19 +80,18 @@ function metadata(path: string): { suite: string; rendererVersion: string } {
 function agentIdentity(config: Json): { agent: string; importPath: string | undefined; model: string } {
   const agents = Array.isArray(config.agents) ? config.agents : config.agent ? [config.agent] : []
   if (agents.length !== 1) throw new HarborResultsRefused('unsupported_agent', 'the job must name exactly one agent')
+  const configuredName = text(agents[0]?.name)
+  const importPath = text(agents[0]?.import_path)
   const agent =
-    text(agents[0]?.name) ??
-    text(agents[0]?.import_path)
-      ?.split(':')
-      .at(-1)
-      ?.replace(/Agent$/, '')
-      .toLowerCase()
+    configuredName === 'vinaya_harbor_agent:VinayaAgent' || importPath === 'vinaya_harbor_agent:VinayaAgent'
+      ? 'vinaya'
+      : configuredName
   if (agent !== 'vinaya')
     throw new HarborResultsRefused('unsupported_agent', `job agent is ${agent ?? 'missing'}, not vinaya`)
   const model = text(agents[0]?.model_name)
   if (model === undefined || model.length === 0)
     throw new HarborResultsRefused('invalid_input', 'the job config does not carry an exact model id')
-  return { agent, importPath: text(agents[0]?.import_path), model }
+  return { agent, importPath, model }
 }
 
 function sameAgent(
