@@ -75,14 +75,13 @@ describe('Harbor job results', () => {
 
   it('refuses the original Claude Code job', () => refusal(join(fixtures, 'claude-code-job'), 'unsupported_agent'))
 
-  it('accepts the documented vinaya agent import string as the job agent identity', () => {
+  it('compares an import path only when the job config carries one', () => {
     const job = copyJob()
     const path = join(job, 'config.json')
     const config = JSON.parse(readFileSync(path, 'utf8'))
-    config.agents[0].name = 'vinaya_harbor_agent:VinayaAgent'
-    delete config.agents[0].import_path
+    config.agents[0].import_path = 'vinaya_harbor_agent:VinayaAgent'
     writeFileSync(path, JSON.stringify(config))
-    expect(read(job).trials.success?.success).toBe(true)
+    refusal(job, 'invalid_input')
   })
 
   it('retains the native Harbor job and trial structures in both agent fixtures', () => {
@@ -189,19 +188,26 @@ describe('Harbor job results', () => {
     refusal(job, 'invalid_input')
   })
 
-  it('refuses a result whose identity is not bound to its locked trial', () => {
+  it('binds the trial lock task digest to the job lock and ignores the result task checksum', () => {
     const job = copyJob()
-    const path = join(job, 'success__trial', 'result.json')
-    const result = JSON.parse(readFileSync(path, 'utf8'))
-    result.task_checksum = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-    writeFileSync(path, JSON.stringify(result))
+    const resultPath = join(job, 'success__trial', 'result.json')
+    const result = JSON.parse(readFileSync(resultPath, 'utf8'))
+    result.task_checksum = '055bdbe8453e2a2e913d13878e71c234680129607c86c0d9a909adc12b871277'
+    writeFileSync(resultPath, JSON.stringify(result))
+    expect(read(job).trials.success?.success).toBe(true)
+    const lockPath = join(job, 'success__trial', 'lock.json')
+    const lock = JSON.parse(readFileSync(lockPath, 'utf8'))
+    lock.task.digest = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    writeFileSync(lockPath, JSON.stringify(lock))
     refusal(job, 'invalid_input')
   })
 
   it('refuses a trial whose agent or model differs from the job identity', () => {
     for (const [file, mutate] of [
       ['config.json', (record: any) => (record.agent.model_name = 'different-model')],
+      ['config.json', (record: any) => (record.agent.name = 'vinaya')],
       ['lock.json', (record: any) => (record.agent.name = 'different-agent')],
+      ['lock.json', (record: any) => (record.agent.model_name = 'different-model')],
       ['result.json', (record: any) => (record.agent_info.model_info.name = 'different-model')]
     ] as const) {
       const job = copyJob()
@@ -285,6 +291,87 @@ describe('Harbor job results', () => {
       ])
     ).toBe(0)
     expect(readFileSync(out)).toEqual(readFileSync(join(fixtures, 'expected-report.txt')))
+  })
+
+  describe('a real Harbor 0.24.0 job of the vinaya agent', () => {
+    const realJob = join(fixtures, 'vinaya-real-0.24')
+    const realSuite = 'code-reviewer-quality-neutral.l5@1'
+    const main = (job: string) =>
+      harborResultsMain([
+        job,
+        '--suite',
+        realSuite,
+        '--subscription-auth',
+        '--bootstrap',
+        'percentile',
+        '--seed',
+        '1',
+        '--resamples',
+        '100',
+        '--confidence',
+        '0.95',
+        '--task-root',
+        job
+      ])
+    function copyRealJob(): string {
+      const root = mkdtempSync(join(tmpdir(), 'vinaya-harbor-real-'))
+      scratch.push(root)
+      const job = join(root, 'job')
+      cpSync(realJob, job, { recursive: true })
+      return job
+    }
+    function mutateTrialLock(mutate: (lock: any) => void): string {
+      const job = copyRealJob()
+      const path = join(job, 'code-clean__9Zd3QD4', 'lock.json')
+      const lock = JSON.parse(readFileSync(path, 'utf8'))
+      mutate(lock)
+      writeFileSync(path, JSON.stringify(lock))
+      return job
+    }
+
+    it('reads with exit 0 under the suite id its task.toml carries and its task root', () => {
+      const out: string[] = []
+      const write = process.stdout.write
+      process.stdout.write = ((chunk: string) => out.push(chunk) > 0) as typeof process.stdout.write
+      try {
+        expect(main(realJob)).toBe(0)
+      } finally {
+        process.stdout.write = write
+      }
+      const report = JSON.parse(out.join(''))
+      expect(report.runs[0]).toMatchObject({ suite: realSuite, agent: 'vinaya', model: 'claude-opus-5-5', mean: 1 })
+      expect(report.runs[0].tasks.map((task: any) => task.taskId)).toEqual(['code-clean', 'code-contract'])
+    })
+
+    it('refuses a trial lock whose agent name differs from the job lock', () => {
+      const job = mutateTrialLock((lock) => (lock.agent.name = 'vinaya'))
+      expect(main(job)).toBe(2)
+      expect(() =>
+        readHarborPracticeRun({
+          jobDirectory: job,
+          taskRoot: job,
+          suite: realSuite as any,
+          subscriptionAuth: true,
+          bootstrap
+        })
+      ).toThrow(expect.objectContaining({ code: 'invalid_input' }))
+    })
+
+    it('refuses a trial lock whose task digest differs from the job lock', () => {
+      const job = mutateTrialLock(
+        (lock) => (lock.task.digest = 'sha256:4c99c99db5edadf74d8ea7c79405b86c1ab9834ddb24f94a411916bc60cf3c90')
+      )
+      expect(main(job)).toBe(2)
+      expect(() =>
+        readHarborPracticeRun({
+          jobDirectory: job,
+          taskRoot: job,
+          suite: realSuite as any,
+          subscriptionAuth: true,
+          bootstrap
+        })
+      ).toThrow(expect.objectContaining({ code: 'invalid_input' }))
+    })
   })
 
   it('contains none of the forbidden feasibility-job material', () => {

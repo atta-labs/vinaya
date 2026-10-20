@@ -1,0 +1,16 @@
+{
+  "task": {
+    "path": "tasks/code-contract",
+    "source": "code-reviewer-quality-neutral.l5"
+  },
+  "trial_name": "code-contract__h3AQcdj",
+  "trials_dir": "/redacted",
+  "agent": {
+    "name": "vinaya_harbor_agent:VinayaAgent",
+    "model_name": "claude-opus-5-5",
+    "kwargs": {
+      "archive": "/redacted/vinaya.tar"
+    }
+  },
+  "job_id": "redacted-id-1"
+}

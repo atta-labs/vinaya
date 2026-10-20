@@ -1,0 +1,25 @@
+schema_version = "1.4"
+
+[metadata]
+case_id = "code-contract"
+case_kind = "review"
+harbor_version = "0.24.0"
+suite = "code-reviewer-quality-neutral.l5@1"
+vinaya_renderer_version = "1:45b6b47c3126515cef39d0d3b1d5abec50bc83b8caa8c6f150cab2ef1fc88e2a"
+
+[verifier]
+timeout_sec = 1800.0
+environment_mode = "shared"
+network_mode = "no-network"
+
+[agent]
+timeout_sec = 3600.0
+network_mode = "allowlist"
+allowed_hosts = ["api.anthropic.com"]
+
+[environment]
+build_timeout_sec = 1800.0
+network_mode = "public"
+
+[environment.env]
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
