@@ -665,14 +665,18 @@ publication calls supply effect identities and pull-request evidence, and
 vendor rate-limit telemetry supplies quota utilization when the CLI reports
 it.
 
-`validateFreezeRecord` validates the later Principal-authored milestone freeze.
-It requires product-risk provenance for every Principal floor, explicit seeded
-bootstrap inputs, trials, budget, cadence, development results, and only the
-two fixed-floor held-out suite results. Every result requires its suite, split,
-backend, adapter, task tallies, interval, time, token, quota and estimated-cost
-measurements. The whole-loop remaining-task floor separately requires its
-acceptance spend and wall-time budgets. Unknown fields and missing suite or
-adapter results are refused.
+`validateFreezeRecord` validates the Principal-authored milestone freeze,
+committed as `apps/cli/tests/eval/freeze-record.json`. It requires
+product-risk provenance for every Principal floor, explicit seeded bootstrap
+inputs, trials, budget and cadence. Development results and the two
+fixed-floor held-out suite results are measured-only: each list may be empty or
+partial, holds at most one result per suite and adapter, and every result in it
+is fully validated. Every result requires its suite, split, backend, adapter,
+task tallies, interval, time, quota and estimated-cost measurements, and its
+usage's uncached input, output, cache read (`cacheReadTokens`) and cache
+creation (`cacheCreationTokens`) tokens, each a non-negative count. The
+whole-loop remaining-task floor separately requires its acceptance spend and
+wall-time budgets. Unknown fields are refused.
 
 Every measured result also names its suite's process layer, `layer` (`G` or
 `P`), which must equal the layer the module registry declares for that suite
@@ -683,22 +687,29 @@ layer-`G` result whose renderer version is empty; a layer-`P` suite has no
 renderer, so its version may be empty. The record also holds:
 
 - `backendComparisonFloors` — one entry per layer-`G` suite, the only suites
-  the backends are compared on. Each floor's value stays absent until the
-  Principal rules on it, and an entry carrying one is refused, as is a floor
-  attached to a layer-`P` suite.
+  the backends are compared on. Each carries the Principal's `value`, between
+  0 and 1, with `basis: "principal-product-risk"`; the code and security
+  reviewer suites add `maximumAdjudicatedFalseBlockingRate`, between 0 and 1,
+  and `whole-loop.l6` adds `maximumSpendUsd` and `maximumWallTimeMs`, each
+  non-negative. A missing or duplicate layer-`G` floor is refused, as is a
+  floor attached to a layer-`P` suite.
 - `practiceRuns` — development results of exactly one trial per task, each
   with its usage and cost and marked `evidence: "never"`: they measure what a
   run costs and decide nothing. A result with more trials is refused.
 - `comparisonParameters` — the non-inferiority margin, trials per task and
   minimum task count, with the UTC time they were recorded (`recordedAt`).
-  Recorded before any Engine held-out run, they let the standalone layer-`G`
-  held-out baseline be observed before the Engine comparison.
+  They come only from the paired development pilot, so a record may omit them;
+  when present they are fully validated. Recorded before any Engine held-out
+  run, they let the standalone layer-`G` held-out baseline be observed before
+  the Engine comparison.
 - `engineHeldOut` — Engine held-out results of layer-`G` suites, each with its
-  `recordedAt`, run at the comparison parameters' trials per task. The
-  comparison parameters are refused when dated after any of them. The whole-loop step-one run remains owed until a
-disposable sandbox repository exists, and Operator capability selection
-remains owed by the Operator on one host project. No floor or live measurement
-is selected or recorded by this implementation.
+  `recordedAt`, run at the comparison parameters' trials per task. Any such
+  result is refused in a record without comparison parameters, and the
+  comparison parameters are refused when dated after any of them.
+
+The whole-loop step-one run remains owed until a disposable sandbox repository
+exists, and Operator capability selection remains owed by the Operator on one
+host project; the record's `owed` section names both.
 
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/freeze-record.ts contains:export const LIVE_SUITE_LAYERS = { -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/step-one.ts contains:export const STEP_ONE_COMPARISON_SUITES = [ -->

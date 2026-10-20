@@ -1,0 +1,251 @@
+{
+  "schemaVersion": 1,
+  "floors": {
+    "developerMinimumResolvedRate": {
+      "value": 0.6,
+      "basis": "principal-product-risk"
+    },
+    "codeReviewerMinimumRecall": {
+      "value": 0.8,
+      "basis": "principal-product-risk"
+    },
+    "codeReviewerMaximumAdjudicatedFalseBlockingRate": {
+      "value": 0.1,
+      "basis": "principal-product-risk"
+    },
+    "wholeLoopRemainingTasksPass3": {
+      "value": 0.5,
+      "basis": "principal-product-risk",
+      "maximumSpendUsd": 0,
+      "maximumWallTimeMs": 14400000
+    }
+  },
+  "bootstrap": {
+    "method": "percentile",
+    "seed": 1,
+    "resamples": 10000,
+    "confidence": 0.95
+  },
+  "trialsPerTask": 3,
+  "liveRunBudget": {
+    "subscriptionQuota": 0.25,
+    "estimatedCostUsd": 0,
+    "wallTimeMs": 28800000
+  },
+  "cadence": {
+    "nightly": "none",
+    "weekly": "none",
+    "release": "layer G suites before every release and before every backend comparison"
+  },
+  "developmentRuns": [],
+  "backendComparisonFloors": [
+    {
+      "suite": "developer-capability-neutral.l5",
+      "layer": "G",
+      "value": 0.6,
+      "basis": "principal-product-risk"
+    },
+    {
+      "suite": "code-reviewer-quality-neutral.l5",
+      "layer": "G",
+      "value": 0.8,
+      "basis": "principal-product-risk",
+      "maximumAdjudicatedFalseBlockingRate": 0.1
+    },
+    {
+      "suite": "security-reviewer-quality-neutral.l5",
+      "layer": "G",
+      "value": 0.8,
+      "basis": "principal-product-risk",
+      "maximumAdjudicatedFalseBlockingRate": 0.1
+    },
+    {
+      "suite": "source-delivery-neutral.l5",
+      "layer": "G",
+      "value": 0.95,
+      "basis": "principal-product-risk"
+    },
+    {
+      "suite": "whole-loop.l6",
+      "layer": "G",
+      "value": 0.5,
+      "basis": "principal-product-risk",
+      "maximumSpendUsd": 0,
+      "maximumWallTimeMs": 14400000
+    }
+  ],
+  "practiceRuns": [
+    {
+      "suite": "developer-capability-neutral.l5",
+      "layer": "G",
+      "rendererVersion": "1:2882f7a75046cb3ae78967da7f12f2a382d40d7950592479b70f2804ffcc18d3",
+      "split": "development",
+      "backend": "standalone",
+      "adapter": "claude-code",
+      "taskCount": 2,
+      "trialsPerTask": 1,
+      "tasks": [
+        {
+          "taskId": "pr-1003",
+          "successes": 0,
+          "trials": 1
+        },
+        {
+          "taskId": "pr-1012",
+          "successes": 0,
+          "trials": 1
+        }
+      ],
+      "mean": 0,
+      "interval": {
+        "lower": 0,
+        "upper": 0
+      },
+      "usage": {
+        "wallTimeMs": 2400707,
+        "inputTokens": 384,
+        "outputTokens": 114612,
+        "cacheReadTokens": 46790349,
+        "cacheCreationTokens": 592965,
+        "subscriptionQuota": null,
+        "estimatedCostUsd": 0
+      },
+      "evidence": "never"
+    },
+    {
+      "suite": "code-reviewer-quality-neutral.l5",
+      "layer": "G",
+      "rendererVersion": "1:45b6b47c3126515cef39d0d3b1d5abec50bc83b8caa8c6f150cab2ef1fc88e2a",
+      "split": "development",
+      "backend": "standalone",
+      "adapter": "claude-code",
+      "taskCount": 2,
+      "trialsPerTask": 1,
+      "tasks": [
+        {
+          "taskId": "code-clean",
+          "successes": 1,
+          "trials": 1
+        },
+        {
+          "taskId": "code-contract",
+          "successes": 1,
+          "trials": 1
+        }
+      ],
+      "mean": 1,
+      "interval": {
+        "lower": 1,
+        "upper": 1
+      },
+      "usage": {
+        "wallTimeMs": 179411,
+        "inputTokens": 22,
+        "outputTokens": 6668,
+        "cacheReadTokens": 0,
+        "cacheCreationTokens": 0,
+        "subscriptionQuota": null,
+        "estimatedCostUsd": 0
+      },
+      "evidence": "never"
+    },
+    {
+      "suite": "security-reviewer-quality-neutral.l5",
+      "layer": "G",
+      "rendererVersion": "1:45b6b47c3126515cef39d0d3b1d5abec50bc83b8caa8c6f150cab2ef1fc88e2a",
+      "split": "development",
+      "backend": "standalone",
+      "adapter": "claude-code",
+      "taskCount": 2,
+      "trialsPerTask": 1,
+      "tasks": [
+        {
+          "taskId": "security-clean",
+          "successes": 1,
+          "trials": 1
+        },
+        {
+          "taskId": "security-credential",
+          "successes": 1,
+          "trials": 1
+        }
+      ],
+      "mean": 1,
+      "interval": {
+        "lower": 1,
+        "upper": 1
+      },
+      "usage": {
+        "wallTimeMs": 91356,
+        "inputTokens": 10,
+        "outputTokens": 4268,
+        "cacheReadTokens": 0,
+        "cacheCreationTokens": 0,
+        "subscriptionQuota": null,
+        "estimatedCostUsd": 0
+      },
+      "evidence": "never"
+    },
+    {
+      "suite": "source-delivery-neutral.l5",
+      "layer": "G",
+      "rendererVersion": "1:45b6b47c3126515cef39d0d3b1d5abec50bc83b8caa8c6f150cab2ef1fc88e2a",
+      "split": "development",
+      "backend": "standalone",
+      "adapter": "claude-code",
+      "taskCount": 2,
+      "trialsPerTask": 1,
+      "tasks": [
+        {
+          "taskId": "dev-correct-citation",
+          "successes": 1,
+          "trials": 1
+        },
+        {
+          "taskId": "dev-irrelevant-source",
+          "successes": 1,
+          "trials": 1
+        }
+      ],
+      "mean": 1,
+      "interval": {
+        "lower": 1,
+        "upper": 1
+      },
+      "usage": {
+        "wallTimeMs": 73845,
+        "inputTokens": 126657,
+        "outputTokens": 1279,
+        "cacheReadTokens": 0,
+        "cacheCreationTokens": 0,
+        "subscriptionQuota": null,
+        "estimatedCostUsd": 0
+      },
+      "evidence": "never"
+    }
+  ],
+  "engineHeldOut": [],
+  "heldOut": {
+    "toolSelection": {
+      "suite": "tool-catalog.l5",
+      "floor": 0.95,
+      "results": []
+    },
+    "sourceCitation": {
+      "suite": "source-delivery.l5",
+      "floor": 0.95,
+      "results": []
+    }
+  },
+  "owed": {
+    "wholeLoopStepOne": {
+      "status": "owed",
+      "reason": "no disposable sandbox repository yet"
+    },
+    "operatorCapabilitySelectionStepOne": {
+      "status": "owed",
+      "project": "Operator on one host",
+      "reason": "the Operator capability selection suite runs on one host only after the Operator on one host project lands"
+    }
+  }
+}
