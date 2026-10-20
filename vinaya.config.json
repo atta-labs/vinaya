@@ -20,6 +20,12 @@
     "atta-labs/secret-scan": {
       "run": "./scripts/vinaya-checks/secret-scan.ts",
       "scope": "full"
+    },
+    "atta-labs/ui-rules": {
+      "run": "./scripts/vinaya-checks/ui-rules.ts",
+      "scope": "diff",
+      "include": ["apps/vinaya-*/**"],
+      "env": { "BASE_SHA": { "optional": true } }
     }
   },
   "ci": {
