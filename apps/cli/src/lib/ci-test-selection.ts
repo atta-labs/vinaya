@@ -8,8 +8,8 @@
  * its full transitive closure instead of the hook's depth one. The selector
  * sees TypeScript imports and declared folder scans only, so the answer
  * narrows nothing unless every changed path is a kind it can see — a path
- * under the portal, under `.changeset/`, or a TypeScript source under
- * `apps/` or `packages/` outside a fixture folder and other than the test
+ * under the portal, under `.changeset/`, or a TypeScript source under a
+ * workspace package's own `src/` or `tests/` outside a fixture folder and other than the test
  * preload, which no test imports. Any other changed path, a base commit that
  * does not resolve, a selection that throws, or a selection that saw no
  * changed file while git did means the whole shard and every package.
@@ -38,12 +38,15 @@ const CLI_DIR = 'apps/cli'
 /**
  * Whether a changed path, repository-root-relative, is one the selector can
  * judge: a path under the portal or under `.changeset/`, or a `.ts`/`.tsx`
- * file under `apps/` or `packages/` that is neither under a `fixtures/`
- * folder nor the test preload.
+ * file under a workspace package's own `src/` or `tests/`
+ * (`apps/<name>/src/`, `packages/<name>/tests/`, ...) that is neither under a
+ * `fixtures/` folder nor the test preload. A script or bin outside those
+ * folders is often spawned as a process the import graph cannot see, so it
+ * runs everything.
  */
 export function isSelectablePath(path: string): boolean {
   if (path.startsWith('apps/vinaya-portal/') || path.startsWith('.changeset/')) return true
-  if (!/^(apps|packages)\/.+\.tsx?$/.test(path)) return false
+  if (!/^(apps|packages)\/[^/]+\/(src|tests)\/.+\.tsx?$/.test(path)) return false
   if (/(^|\/)fixtures\//.test(path)) return false
   return path !== TEST_PRELOAD
 }

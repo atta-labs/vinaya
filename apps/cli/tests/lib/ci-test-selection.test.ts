@@ -43,6 +43,12 @@ describe('which changed paths the selector can judge', () => {
       'tsconfig.json',
       'vinaya.config.json',
       'scripts/build.ts',
+      'apps/cli/scripts/bundle-doctrine.ts',
+      'apps/cli/scripts/bundle-doctrine.test.ts',
+      'packages/aeg-core/bin/verify-dispatch.ts',
+      'apps/cli/vitest.config.ts',
+      'packages/aeg-core/vitest.config.ts',
+      'apps/cli/index.ts',
       'apps/cli/tsconfig.json',
       'apps/cli/src/lib/tool.py'
     ]) {
