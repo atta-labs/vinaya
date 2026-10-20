@@ -395,7 +395,6 @@ export interface World {
 }
 
 const COMMIT_HEADER = /^[A-Z][a-z]+\([a-z0-9-]+\): [A-Z]\S*( \S+)*$/
-const CLOSES_LINE = /^Closes #\d+\s*$/m
 const PAGE_CHARS = 100_000
 
 function filler(length: number, seed: string): string {
@@ -446,8 +445,10 @@ export function createWorld(spec: Partial<WorldSpec>, role: GrantedRole): World 
     const [taken] = faults.splice(i, 1)
     return { ok: false, error: (taken as WorldSpec['faults'][number]).error }
   }
+  // The first line must close this world's own issue, never any other number.
+  const closesLine = new RegExp(`^Closes #${w.issue}\\s*$`)
   const bodyGate = (body: string) =>
-    CLOSES_LINE.test(body.split('\n')[0] ?? '')
+    closesLine.test(body.split('\n')[0] ?? '')
       ? null
       : refused(
           'invalid_input',
@@ -816,15 +817,27 @@ export const TRACE_WRITERS: Record<Adapter, (trace: readonly TraceCall[]) => str
   codex: renderCodexStream
 }
 
-/** What a live run cost, as each CLI reports it: Claude's spend and tokens, Codex's tokens. */
+/**
+ * What a live run cost, as each CLI reports it: Claude's spend and tokens, Codex's tokens.
+ * `inputTokens` includes cached input for both CLIs; the two cache fields break
+ * it out (Codex reports cache reads only, so its creation count is `0`).
+ */
 export interface Usage {
   reportedSpendUsd: number | null
   inputTokens: number
   outputTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
 }
 
 export function usageOf(adapter: Adapter, lines: readonly string[]): Usage {
-  const usage: Usage = { reportedSpendUsd: null, inputTokens: 0, outputTokens: 0 }
+  const usage: Usage = {
+    reportedSpendUsd: null,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0
+  }
   for (const event of parseLines(lines)) {
     const u = asRecord(event.usage)
     const tokens = (key: string) => (typeof u[key] === 'number' ? (u[key] as number) : 0)
@@ -833,10 +846,13 @@ export function usageOf(adapter: Adapter, lines: readonly string[]): Usage {
       usage.inputTokens +=
         tokens('input_tokens') + tokens('cache_read_input_tokens') + tokens('cache_creation_input_tokens')
       usage.outputTokens += tokens('output_tokens')
+      usage.cacheReadTokens += tokens('cache_read_input_tokens')
+      usage.cacheCreationTokens += tokens('cache_creation_input_tokens')
     }
     if (adapter === 'codex' && event.type === 'turn.completed') {
       usage.inputTokens += tokens('input_tokens')
       usage.outputTokens += tokens('output_tokens')
+      usage.cacheReadTokens += tokens('cached_input_tokens')
     }
   }
   return usage
@@ -988,7 +1004,7 @@ export async function replayTrial(c: ToolSelectionCase, adapter: Adapter): Promi
     trace,
     state,
     transcript: lines.join('\n'),
-    usage: { reportedSpendUsd: 0, inputTokens: 0, outputTokens: 0 },
+    usage: { reportedSpendUsd: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
     wallMs: 0
   }
 }

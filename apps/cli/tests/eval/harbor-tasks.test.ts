@@ -591,12 +591,14 @@ function fakeSteps(
   const transcript = lines.map((item) => JSON.stringify({ type: 'item.completed', item }))
   return {
     ...PRODUCTION_VINAYA_PROCESS_STEPS,
-    dispatch: async (_role, _agent, _prompt, opts) => {
+    dispatch: async (_role, _agent, prompt, opts) => {
       dispatched.push({ cwd: opts.cwd, containerMode: opts.containerMode })
       if (kind === 'change' && world !== null) {
         writeFileSync(join(opts.cwd as string, 'apps/cli/src/lib/harbor-fake.ts'), 'export const fake = true\n')
         await world.context.publishChanges('Feat(cli): Add it')
-        await world.context.openPullRequest('t', 'Closes #1\n\nThe change.')
+        // The world's own issue number, as the change trial's prompt names it.
+        const issue = /Closes #(\d+)/.exec(prompt)?.[1]
+        await world.context.openPullRequest('t', `Closes #${issue}\n\nThe change.`)
       }
       for (const line of transcript) opts.observeStdoutLine?.(line)
       return {

@@ -456,7 +456,12 @@ mean and interval, wall time, tokens, reported subscription quota use and
 estimated cost, and beside them the suite's process layer (`layer`) and
 `rendererVersion`: the current Vinaya renderer version for a layer-`G` suite,
 an empty string for a layer-`P` suite. Every trial result carries the same two
-fields beside its own usage.
+fields beside its own usage. The usage records uncached input, output, cache
+read and cache creation tokens as four separate counts, for every adapter:
+Claude Code reports its cache reads and creations apart from its input, while
+Codex counts its cached input inside its input figure, so step one subtracts
+that cached figure to leave uncached input and records Codex's cache creation
+as `0`.
 
 A request may also select adapters and cases. The adapter selection is
 `claude-code` or `codex`, both when absent; any other adapter is refused
@@ -482,7 +487,11 @@ does not carry, and each kind of case runs its own way:
 
 - A `change` case dispatches the Developer with the rendered brief and its
   delivered documents' contents, on the layer-`P` developer case of the same id,
-  with no `--developer-snapshot` brief. The prompt ends with the review loop's
+  with no `--developer-snapshot` brief. The prompt names the issue number the
+  trial's fake forge world is created with, the case's `pullRequest`, and asks
+  for a pull request body whose first line is `Closes #<that number>`, as the
+  real loop's brief does; the fake forge refuses a body whose first line closes
+  any other number. The prompt ends with the review loop's
   own publishing instruction, `publishingInstructionLine` imported from
   `apps/cli/src/lib/dev-review-loop.ts`, so the trial tells the Developer
   exactly what the loop tells it: publish and open its own pull request through
@@ -823,7 +832,7 @@ Task folders are written only under `--out` and never committed: they derive byt
 PYTHONPATH=apps/cli/src/lib/dev-review-eval harbor run --path <out>/<suite> --agent vinaya_harbor_agent:VinayaAgent --ak archive=<file.tar> --model <exact model id>
 ```
 
-Its install step uploads the archive and refuses unless the archive's SHA-256 equals the digest the image recorded for the archive it installed at `/opt/vinaya`, then runs `claude --version`; it runs no `bun install` and no other network step, so a slow registry fetch can never stall Harbor's timed agent setup. On an image converted without `--archive` it refuses, naming the flag. Claude Code and the Vinaya CLI's dependencies are already in the image. Its run step runs `apps/cli/src/lib/dev-review-eval/harbor-trial.ts` on `/case/case.json` in container mode, with the backend `standalone` (the only value accepted now), the adapter `claude-code` and the exact model id it is given, since an alias is not resolved. It forwards only `CLAUDE_FORCE_OAUTH` and `CLAUDE_CODE_OAUTH_TOKEN`, the subscription login, read from the environment of the `harbor run` process and refused from an agent-env flag, whose values Harbor writes into the job's configuration; no API key is read or forwarded. After the run it sets Harbor's input, cache and output tokens and cost from the run's usage file; the usage records no cache figure, so the cache count is `0`. The agent is the repository's only Python file: Biome neither lints nor formats it, and its check is `python3 -m py_compile`.
+Its install step uploads the archive and refuses unless the archive's SHA-256 equals the digest the image recorded for the archive it installed at `/opt/vinaya`, then runs `claude --version`; it runs no `bun install` and no other network step, so a slow registry fetch can never stall Harbor's timed agent setup. On an image converted without `--archive` it refuses, naming the flag. Claude Code and the Vinaya CLI's dependencies are already in the image. Its run step runs `apps/cli/src/lib/dev-review-eval/harbor-trial.ts` on `/case/case.json` in container mode, with the backend `standalone` (the only value accepted now), the adapter `claude-code` and the exact model id it is given, since an alias is not resolved. It forwards only `CLAUDE_FORCE_OAUTH` and `CLAUDE_CODE_OAUTH_TOKEN`, the subscription login, read from the environment of the `harbor run` process and refused from an agent-env flag, whose values Harbor writes into the job's configuration; no API key is read or forwarded. After the run it sets Harbor's input, cache and output tokens and cost from the run's usage file: the input count is the uncached input, and the cache count is the sum of the usage's cache read and cache creation tokens. The dispatch reads a Claude Code session's usage from the last bytes of its stream, where its terminal `result` line sits, so a long session's tokens are recorded. The agent is the repository's only Python file: Biome neither lints nor formats it, and its check is `python3 -m py_compile`.
 
 `harbor-trial.ts` renders the case with `renderCase` and runs the case kind's live path in container mode, in `/app`: a `change` case's Developer through `dispatchRole` with the driver-run tool host and its fake forge, a `review` case's reviewer through `dispatchRole`, an `answer` case through `readOnlyDeveloperTurn`. It reads the case file once and removes it before the role starts, since the neutral case carries fields only grading reads, and writes the agent part of the Vinaya trial record to `/logs/agent/vinaya-trial-record.json` and the run's `StepOneUsage` to `/logs/agent/vinaya-usage.json`.
 

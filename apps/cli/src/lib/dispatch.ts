@@ -450,6 +450,15 @@ export type DispatchHandle = {
   stderr?: string
   durationMs: number
   usage: { input: number; output: number } | null
+  /**
+   * The cache tokens of the same usage object `usage` is read from: Claude's
+   * `cache_read_input_tokens` and `cache_creation_input_tokens`; Codex's
+   * `cached_input_tokens` as read, creation `0`. Codex counts cached input
+   * inside its `input_tokens`, so `usage.input` stays that raw figure here and
+   * a reader wanting uncached input subtracts `read` itself. Absent on a
+   * hand-built fixture handle and on a dispatch that never ran a vendor.
+   */
+  cacheUsage?: { read: number; creation: number } | null
   /** The vendor's own session/thread identifier, parsed from a successful dispatch's stdout — `null` on any failure path or an unparseable shape. */
   resumeId: string | null
   timedOut: boolean
@@ -2233,6 +2242,57 @@ export function parseClaudeUsage(stdout: string): { input: number; output: numbe
   return null
 }
 
+/** The cache tokens of the same terminal `usage` object `parseClaudeUsage` reads, or `null` when no such object parsed. */
+export function parseClaudeCacheUsage(stdout: string): { read: number; creation: number } | null {
+  const lines = stdout.split('\n').filter((l) => l.trim().length > 0)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const obj = JSON.parse(lines[i] as string) as {
+        usage?: {
+          input_tokens?: unknown
+          output_tokens?: unknown
+          cache_read_input_tokens?: unknown
+          cache_creation_input_tokens?: unknown
+        }
+      }
+      const u = obj.usage
+      if (u && typeof u.input_tokens === 'number' && typeof u.output_tokens === 'number') {
+        return {
+          read: typeof u.cache_read_input_tokens === 'number' ? u.cache_read_input_tokens : 0,
+          creation: typeof u.cache_creation_input_tokens === 'number' ? u.cache_creation_input_tokens : 0
+        }
+      }
+    } catch {
+      // not a JSON line — keep scanning backwards, never a guessed shape
+    }
+  }
+  return null
+}
+
+/** The cached input of the same `turn.completed` usage `parseCodexUsage` reads — Codex reports no cache creation, so it is `0` — or `null` when no such event parsed. */
+export function parseCodexCacheUsage(stdout: string): { read: number; creation: number } | null {
+  const lines = stdout.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const raw = (lines[i] ?? '').trim()
+    if (!raw) continue
+    try {
+      const obj = JSON.parse(raw) as {
+        type?: unknown
+        usage?: { input_tokens?: unknown; output_tokens?: unknown; cached_input_tokens?: unknown }
+      }
+      if (obj.type === 'turn.completed' && obj.usage) {
+        const u = obj.usage
+        if (typeof u.input_tokens === 'number' && typeof u.output_tokens === 'number') {
+          return { read: typeof u.cached_input_tokens === 'number' ? u.cached_input_tokens : 0, creation: 0 }
+        }
+      }
+    } catch {
+      // not a JSON line — Codex's own stdout is JSONL only, but never trust it blindly
+    }
+  }
+  return null
+}
+
 /** Codex's `--json` mode prints one event per line; the terminal `turn.completed` event carries `usage`. Scanned from the end since it is always the last event of a successful turn. */
 function parseCodexUsage(stdout: string): { input: number; output: number } | null {
   const lines = stdout.split('\n')
@@ -3324,6 +3384,8 @@ type VendorSpec = {
   parseUsage: UsageParser
   /** The `usage` family's own richer read of the SAME stdout `parseUsage` scans — input/output/cache, honest `unknownReason` when nothing was observed. */
   parseUsageUnits: UsageUnitsParser
+  /** The cache read and creation tokens of the SAME usage object `parseUsage` reads. */
+  parseCacheUsage: (stdout: string) => { read: number; creation: number } | null
   /** This vendor's own genuine receipt of which model ran (O2), or `null` when it emits none — never the requested `--model` value echoed back. */
   parseModel: ModelParser
   parseResumeId: (stdout: string) => string | null
@@ -3431,6 +3493,7 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
     ],
     parseUsage: parseClaudeUsage,
     parseUsageUnits: parseClaudeUsageUnits,
+    parseCacheUsage: parseClaudeCacheUsage,
     parseModel: parseClaudeModel,
     parseResumeId: parseClaudeResumeId,
     renderEvent: renderClaudeEvent,
@@ -3478,6 +3541,7 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
     ],
     parseUsage: parseCodexUsage,
     parseUsageUnits: parseCodexUsageUnits,
+    parseCacheUsage: parseCodexCacheUsage,
     parseModel: parseCodexModel,
     parseResumeId: parseCodexResumeId,
     renderEvent: renderCodexEvent,
@@ -5196,9 +5260,10 @@ export async function dispatchRole(
     const MAX_STDOUT_BYTES = 1_000_000
     let stderrBuf = ''
     const MAX_STDERR_BYTES = 64_000
-    // The turn result rides the stream's LAST events, which a long session
-    // pushes past `stdoutBuf`'s head-only cap — so a Developer dispatch also
-    // keeps the stream's tail, the same size, for the adapter to read.
+    // The turn result and the terminal usage line ride the stream's LAST
+    // events, which a long session pushes past `stdoutBuf`'s head-only cap —
+    // so every dispatch also keeps the stream's tail, the same size, for the
+    // turn-result adapter and the usage readers.
     let stdoutTail = ''
     // Set when a Claude session's own init event reports the dev-tools server
     // failed or skipped (`claudeDevToolsStartFailure`): the driver then ends
@@ -5257,7 +5322,7 @@ export async function dispatchRole(
       // it: `stdoutBuf` still sees every byte, capped exactly as before.
       outputTee.write(chunk)
       if (stdoutBuf.length < MAX_STDOUT_BYTES) stdoutBuf += chunk.toString('utf8')
-      if (turnResultAdapter !== null) stdoutTail = `${stdoutTail}${chunk.toString('utf8')}`.slice(-MAX_STDOUT_BYTES)
+      stdoutTail = `${stdoutTail}${chunk.toString('utf8')}`.slice(-MAX_STDOUT_BYTES)
 
       // Show the work as it happens. Rendering must never be able to end the
       // run it is only observing, so every failure here is swallowed: a
@@ -5513,24 +5578,28 @@ export async function dispatchRole(
       await waitForStdoutDrain()
 
       // O10 — a run's token record survives the manner of its death. The
-      // parent captures usage from `stdoutBuf` HERE, at the moment it ends
+      // parent captures usage from `stdoutTail` HERE, at the moment it ends
       // the child, on every exit path (a clean success, a timeout kill, a
-      // non-zero crash) — never only on the success path below. `stdoutBuf`
-      // already accumulates every byte the child printed before it died
-      // (capped at `MAX_STDOUT_BYTES`), so a partial-but-complete usage line
+      // non-zero crash) — never only on the success path below. `stdoutTail`
+      // already holds the last bytes the child printed before it died
+      // (bounded at `MAX_STDOUT_BYTES`), so a partial-but-complete usage line
       // a vendor flushed just before SIGTERM/SIGKILL landed is not lost
       // merely because the run itself didn't exit cleanly. `parseUsage` on
       // an empty or usage-less buffer already returns `null` — the same
       // honest "no figures" outcome the timeout/crash paths hardcoded
       // before, just no longer hardcoded when real figures ARE present.
-      const usage = vendor.parseUsage(stdoutBuf)
+      // Usage is read from the tail, not the head: the vendor prints its
+      // terminal usage line last, past the head cap on a long session. The
+      // session id and model stay read from the head, where they are printed.
+      const usage = vendor.parseUsage(stdoutTail)
+      const cacheUsage = vendor.parseCacheUsage(stdoutTail)
       // The SAME survives-the-manner-of-death
       // treatment `usage` already gets, extended to the vendor's own model
       // receipt and the richer `usage`-family units — read once here, from
       // the same buffer, and reused by whichever branch below actually logs.
       const reportedModel = vendor.parseModel(stdoutBuf)
       const attemptModel = reportedModel ?? resolvedModel
-      const streamUsageUnits = vendor.parseUsageUnits(stdoutBuf)
+      const streamUsageUnits = vendor.parseUsageUnits(stdoutTail)
       // The stream is the primary source. Only a Claude dispatch whose stream
       // carried no usage line falls back to the session's own transcript,
       // located by the session id this dispatch already records.
@@ -5622,7 +5691,7 @@ export async function dispatchRole(
           resumeId: launch.resumeId ?? vendor.parseResumeId(stdoutBuf)
         })
         void finish(
-          { exitCode: code, durationMs, usage, resumeId: null, timedOut: true, failureReason, effectId },
+          { exitCode: code, durationMs, usage, cacheUsage, resumeId: null, timedOut: true, failureReason, effectId },
           'dispatch_failed',
           priorSize
         )
@@ -5711,6 +5780,7 @@ export async function dispatchRole(
             exitCode: code,
             durationMs,
             usage,
+            cacheUsage,
             resumeId: null,
             timedOut: false,
             failureReason,
@@ -5787,6 +5857,7 @@ export async function dispatchRole(
           exitCode: code,
           durationMs,
           usage,
+          cacheUsage,
           resumeId,
           timedOut: false,
           effectId,
