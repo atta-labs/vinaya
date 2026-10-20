@@ -16,6 +16,7 @@ import {
   makeInProcessDeps,
   makeWorld,
   outboxLines,
+  runLoopInProcess,
   withWorldEnv,
   defaultDeveloperTurnOutput
 } from './dev-review-loop-harness.js'
@@ -446,5 +447,59 @@ describe('devReviewLoop — the driver lines of a whole run', () => {
       'journal_finalized',
       'driver_exited'
     ])
+  })
+})
+
+// Every key the loop writes onto its own process: the unattended marker
+// (`markProcessUnattended`), the run identity, the run and task ids, the pull
+// request and the host. A real driver keeps them for its whole life; a test
+// process that ran a loop in-process must get back exactly what it had, or a
+// later `vinaya` child it spawns inherits an unattended, attributed session.
+const LOOP_WRITTEN_ENV_KEYS = [
+  'VINAYA_UNATTENDED',
+  'VINAYA_RUN_ID',
+  'VINAYA_RUN',
+  'VINAYA_TASK',
+  'VINAYA_PR',
+  'VINAYA_HOST'
+] as const
+
+describe('runLoopInProcess — the test process environment after a run', () => {
+  it('holds exactly the value each loop-written key held before the run, unset or set', async () => {
+    const before: Record<string, string | undefined> = {
+      VINAYA_UNATTENDED: undefined,
+      VINAYA_RUN_ID: 'outer-run-id',
+      VINAYA_RUN: 'outer-run',
+      VINAYA_TASK: undefined,
+      VINAYA_PR: undefined,
+      VINAYA_HOST: 'outer-host'
+    }
+    const saved: Record<string, string | undefined> = {}
+    for (const key of LOOP_WRITTEN_ENV_KEYS) saved[key] = process.env[key]
+    try {
+      for (const key of LOOP_WRITTEN_ENV_KEYS) {
+        if (before[key] === undefined) delete process.env[key]
+        else process.env[key] = before[key]
+      }
+      const world = makeWorld()
+      let unattendedDuringRun: string | undefined
+      const base = makeInProcessDeps(world)
+      const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
+        unattendedDuringRun = process.env.VINAYA_UNATTENDED
+        return base.dispatchRole!(role, agent, prompt, opts)
+      }
+      const result = await runLoopInProcess(world, { task: world.task, agent: 'claude' }, { dispatchRole })
+      expect(result.finalDecision.type).toBe('publish')
+      // The run really marked the process, so the restore below is what put it back.
+      expect(unattendedDuringRun).toBe('1')
+      for (const key of LOOP_WRITTEN_ENV_KEYS) {
+        expect({ key, value: process.env[key] }).toEqual({ key, value: before[key] })
+      }
+    } finally {
+      for (const key of LOOP_WRITTEN_ENV_KEYS) {
+        if (saved[key] === undefined) delete process.env[key]
+        else process.env[key] = saved[key]
+      }
+    }
   })
 })

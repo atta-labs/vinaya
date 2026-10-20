@@ -1185,7 +1185,14 @@ const OWNED_ENV_KEYS = [
   'VINAYA_HOST',
   'VINAYA_ROLE',
   'VINAYA_ATTEMPT',
-  'VINAYA_PARENT_EVENT'
+  'VINAYA_PARENT_EVENT',
+  // What the loop itself writes onto the process: the driver marks itself
+  // unattended for its whole life and names the pull request it is on. A
+  // real driver keeps both until it exits; a test process that ran a loop
+  // in-process must not, or every later `vinaya` child it spawns with an
+  // inherited environment runs unattended and logs as a dispatched session.
+  'VINAYA_UNATTENDED',
+  'VINAYA_PR'
 ] as const
 
 /** The `OWNED_ENV_KEYS` `withWorldEnv` SETS to this world's own values; every other owned key is cleared. */

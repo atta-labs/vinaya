@@ -18,6 +18,40 @@ const READER_BIN = join(import.meta.dir, '..', '..', 'src', 'checks', 'bin', 'ch
 const RETIRED_BIN = join(import.meta.dir, '..', '..', 'src', 'checks', 'bin', 'check-retired-vocabulary.ts')
 const INDEX_TS = join(import.meta.dir, '..', '..', 'src', 'index.ts')
 
+/**
+ * What makes a `vinaya` child log as a dispatched, unattended session rather
+ * than as a plain local run: the unattended marker and role (either one alone
+ * makes a process unattended), a CI runner's flag, the host, the log server's
+ * tokens and spool, and the run identity. A test process that ran a loop
+ * in-process, or that is itself a dispatched session, carries some of these;
+ * inherited, they send the child's log lines somewhere else and can put a
+ * delivery warning on its stderr, which these tests assert empty.
+ */
+const SESSION_ENV_KEYS = [
+  'VINAYA_UNATTENDED',
+  'VINAYA_ROLE',
+  'GITHUB_ACTIONS',
+  'VINAYA_HOST',
+  'VINAYA_LOG_TOKEN',
+  'VINAYA_LOG_READ_TOKEN',
+  'VINAYA_LOG_SPOOL_DIR',
+  'VINAYA_RUN_ID',
+  'VINAYA_RUN',
+  'VINAYA_TASK',
+  'VINAYA_ROUND',
+  'VINAYA_PR',
+  'VINAYA_ATTEMPT',
+  'VINAYA_PARENT_EVENT'
+] as const
+
+/** The environment every check child here starts with: this process's own, minus `SESSION_ENV_KEYS`, with `overrides` applied (an `undefined` value removes the key). */
+function checkChildEnv(overrides: Record<string, string | undefined> = {}): Record<string, string> {
+  const env: Record<string, string | undefined> = { ...process.env, ...overrides }
+  for (const key of SESSION_ENV_KEYS) delete env[key]
+  for (const [key, value] of Object.entries(env)) if (value === undefined) delete env[key]
+  return env as Record<string, string>
+}
+
 function initFixture(name: string): string {
   const root = join(tmpdir(), `vinaya-${name}-${Date.now()}-${Math.random().toString(36).slice(2)}`)
   mkdirSync(root, { recursive: true })
@@ -29,6 +63,33 @@ function initFixture(name: string): string {
   execFileSync('git', ['commit', '-q', '-m', 'Chore: initial commit'], { cwd: root })
   return root
 }
+
+describe('checkChildEnv — the check children start as a plain local run', () => {
+  it('carries none of the session keys even when this process is marked unattended and attributed to a run', () => {
+    const saved: Record<string, string | undefined> = {}
+    for (const key of SESSION_ENV_KEYS) saved[key] = process.env[key]
+    try {
+      for (const key of SESSION_ENV_KEYS) process.env[key] = 'parent-value'
+      process.env.VINAYA_UNATTENDED = '1'
+      const env = checkChildEnv({ BASE_SHA: 'main', PR_BODY: undefined })
+      for (const key of SESSION_ENV_KEYS) expect({ key, value: env[key] }).toEqual({ key, value: undefined })
+      expect(Object.hasOwn(env, 'VINAYA_UNATTENDED')).toBe(false)
+      expect(Object.hasOwn(env, 'PR_BODY')).toBe(false)
+      expect(env.BASE_SHA).toBe('main')
+      expect(env.PATH).toBe(process.env.PATH)
+    } finally {
+      for (const key of SESSION_ENV_KEYS) {
+        if (saved[key] === undefined) delete process.env[key]
+        else process.env[key] = saved[key]
+      }
+    }
+  })
+
+  it('an override cannot put a session key back', () => {
+    expect(checkChildEnv({ VINAYA_UNATTENDED: '1', VINAYA_ROLE: 'developer' })).not.toHaveProperty('VINAYA_UNATTENDED')
+    expect(checkChildEnv({ VINAYA_ROLE: 'developer' })).not.toHaveProperty('VINAYA_ROLE')
+  })
+})
 
 describe('reader-resolvable-prose/retired-vocabulary doctrineRoot default — task vinaya-adopter-portability-v1 2', () => {
   it('both bins call resolveDoctrineRoot() as the unconfigured fallback, not a bare cwd-relative literal', () => {
@@ -61,7 +122,7 @@ describe('reader-resolvable-prose/retired-vocabulary doctrineRoot default — ta
 
       const result = Bun.spawnSync(['bun', INDEX_TS, 'check', 'reader-resolvable-prose'], {
         cwd: root,
-        env: { ...process.env, PR_BODY: undefined }
+        env: checkChildEnv({ PR_BODY: undefined })
       })
       expect(result.exitCode).toBe(0)
       // Positive proof it read the CONFIGURED root, not the package default:
@@ -140,7 +201,7 @@ for (const check of [
     function run(cwd: string): { exitCode: number; stderr: string } {
       const result = Bun.spawnSync(['bun', INDEX_TS, 'check', check.name], {
         cwd,
-        env: { ...process.env, BASE_SHA: 'main', PR_BODY: undefined }
+        env: checkChildEnv({ BASE_SHA: 'main', PR_BODY: undefined })
       })
       return { exitCode: result.exitCode, stderr: result.stderr.toString() }
     }
@@ -292,7 +353,7 @@ describe('doctrine-root checkout-location independence (Issue #314)', () => {
     )
     const result = Bun.spawnSync(['bun', binPath], {
       cwd,
-      env: { ...process.env, PR_BODY: undefined, BASE_SHA: undefined }
+      env: checkChildEnv({ PR_BODY: undefined, BASE_SHA: undefined })
     })
     return { exitCode: result.exitCode, stdout: result.stdout.toString() }
   }
@@ -470,7 +531,7 @@ describe('doctrine root genuinely unresolvable (Issue #314)', () => {
         checkName === 'reader-resolvable-prose' ? 'check-reader-resolvable-prose.ts' : 'check-retired-vocabulary.ts'
       )
       try {
-        const result = Bun.spawnSync(['bun', binPath], { cwd: clone })
+        const result = Bun.spawnSync(['bun', binPath], { cwd: clone, env: checkChildEnv() })
         const exitCode = result.exitCode
         const stderr = result.stderr.toString()
 
@@ -525,7 +586,7 @@ describe('explicit proseGates.doctrineRoot still wins — retired-vocabulary (Is
 
       const result = Bun.spawnSync(['bun', INDEX_TS, 'check', 'retired-vocabulary'], {
         cwd: root,
-        env: { ...process.env, PR_BODY: undefined }
+        env: checkChildEnv({ PR_BODY: undefined })
       })
       expect(result.exitCode).toBe(0)
       // Positive proof it read the CONFIGURED root, not the repo-root
@@ -559,7 +620,7 @@ describe('reader-resolvable-prose: a product-code slug citation is a blocking fi
 
       const result = Bun.spawnSync(['bun', READER_BIN], {
         cwd: root,
-        env: { ...process.env, PR_BODY: undefined, BASE_SHA: undefined }
+        env: checkChildEnv({ PR_BODY: undefined, BASE_SHA: undefined })
       })
       expect(result.exitCode).toBe(1)
       expect(result.stderr.toString()).toContain('product code')
@@ -578,7 +639,7 @@ describe('reader-resolvable-prose: a product-code slug citation is a blocking fi
 
       const result = Bun.spawnSync(['bun', READER_BIN], {
         cwd: root,
-        env: { ...process.env, PR_BODY: undefined, BASE_SHA: undefined }
+        env: checkChildEnv({ PR_BODY: undefined, BASE_SHA: undefined })
       })
       expect(result.exitCode).toBe(0)
     } finally {
@@ -613,7 +674,7 @@ describe('reader-resolvable-prose: the source-comment class', () => {
 
       const result = Bun.spawnSync(['bun', READER_BIN], {
         cwd: root,
-        env: { ...process.env, PR_BODY: undefined, BASE_SHA: undefined }
+        env: checkChildEnv({ PR_BODY: undefined, BASE_SHA: undefined })
       })
       expect(result.exitCode).toBe(0)
       expect(result.stderr.toString()).toContain('lib/x.ts')
@@ -636,7 +697,7 @@ describe('reader-resolvable-prose: the source-comment class', () => {
 
       const result = Bun.spawnSync(['bun', READER_BIN], {
         cwd: root,
-        env: { ...process.env, PR_BODY: undefined, BASE_SHA: undefined }
+        env: checkChildEnv({ PR_BODY: undefined, BASE_SHA: undefined })
       })
       expect(result.exitCode).toBe(1)
       expect(result.stderr.toString()).toContain('forge-number')
@@ -657,7 +718,7 @@ describe('reader-resolvable-prose: the source-comment class', () => {
 
       const result = Bun.spawnSync(['bun', READER_BIN], {
         cwd: root,
-        env: { ...process.env, PR_BODY: undefined, BASE_SHA: undefined }
+        env: checkChildEnv({ PR_BODY: undefined, BASE_SHA: undefined })
       })
       expect(result.exitCode).toBe(0)
       expect(result.stderr.toString()).not.toContain('pinned.ts')
@@ -678,7 +739,7 @@ describe('reader-resolvable-prose: the source-comment class', () => {
 
       const result = Bun.spawnSync(['bun', READER_BIN], {
         cwd: root,
-        env: { ...process.env, PR_BODY: undefined, BASE_SHA: undefined }
+        env: checkChildEnv({ PR_BODY: undefined, BASE_SHA: undefined })
       })
       expect(result.exitCode).toBe(0)
       expect(result.stdout.toString()).toContain('source-comment class dormant')
@@ -716,7 +777,7 @@ describe('reader-resolvable-prose: the spec class checks a root spec, context an
   function runReaderBin(root: string): { exitCode: number | null; stdout: string; stderr: string } {
     const result = Bun.spawnSync(['bun', READER_BIN], {
       cwd: root,
-      env: { ...process.env, PR_BODY: undefined, BASE_SHA: undefined }
+      env: checkChildEnv({ PR_BODY: undefined, BASE_SHA: undefined })
     })
     return { exitCode: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() }
   }
@@ -905,7 +966,7 @@ describe('reader-resolvable-prose: the spec class checks a root spec, context an
 
       const validated = Bun.spawnSync(['bun', INDEX_TS, 'check', 'reader-resolvable-prose'], {
         cwd: root,
-        env: { ...process.env, PR_BODY: undefined, BASE_SHA: undefined }
+        env: checkChildEnv({ PR_BODY: undefined, BASE_SHA: undefined })
       })
       // The command path validates the config instead of degrading to none, so
       // an entry that leaves the repository is named rather than ignored.
@@ -998,12 +1059,12 @@ describe('proseGates.rules — configured writing rules, end to end', () => {
   }
 
   function run(root: string, args: string[]) {
-    const result = Bun.spawnSync(['bun', INDEX_TS, ...args], { cwd: root, env: { ...process.env, PR_BODY: undefined } })
+    const result = Bun.spawnSync(['bun', INDEX_TS, ...args], { cwd: root, env: checkChildEnv({ PR_BODY: undefined }) })
     return { code: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() }
   }
 
   function runBin(root: string, bin: string) {
-    const result = Bun.spawnSync(['bun', bin], { cwd: root, env: { ...process.env, PR_BODY: undefined } })
+    const result = Bun.spawnSync(['bun', bin], { cwd: root, env: checkChildEnv({ PR_BODY: undefined }) })
     return { code: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() }
   }
 
