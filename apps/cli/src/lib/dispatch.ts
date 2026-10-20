@@ -112,6 +112,8 @@ import {
   CLAUDE_SANDBOX_ALLOWED_DOMAINS,
   agentConfigProtectedSubpaths,
   controllerStoreReachableBy,
+  type OpenedAgentConfigEntry,
+  resolveOpenedAgentConfigPaths,
   buildCodexHooksMarketplace,
   buildWorkerEnv,
   containerBoundaryRefusal,
@@ -334,19 +336,20 @@ export type DispatchOpts = {
     pauseBoundRuling?: { rulingId: string; pauseId: string; contentDigest: string } | null
   }
   /**
-   * O3: `true` only when the caller has already
-   * confirmed the task's own Surface `in:` globs cover this agent's own
-   * configuration paths (`AGENT_OWN_CONFIG_GLOBS`) — `dev-review-loop.ts`
-   * resolves this once per round, from the same `resolveTaskSurface` read
-   * its deferral rules already use, and passes it only for the `developer`
-   * role. Omitted/`false` (every other caller, and a task whose Surface
-   * says nothing about them) keeps those paths protected — the safe
-   * default (Traps to avoid: "a task that does not name them keeps the
-   * vendor's protection"). Never resolved inside this module itself: Surface
-   * is an Issue-level fact this generic launcher has no business fetching
-   * on its own.
+   * The configuration directories the task's own Surface opens for this
+   * agent, relative to the worktree (`surfaceOpenedAgentConfigPaths`,
+   * `dev-review-loop.ts`) — resolved once per round from the same
+   * `resolveTaskSurface` read, and passed only for the `developer` role.
+   * Honoured only for a `developer` dispatch with a `cwd`: the driver
+   * resolves them against that worktree (`resolveOpenedAgentConfigPaths`),
+   * creating a missing `/**` directory, and grants the result to Claude as
+   * the write-access scope's `openedSubpaths` and to Codex as extra
+   * writable roots. Omitted or empty (every other caller, and a task whose
+   * Surface names none) keeps every configuration path denied. Never
+   * resolved inside this module itself: Surface is an Issue-level fact this
+   * generic launcher has no business fetching on its own.
    */
-  agentConfigSurfaceCovered?: boolean
+  agentConfigOpened?: readonly OpenedAgentConfigEntry[]
   /**
    * O2: the driver-run dev-tools MCP server's bridge invocation for THIS
    * dispatch — a `dev-bridge --socket <path>` relay the agent's own MCP client
@@ -1757,7 +1760,13 @@ export function buildCodexExecpolicyRules(role: Role): string | null {
 }
 
 export type WriteAccessScope =
-  | { kind: 'directory'; allowedDir: string; extraFiles: string[]; protectedSubpaths: string[] }
+  | {
+      kind: 'directory'
+      allowedDir: string
+      extraFiles: string[]
+      protectedSubpaths: string[]
+      openedSubpaths: string[]
+    }
   | { kind: 'exact-files'; paths: string[] }
 
 /**
@@ -1807,18 +1816,23 @@ export type WriteAccessScope =
  * `allowedDir`, resolved (realpath'd) the same way `allowedDir` itself is —
  * the agent's own configuration paths (`.claude/`, `.mcp.json`) to keep
  * DENIED for Write/Edit even though they sit inside the developer's own
- * otherwise-granted worktree, when the caller says the task's Surface does
- * not cover them. The caller (`dispatch.ts`'s `writeDispatchSettings`)
- * resolves that Surface check; this function stays a generic scope builder
- * with no opinion of its own about which paths are agent configuration.
- * Empty (every pre-O3 caller, and a task whose Surface DOES cover these
- * paths) grants `allowedDir` fully, unmodified.
+ * otherwise-granted worktree. Empty (every pre-O3 caller) grants
+ * `allowedDir` fully, unmodified.
+ *
+ * `openedSubpaths`: absolute, real directories inside `protectedSubpaths`
+ * that the task's own Surface opened (`resolveOpenedAgentConfigPaths`,
+ * `worker-boundary.ts`, already resolved and symlink-checked by the
+ * caller). The write hook allows a protected path that lies inside one of
+ * them; every other protected path stays denied. The caller resolves the
+ * Surface; this function stays a generic scope builder with no opinion of
+ * its own about which paths are agent configuration.
  */
 export function buildWriteAccessScope(
   role: Role,
   allowedDir: string,
   developerFiles: readonly string[] = [],
-  protectedSubpaths: readonly string[] = []
+  protectedSubpaths: readonly string[] = [],
+  openedSubpaths: readonly string[] = []
 ): WriteAccessScope | null {
   const real = (p: string): string => {
     try {
@@ -1844,7 +1858,8 @@ export function buildWriteAccessScope(
       kind: 'directory',
       allowedDir: real(allowedDir),
       extraFiles: developerFiles.map(realFile),
-      protectedSubpaths: protectedSubpaths.map(realExistingOrParent)
+      protectedSubpaths: protectedSubpaths.map(realExistingOrParent),
+      openedSubpaths: openedSubpaths.map(real)
     }
   }
   if (role === 'code-reviewer' || role === 'security') return { kind: 'exact-files', paths: [] }
@@ -1916,6 +1931,12 @@ export const WRITE_PROTECTED_AGENT_CONFIG_DENY_REASON =
  * this task's Surface does not name stays denied even though the rest of
  * the worktree is granted. Never affects `extraFiles` — those files are named
  * by the driver, never by this protection.
+ *
+ * **`directory` scope's own `openedSubpaths`.** Checked inside the protected
+ * match, by membership: a protected path that also lies inside one of
+ * `scope.openedSubpaths` (a configuration directory the task's Surface
+ * opened) is not a protected match, so the in-worktree allow applies to it.
+ * A path outside every opened directory keeps its protected deny.
  */
 export function writeAccessHookScript(dir: string): string {
   return [
@@ -1946,7 +1967,8 @@ export function writeAccessHookScript(dir: string): string {
     '      const inDir = underPath(real, scope.allowedDir);',
     '      const isExtraFile = Array.isArray(scope.extraFiles) && scope.extraFiles.includes(real);',
     '      protectedMatch =',
-    '        Array.isArray(scope.protectedSubpaths) && scope.protectedSubpaths.some((p) => underPath(real, p));',
+    '        Array.isArray(scope.protectedSubpaths) && scope.protectedSubpaths.some((p) => underPath(real, p)) &&',
+    '        !(Array.isArray(scope.openedSubpaths) && scope.openedSubpaths.some((p) => underPath(real, p)));',
     '      allowed = (inDir && !protectedMatch) || isExtraFile;',
     "    } else if (scope.kind === 'exact-files' && Array.isArray(scope.paths)) {",
     '      allowed = scope.paths.includes(real);',
@@ -2056,14 +2078,18 @@ export function writeDispatchSettings(
   confinement: ClaudeSandboxSettings | null = null,
   /**
    * O3: ABSOLUTE agent-configuration paths
-   * (`.claude/`, `.mcp.json`, resolved by the caller from this task's own
-   * Surface — `dev-review-loop.ts`'s `agentOwnConfigProtectedSubpaths`) to
-   * keep write-denied even though they sit inside the developer's own
-   * worktree. Empty (every pre-O3 caller, and a task whose Surface covers
-   * them) grants the worktree fully, unmodified — see
-   * `buildWriteAccessScope`'s own doc comment.
+   * (`.claude/`, `.mcp.json` — `worker-boundary.ts`'s
+   * `agentConfigProtectedSubpaths`) to keep write-denied even though they
+   * sit inside the developer's own worktree. Empty (every pre-O3 caller)
+   * grants the worktree fully, unmodified — see `buildWriteAccessScope`'s
+   * own doc comment.
    */
-  agentConfigProtectedSubpaths: readonly string[] = []
+  agentConfigProtectedSubpaths: readonly string[] = [],
+  /**
+   * ABSOLUTE configuration directories the task's own Surface opened
+   * (`resolveOpenedAgentConfigPaths`), allowed inside the protected ones.
+   */
+  agentConfigOpenedSubpaths: readonly string[] = []
 ): string | null {
   try {
     const dir = join(runPath(runtimeDirForThisRepo(), scope, { area: 'hooks' }), role)
@@ -2075,7 +2101,8 @@ export function writeDispatchSettings(
       allowedDir,
       developerFiles,
       confinement,
-      agentConfigProtectedSubpaths
+      agentConfigProtectedSubpaths,
+      agentConfigOpenedSubpaths
     )
   } catch {
     return null
@@ -2096,7 +2123,8 @@ export function writeDispatchSettingsAt(
   allowedDir = '.',
   developerFiles: readonly string[] = [],
   confinement: ClaudeSandboxSettings | null = null,
-  agentConfigProtectedSubpaths: readonly string[] = []
+  agentConfigProtectedSubpaths: readonly string[] = [],
+  agentConfigOpenedSubpaths: readonly string[] = []
 ): string | null {
   try {
     mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -2111,7 +2139,13 @@ export function writeDispatchSettingsAt(
       const sourcesPath = join(dir, `documentation-sources-${runId}.json`)
       writeFileSync(sourcesPath, JSON.stringify(documentation), { mode: 0o600 })
     }
-    const writeAccessScope = buildWriteAccessScope(role, allowedDir, developerFiles, agentConfigProtectedSubpaths)
+    const writeAccessScope = buildWriteAccessScope(
+      role,
+      allowedDir,
+      developerFiles,
+      agentConfigProtectedSubpaths,
+      agentConfigOpenedSubpaths
+    )
     const writeAccessScriptPath = join(dir, 'write-access.mjs')
     const preToolUseHooks = [
       {
@@ -4369,6 +4403,16 @@ export async function dispatchRole(
   // own metadata, now closed for bun's cache too, only when this dispatch
   // actually enforces Codex's own sandbox.
   const codexBunCacheDir = codexRequireIsolation ? resolveBunInstallCacheDir() : null
+  // The configuration directories this task's Surface opened, resolved
+  // against the worktree once, here in the driver, before either agent is
+  // launched: symlink-checked, a missing `/**` directory created. The same
+  // list reaches both agents — Codex as extra writable roots below, Claude as
+  // its write-access scope's `openedSubpaths` — so one Surface gives one
+  // answer whichever agent runs.
+  const agentConfigOpenedPaths =
+    role === 'developer' && opts.cwd !== undefined
+      ? resolveOpenedAgentConfigPaths(opts.cwd, opts.agentConfigOpened ?? [])
+      : []
   const vendorArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
   const baseArgs =
     agent === 'codex'
@@ -4378,7 +4422,8 @@ export async function dispatchRole(
             ...(opts.extraWritableDirs ?? []),
             ...(codexScratchDir !== null ? [codexScratchDir] : []),
             ...(codexGitCommonDir !== null ? [codexGitCommonDir] : []),
-            ...(codexBunCacheDir !== null ? [codexBunCacheDir] : [])
+            ...(codexBunCacheDir !== null ? [codexBunCacheDir] : []),
+            ...agentConfigOpenedPaths
           ],
           opts.resumeId !== undefined,
           opts.developerFiles ?? []
@@ -4515,7 +4560,8 @@ export async function dispatchRole(
           permissionAllowedDir,
           opts.developerFiles ?? [],
           claudeConfinement?.confined === true ? claudeConfinement.settings : null,
-          agentConfigProtectedSubpaths(permissionAllowedDir, agent, opts.agentConfigSurfaceCovered === true)
+          agentConfigProtectedSubpaths(permissionAllowedDir, agent),
+          agentConfigOpenedPaths
         )
       : null
   const codexHooksPath =

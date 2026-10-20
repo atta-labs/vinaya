@@ -18,6 +18,7 @@
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -845,19 +846,103 @@ export function agentOwnConfigSubpaths(agent: string): readonly string[] {
 }
 
 /**
- * O3: the ABSOLUTE paths, inside `worktreeDir`, a confined dispatch's own
- * write grant must keep DENIED — this agent's own configuration subpaths,
- * UNLESS `surfaceCovered` says the task's own Surface `in:` globs already
- * name them as this task's own work, in which case `[]` (nothing extra
- * denied; the worktree's own blanket grant applies unmodified). The one
- * function both adapters' dispatch wiring calls to resolve the same caller
- * input (`DispatchOpts.agentConfigSurfaceCovered`) into the shape each
- * adapter's own write-gating mechanism takes — `WriteAccessScope.protectedSubpaths`
- * for Claude, the Codex sandbox configuration for Codex.
+ * The configuration paths a Surface entry can open for the named agent: only
+ * its configuration DIRECTORIES (`.claude` for Claude, `.codex` and `.agents`
+ * for Codex). `.mcp.json` is a file and Surface entries are directories, so it
+ * never opens.
  */
-export function agentConfigProtectedSubpaths(worktreeDir: string, agent: string, surfaceCovered: boolean): string[] {
-  if (surfaceCovered) return []
+export function agentOwnConfigDirs(agent: string): readonly string[] {
+  return agentOwnConfigSubpaths(agent).filter((rel) => !rel.endsWith('.json'))
+}
+
+/**
+ * The ABSOLUTE paths, inside `worktreeDir`, a Developer dispatch keeps
+ * write-denied: every one of this agent's own configuration paths, always.
+ * A task's Surface never shrinks this list; the paths it opens are carved out
+ * of it separately (`resolveOpenedAgentConfigPaths`), so a Surface naming
+ * `.claude/rules` opens that folder while `.claude/settings.json`,
+ * `.claude/hooks` and `.mcp.json` stay denied.
+ */
+export function agentConfigProtectedSubpaths(worktreeDir: string, agent: string): string[] {
   return agentOwnConfigSubpaths(agent).map((rel) => join(worktreeDir, rel))
+}
+
+/**
+ * One configuration directory a task's Surface opens, relative to the
+ * worktree: `path` is the entry's literal path (a configuration directory or
+ * a folder inside one); `createIfMissing` is true when the entry ended in
+ * `/**`, the only form that names a directory the task may create.
+ */
+export type OpenedAgentConfigEntry = { path: string; createIfMissing: boolean }
+
+/**
+ * Resolves the configuration directories a task's Surface opened into the
+ * absolute, real paths both agents receive — Claude as the write-access
+ * scope's `openedSubpaths`, Codex as extra writable roots. Runs in the
+ * driver, before the dispatch, outside any sandbox.
+ *
+ * Fails closed per entry: an entry opens nothing when any component of it
+ * inside the worktree is a symbolic link, when an existing component is not
+ * a directory, or when its real path (for a missing directory, its deepest
+ * existing ancestor's real path) differs from the worktree's own real path
+ * joined with the same literal path. All of that is checked before any
+ * directory is created. A missing directory is created only when its entry
+ * ended in `/**`; a missing entry without that tail opens nothing. Never
+ * creates a file.
+ */
+export function resolveOpenedAgentConfigPaths(
+  worktreeDir: string,
+  entries: readonly OpenedAgentConfigEntry[]
+): string[] {
+  if (entries.length === 0) return []
+  let worktreeReal: string
+  try {
+    worktreeReal = realpathSync(worktreeDir)
+  } catch {
+    return []
+  }
+  const opened: string[] = []
+  for (const entry of entries) {
+    const segments = entry.path.split('/')
+    if (segments.some((seg) => seg === '' || seg === '.' || seg === '..')) continue
+    let existing = 0
+    let refused = false
+    for (const seg of segments) {
+      const candidate = join(worktreeDir, ...segments.slice(0, existing), seg)
+      let stat: ReturnType<typeof lstatSync>
+      try {
+        stat = lstatSync(candidate)
+      } catch {
+        break
+      }
+      if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        refused = true
+        break
+      }
+      existing++
+    }
+    if (refused) continue
+    const ancestorRel = segments.slice(0, existing)
+    try {
+      if (realpathSync(join(worktreeDir, ...ancestorRel)) !== join(worktreeReal, ...ancestorRel)) continue
+    } catch {
+      continue
+    }
+    const target = join(worktreeReal, ...segments)
+    if (existing < segments.length) {
+      if (!entry.createIfMissing) continue
+      try {
+        mkdirSync(target, { recursive: true })
+        // Re-check after creating: nothing on the path may have become a
+        // symbolic link between the check above and the creation.
+        if (realpathSync(target) !== target || lstatSync(target).isSymbolicLink()) continue
+      } catch {
+        continue
+      }
+    }
+    opened.push(target)
+  }
+  return [...new Set(opened)]
 }
 
 /**

@@ -52,13 +52,14 @@ import { configPath, loadTrustAnchorConfig, resolveSecurityScanCommand } from '.
 import { buildDeveloperDeltaPacket, buildDeveloperFullPacket, renderContextPacket } from './context-packet.js'
 import {
   addedDiffLines,
-  agentOwnConfigSubpaths,
+  agentOwnConfigDirs,
   findCredentialPatterns,
   protectedPathsForTurn,
   startTurnWriteAttribution,
   taskControlDir,
   WORKER_ENV_ALLOWLIST_KEYS,
   type CredentialFinding,
+  type OpenedAgentConfigEntry,
   type TurnWriteAttribution
 } from './worker-boundary.js'
 import {
@@ -2943,22 +2944,36 @@ async function defaultSweepTasksAtStart(task: number): Promise<void> {
 }
 
 /**
- * O3: `true` only when `surface`'s own `in:` globs
- * cover at least one of `agent`'s own configuration subpaths
- * (`agentOwnConfigSubpaths` — `.claude/`/`.mcp.json` for Claude, `.codex/`/
- * `.agents/` for Codex) — checked with `globCoversPath`, the SAME matcher
- * the Issue's own Surface checks and `AGENT_CONFIG_GLOBS`'s security-scan
- * sibling check (`reviewer-dispatch.ts`) already use, never a second one. A
- * representative path under each subpath stands in for the directory itself
- * (`globCoversPath` matches concrete paths, not bare directory names).
- * `false` (protected) when `surface` is `null` — a task with no resolvable
- * Surface names nothing, so the default protection stays in force (Traps to
- * avoid: "a task that does not name them keeps the vendor's protection").
+ * The configuration directories of `agent` that `surface` opens for this
+ * task, relative to the worktree. An `in:` entry opens a path only when it is
+ * a literal path, or a literal path followed only by `/**`, and that path
+ * equals or lies inside one of `agent`'s own configuration directories
+ * (`agentOwnConfigDirs`): naming `.claude/rules` opens that folder, never the
+ * rest of `.claude`. An entry with any other glob in it opens nothing, an
+ * entry for another agent's configuration opens nothing for this one, and
+ * `.mcp.json` never opens, because Surface entries are directories. An
+ * opened path opens nothing when any `out:` entry equals it, lies inside it
+ * or contains it — `globCoversPath`, the containment test the Issue's own
+ * Surface checks use, where an exclusion wins over an inclusion. Empty when
+ * `surface` is `null`: a task with no resolvable Surface names nothing.
+ * Pure: the driver resolves the result against the worktree
+ * (`resolveOpenedAgentConfigPaths`) before any grant.
  */
-export function surfaceCoversAgentConfig(surface: IssueSurface | null, agent: string): boolean {
-  if (!surface) return false
-  const representativePaths = agentOwnConfigSubpaths(agent).map((p) => (p.endsWith('.json') ? p : `${p}/x`))
-  return representativePaths.some((p) => surface.in.some((glob) => globCoversPath(glob, p)))
+export function surfaceOpenedAgentConfigPaths(surface: IssueSurface | null, agent: string): OpenedAgentConfigEntry[] {
+  if (!surface) return []
+  const configDirs = agentOwnConfigDirs(agent)
+  const opened = new Map<string, OpenedAgentConfigEntry>()
+  for (const raw of surface.in) {
+    const createIfMissing = raw.endsWith('/**')
+    const path = createIfMissing ? raw.slice(0, -'/**'.length) : raw
+    if (path.length === 0 || /[*?[\]{}!\\]/.test(path) || path.startsWith('/') || path.endsWith('/')) continue
+    if (path.split('/').some((seg) => seg === '' || seg === '.' || seg === '..')) continue
+    if (!configDirs.some((dir) => path === dir || path.startsWith(`${dir}/`))) continue
+    if (surface.out.some((glob) => globCoversPath(glob, path))) continue
+    const prior = opened.get(path)
+    opened.set(path, { path, createIfMissing: createIfMissing || prior?.createIfMissing === true })
+  }
+  return [...opened.values()]
 }
 
 /**
@@ -4604,7 +4619,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // round" posture `resolveTaskSurface` already has at its two existing
       // call sites (the publication precondition checks) — a Surface a
       // Principal edits mid-task is picked up by the very next dispatch.
-      const agentConfigSurfaceCovered = surfaceCoversAgentConfig(
+      const agentConfigOpened = surfaceOpenedAgentConfigPaths(
         d.resolveTaskSurface ? d.resolveTaskSurface(task) : null,
         dispatchAgent
       )
@@ -4634,7 +4649,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // already reports `requested:<model>` vs `'default'`, so no
             // separate log line is needed on this side.
             ...(dispatchModel ? { model: dispatchModel } : {}),
-            agentConfigSurfaceCovered,
+            agentConfigOpened,
             // O2: the per-dispatch dev-tools registration — Claude via
             // `--strict-mcp-config --mcp-config`, Codex via its staged
             // `config.toml` (`dispatch.ts`). The one way the Developer

@@ -41,7 +41,9 @@ import {
   LINUX_CLAUDE_SANDBOX_TOOLS,
   resolveGitFirstPath,
   resolveGitCommonDir,
+  agentOwnConfigDirs,
   agentOwnConfigSubpaths,
+  resolveOpenedAgentConfigPaths,
   agentConfigProtectedSubpaths,
   CLAUDE_OWN_CONFIG_SUBPATHS,
   CODEX_OWN_CONFIG_SUBPATHS,
@@ -405,17 +407,77 @@ describe('agentOwnConfigSubpaths / agentConfigProtectedSubpaths (O3)', () => {
     expect(agentOwnConfigSubpaths('gemini')).toEqual([])
   })
 
-  it('resolves absolute protected paths, inside the worktree, when the Surface does not cover them', () => {
-    expect(agentConfigProtectedSubpaths('/wt', 'claude', false)).toEqual([
-      join('/wt', '.claude'),
-      join('/wt', '.mcp.json')
-    ])
-    expect(agentConfigProtectedSubpaths('/wt', 'codex', false)).toEqual([join('/wt', '.codex'), join('/wt', '.agents')])
+  it('resolves every configuration path, absolute and inside the worktree, as protected — a Surface never shrinks this list', () => {
+    expect(agentConfigProtectedSubpaths('/wt', 'claude')).toEqual([join('/wt', '.claude'), join('/wt', '.mcp.json')])
+    expect(agentConfigProtectedSubpaths('/wt', 'codex')).toEqual([join('/wt', '.codex'), join('/wt', '.agents')])
   })
 
-  it('returns an empty list when the Surface covers them — nothing extra denied', () => {
-    expect(agentConfigProtectedSubpaths('/wt', 'claude', true)).toEqual([])
-    expect(agentConfigProtectedSubpaths('/wt', 'codex', true)).toEqual([])
+  it('names only configuration directories as openable — never the .mcp.json file', () => {
+    expect(agentOwnConfigDirs('claude')).toEqual(['.claude'])
+    expect(agentOwnConfigDirs('codex')).toEqual(['.codex', '.agents'])
+    expect(agentOwnConfigDirs('gemini')).toEqual([])
+  })
+})
+
+describe('resolveOpenedAgentConfigPaths — the driver-side, fail-closed resolution of opened configuration directories', () => {
+  it('opens an existing directory as its real path inside the real worktree', () => {
+    const wt = tempDir('vinaya-opened-existing-')
+    mkdirSync(join(wt, '.claude', 'rules'), { recursive: true })
+    expect(resolveOpenedAgentConfigPaths(wt, [{ path: '.claude/rules', createIfMissing: false }])).toEqual([
+      join(realpathSync(wt), '.claude', 'rules')
+    ])
+  })
+
+  it('creates a missing directory named with /** and opens it', () => {
+    const wt = tempDir('vinaya-opened-create-')
+    expect(resolveOpenedAgentConfigPaths(wt, [{ path: '.agents/skills', createIfMissing: true }])).toEqual([
+      join(realpathSync(wt), '.agents', 'skills')
+    ])
+    expect(existsSync(join(wt, '.agents', 'skills'))).toBe(true)
+  })
+
+  it('opens nothing and creates nothing for a missing entry without /**', () => {
+    const wt = tempDir('vinaya-opened-missing-')
+    expect(resolveOpenedAgentConfigPaths(wt, [{ path: '.claude/rules', createIfMissing: false }])).toEqual([])
+    expect(existsSync(join(wt, '.claude'))).toBe(false)
+  })
+
+  it('opens nothing when the opened path itself is a symbolic link', () => {
+    const wt = tempDir('vinaya-opened-link-')
+    const outside = tempDir('vinaya-opened-link-target-')
+    mkdirSync(join(wt, '.claude'), { recursive: true })
+    symlinkSync(outside, join(wt, '.claude', 'rules'))
+    expect(resolveOpenedAgentConfigPaths(wt, [{ path: '.claude/rules', createIfMissing: true }])).toEqual([])
+  })
+
+  it('opens nothing, and creates nothing behind it, when an ancestor inside the worktree is a symbolic link', () => {
+    const wt = tempDir('vinaya-opened-ancestor-link-')
+    const outside = tempDir('vinaya-opened-ancestor-target-')
+    symlinkSync(outside, join(wt, '.claude'))
+    expect(resolveOpenedAgentConfigPaths(wt, [{ path: '.claude/rules', createIfMissing: true }])).toEqual([])
+    expect(readdirSync(outside)).toEqual([])
+  })
+
+  it('opens nothing when a component is a file rather than a directory', () => {
+    const wt = tempDir('vinaya-opened-file-')
+    mkdirSync(join(wt, '.claude'), { recursive: true })
+    writeFileSync(join(wt, '.claude', 'settings.json'), '{}')
+    expect(resolveOpenedAgentConfigPaths(wt, [{ path: '.claude/settings.json', createIfMissing: false }])).toEqual([])
+  })
+
+  it('refuses a path that climbs out of the worktree', () => {
+    const wt = tempDir('vinaya-opened-climb-')
+    expect(resolveOpenedAgentConfigPaths(wt, [{ path: '.claude/../../x', createIfMissing: true }])).toEqual([])
+  })
+
+  it('resolves against the real worktree when the worktree is reached through a symbolic link', () => {
+    const real = tempDir('vinaya-opened-real-wt-')
+    const container = tempDir('vinaya-opened-wt-link-')
+    const linked = join(container, 'wt')
+    symlinkSync(real, linked)
+    expect(resolveOpenedAgentConfigPaths(linked, [{ path: '.codex', createIfMissing: true }])).toEqual([
+      join(realpathSync(real), '.codex')
+    ])
   })
 })
 
