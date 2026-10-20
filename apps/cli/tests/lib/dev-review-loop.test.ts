@@ -84,7 +84,7 @@ import {
   reviewPolicyForLoop,
   routeCompletionEvents,
   turnResultInstruction,
-  surfaceCoversAgentConfig
+  surfaceOpenedAgentConfigPaths
 } from '../../src/lib/dev-review-loop.js'
 import {
   deriveCodeReviewVerdict,
@@ -5559,30 +5559,78 @@ describe('pause comments for a GitHub rate limit', () => {
   })
 })
 
-describe('surfaceCoversAgentConfig (O3)', () => {
-  it('is false (protected) when the Surface is null — a task that names nothing keeps the vendor default', () => {
-    expect(surfaceCoversAgentConfig(null, 'claude')).toBe(false)
-    expect(surfaceCoversAgentConfig(null, 'codex')).toBe(false)
+describe('surfaceOpenedAgentConfigPaths', () => {
+  const opened = (inGlobs: string[], agent: string, out: string[] = []) =>
+    surfaceOpenedAgentConfigPaths({ in: inGlobs, out }, agent)
+
+  it('opens nothing when the Surface is null — a task that names nothing keeps every configuration path denied', () => {
+    expect(surfaceOpenedAgentConfigPaths(null, 'claude')).toEqual([])
+    expect(surfaceOpenedAgentConfigPaths(null, 'codex')).toEqual([])
   })
 
-  it('is true for claude when the Surface in: list names .claude or .mcp.json', () => {
-    expect(surfaceCoversAgentConfig({ in: ['.claude'], out: [] }, 'claude')).toBe(true)
-    expect(surfaceCoversAgentConfig({ in: ['.claude/**'], out: [] }, 'claude')).toBe(true)
-    expect(surfaceCoversAgentConfig({ in: ['.mcp.json'], out: [] }, 'claude')).toBe(true)
+  it('opens a subfolder named literally, or with a trailing /** that may create it, and only that subfolder', () => {
+    expect(opened(['.claude/rules'], 'claude')).toEqual([{ path: '.claude/rules', createIfMissing: false }])
+    expect(opened(['.claude/skills/**'], 'claude')).toEqual([{ path: '.claude/skills', createIfMissing: true }])
+    expect(opened(['.agents/skills/**'], 'codex')).toEqual([{ path: '.agents/skills', createIfMissing: true }])
   })
 
-  it('is true for codex when the Surface in: list names .codex or .agents', () => {
-    expect(surfaceCoversAgentConfig({ in: ['.codex'], out: [] }, 'codex')).toBe(true)
-    expect(surfaceCoversAgentConfig({ in: ['.agents/**'], out: [] }, 'codex')).toBe(true)
+  it('each configuration path opens only itself: .claude never opens .mcp.json, .agents never opens .codex', () => {
+    expect(opened(['.claude'], 'claude')).toEqual([{ path: '.claude', createIfMissing: false }])
+    expect(opened(['.agents/**'], 'codex')).toEqual([{ path: '.agents', createIfMissing: true }])
+    expect(opened(['.codex'], 'codex')).toEqual([{ path: '.codex', createIfMissing: false }])
   })
 
-  it('is false when the Surface names unrelated paths, or only the OTHER vendor’s own config path', () => {
-    expect(surfaceCoversAgentConfig({ in: ['apps/cli/src/lib'], out: [] }, 'claude')).toBe(false)
-    expect(surfaceCoversAgentConfig({ in: ['.codex'], out: [] }, 'claude')).toBe(false)
-    expect(surfaceCoversAgentConfig({ in: ['.claude'], out: [] }, 'codex')).toBe(false)
+  it('never opens .mcp.json, because Surface entries are directories', () => {
+    expect(opened(['.mcp.json'], 'claude')).toEqual([])
+    expect(opened(['.mcp.json/**'], 'claude')).toEqual([])
   })
 
-  it('is false for a vendor with no agent-native configuration path of its own (gemini)', () => {
-    expect(surfaceCoversAgentConfig({ in: ['.gemini'], out: [] }, 'gemini')).toBe(false)
+  it('opens nothing for an entry with any other glob in it', () => {
+    expect(opened(['.claude/settings*.json'], 'claude')).toEqual([])
+    expect(opened(['.claude/*'], 'claude')).toEqual([])
+    expect(opened(['.claude/**/rules'], 'claude')).toEqual([])
+    expect(opened(['.agents/{a,b}'], 'codex')).toEqual([])
+  })
+
+  it('opens nothing for unrelated paths, the other agent’s configuration, or an agent with none of its own', () => {
+    expect(opened(['apps/cli/src/lib'], 'claude')).toEqual([])
+    expect(opened(['.codex', '.agents/skills/**'], 'claude')).toEqual([])
+    expect(opened(['.claude', '.claude/rules/**'], 'codex')).toEqual([])
+    expect(opened(['.gemini'], 'gemini')).toEqual([])
+    expect(opened(['.claudex/rules'], 'claude')).toEqual([])
+  })
+
+  it('opens nothing when a Surface exclusion lies inside the opened path', () => {
+    expect(opened(['.claude'], 'claude', ['.claude/hooks'])).toEqual([])
+  })
+
+  it('opens nothing when the opened path lies inside a Surface exclusion, or equals one', () => {
+    expect(opened(['.claude/rules'], 'claude', ['.claude'])).toEqual([])
+    expect(opened(['.agents/skills/**'], 'codex', ['.agents/**'])).toEqual([])
+    expect(opened(['.claude/rules'], 'claude', ['.claude/rules'])).toEqual([])
+  })
+
+  it('an unrelated exclusion leaves the opened path open', () => {
+    expect(opened(['.claude/rules'], 'claude', ['.claude/hooks'])).toEqual([
+      { path: '.claude/rules', createIfMissing: false }
+    ])
+  })
+
+  it('refuses a path that is absolute or climbs out with ..', () => {
+    expect(opened(['/.claude/rules'], 'claude')).toEqual([])
+    expect(opened(['.claude/../apps'], 'claude')).toEqual([])
+  })
+
+  it('gives Claude and Codex the same answer for the same shape of Surface', () => {
+    for (const [claudeEntry, codexEntry] of [
+      ['.claude', '.agents'],
+      ['.claude/rules', '.agents/skills'],
+      ['.claude/rules/**', '.agents/skills/**'],
+      ['.claude/settings*.json', '.agents/skills*']
+    ] as const) {
+      const c = opened([claudeEntry], 'claude').map((e) => e.createIfMissing)
+      const x = opened([codexEntry], 'codex').map((e) => e.createIfMissing)
+      expect(c).toEqual(x)
+    }
   })
 })
