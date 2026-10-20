@@ -1,7 +1,7 @@
 'use client'
 
 import { Code, Eye, FileText, GitPullRequest, Shield } from 'lucide-react'
-import { motion, useReducedMotion } from 'motion/react'
+import { motion, useIsPresent, useReducedMotion } from 'motion/react'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { improveStats } from '@/process/fixtures/lifecycle'
 import { cn } from '@/ui/lib/utils'
@@ -16,28 +16,20 @@ import { Terminal } from './landing/Terminal'
 
 const START_MS = 180
 
-// What has already played in this opening. React runs an outgoing scene's cleanup and the incoming scene's effect in
-// the same turn, so the microtask sees another scene mounted during item switches. A closed menu leaves none mounted,
-// and clears before another pointer event can reopen it.
+// What has already played in this opening. NavigationMenuContent remains mounted for its Motion exit, so presence —
+// not mounting — defines the session boundary and stops work as soon as the menu starts closing.
 const played = new Set<string>()
-let mounted = 0
-
-function enterPlaybackSession() {
-  mounted++
-}
-
-function leavePlaybackSession() {
-  mounted--
-  queueMicrotask(() => {
-    if (mounted === 0) played.clear()
-  })
-}
 
 function usePlayOnce(key: string, durationMs: number) {
+  const isPresent = useIsPresent()
   const reduced = useReducedMotion()
   const [elapsed, setElapsed] = useState(0)
   useEffect(() => {
-    enterPlaybackSession()
+    if (!isPresent) {
+      played.clear()
+      setElapsed(0)
+      return
+    }
     let raf = 0
     if (reduced || played.has(key)) setElapsed(Number.POSITIVE_INFINITY)
     else {
@@ -50,11 +42,8 @@ function usePlayOnce(key: string, durationMs: number) {
       }
       raf = requestAnimationFrame(tick)
     }
-    return () => {
-      cancelAnimationFrame(raf)
-      leavePlaybackSession()
-    }
-  }, [key, durationMs, reduced])
+    return () => cancelAnimationFrame(raf)
+  }, [key, durationMs, isPresent, reduced])
   return elapsed
 }
 
@@ -357,15 +346,16 @@ function readRamp() {
 
 export function ImproveScene() {
   const canvas = useRef<HTMLCanvasElement>(null)
+  const isPresent = useIsPresent()
   const reduced = useReducedMotion()
   useEffect(() => {
-    enterPlaybackSession()
-    const el = canvas.current
-    const ctx = el?.getContext('2d')
-    if (!el || !ctx) {
-      leavePlaybackSession()
+    if (!isPresent) {
+      played.clear()
       return
     }
+    const el = canvas.current
+    const ctx = el?.getContext('2d')
+    if (!el || !ctx) return
     const dpr = window.devicePixelRatio || 1
     el.width = Math.round(INF.w * dpr)
     el.height = Math.round(INF.h * dpr)
@@ -421,10 +411,7 @@ export function ImproveScene() {
     }
     if (reduced) {
       draw(2, 1, true)
-      return () => {
-        observer.disconnect()
-        leavePlaybackSession()
-      }
+      return () => observer.disconnect()
     }
     const skipDraw = played.has('improve')
     played.add('improve')
@@ -440,9 +427,8 @@ export function ImproveScene() {
     return () => {
       cancelAnimationFrame(raf)
       observer.disconnect()
-      leavePlaybackSession()
     }
-  }, [reduced])
+  }, [isPresent, reduced])
   return <canvas ref={canvas} className={cn(AREA, 'block')} />
 }
 
