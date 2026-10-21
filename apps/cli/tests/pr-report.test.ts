@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { chmodSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1315,6 +1315,54 @@ describe("testRunCacheKey — an ignored file's own content is part of the worki
     const afterIgnoredChange = await runAgentCommand(command, undefined, dir, {}, cache)
     expect(afterIgnoredChange.reusedFrom).toBeUndefined()
     expect(readFileSync(counterFile, 'utf8')).toBe('xx')
+  })
+
+  it("resolves when expanding an ignored folder would exceed Node's default output buffer", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-large-ignored-'))
+    initTestGitRepo(dir)
+    writeFileSync(join(dir, '.gitignore'), 'generated/\n')
+    execFileSync('git', ['add', '.gitignore'], { cwd: dir })
+    execFileSync('git', ['commit', '-q', '-m', 'ignore generated'], { cwd: dir })
+    const generated = join(dir, 'generated')
+    mkdirSync(generated)
+    for (let i = 0; i < 8_500; i++) {
+      writeFileSync(join(generated, `${String(i).padStart(5, '0')}-${'x'.repeat(120)}`), 'x')
+    }
+    const expanded = execFileSync('git', ['status', '--porcelain=v1', '-uall', '--ignored', '-z'], {
+      cwd: dir,
+      maxBuffer: 4 * 1024 * 1024
+    })
+    expect(expanded.byteLength).toBeGreaterThan(1024 * 1024)
+    expect(await testRunStateKey(dir)).not.toBeNull()
+  })
+
+  it('does not change when a file nested in an ignored folder changes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-nested-ignored-'))
+    initTestGitRepo(dir)
+    writeFileSync(join(dir, '.gitignore'), 'generated/\n')
+    execFileSync('git', ['add', '.gitignore'], { cwd: dir })
+    execFileSync('git', ['commit', '-q', '-m', 'ignore generated'], { cwd: dir })
+    mkdirSync(join(dir, 'generated'))
+    const nested = join(dir, 'generated', 'output.txt')
+    writeFileSync(nested, 'first')
+    const before = await testRunStateKey(dir)
+    writeFileSync(nested, 'second')
+    expect(await testRunStateKey(dir)).toBe(before)
+  })
+})
+
+describe('testRunStateKey — large tracked diffs', () => {
+  it("resolves when a tracked diff exceeds Node's default output buffer", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-large-diff-'))
+    initTestGitRepo(dir)
+    const file = join(dir, 'large.txt')
+    writeFileSync(file, 'a')
+    execFileSync('git', ['add', 'large.txt'], { cwd: dir })
+    execFileSync('git', ['commit', '-q', '-m', 'add large file'], { cwd: dir })
+    writeFileSync(file, `${'changed line\n'.repeat(100_000)}`)
+    const diff = execFileSync('git', ['diff', 'HEAD'], { cwd: dir, maxBuffer: 4 * 1024 * 1024 })
+    expect(diff.byteLength).toBeGreaterThan(1024 * 1024)
+    expect(await testRunStateKey(dir)).not.toBeNull()
   })
 })
 
