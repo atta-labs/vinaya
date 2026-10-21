@@ -8,11 +8,14 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
+    "@atta/engine": "file:../apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz",
+    "@atta/executor-agent-spawn": "file:../apps/cli/tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz",
     "yaml": "2.9.0",
     "zod": "3.25.76"
   },
   "devDependencies": {
     "@atta/typescript-config": "workspace:*",
+    "@langchain/langgraph": "0.2.74",
     "@types/bun": "latest",
     "typescript": "^5.7.0"
   }
