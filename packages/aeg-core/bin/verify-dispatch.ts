@@ -118,12 +118,22 @@ const INVOCATION_CWD = process.cwd()
 export type TargetRootExec = typeof execFileSync
 
 export function resolveTargetRoot(cwd = process.cwd(), exec: TargetRootExec = execFileSync): string {
-  return String(
-    exec('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore']
-    })
-  ).trim()
+  const gitRoot = (candidate: string): string | null => {
+    try {
+      const root = exec('git', ['-C', candidate, 'rev-parse', '--show-toplevel'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+      return typeof root === 'string' && root.trim() !== '' ? root.trim() : null
+    } catch {
+      return null
+    }
+  }
+
+  // A caller checkout is authoritative. The script-location fallback keeps
+  // direct imports and invocations from a non-Git directory usable without
+  // ever replacing a valid caller repository with the tool's own.
+  return gitRoot(cwd) ?? gitRoot(import.meta.dirname) ?? join(import.meta.dirname, '../../..')
 }
 
 const REPO_ROOT = resolveTargetRoot(INVOCATION_CWD)

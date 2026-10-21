@@ -103,10 +103,20 @@ function buildConsumersOfLocal(): (pkg: string) => string[] {
 // Captured BEFORE the chdir below: a relative `--body-file` path is relative to
 // where the author ran the command, not to the repo root this script moves to.
 const INVOCATION_CWD = process.cwd()
-const REPO_ROOT = execFileSync('git', ['-C', INVOCATION_CWD, 'rev-parse', '--show-toplevel'], {
-  encoding: 'utf8',
-  stdio: ['ignore', 'pipe', 'ignore']
-}).trim()
+const REPO_ROOT = (() => {
+  for (const candidate of [INVOCATION_CWD, import.meta.dirname]) {
+    try {
+      const root = execFileSync('git', ['-C', candidate, 'rev-parse', '--show-toplevel'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      }).trim()
+      if (root !== '') return root
+    } catch {
+      // Try the script location when the caller is not inside a Git checkout.
+    }
+  }
+  return join(import.meta.dirname, '../../..')
+})()
 process.chdir(REPO_ROOT)
 
 const TASK_BRANCH_PATTERN = /^task\/[^/]+\/[^/]+$/
