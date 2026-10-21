@@ -64,44 +64,65 @@ const deny = (reason) => {
   process.exit(0)
 }
 const tokens = (rule) => rule.replace(/^Bash\\(/, '').replace(/(?::\\*|\\*)\\)$/, '').trim().split(/\\s+/)
-const starts = (line, prefix) => {
-  const words = line.trim().split(/\\s+/)
-  return prefix.every((word, index) => words[index] === word)
-}
-const statements = (line) => line.split(/(?:&&|\\|\\||;|\\n)/).map((part) => part.trim()).filter(Boolean)
-const words = (line) => {
-  const argv = []
+const tokenize = (line) => {
+  const statements = []
+  let argv = []
   let word = ''
   let quote = null
   let escaped = false
   let started = false
-  for (const char of line.trim()) {
+  let background = false
+  const pushWord = () => {
+    if (started) argv.push(word)
+    word = ''
+    started = false
+  }
+  const pushStatement = () => {
+    pushWord()
+    if (argv.length) statements.push(argv)
+    argv = []
+  }
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index]
     if (escaped) { word += char; escaped = false; started = true; continue }
     if (char === '\\\\' && quote !== "'") { escaped = true; started = true; continue }
     if (quote) {
       if (char === quote) quote = null
+      else if (quote === '"' && (char === '\u0060' || (char === '$' && line[index + 1] === '('))) return null
       else word += char
       started = true
       continue
     }
     if (char === "'" || char === '"') { quote = char; started = true; continue }
+    if (char === '\u0060' || (char === '$' && line[index + 1] === '(')) return null
+    if (char === '<' && line[index + 1] === '<') return null
     if (/\\s/.test(char)) {
-      if (started) { argv.push(word); word = ''; started = false }
+      if (char === '\\n') pushStatement()
+      else pushWord()
+      continue
+    }
+    if (char === ';' || char === '|' || char === '&') {
+      pushStatement()
+      if (char === '&' && line[index + 1] !== '&') background = true
+      if (line[index + 1] === char && (char === '|' || char === '&')) index += 1
       continue
     }
     word += char
     started = true
   }
-  if (escaped) word += '\\\\'
-  if (started) argv.push(word)
-  return argv
+  if (escaped || quote) return null
+  pushStatement()
+  if (statements.some((args) =>
+    args[0] === 'eval' ||
+    ((args[0] === 'sh' || args[0] === 'bash') && args[1] === '-c')
+  )) return null
+  return { statements, background }
 }
-const commandBackgrounds = (line) => {
-  const bare = line.replace(/'[^']*'/g, '').replace(/"[^"]*"/g, '').trimEnd()
-  return /(^|[^&])&$/.test(bare) || /(^|[;&|]|\\s)nohup\\s/.test(bare) || /\\bdisown\\b/.test(bare) || /(^|[;&|]|\\s)setsid\\s/.test(bare)
-}
-const commandBypassesGitSafety = (line) => statements(line).some((statement) => {
-  const argv = words(statement)
+const starts = (argv, prefix) => prefix.every((word, index) => argv[index] === word)
+const commandBackgrounds = (parsed) => parsed.background || parsed.statements.some((argv) =>
+  ['nohup', 'disown', 'setsid'].includes(argv[0])
+)
+const commandBypassesGitSafety = (parsed) => parsed.statements.some((argv) => {
   if (argv[0] !== 'git') return false
   if (argv[1] === 'push') return argv.slice(2).some((arg) =>
     arg === '-f' || arg === '--force' || arg === '--no-verify' ||
@@ -117,12 +138,10 @@ const git = (dir, argv) => {
   try { return execFileSync('git', ['-C', dir, ...argv], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim() || null }
   catch { return null }
 }
-const commandTouchesDefaultBranch = (line) => {
+const commandTouchesDefaultBranch = (parsed) => {
   let dir = cwd
-  for (const statement of statements(line)) {
-    const cd = /^cd\\s+(\\S+)$/.exec(statement)
-    if (cd) { dir = resolve(dir, cd[1]); continue }
-    const argv = words(statement)
+  for (const argv of parsed.statements) {
+    if (argv[0] === 'cd' && argv.length === 2) { dir = resolve(dir, argv[1]); continue }
     if (argv[0] !== 'git' || !['commit', 'push'].includes(argv[1])) continue
     const current = git(dir, ['symbolic-ref', '--quiet', '--short', 'HEAD'])
     const remote = git(dir, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'])
@@ -159,12 +178,14 @@ const patchPaths = (patch) => {
 
 if (policy.tools[tool] === 'deny') deny(tool + ' is denied by the role manifest')
 if (tool === 'Bash') {
-  if (policy.guards.background_shell && (args.run_in_background === true || commandBackgrounds(command))) deny('background shell is denied')
-  if (policy.guards.force_push && commandBypassesGitSafety(command)) deny('force push or verification bypass is denied')
-  if (policy.guards.no_verify && commandBypassesGitSafety(command)) deny('force push or verification bypass is denied')
-  if (policy.guards.default_branch_commit && commandTouchesDefaultBranch(command)) deny('commit or push on the default branch is denied')
-  if (policy.shellDeny.some((rule) => starts(command, tokens(rule)))) deny('command matches a shell deny rule')
-  if (!policy.shellAllow.some((rule) => starts(command, tokens(rule)))) deny('command is outside the shell allowlist')
+  const parsed = tokenize(command)
+  if (!parsed) deny('shell command cannot be parsed safely')
+  if (policy.guards.background_shell && (args.run_in_background === true || commandBackgrounds(parsed))) deny('background shell is denied')
+  if (policy.guards.force_push && commandBypassesGitSafety(parsed)) deny('force push or verification bypass is denied')
+  if (policy.guards.no_verify && commandBypassesGitSafety(parsed)) deny('force push or verification bypass is denied')
+  if (policy.guards.default_branch_commit && commandTouchesDefaultBranch(parsed)) deny('commit or push on the default branch is denied')
+  if (parsed.statements.some((argv) => policy.shellDeny.some((rule) => starts(argv, tokens(rule))))) deny('command matches a shell deny rule')
+  if (parsed.statements.length === 0 || parsed.statements.some((argv) => !policy.shellAllow.some((rule) => starts(argv, tokens(rule))))) deny('command is outside the shell allowlist')
 }
 if (policy.guards.background_shell && ['Agent', 'Task'].includes(tool) && args.run_in_background === true) {
   deny('background subagent is denied')
