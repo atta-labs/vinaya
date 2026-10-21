@@ -6,6 +6,7 @@ import { generateClaudeSettings } from './claude-code/settings'
 import { generateCodexConfig } from './codex/config'
 import { CLAUDE_BUILTINS, CODEX_BUILTINS, loadRoleGrants, mcpRule, ROLE_NAMES, type Decision } from './manifest'
 import { resolveGrantValues, type GeneratedAgentConfig } from './policy'
+import { evaluateShellGuards } from './shell-eval'
 
 const processRoot = join(import.meta.dir, '../../../processes/vinaya/executing')
 
@@ -248,31 +249,6 @@ describe('role-grant vendor parity', () => {
       }).stdout.toString()
     }
     const shellGuardCases = [
-      { name: 'background shell', input: { tool_name: 'Bash', tool_input: { command: 'sleep 30 &' } } },
-      { name: 'force push', input: { tool_name: 'Bash', tool_input: { command: 'git push origin --force HEAD' } } },
-      ...[
-        'git commit --no-verify',
-        'git commit -n',
-        'git commit "--no-verify"',
-        "git commit '-n'",
-        'git commit -m "a;b" "--no-verify"',
-        'git commit -m "a;b" -n',
-        'true && git commit --no-verify',
-        'git commit $(echo --no-verify)',
-        'bash -c "git commit --no-verify"',
-        'sh -c "git commit --no-verify"',
-        'eval "git commit --no-verify"',
-        'git commit `echo --no-verify`',
-        'git commit <<EOF',
-        'git commit "unterminated',
-        'git commit trailing\\',
-        'git push origin --force',
-        'true | git push origin "--force"',
-        'git push $(echo --force)'
-      ].map((command) => ({
-        name: `guarded shell command ${command}`,
-        input: { tool_name: 'Bash', tool_input: { command } }
-      })),
       {
         name: 'write outside scope',
         input: { tool_name: 'Write', tool_input: { file_path: join(tmpdir(), 'outside') } },
@@ -318,40 +294,25 @@ describe('role-grant vendor parity', () => {
     for (const tool of ['spawn_agent', 'send_input', 'resume_agent', 'wait_agent', 'close_agent']) {
       expect(invoke(reviewerConfig, { tool_name: tool, tool_input: {} })).toContain('"permissionDecision":"deny"')
     }
-
-    const git = (...args: string[]) => Bun.spawnSync(['git', '-C', workspace, ...args])
-    expect(git('init', '-b', 'task').exitCode).toBe(0)
-    expect(git('config', 'user.email', 'probe@example.invalid').exitCode).toBe(0)
-    expect(git('config', 'user.name', 'Probe').exitCode).toBe(0)
-    writeFileSync(join(workspace, 'tracked'), 'x')
-    expect(git('add', 'tracked').exitCode).toBe(0)
-    expect(git('commit', '-m', 'initial').exitCode).toBe(0)
-    expect(git('branch', 'main').exitCode).toBe(0)
-    expect(git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main').exitCode).toBe(0)
-    for (const config of [claude, codex])
-      expect(
-        invoke(config, {
-          cwd: workspace,
-          tool_name: 'Bash',
-          tool_input: { command: 'git commit --allow-empty -m probe' }
-        })
-      ).toBe('')
-    expect(git('checkout', 'main').exitCode).toBe(0)
-    for (const command of [
-      'git commit --allow-empty -m probe',
-      'true && git commit --allow-empty -m probe',
-      'git commit $(echo --allow-empty) -m probe',
-      'bash -c "git commit --allow-empty -m probe"'
-    ])
-      for (const config of [claude, codex])
-        expect(
-          invoke(config, {
-            cwd: workspace,
-            tool_name: 'Bash',
-            tool_input: { command }
-          })
-        ).toContain('"permissionDecision":"deny"')
   })
+
+  test('every shell bypass spelling is denied by both generated hooks for the guard itself', () => {
+    const rows = evaluateShellGuards()
+    const attacks = rows.filter((row) => row.guard !== 'ordinary')
+    expect(attacks.length).toBeGreaterThanOrEqual(100)
+    for (const row of attacks) {
+      expect(row.claude, `Claude should deny ${JSON.stringify(row.command)}`).toBe('deny')
+      expect(row.codex, `Codex should deny ${JSON.stringify(row.command)}`).toBe('deny')
+      for (const reason of [row.claudeReason, row.codexReason])
+        expect(reason, `${JSON.stringify(row.command)} must be stopped by a guard, not an allowlist`).not.toMatch(
+          /allowlist|shell deny rule/
+        )
+    }
+    for (const row of rows.filter((candidate) => candidate.guard === 'ordinary')) {
+      expect(row.claude, `Claude should allow ${JSON.stringify(row.command)}`).toBe('allow')
+      expect(row.codex, `Codex should allow ${JSON.stringify(row.command)}`).toBe('allow')
+    }
+  }, 60_000)
 
   test('Claude receives schema JSON while Codex receives the schema path', () => {
     const grants = loadRoleGrants(join(processRoot, 'developer/grants.yaml'))
