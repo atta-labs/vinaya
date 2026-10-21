@@ -75,9 +75,9 @@ import {
 import type { CheckResult, ForgeFacts, TrancheFile, TaskEntry } from '../src/index'
 import { readConfigPrincipals } from '../src/principals-config'
 
-const INVOCATION_CWD = process.cwd()
+const COHERENCE_INVOCATION_CWD = process.cwd()
 const REPO_ROOT = (() => {
-  for (const candidate of [INVOCATION_CWD, import.meta.dirname]) {
+  for (const candidate of [COHERENCE_INVOCATION_CWD, import.meta.dirname]) {
     try {
       const root = execFileSync('git', ['-C', candidate, 'rev-parse', '--show-toplevel'], {
         encoding: 'utf8',
@@ -92,7 +92,7 @@ const REPO_ROOT = (() => {
 })()
 process.chdir(REPO_ROOT)
 
-function resolveTargetRepository(): ReturnType<typeof resolveRepo> {
+function resolveCoherenceTargetRepository(): ReturnType<typeof resolveRepo> {
   return resolveRepo(async () => ({
     stdout: execFileSync('git', ['-C', REPO_ROOT, 'remote', 'get-url', 'origin'], {
       encoding: 'utf8',
@@ -479,7 +479,7 @@ export async function loadTrancheSweep(
   baseRef = 'origin/main'
 ): Promise<TrancheSweep> {
   gitFetchMainQuiet()
-  const repo = await resolveTargetRepository()
+  const repo = await resolveCoherenceTargetRepository()
 
   // The Milestone index is the sweep's enumeration authority, so its failure
   // must not be fatal by default: the pre-refactor loader reached the forge
@@ -736,7 +736,7 @@ export async function runCoherenceChecks(
 
   // ---------- forge-dependent checks ----------
 
-  const repo = await resolveTargetRepository()
+  const repo = await resolveCoherenceTargetRepository()
   const token = await resolveGithubToken()
 
   if (!token) {
@@ -1103,7 +1103,7 @@ if (isEntryPoint(import.meta.url, 'verify-coherence')) {
     // loop — see `fetchTaskIssueRefs`'s own doc comment). A non-task branch
     // (no `repo` resolvable, or the forge unreachable) still runs the
     // forward direction below; the reverse check simply has nothing to flag.
-    const repo = await resolveTargetRepository()
+    const repo = await resolveCoherenceTargetRepository()
     const taskIssueRefs = repo
       ? await fetchTaskIssueRefs(repo.owner, repo.repo, [...extractClosesReferences(prBody)])
       : undefined

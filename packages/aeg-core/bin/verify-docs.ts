@@ -105,9 +105,9 @@ import {
 } from '../src/index'
 import { readConfigPrincipals } from '../src/principals-config'
 
-const INVOCATION_CWD = process.cwd()
+const DOCS_INVOCATION_CWD = process.cwd()
 const REPO_ROOT = (() => {
-  for (const candidate of [INVOCATION_CWD, import.meta.dirname]) {
+  for (const candidate of [DOCS_INVOCATION_CWD, import.meta.dirname]) {
     try {
       const root = execFileSync('git', ['-C', candidate, 'rev-parse', '--show-toplevel'], {
         encoding: 'utf8',

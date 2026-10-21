@@ -113,7 +113,7 @@ import {
 import { readConfigPrincipals } from '../src/principals-config'
 import type { Tranche, Task } from '../src/types'
 
-const INVOCATION_CWD = process.cwd()
+const DISPATCH_INVOCATION_CWD = process.cwd()
 
 export type TargetRootExec = typeof execFileSync
 
@@ -136,7 +136,7 @@ export function resolveTargetRoot(cwd = process.cwd(), exec: TargetRootExec = ex
   return gitRoot(cwd) ?? gitRoot(import.meta.dirname) ?? join(import.meta.dirname, '../../..')
 }
 
-const REPO_ROOT = resolveTargetRoot(INVOCATION_CWD)
+const REPO_ROOT = resolveTargetRoot(DISPATCH_INVOCATION_CWD)
 process.chdir(REPO_ROOT)
 
 export async function resolveTargetRepository(
