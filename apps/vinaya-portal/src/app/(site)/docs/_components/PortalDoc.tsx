@@ -1,4 +1,5 @@
-import { COMMANDS, CONFIG_REFERENCE } from '@attalabs/vinaya-sources'
+import { COMMANDS } from '@attalabs/vinaya-sources/commands'
+import { CONFIG_REFERENCE } from '@attalabs/vinaya-sources/config-reference'
 import type { ReactNode } from 'react'
 import {
   Breadcrumb,
