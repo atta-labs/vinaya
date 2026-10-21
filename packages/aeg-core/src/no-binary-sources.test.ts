@@ -41,6 +41,7 @@ const EXEMPT: Readonly<Record<string, string>> = {
   'apps/cli/tests/fixtures/atta-engine/atta-adapter-langgraph-0.0.1.tgz': 'packed test-only runtime tarball',
   'apps/cli/tests/fixtures/atta-engine/atta-agents-0.1.0.tgz': 'packed test-only runtime tarball',
   'apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz': 'packed test-only runtime tarball',
+  'apps/cli/tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.0.tgz': 'packed test-only runtime tarball',
   'apps/cli/tests/fixtures/atta-engine/atta-models-0.1.0.tgz': 'packed test-only runtime tarball',
   'apps/vinaya-portal/public/studio/backlog-light.png': 'portal Studio screenshot',
   'apps/vinaya-portal/public/studio/backlog.png': 'portal Studio screenshot',
