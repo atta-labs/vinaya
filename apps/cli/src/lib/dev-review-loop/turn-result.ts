@@ -206,9 +206,14 @@ export const PERMISSIBLE_RULING_DECISIONS = [
   'stop_task'
 ] as const
 
-/** The same identity the read gate and the receipts use: trimmed, no fragment, no trailing slash. */
+/**
+ * The same identity the read gate and the receipts use: trimmed, no fragment,
+ * no trailing slash, and no pair of backticks wrapping a repository path.
+ */
 export function normalizeSourceIdentity(source: string): string {
-  return source.trim().split('#')[0]!.replace(/\/+$/, '')
+  const trimmed = source.trim()
+  const unwrapped = /^`([^`]*)`$/.exec(trimmed)?.[1] ?? trimmed
+  return unwrapped.trim().split('#')[0]!.replace(/\/+$/, '')
 }
 
 /** Is this a C0 control character (newlines included) or DEL? */

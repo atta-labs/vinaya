@@ -288,7 +288,10 @@ export async function prepareSources(input: PrepareSourcesInput): Promise<Prepar
   const sources: PreparedSource[] = []
   const seen = new Set<string>()
   for (const entry of declared) {
-    const sourceId = documentationSourceId(entry.source)
+    const locator = classifyDocumentationSource(entry.source)
+    // A repository source's id is the path its location is read from, without
+    // the code-span backticks the Documentation list wraps it in.
+    const sourceId = locator.kind === 'repository' ? locator.path : documentationSourceId(entry.source)
     if (seen.has(sourceId)) continue
     seen.add(sourceId)
     const base: Base = {
@@ -297,7 +300,6 @@ export async function prepareSources(input: PrepareSourcesInput): Promise<Prepar
       governs: entry.mechanism,
       objectiveIds: entry.objectiveIds
     }
-    const locator = classifyDocumentationSource(entry.source)
     if (locator.kind === 'url') {
       sources.push(await preparePageSource(base, locator.url, input.storeDir, input.deps))
     } else if (locator.kind === 'repository') {

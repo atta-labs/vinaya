@@ -165,6 +165,16 @@ describe('judgeTurnOutput — the controller accepts a result (O3)', () => {
     expect(failuresOf(output(both), context(documentation([SOURCE, REPO_SOURCE])))).toEqual([])
   })
 
+  it('matches a backticked repository source against the plain id its receipt records', () => {
+    const REPO_SOURCE = 'apps/cli/specs/loop.md'
+    const wrapped = `\`${REPO_SOURCE}\``
+    const cited = { ...completed, sourceUses: [{ source: wrapped, use: 'followed the acceptance rule' }] }
+    const documentation = { sources: [wrapped], countedReads: [REPO_SOURCE] }
+    expect(failuresOf(output(cited), context({ documentation }))).toEqual([])
+    const plain = { ...completed, sourceUses: [{ source: REPO_SOURCE, use: 'followed the acceptance rule' }] }
+    expect(failuresOf(output(plain), context({ documentation })).join()).not.toContain('is not a required source')
+  })
+
   it('rejects a completed result whose only backing is a receipt a worker wrote, and accepts it behind the controller’s (O4)', () => {
     const root = tempDir()
     const hooks = join(root, 'hooks', 'developer')
