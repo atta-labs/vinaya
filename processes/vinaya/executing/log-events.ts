@@ -123,7 +123,7 @@ export function createVinayaLogProducers(config: Pick<LoopConfig, 'loopId' | 'ta
   return {
     legStarted: ({ resumed }) => {
       lastDecision = null
-      return resumed ? [loop({ event: 'resumed', round, by: 'driver' })] : []
+      return resumed ? [loop({ event: 'resumed', round, by: 'principal' })] : []
     },
     nodeStarted: ({ nodeId, attempt: started }) => {
       if (nodeId === DEVELOP_STEP) round = Math.max(1, started)

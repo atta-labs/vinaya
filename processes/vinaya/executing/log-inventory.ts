@@ -24,12 +24,13 @@ export type InventoryRow =
     })
   | (RowBase & {
       status: 'deferred'
-      /** The later work that produces it. */
-      producedBy: string
+      /** Why it is not produced yet, and what makes it producible. */
+      reason: string
     })
 
 const FROM_ASSESSMENT = 'the events the assess-round step recorded in its result'
-const PAUSE_AND_RESUME_TASK = 'the task that adds pause and resume to the Engine path'
+const HANDOFF_DEFERRAL =
+  'deferred: produced once an assess-round `pause` decision becomes an Engine pause awaiting a human handoff; today the binding throws on that decision'
 
 export const LOG_INVENTORY: readonly InventoryRow[] = [
   { family: 'dev_review_loop', events: ['loop_started'], status: 'produced', from: FROM_ASSESSMENT },
@@ -88,6 +89,6 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
   },
   { family: 'dev_review_loop', events: ['driver_heartbeat'], status: 'produced', from: 'each node start' },
   { family: 'dev_review_loop', events: ['driver_exited'], status: 'produced', from: 'the end of every leg' },
-  { family: 'handoff', events: ['raised', 'resolved'], status: 'deferred', producedBy: PAUSE_AND_RESUME_TASK },
+  { family: 'handoff', events: ['raised', 'resolved'], status: 'deferred', reason: HANDOFF_DEFERRAL },
   { family: 'role_attempt', events: ['attempted'], status: 'produced', from: 'each agent step completing or failing' }
 ]

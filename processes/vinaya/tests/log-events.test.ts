@@ -80,14 +80,15 @@ describe('the log inventory', () => {
     for (const row of dropped) expect(row.reason.length).toBeGreaterThan(20)
   })
 
-  test('the deferred rows are exactly handoff raised and resolved, produced by the pause-and-resume task', () => {
+  test('the deferred rows are exactly handoff raised and resolved, with the exact deferral reason', () => {
     const deferred = LOG_INVENTORY.flatMap((row) => (row.status === 'deferred' ? [row] : []))
     expect(deferred).toEqual([
       {
         family: 'handoff',
         events: ['raised', 'resolved'],
         status: 'deferred',
-        producedBy: 'the task that adds pause and resume to the Engine path'
+        reason:
+          'deferred: produced once an assess-round `pause` decision becomes an Engine pause awaiting a human handoff; today the binding throws on that decision'
       }
     ])
   })
@@ -230,6 +231,7 @@ function setup(scenario: Scenario = {}) {
     ])
   )
 
+  const startSlices: LogEventInput[][] = []
   const emitted: Array<{ event: LogEventInput; enveloped: Record<string, unknown> }> = []
   const translator: LogTranslator = createLogTranslator(createVinayaLogProducers(config), (event) =>
     emitted.push({ event, enveloped: { ...event, ...envelope(emitted.length) } })
@@ -245,9 +247,13 @@ function setup(scenario: Scenario = {}) {
     checkpointer: new MemorySaver(),
     workingDirectoryRoot: mkdtempSync(`${tmpdir()}/log-root-`),
     spawnFn,
-    onEvent: translator.onEvent
+    onEvent: (event) => {
+      const before = translator.produced.length
+      translator.onEvent(event)
+      if (event.type === 'node:start') startSlices.push(translator.produced.slice(before) as LogEventInput[])
+    }
   }
-  return { options, translator, emitted }
+  return { options, translator, emitted, startSlices }
 }
 
 async function runLeg(
@@ -398,6 +404,10 @@ describe('the Engine path writes the review loop events from the run', () => {
       { resumed: true }
     )
     expect(resumed.reason).toBe('completed')
+    const pausedEvent = run.emitted.find((entry) => entry.event.event === 'paused')?.event
+    expect(pausedEvent).toMatchObject({ reason: 'principal_item', reason_code: 'halt', round: 1 })
+    const resumedEvent = run.emitted.find((entry) => entry.event.event === 'resumed')?.event
+    expect(resumedEvent).toMatchObject({ by: 'principal', round: 1 })
     expect(expectValid(run)).toEqual([
       heartbeat, // prepare-run
       heartbeat, // reconcile-external-state
@@ -459,13 +469,13 @@ describe('the Engine path writes the review loop events from the run', () => {
   test('a heartbeat comes before every other event of the same node start', async () => {
     const run = setup({ assess: assessments([false, true]) })
     await runLeg(run.translator, () => startProcessRun(run.options), { resumed: false })
-    // Within a node's start the heartbeat is the first event; events that follow belong to a later completion.
+    expect(run.startSlices.length).toBeGreaterThan(0)
+    for (const slice of run.startSlices) {
+      expect(slice[0]?.event).toBe(heartbeat)
+      expect(slice.filter((event) => event.event === heartbeat)).toHaveLength(1)
+    }
     const names = run.emitted.map((entry) => String(entry.event.event))
-    const firstAfterStart = names.findIndex((name) => name !== heartbeat)
-    expect(names[0]).toBe(heartbeat)
-    expect(firstAfterStart).toBeGreaterThan(0)
     const assessStart = names.indexOf('loop_started')
-    expect(names[assessStart - 1]).toBe(heartbeat)
     expect(run.emitted[assessStart - 1]?.event.phase).toBe('assess-round')
   })
 
