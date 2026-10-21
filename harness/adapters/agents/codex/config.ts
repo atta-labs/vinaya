@@ -24,8 +24,20 @@ export function generateCodexConfig(grants: RoleGrants, paths: GeneratorPaths): 
     apply_patch: grants.tools.codex.apply_patch,
     update_plan: grants.tools.codex.update_plan,
     view_image: grants.tools.codex.view_image,
-    web_fetch: grants.tools.codex.web_fetch
+    web_fetch: grants.tools.codex.web_fetch,
+    spawn_agent: grants.tools.codex.spawn_agent,
+    send_input: grants.tools.codex.send_input,
+    resume_agent: grants.tools.codex.resume_agent,
+    wait_agent: grants.tools.codex.wait_agent,
+    close_agent: grants.tools.codex.close_agent
   }
+  const multiAgentEnabled = [
+    grants.tools.codex.spawn_agent,
+    grants.tools.codex.send_input,
+    grants.tools.codex.resume_agent,
+    grants.tools.codex.wait_agent,
+    grants.tools.codex.close_agent
+  ].some((decision) => decision === 'allow')
   const hookPolicy: HookPolicy = {
     tools: hookTools,
     shellAllow: grants.shell.allow,
@@ -40,6 +52,7 @@ export function generateCodexConfig(grants: RoleGrants, paths: GeneratorPaths): 
     '',
     '[features]',
     `shell_tool = ${shellEnabled}`,
+    `multi_agent = ${multiAgentEnabled}`,
     'hooks = true',
     '',
     '[tools]',
@@ -65,7 +78,7 @@ export function generateCodexConfig(grants: RoleGrants, paths: GeneratorPaths): 
     'default_tools_approval_mode = "approve"',
     '',
     '[[hooks.PreToolUse]]',
-    'matcher = "^(Bash|apply_patch|update_plan|view_image|web_fetch)$"',
+    'matcher = "^(Bash|apply_patch|update_plan|view_image|web_fetch|spawn_agent|send_input|resume_agent|wait_agent|close_agent)$"',
     '',
     '[[hooks.PreToolUse.hooks]]',
     'type = "command"',
@@ -97,11 +110,7 @@ export function generateCodexConfig(grants: RoleGrants, paths: GeneratorPaths): 
       ...(grants.vendor.codex.model === 'process-supplied' ? [] : ['--model', grants.vendor.codex.model]),
       '-'
     ],
-    env: {
-      CODEX_HOME: paths.generatedDir,
-      VINAYA_CURRENT_BRANCH: paths.currentBranch ?? '<current-branch>',
-      VINAYA_DEFAULT_BRANCH: paths.defaultBranch ?? 'main'
-    },
+    env: { CODEX_HOME: paths.generatedDir },
     files: {
       'config.toml': configToml,
       'rules/role.rules': execpolicy,

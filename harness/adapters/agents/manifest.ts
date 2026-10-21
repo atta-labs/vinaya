@@ -65,7 +65,12 @@ export const CODEX_BUILTINS = [
   'update_plan',
   'view_image',
   'web_search',
-  'web_fetch'
+  'web_fetch',
+  'spawn_agent',
+  'send_input',
+  'resume_agent',
+  'wait_agent',
+  'close_agent'
 ] as const
 
 export type ClaudeBuiltin = (typeof CLAUDE_BUILTINS)[number]

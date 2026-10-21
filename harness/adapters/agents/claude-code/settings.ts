@@ -48,7 +48,7 @@ export function generateClaudeSettings(grants: RoleGrants, paths: GeneratorPaths
     hooks: {
       PreToolUse: [
         {
-          matcher: 'Bash|Write|Edit|NotebookEdit',
+          matcher: 'Bash|Write|Edit|NotebookEdit|Agent|Task',
           hooks: [{ type: 'command', command: `node ${JSON.stringify(hookPath)}`, timeout: 30 }]
         }
       ]
@@ -75,10 +75,7 @@ export function generateClaudeSettings(grants: RoleGrants, paths: GeneratorPaths
       JSON.stringify(paths.outputSchema),
       ...(grants.vendor.claude.model === 'process-supplied' ? [] : ['--model', grants.vendor.claude.model])
     ],
-    env: {
-      VINAYA_CURRENT_BRANCH: paths.currentBranch ?? '<current-branch>',
-      VINAYA_DEFAULT_BRANCH: paths.defaultBranch ?? 'main'
-    },
+    env: {},
     files: {
       'role-settings.json': JSON.stringify(settings, null, 2) + '\n',
       'role-mcp.json': JSON.stringify(mcp, null, 2) + '\n',

@@ -60,8 +60,6 @@ for (const role of ROLE_NAMES) {
       outputSchemaPath,
       outputSchema,
       mcpCommand: process.env.VINAYA_DEV_BRIDGE ?? 'vinaya-dev-bridge',
-      currentBranch: 'main',
-      defaultBranch: 'main',
       variables: {
         WORKTREE: generatedDir,
         SCRATCH: join(generatedDir, 'scratch'),

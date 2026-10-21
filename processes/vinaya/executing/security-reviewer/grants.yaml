@@ -60,6 +60,11 @@ tools:
     view_image: allow
     web_search: deny
     web_fetch: allow
+    spawn_agent: deny
+    send_input: deny
+    resume_agent: deny
+    wait_agent: deny
+    close_agent: deny
   mcp: { vinaya_dev_tools: [read_source] }
 shell:
   allow: []

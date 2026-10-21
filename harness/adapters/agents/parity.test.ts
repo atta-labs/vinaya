@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { generateClaudeSettings } from './claude-code/settings'
 import { generateCodexConfig } from './codex/config'
-import { loadRoleGrants, mcpRule, ROLE_NAMES, type Decision } from './manifest'
-import type { GeneratedAgentConfig } from './policy'
+import { CLAUDE_BUILTINS, CODEX_BUILTINS, loadRoleGrants, mcpRule, ROLE_NAMES, type Decision } from './manifest'
+import { resolveGrantValues, type GeneratedAgentConfig } from './policy'
 
 const processRoot = join(import.meta.dir, '../../../processes/vinaya/executing')
 
@@ -57,7 +57,12 @@ function claudeEffective(config: GeneratedAgentConfig): Record<string, Decision>
     plan: allow.has('TodoWrite') ? 'allow' : 'deny',
     view_image: allow.has('Read') ? 'allow' : 'deny',
     web_fetch: allow.has('WebFetch') ? 'allow' : 'deny',
-    web_search: allow.has('WebSearch') && !deny.has('WebSearch') ? 'allow' : 'deny'
+    web_search: allow.has('WebSearch') && !deny.has('WebSearch') ? 'allow' : 'deny',
+    spawn_agent: allow.has('Agent') ? 'allow' : 'deny',
+    send_input: allow.has('SendMessage') ? 'allow' : 'deny',
+    resume_agent: allow.has('Agent') ? 'allow' : 'deny',
+    wait_agent: allow.has('TaskOutput') ? 'allow' : 'deny',
+    close_agent: allow.has('TaskStop') ? 'allow' : 'deny'
   }
 }
 
@@ -75,8 +80,54 @@ function codexEffective(config: GeneratedAgentConfig): Record<string, Decision> 
     plan: decision('update_plan'),
     view_image: /view_image = true/.test(toml) ? 'allow' : 'deny',
     web_fetch: decision('web_fetch'),
-    web_search: /web_search = "live"/.test(toml) && /web_search = true/.test(toml) ? 'allow' : 'deny'
+    web_search: /web_search = "live"/.test(toml) && /web_search = true/.test(toml) ? 'allow' : 'deny',
+    spawn_agent: decision('spawn_agent'),
+    send_input: decision('send_input'),
+    resume_agent: decision('resume_agent'),
+    wait_agent: decision('wait_agent'),
+    close_agent: decision('close_agent')
   }
+}
+
+function claudeBuiltins(config: GeneratedAgentConfig): Record<string, Decision> {
+  const settings = JSON.parse(generatedFile(config, 'role-settings.json'))
+  const allow = new Set<string>(settings.permissions.allow)
+  const deny = new Set<string>(settings.permissions.deny)
+  return Object.fromEntries(
+    CLAUDE_BUILTINS.map((name) => [
+      name,
+      name === 'Bash'
+        ? deny.has('Bash')
+          ? 'deny'
+          : [...allow].some((rule) => rule.startsWith('Bash('))
+            ? 'allow'
+            : 'deny'
+        : allow.has(name) && !deny.has(name)
+          ? 'allow'
+          : 'deny'
+    ])
+  )
+}
+
+function codexBuiltins(config: GeneratedAgentConfig): Record<string, Decision> {
+  const toml = generatedFile(config, 'config.toml')
+  const hook = embeddedHookPolicy(config).tools
+  const fromHook = (name: string): Decision => hook[name] ?? 'deny'
+  return Object.fromEntries(
+    CODEX_BUILTINS.map((name) => {
+      if (name === 'exec_command' || name === 'write_stdin')
+        return [name, /shell_tool = true/.test(toml) ? 'allow' : 'deny']
+      if (name === 'view_image') return [name, /view_image = true/.test(toml) ? 'allow' : 'deny']
+      if (name === 'web_search')
+        return [name, /web_search = "live"/.test(toml) && /web_search = true/.test(toml) ? 'allow' : 'deny']
+      if (
+        ['spawn_agent', 'send_input', 'resume_agent', 'wait_agent', 'close_agent'].includes(name) &&
+        !/multi_agent = true/.test(toml)
+      )
+        return [name, 'deny']
+      return [name, fromHook(name)]
+    })
+  )
 }
 
 describe('role-grant vendor parity', () => {
@@ -93,6 +144,8 @@ describe('role-grant vendor parity', () => {
       const claude = generateClaudeSettings(grants, paths)
       const codex = generateCodexConfig(grants, paths)
       expect(codexEffective(codex)).toEqual(claudeEffective(claude))
+      expect(claudeBuiltins(claude)).toEqual(grants.tools.claude)
+      expect(codexBuiltins(codex)).toEqual(grants.tools.codex)
 
       const claudeSettings = JSON.parse(generatedFile(claude, 'role-settings.json'))
       expect(claudeSettings.permissions.allow).not.toContain('Bash')
@@ -102,9 +155,21 @@ describe('role-grant vendor parity', () => {
       expect(generatedFile(codex, 'hooks/pre-tool-use.mjs')).toContain('permissionDecision')
       expect(codex.launch).toContain('--dangerously-bypass-hook-trust')
       expect(generatedFile(codex, 'config.toml')).toContain(
-        'matcher = "^(Bash|apply_patch|update_plan|view_image|web_fetch)$"'
+        'matcher = "^(Bash|apply_patch|update_plan|view_image|web_fetch|spawn_agent|send_input|resume_agent|wait_agent|close_agent)$"'
       )
       expect(generatedFile(codex, 'config.toml')).toContain(`sandbox_mode = "${grants.sandbox.codex}"`)
+      expect(claudeSettings.permissions.allow.filter((rule: string) => rule.startsWith('Bash('))).toEqual(
+        grants.shell.allow
+      )
+      expect(claudeSettings.permissions.deny.filter((rule: string) => rule.startsWith('Bash('))).toEqual(
+        [...(grants.tools.claude.Bash === 'deny' ? ['Bash'] : []), ...grants.shell.deny].filter((rule) =>
+          rule.startsWith('Bash(')
+        )
+      )
+      const policyLines = generatedFile(codex, 'rules/role.rules')
+        .split('\n')
+        .filter((line) => line.startsWith('prefix_rule('))
+      expect(policyLines).toHaveLength(grants.shell.allow.length + grants.shell.deny.length)
       for (const rule of grants.shell.allow)
         expect(generatedFile(codex, 'rules/role.rules')).toContain(
           `pattern = ${JSON.stringify(
@@ -123,14 +188,22 @@ describe('role-grant vendor parity', () => {
               .split(/\s+/)
           )}, decision = "forbidden"`
         )
-      for (const [server, tools] of Object.entries(grants.tools.mcp)) {
-        for (const tool of tools) {
-          expect(claudeSettings.permissions.allow).toContain(mcpRule(server, tool))
-          expect(generatedFile(codex, 'config.toml')).toContain(JSON.stringify(tool))
-        }
-      }
-      for (const domain of grants.network_domains)
-        expect(generatedFile(codex, 'config.toml')).toContain(`${JSON.stringify(domain)} = "allow"`)
+      const expectedMcp = Object.entries(grants.tools.mcp)
+        .flatMap(([server, tools]) => tools.map((tool) => mcpRule(server, tool)))
+        .sort()
+      expect(claudeSettings.permissions.allow.filter((rule: string) => rule.startsWith('mcp__')).sort()).toEqual(
+        expectedMcp
+      )
+      const enabledTools = /enabled_tools = (\[[^\n]+\])/.exec(generatedFile(codex, 'config.toml'))
+      expect(JSON.parse(enabledTools?.[1] ?? '[]').sort()).toEqual(Object.values(grants.tools.mcp).flat().sort())
+      const domains = [...generatedFile(codex, 'config.toml').matchAll(/^"([^"]+)" = "allow"$/gm)].map(
+        (match) => match[1]
+      )
+      expect(domains).toEqual(grants.network_domains)
+      const expectedRoots = resolveGrantValues(grants.writable_roots, paths.variables)
+      expect(claudeSettings.sandbox.filesystem.allowWrite).toEqual(expectedRoots)
+      const roots = /writable_roots = (\[[^\n]+\])/.exec(generatedFile(codex, 'config.toml'))
+      expect(JSON.parse(roots?.[1] ?? '[]')).toEqual(expectedRoots)
       expect(JSON.parse(generatedFile(claude, 'effective-capabilities.json'))).toEqual(claudeEffective(claude))
       expect(JSON.parse(generatedFile(codex, 'effective-capabilities.json'))).toEqual(codexEffective(codex))
     })
@@ -153,7 +226,7 @@ describe('role-grant vendor parity', () => {
     const grants = loadRoleGrants(join(processRoot, 'developer/grants.yaml'))
     const schema = JSON.parse(readFileSync(join(processRoot, 'developer/output.schema.json'), 'utf8'))
     const workspace = mkdtempSync(join(tmpdir(), 'vinaya-generated-hook-'))
-    const config = generateClaudeSettings(grants, {
+    const paths = {
       generatedDir: workspace,
       outputSchemaPath: 'output.schema.json',
       outputSchema: schema,
@@ -163,22 +236,81 @@ describe('role-grant vendor parity', () => {
         BUN_INSTALL_CACHE: '/bun',
         GIT_COMMON_DIR: '/git'
       }
-    })
-    const hook = join(workspace, 'pre-tool-use.mjs')
-    writeFileSync(hook, generatedFile(config, 'hooks/pre-tool-use.mjs'))
-    const invoke = (input: unknown) =>
-      Bun.spawnSync(['node', hook], {
-        cwd: workspace,
+    }
+    const claude = generateClaudeSettings(grants, paths)
+    const codex = generateCodexConfig(grants, paths)
+    const invoke = (config: GeneratedAgentConfig, input: unknown) => {
+      const hook = join(workspace, `${config.vendor}-pre-tool-use.mjs`)
+      writeFileSync(hook, generatedFile(config, 'hooks/pre-tool-use.mjs'))
+      return Bun.spawnSync(['node', hook], {
+        cwd: (input as { cwd?: string }).cwd ?? workspace,
         stdin: Buffer.from(JSON.stringify(input))
       }).stdout.toString()
-    expect(invoke({ tool_name: 'Bash', tool_input: { command: 'git push origin HEAD' } })).toContain(
+    }
+    expect(invoke(claude, { tool_name: 'Bash', tool_input: { command: 'git push origin HEAD' } })).toContain(
       '"permissionDecision":"deny"'
     )
-    expect(invoke({ tool_name: 'Bash', tool_input: { command: 'git status --short' } })).toBe('')
-    expect(invoke({ tool_name: 'Write', tool_input: { file_path: join(tmpdir(), 'outside') } })).toContain(
+    expect(
+      invoke(claude, { tool_name: 'Bash', tool_input: { command: 'git status --short', run_in_background: true } })
+    ).toContain('"permissionDecision":"deny"')
+    expect(invoke(claude, { tool_name: 'Agent', tool_input: { run_in_background: true } })).toContain(
       '"permissionDecision":"deny"'
     )
-    expect(invoke({ tool_name: 'Write', tool_input: { file_path: join(workspace, 'inside') } })).toBe('')
+    expect(invoke(claude, { tool_name: 'Bash', tool_input: { command: 'git commit -an -m probe' } })).toContain(
+      '"permissionDecision":"deny"'
+    )
+    expect(invoke(claude, { tool_name: 'Bash', tool_input: { command: 'git status --short' } })).toBe('')
+    expect(invoke(claude, { tool_name: 'Write', tool_input: { file_path: join(tmpdir(), 'outside') } })).toContain(
+      '"permissionDecision":"deny"'
+    )
+    expect(invoke(claude, { tool_name: 'Write', tool_input: { file_path: join(workspace, 'inside') } })).toBe('')
+
+    const insidePatch = `*** Begin Patch\n*** Add File: ${join(workspace, 'inside.txt')}\n+ok\n*** End Patch`
+    const outsidePatch = `*** Begin Patch\n*** Add File: ${join(tmpdir(), 'outside.txt')}\n+no\n*** End Patch`
+    expect(invoke(codex, { tool_name: 'apply_patch', tool_input: { command: insidePatch } })).toBe('')
+    expect(invoke(codex, { tool_name: 'apply_patch', tool_input: { command: outsidePatch } })).toContain(
+      '"permissionDecision":"deny"'
+    )
+
+    const outsideDir = mkdtempSync(join(tmpdir(), 'vinaya-hook-outside-'))
+    symlinkSync(outsideDir, join(workspace, 'escape-link'))
+    const symlinkPatch = `*** Begin Patch\n*** Add File: ${join(workspace, 'escape-link', 'escaped.txt')}\n+no\n*** End Patch`
+    expect(invoke(codex, { tool_name: 'apply_patch', tool_input: { command: symlinkPatch } })).toContain(
+      '"permissionDecision":"deny"'
+    )
+    expect(invoke(codex, { tool_name: 'send_input', tool_input: {} })).toContain('"permissionDecision":"deny"')
+    expect(invoke(codex, { tool_name: 'spawn_agent', tool_input: {} })).toBe('')
+
+    const reviewer = loadRoleGrants(join(processRoot, 'code-reviewer/grants.yaml'))
+    const reviewerConfig = generateCodexConfig(reviewer, paths)
+    for (const tool of ['spawn_agent', 'send_input', 'resume_agent', 'wait_agent', 'close_agent']) {
+      expect(invoke(reviewerConfig, { tool_name: tool, tool_input: {} })).toContain('"permissionDecision":"deny"')
+    }
+
+    const git = (...args: string[]) => Bun.spawnSync(['git', '-C', workspace, ...args])
+    expect(git('init', '-b', 'task').exitCode).toBe(0)
+    expect(git('config', 'user.email', 'probe@example.invalid').exitCode).toBe(0)
+    expect(git('config', 'user.name', 'Probe').exitCode).toBe(0)
+    writeFileSync(join(workspace, 'tracked'), 'x')
+    expect(git('add', 'tracked').exitCode).toBe(0)
+    expect(git('commit', '-m', 'initial').exitCode).toBe(0)
+    expect(git('branch', 'main').exitCode).toBe(0)
+    expect(git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main').exitCode).toBe(0)
+    expect(
+      invoke(claude, {
+        cwd: workspace,
+        tool_name: 'Bash',
+        tool_input: { command: 'git commit --allow-empty -m probe' }
+      })
+    ).toBe('')
+    expect(git('checkout', 'main').exitCode).toBe(0)
+    expect(
+      invoke(claude, {
+        cwd: workspace,
+        tool_name: 'Bash',
+        tool_input: { command: 'git commit --allow-empty -m probe' }
+      })
+    ).toContain('"permissionDecision":"deny"')
   })
 
   test('Claude receives schema JSON while Codex receives the schema path', () => {
