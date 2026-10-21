@@ -1,0 +1,93 @@
+{
+  "type": "object",
+  "properties": {
+    "reviewResult": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": { "type": "number", "const": 1 },
+            "role": { "type": "string", "const": "code-reviewer" },
+            "headSha": { "type": "string", "minLength": 1 },
+            "manifestDigest": { "type": "string", "minLength": 1 },
+            "summary": { "type": "string", "minLength": 1 },
+            "status": { "type": "string", "const": "completed" },
+            "findings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "severity": { "type": "string", "enum": ["BLOCKER", "MAJOR", "MINOR"] },
+                  "file": { "type": "string" },
+                  "line": {
+                    "anyOf": [{ "type": "integer", "minimum": 1, "maximum": 9007199254740991 }, { "type": "null" }]
+                  },
+                  "description": { "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] }
+                },
+                "required": ["severity", "file", "line", "description"],
+                "additionalProperties": false
+              }
+            },
+            "objectiveResults": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": { "type": "string", "minLength": 1 },
+                  "status": { "type": "string", "enum": ["MET", "NOT MET"] },
+                  "evidence": { "type": "string", "minLength": 1 }
+                },
+                "required": ["id", "status", "evidence"],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "role",
+            "headSha",
+            "manifestDigest",
+            "summary",
+            "status",
+            "findings",
+            "objectiveResults"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": { "type": "number", "const": 1 },
+            "role": { "type": "string", "const": "code-reviewer" },
+            "headSha": { "type": "string", "minLength": 1 },
+            "manifestDigest": { "type": "string", "minLength": 1 },
+            "summary": { "type": "string", "minLength": 1 },
+            "status": { "type": "string", "const": "blocked" },
+            "blocker": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "input_missing",
+                    "input_unreadable",
+                    "diff_unavailable",
+                    "tooling_unavailable",
+                    "scope_unclear"
+                  ]
+                },
+                "detail": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "detail"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["schemaVersion", "role", "headSha", "manifestDigest", "summary", "status", "blocker"],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "required": ["reviewResult"],
+  "additionalProperties": false
+}

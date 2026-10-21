@@ -1,0 +1,76 @@
+role: developer
+vendor:
+  claude: { model: process-supplied }
+  codex: { model: process-supplied }
+tools:
+  claude:
+    Agent: allow
+    Artifact: deny
+    AskUserQuestion: deny
+    Bash: allow
+    CronCreate: deny
+    CronDelete: deny
+    CronList: deny
+    Edit: allow
+    EndConversation: allow
+    EnterPlanMode: deny
+    EnterWorktree: allow
+    ExitPlanMode: deny
+    ExitWorktree: allow
+    Glob: allow
+    Grep: allow
+    KillShell: allow
+    ListAgents: deny
+    ListMcpResourcesTool: deny
+    LSP: allow
+    Monitor: allow
+    NotebookEdit: allow
+    PowerShell: deny
+    PushNotification: deny
+    Read: allow
+    ReadMcpResourceTool: deny
+    RemoteTrigger: deny
+    ReportFindings: deny
+    ScheduleWakeup: deny
+    SendFeedback: deny
+    SendMessage: deny
+    SendUserFile: deny
+    ShareOnboardingGuide: deny
+    Skill: allow
+    SubagentHandback: deny
+    Task: allow
+    TaskCreate: allow
+    TaskGet: allow
+    TaskList: allow
+    TaskOutput: allow
+    TaskStop: allow
+    TaskUpdate: allow
+    TodoWrite: allow
+    ToolSearch: allow
+    WaitForMcpServers: deny
+    WebFetch: allow
+    WebSearch: deny
+    Workflow: allow
+    Write: allow
+  codex:
+    exec_command: allow
+    write_stdin: allow
+    apply_patch: allow
+    update_plan: allow
+    view_image: allow
+    web_search: deny
+    web_fetch: allow
+    spawn_agent: allow
+    send_input: deny
+    resume_agent: allow
+    wait_agent: allow
+    close_agent: allow
+  mcp:
+    vinaya_dev_tools: [fetch_documentation, run_checks, publish_changes, open_pull_request, update_pull_request_body, refresh_evidence, read_pull_request]
+shell:
+  allow: ["Bash(git worktree add:*)", "Bash(git worktree list:*)", "Bash(git fetch:*)", "Bash(git pull:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)", "Bash(git add:*)", "Bash(git commit:*)", "Bash(git config:*)", "Bash(git branch:*)", "Bash(git checkout:*)", "Bash(git merge:*)", "Bash(git rebase:*)", "Bash(bun install:*)", "Bash(bun run:*)", "Bash(bun test:*)", "Bash(bun packages/aeg-core/bin/verify-dispatch.ts:*)", "Bash(bun packages/aeg-core/bin/verify-docs.ts:*)", "Bash(bun packages/aeg-core/bin/verify-task.ts:*)", "Bash(bun apps/cli/src/index.ts:*)"]
+  deny: &developer_denies ["Bash(git push:*)", "Bash(gh:*)", "Bash(git commit --no-verify*)", "Bash(git commit -n*)", "Bash(git stash*)", "Bash(git reset --hard*)", "Bash(rm -rf*)", "Bash(sudo*)", "Bash(security:*)", "Bash(launchctl:*)", "Bash(defaults:*)", "Bash(systemsetup:*)", "Bash(networksetup:*)", "Bash(pmset:*)", "Bash(dscl:*)", "Bash(crontab:*)", "Bash(chsh:*)", "Bash(git config --global:*)", "Bash(git config --system:*)", "Bash(sudo:*)"]
+writable_roots: ["${WORKTREE}", "${SCRATCH}", "${BUN_INSTALL_CACHE}", "${GIT_COMMON_DIR}"]
+network_domains: [github.com, api.github.com, raw.githubusercontent.com, codeload.github.com, objects.githubusercontent.com, registry.npmjs.org, api.anthropic.com]
+hooks: { background_shell: true, force_push: true, no_verify: true, default_branch_commit: true, write_scope: true }
+sandbox: { claude: enabled, codex: workspace-write }
