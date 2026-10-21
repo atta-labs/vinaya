@@ -151,9 +151,13 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       return (context) => {
         const assessment = assessRound(state, task.observe(context.results), task.clock)
         state = assessment.state
-        const { decision } = assessment
-        if (decision.type === 'pause') throw new Error(`The round paused for a human: ${decision.reason}`)
-        return { exitCode: decision.type === 'publish' ? 0 : 1, stdout: decision.type }
+        const { decision, events } = assessment
+        // The Log events the assessment produced travel in the step's result; the log producers read them back.
+        const stdout = JSON.stringify({ decision, events })
+        if (decision.type === 'pause') {
+          throw Object.assign(new Error(`The round paused for a human: ${decision.reason}`), { stdout })
+        }
+        return { exitCode: decision.type === 'publish' ? 0 : 1, stdout }
       }
     }
   },
