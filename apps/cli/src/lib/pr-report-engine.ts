@@ -683,10 +683,17 @@ export function defaultTestRunCache(): TestRunCache {
  * REAL zero-exit run — even one whose own stdout happens to be empty —
  * reaches the caller as a string.
  */
-async function gitOrNull(args: string[], cwd?: string): Promise<string | null> {
+const GIT_MAX_BUFFER = 16 * 1024 * 1024
+
+async function gitOrNull(args: string[], cwd?: string, trim = true): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync('git', args, { encoding: 'utf8', env: process.env, cwd })
-    return stdout.trim()
+    const { stdout } = await execFileAsync('git', args, {
+      encoding: 'utf8',
+      env: process.env,
+      cwd,
+      maxBuffer: GIT_MAX_BUFFER
+    })
+    return trim ? stdout.trim() : stdout
   } catch {
     return null
   }
@@ -701,18 +708,17 @@ async function gitOrNull(args: string[], cwd?: string): Promise<string | null> {
  * {@link gitOrNull}).
  *
  * The working-tree hash covers tracked changes (`git diff HEAD`), every
- * UNTRACKED file's own content (a status listing alone would miss a file
- * whose content changed while its path stayed the same), and — `--ignored`
- * (round-2 security review, MEDIUM) — every IGNORED path git's own default
- * (non-`matching`) listing names, with the same per-file content hash for
- * any ignored entry that is itself a regular file (closing the `.env`/single
- * generated-file case the finding named). A large ignored DIRECTORY (most
- * commonly `node_modules`) is deliberately NOT expanded file-by-file:
- * `--ignored=matching` would force git to walk and list every file inside
- * it, and hashing that tree's full content on every cache lookup would cost
- * more than O3 exists to save. Its own path stays in the hash (from the
- * status line, and — via `MISSING`, since `readFileSync` on a directory
- * throws — from the per-entry loop below), so the directory's mere
+ * UNTRACKED file's own content (from `git status --porcelain=v1 -uall -z`),
+ * and every IGNORED entry named by
+ * `git ls-files --others --ignored --exclude-standard --directory -z`, with
+ * the same per-file content hash for any ignored entry that is itself a
+ * regular file (closing the `.env`/single generated-file case the finding
+ * named). `--directory` collapses a large ignored DIRECTORY (most commonly
+ * `node_modules`) to one trailing-slash path instead of expanding it
+ * file-by-file, because hashing that tree's full content on every cache
+ * lookup would cost more than O3 exists to save. Its own path stays in the
+ * hash (and — via `MISSING`, since `readFileSync` on a directory throws —
+ * in the per-entry loop below), so the directory's mere
  * presence/absence still changes the key; a content change to a file NESTED
  * inside it does not. A known, accepted gap, not a silent one.
  *
@@ -724,7 +730,9 @@ async function gitOrNull(args: string[], cwd?: string): Promise<string | null> {
  * contribution, meaning a real content edit to it never invalidates a
  * cached result. `-z` disables that quoting entirely and NUL-terminates
  * each record instead of newline-terminating it, so every path below is the
- * exact, literal one `readFileSync` needs.
+ * exact, literal one `readFileSync` needs. Every git read uses an explicit
+ * 16 MiB output buffer so a tracked diff beyond Node's 1 MiB default still
+ * resolves; any command failure or larger overflow still returns `null`.
  */
 const NUL = String.fromCharCode(0)
 
@@ -759,24 +767,32 @@ function hashField(hash: ReturnType<typeof createHash>, value: string | Buffer):
  * text itself — split out so the two can share one git/filesystem read
  * without either owning a second, divergent copy of it: the per-file reuse
  * key must hash the identical state the exact-command key already does,
- * hostname/head/status/diff/uncommitted-file-contents alike, differing only
- * in whether the command text is one more field in the same sequence.
+ * hostname/head/untracked-list/ignored-list/diff/uncommitted-file-contents
+ * alike, differing only in whether the command text is one more field in the
+ * same sequence.
  * `null` propagates the same "could not resolve, don't know" refusal
  * {@link gitOrNull} already establishes for its own callers.
  */
 async function collectStateFields(cwd?: string): Promise<(string | Buffer)[] | null> {
   const head = await gitOrNull(['rev-parse', 'HEAD'], cwd)
   if (!head) return null
-  const status = await gitOrNull(['status', '--porcelain=v1', '-uall', '--ignored', '-z'], cwd)
+  const status = await gitOrNull(['status', '--porcelain=v1', '-uall', '-z'], cwd)
   if (status === null) return null
+  const ignored = await gitOrNull(
+    ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'],
+    cwd,
+    false
+  )
+  if (ignored === null) return null
   const diff = await gitOrNull(['diff', 'HEAD'], cwd)
   if (diff === null) return null
-  const fields: (string | Buffer)[] = [hostname(), head, status, diff]
-  const uncommitted = status
+  const fields: (string | Buffer)[] = [hostname(), head, status, ignored, diff]
+  const untracked = status
     .split(NUL)
-    .filter((entry) => entry.startsWith('?? ') || entry.startsWith('!! '))
+    .filter((entry) => entry.startsWith('?? '))
     .map((entry) => entry.slice(3))
-    .sort()
+  const ignoredPaths = ignored.split(NUL).filter(Boolean)
+  const uncommitted = [...untracked, ...ignoredPaths].sort()
   const base = cwd ?? process.cwd()
   for (const f of uncommitted) {
     fields.push(f)
