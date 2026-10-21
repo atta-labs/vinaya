@@ -247,22 +247,33 @@ describe('role-grant vendor parity', () => {
         stdin: Buffer.from(JSON.stringify(input))
       }).stdout.toString()
     }
-    expect(invoke(claude, { tool_name: 'Bash', tool_input: { command: 'git push origin HEAD' } })).toContain(
-      '"permissionDecision":"deny"'
-    )
-    expect(
-      invoke(claude, { tool_name: 'Bash', tool_input: { command: 'git status --short', run_in_background: true } })
-    ).toContain('"permissionDecision":"deny"')
+    const shellGuardCases = [
+      { name: 'background shell', input: { tool_name: 'Bash', tool_input: { command: 'sleep 30 &' } } },
+      { name: 'force push', input: { tool_name: 'Bash', tool_input: { command: 'git push origin --force HEAD' } } },
+      ...['--no-verify', '"--no-verify"', "'--no-verify'", '-n', '"-n"', "'-n'"].map((flag) => ({
+        name: `verification bypass ${flag}`,
+        input: { tool_name: 'Bash', tool_input: { command: `git commit ${flag} --allow-empty -m probe` } }
+      })),
+      {
+        name: 'write outside scope',
+        input: { tool_name: 'Write', tool_input: { file_path: join(tmpdir(), 'outside') } },
+        codexInput: {
+          tool_name: 'apply_patch',
+          tool_input: { command: `*** Begin Patch\n*** Add File: ${join(tmpdir(), 'outside.txt')}\n+no\n*** End Patch` }
+        }
+      }
+    ]
+    for (const guard of shellGuardCases) {
+      expect(invoke(claude, guard.input), `Claude should deny ${guard.name}`).toContain('"permissionDecision":"deny"')
+      expect(invoke(codex, guard.codexInput ?? guard.input), `Codex should deny ${guard.name}`).toContain(
+        '"permissionDecision":"deny"'
+      )
+    }
     expect(invoke(claude, { tool_name: 'Agent', tool_input: { run_in_background: true } })).toContain(
       '"permissionDecision":"deny"'
     )
-    expect(invoke(claude, { tool_name: 'Bash', tool_input: { command: 'git commit -an -m probe' } })).toContain(
-      '"permissionDecision":"deny"'
-    )
     expect(invoke(claude, { tool_name: 'Bash', tool_input: { command: 'git status --short' } })).toBe('')
-    expect(invoke(claude, { tool_name: 'Write', tool_input: { file_path: join(tmpdir(), 'outside') } })).toContain(
-      '"permissionDecision":"deny"'
-    )
+    expect(invoke(codex, { tool_name: 'Bash', tool_input: { command: 'git status --short' } })).toBe('')
     expect(invoke(claude, { tool_name: 'Write', tool_input: { file_path: join(workspace, 'inside') } })).toBe('')
 
     const insidePatch = `*** Begin Patch\n*** Add File: ${join(workspace, 'inside.txt')}\n+ok\n*** End Patch`
@@ -296,21 +307,23 @@ describe('role-grant vendor parity', () => {
     expect(git('commit', '-m', 'initial').exitCode).toBe(0)
     expect(git('branch', 'main').exitCode).toBe(0)
     expect(git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main').exitCode).toBe(0)
-    expect(
-      invoke(claude, {
-        cwd: workspace,
-        tool_name: 'Bash',
-        tool_input: { command: 'git commit --allow-empty -m probe' }
-      })
-    ).toBe('')
+    for (const config of [claude, codex])
+      expect(
+        invoke(config, {
+          cwd: workspace,
+          tool_name: 'Bash',
+          tool_input: { command: 'git commit --allow-empty -m probe' }
+        })
+      ).toBe('')
     expect(git('checkout', 'main').exitCode).toBe(0)
-    expect(
-      invoke(claude, {
-        cwd: workspace,
-        tool_name: 'Bash',
-        tool_input: { command: 'git commit --allow-empty -m probe' }
-      })
-    ).toContain('"permissionDecision":"deny"')
+    for (const config of [claude, codex])
+      expect(
+        invoke(config, {
+          cwd: workspace,
+          tool_name: 'Bash',
+          tool_input: { command: 'git commit --allow-empty -m probe' }
+        })
+      ).toContain('"permissionDecision":"deny"')
   })
 
   test('Claude receives schema JSON while Codex receives the schema path', () => {

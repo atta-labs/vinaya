@@ -69,7 +69,33 @@ const starts = (line, prefix) => {
   return prefix.every((word, index) => words[index] === word)
 }
 const statements = (line) => line.split(/(?:&&|\\|\\||;|\\n)/).map((part) => part.trim()).filter(Boolean)
-const words = (line) => line.trim().split(/\\s+/).filter(Boolean)
+const words = (line) => {
+  const argv = []
+  let word = ''
+  let quote = null
+  let escaped = false
+  let started = false
+  for (const char of line.trim()) {
+    if (escaped) { word += char; escaped = false; started = true; continue }
+    if (char === '\\\\' && quote !== "'") { escaped = true; started = true; continue }
+    if (quote) {
+      if (char === quote) quote = null
+      else word += char
+      started = true
+      continue
+    }
+    if (char === "'" || char === '"') { quote = char; started = true; continue }
+    if (/\\s/.test(char)) {
+      if (started) { argv.push(word); word = ''; started = false }
+      continue
+    }
+    word += char
+    started = true
+  }
+  if (escaped) word += '\\\\'
+  if (started) argv.push(word)
+  return argv
+}
 const commandBackgrounds = (line) => {
   const bare = line.replace(/'[^']*'/g, '').replace(/"[^"]*"/g, '').trimEnd()
   return /(^|[^&])&$/.test(bare) || /(^|[;&|]|\\s)nohup\\s/.test(bare) || /\\bdisown\\b/.test(bare) || /(^|[;&|]|\\s)setsid\\s/.test(bare)
