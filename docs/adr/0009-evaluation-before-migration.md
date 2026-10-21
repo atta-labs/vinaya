@@ -1,6 +1,6 @@
 # 0009. Evaluation before migration
 
-**Status:** Accepted
+**Status:** Superseded by [0013](0013-engine-migration-first-no-baseline-run.md)
 
 **Date:** 2026-10-12
 
