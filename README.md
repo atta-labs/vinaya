@@ -122,8 +122,12 @@ vinaya/
 │   ├── sources/              # State and doctrine sources
 │   └── typescript-config/    # Shared TypeScript configs
 ├── harness/                  # The generic harness (@attalabs/harness); never imports processes/
+│   └── dev-process/
+│       ├── contract/         # process.schema.json — the contract every process.yaml meets
+│       └── loader/           # load-process.ts — validates a process folder and pins its digest
 ├── processes/
 │   └── vinaya/               # The Vinaya process (@attalabs/process-vinaya)
+│       └── process.yaml      # Process identity: id, version, Flow path, role folders
 └── aeg-root/                 # AEG doctrine
 ```
 
