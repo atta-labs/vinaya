@@ -1,6 +1,7 @@
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
  * Regression coverage for aeg-governance-hardening task 21 (#351) —
@@ -40,7 +41,10 @@ vi.mock('node:child_process', async (importOriginal) => {
   return {
     ...actual,
     spawnSync: (...args: unknown[]) => spawnSyncMock(...args),
-    execFileSync: (...args: unknown[]) => execFileSyncMock(...args),
+    execFileSync: (...args: Parameters<typeof actual.execFileSync>) =>
+      args[0] === 'git' && Array.isArray(args[1]) && args[1].includes('--show-toplevel')
+        ? actual.execFileSync(...args)
+        : execFileSyncMock(...args),
     execFile
   }
 })
@@ -50,14 +54,26 @@ const {
   currentFindingCounts,
   fetchBacklogIssuePrsBatch,
   resolveDependsOn,
-  resolvePremiseBriefText
+  resolvePremiseBriefText,
+  resolveTargetRepository,
+  resolveTargetRoot
 } = await import('./verify-dispatch')
 const { checkDispatchReadiness } = await import('../src/dispatch-gate')
+const { resetResolveRepoCache } = await import('../../aeg-forge-state/src/resolve-repo')
+const actualChildProcess = await vi.importActual<typeof import('node:child_process')>('node:child_process')
+
+const tempDirs: string[] = []
 
 beforeEach(() => {
   spawnSyncMock.mockReset()
   execFileSyncMock.mockReset()
   execFileAsyncMock.mockReset()
+  resetResolveRepoCache()
+})
+
+afterEach(() => {
+  delete process.env.AEG_REPO
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
 function successResult(stdout: string, status = 0): { stdout: string; stderr: string; status: number } {
@@ -73,6 +89,63 @@ function spawnFailureResult(): { error: Error; stdout: null; stderr: null; statu
   // captured non-zero exit. Must not be confused with "0 findings."
   return { error: new Error('spawn bun ENOENT'), stdout: null, stderr: null, status: null }
 }
+
+function temporaryRepository(origin = 'git@github.com:acme/other-repo.git'): string {
+  const dir = mkdtempSync(join(tmpdir(), 'verify-dispatch-'))
+  tempDirs.push(dir)
+  actualChildProcess.execFileSync('git', ['init', '--quiet', dir])
+  actualChildProcess.execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', origin])
+  return dir
+}
+
+describe('target repository resolution', () => {
+  it('resolves another checkout root and its origin repository', async () => {
+    const target = temporaryRepository()
+
+    expect(resolveTargetRoot(target, actualChildProcess.execFileSync)).toBe(target)
+    expect(await resolveTargetRepository(target, actualChildProcess.execFileSync)).toEqual({
+      owner: 'acme',
+      repo: 'other-repo'
+    })
+  })
+
+  it("keeps the script repository's root and origin when invoked inside it", async () => {
+    const expectedRoot = actualChildProcess
+      .execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' })
+      .trim()
+
+    expect(resolveTargetRoot(process.cwd(), actualChildProcess.execFileSync)).toBe(expectedRoot)
+    expect(await resolveTargetRepository(expectedRoot, actualChildProcess.execFileSync)).toEqual({
+      owner: 'atta-labs',
+      repo: 'vinaya'
+    })
+  })
+
+  it('preserves AEG_REPO as the highest-priority override', async () => {
+    const target = temporaryRepository()
+    process.env.AEG_REPO = 'override/project'
+
+    expect(
+      await resolveTargetRepository(target, (() => {
+        throw new Error('origin lookup must not run when AEG_REPO is valid')
+      }) as typeof actualChildProcess.execFileSync)
+    ).toEqual({ owner: 'override', repo: 'project' })
+  })
+
+  it('runs baseline sibling tools with the target checkout as cwd', () => {
+    const target = temporaryRepository()
+    spawnSyncMock.mockImplementation((_cmd: string, args: string[], options: { cwd?: string }) => {
+      expect(options.cwd).toBe(target)
+      if (args.some((a) => a.endsWith('/bin/verify-docs.ts'))) return successResult('')
+      return successResult(JSON.stringify({ summary: { failed: 0 } }))
+    })
+
+    expect(currentFindingCounts(target)).toEqual([
+      { tool: 'verify-docs-full', findingCount: 0, unavailable: false },
+      { tool: 'verify-coherence', findingCount: 0, unavailable: false }
+    ])
+  })
+})
 
 describe('currentFindingCounts', () => {
   it('(a) reports 0 when both tools exit 0 with no findings', () => {

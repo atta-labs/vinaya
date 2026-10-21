@@ -20,7 +20,8 @@
  *   bun packages/aeg-core/bin/verify-coherence.ts --closes-n        # Closes #N gate (CI — reads BRANCH + PR_BODY env)
  *   GITHUB_TOKEN='' bun packages/aeg-core/bin/verify-coherence.ts   # test no-token path
  *
- * CWD-independent by design: chdir's to the repo root immediately below, since
+ * Target-repository-relative by design: resolves the caller's Git root and
+ * chdir's there immediately below, since
  * this script is also spawned as a subprocess (apps/vinaya/web's
  * /api/coherence route) without an explicit cwd — every relative path in this
  * file (DOC_OWNERS_PATH, aeg-root/, etc.) must resolve correctly regardless of
@@ -74,8 +75,21 @@ import {
 import type { CheckResult, ForgeFacts, TrancheFile, TaskEntry } from '../src/index'
 import { readConfigPrincipals } from '../src/principals-config'
 
-const REPO_ROOT = join(import.meta.dirname, '../../..')
+const INVOCATION_CWD = process.cwd()
+const REPO_ROOT = execFileSync('git', ['-C', INVOCATION_CWD, 'rev-parse', '--show-toplevel'], {
+  encoding: 'utf8',
+  stdio: ['ignore', 'pipe', 'ignore']
+}).trim()
 process.chdir(REPO_ROOT)
+
+function resolveTargetRepository(): ReturnType<typeof resolveRepo> {
+  return resolveRepo(async () => ({
+    stdout: execFileSync('git', ['-C', REPO_ROOT, 'remote', 'get-url', 'origin'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+  }))
+}
 
 /**
  * The registry's project names — the authority R1's project-registry half
@@ -455,7 +469,7 @@ export async function loadTrancheSweep(
   baseRef = 'origin/main'
 ): Promise<TrancheSweep> {
   gitFetchMainQuiet()
-  const repo = await resolveRepo()
+  const repo = await resolveTargetRepository()
 
   // The Milestone index is the sweep's enumeration authority, so its failure
   // must not be fatal by default: the pre-refactor loader reached the forge
@@ -712,7 +726,7 @@ export async function runCoherenceChecks(
 
   // ---------- forge-dependent checks ----------
 
-  const repo = await resolveRepo()
+  const repo = await resolveTargetRepository()
   const token = await resolveGithubToken()
 
   if (!token) {
@@ -1079,7 +1093,7 @@ if (isEntryPoint(import.meta.url, 'verify-coherence')) {
     // loop — see `fetchTaskIssueRefs`'s own doc comment). A non-task branch
     // (no `repo` resolvable, or the forge unreachable) still runs the
     // forward direction below; the reverse check simply has nothing to flag.
-    const repo = await resolveRepo()
+    const repo = await resolveTargetRepository()
     const taskIssueRefs = repo
       ? await fetchTaskIssueRefs(repo.owner, repo.repo, [...extractClosesReferences(prBody)])
       : undefined

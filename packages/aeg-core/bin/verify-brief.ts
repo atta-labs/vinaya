@@ -91,7 +91,7 @@ function readManifest(dir: string): PackageManifest | null {
  * — the SAME `buildConsumersOf` `apps/cli`'s `check-brief-shape.ts` wires for
  * the CI entry point, so a brief that passes here at authoring time cannot
  * be refused for a different reason once dispatched. Reads relative to
- * `REPO_ROOT` (this script has already `chdir`'d there by the time this
+ * `REPO_ROOT` (this script has already `chdir`'d to the caller's Git root when this
  * runs).
  */
 function buildConsumersOfLocal(): (pkg: string) => string[] {
@@ -100,10 +100,13 @@ function buildConsumersOfLocal(): (pkg: string) => string[] {
   return buildConsumersOf(workspaces, listDirs, readManifest)
 }
 
-const REPO_ROOT = join(import.meta.dir, '../../..')
 // Captured BEFORE the chdir below: a relative `--body-file` path is relative to
 // where the author ran the command, not to the repo root this script moves to.
 const INVOCATION_CWD = process.cwd()
+const REPO_ROOT = execFileSync('git', ['-C', INVOCATION_CWD, 'rev-parse', '--show-toplevel'], {
+  encoding: 'utf8',
+  stdio: ['ignore', 'pipe', 'ignore']
+}).trim()
 process.chdir(REPO_ROOT)
 
 const TASK_BRANCH_PATTERN = /^task\/[^/]+\/[^/]+$/

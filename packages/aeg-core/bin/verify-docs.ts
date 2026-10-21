@@ -61,7 +61,8 @@
  * Escape hatch (state-machine.md Section 12): label `vinaya/override:docs` on the PR, or set
  * env OVERRIDE_DOCS=1, skips the gate. Visible in the check log.
  *
- * CWD-independent by design: chdir's to the repo root immediately below. Every
+ * Target-repository-relative by design: resolves the caller's Git root and
+ * chdir's there immediately below. Every
  * relative path here (DOC_OWNERS_PATH, git diff/ls-files, readdirSync walks)
  * must resolve correctly regardless of the invoking process's own working
  * directory — this script is a sibling of verify-coherence.ts, which is
@@ -104,7 +105,11 @@ import {
 } from '../src/index'
 import { readConfigPrincipals } from '../src/principals-config'
 
-const REPO_ROOT = join(import.meta.dir, '../../..')
+const INVOCATION_CWD = process.cwd()
+const REPO_ROOT = execFileSync('git', ['-C', INVOCATION_CWD, 'rev-parse', '--show-toplevel'], {
+  encoding: 'utf8',
+  stdio: ['ignore', 'pipe', 'ignore']
+}).trim()
 process.chdir(REPO_ROOT)
 
 const args = process.argv.slice(2)
