@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -102,7 +102,7 @@ describe('target repository resolution', () => {
   it('resolves another checkout root and its origin repository', async () => {
     const target = temporaryRepository()
 
-    expect(resolveTargetRoot(target, actualChildProcess.execFileSync)).toBe(target)
+    expect(resolveTargetRoot(target, actualChildProcess.execFileSync)).toBe(realpathSync(target))
     expect(await resolveTargetRepository(target, actualChildProcess.execFileSync)).toEqual({
       owner: 'acme',
       repo: 'other-repo'
