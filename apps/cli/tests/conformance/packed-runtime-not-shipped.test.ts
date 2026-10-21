@@ -100,7 +100,7 @@ describe('packed Atta fixtures remain development-only', () => {
       .filter((path) => attaImports(readFileSync(path, 'utf8'), path).length > 0)
       .map((path) => relative(CLI, path))
 
-    expect(vendored.length).toBe(4)
+    expect(vendored.length).toBe(5)
     expect(publishedOffenders(CLI, manifest.files, vendoredDigests)).toEqual([])
     expect(Object.keys(manifest.dependencies).filter((name) => name.startsWith('@atta/'))).toEqual([])
     expect(
@@ -108,7 +108,7 @@ describe('packed Atta fixtures remain development-only', () => {
         .filter(([name, specifier]) => name.startsWith('@atta/') && specifier.startsWith(`file:${FIXTURES}/`))
         .map(([name]) => name)
         .sort()
-    ).toEqual(['@atta/adapter-langgraph', '@atta/agents', '@atta/engine', '@atta/models'])
+    ).toEqual(['@atta/adapter-langgraph', '@atta/agents', '@atta/engine', '@atta/executor-agent-spawn', '@atta/models'])
     expect(sourceImports).toEqual([])
   })
 

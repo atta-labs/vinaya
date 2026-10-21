@@ -13,7 +13,7 @@
     },
     "apps/cli": {
       "name": "@attalabs/vinaya",
-      "version": "0.39.0",
+      "version": "0.40.0",
       "bin": {
         "vinaya": "./dist/index.js",
         "vinaya-select-tests": "./dist/lib/pre-push-select-tests.js",
@@ -29,6 +29,7 @@
         "@atta/adapter-langgraph": "file:tests/fixtures/atta-engine/atta-adapter-langgraph-0.0.1.tgz",
         "@atta/agents": "file:tests/fixtures/atta-engine/atta-agents-0.1.0.tgz",
         "@atta/engine": "file:tests/fixtures/atta-engine/atta-engine-0.0.1.tgz",
+        "@atta/executor-agent-spawn": "file:tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.0.tgz",
         "@atta/models": "file:tests/fixtures/atta-engine/atta-models-0.1.0.tgz",
         "@atta/typescript-config": "workspace:*",
         "@attalabs/aeg-core": "workspace:*",
@@ -98,10 +99,10 @@
     },
     "packages/aeg-core": {
       "name": "@attalabs/aeg-core",
-      "version": "0.39.0",
+      "version": "0.40.0",
       "dependencies": {
-        "@attalabs/aeg-forge-state": "0.39.0",
-        "@attalabs/aeg-types": "0.39.0",
+        "@attalabs/aeg-forge-state": "0.40.0",
+        "@attalabs/aeg-types": "0.40.0",
         "gray-matter": "^4.0.3",
         "zod": "3.25.76",
       },
@@ -113,9 +114,9 @@
     },
     "packages/aeg-forge-state": {
       "name": "@attalabs/aeg-forge-state",
-      "version": "0.39.0",
+      "version": "0.40.0",
       "dependencies": {
-        "@attalabs/aeg-types": "0.39.0",
+        "@attalabs/aeg-types": "0.40.0",
         "@octokit/graphql": "^8.1.1",
       },
       "devDependencies": {
@@ -126,7 +127,7 @@
     },
     "packages/aeg-types": {
       "name": "@attalabs/aeg-types",
-      "version": "0.39.0",
+      "version": "0.40.0",
       "devDependencies": {
         "@atta/typescript-config": "workspace:*",
         "typescript": "^5.7.0",
@@ -134,11 +135,11 @@
     },
     "packages/sources": {
       "name": "@attalabs/vinaya-sources",
-      "version": "0.39.0",
+      "version": "0.40.0",
       "dependencies": {
-        "@attalabs/aeg-core": "0.39.0",
-        "@attalabs/aeg-forge-state": "0.39.0",
-        "@attalabs/aeg-types": "0.39.0",
+        "@attalabs/aeg-core": "0.40.0",
+        "@attalabs/aeg-forge-state": "0.40.0",
+        "@attalabs/aeg-types": "0.40.0",
         "zod": "3.25.76",
       },
       "devDependencies": {
@@ -205,6 +206,8 @@
     "@atta/agents": ["@atta/agents@apps/cli/tests/fixtures/atta-engine/atta-agents-0.1.0.tgz", {}, "sha512-WAnjkaNCBYFnwR2WfgHtpGVIeqtOorNzeui5VAHic/4Yps0WcQLLc2A+BSkttab1kq3W95GOcCEGX6lop6T33g=="],
 
     "@atta/engine": ["@atta/engine@apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz", { "dependencies": { "@atta/agents": "0.1.0", "js-yaml": "^4.1.1", "zod": "^4.3.6" } }, "sha512-U1ik7L1RohPL8W9P5x9pwHlQFA1lEi2ljfRi7gcj7pa+xlQscQEn20qEm72GeY2s4NbrZ3gmdsepDMU4IDAluA=="],
+
+    "@atta/executor-agent-spawn": ["@atta/executor-agent-spawn@tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.0.tgz", { "dependencies": { "@atta/engine": "0.0.1", "@langchain/langgraph": "^0.2.0", "handlebars": "^4.7.8" } }, "sha512-irirAabM0h9EnZyjc79Cchp5sh65fMHVSXH1wa/LEbobJT99lUcoP5MIqzJZSPSwREE5ziQRIeA1JYfz/TgAgg=="],
 
     "@atta/models": ["@atta/models@apps/cli/tests/fixtures/atta-engine/atta-models-0.1.0.tgz", { "dependencies": { "@ai-sdk/anthropic": "^3.0.64", "@ai-sdk/google": "^3.0.60", "@ai-sdk/groq": "^3.0.35", "@ai-sdk/openai": "^3.0.53", "@openrouter/ai-sdk-provider": "^2.5.0", "ai": "^6.0.140", "ollama-ai-provider-v2": "^1.5.0", "server-only": "^0.0.1" }, "peerDependencies": { "next": "^16.0.0", "react": "^19.0.0" } }, "sha512-AUVJeY17KdHusoweJ7+zvaDTVHH51vRMtgtNOOtkQQI9ibMeD0qrAXEcvkRYRLHKQXglYPfmcEJfWMNyYd6eVg=="],
 
