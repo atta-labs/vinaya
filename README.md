@@ -121,6 +121,9 @@ vinaya/
 │   ├── aeg-types/            # Shared types
 │   ├── sources/              # State and doctrine sources
 │   └── typescript-config/    # Shared TypeScript configs
+├── harness/                  # The generic harness (@attalabs/harness); never imports processes/
+├── processes/
+│   └── vinaya/               # The Vinaya process (@attalabs/process-vinaya)
 └── aeg-root/                 # AEG doctrine
 ```
 

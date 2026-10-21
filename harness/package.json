@@ -1,0 +1,15 @@
+{
+  "name": "@attalabs/harness",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --timeout=30000",
+    "clean": "rm -rf dist .turbo"
+  },
+  "devDependencies": {
+    "@atta/typescript-config": "workspace:*",
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  }
+}

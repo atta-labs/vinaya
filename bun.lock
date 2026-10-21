@@ -97,6 +97,15 @@
         "typescript": "^5.7.0",
       },
     },
+    "harness": {
+      "name": "@attalabs/harness",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@atta/typescript-config": "workspace:*",
+        "@types/bun": "latest",
+        "typescript": "^5.7.0",
+      },
+    },
     "packages/aeg-core": {
       "name": "@attalabs/aeg-core",
       "version": "0.40.0",
@@ -151,6 +160,15 @@
     "packages/typescript-config": {
       "name": "@atta/typescript-config",
       "version": "0.0.0",
+    },
+    "processes/vinaya": {
+      "name": "@attalabs/process-vinaya",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@atta/typescript-config": "workspace:*",
+        "@types/bun": "latest",
+        "typescript": "^5.7.0",
+      },
     },
   },
   "overrides": {
@@ -219,7 +237,11 @@
 
     "@attalabs/aeg-types": ["@attalabs/aeg-types@workspace:packages/aeg-types"],
 
+    "@attalabs/harness": ["@attalabs/harness@workspace:harness"],
+
     "@attalabs/log-server": ["@attalabs/log-server@workspace:apps/log-server"],
+
+    "@attalabs/process-vinaya": ["@attalabs/process-vinaya@workspace:processes/vinaya"],
 
     "@attalabs/vinaya": ["@attalabs/vinaya@workspace:apps/cli"],
 
