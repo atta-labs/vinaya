@@ -314,6 +314,53 @@ describe('role-grant vendor parity', () => {
     }
   }, 60_000)
 
+  test('developer boundary: no forge credential, git push and gh denied on both vendors', () => {
+    const grants = loadRoleGrants(join(processRoot, 'developer/grants.yaml'))
+    const outputSchema = JSON.parse(readFileSync(join(processRoot, 'developer/output.schema.json'), 'utf8'))
+    const workspace = mkdtempSync(join(tmpdir(), 'vinaya-boundary-'))
+    const paths = {
+      generatedDir: workspace,
+      outputSchemaPath: 'output.schema.json',
+      outputSchema,
+      variables: {
+        WORKTREE: workspace,
+        SCRATCH: join(workspace, 'scratch'),
+        BUN_INSTALL_CACHE: '/bun',
+        GIT_COMMON_DIR: join(workspace, '.git')
+      }
+    }
+    const claude = generateClaudeSettings(grants, paths)
+    const codex = generateCodexConfig(grants, paths)
+    const credential =
+      /(GH|GITHUB)_[A-Z_]*(TOKEN|KEY|SECRET|PAT)|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_|GIT_ASKPASS|\.config\/gh/i
+    for (const config of [claude, codex]) {
+      expect(Object.keys(config.env).filter((name) => credential.test(name))).toEqual([])
+      expect(Object.values(config.env).filter((value) => credential.test(value))).toEqual([])
+      for (const [path, content] of Object.entries(config.files))
+        if (path !== 'hooks/pre-tool-use.mjs') expect(content, `${config.vendor} ${path}`).not.toMatch(credential)
+    }
+    const settings = JSON.parse(generatedFile(claude, 'role-settings.json'))
+    expect(settings.permissions.deny).toContain('Bash(git push:*)')
+    expect(settings.permissions.deny).toContain('Bash(gh:*)')
+    expect(settings.permissions.allow.filter((rule: string) => /git push|Bash\(gh/.test(rule))).toEqual([])
+    const rules = generatedFile(codex, 'rules/role.rules')
+    expect(rules).toContain('pattern = ["git","push"], decision = "forbidden"')
+    expect(rules).toContain('pattern = ["gh"], decision = "forbidden"')
+    expect(rules).not.toMatch(/pattern = \["(git","push|gh)"\], decision = "allow"/)
+
+    for (const config of [claude, codex]) {
+      const hook = join(workspace, `${config.vendor}-boundary-hook.mjs`)
+      writeFileSync(hook, generatedFile(config, 'hooks/pre-tool-use.mjs'))
+      for (const command of ['git push origin task/engine-harness-v1/3', 'git push', 'gh pr create', 'gh api user']) {
+        const out = Bun.spawnSync(['node', hook], {
+          cwd: workspace,
+          stdin: Buffer.from(JSON.stringify({ tool_name: 'Bash', tool_input: { command } }))
+        }).stdout.toString()
+        expect(out, `${config.vendor} should deny ${command}`).toContain('"permissionDecision":"deny"')
+      }
+    }
+  })
+
   test('Claude receives schema JSON while Codex receives the schema path', () => {
     const grants = loadRoleGrants(join(processRoot, 'developer/grants.yaml'))
     const outputSchemaPath = join(processRoot, 'developer/output.schema.json')
