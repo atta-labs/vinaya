@@ -372,3 +372,34 @@ describe('reviewer context carries the manifest identities and the Developer’s
     expect(onDisk.sources.find((s) => s.sourceId === PAGE_URL)?.finalUrl).toBe(PAGE_URL)
   })
 })
+
+describe('a repository source id is the plain path, however the Documentation list wrote it', () => {
+  it('prepares ids without backticks and read_source accepts either spelling', async () => {
+    const repo = repository()
+    writeFileSync(join(repo.dir, 'specs', 'other.md'), '# Other\n')
+    execFileSync('git', ['add', '.'], { cwd: repo.dir })
+    execFileSync('git', ['commit', '-q', '-m', 'other'], { cwd: repo.dir })
+    const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo.dir, encoding: 'utf8' }).trim()
+    const storeDir = join(tempDir(), 'control', 'sources')
+    const { manifest } = await prepareSources({
+      brief: brief(`\`${SPEC}\``, 'specs/other.md', PAGE_URL),
+      round: 1,
+      base,
+      storeDir,
+      deps: { readObject: gitObjectReader(repo.dir), fetch: mutablePage().deps, now: () => NOW }
+    })
+    expect(manifest.sources.map((s) => s.sourceId)).toEqual([SPEC, 'specs/other.md', PAGE_URL])
+    const readSource = createReadSourceTool({
+      storeDir,
+      manifestDigest: manifest.digest,
+      readObject: gitObjectReader(repo.dir)
+    })
+    for (const sourceId of [SPEC, `\`${SPEC}\``, 'specs/other.md', '`specs/other.md`']) {
+      const result = await readSource({ sourceId })
+      expect(result.ok).toBe(true)
+      if (result.ok) expect(result.result.content.length).toBeGreaterThan(0)
+    }
+    const page = await readSource({ sourceId: PAGE_URL })
+    expect(page.ok).toBe(true)
+  })
+})
