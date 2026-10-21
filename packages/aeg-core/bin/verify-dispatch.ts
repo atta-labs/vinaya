@@ -67,7 +67,9 @@
  * mode, when that mode's check passes); 1 otherwise, with every failing
  * predicate printed by name.
  *
- * CWD-independent by design: chdir's to the repo root immediately below.
+ * Captures the caller's checkout, resolves its Git top-level, and runs every
+ * target-repository read from there. Script-owned sibling tools are resolved
+ * separately from this module's directory.
  */
 
 import { execFile, execFileSync, spawnSync } from 'node:child_process'
@@ -111,8 +113,45 @@ import {
 import { readConfigPrincipals } from '../src/principals-config'
 import type { Tranche, Task } from '../src/types'
 
-const REPO_ROOT = join(import.meta.dirname, '../../..')
+const DISPATCH_INVOCATION_CWD = process.cwd()
+
+export type TargetRootExec = typeof execFileSync
+
+export function resolveTargetRoot(cwd = process.cwd(), exec: TargetRootExec = execFileSync): string {
+  const gitRoot = (candidate: string): string | null => {
+    try {
+      const root = exec('git', ['-C', candidate, 'rev-parse', '--show-toplevel'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+      return typeof root === 'string' && root.trim() !== '' ? root.trim() : null
+    } catch {
+      return null
+    }
+  }
+
+  // A caller checkout is authoritative. The script-location fallback keeps
+  // direct imports and invocations from a non-Git directory usable without
+  // ever replacing a valid caller repository with the tool's own.
+  return gitRoot(cwd) ?? gitRoot(import.meta.dirname) ?? join(import.meta.dirname, '../../..')
+}
+
+const REPO_ROOT = resolveTargetRoot(DISPATCH_INVOCATION_CWD)
 process.chdir(REPO_ROOT)
+
+export async function resolveTargetRepository(
+  repoRoot = REPO_ROOT,
+  exec: TargetRootExec = execFileSync
+): Promise<RepoRef | null> {
+  return resolveRepo(async () => ({
+    stdout: String(
+      exec('git', ['-C', repoRoot, 'remote', 'get-url', 'origin'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+    )
+  }))
+}
 
 // ---- I/O helpers -------------------------------------------------------------
 
@@ -713,8 +752,8 @@ type CaptureResult = { stdout: string; stderr: string; exitCode: number; ranAtAl
  * it exists to surface. Each caller now picks the stream its own parse needs —
  * see `currentFindingCounts`.
  */
-function captureStreams(cmd: string, args: string[]): CaptureResult {
-  const result = spawnSync(cmd, args, { encoding: 'utf8' })
+function captureStreams(cmd: string, args: string[], repoRoot = REPO_ROOT): CaptureResult {
+  const result = spawnSync(cmd, args, { encoding: 'utf8', cwd: repoRoot })
   if (result.error) return { stdout: '', stderr: '', exitCode: -1, ranAtAll: false }
   return {
     stdout: result.stdout ?? '',
@@ -826,11 +865,11 @@ function siblingTool(name: string): string {
  * produced no parseable output) is reported explicitly and is never folded
  * into the numeric count — see `docsUnavailable`/`coherenceUnavailable` below.
  */
-export function currentFindingCounts(): FindingCount[] {
+export function currentFindingCounts(repoRoot = REPO_ROOT): FindingCount[] {
   // verify-docs is COUNTED, not parsed: `✗` lines are scanned, and a stray
   // stderr line cannot corrupt a line count the way it corrupts a JSON parse.
   // Both streams are scanned so a finding printed to stderr still counts.
-  const docs = captureStreams('bun', [siblingTool('verify-docs')])
+  const docs = captureStreams('bun', [siblingTool('verify-docs')], repoRoot)
   const docsFindingCount = docs.ranAtAll ? countErrorLines(`${docs.stdout}${docs.stderr}`) : 0
   // verify-docs's own contract: exit 1 iff errors.length > 0 (bin/verify-docs.ts).
   // A non-zero exit with zero ✗ lines means it crashed before reaching that
@@ -841,7 +880,7 @@ export function currentFindingCounts(): FindingCount[] {
   // document to stdout; anything on stderr is a subprocess's diagnostic noise
   // and is not part of the payload. Including it is what made a healthy run
   // report UNAVAILABLE (#173).
-  const coherence = captureStreams('bun', [siblingTool('verify-coherence'), '--json'])
+  const coherence = captureStreams('bun', [siblingTool('verify-coherence'), '--json'], repoRoot)
   const coherenceRead = coherence.ranAtAll ? coherenceFailedCount(coherence.stdout) : null
   const coherenceFailed = typeof coherenceRead === 'number' ? coherenceRead : null
   // Three ways to be unavailable: the tool could not run, its stdout is not
@@ -938,7 +977,7 @@ export function resolvePremiseBriefText(
 
 async function runPremiseModeFromIssue(trancheSlug: string, taskId: string): Promise<void> {
   const principalAllowlist = principalsOrExit(' --premise')
-  const repo = await resolveRepo()
+  const repo = await resolveTargetRepository()
   if (!repo) {
     console.error(
       'verify-dispatch --premise: could not resolve a GitHub repo (set AEG_REPO=owner/repo, or confirm `gh auth login`).'
@@ -1029,7 +1068,8 @@ function runSimulateMode(trancheSlug: string, taskId: string, bodyFile: string):
     [
       'verify-brief',
       () =>
-        execFileSync('bun', ['packages/aeg-core/bin/verify-brief.ts'], {
+        execFileSync('bun', [siblingTool('verify-brief')], {
+          cwd: REPO_ROOT,
           env: { ...process.env, BRANCH: branch, PR_BODY: body },
           stdio: 'inherit'
         })
@@ -1037,7 +1077,8 @@ function runSimulateMode(trancheSlug: string, taskId: string, bodyFile: string):
     [
       'verify-docs --pr',
       () =>
-        execFileSync('bun', ['packages/aeg-core/bin/verify-docs.ts', '--pr'], {
+        execFileSync('bun', [siblingTool('verify-docs'), '--pr'], {
+          cwd: REPO_ROOT,
           env: { ...process.env, PR_BODY: body },
           stdio: 'inherit'
         })
@@ -1045,7 +1086,8 @@ function runSimulateMode(trancheSlug: string, taskId: string, bodyFile: string):
     [
       'verify-docs --push (C5, via PR_BODY_FILE)',
       () =>
-        execFileSync('bun', ['packages/aeg-core/bin/verify-docs.ts', '--push'], {
+        execFileSync('bun', [siblingTool('verify-docs'), '--push'], {
+          cwd: REPO_ROOT,
           env: { ...process.env, PR_BODY_FILE: bodyFile },
           stdio: 'inherit'
         })
@@ -1159,7 +1201,7 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
   // now made explicit since the forge read no longer needs it.
   sh('git', ['fetch', 'origin', 'main', '--quiet'])
 
-  const repo = await resolveRepo()
+  const repo = await resolveTargetRepository()
   const token = await resolveGithubToken()
   if (!repo || !token) {
     console.error(
@@ -1288,7 +1330,7 @@ async function runGateModeForIssue(issueNumber: number): Promise<void> {
   const principalAllowlist = principalsOrExit('')
   sh('git', ['fetch', 'origin', 'main', '--quiet'])
 
-  const repo = await resolveRepo()
+  const repo = await resolveTargetRepository()
   const token = await resolveGithubToken()
   if (!repo || !token) {
     console.error(

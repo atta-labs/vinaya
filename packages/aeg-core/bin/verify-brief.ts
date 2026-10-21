@@ -91,7 +91,7 @@ function readManifest(dir: string): PackageManifest | null {
  * — the SAME `buildConsumersOf` `apps/cli`'s `check-brief-shape.ts` wires for
  * the CI entry point, so a brief that passes here at authoring time cannot
  * be refused for a different reason once dispatched. Reads relative to
- * `REPO_ROOT` (this script has already `chdir`'d there by the time this
+ * `REPO_ROOT` (this script has already `chdir`'d to the caller's Git root when this
  * runs).
  */
 function buildConsumersOfLocal(): (pkg: string) => string[] {
@@ -100,10 +100,23 @@ function buildConsumersOfLocal(): (pkg: string) => string[] {
   return buildConsumersOf(workspaces, listDirs, readManifest)
 }
 
-const REPO_ROOT = join(import.meta.dir, '../../..')
 // Captured BEFORE the chdir below: a relative `--body-file` path is relative to
 // where the author ran the command, not to the repo root this script moves to.
-const INVOCATION_CWD = process.cwd()
+const BRIEF_INVOCATION_CWD = process.cwd()
+const REPO_ROOT = (() => {
+  for (const candidate of [BRIEF_INVOCATION_CWD, import.meta.dirname]) {
+    try {
+      const root = execFileSync('git', ['-C', candidate, 'rev-parse', '--show-toplevel'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      }).trim()
+      if (root !== '') return root
+    } catch {
+      // Try the script location when the caller is not inside a Git checkout.
+    }
+  }
+  return join(import.meta.dirname, '../../..')
+})()
 process.chdir(REPO_ROOT)
 
 const TASK_BRANCH_PATTERN = /^task\/[^/]+\/[^/]+$/
@@ -292,7 +305,7 @@ export function main(): void {
   const bodyFile = requireFlagValue(process.argv, 'body-file')
   let prBody = process.env.PR_BODY ?? ''
   if (bodyFile !== null) {
-    const path = resolve(INVOCATION_CWD, bodyFile)
+    const path = resolve(BRIEF_INVOCATION_CWD, bodyFile)
     try {
       prBody = readFileSync(path, 'utf8')
     } catch {
