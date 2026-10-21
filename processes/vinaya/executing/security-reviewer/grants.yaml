@@ -3,7 +3,63 @@ vendor:
   claude: { model: process-supplied }
   codex: { model: process-supplied }
 tools:
-  builtins: { Agent: deny, AskUserQuestion: deny, Bash: allow, Edit: deny, EnterPlanMode: deny, ExitPlanMode: deny, Glob: allow, Grep: allow, KillShell: deny, NotebookEdit: deny, Read: allow, Skill: allow, Task: deny, TaskOutput: deny, TodoWrite: allow, WebFetch: allow, WebSearch: deny, Write: deny }
+  claude:
+    Agent: deny
+    Artifact: deny
+    AskUserQuestion: deny
+    Bash: deny
+    CronCreate: deny
+    CronDelete: deny
+    CronList: deny
+    Edit: deny
+    EndConversation: allow
+    EnterPlanMode: deny
+    EnterWorktree: deny
+    ExitPlanMode: deny
+    ExitWorktree: deny
+    Glob: allow
+    Grep: allow
+    KillShell: deny
+    ListAgents: deny
+    ListMcpResourcesTool: deny
+    LSP: allow
+    Monitor: deny
+    NotebookEdit: deny
+    PowerShell: deny
+    PushNotification: deny
+    Read: allow
+    ReadMcpResourceTool: deny
+    RemoteTrigger: deny
+    ReportFindings: deny
+    ScheduleWakeup: deny
+    SendFeedback: deny
+    SendMessage: deny
+    SendUserFile: deny
+    ShareOnboardingGuide: deny
+    Skill: allow
+    SubagentHandback: deny
+    Task: deny
+    TaskCreate: deny
+    TaskGet: deny
+    TaskList: deny
+    TaskOutput: deny
+    TaskStop: deny
+    TaskUpdate: deny
+    TodoWrite: allow
+    ToolSearch: allow
+    WaitForMcpServers: deny
+    WebFetch: allow
+    WebSearch: deny
+    Workflow: deny
+    Write: deny
+  codex:
+    exec_command: deny
+    write_stdin: deny
+    apply_patch: deny
+    update_plan: allow
+    view_image: allow
+    web_search: deny
+    web_fetch: allow
   mcp: { vinaya_dev_tools: [read_source] }
 shell:
   allow: []

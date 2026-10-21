@@ -3,25 +3,63 @@ vendor:
   claude: { model: process-supplied }
   codex: { model: process-supplied }
 tools:
-  builtins: &builtins
+  claude:
     Agent: allow
+    Artifact: deny
     AskUserQuestion: deny
     Bash: allow
+    CronCreate: deny
+    CronDelete: deny
+    CronList: deny
     Edit: allow
+    EndConversation: allow
     EnterPlanMode: deny
+    EnterWorktree: allow
     ExitPlanMode: deny
+    ExitWorktree: allow
     Glob: allow
     Grep: allow
     KillShell: allow
+    ListAgents: deny
+    ListMcpResourcesTool: deny
+    LSP: allow
+    Monitor: allow
     NotebookEdit: allow
+    PowerShell: deny
+    PushNotification: deny
     Read: allow
+    ReadMcpResourceTool: deny
+    RemoteTrigger: deny
+    ReportFindings: deny
+    ScheduleWakeup: deny
+    SendFeedback: deny
+    SendMessage: deny
+    SendUserFile: deny
+    ShareOnboardingGuide: deny
     Skill: allow
+    SubagentHandback: deny
     Task: allow
+    TaskCreate: allow
+    TaskGet: allow
+    TaskList: allow
     TaskOutput: allow
+    TaskStop: allow
+    TaskUpdate: allow
     TodoWrite: allow
+    ToolSearch: allow
+    WaitForMcpServers: deny
     WebFetch: allow
     WebSearch: deny
+    Workflow: allow
     Write: allow
+  codex:
+    exec_command: allow
+    write_stdin: allow
+    apply_patch: allow
+    update_plan: allow
+    view_image: allow
+    web_search: deny
+    web_fetch: allow
   mcp:
     vinaya_dev_tools: [fetch_documentation, run_checks, publish_changes, open_pull_request, update_pull_request_body, refresh_evidence, read_pull_request]
 shell:
