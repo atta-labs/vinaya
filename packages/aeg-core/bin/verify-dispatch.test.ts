@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -132,17 +132,21 @@ describe('target repository resolution', () => {
     ).toEqual({ owner: 'override', repo: 'project' })
   })
 
-  it('runs baseline sibling tools with the target checkout as cwd', () => {
+  it('runs a baseline sibling tool against the target checkout', () => {
     const target = temporaryRepository()
-    spawnSyncMock.mockImplementation((_cmd: string, args: string[], options: { cwd?: string }) => {
-      expect(options.cwd).toBe(target)
-      if (args.some((a) => a.endsWith('/bin/verify-docs.ts'))) return successResult('')
-      return successResult(JSON.stringify({ summary: { failed: 0 } }))
+    mkdirSync(join(target, '.vinaya'))
+    writeFileSync(join(target, '.vinaya/doc-owners'), 'src/** docs/target-only-missing.md\n')
+
+    spawnSyncMock.mockImplementation((cmd: string, args: string[], options: { cwd?: string }) => {
+      if (args.some((a) => a.endsWith('/bin/verify-coherence.ts'))) {
+        return actualChildProcess.spawnSync(cmd, args, options)
+      }
+      return successResult('')
     })
 
     expect(currentFindingCounts(target)).toEqual([
       { tool: 'verify-docs-full', findingCount: 0, unavailable: false },
-      { tool: 'verify-coherence', findingCount: 0, unavailable: false }
+      expect.objectContaining({ tool: 'verify-coherence', findingCount: 1 })
     ])
   })
 })
