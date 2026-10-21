@@ -58,7 +58,7 @@
     "@atta/adapter-langgraph": "file:tests/fixtures/atta-engine/atta-adapter-langgraph-0.0.1.tgz",
     "@atta/agents": "file:tests/fixtures/atta-engine/atta-agents-0.1.0.tgz",
     "@atta/engine": "file:tests/fixtures/atta-engine/atta-engine-0.0.1.tgz",
-    "@atta/executor-agent-spawn": "file:tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.0.tgz",
+    "@atta/executor-agent-spawn": "file:tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz",
     "@atta/models": "file:tests/fixtures/atta-engine/atta-models-0.1.0.tgz",
     "@attalabs/aeg-core": "workspace:*",
     "@attalabs/aeg-forge-state": "workspace:*",

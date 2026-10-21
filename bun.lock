@@ -15,10 +15,10 @@
       "name": "@attalabs/vinaya",
       "version": "0.40.0",
       "bin": {
-        "vinaya": "./dist/index.js",
-        "vinaya-select-tests": "./dist/lib/pre-push-select-tests.js",
-        "vinaya-changed-files": "./dist/lib/pre-push-changed-files.js",
-        "vinaya-cache-test-run": "./dist/lib/pre-push-cache-test-run.js",
+        "vinaya": "dist/index.js",
+        "vinaya-select-tests": "dist/lib/pre-push-select-tests.js",
+        "vinaya-changed-files": "dist/lib/pre-push-changed-files.js",
+        "vinaya-cache-test-run": "dist/lib/pre-push-cache-test-run.js",
       },
       "dependencies": {
         "gray-matter": "^4.0.3",
@@ -29,7 +29,7 @@
         "@atta/adapter-langgraph": "file:tests/fixtures/atta-engine/atta-adapter-langgraph-0.0.1.tgz",
         "@atta/agents": "file:tests/fixtures/atta-engine/atta-agents-0.1.0.tgz",
         "@atta/engine": "file:tests/fixtures/atta-engine/atta-engine-0.0.1.tgz",
-        "@atta/executor-agent-spawn": "file:tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.0.tgz",
+        "@atta/executor-agent-spawn": "file:tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz",
         "@atta/models": "file:tests/fixtures/atta-engine/atta-models-0.1.0.tgz",
         "@atta/typescript-config": "workspace:*",
         "@attalabs/aeg-core": "workspace:*",
@@ -169,9 +169,12 @@
       "name": "@attalabs/process-vinaya",
       "version": "0.0.0",
       "devDependencies": {
+        "@atta/engine": "file:../../apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz",
+        "@atta/executor-agent-spawn": "file:../../apps/cli/tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz",
         "@atta/typescript-config": "workspace:*",
         "@types/bun": "latest",
         "typescript": "^5.7.0",
+        "yaml": "2.9.0",
       },
     },
   },
@@ -229,7 +232,7 @@
 
     "@atta/engine": ["@atta/engine@apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz", { "dependencies": { "@atta/agents": "0.1.0", "js-yaml": "^4.1.1", "zod": "^4.3.6" } }, "sha512-U1ik7L1RohPL8W9P5x9pwHlQFA1lEi2ljfRi7gcj7pa+xlQscQEn20qEm72GeY2s4NbrZ3gmdsepDMU4IDAluA=="],
 
-    "@atta/executor-agent-spawn": ["@atta/executor-agent-spawn@tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.0.tgz", { "dependencies": { "@atta/engine": "0.0.1", "@langchain/langgraph": "^0.2.0", "handlebars": "^4.7.8" } }, "sha512-irirAabM0h9EnZyjc79Cchp5sh65fMHVSXH1wa/LEbobJT99lUcoP5MIqzJZSPSwREE5ziQRIeA1JYfz/TgAgg=="],
+    "@atta/executor-agent-spawn": ["@atta/executor-agent-spawn@../../apps/cli/tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz", { "dependencies": { "@atta/engine": "0.0.1", "@langchain/langgraph": "^0.2.0", "handlebars": "^4.7.8" } }, "sha512-qrwg5REpqkkhNqkQTpYGTiud8yXxxEsX/rHwGumtZvPgzy/nB9IY+Ar/2bw9FDLnc6fahjcwDEfNIdK0nHONPQ=="],
 
     "@atta/models": ["@atta/models@apps/cli/tests/fixtures/atta-engine/atta-models-0.1.0.tgz", { "dependencies": { "@ai-sdk/anthropic": "^3.0.64", "@ai-sdk/google": "^3.0.60", "@ai-sdk/groq": "^3.0.35", "@ai-sdk/openai": "^3.0.53", "@openrouter/ai-sdk-provider": "^2.5.0", "ai": "^6.0.140", "ollama-ai-provider-v2": "^1.5.0", "server-only": "^0.0.1" }, "peerDependencies": { "next": "^16.0.0", "react": "^19.0.0" } }, "sha512-AUVJeY17KdHusoweJ7+zvaDTVHH51vRMtgtNOOtkQQI9ibMeD0qrAXEcvkRYRLHKQXglYPfmcEJfWMNyYd6eVg=="],
 
@@ -1392,6 +1395,8 @@
     "@atta/engine/js-yaml": ["js-yaml@4.3.2", "", { "dependencies": { "argparse": "^2.0.1" }, "bin": { "js-yaml": "bin/js-yaml.js" } }, "sha512-SFNOvSJ+Dgf/9An904Yx+CgSlIPCkIpao4qo51lpee25TIRejdH3rhR4EZMGoNx3/TP3O+wzWuiTFl4sqbltzA=="],
 
     "@atta/engine/zod": ["zod@4.6.7", "", {}, "sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg=="],
+
+    "@attalabs/vinaya/@atta/executor-agent-spawn": ["@atta/executor-agent-spawn@tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz", { "dependencies": { "@atta/engine": "0.0.1", "@langchain/langgraph": "^0.2.0", "handlebars": "^4.7.8" } }, "sha512-qrwg5REpqkkhNqkQTpYGTiud8yXxxEsX/rHwGumtZvPgzy/nB9IY+Ar/2bw9FDLnc6fahjcwDEfNIdK0nHONPQ=="],
 
     "@img/sharp-freebsd-wasm32/@img/sharp-wasm32": ["@img/sharp-wasm32@0.35.5", "", { "dependencies": { "@emnapi/runtime": "^1.11.3" } }, "sha512-Ptsga1su4tQx+LLF1ECS9U6nz5kmrXKo6XVbtR48Ke3ZRxxgaWBu7IDtEe1quo8hiupwm6WFqxVlXaSf7IINGQ=="],
 

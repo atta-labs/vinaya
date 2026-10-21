@@ -349,6 +349,8 @@ This section's mechanism is a backstop against a turn that WROTE where it must n
 
 ## 8. The six boundaries, one table, both vendors — and the removal decision (O4, O5)
 
+The executing process roles declare their complete cross-vendor capability policy in one `grants.yaml` per role. The pure adapters under `harness/adapters/agents/` translate that single policy into Claude settings and Codex configuration; their parity test checks that neither translation changes the allowed or denied capability set. Role doctrine files remain pointers to package-owned canonical doctrine, while each role-local output schema is the structured-output contract supplied at launch.
+
 The Boundary this task was dispatched against names six boundaries — the same six §3's probe proved against the hand-built Seatbelt profile (environment, HOME, Keychain, credential helper, socket, parent process) — and asks a single question of each: now that Claude (§4a) and Codex (§4b) each run through their OWN vendor-shipped sandbox instead of that hand-built profile, is every one of the six still held, for BOTH vendors, by a named mechanism with a passing test? The table below is that evidence, read directly off §§4a–4b above; nothing in it is re-derived or guessed. Per this task's own Traps: a boundary without a named mechanism AND a passing test counts as **not held**, full stop — recorded as such here rather than argued around.
 
 | Boundary | Claude's own mechanism | Codex's own mechanism | Test |

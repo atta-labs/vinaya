@@ -1,0 +1,148 @@
+{
+  "type": "object",
+  "properties": {
+    "turnResult": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": { "type": "number", "const": 1 },
+            "status": { "type": "string", "const": "completed" },
+            "summary": { "type": "string", "minLength": 1 },
+            "confidence": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "confidenceExplanation": { "type": "string", "minLength": 1, "maxLength": 280 },
+            "addressedFindingIds": { "maxItems": 0, "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "sourceUses": {
+              "minItems": 0,
+              "maxItems": 0,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "source": { "type": "string", "minLength": 1 },
+                  "use": { "type": "string", "minLength": 1 }
+                },
+                "required": ["source", "use"],
+                "additionalProperties": false
+              }
+            },
+            "reportedChecks": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "command": { "type": "string", "minLength": 1 },
+                      "outcome": { "type": "string", "enum": ["pass", "fail"] }
+                    },
+                    "required": ["command", "outcome"],
+                    "additionalProperties": false
+                  }
+                },
+                { "type": "null" }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "status",
+            "summary",
+            "confidence",
+            "confidenceExplanation",
+            "addressedFindingIds",
+            "sourceUses",
+            "reportedChecks"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": { "type": "number", "const": 1 },
+            "status": { "type": "string", "const": "blocked" },
+            "summary": { "type": "string", "minLength": 1 },
+            "blocker": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "dependency_unmerged",
+                    "conflict_open",
+                    "preflight_failed",
+                    "premise_stale",
+                    "brief_contradicts_code",
+                    "test_failure",
+                    "destructive_unauthorized",
+                    "tooling_unavailable"
+                  ]
+                },
+                "detail": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "detail"],
+              "additionalProperties": false
+            },
+            "sourceUses": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "source": { "type": "string", "minLength": 1 },
+                      "use": { "type": "string", "minLength": 1 }
+                    },
+                    "required": ["source", "use"],
+                    "additionalProperties": false
+                  }
+                },
+                { "type": "null" }
+              ]
+            }
+          },
+          "required": ["schemaVersion", "status", "summary", "blocker", "sourceUses"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": { "type": "number", "const": 1 },
+            "status": { "type": "string", "const": "needs_ruling" },
+            "summary": { "type": "string", "minLength": 1 },
+            "rulingRequest": {
+              "type": "object",
+              "properties": {
+                "question": { "type": "string", "minLength": 1 },
+                "decisions": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+              },
+              "required": ["question", "decisions"],
+              "additionalProperties": false
+            },
+            "sourceUses": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "source": { "type": "string", "minLength": 1 },
+                      "use": { "type": "string", "minLength": 1 }
+                    },
+                    "required": ["source", "use"],
+                    "additionalProperties": false
+                  }
+                },
+                { "type": "null" }
+              ]
+            }
+          },
+          "required": ["schemaVersion", "status", "summary", "rulingRequest", "sourceUses"],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "required": ["turnResult"],
+  "additionalProperties": false
+}

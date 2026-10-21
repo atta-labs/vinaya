@@ -1,0 +1,14 @@
+role: security-reviewer
+vendor:
+  claude: { model: process-supplied }
+  codex: { model: process-supplied }
+tools:
+  builtins: { Agent: deny, AskUserQuestion: deny, Bash: allow, Edit: deny, EnterPlanMode: deny, ExitPlanMode: deny, Glob: allow, Grep: allow, KillShell: deny, NotebookEdit: deny, Read: allow, Skill: allow, Task: deny, TaskOutput: deny, TodoWrite: allow, WebFetch: allow, WebSearch: deny, Write: deny }
+  mcp: { vinaya_dev_tools: [read_source] }
+shell:
+  allow: []
+  deny: ["Bash(git push:*)", "Bash(git commit:*)", "Bash(git add:*)", "Bash(gh:*)", "Bash(bun install:*)", "Bash(bun test:*)", "Bash(bun run:*)", "Bash(npx:*)", "Bash(security:*)", "Bash(launchctl:*)", "Bash(defaults:*)", "Bash(systemsetup:*)", "Bash(networksetup:*)", "Bash(pmset:*)", "Bash(dscl:*)", "Bash(crontab:*)", "Bash(chsh:*)", "Bash(git config --global:*)", "Bash(git config --system:*)", "Bash(sudo:*)"]
+writable_roots: []
+network_domains: [github.com, api.github.com, raw.githubusercontent.com, codeload.github.com, objects.githubusercontent.com, registry.npmjs.org, api.anthropic.com]
+hooks: { background_shell: true, force_push: true, no_verify: true, default_branch_commit: true, write_scope: true }
+sandbox: { claude: enabled, codex: read-only }
