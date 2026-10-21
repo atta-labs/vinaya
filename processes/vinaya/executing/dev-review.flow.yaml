@@ -1,0 +1,53 @@
+schema_version: "2.0"
+id: vinaya-dev-review
+display_name: Vinaya developer review
+description: One task from prepared inputs to a reviewed pull request ready for merge.
+experimental: true
+benchmarked: false
+defaults:
+  model: process-supplied
+agents:
+  - role: developer
+  - role: code-reviewer
+  - role: security-reviewer
+steps:
+  - { id: prepare-run, type: mechanical, action: vinaya.prepare-run }
+  - { id: reconcile-external-state, type: mechanical, action: vinaya.reconcile-external-state }
+  - { id: prepare-sources, type: mechanical, action: vinaya.prepare-sources }
+  - id: develop
+    type: agent
+    role: developer
+    prompt_template: "Develop the task {{question}}."
+    permission: developer/grants.yaml
+    working_directory: "."
+    max_turns: 200
+  - { id: validate-developer-output, type: mechanical, action: vinaya.validate-developer-output }
+  - { id: run-mechanical-gates, type: mechanical, action: harness.run-gates }
+  - id: classify-gate-result
+    type: mechanical
+    action: vinaya.classify-gate-result
+    decision: { examine: run-mechanical-gates, if_true: develop, if_false: dispatch-reviewers, max_revisions: 3 }
+  - { id: dispatch-reviewers, type: mechanical, action: vinaya.dispatch-reviewers }
+  - id: code-review
+    type: agent
+    role: code-reviewer
+    prompt_template: "Review the task {{question}}."
+    permission: code-reviewer/grants.yaml
+    working_directory: "."
+    max_turns: 100
+    depends_on: [dispatch-reviewers]
+  - id: security-review
+    type: agent
+    role: security-reviewer
+    prompt_template: "Security-review the task {{question}}."
+    permission: security-reviewer/grants.yaml
+    working_directory: "."
+    max_turns: 100
+    depends_on: [dispatch-reviewers]
+  - { id: validate-reviewer-outputs, type: mechanical, action: vinaya.validate-reviewer-outputs, depends_on: [code-review, security-review] }
+  - { id: assess-round, type: mechanical, action: vinaya.assess-round }
+  - id: build-revision-handoff
+    type: mechanical
+    action: vinaya.build-revision-handoff
+    decision: { examine: assess-round, if_true: develop, if_false: publish-ready-for-merge, max_revisions: 5 }
+  - { id: publish-ready-for-merge, type: mechanical, action: harness.publish }

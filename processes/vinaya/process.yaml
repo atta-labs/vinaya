@@ -1,0 +1,8 @@
+id: vinaya
+name: Vinaya
+version: 0.1.0
+flow: executing/dev-review.flow.yaml
+roles:
+  - executing/developer
+  - executing/code-reviewer
+  - executing/security-reviewer

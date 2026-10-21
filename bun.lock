@@ -100,6 +100,10 @@
     "harness": {
       "name": "@attalabs/harness",
       "version": "0.0.0",
+      "dependencies": {
+        "yaml": "2.9.0",
+        "zod": "3.25.76",
+      },
       "devDependencies": {
         "@atta/typescript-config": "workspace:*",
         "@types/bun": "latest",
