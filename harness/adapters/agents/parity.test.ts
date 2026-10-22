@@ -4,7 +4,19 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { generateClaudeSettings } from './claude-code/settings'
 import { generateCodexConfig } from './codex/config'
-import { CLAUDE_BUILTINS, CODEX_BUILTINS, loadRoleGrants, mcpRule, ROLE_NAMES, type Decision } from './manifest'
+import { claudeShellRule } from './claude-code/capabilities'
+import { CODEX_READ_ONLY_COMMANDS } from './codex/capabilities'
+import {
+  CLAUDE_BUILTINS,
+  CODEX_BUILTINS,
+  loadRoleGrants,
+  mcpRule,
+  type RoleCapabilities,
+  type RoleContract,
+  resolveRoleGrants,
+  ROLE_NAMES,
+  type Decision
+} from './manifest'
 import { resolveGrantValues, type GeneratedAgentConfig } from './policy'
 import { evaluateShellGuards } from './shell-eval'
 
@@ -21,7 +33,7 @@ export const GAP_TABLE = [
     id: 1,
     status: 'closed',
     reason:
-      'every shell allow and deny is emitted as a Codex execpolicy prefix_rule and the hook denies commands outside the allowlist'
+      'every shell allow and deny is emitted as a Codex execpolicy prefix_rule and the hook denies commands outside the allowlist of a role whose shell default is not allow'
   },
   {
     id: 2,
@@ -53,8 +65,15 @@ function claudeEffective(config: GeneratedAgentConfig): Record<string, Decision>
   const allow = new Set<string>(settings.permissions.allow)
   const deny = new Set<string>(settings.permissions.deny)
   return {
-    shell: deny.has('Bash') ? 'deny' : [...allow].some((rule) => rule.startsWith('Bash(')) ? 'allow' : 'deny',
-    write: allow.has('Write') && allow.has('Edit') ? 'allow' : 'deny',
+    // Claude reads files with Read (Grep and Glob alongside it).
+    read_files: allow.has('Read') && !deny.has('Read') ? 'allow' : 'deny',
+    run_commands: deny.has('Bash')
+      ? 'deny'
+      : [...allow].some((rule) => rule === 'Bash' || rule.startsWith('Bash('))
+        ? 'allow'
+        : 'deny',
+    write_files:
+      allow.has('Write') && allow.has('Edit') && settings.sandbox.filesystem.allowWrite.length > 0 ? 'allow' : 'deny',
     plan: allow.has('TodoWrite') ? 'allow' : 'deny',
     view_image: allow.has('Read') ? 'allow' : 'deny',
     web_fetch: allow.has('WebFetch') ? 'allow' : 'deny',
@@ -75,9 +94,22 @@ function codexEffective(config: GeneratedAgentConfig): Record<string, Decision> 
     if (value === undefined) throw new Error(`missing hook decision for ${name}`)
     return value
   }
+  const shellTool = /shell_tool = true/.test(toml)
+  const policy = embeddedHookPolicy(config) as unknown as { shellAllow: string[]; shellDefaultAllow?: boolean }
+  const readingOnly = new Set<string>(CODEX_READ_ONLY_COMMANDS.map(claudeShellRule))
+  const roots = JSON.parse(/writable_roots = (\[[^\n]*\])/.exec(toml)?.[1] ?? '[]') as string[]
   return {
-    shell: /shell_tool = true/.test(toml) ? 'allow' : 'deny',
-    write: decision('apply_patch'),
+    // Codex reads files only through its shell, under any sandbox.
+    read_files: shellTool ? 'allow' : 'deny',
+    // It runs commands when its shell may run more than the reading-only commands.
+    run_commands:
+      shellTool && (policy.shellDefaultAllow === true || policy.shellAllow.some((rule) => !readingOnly.has(rule)))
+        ? 'allow'
+        : 'deny',
+    write_files:
+      decision('apply_patch') === 'allow' && /sandbox_mode = "workspace-write"/.test(toml) && roots.length > 0
+        ? 'allow'
+        : 'deny',
     plan: decision('update_plan'),
     view_image: /view_image = true/.test(toml) ? 'allow' : 'deny',
     web_fetch: decision('web_fetch'),
@@ -131,6 +163,113 @@ function codexBuiltins(config: GeneratedAgentConfig): Record<string, Decision> {
   )
 }
 
+describe('reviewers read on both vendors and write on neither', () => {
+  for (const role of ['code-reviewer', 'security-reviewer'] as const)
+    test(role, () => {
+      const grants = loadRoleGrants(join(processRoot, role, 'grants.yaml'))
+      const schema = JSON.parse(readFileSync(join(processRoot, role, 'output.schema.json'), 'utf8'))
+      const paths = {
+        generatedDir: `/tmp/generated/${role}`,
+        outputSchemaPath: join(processRoot, role, 'output.schema.json'),
+        outputSchema: schema,
+        variables: { WORKTREE: '/repo', SCRATCH: '/scratch', BUN_INSTALL_CACHE: '/bun', GIT_COMMON_DIR: '/git' }
+      }
+      const claude = generateClaudeSettings(grants, paths)
+      const codex = generateCodexConfig(grants, paths)
+      expect(claudeEffective(claude).read_files).toBe('allow')
+      expect(codexEffective(codex).read_files).toBe('allow')
+      // No write on either vendor: Claude has no Write/Edit and no writable path; Codex's sandbox is read-only,
+      // with no writable root and no apply_patch.
+      expect(claudeEffective(claude).write_files).toBe('deny')
+      expect(JSON.parse(generatedFile(claude, 'role-settings.json')).sandbox.filesystem.allowWrite).toEqual([])
+      const toml = generatedFile(codex, 'config.toml')
+      expect(toml).toContain('sandbox_mode = "read-only"')
+      expect(JSON.parse(/writable_roots = (\[[^\n]*\])/.exec(toml)?.[1] ?? '[]')).toEqual([])
+      expect(codexEffective(codex).write_files).toBe('deny')
+      // The review shell denies still bind the Codex reviewer.
+      expect(generatedFile(codex, 'rules/role.rules')).toContain('pattern = ["git","push"], decision = "forbidden"')
+    })
+
+  test('a role that can read on one vendor but not the other fails the parity check', () => {
+    const grants = loadRoleGrants(join(processRoot, 'code-reviewer', 'grants.yaml'))
+    const broken = {
+      ...grants,
+      tools: { ...grants.tools, codex: { ...grants.tools.codex, exec_command: 'deny', write_stdin: 'deny' } }
+    } as typeof grants
+    const paths = { generatedDir: '/tmp/generated/x', outputSchemaPath: '/x.json', outputSchema: {}, variables: {} }
+    expect(codexEffective(generateCodexConfig(broken, paths))).not.toEqual(
+      claudeEffective(generateClaudeSettings(broken, paths))
+    )
+  })
+})
+
+describe('the capability contract gives both vendors the same effective permissions', () => {
+  const base: RoleContract = {
+    role: 'developer',
+    models: { claude: 'process-supplied', codex: 'process-supplied' },
+    capabilities: {
+      read_files: 'deny',
+      run_commands: 'deny',
+      write_files: 'deny',
+      network: ['github.com'],
+      web_fetch: 'deny',
+      web_search: 'deny',
+      subagents: 'deny',
+      plan_tool: 'deny',
+      view_image: 'deny'
+    },
+    mcp_tools: { vinaya_dev_tools: ['read_source'] },
+    hooks: {
+      background_shell: true,
+      force_push: true,
+      no_verify: true,
+      default_branch_commit: true,
+      write_scope: true
+    },
+    sandbox: 'enabled'
+  }
+  const paths = {
+    generatedDir: '/tmp/generated/contract',
+    outputSchemaPath: '/x.json',
+    outputSchema: {},
+    variables: { WORKTREE: '/repo' }
+  }
+  const runs = [
+    'deny',
+    { allow: ['Bash(make:*)'], deny: ['Bash(git push:*)'] },
+    { default: 'allow', allow: [], deny: [] }
+  ] as const
+  const writes = ['deny', ['${WORKTREE}']] as const
+  for (const read_files of ['allow', 'deny'] as const)
+    for (const run_commands of runs)
+      for (const write_files of writes)
+        for (const toggle of ['allow', 'deny'] as const) {
+          const capabilities = {
+            ...base.capabilities,
+            read_files,
+            run_commands: run_commands as RoleCapabilities['run_commands'],
+            write_files: write_files as RoleCapabilities['write_files'],
+            web_fetch: toggle,
+            web_search: toggle,
+            subagents: toggle,
+            plan_tool: toggle,
+            // Claude reads images with Read, so the image capability follows reading on both.
+            view_image: read_files
+          }
+          // Codex reads through its shell: a role that may run commands can read on both vendors.
+          if (run_commands !== 'deny' && read_files === 'deny') continue
+          test(`read ${read_files}, run ${JSON.stringify(run_commands)}, write ${JSON.stringify(write_files)}, others ${toggle}`, () => {
+            const grants = resolveRoleGrants({ ...base, capabilities })
+            const claude = claudeEffective(generateClaudeSettings(grants, paths))
+            const codex = codexEffective(generateCodexConfig(grants, paths))
+            expect(codex).toEqual(claude)
+            expect(claude.read_files).toBe(read_files)
+            expect(claude.run_commands).toBe(run_commands === 'deny' ? 'deny' : 'allow')
+            expect(claude.write_files).toBe(write_files === 'deny' ? 'deny' : 'allow')
+          })
+        }
+})
+
 describe('role-grant vendor parity', () => {
   for (const role of ROLE_NAMES)
     test(role, () => {
@@ -149,28 +288,32 @@ describe('role-grant vendor parity', () => {
       expect(codexBuiltins(codex)).toEqual(grants.tools.codex)
 
       const claudeSettings = JSON.parse(generatedFile(claude, 'role-settings.json'))
-      expect(claudeSettings.permissions.allow).not.toContain('Bash')
+      // A bare Bash allow is only for a role whose grants make the shell's default allow.
+      expect(claudeSettings.permissions.allow.includes('Bash')).toBe(grants.shell.default === 'allow')
       expect(claudeSettings.sandbox.network.allowedDomains).toEqual(grants.network_domains)
       expect(claudeSettings.sandbox.autoAllowBashIfSandboxed).toBe(false)
       expect(generatedFile(claude, 'hooks/pre-tool-use.mjs')).toContain('permissionDecision')
       expect(generatedFile(codex, 'hooks/pre-tool-use.mjs')).toContain('permissionDecision')
       expect(codex.launch).toContain('--dangerously-bypass-hook-trust')
+      expect(codex.launch).toContain('--json')
       expect(generatedFile(codex, 'config.toml')).toContain(
         'matcher = "^(Bash|apply_patch|update_plan|view_image|web_fetch|spawn_agent|send_input|resume_agent|wait_agent|close_agent)$"'
       )
       expect(generatedFile(codex, 'config.toml')).toContain(`sandbox_mode = "${grants.sandbox.codex}"`)
+      // Claude gets the shell's allow rules only when it has the shell.
       expect(claudeSettings.permissions.allow.filter((rule: string) => rule.startsWith('Bash('))).toEqual(
-        grants.shell.allow
+        grants.tools.claude.Bash === 'allow' ? grants.shell.allow : []
       )
+      // Claude gets the shell's deny rules only when it has the shell; otherwise Bash itself is denied.
       expect(claudeSettings.permissions.deny.filter((rule: string) => rule.startsWith('Bash('))).toEqual(
-        [...(grants.tools.claude.Bash === 'deny' ? ['Bash'] : []), ...grants.shell.deny].filter((rule) =>
-          rule.startsWith('Bash(')
-        )
+        grants.tools.claude.Bash === 'allow' ? grants.shell.deny : []
       )
       const policyLines = generatedFile(codex, 'rules/role.rules')
         .split('\n')
         .filter((line) => line.startsWith('prefix_rule('))
-      expect(policyLines).toHaveLength(grants.shell.allow.length + grants.shell.deny.length)
+      // A flag-anywhere rule (\`...\`) is not a prefix, so only the hook enforces it.
+      const prefixDenies = grants.shell.deny.filter((rule) => !rule.includes(' ... '))
+      expect(policyLines).toHaveLength(grants.shell.allow.length + prefixDenies.length)
       for (const rule of grants.shell.allow)
         expect(generatedFile(codex, 'rules/role.rules')).toContain(
           `pattern = ${JSON.stringify(
@@ -180,7 +323,7 @@ describe('role-grant vendor parity', () => {
               .split(/\s+/)
           )}, decision = "allow"`
         )
-      for (const rule of grants.shell.deny)
+      for (const rule of prefixDenies)
         expect(generatedFile(codex, 'rules/role.rules')).toContain(
           `pattern = ${JSON.stringify(
             rule
@@ -294,6 +437,52 @@ describe('role-grant vendor parity', () => {
     for (const tool of ['spawn_agent', 'send_input', 'resume_agent', 'wait_agent', 'close_agent']) {
       expect(invoke(reviewerConfig, { tool_name: tool, tool_input: {} })).toContain('"permissionDecision":"deny"')
     }
+  })
+
+  test('the Linux Unix-socket opt-in reaches the generated Claude sandbox only when asked for', () => {
+    const grants = loadRoleGrants(join(processRoot, 'developer/grants.yaml'))
+    const base = { generatedDir: '/tmp/generated/developer', outputSchemaPath: 'output.schema.json', outputSchema: {} }
+    const network = (allowUnixSockets?: boolean) =>
+      JSON.parse(generatedFile(generateClaudeSettings(grants, { ...base, allowUnixSockets }), 'role-settings.json'))
+        .sandbox.network
+    expect(network(true).allowAllUnixSockets).toBe(true)
+    expect(network(true).allowedDomains).toEqual(grants.network_domains)
+    expect(network(false)).not.toHaveProperty('allowAllUnixSockets')
+    expect(network()).not.toHaveProperty('allowAllUnixSockets')
+  })
+
+  test('the developer shell runs ordinary commands and refuses only the denied forms and the guards', () => {
+    const grants = loadRoleGrants(join(processRoot, 'developer/grants.yaml'))
+    const workspace = mkdtempSync(join(tmpdir(), 'vinaya-developer-shell-'))
+    const paths = {
+      generatedDir: workspace,
+      outputSchemaPath: 'o.json',
+      outputSchema: {},
+      variables: { WORKTREE: workspace }
+    }
+    const decide = (config: GeneratedAgentConfig, command: string): string => {
+      const hook = join(workspace, `${config.vendor}-hook.mjs`)
+      writeFileSync(hook, generatedFile(config, 'hooks/pre-tool-use.mjs'))
+      const out = Bun.spawnSync(['node', hook], {
+        cwd: workspace,
+        stdin: Buffer.from(JSON.stringify({ tool_name: 'Bash', tool_input: { command } }))
+      }).stdout.toString()
+      return out === '' ? 'allow' : String(JSON.parse(out).hookSpecificOutput.permissionDecisionReason)
+    }
+    for (const config of [generateClaudeSettings(grants, paths), generateCodexConfig(grants, paths)]) {
+      for (const command of ['pwd', 'ls -la', 'cat package.json', 'bun test', 'git status', 'grep -rn foo . | head'])
+        expect(decide(config, command), `${config.vendor} ${command}`).toBe('allow')
+      expect(decide(config, 'git push origin task-branch')).toBe('command matches a shell deny rule')
+      expect(decide(config, 'gh pr list')).toBe('command matches a shell deny rule')
+      expect(decide(config, 'rm -rf /tmp/x')).toBe('command matches a shell deny rule')
+      expect(decide(config, 'git commit -n -m x')).toBe('verification bypass is denied')
+      expect(decide(config, 'sleep 100 &')).toBe('background shell is denied')
+      expect(decide(config, 'sh -c "pwd"')).toBe('shell command cannot be proven safe')
+    }
+    // A role without the default keeps its allowlist.
+    const listed = { ...grants, shell: { allow: grants.shell.allow, deny: grants.shell.deny } }
+    for (const config of [generateClaudeSettings(listed, paths), generateCodexConfig(listed, paths)])
+      expect(decide(config, 'pwd')).toBe('command is outside the shell allowlist')
   })
 
   test('every shell bypass spelling is denied by both generated hooks for the guard itself', () => {

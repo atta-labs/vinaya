@@ -21,6 +21,9 @@ import {
 import { parse } from 'yaml'
 import type { GeneratedAgentConfig } from '../../adapters/agents/policy'
 import type { LoadedProcess } from '../loader/load-process'
+import { stageCodexAuth } from '../../adapters/agents/codex/auth'
+import { RESUME_SESSION_PLACEHOLDER } from '../../adapters/agents/policy'
+import { sessionIdOf } from '../../adapters/agents/structured-result'
 
 // Runs a loaded process's Flow on the packed executor. The runtime knows no
 // particular process: everything a Flow names (mechanical actions, deciding
@@ -85,7 +88,24 @@ export interface ProcessRunOptions {
   spawnFn?: SpawnFn
   onEvent?: AgentSpawnExecutorConfig['onEvent']
   envAllowlist?: string[]
+  /**
+   * Agent step id to a function that completes the step's rendered prompt with what only the
+   * process knows (a task's brief, say). It runs each time the step starts, over the results so far.
+   */
+  stepPrompts?: Readonly<Record<string, StepPrompt>>
+  /**
+   * Agent steps that continue their own earlier session each time they run again (a revision of the same
+   * work). The Flow's `resume` names only a prior step, so a step's own continuation is the runner's.
+   */
+  continueSessions?: readonly string[]
 }
+
+export type StepPrompt = (
+  rendered: string,
+  results: Readonly<Record<string, StepNodeResult>>,
+  /** The vendor session this step continues (the step's `resume`), absent on a fresh session. */
+  context?: { resumeSessionId?: string }
+) => Promise<string> | string
 
 function camelize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(camelize)
@@ -139,7 +159,9 @@ function assertBindingsCover(steps: FlowStep[], bindings: ProcessBindings): void
 function nodeExecutor(
   actions: ActionRegistry,
   config: AgentSpawnExecutorConfig,
-  spawnFn: SpawnFn | undefined
+  spawnFn: SpawnFn | undefined,
+  stepPrompts: Readonly<Record<string, StepPrompt>> = {},
+  continueSessions: readonly string[] = []
 ): AgentLifecycleNodeExecutor {
   return async (state: AgentSpawnGraphStateValue, { node, plan, signal }) => {
     if (node.kind === 'mechanical') {
@@ -162,12 +184,34 @@ function nodeExecutor(
     if (node.kind !== 'agent-spawn') {
       throw new Error(`Unsupported node kind "${node.kind}" for step "${node.id}"`)
     }
-    const resumeSessionId = node.resume ? state.sessions[node.resume] : undefined
-    const prompt = renderStepPrompt(node, { question: plan.question, results: state.results })
+    const resumeSessionId = node.resume
+      ? state.sessions[node.resume]
+      : continueSessions.includes(node.id)
+        ? state.sessions[node.id]
+        : undefined
+    const rendered = renderStepPrompt(node, { question: plan.question, results: state.results })
+    const complete = Object.hasOwn(stepPrompts, node.id) ? stepPrompts[node.id] : undefined
+    const prompt = complete
+      ? await complete(rendered, state.results, resumeSessionId === undefined ? {} : { resumeSessionId })
+      : rendered
     const result = await executeAgentSpawnNode({ node, prompt, resumeSessionId, config, spawnFn, signal })
+    // The executor's own node executor reports what the agent printed as streaming events; this one
+    // replaces it, so it reports the same records the same way.
+    for (const reported of result.events) {
+      const content = typeof reported === 'string' ? reported : JSON.stringify(reported)
+      try {
+        config.onEvent?.({ type: 'node:streaming', nodeId: node.id, runId: state.runId, content })
+      } catch {
+        // A faulty observer never fails the step it observes.
+      }
+    }
     return {
       results: { [node.id]: result },
-      sessions: result.sessionId ? { [node.id]: result.sessionId } : {}
+      // The executor reads `session_id`; a Codex stream names its session in `thread.started`.
+      sessions: (() => {
+        const sessionId = result.sessionId ?? sessionIdOf(result.events)
+        return sessionId ? { [node.id]: sessionId } : {}
+      })()
     }
   }
 }
@@ -200,7 +244,17 @@ function prepare(options: ProcessRunOptions): PreparedLeg {
     ...(options.onEvent ? { onEvent: options.onEvent } : {}),
     ...(options.envAllowlist ? { envAllowlist: options.envAllowlist } : {})
   }
-  return { plan, config, executor: nodeExecutor(options.bindings.actions, config, options.spawnFn) }
+  return {
+    plan,
+    config,
+    executor: nodeExecutor(
+      options.bindings.actions,
+      config,
+      options.spawnFn,
+      options.stepPrompts,
+      options.continueSessions
+    )
+  }
 }
 
 // The executor cannot serialise legs of one run: two concurrent legs on a
@@ -264,7 +318,13 @@ export async function resumeProcessRun(options: ProcessRunOptions, identity: Run
  */
 export function createRoleLauncher(
   generated: GeneratedAgentConfig,
-  options: { generatedDir: string; allowedPermissions: string[]; timeoutMs?: number }
+  options: {
+    generatedDir: string
+    allowedPermissions: string[]
+    timeoutMs?: number
+    /** A Codex launch whose CODEX_HOME is the generated directory gets a copy of the operator's subscription login there. */
+    stageCodexLogin?: boolean
+  }
 ): RoleBinaryConfig {
   for (const [path, content] of Object.entries(generated.files)) {
     const target = join(options.generatedDir, path)
@@ -272,11 +332,22 @@ export function createRoleLauncher(
     writeFileSync(target, content)
     if (generated.executableFiles.includes(path)) chmodSync(target, 0o755)
   }
+  if (
+    options.stageCodexLogin === true &&
+    generated.vendor === 'codex' &&
+    generated.env.CODEX_HOME === options.generatedDir
+  )
+    stageCodexAuth(options.generatedDir)
   const [command, ...args] = generated.launch
   if (command === undefined) throw new Error(`The ${generated.vendor} adapter generated an empty launch command`)
+  const resume = generated.resumeLaunch
   return {
     command,
-    buildArgs: () => [...args],
+    // A step that continues a session launches the adapter's resume form with that session's id.
+    buildArgs: ({ resumeSessionId }) =>
+      resumeSessionId !== undefined && resume !== undefined
+        ? resume.slice(1).map((arg) => (arg === RESUME_SESSION_PLACEHOLDER ? resumeSessionId : arg))
+        : [...args],
     allowedPermissions: options.allowedPermissions,
     env: generated.env,
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs })

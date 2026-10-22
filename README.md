@@ -142,6 +142,29 @@ bunx turbo build
 bunx biome check .
 ```
 
+### Running a task on the Engine
+
+The standalone review loop (`bun apps/cli/src/index.ts task run`) stays the default. This repository
+can also run one task on the Engine, from a script that lives outside the published CLI:
+
+```bash
+bun processes/vinaya/bin/run-engine.ts --task <n> --agent <claude|codex>
+bun processes/vinaya/bin/run-engine.ts --task <n> --agent <claude|codex> --dry-run
+```
+
+The first line printed is the run's `loopId`, the id its Log events carry. A run writes its trace
+to `<runtimeDir>/engine-runs/<n>/trace.json`: every step in order with its exit code, what each
+agent reported while it ran, and both reviewer verdicts. `--dry-run` prints the process digest, the
+steps, the function each mechanical step adapts and each role's launch command, and launches
+nothing.
+
+The Developer's prompt carries the task's frozen brief and the context packet (with the required
+sources it prepared). It does not yet carry the doctrine block, the Issue-rulings block, the kept-work
+note or the later-round resume context; those are not sent. On a Linux host that sets
+`VINAYA_LINUX_SANDBOX_ALLOW_UNIX_SOCKETS=1` the generated Claude settings allow Unix sockets, as the
+loop does, and the variable is forwarded to
+the agent. The Developer's shell runs any command its `grants.yaml` does not deny.
+
 ## Docs
 
 - **[vinaya.attalabs.dev](https://vinaya.attalabs.dev)** — the pitch, the lifecycle, why this

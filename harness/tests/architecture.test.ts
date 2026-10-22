@@ -33,6 +33,36 @@ export function importsOfAProcess(source: string): string[] {
   return offending
 }
 
+// Nor does it reach into an application: a file under `harness/` that imports
+// from `apps/` would make the generic machinery depend on one product's code.
+export function importsOfAnApp(source: string): string[] {
+  const offending: string[] = []
+  for (const match of source.matchAll(SPECIFIER)) {
+    const specifier = match[2] ?? ''
+    if (specifier.startsWith('.') && specifier.split('/').includes('apps')) offending.push(specifier)
+  }
+  return offending
+}
+
+describe('harness never imports an app', () => {
+  test('no file under harness/ imports from apps/', () => {
+    const violations: string[] = []
+    for (const file of sourceFiles(harnessRoot)) {
+      if (file === import.meta.path) continue
+      for (const specifier of importsOfAnApp(readFileSync(file, 'utf8'))) {
+        violations.push(`${file.slice(harnessRoot.length + 1)} imports ${specifier}`)
+      }
+    }
+    expect(violations).toEqual([])
+  })
+
+  test('the scan catches a planted offending import', () => {
+    expect(importsOfAnApp("import { x } from '../../apps/cli/src/lib/thing'")).toEqual(['../../apps/cli/src/lib/thing'])
+    expect(importsOfAnApp("const m = await import('../../../apps/cli/x')")).toEqual(['../../../apps/cli/x'])
+    expect(importsOfAnApp("import { x } from './local'\nimport y from 'node:fs'")).toEqual([])
+  })
+})
+
 describe('harness never imports a process', () => {
   test('no file under harness/ imports from processes/', () => {
     const violations: string[] = []

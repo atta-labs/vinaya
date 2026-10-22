@@ -1,3 +1,5 @@
+import { claudeShellRule } from './claude-code/capabilities'
+import { CODEX_READ_ONLY_COMMANDS } from './codex/capabilities'
 import type { Decision, RoleGrants } from './manifest'
 
 export interface GeneratedAgentConfig {
@@ -6,7 +8,15 @@ export interface GeneratedAgentConfig {
   env: Record<string, string>
   files: Record<string, string>
   executableFiles: string[]
+  /**
+   * The launch that continues an earlier session: `launch` with the vendor's resume form, the session id
+   * standing as `RESUME_SESSION_PLACEHOLDER`. Absent: the vendor's sessions are not continued.
+   */
+  resumeLaunch?: string[]
 }
+
+/** Stands for the session id in `GeneratedAgentConfig.resumeLaunch`. */
+export const RESUME_SESSION_PLACEHOLDER = '<session-id>'
 
 export interface GeneratorPaths {
   generatedDir: string
@@ -14,6 +24,8 @@ export interface GeneratorPaths {
   outputSchema: Record<string, unknown>
   mcpCommand?: string
   variables?: Record<string, string>
+  /** Claude's sandbox may connect to Unix sockets: the Linux host opt-in for a kernel that refuses the sandbox's seccomp step. */
+  allowUnixSockets?: boolean
 }
 
 export function resolveGrantValues(values: string[], variables: Record<string, string> = {}): string[] {
@@ -26,6 +38,8 @@ export interface HookPolicy {
   tools: Record<string, Decision>
   shellAllow: string[]
   shellDeny: string[]
+  /** A command no allow rule names is allowed (only the deny rules and the guards refuse); absent means it is refused. */
+  shellDefaultAllow?: boolean
   writableRoots: string[]
   guards: RoleGrants['hooks']
 }
@@ -78,6 +92,9 @@ const tokenize = (line) => {
   let started = false
   let dynamic = false
   let background = false
+  // An unquoted output redirect to a file (\`>\`, \`>>\`, \`N>\`, \`&>\`); a duplication onto another
+  // descriptor (\`2>&1\`) and \`/dev/null\` write no file.
+  let redirect = false
   const pushWord = () => {
     if (started) argv.push({ text: word, dynamic })
     word = ''
@@ -141,13 +158,21 @@ const tokenize = (line) => {
       if (next === '|' || next === '&') index += 1
       continue
     }
+    if (char === '>') {
+      let at = index + 1
+      if (line[at] === '>') at += 1
+      while (line[at] === ' ' || line[at] === '\t') at += 1
+      const duplicate = line[at] === '&' && /[0-9-]/.test(line[at + 1] ?? '')
+      const target = /^[^\s;|&()]*/.exec(line.slice(at))?.[0] ?? ''
+      if (!duplicate && target !== '/dev/null') redirect = true
+    }
     if (/[*?\[\]{}]/.test(char) || (char === '~' && !started)) dynamic = true
     word += char
     started = true
   }
   if (quote) return null
   pushStatement()
-  return { statements, background }
+  return { statements, background, redirect }
 }
 
 const RESERVED = new Set(['!', '{', '}', 'if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done', 'time', 'coproc'])
@@ -162,6 +187,15 @@ const COMMIT_LIKE = new Set(['commit', 'merge', 'cherry-pick', 'revert', 'am', '
 const UNSAFE_CONFIG = /^(alias\.|core\.hookspath|include|core\.fsmonitor|core\.pager|core\.editor|core\.sshcommand|sequence\.editor)/i
 const base = (word) => word.split('/').pop()
 const starts = (argv, prefix) => prefix.every((word, index) => argv[index] === word)
+// A rule 'prefix ... -flag' matches the prefix and then the flag anywhere after it ('--flag=value', and a short
+// flag with its value attached, included).
+const hasFlag = (words, flag) => words.some((word) => word === flag || word.startsWith(flag + '=') || (/^-[^-]$/.test(flag) && word.startsWith(flag)))
+const matches = (argv, rule) => {
+  const gap = rule.indexOf('...')
+  if (gap < 0) return starts(argv, rule)
+  const prefix = rule.slice(0, gap)
+  return starts(argv, prefix) && rule.slice(gap + 1).every((flag) => hasFlag(argv.slice(prefix.length), flag))
+}
 const git = (dir, argv) => {
   try { return execFileSync('git', ['-C', dir, ...argv], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim() || null }
   catch { return null }
@@ -321,9 +355,11 @@ if (tool === 'Bash') {
   if (policy.guards.no_verify && found.has('no_verify')) deny('verification bypass is denied')
   if (policy.guards.default_branch_commit && found.has('default_branch')) deny('commit or push on the default branch is denied')
   if (gitGuards && found.has('unsafe')) deny('shell command cannot be proven safe')
+  // A role with nowhere to write may not redirect output into a file either.
+  if (parsed.redirect && policy.writableRoots.length === 0) deny('output redirection is denied')
   const statements = parsed.statements.map((words) => words.map((word) => word.text))
-  if (statements.some((argv) => policy.shellDeny.some((rule) => starts(argv, tokens(rule))))) deny('command matches a shell deny rule')
-  if (statements.length === 0 || statements.some((argv) => !policy.shellAllow.some((rule) => starts(argv, tokens(rule))))) deny('command is outside the shell allowlist')
+  if (statements.some((argv) => policy.shellDeny.some((rule) => matches(argv, tokens(rule))))) deny('command matches a shell deny rule')
+  if (!policy.shellDefaultAllow && (statements.length === 0 || statements.some((argv) => !policy.shellAllow.some((rule) => matches(argv, tokens(rule)))))) deny('command is outside the shell allowlist')
 }
 if (policy.guards.background_shell && ['Agent', 'Task'].includes(tool) && args.run_in_background === true) {
   deny('background subagent is denied')
@@ -339,32 +375,53 @@ if (policy.guards.write_scope && ['Write', 'Edit', 'NotebookEdit', 'apply_patch'
 `
 }
 
+/**
+ * What a role can effectively do on one vendor, from its resolved grants, in
+ * vendor-neutral terms. Both vendors' adapters write this as
+ * `effective-capabilities.json`, and the parity test requires the two to be
+ * equal for every role.
+ * - `read_files`: Claude's Read; Codex's shell (Codex reads through it).
+ * - `run_commands`: Claude's Bash; Codex's shell beyond the reading-only commands.
+ * - `write_files`: Claude's Write and Edit with a writable root; Codex's
+ *   apply_patch under a workspace-write sandbox with a writable root.
+ */
 export function normalizedCapabilities(grants: RoleGrants, vendor: 'claude' | 'codex'): Record<string, Decision> {
-  if (vendor === 'claude')
+  const yes = (value: boolean): Decision => (value ? 'allow' : 'deny')
+  const writable = grants.writable_roots.length > 0
+  if (vendor === 'claude') {
+    const c = grants.tools.claude
     return {
-      shell: grants.tools.claude.Bash,
-      write: grants.tools.claude.Write === 'allow' && grants.tools.claude.Edit === 'allow' ? 'allow' : 'deny',
-      plan: grants.tools.claude.TodoWrite,
-      view_image: grants.tools.claude.Read,
-      web_fetch: grants.tools.claude.WebFetch,
-      web_search: grants.tools.claude.WebSearch,
-      spawn_agent: grants.tools.claude.Agent,
-      send_input: grants.tools.claude.SendMessage,
-      resume_agent: grants.tools.claude.Agent,
-      wait_agent: grants.tools.claude.TaskOutput,
-      close_agent: grants.tools.claude.TaskStop
+      read_files: c.Read,
+      run_commands: c.Bash,
+      write_files: yes(c.Write === 'allow' && c.Edit === 'allow' && writable),
+      plan: c.TodoWrite,
+      view_image: c.Read,
+      web_fetch: c.WebFetch,
+      web_search: c.WebSearch,
+      spawn_agent: c.Agent,
+      send_input: c.SendMessage,
+      resume_agent: c.Agent,
+      wait_agent: c.TaskOutput,
+      close_agent: c.TaskStop
     }
+  }
+  const x = grants.tools.codex
+  const shell = x.exec_command === 'allow'
+  const readOnlyCommands = new Set<string>(CODEX_READ_ONLY_COMMANDS.map(claudeShellRule))
+  const runsBeyondReading =
+    grants.shell.default === 'allow' || grants.shell.allow.some((rule) => !readOnlyCommands.has(rule))
   return {
-    shell: grants.tools.codex.exec_command,
-    write: grants.tools.codex.apply_patch,
-    plan: grants.tools.codex.update_plan,
-    view_image: grants.tools.codex.view_image,
-    web_fetch: grants.tools.codex.web_fetch,
-    web_search: grants.tools.codex.web_search,
-    spawn_agent: grants.tools.codex.spawn_agent,
-    send_input: grants.tools.codex.send_input,
-    resume_agent: grants.tools.codex.resume_agent,
-    wait_agent: grants.tools.codex.wait_agent,
-    close_agent: grants.tools.codex.close_agent
+    read_files: yes(shell),
+    run_commands: yes(shell && runsBeyondReading),
+    write_files: yes(x.apply_patch === 'allow' && grants.sandbox.codex === 'workspace-write' && writable),
+    plan: x.update_plan,
+    view_image: x.view_image,
+    web_fetch: x.web_fetch,
+    web_search: x.web_search,
+    spawn_agent: x.spawn_agent,
+    send_input: x.send_input,
+    resume_agent: x.resume_agent,
+    wait_agent: x.wait_agent,
+    close_agent: x.close_agent
   }
 }

@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "run-engine": "bun bin/run-engine.ts",
     "test": "bun test --timeout=30000",
     "clean": "rm -rf dist .turbo"
   },

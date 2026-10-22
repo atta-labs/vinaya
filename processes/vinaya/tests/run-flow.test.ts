@@ -20,7 +20,8 @@ import {
   findOpenPrForBranch
 } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
 import { publishRound } from '../../../apps/cli/src/lib/dev-review-loop/publication'
-import { defaultRunWorktreeChecks, handoffFindings } from '../../../apps/cli/src/lib/dev-review-loop'
+import { handoffFindings } from '../../../apps/cli/src/lib/dev-review-loop'
+import { runCliChecks } from '../../../harness/gates/run-checks'
 import { parseDeveloperTurnResult } from '../../../apps/cli/src/lib/developer-turn-result'
 import { parseReviewResult } from '../../../apps/cli/src/lib/review-result'
 import {
@@ -66,13 +67,93 @@ describe('bindings cover the Flow', () => {
     expect(adapts('vinaya.reconcile-external-state')?.[0]).toBe(findOpenPrForBranch)
     expect(adapts('vinaya.prepare-sources')?.[0]).toBe(fetchSourceRevision)
     expect(adapts('vinaya.validate-developer-output')?.[0]).toBe(parseDeveloperTurnResult)
-    expect(adapts('harness.run-gates')?.[0]).toBe(defaultRunWorktreeChecks)
+    expect(adapts('harness.run-gates')?.[0]).toBe(runCliChecks)
     expect(adapts('vinaya.validate-reviewer-outputs')?.[0]).toBe(parseReviewResult)
     expect(adapts('vinaya.assess-round')?.[0]).toBe(assessRound)
     expect(adapts('vinaya.build-revision-handoff')?.[0]).toBe(handoffFindings)
     expect(adapts('harness.publish')?.[0]).toBe(publishRound)
     expect(adapts('vinaya.classify-gate-result')?.[0]).toBe(classifyGateResult)
     expect(adapts('vinaya.dispatch-reviewers')?.[0]).toBe(dispatchReviewers)
+  })
+})
+
+describe('bindings read run state when their step runs', () => {
+  const review = (role: string) => ({
+    reviewResult: {
+      schemaVersion: 1,
+      role,
+      status: 'completed',
+      headSha: 'abc123',
+      manifestDigest: 'digest',
+      summary: 'ok',
+      findings: [],
+      objectiveResults: []
+    }
+  })
+  const agentResult = (output: unknown) =>
+    ({ kind: 'agent-spawn', nodeId: 'x', exitCode: 0, events: [output] }) as never
+
+  test('publish receives the pull request number and head found when it runs', () => {
+    const published: Array<{ root: string; input: Record<string, unknown> }> = []
+    let prNumber: number | null = null
+    const task = {
+      runtimeDir: '/runtime',
+      branch: 'task/issue-9',
+      issueNumber: 9,
+      worktreePath: '/repo/.worktrees/task/issue-9',
+      reviewRound: () => 2,
+      publish: (at: Record<string, unknown>) => ({ task: 9, ...at }),
+      bound: {
+        findOpenPrForBranch: (branch: string) => (branch === 'task/issue-9' && prNumber ? { number: prNumber } : null),
+        readWorktreeHead: (path: string) => (path === '/repo/.worktrees/task/issue-9' ? 'abc123' : null),
+        publishRound: (root: string, input: Record<string, unknown>) => void published.push({ root, input })
+      }
+    } as unknown as TaskInput
+    const publish = createActions(task)['harness.publish'] as (context: never) => unknown
+    expect(() => publish({} as never)).toThrow('no open pull request')
+    // The pull request is opened after the task started, before the publish step runs.
+    prNumber = 4242
+    publish({} as never)
+    expect(published).toEqual([
+      { root: '/runtime', input: { task: 9, prNumber: 4242, expectedHead: 'abc123', round: 2 } }
+    ])
+  })
+
+  test('validating the reviewer outputs holds both verdicts for the round in progress', () => {
+    const held: Array<[string, number, number, string, string]> = []
+    const task = {
+      runtimeDir: '/runtime',
+      issueNumber: 9,
+      reviewRound: () => 3,
+      renderVerdict: (role: string) => `rendered ${role}`,
+      bound: {
+        writeHeldVerdict: (root: string, issue: number, round: number, role: string, text: string) =>
+          void held.push([root, issue, round, role, text])
+      }
+    } as unknown as TaskInput
+    const validate = createActions(task)['vinaya.validate-reviewer-outputs'] as (context: never) => unknown
+    const results = {
+      'code-review': agentResult(review('code-reviewer')),
+      'security-review': agentResult(review('security-reviewer'))
+    }
+    validate({ results } as never)
+    expect(held).toEqual([
+      ['/runtime', 9, 3, 'reviewer', 'rendered reviewer'],
+      ['/runtime', 9, 3, 'security', 'rendered security']
+    ])
+  })
+
+  test('an invalid reviewer output holds nothing', () => {
+    const held: unknown[] = []
+    const task = {
+      reviewRound: () => 1,
+      renderVerdict: () => '',
+      bound: { writeHeldVerdict: () => void held.push(1) }
+    } as unknown as TaskInput
+    const validate = createActions(task)['vinaya.validate-reviewer-outputs'] as (context: never) => unknown
+    const results = { 'code-review': agentResult(review('code-reviewer')), 'security-review': agentResult({}) }
+    expect(() => validate({ results } as never)).toThrow('security-review output failed')
+    expect(held).toEqual([])
   })
 })
 
