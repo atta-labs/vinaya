@@ -9,17 +9,23 @@ import { NODE_CONTRACTS } from '../lib/dev-review-loop/dev-review-engine-state-c
 import { SCANNER_DECLARATIONS, underDeclaredRoot } from '../../src/lib/repo-scanner-tests.js'
 import { REFRESH_COMMAND, refreshLoopBaseline } from '../../scripts/refresh-loop-baseline.js'
 import { type Observation, SCENARIO_DRIVERS } from './dev-review-current-loop-adapter.js'
+import { ENGINE_SCENARIO_DRIVERS } from './dev-review-engine-loop-adapter.js'
+import engineFailureFixture from '../fixtures/dev-review-engine-expected-failures.json'
 
 /**
  * The developer-review architecture exit gate.
  *
  * One test file executes every scenario of the normalized behavioral corpus
  * (`tests/fixtures/dev-review-engine-scenarios.json`) against the current
- * standalone loop through `dev-review-current-loop-adapter.ts`, and classifies
+ * standalone loop through `dev-review-current-loop-adapter.ts` and the real
+ * Engine Flow through `dev-review-engine-loop-adapter.ts`, using both vendor
+ * launch shapes. It classifies
  * each result against the scenario's portable expectation: passed, an
  * expected failure that names an open entry of the frozen defect register, or
  * an unexpected failure. Nothing is skipped and no failure is accepted without
- * a register identifier. It then checks the exit condition over every product
+ * a register identifier. Engine failures name a scenario product guarantee
+ * in the shrinking expected-failure fixture, checked for invalid and stale
+ * mappings and bounded by a pinned ceiling. It then checks the exit condition over every product
  * guarantee of the invariant register — an owner, a typed representation, a
  * failure behavior, an executed corpus scenario and, where an external
  * standard applies, a normative source — and pins the standalone baseline the
@@ -209,10 +215,30 @@ beforeAll(async () => {
       verdict: classify(scenario, mismatches(scenario.expect, observation), register.defects)
     })
     cleanupWorlds()
+    for (const agent of ENGINE_AGENTS) {
+      const engineDriver = ENGINE_SCENARIO_DRIVERS[scenario.id]
+      if (engineDriver === undefined) continue
+      const engineObservation = await engineDriver(agent)
+      engineResults.push({
+        scenario,
+        agent,
+        observation: engineObservation,
+        verdict: classifyEngine(
+          scenario,
+          mismatches(scenario.expect, engineObservation),
+          engineFailures.entries.find((entry) => entry.scenario === scenario.id)
+        )
+      })
+    }
   }
 }, 240_000)
 
-afterAll(cleanupWorlds)
+afterAll(() => {
+  cleanupWorlds()
+  process.stdout.write(
+    `Engine expected-failure count: ${engineFailures.entries.length}; ceiling: ${ENGINE_FAILURE_CEILING}\n`
+  )
+})
 
 const countOf = (kind: Verdict['kind']) => results.filter((r) => r.verdict.kind === kind).length
 
@@ -255,10 +281,12 @@ describe('architecture exit gate (O1: every corpus scenario executes on the stan
       ...results.map((r) => {
         const v = r.verdict
         const tag = v.kind === 'expected-defect' ? `expected-defect ${v.defect}` : v.kind
-        return `  ${r.scenario.id}: ${tag} (${r.observation.decision})`
+        return `  standalone ${r.scenario.id}: ${tag} (${r.observation.decision})`
       })
     ]
     process.stdout.write(`${lines.join('\n')}\n`)
+    expect(countOf('passed')).toBe(22)
+    expect(countOf('expected-defect')).toBe(1)
     expect(skipped).toBe(0)
     expect(results.length).toBe(corpus.scenarios.length)
   })
@@ -325,6 +353,149 @@ describe('architecture exit gate (O2: every failure names an open defect-registe
     ]) {
       expect(found.some((m) => m.startsWith(prefix))).toBe(true)
     }
+  })
+})
+
+// The deletion-owner allowlist is frozen from the task rationale. It is not
+// inferred from whichever guarantees happen to fail in this run.
+const ENGINE_DELETION_OWNERS: Readonly<Record<string, readonly string[]>> = {
+  '3': ['INV-093', 'INV-094'],
+  '4': ['INV-025', 'INV-026', 'INV-075', 'INV-092', 'INV-101', 'INV-106', 'INV-113', 'INV-116'],
+  '5': ['INV-002', 'INV-008', 'INV-076', 'INV-078', 'INV-086', 'INV-109', 'INV-144'],
+  '6': ['INV-079', 'INV-082', 'INV-088', 'INV-090', 'INV-107'],
+  '7': [
+    'INV-005',
+    'INV-010',
+    'INV-011',
+    'INV-016',
+    'INV-020',
+    'INV-023',
+    'INV-042',
+    'INV-057',
+    'INV-063',
+    'INV-013',
+    'INV-031'
+  ],
+  '8': ['INV-033', 'INV-037', 'INV-038', 'INV-039', 'INV-041', 'INV-120', 'INV-122', 'INV-126', 'INV-137'],
+  '9': ['INV-043', 'INV-071', 'INV-099', 'INV-102'],
+  '10': ['INV-103', 'INV-118', 'INV-124', 'INV-125', 'INV-127', 'INV-163'],
+  '11': ['INV-021', 'INV-164'],
+  '12': ['INV-089']
+}
+const ENGINE_ALLOWED_GUARANTEES = new Set(Object.values(ENGINE_DELETION_OWNERS).flat())
+const ENGINE_AGENTS = ['claude', 'codex'] as const
+// This ceiling may only fall together with removal of resolved fixture entries.
+const ENGINE_FAILURE_CEILING = 21
+interface EngineFailure {
+  scenario: string
+  guarantee: string
+  reason: string
+}
+const engineFailures: { schemaVersion: number; entries: EngineFailure[] } = engineFailureFixture
+type EngineVerdict =
+  | { kind: 'passed' }
+  | { kind: 'expected failure'; guarantee: string; mismatches: string[] }
+  | { kind: 'unexpected'; reason: string; mismatches: string[] }
+const engineResults: {
+  scenario: Scenario
+  agent: (typeof ENGINE_AGENTS)[number]
+  observation: Observation
+  verdict: EngineVerdict
+}[] = []
+
+function engineMappingError(scenario: Scenario, entry: EngineFailure): string | null {
+  if (entry.scenario !== scenario.id) return 'mapping names another scenario'
+  if (
+    !register.invariants.some(
+      (invariant) => invariant.id === entry.guarantee && invariant.classification === 'product-guarantee'
+    )
+  )
+    return 'not a product-guarantee in the invariant register'
+  if (!scenario.guarantees.includes(entry.guarantee)) return 'guarantee is not named by this scenario'
+  if (!ENGINE_ALLOWED_GUARANTEES.has(entry.guarantee)) return 'guarantee has no later deletion owner'
+  if (!entry.reason?.trim()) return 'mapping has no observed reason'
+  return null
+}
+
+function classifyEngine(scenario: Scenario, found: string[], entry?: EngineFailure): EngineVerdict {
+  if (entry === undefined)
+    return found.length === 0
+      ? { kind: 'passed' }
+      : { kind: 'unexpected', reason: 'unmapped mismatch', mismatches: found }
+  const error = engineMappingError(scenario, entry)
+  if (error !== null) return { kind: 'unexpected', reason: error, mismatches: found }
+  if (found.length === 0) return { kind: 'unexpected', reason: 'stale entry: scenario now passes', mismatches: found }
+  return { kind: 'expected failure', guarantee: entry.guarantee, mismatches: found }
+}
+
+function engineFixtureErrors(entries: EngineFailure[], ceiling: number): string[] {
+  const errors: string[] = []
+  if (entries.length > ceiling) errors.push('expected-failure ceiling exceeded')
+  const seen = new Set<string>()
+  for (const entry of entries) {
+    if (seen.has(entry.scenario)) errors.push(`duplicate scenario: ${entry.scenario}`)
+    seen.add(entry.scenario)
+    const scenario = corpus.scenarios.find((candidate) => candidate.id === entry.scenario)
+    const error = scenario ? engineMappingError(scenario, entry) : 'unknown scenario'
+    if (error !== null) errors.push(`${entry.scenario}: ${error}`)
+  }
+  return errors
+}
+
+describe('architecture exit gate (Engine: the same corpus, real Flow and actions, both stub vendors)', () => {
+  it('executes every scenario with each vendor and prints one classification per run', () => {
+    expect(Object.keys(ENGINE_SCENARIO_DRIVERS).sort()).toEqual(corpus.scenarios.map((scenario) => scenario.id).sort())
+    for (const agent of ENGINE_AGENTS) {
+      const rows = engineResults.filter((row) => row.agent === agent)
+      expect(rows.map((row) => row.scenario.id)).toEqual(corpus.scenarios.map((scenario) => scenario.id))
+      for (const row of rows) {
+        const verdict = row.verdict
+        const tag = verdict.kind === 'expected failure' ? `expected failure ${verdict.guarantee}` : verdict.kind
+        process.stdout.write(`  engine ${agent} ${row.scenario.id}: ${tag} (${row.observation.decision})\n`)
+      }
+      process.stdout.write(
+        `Engine ${agent}: ${rows.filter((row) => row.verdict.kind === 'passed').length} passed, ${rows.filter((row) => row.verdict.kind === 'expected failure').length} expected failure, ${rows.filter((row) => row.verdict.kind === 'unexpected').length} unexpected\n`
+      )
+    }
+  })
+
+  it('accepts no unexpected mismatch or stale entry and both vendors classify identically', () => {
+    expect(
+      engineResults
+        .filter((row) => row.verdict.kind === 'unexpected')
+        .map((row) => ({ scenario: row.scenario.id, agent: row.agent, verdict: row.verdict }))
+    ).toEqual([])
+    for (const scenario of corpus.scenarios) {
+      const rows = engineResults.filter((row) => row.scenario.id === scenario.id)
+      expect(rows).toHaveLength(2)
+      const classification = (row: (typeof rows)[number]) =>
+        row.verdict.kind === 'expected failure' ? [row.verdict.kind, row.verdict.guarantee] : [row.verdict.kind]
+      expect(classification(rows[0]!)).toEqual(classification(rows[1]!))
+    }
+  })
+
+  it('the fixture has unique scenarios, product guarantees with later owners and the pinned entry count', () => {
+    expect(engineFailures.schemaVersion).toBe(1)
+    expect(engineFixtureErrors(engineFailures.entries, ENGINE_FAILURE_CEILING)).toEqual([])
+    expect(engineFailures.entries.length).toBe(ENGINE_FAILURE_CEILING)
+  })
+
+  it('rejects an unmapped failure, a non-product id, an unrelated id, an unowned id and a stale entry', () => {
+    const scenario = corpus.scenarios.find((row) => row.id === 'clean-completion')!
+    const entry = { scenario: scenario.id, guarantee: 'INV-099', reason: 'probe' }
+    expect(classifyEngine(scenario, ['probe']).kind).toBe('unexpected')
+    for (const guarantee of ['DEF-03', 'INV-014', 'INV-999', 'INV-057', 'INV-001']) {
+      expect(classifyEngine(scenario, ['probe'], { ...entry, guarantee }).kind).toBe('unexpected')
+    }
+    expect(classifyEngine(scenario, [], entry)).toMatchObject({
+      kind: 'unexpected',
+      reason: 'stale entry: scenario now passes'
+    })
+    expect(classifyEngine(scenario, ['probe'], entry)).toMatchObject({ kind: 'expected failure', guarantee: 'INV-099' })
+    expect(classifyEngine(scenario, []).kind).toBe('passed')
+    expect(engineFixtureErrors([entry, entry], 1)).toContain('expected-failure ceiling exceeded')
+    expect(engineFixtureErrors([entry, entry], 2)).toContain(`duplicate scenario: ${scenario.id}`)
+    expect(engineFixtureErrors([{ ...entry, scenario: 'absent' }], 1)).toContain('absent: unknown scenario')
   })
 })
 
@@ -395,6 +566,10 @@ describe('architecture exit gate (O3: no product guarantee lacks an owner, repre
       `  failure behavior: ${withFailure}/${guarantees.length}`,
       `  executed corpus scenario: ${withScenario}/${guarantees.length} (${guarantees.filter((g) => named.has(g.id)).length} named directly by a scenario)`,
       `  normative source: ${withSource}/${applicable.length} where an external standard applies (${guarantees.length - applicable.length} with none)`,
+      `product guarantees with no directly named corpus scenario (proved by their owners): ${guarantees
+        .filter((g) => !named.has(g.id))
+        .map((g) => g.id)
+        .join(', ')}`,
       `guarantee gaps: ${gaps.length}`
     ]
     process.stdout.write(`${lines.join('\n')}\n`)

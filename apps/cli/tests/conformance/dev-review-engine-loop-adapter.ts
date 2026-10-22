@@ -1,0 +1,550 @@
+import { execFileSync } from 'node:child_process'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { basename, dirname, join, resolve } from 'node:path'
+import { buildReviewInputManifest, DEFAULT_REVIEW_POLICY, objectivesVersion } from '@attalabs/aeg-core'
+import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
+import { loadProcess } from '../../../../harness/dev-process/loader/load-process.js'
+import { createActions } from '../../../../processes/vinaya/executing/actions.js'
+import type { DeveloperPromptFacts } from '../../../../processes/vinaya/executing/developer-prompt.js'
+import {
+  liveTaskInput,
+  runEngine,
+  type Agent,
+  type EngineForge,
+  type EngineRunOptions,
+  type RunTrace
+} from '../../../../processes/vinaya/bin/run-engine.js'
+import { createDeveloperDevToolContext } from '../../src/lib/task-tools/developer-dev-tools-context.js'
+import { manifestDigest } from '../../src/lib/review-result.js'
+import { readDriverLock, readPauseState } from '../../src/lib/dev-review-loop/pause-resume.js'
+import { cleanupAllReviewerIsolationArtifacts } from '../../src/lib/dev-review-loop/reviewer-isolation.js'
+import { heldVerdictPath } from '../../src/lib/dev-review-loop/reviewer-dispatch.js'
+import type { Observation } from './dev-review-current-loop-adapter.js'
+
+/**
+ * The real developer-review Flow and bound actions, supplied with a temporary
+ * git repository, a file-backed fake forge and vendor-shaped stub processes.
+ * Only external inputs and effects are faked. The adapter never supplies a
+ * decision, retry or missing control record on the Engine's behalf.
+ *
+ * The runner currently exposes start and a halt handle, but no resume/cancel
+ * entry point. Continuation scenarios re-enter that start boundary with the
+ * same run files and changed forge facts; cancellation requests use its halt
+ * handle. Their missing authentication, resolution and continuation behavior
+ * remains observable rather than being implemented by this test adapter.
+ */
+const PROCESS = loadProcess(resolve(import.meta.dir, '../../../../processes/vinaya'))
+const TASK = 7
+const BRANCH = 'task/issue-7'
+const SOURCE = 'https://example.com/required-source'
+const ROLES = ['developer', 'code-reviewer', 'security-reviewer'] as const
+type Role = (typeof ROLES)[number]
+type RecordLine = Record<string, unknown>
+
+function append(path: string, value: unknown): void {
+  appendFileSync(path, `${JSON.stringify(value)}\n`)
+}
+function lines(path: string): RecordLine[] {
+  return existsSync(path)
+    ? readFileSync(path, 'utf8')
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as RecordLine)
+    : []
+}
+function json(path: string): RecordLine | null {
+  return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as RecordLine) : null
+}
+function records(dir: string): RecordLine[] {
+  return existsSync(dir)
+    ? readdirSync(dir)
+        .filter((name) => name.endsWith('.json'))
+        .sort()
+        .map((name) => json(join(dir, name))!)
+    : []
+}
+
+/** A CLI-shaped child: delivers JSONL only after the executor closes stdin. */
+function stubAgent(
+  agent: Agent,
+  role: Role,
+  output: unknown,
+  code: number,
+  finish: () => Promise<void>
+): SpawnedProcessLike {
+  const listeners: Array<(code: number | null) => void> = []
+  let stdout: ((chunk: string) => void) | undefined
+  let closed = false
+  const close = (exit: number | null) => {
+    if (closed) return
+    closed = true
+    for (const listener of listeners) listener(exit)
+  }
+  return {
+    stdin: {
+      write: () => {},
+      end: () => {
+        setTimeout(async () => {
+          try {
+            await finish()
+            if (closed) return
+            const session = `stub-${role}`
+            const events =
+              code !== 0
+                ? []
+                : agent === 'claude'
+                  ? [
+                      { type: 'system', session_id: session },
+                      ...(output === undefined
+                        ? []
+                        : [{ type: 'result', session_id: session, structured_output: output }])
+                    ]
+                  : [
+                      { type: 'thread.started', thread_id: session },
+                      ...(output === undefined
+                        ? []
+                        : [{ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(output) } }]),
+                      { type: 'turn.completed' }
+                    ]
+            for (const event of events) stdout?.(`${JSON.stringify(event)}\n`)
+            close(code)
+          } catch {
+            close(1)
+          }
+        }, 0)
+      }
+    },
+    stdout: { on: (_event, listener) => (stdout = listener as (chunk: string) => void) },
+    stderr: { on: () => {} },
+    on: ((event: string, listener: (code: number | null) => void) => {
+      if (event === 'close') listeners.push(listener)
+    }) as SpawnedProcessLike['on'],
+    kill: () => close(null)
+  } as SpawnedProcessLike
+}
+
+function roleOf(agent: Agent, args: string[], env: Record<string, string | undefined> | undefined): Role {
+  const dir = agent === 'claude' ? dirname(args[args.indexOf('--settings') + 1] ?? '') : (env?.CODEX_HOME ?? '')
+  const role = basename(dir)
+  if (!ROLES.includes(role as Role)) throw new Error(`unrecognized ${agent} launch role: ${role}`)
+  return role as Role
+}
+
+/** One isolated scenario, returning only recorded output and performed effects. */
+export async function runEngineScenario(id: string, agent: Agent): Promise<Observation> {
+  const root = mkdtempSync(join(tmpdir(), 'engine-corpus-'))
+  const runtimeDir = join(root, 'runtime')
+  mkdirSync(runtimeDir)
+  const savedHome = process.env.CODEX_HOME
+  // A stub login prevents the real role launcher from copying an operator's credential.
+  const stubHome = join(root, 'stub-home')
+  mkdirSync(stubHome)
+  writeFileSync(join(stubHome, 'auth.json'), '{}\n')
+  process.env.CODEX_HOME = stubHome
+  try {
+    return await drive(id, agent, root, runtimeDir)
+  } finally {
+    if (savedHome === undefined) delete process.env.CODEX_HOME
+    else process.env.CODEX_HOME = savedHome
+    cleanupAllReviewerIsolationArtifacts(runtimeDir, TASK)
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  }
+}
+
+async function drive(id: string, agent: Agent, root: string, runtimeDir: string): Promise<Observation> {
+  const repo = join(root, 'repo')
+  mkdirSync(repo)
+  const git = (...args: string[]) =>
+    execFileSync(
+      'git',
+      ['-c', 'user.name=stub', '-c', 'user.email=stub@example.com', '-c', 'commit.gpgsign=false', ...args],
+      { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+    ).trim()
+  git('init', '-q', '-b', 'main')
+  writeFileSync(join(repo, 'sample.ts'), 'export const value = 1\n')
+  git('add', 'sample.ts')
+  git('commit', '-q', '-m', 'base')
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+  const worktree = join(repo, '.worktrees', BRANCH)
+  git('worktree', 'add', '-q', '-b', BRANCH, worktree)
+  if (id === 'isolation-refusal') git('-C', worktree, 'checkout', '-q', '-b', 'task/other/1')
+  const head = git('rev-parse', 'HEAD')
+  const eventFile = join(runtimeDir, 'events.jsonl')
+  const effectFile = join(runtimeDir, 'forge.jsonl')
+  const actionFile = join(runtimeDir, 'actions.jsonl')
+  const gateState = join(root, 'gate.json')
+  const gateCli = join(root, 'gate.ts')
+  // The real harness.run-gates action invokes this fake external check command.
+  writeFileSync(
+    gateCli,
+    `const gate = await Bun.file(${JSON.stringify(gateState)}).json(); console.log(gate.output); process.exit(gate.code)\n`
+  )
+  const red = id === 'mechanical-failure-repeats' || id === 'mechanical-failure-recovers' || id === 'context-pressure'
+  writeFileSync(
+    gateState,
+    JSON.stringify({ code: red ? 1 : 0, output: red ? 'check failed: sample' : 'checks passed' })
+  )
+  const objectives =
+    id === 'reviewer-invalidity'
+      ? [
+          { id: 'O1', text: 'Do the thing.' },
+          { id: 'O2', text: 'Do the other thing.' }
+        ]
+      : [{ id: 'O1', text: 'Do the thing.' }]
+  let moved = false
+  let ruling = false
+  let continuing = false
+  const policy = {
+    ...DEFAULT_REVIEW_POLICY,
+    ...(id === 'bounded-exhaustion' ? { maxRounds: 1 } : {}),
+    ...(id === 'context-pressure' ? { maxTaskMinutes: 1e-9 } : {})
+  }
+  const brief = `# Frozen brief\n\n## Objectives\n\n${objectives.map((o) => `${o.id}. ${o.text}`).join('\n')}\n\n**Revision:** ${head}\n`
+  const currentObjectives = () => (moved ? [...objectives, { id: 'O2', text: 'Also do this.' }] : objectives)
+  let publications = 0
+  let prOpen = id === 'restart'
+  const forge: EngineForge = {
+    checkTaskDispatchReadiness: () => ({ ready: true, output: 'ready' }),
+    createTaskWorktree: () => worktree,
+    findOpenPrForBranch: () => (prOpen ? { number: 70, branch: BRANCH } : null),
+    fetchFrozenBrief: () => brief,
+    resolveIssueObjectives: () => ({
+      objectives: currentObjectives(),
+      text: currentObjectives()
+        .map((o) => `${o.id}. ${o.text}`)
+        .join('\n'),
+      version: objectivesVersion(currentObjectives()),
+      edit: null
+    }),
+    fetchNewestRulingOrdinal: () => (ruling ? 1 : 0),
+    fetchNewestIssueRulingOrdinal: () => 0,
+    fetchSourceRevision: () => head,
+    fetchCiConclusion: () => (json(gateState)?.code === 0 ? 'green' : 'red'),
+    fetchIssueRulingsAfterBrief: () => [],
+    fetchRulings: () => (ruling ? ['Go ahead.'] : []),
+    fetchLoopHistory: () => ({
+      rounds: [],
+      totalWallMs: 0,
+      totalFilesChanged: 0,
+      summaryUrl: null,
+      reviewGate: 'unknown',
+      journalFinalized: null
+    }),
+    resolveHead: () => head,
+    resolveDeveloperDoctrineText: () => Promise.resolve('Execute the frozen brief.'),
+    prBody: () => 'Closes #7',
+    pullRequestView: () => ({
+      number: 70,
+      body: 'Closes #7',
+      headRefOid: head,
+      state: 'OPEN',
+      mergeable: id === 'stale-conflict' ? 'CONFLICTING' : 'MERGEABLE'
+    }),
+    publishRound: (_runtime, input) => {
+      publications += 1
+      append(effectFile, { kind: 'publication-started', round: input.round })
+      if ((id === 'uncertain-effect-crash' || id === 'publication-replay') && publications === 1)
+        throw new Error('simulated crash after the remote publish began')
+      for (const role of ['reviewer', 'security'] as const) {
+        const body = readFileSync(heldVerdictPath(runtimeDir, TASK, input.round, role), 'utf8')
+        append(effectFile, {
+          kind: 'comment',
+          marker: role === 'reviewer' ? 'reviewer-verdict' : 'security-verdict',
+          body
+        })
+      }
+      append(effectFile, { kind: 'comment', marker: 'summary', round: input.round })
+      append(effectFile, { kind: 'published', round: input.round })
+    }
+  }
+  const unavailable = async (): Promise<never> => {
+    throw new Error('unused fake tool')
+  }
+  const devTools = createDeveloperDevToolContext({
+    readPublicationCheckInput: () => ({
+      worktreeBranch: git('-C', worktree, 'branch', '--show-current'),
+      expectedBranch: BRANCH,
+      worktreeHead: head,
+      recordedHead: head,
+      base: head,
+      expectedBase: head,
+      changedPaths: [],
+      surface: null
+    }),
+    commitAndPush: async () => {
+      append(effectFile, { kind: 'commit' })
+      append(effectFile, { kind: 'push' })
+      return { ok: true, result: { pushedHead: head } }
+    },
+    validatePrBody: () => ({ ok: true }),
+    openPullRequest: unavailable,
+    updatePullRequestBody: unavailable,
+    refreshEvidence: unavailable,
+    readPullRequest: unavailable,
+    runChecks: unavailable
+  })
+  const task = await liveTaskInput({ task: TASK, agent, dryRun: false }, repo, runtimeDir, 'corpus', {
+    fetchLabels: () => [],
+    fetchTitle: () => 'A test task',
+    policy: () => policy,
+    forge
+  })
+  task.cliEntry = gateCli
+  if (id === 'required-source-failure') task.developerContext = { ...task.developerContext, requiredSources: [SOURCE] }
+  if (id === 'context-pressure') task.clock = { elapsedMs: 1000, byPhaseMs: { developer: 1000 } }
+  const recordedActionsForRun = () =>
+    Object.fromEntries(
+      Object.entries(createActions(task)).map(([name, action]) => [
+        name,
+        async (context: Parameters<typeof action>[0]) => {
+          try {
+            const result = await action(context)
+            append(actionFile, { node: context.nodeId, ...result })
+            return result
+          } catch (error) {
+            append(actionFile, {
+              node: context.nodeId,
+              error: String(error),
+              stdout: (error as { stdout?: string }).stdout
+            })
+            throw error
+          }
+        }
+      ])
+    )
+  const counts: Partial<Record<Role, number>> = {}
+  const traces: RunTrace[] = []
+  const facts = (): DeveloperPromptFacts => ({
+    brief,
+    objectives: { objectives, version: objectivesVersion(objectives) },
+    rulings: forge.fetchRulings(70),
+    rulingOrdinal: ruling ? 1 : 0,
+    policy,
+    baseSha: head,
+    headSha: head,
+    sources: { block: id === 'required-source-failure' ? `Required sources: ${SOURCE}` : null, evidence: [] },
+    round: task.reviewRound(),
+    doctrine: 'Execute the frozen brief.',
+    issueRulings: [],
+    keptWork: null,
+    resume: { task: TASK, branch: BRANCH, worktree, remoteHead: head },
+    heldReview: null
+  })
+  const execute = async (cancel = false) => {
+    const control = createRunControl()
+    const options: EngineRunOptions = {
+      args: { task: TASK, agent, dryRun: false },
+      process: PROCESS,
+      repoRoot: repo,
+      runtimeDir,
+      loopId: 'corpus',
+      taskInput: task,
+      actions: recordedActionsForRun(),
+      sink: { log: (event) => append(eventFile, event), drain: async () => {} },
+      startHost: async () => ({ close: async () => {} }),
+      devToolsContext: devTools,
+      control,
+      out: () => {},
+      developerFacts: async () => {
+        if (id === 'review-policy-unreadable') throw new Error('fake: trust-anchor read failed')
+        return facts()
+      },
+      observe: (event) => {
+        if (cancel && event.type === 'node:start') control.halt('cancel')
+      },
+      spawnFn: (_command, args, spawnOptions) => {
+        const role = roleOf(agent, args, spawnOptions?.env)
+        append(effectFile, { kind: 'spawn', role })
+        const attempt = (counts[role] ?? 0) + 1
+        counts[role] = attempt
+        let output: unknown
+        const isHumanPause =
+          ['human-pause', 'resume', 'cancellation', 'operator-intervention-unauthenticated'].includes(id) && !continuing
+        if (role === 'developer') {
+          output = {
+            turnResult: {
+              schemaVersion: 1,
+              status: 'completed',
+              summary: 'Done.',
+              confidence: 95,
+              confidenceExplanation: 'Stub result.',
+              addressedFindingIds: id === 'developer-failure' && attempt > 1 ? ['R9-XX-1'] : [],
+              sourceUses:
+                id === 'required-source-failure' ? [{ source: SOURCE, use: 'claimed without a counted read' }] : [],
+              reportedChecks: null
+            }
+          }
+        } else {
+          const blocker =
+            role === 'code-reviewer' &&
+            (id === 'requested-changes' || id === 'developer-failure' || id === 'bounded-exhaustion') &&
+            attempt === 1
+          output = {
+            reviewResult: {
+              schemaVersion: 1,
+              role,
+              status: isHumanPause && role === 'code-reviewer' ? 'blocked' : 'completed',
+              headSha: head,
+              manifestDigest: manifestDigest(
+                buildReviewInputManifest({
+                  headSha: head,
+                  baseSha: head,
+                  briefContent: brief,
+                  objectivesVersion: objectivesVersion(objectives),
+                  rulingOrdinal: ruling ? 1 : 0,
+                  policy
+                })
+              ),
+              summary: 'Stub review.',
+              ...(isHumanPause && role === 'code-reviewer'
+                ? { blocker: { kind: 'scope_unclear', detail: 'needs a call nobody made' } }
+                : {
+                    findings: blocker
+                      ? [
+                          {
+                            severity: 'BLOCKER',
+                            file: 'sample.ts',
+                            line: 1,
+                            description: 'a blocking finding the developer must address'
+                          }
+                        ]
+                      : [],
+                    objectiveResults: (id === 'reviewer-invalidity' && role === 'code-reviewer'
+                      ? objectives.slice(0, 1)
+                      : objectives
+                    ).map((o) => ({ id: o.id, status: 'MET', evidence: 'sample.ts implements the behavior.' }))
+                  })
+            }
+          }
+          if (id === 'reviewer-failure' && role === 'security-reviewer') output = undefined
+        }
+        return stubAgent(agent, role, output, id === 'provider-failure' && role === 'developer' ? 1 : 0, async () => {
+          if (role === 'developer' && id !== 'isolation-refusal') prOpen = true
+          if (role === 'developer' && id === 'isolation-refusal')
+            append(effectFile, {
+              kind: 'tool-result',
+              result: await devTools.publishChanges('Test(cli): Exercise publication')
+            })
+          if (role === 'developer' && id === 'mechanical-failure-recovers' && attempt >= 2)
+            writeFileSync(gateState, JSON.stringify({ code: 0, output: 'checks passed' }))
+          if (role !== 'developer' && id === 'stale-objectives') moved = true
+        })
+      }
+    }
+    const result = await runEngine(options)
+    traces.push(JSON.parse(readFileSync(result.tracePath, 'utf8')) as RunTrace)
+  }
+  await execute()
+  if (id === 'publication-replay' || id === 'resume') {
+    continuing = true
+    ruling = id === 'resume'
+    await execute()
+  }
+  if (id === 'cancellation' || id === 'operator-intervention-unauthenticated') {
+    ruling = id === 'cancellation'
+    await execute(true)
+  }
+  const last = traces.at(-1)!
+  const recordedActions = lines(actionFile)
+  const assessed = recordedActions
+    .filter((record) => record.node === 'assess-round' && typeof record.stdout === 'string')
+    .at(-1)
+  const decision = assessed
+    ? (JSON.parse(String(assessed.stdout)) as { decision: { type: string; reason?: string } }).decision
+    : null
+  const pause = readPauseState(runtimeDir, TASK)
+  const controlDir = join(runtimeDir, 'tasks-execution', String(TASK), 'control')
+  const events = lines(eventFile)
+  const effects = lines(effectFile)
+  const roundStartsByRound: Record<string, number> = {}
+  for (const event of events)
+    if (event.kind === 'dev_review_loop' && event.event === 'round_started')
+      roundStartsByRound[String(event.round)] = (roundStartsByRound[String(event.round)] ?? 0) + 1
+  const dispatches = (role: Role) => effects.filter((effect) => effect.kind === 'spawn' && effect.role === role).length
+  return {
+    decision:
+      last.outcome === 'completed'
+        ? 'publish'
+        : last.outcome === 'paused'
+          ? 'pause:halt'
+          : decision?.type === 'pause'
+            ? `pause:${decision.reason}`
+            : `ended:${last.outcome}`,
+    refusal: last.error ?? null,
+    durable: {
+      pauseReason: pause?.reason ?? null,
+      pauseRound: pause?.round ?? null,
+      infrastructureRetries: pause?.infrastructureRetries ?? null,
+      // A completed saved trace is the Engine representation of the terminal publish phase.
+      controlPhase:
+        (json(join(controlDir, 'loop-state.json'))?.phase as string | undefined) ??
+        (last.outcome === 'completed'
+          ? 'publish'
+          : last.outcome === 'paused' || decision?.type === 'pause'
+            ? 'pause'
+            : null),
+      driverLockHeld: readDriverLock(runtimeDir, TASK) !== null,
+      escalations: records(join(controlDir, 'escalation')).length,
+      resolutions: records(join(controlDir, 'resolution'))
+        .map((record) => String(record.decision))
+        .sort()
+    },
+    effects: {
+      publishedRounds: effects.filter((effect) => effect.kind === 'published').map((effect) => Number(effect.round)),
+      markers: effects.filter((effect) => effect.kind === 'comment').map((effect) => String(effect.marker)),
+      developerDispatches: dispatches('developer'),
+      codeReviewerDispatches: dispatches('code-reviewer'),
+      securityDispatches: dispatches('security-reviewer'),
+      commits: effects.filter((effect) => effect.kind === 'commit').length,
+      pushes: effects.filter((effect) => effect.kind === 'push').length,
+      prOpens: effects.filter((effect) => effect.kind === 'pr-open').length
+    },
+    events: events.map((event) =>
+      event.kind === 'dev_review_loop' ? String(event.event) : `${event.kind}:${event.event}`
+    ),
+    roundStartsByRound,
+    journalResults: events
+      .filter((event) => event.kind === 'dev_review_loop' && event.event === 'journal_finalized')
+      .map((event) => String(event.result))
+  }
+}
+
+const IDS = [
+  'clean-completion',
+  'lifecycle-telemetry',
+  'requested-changes',
+  'mechanical-failure-repeats',
+  'mechanical-failure-recovers',
+  'reviewer-invalidity',
+  'reviewer-failure',
+  'review-policy-unreadable',
+  'developer-failure',
+  'provider-failure',
+  'required-source-failure',
+  'context-pressure',
+  'bounded-exhaustion',
+  'human-pause',
+  'restart',
+  'resume',
+  'cancellation',
+  'operator-intervention-unauthenticated',
+  'stale-objectives',
+  'stale-conflict',
+  'uncertain-effect-crash',
+  'publication-replay',
+  'isolation-refusal'
+]
+export const ENGINE_SCENARIO_DRIVERS: Record<string, (agent: Agent) => Promise<Observation>> = Object.fromEntries(
+  IDS.map((id) => [id, (agent: Agent) => runEngineScenario(id, agent)])
+)
