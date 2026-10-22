@@ -29,6 +29,8 @@ import {
 } from '../../../harness/dev-process/logging/translate'
 import { defaultRunWorktreeChecks } from '../../../apps/cli/src/lib/dev-review-loop'
 import { readWorktreeHead } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+import { developerBranchFor } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
+import { addedDiffLines, findCredentialPatterns } from '../../../apps/cli/src/lib/worker-boundary'
 import type { DevToolContext, DevToolResult } from '../../../apps/cli/src/lib/task-tools/dev-tools-server'
 import { createLogSink } from '../../../apps/cli/src/lib/log-sink'
 import { startDevToolsHost, type DevToolsHost } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
@@ -154,6 +156,8 @@ export interface TraceStep {
   attempt: number
   /** The step's exit code; null for an agent step that ran again later (the executor keeps only the last result) or one that never reported. */
   exitCode: number | null
+  /** The message and stack of the error a bound action threw; absent when the step did not throw. */
+  error?: string
   /** The `node:streaming` events delivered while the step ran, as delivered. */
   streaming: unknown[]
 }
@@ -186,9 +190,11 @@ export function createTraceRecorder(meta: { task: number; agent: Agent; loopId: 
         steps.push({ nodeId: event.nodeId, attempt, exitCode: null, streaming: [] })
       } else if (event.type === 'node:streaming') open(event.nodeId)?.streaming.push(event)
     },
-    recordExit(nodeId: string, exitCode: number): void {
+    recordExit(nodeId: string, exitCode: number, error?: string): void {
       const step = open(nodeId)
-      if (step) step.exitCode = exitCode
+      if (!step) return
+      step.exitCode = exitCode
+      if (error !== undefined) step.error = error
     },
     finish(outcome: string, results: Readonly<Record<string, StepNodeResult>>, error?: string): RunTrace {
       for (const [nodeId, result] of Object.entries(results)) {
@@ -203,9 +209,10 @@ export function createTraceRecorder(meta: { task: number; agent: Agent; loopId: 
 }
 
 /** The actions, each reporting its exit code to the trace. */
-function tracedActions(
+export function tracedActions(
   actions: ActionRegistry,
-  trace: Pick<ReturnType<typeof createTraceRecorder>, 'recordExit'>
+  trace: Pick<ReturnType<typeof createTraceRecorder>, 'recordExit'>,
+  report: (line: string) => void = (line) => process.stderr.write(`${line}\n`)
 ): ActionRegistry {
   return Object.fromEntries(
     Object.entries(actions).map(([name, action]) => [
@@ -216,7 +223,9 @@ function tracedActions(
           trace.recordExit(context.nodeId, result.exitCode)
           return result
         } catch (error) {
-          trace.recordExit(context.nodeId, 1)
+          const detail = error instanceof Error ? (error.stack ?? error.message) : String(error)
+          trace.recordExit(context.nodeId, 1, detail)
+          report(`step ${context.nodeId} failed: ${detail}`)
           throw error
         }
       }
@@ -326,7 +335,9 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
     StepNodeResult
   >
   const reason = outcome?.reason ?? 'failed'
-  writeFileSync(tracePath, `${JSON.stringify(trace.finish(reason, results, error), null, 2)}\n`)
+  // The trace carries tool output verbatim, so only its owner reads it.
+  writeFileSync(tracePath, `${JSON.stringify(trace.finish(reason, results, error), null, 2)}\n`, { mode: 0o600 })
+  chmodSync(tracePath, 0o600)
   out(`trace ${tracePath}`)
   const exitCode = reason === 'completed' ? 0 : reason === 'paused' ? 2 : 1
   return { outcome, exitCode, tracePath }
@@ -412,7 +423,18 @@ function liveDevToolsContext(input: { branch: string; worktreePath: string; task
     },
     commitAndPush: (header) =>
       attempt('publish_changes', () => {
-        git('add', '-A')
+        // The loop's pre-push credential scan: the header and the added lines, before anything leaves.
+        const found = [
+          ...findCredentialPatterns(header, 'the proposed commit header'),
+          ...(() => {
+            git('add', '-A')
+            return findCredentialPatterns(addedDiffLines(git('diff', '--cached', '-U0')), 'the staged diff')
+          })()
+        ]
+        if (found.length > 0) {
+          git('reset', '-q')
+          throw new Error(`recognized credential pattern(s): ${found.map((f) => f.pattern).join(', ')}`)
+        }
         git('commit', '--allow-empty-message', '-m', header)
         git('push', 'origin', `HEAD:refs/heads/${branch}`)
         return { pushedHead: git('rev-parse', 'HEAD') }
@@ -438,7 +460,8 @@ function liveDevToolsContext(input: { branch: string; worktreePath: string; task
 
 /** The per-task input the actions read: the branch, the Log events' loop and the verdict plumbing. */
 async function liveTaskInput(args: EngineArgs, repoRoot: string, loopId: string): Promise<TaskInput> {
-  const branch = `task/issue-${args.task}`
+  // Tranche tasks live on `task/<tranche>/<n>`, backlog tasks on `task/issue-<n>`.
+  const branch = developerBranchFor(args.task)
   const worktreePath = join(repoRoot, '.worktrees', branch)
   const policy = reviewPolicyForLoop()
   const config: LoopConfig = {
