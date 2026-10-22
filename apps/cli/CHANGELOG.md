@@ -1,5 +1,12 @@
 # @attalabs/vinaya
 
+## 0.41.0
+
+### Patch Changes
+
+- 6bd327e: Keep pre-push test-run caching available when working trees contain large ignored folders or tracked diffs.
+- 8ec463b: The four `bin` entries name their built files without a leading `./`, so publishing prints no `script name was cleaned` warning.
+
 ## 0.40.0
 
 ### Minor Changes
