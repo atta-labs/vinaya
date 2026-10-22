@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -10,7 +11,10 @@ import {
 import type { StepNodeResult } from '@atta/executor-agent-spawn'
 import { generateClaudeSettings } from '../../../harness/adapters/agents/claude-code/settings'
 import { generateCodexConfig } from '../../../harness/adapters/agents/codex/config'
-import { loadRoleGrants, ROLE_NAMES } from '../../../harness/adapters/agents/manifest'
+import { loadRoleGrants, ROLE_NAMES, withModel } from '../../../harness/adapters/agents/manifest'
+import { structuredResult } from '../../../harness/adapters/agents/structured-result'
+import { pullRequestCheckEnv, type PullRequestView } from './pull-request-env'
+import { runCliChecks } from '../../../harness/gates/run-checks'
 import type { GeneratedAgentConfig, GeneratorPaths } from '../../../harness/adapters/agents/policy'
 import {
   createRoleLauncher,
@@ -27,7 +31,7 @@ import {
   findOpenPrForBranch
 } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
 import { publishRound, type PublishInput } from '../../../apps/cli/src/lib/dev-review-loop/publication'
-import { defaultRunWorktreeChecks, handoffFindings } from '../../../apps/cli/src/lib/dev-review-loop'
+import { handoffFindings } from '../../../apps/cli/src/lib/dev-review-loop'
 import { readWorktreeHead } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import { writeHeldVerdict } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import {
@@ -43,8 +47,10 @@ import { parseReviewResult, type ReviewResult } from '../../../apps/cli/src/lib/
 
 /** What the bound functions need that the recorded step results cannot supply. */
 export interface TaskInput {
-  /** Repository root the bound functions run from. */
-  root: string
+  /** The runtime directory run files go under (`<runtimeDir>/tasks-execution/<task>/…`), never the repository. */
+  runtimeDir: string
+  /** The CLI entry script whose `check --all` the gate step runs. */
+  cliEntry: string
   branch: string
   issueNumber: number
   worktreePath: string
@@ -56,6 +62,8 @@ export interface TaskInput {
   reviewRound: () => number
   /** What the round's gate and verdicts amount to, read from the recorded results. */
   observe: (results: Readonly<Record<string, StepNodeResult>>) => Observations
+  /** The reviewer prompt for `role`, built over this round's staged candidate (absent in stub runs). */
+  reviewerPrompt?: (role: 'reviewer' | 'security') => string
   /** The reviewers' verdicts for the round, read from the recorded results. */
   verdicts: (results: Readonly<Record<string, StepNodeResult>>) => readonly VerdictObservation[]
   /**
@@ -80,6 +88,11 @@ export type HeldVerdictRole = 'reviewer' | 'security'
 
 /** The functions whose results depend on state that changes during the run. */
 export interface BoundFunctions {
+  checkTaskDispatchReadiness: typeof checkTaskDispatchReadiness
+  createTaskWorktree: typeof createTaskWorktree
+  fetchSourceRevision: typeof fetchSourceRevision
+  /** Reads the branch's pull request for the checks' environment (`pullRequestCheckEnv`). */
+  pullRequestView: (branch: string) => PullRequestView
   findOpenPrForBranch: typeof findOpenPrForBranch
   readWorktreeHead: typeof readWorktreeHead
   writeHeldVerdict: typeof writeHeldVerdict
@@ -92,13 +105,53 @@ interface Binding {
   build: (task: TaskInput) => ProcessAction
 }
 
+/**
+ * The gate observation for `round`, read from the recorded gate step's result (green when it exited zero,
+ * its wall time) and the task worktree's diff against main, with the Developer's stated confidence.
+ * Throws when the gate step has no recorded result, or recorded a red one: the Flow reaches the
+ * assessment only after a green gate, so a red one here is a wiring fault, never a judgement.
+ */
+export function gateObservation(
+  worktreePath: string,
+  round: number,
+  results: Readonly<Record<string, StepNodeResult>>
+): Observations {
+  const gate = results['run-mechanical-gates']
+  if (!gate) throw new Error('assess-round found no recorded result for the gate step run-mechanical-gates')
+  const green = gate.exitCode === 0
+  if (!green) throw new Error(`assess-round reached after a red gate (run-mechanical-gates exited ${gate.exitCode})`)
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: worktreePath, encoding: 'utf8' }).trim()
+  const head = git('rev-parse', 'HEAD')
+  const baseHead = git('merge-base', 'origin/main', head)
+  const short = git('diff', '--shortstat', baseHead, head)
+  const count = (pattern: RegExp) => Number(pattern.exec(short)?.[1] ?? 0)
+  const turn = agentOutput(results, 'develop') as {
+    turnResult?: { confidence?: number; confidenceExplanation?: string }
+  }
+  const value = turn?.turnResult?.confidence
+  return {
+    kind: 'gate',
+    round,
+    green,
+    confidence: typeof value === 'number' ? { value, reason: turn.turnResult?.confidenceExplanation } : 'absent',
+    stats: {
+      baseHead,
+      head,
+      filesChanged: count(/(\d+) files? changed/),
+      insertions: count(/(\d+) insertions?/),
+      deletions: count(/(\d+) deletions?/),
+      wallMs: gate.kind === 'mechanical' ? gate.durationMs : 0
+    }
+  }
+}
+
 const ok = (stdout = ''): { exitCode: number; stdout: string } => ({ exitCode: 0, stdout })
 
 /** The final structured record an agent step reported, or undefined for a step that is not one. */
 export function agentOutput(results: Readonly<Record<string, StepNodeResult>>, step: string): unknown {
   const result = results[step]
   if (result?.kind !== 'agent-spawn') return undefined
-  return result.events[result.events.length - 1]
+  return structuredResult(result.events)
 }
 
 /** The gate step's recorded exit result is red when it did not exit zero. */
@@ -127,19 +180,19 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
   'vinaya.prepare-run': {
     adapts: [checkTaskDispatchReadiness, createTaskWorktree],
     build: (task) => () => {
-      const readiness = checkTaskDispatchReadiness(task.branch)
+      const readiness = (task.bound?.checkTaskDispatchReadiness ?? checkTaskDispatchReadiness)(task.branch)
       if (!readiness.ready) return { exitCode: 1, stdout: readiness.output }
-      createTaskWorktree(task.branch)
+      ;(task.bound?.createTaskWorktree ?? createTaskWorktree)(task.branch)
       return ok(readiness.output)
     }
   },
   'vinaya.reconcile-external-state': {
     adapts: [findOpenPrForBranch],
-    build: (task) => () => ok(JSON.stringify(findOpenPrForBranch(task.branch)))
+    build: (task) => () => ok(JSON.stringify((task.bound?.findOpenPrForBranch ?? findOpenPrForBranch)(task.branch)))
   },
   'vinaya.prepare-sources': {
     adapts: [fetchSourceRevision],
-    build: (task) => () => ok(fetchSourceRevision(task.issueNumber))
+    build: (task) => () => ok((task.bound?.fetchSourceRevision ?? fetchSourceRevision)(task.issueNumber))
   },
   'vinaya.validate-developer-output': {
     adapts: [parseDeveloperTurnResult],
@@ -152,9 +205,13 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
     }
   },
   'harness.run-gates': {
-    adapts: [defaultRunWorktreeChecks],
+    adapts: [runCliChecks],
     build: (task) => async () => {
-      const gates = await defaultRunWorktreeChecks(task.worktreePath)
+      const gates = await runCliChecks(
+        task.cliEntry,
+        task.worktreePath,
+        pullRequestCheckEnv(task.branch, task.bound?.pullRequestView)
+      )
       return { exitCode: gates.passed ? 0 : 1, stdout: gates.output }
     }
   },
@@ -177,7 +234,7 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       // Nothing is held until both verdicts validated, so a round never holds one reviewer's verdict alone.
       const round = task.reviewRound()
       for (const [role, review] of held)
-        write(task.root, task.issueNumber, round, role, task.renderVerdict(role, review))
+        write(task.runtimeDir, task.issueNumber, round, role, task.renderVerdict(role, review))
       return ok()
     }
   },
@@ -186,9 +243,24 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
     build: (task) => {
       let state = task.loopState
       return (context) => {
-        const assessment = assessRound(state, task.observe(context.results), task.clock)
+        // assessRound reads a round as a gate observation, then the verdicts; the Flow reaches this step only
+        // after a green gate, so the gate observation is recorded here first when the state has no pending round.
+        const observation = task.observe(context.results)
+        const gateEvents: unknown[] = []
+        if (observation.kind === 'verdicts' && (state.pending === null || state.pending.round !== observation.round)) {
+          const gate = assessRound(
+            state,
+            gateObservation(task.worktreePath, observation.round, context.results),
+            task.clock
+          )
+          state = gate.state
+          gateEvents.push(...gate.events)
+        }
+        const assessment = assessRound(state, observation, task.clock)
         state = assessment.state
-        const { decision, events } = assessment
+        const { decision } = assessment
+        // The gate's events come first, as the standalone loop records them, then the verdicts'.
+        const events = [...gateEvents, ...assessment.events]
         // The Log events the assessment produced travel in the step's result; the log producers read them back.
         const stdout = JSON.stringify({ decision, events })
         if (decision.type === 'pause') {
@@ -200,8 +272,25 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
   },
   'vinaya.build-revision-handoff': {
     adapts: [handoffFindings],
-    build: (task) => (context) =>
-      ok(JSON.stringify(handoffFindings(task.reviewRound(), ...task.verdicts(context.results))))
+    build: (task) => (context) => {
+      // Only a revise decision starts a new round; on publish the held verdicts stay bound to this round.
+      const assessed = context.results['assess-round']
+      const stdout = assessed && 'stdout' in assessed ? String(assessed.stdout) : ''
+      let decision: string | undefined
+      try {
+        decision = (JSON.parse(stdout) as { decision?: { type?: string } }).decision?.type
+      } catch (error) {
+        throw new Error(
+          `build-revision-handoff could not read the assess-round decision: ${error instanceof Error ? error.message : String(error)}`
+        )
+      }
+      if (typeof decision !== 'string')
+        throw new Error(
+          `build-revision-handoff found no decision type in the assess-round output: ${stdout.slice(0, 200)}`
+        )
+      if (decision === 'publish') return ok()
+      return ok(JSON.stringify(handoffFindings(task.reviewRound(), ...task.verdicts(context.results))))
+    }
   },
   'harness.publish': {
     adapts: [publishRound],
@@ -213,7 +302,7 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       if (pr === null) throw new Error(`harness.publish found no open pull request for branch ${task.branch}`)
       const expectedHead = readHead(task.worktreePath)
       if (expectedHead === null) throw new Error(`harness.publish could not read the head of ${task.worktreePath}`)
-      publish(task.root, task.publish({ prNumber: pr.number, expectedHead, round: task.reviewRound() }))
+      publish(task.runtimeDir, task.publish({ prNumber: pr.number, expectedHead, round: task.reviewRound() }))
       return ok()
     }
   }
@@ -238,12 +327,16 @@ export function createRoleLaunchers(options: {
   generatedRoot: string
   variables?: Record<string, string>
   mcpCommand?: string
+  /** Replaces a `process-supplied` model in every role's grants for this run. */
+  model?: string
   /** Claude's sandbox may use Unix sockets (the Linux host opt-in); the Codex adapter has no such filter. */
   allowUnixSockets?: boolean
+  /** Copy the operator's Codex subscription login into each Codex role's generated CODEX_HOME (a live run). */
+  stageCodexLogin?: boolean
 }): RoleLauncher {
   const launchers: Record<string, ReturnType<typeof createRoleLauncher>> = {}
   for (const role of ROLE_NAMES) {
-    const grants = loadRoleGrants(join(executing, role, 'grants.yaml'))
+    const grants = withModel(loadRoleGrants(join(executing, role, 'grants.yaml')), options.model)
     const outputSchemaPath = join(executing, role, 'output.schema.json')
     const generatedDir = join(options.generatedRoot, role)
     const paths: GeneratorPaths = {
@@ -256,7 +349,11 @@ export function createRoleLaunchers(options: {
     }
     const generated: GeneratedAgentConfig =
       options.vendor === 'claude-code' ? generateClaudeSettings(grants, paths) : generateCodexConfig(grants, paths)
-    launchers[role] = createRoleLauncher(generated, { generatedDir, allowedPermissions: [`${role}/grants.yaml`] })
+    launchers[role] = createRoleLauncher(generated, {
+      generatedDir,
+      allowedPermissions: [`${role}/grants.yaml`],
+      stageCodexLogin: options.stageCodexLogin === true
+    })
   }
   return launchers
 }

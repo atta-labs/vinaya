@@ -3,6 +3,7 @@ import type { RoleGrants } from '../manifest'
 import {
   normalizedCapabilities,
   preToolUseScript,
+  RESUME_SESSION_PLACEHOLDER,
   resolveGrantValues,
   shellTokens,
   type GeneratedAgentConfig,
@@ -92,25 +93,35 @@ export function generateCodexConfig(grants: RoleGrants, paths: GeneratorPaths): 
       (rule) =>
         `prefix_rule(pattern = ${JSON.stringify(shellTokens(rule))}, decision = "allow", justification = "role grants allow")`
     ),
-    ...grants.shell.deny.map(
-      (rule) =>
-        `prefix_rule(pattern = ${JSON.stringify(shellTokens(rule))}, decision = "forbidden", justification = "role grants deny")`
-    ),
+    // A rule with a flag anywhere after its prefix (`...`) is not a prefix; only the hook enforces it.
+    ...grants.shell.deny
+      .filter((rule) => !shellTokens(rule).includes('...'))
+      .map(
+        (rule) =>
+          `prefix_rule(pattern = ${JSON.stringify(shellTokens(rule))}, decision = "forbidden", justification = "role grants deny")`
+      ),
     ''
   ].join('\n')
+  const launch = [
+    'codex',
+    'exec',
+    '--dangerously-bypass-hook-trust',
+    '--config',
+    'approval_policy="never"',
+    // JSONL events on stdout: the executor frames stdout as one JSON record per line, and Codex's plain
+    // final message is not that. The structured final message is the last `agent_message` item
+    // (`structuredResult` recovers it), as the CLI's own Codex dispatch reads it.
+    '--json',
+    '--output-schema',
+    paths.outputSchemaPath,
+    ...(grants.vendor.codex.model === 'process-supplied' ? [] : ['--model', grants.vendor.codex.model]),
+    '-'
+  ]
   return {
     vendor: 'codex',
-    launch: [
-      'codex',
-      'exec',
-      '--dangerously-bypass-hook-trust',
-      '--config',
-      'approval_policy="never"',
-      '--output-schema',
-      paths.outputSchemaPath,
-      ...(grants.vendor.codex.model === 'process-supplied' ? [] : ['--model', grants.vendor.codex.model]),
-      '-'
-    ],
+    launch,
+    // `codex exec resume <id> …` continues that thread, as the CLI's own Codex dispatch resumes its Developer.
+    resumeLaunch: [launch[0] as string, launch[1] as string, 'resume', RESUME_SESSION_PLACEHOLDER, ...launch.slice(2)],
     env: { CODEX_HOME: paths.generatedDir },
     files: {
       'config.toml': configToml,

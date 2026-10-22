@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, statSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
@@ -7,10 +8,12 @@ import { loadProcess } from '../../../harness/dev-process/loader/load-process'
 import type { ActionRegistry } from '../../../harness/dev-process/engine-runtime/run-process'
 import type { NodeLifecycle } from '../../../harness/dev-process/logging/translate'
 import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-tools-registration'
-import { classifyGateResult, dispatchReviewers, type TaskInput } from '../executing/actions'
+import { classifyGateResult, createActions, dispatchReviewers, type TaskInput } from '../executing/actions'
+import { heldVerdictPath, writeHeldVerdict } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import type { DeveloperPromptFacts } from '../executing/developer-prompt'
 import {
   createTraceRecorder,
+  developerSourceStoreDir,
   dryRunLines,
   liveTaskInput,
   parseArgs,
@@ -30,6 +33,20 @@ describe('arguments', () => {
     expect(() => parseArgs(['--task', '3'])).toThrow('Usage')
     expect(() => parseArgs(['--task', 'x', '--agent', 'claude'])).toThrow('positive integer')
     expect(() => parseArgs(['--task', '3', '--agent', 'gemini'])).toThrow('claude or codex')
+  })
+
+  test('--model names the model for process-supplied grants', () => {
+    expect(parseArgs(['--task', '1', '--agent', 'codex', '--model', 'gpt-x'])).toEqual({
+      task: 1,
+      agent: 'codex',
+      dryRun: false,
+      model: 'gpt-x'
+    })
+    expect(parseArgs(['--task', '1', '--agent', 'codex'])).not.toHaveProperty('model')
+    expect(() => parseArgs(['--task', '1', '--agent', 'codex', '--model'])).toThrow('--model takes a model id')
+    expect(() => parseArgs(['--task', '1', '--agent', 'codex', '--model', '--dry-run'])).toThrow(
+      '--model takes a model id'
+    )
   })
 })
 
@@ -86,7 +103,7 @@ const STEP_OF_ROLE: Record<string, string> = {
   'security-reviewer': 'security-review'
 }
 
-function stubAgent(role: string, lines: string[]): SpawnedProcessLike {
+function stubAgent(_role: string, lines: string[]): SpawnedProcessLike {
   const closeListeners: Array<(code: number | null) => void> = []
   let stdout: ((chunk: string) => void) | undefined
   return {
@@ -342,7 +359,12 @@ const FACTS: DeveloperPromptFacts = {
     block: 'Required sources:\n- docs/x.md',
     evidence: [{ ref: 'source:docs/x.md', version: 'sha256:1' }]
   },
-  round: 1
+  round: 1,
+  doctrine: 'Developer doctrine: stop when blocked.',
+  issueRulings: ['Issue ruling: continue.'],
+  keptWork: null,
+  resume: { task: 7, branch: 'task/issue-7', worktree: '/repo/.worktrees/task/issue-7', remoteHead: null },
+  heldReview: null
 }
 
 /** Runs the stub Flow and returns the prompt and environment each agent spawn was given. */
@@ -382,7 +404,9 @@ describe("the Developer's prompt", () => {
   test('carries the frozen brief, the context packet and the turn-result instruction, not only the task number', async () => {
     const spawned = await spawnedWith({ developerFacts: async () => FACTS })
     const developer = spawned.find((entry) => entry.role === 'developer')
-    expect(developer?.prompt).toContain('Task 7')
+    // The Flow's rendered line is not sent: the loop's Developer receives none.
+    expect(developer?.prompt).not.toContain('Develop the task')
+    expect(developer?.prompt).toContain('Developer doctrine: stop when blocked.')
     expect(developer?.prompt).toContain('Do the one thing.')
     expect(developer?.prompt).toContain('# Context packet v1')
     expect(developer?.prompt).toContain('Execute only this frozen brief on the task branch.')
@@ -404,6 +428,24 @@ describe("the Developer's prompt", () => {
       }
     })
     expect(reads).toBe(1)
+  })
+})
+
+describe("the reviewers' prompts", () => {
+  test('each reviewer step is given the task input reviewer prompt for its role', async () => {
+    const asked: string[] = []
+    const reviewerPrompt = (role: 'reviewer' | 'security') => {
+      asked.push(role)
+      return `STUB PROMPT FOR ${role}`
+    }
+    const spawned = await spawnedWith({
+      developerFacts: async () => FACTS,
+      taskInput: { reviewerPrompt } as unknown as TaskInput
+    })
+    expect(spawned.find((e) => e.role === 'code-reviewer')?.prompt).toBe('STUB PROMPT FOR reviewer')
+    expect(spawned.find((e) => e.role === 'security-reviewer')?.prompt).toBe('STUB PROMPT FOR security')
+    expect(spawned.find((e) => e.role === 'developer')?.prompt).not.toContain('STUB PROMPT')
+    expect(asked.sort()).toEqual(['reviewer', 'security'])
   })
 })
 
@@ -463,10 +505,73 @@ describe('agent-step failures and the live task context', () => {
       fetchLabels: (n: number) => (n === 1564 ? ['vinaya/tranche:engine-harness-v1'] : []),
       fetchTitle: () => '[engine-harness-v1] 5 — The Engine runs one task'
     }
-    const tranche = await liveTaskInput({ task: 1564, agent: 'claude', dryRun: false }, '/repo', 'l', lookups)
+    const tranche = await liveTaskInput(
+      { task: 1564, agent: 'claude', dryRun: false },
+      '/repo',
+      '/runtime',
+      'l',
+      lookups
+    )
     expect(tranche.branch).toBe('task/engine-harness-v1/5')
     expect(tranche.worktreePath).toBe('/repo/.worktrees/task/engine-harness-v1/5')
-    const backlog = await liveTaskInput({ task: 9, agent: 'claude', dryRun: false }, '/repo', 'l', lookups)
+    const backlog = await liveTaskInput({ task: 9, agent: 'claude', dryRun: false }, '/repo', '/runtime', 'l', lookups)
     expect(backlog.branch).toBe('task/issue-9')
+  })
+
+  test('staging the review input writes run files under the runtime directory, nothing under the repository', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'engine-repo-')))
+    const runtimeDir = realpathSync(mkdtempSync(join(tmpdir(), 'engine-runtime-')))
+    const git = (...a: string[]) =>
+      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: root, encoding: 'utf8' }).trim()
+    git('init', '-q')
+    writeFileSync(join(root, 'a.txt'), 'a\n')
+    git('add', '-A')
+    git('commit', '-q', '-m', 'base')
+    git('worktree', 'add', '-q', '-b', 'task/issue-9', join(root, '.worktrees', 'task', 'issue-9'))
+    const before = readdirSync(root).sort()
+    const input = await liveTaskInput({ task: 9, agent: 'claude', dryRun: false }, root, runtimeDir, 'l', {
+      policy: () => ({ maxRounds: 4, maxTaskMinutes: 90 }) as never,
+      fetchLabels: () => [],
+      fetchTitle: () => 'a backlog Issue',
+      reviewSources: { baseOf: () => 'base', brief: () => 'brief', prBody: () => '', diff: () => 'diff' }
+    })
+    const staged = input.stageReviewInput(1)
+    expect(staged?.dir.startsWith(join(runtimeDir, 'tasks-execution', '9'))).toBe(true)
+    // The held verdicts go to the task input's runtime directory, as do the Developer's sources.
+    expect(input.runtimeDir).toBe(runtimeDir)
+    const held: string[] = []
+    const validate = createActions({
+      ...input,
+      renderVerdict: (role: string) => `held ${role}`,
+      reviewRound: () => 1,
+      bound: { writeHeldVerdict }
+    } as TaskInput)['vinaya.validate-reviewer-outputs'] as (context: never) => unknown
+    const review = (role: string) => ({
+      kind: 'agent-spawn',
+      nodeId: role,
+      exitCode: 0,
+      events: [
+        {
+          reviewResult: {
+            schemaVersion: 1,
+            role,
+            status: 'completed',
+            headSha: 'abc123',
+            manifestDigest: 'digest',
+            summary: 'ok',
+            findings: [],
+            objectiveResults: []
+          }
+        }
+      ]
+    })
+    validate({
+      results: { 'code-review': review('code-reviewer'), 'security-review': review('security-reviewer') }
+    } as never)
+    for (const role of ['reviewer', 'security'] as const) held.push(heldVerdictPath(runtimeDir, 9, 1, role))
+    for (const path of held) expect(readFileSync(path, 'utf8')).toContain('held')
+    expect(developerSourceStoreDir(runtimeDir, 9).startsWith(join(runtimeDir, 'tasks-execution', '9'))).toBe(true)
+    expect(readdirSync(root).sort()).toEqual(before)
+    expect(before).toEqual(['.git', '.worktrees', 'a.txt'])
   })
 })

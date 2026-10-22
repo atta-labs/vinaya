@@ -1,75 +1,22 @@
 role: code-reviewer
-vendor:
-  claude: { model: process-supplied }
-  codex: { model: process-supplied }
-tools:
-  claude:
-    Agent: deny
-    Artifact: deny
-    AskUserQuestion: deny
-    Bash: deny
-    CronCreate: deny
-    CronDelete: deny
-    CronList: deny
-    Edit: deny
-    EndConversation: allow
-    EnterPlanMode: deny
-    EnterWorktree: deny
-    ExitPlanMode: deny
-    ExitWorktree: deny
-    Glob: allow
-    Grep: allow
-    KillShell: deny
-    ListAgents: deny
-    ListMcpResourcesTool: deny
-    LSP: allow
-    Monitor: deny
-    NotebookEdit: deny
-    PowerShell: deny
-    PushNotification: deny
-    Read: allow
-    ReadMcpResourceTool: deny
-    RemoteTrigger: deny
-    ReportFindings: deny
-    ScheduleWakeup: deny
-    SendFeedback: deny
-    SendMessage: deny
-    SendUserFile: deny
-    ShareOnboardingGuide: deny
-    Skill: allow
-    SubagentHandback: deny
-    Task: deny
-    TaskCreate: deny
-    TaskGet: deny
-    TaskList: deny
-    TaskOutput: deny
-    TaskStop: deny
-    TaskUpdate: deny
-    TodoWrite: allow
-    ToolSearch: allow
-    WaitForMcpServers: deny
-    WebFetch: allow
-    WebSearch: deny
-    Workflow: deny
-    Write: deny
-  codex:
-    exec_command: deny
-    write_stdin: deny
-    apply_patch: deny
-    update_plan: allow
-    view_image: allow
-    web_search: deny
-    web_fetch: allow
-    spawn_agent: deny
-    send_input: deny
-    resume_agent: deny
-    wait_agent: deny
-    close_agent: deny
-  mcp: { vinaya_dev_tools: [read_source] }
-shell:
-  allow: []
-  deny: &review_denies ["Bash(git push:*)", "Bash(git commit:*)", "Bash(git add:*)", "Bash(gh:*)", "Bash(bun install:*)", "Bash(bun test:*)", "Bash(bun run:*)", "Bash(npx:*)", "Bash(security:*)", "Bash(launchctl:*)", "Bash(defaults:*)", "Bash(systemsetup:*)", "Bash(networksetup:*)", "Bash(pmset:*)", "Bash(dscl:*)", "Bash(crontab:*)", "Bash(chsh:*)", "Bash(git config --global:*)", "Bash(git config --system:*)", "Bash(sudo:*)"]
-writable_roots: []
-network_domains: [github.com, api.github.com, raw.githubusercontent.com, codeload.github.com, objects.githubusercontent.com, registry.npmjs.org, api.anthropic.com]
+# The role's capability contract. It names what the role may do, never a vendor's tools: each agent
+# adapter maps it to its own built-ins (harness/adapters/agents/README.md), and denies every built-in
+# no allowed capability names.
+# Per vendor only because a model id names one vendor's model; process-supplied leaves it to the run.
+models: { claude: process-supplied, codex: process-supplied }
+capabilities:
+  read_files: allow
+  # No shell of its own: Claude reads with Read/Grep/Glob, Codex with reading commands only, under a
+  # read-only sandbox.
+  run_commands: deny
+  write_files: deny
+  network: [github.com, api.github.com, raw.githubusercontent.com, codeload.github.com, objects.githubusercontent.com, registry.npmjs.org, api.anthropic.com]
+  web_fetch: allow
+  web_search: deny
+  subagents: deny
+  plan_tool: allow
+  view_image: allow
+mcp_tools:
+  vinaya_dev_tools: [read_source]
 hooks: { background_shell: true, force_push: true, no_verify: true, default_branch_commit: true, write_scope: true }
-sandbox: { claude: enabled, codex: read-only }
+sandbox: enabled
