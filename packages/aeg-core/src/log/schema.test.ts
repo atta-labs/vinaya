@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { LogEventSchema } from './schema'
+import { buildHeader } from './envelope'
+import { classifyStoredLine } from './store'
 
 const meta = {
   schema: 1 as const,
@@ -13,6 +15,49 @@ const meta = {
   machine: 'deadbeef'
 }
 const subject = { issue: 412, role: 'developer' as const }
+
+describe('schema 4 producer identities', () => {
+  const header = buildHeader({
+    now: new Date(meta.ts),
+    runId: 'run',
+    seq: 0,
+    repo: null,
+    vinaya: 'test',
+    doctrine: 'test',
+    host: 'cli',
+    hostname: 'test',
+    env: {},
+    eventId: 'event',
+    processId: 'instance'
+  })
+  const line = {
+    ...header,
+    kind: 'operation',
+    event: 'completed',
+    operation: 'test',
+    result: 'ok',
+    target: null,
+    error_class: null,
+    payload: {}
+  }
+  it('validates and stores schema 4', () => {
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+    expect(classifyStoredLine(JSON.stringify(line), '').status).toBe('ok')
+  })
+  it.each(['process', 'runner'])('rejects a missing %s', (key) => {
+    const incomplete = { ...header.meta } as Record<string, unknown>
+    delete incomplete[key]
+    expect(LogEventSchema.safeParse({ ...line, meta: incomplete }).success).toBe(false)
+  })
+  it('rejects a string runner and keeps schema 3 readable', () => {
+    expect(LogEventSchema.safeParse({ ...line, meta: { ...header.meta, runner: 'atta-engine' } }).success).toBe(false)
+    const historic = { ...header.meta } as Record<string, unknown>
+    delete historic.process
+    delete historic.runner
+    historic.schema = 3
+    expect(LogEventSchema.safeParse({ ...line, meta: historic }).success).toBe(true)
+  })
+})
 
 const validDispatched = {
   meta,
@@ -698,9 +743,9 @@ describe('LogEventSchema — custom family', () => {
     expect(LogEventSchema.safeParse(customEvent).success).toBe(true)
   })
 
-  it('refuses a custom event under a schema 1 or schema 2 header', () => {
-    expect(LogEventSchema.safeParse({ ...customEvent, meta }).success).toBe(false)
-    expect(LogEventSchema.safeParse({ ...customEvent, meta: metaV2 }).success).toBe(false)
+  it('accepts a custom event under a schema 1 or schema 2 header', () => {
+    expect(LogEventSchema.safeParse({ ...customEvent, meta }).success).toBe(true)
+    expect(LogEventSchema.safeParse({ ...customEvent, meta: metaV2 }).success).toBe(true)
   })
 
   it('refuses an event other than recorded — the name is data, never the discriminator', () => {

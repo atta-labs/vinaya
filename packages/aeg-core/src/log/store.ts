@@ -35,7 +35,7 @@ import { LogEventSchema, type LogEvent, type Provenance } from './schema'
  * `HeaderMetaSchema` discriminated union in `schema.ts` (`1` | `2` | `3`); a future
  * task widening that union widens this set in the same change.
  */
-export const KNOWN_SCHEMA_VERSIONS = [1, 2, 3] as const
+export const KNOWN_SCHEMA_VERSIONS = [1, 2, 3, 4] as const
 
 /**
  * A record's stable identity across retry, concurrent append and a lost

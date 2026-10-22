@@ -56,6 +56,7 @@ import { extractSourceRevision } from '@attalabs/aeg-core'
 import type { DevToolContext, DevToolResult } from '../../../apps/cli/src/lib/task-tools/dev-tools-server'
 import { validatePrBodyForCreate } from '../../../apps/cli/src/commands/pr'
 import { createLogSink } from '../../../apps/cli/src/lib/log-sink'
+import { setEngineLogIdentity } from './engine-log-identity'
 import { startDevToolsHost, type DevToolsHost } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
 import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-tools-registration'
 import { createDeveloperDevToolContext } from '../../../apps/cli/src/lib/task-tools/developer-dev-tools-context'
@@ -914,6 +915,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     for (const line of lines) process.stdout.write(`${line}\n`)
     return 0
   }
+  setEngineLogIdentity(loaded)
   const sink = createLogSink()
   const loopId = randomUUID()
   process.env.VINAYA_RUN = loopId

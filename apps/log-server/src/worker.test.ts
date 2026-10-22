@@ -9,11 +9,60 @@
 
 import { SELF } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
+import { buildHeader } from '@attalabs/aeg-core/log'
 
 const INGEST = 'ingest-token-for-tests'
 const READ = 'read-token-for-tests'
 const BASE = 'https://log.example.com'
 const REPO = 'atta-labs/worker-suite'
+
+describe('producer identity schema compatibility', () => {
+  it.each(['atta-engine', 'standalone', 'schema-3'])('stores %s as a valid event', async (runner) => {
+    const header = buildHeader({
+      now: new Date('2026-09-05T00:00:00.000Z'),
+      runId: 'run',
+      seq: 0,
+      repo: null,
+      vinaya: 'test',
+      doctrine: 'test',
+      host: 'cli',
+      hostname: 'test',
+      env: { runnerId: runner },
+      eventId: `event-${runner}`,
+      processId: 'instance'
+    })
+    const meta = { ...header.meta } as Record<string, unknown>
+    if (runner === 'schema-3') {
+      meta.schema = 3
+      delete meta.process
+      delete meta.runner
+    }
+    const event = {
+      ...header,
+      meta,
+      kind: 'operation',
+      event: 'completed',
+      operation: 'test',
+      result: 'ok',
+      target: null,
+      error_class: null,
+      payload: {}
+    }
+    const repo = `atta-labs/identity-${runner}`
+    const response = await SELF.fetch(url('events', repo), {
+      method: 'POST',
+      headers: bearer(INGEST),
+      body: JSON.stringify(event)
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ accepted: 1, rejected: 0 })
+    const read = await SELF.fetch(url('events', repo), { headers: bearer(READ) })
+    const stored = JSON.parse((await read.text()).trim())
+    expect(stored.status).toBe('ok')
+    expect(stored.event.meta.schema).toBe(runner === 'schema-3' ? 3 : 4)
+    if (runner !== 'schema-3') expect(stored.event.meta.runner.id).toBe(runner)
+  })
+})
 
 function url(path: string, repo = REPO): string {
   return `${BASE}/v1/repos/${repo}/${path}`

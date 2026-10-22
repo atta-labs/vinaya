@@ -29,7 +29,7 @@ export const FACT_SHEETS: Record<ExecutionName, FactSheet> = {
   // loop_started, one round of four events, stop condition and journal; one developer and one reviewer dispatch pair; one typecheck.
   'green-one-round': {
     lines: 12,
-    schemas: { '3': 12 },
+    schemas: { '4': 12 },
     rounds: 1,
     eventsByKind: { dev_review_loop: 7, dispatch: 4, gate: 1 },
     findingIdentities: [],
@@ -39,7 +39,7 @@ export const FACT_SHEETS: Record<ExecutionName, FactSheet> = {
   // Rounds 2 and 3 carry a findings comparison and a stated confidence, round 3 after the extra turn.
   'three-rounds-recurring-finding': {
     lines: 32,
-    schemas: { '3': 32 },
+    schemas: { '4': 32 },
     rounds: 3,
     eventsByKind: { dev_review_loop: 17, dispatch: 12, gate: 3 },
     findingIdentities: ['fnd-auth-1', 'fnd-docs-2'],
@@ -48,7 +48,7 @@ export const FACT_SHEETS: Record<ExecutionName, FactSheet> = {
   // Round 1 reports one finding and ends changes requested; a pause and a resume follow; round 2 resolves it.
   'paused-and-resumed': {
     lines: 24,
-    schemas: { '3': 24 },
+    schemas: { '4': 24 },
     rounds: 2,
     eventsByKind: { dev_review_loop: 14, dispatch: 8, gate: 2 },
     findingIdentities: ['fnd-q-1', 'fnd-sec-3'],
@@ -57,7 +57,7 @@ export const FACT_SHEETS: Record<ExecutionName, FactSheet> = {
   // loop_started, round_started, stop condition, round_ended and journal; the developer dispatch pair; one handoff. No reviewer is ever dispatched.
   'escalated-handoff': {
     lines: 8,
-    schemas: { '3': 8 },
+    schemas: { '4': 8 },
     rounds: 1,
     eventsByKind: { dev_review_loop: 5, dispatch: 2, handoff: 1 },
     findingIdentities: [],
@@ -66,7 +66,7 @@ export const FACT_SHEETS: Record<ExecutionName, FactSheet> = {
   // One check and one fingerprint: fail at the first commit, pass at the second.
   'gate-two-commits': {
     lines: 2,
-    schemas: { '3': 2 },
+    schemas: { '4': 2 },
     rounds: 0,
     eventsByKind: { gate: 2 },
     findingIdentities: [],
@@ -75,7 +75,7 @@ export const FACT_SHEETS: Record<ExecutionName, FactSheet> = {
   // One check and one fingerprint, no commit on either line: pass, then fail.
   'gate-no-commit': {
     lines: 2,
-    schemas: { '3': 2 },
+    schemas: { '4': 2 },
     rounds: 0,
     eventsByKind: { gate: 2 },
     findingIdentities: [],
@@ -84,7 +84,7 @@ export const FACT_SHEETS: Record<ExecutionName, FactSheet> = {
   // One check, one fingerprint, one commit: pass, pass.
   'gate-same-commit-twice': {
     lines: 2,
-    schemas: { '3': 2 },
+    schemas: { '4': 2 },
     rounds: 0,
     eventsByKind: { gate: 2 },
     findingIdentities: [],
@@ -93,16 +93,16 @@ export const FACT_SHEETS: Record<ExecutionName, FactSheet> = {
   // Five usage observations (two cumulative opus, three delta sonnet, the last with every unit unknown) and two sonnet role attempts with null usage.
   'usage-and-models': {
     lines: 7,
-    schemas: { '3': 7 },
+    schemas: { '4': 7 },
     rounds: 0,
     eventsByKind: { usage: 5, role_attempt: 2 },
     findingIdentities: [],
     models: ['opus', 'sonnet']
   },
-  // In order: schema 1, schema 2, schema 2 low-trust (0.30.1), schema 3, schema 9 (unknown), schema 3 failing validation (a gate line), the schema 3 line again.
+  // In order: schema 1, schema 2, schema 2 low-trust (0.30.1), schema 4, schema 9 (unknown), schema 4 failing validation (a gate line), the schema 4 line again.
   'historical-and-hostile-lines': {
     lines: 7,
-    schemas: { '1': 1, '2': 2, '3': 3, '9': 1 },
+    schemas: { '1': 1, '2': 2, '4': 3, '9': 1 },
     rounds: 0,
     eventsByKind: { operation: 6, gate: 1 },
     findingIdentities: [],

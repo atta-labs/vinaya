@@ -136,7 +136,7 @@ export function createRecorder(seed: string, name: string, index: number, issue:
         ...(options.provenance ? { provenance: options.provenance } : {}),
         ...(options.sha ? { subject: { sha: options.sha } } : {})
       })
-      if (options.sha && header.meta.schema === 3) header.meta.work.revision = options.sha
+      if (options.sha && (header.meta.schema === 3 || header.meta.schema === 4)) header.meta.work.revision = options.sha
       const { kind, event, ...fields } = body
       return { ...header, kind, event, payload: {}, ...fields }
     },

@@ -186,7 +186,7 @@ describe('unknown-version records are kept for diagnosis (O3)', () => {
   })
 
   it('KNOWN_SCHEMA_VERSIONS mirrors the discriminated header union', () => {
-    expect([...KNOWN_SCHEMA_VERSIONS]).toEqual([1, 2, 3])
+    expect([...KNOWN_SCHEMA_VERSIONS]).toEqual([1, 2, 3, 4])
   })
 
   it('a corrupt line (known version, failed validation) is `invalid`, distinct from unknown_version', () => {
@@ -250,8 +250,8 @@ describe('schema 3 (O3, O4)', () => {
     expect(classifyStoredLine(JSON.stringify(extra), HOME).status).toBe('invalid')
   })
 
-  it('a schema 4 line is still kept verbatim as an unknown-version record', () => {
-    const rec = classifyStoredLine(JSON.stringify({ meta: { schema: 4, run_id: 'r', seq: 0, event_id: 'f-4' } }), HOME)
+  it('a future schema line is still kept verbatim as an unknown-version record', () => {
+    const rec = classifyStoredLine(JSON.stringify({ meta: { schema: 5, run_id: 'r', seq: 0, event_id: 'f-5' } }), HOME)
     expect(rec.status).toBe('unknown_version')
   })
 })

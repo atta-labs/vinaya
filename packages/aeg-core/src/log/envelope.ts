@@ -86,6 +86,12 @@ export type HeaderInput = {
     flowVersion?: string
     runtime?: string
     source?: string
+    /** The five VINAYA_PROCESS_* and VINAYA_RUNNER_* producer identity variables. */
+    processId?: string
+    processVersion?: string
+    processDigest?: string
+    runnerId?: string
+    runnerVersion?: string
   }
   /**
    * The Issue the caller's own checked-out branch names, for a process that
@@ -123,7 +129,7 @@ export type HeaderInput = {
  * `subject.issue` come only from `input.env`/`input.subject`, never
  * self-declared by whatever's building the rest of the event.
  *
- * Always builds `schema: 3` — `schema: 1` and `2` remain read-side
+ * Always builds `schema: 4` — `schema: 1`, `2` and `3` remain read-side
  * compatibility shapes only, for a line already on disk; `buildHeader` never
  * writes them.
  */
@@ -141,7 +147,7 @@ export function buildHeader(input: HeaderInput): Header {
   const issue = subject.issue
   return {
     meta: {
-      schema: 3,
+      schema: 4,
       ts: input.now.toISOString(),
       run_id: input.runId,
       seq: input.seq,
@@ -179,6 +185,15 @@ export function buildHeader(input: HeaderInput): Header {
         version: lineageFieldFromEnv(input.env.flowVersion)
       },
       runtime: lineageFieldFromEnv(input.env.runtime),
+      process: {
+        id: lineageFieldFromEnv(input.env.processId) ?? 'vinaya',
+        version: lineageFieldFromEnv(input.env.processVersion),
+        digest: lineageFieldFromEnv(input.env.processDigest)
+      },
+      runner: {
+        id: lineageFieldFromEnv(input.env.runnerId) ?? 'standalone',
+        version: lineageFieldFromEnv(input.env.runnerVersion)
+      },
       source: lineageFieldFromEnv(input.env.source)
     },
     subject

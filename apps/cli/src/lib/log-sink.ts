@@ -1661,6 +1661,11 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
         flow: env.VINAYA_FLOW,
         flowVersion: env.VINAYA_FLOW_VERSION,
         runtime: env.VINAYA_RUNTIME,
+        processId: env.VINAYA_PROCESS_ID,
+        processVersion: env.VINAYA_PROCESS_VERSION,
+        processDigest: env.VINAYA_PROCESS_DIGEST,
+        runnerId: env.VINAYA_RUNNER_ID,
+        runnerVersion: env.VINAYA_RUNNER_VERSION,
         source: env.VINAYA_SOURCE
       }
     }

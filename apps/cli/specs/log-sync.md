@@ -10,7 +10,7 @@ The sender's queue contract, `LogStore` (`packages/aeg-core/src/log/store.ts` �
 
 `normalizeStoredLine(raw, origin)` (`normalize.ts`) turns one stored line into **exactly one** of:
 
-- a **row** (`DatasetRow`, `row.ts`) — the line validated under a schema version this build knows (`1`, `2` or `3`);
+- a **row** (`DatasetRow`, `row.ts`) — the line validated under a schema version this build knows (`1`, `2`, `3` or `4`);
 - a **quarantine record** (`QuarantineRecord`) — the line names a schema version this build does not know, or fails validation under the one it names, or is not JSON at all. It holds the reason, the raw text with the same redaction every read applies (a secret in a line that failed validation never reaches a cache), the identity when one can be read, the schema version when one can be read, and the sha256 of the raw text. It produces no row.
 
 Validation, version handling and redaction are `classifyStoredLine`'s (`store.ts`), called with an empty home directory; the normaliser only maps its three outcomes (`ok` to a row, `unknown_version` and `invalid` to quarantine). There is no second validator.
@@ -23,11 +23,11 @@ A row carries, as columns:
 | `schema`, `kind`, `event` | the line | every schema |
 | `time` | `meta.ts` | every schema |
 | `runId`, `seq` | `meta.run_id`, `meta.seq` | every schema |
-| `workRef` | `meta.work.ref` | schema 3 |
-| `actor` | `meta.actor_id` | schema 2 and 3 |
+| `workRef` | `meta.work.ref` | schema 3 and 4 |
+| `actor` | `meta.actor_id` | schema 2, 3 and 4 |
 | `cliVersion`, `doctrine`, `host`, `repo` | `meta.vinaya`, `meta.doctrine`, `meta.host`, `meta.repo` | every schema |
-| `flowId`, `flowVersion` | `meta.flow.id`, `meta.flow.version` | schema 3 |
-| `provenance` | `meta.provenance` | schema 2 and 3 |
+| `flowId`, `flowVersion` | `meta.flow.id`, `meta.flow.version` | schema 3 and 4 |
+| `provenance` | `meta.provenance` | schema 2, 3 and 4 |
 | `trust` | see "The low-trust rule" | — |
 | `issue`, `pr`, `round`, `commit`, `role`, `objectivesVersion` | `subject.issue`, `.pr`, `.round`, `.sha`, `.role`, `.objectives_version` | every schema |
 
@@ -43,6 +43,10 @@ and, beside the columns:
 **Identity is the event's, never its position.** Two sources can hold the same event — a folder and the server it was forwarded to — so a row's position in its source is provenance (`origin`), never part of its identity or its hash.
 
 ## The unknown rule
+
+Schema `4` retains its process and runner objects in the validated `header`;
+these identities add no dataset columns. The sync tests use current-schema
+fixture lines when exercising arrival order and trailing cursors.
 
 A field a line's schema never had reads as **unknown**, never as a default. A schema 1 line has no `event_id`, no actor, no work reference, no flow and no provenance; a schema 2 line has no work reference and no flow. Each such column is `null` **and** named in the row's `unknown` map with the reason (`a schema 1 header has no actor_id`). A column not named in `unknown` carries the line's own value — `null` included, when the writer recorded that it had nothing to say (a schema 3 line whose caller named no work reference). A subject field the line simply omits (`pr`, `round`, `sha`, `objectives_version` are optional in every schema) reads `null` and is not unknown.
 
