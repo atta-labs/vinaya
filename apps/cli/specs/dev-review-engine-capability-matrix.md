@@ -32,15 +32,14 @@ boundary is fixed. Every runtime row records it, cites Atta source pinned at
 that commit with a line anchor, and concludes `fit` or a named gap.
 
 The repository's packed-consumer test exercises a separate artifact set: the
-engine, LangGraph adapter, agents and models tarballs vendored under
+engine, LangGraph adapter, agents, models and executor tarballs vendored under
 `apps/cli/tests/fixtures/atta-engine/`, whose README records the Atta commit
-they were packed from and the digest each copy must match. With those
+each was packed from and the digest each copy must match. With those
 tarballs the packed graph builder accepts a caller-supplied executor, and the
-test verifies that seam with a steps-shaped Flow. Public start and resume do
-not yet accept that executor, so the complete run-control proof remains an
-Atta Engine-owned gap under cutover gate 16. The Engine run-control boundary
-registry row names the current packed-consumer test and the public
-start/resume test that replaces it when the runtime delivers that seam.
+vendored executor package (`atta-executor-agent-spawn-0.1.1.tgz`) accepts a
+caller executor through public start and resume, so cutover gate 16 is
+delivered. The Engine run-control boundary registry row names the packed
+consumer test that verifies that seam with a steps-shaped Flow.
 
 The capabilities already established by the matrix remain fit: Flow and
 Plan compilation, the external-consumer packaging proof, the injected graph
@@ -49,7 +48,7 @@ without replay, a typed paused outcome for human input, the live event
 stream, cancellation of a live child, typed run outcomes, refusal of an
 undeclared role or action, the subscription-login invocation seam, and
 redaction of observed and persisted output. Their limitations remain caller
-obligations except for the gate-16 gap just named:
+obligations:
 
 - **Legs of one run are serialised by the caller.** The runtime cannot stop
   two concurrent resumes of one run; Vinaya's one-driver-per-task lock is
