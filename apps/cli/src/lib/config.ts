@@ -881,6 +881,7 @@ const VinayaConfigObjectSchema = z.object({
   // string — the environment is the one source, so a missing credential
   // surfaces as an authentication failure at the destination, not a fallback.
   //
+  runner: z.enum(['standalone', 'atta-engine']).optional(),
   // **Default-branch only, for an unattended caller** — the exact rule
   // `runtimeDir` already carries: the destination is a
   // path or URL a pull request under review could otherwise redirect in its
@@ -919,6 +920,7 @@ const VinayaConfigObjectSchema = z.object({
     .refine((v) => v.readHeaders === undefined || v.url !== undefined, {
       message: 'logs: readHeaders requires url'
     })
+    .or(z.literal(false))
     .optional(),
   // Opt-in decision records. `path` is the folder, relative to the
   // repository root, that holds them: `vinaya new adr <title>` writes the
@@ -2195,3 +2197,14 @@ export function trustTokensCollectCommand(
 }
 
 export { GLOBAL_VINAYA_HOME, GLOBAL_CONFIG_PATH, LOCAL_CONFIG_FILENAME }
+
+/** Selects the runner for one invocation; an absent setting keeps the standalone loop. */
+export function resolveTaskRunner(override: string | undefined, config: VinayaConfig | null): TaskRunner {
+  const runner = override ?? config?.runner ?? 'standalone'
+  if (runner !== 'standalone' && runner !== 'atta-engine') {
+    throw new Error('runner: expected standalone or atta-engine')
+  }
+  return runner
+}
+
+export type TaskRunner = 'standalone' | 'atta-engine'

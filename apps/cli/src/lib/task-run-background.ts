@@ -394,6 +394,7 @@ export async function startBackgroundRun(
   // scratch), so dropping the flag here silently loses the operator's
   // explicit choice to the class-mapped/vendor-default model instead.
   if (input.model) argv.push('--model', input.model)
+  if (input.runner) argv.push('--runner', input.runner)
   const fd = openLoopLogAppendFd(logPath)
   let child: SpawnedController
   try {

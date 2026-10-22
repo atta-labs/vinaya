@@ -636,7 +636,7 @@ describe('a pre-spawn sign-in refusal never blocks the task', () => {
 
     const result = await runLoopInProcess(world)
 
-    expect(result.finalDecision.type).toBe('publish')
+    expect(result.finalDecision?.type).toBe('publish')
     expect(world.dispatchCountByRole.developer).toBe(1)
   })
 
@@ -853,7 +853,7 @@ describe('a sandbox capability refusal pauses once for the Operator and is never
 
     const result = await withWorldEnv(world, () => runTask({ issue: world.task, agent: 'claude' }, runTaskDeps))
 
-    expect(result.finalDecision.type).toBe('publish')
+    expect(result.finalDecision?.type).toBe('publish')
     expect(world.rulings).toEqual([])
     const resolution = await withWorldEnv(world, () => readResolutionRecord(world.task, held.escalationId!))
     expect(resolution).toMatchObject({ decision: 'resume', authenticatedFrom: `issue-${world.task}-host-repaired` })

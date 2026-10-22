@@ -150,7 +150,7 @@ export function realLogSelftestDeps(): LogSelftestDeps {
   return {
     resolveDestination: () => resolveUnattendedLogDestination(),
     resolveServerSetting: () => resolveUnattendedServerSetting(),
-    readReadHeaders: () => config?.logs?.readHeaders,
+    readReadHeaders: () => (config?.logs || undefined)?.readHeaders,
     resolveHeaders: (headers) => resolveLogsHeaderValues(headers, process.env),
     readLastSeq: async (url, headers) => {
       try {

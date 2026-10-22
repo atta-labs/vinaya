@@ -55,7 +55,7 @@ import {
 import { extractSourceRevision } from '@attalabs/aeg-core'
 import type { DevToolContext, DevToolResult } from '../../../apps/cli/src/lib/task-tools/dev-tools-server'
 import { validatePrBodyForCreate } from '../../../apps/cli/src/commands/pr'
-import { createLogSink } from '../../../apps/cli/src/lib/log-sink'
+import { createLogSink, type LogSinkDeps } from '../../../apps/cli/src/lib/log-sink'
 import { setEngineLogIdentity } from './engine-log-identity'
 import { startDevToolsHost, type DevToolsHost } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
 import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-tools-registration'
@@ -103,8 +103,8 @@ import {
 
 // The Engine path for one task: the Vinaya process run on the packed executor
 // instead of the standalone review loop. Choosing this entry point is the
-// whole switch — the loop stays the default and no CLI command changes,
-// because CLI source may not import an Engine package.
+// whole switch — task run selects this script as a subprocess, keeping
+// Engine packages outside the CLI source.
 //
 //   bun processes/vinaya/bin/run-engine.ts --task <n> --agent <claude|codex> [--dry-run]
 
@@ -899,6 +899,11 @@ async function liveRuntimeDir(): Promise<string> {
   return repo ? runtimeDirForRepoAsync(repo) : join(homedir(), '.vinaya', 'runtime')
 }
 
+/** Engine events use the shared sink with delivery restricted to its local folder. */
+export function createEngineLogSink(overrides: Partial<LogSinkDeps> = {}) {
+  return createLogSink({ ...overrides, folderOnly: true })
+}
+
 export async function main(argv: readonly string[]): Promise<number> {
   const args = parseArgs(argv)
   const repoRoot = resolve(import.meta.dir, '../../..')
@@ -916,7 +921,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 0
   }
   setEngineLogIdentity(loaded)
-  const sink = createLogSink()
+  const sink = createEngineLogSink()
   const loopId = randomUUID()
   process.env.VINAYA_RUN = loopId
   const taskInput = await liveTaskInput(args, repoRoot, runtimeDir, loopId)

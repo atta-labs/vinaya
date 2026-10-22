@@ -33,7 +33,7 @@ export type EmitCustomEventDeps = {
 }
 
 const defaultDeps: EmitCustomEventDeps = {
-  declarations: () => loadConfig()?.logs?.events ?? {},
+  declarations: () => (loadConfig()?.logs || undefined)?.events ?? {},
   emit: log
 }
 
