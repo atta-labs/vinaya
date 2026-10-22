@@ -64,6 +64,9 @@ import { packageRoot } from './package-root.js'
 /** Rotation cap (§9: "rotation and a size cap ship with the first write") — one `.1.ndjson` slot, overwritten each time the live file crosses this. */
 export const OUTBOX_MAX_BYTES = 8 * 1024 * 1024
 
+/** Inherited by Engine subprocesses so their ordinary shared sinks stay local too. */
+export const LOG_FOLDER_ONLY_ENV = 'VINAYA_LOG_FOLDER_ONLY'
+
 type Envelope = { meta: unknown; subject: unknown }
 /** Distributes over `LogEvent`'s member events so each keeps its own extra fields after `meta`/`subject` are stripped — the sink fills those, a caller never passes them. */
 type StripEnvelope<T> = T extends Envelope ? Omit<T, 'meta' | 'subject'> : never
@@ -143,6 +146,10 @@ export function describeFolderFallback(reason: FolderFallbackReason): string {
 }
 
 export type LogSinkDeps = {
+  /** Restricts this sink to a local folder, even when a server is configured. */
+  folderOnly?: boolean
+  readConfig: () => VinayaConfig | null
+
   /** Trust asserted by a caller that structurally knows the producer; absent uses the derived default. */
   provenance?: Provenance
   outboxRoot: () => string
@@ -194,7 +201,8 @@ export type LogSinkDeps = {
    */
   resolveLogDestination: (
     repo: RepoRef | null,
-    env: NodeJS.ProcessEnv
+    env: NodeJS.ProcessEnv,
+    folderOnly?: boolean
   ) => ResolvedLogDestination | Promise<ResolvedLogDestination>
   /**
    * Where `logSync` writes when this sink has not resolved its destination
@@ -343,7 +351,12 @@ export function resolveLogDestinationFrom(input: {
   env: NodeJS.ProcessEnv
   defaultFolder: string
   repoRoot?: string | null
+  folderOnly?: boolean
 }): ResolvedLogDestination {
+  if (input.localConfig?.logs === false || (input.unattended && input.trustAnchorConfig?.logs === false)) {
+    return { kind: 'none', reason: 'logs: false disables Log recording' }
+  }
+
   // O6: a confined dispatch cannot write the real log folder
   // (`<runtimeDir>/logs/…`, outside its granted worktree/scratch) nor reach a
   // log server, so its `log()` calls died with "log outbox target could not
@@ -384,6 +397,13 @@ export function resolveLogDestinationFrom(input: {
     }
   } else {
     effective = local
+  }
+  if (input.folderOnly || input.env[LOG_FOLDER_ONLY_ENV] === '1') {
+    const folder =
+      effective && 'folder' in effective && !isInsideRepo(effective.folder, input.repoRoot)
+        ? effective.folder
+        : input.defaultFolder
+    return { kind: 'folder', folder }
   }
   // O3: a CI job never falls back to a folder — an ephemeral runner's own
   // disk dies with the job, so a folder there is not a real destination, it
@@ -472,7 +492,8 @@ export function resetTrustAnchorConfigMemo(): void {
 
 async function defaultResolveLogDestination(
   repo: RepoRef | null,
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  folderOnly = false
 ): Promise<ResolvedLogDestination> {
   const localConfig = loadConfig()
   // THIS process's own classification, never the event env's: `dispatchRole`
@@ -486,6 +507,7 @@ async function defaultResolveLogDestination(
   const repoRoot = repoRootSync()
   return resolveLogDestinationFrom({
     localConfig,
+    folderOnly,
     trustAnchorConfig: unattended ? await processTrustAnchor(repoRoot) : null,
     unattended,
     env,
@@ -513,14 +535,15 @@ async function defaultResolveLogDestination(
  * before the decision.
  */
 export function unresolvedLogDestination(env: NodeJS.ProcessEnv): ResolvedLogDestination {
+  const loaded = loadConfig()
+  if (loaded?.logs === false) return { kind: 'none', reason: 'logs: false disables Log recording' }
   if (hostFromEnv(env) === 'ci') {
     return {
       kind: 'none',
       reason: 'the process ended before its log destination was resolved, and a CI job never records to a folder'
     }
   }
-  const loaded = loadConfig()
-  const localConfig = loaded?.logs?.url !== undefined ? { ...loaded, logs: undefined } : loaded
+  const localConfig = loaded?.logs && loaded.logs.url !== undefined ? { ...loaded, logs: undefined } : loaded
   const unattended = isUnattendedProcess(process.env)
   const repoRoot = repoRootSync()
   const runtimeDir =
@@ -1245,6 +1268,7 @@ export function setBranchIssueFallback(enabled: boolean): void {
  */
 function defaultDeps(): Omit<LogSinkDeps, 'resolveBranchIssue' | 'resolveHeadSha'> {
   return {
+    readConfig: loadConfig,
     outboxRoot: () => join(GLOBAL_VINAYA_HOME, 'outbox'),
     home: () => homedir(),
     hostname: () => osHostname(),
@@ -1552,7 +1576,14 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
         doctrine()
       ]).then(async ([resolved, doctrineValue]) => {
         const repo = resolved && isSafeRepoSegment(resolved.owner) && isSafeRepoSegment(resolved.repo) ? resolved : null
-        settledContext = { repo, doctrine: doctrineValue, destination: await deps.resolveLogDestination(repo, env) }
+        settledContext = {
+          repo,
+          doctrine: doctrineValue,
+          destination:
+            deps.readConfig()?.logs === false
+              ? { kind: 'none', reason: 'logs: false disables Log recording' }
+              : await deps.resolveLogDestination(repo, env, deps.folderOnly)
+        }
         return settledContext
       })
     }
@@ -1833,9 +1864,19 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   function logSync(e: LogEventInput, opts: LogSyncOptions = {}): void {
     try {
       const call = snapshot()
-      let ctx = settledContext
+      let ctx =
+        deps.readConfig()?.logs === false
+          ? {
+              repo: null,
+              doctrine: 'unknown',
+              destination: { kind: 'none' as const, reason: 'logs: false disables Log recording' }
+            }
+          : settledContext
       if (ctx === undefined) {
-        const destination = deps.unresolvedLogDestination(deps.env())
+        const destination =
+          deps.readConfig()?.logs === false
+            ? { kind: 'none' as const, reason: 'logs: false disables Log recording' }
+            : deps.unresolvedLogDestination(deps.env())
         if (destination.kind === 'folder' && !opts.quiet) {
           warnOnce(
             `vinaya: the process ended before its log destination was resolved — the event is written to ${destination.folder}; \`vinaya log send\` delivers it to a configured server later\n`

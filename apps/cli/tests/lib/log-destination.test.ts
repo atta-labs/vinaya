@@ -47,6 +47,7 @@ describe('logs — schema mutual exclusion (see also tests/config.test.ts)', () 
     const configPath = join(import.meta.dir, '..', '..', '..', '..', 'vinaya.config.json')
     const configText = readFileSync(configPath, 'utf8')
     const config = JSON.parse(configText) as VinayaConfig
+    if (!config.logs) throw new Error('repository config must declare a Log server')
 
     // Rule 1: readHeaders must be present when logs.url is configured.
     expect(config.logs?.url).toBeDefined()

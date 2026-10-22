@@ -1,19 +1,13 @@
 /**
  * `runTask` — the one lib function `vinaya task run <tranche> <n> --agent
- * <vendor>` calls (`commands/task-run.ts`). Composes `prepareTask`
- * (`dispatch-task.js`, task 1) with `devReviewLoop` (`dev-review-loop.js`)
- * — nothing else. `prepareTask` renders and freezes the brief and
- * starts no agent under any circumstances (its own doc comment); the loop's
- * own round-1 entry reads that frozen brief off the Issue
- * (`fetchFrozenBrief`) and is the ONLY place a developer is ever dispatched
- * from a fresh task — so a developer is started exactly once by
- * construction, never by anything this file does.
+ * <vendor>` calls (`commands/task-run.ts`). Prepares the frozen brief,
+ * resolves the task, branch and model, then starts the selected runner.
+ * `prepareTask` starts no agent; the standalone loop or Engine subprocess
+ * owns the developer dispatch.
  *
- * `--agent` is never passed into `prepareTask` (Traps to avoid) — preparation
- * is agent-agnostic; only `devReviewLoop`'s own `LoopInput.agent` field
- * carries it, exactly once. `LoopInput.model` (issue-661, O1) carries the
- * SAME resolution: `runTask` resolves it once, right here, and
- * `devReviewLoop`'s own developer dispatch is the only place it is spent.
+ * `--agent` is never passed into `prepareTask` — preparation is
+ * agent-agnostic. Both runners receive the same agent and the model
+ * resolution performed once here.
  */
 
 import { defaultControlStoreDeps, readResolution, type ResolutionRecord } from '@attalabs/aeg-core'
@@ -23,6 +17,8 @@ import {
   assembleAndRenderBrief as realAssembleAndRenderBrief,
   assembleAndRenderBriefForIssue as realAssembleAndRenderBriefForIssue
 } from './brief-assembly.js'
+import { type loadConfig, loadTaskRunner, resolveTaskRunner, type TaskRunner } from './config.js'
+import { runTaskEngine, type EngineRunnerDeps } from './task-run-engine.js'
 import type { AgentVendor } from './dispatch.js'
 import {
   developerBranchFor as realDeveloperBranchFor,
@@ -97,6 +93,7 @@ export function isAlreadyDispatchedError(err: unknown): boolean {
 export type RunTaskInput = ({ tranche: string; n: number } | { issue: number }) & {
   agent: AgentVendor
   model?: string
+  runner?: TaskRunner
   /**
    * `--widen-surface <glob,...> --reason <text>`: continue a pre-pull-request
    * escalation whose Developer asked for `widen_surface` — supersede the
@@ -143,7 +140,20 @@ export type RunTaskResult = DriverResult & { prUrl: string | null; branch: strin
  * `prepareTask` and `devReviewLoop` are the two real functions this task's
  * Surface calls unmodified; every field defaults to them.
  */
+export type EngineTaskResult = {
+  exitCode: number
+  task: number
+  branch: string
+  prUrl: null
+  prNumber: null
+  finalDecision: null
+}
+export type RunTaskOutcome = RunTaskResult | EngineTaskResult
+
 export type RunTaskDeps = {
+  runnerConfig?: () => ReturnType<typeof loadConfig>
+  engine?: Partial<EngineRunnerDeps>
+
   prepareTask: (input: { tranche: string; n: number }) => Promise<PrepareTaskResult>
   prepareIssueTask: (input: { issue: number }) => Promise<PrepareTaskResult>
   assembleAndRenderBrief: (tranche: string, taskId: string) => Promise<AssembleAndRenderBriefResult>
@@ -387,13 +397,14 @@ export async function resolveIssueForRunTask(
   }
 }
 
-export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRunTaskDeps): Promise<RunTaskResult> {
+export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRunTaskDeps): Promise<RunTaskOutcome> {
   // Round 2 review (MAJOR) / security review (MEDIUM): a driver runs with no
   // human watching, so it must resolve `runtimeDir` through the
   // default-branch gate rather than trusting the working tree. Marked FIRST,
   // before any path is resolved and before anything is dispatched, so the
   // classification is already true for this process and for every child that
   // inherits its environment.
+  const runner = deps.runnerConfig ? resolveTaskRunner(input.runner, deps.runnerConfig()) : loadTaskRunner(input.runner)
   markProcessUnattended()
   const { agent, model: explicitModel } = input
   const taskLabel = taskLabelFor(input)
@@ -445,6 +456,13 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
   // detached child a `--background` start launches, and the Operator's
   // `task_start` tool all run `runTask` itself.
   deps.assignIssue(issue)
+  if (runner === 'atta-engine') {
+    const exitCode = await runTaskEngine(
+      { task: issue, agent, ...(resolvedModel ? { model: resolvedModel } : {}) },
+      deps.engine
+    )
+    if (exitCode !== null) return { exitCode, task: issue, branch, prUrl: null, prNumber: null, finalDecision: null }
+  }
   const loopResult = await deps.devReviewLoop(
     shouldResumeFromPause
       ? { resumePr: existingPr.number, agent, ...(resolvedModel ? { model: resolvedModel } : {}) }

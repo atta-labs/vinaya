@@ -306,7 +306,7 @@ export async function probeLogDestinationServer(
  * Exported so a per-call-site proof can invoke this exact wiring.
  */
 export async function readLogServerDigestReal(url: string): Promise<LogServerDigestRead> {
-  const raw = loadConfig()?.logs?.readHeaders
+  const raw = (loadConfig()?.logs || undefined)?.readHeaders
   if (raw === undefined || logsCredentialMissing(raw, process.env)) return { kind: 'no-read-credential' }
   try {
     const response = await fetch(statsUrlFrom(url), {

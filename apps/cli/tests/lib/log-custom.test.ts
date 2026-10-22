@@ -51,7 +51,7 @@ describe('logs.events — the declaration in vinaya.config.json (O1, O2)', () =>
   it('loads a config declaring events under logs, with no destination set', () => {
     const parsed = VinayaConfigSchema.safeParse({ logs: { events: declarations } })
     expect(parsed.success).toBe(true)
-    if (parsed.success) expect(parsed.data.logs?.events).toEqual(declarations)
+    if (parsed.success) expect((parsed.data.logs || undefined)?.events).toEqual(declarations)
   })
 
   it('an events-only logs setting declares no destination — the default folder still applies', () => {

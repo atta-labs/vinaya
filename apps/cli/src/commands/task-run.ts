@@ -49,8 +49,8 @@
 
 import { colourLoopLine } from '../lib/dispatch.js'
 import { DISPATCH_AGENTS, type DispatchAgent } from '../lib/dispatch-task.js'
-import { loadConfig } from '../lib/config.js'
-import { runTask, type RunTaskResult } from '../lib/task-run.js'
+import { loadConfig, loadTaskRunner, type TaskRunner } from '../lib/config.js'
+import { runTask, type RunTaskResult, type RunTaskOutcome } from '../lib/task-run.js'
 import { startBackgroundRun } from '../lib/task-run-background.js'
 import { resumeCommandFor } from '../lib/task-status.js'
 import { noPushResumeCommandFor } from '../lib/dev-review-loop/pause-resume.js'
@@ -58,9 +58,20 @@ import { noPushResumeCommandFor } from '../lib/dev-review-loop/pause-resume.js'
 /** Any failure other than a usage/argv error or a policy `pause` — see the module doc comment's exit-code table. */
 const TASK_RUN_FAILURE_EXIT_CODE = 3
 
-const KNOWN_FLAGS = ['--agent', '--issue', '--background', '--model', '--quiet', '--widen-surface', '--reason']
+const KNOWN_FLAGS = [
+  '--agent',
+  '--issue',
+  '--background',
+  '--model',
+  '--quiet',
+  '--widen-surface',
+  '--reason',
+  '--runner'
+]
 
 type ParsedFlags = {
+  runner: string | undefined
+  runnerFlagPresent: boolean
   agent: string | undefined
   agentFlagPresent: boolean
   issue: string | undefined
@@ -90,6 +101,8 @@ type ParsedFlags = {
  * the config default instead of failing loud.
  */
 export function parseFlags(rest: string[]): ParsedFlags {
+  let runner: string | undefined
+  let runnerFlagPresent = false
   let agent: string | undefined
   let agentFlagPresent = false
   let issue: string | undefined
@@ -103,7 +116,10 @@ export function parseFlags(rest: string[]): ParsedFlags {
   const unknown: string[] = []
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]
-    if (a === '--agent') {
+    if (a === '--runner') {
+      runnerFlagPresent = true
+      runner = rest[++i]
+    } else if (a === '--agent') {
       agentFlagPresent = true
       agent = rest[++i]
     } else if (a === '--issue') {
@@ -123,6 +139,8 @@ export function parseFlags(rest: string[]): ParsedFlags {
     } else if (a !== undefined) unknown.push(a)
   }
   return {
+    runner,
+    runnerFlagPresent,
     agent,
     agentFlagPresent,
     issue,
@@ -167,8 +185,8 @@ export function applyQuiet(parsed: Pick<ParsedFlags, 'quiet'>): void {
 }
 
 const USAGE = [
-  `Usage: vinaya task run <tranche> <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>] [--widen-surface <glob,...> --reason <text>]`,
-  `   or: vinaya task run --issue <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>] [--widen-surface <glob,...> --reason <text>]`
+  `Usage: vinaya task run <tranche> <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>] [--runner <standalone|atta-engine>] [--widen-surface <glob,...> --reason <text>]`,
+  `   or: vinaya task run --issue <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>] [--runner <standalone|atta-engine>] [--widen-surface <glob,...> --reason <text>]`
 ].join('\n')
 
 /** `parseWidenSurface`, with a usage error reported and exited on. */
@@ -180,6 +198,23 @@ function widenSurfaceOrExit(parsed: ParsedFlags): { widenSurface?: { globs: stri
     process.exit(2)
   }
   return { widenSurface: widen }
+}
+
+/** Rejects a missing or unknown runner before preparation or a background launch. */
+export function runnerForFlags(parsed: Pick<ParsedFlags, 'runner' | 'runnerFlagPresent'>): TaskRunner {
+  if (parsed.runnerFlagPresent && (!parsed.runner || parsed.runner.startsWith('--'))) {
+    throw new Error('--runner requires standalone or atta-engine')
+  }
+  return loadTaskRunner(parsed.runner)
+}
+
+function runnerOrExit(parsed: ParsedFlags): TaskRunner {
+  try {
+    return runnerForFlags(parsed)
+  } catch (error) {
+    console.error(`vinaya task run: ${error instanceof Error ? error.message : String(error)}`)
+    process.exit(2)
+  }
 }
 
 /** `--agent` falls back to `dispatch.agent` in `vinaya.config.json` when omitted entirely — see `parseFlags`'s own doc comment on `agentFlagPresent`. `null` when no valid agent could be resolved (message already printed). */
@@ -293,13 +328,17 @@ export function attachedRunNotice(input: Parameters<typeof runTask>[0], stdinIsT
 async function runAndReport(input: Parameters<typeof runTask>[0]): Promise<void> {
   const notice = attachedRunNotice(input, process.stdin.isTTY === true)
   if (notice !== null) process.stderr.write(`${notice}\n`)
-  let result: RunTaskResult
+  let result: RunTaskOutcome
   try {
     result = await runTask(input)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     process.stderr.write(`Error: ${message}\n`)
     process.exit(TASK_RUN_FAILURE_EXIT_CODE)
+  }
+  if ('exitCode' in result) {
+    process.exitCode = result.exitCode
+    return
   }
   reportRunTaskResult(result, { agent: input.agent, ...(input.model ? { model: input.model } : {}) })
 }
@@ -362,13 +401,14 @@ export async function taskRunCommand(args: string[]): Promise<void> {
     }
     const agent = resolveAgentOrReport(parsed)
     if (!agent) process.exit(2)
+    const runner = runnerOrExit(parsed)
     const widen = widenSurfaceOrExit(parsed)
     applyQuiet(parsed)
     if (parsed.background) {
-      await runBackgroundAndReport({ issue: issueN, agent, model: parsed.model, ...widen })
+      await runBackgroundAndReport({ issue: issueN, agent, model: parsed.model, runner, ...widen })
       return
     }
-    await runAndReport({ issue: issueN, agent, model: parsed.model, ...widen })
+    await runAndReport({ issue: issueN, agent, model: parsed.model, runner, ...widen })
     return
   }
 
@@ -394,17 +434,18 @@ export async function taskRunCommand(args: string[]): Promise<void> {
   }
   const agent = resolveAgentOrReport(parsed)
   if (!agent) process.exit(2)
+  const runner = runnerOrExit(parsed)
   const widen = widenSurfaceOrExit(parsed)
   applyQuiet(parsed)
   if (parsed.background) {
-    await runBackgroundAndReport({ tranche: trancheSlug, n, agent, model: parsed.model, ...widen })
+    await runBackgroundAndReport({ tranche: trancheSlug, n, agent, model: parsed.model, runner, ...widen })
     return
   }
-  await runAndReport({ tranche: trancheSlug, n, agent, model: parsed.model, ...widen })
+  await runAndReport({ tranche: trancheSlug, n, agent, model: parsed.model, runner, ...widen })
 }
 
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'task run': { date: '2026-09-30', callsToday: 6, retiresVia: 'sharedCommandShell' }
+  'task run': { date: '2026-09-30', callsToday: 7, retiresVia: 'sharedCommandShell' }
 }

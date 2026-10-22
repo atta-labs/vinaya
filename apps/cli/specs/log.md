@@ -11,6 +11,21 @@ new producer to omit the version or ruling slot.
 
 One `log(e)`, one sink: each typed event is delivered live to the configured destination, and a local retry queue holds events only while a server is unreachable. The full design is the Linear "Tech spec — The Vinaya Log"; this file is the durable, in-repo reference for what has shipped — the schema, the header, and the append — not a restatement of the whole spec.
 
+## Disabling recording and Engine destinations
+
+`"logs": false` disables every Log destination for both task runners, including
+synchronous process-exit recording and worker spooling: no folder file, no
+server retry outbox and no server request. An absent setting retains the
+existing default folder behaviour.
+
+The Engine runner constructs the shared `createLogSink` with `folderOnly: true`.
+It keeps a permitted `logs.folder`, or uses `<runtimeDir>/logs` when a server
+URL is configured. It never appends to the server retry outbox or delivers
+server requests. `logs: false` takes precedence over this restriction.
+The Engine also passes the folder restriction through its subprocess
+environment, including CLI checks, check children and agent launches, so
+ordinary shared sinks in those processes cannot select a server destination.
+
 ## The envelope: `schema: 1`, `2`, `3` and `4`
 
 `meta.schema` is a discriminated union. `1` is the original header — every field below in "The header, on every line," nothing more — and stays exactly as it was: a line already on disk, or a fixture recorded before these fields existed, keeps parsing without a schema violation just because it predates the fields below. `buildHeader` (`packages/aeg-core/src/log/envelope.ts`) builds `4` for every event (see "`schema: 4`" below); `1`, `2` and `3` are read-side compatibility shapes only, never something a caller asks `buildHeader` to produce, and a line of any older version reads back unchanged.

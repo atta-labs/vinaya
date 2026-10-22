@@ -201,6 +201,10 @@ export const COMMANDS: readonly Command[] = [
     description: 'One command from a planned Issue to a reviewed pull request — exactly one developer started',
     flags: [
       {
+        flag: '--runner <standalone|atta-engine>',
+        description: 'Override runner config for this invocation; absent uses config, whose default is standalone'
+      },
+      {
         flag: '--agent <claude|codex>',
         description: 'Vendor for the developer and both reviewers this run dispatches'
       },
@@ -216,10 +220,11 @@ export const COMMANDS: readonly Command[] = [
       }
     ],
     details: [
+      'The atta-engine runner starts the workspace Engine script with Bun, streams its output and returns its exit code. A published install without the script prints one notice and falls back to standalone. Engine Log events use the local folder only; logs: false disables all Log destinations for both runners.',
       // AEG:CLAIM: apps/cli/src/lib/task-run.ts contains:async function widenSurfaceBeforeRun(
       "`--widen-surface` is the Planner's one command for a widen-surface escalation, and refuses before any write when the held pause is not one (no pause, a pause with a pull request — whose continuation is the ruling on that pull request — or a round whose Developer asked for no `widen_surface`), when a driver is still alive for the task, when the escalation's resolution is already consumed (a replay — the Surface is never widened twice), or when the widened body fails the write gate, whose findings name the field to edit first. The escalation packet's permitted next actions name this command with the globs the Developer asked for, and `task_resume` refuses such an escalation naming it.",
       // AEG:CLAIM: apps/cli/src/lib/task-run.ts contains:export async function runTask(
-      "Composes `task brief`'s own preparation (`prepareTask`) with the watching driver (`runDriverLoop`, `dev-review-loop.ts`) — nothing else. Preparation starts no agent; the loop's own round 1 reads the frozen brief off the Issue and is the only place a developer is ever dispatched from a fresh task, so exactly one developer is started by construction.",
+      "Prepares the frozen brief and resolves the task, branch and model once. The standalone runner then starts the watching driver (`runDriverLoop`, `dev-review-loop.ts`). Preparation starts no agent; the loop's own round 1 reads the frozen brief off the Issue and is the only place a developer is ever dispatched from a fresh task, so exactly one developer is started by construction.",
       'A brief already frozen on the Issue is reused, never re-posted — the second `task dispatch`/`task brief` call this composes around does not fail the whole run, it just skips straight to running the loop. A task whose Issue refuses preparation (a missing brief section, an unmet dispatch gate) is refused before any agent starts, with nothing posted.',
       "Refuses when the frozen brief's developer branch already has an open pull request AND a driver is still live for it — a driver that crashed or was killed leaves its PR behind, and this command is the one that revives it, in any state, pause held or not.",
       "issue-711 O4: a pause never ends this process — it keeps running and watches the pull request, continuing on its own once a newer Principal ruling appears (or, for an `'infrastructure'`/`'stale_driver'` pause, after a bounded backoff), with no `--resume` command needed for the ordinary case. Exit and printed summary distinguish a published pull request OR a watched pause's own genuine end — merged, closed, or an operator's own `--cancel` (exit `0` either way, the PR URL) — from the one pause this process can never watch (no pull request exists yet — exit `1`, with the working `vinaya task run` command for this task's own branch to continue by hand — `<tranche> <n>` for a tranche task, `--issue <n>` for a backlog one — never a `dev-review-loop --resume` line naming a pull-request number this pause does not have), a usage/argv error (exit `2`), and any other failure (exit `3`)."

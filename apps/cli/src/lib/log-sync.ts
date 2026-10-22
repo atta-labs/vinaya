@@ -250,7 +250,7 @@ export function realLogSyncDeps(): LogSyncDeps {
         repoRoot: repoRootSync()
       })
     },
-    readHeadersRaw: () => config?.logs?.readHeaders,
+    readHeadersRaw: () => (config?.logs || undefined)?.readHeaders,
     resolveHeaders: (headers) => resolveLogsHeaderValues(headers, process.env),
     cacheDir: async (repo) => {
       const dir = join(await runtimeDirForRepoAsync(repo), LOGS_CACHE_DIR_NAME)

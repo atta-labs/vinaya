@@ -55,7 +55,7 @@ import {
 import { extractSourceRevision } from '@attalabs/aeg-core'
 import type { DevToolContext, DevToolResult } from '../../../apps/cli/src/lib/task-tools/dev-tools-server'
 import { validatePrBodyForCreate } from '../../../apps/cli/src/commands/pr'
-import { createLogSink } from '../../../apps/cli/src/lib/log-sink'
+import { createLogSink, LOG_FOLDER_ONLY_ENV, type LogSinkDeps } from '../../../apps/cli/src/lib/log-sink'
 import { setEngineLogIdentity } from './engine-log-identity'
 import { startDevToolsHost, type DevToolsHost } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
 import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-tools-registration'
@@ -103,8 +103,8 @@ import {
 
 // The Engine path for one task: the Vinaya process run on the packed executor
 // instead of the standalone review loop. Choosing this entry point is the
-// whole switch — the loop stays the default and no CLI command changes,
-// because CLI source may not import an Engine package.
+// whole switch — task run selects this script as a subprocess, keeping
+// Engine packages outside the CLI source.
 //
 //   bun processes/vinaya/bin/run-engine.ts --task <n> --agent <claude|codex> [--dry-run]
 
@@ -384,7 +384,10 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
       // A revision continues the Developer's own session, as the standalone loop resumes it.
       continueSessions: ['develop'],
       envAllowlist: agentEnvAllowlist({
-        extra: options.allowUnixSockets === true ? [LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV] : []
+        extra: [
+          LOG_FOLDER_ONLY_ENV,
+          ...(options.allowUnixSockets === true ? [LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV] : [])
+        ]
       }),
       ...(developerFacts
         ? {
@@ -899,6 +902,16 @@ async function liveRuntimeDir(): Promise<string> {
   return repo ? runtimeDirForRepoAsync(repo) : join(homedir(), '.vinaya', 'runtime')
 }
 
+/** Engine events use the shared sink with delivery restricted to its local folder. */
+export function createEngineLogSink(overrides: Partial<LogSinkDeps> = {}) {
+  return createLogSink({ ...overrides, folderOnly: true })
+}
+
+/** Apply before any Engine act so CLI children and their own children inherit local-only recording. */
+export function configureEngineLogEnvironment(env: NodeJS.ProcessEnv = process.env): void {
+  env[LOG_FOLDER_ONLY_ENV] = '1'
+}
+
 export async function main(argv: readonly string[]): Promise<number> {
   const args = parseArgs(argv)
   const repoRoot = resolve(import.meta.dir, '../../..')
@@ -915,8 +928,9 @@ export async function main(argv: readonly string[]): Promise<number> {
     for (const line of lines) process.stdout.write(`${line}\n`)
     return 0
   }
+  configureEngineLogEnvironment()
   setEngineLogIdentity(loaded)
-  const sink = createLogSink()
+  const sink = createEngineLogSink()
   const loopId = randomUUID()
   process.env.VINAYA_RUN = loopId
   const taskInput = await liveTaskInput(args, repoRoot, runtimeDir, loopId)
