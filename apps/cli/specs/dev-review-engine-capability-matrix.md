@@ -32,15 +32,19 @@ boundary is fixed. Every runtime row records it, cites Atta source pinned at
 that commit with a line anchor, and concludes `fit` or a named gap.
 
 The repository's packed-consumer test exercises a separate artifact set: the
-engine, LangGraph adapter, agents and models tarballs vendored under
-`apps/cli/tests/fixtures/atta-engine/`, whose README records the Atta commit
-they were packed from and the digest each copy must match. With those
-tarballs the packed graph builder accepts a caller-supplied executor, and the
-test verifies that seam with a steps-shaped Flow. Public start and resume do
-not yet accept that executor, so the complete run-control proof remains an
-Atta Engine-owned gap under cutover gate 16. The Engine run-control boundary
-registry row names the current packed-consumer test and the public
-start/resume test that replaces it when the runtime delivers that seam.
+engine, LangGraph adapter, agents, models and executor tarballs vendored under
+`apps/cli/tests/fixtures/atta-engine/` (`atta-engine-0.0.1.tgz`,
+`atta-adapter-langgraph-0.0.1.tgz`, `atta-agents-0.1.0.tgz`,
+`atta-models-0.1.0.tgz` and `atta-executor-agent-spawn-0.1.1.tgz`), whose
+README records the Atta commit each was packed from and the digest each copy
+must match. With those tarballs the packed graph builder accepts a
+caller-supplied executor, and the test verifies that seam with a steps-shaped
+Flow. The vendored executor package, `atta-executor-agent-spawn-0.1.1.tgz`,
+also accepts a caller executor through public start and resume, so cutover
+gate 16 is delivered and the run-control proof no longer waits on Atta
+Engine. The Engine run-control boundary registry row names the current
+packed-consumer test and the public start/resume test that completes that
+proof.
 
 The capabilities already established by the matrix remain fit: Flow and
 Plan compilation, the external-consumer packaging proof, the injected graph
