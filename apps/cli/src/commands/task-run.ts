@@ -447,5 +447,5 @@ export async function taskRunCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'task run': { date: '2026-09-30', callsToday: 6, retiresVia: 'sharedCommandShell' }
+  'task run': { date: '2026-09-30', callsToday: 7, retiresVia: 'sharedCommandShell' }
 }

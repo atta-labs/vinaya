@@ -2239,14 +2239,15 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // Principal list throws) — one new file, so a change to `config.ts` now
 // selects that one extra suite, never two. Same rule.
 describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings (Issue #707, O1)', () => {
-  it('a change to the log sink (log-sink.ts/config.ts/run-paths.ts) selects at most 30 files', () => {
+  it('a change to the log sink (log-sink.ts/config.ts/run-paths.ts) selects at most 32 files', () => {
     const changed = [
       join(REPO_ROOT, 'apps/cli/src/lib/log-sink.ts'),
       join(REPO_ROOT, 'apps/cli/src/lib/config.ts'),
       join(REPO_ROOT, 'apps/cli/src/lib/run-paths.ts')
     ]
     const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { depth: 'one' })
-    expect(selected.length).toBeLessThanOrEqual(30)
+    // Runner selection and disabled-recording suites directly consume these modules too.
+    expect(selected.length).toBeLessThanOrEqual(32)
   }, 30_000)
 
   it('a change to a widely imported export of the shared core package selects at most 25 files', () => {

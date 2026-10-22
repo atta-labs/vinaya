@@ -636,7 +636,7 @@ describe('a pre-spawn sign-in refusal never blocks the task', () => {
 
     const result = await runLoopInProcess(world)
 
-    expect(result.finalDecision?.type).toBe('publish')
+    expect(result.finalDecision.type).toBe('publish')
     expect(world.dispatchCountByRole.developer).toBe(1)
   })
 
