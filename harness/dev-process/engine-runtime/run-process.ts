@@ -165,6 +165,16 @@ function nodeExecutor(
     const resumeSessionId = node.resume ? state.sessions[node.resume] : undefined
     const prompt = renderStepPrompt(node, { question: plan.question, results: state.results })
     const result = await executeAgentSpawnNode({ node, prompt, resumeSessionId, config, spawnFn, signal })
+    // The executor's own node executor reports what the agent printed as streaming events; this one
+    // replaces it, so it reports the same records the same way.
+    for (const reported of result.events) {
+      const content = typeof reported === 'string' ? reported : JSON.stringify(reported)
+      try {
+        config.onEvent?.({ type: 'node:streaming', nodeId: node.id, runId: state.runId, content })
+      } catch {
+        // A faulty observer never fails the step it observes.
+      }
+    }
     return {
       results: { [node.id]: result },
       sessions: result.sessionId ? { [node.id]: result.sessionId } : {}

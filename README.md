@@ -142,6 +142,22 @@ bunx turbo build
 bunx biome check .
 ```
 
+### Running a task on the Engine
+
+The standalone review loop (`bun apps/cli/src/index.ts task run`) stays the default. This repository
+can also run one task on the Engine, from a script that lives outside the published CLI:
+
+```bash
+bun processes/vinaya/bin/run-engine.ts --task <n> --agent <claude|codex>
+bun processes/vinaya/bin/run-engine.ts --task <n> --agent <claude|codex> --dry-run
+```
+
+The first line printed is the run's `loopId`, the id its Log events carry. A run writes its trace
+to `<runtimeDir>/engine-runs/<n>/trace.json`: every step in order with its exit code, what each
+agent reported while it ran, and both reviewer verdicts. `--dry-run` prints the process digest, the
+steps, the function each mechanical step adapts and each role's launch command, and launches
+nothing.
+
 ## Docs
 
 - **[vinaya.attalabs.dev](https://vinaya.attalabs.dev)** — the pitch, the lifecycle, why this

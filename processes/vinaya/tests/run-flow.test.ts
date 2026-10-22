@@ -76,6 +76,84 @@ describe('bindings cover the Flow', () => {
   })
 })
 
+describe('bindings read run state when their step runs', () => {
+  const review = (role: string) => ({
+    reviewResult: {
+      schemaVersion: 1,
+      role,
+      status: 'completed',
+      headSha: 'abc123',
+      manifestDigest: 'digest',
+      summary: 'ok',
+      findings: [],
+      objectiveResults: []
+    }
+  })
+  const agentResult = (output: unknown) =>
+    ({ kind: 'agent-spawn', nodeId: 'x', exitCode: 0, events: [output] }) as never
+
+  test('publish receives the pull request number and head found when it runs', () => {
+    const published: Array<{ root: string; input: Record<string, unknown> }> = []
+    let prNumber: number | null = null
+    const task = {
+      root: '/repo',
+      branch: 'task/issue-9',
+      issueNumber: 9,
+      worktreePath: '/repo/.worktrees/task/issue-9',
+      reviewRound: () => 2,
+      publish: (at: Record<string, unknown>) => ({ task: 9, ...at }),
+      bound: {
+        findOpenPrForBranch: (branch: string) => (branch === 'task/issue-9' && prNumber ? { number: prNumber } : null),
+        readWorktreeHead: (path: string) => (path === '/repo/.worktrees/task/issue-9' ? 'abc123' : null),
+        publishRound: (root: string, input: Record<string, unknown>) => void published.push({ root, input })
+      }
+    } as unknown as TaskInput
+    const publish = createActions(task)['harness.publish'] as (context: never) => unknown
+    expect(() => publish({} as never)).toThrow('no open pull request')
+    // The pull request is opened after the task started, before the publish step runs.
+    prNumber = 4242
+    publish({} as never)
+    expect(published).toEqual([{ root: '/repo', input: { task: 9, prNumber: 4242, expectedHead: 'abc123', round: 2 } }])
+  })
+
+  test('validating the reviewer outputs holds both verdicts for the round in progress', () => {
+    const held: Array<[number, number, string, string]> = []
+    const task = {
+      root: '/repo',
+      issueNumber: 9,
+      reviewRound: () => 3,
+      renderVerdict: (role: string) => `rendered ${role}`,
+      bound: {
+        writeHeldVerdict: (_root: string, issue: number, round: number, role: string, text: string) =>
+          void held.push([issue, round, role, text])
+      }
+    } as unknown as TaskInput
+    const validate = createActions(task)['vinaya.validate-reviewer-outputs'] as (context: never) => unknown
+    const results = {
+      'code-review': agentResult(review('code-reviewer')),
+      'security-review': agentResult(review('security-reviewer'))
+    }
+    validate({ results } as never)
+    expect(held).toEqual([
+      [9, 3, 'reviewer', 'rendered reviewer'],
+      [9, 3, 'security', 'rendered security']
+    ])
+  })
+
+  test('an invalid reviewer output holds nothing', () => {
+    const held: unknown[] = []
+    const task = {
+      reviewRound: () => 1,
+      renderVerdict: () => '',
+      bound: { writeHeldVerdict: () => void held.push(1) }
+    } as unknown as TaskInput
+    const validate = createActions(task)['vinaya.validate-reviewer-outputs'] as (context: never) => unknown
+    const results = { 'code-review': agentResult(review('code-reviewer')), 'security-review': agentResult({}) }
+    expect(() => validate({ results } as never)).toThrow('security-review output failed')
+    expect(held).toEqual([])
+  })
+})
+
 const STEP_OF_ROLE: Record<string, string> = {
   developer: 'develop',
   'code-reviewer': 'code-review',

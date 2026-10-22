@@ -28,11 +28,13 @@ import {
 } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
 import { publishRound, type PublishInput } from '../../../apps/cli/src/lib/dev-review-loop/publication'
 import { defaultRunWorktreeChecks, handoffFindings } from '../../../apps/cli/src/lib/dev-review-loop'
+import { readWorktreeHead } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+import { writeHeldVerdict } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import {
   parseDeveloperTurnResult,
   type DeveloperTurnSchemaContext
 } from '../../../apps/cli/src/lib/developer-turn-result'
-import { parseReviewResult } from '../../../apps/cli/src/lib/review-result'
+import { parseReviewResult, type ReviewResult } from '../../../apps/cli/src/lib/review-result'
 
 // The mechanical actions, decisions and role launchers of the developer
 // review Flow. Each action adapts one function the review loop already
@@ -56,7 +58,32 @@ export interface TaskInput {
   observe: (results: Readonly<Record<string, StepNodeResult>>) => Observations
   /** The reviewers' verdicts for the round, read from the recorded results. */
   verdicts: (results: Readonly<Record<string, StepNodeResult>>) => readonly VerdictObservation[]
-  publish: PublishInput
+  /**
+   * The `publishRound` input for the pull request and judged head found when the step runs: the
+   * pull request does not exist when the task starts, and the head moves with every revision.
+   */
+  publish: (at: PublishTarget) => PublishInput
+  /** Renders one reviewer's validated result as the comment text held for publication. */
+  renderVerdict: (role: HeldVerdictRole, review: ReviewResult) => string
+  /** Replacements for the forge and filesystem functions the actions call, for a run that must not reach them. */
+  bound?: Partial<BoundFunctions>
+}
+
+/** What only the moment of publication knows. */
+export interface PublishTarget {
+  prNumber: number
+  expectedHead: string
+  round: number
+}
+
+export type HeldVerdictRole = 'reviewer' | 'security'
+
+/** The functions whose results depend on state that changes during the run. */
+export interface BoundFunctions {
+  findOpenPrForBranch: typeof findOpenPrForBranch
+  readWorktreeHead: typeof readWorktreeHead
+  writeHeldVerdict: typeof writeHeldVerdict
+  publishRound: typeof publishRound
 }
 
 interface Binding {
@@ -68,7 +95,7 @@ interface Binding {
 const ok = (stdout = ''): { exitCode: number; stdout: string } => ({ exitCode: 0, stdout })
 
 /** The final structured record an agent step reported, or undefined for a step that is not one. */
-function agentOutput(results: Readonly<Record<string, StepNodeResult>>, step: string): unknown {
+export function agentOutput(results: Readonly<Record<string, StepNodeResult>>, step: string): unknown {
   const result = results[step]
   if (result?.kind !== 'agent-spawn') return undefined
   return result.events[result.events.length - 1]
@@ -134,13 +161,23 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
   'vinaya.classify-gate-result': { adapts: [classifyGateResult], build: () => classifyGateResult },
   'vinaya.dispatch-reviewers': { adapts: [dispatchReviewers], build: () => dispatchReviewers },
   'vinaya.validate-reviewer-outputs': {
-    adapts: [parseReviewResult],
-    build: () => (context) => {
-      for (const step of ['code-review', 'security-review']) {
+    adapts: [parseReviewResult, writeHeldVerdict],
+    build: (task) => (context) => {
+      const write = task.bound?.writeHeldVerdict ?? writeHeldVerdict
+      const held: Array<[HeldVerdictRole, ReviewResult]> = []
+      for (const [step, role] of [
+        ['code-review', 'reviewer'],
+        ['security-review', 'security']
+      ] as const) {
         const validation = parseReviewResult(agentOutput(context.results, step))
         if (!validation.ok)
           throw new Error(`${step} output failed ${validation.stage} validation: ${validation.errors.join('; ')}`)
+        held.push([role, validation.result])
       }
+      // Nothing is held until both verdicts validated, so a round never holds one reviewer's verdict alone.
+      const round = task.reviewRound()
+      for (const [role, review] of held)
+        write(task.root, task.issueNumber, round, role, task.renderVerdict(role, review))
       return ok()
     }
   },
@@ -169,7 +206,14 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
   'harness.publish': {
     adapts: [publishRound],
     build: (task) => () => {
-      publishRound(task.root, task.publish)
+      const findPr = task.bound?.findOpenPrForBranch ?? findOpenPrForBranch
+      const readHead = task.bound?.readWorktreeHead ?? readWorktreeHead
+      const publish = task.bound?.publishRound ?? publishRound
+      const pr = findPr(task.branch)
+      if (pr === null) throw new Error(`harness.publish found no open pull request for branch ${task.branch}`)
+      const expectedHead = readHead(task.worktreePath)
+      if (expectedHead === null) throw new Error(`harness.publish could not read the head of ${task.worktreePath}`)
+      publish(task.root, task.publish({ prNumber: pr.number, expectedHead, round: task.reviewRound() }))
       return ok()
     }
   }
