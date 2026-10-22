@@ -158,9 +158,11 @@ agent reported while it ran, and both reviewer verdicts. `--dry-run` prints the 
 steps, the function each mechanical step adapts and each role's launch command, and launches
 nothing.
 
-The Developer is given what the loop gives its Developer: the task's frozen brief, its required
-sources and the context packet. On a Linux host that sets `VINAYA_LINUX_SANDBOX_ALLOW_UNIX_SOCKETS=1`
-the generated Claude settings allow Unix sockets, as the loop does, and the variable is forwarded to
+The Developer's prompt carries the task's frozen brief and the context packet (with the required
+sources it prepared). It does not yet carry the doctrine block, the Issue-rulings block, the kept-work
+note or the later-round resume context; those are not sent. On a Linux host that sets
+`VINAYA_LINUX_SANDBOX_ALLOW_UNIX_SOCKETS=1` the generated Claude settings allow Unix sockets, as the
+loop does, and the variable is forwarded to
 the agent. The Developer's shell runs any command its `grants.yaml` does not deny.
 
 ## Docs

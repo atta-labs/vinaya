@@ -197,7 +197,10 @@ export interface RunTrace {
 const REVIEW_STEPS = ['code-review', 'security-review'] as const
 
 /** Builds the trace of a run from what the Engine delivers and what the actions return. */
-export function createTraceRecorder(meta: { task: number; agent: Agent; loopId: string }) {
+export function createTraceRecorder(
+  meta: { task: number; agent: Agent; loopId: string },
+  report: (line: string) => void = (line) => process.stderr.write(`${line}\n`)
+) {
   const steps: TraceStep[] = []
   const attempts = new Map<string, number>()
   const open = (nodeId: string): TraceStep | undefined => {
@@ -211,6 +214,14 @@ export function createTraceRecorder(meta: { task: number; agent: Agent; loopId: 
         attempts.set(event.nodeId, attempt)
         steps.push({ nodeId: event.nodeId, attempt, exitCode: null, streaming: [] })
       } else if (event.type === 'node:streaming') open(event.nodeId)?.streaming.push(event)
+      else if (event.type === 'node:failed') {
+        // An agent step's failure arrives here; a mechanical one was already recorded by `tracedActions`.
+        const step = open(event.nodeId)
+        if (!step || step.error !== undefined) return
+        step.error = event.error.split('\n').slice(0, 8).join('\n')
+        if (step.exitCode === null) step.exitCode = 1
+        report(`step ${event.nodeId} failed: ${step.error}`)
+      }
     },
     recordExit(nodeId: string, exitCode: number, error?: string): void {
       const step = open(nodeId)
@@ -500,11 +511,20 @@ function liveDevToolsContext(input: { branch: string; worktreePath: string; task
 }
 
 /** The per-task input the actions read: the branch, the Log events' loop and the verdict plumbing. */
-async function liveTaskInput(args: EngineArgs, repoRoot: string, loopId: string): Promise<TaskInput> {
+export async function liveTaskInput(
+  args: EngineArgs,
+  repoRoot: string,
+  loopId: string,
+  lookups: {
+    fetchTitle?: (n: number) => string
+    fetchLabels?: (n: number) => string[]
+    policy?: typeof reviewPolicyForLoop
+  } = {}
+): Promise<TaskInput> {
   // Tranche tasks live on `task/<tranche>/<n>`, backlog tasks on `task/issue-<n>`.
-  const branch = developerBranchFor(args.task)
+  const branch = developerBranchFor(args.task, lookups.fetchTitle, lookups.fetchLabels)
   const worktreePath = join(repoRoot, '.worktrees', branch)
-  const policy = reviewPolicyForLoop()
+  const policy = (lookups.policy ?? reviewPolicyForLoop)()
   const config: LoopConfig = {
     loopId,
     task: args.task,

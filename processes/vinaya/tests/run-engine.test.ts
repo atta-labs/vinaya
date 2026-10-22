@@ -9,7 +9,16 @@ import type { NodeLifecycle } from '../../../harness/dev-process/logging/transla
 import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-tools-registration'
 import { classifyGateResult, dispatchReviewers, type TaskInput } from '../executing/actions'
 import type { DeveloperPromptFacts } from '../executing/developer-prompt'
-import { dryRunLines, parseArgs, runEngine, shimContent, type EngineRunOptions, type RunTrace } from '../bin/run-engine'
+import {
+  createTraceRecorder,
+  dryRunLines,
+  liveTaskInput,
+  parseArgs,
+  runEngine,
+  shimContent,
+  type EngineRunOptions,
+  type RunTrace
+} from '../bin/run-engine'
 
 const loaded = loadProcess(resolve(import.meta.dir, '..'))
 const repoRoot = resolve(import.meta.dir, '../../..')
@@ -431,5 +440,33 @@ describe('the Linux sandbox opt-in', () => {
     }
     await runEngine(options)
     expect(settingsOf(options, 'developer').sandbox.network).not.toHaveProperty('allowAllUnixSockets')
+  })
+})
+
+describe('agent-step failures and the live task context', () => {
+  test('a failed agent step records its error and first stack lines, and the runner reports them', () => {
+    const reported: string[] = []
+    const trace = createTraceRecorder({ task: 7, agent: 'claude', loopId: 'l' }, (line) => reported.push(line))
+    trace.onEvent({ type: 'node:start', nodeId: 'develop', runId: 'r' } as NodeLifecycle)
+    const stack = ['Error: the agent exited 3', ...Array.from({ length: 12 }, (_, i) => `    at frame${i}`)].join('\n')
+    trace.onEvent({ type: 'node:failed', nodeId: 'develop', runId: 'r', error: stack } as NodeLifecycle)
+    const step = trace.finish('failed', {}).steps.find((s) => s.nodeId === 'develop')
+    expect(step?.exitCode).toBe(1)
+    expect(step?.error).toContain('the agent exited 3')
+    expect(step?.error).not.toContain('frame11')
+    expect(reported.join('\n')).toContain('the agent exited 3')
+  })
+
+  test('a tranche task and a backlog Issue resolve to their real branches', async () => {
+    const lookups = {
+      policy: () => ({ maxRounds: 4, maxTaskMinutes: 90 }) as never,
+      fetchLabels: (n: number) => (n === 1564 ? ['vinaya/tranche:engine-harness-v1'] : []),
+      fetchTitle: () => '[engine-harness-v1] 5 — The Engine runs one task'
+    }
+    const tranche = await liveTaskInput({ task: 1564, agent: 'claude', dryRun: false }, '/repo', 'l', lookups)
+    expect(tranche.branch).toBe('task/engine-harness-v1/5')
+    expect(tranche.worktreePath).toBe('/repo/.worktrees/task/engine-harness-v1/5')
+    const backlog = await liveTaskInput({ task: 9, agent: 'claude', dryRun: false }, '/repo', 'l', lookups)
+    expect(backlog.branch).toBe('task/issue-9')
   })
 })
