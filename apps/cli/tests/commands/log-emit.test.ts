@@ -212,7 +212,7 @@ describe('vinaya log emit — a process outside Vinaya (O3)', () => {
       meta: { work: { ref: string | null }; flow: { id: string | null }; schema: number }
       subject: { role: string; issue: number | null }
     }
-    expect(line.meta.schema).toBe(3)
+    expect(line.meta.schema).toBe(4)
     expect(line.meta.work.ref).toBe('JIRA-4821')
     expect(line.meta.flow.id).toBe('acme-release-flow')
     // No Vinaya role or task was set — the header says so honestly.

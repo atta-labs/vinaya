@@ -112,13 +112,15 @@ describe('log-sink — a valid line', () => {
     expect(parsed.meta.lineage.run).toBe('loop-abc')
   })
 
-  it("writes schema 3: the work reference defaults to the task's Issue number as text, the flow to vinaya, everything else null", async () => {
+  it("writes schema 4: the work reference defaults to the task's Issue number as text, the flow to vinaya, everything else null", async () => {
     const { dir, deps } = testDeps()
     const { log } = createLogSink(deps)
     log(DISPATCHED)
     await flush()
     const parsed = JSON.parse(readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson'), 'utf8').trim())
-    expect(parsed.meta.schema).toBe(3)
+    expect(parsed.meta.schema).toBe(4)
+    expect(parsed.meta.process).toEqual({ id: 'vinaya', version: null, digest: null })
+    expect(parsed.meta.runner).toEqual({ id: 'standalone', version: null })
     expect(parsed.subject.issue).toBe(404)
     expect(parsed.meta.work).toEqual({ ref: '404', repo: 'atta-labs/vinaya', change: null, revision: null })
     expect(parsed.meta.flow).toEqual({ id: 'vinaya', version: null })
@@ -135,6 +137,11 @@ describe('log-sink — a valid line', () => {
         VINAYA_FLOW: 'acme-release',
         VINAYA_FLOW_VERSION: '4',
         VINAYA_RUNTIME: 'codex',
+        VINAYA_PROCESS_ID: 'acme',
+        VINAYA_PROCESS_VERSION: '1.0',
+        VINAYA_PROCESS_DIGEST: 'digest',
+        VINAYA_RUNNER_ID: 'atta-engine',
+        VINAYA_RUNNER_VERSION: '2.0',
         VINAYA_SOURCE: 'acme-ci'
       })
     })
@@ -145,6 +152,8 @@ describe('log-sink — a valid line', () => {
     expect(parsed.meta.work.ref).toBe('ACME-17')
     expect(parsed.meta.flow).toEqual({ id: 'acme-release', version: '4' })
     expect(parsed.meta.runtime).toBe('codex')
+    expect(parsed.meta.process).toEqual({ id: 'acme', version: '1.0', digest: 'digest' })
+    expect(parsed.meta.runner).toEqual({ id: 'atta-engine', version: '2.0' })
     expect(parsed.meta.source).toBe('acme-ci')
     expect(parsed.subject.issue).toBe(404)
   })
@@ -1268,7 +1277,7 @@ describe('logSync — recording an event as the process ends (O1, O2, O3, O5)', 
     // Read with no await in between: the append happened inside the call.
     const [line] = readLines(lineFile(dir))
     expect(returned).toBeUndefined()
-    expect(line?.meta.schema).toBe(3)
+    expect(line?.meta.schema).toBe(4)
     expect(line?.meta.repo).toBe('atta-labs/vinaya')
     expect(line?.meta.run_id).toBe(sink.runId)
     expect(typeof line?.meta.event_id).toBe('string')

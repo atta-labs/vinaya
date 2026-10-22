@@ -11,9 +11,9 @@ new producer to omit the version or ruling slot.
 
 One `log(e)`, one sink: each typed event is delivered live to the configured destination, and a local retry queue holds events only while a server is unreachable. The full design is the Linear "Tech spec — The Vinaya Log"; this file is the durable, in-repo reference for what has shipped — the schema, the header, and the append — not a restatement of the whole spec.
 
-## The envelope: `schema: 1`, `2` and `3`
+## The envelope: `schema: 1`, `2`, `3` and `4`
 
-`meta.schema` is a discriminated union. `1` is the original header — every field below in "The header, on every line," nothing more — and stays exactly as it was: a line already on disk, or a fixture recorded before these fields existed, keeps parsing without a schema violation just because it predates the fields below. `buildHeader` (`packages/aeg-core/src/log/envelope.ts`) builds `3` for every event (see "`schema: 3`" below); `1` and `2` are read-side compatibility shapes only, never something a caller asks `buildHeader` to produce, and a line of either reads back unchanged.
+`meta.schema` is a discriminated union. `1` is the original header — every field below in "The header, on every line," nothing more — and stays exactly as it was: a line already on disk, or a fixture recorded before these fields existed, keeps parsing without a schema violation just because it predates the fields below. `buildHeader` (`packages/aeg-core/src/log/envelope.ts`) builds `4` for every event (see "`schema: 4`" below); `1`, `2` and `3` are read-side compatibility shapes only, never something a caller asks `buildHeader` to produce, and a line of any older version reads back unchanged.
 
 `schema: 2` adds:
 
@@ -80,6 +80,26 @@ source: string | null      // the source that emitted it (VINAYA_SOURCE), else n
 ```
 
 Every value is `null` where unknown and never invented. `subject.issue` is unchanged: a Vinaya task's Issue number still fills it, and still becomes `work.ref` as text when `VINAYA_WORK_REF` is unset. An empty environment variable reads as unset. `actor_id`, `work.ref` and `flow.id` are all opaque, so an event from a process with no tracker Issue, an actor that is not a doctrine role and a flow that is not `vinaya` is written and read back through the storage contract unchanged. Any other `meta.schema` number stays an unknown-version record.
+
+### `schema: 4` — the process and runner
+
+Every schema `3` field is unchanged, including `runtime: string | null`:
+`VINAYA_RUNTIME` still names the runtime that produced the event. Schema `4`
+adds these header fields:
+
+```
+process: { id: string, version: string | null, digest: string | null }
+runner: { id: string, version: string | null }
+```
+
+`buildHeader` reads the values supplied by the sink from `VINAYA_PROCESS_ID`,
+`VINAYA_PROCESS_VERSION`, `VINAYA_PROCESS_DIGEST`, `VINAYA_RUNNER_ID` and
+`VINAYA_RUNNER_VERSION`. Absent or empty process and runner ids default to
+`vinaya` and `standalone`; absent or empty versions and digest read `null`.
+Both ids are free strings, so other processes and third-party runners can
+name themselves. `processAndRunnerOf(meta)` returns these objects for schema
+`4`; a schema `1`–`3` line reads as process `{ id: 'vinaya', version: null,
+digest: null }` on runner `{ id: 'standalone', version: null }`.
 
 ## The header, on every line
 
@@ -202,7 +222,7 @@ A repository records events Vinaya does not know about by declaring them in its 
 
 `logs.events` is not a destination — it says what may be recorded, never where to — so it is not subject to the default-branch-only rule `logs.folder` and `logs.url` carry for an unattended caller. An events-only `logs` setting declares no destination, and the default folder applies.
 
-**The `custom` family.** One event, `recorded`, carrying `name` (the declared name — data, never the discriminator) and `fields` (the values, flat: text of at most 500 characters, a finite number, or a boolean). `kind` and `event` are fixed; a `custom` event never sets its own header, kind or family. A `custom` line is valid only under a `schema: 3` header — the family is newer than `1` and `2`, so a line claiming either with a `custom` body is one this log never wrote.
+**The `custom` family.** One event, `recorded`, carrying `name` (the declared name — data, never the discriminator) and `fields` (the values, flat: text of at most 500 characters, a finite number, or a boolean). `kind` and `event` are fixed; a `custom` event never sets its own header, kind or family. A `custom` line accepts schema `1`–`4` headers on read; new events use `schema: 4`.
 
 **Recording one.** `emitCustomEvent(name, fields)` (`apps/cli/src/lib/log-custom.ts`) reads the declarations from the loaded config, checks the event (`checkCustomEvent`, pure, `packages/aeg-core/src/log/custom.ts`), and writes through `log()` — the same header, destination and redaction as every other event. A declared name with every declared field present, each of its declared type, and no other field writes exactly one `custom` line. Every declared field is required.
 
@@ -262,7 +282,7 @@ This exits `0` and prints the event name and the kind of destination it was reco
 - **Stable identity across retry, concurrent append and a lost acknowledgement.** `recordIdentity` reads a `schema: 2` line's `event_id` (generated once per `log()` call), falling back to `${run_id}:${seq}` for a `schema: 1` line — the same pair a stored line is deduplicated on. `append` is idempotent by that identity: re-appending an already-stored batch is a no-op (reported in `AppendOutcome.duplicates`), so a retry after a lost acknowledgement collapses to one record rather than a duplicate.
 - **Acknowledged records alone are removed.** `acknowledge(identities)` removes exactly the identities it is handed — never a positional truncation that could drop a record the forge never confirmed.
 - **Overflow is reported, not silent.** A capacity-bounded store's `append` returns an `OverflowDiagnostic` naming the dropped identities — the observable loss the outbox rotation's single overwritten `<name>.1.ndjson` slot never surfaced.
-- **Read-back validates version and provenance, and keeps unknown-version records.** `classifyStoredLine` / `readPage` run the full `LogEventSchema` (validating a `schema: 2` line's provenance), re-apply `redact()` at the read (transport) boundary, and — for a line whose `meta.schema` is outside `KNOWN_SCHEMA_VERSIONS` (`1`, `2`, `3`) — return an `unknown_version` record that keeps the line verbatim for diagnosis rather than dropping it or failing the whole page. A known version that fails validation is `invalid` (corrupt), a distinct outcome from `unknown_version`.
+- **Read-back validates version and provenance, and keeps unknown-version records.** `classifyStoredLine` / `readPage` run the full `LogEventSchema` (validating a `schema: 2` line's provenance), re-apply `redact()` at the read (transport) boundary, and — for a line whose `meta.schema` is outside `KNOWN_SCHEMA_VERSIONS` (`1`, `2`, `3`, `4`) — return an `unknown_version` record that keeps the line verbatim for diagnosis rather than dropping it or failing the whole page. A known version that fails validation is `invalid` (corrupt), a distinct outcome from `unknown_version`.
 
 **Both backends implement the contract.** The deterministic fixture backend (`createFixtureStore`) is the in-memory twin the tests exercise (`packages/aeg-core/src/log/store.test.ts`). The real one is the live `logs` destination below: the sink's append is its write side, `classifyStoredLine` its read/transport-redaction side (run again before a server drain posts), and a server destination's tail-preserving, per-chunk truncate-on-confirmed-delivery is its acknowledgement side — no GitHub-comment adapter fills this role, and `vinaya log flush` does not exist. Redaction runs at BOTH boundaries — `log()` redacts before the append (sink), `classifyStoredLine` redacts again before a drain (transport) — so a secret is filtered even if one boundary's pattern set has a gap.
 

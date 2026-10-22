@@ -90,7 +90,7 @@ describe('emitCustomEvent — a declared event (O4)', () => {
     expect(events).toEqual([{ kind: 'custom', event: 'recorded', name: 'acme.deploy', fields: valid, payload: {} }])
   })
 
-  it('writes one valid custom line under a schema 3 header through the log sink', async () => {
+  it('writes one valid custom line under a schema 4 header through the log sink', async () => {
     const { dir, sink } = realSink()
     emitCustomEvent('acme.deploy', valid, { declarations: () => declarations, emit: sink.log })
     await sink.drain()
@@ -101,7 +101,7 @@ describe('emitCustomEvent — a declared event (O4)', () => {
     expect(line.kind).toBe('custom')
     expect(line.name).toBe('acme.deploy')
     expect(line.fields).toEqual(valid)
-    expect((line.meta as { schema: number }).schema).toBe(3)
+    expect((line.meta as { schema: number }).schema).toBe(4)
   })
 })
 

@@ -413,7 +413,7 @@ describe('O7 — a run returns a summary of everything it did', () => {
 
 /**
  * A server-like source's lines, built from the fixture executions: every
- * valid schema-3 line, positioned by its numeric sequence (`"0"`, `"1"`, …),
+ * valid current-schema line, positioned by its numeric sequence (`"0"`, `"1"`, …),
  * with its event time rewritten so arrival order is not event-time order —
  * as when several machines send into one stream. Position `i` carries minute
  * `(i * 7) % count` past a fixed instant, a permutation that interleaves the
@@ -424,7 +424,7 @@ function outOfOrderLines(count: number): SourceLine[] {
     .flatMap((execution) => execution.lines)
     .filter((line) => line.validity === 'valid')
     .map((line) => JSON.parse(line.raw) as { meta: { schema: number; ts: string } })
-    .filter((event) => event.meta.schema === 3)
+    .filter((event) => event.meta.schema === 4)
   expect(valid.length).toBeGreaterThanOrEqual(count)
   const base = Date.parse('2026-09-20T00:00:00.000Z')
   return valid.slice(0, count).map((event, index) => {

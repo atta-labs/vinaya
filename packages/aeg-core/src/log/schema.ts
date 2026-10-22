@@ -200,11 +200,31 @@ const HeaderMetaV3Schema = z
   })
   .strict()
 
-const HeaderMetaSchema = z.discriminatedUnion('schema', [HeaderMetaV1Schema, HeaderMetaV2Schema, HeaderMetaV3Schema])
+/** Schema 4 preserves schema 3 and adds the process and runner identities. */
+const HeaderMetaV4Schema = HeaderMetaV3Schema.extend({
+  schema: z.literal(4),
+  process: z.object({ id: z.string(), version: z.string().nullable(), digest: z.string().nullable() }).strict(),
+  runner: z.object({ id: z.string(), version: z.string().nullable() }).strict()
+}).strict()
+
+export const HeaderMetaSchema = z.discriminatedUnion('schema', [
+  HeaderMetaV1Schema,
+  HeaderMetaV2Schema,
+  HeaderMetaV3Schema,
+  HeaderMetaV4Schema
+])
+
+/** Historic headers predate explicit producer identities. */
+export function processAndRunnerOf(meta: z.infer<typeof HeaderMetaSchema>): Pick<HeaderMetaV4, 'process' | 'runner'> {
+  return meta.schema === 4
+    ? { process: meta.process, runner: meta.runner }
+    : { process: { id: 'vinaya', version: null, digest: null }, runner: { id: 'standalone', version: null } }
+}
 export {
   HeaderMetaV1Schema,
   HeaderMetaV2Schema,
   HeaderMetaV3Schema,
+  HeaderMetaV4Schema,
   WorkSchema,
   FlowSchema,
   LineageSchema,
@@ -214,6 +234,7 @@ export {
 export type HeaderMetaV1 = z.infer<typeof HeaderMetaV1Schema>
 export type HeaderMetaV2 = z.infer<typeof HeaderMetaV2Schema>
 export type HeaderMetaV3 = z.infer<typeof HeaderMetaV3Schema>
+export type HeaderMetaV4 = z.infer<typeof HeaderMetaV4Schema>
 export type Work = z.infer<typeof WorkSchema>
 export type Flow = z.infer<typeof FlowSchema>
 export type Lineage = z.infer<typeof LineageSchema>
@@ -982,14 +1003,13 @@ export type EffectEvent = z.infer<typeof EffectEventSchema>
 // declared name is data in `name`, and the values sit flat under `fields`,
 // never nested. Whether `name` is declared and each value matches its
 // declared type is the writer's check (`checkCustomEvent`) — this schema
-// holds only the shape every declaration shares. Valid under a schema 3
-// header only: the family is newer than 1 and 2, so a line claiming either
-// with a `custom` body is not one this log ever wrote.
+// holds only the shape every declaration shares. All supported header versions
+// are accepted on read; new events use schema 4.
 
 const CustomFieldValueSchema = z.union([z.string().max(CUSTOM_TEXT_MAX_LENGTH), z.number().finite(), z.boolean()])
 
 const customShared = {
-  meta: HeaderMetaV3Schema,
+  meta: HeaderMetaSchema,
   subject: SubjectSchema,
   kind: z.literal('custom'),
   ...envelopeTail
