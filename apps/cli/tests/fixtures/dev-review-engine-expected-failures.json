@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "description": "Observed Engine differences from the portable corpus. Entries may only be removed as their guarantees are implemented; the exit test pins the ceiling.",
+  "entries": [
+    {
+      "scenario": "lifecycle-telemetry",
+      "guarantee": "INV-116",
+      "reason": "The lifecycle stream includes per-node heartbeats and role attempts in the portable lifecycle sequence."
+    },
+    {
+      "scenario": "requested-changes",
+      "guarantee": "INV-099",
+      "reason": "A revision publishes without the developer round marker required by the round sequence."
+    },
+    {
+      "scenario": "mechanical-failure-repeats",
+      "guarantee": "INV-010",
+      "reason": "Repeated red gates exhaust the Flow revision counter instead of recording a repeat_failure pause."
+    },
+    {
+      "scenario": "reviewer-invalidity",
+      "guarantee": "INV-057",
+      "reason": "Under-reported objectives fail validation without a fresh retry or durable infrastructure pause."
+    },
+    {
+      "scenario": "reviewer-failure",
+      "guarantee": "INV-057",
+      "reason": "A missing reviewer result ends the run after one attempt, without a retry or pause record."
+    },
+    {
+      "scenario": "review-policy-unreadable",
+      "guarantee": "INV-103",
+      "reason": "The policy reader throws during task-input preparation before the Flow starts, refusing entry without a durable infrastructure pause or escalation record."
+    },
+    {
+      "scenario": "developer-failure",
+      "guarantee": "INV-013",
+      "reason": "Unknown addressed finding ids are accepted and the next reviewed round publishes; the turn acceptance gap also concerns INV-031."
+    },
+    {
+      "scenario": "provider-failure",
+      "guarantee": "INV-023",
+      "reason": "A failed provider step ends the run without recording or spending the infrastructure retry."
+    },
+    {
+      "scenario": "required-source-failure",
+      "guarantee": "INV-125",
+      "reason": "A claimed required source with no delivery receipt is accepted and reaches review and publication."
+    },
+    {
+      "scenario": "context-pressure",
+      "guarantee": "INV-020",
+      "reason": "Red gates bypass the task time budget assessment and exhaust the Flow revision counter."
+    },
+    {
+      "scenario": "bounded-exhaustion",
+      "guarantee": "INV-005",
+      "reason": "The round cap is assessed but its pause has no durable state or pause comment."
+    },
+    {
+      "scenario": "human-pause",
+      "guarantee": "INV-076",
+      "reason": "An escalation decision has no durable pause or escalation record, handoff event or pause comment."
+    },
+    {
+      "scenario": "restart",
+      "guarantee": "INV-101",
+      "reason": "An already-open pull request still dispatches the developer instead of attaching."
+    },
+    {
+      "scenario": "resume",
+      "guarantee": "INV-090",
+      "reason": "Re-entering the runner after a ruling starts a new leg without consuming a durable resolution or emitting resumed."
+    },
+    {
+      "scenario": "cancellation",
+      "guarantee": "INV-089",
+      "reason": "The runner halt handle pauses; it neither consumes a cancel resolution nor records cancellation."
+    },
+    {
+      "scenario": "operator-intervention-unauthenticated",
+      "guarantee": "INV-088",
+      "reason": "The halt handle accepts a request without authenticating a Principal ruling and has no durable pause resolution."
+    },
+    {
+      "scenario": "stale-objectives",
+      "guarantee": "INV-063",
+      "reason": "Changed objectives fail verdict rendering rather than producing the typed objectives_changed pause."
+    },
+    {
+      "scenario": "stale-conflict",
+      "guarantee": "INV-043",
+      "reason": "A conflicting forge head reaches reviewers and publication."
+    },
+    {
+      "scenario": "uncertain-effect-crash",
+      "guarantee": "INV-021",
+      "reason": "merged_ready is emitted before the publication callback fails, with no durable crash pause."
+    },
+    {
+      "scenario": "publication-replay",
+      "guarantee": "INV-041",
+      "reason": "Re-entry after a publication crash dispatches the developer again and emits merged_ready for both legs."
+    },
+    {
+      "scenario": "isolation-refusal",
+      "guarantee": "INV-033",
+      "reason": "A refused publication on the wrong branch still reaches reviewers and final publication."
+    }
+  ]
+}
