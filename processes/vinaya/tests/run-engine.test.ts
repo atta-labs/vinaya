@@ -13,6 +13,7 @@ import { heldVerdictPath, writeHeldVerdict } from '../../../apps/cli/src/lib/dev
 import type { DeveloperPromptFacts } from '../executing/developer-prompt'
 import {
   createTraceRecorder,
+  tracedActions,
   developerSourceStoreDir,
   dryRunLines,
   liveTaskInput,
@@ -497,6 +498,26 @@ describe('agent-step failures and the live task context', () => {
     expect(step?.error).toContain('the agent exited 3')
     expect(step?.error).not.toContain('frame11')
     expect(reported.join('\n')).toContain('the agent exited 3')
+  })
+
+  test('a throwing mechanical step reports only the message and the first stack lines', async () => {
+    const reported: string[] = []
+    const exits: Array<[string, number, string | undefined]> = []
+    const error = new Error('the action broke')
+    error.stack = ['Error: the action broke', ...Array.from({ length: 12 }, (_, i) => `    at frame${i}`)].join('\n')
+    const actions = tracedActions(
+      {
+        'x.act': () => {
+          throw error
+        }
+      },
+      { recordExit: (nodeId, code, detail) => void exits.push([nodeId, code, detail]) },
+      (line) => reported.push(line)
+    )
+    await expect(actions['x.act']?.({ nodeId: 'n', action: 'x.act', results: {} })).rejects.toBe(error)
+    expect(exits[0]?.[2]).toContain('the action broke')
+    expect(exits[0]?.[2]).not.toContain('frame11')
+    expect(reported.join('\n')).not.toContain('frame11')
   })
 
   test('a tranche task and a backlog Issue resolve to their real branches', async () => {

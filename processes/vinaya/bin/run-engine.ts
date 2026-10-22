@@ -54,6 +54,7 @@ import {
 } from '../../../apps/cli/src/lib/source-provider'
 import { extractSourceRevision } from '@attalabs/aeg-core'
 import type { DevToolContext, DevToolResult } from '../../../apps/cli/src/lib/task-tools/dev-tools-server'
+import { validatePrBodyForCreate } from '../../../apps/cli/src/commands/pr'
 import { createLogSink } from '../../../apps/cli/src/lib/log-sink'
 import { startDevToolsHost, type DevToolsHost } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
 import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-tools-registration'
@@ -284,7 +285,10 @@ export function tracedActions(
           trace.recordExit(context.nodeId, result.exitCode)
           return result
         } catch (error) {
-          const detail = error instanceof Error ? (error.stack ?? error.message) : String(error)
+          const detail = (error instanceof Error ? (error.stack ?? error.message) : String(error))
+            .split('\n')
+            .slice(0, 8)
+            .join('\n')
           trace.recordExit(context.nodeId, 1, detail)
           report(`step ${context.nodeId} failed: ${detail}`)
           throw error
@@ -530,7 +534,19 @@ function liveDevToolsContext(input: {
         git('push', 'origin', `HEAD:refs/heads/${branch}`)
         return { pushedHead: git('rev-parse', 'HEAD') }
       }),
-    validatePrBody: () => ({ ok: true }),
+    // The loop's own body gate, over the files the branch changed: a body the brief-schema checks refuse is never opened.
+    validatePrBody: async (body, title) => {
+      const errors = await validatePrBodyForCreate({
+        body,
+        title: title ?? `Task ${input.task}`,
+        changedFiles: changedPaths(),
+        branch,
+        baseBranch: 'main'
+      })
+      return errors.length === 0
+        ? { ok: true }
+        : { ok: false, reason: errors.map((e) => `${e.check}: ${e.message}`).join('; ') }
+    },
     openPullRequest: (title, body) =>
       attempt('open_pull_request', () => {
         sh('gh', ['pr', 'create', '--head', branch, '--base', 'main', '--title', title, '--body', body])
