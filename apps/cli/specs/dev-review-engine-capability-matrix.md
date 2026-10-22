@@ -37,9 +37,10 @@ The repository's packed-consumer test exercises a separate artifact set: the
 `atta-models-0.1.0.tgz` tarballs vendored under
 `apps/cli/tests/fixtures/atta-engine/`, whose README records the Atta commit
 they were packed from and the digest each copy must match. With those
-tarballs, the executor package accepts a caller-supplied executor through
-public start and resume, and the packed-consumer test verifies the complete
-run-control seam with a steps-shaped Flow. Cutover gate 16 is therefore
+tarballs, the vendored `atta-executor-agent-spawn-0.1.1.tgz` package accepts
+a caller-supplied executor through public start and resume, and the
+packed-consumer test verifies the complete run-control seam with a
+steps-shaped Flow. Cutover gate 16 is therefore
 delivered. The Engine run-control boundary registry row names that
 packed-consumer test.
 
