@@ -1,15 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  statSync,
-  writeFileSync
-} from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { DEFAULT_REVIEW_POLICY } from '@attalabs/aeg-core'
@@ -18,6 +9,10 @@ import { fetchLoopHistory } from '../../../apps/cli/src/lib/dev-review-loop/jour
 import { heldVerdictPath } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { loadProcess } from '../../../harness/dev-process/loader/load-process'
 import { type EngineForge, liveDeveloperFacts, liveTaskInput, runEngine } from '../bin/run-engine'
+
+/** Names directly under a directory, dotfiles included (a plain listing of a throwaway repository). */
+const topLevelNames = (dir: string): string[] =>
+  Array.from(new Bun.Glob('*').scanSync({ cwd: dir, onlyFiles: false, dot: true })).sort()
 
 // An end-to-end replay of one task on the Engine path: the real packed Engine, the real runner
 // (`runEngine`, `liveTaskInput`, `liveDeveloperFacts`), the real action bindings, the real adapters and the
@@ -150,7 +145,7 @@ async function replay(scenario: Scenario) {
   git(root, 'add', '-A')
   git(root, 'commit', '-q', '-m', 'base')
   git(root, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
-  const before = readdirSync(root).sort()
+  const before = topLevelNames(root)
 
   const forgeCalls: string[] = []
   const published: Array<{ round: number; prNumber: number; expectedHead: string; heldFound: boolean }> = []
@@ -312,7 +307,7 @@ for (const vendor of ['claude', 'codex'] as const)
       expect(first).toContain('Kept work:')
       expect(first).toContain('notes.md')
       // Nothing the run wrote lands in the repository: only the task worktree was added.
-      expect(readdirSync(run.root).sort()).toEqual([...run.before, '.worktrees'].sort())
+      expect(topLevelNames(run.root)).toEqual([...run.before, '.worktrees'].sort())
       // The Log events the run emitted, in order (each name once, first occurrence).
       const names = [...new Set(run.events.map((e) => e.event ?? e.kind ?? ''))]
       expect(names).toEqual(

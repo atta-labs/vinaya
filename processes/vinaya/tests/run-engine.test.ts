@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
@@ -23,6 +23,10 @@ import {
   type EngineRunOptions,
   type RunTrace
 } from '../bin/run-engine'
+
+/** Names directly under a directory, dotfiles included (a plain listing of a throwaway repository). */
+const topLevelNames = (dir: string): string[] =>
+  Array.from(new Bun.Glob('*').scanSync({ cwd: dir, onlyFiles: false, dot: true })).sort()
 
 const loaded = loadProcess(resolve(import.meta.dir, '..'))
 const repoRoot = resolve(import.meta.dir, '../../..')
@@ -549,7 +553,7 @@ describe('agent-step failures and the live task context', () => {
     git('add', '-A')
     git('commit', '-q', '-m', 'base')
     git('worktree', 'add', '-q', '-b', 'task/issue-9', join(root, '.worktrees', 'task', 'issue-9'))
-    const before = readdirSync(root).sort()
+    const before = topLevelNames(root)
     const input = await liveTaskInput({ task: 9, agent: 'claude', dryRun: false }, root, runtimeDir, 'l', {
       policy: () => ({ maxRounds: 4, maxTaskMinutes: 90 }) as never,
       fetchLabels: () => [],
@@ -592,7 +596,7 @@ describe('agent-step failures and the live task context', () => {
     for (const role of ['reviewer', 'security'] as const) held.push(heldVerdictPath(runtimeDir, 9, 1, role))
     for (const path of held) expect(readFileSync(path, 'utf8')).toContain('held')
     expect(developerSourceStoreDir(runtimeDir, 9).startsWith(join(runtimeDir, 'tasks-execution', '9'))).toBe(true)
-    expect(readdirSync(root).sort()).toEqual(before)
+    expect(topLevelNames(root)).toEqual(before)
     expect(before).toEqual(['.git', '.worktrees', 'a.txt'])
   })
 })
