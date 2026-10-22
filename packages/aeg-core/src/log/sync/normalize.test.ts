@@ -266,9 +266,10 @@ describe('quarantine (O2)', () => {
     expect(record.reason.length).toBeGreaterThan(0)
   })
 
-  it('a schema 1 or 2 header on a custom event is invalid, not a row', () => {
-    const raw = JSON.stringify({ ...JSON.parse(customLine()), meta: { schema: 2, ...core, ...v2Fields } })
-    expect(quarantineOf(raw).status).toBe('invalid')
+  it.each([1, 2])('a schema %s header on a custom event remains readable', (schema) => {
+    const meta = schema === 1 ? { schema, ...core } : { schema, ...core, ...v2Fields }
+    const raw = JSON.stringify({ ...JSON.parse(customLine()), meta })
+    expect(rowOf(raw).schema).toBe(schema)
   })
 
   it('text that is not JSON becomes one quarantine record with no identity', () => {
