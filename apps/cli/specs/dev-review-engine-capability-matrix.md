@@ -48,7 +48,7 @@ without replay, a typed paused outcome for human input, the live event
 stream, cancellation of a live child, typed run outcomes, refusal of an
 undeclared role or action, the subscription-login invocation seam, and
 redaction of observed and persisted output. Their limitations remain caller
-obligations except for the gate-16 gap just named:
+obligations:
 
 - **Legs of one run are serialised by the caller.** The runtime cannot stop
   two concurrent resumes of one run; Vinaya's one-driver-per-task lock is
