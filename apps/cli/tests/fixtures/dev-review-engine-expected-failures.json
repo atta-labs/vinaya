@@ -30,7 +30,7 @@
     {
       "scenario": "review-policy-unreadable",
       "guarantee": "INV-103",
-      "reason": "An unreadable policy fails the developer step without a durable infrastructure pause."
+      "reason": "The policy reader throws during task-input preparation before the Flow starts, refusing entry without a durable infrastructure pause or escalation record."
     },
     {
       "scenario": "developer-failure",

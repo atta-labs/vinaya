@@ -459,6 +459,23 @@ describe('architecture exit gate (Engine: the same corpus, real Flow and actions
     }
   })
 
+  it('an unreadable policy is observed at preparation, before any worker attempt', () => {
+    for (const agent of ENGINE_AGENTS) {
+      const row = engineResults.find(
+        (result) => result.agent === agent && result.scenario.id === 'review-policy-unreadable'
+      )!
+      expect(['refused', 'pause:infrastructure']).toContain(row.observation.decision)
+      expect(row.observation.effects.developerDispatches).toBe(0)
+      expect(row.observation.effects.codeReviewerDispatches).toBe(0)
+      expect(row.observation.effects.securityDispatches).toBe(0)
+      expect(row.observation.events).not.toContain('role_attempt:attempted')
+      if (row.observation.decision === 'refused') {
+        expect(row.observation.refusal).toBe('fake: trust-anchor read failed')
+        expect(row.observation.events).toEqual([])
+      }
+    }
+  })
+
   it('accepts no unexpected mismatch or stale entry and both vendors classify identically', () => {
     expect(
       engineResults

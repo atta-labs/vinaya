@@ -294,12 +294,21 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
     readPullRequest: unavailable,
     runChecks: unavailable
   })
-  const task = await liveTaskInput({ task: TASK, agent, dryRun: false }, repo, runtimeDir, 'corpus', {
-    fetchLabels: () => [],
-    fetchTitle: () => 'A test task',
-    policy: () => policy,
-    forge
-  })
+  let task: Awaited<ReturnType<typeof liveTaskInput>>
+  try {
+    task = await liveTaskInput({ task: TASK, agent, dryRun: false }, repo, runtimeDir, 'corpus', {
+      fetchLabels: () => [],
+      fetchTitle: () => 'A test task',
+      policy: () => {
+        if (id === 'review-policy-unreadable') throw new Error('fake: trust-anchor read failed')
+        return policy
+      },
+      forge
+    })
+  } catch (error) {
+    // Preparation precedes the Flow; observe its thrown refusal without inventing a run trace.
+    return observeEngineRun(runtimeDir, [], error)
+  }
   task.cliEntry = gateCli
   if (id === 'required-source-failure') task.developerContext = { ...task.developerContext, requiredSources: [SOURCE] }
   if (id === 'context-pressure') task.clock = { elapsedMs: 1000, byPhaseMs: { developer: 1000 } }
@@ -356,10 +365,7 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
       devToolsContext: devTools,
       control,
       out: () => {},
-      developerFacts: async () => {
-        if (id === 'review-policy-unreadable') throw new Error('fake: trust-anchor read failed')
-        return facts()
-      },
+      developerFacts: async () => facts(),
       observe: (event) => {
         if (cancel && event.type === 'node:start') control.halt('cancel')
       },
@@ -455,8 +461,13 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
     ruling = id === 'cancellation'
     await execute(true)
   }
-  const last = traces.at(-1)!
-  const recordedActions = lines(actionFile)
+  return observeEngineRun(runtimeDir, traces)
+}
+
+/** Normalize actual preparation refusals and saved run records into the shared observation. */
+function observeEngineRun(runtimeDir: string, traces: RunTrace[], preparationError?: unknown): Observation {
+  const last = traces.at(-1)
+  const recordedActions = lines(join(runtimeDir, 'actions.jsonl'))
   const assessed = recordedActions
     .filter((record) => record.node === 'assess-round' && typeof record.stdout === 'string')
     .at(-1)
@@ -465,8 +476,8 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
     : null
   const pause = readPauseState(runtimeDir, TASK)
   const controlDir = join(runtimeDir, 'tasks-execution', String(TASK), 'control')
-  const events = lines(eventFile)
-  const effects = lines(effectFile)
+  const events = lines(join(runtimeDir, 'events.jsonl'))
+  const effects = lines(join(runtimeDir, 'forge.jsonl'))
   const roundStartsByRound: Record<string, number> = {}
   for (const event of events)
     if (event.kind === 'dev_review_loop' && event.event === 'round_started')
@@ -474,14 +485,21 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
   const dispatches = (role: Role) => effects.filter((effect) => effect.kind === 'spawn' && effect.role === role).length
   return {
     decision:
-      last.outcome === 'completed'
-        ? 'publish'
-        : last.outcome === 'paused'
-          ? 'pause:halt'
-          : decision?.type === 'pause'
-            ? `pause:${decision.reason}`
-            : `ended:${last.outcome}`,
-    refusal: last.error ?? null,
+      preparationError !== undefined
+        ? 'refused'
+        : last?.outcome === 'completed'
+          ? 'publish'
+          : last?.outcome === 'paused'
+            ? 'pause:halt'
+            : decision?.type === 'pause'
+              ? `pause:${decision.reason}`
+              : `ended:${last?.outcome}`,
+    refusal:
+      preparationError !== undefined
+        ? preparationError instanceof Error
+          ? preparationError.message
+          : String(preparationError)
+        : (last?.error ?? null),
     durable: {
       pauseReason: pause?.reason ?? null,
       pauseRound: pause?.round ?? null,
@@ -489,9 +507,9 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
       // A completed saved trace is the Engine representation of the terminal publish phase.
       controlPhase:
         (json(join(controlDir, 'loop-state.json'))?.phase as string | undefined) ??
-        (last.outcome === 'completed'
+        (last?.outcome === 'completed'
           ? 'publish'
-          : last.outcome === 'paused' || decision?.type === 'pause'
+          : last?.outcome === 'paused' || decision?.type === 'pause'
             ? 'pause'
             : null),
       driverLockHeld: readDriverLock(runtimeDir, TASK) !== null,
