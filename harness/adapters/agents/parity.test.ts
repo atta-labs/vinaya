@@ -21,7 +21,7 @@ export const GAP_TABLE = [
     id: 1,
     status: 'closed',
     reason:
-      'every shell allow and deny is emitted as a Codex execpolicy prefix_rule and the hook denies commands outside the allowlist'
+      'every shell allow and deny is emitted as a Codex execpolicy prefix_rule and the hook denies commands outside the allowlist of a role whose shell default is not allow'
   },
   {
     id: 2,
@@ -149,7 +149,8 @@ describe('role-grant vendor parity', () => {
       expect(codexBuiltins(codex)).toEqual(grants.tools.codex)
 
       const claudeSettings = JSON.parse(generatedFile(claude, 'role-settings.json'))
-      expect(claudeSettings.permissions.allow).not.toContain('Bash')
+      // A bare Bash allow is only for a role whose grants make the shell's default allow.
+      expect(claudeSettings.permissions.allow.includes('Bash')).toBe(grants.shell.default === 'allow')
       expect(claudeSettings.sandbox.network.allowedDomains).toEqual(grants.network_domains)
       expect(claudeSettings.sandbox.autoAllowBashIfSandboxed).toBe(false)
       expect(generatedFile(claude, 'hooks/pre-tool-use.mjs')).toContain('permissionDecision')
@@ -294,6 +295,52 @@ describe('role-grant vendor parity', () => {
     for (const tool of ['spawn_agent', 'send_input', 'resume_agent', 'wait_agent', 'close_agent']) {
       expect(invoke(reviewerConfig, { tool_name: tool, tool_input: {} })).toContain('"permissionDecision":"deny"')
     }
+  })
+
+  test('the Linux Unix-socket opt-in reaches the generated Claude sandbox only when asked for', () => {
+    const grants = loadRoleGrants(join(processRoot, 'developer/grants.yaml'))
+    const base = { generatedDir: '/tmp/generated/developer', outputSchemaPath: 'output.schema.json', outputSchema: {} }
+    const network = (allowUnixSockets?: boolean) =>
+      JSON.parse(generatedFile(generateClaudeSettings(grants, { ...base, allowUnixSockets }), 'role-settings.json'))
+        .sandbox.network
+    expect(network(true).allowAllUnixSockets).toBe(true)
+    expect(network(true).allowedDomains).toEqual(grants.network_domains)
+    expect(network(false)).not.toHaveProperty('allowAllUnixSockets')
+    expect(network()).not.toHaveProperty('allowAllUnixSockets')
+  })
+
+  test('the developer shell runs ordinary commands and refuses only the denied forms and the guards', () => {
+    const grants = loadRoleGrants(join(processRoot, 'developer/grants.yaml'))
+    const workspace = mkdtempSync(join(tmpdir(), 'vinaya-developer-shell-'))
+    const paths = {
+      generatedDir: workspace,
+      outputSchemaPath: 'o.json',
+      outputSchema: {},
+      variables: { WORKTREE: workspace }
+    }
+    const decide = (config: GeneratedAgentConfig, command: string): string => {
+      const hook = join(workspace, `${config.vendor}-hook.mjs`)
+      writeFileSync(hook, generatedFile(config, 'hooks/pre-tool-use.mjs'))
+      const out = Bun.spawnSync(['node', hook], {
+        cwd: workspace,
+        stdin: Buffer.from(JSON.stringify({ tool_name: 'Bash', tool_input: { command } }))
+      }).stdout.toString()
+      return out === '' ? 'allow' : String(JSON.parse(out).hookSpecificOutput.permissionDecisionReason)
+    }
+    for (const config of [generateClaudeSettings(grants, paths), generateCodexConfig(grants, paths)]) {
+      for (const command of ['pwd', 'ls -la', 'cat package.json', 'bun test', 'git status', 'grep -rn foo . | head'])
+        expect(decide(config, command), `${config.vendor} ${command}`).toBe('allow')
+      expect(decide(config, 'git push origin task-branch')).toBe('command matches a shell deny rule')
+      expect(decide(config, 'gh pr list')).toBe('command matches a shell deny rule')
+      expect(decide(config, 'rm -rf /tmp/x')).toBe('command matches a shell deny rule')
+      expect(decide(config, 'git commit -n -m x')).toBe('verification bypass is denied')
+      expect(decide(config, 'sleep 100 &')).toBe('background shell is denied')
+      expect(decide(config, 'sh -c "pwd"')).toBe('shell command cannot be proven safe')
+    }
+    // A role without the default keeps its allowlist.
+    const listed = { ...grants, shell: { allow: grants.shell.allow, deny: grants.shell.deny } }
+    for (const config of [generateClaudeSettings(listed, paths), generateCodexConfig(listed, paths)])
+      expect(decide(config, 'pwd')).toBe('command is outside the shell allowlist')
   })
 
   test('every shell bypass spelling is denied by both generated hooks for the guard itself', () => {

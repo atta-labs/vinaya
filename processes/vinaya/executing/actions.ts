@@ -238,6 +238,8 @@ export function createRoleLaunchers(options: {
   generatedRoot: string
   variables?: Record<string, string>
   mcpCommand?: string
+  /** Claude's sandbox may use Unix sockets (the Linux host opt-in); the Codex adapter has no such filter. */
+  allowUnixSockets?: boolean
 }): RoleLauncher {
   const launchers: Record<string, ReturnType<typeof createRoleLauncher>> = {}
   for (const role of ROLE_NAMES) {
@@ -249,7 +251,8 @@ export function createRoleLaunchers(options: {
       outputSchemaPath,
       outputSchema: JSON.parse(readFileSync(outputSchemaPath, 'utf8')),
       mcpCommand: options.mcpCommand,
-      variables: options.variables
+      variables: options.variables,
+      allowUnixSockets: options.allowUnixSockets
     }
     const generated: GeneratedAgentConfig =
       options.vendor === 'claude-code' ? generateClaudeSettings(grants, paths) : generateCodexConfig(grants, paths)

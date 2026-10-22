@@ -84,7 +84,8 @@ export interface RoleGrants {
     codex: Record<CodexBuiltin, Decision>
     mcp: Record<string, string[]>
   }
-  shell: { allow: string[]; deny: string[] }
+  /** `default: allow` lets a command no allow rule names run; only `deny` and the hook guards refuse. Absent: it is refused. */
+  shell: { allow: string[]; deny: string[]; default?: Decision }
   writable_roots: string[]
   network_domains: string[]
   hooks: Record<'background_shell' | 'force_push' | 'no_verify' | 'default_branch_commit' | 'write_scope', boolean>

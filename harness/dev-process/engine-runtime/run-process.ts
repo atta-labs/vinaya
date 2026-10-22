@@ -85,7 +85,17 @@ export interface ProcessRunOptions {
   spawnFn?: SpawnFn
   onEvent?: AgentSpawnExecutorConfig['onEvent']
   envAllowlist?: string[]
+  /**
+   * Agent step id to a function that completes the step's rendered prompt with what only the
+   * process knows (a task's brief, say). It runs each time the step starts, over the results so far.
+   */
+  stepPrompts?: Readonly<Record<string, StepPrompt>>
 }
+
+export type StepPrompt = (
+  rendered: string,
+  results: Readonly<Record<string, StepNodeResult>>
+) => Promise<string> | string
 
 function camelize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(camelize)
@@ -139,7 +149,8 @@ function assertBindingsCover(steps: FlowStep[], bindings: ProcessBindings): void
 function nodeExecutor(
   actions: ActionRegistry,
   config: AgentSpawnExecutorConfig,
-  spawnFn: SpawnFn | undefined
+  spawnFn: SpawnFn | undefined,
+  stepPrompts: Readonly<Record<string, StepPrompt>> = {}
 ): AgentLifecycleNodeExecutor {
   return async (state: AgentSpawnGraphStateValue, { node, plan, signal }) => {
     if (node.kind === 'mechanical') {
@@ -163,7 +174,9 @@ function nodeExecutor(
       throw new Error(`Unsupported node kind "${node.kind}" for step "${node.id}"`)
     }
     const resumeSessionId = node.resume ? state.sessions[node.resume] : undefined
-    const prompt = renderStepPrompt(node, { question: plan.question, results: state.results })
+    const rendered = renderStepPrompt(node, { question: plan.question, results: state.results })
+    const complete = Object.hasOwn(stepPrompts, node.id) ? stepPrompts[node.id] : undefined
+    const prompt = complete ? await complete(rendered, state.results) : rendered
     const result = await executeAgentSpawnNode({ node, prompt, resumeSessionId, config, spawnFn, signal })
     // The executor's own node executor reports what the agent printed as streaming events; this one
     // replaces it, so it reports the same records the same way.
@@ -210,7 +223,11 @@ function prepare(options: ProcessRunOptions): PreparedLeg {
     ...(options.onEvent ? { onEvent: options.onEvent } : {}),
     ...(options.envAllowlist ? { envAllowlist: options.envAllowlist } : {})
   }
-  return { plan, config, executor: nodeExecutor(options.bindings.actions, config, options.spawnFn) }
+  return {
+    plan,
+    config,
+    executor: nodeExecutor(options.bindings.actions, config, options.spawnFn, options.stepPrompts)
+  }
 }
 
 // The executor cannot serialise legs of one run: two concurrent legs on a

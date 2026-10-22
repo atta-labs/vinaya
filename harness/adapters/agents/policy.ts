@@ -14,6 +14,8 @@ export interface GeneratorPaths {
   outputSchema: Record<string, unknown>
   mcpCommand?: string
   variables?: Record<string, string>
+  /** Claude's sandbox may connect to Unix sockets: the Linux host opt-in for a kernel that refuses the sandbox's seccomp step. */
+  allowUnixSockets?: boolean
 }
 
 export function resolveGrantValues(values: string[], variables: Record<string, string> = {}): string[] {
@@ -26,6 +28,8 @@ export interface HookPolicy {
   tools: Record<string, Decision>
   shellAllow: string[]
   shellDeny: string[]
+  /** A command no allow rule names is allowed (only the deny rules and the guards refuse); absent means it is refused. */
+  shellDefaultAllow?: boolean
   writableRoots: string[]
   guards: RoleGrants['hooks']
 }
@@ -323,7 +327,7 @@ if (tool === 'Bash') {
   if (gitGuards && found.has('unsafe')) deny('shell command cannot be proven safe')
   const statements = parsed.statements.map((words) => words.map((word) => word.text))
   if (statements.some((argv) => policy.shellDeny.some((rule) => starts(argv, tokens(rule))))) deny('command matches a shell deny rule')
-  if (statements.length === 0 || statements.some((argv) => !policy.shellAllow.some((rule) => starts(argv, tokens(rule))))) deny('command is outside the shell allowlist')
+  if (!policy.shellDefaultAllow && (statements.length === 0 || statements.some((argv) => !policy.shellAllow.some((rule) => starts(argv, tokens(rule)))))) deny('command is outside the shell allowlist')
 }
 if (policy.guards.background_shell && ['Agent', 'Task'].includes(tool) && args.run_in_background === true) {
   deny('background subagent is denied')

@@ -42,6 +42,7 @@ export function generateCodexConfig(grants: RoleGrants, paths: GeneratorPaths): 
     tools: hookTools,
     shellAllow: grants.shell.allow,
     shellDeny: grants.shell.deny,
+    shellDefaultAllow: grants.shell.default === 'allow',
     writableRoots,
     guards: grants.hooks
   }

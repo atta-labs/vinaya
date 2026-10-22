@@ -8,6 +8,7 @@ import type { ActionRegistry } from '../../../harness/dev-process/engine-runtime
 import type { NodeLifecycle } from '../../../harness/dev-process/logging/translate'
 import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-tools-registration'
 import { classifyGateResult, dispatchReviewers, type TaskInput } from '../executing/actions'
+import type { DeveloperPromptFacts } from '../executing/developer-prompt'
 import { dryRunLines, parseArgs, runEngine, shimContent, type EngineRunOptions, type RunTrace } from '../bin/run-engine'
 
 const loaded = loadProcess(resolve(import.meta.dir, '..'))
@@ -288,6 +289,14 @@ describe('a stub run on the Engine path', () => {
     expect(readTrace(result.tracePath).outcome).not.toBe('completed')
   })
 
+  test('a step whose action throws records its message and stack in the trace', async () => {
+    const { options } = stubRun({ failAt: 'run-mechanical-gates' })
+    const result = await runEngine(options)
+    const failed = readTrace(result.tracePath).steps.find((step) => step.nodeId === 'run-mechanical-gates')
+    expect(failed?.exitCode).toBe(1)
+    expect(failed?.error).toContain('the action broke')
+  })
+
   test('closes the host and drains the sink when the run pauses', async () => {
     const { options, calls } = stubRun({ haltAt: 'validate-developer-output' })
     const result = await runEngine(options)
@@ -304,5 +313,123 @@ describe('a stub run on the Engine path', () => {
     expect(calls.filter((call) => call.startsWith('spawn:'))).toEqual([])
     expect(calls.filter((call) => call === 'drain')).toHaveLength(1)
     expect(readTrace(result.tracePath).error).toBe('no socket')
+  })
+})
+
+// --- the Developer's prompt and the Linux sandbox opt-in ---------------------
+
+const FACTS: DeveloperPromptFacts = {
+  brief: '# Frozen brief\nDo the one thing.\n\n**Revision:** abc',
+  objectives: { objectives: [{ id: 'O1', text: 'It works' }], version: 'v1' },
+  rulings: ['Principal ruling: go on.'],
+  rulingOrdinal: 2,
+  policy: {
+    maxRounds: 4,
+    maxTaskMinutes: 90
+  } as DeveloperPromptFacts['policy'],
+  baseSha: 'b'.repeat(40),
+  headSha: 'a'.repeat(40),
+  sources: {
+    block: 'Required sources:\n- docs/x.md',
+    evidence: [{ ref: 'source:docs/x.md', version: 'sha256:1' }]
+  },
+  round: 1
+}
+
+/** Runs the stub Flow and returns the prompt and environment each agent spawn was given. */
+async function spawnedWith(extra: Partial<EngineRunOptions>) {
+  const { options } = stubRun()
+  const spawned: Array<{
+    role: string
+    prompt: string
+    env: Record<string, string | undefined>
+  }> = []
+  const inner = options.spawnFn as NonNullable<EngineRunOptions['spawnFn']>
+  await runEngine({
+    ...options,
+    ...extra,
+    spawnFn: ((command: string, args: string[], spawnOptions: { env?: Record<string, string | undefined> }) => {
+      const child = inner(command, args, spawnOptions as never)
+      const settings = args[args.indexOf('--settings') + 1] ?? ''
+      const entry = {
+        role: settings.split('/').at(-2) ?? '',
+        prompt: '',
+        env: spawnOptions?.env ?? {}
+      }
+      spawned.push(entry)
+      const stdin = child.stdin as NonNullable<typeof child.stdin>
+      const write = stdin.write.bind(stdin)
+      stdin.write = ((chunk: string) => {
+        entry.prompt += String(chunk)
+        return write(chunk)
+      }) as typeof stdin.write
+      return child
+    }) as never
+  })
+  return spawned
+}
+
+describe("the Developer's prompt", () => {
+  test('carries the frozen brief, the context packet and the turn-result instruction, not only the task number', async () => {
+    const spawned = await spawnedWith({ developerFacts: async () => FACTS })
+    const developer = spawned.find((entry) => entry.role === 'developer')
+    expect(developer?.prompt).toContain('Task 7')
+    expect(developer?.prompt).toContain('Do the one thing.')
+    expect(developer?.prompt).toContain('# Context packet v1')
+    expect(developer?.prompt).toContain('Execute only this frozen brief on the task branch.')
+    expect(developer?.prompt).toContain('- ruling @ ordinal:2')
+    expect(developer?.prompt).toContain('- source:docs/x.md @ sha256:1')
+    expect(developer?.prompt).toContain('Required sources:')
+    expect(developer?.prompt).toContain('schemaVersion 1')
+    // The reviewers are not given the Developer's brief.
+    for (const entry of spawned.filter((candidate) => candidate.role !== 'developer'))
+      expect(entry.prompt).not.toContain('Do the one thing.')
+  })
+
+  test('is read when the step starts', async () => {
+    let reads = 0
+    await spawnedWith({
+      developerFacts: async () => {
+        reads += 1
+        return FACTS
+      }
+    })
+    expect(reads).toBe(1)
+  })
+})
+
+describe('the Linux sandbox opt-in', () => {
+  const settingsOf = (options: EngineRunOptions, role: string) =>
+    JSON.parse(
+      readFileSync(join(options.runtimeDir, 'engine-runs', '7', 'generated', role, 'role-settings.json'), 'utf8')
+    )
+
+  test('allows Unix sockets in every role sandbox and forwards the variable to the agent', async () => {
+    const { options } = stubRun()
+    const prior = process.env.VINAYA_LINUX_SANDBOX_ALLOW_UNIX_SOCKETS
+    process.env.VINAYA_LINUX_SANDBOX_ALLOW_UNIX_SOCKETS = '1'
+    try {
+      const spawned = await spawnedWith({ allowUnixSockets: true })
+      for (const entry of spawned) expect(entry.env.VINAYA_LINUX_SANDBOX_ALLOW_UNIX_SOCKETS).toBe('1')
+    } finally {
+      if (prior === undefined) delete process.env.VINAYA_LINUX_SANDBOX_ALLOW_UNIX_SOCKETS
+      else process.env.VINAYA_LINUX_SANDBOX_ALLOW_UNIX_SOCKETS = prior
+    }
+    await runEngine({ ...options, allowUnixSockets: true })
+    for (const role of ['developer', 'code-reviewer', 'security-reviewer'])
+      expect(settingsOf(options, role).sandbox.network.allowAllUnixSockets).toBe(true)
+  })
+
+  test('leaves the sandbox as it was without the opt-in', async () => {
+    const { options } = stubRun()
+    process.env.VINAYA_LINUX_SANDBOX_ALLOW_UNIX_SOCKETS = '1'
+    try {
+      const spawned = await spawnedWith({})
+      for (const entry of spawned) expect(entry.env.VINAYA_LINUX_SANDBOX_ALLOW_UNIX_SOCKETS).toBeUndefined()
+    } finally {
+      delete process.env.VINAYA_LINUX_SANDBOX_ALLOW_UNIX_SOCKETS
+    }
+    await runEngine(options)
+    expect(settingsOf(options, 'developer').sandbox.network).not.toHaveProperty('allowAllUnixSockets')
   })
 })

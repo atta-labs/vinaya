@@ -30,7 +30,25 @@ import {
 import { defaultRunWorktreeChecks } from '../../../apps/cli/src/lib/dev-review-loop'
 import { readWorktreeHead } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import { developerBranchFor } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
-import { addedDiffLines, findCredentialPatterns } from '../../../apps/cli/src/lib/worker-boundary'
+import {
+  addedDiffLines,
+  findCredentialPatterns,
+  linuxUnixSocketFilterOptIn,
+  LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV
+} from '../../../apps/cli/src/lib/worker-boundary'
+import {
+  appendSourceDeliveryReceipt,
+  injectedDeliveryReceipts,
+  requiredSourcesPromptBlock,
+  sourceReceiptsPath,
+  sourceStoreDir
+} from '../../../apps/cli/src/lib/source-manifest'
+import {
+  prepareSources,
+  RequiredSourcesUnavailable,
+  realSourceProviderDeps
+} from '../../../apps/cli/src/lib/source-provider'
+import { extractSourceRevision } from '@attalabs/aeg-core'
 import type { DevToolContext, DevToolResult } from '../../../apps/cli/src/lib/task-tools/dev-tools-server'
 import { createLogSink } from '../../../apps/cli/src/lib/log-sink'
 import { startDevToolsHost, type DevToolsHost } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
@@ -38,6 +56,9 @@ import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-too
 import { createDeveloperDevToolContext } from '../../../apps/cli/src/lib/task-tools/developer-dev-tools-context'
 import {
   fetchFrozenBrief,
+  fetchIssueRulingsAfterBrief,
+  fetchNewestIssueRulingOrdinal,
+  fetchRulings,
   fetchNewestRulingOrdinal,
   findOpenPrForBranch,
   resolveIssueObjectives,
@@ -47,6 +68,7 @@ import { fetchLoopHistory } from '../../../apps/cli/src/lib/dev-review-loop/jour
 import { buildVerdictFromReview } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { RUNTIME_DIR_ENV_KEY, runtimeDirForRepoAsync } from '../../../apps/cli/src/lib/run-paths'
 import { parseReviewResult, type ReviewResult } from '../../../apps/cli/src/lib/review-result'
+import { developerPrompt, type DeveloperPromptFacts } from '../executing/developer-prompt'
 import {
   ACTION_BINDINGS,
   agentOutput,
@@ -257,6 +279,10 @@ export interface EngineRunOptions {
   control?: RunControl
   out?: (line: string) => void
   execPath?: string
+  /** The Developer's prompt facts, read each time its step starts; absent leaves the prompt as the Flow renders it. */
+  developerFacts?: () => Promise<DeveloperPromptFacts>
+  /** The Linux host opt-in: the generated Claude settings allow Unix sockets and the variable is forwarded to the agent. */
+  allowUnixSockets?: boolean
 }
 
 export interface EngineRunResult {
@@ -279,6 +305,7 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
     (await import('../executing/log-events')).createVinayaLogProducers({ loopId: options.loopId, task: args.task }),
     options.sink.log as unknown as EmitLogEvent
   )
+  const developerFacts = options.developerFacts
   let host: Pick<DevToolsHost, 'close'> | undefined
   let outcome: RunOutcome | null = null
   let error: string | undefined
@@ -299,7 +326,8 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
     const roles = createRoleLaunchers({
       vendor: vendorOf(args.agent),
       generatedRoot: join(runDir, 'generated'),
-      mcpCommand: shimPath
+      mcpCommand: shimPath,
+      allowUnixSockets: options.allowUnixSockets === true
     })
     const base = options.actions ?? createActions(options.taskInput)
     const actions = recordingActions(tracedActions(base, trace), translator)
@@ -309,6 +337,19 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
       bindings: { actions, decisions: (await import('../executing/actions')).decisions, roles },
       checkpointer: new MemorySaver(),
       workingDirectoryRoot: options.repoRoot,
+      // The child gets PATH and HOME only; the sandbox opt-in is the one other thing it is told.
+      ...(options.allowUnixSockets === true
+        ? {
+            envAllowlist: ['PATH', 'HOME', LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV]
+          }
+        : {}),
+      ...(developerFacts
+        ? {
+            stepPrompts: {
+              develop: async (rendered, results) => developerPrompt(rendered, await developerFacts(), results)
+            }
+          }
+        : {}),
       ...(options.spawnFn ? { spawnFn: options.spawnFn } : {}),
       ...(options.control ? { control: options.control } : {}),
       onEvent: (event) => {
@@ -543,6 +584,59 @@ async function liveTaskInput(args: EngineArgs, repoRoot: string, loopId: string)
   }
 }
 
+/** The Developer's prompt facts as the review loop reads them for the same Issue, read when its step starts. */
+function liveDeveloperFacts(input: {
+  task: number
+  repoRoot: string
+  branch: string
+  worktreePath: string
+  round: () => number
+}): () => Promise<DeveloperPromptFacts> {
+  const { task, repoRoot, branch, worktreePath } = input
+  return async () => {
+    const policy = reviewPolicyForLoop()
+    const brief = fetchFrozenBrief(task)
+    const headSha = readWorktreeHead(worktreePath) ?? sh('git', ['rev-parse', 'origin/main'], repoRoot)
+    let baseSha: string
+    try {
+      baseSha = sh('git', ['merge-base', 'origin/main', headSha], worktreePath)
+    } catch {
+      baseSha = sh('git', ['rev-parse', 'origin/main'], repoRoot)
+    }
+    const pr = findOpenPrForBranch(branch)
+    const rulings = pr ? fetchRulings(pr.number) : fetchIssueRulingsAfterBrief(task)
+    const round = input.round()
+    const storeDir = sourceStoreDir(repoRoot, task)
+    const prepared = await prepareSources({
+      brief,
+      round,
+      base: extractSourceRevision(brief) ?? headSha,
+      storeDir,
+      deps: realSourceProviderDeps(worktreePath)
+    })
+    if (prepared.unavailable.length > 0) throw new RequiredSourcesUnavailable(prepared.unavailable)
+    for (const receipt of injectedDeliveryReceipts(prepared.manifest, new Date().toISOString()))
+      appendSourceDeliveryReceipt(sourceReceiptsPath(storeDir), receipt)
+    return {
+      brief,
+      objectives: resolveIssueObjectives(task),
+      rulings,
+      rulingOrdinal: pr ? fetchNewestRulingOrdinal(pr.number) : fetchNewestIssueRulingOrdinal(task),
+      policy,
+      baseSha,
+      headSha,
+      sources: {
+        block: requiredSourcesPromptBlock(prepared.manifest),
+        evidence: prepared.manifest.sources.map((source) => ({
+          ref: `source:${source.sourceId}`,
+          version: source.contentDigest ?? source.snapshotRef ?? 'unavailable'
+        }))
+      },
+      round
+    }
+  }
+}
+
 async function liveRuntimeDir(): Promise<string> {
   const fromEnv = process.env[RUNTIME_DIR_ENV_KEY]
   if (fromEnv) return fromEnv
@@ -585,6 +679,14 @@ export async function main(argv: readonly string[]): Promise<number> {
     taskInput,
     sink,
     startHost: startDevToolsHost,
+    developerFacts: liveDeveloperFacts({
+      task: args.task,
+      repoRoot,
+      branch: taskInput.branch,
+      worktreePath: taskInput.worktreePath,
+      round: taskInput.reviewRound
+    }),
+    allowUnixSockets: linuxUnixSocketFilterOptIn(),
     devToolsContext: liveDevToolsContext({
       branch: taskInput.branch,
       worktreePath: taskInput.worktreePath,
