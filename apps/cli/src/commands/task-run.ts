@@ -49,7 +49,7 @@
 
 import { colourLoopLine } from '../lib/dispatch.js'
 import { DISPATCH_AGENTS, type DispatchAgent } from '../lib/dispatch-task.js'
-import { loadConfig, resolveTaskRunner, type TaskRunner } from '../lib/config.js'
+import { loadConfig, loadTaskRunner, type TaskRunner } from '../lib/config.js'
 import { runTask, type RunTaskResult, type RunTaskOutcome } from '../lib/task-run.js'
 import { startBackgroundRun } from '../lib/task-run-background.js'
 import { resumeCommandFor } from '../lib/task-status.js'
@@ -205,7 +205,7 @@ export function runnerForFlags(parsed: Pick<ParsedFlags, 'runner' | 'runnerFlagP
   if (parsed.runnerFlagPresent && (!parsed.runner || parsed.runner.startsWith('--'))) {
     throw new Error('--runner requires standalone or atta-engine')
   }
-  return resolveTaskRunner(parsed.runner, loadConfig())
+  return loadTaskRunner(parsed.runner)
 }
 
 function runnerOrExit(parsed: ParsedFlags): TaskRunner {

@@ -64,6 +64,9 @@ import { packageRoot } from './package-root.js'
 /** Rotation cap (§9: "rotation and a size cap ship with the first write") — one `.1.ndjson` slot, overwritten each time the live file crosses this. */
 export const OUTBOX_MAX_BYTES = 8 * 1024 * 1024
 
+/** Inherited by Engine subprocesses so their ordinary shared sinks stay local too. */
+export const LOG_FOLDER_ONLY_ENV = 'VINAYA_LOG_FOLDER_ONLY'
+
 type Envelope = { meta: unknown; subject: unknown }
 /** Distributes over `LogEvent`'s member events so each keeps its own extra fields after `meta`/`subject` are stripped — the sink fills those, a caller never passes them. */
 type StripEnvelope<T> = T extends Envelope ? Omit<T, 'meta' | 'subject'> : never
@@ -395,7 +398,7 @@ export function resolveLogDestinationFrom(input: {
   } else {
     effective = local
   }
-  if (input.folderOnly) {
+  if (input.folderOnly || input.env[LOG_FOLDER_ONLY_ENV] === '1') {
     const folder =
       effective && 'folder' in effective && !isInsideRepo(effective.folder, input.repoRoot)
         ? effective.folder

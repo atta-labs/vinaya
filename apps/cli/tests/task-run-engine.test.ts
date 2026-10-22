@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'bun:test'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { parseFlags, runnerForFlags } from '../src/commands/task-run.js'
 import { resolveTaskRunner, VinayaConfigSchema } from '../src/lib/config.js'
 import { runTask, type RunTaskDeps } from '../src/lib/task-run.js'
 import { ENGINE_FALLBACK_NOTICE, runTaskEngine } from '../src/lib/task-run-engine.js'
+import { spawnBudgetedAsync, stripVinayaEnv } from './lib/process-fixture.js'
 
 function fixture(overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
   return {
@@ -40,6 +44,60 @@ describe('task runner selection', () => {
     expect(result.success).toBe(false)
     if (!result.success) expect(result.error.issues[0]?.path).toEqual(['runner'])
     expect(() => resolveTaskRunner('other', null)).toThrow('runner')
+  })
+
+  it('refuses an invalid configured runner through the real command, even with an override', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'runner-config-'))
+    try {
+      writeFileSync(join(root, 'vinaya.config.json'), JSON.stringify({ runner: 'other', logs: false }))
+      for (const extra of [[], ['--runner', 'standalone'], ['--runner', 'atta-engine']]) {
+        const result = await spawnBudgetedAsync(
+          [
+            process.execPath,
+            join(import.meta.dir, '../src/index.ts'),
+            'task',
+            'run',
+            '--issue',
+            '42',
+            '--agent',
+            'codex',
+            ...extra
+          ],
+          { cwd: root, env: { ...stripVinayaEnv(), HOME: root } }
+        )
+        expect(result.status).toBe(2)
+        expect(result.stderr).toContain('runner')
+        expect(result.stderr).not.toContain(ENGINE_FALLBACK_NOTICE)
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses invalid config before direct runTask preparation', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'runner-config-'))
+    const cwd = process.cwd()
+    let preparations = 0
+    try {
+      writeFileSync(join(root, 'vinaya.config.json'), JSON.stringify({ runner: 'other', logs: false }))
+      process.chdir(root)
+      await expect(
+        runTask(
+          { issue: 42, agent: 'codex' },
+          fixture({
+            runnerConfig: undefined,
+            prepareIssueTask: async () => {
+              preparations++
+              throw new Error('unexpected preparation')
+            }
+          })
+        )
+      ).rejects.toThrow('runner')
+      expect(preparations).toBe(0)
+    } finally {
+      process.chdir(cwd)
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('parses a one-run flag override and refuses a missing flag value', () => {

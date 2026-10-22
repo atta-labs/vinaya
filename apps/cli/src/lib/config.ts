@@ -1959,7 +1959,7 @@ export type ConfigLoadResult = { ok: true; config: VinayaConfig | null } | { ok:
  * reports the invalid file once on standard error; this loader reports
  * nothing itself — its callers print their own error.
  *
- * Used only by the `check` command path: a typo'd `checks` key falling back
+ * Used by `check` and task runner selection: a typo'd `checks` key falling back
  * to "no custom checks ran" behind a warning would still let `vinaya check
  * --all` print green over a broken registration — this loader refuses
  * instead.
@@ -2208,3 +2208,10 @@ export function resolveTaskRunner(override: string | undefined, config: VinayaCo
 }
 
 export type TaskRunner = 'standalone' | 'atta-engine'
+
+/** A malformed configuration must refuse a task start, even with a runner override. */
+export function loadTaskRunner(override?: string): TaskRunner {
+  const loaded = loadConfigChecked()
+  if (!loaded.ok) throw new Error(`${loaded.path}: ${loaded.error}`)
+  return resolveTaskRunner(override, loaded.config)
+}

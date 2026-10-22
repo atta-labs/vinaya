@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createLogSink, resolveLogDestinationFrom, type LogSinkDeps } from '../../src/lib/log-sink.js'
+import {
+  createLogSink,
+  LOG_FOLDER_ONLY_ENV,
+  resolveLogDestinationFrom,
+  type LogSinkDeps
+} from '../../src/lib/log-sink.js'
 import { VinayaConfigSchema, type VinayaConfig } from '../../src/lib/config.js'
 import { createEngineLogSink } from '../../../../processes/vinaya/bin/run-engine.js'
+import { buildCheckEnv } from '../../src/checks/runner.js'
+import { spawnBudgetedAsync, stripVinayaEnv } from './process-fixture.js'
 
 const EVENT = {
   kind: 'dispatch' as const,
@@ -117,5 +124,61 @@ describe('Log recording restrictions', () => {
       folderOnly: true
     })
     expect(result).toEqual({ kind: 'folder', folder: '/local/logs' })
+  })
+
+  it('check children inherit the Engine restriction even when their declared env tries to relax it', () => {
+    expect(buildCheckEnv(undefined, { [LOG_FOLDER_ONLY_ENV]: '1' })).toEqual({ [LOG_FOLDER_ONLY_ENV]: '1' })
+    expect(buildCheckEnv({ [LOG_FOLDER_ONLY_ENV]: '0' }, { [LOG_FOLDER_ONLY_ENV]: '1' })[LOG_FOLDER_ONLY_ENV]).toBe('1')
+    expect(buildCheckEnv(undefined, {})).toEqual({})
+  })
+
+  it('Engine run_checks subprocesses use ordinary shared sinks without server delivery or outbox writes', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'engine-log-child-'))
+    roots.push(root)
+    writeFileSync(join(root, 'vinaya.config.json'), JSON.stringify({ logs: { url: 'http://127.0.0.1:1' } }))
+    const sinkPath = join(import.meta.dir, '../../src/lib/log-sink.ts')
+    const runnerPath = join(import.meta.dir, '../../../../processes/vinaya/bin/run-engine.ts')
+    const checksPath = join(import.meta.dir, '../../../../harness/gates/run-checks.ts')
+    const cli = join(root, 'fixture-cli.ts')
+    writeFileSync(
+      cli,
+      `
+        import { log, logSync, drainLogSink } from ${JSON.stringify(sinkPath)}
+        let requests = 0
+        globalThis.fetch = async () => { requests++; return new Response('ok') }
+        if (process.argv.slice(2).join(' ') !== 'check --all') throw new Error('unexpected check argv')
+        log(${JSON.stringify(EVENT)})
+        await drainLogSink()
+        logSync(${JSON.stringify(EVENT)})
+        console.log(JSON.stringify({ requests }))
+      `
+    )
+    const parent = join(root, 'engine-parent.ts')
+    writeFileSync(
+      parent,
+      `
+        import { configureEngineLogEnvironment } from ${JSON.stringify(runnerPath)}
+        import { runCliChecks } from ${JSON.stringify(checksPath)}
+        configureEngineLogEnvironment()
+        const result = await runCliChecks(${JSON.stringify(cli)}, ${JSON.stringify(root)}, {})
+        if (!result.passed) throw new Error(result.output)
+        console.log(result.output)
+      `
+    )
+    const result = await spawnBudgetedAsync([process.execPath, parent], {
+      cwd: root,
+      env: {
+        ...stripVinayaEnv(),
+        HOME: root,
+        AEG_REPO: 'example/test',
+        VINAYA_TASK: '42',
+        VINAYA_RUNTIME_DIR: join(root, 'runtime')
+      }
+    })
+    expect(result.status).toBe(0)
+    expect(result.stderr).not.toContain('Error')
+    expect(readFileSync(join(root, 'runtime/logs/example-test/42.ndjson'), 'utf8').trim().split('\n')).toHaveLength(2)
+    expect(existsSync(join(root, '.vinaya/outbox'))).toBe(false)
+    expect(result.stdout).toContain('"requests":0')
   })
 })

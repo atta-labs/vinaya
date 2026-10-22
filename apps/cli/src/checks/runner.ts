@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { cpus } from 'node:os'
 import { globToRegex, type GateOutcome } from '@attalabs/aeg-core'
-import { log as defaultLog, warmupLogSink, type LogEventInput } from '../lib/log-sink.js'
+import { log as defaultLog, warmupLogSink, LOG_FOLDER_ONLY_ENV, type LogEventInput } from '../lib/log-sink.js'
 import { CHECK_SCHEMA_VERSION, type CheckError, type CheckOutcome, type CheckSpec, type CheckStatus } from './contract'
 
 export type RunOptions = {
@@ -339,9 +339,7 @@ export function buildCheckEnv(
     if (value !== undefined) out[key] = value
   }
 
-  if (!env) return out
-
-  for (const [key, decl] of Object.entries(env)) {
+  for (const [key, decl] of Object.entries(env ?? {})) {
     if (decl === true || (typeof decl === 'object' && 'optional' in decl)) {
       const value = callerEnv[key]
       if (value !== undefined) out[key] = value
@@ -355,6 +353,8 @@ export function buildCheckEnv(
     }
   }
 
+  // A check may narrow its environment, but never relax its Engine parent's Log restriction.
+  if (callerEnv[LOG_FOLDER_ONLY_ENV] === '1') out[LOG_FOLDER_ONLY_ENV] = '1'
   return out
 }
 

@@ -17,7 +17,7 @@ import {
   assembleAndRenderBrief as realAssembleAndRenderBrief,
   assembleAndRenderBriefForIssue as realAssembleAndRenderBriefForIssue
 } from './brief-assembly.js'
-import { loadConfig, resolveTaskRunner, type TaskRunner } from './config.js'
+import { type loadConfig, loadTaskRunner, resolveTaskRunner, type TaskRunner } from './config.js'
 import { runTaskEngine, type EngineRunnerDeps } from './task-run-engine.js'
 import type { AgentVendor } from './dispatch.js'
 import {
@@ -404,7 +404,7 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
   // before any path is resolved and before anything is dispatched, so the
   // classification is already true for this process and for every child that
   // inherits its environment.
-  const runner = resolveTaskRunner(input.runner, (deps.runnerConfig ?? loadConfig)())
+  const runner = deps.runnerConfig ? resolveTaskRunner(input.runner, deps.runnerConfig()) : loadTaskRunner(input.runner)
   markProcessUnattended()
   const { agent, model: explicitModel } = input
   const taskLabel = taskLabelFor(input)

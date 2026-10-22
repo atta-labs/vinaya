@@ -22,6 +22,9 @@ The Engine runner constructs the shared `createLogSink` with `folderOnly: true`.
 It keeps a permitted `logs.folder`, or uses `<runtimeDir>/logs` when a server
 URL is configured. It never appends to the server retry outbox or delivers
 server requests. `logs: false` takes precedence over this restriction.
+The Engine also passes the folder restriction through its subprocess
+environment, including CLI checks, check children and agent launches, so
+ordinary shared sinks in those processes cannot select a server destination.
 
 ## The envelope: `schema: 1`, `2`, `3` and `4`
 
