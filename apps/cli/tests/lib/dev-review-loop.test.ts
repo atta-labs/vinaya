@@ -1514,7 +1514,10 @@ describe('devReviewLoop — the driver heartbeat (#949, O1)', () => {
   })
 
   it("the production heartbeat timer is unref()'d so it never keeps the process alive (#949, Traps)", () => {
-    const source = readFileSync(join(import.meta.dir, '..', '..', 'src', 'lib', 'dev-review-loop.ts'), 'utf8')
+    const source = readFileSync(
+      join(import.meta.dir, '..', '..', 'src', 'lib', 'dev-review-loop', 'driver-lifecycle.ts'),
+      'utf8'
+    )
     const idx = source.indexOf('function defaultSetHeartbeat(')
     expect(idx).toBeGreaterThan(-1)
     const body = source.slice(idx, idx + 400)
@@ -1630,15 +1633,18 @@ describe('devReviewLoop — the driver_exited lifecycle event (#949, O2/O3)', ()
   })
 
   it('recordDriverExited stops the heartbeat before it writes anything, on exactly one guarded path (#949, O1/Traps)', () => {
-    const source = readFileSync(join(import.meta.dir, '..', '..', 'src', 'lib', 'dev-review-loop.ts'), 'utf8')
-    const idx = source.indexOf('function recordDriverExited(')
+    const source = readFileSync(
+      join(import.meta.dir, '..', '..', 'src', 'lib', 'dev-review-loop', 'driver-lifecycle.ts'),
+      'utf8'
+    )
+    const idx = source.indexOf('export function createDriverExitRecorder(')
     expect(idx).toBeGreaterThan(-1)
-    const body = source.slice(idx, source.indexOf('\n    }\n', idx))
+    const body = source.slice(idx, source.indexOf('\n}\n', idx))
     // Guarded against a double write for one exit.
-    expect(body).toMatch(/if \(exitTraceWritten\) return/)
-    const stopAt = body.indexOf('stopHeartbeat()')
+    expect(body).toMatch(/if \(written\) return/)
+    const stopAt = body.indexOf('facts.stopHeartbeat()')
     const roleLineAt = body.indexOf('appendRoleLine(')
-    const logAt = body.indexOf('log(event)')
+    const logAt = body.indexOf('facts.log(event)')
     expect(stopAt).toBeGreaterThan(-1)
     // The timer is cleared before any role-log line or Log event is written,
     // so a stray tick can never land after the exit is recorded.
