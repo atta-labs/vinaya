@@ -43,19 +43,9 @@
       "reason": "Red gates bypass the task time budget assessment and exhaust the Flow revision counter."
     },
     {
-      "scenario": "resume",
-      "guarantee": "INV-090",
-      "reason": "Re-entering the runner after a ruling starts a new leg without consuming a durable resolution or emitting resumed."
-    },
-    {
       "scenario": "cancellation",
       "guarantee": "INV-089",
       "reason": "The runner halt handle pauses; it neither consumes a cancel resolution nor records cancellation."
-    },
-    {
-      "scenario": "operator-intervention-unauthenticated",
-      "guarantee": "INV-088",
-      "reason": "The halt handle accepts a request without authenticating a Principal ruling and has no durable pause resolution."
     },
     {
       "scenario": "stale-objectives",
