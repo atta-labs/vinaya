@@ -68,19 +68,27 @@ import { validatePrBodyForCreate } from '../../../apps/cli/src/commands/pr'
 import { createLogSink, drainLogSink, LOG_FOLDER_ONLY_ENV, type LogSinkDeps } from '../../../apps/cli/src/lib/log-sink'
 import { setEngineLogIdentity } from './engine-log-identity'
 import {
+  abortableSleep,
   chooseStart,
+  claimResume,
   createChildReaper,
+  liveResumeDeps,
   lockExitOf,
   onShutdownSignals,
   realLaunchDeps,
   recoverRun,
   releaseDriverLock,
+  resumeModel,
   revisionMovedLine,
   roleTimeouts,
+  rulingPollMs,
   runIdentityOfTask,
   SIGNAL_EXIT_CODE,
   takeDriverLock,
-  type RecoveryDeps
+  watchForRuling,
+  type RecoveryDeps,
+  type ResumeDeps,
+  type RulingWatch
 } from './run-lifecycle'
 import {
   createDriverExitRecorder,
@@ -184,6 +192,75 @@ export function parseArgs(argv: readonly string[]): EngineArgs {
   }
   if (task === undefined || agent === undefined) throw new Error(USAGE)
   return { task, agent, dryRun, ...(model ? { model } : {}) }
+}
+
+export interface ResumeArgs {
+  /** The pull request whose `Closes` line names the task. */
+  resume: number
+  agent?: Agent
+  /** The model for the resumed run; absent takes the one the run's checkpoint recorded. */
+  model?: string
+}
+
+const RESUME_USAGE = 'Usage: run-engine.ts --resume <pr> [--agent <claude|codex>] [--model <id>]'
+
+export function parseResumeArgs(argv: readonly string[]): ResumeArgs {
+  let resume: number | undefined
+  let agent: Agent | undefined
+  let model: string | undefined
+  for (let i = 0; i < argv.length; i++) {
+    const flag = argv[i]
+    if (flag === '--resume') {
+      const value = argv[++i] ?? ''
+      if (!/^[1-9][0-9]*$/.test(value)) throw new Error(`--resume takes a pull request number. ${RESUME_USAGE}`)
+      resume = Number(value)
+    } else if (flag === '--agent') {
+      const value = argv[++i]
+      if (value !== 'claude' && value !== 'codex') throw new Error(`--agent takes claude or codex. ${RESUME_USAGE}`)
+      agent = value
+    } else if (flag === '--model') {
+      const value = argv[++i] ?? ''
+      if (value === '' || value.startsWith('--')) throw new Error(`--model takes a model id. ${RESUME_USAGE}`)
+      model = value
+    } else throw new Error(`Unknown argument "${flag}". ${RESUME_USAGE}`)
+  }
+  if (resume === undefined) throw new Error(RESUME_USAGE)
+  return { resume, ...(agent ? { agent } : {}), ...(model ? { model } : {}) }
+}
+
+/** The model the newest checkpoint of the task's run recorded; undefined when the run has none or left the vendor's default. */
+export function recordedCheckpointModel(runtimeDir: string, task: number): string | undefined {
+  const file = checkpointPath(runDirectory(runtimeDir, task))
+  if (!existsSync(file)) return undefined
+  const saver = new SqliteCheckpointer({ path: file, revision: 'unknown' })
+  try {
+    const model = saver.latestProvenance(runIdentityOfTask(task).threadId)?.model
+    return model === '' ? undefined : model
+  } finally {
+    saver.close()
+  }
+}
+
+export interface ResumeEngineInput {
+  args: ResumeArgs
+  runtimeDir: string
+  deps?: ResumeDeps
+  /** Runs the claimed task on the Engine; the checkpoint it finds is the one the halted run left. */
+  run: (args: EngineArgs) => Promise<EngineRunResult>
+}
+
+/**
+ * `--resume <pr>`: settles the task, the agent and the authenticated resolution (`claimResume`), then continues the
+ * halted run from its checkpoint with the model `--model` names, else the one the checkpoint recorded.
+ */
+export async function resumeEngine(input: ResumeEngineInput): Promise<EngineRunResult> {
+  const claim = claimResume(
+    input.runtimeDir,
+    { pr: input.args.resume, agent: input.args.agent },
+    input.deps ?? liveResumeDeps
+  )
+  const model = resumeModel(input.args.model, recordedCheckpointModel(input.runtimeDir, claim.task))
+  return input.run({ task: claim.task, agent: claim.agent, dryRun: false, ...(model ? { model } : {}) })
 }
 
 const vendorOf = (agent: Agent): 'claude-code' | 'codex' => (agent === 'claude' ? 'claude-code' : 'codex')
@@ -403,6 +480,8 @@ export interface EngineLifecycleOptions {
   killGraceMs?: number
   /** Whether SIGINT and SIGTERM abort the run (default true). */
   handleSignals?: boolean
+  /** After a halt that left a pause, waits for a newer ruling or a cancel and continues the run on a ruling; absent ends the runner at the halt. */
+  watch?: RulingWatch
 }
 
 /** The HEAD of the checkout at `repoRoot`, or `unknown` when it is not a git checkout. */
@@ -463,10 +542,14 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
     return { outcome: null, exitCode: 1, tracePath }
   }
 
-  const control = options.control ?? createRunControl()
+  // Each leg of a run has a run control of its own: a halted one cannot be run again.
+  let control = options.control ?? createRunControl()
   const reaper = createChildReaper(options.spawnFn)
   // A halt ends the agents' whole process groups at once: the executor signals only the agent it spawned.
-  control.signal.addEventListener('abort', () => void reaper.reap(lifecycle.killGraceMs), { once: true })
+  const reapOnHalt = (): void =>
+    control.signal.addEventListener('abort', () => void reaper.reap(lifecycle.killGraceMs), { once: true })
+  reapOnHalt()
+  const stopWatching = new AbortController()
   const log = (event: DevReviewLoopEventInput): void => (options.sink.log as unknown as (event: unknown) => void)(event)
   let currentNode: string | null = null
   let prNumber = 0
@@ -506,48 +589,52 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
           signalled = signal
           narrate(`received ${signal}; stopping the run and ending its agents`)
           control.halt(signal)
+          stopWatching.abort()
         })
 
   // Every pausing exit — a pause decision and an error alike — ends here: records, one comment, then the halt.
   const taskForHandoff = options.taskInput
-  const handoff: Handoff = createHandoff(
-    {
-      task: args.task,
-      branch: taskForHandoff?.branch ?? '',
-      runtimeDir: options.runtimeDir,
-      runId: options.loopId,
-      agent: args.agent,
-      ...(args.model ? { model: args.model } : {}),
-      round: () => taskForHandoff?.reviewRound?.() ?? 1,
-      head: () => {
-        try {
-          return (taskForHandoff?.worktreePath ? readWorktreeHead(taskForHandoff.worktreePath) : null) ?? 'unknown'
-        } catch {
-          return 'unknown'
+  const makeHandoff = (): Handoff =>
+    createHandoff(
+      {
+        task: args.task,
+        branch: taskForHandoff?.branch ?? '',
+        runtimeDir: options.runtimeDir,
+        runId: options.loopId,
+        agent: args.agent,
+        ...(args.model ? { model: args.model } : {}),
+        round: () => taskForHandoff?.reviewRound?.() ?? 1,
+        head: () => {
+          try {
+            return (taskForHandoff?.worktreePath ? readWorktreeHead(taskForHandoff.worktreePath) : null) ?? 'unknown'
+          } catch {
+            return 'unknown'
+          }
+        },
+        prNumber: () => {
+          if (prNumber > 0) return prNumber
+          // The Developer may have opened the pull request since the reconcile step looked.
+          const find = taskForHandoff?.bound?.findOpenPrForBranch
+          try {
+            return find && taskForHandoff?.branch ? (find(taskForHandoff.branch)?.number ?? null) : null
+          } catch {
+            return null
+          }
+        },
+        versions: () => {
+          if (!taskForHandoff?.inputVersions) throw new Error('no input versions are wired for this run')
+          return taskForHandoff.inputVersions()
+        },
+        halt: (reason) => {
+          pausedFor = reason
+          control.halt(handoffHaltReason(reason))
         }
       },
-      prNumber: () => {
-        if (prNumber > 0) return prNumber
-        // The Developer may have opened the pull request since the reconcile step looked.
-        const find = taskForHandoff?.bound?.findOpenPrForBranch
-        try {
-          return find && taskForHandoff?.branch ? (find(taskForHandoff.branch)?.number ?? null) : null
-        } catch {
-          return null
-        }
-      },
-      versions: () => {
-        if (!taskForHandoff?.inputVersions) throw new Error('no input versions are wired for this run')
-        return taskForHandoff.inputVersions()
-      },
-      halt: (reason) => {
-        pausedFor = reason
-        control.halt(handoffHaltReason(reason))
-      }
-    },
-    options.loopId,
-    options.handoffDeps ?? liveHandoffDeps(log)
-  )
+      options.loopId,
+      options.handoffDeps ?? liveHandoffDeps(log)
+    )
+  // A resumed leg hands its own pauses off afresh: one handoff answers for one leg.
+  let handoff = makeHandoff()
   if (taskForHandoff) taskForHandoff.handoff = handoff
   /** An error the run could not absorb is a pause for the infrastructure, never a failed run. */
   const handOffError = (message: string): LegOutcome => {
@@ -609,101 +696,128 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
     )
     const actions = recordingActions(tracedActions(noting, trace), translator)
     const revision = options.revision ?? checkoutRevision(options.repoRoot)
-    checkpointer = new SqliteCheckpointer({ path: checkpointPath(runDir), revision, model: args.model })
+    const saver = new SqliteCheckpointer({ path: checkpointPath(runDir), revision, model: args.model })
+    checkpointer = saver
     const identity = runIdentityOfTask(args.task)
-    const choice = await chooseStart(checkpointer, identity)
-    appendRunStartMarker(logPath, {
-      role: 'engine-runner',
-      pid: lifecycle.pid ?? process.pid,
-      runId: options.loopId,
-      resumed: choice.kind === 'resume'
-    })
-    const branch = options.taskInput?.branch
-    narrate(
-      choice.kind === 'resume'
-        ? `resuming the run from its checkpoint (${identity.runId})`
-        : choice.kind === 'completed'
-          ? 'the checkpoint records a completed run; nothing to run'
-          : `no checkpoint; starting fresh${branch ? ` on branch ${branch}` : ''}`
-    )
-    const moved = choice.kind === 'resume' ? revisionMovedLine(choice.checkpointRevision, revision) : null
-    if (moved !== null) narrate(moved)
-
-    // What a re-run reads before it dispatches: the prior launch, the round journal and any held verdict.
-    const recovery = lifecycle.recovery ? recoverRun(lifecycle.recovery) : null
-    if (recovery !== null && options.taskInput) {
-      options.taskInput.loopState = recovery.state
-      if (recovery.nextRound !== null) options.taskInput.seedRound?.(recovery.nextRound)
-    }
-    if (recovery?.refusal) {
-      narrate(`not dispatching: ${recovery.refusal}`)
-      throw new Error(recovery.refusal)
-    }
-    translator.beginLeg({ resumed: choice.kind === 'resume' })
-    if (choice.kind === 'completed') {
-      legOutcome = { reason: 'completed' }
-    } else if (recovery?.held) {
-      // A clean verdict pair still bound to the current head is published as it stands: no review is dispatched again.
-      narrate(`held clean verdict from round ${recovery.held.round} still covers the head; publishing it`)
-      options.taskInput?.seedRound?.(recovery.held.round)
-      const published = await actions['harness.publish']?.({
-        nodeId: 'publish-ready-for-merge',
-        action: 'harness.publish',
-        results: {}
+    const runLeg = async (): Promise<void> => {
+      outcome = null
+      error = undefined
+      pausedFor = undefined
+      const choice = await chooseStart(saver, identity)
+      appendRunStartMarker(logPath, {
+        role: 'engine-runner',
+        pid: lifecycle.pid ?? process.pid,
+        runId: options.loopId,
+        resumed: choice.kind === 'resume'
       })
-      legOutcome =
-        published?.exitCode === 0 ? { reason: 'completed' } : { reason: 'failed', error: 'publication failed' }
-    } else {
-      const developerFacts = options.developerFacts
-      const runOptions: ProcessRunOptions = {
-        process: options.process,
-        question: `Task ${args.task}`,
-        bindings: { actions, decisions: (await import('../executing/actions')).decisions, roles },
-        checkpointer,
-        workingDirectoryRoot: options.repoRoot,
-        // A revision continues the Developer's own session, as the standalone loop resumes it.
-        continueSessions: ['develop'],
-        envAllowlist: agentEnvAllowlist({
-          extra: [
-            LOG_FOLDER_ONLY_ENV,
-            ...(options.allowUnixSockets === true ? [LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV] : [])
-          ]
-        }),
-        ...(developerFacts
-          ? {
-              stepPrompts: {
-                develop: async (rendered, results, context) =>
-                  developerPrompt(rendered, await developerFacts(), results, context),
-                ...(options.taskInput?.reviewerPrompt
-                  ? {
-                      'code-review': async () => options.taskInput.reviewerPrompt!('reviewer'),
-                      'security-review': async () => options.taskInput.reviewerPrompt!('security')
-                    }
-                  : {})
+      const branch = options.taskInput?.branch
+      narrate(
+        choice.kind === 'resume'
+          ? `resuming the run from its checkpoint (${identity.runId})`
+          : choice.kind === 'completed'
+            ? 'the checkpoint records a completed run; nothing to run'
+            : `no checkpoint; starting fresh${branch ? ` on branch ${branch}` : ''}`
+      )
+      const moved = choice.kind === 'resume' ? revisionMovedLine(choice.checkpointRevision, revision) : null
+      if (moved !== null) narrate(moved)
+
+      // What a re-run reads before it dispatches: the prior launch, the round journal and any held verdict.
+      const recovery = lifecycle.recovery ? recoverRun(lifecycle.recovery) : null
+      if (recovery !== null && options.taskInput) {
+        options.taskInput.loopState = recovery.state
+        if (recovery.nextRound !== null) options.taskInput.seedRound?.(recovery.nextRound)
+      }
+      if (recovery?.refusal) {
+        narrate(`not dispatching: ${recovery.refusal}`)
+        throw new Error(recovery.refusal)
+      }
+      translator.beginLeg({ resumed: choice.kind === 'resume' })
+      if (choice.kind === 'completed') {
+        legOutcome = { reason: 'completed' }
+      } else if (recovery?.held) {
+        // A clean verdict pair still bound to the current head is published as it stands: no review is dispatched again.
+        narrate(`held clean verdict from round ${recovery.held.round} still covers the head; publishing it`)
+        options.taskInput?.seedRound?.(recovery.held.round)
+        const published = await actions['harness.publish']?.({
+          nodeId: 'publish-ready-for-merge',
+          action: 'harness.publish',
+          results: {}
+        })
+        legOutcome =
+          published?.exitCode === 0 ? { reason: 'completed' } : { reason: 'failed', error: 'publication failed' }
+      } else {
+        const developerFacts = options.developerFacts
+        const runOptions: ProcessRunOptions = {
+          process: options.process,
+          question: `Task ${args.task}`,
+          bindings: { actions, decisions: (await import('../executing/actions')).decisions, roles },
+          checkpointer: saver,
+          workingDirectoryRoot: options.repoRoot,
+          // A revision continues the Developer's own session, as the standalone loop resumes it.
+          continueSessions: ['develop'],
+          envAllowlist: agentEnvAllowlist({
+            extra: [
+              LOG_FOLDER_ONLY_ENV,
+              ...(options.allowUnixSockets === true ? [LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV] : [])
+            ]
+          }),
+          ...(developerFacts
+            ? {
+                stepPrompts: {
+                  develop: async (rendered, results, context) =>
+                    developerPrompt(rendered, await developerFacts(), results, context),
+                  ...(options.taskInput?.reviewerPrompt
+                    ? {
+                        'code-review': async () => options.taskInput.reviewerPrompt!('reviewer'),
+                        'security-review': async () => options.taskInput.reviewerPrompt!('security')
+                      }
+                    : {})
+                }
               }
-            }
-          : {}),
-        spawnFn: reaper.spawnFn,
-        control,
-        onEvent: (event) => {
-          const lifecycleEvent = event as NodeLifecycle
-          if (lifecycleEvent.type === 'node:start') currentNode = lifecycleEvent.nodeId
-          options.observe?.(lifecycleEvent)
-          trace.onEvent(lifecycleEvent)
-          translator.onEvent(lifecycleEvent)
+            : {}),
+          spawnFn: reaper.spawnFn,
+          control,
+          onEvent: (event) => {
+            const lifecycleEvent = event as NodeLifecycle
+            if (lifecycleEvent.type === 'node:start') currentNode = lifecycleEvent.nodeId
+            options.observe?.(lifecycleEvent)
+            trace.onEvent(lifecycleEvent)
+            translator.onEvent(lifecycleEvent)
+          }
+        }
+        outcome = await (choice.kind === 'resume'
+          ? resumeProcessRun(runOptions, identity)
+          : startProcessRun(runOptions, identity))
+        legOutcome = outcome as unknown as LegOutcome
+        if (outcome.reason === 'failed') {
+          // A step that threw is handed off like any other pause, keeping what the checkpoint holds.
+          error = outcome.error
+          legOutcome = { ...legOutcome, ...handOffError(outcome.error) }
         }
       }
-      outcome = await (choice.kind === 'resume'
-        ? resumeProcessRun(runOptions, identity)
-        : startProcessRun(runOptions, identity))
-      legOutcome = outcome as unknown as LegOutcome
-      if (outcome.reason === 'failed') {
-        // A step that threw is handed off like any other pause, keeping what the checkpoint holds.
-        error = outcome.error
-        legOutcome = { ...legOutcome, ...handOffError(outcome.error) }
-      }
+      translator.endLeg(legOutcome as LegOutcome)
     }
-    translator.endLeg(legOutcome as LegOutcome)
+    for (;;) {
+      try {
+        await runLeg()
+      } catch (thrown) {
+        error = thrown instanceof Error ? thrown.message : String(thrown)
+        legOutcome = handOffError(error)
+        translator.endLeg(legOutcome)
+      }
+      if (!lifecycle.watch || legOutcome?.reason !== 'paused' || signalled !== null) break
+      narrate('the run is halted; watching for a newer ruling or a cancel')
+      const watched = await watchForRuling(options.runtimeDir, args.task, lifecycle.watch, stopWatching.signal, narrate)
+      if (watched.kind === 'ruled') narrate(`a newer ruling resumed escalation ${watched.escalationId}`)
+      else if (watched.kind === 'cancelled') narrate('the pause was cancelled; ending')
+      else if (watched.kind === 'consumed') narrate('another process claimed the resolution and owns the run; ending')
+      else if (watched.kind === 'refused') narrate(`the resolution was refused: ${watched.message}`)
+      if (watched.kind !== 'ruled') break
+      control = createRunControl()
+      reapOnHalt()
+      handoff = makeHandoff()
+      if (taskForHandoff) taskForHandoff.handoff = handoff
+    }
   } catch (thrown) {
     error = thrown instanceof Error ? thrown.message : String(thrown)
     legOutcome = handOffError(error)
@@ -739,15 +853,16 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
       }
     }
   }
-  const results = (outcome && 'checkpoint' in outcome ? (outcome.checkpoint?.results ?? {}) : {}) as Record<
-    string,
-    StepNodeResult
-  >
-  const reason = (legOutcome as LegOutcome | null)?.reason ?? (outcome as RunOutcome | null)?.reason ?? 'failed'
+  // The legs assign these from inside a closure, which the compiler's flow analysis does not follow.
+  const finalOutcome = outcome as RunOutcome | null
+  const results = (
+    finalOutcome && 'checkpoint' in finalOutcome ? (finalOutcome.checkpoint?.results ?? {}) : {}
+  ) as Record<string, StepNodeResult>
+  const reason = (legOutcome as LegOutcome | null)?.reason ?? finalOutcome?.reason ?? 'failed'
   writeTrace(reason, results, error)
   const exitCode =
     signalled !== null ? SIGNAL_EXIT_CODE[signalled] : reason === 'completed' ? 0 : reason === 'paused' ? 2 : 1
-  return { outcome, exitCode, tracePath }
+  return { outcome: finalOutcome, exitCode, tracePath }
 }
 
 // --- the live wiring: forge, git and Log reached only from `main` -------------
@@ -1278,22 +1393,8 @@ export function configureEngineLogEnvironment(env: NodeJS.ProcessEnv = process.e
   env[LOG_FOLDER_ONLY_ENV] = '1'
 }
 
-export async function main(argv: readonly string[]): Promise<number> {
-  const args = parseArgs(argv)
-  const repoRoot = resolve(import.meta.dir, '../../..')
-  const loaded = loadProcess(resolve(import.meta.dir, '..'))
-  const runtimeDir = await liveRuntimeDir()
-  const runDir = runDirectory(runtimeDir, args.task)
-  if (args.dryRun) {
-    const lines = await dryRunLines({
-      process: loaded,
-      agent: args.agent,
-      generatedRoot: mkdtempSync(join(tmpdir(), 'engine-dry-run-')),
-      shimPath: join(runDir, 'dev-bridge.sh')
-    })
-    for (const line of lines) process.stdout.write(`${line}\n`)
-    return 0
-  }
+/** Runs one task on the Engine against the live forge, git and Log. */
+async function runLive(args: EngineArgs, loaded: LoadedProcess, repoRoot: string, runtimeDir: string): Promise<number> {
   configureEngineLogEnvironment()
   setEngineLogIdentity(loaded)
   const sink = createEngineLogSink()
@@ -1320,7 +1421,8 @@ export async function main(argv: readonly string[]): Promise<number> {
     allowUnixSockets: linuxUnixSocketFilterOptIn(),
     lifecycle: {
       dispatchConfig: loadConfig()?.dispatch,
-      recovery: liveRecovery({ args, runtimeDir, taskInput })
+      recovery: liveRecovery({ args, runtimeDir, taskInput }),
+      watch: { deps: liveResumeDeps, pollMs: rulingPollMs(), sleep: abortableSleep }
     },
     devToolsContext: liveDevToolsContext({
       branch: taskInput.branch,
@@ -1332,6 +1434,38 @@ export async function main(argv: readonly string[]): Promise<number> {
   // The handoff's escalation record logs through the default sink, which nothing else drains.
   await drainLogSink()
   return result.exitCode
+}
+
+export async function main(argv: readonly string[]): Promise<number> {
+  const repoRoot = resolve(import.meta.dir, '../../..')
+  const loaded = loadProcess(resolve(import.meta.dir, '..'))
+  const runtimeDir = await liveRuntimeDir()
+  if (argv.includes('--resume')) {
+    const args = parseResumeArgs(argv)
+    const result = await resumeEngine({
+      args,
+      runtimeDir,
+      run: async (resolved) => ({
+        outcome: null,
+        exitCode: await runLive(resolved, loaded, repoRoot, runtimeDir),
+        tracePath: ''
+      })
+    })
+    return result.exitCode
+  }
+  const args = parseArgs(argv)
+  const runDir = runDirectory(runtimeDir, args.task)
+  if (args.dryRun) {
+    const lines = await dryRunLines({
+      process: loaded,
+      agent: args.agent,
+      generatedRoot: mkdtempSync(join(tmpdir(), 'engine-dry-run-')),
+      shimPath: join(runDir, 'dev-bridge.sh')
+    })
+    for (const line of lines) process.stdout.write(`${line}\n`)
+    return 0
+  }
+  return runLive(args, loaded, repoRoot, runtimeDir)
 }
 
 if (import.meta.main) {

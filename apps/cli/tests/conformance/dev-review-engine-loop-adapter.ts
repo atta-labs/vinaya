@@ -18,8 +18,10 @@ import { createActions } from '../../../../processes/vinaya/executing/actions.js
 import type { DeveloperPromptFacts } from '../../../../processes/vinaya/executing/developer-prompt.js'
 import {
   liveTaskInput,
+  resumeEngine,
   runEngine,
   type Agent,
+  type EngineArgs,
   type EngineForge,
   type EngineRunOptions,
   type RunTrace
@@ -31,9 +33,11 @@ import {
   pauseMarker,
   readDriverLock,
   readPauseState,
+  resolveEscalation,
   writeEscalationRecord
 } from '../../src/lib/dev-review-loop/pause-resume.js'
 import { liveHandoffDeps, type HandoffDeps } from '../../../../processes/vinaya/executing/handoff.js'
+import { liveResumeDeps, type ResumeDeps } from '../../../../processes/vinaya/bin/run-lifecycle.js'
 import { LOG_FOLDER_ONLY_ENV } from '../../src/lib/log-sink.js'
 import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache } from '../../src/lib/run-paths.js'
 import { cleanupAllReviewerIsolationArtifacts } from '../../src/lib/dev-review-loop/reviewer-isolation.js'
@@ -46,11 +50,12 @@ import type { Observation } from './dev-review-current-loop-adapter.js'
  * Only external inputs and effects are faked. The adapter never supplies a
  * decision, retry or missing control record on the Engine's behalf.
  *
- * The runner currently exposes start and a halt handle, but no resume/cancel
- * entry point. Continuation scenarios re-enter that start boundary with the
- * same run files and changed forge facts; cancellation requests use its halt
- * handle. Their missing authentication, resolution and continuation behavior
- * remains observable rather than being implemented by this test adapter.
+ * A ruling-resumed scenario goes through the runner's `--resume` entry, which
+ * authenticates the ruling and claims the resolution with the real control
+ * store; a restart re-enters the start boundary with the same run files and
+ * changed forge facts; cancellation requests use the runner's halt handle.
+ * Missing behavior stays observable rather than being implemented by this
+ * test adapter.
  */
 const PROCESS = loadProcess(resolve(import.meta.dir, '../../../../processes/vinaya'))
 const TASK = 7
@@ -387,10 +392,10 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
     resume: { task: TASK, branch: BRANCH, worktree, remoteHead: head },
     heldReview: null
   })
-  const execute = async (cancel = false) => {
+  const execute = async (cancel = false, args: EngineArgs = { task: TASK, agent, dryRun: false }) => {
     const control = createRunControl()
     const options: EngineRunOptions = {
-      args: { task: TASK, agent, dryRun: false },
+      args,
       process: PROCESS,
       repoRoot: repo,
       runtimeDir,
@@ -492,18 +497,53 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
   await execute()
   // A re-run is a fresh subprocess: the runner of the leg before is gone, and so is whatever lock it kept.
   const runnerGone = () => clearDriverLock(runtimeDir, TASK)
-  if (id === 'publication-replay' || id === 'resume') {
+  // The forge a `--resume` reads: the real control store and pause record, a fake pull request and rulings.
+  const resumeDeps: ResumeDeps = {
+    ...liveResumeDeps,
+    resolveEscalation: (...args) => {
+      const resolved = resolveEscalation(...args)
+      append(eventFile, { kind: 'handoff', event: 'resolved' })
+      return resolved
+    },
+    fetchPrBody: forge.prBody.bind(null, 70),
+    findOpenPrForBranch: forge.findOpenPrForBranch,
+    fetchRulings: () => (ruling ? ['Go ahead.'] : []),
+    fetchIssueRulings: () => (ruling ? ['Go ahead.'] : []),
+    fetchNewestRulingOrdinal: () => (ruling ? 1 : 0),
+    fetchNewestIssueRulingOrdinal: () => 0,
+    fetchNewestRulingAuthor: () => (ruling ? 'principal' : null),
+    fetchNewestIssueRulingAuthor: () => null
+  }
+  let refused: unknown
+  if (id === 'publication-replay') {
+    runnerGone()
+    continuing = true
+    await execute()
+  }
+  if (id === 'resume' || id === 'operator-intervention-unauthenticated') {
     runnerGone()
     continuing = true
     ruling = id === 'resume'
-    await execute()
+    try {
+      await resumeEngine({
+        args: { resume: 70, agent },
+        runtimeDir,
+        deps: resumeDeps,
+        run: async (resolved) => {
+          await execute(false, resolved)
+          return { outcome: null, exitCode: 0, tracePath: '' }
+        }
+      })
+    } catch (error) {
+      refused = error
+    }
   }
-  if (id === 'cancellation' || id === 'operator-intervention-unauthenticated') {
+  if (id === 'cancellation') {
     runnerGone()
-    ruling = id === 'cancellation'
+    ruling = true
     await execute(true)
   }
-  return observeEngineRun(runtimeDir, traces)
+  return observeEngineRun(runtimeDir, traces, refused)
 }
 
 /** Normalize actual preparation refusals and saved run records into the shared observation. */

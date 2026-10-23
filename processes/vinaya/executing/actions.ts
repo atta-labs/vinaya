@@ -354,6 +354,9 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
           `build-revision-handoff found no decision type in the assess-round output: ${stdout.slice(0, 200)}`
         )
       if (decision === 'publish') return ok()
+      // A pause does not end the round: the ruling that resumes it sends the Developer back to the same round,
+      // so the round stays open and no verdict is consumed.
+      if (decision === 'pause') return ok(JSON.stringify(handoffFindings(task.reviewRound())))
       return ok(JSON.stringify(handoffFindings(task.reviewRound(), ...task.verdicts(context.results))))
     }
   },
