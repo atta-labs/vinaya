@@ -20,6 +20,9 @@ import {
   findOpenPrForBranch
 } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
 import { publishRound } from '../../../apps/cli/src/lib/dev-review-loop/publication'
+import { cleanupAllReviewerIsolationArtifacts } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-isolation'
+import { enforcementControlsActive } from '../../../apps/cli/src/lib/enforcement-controls'
+import { probeAgentSandbox } from '../../../apps/cli/src/lib/worker-boundary'
 import { handoffFindings } from '../../../apps/cli/src/lib/dev-review-loop'
 import { runCliChecks } from '../../../harness/gates/run-checks'
 import { parseDeveloperTurnResult } from '../../../apps/cli/src/lib/developer-turn-result'
@@ -61,7 +64,13 @@ describe('bindings cover the Flow', () => {
 
   test('each loop-backed entry records the function it adapts', () => {
     const adapts = (name: string) => ACTION_BINDINGS[name]?.adapts
-    expect(adapts('vinaya.prepare-run')).toEqual([checkTaskDispatchReadiness, createTaskWorktree])
+    expect(adapts('vinaya.prepare-run')).toEqual([
+      checkTaskDispatchReadiness,
+      createTaskWorktree,
+      cleanupAllReviewerIsolationArtifacts,
+      enforcementControlsActive,
+      probeAgentSandbox
+    ])
     expect(adapts('vinaya.prepare-run')?.[0]).toBe(checkTaskDispatchReadiness)
     expect(adapts('vinaya.prepare-run')?.[1]).toBe(createTaskWorktree)
     expect(adapts('vinaya.reconcile-external-state')?.[0]).toBe(findOpenPrForBranch)

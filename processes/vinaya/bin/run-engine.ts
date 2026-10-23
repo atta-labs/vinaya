@@ -9,6 +9,7 @@ import {
   buildReviewInputManifest,
   type DevReviewLoopEventInput,
   type LoopConfig,
+  type LoopState,
   type Observations,
   type ReviewInputManifest,
   type VerdictObservation
@@ -165,6 +166,7 @@ import {
   agentOutput,
   createActions,
   createRoleLaunchers,
+  sandboxProbePlanFor,
   type HeldVerdictRole,
   type TaskInput
 } from '../executing/actions'
@@ -719,6 +721,14 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
       stageCodexLogin: true,
       timeouts: roleTimeouts(lifecycle.dispatchConfig)
     })
+    // The Developer's sandbox is probed from the launch shape just generated, before the first agent step.
+    if (options.taskInput && roles.developer) {
+      const vendor = vendorOf(args.agent)
+      const developer = roles.developer
+      const { taskInput } = options
+      taskInput.sandboxPlan = () =>
+        sandboxProbePlanFor(vendor, developer, join(runDir, 'generated', 'developer'), taskInput.worktreePath)
+    }
     const base = options.actions ?? createActions(options.taskInput)
     // The pull request found by the reconcile step is the one the heartbeat reports.
     const noting: ActionRegistry = Object.fromEntries(
@@ -1078,15 +1088,14 @@ export async function liveTaskInput(
   // Tranche tasks live on `task/<tranche>/<n>`, backlog tasks on `task/issue-<n>`.
   const branch = developerBranchFor(args.task, lookups.fetchTitle, lookups.fetchLabels)
   const worktreePath = join(repoRoot, '.worktrees', branch)
-  const policy = (lookups.policy ?? reviewPolicyForLoop)()
-  const config: LoopConfig = {
-    loopId,
-    task: args.task,
-    reviewers: ['reviewer', 'security'],
-    models: {},
-    maxRounds: policy.maxRounds,
-    maxTaskMinutes: policy.maxTaskMinutes
+  // The policy is read when first needed, never when this input is built: the prepare-run step reads it first, so a
+  // failed read pauses through the handoff instead of throwing before the run starts.
+  let readPolicy: ReturnType<typeof reviewPolicyForLoop> | null = null
+  const policyNow = (): ReturnType<typeof reviewPolicyForLoop> => {
+    if (readPolicy === null) readPolicy = (lookups.policy ?? reviewPolicyForLoop)()
+    return readPolicy
   }
+  let loopState: LoopState | null = null
   // The review round advances when a revision handoff reads the verdicts it answers.
   let round = 1
   const manifestAt = (headSha: string): ReviewInputManifest => {
@@ -1103,7 +1112,7 @@ export async function liveTaskInput(
       briefContent: forge.fetchFrozenBrief(args.task),
       objectivesVersion: forge.resolveIssueObjectives(args.task).version,
       rulingOrdinal: pr ? forge.fetchNewestRulingOrdinal(pr.number) : 0,
-      policy
+      policy: policyNow()
     })
   }
   const judgedHead = (): string => {
@@ -1119,7 +1128,7 @@ export async function liveTaskInput(
       args.task,
       { exitCode: 0, durationMs: 0, usage: null } as never,
       manifestAt(judgedHead()),
-      policy,
+      policyNow(),
       forge.resolveIssueObjectives(args.task).objectives
     )
   const verdictsOf = (results: Readonly<Record<string, StepNodeResult>>): VerdictObservation[] =>
@@ -1166,7 +1175,7 @@ export async function liveTaskInput(
       ciConclusion: forge.fetchCiConclusion(judgedHead()),
       revision: forge.fetchSourceRevision(args.task),
       manifest: manifestAt(judgedHead()),
-      policy
+      policy: policyNow()
     }
     return renderVinayaReviewerPrompt(role, facts, staged)
   }
@@ -1187,7 +1196,35 @@ export async function liveTaskInput(
       findOpenPrForBranch: forge.findOpenPrForBranch,
       publishRound: forge.publishRound
     },
-    loopState: initialLoopState(config),
+    get loopState(): LoopState {
+      const policy = policyNow()
+      const config: LoopConfig = {
+        loopId,
+        task: args.task,
+        reviewers: ['reviewer', 'security'],
+        models: {},
+        maxRounds: policy.maxRounds,
+        maxTaskMinutes: policy.maxTaskMinutes
+      }
+      if (loopState === null) loopState = initialLoopState(config)
+      return loopState
+    },
+    set loopState(next: LoopState) {
+      loopState = next
+    },
+    repoRoot,
+    reviewPolicy: policyNow,
+    prepareSources: async () => {
+      const brief = forge.fetchFrozenBrief(args.task)
+      const headSha = readWorktreeHead(worktreePath) ?? sh('git', ['rev-parse', 'origin/main'], repoRoot)
+      return prepareSources({
+        brief,
+        round,
+        base: extractSourceRevision(brief) ?? headSha,
+        storeDir: developerSourceStoreDir(runtimeDir, args.task),
+        deps: realSourceProviderDeps(worktreePath)
+      })
+    },
     // Read when a pause is raised. A failed Issue read propagates: recording a ruling baseline of zero would
     // let any earlier ruling authenticate this pause's resume, so no escalation record is written instead.
     inputVersions: () => {
@@ -1200,7 +1237,14 @@ export async function liveTaskInput(
         briefHash: briefHashOf(forge.fetchFrozenBrief(args.task)),
         objectivesVersion,
         rulingOrdinal: pr ? forge.fetchNewestRulingOrdinal(pr.number) : forge.fetchNewestIssueRulingOrdinal(args.task),
-        policyDigest: policyDigestOf(policy)
+        // An unreadable policy has no digest; the pause that reports it still records the rest.
+        policyDigest: (() => {
+          try {
+            return policyDigestOf(policyNow())
+          } catch {
+            return 'unknown'
+          }
+        })()
       }
     },
     reviewRound: () => round,
@@ -1226,7 +1270,7 @@ export async function liveTaskInput(
       task: args.task,
       ...at,
       journal: forge.fetchLoopHistory(at.prNumber),
-      policy,
+      policy: policyNow(),
       manifest: manifestAt(at.expectedHead)
     })
   }

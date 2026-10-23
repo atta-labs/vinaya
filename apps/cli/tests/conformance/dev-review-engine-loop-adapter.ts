@@ -335,6 +335,12 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
     return observeEngineRun(runtimeDir, [], error)
   }
   task.cliEntry = gateCli
+  // The corpus repository has no installed hooks and no sandbox to probe: both controls are reported active.
+  task.bound = {
+    ...task.bound,
+    localGateControl: () => ({ control: 'local-gate', active: true, detail: '', remedy: '' }),
+    probeAgentSandbox: async () => ({ ok: true })
+  }
   if (id === 'required-source-failure') task.developerContext = { ...task.developerContext, requiredSources: [SOURCE] }
   if (id === 'context-pressure') task.clock = { elapsedMs: 1000, byPhaseMs: { developer: 1000 } }
   const recordedActionsForRun = () =>
