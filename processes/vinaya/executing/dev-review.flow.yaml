@@ -53,7 +53,7 @@ steps:
     role: code-reviewer
     prompt_template: "Review the task {{question}}."
     permission: code-reviewer/grants.yaml
-    working_directory: "processes/vinaya"
+    working_directory: ""
     max_turns: 100
     depends_on: [dispatch-reviewers]
   - id: security-review
@@ -61,7 +61,7 @@ steps:
     role: security-reviewer
     prompt_template: "Security-review the task {{question}}."
     permission: security-reviewer/grants.yaml
-    working_directory: "processes/vinaya"
+    working_directory: ""
     max_turns: 100
     depends_on: [dispatch-reviewers]
   - { id: validate-reviewer-outputs, type: mechanical, action: vinaya.validate-reviewer-outputs, depends_on: [code-review, security-review] }
