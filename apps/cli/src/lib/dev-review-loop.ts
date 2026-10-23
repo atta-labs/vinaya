@@ -404,15 +404,8 @@ export {
   readWorktreeHead,
   resolveHead
 } from './dev-review-loop/gate-reading.js'
-export type {
-  MergeableState,
-  PrOpenState
-} from './dev-review-loop/gate-reading.js'
-export {
-  DRIVER_OWNED_PATHS,
-  fetchPrState,
-  parseMergeTreeConflictFiles
-} from './dev-review-loop/gate-reading.js'
+export type { MergeableState, PrOpenState } from './dev-review-loop/gate-reading.js'
+export { DRIVER_OWNED_PATHS, fetchPrState, parseMergeTreeConflictFiles } from './dev-review-loop/gate-reading.js'
 export {
   checkTaskDispatchReadiness,
   describeObjectivesEdit,
@@ -474,10 +467,7 @@ export {
   writeEscalationRecord,
   WrongTargetResolutionError
 } from './dev-review-loop/pause-resume.js'
-export type {
-  EscalationFacts,
-  ResolveEscalationResult
-} from './dev-review-loop/pause-resume.js'
+export type { EscalationFacts, ResolveEscalationResult } from './dev-review-loop/pause-resume.js'
 export {
   developerRoundMarker,
   DevReviewLoopResumeError,
@@ -726,10 +716,7 @@ export type LoopDeps = {
    * turn (both zero). Best-effort: an unreadable worktree or a branch with
    * no upstream tracking ref reports zero for that half, never throws.
    */
-  readUnpushedWorkDetail: (worktreePath: string) => {
-    dirtyFiles: string[]
-    aheadCount: number
-  }
+  readUnpushedWorkDetail: (worktreePath: string) => { dirtyFiles: string[]; aheadCount: number }
   /** O9: the newest developer-stop comment on the task Issue, or `null`. */
   fetchDeveloperStop: typeof fetchDeveloperStop
   /** O4/O5/O7: the forge's own mergeable state for a PR. */
@@ -888,9 +875,7 @@ export type LoopDeps = {
    * branch is no longer at `expectedRemoteHead`.
    */
   pushTaskBranchWithLease: (
-    input: Parameters<LoopDeps['pushTaskBranch']>[0] & {
-      expectedRemoteHead: string
-    }
+    input: Parameters<LoopDeps['pushTaskBranch']>[0] & { expectedRemoteHead: string }
   ) => { ok: true } | { ok: false; refusal: string; hook: boolean; lease: boolean }
   /** O1/O2: the worktree's own diff text since `base`, for the after-turn credential scan. `null` when unreadable. */
   gitWorktreeDiffText: (worktreePath: string, base: string) => string | null
@@ -1022,9 +1007,7 @@ function defaultGitMergeBase(head: string): Promise<string> {
 
 function defaultGitFetch(sha: string): void {
   try {
-    execFileSync('git', ['fetch', '--quiet', 'origin', sha], {
-      stdio: ['ignore', 'ignore', 'ignore']
-    })
+    execFileSync('git', ['fetch', '--quiet', 'origin', sha], { stdio: ['ignore', 'ignore', 'ignore'] })
   } catch {
     // Non-fatal — the object may already be local; the diff below is the real test.
   }
@@ -1118,11 +1101,7 @@ function scanStreamToString(stream: Buffer | string | null | undefined): string 
  */
 export function defaultRunSecurityScanSubprocess(command: readonly string[], scanTargetDir: string): SecurityScanRun {
   const exe = command[0]
-  if (exe === undefined)
-    return {
-      ok: false,
-      reason: 'the configured securityScan.command is empty'
-    }
+  if (exe === undefined) return { ok: false, reason: 'the configured securityScan.command is empty' }
   // Round-2 security review, HIGH: the scan target is a PULL-REQUEST-AUTHORED
   // checkout, so it must never steer the subprocess's own config resolution.
   // `npx --yes <pkg>@<ver>` reads `.npmrc` from the process cwd AND its
@@ -1142,10 +1121,7 @@ export function defaultRunSecurityScanSubprocess(command: readonly string[], sca
   try {
     sandbox = mkdtempSync(join(tmpdir(), 'vinaya-scan-'))
   } catch (err) {
-    return {
-      ok: false,
-      reason: `could not create a scan sandbox: ${err instanceof Error ? err.message : String(err)}`
-    }
+    return { ok: false, reason: `could not create a scan sandbox: ${err instanceof Error ? err.message : String(err)}` }
   }
   const env: NodeJS.ProcessEnv = {}
   for (const key of WORKER_ENV_ALLOWLIST_KEYS) {
@@ -1172,15 +1148,9 @@ export function defaultRunSecurityScanSubprocess(command: readonly string[], sca
     }
     if (e.code === 'ENOENT') return { ok: false, reason: `scanner executable not found: ${exe}` }
     if (e.code === 'ENOBUFS' || e.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER')
-      return {
-        ok: false,
-        reason: `scanner output exceeded ${SECURITY_SCAN_MAX_BUFFER_BYTES} bytes`
-      }
+      return { ok: false, reason: `scanner output exceeded ${SECURITY_SCAN_MAX_BUFFER_BYTES} bytes` }
     if (e.code === 'ETIMEDOUT' || e.signal === 'SIGTERM')
-      return {
-        ok: false,
-        reason: `scanner timed out after ${SECURITY_SCAN_TIMEOUT_MS}ms`
-      }
+      return { ok: false, reason: `scanner timed out after ${SECURITY_SCAN_TIMEOUT_MS}ms` }
     // A run that exited non-zero: its output is the scan result, passed through
     // (exit status not read as pass/fail). Only a run that printed nothing at
     // all is a genuine failure with no result to hand the reviewer.
@@ -1276,10 +1246,7 @@ export function assertValidLoopEvent(e: DevReviewLoopEventInput): void {
  * worktree's own `git status --porcelain` with no exemption at all: a stray
  * file of any name is ordinary untracked work, never specially ignored.
  */
-function defaultReadUnpushedWorkDetail(worktreePath: string): {
-  dirtyFiles: string[]
-  aheadCount: number
-} {
+function defaultReadUnpushedWorkDetail(worktreePath: string): { dirtyFiles: string[]; aheadCount: number } {
   let dirtyFiles: string[] = []
   try {
     // Deliberately NOT `sh()`: its own blanket `.trim()` on the whole output
@@ -1401,10 +1368,7 @@ export function defaultReadMergedDefaultCommit(
   const vetted = (sha: string): MergedDefaultCommit | null => {
     if (gitOk(worktreePath, ['merge-base', '--is-ancestor', sha, head]) === null) return null
     const advanced = new Set(lines(['diff', '--name-only', sha, head]))
-    return {
-      commit: sha,
-      regressedPaths: lines(['diff', '--name-only', head]).filter((path) => advanced.has(path))
-    }
+    return { commit: sha, regressedPaths: lines(['diff', '--name-only', head]).filter((path) => advanced.has(path)) }
   }
   const incoming = gitOk(worktreePath, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])
   const fromMergeHead = incoming ? vetted(incoming) : null
@@ -1459,11 +1423,7 @@ function ensureDefaultTipObject(worktreePath: string, tip: string, remoteUrl: st
 }
 
 /** How each changed path relates to the default branch's tip (`classifyAgainstDefaultTip`). */
-export type DefaultTipClassification = {
-  sameAsTip: string[]
-  mainDrift: string[]
-  taskChanged: string[]
-}
+export type DefaultTipClassification = { sameAsTip: string[]; mainDrift: string[]; taskChanged: string[] }
 
 /** Each path's `<mode> <object>` at `commit`, absent when the commit has no such path; `null` when git cannot answer. */
 function treeEntriesAt(worktreePath: string, commit: string, paths: readonly string[]): Map<string, string> | null {
@@ -1493,11 +1453,7 @@ export function defaultClassifyAgainstDefaultTip(
   paths: readonly string[],
   remoteUrl: string | null
 ): DefaultTipClassification | null {
-  const classified: DefaultTipClassification = {
-    sameAsTip: [],
-    mainDrift: [],
-    taskChanged: []
-  }
+  const classified: DefaultTipClassification = { sameAsTip: [], mainDrift: [], taskChanged: [] }
   if (paths.length === 0) return classified
   if (!ensureDefaultTipObject(worktreePath, tip, remoteUrl)) return null
   const base = gitOk(worktreePath, ['merge-base', head, tip])
@@ -1745,10 +1701,7 @@ export function developerContinuationFacts(recovered: ReturnType<typeof recoverL
   return {
     unresolvedFindings: handoff?.findings.map((finding) => ({ ...finding })) ?? [],
     gateOutput:
-      handoff?.failingChecks.map((check) => ({
-        reference: check,
-        summary: 'failed on the newest gate read'
-      })) ?? []
+      handoff?.failingChecks.map((check) => ({ reference: check, summary: 'failed on the newest gate read' })) ?? []
   }
 }
 
@@ -1845,10 +1798,7 @@ function defaultCommitWorktree(worktreePath: string, header: string): CommitWork
   } finally {
     rmSync(traceDir, { recursive: true, force: true })
   }
-  return {
-    ok: true,
-    sha: sh('git', ['-C', worktreePath, 'rev-parse', 'HEAD']).trim()
-  }
+  return { ok: true, sha: sh('git', ['-C', worktreePath, 'rev-parse', 'HEAD']).trim() }
 }
 
 /**
@@ -1882,11 +1832,7 @@ function defaultOpenTaskPullRequest(input: {
   let context: ReturnType<typeof authenticateWorkerInvocation>
   try {
     context = authenticateWorkerInvocation(
-      {
-        VINAYA_ROLE: 'developer',
-        VINAYA_TASK: String(input.task),
-        VINAYA_RUN_ID: runId
-      },
+      { VINAYA_ROLE: 'developer', VINAYA_TASK: String(input.task), VINAYA_RUN_ID: runId },
       realDispatchTeeRecoveryDeps()
     )
   } catch {
@@ -1943,10 +1889,7 @@ async function defaultStartDevTools(input: {
     // A Developer turn is served its seven tools; a reviewer turn only `read_source`.
     role: input.role ?? 'developer'
   })
-  return {
-    bridge: driverDevBridgeInvocation(host.socketPath),
-    close: () => host.close()
-  }
+  return { bridge: driverDevBridgeInvocation(host.socketPath), close: () => host.close() }
 }
 
 /** O2/O3: `gh pr edit --body-file` to replace the open PR's body (the `update_pull_request_body` tool's forge write). */
@@ -2372,16 +2315,11 @@ function gatePollEnvOverride(name: string, fallback: number): number {
 /** O7: `git pull --ff-only origin main` — the exact update `checkStaleDriver` re-execs from. `--ff-only` refuses rather than fabricating a merge commit on a base this driver never touches directly. */
 function defaultPullDefaultBranch(): { ok: true } | { ok: false; reason: string } {
   try {
-    execFileSync('git', ['pull', '--ff-only', 'origin', 'main'], {
-      stdio: ['ignore', 'ignore', 'pipe']
-    })
+    execFileSync('git', ['pull', '--ff-only', 'origin', 'main'], { stdio: ['ignore', 'ignore', 'pipe'] })
     return { ok: true }
   } catch (err) {
     const stderr = err && typeof err === 'object' && 'stderr' in err ? String((err as { stderr: unknown }).stderr) : ''
-    return {
-      ok: false,
-      reason: stderr.trim() || (err instanceof Error ? err.message : String(err))
-    }
+    return { ok: false, reason: stderr.trim() || (err instanceof Error ? err.message : String(err)) }
   }
 }
 
@@ -2430,34 +2368,19 @@ async function defaultRunEvidenceReport(
       reason: `could not fetch PR ${pushPr}'s live body: ${err instanceof Error ? err.message : String(err)}`
     }
   }
-  const envOverlay: NodeJS.ProcessEnv = {
-    ...process.env,
-    PR_BODY: preEditBody,
-    PR_NUMBER: pushPr,
-    BRANCH: branch
-  }
+  const envOverlay: NodeJS.ProcessEnv = { ...process.env, PR_BODY: preEditBody, PR_NUMBER: pushPr, BRANCH: branch }
   try {
-    const result = await buildReport({
-      body: preEditBody,
-      gradedBodySource: 'push',
-      cwd,
-      envOverlay
-    })
+    const result = await buildReport({ body: preEditBody, gradedBodySource: 'push', cwd, envOverlay })
     // Every non-`'ok'` kind carries a `message` and reaches here as an
     // ordinary return, never a process exit — including `'body-checks-refused'`:
     // a body-check refusal during this push is just one more
     // failure mode this ternary already collapses to `{ ok: false, reason }`.
-    const outcome = await runReportForOpenPr(pushPr, preEditBody, result, {
-      branch
-    })
+    const outcome = await runReportForOpenPr(pushPr, preEditBody, result, { branch })
     return outcome.kind === 'ok'
       ? { ok: true, gatesFailed: outcome.gatesFailed }
       : { ok: false, reason: outcome.message }
   } catch (err) {
-    return {
-      ok: false,
-      reason: err instanceof Error ? err.message : String(err)
-    }
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) }
   }
 }
 
@@ -2660,16 +2583,11 @@ function deferredEntriesForRound(round: number, verdicts: VerdictObservation[]):
  * this task: an operator's own one-shot `--task`/`--resume` call was
  * always meant to end here.
  */
-export type LoopInput = {
-  json?: boolean
-  model?: string
-  retainDriverLock?: string
-} & ({ task: number; agent: AgentVendor } | { resumePr: number; agent?: AgentVendor })
-export type LoopResult = {
-  finalDecision: Decision
-  prNumber: number
-  task: number
-}
+export type LoopInput = { json?: boolean; model?: string; retainDriverLock?: string } & (
+  | { task: number; agent: AgentVendor }
+  | { resumePr: number; agent?: AgentVendor }
+)
+export type LoopResult = { finalDecision: Decision; prNumber: number; task: number }
 
 /**
  * The exact argv `checkStaleDriver`'s re-exec hands to a fresh `vinaya
@@ -2789,10 +2707,7 @@ export function surfaceOpenedAgentConfigPaths(surface: IssueSurface | null, agen
     if (!configDirs.some((dir) => path === dir || path.startsWith(`${dir}/`))) continue
     if (surface.out.some((glob) => globCoversPath(glob, path))) continue
     const prior = opened.get(path)
-    opened.set(path, {
-      path,
-      createIfMissing: createIfMissing || prior?.createIfMissing === true
-    })
+    opened.set(path, { path, createIfMissing: createIfMissing || prior?.createIfMissing === true })
   }
   return [...opened.values()]
 }
@@ -2894,11 +2809,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     dispatchModel = agentSwitched ? input.model : (input.model ?? held.model)
     if (readDeveloperModelRuns(root, closesTask).length === 0 && held.agent !== undefined) {
       writeDeveloperModelRuns(root, closesTask, [
-        {
-          model: held.model ?? held.agent,
-          firstRound: 1,
-          lastRound: held.round
-        }
+        { model: held.model ?? held.agent, firstRound: 1, lastRound: held.round }
       ])
     }
     // O5: an automatic-recovery (`'infrastructure'` or `'stale_driver'`)
@@ -3155,12 +3066,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   // one) — passing `null` here means this marker never waits on
   // `resolveRepo()`, which only runs later, inside the body.
   const loopLogPath = loopLogPathFor(null, task)
-  appendRunStartMarker(loopLogPath, {
-    role: 'dev-review-loop',
-    pid: process.pid,
-    runId,
-    resumed: 'resumePr' in input
-  })
+  appendRunStartMarker(loopLogPath, { role: 'dev-review-loop', pid: process.pid, runId, resumed: 'resumePr' in input })
 
   // The same keep-policy `vinaya task sweep` runs on demand, started here
   // but never awaited before dispatch (O2) — `excludeScope` (this run's OWN
@@ -3238,11 +3144,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         printDriverLockLine(message)
         throw new Error(`devReviewLoop: ${message}`)
       }
-      writeDriverLock(root, task, {
-        pid: process.pid,
-        startedAt: new Date().toISOString(),
-        token: lockToken
-      })
+      writeDriverLock(root, task, { pid: process.pid, startedAt: new Date().toISOString(), token: lockToken })
     }
   }
   // O3: restart cleanliness — a crashed or killed prior run's own
@@ -3444,11 +3346,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // issue-661, O1: the developer's own resolved model when `runTask`
       // resolved one, else the vendor name unchanged — reviewer/security
       // model resolution is out of this task's boundary.
-      models: {
-        developer: dispatchModel ?? dispatchAgent,
-        'code-reviewer': dispatchAgent,
-        security: dispatchAgent
-      },
+      models: { developer: dispatchModel ?? dispatchAgent, 'code-reviewer': dispatchAgent, security: dispatchAgent },
       // O4: the repo-wide default, corrected to the REAL
       // `reviewPolicy()` value the moment the widened `try` below reads it
       // successfully (O6: `config` must be valid — never built from a
@@ -3557,11 +3455,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // The forge markers on this task's own pull request — never a log
       // event or the telemetry outbox. `prNumber` is already the attached
       // PR's number by the one call site below.
-      const seeded = seedLoopHistory({
-        fetchLoopHistory: d.fetchLoopHistory,
-        prNumber,
-        state
-      })
+      const seeded = seedLoopHistory({ fetchLoopHistory: d.fetchLoopHistory, prNumber, state })
       loopHistory = seeded.loopHistory
       historyApplies = seeded.historyApplies
       state = seeded.state
@@ -3747,11 +3641,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         round,
         phase,
         pauseReason,
-        budgets: {
-          mechanicalRetries: gateStalledStreak,
-          reviewRounds: round,
-          infrastructureRetries
-        },
+        budgets: { mechanicalRetries: gateStalledStreak, reviewRounds: round, infrastructureRetries },
         heldResult: heldResultIdentity,
         deliveredFindings: deliveredFindingsIdentity,
         // The two repeat detectors, read straight off the live `LoopState`
@@ -3759,10 +3649,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // itself. A re-exec (`checkStaleDriver`) and an attach both build a
         // fresh `LoopState`, so without this the next round would re-send the
         // developer at a finding or a failure that had already repeated.
-        repeatMemory: {
-          blockingFindings: state.lastBlockingFindings,
-          lastFailure: state.lastFailure
-        },
+        repeatMemory: { blockingFindings: state.lastBlockingFindings, lastFailure: state.lastFailure },
         publicationExpectedBase: publicationState.publicationExpectedBase,
         developerHandoff,
         // The task's own clock, carried forward unchanged (`taskStartedAt`) and
@@ -3878,12 +3765,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       } catch {
         // Best-effort — a crash this early in setup can leave `policy` unassigned.
       }
-      return {
-        briefHash: brief,
-        objectivesVersion: objectives,
-        rulingOrdinal: ordinal,
-        policyDigest: digest
-      }
+      return { briefHash: brief, objectivesVersion: objectives, rulingOrdinal: ordinal, policyDigest: digest }
     }
     let resumedDispatch = resumeFrom !== null
     /** O3: the last red gate's failing check-run names, for the next gate-red dispatch prompt and, if it stalls, the pause detail. */
@@ -3996,13 +3878,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // receipts and other roles' folders are still resolved and hashed, so
       // an unreadable config never fails this role's WHOLE check open.
       const vinayaConfigPath = configPath()
-      const entries = protectedPathsForTurn({
-        runtimeDir: root,
-        task,
-        round: roundNum,
-        role,
-        vinayaConfigPath
-      })
+      const entries = protectedPathsForTurn({ runtimeDir: root, task, round: roundNum, role, vinayaConfigPath })
       // The control store and the documentation receipts file are the
       // entries the driver's own tools write during a turn; `driverToolCall`
       // (wrapped around every dev-tools call that writes,
@@ -4059,10 +3935,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     /** O2: a dispatch's own raw vendor output (the dispatch tee, `output/<effectId>.log`) as a scan-text entry, when `handle.effectId` resolves to one that is actually readable — `null` otherwise, never faked. Shared by the Developer and Reviewer scan-text builders below. */
     function rawOutputScanText(handle: DispatchHandle): { text: string; location: string } | null {
       if (!handle.effectId) return null
-      const teePath = runPath(root, task, {
-        area: 'output',
-        file: `${handle.effectId}.log`
-      })
+      const teePath = runPath(root, task, { area: 'output', file: `${handle.effectId}.log` })
       const raw = readIfExists(teePath)
       return raw ? { text: raw, location: `the turn's own raw output (${teePath})` } : null
     }
@@ -4089,21 +3962,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       if (output) {
         const written = developerWrittenTextFromVendorOutput(output.text, dispatchAgent)
         if (written)
-          texts.push({
-            text: written,
-            location: "the Developer's own turn output (its messages and tool invocations)"
-          })
+          texts.push({ text: written, location: "the Developer's own turn output (its messages and tool invocations)" })
       }
       const worktree = worktreePathForBranch()
       if (publicationState.turnPreHead !== null && existsSync(worktree)) {
         const diff = d.gitWorktreeDiffText(worktree, publicationState.turnPreHead)
         if (diff) {
           const added = addedDiffLines(diff)
-          if (added)
-            texts.push({
-              text: added,
-              location: 'the diff lines this turn added to the worktree'
-            })
+          if (added) texts.push({ text: added, location: 'the diff lines this turn added to the worktree' })
         }
       }
       return texts
@@ -4193,7 +4059,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     /** Rewrite the open pull request's `AEG:BEYOND-SURFACE` block after the branch moved — a no-op with no open pull request or no change to the block. Never throws: a failed write is logged, and the next body write records it. */
-    async function _syncBeyondSurfaceRecord(pr: number | null): Promise<void> {
+    async function syncBeyondSurfaceRecord(pr: number | null): Promise<void> {
       return sharedSyncBeyondSurfaceRecord(liveContextScope(), pr)
     }
 
@@ -4692,10 +4558,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         round: roundNum,
         knownFindingIds: handoffFindingIdsByRound.get(roundNum) ?? [],
         requireAddressedFindings: answersFindings && (handoffFindingIdsByRound.get(roundNum) ?? []).length > 0,
-        documentation: handle.documentation ?? {
-          sources: [],
-          countedReads: []
-        }
+        documentation: handle.documentation ?? { sources: [], countedReads: [] }
       })
       return verdict.ok && verdict.result.status === 'blocked' && verdict.result.blocker.kind === 'test_failure'
     }
@@ -4706,10 +4569,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         round: roundNum,
         knownFindingIds: handoffFindingIdsByRound.get(roundNum) ?? [],
         requireAddressedFindings: answersFindings && (handoffFindingIdsByRound.get(roundNum) ?? []).length > 0,
-        documentation: handle.documentation ?? {
-          sources: [],
-          countedReads: []
-        }
+        documentation: handle.documentation ?? { sources: [], countedReads: [] }
       })
       return verdict.ok && pauseForAcceptedResult(verdict.result) !== null
     }
@@ -4730,22 +4590,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       roundNum: number,
       answersFindings: boolean
     ): Promise<
-      | {
-          kind: 'checks'
-          runIds: number[]
-          ciConclusion: 'green' | 'red' | 'pending'
-        }
-      | { kind: 'host' }
-      | null
+      { kind: 'checks'; runIds: number[]; ciConclusion: 'green' | 'red' | 'pending' } | { kind: 'host' } | null
     > {
       const verdict = judgeTurnOutput(handle.turnOutput, {
         round: roundNum,
         knownFindingIds: handoffFindingIdsByRound.get(roundNum) ?? [],
         requireAddressedFindings: answersFindings && (handoffFindingIdsByRound.get(roundNum) ?? []).length > 0,
-        documentation: handle.documentation ?? {
-          sources: [],
-          countedReads: []
-        }
+        documentation: handle.documentation ?? { sources: [], countedReads: [] }
       })
       if (!verdict.ok || verdict.result.status !== 'blocked' || verdict.result.blocker.kind !== 'tooling_unavailable')
         return null
@@ -4788,19 +4639,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       handle: DispatchHandle,
       roundNum: number,
       answersFindings: boolean
-    ): Promise<{
-      runIds: number[]
-      ciConclusion: 'green' | 'red' | 'pending'
-      failingChecks: string[]
-    } | null> {
+    ): Promise<{ runIds: number[]; ciConclusion: 'green' | 'red' | 'pending'; failingChecks: string[] } | null> {
       const verdict = judgeTurnOutput(handle.turnOutput, {
         round: roundNum,
         knownFindingIds: handoffFindingIdsByRound.get(roundNum) ?? [],
         requireAddressedFindings: answersFindings && (handoffFindingIdsByRound.get(roundNum) ?? []).length > 0,
-        documentation: handle.documentation ?? {
-          sources: [],
-          countedReads: []
-        }
+        documentation: handle.documentation ?? { sources: [], countedReads: [] }
       })
       if (!verdict.ok || verdict.result.status !== 'blocked' || verdict.result.blocker.kind !== 'tooling_unavailable')
         return null
@@ -4813,11 +4657,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
       const rerun = await rerunFailedChecksForHead(head, roundNum, 'a tooling_unavailable report')
       if (rerun === null) return null
-      return {
-        runIds: rerun.runIds,
-        ciConclusion: rerun.gate.ciConclusion,
-        failingChecks: rerun.gate.failingChecks
-      }
+      return { runIds: rerun.runIds, ciConclusion: rerun.gate.ciConclusion, failingChecks: rerun.gate.failingChecks }
     }
 
     /** Rerun every failed workflow on one head, then wait for that head's gate once. */
@@ -4825,10 +4665,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       head: string,
       roundNum: number,
       reason: string
-    ): Promise<{
-      runIds: number[]
-      gate: Awaited<ReturnType<typeof waitForGreenGate>>
-    } | null> {
+    ): Promise<{ runIds: number[]; gate: Awaited<ReturnType<typeof waitForGreenGate>> } | null> {
       const rerunIds = rerunFailedWorkflowsOn(head, roundNum, reason)
       if (rerunIds.length === 0) return null
       const gate = await waitForGreenGate(d.now())
@@ -4945,10 +4782,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         record(
           secondAttempt,
           secondHead,
-          {
-            ok: false,
-            failures: [`turnResult: the correction turn failed (${correction.failureReason})`]
-          },
+          { ok: false, failures: [`turnResult: the correction turn failed (${correction.failureReason})`] },
           null
         )
         throw new DeveloperTurnResultPause(
@@ -5001,7 +4835,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * compares it against the base recorded before the attempt, so a refused
      * attempt never moves that expectation. Never throws.
      */
-    async function _readPublicationBase(worktreeHead: string | null): Promise<string | null> {
+    async function readPublicationBase(worktreeHead: string | null): Promise<string | null> {
       return sharedReadPublicationBase(liveContextScope(), worktreeHead)
     }
 
@@ -5057,9 +4891,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * the citations of the round's newest accepted `completed` turn result.
      * Nothing when there is no manifest or it names no source.
      */
-    function roundReviewerSources(roundNum: number): {
-      requiredSources?: ReviewerSourceFacts
-    } {
+    function roundReviewerSources(roundNum: number): { requiredSources?: ReviewerSourceFacts } {
       const manifest = preparedSourcesByRound.get(roundNum) ?? readRequiredSourceManifest(sourceStoreForTask())
       if (manifest === null || manifest.sources.length === 0) return {}
       return {
@@ -5080,10 +4912,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     async function startReviewerSourceTools(
       dispatchRoleName: 'code-reviewer' | 'security',
       sources: ReviewerSourceFacts | undefined
-    ): Promise<{
-      bridge: BridgeInvocation
-      close: () => Promise<void>
-    } | null> {
+    ): Promise<{ bridge: BridgeInvocation; close: () => Promise<void> } | null> {
       if (sources === undefined || sources.sources.length === 0) return null
       const worktree = existsSync(worktreePathForBranch()) ? worktreePathForBranch() : process.cwd()
       const readSource = createReadSourceTool({
@@ -5145,11 +4974,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         ...liveContextScope(),
         agent: dispatchAgent,
         round: () => roundNum,
-        helpers: {
-          ownChangesRangeBase,
-          defaultGitWorktreeUntrackedPaths,
-          worktreeCheckEnv
-        }
+        helpers: { ownChangesRangeBase, defaultGitWorktreeUntrackedPaths, worktreeCheckEnv }
       })
     }
     /**
@@ -5205,9 +5030,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * already used, unchanged.
      */
     function reconcileDeveloperResume(artifactsPresent: boolean): void {
-      const recon = recoverDeveloperLaunch(task, dispatchAgent, repo, {
-        artifactsPresent
-      })
+      const recon = recoverDeveloperLaunch(task, dispatchAgent, repo, { artifactsPresent })
       if (recon.kind === 'live') {
         throw new LaunchContinuityLost(
           `a prior dispatched developer launch (pid ${recon.record.childPid}) is still running for task ${task} — refusing to start a second worker on the same task`
@@ -5760,14 +5583,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const baseHead = d.gitRevParseOriginMain()
       d.gitFetch(head)
       const { filesChanged, insertions, deletions } = parseShortstat(d.gitDiffShortstat(baseHead, head))
-      return {
-        baseHead,
-        head,
-        filesChanged,
-        insertions,
-        deletions,
-        wallMs: d.now() - roundStartMs
-      }
+      return { baseHead, head, filesChanged, insertions, deletions, wallMs: d.now() - roundStartMs }
     }
 
     /**
@@ -6037,14 +5853,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // turn; stopped by `recordDriverExited` before any exit line. The
     // production timer is `.unref()`'d, so it never keeps the process alive.
     const emitHeartbeat = (): void =>
-      emitDriverHeartbeat({
-        loopId: config.loopId,
-        task,
-        round,
-        phase: currentPhase,
-        prNumber,
-        log
-      })
+      emitDriverHeartbeat({ loopId: config.loopId, task, round, phase: currentPhase, prNumber, log })
     stopHeartbeat = d.setHeartbeat(emitHeartbeat, DRIVER_HEARTBEAT_INTERVAL_MS)
 
     // Round 2 review, BLOCKER: `firstPass`/`pendingCompletionEvents` are
@@ -6112,11 +5921,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // any fresh driver invocation.
         clearDriverLock(root, task)
         const reexecArgs = buildReexecArgs(
-          {
-            ...input,
-            agent: dispatchAgent,
-            ...(dispatchModel ? { model: dispatchModel } : {})
-          },
+          { ...input, agent: dispatchAgent, ...(dispatchModel ? { model: dispatchModel } : {}) },
           task
         )
         const exitCode = d.reexecSelf(reexecArgs)
@@ -6143,11 +5948,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // resolved at entry — this is still the identical process/run, so a
         // later resume attempt (if this is a driver-loop-owned call) still
         // recognizes it as its own.
-        writeDriverLock(root, task, {
-          pid: process.pid,
-          startedAt: new Date().toISOString(),
-          token: lockToken
-        })
+        writeDriverLock(root, task, { pid: process.pid, startedAt: new Date().toISOString(), token: lockToken })
         reexecFailureNote = `re-exec of \`vinaya ${reexecArgs.join(' ')}\` could not even start after pulling the updated base`
       } else {
         reexecFailureNote = `could not pull the default branch to re-exec from: ${pulled.reason}`
@@ -6339,11 +6140,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // SAME head with no push in between: the second one reads as
               // `no_progress`, not another redelivery drifting toward a
               // confidence collapse.
-              const marker = runPath(root, task, {
-                area: 'round',
-                round: held.round,
-                file: 'attach-redelivered'
-              })
+              const marker = runPath(root, task, { area: 'round', round: held.round, file: 'attach-redelivered' })
               // The control-store
               // `deliveredFindings` identity backs up the SAME "already
               // delivered" fact the local marker file records — checked
@@ -6378,10 +6175,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 // A recovered verdict carries only its rendered text — no ids to hand over.
                 lastHandoffFindings = null
                 firstPass = false
-                deliveredFindingsIdentity = {
-                  round: held.round,
-                  head: currentHead
-                }
+                deliveredFindingsIdentity = { round: held.round, head: currentHead }
                 persistCurrentLoopState('dispatch_developer')
               }
             }
@@ -6578,10 +6372,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                   round,
                   'escalation',
                   detail,
-                  {
-                    agent: dispatchAgent,
-                    ...(dispatchModel ? { model: dispatchModel } : {})
-                  },
+                  { agent: dispatchAgent, ...(dispatchModel ? { model: dispatchModel } : {}) },
                   escalationRecord?.rulingOrdinal
                 )
               )
@@ -6784,10 +6575,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               round = heldClean.round
               lastDispatchedManifest = heldClean.manifest
               approvedBriefContent = carryBriefContent
-              heldResultIdentity = {
-                round: heldClean.round,
-                head: heldClean.head
-              }
+              heldResultIdentity = { round: heldClean.round, head: heldClean.head }
               decision = { type: 'publish' }
             } else {
               patchCarryNote = `held clean verdict from round ${heldClean.round} at head ${heldClean.head} does not cover the current head ${currentHeadForCarry} (unbound: ${unboundFields(carryBinding).join(', ')}) — starting a fresh round`
@@ -6918,10 +6706,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
       // A host-repair pause ends this driver and frees the lock, so the
       // ordinary start can continue the task once the host is repaired.
-      keepLockAlive = keepDriverLock({
-        kind: 'crash',
-        hostRepair: sandboxRefusal !== null
-      })
+      keepLockAlive = keepDriverLock({ kind: 'crash', hostRepair: sandboxRefusal !== null })
       // The SAME durable snapshot every
       // other pause reason gets, best-effort like the write itself already
       // is — a genuinely uncaught error is exactly the case this record
@@ -6994,10 +6779,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // nothing was ever opened against. Recorded on the task Issue
         // instead, the one forge location that is always addressable for a
         // task with no open PR yet.
-        const invocation = {
-          agent: dispatchAgent,
-          ...(dispatchModel ? { model: dispatchModel } : {})
-        }
+        const invocation = { agent: dispatchAgent, ...(dispatchModel ? { model: dispatchModel } : {}) }
         const postResult =
           prNumber <= 0
             ? d.postIssuePauseComment(
@@ -7224,9 +7006,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // simulating one, well beyond this fix's own boundary.
             const headBeforeDispatch = isGateRedRetry || conflictFiles !== null ? d.resolveHead(branch) : null
             roundStartMs = d.now()
-            await dispatchDeveloper(prompt, round, {
-              answersFindings: isReviewFindingsRetry
-            })
+            await dispatchDeveloper(prompt, round, { answersFindings: isReviewFindingsRetry })
             resumedDispatch = false
             issueRulingsOwed = false
 
@@ -7531,9 +7311,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           const premiseFailureLines = premiseResult !== null ? premiseResult.errors.map((e) => e.message) : []
           const gateGreen = gate.green && !premiseFailed
           lastFailingChecks = [...gate.failingChecks, ...premiseFailureLines]
-          persistDeveloperHandoff({
-            failingChecks: lastFailingChecks.filter((check) => check.length > 0)
-          })
+          persistDeveloperHandoff({ failingChecks: lastFailingChecks.filter((check) => check.length > 0) })
           lastFailureLogs = gate.failureLogs
           pendingGateRedRetry = !gateGreen
           if (mechanicalRetryRecoverySurvivesOneReset) {
@@ -7563,10 +7341,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           state = result.state
           decision = result.decision
           if (decision.type === 'pause' && decision.reason === 'confidence' && decision.detail === undefined) {
-            decision = {
-              ...decision,
-              detail: describeConfidencePauseDetail(confidence ?? 'absent')
-            }
+            decision = { ...decision, detail: describeConfidencePauseDetail(confidence ?? 'absent') }
           }
           await logEvents(result.events)
           persistCurrentLoopState(decision.type, decision.type === 'pause' ? decision.reason : undefined)
@@ -7578,21 +7353,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           const head = d.resolveHead(branch)
           const stats = computeStats(head, roundStartMs)
           const confidence = roundConfidence(round)
-          const obs: Observations = {
-            kind: 'gate',
-            round,
-            green: true,
-            confidence,
-            stats
-          }
+          const obs: Observations = { kind: 'gate', round, green: true, confidence, stats }
           const result = assessRound(state, obs, taskClock())
           state = result.state
           decision = result.decision
           if (decision.type === 'pause' && decision.reason === 'confidence' && decision.detail === undefined) {
-            decision = {
-              ...decision,
-              detail: describeConfidencePauseDetail(confidence)
-            }
+            decision = { ...decision, detail: describeConfidencePauseDetail(confidence) }
           }
           pendingGateRedRetry = false
           if (mechanicalRetryRecoverySurvivesOneReset) {
@@ -7839,17 +7605,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 })(),
                 candidateDir,
                 runScan:
-                  d.runSecurityScanSubprocess ??
-                  (() => ({
-                    ok: false,
-                    reason: 'no scanner runner is available'
-                  }))
+                  d.runSecurityScanSubprocess ?? (() => ({ ok: false, reason: 'no scanner runner is available' }))
               })
             } catch (scanErr) {
-              scanOutcome = {
-                kind: 'failed',
-                reason: scanErr instanceof Error ? scanErr.message : String(scanErr)
-              }
+              scanOutcome = { kind: 'failed', reason: scanErr instanceof Error ? scanErr.message : String(scanErr) }
             }
             facts.configScan = scanOutcome
             const scanDetail = scanOutcome.kind === 'failed' ? `failed reason=${scanOutcome.reason}` : scanOutcome.kind
@@ -8011,11 +7770,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               } between reviewer dispatch and assessment — superseded by \`${command}\``
               const stats = computeStats(head, roundStartMs)
               await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats, 'objectives_changed'))
-              decision = {
-                type: 'pause',
-                reason: 'objectives_changed',
-                detail
-              }
+              decision = { type: 'pause', reason: 'objectives_changed', detail }
             } else if (!binding.rulingOrdinal) {
               const detail = `a new ruling landed between reviewer dispatch and assessment — ruling ordinal moved from ${facts.manifest.rulingOrdinal} to ${reassessedRulingOrdinal} — superseded by ruling ${prNumber}-${reassessedRulingOrdinal}`
               const stats = computeStats(head, roundStartMs)
@@ -8047,10 +7802,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               lastReviewContext = `${reviewer.verdict.rendered}\n\n---\n\n${security.verdict.rendered}`
               lastHandoffFindings = handoffFindings(round, reviewer.verdict.observation, security.verdict.observation)
               persistDeveloperHandoff({
-                findings: lastHandoffFindings.map((finding) => ({
-                  id: finding.id,
-                  description: finding.line
-                }))
+                findings: lastHandoffFindings.map((finding) => ({ id: finding.id, description: finding.line }))
               })
 
               const roundVerdicts = [reviewer.verdict.observation, security.verdict.observation]
@@ -8086,10 +7838,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // cap that a patch-identical carry should have (and did)
               // already avoid.
               if (decision.type === 'pause' && decision.reason === 'max_rounds' && patchCarryNote !== null) {
-                decision = {
-                  ...decision,
-                  detail: `${decision.detail ?? ''} — ${patchCarryNote}`.trim()
-                }
+                decision = { ...decision, detail: `${decision.detail ?? ''} — ${patchCarryNote}`.trim() }
               }
               // The live check runs here, on the head both reviewers just
               // approved and before the round's events are logged — never
@@ -8234,10 +7983,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             .flatMap(([, entries]) => entries)
           const deferredIssue =
             deferredFindings.length > 0
-              ? d.writeDeferredFindingsIssue({
-                  prNumber,
-                  entries: deferredFindings
-                })
+              ? d.writeDeferredFindingsIssue({ prNumber, entries: deferredFindings })
               : undefined
 
           d.publishRound(root, {
@@ -8374,10 +8120,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // already takes, for the same reason: a comment can only be posted
           // against a pull request that exists, and this site is not
           // structurally guaranteed to have one.
-          const pauseInvocation = {
-            agent: dispatchAgent,
-            ...(dispatchModel ? { model: dispatchModel } : {})
-          }
+          const pauseInvocation = { agent: dispatchAgent, ...(dispatchModel ? { model: dispatchModel } : {}) }
           await logPauseCommentRetryIfNotable(
             round,
             prNumber <= 0
@@ -8416,11 +8159,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
  * a `-1` sentinel is what made such a pause uncancellable.
  */
 export type CancelInput = { agent: AgentVendor } & ({ cancelPr: number } | { cancelTask: number })
-export type CancelResult = {
-  task: number
-  escalationId: string
-  fencedEffectKeys: string[]
-}
+export type CancelResult = { task: number; escalationId: string; fencedEffectKeys: string[] }
 
 export type CancelDeps = {
   fetchPrBody: typeof fetchPrBody
@@ -8750,11 +8489,7 @@ export type DriverEndReason = 'merged' | 'closed' | 'cancelled'
  * Surface keeps: `packages/aeg-core` stays untouched by this member.
  */
 export type DriverDecision = Decision | { type: 'ended'; reason: DriverEndReason }
-export type DriverResult = {
-  finalDecision: DriverDecision
-  prNumber: number
-  task: number
-}
+export type DriverResult = { finalDecision: DriverDecision; prNumber: number; task: number }
 
 export type DriverWatchDeps = {
   /** Defaults to the real `devReviewLoop` — every resume attempt this watcher makes goes through it unchanged, threading the SAME caller-supplied `loopDeps` every time (a test's in-process harness included). */
@@ -9006,9 +8741,7 @@ async function watchPauseThenResume(
   let agent = held?.agent
   let model = held?.model
   classifyRateLimitPause(
-    held ?? {
-      detail: pauseResult.finalDecision.type === 'pause' ? pauseResult.finalDecision.detail : undefined
-    }
+    held ?? { detail: pauseResult.finalDecision.type === 'pause' ? pauseResult.finalDecision.detail : undefined }
   )
   let escalationId = held?.escalationId ?? null
   // "Newer than the pause" (O4's own wording) — captured now, the moment
