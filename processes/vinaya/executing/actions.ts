@@ -190,6 +190,8 @@ export interface TaskInput {
     role: 'reviewer' | 'security',
     results: Readonly<Record<string, StepNodeResult>>
   ) => string | Promise<string>
+  /** The scratch directory prepared by the prompt for this role's current attempt. */
+  reviewerWorkingDirectory?: (role: 'reviewer' | 'security') => string | null
   /** The round's staged, head-verified candidate copy the security scan runs over, or null when none could be staged. */
   candidateDir?: () => string | null
   /** The task's frozen brief, whose `[live]` Test Plan lines the live-check step runs. */

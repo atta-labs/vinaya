@@ -426,6 +426,25 @@ export function isReviewerLaunch(generatedRoot: string) {
     )
 }
 
+/** Gives each reviewer launch the scratch directory prepared for that role's current attempt. */
+export function withReviewerWorkingDirectory(
+  spawnFn: SpawnFn,
+  generatedRoot: string,
+  directoryFor: (role: HeldVerdictRole) => string | null
+): SpawnFn {
+  const roots = {
+    reviewer: join(generatedRoot, 'code-reviewer'),
+    security: join(generatedRoot, 'security-reviewer')
+  } as const
+  return (command, args, options) => {
+    const role = (Object.entries(roots) as Array<[HeldVerdictRole, string]>).find(
+      ([, root]) => options?.env?.CODEX_HOME === root || args.some((arg) => arg.startsWith(`${root}/`))
+    )?.[0]
+    const directory = role ? directoryFor(role) : null
+    return spawnFn(command, args, directory ? { ...options, cwd: directory } : options)
+  }
+}
+
 /** One execution of a step, in the order the Engine started them. */
 export interface TraceStep {
   nodeId: string
@@ -931,7 +950,14 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
                 }
               }
             : {}),
-          spawnFn: tolerateReviewerExit(reaper.spawnFn, isReviewerLaunch(join(runDir, 'generated'))),
+          spawnFn: tolerateReviewerExit(
+            withReviewerWorkingDirectory(
+              reaper.spawnFn,
+              join(runDir, 'generated'),
+              (role) => options.taskInput?.reviewerWorkingDirectory?.(role) ?? null
+            ),
+            isReviewerLaunch(join(runDir, 'generated'))
+          ),
           control,
           onEvent: (event) => {
             const lifecycleEvent = event as NodeLifecycle
@@ -1270,11 +1296,14 @@ export async function liveTaskInput(
     diff: (base, head) => sh('git', ['diff', `${base}...${head}`], worktreePath),
     ...lookups.reviewSources
   })
+  const reviewerDirectories: Record<HeldVerdictRole, string | null> = { reviewer: null, security: null }
   const reviewerPrompt = async (
     role: HeldVerdictRole,
     results: Readonly<Record<string, StepNodeResult>>
   ): Promise<string> => {
-    const staged = reviewInput.stage(round)
+    const attempt = recordedDispatch(results)?.attempt ?? 1
+    const staged = reviewInput.stageAttempt(round, role, attempt)
+    reviewerDirectories[role] = staged?.dir ?? null
     // The role's doctrine, resolved as the standalone loop resolves it; a failed resolution renders none.
     let doctrine: string | null = null
     try {
@@ -1308,6 +1337,7 @@ export async function liveTaskInput(
   }
   return {
     reviewerPrompt,
+    reviewerWorkingDirectory: (role) => reviewerDirectories[role],
     candidateDir: () => reviewInput.stage(round)?.dir ?? null,
     frozenBrief: () => forge.fetchFrozenBrief(args.task),
     stageReviewInput: (n) => reviewInput.stage(n),

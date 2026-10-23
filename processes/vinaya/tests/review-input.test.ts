@@ -75,6 +75,54 @@ describe('the Vinaya review input', () => {
     expect(prior).toContain('SECURITY round-1 finding S1')
   })
 
+  test('builds a fresh isolated copy per role and attempt from identical staged bytes', () => {
+    const { worktree, head } = repoWithCommit()
+    const root = mkdtempSync(join(tmpdir(), 'review-input-root-'))
+    const stager = createVinayaReviewInputStager({
+      root,
+      task: 9,
+      worktreePath: worktree,
+      judgedHead: () => head,
+      readHead: () => head,
+      baseOf: () => 'base',
+      brief: () => 'brief bytes',
+      prBody: () => 'body bytes',
+      diff: () => 'diff bytes',
+      priorFindings: () => 'finding bytes'
+    })
+    const reviewer1 = stager.stageAttempt(1, 'reviewer', 1)
+    const security1 = stager.stageAttempt(1, 'security', 1)
+    const reviewer2 = stager.stageAttempt(1, 'reviewer', 2)
+    expect(new Set([reviewer1?.dir, security1?.dir, reviewer2?.dir]).size).toBe(3)
+    for (const key of ['brief', 'prBody', 'diff', 'priorFindings'] as const) {
+      const bytes = [reviewer1, security1, reviewer2].map((input) => readFileSync(input?.paths?.[key] as string))
+      expect(bytes[0]).toEqual(bytes[1])
+      expect(bytes[1]).toEqual(bytes[2])
+    }
+    const facts: ReviewerPromptFacts = {
+      objectives: '',
+      resolvedObjectives: [],
+      rulings: [],
+      ciConclusion: 'green',
+      revision: 'rev',
+      manifest: {
+        headSha: 'a'.repeat(40),
+        baseSha: 'b'.repeat(40),
+        briefHash: 'c'.repeat(64),
+        objectivesVersion: 'd'.repeat(64),
+        rulingOrdinal: 0,
+        policyDigest: 'e'.repeat(64)
+      },
+      policy: DEFAULT_REVIEW_POLICY
+    }
+    const reviewerPrompt = renderVinayaReviewerPrompt('reviewer', facts, reviewer1)
+    const securityPrompt = renderVinayaReviewerPrompt('security', facts, security1)
+    for (const path of Object.values(reviewer1?.paths ?? {})) expect(reviewerPrompt).toContain(path)
+    for (const path of Object.values(security1?.paths ?? {})) expect(securityPrompt).toContain(path)
+    expect(reviewerPrompt).not.toContain(security1?.dir as string)
+    expect(securityPrompt).not.toContain(reviewer1?.dir as string)
+  })
+
   test('a head that cannot be copied stages nothing and the prompt names no input paths', () => {
     const root = mkdtempSync(join(tmpdir(), 'review-input-root-'))
     const stager = createVinayaReviewInputStager({
