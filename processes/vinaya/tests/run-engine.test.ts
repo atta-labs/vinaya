@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { Database } from 'bun:sqlite'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -12,6 +13,7 @@ import { classifyGateResult, createActions, dispatchReviewers, type TaskInput } 
 import { heldVerdictPath, writeHeldVerdict } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import type { DeveloperPromptFacts } from '../executing/developer-prompt'
 import {
+  checkpointPath,
   createTraceRecorder,
   tracedActions,
   developerSourceStoreDir,
@@ -298,6 +300,15 @@ describe('a stub run on the Engine path', () => {
     expect(result.exitCode).toBe(0)
     const generated = join(options.runtimeDir, 'engine-runs', '7', 'generated', 'developer')
     expect(readFileSync(join(generated, 'role-mcp.json'), 'utf8')).toContain(shim)
+  })
+
+  test('keeps the run checkpoints in a SQLite file under the run directory', async () => {
+    const { options } = stubRun()
+    await runEngine({ ...options, revision: 'rev-under-test' })
+    const file = checkpointPath(join(options.runtimeDir, 'engine-runs', '7'))
+    expect(statSync(file).size).toBeGreaterThan(0)
+    const rows = new Database(file, { readonly: true }).query('SELECT DISTINCT revision FROM checkpoints').all()
+    expect(rows).toEqual([{ revision: 'rev-under-test' }])
   })
 
   test('closes the host and drains the sink when the run succeeds', async () => {

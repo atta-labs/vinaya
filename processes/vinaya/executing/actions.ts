@@ -55,7 +55,7 @@ export interface TaskInput {
   issueNumber: number
   worktreePath: string
   developerContext: DeveloperTurnSchemaContext
-  /** The loop state `assessRound` starts from; each assessment replaces it. */
+  /** The loop state the first `assessRound` starts from; later assessments start from the previous assessment's recorded state. */
   loopState: LoopState
   clock?: TaskClock
   /** The round's review round number, as `handoffFindings` counts it. */
@@ -144,6 +144,43 @@ export function gateObservation(
     }
   }
 }
+
+const MAP_TAG = '__map'
+
+/** Loop state as JSON: its maps travel as tagged entry lists, the only part JSON cannot carry. */
+export function encodeLoopState(state: LoopState): string {
+  return JSON.stringify(state, (_key, value) => (value instanceof Map ? { [MAP_TAG]: [...value.entries()] } : value))
+}
+
+export function decodeLoopState(text: string): LoopState {
+  return JSON.parse(text, (_key, value) =>
+    value !== null && typeof value === 'object' && Array.isArray((value as Record<string, unknown>)[MAP_TAG])
+      ? new Map((value as Record<string, [unknown, unknown][]>)[MAP_TAG])
+      : value
+  ) as LoopState
+}
+
+/**
+ * The loop state the next assessment starts from: the state recorded in the previous assessment's step result,
+ * or `initial` before any assessment ran. The recorded state is the checkpointed one, so a resumed run carries it
+ * forward; a round number below `initial`'s never replaces it. A recorded result with no readable state throws,
+ * since falling back to `initial` would silently restart the round count.
+ */
+export function carriedLoopState(results: Readonly<Record<string, StepNodeResult>>, initial: LoopState): LoopState {
+  const previous = results['assess-round']
+  if (!previous || !('stdout' in previous)) return initial
+  let recorded: LoopState | undefined
+  try {
+    const parsed = JSON.parse(String(previous.stdout)) as { state?: unknown }
+    if (parsed.state !== undefined) recorded = decodeLoopState(JSON.stringify(parsed.state))
+  } catch {
+    // Reported below with the rest of the unreadable cases.
+  }
+  if (!recorded) throw new Error('assess-round found a previous assessment result with no readable loop state')
+  return roundOf(recorded) < roundOf(initial) ? initial : recorded
+}
+
+const roundOf = (state: LoopState): number => Math.max(state.rounds.length, state.pending?.round ?? 0)
 
 const ok = (stdout = ''): { exitCode: number; stdout: string } => ({ exitCode: 0, stdout })
 
@@ -241,8 +278,8 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
   'vinaya.assess-round': {
     adapts: [assessRound],
     build: (task) => {
-      let state = task.loopState
       return (context) => {
+        let state = carriedLoopState(context.results, task.loopState)
         // assessRound reads a round as a gate observation, then the verdicts; the Flow reaches this step only
         // after a green gate, so the gate observation is recorded here first when the state has no pending round.
         const observation = task.observe(context.results)
@@ -262,7 +299,7 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
         // The gate's events come first, as the standalone loop records them, then the verdicts'.
         const events = [...gateEvents, ...assessment.events]
         // The Log events the assessment produced travel in the step's result; the log producers read them back.
-        const stdout = JSON.stringify({ decision, events })
+        const stdout = JSON.stringify({ decision, events, state: JSON.parse(encodeLoopState(state)) })
         if (decision.type === 'pause') {
           throw Object.assign(new Error(`The round paused for a human: ${decision.reason}`), { stdout })
         }
