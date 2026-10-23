@@ -40,6 +40,17 @@ steps:
     action: vinaya.classify-developer-output
     decision: { examine: validate-developer-output, if_true: develop, if_false: run-mechanical-gates, max_revisions: 3 }
   - { id: run-mechanical-gates, type: mechanical, action: harness.run-gates }
+  # The forge gates, in the standalone round order, before the gate is assessed and any reviewer is dispatched:
+  # mergeability first (a conflicting head goes back to the Developer before any CI wait), then the forge's CI
+  # (waited on while pending; a red read is part of the gate the assessment judges), then the premise re-check (a
+  # stale pin pauses through the handoff).
+  - { id: check-mergeability, type: mechanical, action: vinaya.check-mergeability }
+  - id: classify-mergeability
+    type: mechanical
+    action: vinaya.classify-mergeability
+    decision: { examine: check-mergeability, if_true: develop, if_false: read-forge-ci, max_revisions: 3 }
+  - { id: read-forge-ci, type: mechanical, action: vinaya.read-forge-ci }
+  - { id: check-premise, type: mechanical, action: vinaya.check-premise }
   - { id: assess-gate, type: mechanical, action: vinaya.assess-gate }
   - id: classify-gate-result
     type: mechanical

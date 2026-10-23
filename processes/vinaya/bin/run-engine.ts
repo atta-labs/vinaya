@@ -41,9 +41,15 @@ import { createVinayaLogProducers, handoffHaltReason, STEP_FAILED } from '../exe
 import { createHandoff, liveHandoffDeps, type Handoff, type HandoffDeps } from '../executing/handoff'
 import {
   fetchCiConclusion,
+  fetchConflictingFiles,
+  fetchFailedCheckWorkflowRunIds,
+  fetchFailingCheckRuns,
+  fetchMergeableState,
   readWorktreeHead,
+  rerunFailedWorkflowJobs,
   resolveHead
 } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+import { postMarkedComment } from '../../../apps/cli/src/lib/forge-write'
 import { developerBranchFor } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
 import { publishRound } from '../../../apps/cli/src/lib/dev-review-loop/publication'
 import {
@@ -1141,6 +1147,12 @@ export interface EngineForge {
   createTaskWorktree: typeof createTaskWorktree
   pullRequestView: typeof ghPullRequestView
   publishRound: typeof publishRound
+  fetchFailingCheckRuns: typeof fetchFailingCheckRuns
+  fetchFailedCheckWorkflowRunIds: typeof fetchFailedCheckWorkflowRunIds
+  rerunFailedWorkflowJobs: typeof rerunFailedWorkflowJobs
+  fetchMergeableState: typeof fetchMergeableState
+  fetchConflictingFiles: typeof fetchConflictingFiles
+  postMarkedComment: typeof postMarkedComment
 }
 
 export const liveForge: EngineForge = {
@@ -1160,7 +1172,13 @@ export const liveForge: EngineForge = {
   checkTaskDispatchReadiness,
   createTaskWorktree,
   pullRequestView: ghPullRequestView,
-  publishRound
+  publishRound,
+  fetchFailingCheckRuns,
+  fetchFailedCheckWorkflowRunIds,
+  rerunFailedWorkflowJobs,
+  fetchMergeableState,
+  fetchConflictingFiles,
+  postMarkedComment
 }
 
 /** The per-task input the actions read: the branch, the Log events' loop and the verdict plumbing. */
@@ -1325,6 +1343,13 @@ export async function liveTaskInput(
       findOpenPrForBranch: forge.findOpenPrForBranch,
       publishRound: forge.publishRound,
       fetchPrBody: forge.prBody,
+      fetchCiConclusion: forge.fetchCiConclusion,
+      fetchFailingCheckRuns: forge.fetchFailingCheckRuns,
+      fetchFailedCheckWorkflowRunIds: forge.fetchFailedCheckWorkflowRunIds,
+      rerunFailedWorkflowJobs: forge.rerunFailedWorkflowJobs,
+      fetchMergeableState: forge.fetchMergeableState,
+      fetchConflictingFiles: forge.fetchConflictingFiles,
+      postMarkedComment: forge.postMarkedComment,
       ...lookups.completion
     },
     get loopState(): LoopState {

@@ -17,6 +17,7 @@ const ASSESS_STEP = 'assess-round'
 /** The steps that record the shared assessment's events with their decision, in the order a round reaches them. */
 export const DECIDING_STEPS: readonly string[] = [
   'validate-developer-output',
+  'check-mergeability',
   'assess-gate',
   'validate-reviewer-outputs',
   ASSESS_STEP

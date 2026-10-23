@@ -1,4 +1,6 @@
 import type { VerdictObservation } from '@attalabs/aeg-core'
+import type { ActionRegistry } from '../../../harness/dev-process/engine-runtime/run-process'
+import type { EngineForge } from '../bin/run-engine'
 import { LOG_FOLDER_ONLY_ENV } from '../../../apps/cli/src/lib/log-sink'
 import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache } from '../../../apps/cli/src/lib/run-paths'
 
@@ -66,4 +68,30 @@ export function useRuntimeDir(dir: string | null): void {
 /** Keeps every Log event a run writes in its local folder. */
 export function keepLogLocal(): void {
   process.env[LOG_FOLDER_ONLY_ENV] = '1'
+}
+
+/** The forge-gate steps, each replaced by one that passes: a mergeable head, a CI read that decides nothing, a premise that holds. */
+export const PASSING_FORGE_GATES: ActionRegistry = {
+  'vinaya.check-mergeability': () => ({ exitCode: 0 }),
+  'vinaya.classify-mergeability': () => ({ exitCode: 0 }),
+  'vinaya.read-forge-ci': () => ({ exitCode: 0 }),
+  'vinaya.check-premise': () => ({ exitCode: 0 })
+}
+
+/** The forge reads and writes the forge-gate steps make, answering a mergeable head with nothing failed. */
+export const QUIET_FORGE_GATES: Pick<
+  EngineForge,
+  | 'fetchMergeableState'
+  | 'fetchConflictingFiles'
+  | 'fetchFailingCheckRuns'
+  | 'fetchFailedCheckWorkflowRunIds'
+  | 'rerunFailedWorkflowJobs'
+  | 'postMarkedComment'
+> = {
+  fetchMergeableState: () => 'MERGEABLE',
+  fetchConflictingFiles: () => [],
+  fetchFailingCheckRuns: () => [],
+  fetchFailedCheckWorkflowRunIds: () => [],
+  rerunFailedWorkflowJobs: () => {},
+  postMarkedComment: () => 'https://example.invalid/comment'
 }

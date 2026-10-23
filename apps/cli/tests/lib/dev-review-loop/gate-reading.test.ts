@@ -31,6 +31,12 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../process-fixture'
+import {
+  checkPremiseAtHead,
+  pollMergeableState,
+  renderConflictPrompt,
+  type MergeableState
+} from '../../../src/lib/dev-review-loop/gate-reading'
 
 const GATE_READING = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -439,5 +445,66 @@ exit 0
     })
     expect(r.status).not.toBe(0)
     expect(r.stderr).toContain('fetchMergeableState')
+  })
+})
+
+describe('the gate reads both runners share, each value passed explicitly', () => {
+  const poll = (answers: MergeableState[], maxAttempts = 5) => {
+    const sleeps: number[] = []
+    const reads: number[] = []
+    return {
+      sleeps,
+      reads,
+      deps: {
+        gatePollMaxAttempts: maxAttempts,
+        gatePollIntervalMs: 7,
+        sleep: async (ms: number) => void sleeps.push(ms),
+        fetchMergeableState: (pr: number) => {
+          reads.push(pr)
+          return answers.length > 1 ? answers.shift()! : answers[0]!
+        }
+      }
+    }
+  }
+
+  it('pollMergeableState polls off UNKNOWN within the budget, sleeping the interval between reads', async () => {
+    const run = poll(['UNKNOWN', 'UNKNOWN', 'MERGEABLE'])
+    expect(await pollMergeableState(12, run.deps)).toBe('MERGEABLE')
+    expect(run.reads).toEqual([12, 12, 12])
+    expect(run.sleeps).toEqual([7, 7])
+    expect(await pollMergeableState(12, poll(['CONFLICTING']).deps)).toBe('CONFLICTING')
+  })
+
+  it('pollMergeableState reads a spent budget as CONFLICTING, never as clean', async () => {
+    const run = poll(['UNKNOWN'], 3)
+    expect(await pollMergeableState(12, run.deps)).toBe('CONFLICTING')
+    expect(run.reads).toHaveLength(3)
+  })
+
+  it('checkPremiseAtHead is dormant on an unreadable body or one with no Premise block, and fails a stale pin', () => {
+    expect(
+      checkPremiseAtHead(5, () => {
+        throw new Error('forge down')
+      })
+    ).toBeNull()
+    expect(checkPremiseAtHead(5, () => 'Closes #5')).toBeNull()
+    const stale = checkPremiseAtHead(
+      5,
+      () => '**Premise:**\n- definitely-absent-pinned-file.ts contains: OLD\n\nCloses #5'
+    )
+    expect(stale?.pass).toBe(false)
+    expect(stale?.errors.map((error) => error.message).join('\n')).toContain('definitely-absent-pinned-file.ts')
+  })
+
+  it('renderConflictPrompt names each conflicting file and ends with the publishing clause it is given', () => {
+    const prompt = renderConflictPrompt(['a.ts', 'b.ts'], 'publish only through the tools.')
+    expect(prompt).toBe(
+      [
+        'This branch is behind the base in a way that conflicts — it cannot merge as-is.',
+        'Start a merge without committing it: run `git merge --no-commit origin/main` from this worktree, resolve the conflicting file(s) below, then publish only through the tools. The publish_changes tool makes the merge commit, so do not run git commit or rebase yourself. Conflicting file(s):',
+        '- a.ts\n- b.ts'
+      ].join('\n\n')
+    )
+    expect(renderConflictPrompt([], 'x')).toEndWith('(no specific file could be determined)')
   })
 })

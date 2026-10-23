@@ -43,9 +43,12 @@ import {
   type reviewPolicyForLoop
 } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
 import {
+  developerRoundMarker,
   DispatchSandboxRefused,
   driverDecidedPauseEvents,
-  MAX_GATE_STALLED_TURNS
+  MAX_GATE_STALLED_TURNS,
+  pollUntil,
+  renderDeveloperRoundComment
 } from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
 import { cleanupAllReviewerIsolationArtifacts } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-isolation'
 import {
@@ -72,8 +75,13 @@ import {
   type PrepareSourcesResult
 } from '../../../apps/cli/src/lib/source-provider'
 import { probeAgentSandbox, type SandboxProbePlan } from '../../../apps/cli/src/lib/worker-boundary'
-import { publishRound, type PublishInput } from '../../../apps/cli/src/lib/dev-review-loop/publication'
 import {
+  postForgeEffectOnce,
+  publishRound,
+  type PublishInput
+} from '../../../apps/cli/src/lib/dev-review-loop/publication'
+import {
+  defaultDeps,
   defaultRunSecurityScanSubprocess,
   defaultUpdatePrBody,
   deferredEntriesForRound,
@@ -81,7 +89,19 @@ import {
   handoffFindings
 } from '../../../apps/cli/src/lib/dev-review-loop'
 import { loadTrustAnchorConfig } from '../../../apps/cli/src/lib/config'
-import { readWorktreeHead } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+import {
+  checkPremiseAtHead,
+  describeFailingCheckRun,
+  fetchCiConclusion,
+  fetchConflictingFiles,
+  fetchFailedCheckWorkflowRunIds,
+  fetchFailingCheckRuns,
+  fetchMergeableState,
+  pollMergeableState,
+  readWorktreeHead,
+  rerunFailedWorkflowJobs,
+  type GatePoll
+} from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import {
   buildManifestRecord,
   decideSecurityScan,
@@ -119,6 +139,7 @@ import { routeCompletionEvents } from '../../../apps/cli/src/lib/dev-review-loop
 import { resolveTrustAnchorSecurityScanCommand } from '../../../apps/cli/src/lib/dev-review-loop/security-scan-command'
 import { fetchPrBody } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
 import {
+  postMarkedComment,
   upsertDeferredFindingsIssue,
   type DeferredFindingEntry,
   type DeferredFindingsIssueRef
@@ -223,6 +244,8 @@ export interface TaskInput {
   sandboxPlan?: () => SandboxProbePlan | null
   /** Prepares the task's required Documentation sources into the controller-owned store; absent for a run with no sources to prepare. */
   prepareSources?: () => Promise<PrepareSourcesResult>
+  /** The budget the forge-gate steps poll a pending CI read or an unresolved mergeability within; the standalone loop's own when absent. */
+  gatePoll?: GatePoll
 }
 
 /** What only the moment of publication knows. */
@@ -267,6 +290,14 @@ export interface BoundFunctions {
   /** The repository's local gate control, read for the enforcement controls every dispatch requires. */
   localGateControl: () => EnforcementControl
   probeAgentSandbox: typeof probeAgentSandbox
+  fetchCiConclusion: typeof fetchCiConclusion
+  fetchFailingCheckRuns: typeof fetchFailingCheckRuns
+  fetchFailedCheckWorkflowRunIds: typeof fetchFailedCheckWorkflowRunIds
+  rerunFailedWorkflowJobs: typeof rerunFailedWorkflowJobs
+  fetchMergeableState: typeof fetchMergeableState
+  fetchConflictingFiles: typeof fetchConflictingFiles
+  /** Posts a marked comment on the pull request: the round marker the reviewers' dispatch leaves. */
+  postMarkedComment: typeof postMarkedComment
 }
 
 interface Binding {
@@ -280,13 +311,20 @@ type Results = Readonly<Record<string, StepNodeResult>>
 // --- the loop record the deciding steps carry ---------------------------------
 
 /** The steps whose recorded result carries the loop state, each with the sequence number it was recorded under. */
-export const STATE_STEPS = ['validate-developer-output', 'assess-gate', 'assess-round', 'run-live-checks'] as const
+export const STATE_STEPS = [
+  'validate-developer-output',
+  'check-mergeability',
+  'assess-gate',
+  'assess-round',
+  'run-live-checks'
+] as const
 
 /** Why the Developer is dispatched again, as the step that sent it back recorded it. */
 export type SendBackKind =
   | 'correction'
   | 'open-pull-request'
   | 'gate-red'
+  | 'conflict'
   | 'low-confidence'
   | 'ask-confidence'
   | 'unpushed'
@@ -297,6 +335,8 @@ export interface SendBack {
   kind: SendBackKind
   /** The branch head on the remote when the Developer was sent back; a turn that leaves it unchanged pushed nothing. */
   headBefore?: string | null
+  /** The files a conflicting head conflicts in, for the conflict turn's prompt. */
+  files?: string[]
   /** The typed failures of a rejected turn result, for its one correction turn. */
   failures?: string[]
   /** The finding ids the rejected turn could cite, kept for its correction turn. */
@@ -941,8 +981,11 @@ function validateDeveloperOutput(task: TaskInput, context: ActionContext): { exi
     return out(BACK, { sendBack: { kind: 'open-pull-request' } })
   }
 
-  // A turn sent back for a red gate or for unpushed work must have moved the branch's remote head.
-  if ((original?.kind !== 'gate-red' && original?.kind !== 'unpushed') || typeof original.headBefore !== 'string')
+  // A turn sent back for a red gate, a conflict or unpushed work must have moved the branch's remote head.
+  if (
+    (original?.kind !== 'gate-red' && original?.kind !== 'conflict' && original?.kind !== 'unpushed') ||
+    typeof original.headBefore !== 'string'
+  )
     return out(FORWARD, { counters })
   const headBefore = original.headBefore
   const remote = safeRead(task.remoteHead)
@@ -996,8 +1039,16 @@ function assessGate(task: TaskInput, context: ActionContext): { exitCode: number
   let state = before
   const counters = previous?.counters ?? NO_COUNTERS
   const round = task.reviewRound()
-  const green = gate.exitCode === 0
-  const failure = green ? undefined : gateFailure(gate)
+  // The head's gate is the local checks and the forge's CI read together: a red CI read is a red gate.
+  const ci = recordedForgeCi(results)
+  const localGreen = gate.exitCode === 0
+  const ciRed = localGreen && ci?.conclusion === 'red'
+  const green = localGreen && !ciRed
+  const failure = !localGreen
+    ? gateFailure(gate)
+    : ciRed && ci.failingChecks.length > 0
+      ? ci.failingChecks.join('; ')
+      : undefined
   const stats = worktreeStats(task.worktreePath, gate.kind === 'mechanical' ? gate.durationMs : 0)
   const events: DevReviewLoopEventInput[] = []
   const headNow = () => safeRead(task.remoteHead) ?? stats.head
@@ -1251,6 +1302,260 @@ function assessVerdictsAction(task: TaskInput, context: ActionContext): { exitCo
   return { exitCode: decision.type === 'publish' ? 0 : 1, stdout }
 }
 
+// --- the forge gates: mergeability, CI and the premise, in the standalone round order ---------------
+
+/** The poll budget the forge-gate steps read within: the task's own, else the standalone loop's. */
+function gatePollOf(task: TaskInput): GatePoll {
+  if (task.gatePoll !== undefined) return task.gatePoll
+  const { gatePollMaxAttempts, gatePollIntervalMs, sleep } = defaultDeps()
+  return { gatePollMaxAttempts, gatePollIntervalMs, sleep }
+}
+
+/** The pull request the forge gates judge; throws when none is open, since every gate step runs after one was. */
+function openPullRequestOf(task: TaskInput, step: string): number {
+  const pr = (task.bound?.findOpenPrForBranch ?? findOpenPrForBranch)(task.branch)
+  if (pr === null) throw new Error(`${step} found no open pull request for branch ${task.branch}`)
+  return pr.number
+}
+
+/** The head the forge gates judge: the worktree's, else the branch's on the remote. */
+function judgedHeadOf(task: TaskInput): string {
+  const head = worktreeHeadOf(task) ?? safeRead(task.remoteHead)
+  if (head === null) throw new Error(`the forge gates could not read the head of ${task.worktreePath}`)
+  return head
+}
+
+/**
+ * The forge's mergeability of the pull request, read before any CI wait (`pollMergeableState`). A conflicting head
+ * goes back to the Developer with the conflicting files (`fetchConflictingFiles`), never to the reviewers. A conflict
+ * the Developer's turn left unchanged is a stalled turn named by the conflict: a mechanical failure the assessment
+ * judges, so the same conflict twice pauses `repeat_failure`, and an unnamed second stall pauses `infrastructure`.
+ */
+async function checkMergeability(
+  task: TaskInput,
+  context: ActionContext
+): Promise<{ exitCode: number; stdout: string }> {
+  const { results } = context
+  const previous = latestRecord(results)
+  let state = carriedLoopState(results, task.loopState)
+  const counters = previous?.counters ?? NO_COUNTERS
+  const round = task.reviewRound()
+  const events: DevReviewLoopEventInput[] = []
+  const out = (
+    exitCode: number,
+    decision: { type: string; reason?: string; detail?: string },
+    fields: { counters?: RoundCounters; sendBack?: SendBack | null; mergeable: string; files?: string[] }
+  ) => ({
+    exitCode,
+    // What the Developer's turn answered is carried on, so the CI read that follows judges the same turn.
+    stdout: recordOutput(results, state, {
+      counters,
+      answered: previous?.answered ?? null,
+      ...fields,
+      events,
+      decision
+    })
+  })
+  const prNumber = openPullRequestOf(task, 'check-mergeability')
+  const mergeable = await pollMergeableState(prNumber, {
+    ...gatePollOf(task),
+    fetchMergeableState: task.bound?.fetchMergeableState ?? fetchMergeableState
+  })
+  // Mergeable: the stall check the Developer's turn left is the gate's to read next.
+  if (mergeable !== 'CONFLICTING') return out(FORWARD, { type: 'mergeable' }, { mergeable })
+  const files = (task.bound?.fetchConflictingFiles ?? fetchConflictingFiles)('main', task.branch)
+  const head = safeRead(task.remoteHead) ?? judgedHeadOf(task)
+  const sendBack: SendBack = { kind: 'conflict', headBefore: head, files }
+  const stall = counters.stallCheck
+  if (stall === null || previous?.answered !== 'conflict')
+    return out(
+      BACK,
+      { type: 'dispatch_developer' },
+      { counters: { ...counters, stallCheck: null }, sendBack, mergeable, files }
+    )
+  // The conflict turn moved nothing: a stall named by its refusal, else by the conflict itself.
+  const streak = counters.gateStalledStreak + 1
+  const stats = worktreeStats(task.worktreePath, 0)
+  const named =
+    stall.refusal !== null
+      ? `publication refused: ${stall.refusal}`
+      : `conflict never resolved (file(s): ${files.length > 0 ? files.join(', ') : '(unknown)'})`
+  const detail = `head ${stall.headBefore} unchanged after dispatch; ${named}`
+  const assessed = assessRound(state, { kind: 'mechanical_failure', round, failure: detail, stats }, task.clock)
+  state = assessed.state
+  events.push(...assessed.events)
+  const paused = (decision: { reason: PauseReason; detail?: string }, error?: unknown) => {
+    pauseThrough(task, 'check-mergeability', {
+      reason: decision.reason,
+      detail: decision.detail ?? decision.reason,
+      ...(error === undefined ? {} : { error })
+    })
+    return out(BACK, { type: 'pause', ...decision }, { counters: NO_COUNTERS, sendBack, mergeable, files })
+  }
+  if (assessed.decision.type === 'pause') return paused(assessed.decision)
+  if (streak < MAX_GATE_STALLED_TURNS)
+    return out(
+      BACK,
+      { type: 'dispatch_developer' },
+      { counters: { ...counters, gateStalledStreak: streak, stallCheck: null }, sendBack, mergeable, files }
+    )
+  events.push(...driverDecidedPauseEvents(loopIdOf(state), state, round, stats, 'infrastructure'))
+  return paused({ reason: 'infrastructure', detail }, new Error(detail))
+}
+
+/** Records how the mergeability step routed; the decision on this step reads that step's own exit result. */
+export function classifyMergeability(context: ActionContext): { exitCode: number; stdout: string } {
+  const checked = context.results['check-mergeability']
+  if (!checked) throw new Error('classify-mergeability ran before the mergeability step recorded a result')
+  return ok(isSentBack(checked) ? 'developer' : 'ci')
+}
+
+/** What the CI step recorded: the head it read, its conclusion, the failing check runs and the heads already rerun. */
+export interface RecordedForgeCi {
+  head: string | null
+  conclusion: 'green' | 'red' | 'pending' | 'skipped'
+  failingChecks: string[]
+  /** The heads whose failed jobs were rerun, each once. */
+  rerunHeads: string[]
+  /** The workflow runs this read reran, empty when it reran none. */
+  rerunRunIds: number[]
+}
+
+/** The CI step's newest record, or null before it ran or when it recorded something unreadable. */
+export function recordedForgeCi(results: Results): RecordedForgeCi | null {
+  const stdout = stdoutOf(results['read-forge-ci'])
+  if (!stdout) return null
+  try {
+    const parsed = JSON.parse(stdout) as Partial<RecordedForgeCi>
+    return typeof parsed.conclusion === 'string'
+      ? {
+          head: parsed.head ?? null,
+          conclusion: parsed.conclusion,
+          failingChecks: parsed.failingChecks ?? [],
+          rerunHeads: parsed.rerunHeads ?? [],
+          rerunRunIds: parsed.rerunRunIds ?? []
+        }
+      : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The forge's CI conclusion for the head (`fetchCiConclusion`, which leaves out the review gate and the test-plan
+ * wait check), waited on while it reads pending within the gate poll budget; a budget spent on pending reads red,
+ * as the standalone loop's gate wait does. A red head the Developer's turn left unchanged has its failed jobs rerun
+ * once (`rerunFailedWorkflowJobs`) and is read again. A red local gate decides the round alone, so no CI is read.
+ */
+async function readForgeCi(task: TaskInput, context: ActionContext): Promise<{ exitCode: number; stdout: string }> {
+  const { results } = context
+  const prior = recordedForgeCi(results)
+  const rerunHeads = prior?.rerunHeads ?? []
+  const gate = results['run-mechanical-gates']
+  if (gate !== undefined && gate.exitCode !== 0)
+    return ok(JSON.stringify({ head: null, conclusion: 'skipped', failingChecks: [], rerunHeads, rerunRunIds: [] }))
+  const head = judgedHeadOf(task)
+  const readCi = task.bound?.fetchCiConclusion ?? fetchCiConclusion
+  const poll = gatePollOf(task)
+  const wait = () =>
+    pollUntil(
+      () => {
+        const conclusion = readCi(head)
+        return conclusion === 'pending' ? null : conclusion
+      },
+      poll.gatePollMaxAttempts,
+      poll.gatePollIntervalMs,
+      poll.sleep,
+      `the CI read never resolved off 'pending' for head ${head} within the poll budget`
+    ).catch(() => 'red' as const)
+  let conclusion = await wait()
+  const rerunRunIds: number[] = []
+  const previous = latestRecord(results)
+  const stall = previous?.counters.stallCheck ?? null
+  const unchangedRedHead =
+    conclusion === 'red' &&
+    previous?.answered === 'gate-red' &&
+    stall !== null &&
+    stall.headBefore === head &&
+    stall.refusal === null &&
+    !rerunHeads.includes(head)
+  if (unchangedRedHead) {
+    const rerun = task.bound?.rerunFailedWorkflowJobs ?? rerunFailedWorkflowJobs
+    for (const runId of (task.bound?.fetchFailedCheckWorkflowRunIds ?? fetchFailedCheckWorkflowRunIds)(head)) {
+      try {
+        rerun(runId)
+        rerunRunIds.push(runId)
+      } catch {
+        // A run the forge refused to rerun keeps its failure; the others still rerun.
+      }
+    }
+    if (rerunRunIds.length > 0) conclusion = await wait()
+  }
+  const failingChecks =
+    conclusion === 'red'
+      ? (task.bound?.fetchFailingCheckRuns ?? fetchFailingCheckRuns)(head).map(describeFailingCheckRun)
+      : []
+  return ok(
+    JSON.stringify({
+      head,
+      conclusion,
+      failingChecks,
+      rerunHeads: rerunRunIds.length > 0 ? [...rerunHeads, head] : rerunHeads,
+      rerunRunIds
+    })
+  )
+}
+
+/**
+ * The dispatch gate's premise re-assertion against the pull request's live body at this head
+ * (`checkPremiseAtHead`). A stale pin pauses through the handoff before any reviewer is dispatched; a body that
+ * cannot be read, or carries no `Premise:` block, is dormant.
+ */
+function checkPremise(task: TaskInput): { exitCode: number; stdout: string } {
+  const prNumber = openPullRequestOf(task, 'check-premise')
+  const result = checkPremiseAtHead(prNumber, task.bound?.fetchPrBody ?? fetchPrBody)
+  if (result === null || result.pass) return ok(JSON.stringify({ premise: result === null ? 'dormant' : 'holds' }))
+  const failures = result.errors.map((error) => error.message)
+  const head = worktreeHeadOf(task)
+  pauseThrough(task, 'check-premise', {
+    reason: 'escalation',
+    detail: `a Premise pin no longer holds at ${head ?? 'the task head'}, so no reviewer is dispatched: ${failures.join('; ')}`
+  })
+  return { exitCode: 1, stdout: JSON.stringify({ premise: 'stale', head, failures }) }
+}
+
+/**
+ * The round marker comment the standalone loop posts before its reviewers are dispatched
+ * (`renderDeveloperRoundComment`): the judged head, the frozen manifest's ruling slot, and the finding ids and
+ * checks the newest accepted Developer turn reported. Posted once per round and head.
+ */
+function postRoundMarker(task: TaskInput, results: Results, round: number, inputs: ReviewRoundInputs): void {
+  const prNumber = openPullRequestOf(task, 'dispatch-reviewers')
+  const head = inputs.manifest.headSha
+  const turn = agentOutput(results, 'develop') as {
+    turnResult?: {
+      status?: unknown
+      addressedFindingIds?: string[]
+      reportedChecks?: { command: string; outcome: 'pass' | 'fail' }[] | null
+    }
+  }
+  const completed = turn?.turnResult?.status === 'completed' ? turn.turnResult : null
+  const post = task.bound?.postMarkedComment ?? postMarkedComment
+  postForgeEffectOnce(task.runtimeDir, task.issueNumber, `developer-round-comment-${round}-${head}`, () =>
+    post(
+      'pr',
+      String(prNumber),
+      developerRoundMarker(round),
+      renderDeveloperRoundComment(
+        head,
+        completed?.addressedFindingIds ?? [],
+        completed?.reportedChecks ?? [],
+        inputs.manifest.pauseBoundRuling ?? null
+      )
+    )
+  )
+}
+
 export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
   'vinaya.prepare-run': {
     adapts: [
@@ -1362,6 +1667,16 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       return { exitCode: gates.passed ? 0 : 1, stdout: gates.output }
     }
   },
+  'vinaya.check-mergeability': {
+    adapts: [pollMergeableState, fetchConflictingFiles, assessRound],
+    build: (task) => (context) => checkMergeability(task, context)
+  },
+  'vinaya.classify-mergeability': { adapts: [classifyMergeability], build: () => classifyMergeability },
+  'vinaya.read-forge-ci': {
+    adapts: [fetchCiConclusion, rerunFailedWorkflowJobs],
+    build: (task) => (context) => readForgeCi(task, context)
+  },
+  'vinaya.check-premise': { adapts: [checkPremiseAtHead], build: (task) => () => checkPremise(task) },
   'vinaya.assess-gate': { adapts: [assessRound], build: (task) => (context) => assessGate(task, context) },
   'vinaya.classify-gate-result': { adapts: [classifyGateResult], build: () => classifyGateResult },
   'vinaya.run-security-scan': {
@@ -1387,7 +1702,7 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
     }
   },
   'vinaya.dispatch-reviewers': {
-    adapts: [dispatchReviewers, persistManifestRecord],
+    adapts: [dispatchReviewers, persistManifestRecord, renderDeveloperRoundComment],
     build: (task) => (context) => {
       const round = task.reviewRound()
       const previous = recordedDispatch(context.results)
@@ -1396,6 +1711,8 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       const retry =
         previous !== null && previous.round === round && reviews?.round === round && reviews.next === 'retry'
       const inputs = retry ? previous.inputs : (task.reviewInputs?.(round) ?? null)
+      // The round marker precedes the reviewers, as the standalone loop posts it; a stub run with no inputs posts none.
+      if (inputs !== null) postRoundMarker(task, context.results, round, inputs)
       return ok(JSON.stringify({ round, attempt: retry ? previous.attempt + 1 : 1, inputs }))
     }
   },
@@ -1638,6 +1955,7 @@ export function createActions(task: TaskInput): ActionRegistry {
 export const decisions: DecisionRegistry = {
   'choose-start': isDevelopmentDue,
   'classify-developer-output': isSentBack,
+  'classify-mergeability': isSentBack,
   'classify-gate-result': isGateRed,
   'classify-reviewer-outputs': isSentBack,
   'build-revision-handoff': isRevisionRequested,

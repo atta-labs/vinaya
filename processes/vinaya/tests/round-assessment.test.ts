@@ -23,7 +23,7 @@ import {
   encodeLoopState,
   type TaskInput
 } from '../executing/actions'
-import { confidentTurn, heldReviews, vendorLines } from './round-fakes'
+import { confidentTurn, heldReviews, PASSING_FORGE_GATES, vendorLines } from './round-fakes'
 
 type Action = (context: never) => Promise<{ exitCode: number; stdout?: string }> | { exitCode: number; stdout?: string }
 
@@ -306,6 +306,7 @@ describe('the round assessment across a resume', () => {
             ].map((name) => [name, () => ({ exitCode: 0 })])
           ),
           'harness.run-gates': () => ({ exitCode: 0 }),
+          ...PASSING_FORGE_GATES,
           'vinaya.classify-developer-output': real['vinaya.classify-developer-output']!,
           'vinaya.assess-gate': real['vinaya.assess-gate']!,
           'vinaya.classify-reviewer-outputs': real['vinaya.classify-reviewer-outputs']!,

@@ -8,16 +8,17 @@ import {
 } from '../../../apps/cli/src/lib/context-packet'
 import { publishingInstructionLine } from '../../../apps/cli/src/lib/dev-review-loop'
 import { renderDeveloperDoctrineBlock } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
+import { renderConflictPrompt } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import { commitAndPushPrompt } from '../../../apps/cli/src/lib/task-tools/live-developer-context'
 import {
   turnResultCorrectionPrompt,
   turnResultInstruction
 } from '../../../apps/cli/src/lib/dev-review-loop/turn-result'
-import { latestRecord, type SendBack } from './actions'
+import { latestRecord, recordedForgeCi, type SendBack } from './actions'
 
 // What today's review loop sends its Developer each round, built from the same exported functions
 // (`renderDeveloperDoctrineBlock`, `publishingInstructionLine`, `turnResultInstruction`, the context-packet
-// builders) and, where the loop builds a block in a closure no caller can reach (`issueRulingsBlock`,
+// builders, `renderConflictPrompt`) and, where the loop builds a block in a closure no caller can reach (`issueRulingsBlock`,
 // `keptWorkNote`, `resumeContextBlock`, the review-findings prompt of `dev-review-loop.ts`), the same text.
 // The facts come from `DeveloperPromptFacts`, so a test supplies them without reaching the forge.
 
@@ -82,6 +83,7 @@ export function revisionFacts(results: Readonly<Record<string, StepNodeResult>>)
     }
   }
   const gates = results['run-mechanical-gates']
+  const ci = recordedForgeCi(results)
   const gateOutput =
     gates?.kind === 'mechanical' && gates.exitCode !== 0
       ? [
@@ -90,8 +92,17 @@ export function revisionFacts(results: Readonly<Record<string, StepNodeResult>>)
             summary: gates.stdout.slice(-4000)
           }
         ]
-      : []
+      : ci?.conclusion === 'red'
+        ? [{ reference: 'read-forge-ci', summary: forgeCiSummary(ci.failingChecks) }]
+        : []
   return { unresolvedFindings, gateOutput }
+}
+
+/** The standalone loop's account of a red CI read: the failing check runs, by name and run. */
+function forgeCiSummary(failingChecks: readonly string[]): string {
+  return `CI is red on the last head. Failing check-run(s): ${
+    failingChecks.length > 0 ? failingChecks.join(', ') : '(unknown)'
+  }. Fix the failing check(s).`
 }
 
 /** The loop's `issueRulingsBlock`: the Issue's rulings after the brief, or null when there are none. */
@@ -154,6 +165,7 @@ export function latestSendBack(results: Readonly<Record<string, StepNodeResult>>
 export type DeveloperTurnKind =
   | 'first'
   | 'gate-red'
+  | 'conflict'
   | 'live-red'
   | 'review'
   | 'correction'
@@ -161,7 +173,7 @@ export type DeveloperTurnKind =
   | 'unpushed'
   | 'ask-confidence'
 
-/** Why the Developer runs again: first turn, a red gate on its last head, a failed live line, a rejected turn result, no push, or the round's review findings. */
+/** Why the Developer runs again: first turn, a red gate or a conflict on its last head, a failed live line, a rejected turn result, no push, or the round's review findings. */
 export function developerTurnKind(
   results: Readonly<Record<string, StepNodeResult>>,
   headSha?: string
@@ -175,6 +187,7 @@ export function developerTurnKind(
     case 'unpushed':
     case 'ask-confidence':
     case 'gate-red':
+    case 'conflict':
       return sendBack.kind
     case 'live-red':
       return headSha !== undefined && liveWithdrawalOf(results, headSha) !== null ? 'live-red' : 'review'
@@ -231,15 +244,20 @@ function revisionPromptText(
 ): string {
   const { unresolvedFindings, gateOutput } = revisionFacts(results)
   const handoff = kind === 'review' ? unresolvedFindings : []
+  const forgeCiRed = gateOutput.find((gate) => gate.reference === 'read-forge-ci')
   return [
-    kind === 'gate-red'
-      ? [
-          'The checks (`vinaya check --all`) are red on the last head. Fix the failing check(s).',
-          ...gateOutput.map((gate) => `\`${gate.reference}\` output (tail):\n\n${gate.summary}`)
-        ].join('\n\n')
-      : kind === 'live-red'
-        ? (liveWithdrawalOf(results, facts.headSha) ?? '')
-        : `Round ${facts.round} review findings:\n\n${facts.heldReview ?? '(no held review was found for the previous round)'}\n`,
+    kind === 'conflict'
+      ? renderConflictPrompt(latestSendBack(results)?.files ?? [], publishingInstructionLine())
+      : kind === 'gate-red' && forgeCiRed !== undefined
+        ? forgeCiRed.summary
+        : kind === 'gate-red'
+          ? [
+              'The checks (`vinaya check --all`) are red on the last head. Fix the failing check(s).',
+              ...gateOutput.map((gate) => `\`${gate.reference}\` output (tail):\n\n${gate.summary}`)
+            ].join('\n\n')
+          : kind === 'live-red'
+            ? (liveWithdrawalOf(results, facts.headSha) ?? '')
+            : `Round ${facts.round} review findings:\n\n${facts.heldReview ?? '(no held review was found for the previous round)'}\n`,
     handoff.length > 0
       ? `Finding ids in this handoff — cite the ones you address in your turn result's \`addressedFindingIds\`:\n${handoff.map((f) => `- ${f.id}: ${f.description}`).join('\n')}`
       : '',

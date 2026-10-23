@@ -281,6 +281,15 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
       state: 'OPEN',
       mergeable: id === 'stale-conflict' ? 'CONFLICTING' : 'MERGEABLE'
     }),
+    fetchFailingCheckRuns: () => [],
+    fetchFailedCheckWorkflowRunIds: () => [],
+    rerunFailedWorkflowJobs: () => {},
+    fetchMergeableState: () => (id === 'stale-conflict' ? 'CONFLICTING' : 'MERGEABLE'),
+    fetchConflictingFiles: () => (id === 'stale-conflict' ? ['sample.ts'] : []),
+    postMarkedComment: (_kind, _ref, marker) => {
+      append(effectFile, { kind: 'comment', marker })
+      return `https://example.com/comment/${encodeURIComponent(marker)}`
+    },
     publishRound: (_runtime, input) => {
       publications += 1
       append(effectFile, { kind: 'publication-started', round: input.round })
