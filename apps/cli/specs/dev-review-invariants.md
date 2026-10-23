@@ -170,6 +170,12 @@ recovery reads the audit traced are the control store's loop state
 written by the Principal's account (`fetchLoopHistory`). That finding is
 recorded as `INV-096`, a product guarantee, and the Engine path must keep
 it.
+The Engine runner keeps it: its recovery reads reach only the forge, the prior
+launch record and the held verdict files, and the round journal comes from
+`fetchLoopHistory`. The functions the two runners share for the heartbeat, the
+exit record, the driver lock's keep-or-clear rule and the journal seeding
+(`INV-116`, `INV-106`, `INV-101`) are named in
+`dev-review-loop/driver-lifecycle.ts`, where the register's sources now point.
 
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop/round-assess.ts contains:export async function waitForOwnLoopLine( -->
 <!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"id": "INV-111", -->

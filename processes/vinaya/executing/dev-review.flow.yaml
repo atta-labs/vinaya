@@ -14,6 +14,8 @@ steps:
   - { id: prepare-run, type: mechanical, action: vinaya.prepare-run }
   - { id: reconcile-external-state, type: mechanical, action: vinaya.reconcile-external-state }
   - { id: prepare-sources, type: mechanical, action: vinaya.prepare-sources }
+  # A Flow decision branches back to a prior step on true and forward on false, so the Developer is listed before the
+  # decision that routes to it: true (no pull request is open yet) develops, false (one is) attaches at the gates.
   - id: develop
     type: agent
     role: developer
@@ -21,7 +23,13 @@ steps:
     permission: developer/grants.yaml
     working_directory: "."
     max_turns: 200
-  - { id: validate-developer-output, type: mechanical, action: vinaya.validate-developer-output }
+    depends_on: [choose-start]
+  - id: choose-start
+    type: mechanical
+    action: vinaya.choose-start
+    depends_on: [prepare-sources]
+    decision: { examine: reconcile-external-state, if_true: develop, if_false: run-mechanical-gates, max_revisions: 1 }
+  - { id: validate-developer-output, type: mechanical, action: vinaya.validate-developer-output, depends_on: [develop] }
   - { id: run-mechanical-gates, type: mechanical, action: harness.run-gates }
   - id: classify-gate-result
     type: mechanical

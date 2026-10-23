@@ -318,6 +318,7 @@ describe('the Vinaya Flow on the Engine, with stub agents', () => {
       'prepare-run',
       'reconcile-external-state',
       'prepare-sources',
+      'choose-start',
       'develop',
       'validate-developer-output'
     ]

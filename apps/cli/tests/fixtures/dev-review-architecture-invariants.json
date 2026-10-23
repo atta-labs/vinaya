@@ -77,6 +77,16 @@
     ],
     "addedSinceBaseline": [
       {
+        "path": "apps/cli/src/lib/dev-review-loop/driver-lifecycle.ts",
+        "kind": "implementation",
+        "reason": "The driver heartbeat, the single driver exit record, the keep-or-clear rule for the driver lock and the seeding of the round journal, lifted out of the loop so the standalone loop and the Engine runner call the same functions."
+      },
+      {
+        "path": "apps/cli/tests/lib/dev-review-loop/driver-lifecycle.test.ts",
+        "kind": "test",
+        "reason": "The unit tests of driver-lifecycle.ts, landed in the same change."
+      },
+      {
         "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts",
         "kind": "implementation",
         "reason": "Landed after the baseline revision as the publication precondition gate; the current loop.md section \"Publishing each Developer turn (both agents, only through the driver-run tools)\" describes its use by publish_changes."
@@ -685,6 +695,7 @@
         }
       ],
       "tests": [
+        "processes/vinaya/tests/run-lifecycle.test.ts",
         "apps/cli/tests/lib/dev-review-loop/developer-dispatch.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
       ],
@@ -709,7 +720,11 @@
           "symbol": "terminateLaunchedChildOnShutdown"
         }
       ],
-      "tests": ["apps/cli/tests/lib/dispatch/reconcile-launch.test.ts", "apps/cli/tests/lib/dispatch.test.ts"],
+      "tests": [
+        "processes/vinaya/tests/run-lifecycle.test.ts",
+        "apps/cli/tests/lib/dispatch/reconcile-launch.test.ts",
+        "apps/cli/tests/lib/dispatch.test.ts"
+      ],
       "loopSpec": ["A killed driver leaves no orphan"],
       "reason": "Revision 17 section 16.15: cancellation terminates owned process trees with bounded escalation.",
       "scope": "product"
@@ -1669,6 +1684,7 @@
         }
       ],
       "tests": [
+        "processes/vinaya/tests/run-lifecycle.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-9.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-11.test.ts"
       ],
@@ -2016,7 +2032,11 @@
           "symbol": "acquireDriverLockAtomic"
         }
       ],
-      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-10.test.ts", "apps/cli/tests/lib/dev-review-loop.test.ts"],
+      "tests": [
+        "processes/vinaya/tests/run-lifecycle.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-10.test.ts",
+        "apps/cli/tests/lib/dev-review-loop.test.ts"
+      ],
       "loopSpec": ["One driver per task"],
       "reason": "Deterministic exclusive create plus pid probe.",
       "scope": "product"
@@ -2097,6 +2117,7 @@
         }
       ],
       "tests": [
+        "processes/vinaya/tests/run-lifecycle.test.ts",
         "apps/cli/tests/lib/dev-review-loop/journal-history.test.ts",
         "packages/aeg-core/src/dev-review-loop/journal-reconstruction.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts",
@@ -2192,11 +2213,13 @@
       "scenarios": ["restart"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/dev-review-loop.ts",
+          "path": "apps/cli/src/lib/dev-review-loop/driver-lifecycle.ts",
           "symbol": "seedLoopHistory"
         }
       ],
       "tests": [
+        "processes/vinaya/tests/run-lifecycle.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/driver-lifecycle.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-4.test.ts"
       ],
@@ -2286,11 +2309,13 @@
       "scenarios": ["restart"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/dev-review-loop.ts",
-          "symbol": "devReviewLoop"
+          "path": "apps/cli/src/lib/dev-review-loop/driver-lifecycle.ts",
+          "symbol": "keepDriverLock"
         }
       ],
       "tests": [
+        "processes/vinaya/tests/run-lifecycle.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/driver-lifecycle.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts",
         "apps/cli/tests/lib/dev-review-loop/inproc-10.test.ts"
       ],
@@ -2426,7 +2451,11 @@
           "symbol": "appendLoopLogLine"
         }
       ],
-      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts", "apps/cli/tests/lib/dev-review-loop.test.ts"],
+      "tests": [
+        "processes/vinaya/tests/run-lifecycle.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts",
+        "apps/cli/tests/lib/dev-review-loop.test.ts"
+      ],
       "loopSpec": ["The per-task driver log"],
       "reason": "Narration only; fail-open.",
       "scope": "product"
@@ -2477,11 +2506,16 @@
       "scenarios": ["cancellation"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/dev-review-loop.ts",
-          "symbol": "recordDriverExited"
+          "path": "apps/cli/src/lib/dev-review-loop/driver-lifecycle.ts",
+          "symbol": "createDriverExitRecorder"
         }
       ],
-      "tests": ["apps/cli/tests/lib/dev-review-loop.test.ts", "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts"],
+      "tests": [
+        "processes/vinaya/tests/run-lifecycle.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/driver-lifecycle.test.ts",
+        "apps/cli/tests/lib/dev-review-loop.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts"
+      ],
       "loopSpec": ["A stale driver re-execs in place, and pauses only if that fails"],
       "reason": "Liveness telemetry; fire-and-forget.",
       "scope": "product"

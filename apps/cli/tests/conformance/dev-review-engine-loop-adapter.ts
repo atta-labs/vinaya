@@ -26,7 +26,7 @@ import {
 } from '../../../../processes/vinaya/bin/run-engine.js'
 import { createDeveloperDevToolContext } from '../../src/lib/task-tools/developer-dev-tools-context.js'
 import { manifestDigest } from '../../src/lib/review-result.js'
-import { readDriverLock, readPauseState } from '../../src/lib/dev-review-loop/pause-resume.js'
+import { clearDriverLock, readDriverLock, readPauseState } from '../../src/lib/dev-review-loop/pause-resume.js'
 import { cleanupAllReviewerIsolationArtifacts } from '../../src/lib/dev-review-loop/reviewer-isolation.js'
 import { heldVerdictPath } from '../../src/lib/dev-review-loop/reviewer-dispatch.js'
 import type { Observation } from './dev-review-current-loop-adapter.js'
@@ -452,12 +452,16 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
     traces.push(JSON.parse(readFileSync(result.tracePath, 'utf8')) as RunTrace)
   }
   await execute()
+  // A re-run is a fresh subprocess: the runner of the leg before is gone, and so is whatever lock it kept.
+  const runnerGone = () => clearDriverLock(runtimeDir, TASK)
   if (id === 'publication-replay' || id === 'resume') {
+    runnerGone()
     continuing = true
     ruling = id === 'resume'
     await execute()
   }
   if (id === 'cancellation' || id === 'operator-intervention-unauthenticated') {
+    runnerGone()
     ruling = id === 'cancellation'
     await execute(true)
   }

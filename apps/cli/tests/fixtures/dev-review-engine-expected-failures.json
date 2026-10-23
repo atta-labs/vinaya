@@ -3,11 +3,6 @@
   "description": "Observed Engine differences from the portable corpus. Entries may only be removed as their guarantees are implemented; the exit test pins the ceiling.",
   "entries": [
     {
-      "scenario": "lifecycle-telemetry",
-      "guarantee": "INV-116",
-      "reason": "The lifecycle stream includes per-node heartbeats and role attempts in the portable lifecycle sequence."
-    },
-    {
       "scenario": "requested-changes",
       "guarantee": "INV-099",
       "reason": "A revision publishes without the developer round marker required by the round sequence."
@@ -61,11 +56,6 @@
       "scenario": "human-pause",
       "guarantee": "INV-076",
       "reason": "An escalation decision has no durable pause or escalation record, handoff event or pause comment."
-    },
-    {
-      "scenario": "restart",
-      "guarantee": "INV-101",
-      "reason": "An already-open pull request still dispatches the developer instead of attaching."
     },
     {
       "scenario": "resume",

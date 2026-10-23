@@ -32,7 +32,7 @@ describe('Vinaya process packed runtime boundary', () => {
     const steps = flow.steps as Array<{ type: string; role?: string; permission?: string }>
     const agents = steps.filter((step) => step.type === 'agent')
     expect(plan.graph.nodes).toBeDefined()
-    expect(Object.keys(plan.graph.nodes)).toHaveLength(14)
+    expect(Object.keys(plan.graph.nodes)).toHaveLength(15)
     for (const step of agents) {
       expect(step.permission).toBe(`${step.role}/grants.yaml`)
       const roleFolder = join(dirname(loaded.flowPath), step.role!)

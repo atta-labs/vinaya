@@ -64,7 +64,7 @@ None — no externally-normative source governs this task.
 
 ## Planner's rationale
 
-**Boundary** — In: \`apps/cli/src/lib/dispatch.ts\`, a stand-in real file (issue-657, O3: the render now refuses when the Surface resolves to a tracked file but the Boundary names none of them). Out: everything else, including every importer of it outside \`apps/cli/src/lib\`, named as \`apps/cli/src/commands\` and \`apps/cli/tests\`.
+**Boundary** — In: \`apps/cli/src/lib/dispatch.ts\`, a stand-in real file (issue-657, O3: the render now refuses when the Surface resolves to a tracked file but the Boundary names none of them). Out: everything else, including every importer of it outside \`apps/cli/src/lib\`, named as \`apps/cli/src/commands\` and \`apps/cli/tests\`, and the Engine runner callers under \`processes/vinaya/bin\` and \`processes/vinaya/tests\` (\`processes/vinaya/bin\` and \`processes/vinaya/tests\` are in the Surface).
 
 - \`reader-resolvable-prose\`: the fixture edits no source comments, so it satisfies this check.
 - \`doc-claims\`: the fixture adds no documented claim, so it satisfies this check.
@@ -85,7 +85,7 @@ None — no externally-normative source governs this task.
 
 ## Surface
 
-in: apps/cli/src/lib
+in: apps/cli/src/lib, processes/vinaya/bin, processes/vinaya/tests
 out: aeg-root, apps/cli/src/commands, apps/cli/tests
 
 ## Parts

@@ -74,9 +74,13 @@ describe('the log inventory', () => {
     expect(named.filter((name) => !known.has(name))).toEqual([])
   })
 
-  test('the dropped rows are exactly unpushed_work_resume and infrastructure_retry, each with a reason', () => {
+  test('the dropped rows are exactly attempted, unpushed_work_resume and infrastructure_retry, each with a reason', () => {
     const dropped = LOG_INVENTORY.flatMap((row) => (row.status === 'dropped' ? [row] : []))
-    expect(dropped.flatMap((row) => row.events).sort()).toEqual(['infrastructure_retry', 'unpushed_work_resume'])
+    expect(dropped.flatMap((row) => row.events).sort()).toEqual([
+      'attempted',
+      'infrastructure_retry',
+      'unpushed_work_resume'
+    ])
     for (const row of dropped) expect(row.reason.length).toBeGreaterThan(20)
   })
 
@@ -300,17 +304,16 @@ function expectValid(run: ReturnType<typeof setup>): string[] {
 
 const heartbeat = 'driver_heartbeat'
 const attempted = 'attempted'
-// One heartbeat for each of the Flow's steps up to the reviewers, then the reviewers' two.
-const upToGates = [
-  heartbeat, // prepare-run
-  heartbeat, // reconcile-external-state
-  heartbeat, // prepare-sources
-  heartbeat, // develop
-  attempted,
-  heartbeat, // validate-developer-output
-  heartbeat, // run-mechanical-gates
-  heartbeat, // classify-gate-result
-  heartbeat // dispatch-reviewers
+const exited = 'driver_exited'
+// A round's assessment, as the assess-round step records it.
+const assessedRound = [
+  'round_started',
+  'gate_result_read',
+  'verdicts_read',
+  'findings_compared',
+  'stop_condition_met',
+  'round_ended',
+  'journal_finalized'
 ]
 
 describe('the Engine path writes the review loop events from the run', () => {
@@ -318,26 +321,8 @@ describe('the Engine path writes the review loop events from the run', () => {
     const run = setup()
     const outcome = await runLeg(run.translator, () => startProcessRun(run.options), { resumed: false })
     expect(outcome.reason).toBe('completed')
-    expect(expectValid(run)).toEqual([
-      ...upToGates,
-      heartbeat, // code-review
-      heartbeat, // security-review
-      attempted,
-      attempted,
-      heartbeat, // validate-reviewer-outputs
-      heartbeat, // assess-round
-      'loop_started',
-      'round_started',
-      'gate_result_read',
-      'verdicts_read',
-      'findings_compared',
-      'stop_condition_met',
-      'round_ended',
-      'journal_finalized',
-      heartbeat, // build-revision-handoff
-      heartbeat, // publish-ready-for-merge
-      'driver_exited'
-    ])
+    // No node writes a heartbeat or an attempt, and the exit record is the runner's, written once after the leg.
+    expect(expectValid(run)).toEqual(['loop_started', ...assessedRound])
   })
 
   test('one revision loop-back', async () => {
@@ -346,46 +331,17 @@ describe('the Engine path writes the review loop events from the run', () => {
     expect(outcome.reason).toBe('completed')
     const names = expectValid(run)
     expect(names).toEqual([
-      ...upToGates,
-      heartbeat,
-      heartbeat,
-      attempted,
-      attempted,
-      heartbeat, // validate-reviewer-outputs
-      heartbeat, // assess-round
       'loop_started',
       'round_started',
       'gate_result_read',
       'verdicts_read',
       'findings_compared',
       'round_ended',
-      heartbeat, // build-revision-handoff
       // round two
-      heartbeat, // develop
-      attempted,
-      heartbeat, // validate-developer-output
-      heartbeat, // run-mechanical-gates
-      heartbeat, // classify-gate-result
-      heartbeat, // dispatch-reviewers
-      heartbeat,
-      heartbeat,
-      attempted,
-      attempted,
-      heartbeat, // validate-reviewer-outputs
-      heartbeat, // assess-round
-      'round_started',
-      'gate_result_read',
-      'verdicts_read',
-      'findings_compared',
-      'stop_condition_met',
-      'round_ended',
-      'journal_finalized',
-      heartbeat, // build-revision-handoff
-      heartbeat, // publish-ready-for-merge
-      'driver_exited'
+      ...assessedRound
     ])
-    const roundTwoHeartbeat = run.emitted.filter((entry) => entry.event.event === heartbeat).at(-3)
-    expect(roundTwoHeartbeat?.event.round).toBe(2)
+    const secondRound = run.emitted.filter((entry) => entry.event.event === 'round_started').at(-1)
+    expect(secondRound?.event.round).toBe(2)
   })
 
   test('a halt, then a resume', async () => {
@@ -408,75 +364,25 @@ describe('the Engine path writes the review loop events from the run', () => {
     expect(pausedEvent).toMatchObject({ reason: 'principal_item', reason_code: 'halt', round: 1 })
     const resumedEvent = run.emitted.find((entry) => entry.event.event === 'resumed')?.event
     expect(resumedEvent).toMatchObject({ by: 'principal', round: 1 })
-    expect(expectValid(run)).toEqual([
-      heartbeat, // prepare-run
-      heartbeat, // reconcile-external-state
-      heartbeat, // prepare-sources
-      heartbeat, // develop
-      attempted,
-      heartbeat, // validate-developer-output
-      'paused',
-      'driver_exited',
-      'resumed',
-      heartbeat, // run-mechanical-gates
-      heartbeat, // classify-gate-result
-      heartbeat, // dispatch-reviewers
-      heartbeat,
-      heartbeat,
-      attempted,
-      attempted,
-      heartbeat, // validate-reviewer-outputs
-      heartbeat, // assess-round
-      'loop_started',
-      'round_started',
-      'gate_result_read',
-      'verdicts_read',
-      'findings_compared',
-      'stop_condition_met',
-      'round_ended',
-      'journal_finalized',
-      heartbeat, // build-revision-handoff
-      heartbeat, // publish-ready-for-merge
-      'driver_exited'
-    ])
+    expect(expectValid(run)).toEqual(['paused', 'resumed', 'loop_started', ...assessedRound])
   })
 
   test('gates that exhaust the revision ceiling', async () => {
     const run = setup({ gates: [1] })
     const outcome = await runLeg(run.translator, () => startProcessRun(run.options), { resumed: false })
     expect(outcome.reason).toBe('exhausted')
-    const round = [
-      heartbeat, // develop
-      attempted,
-      heartbeat, // validate-developer-output
-      heartbeat, // run-mechanical-gates
-      heartbeat // classify-gate-result
-    ]
-    expect(expectValid(run)).toEqual([
-      heartbeat, // prepare-run
-      heartbeat, // reconcile-external-state
-      heartbeat, // prepare-sources
-      ...round,
-      ...round,
-      ...round,
-      ...round,
-      'stop_condition_met',
-      'paused',
-      'driver_exited'
-    ])
+    expect(expectValid(run)).toEqual(['stop_condition_met', 'paused'])
   })
 
-  test('a heartbeat comes before every other event of the same node start', async () => {
+  test('no node start writes a heartbeat and no agent step writes an attempt', async () => {
     const run = setup({ assess: assessments([false, true]) })
     await runLeg(run.translator, () => startProcessRun(run.options), { resumed: false })
     expect(run.startSlices.length).toBeGreaterThan(0)
-    for (const slice of run.startSlices) {
-      expect(slice[0]?.event).toBe(heartbeat)
-      expect(slice.filter((event) => event.event === heartbeat)).toHaveLength(1)
-    }
+    for (const slice of run.startSlices) expect(slice).toEqual([])
     const names = run.emitted.map((entry) => String(entry.event.event))
-    const assessStart = names.indexOf('loop_started')
-    expect(run.emitted[assessStart - 1]?.event.phase).toBe('assess-round')
+    expect(names).not.toContain(heartbeat)
+    expect(names).not.toContain(attempted)
+    expect(names).not.toContain(exited)
   })
 
   test('the role launchers are handed no emit function, and no role may write to the Log', () => {
@@ -505,17 +411,20 @@ describe('the producers cover every end a run can come to', () => {
     return (events ?? []).map((event) => String(event.event))
   }
 
-  test('a cancelled leg writes cancelled, then an exit by signal', () => {
-    const ends = producers().runEnded?.({ outcome: { reason: 'failed', error: 'x' }, cancelled: true, steps: {} })
-    expect(names(ends)).toEqual(['cancelled', 'driver_exited'])
-    expect(ends?.[1]?.reason).toBe('signal')
+  test('a cancelled leg writes cancelled, and its exit is by signal', () => {
+    const context = { outcome: { reason: 'failed', error: 'x' }, cancelled: true, steps: {} } as const
+    const run = producers()
+    expect(names(run.runEnded?.(context))).toEqual(['cancelled'])
+    expect(run.exit(context)).toEqual({ reason: 'signal', lastDecision: 'cancel' })
   })
 
-  test('a crash writes paused and an exit by error, and never a round_ended', () => {
-    const ends = producers().runEnded?.({ outcome: { reason: 'failed', error: 'x' }, cancelled: false, steps: {} })
-    expect(names(ends)).toEqual(['paused', 'driver_exited'])
+  test('a crash writes paused, never a round_ended, and its exit is by error', () => {
+    const context = { outcome: { reason: 'failed', error: 'x' }, cancelled: false, steps: {} } as const
+    const run = producers()
+    const ends = run.runEnded?.(context)
+    expect(names(ends)).toEqual(['paused'])
     expect(ends?.[0]?.reason_code).toBe('infrastructure')
-    expect(ends?.[1]?.reason).toBe('error')
+    expect(run.exit(context)).toEqual({ reason: 'error', lastDecision: 'error', exitCode: 1, failedStep: true })
   })
 
   test('a crash after a real round end closes the journal from that round and writes no second round_ended', () => {
@@ -527,7 +436,7 @@ describe('the producers cover every end a run can come to', () => {
     )
     expect(fromAssessment.filter((name) => name === 'round_ended')).toHaveLength(1)
     const ends = names(run.runEnded?.({ outcome: { reason: 'failed', error: 'x' }, cancelled: false, steps: recorded }))
-    expect(ends).toEqual(['paused', 'journal_finalized', 'driver_exited'])
+    expect(ends).toEqual(['paused', 'journal_finalized'])
   })
 
   test('a decided pause is not written a second time when its run fails', () => {
@@ -540,21 +449,23 @@ describe('the producers cover every end a run can come to', () => {
     expect(
       names(run.nodeFailed?.({ nodeId: 'assess-round', runId: 'r', attempt: 1, steps: recorded, error: 'x' }))
     ).toEqual(['paused'])
-    const ends = run.runEnded?.({ outcome: { reason: 'failed', error: 'x' }, cancelled: false, steps: recorded })
-    expect(names(ends)).toEqual(['driver_exited'])
-    expect(ends?.[0]?.last_decision).toBe('pause(confidence)')
-    expect(ends?.[0]?.reason).toBe('paused')
+    const context = { outcome: { reason: 'failed', error: 'x' }, cancelled: false, steps: recorded } as const
+    expect(names(run.runEnded?.(context))).toEqual([])
+    expect(run.exit(context)).toEqual({ reason: 'paused', lastDecision: 'pause(confidence)' })
   })
 
-  test('an agent step that fails is a failed attempt', () => {
+  test('each way a leg ends names its exit', () => {
+    const run = producers()
+    const exit = (reason: 'completed' | 'paused' | 'exhausted') =>
+      run.exit({ outcome: { reason }, cancelled: false, steps: {} })
+    expect(exit('completed')).toEqual({ reason: 'finished', lastDecision: 'publish', exitCode: 0 })
+    expect(exit('paused')).toEqual({ reason: 'paused', lastDecision: 'pause(halt)' })
+    expect(exit('exhausted')).toEqual({ reason: 'paused', lastDecision: 'pause(max_rounds)' })
+  })
+
+  test('an agent step that fails writes no attempt', () => {
     const events = producers().nodeFailed?.({ nodeId: 'develop', runId: 'r', attempt: 2, steps: {}, error: 'x' })
-    expect(events?.[0]).toMatchObject({
-      kind: 'role_attempt',
-      actor: 'developer',
-      attempt: 2,
-      effect_id: 'develop:2',
-      outcome: 'infrastructure_failed'
-    })
+    expect(events).toEqual([])
   })
 
   test('an unreadable assessment result produces nothing', () => {
@@ -572,8 +483,11 @@ describe('the producers cover every end a run can come to', () => {
 
 describe('every produced row has a producer that wrote it', () => {
   test('each event a produced row names was written by a run or a producer above', () => {
+    // The runner writes the heartbeat and the exit record; its own suite runs them.
     const missing = LOG_INVENTORY.flatMap((row) =>
-      row.status === 'produced' ? row.events.map((event) => `${row.family}/${event}`) : []
+      row.status === 'produced' && !row.from.startsWith('the runner')
+        ? row.events.map((event) => `${row.family}/${event}`)
+        : []
     ).filter((name) => !seen.has(name))
     expect(missing).toEqual([])
   })

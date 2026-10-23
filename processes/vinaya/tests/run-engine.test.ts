@@ -63,9 +63,9 @@ describe('the dry run', () => {
         shimPath: '/runs/1/dev-bridge.sh'
       })
       expect(lines[0]).toBe(`process ${loaded.identity.id}@${loaded.identity.version} digest ${loaded.digest}`)
-      expect(lines.filter((line) => line.startsWith('step '))).toHaveLength(14)
+      expect(lines.filter((line) => line.startsWith('step '))).toHaveLength(15)
       const bound = lines.filter((line) => line.startsWith('bound '))
-      expect(bound).toHaveLength(11)
+      expect(bound).toHaveLength(12)
       expect(bound).toContain('bound publish-ready-for-merge harness.publish: publishRound')
       expect(bound).toContain(
         'bound validate-reviewer-outputs vinaya.validate-reviewer-outputs: parseReviewResult, writeHeldVerdict'
@@ -170,6 +170,7 @@ function stubRun(scenario: { failAt?: string; haltAt?: string; hostFails?: boole
       'vinaya.prepare-run',
       'vinaya.reconcile-external-state',
       'vinaya.prepare-sources',
+      'vinaya.choose-start',
       'vinaya.validate-developer-output',
       'harness.run-gates',
       'vinaya.classify-gate-result',
@@ -241,6 +242,7 @@ describe('a stub run on the Engine path', () => {
       'prepare-run',
       'reconcile-external-state',
       'prepare-sources',
+      'choose-start',
       'develop',
       'validate-developer-output',
       'run-mechanical-gates',
@@ -279,13 +281,8 @@ describe('a stub run on the Engine path', () => {
     expect(drain).toBeGreaterThan(lastLog)
     expect(calls.filter((call) => call === 'drain')).toHaveLength(1)
     const kinds = emitted.map((event) => `${(event as { kind: string }).kind}.${(event as { event: string }).event}`)
-    const heartbeat = 'dev_review_loop.driver_heartbeat'
-    const attempt = 'role_attempt.attempted'
-    expect(kinds).toEqual([
-      ...[heartbeat, heartbeat, heartbeat, heartbeat, attempt],
-      ...[heartbeat, heartbeat, heartbeat, heartbeat, heartbeat, heartbeat, attempt, attempt],
-      ...[heartbeat, heartbeat, heartbeat, heartbeat, 'dev_review_loop.driver_exited']
-    ])
+    // The stub assessment records no round, so the only event is the single exit record: no node writes a heartbeat.
+    expect(kinds).toEqual(['dev_review_loop.driver_exited'])
   })
 
   test('starts the host before the Developer and writes the executable shim', async () => {
