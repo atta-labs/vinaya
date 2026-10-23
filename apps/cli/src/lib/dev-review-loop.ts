@@ -9067,7 +9067,7 @@ async function watchPrePrPauseThenResume(
  * Developer back with the conflicting files through the existing conflict
  * send-back; the gates and both reviews run again on the new head before
  * anything publishes. A base that moved over this driver's own code hands the
- * task to a fresh process first (`handOffStaleWatchingDriver`, ADR 0006).
+ * task to a fresh process first (`handOffStaleWatchingDriver`), so it resumes on current code, never by rewriting history.
  *
  * Each re-entry is counted against `MAX_AUTOMATIC_CONFLICT_REENTRIES` and
  * narrated in the per-task driver log and the Log (`conflict_reentry`). Once
