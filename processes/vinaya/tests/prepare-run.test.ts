@@ -7,7 +7,6 @@ import { createRunControl } from '@atta/executor-agent-spawn'
 import { isHostRepairPause, readPauseState } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { DispatchSandboxRefused } from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
 import type { EnforcementControl } from '../../../apps/cli/src/lib/enforcement-controls'
-import { runPath } from '../../../apps/cli/src/lib/run-paths'
 import type { PreparedSource, RequiredSourceManifest } from '../../../apps/cli/src/lib/source-manifest'
 import { sourceReceiptsPath } from '../../../apps/cli/src/lib/source-manifest'
 import type { FetchDocumentationDeps } from '../../../apps/cli/src/lib/task-tools/fetch-documentation'
@@ -161,7 +160,7 @@ describe('prepare-run reads the review policy', () => {
 describe('prepare-run removes stale reviewer candidates', () => {
   test('a candidate and a scratch copy a prior run left are gone before any agent step; a verdict is kept', async () => {
     const { run, runtimeDir } = setup()
-    const round = runPath(runtimeDir, TASK, { area: 'round', round: 2 })
+    const round = join(runtimeDir, 'tasks-execution', String(TASK), 'rounds', '2')
     mkdirSync(join(round, 'candidate'), { recursive: true })
     mkdirSync(join(round, 'reviewer-scratch'), { recursive: true })
     writeFileSync(join(round, 'candidate', 'stale.ts'), 'old\n')
