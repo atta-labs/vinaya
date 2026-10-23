@@ -452,7 +452,7 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
   },
   {
     // Shared by the standalone loop and the Engine runner.
-    name: 'driver lifecycle — the liveness heartbeat and the single exit record',
+    name: 'devReviewLoop driver lifecycle — the liveness heartbeat and the single exit record',
     files: [DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH],
     requires: [
       { kind: 'dev_review_loop', event: 'driver_heartbeat' },
