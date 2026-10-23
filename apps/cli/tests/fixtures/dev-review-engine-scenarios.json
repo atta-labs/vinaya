@@ -61,6 +61,10 @@
         "sha256": "360db9b1b23a0dc09adb04528223a8481439c145d676a5b00b4485bb231c6b85"
       },
       {
+        "path": "apps/cli/src/lib/dev-review-loop/security-scan-command.ts",
+        "sha256": "b748e249d67ec21d61791b61d5dd522682a48453e3a70fd843c668df0ff62cde"
+      },
+      {
         "path": "apps/cli/src/lib/dev-review-loop/turn-result.ts",
         "sha256": "0b734ecbde7a05278b4e73821617b3e4b12bccc3c955ed5f101b9c323a136529"
       },
