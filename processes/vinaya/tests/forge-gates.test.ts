@@ -565,6 +565,10 @@ for (const agent of AGENTS) {
       roots.push(root)
       const git = gitIn(root)
       git('init', '-q', '-b', 'main')
+      // The real rebase commits with the repository's own identity: a host with no global git identity still has one.
+      git('config', 'user.name', 't')
+      git('config', 'user.email', 't@t')
+      git('config', 'commit.gpgsign', 'false')
       mkdirSync(join(root, 'apps/cli/src'), { recursive: true })
       mkdirSync(join(root, '.github/workflows'), { recursive: true })
       writeFileSync(join(root, 'apps/cli/src/own.ts'), 'export const own = 1\n')
