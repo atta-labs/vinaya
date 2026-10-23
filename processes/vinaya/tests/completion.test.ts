@@ -123,6 +123,8 @@ interface Observed {
   scans: Array<{ command: readonly string[]; cwd: string }>
   discarded: number[]
   results: Record<string, { exitCode: number; stdout: string }>
+  /** The `paused` Log events, as `<reason>/<reason_code>`. */
+  paused: string[]
 }
 
 async function runFlow(agent: Agent, scenario: Scenario = {}): Promise<Observed> {
@@ -281,6 +283,7 @@ async function runFlow(agent: Agent, scenario: Scenario = {}): Promise<Observed>
       outcome: (JSON.parse(readFileSync(result.tracePath, 'utf8')) as { outcome: string }).outcome,
       timeline,
       journalResults: events.filter((e) => e.event === 'journal_finalized').map((e) => String(e.result)),
+      paused: events.filter((e) => e.event === 'paused').map((e) => `${String(e.reason)}/${String(e.reason_code)}`),
       spawns,
       pauses: handoff.calls.filter((call) => call.startsWith('escalation:')),
       prBody,
@@ -338,6 +341,8 @@ describe.each(AGENTS)('the live-check step (%s)', (agent) => {
     const observed = await runFlow(agent, { live: ['bun test live.test.ts'], liveExits: [1], maxRounds: 1 })
     expect(observed.outcome).toBe('paused')
     expect(observed.pauses).toEqual(['escalation:max_rounds'])
+    // The withdrawn approval at the cap is logged as the principal item the standalone loop records.
+    expect(observed.paused).toEqual(['principal_item/max_rounds'])
     expect(observed.timeline).not.toContain('publish')
     expect(observed.journalResults).toEqual(['stopped'])
     expect(developerSpawns(observed)).toBe(1)
@@ -437,8 +442,12 @@ describe.each(AGENTS)('the security scan (%s)', (agent) => {
       kind: 'ran',
       output: 'scanner findings'
     })
-    expect(observed.spawns.indexOf('code-reviewer')).toBeGreaterThan(-1)
-    expect(observed.timeline.indexOf('scan')).toBeGreaterThan(-1)
+    // The scan finishes before either reviewer is launched.
+    const scannedAt = observed.timeline.indexOf('scan')
+    expect(scannedAt).toBeGreaterThan(-1)
+    expect(observed.timeline.indexOf('spawn:code-reviewer')).toBeGreaterThan(scannedAt)
+    expect(observed.timeline.indexOf('spawn:security-reviewer')).toBeGreaterThan(scannedAt)
+    expect(observed.timeline.indexOf('spawn:developer')).toBeLessThan(scannedAt)
   })
 
   test('with no command configured nothing runs', async () => {

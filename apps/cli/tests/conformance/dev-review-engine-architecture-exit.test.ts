@@ -374,18 +374,19 @@ const ENGINE_DELETION_OWNERS: Readonly<Record<string, readonly string[]>> = {
     'INV-057',
     'INV-063',
     'INV-013',
-    'INV-031'
+    'INV-031',
+    'INV-125'
   ],
   '8': ['INV-033', 'INV-037', 'INV-038', 'INV-039', 'INV-041', 'INV-120', 'INV-122', 'INV-126', 'INV-137'],
   '9': ['INV-043', 'INV-071', 'INV-099', 'INV-102'],
-  '10': ['INV-103', 'INV-118', 'INV-124', 'INV-125', 'INV-127', 'INV-163'],
+  '10': ['INV-103', 'INV-118', 'INV-124', 'INV-127', 'INV-163'],
   '11': ['INV-021', 'INV-164'],
   '12': ['INV-089']
 }
 const ENGINE_ALLOWED_GUARANTEES = new Set(Object.values(ENGINE_DELETION_OWNERS).flat())
 const ENGINE_AGENTS = ['claude', 'codex'] as const
 // This ceiling may only fall together with removal of resolved fixture entries.
-const ENGINE_FAILURE_CEILING = 12
+const ENGINE_FAILURE_CEILING = 11
 interface EngineFailure {
   scenario: string
   guarantee: string

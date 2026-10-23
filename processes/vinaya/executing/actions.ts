@@ -13,14 +13,15 @@ import {
   type TaskClock,
   type VerdictObservation
 } from '@attalabs/aeg-core'
-import type { StepNodeResult } from '@atta/executor-agent-spawn'
+import type { RoleBinaryConfig, StepNodeResult } from '@atta/executor-agent-spawn'
 import { generateClaudeSettings } from '../../../harness/adapters/agents/claude-code/settings'
 import { generateCodexConfig } from '../../../harness/adapters/agents/codex/config'
 import { loadRoleGrants, ROLE_NAMES, withModel } from '../../../harness/adapters/agents/manifest'
 import { structuredResult } from '../../../harness/adapters/agents/structured-result'
 import { pullRequestCheckEnv, type PullRequestView } from './pull-request-env'
-import type { Handoff, InputVersions } from './handoff'
+import type { Handoff, InputVersions, PauseRequest } from './handoff'
 import { runCliChecks } from '../../../harness/gates/run-checks'
+import { agentEnvAllowlist } from '../../../harness/adapters/agents/launch-env'
 import type { GeneratedAgentConfig, GeneratorPaths } from '../../../harness/adapters/agents/policy'
 import {
   createRoleLauncher,
@@ -34,8 +35,30 @@ import {
   checkTaskDispatchReadiness,
   createTaskWorktree,
   fetchSourceRevision,
-  findOpenPrForBranch
+  findOpenPrForBranch,
+  type reviewPolicyForLoop
 } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
+import { DispatchSandboxRefused } from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
+import { cleanupAllReviewerIsolationArtifacts } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-isolation'
+import { normalizeSourceIdentity } from '../../../apps/cli/src/lib/dev-review-loop/turn-result'
+import {
+  describeInactiveControls,
+  enforcementControlsActive,
+  type EnforcementControl
+} from '../../../apps/cli/src/lib/enforcement-controls'
+import { realLocalGateControl } from '../../../apps/cli/src/lib/local-gate-control'
+import {
+  countedSourceIds,
+  readSourceDeliveryReceipts,
+  sourceReceiptsPath,
+  sourceStoreDir
+} from '../../../apps/cli/src/lib/source-manifest'
+import {
+  prepareSources,
+  RequiredSourcesUnavailable,
+  type PrepareSourcesResult
+} from '../../../apps/cli/src/lib/source-provider'
+import { probeAgentSandbox, type SandboxProbePlan } from '../../../apps/cli/src/lib/worker-boundary'
 import { publishRound, type PublishInput } from '../../../apps/cli/src/lib/dev-review-loop/publication'
 import {
   defaultRunSecurityScanSubprocess,
@@ -118,8 +141,6 @@ export interface TaskInput {
   candidateDir?: () => string | null
   /** The task's frozen brief, whose `[live]` Test Plan lines the live-check step runs. */
   frozenBrief?: () => string
-  /** The repository root a live-check checkout is cut from. */
-  repoRoot?: string
   /** The reviewers' verdicts for the round, read from the recorded results. */
   verdicts: (results: Readonly<Record<string, StepNodeResult>>) => readonly VerdictObservation[]
   /**
@@ -135,6 +156,14 @@ export interface TaskInput {
   handoff?: Handoff
   /** The brief, objectives, ruling and policy versions an escalation record binds its ruling to; throws when they cannot be read. */
   inputVersions?: () => InputVersions
+  /** The repository root the local enforcement controls are read from and a live-check checkout is cut from; the working directory when absent. */
+  repoRoot?: string
+  /** Reads the review policy, throwing when it cannot be read; absent for a run with no policy to read. */
+  reviewPolicy?: () => ReturnType<typeof reviewPolicyForLoop>
+  /** The plan that proves the Developer's agent sandbox runs a command, or null when the run launches no sandboxed agent. */
+  sandboxPlan?: () => SandboxProbePlan | null
+  /** Prepares the task's required Documentation sources into the controller-owned store; absent for a run with no sources to prepare. */
+  prepareSources?: () => Promise<PrepareSourcesResult>
 }
 
 /** What only the moment of publication knows. */
@@ -173,6 +202,10 @@ export interface BoundFunctions {
   discardHeldVerdicts: typeof discardHeldVerdicts
   /** Opens or updates the pull request's one deferred-findings Issue. */
   writeDeferredFindingsIssue: (input: { prNumber: number; entries: DeferredFindingEntry[] }) => DeferredFindingsIssueRef
+  cleanupAllReviewerIsolationArtifacts: typeof cleanupAllReviewerIsolationArtifacts
+  /** The repository's local gate control, read for the enforcement controls every dispatch requires. */
+  localGateControl: () => EnforcementControl
+  probeAgentSandbox: typeof probeAgentSandbox
 }
 
 interface Binding {
@@ -396,11 +429,60 @@ export function dispatchReviewers(): { exitCode: number; stdout: string } {
 
 export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
   'vinaya.prepare-run': {
-    adapts: [checkTaskDispatchReadiness, createTaskWorktree],
-    build: (task) => () => {
+    adapts: [
+      checkTaskDispatchReadiness,
+      createTaskWorktree,
+      cleanupAllReviewerIsolationArtifacts,
+      enforcementControlsActive,
+      probeAgentSandbox
+    ],
+    build: (task) => async () => {
+      // Every refusal below is a pause through the handoff, never a thrown start: the run halts at this step's boundary.
+      const refuse = (request: PauseRequest): { exitCode: number; stdout: string } => {
+        if (!task.handoff)
+          throw new Error(`prepare-run refused (${request.reason}) but no handoff is wired to make it durable`)
+        task.handoff.pause(request)
+        return { exitCode: 1, stdout: request.detail }
+      }
+      // The policy is read here, not when the run's input is built, so a failed read pauses instead of refusing entry.
+      try {
+        task.reviewPolicy?.()
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error)
+        return refuse({
+          reason: 'infrastructure',
+          detail: `the review policy could not be read, so no verdict is cast under a default: ${reason}`,
+          error
+        })
+      }
+      // A prior run's reviewer candidates and scratch copies never leak into this one.
+      ;(task.bound?.cleanupAllReviewerIsolationArtifacts ?? cleanupAllReviewerIsolationArtifacts)(
+        task.runtimeDir,
+        task.issueNumber
+      )
+      const controls = enforcementControlsActive([
+        (task.bound?.localGateControl ?? (() => realLocalGateControl(task.repoRoot ?? process.cwd())))()
+      ])
+      if (!controls.active) {
+        const detail = describeInactiveControls(controls)
+        return refuse({ reason: 'infrastructure', detail, error: new Error(detail) })
+      }
       const readiness = (task.bound?.checkTaskDispatchReadiness ?? checkTaskDispatchReadiness)(task.branch)
       if (!readiness.ready) return { exitCode: 1, stdout: readiness.output }
       ;(task.bound?.createTaskWorktree ?? createTaskWorktree)(task.branch)
+      // The sandbox is proved by running a real command in it, before the first agent step.
+      const plan = task.sandboxPlan?.() ?? null
+      if (plan !== null) {
+        const probe = await (task.bound?.probeAgentSandbox ?? probeAgentSandbox)(plan)
+        if (!probe.ok) {
+          const refusal = new DispatchSandboxRefused(
+            { agent: plan.agent, error: probe.error },
+            `task ${task.issueNumber}`
+          )
+          // A host-repair pause: addressed to the Operator, spends no infrastructure retry, never resumed by a ruling.
+          return refuse({ reason: 'sandbox_refused', detail: refusal.message, error: refusal })
+        }
+      }
       return ok(readiness.output)
     }
   },
@@ -415,8 +497,26 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
   // The branch point itself is the Flow's decision on the reconcile step's result; this step records that it ran.
   'vinaya.choose-start': { adapts: [], build: () => () => ok() },
   'vinaya.prepare-sources': {
-    adapts: [fetchSourceRevision],
-    build: (task) => () => ok((task.bound?.fetchSourceRevision ?? fetchSourceRevision)(task.issueNumber))
+    adapts: [fetchSourceRevision, prepareSources],
+    build: (task) => async () => {
+      const revision = (task.bound?.fetchSourceRevision ?? fetchSourceRevision)(task.issueNumber)
+      const prepared = await task.prepareSources?.()
+      if (prepared === undefined) return ok(revision)
+      // A source the turn would have to take on memory pauses the run before the Developer is dispatched.
+      if (prepared.unavailable.length > 0) {
+        if (!task.handoff)
+          throw new Error('prepare-sources found an unreadable source but no handoff is wired to make it durable')
+        const unavailable = new RequiredSourcesUnavailable(prepared.unavailable)
+        task.handoff.pause({ reason: 'missing_source', detail: unavailable.message, error: unavailable })
+        return { exitCode: 1, stdout: unavailable.message }
+      }
+      // The turn is judged against the sources the brief names, as the standalone loop does.
+      task.developerContext = {
+        ...task.developerContext,
+        requiredSources: prepared.manifest.sources.map((source) => source.requirementText)
+      }
+      return ok(revision)
+    }
   },
   'vinaya.validate-developer-output': {
     adapts: [parseDeveloperTurnResult],
@@ -425,6 +525,21 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       // The Flow has no human-handoff step, so an invalid turn ends the run as failed.
       if (!validation.ok)
         throw new Error(`Developer output failed ${validation.stage} validation: ${validation.errors.join('; ')}`)
+      // A citation counts only behind a delivery receipt the controller recorded, never the Developer's word.
+      if (validation.result.status === 'completed') {
+        const counted = new Set(
+          countedSourceIds(
+            readSourceDeliveryReceipts(sourceReceiptsPath(sourceStoreDir(task.runtimeDir, task.issueNumber)))
+          ).map(normalizeSourceIdentity)
+        )
+        const unread = (validation.result.sourceUses ?? []).filter(
+          (use) => !counted.has(normalizeSourceIdentity(use.source))
+        )
+        if (unread.length > 0)
+          throw new Error(
+            `Developer output cites required source(s) with no delivery receipt the controller recorded: ${unread.map((use) => use.source).join(', ')}`
+          )
+      }
       return ok()
     }
   },
@@ -605,6 +720,9 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
         state: JSON.parse(encodeLoopState(withdrawn.state)),
         from
       })
+      // At the round cap the failed line is the principal item: the withdrawn round pauses `max_rounds`, logged as
+      // a `principal_item` pause, and the handoff makes it durable, as the standalone loop does. A line the host
+      // cannot run is recorded unverified instead and held by the merge gate like an unticked principal item.
       if (atCap) {
         if (!task.handoff) throw new Error('run-live-checks decided a pause but no handoff is wired to make it durable')
         task.handoff.pause({
@@ -707,6 +825,40 @@ async function runLiveGate(task: TaskInput, head: string, commands: readonly str
     }
   }
   return result.failures
+}
+
+/**
+ * The plan that proves the Developer's sandbox for the launch shape `vendor` generated: the settings file
+ * Claude launches with, or the Codex configuration its `CODEX_HOME` holds, run from the task worktree with the
+ * launcher's own environment over the agent environment allowlist.
+ */
+export function sandboxProbePlanFor(
+  vendor: 'claude-code' | 'codex',
+  launcher: Pick<RoleBinaryConfig, 'command' | 'env'>,
+  generatedDir: string,
+  cwd: string,
+  sourceEnv: Readonly<Record<string, string | undefined>> = process.env
+): SandboxProbePlan {
+  const env: NodeJS.ProcessEnv = {}
+  for (const key of agentEnvAllowlist()) if (sourceEnv[key] !== undefined) env[key] = sourceEnv[key]
+  Object.assign(env, launcher.env)
+  if (vendor === 'claude-code')
+    return {
+      agent: 'claude',
+      binaryPath: launcher.command,
+      cwd,
+      env,
+      settingsPath: join(generatedDir, 'role-settings.json')
+    }
+  return {
+    agent: 'codex',
+    binaryPath: launcher.command,
+    cwd,
+    env,
+    configToml: readFileSync(join(generatedDir, 'config.toml'), 'utf8'),
+    // The Engine's generated configuration names every writable root itself.
+    withWritableDirs: (args) => [...args]
+  }
 }
 
 /** The action registry for one task: each binding's action, built over that task's input. */

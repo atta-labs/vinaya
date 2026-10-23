@@ -212,6 +212,12 @@ async function replay(scenario: Scenario) {
     policy,
     forge
   })
+  // The fixture repository has no installed hooks and no sandbox to probe; the preparation controls have their own tests.
+  taskInput.bound = {
+    ...taskInput.bound,
+    localGateControl: () => ({ control: 'local-gate', active: true, detail: '', remedy: '' }),
+    probeAgentSandbox: async () => ({ ok: true })
+  }
 
   const spawns: Array<{ step: Step; args: string[]; env: Record<string, string | undefined>; prompt: string }> = []
   const rounds: Record<Step, number> = { develop: 0, 'code-review': 0, 'security-review': 0 }

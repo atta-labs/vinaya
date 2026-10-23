@@ -23,11 +23,6 @@
       "reason": "A missing reviewer result ends the run after one attempt, without a retry or pause record."
     },
     {
-      "scenario": "review-policy-unreadable",
-      "guarantee": "INV-103",
-      "reason": "The policy reader throws during task-input preparation before the Flow starts, refusing entry without a durable infrastructure pause or escalation record."
-    },
-    {
       "scenario": "developer-failure",
       "guarantee": "INV-013",
       "reason": "Unknown addressed finding ids are accepted and the next reviewed round publishes; the turn acceptance gap also concerns INV-031."
@@ -35,7 +30,7 @@
     {
       "scenario": "required-source-failure",
       "guarantee": "INV-125",
-      "reason": "A claimed required source with no delivery receipt is accepted and reaches review and publication."
+      "reason": "A claimed required source with no delivery receipt is rejected and pauses the run, but after one Developer dispatch: the Engine runs no correction turn, where the portable corpus expects two."
     },
     {
       "scenario": "context-pressure",
