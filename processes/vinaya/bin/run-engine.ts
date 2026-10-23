@@ -7,15 +7,23 @@ import { join, resolve } from 'node:path'
 import {
   initialLoopState,
   buildReviewInputManifest,
+  type DevReviewLoopEventInput,
   type LoopConfig,
   type Observations,
   type ReviewInputManifest,
   type VerdictObservation
 } from '@attalabs/aeg-core'
-import type { RunControl, RunOutcome, SpawnFn, StepNodeResult } from '@atta/executor-agent-spawn'
+import {
+  createRunControl,
+  type RunControl,
+  type RunOutcome,
+  type SpawnFn,
+  type StepNodeResult
+} from '@atta/executor-agent-spawn'
 import { loadProcess, type LoadedProcess } from '../../../harness/dev-process/loader/load-process'
 import { SqliteCheckpointer } from '../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
 import {
+  resumeProcessRun,
   startProcessRun,
   type ActionRegistry,
   type ProcessRunOptions
@@ -27,6 +35,7 @@ import {
   type LegOutcome,
   type NodeLifecycle
 } from '../../../harness/dev-process/logging/translate'
+import { createVinayaLogProducers, STEP_FAILED } from '../executing/log-events'
 import {
   fetchCiConclusion,
   readWorktreeHead,
@@ -57,6 +66,31 @@ import type { DevToolContext, DevToolResult } from '../../../apps/cli/src/lib/ta
 import { validatePrBodyForCreate } from '../../../apps/cli/src/commands/pr'
 import { createLogSink, LOG_FOLDER_ONLY_ENV, type LogSinkDeps } from '../../../apps/cli/src/lib/log-sink'
 import { setEngineLogIdentity } from './engine-log-identity'
+import {
+  chooseStart,
+  createChildReaper,
+  lockExitOf,
+  onShutdownSignals,
+  realLaunchDeps,
+  recoverRun,
+  releaseDriverLock,
+  revisionMovedLine,
+  roleTimeouts,
+  runIdentityOfTask,
+  SIGNAL_EXIT_CODE,
+  takeDriverLock,
+  type RecoveryDeps
+} from './run-lifecycle'
+import {
+  createDriverExitRecorder,
+  DRIVER_HEARTBEAT_INTERVAL_MS,
+  defaultSetHeartbeat,
+  emitDriverHeartbeat
+} from '../../../apps/cli/src/lib/dev-review-loop/driver-lifecycle'
+import { isDriverPidAlive } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+import { appendLoopLogLine, appendRunStartMarker, loopLogPathFor } from '../../../apps/cli/src/lib/loop-log'
+import { getProcessSnapshot, readLaunchRecord, terminateChildWithGrace } from '../../../apps/cli/src/lib/dispatch'
+import { loadConfig } from '../../../apps/cli/src/lib/config'
 import { startDevToolsHost, type DevToolsHost } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
 import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-tools-registration'
 import { createDeveloperDevToolContext } from '../../../apps/cli/src/lib/task-tools/developer-dev-tools-context'
@@ -75,8 +109,13 @@ import {
   reviewPolicyForLoop
 } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
 import { fetchLoopHistory } from '../../../apps/cli/src/lib/dev-review-loop/journal-history'
-import { buildVerdictFromReview, heldVerdictPath } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
+import {
+  buildVerdictFromReview,
+  heldVerdictPath,
+  latestHeldCleanVerdict
+} from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { RUNTIME_DIR_ENV_KEY, runtimeDirForRepoAsync } from '../../../apps/cli/src/lib/run-paths'
+import { defaultPatchIdOf } from '../../../apps/cli/src/lib/dev-review-loop'
 import { parseReviewResult, type ReviewResult } from '../../../apps/cli/src/lib/review-result'
 import type { ReviewerPromptFacts } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { agentEnvAllowlist } from '../../../harness/adapters/agents/launch-env'
@@ -329,6 +368,24 @@ export interface EngineRunOptions {
   allowUnixSockets?: boolean
   /** The code revision recorded on every checkpoint; defaults to the HEAD of `repoRoot`, the checkout the runner runs from. */
   revision?: string
+  /** What the runner does around the run; every member defaults to the live behaviour. */
+  lifecycle?: EngineLifecycleOptions
+}
+
+export interface EngineLifecycleOptions {
+  /** Starts the driver heartbeat timer; replaced by a test that drives the callback on its own clock. */
+  setHeartbeat?: (cb: () => void, intervalMs: number) => () => void
+  pid?: number
+  isPidAlive?: (pid: number) => boolean
+  now?: () => Date
+  /** The dispatch settings the role ceilings come from (`dispatch.timeoutMs`, `dispatch.reviewerTimeoutMs`). */
+  dispatchConfig?: { timeoutMs?: number; reviewerTimeoutMs?: number }
+  /** What a re-run reads before it dispatches; absent for a run that must not reach the forge. */
+  recovery?: RecoveryDeps
+  /** How long agent process groups are given to exit on the graceful signal before the forced one. */
+  killGraceMs?: number
+  /** Whether SIGINT and SIGTERM abort the run (default true). */
+  handleSignals?: boolean
 }
 
 /** The HEAD of the checkout at `repoRoot`, or `unknown` when it is not a git checkout. */
@@ -353,20 +410,88 @@ export interface EngineRunResult {
 export async function runEngine(options: EngineRunOptions): Promise<EngineRunResult> {
   const out = options.out ?? ((line: string) => process.stdout.write(`${line}\n`))
   const { args } = options
+  const lifecycle = options.lifecycle ?? {}
   out(`loopId ${options.loopId}`)
   const runDir = runDirectory(options.runtimeDir, args.task)
   mkdirSync(runDir, { recursive: true })
   const tracePath = join(runDir, 'trace.json')
   const trace = createTraceRecorder({ task: args.task, agent: args.agent, loopId: options.loopId })
-  const translator = createLogTranslator(
-    // The producers are the Vinaya process's own; they know the loop and the task.
-    (await import('../executing/log-events')).createVinayaLogProducers({ loopId: options.loopId, task: args.task }),
-    options.sink.log as unknown as EmitLogEvent
+  const producers = createVinayaLogProducers({ loopId: options.loopId, task: args.task })
+  const translator = createLogTranslator(producers, options.sink.log as unknown as EmitLogEvent)
+  const logPath = loopLogPathFor(null, args.task, options.runtimeDir)
+  const narrate = (line: string): void => appendLoopLogLine(logPath, `${new Date().toISOString()}  ${line}`)
+  const writeTrace = (outcome: string, results: Record<string, StepNodeResult>, error?: string): void => {
+    // The trace carries tool output verbatim, so only its owner reads it.
+    writeFileSync(tracePath, `${JSON.stringify(trace.finish(outcome, results, error), null, 2)}\n`, { mode: 0o600 })
+    chmodSync(tracePath, 0o600)
+    out(`trace ${tracePath}`)
+  }
+
+  // One runner per task: a held lock ends this start before anything is dispatched.
+  const lock = takeDriverLock(options.runtimeDir, args.task, {
+    pid: lifecycle.pid ?? process.pid,
+    now: lifecycle.now ?? (() => new Date()),
+    isPidAlive: lifecycle.isPidAlive ?? isDriverPidAlive,
+    token: randomUUID(),
+    narrate
+  })
+  if (!lock.acquired) {
+    narrate(`engine runner ${lock.message}`)
+    out(`engine runner ${lock.message}`)
+    await options.sink.drain()
+    writeTrace('refused', {}, lock.message)
+    return { outcome: null, exitCode: 1, tracePath }
+  }
+
+  const control = options.control ?? createRunControl()
+  const reaper = createChildReaper(options.spawnFn)
+  // A halt ends the agents' whole process groups at once: the executor signals only the agent it spawned.
+  control.signal.addEventListener('abort', () => void reaper.reap(lifecycle.killGraceMs), { once: true })
+  const log = (event: DevReviewLoopEventInput): void => (options.sink.log as unknown as (event: unknown) => void)(event)
+  let currentNode: string | null = null
+  let prNumber = 0
+  let signalled: 'SIGINT' | 'SIGTERM' | null = null
+  let described = 'starting'
+  let stopHeartbeat: () => void = () => {}
+  const recordExit = createDriverExitRecorder({
+    loopId: options.loopId,
+    task: args.task,
+    loopLogPath: logPath,
+    describeDecision: () => described,
+    stopHeartbeat: () => stopHeartbeat(),
+    log
+  })
+  stopHeartbeat = (lifecycle.setHeartbeat ?? defaultSetHeartbeat)(
+    () =>
+      emitDriverHeartbeat({
+        loopId: options.loopId,
+        task: args.task,
+        round: options.taskInput?.reviewRound?.() ?? 1,
+        phase: currentNode,
+        prNumber,
+        log
+      }),
+    DRIVER_HEARTBEAT_INTERVAL_MS
   )
-  const developerFacts = options.developerFacts
+  const stopSignals =
+    lifecycle.handleSignals === false
+      ? () => {}
+      : onShutdownSignals((signal) => {
+          if (signalled !== null) {
+            // A second signal means the first stop is taking too long: end the agents now and leave.
+            narrate(`received ${signal} again; ending the agents now`)
+            void reaper.reap(0).then(() => process.exit(SIGNAL_EXIT_CODE[signal]))
+            return
+          }
+          signalled = signal
+          narrate(`received ${signal}; stopping the run and ending its agents`)
+          control.halt(signal)
+        })
+
   let host: Pick<DevToolsHost, 'close'> | undefined
   let checkpointer: SqliteCheckpointer | undefined
   let outcome: RunOutcome | null = null
+  let legOutcome: LegOutcome | null = null
   let error: string | undefined
   try {
     const socketPath = devToolsSocketPath(`engine-${args.task}`)
@@ -386,58 +511,143 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
       mcpCommand: shimPath,
       model: args.model,
       allowUnixSockets: options.allowUnixSockets === true,
-      stageCodexLogin: true
+      stageCodexLogin: true,
+      timeouts: roleTimeouts(lifecycle.dispatchConfig)
     })
     const base = options.actions ?? createActions(options.taskInput)
-    const actions = recordingActions(tracedActions(base, trace), translator)
-    checkpointer = new SqliteCheckpointer({
-      path: checkpointPath(runDir),
-      revision: options.revision ?? checkoutRevision(options.repoRoot),
-      model: args.model
-    })
-    const runOptions: ProcessRunOptions = {
-      process: options.process,
-      question: `Task ${args.task}`,
-      bindings: { actions, decisions: (await import('../executing/actions')).decisions, roles },
-      checkpointer,
-      workingDirectoryRoot: options.repoRoot,
-      // A revision continues the Developer's own session, as the standalone loop resumes it.
-      continueSessions: ['develop'],
-      envAllowlist: agentEnvAllowlist({
-        extra: [
-          LOG_FOLDER_ONLY_ENV,
-          ...(options.allowUnixSockets === true ? [LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV] : [])
-        ]
-      }),
-      ...(developerFacts
-        ? {
-            stepPrompts: {
-              develop: async (rendered, results, context) =>
-                developerPrompt(rendered, await developerFacts(), results, context),
-              ...(options.taskInput?.reviewerPrompt
-                ? {
-                    'code-review': async () => options.taskInput.reviewerPrompt!('reviewer'),
-                    'security-review': async () => options.taskInput.reviewerPrompt!('security')
-                  }
-                : {})
-            }
+    // The pull request found by the reconcile step is the one the heartbeat reports.
+    const noting: ActionRegistry = Object.fromEntries(
+      Object.entries(base).map(([name, action]) => [
+        name,
+        async (context: Parameters<typeof action>[0]) => {
+          const result = await action(context)
+          if (context.nodeId === 'reconcile-external-state') {
+            try {
+              const found = (JSON.parse(result.stdout ?? 'null') as { number?: unknown } | null)?.number
+              if (typeof found === 'number') prNumber = found
+            } catch {}
           }
-        : {}),
-      ...(options.spawnFn ? { spawnFn: options.spawnFn } : {}),
-      ...(options.control ? { control: options.control } : {}),
-      onEvent: (event) => {
-        options.observe?.(event as NodeLifecycle)
-        trace.onEvent(event as NodeLifecycle)
-        translator.onEvent(event as NodeLifecycle)
-      }
+          return result
+        }
+      ])
+    )
+    const actions = recordingActions(tracedActions(noting, trace), translator)
+    const revision = options.revision ?? checkoutRevision(options.repoRoot)
+    checkpointer = new SqliteCheckpointer({ path: checkpointPath(runDir), revision, model: args.model })
+    const identity = runIdentityOfTask(args.task)
+    const choice = await chooseStart(checkpointer, identity)
+    appendRunStartMarker(logPath, {
+      role: 'engine-runner',
+      pid: lifecycle.pid ?? process.pid,
+      runId: options.loopId,
+      resumed: choice.kind === 'resume'
+    })
+    const branch = options.taskInput?.branch
+    narrate(
+      choice.kind === 'resume'
+        ? `resuming the run from its checkpoint (${identity.runId})`
+        : choice.kind === 'completed'
+          ? 'the checkpoint records a completed run; nothing to run'
+          : `no checkpoint; starting fresh${branch ? ` on branch ${branch}` : ''}`
+    )
+    const moved = choice.kind === 'resume' ? revisionMovedLine(choice.checkpointRevision, revision) : null
+    if (moved !== null) narrate(moved)
+
+    // What a re-run reads before it dispatches: the prior launch, the round journal and any held verdict.
+    const recovery = lifecycle.recovery ? recoverRun(lifecycle.recovery) : null
+    if (recovery !== null && options.taskInput) {
+      options.taskInput.loopState = recovery.state
+      if (recovery.nextRound !== null) options.taskInput.seedRound?.(recovery.nextRound)
     }
-    translator.beginLeg()
-    outcome = await startProcessRun(runOptions)
-    translator.endLeg(outcome as unknown as LegOutcome)
+    if (recovery?.refusal) {
+      narrate(`not dispatching: ${recovery.refusal}`)
+      throw new Error(recovery.refusal)
+    }
+    translator.beginLeg({ resumed: choice.kind === 'resume' })
+    if (choice.kind === 'completed') {
+      legOutcome = { reason: 'completed' }
+    } else if (recovery?.held) {
+      // A clean verdict pair still bound to the current head is published as it stands: no review is dispatched again.
+      narrate(`held clean verdict from round ${recovery.held.round} still covers the head; publishing it`)
+      options.taskInput?.seedRound?.(recovery.held.round)
+      const published = await actions['harness.publish']?.({
+        nodeId: 'publish-ready-for-merge',
+        action: 'harness.publish',
+        results: {}
+      })
+      legOutcome =
+        published?.exitCode === 0 ? { reason: 'completed' } : { reason: 'failed', error: 'publication failed' }
+    } else {
+      const developerFacts = options.developerFacts
+      const runOptions: ProcessRunOptions = {
+        process: options.process,
+        question: `Task ${args.task}`,
+        bindings: { actions, decisions: (await import('../executing/actions')).decisions, roles },
+        checkpointer,
+        workingDirectoryRoot: options.repoRoot,
+        // A revision continues the Developer's own session, as the standalone loop resumes it.
+        continueSessions: ['develop'],
+        envAllowlist: agentEnvAllowlist({
+          extra: [
+            LOG_FOLDER_ONLY_ENV,
+            ...(options.allowUnixSockets === true ? [LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV] : [])
+          ]
+        }),
+        ...(developerFacts
+          ? {
+              stepPrompts: {
+                develop: async (rendered, results, context) =>
+                  developerPrompt(rendered, await developerFacts(), results, context),
+                ...(options.taskInput?.reviewerPrompt
+                  ? {
+                      'code-review': async () => options.taskInput.reviewerPrompt!('reviewer'),
+                      'security-review': async () => options.taskInput.reviewerPrompt!('security')
+                    }
+                  : {})
+              }
+            }
+          : {}),
+        spawnFn: reaper.spawnFn,
+        control,
+        onEvent: (event) => {
+          const lifecycleEvent = event as NodeLifecycle
+          if (lifecycleEvent.type === 'node:start') currentNode = lifecycleEvent.nodeId
+          options.observe?.(lifecycleEvent)
+          trace.onEvent(lifecycleEvent)
+          translator.onEvent(lifecycleEvent)
+        }
+      }
+      outcome = await (choice.kind === 'resume'
+        ? resumeProcessRun(runOptions, identity)
+        : startProcessRun(runOptions, identity))
+      legOutcome = outcome as unknown as LegOutcome
+    }
+    translator.endLeg(legOutcome as LegOutcome)
   } catch (thrown) {
     error = thrown instanceof Error ? thrown.message : String(thrown)
-    translator.endLeg({ reason: 'failed', error })
+    legOutcome = { reason: 'failed', error }
+    translator.endLeg(legOutcome)
   } finally {
+    stopSignals()
+    // No agent outlives the run: whatever a halted or finished launch left running is ended with its group.
+    await reaper.reap(lifecycle.killGraceMs)
+    // The exit is recorded once, before the sink drains, and the lock is kept or cleared by the shared rule.
+    const exit = producers.exit({
+      outcome: legOutcome ?? { reason: 'failed' },
+      cancelled: signalled !== null,
+      steps: {}
+    })
+    described = exit.lastDecision
+    recordExit(exit.reason, {
+      ...(signalled !== null
+        ? { exitCode: SIGNAL_EXIT_CODE[signalled] }
+        : exit.exitCode !== undefined
+          ? { exitCode: exit.exitCode }
+          : {}),
+      ...(exit.failedStep ? { error: Object.assign(new Error('a step failed'), { code: STEP_FAILED }) } : {})
+    })
+    const lockOutcome = releaseDriverLock(options.runtimeDir, args.task, lockExitOf(exit))
+    narrate(`driver exited (${exit.reason}, ${exit.lastDecision}); driver lock ${lockOutcome}`)
     try {
       await host?.close()
     } finally {
@@ -452,12 +662,10 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
     string,
     StepNodeResult
   >
-  const reason = outcome?.reason ?? 'failed'
-  // The trace carries tool output verbatim, so only its owner reads it.
-  writeFileSync(tracePath, `${JSON.stringify(trace.finish(reason, results, error), null, 2)}\n`, { mode: 0o600 })
-  chmodSync(tracePath, 0o600)
-  out(`trace ${tracePath}`)
-  const exitCode = reason === 'completed' ? 0 : reason === 'paused' ? 2 : 1
+  const reason = (outcome as RunOutcome | null)?.reason ?? (legOutcome as LegOutcome | null)?.reason ?? 'failed'
+  writeTrace(reason, results, error)
+  const exitCode =
+    signalled !== null ? SIGNAL_EXIT_CODE[signalled] : reason === 'completed' ? 0 : reason === 'paused' ? 2 : 1
   return { outcome, exitCode, tracePath }
 }
 
@@ -774,6 +982,17 @@ export async function liveTaskInput(
     },
     loopState: initialLoopState(config),
     reviewRound: () => round,
+    // A re-run numbers its first round after the rounds the forge already holds; never backwards.
+    seedRound: (next) => {
+      round = Math.max(round, next)
+    },
+    currentManifest: () => {
+      try {
+        return manifestAt(judgedHead())
+      } catch {
+        return null
+      }
+    },
     observe: (results): Observations => ({ kind: 'verdicts', round, verdicts: verdictsOf(results) }),
     verdicts: (results) => {
       const verdicts = verdictsOf(results)
@@ -913,17 +1132,44 @@ export function heldReviewOf(runtimeDir: string, task: number, round: number): s
   return `${reviewer ?? ''}\n\n---\n\n${security ?? ''}`
 }
 
+/** The GitHub repository the checkout's origin names, or null when it names none. */
+function liveRepo(): { owner: string; repo: string } | null {
+  try {
+    const match = /github\.com[:/]([^/]+)\/([^/.]+)/.exec(sh('git', ['remote', 'get-url', 'origin']))
+    return match ? { owner: match[1] as string, repo: match[2] as string } : null
+  } catch {
+    return null
+  }
+}
+
 async function liveRuntimeDir(): Promise<string> {
   const fromEnv = process.env[RUNTIME_DIR_ENV_KEY]
   if (fromEnv) return fromEnv
-  let repo: { owner: string; repo: string } | null = null
-  try {
-    const match = /github\.com[:/]([^/]+)\/([^/.]+)/.exec(sh('git', ['remote', 'get-url', 'origin']))
-    if (match) repo = { owner: match[1] as string, repo: match[2] as string }
-  } catch {
-    repo = null
-  }
+  const repo = liveRepo()
   return repo ? runtimeDirForRepoAsync(repo) : join(homedir(), '.vinaya', 'runtime')
+}
+
+/** What a re-run of the live task reads: the forge, the prior launch record and the held verdicts on disk. */
+export function liveRecovery(input: {
+  args: EngineArgs
+  runtimeDir: string
+  taskInput: Awaited<ReturnType<typeof liveTaskInput>>
+  forge?: Partial<EngineForge>
+  repo?: { owner: string; repo: string } | null
+}): RecoveryDeps {
+  const forge: EngineForge = { ...liveForge, ...input.forge }
+  const { args, runtimeDir, taskInput } = input
+  return {
+    prNumber: () => forge.findOpenPrForBranch(taskInput.branch)?.number ?? null,
+    fetchLoopHistory: forge.fetchLoopHistory,
+    loopState: () => taskInput.loopState,
+    readLaunch: () =>
+      readLaunchRecord('developer', args.agent, input.repo === undefined ? liveRepo() : input.repo, args.task),
+    launchDeps: realLaunchDeps(getProcessSnapshot, terminateChildWithGrace),
+    heldVerdict: () => latestHeldCleanVerdict(runtimeDir, args.task),
+    currentManifest: () => taskInput.currentManifest?.() ?? null,
+    patchIdOf: defaultPatchIdOf
+  }
 }
 
 /** Engine events use the shared sink with delivery restricted to its local folder. */
@@ -976,6 +1222,10 @@ export async function main(argv: readonly string[]): Promise<number> {
       round: taskInput.reviewRound
     }),
     allowUnixSockets: linuxUnixSocketFilterOptIn(),
+    lifecycle: {
+      dispatchConfig: loadConfig()?.dispatch,
+      recovery: liveRecovery({ args, runtimeDir, taskInput })
+    },
     devToolsContext: liveDevToolsContext({
       branch: taskInput.branch,
       worktreePath: taskInput.worktreePath,

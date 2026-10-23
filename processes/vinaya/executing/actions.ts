@@ -5,6 +5,7 @@ import {
   assessRound,
   type LoopState,
   type Observations,
+  type ReviewInputManifest,
   type TaskClock,
   type VerdictObservation
 } from '@attalabs/aeg-core'
@@ -60,6 +61,10 @@ export interface TaskInput {
   clock?: TaskClock
   /** The round's review round number, as `handoffFindings` counts it. */
   reviewRound: () => number
+  /** Moves the review round forward to `round` (never back), for a run that continues rounds the forge already holds. */
+  seedRound?: (round: number) => void
+  /** The review-input manifest of the task head as it stands now, or null when it cannot be built. */
+  currentManifest?: () => ReviewInputManifest | null
   /** What the round's gate and verdicts amount to, read from the recorded results. */
   observe: (results: Readonly<Record<string, StepNodeResult>>) => Observations
   /** The reviewer prompt for `role`, built over this round's staged candidate (absent in stub runs). */
@@ -196,6 +201,16 @@ export function isGateRed(examined: StepNodeResult): boolean {
   return examined.exitCode !== 0
 }
 
+/** The reconcile step's exit code when no pull request is open for the branch yet. */
+export const EXIT_NO_OPEN_PR = 0
+/** The reconcile step's exit code when a pull request is already open for the branch. */
+export const EXIT_OPEN_PR = 1
+
+/** The start decision's predicate: the Developer is due only when the reconcile step found no open pull request. */
+export function isDevelopmentDue(examined: StepNodeResult): boolean {
+  return examined.exitCode === EXIT_NO_OPEN_PR
+}
+
 /** The assessment step's recorded exit result asks for a revision when it did not exit zero. */
 export function isRevisionRequested(examined: StepNodeResult): boolean {
   return examined.exitCode !== 0
@@ -225,8 +240,14 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
   },
   'vinaya.reconcile-external-state': {
     adapts: [findOpenPrForBranch],
-    build: (task) => () => ok(JSON.stringify((task.bound?.findOpenPrForBranch ?? findOpenPrForBranch)(task.branch)))
+    build: (task) => () => {
+      const open = (task.bound?.findOpenPrForBranch ?? findOpenPrForBranch)(task.branch)
+      // The exit code is what the start decision reads: zero when no pull request is open yet.
+      return { exitCode: open === null ? EXIT_NO_OPEN_PR : EXIT_OPEN_PR, stdout: JSON.stringify(open) }
+    }
   },
+  // The branch point itself is the Flow's decision on the reconcile step's result; this step records that it ran.
+  'vinaya.choose-start': { adapts: [], build: () => () => ok() },
   'vinaya.prepare-sources': {
     adapts: [fetchSourceRevision],
     build: (task) => () => ok((task.bound?.fetchSourceRevision ?? fetchSourceRevision)(task.issueNumber))
@@ -352,6 +373,7 @@ export function createActions(task: TaskInput): ActionRegistry {
 
 /** Deciding step id to its boolean, read from the examined step's exit result. */
 export const decisions: DecisionRegistry = {
+  'choose-start': isDevelopmentDue,
   'classify-gate-result': isGateRed,
   'build-revision-handoff': isRevisionRequested
 }
@@ -370,6 +392,8 @@ export function createRoleLaunchers(options: {
   allowUnixSockets?: boolean
   /** Copy the operator's Codex subscription login into each Codex role's generated CODEX_HOME (a live run). */
   stageCodexLogin?: boolean
+  /** The ceiling in milliseconds each role launches with, by role name; a role absent from it keeps the executor's own bound. */
+  timeouts?: Readonly<Record<string, number>>
 }): RoleLauncher {
   const launchers: Record<string, ReturnType<typeof createRoleLauncher>> = {}
   for (const role of ROLE_NAMES) {
@@ -389,7 +413,8 @@ export function createRoleLaunchers(options: {
     launchers[role] = createRoleLauncher(generated, {
       generatedDir,
       allowedPermissions: [`${role}/grants.yaml`],
-      stageCodexLogin: options.stageCodexLogin === true
+      stageCodexLogin: options.stageCodexLogin === true,
+      ...(options.timeouts?.[role] === undefined ? {} : { timeoutMs: options.timeouts[role] })
     })
   }
   return launchers

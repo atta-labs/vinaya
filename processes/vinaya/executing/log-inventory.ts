@@ -87,8 +87,24 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
     status: 'dropped',
     reason: 'The Engine path retries nothing: a step that fails fails the run, so there is no retry episode to count.'
   },
-  { family: 'dev_review_loop', events: ['driver_heartbeat'], status: 'produced', from: 'each node start' },
-  { family: 'dev_review_loop', events: ['driver_exited'], status: 'produced', from: 'the end of every leg' },
+  {
+    family: 'dev_review_loop',
+    events: ['driver_heartbeat'],
+    status: 'produced',
+    from: 'the runner: one every five minutes while the run is alive, never one per node'
+  },
+  {
+    family: 'dev_review_loop',
+    events: ['driver_exited'],
+    status: 'produced',
+    from: 'the runner: one when the run ends, whatever way it ends'
+  },
   { family: 'handoff', events: ['raised', 'resolved'], status: 'deferred', reason: HANDOFF_DEFERRAL },
-  { family: 'role_attempt', events: ['attempted'], status: 'produced', from: 'each agent step completing or failing' }
+  {
+    family: 'role_attempt',
+    events: ['attempted'],
+    status: 'dropped',
+    reason:
+      'The Engine path records each launch as a checkpointed step result, and the portable lifecycle sequence names no role attempt.'
+  }
 ]

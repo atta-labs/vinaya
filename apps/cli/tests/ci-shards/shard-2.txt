@@ -39,6 +39,7 @@ tests/lib/dev-review-loop/inproc-1.test.ts
 tests/lib/dev-review-loop/rate-limit-red-gate.test.ts
 tests/lib/dev-review-loop/inproc-3.test.ts
 tests/lib/dev-review-loop/developer-publication.test.ts
+tests/lib/dev-review-loop/driver-lifecycle.test.ts
 tests/lib/dev-review-loop/inproc-11.test.ts
 tests/lib/dev-review-loop/reviewer-redispatch.test.ts
 tests/lib/dispatch-task.test.ts

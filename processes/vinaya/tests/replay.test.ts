@@ -160,6 +160,8 @@ async function replay(scenario: Scenario) {
   const objectives = reviewIds.map((id) => ({ id, text: `objective ${id}` }))
   const branch = `task/issue-${TASK}`
   const worktree = join(root, '.worktrees', branch)
+  // The Developer opens the pull request: none exists before its first launch.
+  let prOpen = false
   const forge: Partial<EngineForge> = {
     checkTaskDispatchReadiness: (b) => {
       forgeCalls.push(`readiness ${b}`)
@@ -173,7 +175,7 @@ async function replay(scenario: Scenario) {
       // Unpublished work the Developer left: the kept-work note names it.
       writeFileSync(join(worktree, 'notes.md'), 'draft\n')
     },
-    findOpenPrForBranch: () => ({ number: PR }) as never,
+    findOpenPrForBranch: () => (prOpen ? ({ number: PR } as never) : null),
     fetchFrozenBrief: () => BRIEF,
     resolveIssueObjectives: () =>
       ({ text: objectives.map((o) => `${o.id}. ${o.text}`).join('\n'), objectives, version: 'v1' }) as never,
@@ -239,6 +241,7 @@ async function replay(scenario: Scenario) {
       const role = Object.keys(STEP_OF_ROLE).find((name) => spawnArgs.join(' ').includes(`/${name}/`))
       const step = STEP_OF_ROLE[role ?? ''] as Step
       rounds[step] += 1
+      if (step === 'develop') prOpen = true
       const entry = { step, args: [...spawnArgs], env: options?.env ?? {}, prompt: '' }
       spawns.push(entry)
       const review = step === 'code-review' ? scenario.codeReview?.[rounds[step]] : undefined

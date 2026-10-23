@@ -1,5 +1,11 @@
 import type { DevReviewLoopEventInput, LoopConfig } from '@attalabs/aeg-core'
-import type { LogEventInput, LogProducers, RecordedSteps } from '../../../harness/dev-process/logging/translate'
+import type {
+  LogEventInput,
+  LogProducers,
+  RecordedSteps,
+  RunEndContext
+} from '../../../harness/dev-process/logging/translate'
+import type { DriverExitReason } from '../../../apps/cli/src/lib/dev-review-loop/driver-lifecycle'
 
 // The Log events the developer review Flow's run produces, for the harness
 // translator. Nothing here reaches the Log: each producer returns events
@@ -18,7 +24,17 @@ export const AGENT_STEP_ROLES: Readonly<Record<string, string>> = {
 }
 
 /** The code the driver's exit record gives a run that ended on a failed step. */
-const STEP_FAILED = 'step_failed'
+export const STEP_FAILED = 'step_failed'
+
+/** How a leg ended, as the driver's exit record states it. */
+export interface LegExit {
+  reason: DriverExitReason
+  /** The decision the exit record names: `publish`, `pause(<reason>)`, `cancel` or `error`. */
+  lastDecision: string
+  exitCode?: number
+  /** True when the run ended on a failed step rather than a decision. */
+  failedStep?: boolean
+}
 
 interface Assessment {
   decision: string
@@ -45,7 +61,9 @@ function readAssessment(steps: RecordedSteps): Assessment | null {
 }
 
 /** Producers for one run of the Flow, with the state a run builds up across its legs. */
-export function createVinayaLogProducers(config: Pick<LoopConfig, 'loopId' | 'task'>): LogProducers {
+export function createVinayaLogProducers(
+  config: Pick<LoopConfig, 'loopId' | 'task'>
+): LogProducers & { exit: (context: RunEndContext) => LegExit } {
   let round = 1
   let lastDecision: string | null = null
   let finalHead: string | null = null
@@ -59,9 +77,6 @@ export function createVinayaLogProducers(config: Pick<LoopConfig, 'loopId' | 'ta
 
   const paused = (reasonCode: string): LogEventInput =>
     loop({ event: 'paused', round, reason: 'principal_item', reason_code: reasonCode })
-
-  const exited = (reason: string, lastDecisionText: string, extra: Record<string, unknown> = {}): LogEventInput =>
-    loop({ event: 'driver_exited', task: config.task, reason, last_decision: lastDecisionText, ...extra })
 
   /** Closes the journal from what the assessment events carried; says nothing when no round was ever assessed. */
   const closeJournal = (): LogEventInput[] => {
@@ -98,66 +113,50 @@ export function createVinayaLogProducers(config: Pick<LoopConfig, 'loopId' | 'ta
     return assessment.events as unknown as LogEventInput[]
   }
 
-  const attempt = (
-    nodeId: string,
-    attemptNumber: number,
-    outcome: 'completed' | 'infrastructure_failed'
-  ): LogEventInput[] => {
-    const actor = AGENT_STEP_ROLES[nodeId]
-    if (actor === undefined) return []
-    return [
-      {
-        kind: 'role_attempt',
-        event: 'attempted',
-        payload: {},
-        actor,
-        attempt: attemptNumber,
-        effect_id: `${nodeId}:${attemptNumber}`,
-        model: null,
-        outcome,
-        usage: null
-      }
-    ]
-  }
-
   return {
     legStarted: ({ resumed }) => {
       lastDecision = null
       return resumed ? [loop({ event: 'resumed', round, by: 'principal' })] : []
     },
+    // The driver's liveness is the timed heartbeat the runner emits and its exit record; no node writes either.
     nodeStarted: ({ nodeId, attempt: started }) => {
       if (nodeId === DEVELOP_STEP) round = Math.max(1, started)
-      return [loop({ event: 'driver_heartbeat', task: config.task, round, phase: nodeId })]
+      return []
     },
-    nodeCompleted: ({ nodeId, attempt: started, steps }) =>
-      nodeId === ASSESS_STEP ? assessed(steps) : attempt(nodeId, started, 'completed'),
-    nodeFailed: ({ nodeId, attempt: started, steps }) =>
-      nodeId === ASSESS_STEP ? assessed(steps) : attempt(nodeId, started, 'infrastructure_failed'),
+    nodeCompleted: ({ nodeId, steps }) => (nodeId === ASSESS_STEP ? assessed(steps) : []),
+    nodeFailed: ({ nodeId, steps }) => (nodeId === ASSESS_STEP ? assessed(steps) : []),
     runEnded: ({ outcome, cancelled }) => {
-      if (cancelled) {
-        return [loop({ event: 'cancelled', round, by: 'principal' }), exited('signal', 'cancel')]
-      }
+      if (cancelled) return [loop({ event: 'cancelled', round, by: 'principal' })]
       switch (outcome.reason) {
         case 'completed':
-          return [exited('finished', 'publish', { exit_code: 0 })]
+          return []
         case 'paused':
-          return [paused('halt'), exited('paused', 'pause(halt)')]
+          return [paused('halt')]
         case 'exhausted':
           return [
             loop({ event: 'stop_condition_met', round, condition: 'max_rounds' }),
             paused('max_rounds'),
-            ...closeJournal(),
-            exited('paused', 'pause(max_rounds)')
+            ...closeJournal()
           ]
         default: {
           // A decided pause already wrote its own `paused`, `round_ended` and `journal_finalized`; a crash wrote none.
-          if (lastDecision?.startsWith('pause(')) return [exited('paused', lastDecision)]
-          return [
-            paused('infrastructure'),
-            ...closeJournal(),
-            exited('error', 'error', { exit_code: 1, error_class: STEP_FAILED })
-          ]
+          if (lastDecision?.startsWith('pause(')) return []
+          return [paused('infrastructure'), ...closeJournal()]
         }
+      }
+    },
+    exit: ({ outcome, cancelled }) => {
+      if (cancelled) return { reason: 'signal', lastDecision: 'cancel' }
+      switch (outcome.reason) {
+        case 'completed':
+          return { reason: 'finished', lastDecision: 'publish', exitCode: 0 }
+        case 'paused':
+          return { reason: 'paused', lastDecision: 'pause(halt)' }
+        case 'exhausted':
+          return { reason: 'paused', lastDecision: 'pause(max_rounds)' }
+        default:
+          if (lastDecision?.startsWith('pause(')) return { reason: 'paused', lastDecision }
+          return { reason: 'error', lastDecision: 'error', exitCode: 1, failedStep: true }
       }
     }
   }

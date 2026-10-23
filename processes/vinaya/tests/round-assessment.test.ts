@@ -284,6 +284,7 @@ describe('the round assessment across a resume', () => {
               'vinaya.prepare-run',
               'vinaya.reconcile-external-state',
               'vinaya.prepare-sources',
+              'vinaya.choose-start',
               'vinaya.validate-developer-output',
               'vinaya.validate-reviewer-outputs',
               'harness.publish'

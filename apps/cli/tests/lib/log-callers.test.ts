@@ -31,6 +31,7 @@ const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..',
 const SINK_PATH = 'apps/cli/src/lib/log-sink.ts'
 const DISPATCH_PATH = 'apps/cli/src/lib/dispatch.ts'
 const DEV_REVIEW_LOOP_PATH = 'apps/cli/src/lib/dev-review-loop.ts'
+const DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH = 'apps/cli/src/lib/dev-review-loop/driver-lifecycle.ts'
 const DEV_REVIEW_LOOP_REVIEWER_DISPATCH_PATH = 'apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts'
 const DEV_REVIEW_LOOP_PUBLICATION_PATH = 'apps/cli/src/lib/dev-review-loop/publication.ts'
 const DEV_REVIEW_LOOP_PAUSE_RESUME_PATH = 'apps/cli/src/lib/dev-review-loop/pause-resume.ts'
@@ -439,17 +440,23 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
     ]
   },
   {
-    name: 'devReviewLoop driver — resume, cancel, unpushed-work resume, a failed reviewer report, liveness heartbeat and exit',
+    name: 'devReviewLoop driver — resume, cancel, unpushed-work resume and a failed reviewer report',
     files: [DEV_REVIEW_LOOP_PATH],
     requires: [
       { kind: 'dev_review_loop', event: 'resumed' },
       { kind: 'dev_review_loop', event: 'unpushed_work_resume' },
       { kind: 'dev_review_loop', event: 'cancelled' },
       { kind: 'dev_review_loop', event: 'infrastructure_retry' },
-      // The driver's own liveness pair.
-      { kind: 'dev_review_loop', event: 'driver_heartbeat' },
-      { kind: 'dev_review_loop', event: 'driver_exited' },
       { kind: 'role_attempt', event: 'attempted' }
+    ]
+  },
+  {
+    // Shared by the standalone loop and the Engine runner.
+    name: 'driver lifecycle — the liveness heartbeat and the single exit record',
+    files: [DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH],
+    requires: [
+      { kind: 'dev_review_loop', event: 'driver_heartbeat' },
+      { kind: 'dev_review_loop', event: 'driver_exited' }
     ]
   },
   {
@@ -644,7 +651,7 @@ const FAMILY_OWNERS: Record<string, readonly string[]> = {
   dispatch: [DISPATCH_PATH],
   role_attempt: [DISPATCH_PATH, DEV_REVIEW_LOOP_PATH],
   usage: [DISPATCH_PATH],
-  dev_review_loop: [DEV_REVIEW_LOOP_PATH],
+  dev_review_loop: [DEV_REVIEW_LOOP_PATH, DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH],
   gate: [RUNNER_PATH],
   effect: [EFFECTS_PATH],
   handoff: [DEV_REVIEW_LOOP_PAUSE_RESUME_PATH],
