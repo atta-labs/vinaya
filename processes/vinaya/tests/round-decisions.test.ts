@@ -633,7 +633,7 @@ for (const agent of AGENTS) {
   })
 
   describe(`a reviewer with no usable review is retried fresh (${agent})`, () => {
-    test('an invalid review is classified and retried, never thrown, and the retry stands', async () => {
+    test('two attempts use distinct scratch directories and session ids, and the retry stands', async () => {
       const observed = await run(agent, {
         reviewer: (role, attempt, world) =>
           role === 'code-reviewer' && attempt === 1
