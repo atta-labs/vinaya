@@ -40,11 +40,14 @@ import {
 import { createVinayaLogProducers, handoffHaltReason, STEP_FAILED } from '../executing/log-events'
 import { createHandoff, liveHandoffDeps, type Handoff, type HandoffDeps } from '../executing/handoff'
 import {
+  conflictReentryBoundDetail,
   fetchCiConclusion,
   fetchConflictingFiles,
   fetchFailedCheckWorkflowRunIds,
   fetchFailingCheckRuns,
   fetchMergeableState,
+  fetchPrState,
+  MAX_AUTOMATIC_CONFLICT_REENTRIES,
   readWorktreeHead,
   rerunFailedWorkflowJobs,
   resolveHead
@@ -88,6 +91,7 @@ import {
   chooseStart,
   claimResume,
   createChildReaper,
+  currentRunGeneration,
   liveResumeDeps,
   lockExitOf,
   onShutdownSignals,
@@ -102,11 +106,14 @@ import {
   SIGNAL_EXIT_CODE,
   takeDriverLock,
   watchForRuling,
+  watchPublishedPullRequest,
+  type PublishedWatch,
   type RecoveryDeps,
   type ResumeDeps,
   type RulingWatch
 } from './run-lifecycle'
 import {
+  conflictReentryEvent,
   createDriverExitRecorder,
   DRIVER_HEARTBEAT_INTERVAL_MS,
   defaultSetHeartbeat,
@@ -272,7 +279,7 @@ export function recordedCheckpointModel(runtimeDir: string, task: number): strin
   if (!existsSync(file)) return undefined
   const saver = new SqliteCheckpointer({ path: file, revision: 'unknown' })
   try {
-    const model = saver.latestProvenance(runIdentityOfTask(task).threadId)?.model
+    const model = saver.latestProvenance(runIdentityOfTask(task, currentRunGeneration(saver, task)).threadId)?.model
     return model === '' ? undefined : model
   } finally {
     saver.close()
@@ -616,6 +623,11 @@ export interface EngineLifecycleOptions {
   handleSignals?: boolean
   /** After a halt that left a pause, waits for a newer ruling or a cancel and continues the run on a ruling; absent ends the runner at the halt. */
   watch?: RulingWatch
+  /**
+   * After a run that completed, watches its pull request until it is merged or closed, and starts a fresh run on a
+   * conflict with the default branch; absent ends the runner at completion.
+   */
+  publishedWatch?: PublishedWatch
 }
 
 /** The HEAD of the checkout at `repoRoot`, or `unknown` when it is not a git checkout. */
@@ -728,6 +740,15 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
 
   // Every pausing exit — a pause decision and an error alike — ends here: records, one comment, then the halt.
   const taskForHandoff = options.taskInput
+  /** The open pull request on the run's branch, or null when none is or it cannot be read. */
+  const openPullRequest = (): number | null => {
+    const find = taskForHandoff?.bound?.findOpenPrForBranch
+    try {
+      return find && taskForHandoff?.branch ? (find(taskForHandoff.branch)?.number ?? null) : null
+    } catch {
+      return null
+    }
+  }
   const makeHandoff = (): Handoff =>
     createHandoff(
       {
@@ -745,16 +766,8 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
             return 'unknown'
           }
         },
-        prNumber: () => {
-          if (prNumber > 0) return prNumber
-          // The Developer may have opened the pull request since the reconcile step looked.
-          const find = taskForHandoff?.bound?.findOpenPrForBranch
-          try {
-            return find && taskForHandoff?.branch ? (find(taskForHandoff.branch)?.number ?? null) : null
-          } catch {
-            return null
-          }
-        },
+        // The Developer may have opened the pull request since the reconcile step looked.
+        prNumber: () => (prNumber > 0 ? prNumber : openPullRequest()),
         versions: () => {
           if (!taskForHandoff?.inputVersions) throw new Error('no input versions are wired for this run')
           return taskForHandoff.inputVersions()
@@ -866,7 +879,11 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
     const revision = options.revision ?? checkoutRevision(options.repoRoot)
     const saver = new SqliteCheckpointer({ path: checkpointPath(runDir), revision, model: args.model })
     checkpointer = saver
-    const identity = runIdentityOfTask(args.task)
+    // The task's newest run: a completed one is watched, and a conflict on its pull request starts the next.
+    let generation = currentRunGeneration(saver, args.task)
+    let identity = runIdentityOfTask(args.task, generation)
+    // This runner's automatic conflict re-entries of the published pull request.
+    let conflictReentries = 0
     // The run compiles its own Flow, ceilings from the review policy; an unreadable policy leaves the checked-in one,
     // and the prepare-run step pauses on that policy before any decision is reached.
     const runProcess = (): LoadedProcess => {
@@ -992,6 +1009,52 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
         error = thrown instanceof Error ? thrown.message : String(thrown)
         legOutcome = handOffError(error)
         translator.endLeg(legOutcome)
+      }
+      if (lifecycle.publishedWatch && legOutcome?.reason === 'completed' && signalled === null) {
+        const published = prNumber > 0 ? prNumber : openPullRequest()
+        if (published === null) break
+        narrate(`watching PR #${published} after its publication, until it is merged or closed`)
+        const read = await watchPublishedPullRequest(published, lifecycle.publishedWatch, stopWatching.signal, narrate)
+        if (read !== 'conflicting') {
+          narrate(read === 'stopped' ? 'the watch was stopped; ending' : `PR #${published} was ${read}; ending`)
+          break
+        }
+        if (conflictReentries >= MAX_AUTOMATIC_CONFLICT_REENTRIES) {
+          // The bound is spent: a person decides, through the ordinary pause and its comment.
+          narrate(
+            `PR #${published} fell into conflict with the default branch again, and its ${MAX_AUTOMATIC_CONFLICT_REENTRIES} automatic re-entries are spent; pausing for a person`
+          )
+          handoff = makeHandoff()
+          if (taskForHandoff) taskForHandoff.handoff = handoff
+          handoff.pause({
+            reason: 'repeat_failure',
+            detail: conflictReentryBoundDetail(published, MAX_AUTOMATIC_CONFLICT_REENTRIES)
+          })
+          legOutcome = { reason: 'paused', haltReason: handoffHaltReason('repeat_failure') }
+          break
+        }
+        conflictReentries += 1
+        log(
+          conflictReentryEvent({
+            loopId: options.loopId,
+            task: args.task,
+            prNumber: published,
+            attempt: conflictReentries,
+            bound: MAX_AUTOMATIC_CONFLICT_REENTRIES
+          })
+        )
+        // A completed checkpoint has nothing left to run: the re-entry is a fresh run of the next generation, which
+        // attaches to the open pull request and sends the Developer back with the conflicting files.
+        generation += 1
+        identity = runIdentityOfTask(args.task, generation)
+        narrate(
+          `PR #${published} fell into conflict with the default branch after it was published: starting a fresh run (${identity.runId}) to send it back to the Developer (re-entry ${conflictReentries} of ${MAX_AUTOMATIC_CONFLICT_REENTRIES})`
+        )
+        control = createRunControl()
+        reapOnHalt()
+        handoff = makeHandoff()
+        if (taskForHandoff) taskForHandoff.handoff = handoff
+        continue
       }
       if (!lifecycle.watch || legOutcome?.reason !== 'paused' || signalled !== null) break
       narrate('the run is halted; watching for a newer ruling or a cancel')
@@ -1685,7 +1748,8 @@ async function runLive(args: EngineArgs, loaded: LoadedProcess, repoRoot: string
     lifecycle: {
       dispatchConfig: loadConfig()?.dispatch,
       recovery: liveRecovery({ args, runtimeDir, taskInput }),
-      watch: { deps: liveResumeDeps, pollMs: rulingPollMs(), sleep: abortableSleep }
+      watch: { deps: liveResumeDeps, pollMs: rulingPollMs(), sleep: abortableSleep },
+      publishedWatch: { fetchPrState, fetchMergeableState, pollMs: rulingPollMs(), sleep: abortableSleep }
     },
     devToolsContext: liveContext.context,
     beginDeveloperTurn: liveContext.beginTurn

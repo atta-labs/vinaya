@@ -71,8 +71,8 @@ describe('the log inventory', () => {
       ...['raised', 'resolved'].filter((event) => rowsFor('handoff', event).length !== 1).map((e) => `handoff/${e}`)
     ]
     expect(uncovered).toEqual([])
-    expect(loopEventNames).toHaveLength(15)
-    expect(LOG_INVENTORY).toHaveLength(18)
+    expect(loopEventNames).toHaveLength(16)
+    expect(LOG_INVENTORY).toHaveLength(19)
   })
 
   test('no row names an event the schemas do not have', () => {

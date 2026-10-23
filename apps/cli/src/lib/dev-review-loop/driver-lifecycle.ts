@@ -65,6 +65,31 @@ export function emitDriverHeartbeat(facts: DriverHeartbeatFacts): void {
   }
 }
 
+/** One automatic conflict re-entry of a published pull request, as both runners narrate it. */
+export interface ConflictReentryFacts {
+  loopId: string
+  task: number
+  prNumber: number
+  /** This re-entry's number for the pull request, from 1. */
+  attempt: number
+  /** The most re-entries the driver makes before it pauses for a person. */
+  bound: number
+}
+
+/** The `conflict_reentry` Log event for one automatic re-entry. */
+export function conflictReentryEvent(facts: ConflictReentryFacts): DevReviewLoopEventInput {
+  return {
+    kind: 'dev_review_loop',
+    payload: {},
+    loop_id: facts.loopId,
+    event: 'conflict_reentry',
+    task: facts.task,
+    pr: facts.prNumber,
+    attempt: facts.attempt,
+    bound: facts.bound
+  }
+}
+
 /** Why a driver exited. */
 export type DriverExitReason = 'finished' | 'paused' | 'reexec' | 'error' | 'signal'
 
@@ -133,7 +158,8 @@ export function createDriverExitRecorder(
 
 /** How a driver's run ended, as far as the driver lock is concerned. */
 export type DriverLockExit =
-  | { kind: 'publish' }
+  /** A publication. `watched` is true under the watching driver, which goes on watching the published pull request until it is merged or closed. */
+  | { kind: 'publish'; watched: boolean }
   /** A decided pause. `watched` is true under the watching driver, which is never done at any pause. */
   | { kind: 'pause'; reason: string; watched: boolean }
   /** An uncaught error. `hostRepair` is true when the host cannot run the sandbox: that pause frees the lock so an ordinary start can continue once the host is repaired. */
@@ -141,16 +167,17 @@ export type DriverLockExit =
 
 /**
  * Whether the driver lock stays in place when the driver exits. An
- * infrastructure or stale-driver pause, an uncaught error and any pause under
- * the watching driver keep it — the run is a live process that hit a
- * recoverable hiccup, and a cleared lock would misrepresent that as a settled
- * pause a person decides. Every other exit — a publish, or any pause that is a
- * decision only a Principal can make — clears it.
+ * infrastructure or stale-driver pause, an uncaught error and any pause or
+ * publish under the watching driver keep it — the run is a live process that
+ * hit a recoverable hiccup, or goes on watching its pull request, and a
+ * cleared lock would misrepresent that as a settled task. Every other exit —
+ * an unwatched publish, or any pause that is a decision only a Principal can
+ * make — clears it.
  */
 export function keepDriverLock(exit: DriverLockExit): boolean {
   switch (exit.kind) {
     case 'publish':
-      return false
+      return exit.watched
     case 'crash':
       return !exit.hostRepair
     case 'pause':

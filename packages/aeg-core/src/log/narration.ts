@@ -187,6 +187,17 @@ function driverExited(record: Fields): NarrationLine {
   }
 }
 
+function conflictReentry(record: Fields): NarrationLine {
+  const pr = whole(record.pr)
+  const attempt = whole(record.attempt)
+  const bound = whole(record.bound)
+  const count = attempt !== null && bound !== null ? ` (re-entry ${attempt} of ${bound})` : ''
+  return {
+    kind: 'working',
+    text: `${pr === null ? 'The pull request' : `Pull request #${pr}`} fell into conflict with the default branch after it was published: the loop re-entered by itself to send it back to the Developer${count}.`
+  }
+}
+
 function dispatched(record: Fields): NarrationLine {
   const role = text(record.target_role)
   const who = roleSubject(role)
@@ -248,6 +259,8 @@ export function narrate(record: unknown, earlier: readonly unknown[] = []): Narr
         return stopped(fields.condition)
       case 'driver_exited':
         return driverExited(fields)
+      case 'conflict_reentry':
+        return conflictReentry(fields)
       default:
         return null
     }

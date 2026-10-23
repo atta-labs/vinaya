@@ -318,7 +318,8 @@ export const STATE_STEPS = [
   'check-mergeability',
   'assess-gate',
   'assess-round',
-  'run-live-checks'
+  'run-live-checks',
+  'check-publish-mergeability'
 ] as const
 
 /** Why the Developer is dispatched again, as the step that sent it back recorded it. */
@@ -1405,6 +1406,48 @@ async function checkMergeability(
   return paused({ reason: 'infrastructure', detail }, new Error(detail))
 }
 
+/**
+ * The forge's mergeability, read again before publication as the standalone loop reads it: reviewers can work long
+ * enough for an approved head to fall into conflict with the default branch. A conflicting head is never published:
+ * the round's held verdicts are discarded, the completion events the live-check step deferred for this publication
+ * are never handed on, the round does not advance, and the Developer is sent back with the conflicting files, so the
+ * next reviewer dispatch judges the resolved head. An unresolved conflict is then bounded by the mergeability step
+ * the resolved head passes through on its way back to the reviewers.
+ */
+async function checkPublishMergeability(
+  task: TaskInput,
+  context: ActionContext
+): Promise<{ exitCode: number; stdout: string }> {
+  const { results } = context
+  const prNumber = openPullRequestOf(task, 'check-publish-mergeability')
+  const mergeable = await pollMergeableState(prNumber, {
+    ...gatePollOf(task),
+    fetchMergeableState: task.bound?.fetchMergeableState ?? fetchMergeableState
+  })
+  if (mergeable !== 'CONFLICTING') return ok(JSON.stringify({ mergeable }))
+  const files = (task.bound?.fetchConflictingFiles ?? fetchConflictingFiles)('main', task.branch)
+  ;(task.bound?.discardHeldVerdicts ?? discardHeldVerdicts)(task.runtimeDir, task.issueNumber, task.reviewRound())
+  const previous = latestRecord(results)
+  const head = safeRead(task.remoteHead) ?? judgedHeadOf(task)
+  return {
+    exitCode: BACK,
+    stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
+      counters: { ...(previous?.counters ?? NO_COUNTERS), stallCheck: null },
+      sendBack: { kind: 'conflict', headBefore: head, files },
+      decision: { type: 'dispatch_developer' },
+      mergeable,
+      files
+    })
+  }
+}
+
+/** Records how the pre-publication mergeability step routed; the decision on this step reads that step's exit result. */
+export function classifyPublishMergeability(context: ActionContext): { exitCode: number; stdout: string } {
+  const checked = context.results['check-publish-mergeability']
+  if (!checked) throw new Error('classify-publish-mergeability ran before the mergeability step recorded a result')
+  return ok(isSentBack(checked) ? 'developer' : 'publish')
+}
+
 /** Records how the mergeability step routed; the decision on this step reads that step's own exit result. */
 export function classifyMergeability(context: ActionContext): { exitCode: number; stdout: string } {
   const checked = context.results['check-mergeability']
@@ -1823,6 +1866,14 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       return ok(isLiveWithdrawn(live) ? 'withdrawn' : 'approved')
     }
   },
+  'vinaya.check-publish-mergeability': {
+    adapts: [pollMergeableState, fetchConflictingFiles, discardHeldVerdicts],
+    build: (task) => (context) => checkPublishMergeability(task, context)
+  },
+  'vinaya.classify-publish-mergeability': {
+    adapts: [classifyPublishMergeability],
+    build: () => classifyPublishMergeability
+  },
   'harness.publish': {
     adapts: [publishRound, upsertDeferredFindingsIssue],
     build: (task) => (context) => {
@@ -1961,7 +2012,8 @@ export const decisions: DecisionRegistry = {
   'classify-gate-result': isGateRed,
   'classify-reviewer-outputs': isSentBack,
   'build-revision-handoff': isRevisionRequested,
-  'classify-live-result': isLiveWithdrawn
+  'classify-live-result': isLiveWithdrawn,
+  'classify-publish-mergeability': isSentBack
 }
 
 const executing = join(import.meta.dir)

@@ -187,6 +187,10 @@ interface Scenario {
   gates?: number[]
   /** Exit codes the assessment step reports in turn (non-zero asks for a revision); the last repeats. */
   assessments?: number[]
+  /** Exit codes the mergeability step before the reviewers reports in turn (1: a conflicting head); the last repeats. */
+  mergeable?: number[]
+  /** Exit codes the mergeability step before publication reports in turn (1: a conflicting head); the last repeats. */
+  publishMergeable?: number[]
   /** Spawns for these roles never exit on their own. */
   hang?: string[]
   onSpawn?: (role: string) => void
@@ -200,6 +204,8 @@ function setup(scenario: Scenario = {}) {
   const gates = [...(scenario.gates ?? [0])]
   let lastGate = 0
   const assessments = [...(scenario.assessments ?? [0])]
+  const mergeable = [...(scenario.mergeable ?? [0])]
+  const publishMergeable = [...(scenario.publishMergeable ?? [0])]
   const next = (queue: number[]) => (queue.length > 1 ? (queue.shift() as number) : (queue[0] ?? 0))
 
   const real = createActions({ reviewRound: () => 1 } as unknown as TaskInput)
@@ -216,6 +222,8 @@ function setup(scenario: Scenario = {}) {
         // The gate assessment's own decision is replaced: a red gate sends the Developer back.
         if (name === 'vinaya.assess-gate') return { exitCode: lastGate === 0 ? 0 : 1 }
         if (name === 'vinaya.assess-round') return { exitCode: next(assessments) }
+        if (name === 'vinaya.check-mergeability') return { exitCode: next(mergeable) }
+        if (name === 'vinaya.check-publish-mergeability') return { exitCode: next(publishMergeable) }
         if (
           name === 'vinaya.classify-gate-result' ||
           name === 'vinaya.classify-developer-output' ||
@@ -314,6 +322,29 @@ describe('the Vinaya Flow on the Engine, with stub agents', () => {
     expect(stepCalls.develop).toBe(2)
     expect(stepCalls['code-review']).toBe(2)
     expect(stepCalls['assess-round']).toBe(2)
+    expect(stepCalls['publish-ready-for-merge']).toBe(1)
+  })
+
+  test('a CONFLICTING head is sent back to the Developer before reviewer dispatch and again before publish', async () => {
+    const order: string[] = []
+    const { options, stepCalls } = setup({
+      mergeable: [1, 0],
+      publishMergeable: [1, 0],
+      onAction: (step) => order.push(step),
+      onSpawn: (role) => order.push(STEP_OF_ROLE[role] ?? role)
+    })
+    const outcome = await startProcessRun(options)
+    expect(outcome.reason).toBe('completed')
+    // The head that conflicted before review reached no reviewer: the Developer ran again first.
+    const firstConflict = order.indexOf('check-mergeability')
+    expect(order.indexOf('code-review')).toBeGreaterThan(order.indexOf('develop', firstConflict))
+    // The approved head that fell into conflict was never published: back to the Developer, then reviewed again.
+    const publishConflict = order.indexOf('check-publish-mergeability')
+    expect(order.indexOf('publish-ready-for-merge')).toBeGreaterThan(order.lastIndexOf('code-review'))
+    expect(order.indexOf('develop', publishConflict)).toBeLessThan(order.lastIndexOf('code-review'))
+    expect(stepCalls.develop).toBe(3)
+    expect(stepCalls['code-review']).toBe(2)
+    expect(stepCalls['check-publish-mergeability']).toBe(2)
     expect(stepCalls['publish-ready-for-merge']).toBe(1)
   })
 

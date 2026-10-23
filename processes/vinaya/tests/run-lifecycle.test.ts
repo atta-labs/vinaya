@@ -301,7 +301,7 @@ describe('one Engine runner per task', () => {
     standalone: DriverLockExit
     kept: boolean
   }> = [
-    { name: 'a publish', scenario: () => ({}), standalone: { kind: 'publish' }, kept: false },
+    { name: 'a publish', scenario: () => ({}), standalone: { kind: 'publish', watched: false }, kept: false },
     {
       name: 'a halt',
       scenario: (control) => ({ actions: { 'harness.run-gates': () => haltThen(control, 'stop') } }),
@@ -466,6 +466,8 @@ describe('re-running a task', () => {
       'build-revision-handoff',
       'run-live-checks',
       'classify-live-result',
+      'check-publish-mergeability',
+      'classify-publish-mergeability',
       'publish-ready-for-merge'
     ])
   })

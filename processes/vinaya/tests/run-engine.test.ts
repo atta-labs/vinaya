@@ -47,6 +47,10 @@ import {
   type TaskInput
 } from '../executing/actions'
 import { heldVerdictPath, writeHeldVerdict } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
+import { MAX_AUTOMATIC_CONFLICT_REENTRIES } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+import { loopLogPathFor } from '../../../apps/cli/src/lib/loop-log'
+import { SqliteCheckpointer } from '../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
+import { currentRunGeneration, runIdentityOfTask } from '../bin/run-lifecycle'
 import type { DeveloperPromptFacts } from '../executing/developer-prompt'
 import {
   checkpointPath,
@@ -101,9 +105,12 @@ describe('the dry run', () => {
         shimPath: '/runs/1/dev-bridge.sh'
       })
       expect(lines[0]).toBe(`process ${loaded.identity.id}@${loaded.identity.version} digest ${loaded.digest}`)
-      expect(lines.filter((line) => line.startsWith('step '))).toHaveLength(25)
+      expect(lines.filter((line) => line.startsWith('step '))).toHaveLength(27)
       const bound = lines.filter((line) => line.startsWith('bound '))
-      expect(bound).toHaveLength(22)
+      expect(bound).toHaveLength(24)
+      expect(bound).toContain(
+        'bound check-publish-mergeability vinaya.check-publish-mergeability: pollMergeableState, fetchConflictingFiles, discardHeldVerdicts'
+      )
       expect(bound).toContain(
         'bound check-mergeability vinaya.check-mergeability: pollMergeableState, fetchConflictingFiles, assessRound'
       )
@@ -322,6 +329,8 @@ describe('a stub run on the Engine path', () => {
       'build-revision-handoff',
       'run-live-checks',
       'classify-live-result',
+      'check-publish-mergeability',
+      'classify-publish-mergeability',
       'publish-ready-for-merge'
     ])
     expect(trace.steps.every((step) => step.exitCode === 0)).toBe(true)
@@ -484,6 +493,113 @@ async function spawnedWith(extra: Partial<EngineRunOptions>) {
   })
   return spawned
 }
+
+describe('a published pull request that falls into conflict with the default branch', () => {
+  type Read = { state: 'OPEN' | 'MERGED' | 'CLOSED'; mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN' }
+  /** A stub run whose first run opens PR #70; each later run attaches to it, and its first mergeability read is the conflict the re-entry answers. */
+  function publishedRun(reads: Read[]) {
+    const run = stubRun()
+    let reconciles = 0
+    let conflictToAnswer = false
+    const base = run.options.actions!
+    run.options.actions = {
+      ...base,
+      'vinaya.reconcile-external-state': async () => {
+        reconciles += 1
+        if (reconciles === 1) return { exitCode: 0 }
+        conflictToAnswer = true
+        return { exitCode: 1, stdout: JSON.stringify({ number: 70 }) }
+      },
+      'vinaya.check-mergeability': async (context) => {
+        if (!conflictToAnswer) return base['vinaya.check-mergeability']!(context)
+        conflictToAnswer = false
+        return { exitCode: 1 }
+      }
+    }
+    run.options.taskInput = {
+      ...run.options.taskInput,
+      branch: 'task/issue-7',
+      bound: { findOpenPrForBranch: () => ({ number: 70 }) }
+    } as unknown as TaskInput
+    let read = -1
+    const current = () => reads[Math.min(read, reads.length - 1)]!
+    run.options.lifecycle = {
+      handleSignals: false,
+      publishedWatch: {
+        fetchPrState: () => {
+          read += 1
+          return current().state
+        },
+        fetchMergeableState: () => current().mergeable,
+        pollMs: 0,
+        sleep: async () => {}
+      }
+    }
+    const generation = () => {
+      const saver = new SqliteCheckpointer({
+        path: checkpointPath(join(run.runtimeDir, 'engine-runs', '7')),
+        revision: 'x'
+      })
+      try {
+        return currentRunGeneration(saver, 7)
+      } finally {
+        saver.close()
+      }
+    }
+    return { ...run, generation }
+  }
+  const spawned = (calls: string[], step: string) => calls.filter((call) => call === `spawn:${step}`).length
+  const reentries = (emitted: unknown[]) =>
+    emitted.filter((event) => (event as { event?: string }).event === 'conflict_reentry') as Array<{ attempt: number }>
+
+  test('a completed run whose pull request turns CONFLICTING starts a fresh run at the Developer, then publishes again', async () => {
+    const run = publishedRun([
+      { state: 'OPEN', mergeable: 'UNKNOWN' },
+      { state: 'OPEN', mergeable: 'CONFLICTING' },
+      { state: 'MERGED', mergeable: 'MERGEABLE' }
+    ])
+    const result = await runEngine(run.options)
+    expect(result.exitCode).toBe(0)
+    // The fresh run attached to the open pull request and dispatched the Developer for the conflict, then both reviews.
+    expect(spawned(run.calls, 'develop')).toBe(2)
+    expect(spawned(run.calls, 'code-review')).toBe(2)
+    expect(spawned(run.calls, 'security-review')).toBe(2)
+    const steps = readTrace(result.tracePath).steps.map((step) => step.nodeId)
+    expect(steps.filter((step) => step === 'publish-ready-for-merge')).toHaveLength(2)
+    // The completed checkpoint was never resumed: the re-entry ran under the next run identity.
+    expect(run.generation()).toBe(2)
+    expect(reentries(run.emitted)).toEqual([
+      expect.objectContaining({ pr: 70, attempt: 1, bound: MAX_AUTOMATIC_CONFLICT_REENTRIES })
+    ])
+    const driverLog = readFileSync(loopLogPathFor(null, 7, run.runtimeDir), 'utf8')
+    expect(driverLog).toContain(`starting a fresh run (${runIdentityOfTask(7, 2).runId})`)
+    expect(driverLog).toContain('PR #70 was merged; ending')
+  })
+
+  test('a published pull request that is closed ends the runner with no re-entry', async () => {
+    const run = publishedRun([{ state: 'CLOSED', mergeable: 'MERGEABLE' }])
+    const result = await runEngine(run.options)
+    expect(result.exitCode).toBe(0)
+    expect(spawned(run.calls, 'develop')).toBe(1)
+    expect(reentries(run.emitted)).toEqual([])
+  })
+
+  test('past the re-entry bound the runner pauses for a person through the ordinary pause, and ends', async () => {
+    const run = publishedRun([{ state: 'OPEN', mergeable: 'CONFLICTING' }])
+    const result = await runEngine(run.options)
+    expect(result.exitCode).toBe(2)
+    expect(reentries(run.emitted).map((event) => event.attempt)).toEqual(
+      Array.from({ length: MAX_AUTOMATIC_CONFLICT_REENTRIES }, (_, i) => i + 1)
+    )
+    expect(spawned(run.calls, 'develop')).toBe(MAX_AUTOMATIC_CONFLICT_REENTRIES + 1)
+    expect(run.handoff.calls).toEqual([
+      'escalation:repeat_failure',
+      'pause-state:repeat_failure',
+      'comment:pr:repeat_failure'
+    ])
+    expect(readTrace(result.tracePath).pauseReason).toBe('repeat_failure')
+  })
+})
 
 describe("the Developer's prompt", () => {
   test('carries the frozen brief, the context packet and the turn-result instruction, not only the task number', async () => {

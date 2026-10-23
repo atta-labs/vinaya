@@ -458,7 +458,8 @@ describe('runDriverLoop — issue-1194 stale watching-driver hand-off', () => {
         calls.push(input)
         return calls.length === 1 ? pause : { finalDecision: { type: 'publish' }, prNumber: 42, task: 1165 }
       },
-      fetchPrState: () => 'OPEN',
+      // Open while the pause is watched; merged once the resumed run has published it.
+      fetchPrState: () => (calls.length > 1 ? 'MERGED' : 'OPEN'),
       fetchNewestRulingOrdinal: () => ordinal,
       readPauseState: () => ({
         task: 1165,
@@ -642,13 +643,17 @@ function rateLimitHarness(detail: string, resumes: LoopResult[]) {
   const resumeInputs: unknown[] = []
   const closed = { value: false }
   const done: LoopResult = { finalDecision: { type: 'publish' }, prNumber: 7, task: 1129 }
+  let published = false
   const watch: Partial<DriverWatchDeps> = {
     devReviewLoop: async (input) => {
       if (!('resumePr' in input)) return rateLimitPauseResult(detail)
       resumeInputs.push(input.resumePr)
-      return resumes.shift() ?? done
+      const result = resumes.shift() ?? done
+      published = result.finalDecision.type === 'publish'
+      return result
     },
-    fetchPrState: () => (closed.value ? 'CLOSED' : 'OPEN'),
+    // A published pull request is merged at once, so the driver's watch of it ends there.
+    fetchPrState: () => (closed.value ? 'CLOSED' : published ? 'MERGED' : 'OPEN'),
     fetchNewestRulingOrdinal: () => 0,
     readPauseState: () => heldRateLimitPause(detail),
     readResolutionRecord: () => null,
@@ -1015,13 +1020,17 @@ describe('watchPauseThenResume — a failed bare retry is retried within the inf
       written.push(state.infrastructureRetries ?? -1)
       held.infrastructureRetries = state.infrastructureRetries ?? 0
     }
+    let published = false
     h.watch.devReviewLoop = async (input) => {
       if (!('resumePr' in input)) return rateLimitPauseResult(detail)
       resumeInputs.push(input.resumePr)
       const next = attempts.shift()
       if (next) throw next
+      published = true
       return { finalDecision: { type: 'publish' }, prNumber: 7, task: 1129 }
     }
+    // A published pull request is merged at once, so the driver's watch of it ends there.
+    h.watch.fetchPrState = () => (h.closed.value ? 'CLOSED' : published ? 'MERGED' : 'OPEN')
     const sleep = h.watch.sleep!
     h.watch.sleep = async (ms) => {
       await sleep(ms)

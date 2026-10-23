@@ -124,6 +124,14 @@ export type LoopWorld = {
   prNumber: number
   /** issue-711 O4: the forge's own pull-request state `runDriverLoop`'s watch loop polls (`fetchPrState`) — defaults to `'OPEN'`; a fixture flips it to `'MERGED'`/`'CLOSED'` to drive the driver's own terminal `'ended'` exits. */
   prState: 'OPEN' | 'MERGED' | 'CLOSED'
+  /**
+   * What the forge does once the watching driver publishes (`runDriverLoopInProcess` only): `'merge'` (the default)
+   * merges the pull request, so the driver's watch of the published pull request ends at once; `'watch'` leaves it
+   * open, for a fixture that changes `prState`/`mergeable` itself while the driver watches it.
+   */
+  afterPublish: 'merge' | 'watch'
+  /** The `conflict_reentry` events the watching driver handed its Log (`runDriverLoopInProcess` only). */
+  watchEvents: unknown[]
   /** Flips true the first time the Developer role is dispatched — the head then resolves and the PR opens, exactly as the fake `gh` keyed on `.fake-dev-invoked`. */
   developerPushed: boolean
   /**
@@ -386,6 +394,8 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     mergeBase: sha('b'),
     prNumber: 123,
     prState: 'OPEN',
+    afterPublish: 'merge',
+    watchEvents: [],
     developerPushed: false,
     remoteBranchExists: false,
     worktreeHead: sha('a'),
@@ -1003,6 +1013,8 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     },
     publishRound: (_root, input) => {
       world.publishedRounds.push(input.round)
+      // The forge merges what was published unless the fixture keeps it open (`afterPublish`).
+      if (world.afterPublish === 'merge') world.prState = 'MERGED'
       if (input.deferredIssue) world.publishedDeferredIssues.push(input.deferredIssue)
       // Record the same three comments the real publishRound posts, in order,
       // so a test asserting the published sequence still sees it. The real
@@ -1240,7 +1252,17 @@ export async function runDriverLoopInProcess(
   const loopDeps: Partial<LoopDeps> = { ...makeInProcessDeps(world), ...overrides }
   return withWorldEnv(world, () =>
     runDriverLoop(input, loopDeps, {
+      // The forge merges what the driver published unless the fixture keeps it open (`afterPublish`).
+      devReviewLoop: async (loopInput, deps) => {
+        const result = await devReviewLoop(loopInput, deps)
+        if (result.finalDecision.type === 'publish' && world.afterPublish === 'merge') world.prState = 'MERGED'
+        return result
+      },
       fetchPrState: (_pr) => world.prState,
+      fetchMergeableState: (_pr) => world.mergeable,
+      logEvent: (event) => {
+        world.watchEvents.push(event)
+      },
       // The same open-pull-request read the loop itself is given — how a
       // pause recorded before any pull request finds the one opened since.
       findOpenPrForBranch: (branch) => loopDeps.findOpenPrForBranch!(branch),

@@ -101,6 +101,12 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
     from: 'the runner: one when the run ends, whatever way it ends'
   },
   {
+    family: 'dev_review_loop',
+    events: ['conflict_reentry'],
+    status: 'produced',
+    from: 'the runner: one each time its watch of a published pull request finds it conflicting and starts a fresh run, up to the re-entry bound'
+  },
+  {
     family: 'handoff',
     events: ['raised'],
     status: 'produced',

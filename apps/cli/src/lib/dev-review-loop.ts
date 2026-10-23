@@ -134,8 +134,9 @@ import {
 import { controlStoreRoot } from './effects.js'
 import { resolveRoleDoctrineText } from '../roles/plan.js'
 import { validatePrBodyForCreate } from '../commands/pr.js'
-import { createLogSink, drainLogSink, resolveLogAppendPath } from './log-sink.js'
+import { createLogSink, drainLogSink, log as logToDefaultSink, resolveLogAppendPath } from './log-sink.js'
 import {
+  conflictReentryEvent,
   createDriverExitRecorder,
   DRIVER_HEARTBEAT_INTERVAL_MS,
   defaultSetHeartbeat,
@@ -156,6 +157,7 @@ import { detectVendoredVinaya } from './self-host.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import {
   checkPremiseAtHead,
+  conflictReentryBoundDetail,
   describeFailingCheckRun,
   fetchCiConclusion,
   fetchConflictingFiles,
@@ -165,7 +167,9 @@ import {
   fetchPrState,
   gitCommitsTouchingDriverPaths,
   type FailingCheckRun,
+  MAX_AUTOMATIC_CONFLICT_REENTRIES,
   pollMergeableState,
+  readPublishedPullRequest,
   readWorktreeHead,
   renderConflictPrompt,
   rerunFailedWorkflowJobs,
@@ -2667,12 +2671,22 @@ export function deferredEntriesForRound(round: number, verdicts: VerdictObservat
  * NOT its own, same as a genuinely different process would be). Absent
  * (the ordinary case), a pause still clears the lock exactly as before
  * this task: an operator's own one-shot `--task`/`--resume` call was
- * always meant to end here.
+ * always meant to end here. A clean `publish` under the watching driver
+ * keeps the lock too: `runDriverLoop` goes on watching the published pull
+ * request and releases the lock only once it is merged or closed.
+ *
+ * `pauseOnConflict` — set ONLY by `runDriverLoop`'s published-pull-request
+ * watch, once its automatic conflict re-entries (`MAX_AUTOMATIC_CONFLICT_REENTRIES`)
+ * are spent: the first conflicting mergeability read of this run then
+ * pauses `repeat_failure` with this detail, through the ordinary pause path,
+ * instead of sending the Developer back again.
  */
-export type LoopInput = { json?: boolean; model?: string; retainDriverLock?: string } & (
-  | { task: number; agent: AgentVendor }
-  | { resumePr: number; agent?: AgentVendor }
-)
+export type LoopInput = {
+  json?: boolean
+  model?: string
+  retainDriverLock?: string
+  pauseOnConflict?: string
+} & ({ task: number; agent: AgentVendor } | { resumePr: number; agent?: AgentVendor })
 export type LoopResult = { finalDecision: Decision; prNumber: number; task: number }
 
 /**
@@ -3300,7 +3314,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   }
 
   try {
-    return await runDevReviewLoopBody()
+    const outcome = await runDevReviewLoopBody()
+    // A publish under the watching driver is not the end of the task: the
+    // driver goes on watching the published pull request (`runDriverLoop`),
+    // so the lock stays held until it is merged or closed.
+    if (
+      outcome.finalDecision.type === 'publish' &&
+      keepDriverLock({ kind: 'publish', watched: input.retainDriverLock !== undefined && outcome.prNumber > 0 })
+    ) {
+      keepLockAlive = true
+    }
+    return outcome
   } finally {
     if (prevPr === undefined) delete process.env.VINAYA_PR
     else process.env.VINAYA_PR = prevPr
@@ -7302,6 +7326,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // genuine next round), so a conflicting head is sent back before any
           // CI wait, never after one.
           const mergeableBeforeGate = await pollMergeableState(prNumber, d)
+          if (mergeableBeforeGate === 'CONFLICTING' && input.pauseOnConflict !== undefined) {
+            // The watching driver's automatic conflict re-entries for this
+            // published pull request are spent: a person decides, through
+            // the ordinary pause and its comment.
+            const stats = computeStats(d.resolveHead(branch), roundStartMs)
+            await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats, 'repeat_failure'))
+            decision = { type: 'pause', reason: 'repeat_failure', detail: input.pauseOnConflict }
+            continue
+          }
           if (mergeableBeforeGate === 'CONFLICTING') {
             publicationState.pendingConflictFiles = await withRateLimitWait(() =>
               d.fetchConflictingFiles('main', branch)
@@ -8564,6 +8597,10 @@ export type DriverWatchDeps = {
   now: () => number
   /** The open pull request on a branch — how a pause recorded before any pull request existed finds the one opened since, to bind and resume it. */
   findOpenPrForBranch: typeof findOpenPrForBranch
+  /** The forge's mergeability of a published pull request, read on each watch tick — `UNKNOWN` is read again on the next. */
+  fetchMergeableState: typeof fetchMergeableState
+  /** Where an automatic conflict re-entry's `conflict_reentry` event goes — the Vinaya Log. */
+  logEvent: (event: DevReviewLoopEventInput) => void
 }
 
 /** One driver run's count of automatic rate-limit resumes, kept across pauses so the bound survives each re-watch; keyed by the round the pauses belong to. */
@@ -8589,7 +8626,9 @@ function defaultDriverWatchDeps(): DriverWatchDeps {
     infrastructureBackoffMs: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_WATCH_INFRA_BACKOFF_MS', 60_000),
     readRateLimitReset: defaultReadRateLimitReset,
     now: () => Date.now(),
-    findOpenPrForBranch
+    findOpenPrForBranch,
+    fetchMergeableState,
+    logEvent: (event) => logToDefaultSink(event)
   }
 }
 
@@ -9016,12 +9055,115 @@ async function watchPrePrPauseThenResume(
 }
 
 /**
+ * A `publish` does not end a task under the watching driver: until the pull
+ * request is merged or closed, the default branch can move under it and
+ * leave it conflicting, and nothing else would pick the task up again. Each
+ * poll reads the pull request's state, then its forge mergeability
+ * (`readPublishedPullRequest`): merged or closed ends the watch, and
+ * `UNKNOWN` is read again on the next poll, never taken as conflicting or
+ * clean. A `CONFLICTING` read re-enters `devReviewLoop` as `task run` would —
+ * `--task`, under this driver's own lock token, never `--resume`, so no ruling
+ * is needed — and that run's attach reads the same conflict and sends the
+ * Developer back with the conflicting files through the existing conflict
+ * send-back; the gates and both reviews run again on the new head before
+ * anything publishes. A base that moved over this driver's own code hands the
+ * task to a fresh process first (`handOffStaleWatchingDriver`, ADR 0006).
+ *
+ * Each re-entry is counted against `MAX_AUTOMATIC_CONFLICT_REENTRIES` and
+ * narrated in the per-task driver log and the Log (`conflict_reentry`). Once
+ * they are spent, the next conflict re-enters with `pauseOnConflict`: that run
+ * pauses `repeat_failure` through the ordinary pause and its comment, and
+ * `runDriverLoop` ends its watch on it. A re-entry that throws is reported and
+ * the watch polls again; a failed forge read is "cannot tell yet".
+ */
+async function watchPublishedPullRequest(
+  published: LoopResult,
+  input: LoopInput,
+  loopDeps: Partial<LoopDeps>,
+  w: DriverWatchDeps,
+  driverLockToken: string,
+  baseHeadAtStart: string,
+  reentries: { count: number }
+): Promise<
+  | { kind: 'ended'; reason: 'merged' | 'closed' }
+  | { kind: 'result'; result: LoopResult; boundSpent: boolean }
+  | { kind: 'unwatched' }
+> {
+  const { prNumber, task } = published
+  const held = watchReadOrFallback('pause state', () => w.readPauseState(w.runtimeDir(), task), null)
+  const agent = input.agent ?? (held?.agent !== undefined && isAgentVendor(held.agent) ? held.agent : undefined)
+  if (!agent) {
+    process.stderr.write(
+      `vinaya dev-review-loop: task ${task} records no agent to re-enter PR #${prNumber} with; the driver stops watching it.\n`
+    )
+    return { kind: 'unwatched' }
+  }
+  const model = input.model ?? held?.model
+  const loopLogPath = loopLogPathFor(null, task)
+  appendDriverLine(loopLogPath, `Watching PR #${prNumber} after its publication, until it is merged or closed.`)
+  while (true) {
+    const read = watchReadOrFallback(
+      'published pull request',
+      () => readPublishedPullRequest(prNumber, w),
+      'watching' as const
+    )
+    if (read === 'merged' || read === 'closed') return { kind: 'ended', reason: read }
+    if (read === 'conflicting') {
+      const continuation: LoopInput = { task, agent, ...(model ? { model } : {}) }
+      if (handOffStaleWatchingDriver(baseHeadAtStart, continuation, task, driverLockToken, w))
+        return { kind: 'unwatched' }
+      const boundSpent = reentries.count >= MAX_AUTOMATIC_CONFLICT_REENTRIES
+      if (boundSpent) {
+        appendDriverLine(
+          loopLogPath,
+          `PR #${prNumber} fell into conflict with the default branch again, and its ${MAX_AUTOMATIC_CONFLICT_REENTRIES} automatic re-entries are spent: the loop pauses for a person.`,
+          'waiting'
+        )
+      } else {
+        reentries.count += 1
+        const event = conflictReentryEvent({
+          loopId: randomUUID(),
+          task,
+          prNumber,
+          attempt: reentries.count,
+          bound: MAX_AUTOMATIC_CONFLICT_REENTRIES
+        })
+        w.logEvent(event)
+        narrateDriverEvent(loopLogPath, event, [], task)
+      }
+      try {
+        const result = await w.devReviewLoop(
+          {
+            ...continuation,
+            retainDriverLock: driverLockToken,
+            ...(boundSpent
+              ? { pauseOnConflict: conflictReentryBoundDetail(prNumber, MAX_AUTOMATIC_CONFLICT_REENTRIES) }
+              : {})
+          },
+          loopDeps
+        )
+        return { kind: 'result', result, boundSpent }
+      } catch (err) {
+        process.stderr.write(
+          `vinaya dev-review-loop: watcher's conflict re-entry for PR #${prNumber} failed — ${
+            err instanceof Error ? err.message : String(err)
+          }; still watching.\n`
+        )
+      }
+    }
+    await w.sleep(w.watchPollIntervalMs)
+  }
+}
+
+/**
  * issue-711 O4's own entry point — `apps/cli/src/commands/dev-review-loop.ts`'s
  * `--task` start and `task-run.ts`'s `runTask` both call this instead of
  * `devReviewLoop` directly (a human's own explicit `--resume <pr>`/
  * `--cancel <pr>` stay one-shot, unchanged — see this function's own
  * module doc comment, above). One call in, one `DriverResult` out, however
- * many pause/resume cycles it takes underneath.
+ * many pause/resume cycles it takes underneath. A publish is watched too
+ * (`watchPublishedPullRequest`): the driver returns it once the pull request
+ * is merged, ends `closed` once it is closed, and re-enters it on a conflict.
  */
 export async function runDriverLoop(
   input: LoopInput,
@@ -9047,8 +9189,40 @@ export async function runDriverLoop(
   // process, not module state or each resumed loop entry.
   const baseHeadAtStart = w.gitRevParseOriginMain()
   const rateLimitBudget: RateLimitResumeBudget = { round: -1, count: 0 }
+  // This driver's automatic conflict re-entries of its published pull
+  // request, counted across every publish it watches.
+  const conflictReentries = { count: 0 }
   let result = await w.devReviewLoop({ ...input, retainDriverLock: driverLockToken }, loopDeps)
-  while (result.finalDecision.type === 'pause') {
+  for (;;) {
+    if (result.finalDecision.type === 'publish' && result.prNumber > 0) {
+      const watched = await watchPublishedPullRequest(
+        result,
+        input,
+        loopDeps,
+        w,
+        driverLockToken,
+        baseHeadAtStart,
+        conflictReentries
+      )
+      if (watched.kind === 'unwatched') return result
+      if (watched.kind === 'ended') {
+        // Merged or closed: the task is over, and the lock the watched
+        // publish kept is released here.
+        w.clearDriverLock(w.runtimeDir(), result.task)
+        return watched.reason === 'merged'
+          ? result
+          : { finalDecision: { type: 'ended', reason: 'closed' }, prNumber: result.prNumber, task: result.task }
+      }
+      result = watched.result
+      if (watched.boundSpent && result.finalDecision.type === 'pause') {
+        // The re-entry bound is spent and the run paused for a person: the
+        // watch ends on that pause, its comment naming what continues it.
+        w.clearDriverLock(w.runtimeDir(), result.task)
+        return result
+      }
+      continue
+    }
+    if (result.finalDecision.type !== 'pause') return result
     const outcome =
       result.prNumber > 0
         ? await watchPauseThenResume(result, loopDeps, w, driverLockToken, rateLimitBudget, baseHeadAtStart)
@@ -9075,7 +9249,6 @@ export async function runDriverLoop(
     }
     result = outcome.result
   }
-  return result
 }
 
 export const DEV_REVIEW_LOOP_AGENTS = AGENT_VENDOR_NAMES
