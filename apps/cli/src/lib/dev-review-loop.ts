@@ -303,15 +303,16 @@ import {
   createLiveDeveloperContext,
   createLivePublicationState,
   defaultPushTaskBranch as sharedDefaultPushTaskBranch,
-  defaultPushTaskBranchWithLease,
+  defaultPushTaskBranchWithLease as sharedDefaultPushTaskBranchWithLease,
   developerRunIdFor,
+  LeasePushRejected,
+  PushHookRefusal,
   firstErrorLine,
   type LivePublicationScope,
   publishDeveloperTurn as sharedPublishDeveloperTurn,
   readPublicationBase as sharedReadPublicationBase,
   resolvePublicationBase as sharedResolvePublicationBase,
   syncBeyondSurfaceRecord as sharedSyncBeyondSurfaceRecord,
-  traceHasRefusingHook,
   withBeyondSurfaceRecord as sharedWithBeyondSurfaceRecord
 } from './task-tools/live-developer-context.js'
 import { type DevPullRequestView, type DevToolContext, reviewerDevToolContext } from './task-tools/dev-tools-server.js'
@@ -1558,11 +1559,7 @@ export function defaultRestoreWorktreeHead(worktreePath: string, head: string): 
   return gitOk(worktreePath, ['rev-parse', 'HEAD']) === head
 }
 
-export {
-  boundedPushOutput,
-  pushBranchClassified,
-  pushedCommitRangeBase
-} from './task-tools/live-developer-context.js'
+export { pushedCommitRangeBase } from './task-tools/live-developer-context.js'
 
 /**
  * The lower bound that measures only the task's own changes: `pushedBase`
@@ -1644,6 +1641,43 @@ function defaultGitWorktreeDiffText(worktreePath: string, base: string): string 
 type CommitWorktreeResult =
   | { ok: true; sha: string }
   | { ok: false; check: 'commit-hook'; errorLine: string; output: string }
+
+/** True only when Git's own trace says a commit hook exited non-zero. */
+function traceHasRefusingHook(trace: string, names: ReadonlySet<string>): boolean {
+  const hooks = new Set<number>()
+  for (const line of trace.split('\n')) {
+    try {
+      const event = JSON.parse(line) as {
+        event?: string
+        child_id?: number
+        child_class?: string
+        hook_name?: string
+        code?: number
+      }
+      if (
+        event.event === 'child_start' &&
+        event.child_class === 'hook' &&
+        typeof event.hook_name === 'string' &&
+        names.has(event.hook_name) &&
+        typeof event.child_id === 'number'
+      ) {
+        hooks.add(event.child_id)
+      }
+      if (
+        event.event === 'child_exit' &&
+        typeof event.child_id === 'number' &&
+        hooks.has(event.child_id) &&
+        typeof event.code === 'number' &&
+        event.code !== 0
+      ) {
+        return true
+      }
+    } catch {
+      // Trace2 is newline-delimited JSON; an unreadable line proves nothing.
+    }
+  }
+  return false
+}
 
 type PublicationRefusal = {
   kind: 'refused'
@@ -1801,6 +1835,97 @@ function defaultCommitWorktree(worktreePath: string, header: string): CommitWork
   return { ok: true, sha: sh('git', ['-C', worktreePath, 'rev-parse', 'HEAD']).trim() }
 }
 
+/** git's own words for a push it refused because the remote ref moved. */
+const LEASE_REJECTED = /\(stale info\)|\[rejected\]|\(fetch first\)|non-fast-forward/
+
+/** A push's captured output is read in full: a hook that runs a whole suite prints far more than Node's default 1 MiB buffer, and a killed push would read as a failure outside the hook. */
+const PUSH_OUTPUT_MAX_BUFFER = 256 * 1024 * 1024
+
+/** How many lines of a push's output reach the Developer. */
+const PUSH_REFUSAL_MAX_LINES = 40
+
+/** The lines of a test runner's or check's output that name what failed. */
+const FAILING_LINE =
+  /\(fail\)|\bfail(?:ed|ing|ure)?\b|\berror\b|✗|✘|\bnot ok\b|\bexpect(?:ed)?\b|\breceived\b|\bselected \d+ of \d+/i
+
+/** A line naming one failing test or check, the lines the Developer must never lose to the detail lines around them. */
+const FAILING_TEST_LINE = /\(fail\)|✗|✘|\bnot ok\b/i
+
+/**
+ * A push's output as untrusted text for the Developer: the failing test and
+ * check names first, then the other failure and selection lines, else the
+ * output's tail, each line sanitized like any public detail and the whole
+ * bounded in lines. Detail lines only fill what the names leave free.
+ */
+export function boundedPushOutput(output: string, mode: 'failing' | 'tail'): string {
+  const lines = output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const names = mode === 'failing' ? lines.filter((line) => FAILING_TEST_LINE.test(line)) : []
+  const details =
+    mode === 'failing' ? lines.filter((line) => !FAILING_TEST_LINE.test(line) && FAILING_LINE.test(line)) : []
+  const kept =
+    names.length + details.length > 0
+      ? [...names.slice(0, PUSH_REFUSAL_MAX_LINES), ...details].slice(0, PUSH_REFUSAL_MAX_LINES)
+      : lines.slice(-PUSH_REFUSAL_MAX_LINES)
+  return kept.map((line) => sanitizePublicPauseDetail(line)).join('\n')
+}
+
+/**
+ * Runs `git push` for the task branch from its worktree under a trace2 event
+ * file. A push the repository's own pre-push hook refused throws
+ * `PushHookRefusal` carrying the hook's failing lines; any other failure
+ * throws an error naming the git exit and the push's own bounded error output.
+ * With `lease`, the push is `--force-with-lease=refs/heads/<branch>:<lease>`,
+ * and a push git refused because the remote branch moved off `lease` throws
+ * `LeasePushRejected` — a refusal, never retried.
+ */
+export function pushBranchClassified(worktreePath: string, branch: string, lease?: string): void {
+  const traceDir = mkdtempSync(join(tmpdir(), 'vinaya-push-trace-'))
+  const tracePath = join(traceDir, 'trace.jsonl')
+  try {
+    // Through the driver-tool guard: the push runs the pre-push hook and its
+    // tests, and a stopped driver must not leave that run behind.
+    const leaseArgs = lease === undefined ? [] : [`--force-with-lease=refs/heads/${branch}:${lease}`]
+    const pushed = guardedSpawnSync(
+      'git',
+      ['-C', worktreePath, 'push', 'origin', `HEAD:refs/heads/${branch}`, ...leaseArgs],
+      {
+        env: { ...process.env, GIT_TRACE2_EVENT: tracePath },
+        maxBuffer: PUSH_OUTPUT_MAX_BUFFER,
+        stdio: ['ignore', 'pipe', 'pipe']
+      }
+    )
+    if (pushed.error || pushed.status !== 0) {
+      throw Object.assign(pushed.error ?? new Error(`git push exited ${pushed.status}`), {
+        stdout: pushed.stdout,
+        stderr: pushed.stderr,
+        status: pushed.status
+      })
+    }
+  } catch (err) {
+    const raw =
+      err && typeof err === 'object'
+        ? (err as { stdout?: unknown; stderr?: unknown; status?: unknown; code?: unknown })
+        : {}
+    const output = `${String(raw.stdout ?? '')}\n${String(raw.stderr ?? '')}`.trim()
+    const trace = existsSync(tracePath) ? readFileSync(tracePath, 'utf8') : ''
+    if (traceHasRefusingHook(trace, new Set(['pre-push']))) {
+      throw new PushHookRefusal(boundedPushOutput(output, 'failing'))
+    }
+    if (lease !== undefined && LEASE_REJECTED.test(output)) {
+      throw new LeasePushRejected(boundedPushOutput(output, 'tail'))
+    }
+    const exit =
+      typeof raw.status === 'number' ? `git exit ${raw.status}` : `git failed (${String(raw.code ?? 'no exit status')})`
+    const detail = boundedPushOutput(output || (err instanceof Error ? err.message : String(err)), 'tail')
+    throw new Error(`${exit}: ${detail || 'no captured output'}`)
+  } finally {
+    rmSync(traceDir, { recursive: true, force: true })
+  }
+}
+
 /**
  * O3/O4: pushes the task branch through the Broker's governed `branch-push`
  * operation (`defaultPushTaskBranch`, shared with the Engine runner).
@@ -1808,7 +1933,19 @@ function defaultCommitWorktree(worktreePath: string, header: string): CommitWork
 function defaultPushTaskBranch(
   input: Parameters<LoopDeps['pushTaskBranch']>[0]
 ): { ok: true } | { ok: false; refusal: string; hook: boolean } {
-  return sharedDefaultPushTaskBranch(input)
+  return sharedDefaultPushTaskBranch(input, pushBranchClassified)
+}
+
+/**
+ * O2: the driver's own force-with-lease push of the task branch after it
+ * rebased that branch onto the default branch's tip, through the Broker's
+ * `branch-lease-push` operation (`defaultPushTaskBranchWithLease`, shared with
+ * the Engine runner).
+ */
+function defaultPushTaskBranchWithLease(
+  input: Parameters<LoopDeps['pushTaskBranchWithLease']>[0]
+): { ok: true } | { ok: false; refusal: string; hook: boolean; lease: boolean } {
+  return sharedDefaultPushTaskBranchWithLease(input, pushBranchClassified)
 }
 
 /**
