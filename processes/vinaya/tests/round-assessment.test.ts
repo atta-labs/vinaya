@@ -23,6 +23,7 @@ import {
   encodeLoopState,
   type TaskInput
 } from '../executing/actions'
+import { confidentTurn, heldReviews, vendorLines } from './round-fakes'
 
 type Action = (context: never) => Promise<{ exitCode: number; stdout?: string }> | { exitCode: number; stdout?: string }
 
@@ -57,58 +58,61 @@ const loopState = () =>
     maxTaskMinutes: 0
   })
 
-describe('assess-round', () => {
-  test('a verdicts observation with no pending round records the gate first and does not throw', async () => {
-    const task = {
-      worktreePath: worktree(),
-      loopState: loopState(),
-      observe: () => ({ kind: 'verdicts', round: 1, verdicts: approving })
-    } as unknown as TaskInput
-    const assess = createActions(task)['vinaya.assess-round'] as unknown as Action
-    const develop = {
-      kind: 'agent-spawn',
-      nodeId: 'develop',
-      exitCode: 0,
-      events: [{ turnResult: { confidence: 0.9, confidenceExplanation: 'tested' } }]
-    }
-    const gate = {
-      kind: 'mechanical',
-      nodeId: 'run-mechanical-gates',
-      exitCode: 0,
-      stdout: '',
-      stderr: '',
-      durationMs: 1234
-    }
-    const result = await assess({ results: { develop, 'run-mechanical-gates': gate } } as never)
+const gateResult = (exitCode: number, stdout = '') => ({
+  kind: 'mechanical',
+  nodeId: 'run-mechanical-gates',
+  exitCode,
+  stdout,
+  stderr: '',
+  durationMs: 1234
+})
+
+describe('assess-gate and assess-round', () => {
+  test('the gate is assessed first, then the verdicts the reviewer step held, from the state the gate recorded', async () => {
+    const task = { worktreePath: worktree(), loopState: loopState(), reviewRound: () => 1 } as unknown as TaskInput
+    const actions = createActions(task)
+    const gate = (await (actions['vinaya.assess-gate'] as unknown as Action)({
+      results: { 'run-mechanical-gates': gateResult(0) }
+    } as never)) as { exitCode: number; stdout: string }
+    expect(gate.exitCode).toBe(0)
+    const gated = JSON.parse(gate.stdout) as { decision: { type: string }; events: Array<{ event: string }> }
+    expect(gated.decision.type).toBe('dispatch_reviewers')
+    expect(gated.events.map((e) => e.event)).toContain('gate_result_read')
+    const result = await (actions['vinaya.assess-round'] as unknown as Action)({
+      results: {
+        'run-mechanical-gates': gateResult(0),
+        'assess-gate': { kind: 'mechanical', exitCode: 0, stdout: gate.stdout },
+        'validate-reviewer-outputs': { kind: 'mechanical', ...heldReviews(1, approving) }
+      }
+    } as never)
     const { decision, events } = JSON.parse(result.stdout ?? '') as {
       decision: { type: string }
       events: Array<{ event: string }>
     }
     expect(decision.type).toBe('publish')
     expect(result.exitCode).toBe(0)
-    const names = events.map((e) => e.event)
-    // The injected gate is recorded before the verdicts: removing the injection drops gate_result_read.
-    expect(names.indexOf('gate_result_read')).toBeGreaterThanOrEqual(0)
-    expect(names.indexOf('gate_result_read')).toBeLessThan(names.indexOf('verdicts_read'))
+    expect(events.map((e) => e.event)).toContain('verdicts_read')
   })
 
-  test('a red or missing gate result is a wiring fault, never read as green', async () => {
-    const make = () =>
-      createActions({
-        worktreePath: worktree(),
-        loopState: loopState(),
-        observe: () => ({ kind: 'verdicts', round: 1, verdicts: approving })
-      } as unknown as TaskInput)['vinaya.assess-round'] as unknown as Action
-    const red = {
-      kind: 'mechanical',
-      nodeId: 'run-mechanical-gates',
-      exitCode: 1,
-      stdout: '',
-      stderr: '',
-      durationMs: 1
+  test('a red gate is a gate observation: an unreviewed round sends the Developer back, never a thrown error', async () => {
+    const task = {
+      worktreePath: worktree(),
+      loopState: loopState(),
+      reviewRound: () => 1,
+      remoteHead: () => 'abc'
+    } as unknown as TaskInput
+    const assess = createActions(task)['vinaya.assess-gate'] as unknown as Action
+    const result = await assess({ results: { 'run-mechanical-gates': gateResult(1, 'check failed: a') } } as never)
+    expect(result.exitCode).toBe(1)
+    const recorded = JSON.parse(result.stdout ?? '') as {
+      decision: { type: string }
+      sendBack: { kind: string }
+      state: { rounds: Array<{ notReviewed?: string }> }
     }
-    await expect(async () => make()({ results: { 'run-mechanical-gates': red } } as never)).toThrow('red gate')
-    await expect(async () => make()({ results: {} } as never)).toThrow('no recorded result')
+    expect(recorded.decision.type).toBe('dispatch_developer')
+    expect(recorded.sendBack.kind).toBe('gate-red')
+    expect(recorded.state.rounds.map((round) => round.notReviewed)).toEqual(['checks_red'])
+    await expect(async () => assess({ results: {} } as never)).toThrow('no recorded result')
   })
 })
 
@@ -201,10 +205,7 @@ const changesRequested: VerdictObservation[] = [
 function stubAgent(vendor: 'claude-code' | 'codex'): SpawnedProcessLike {
   const closeListeners: Array<(code: number | null) => void> = []
   let stdout: ((chunk: string) => void) | undefined
-  const lines =
-    vendor === 'codex'
-      ? ['{"type":"thread.started","thread_id":"thread-1"}', '{"type":"turn.completed"}']
-      : ['{"type":"result","session_id":"session-1"}']
+  const lines = vendorLines(vendor, confidentTurn)
   return {
     stdin: {
       write: () => {},
@@ -244,15 +245,27 @@ describe('the round assessment across a resume', () => {
     const initial = loopState()
     expect(carriedLoopState({}, initial)).toBe(initial)
     const advanced = assessedRound(initial, 1, changesRequested)
-    const result = (state: LoopState) =>
+    const result = (state: LoopState, seq = 1) =>
       ({
-        'assess-round': { kind: 'mechanical', stdout: JSON.stringify({ state: JSON.parse(encodeLoopState(state)) }) }
+        'assess-round': {
+          kind: 'mechanical',
+          stdout: JSON.stringify({ seq, state: JSON.parse(encodeLoopState(state)) })
+        }
       }) as never
     expect(carriedLoopState(result(advanced), initial)).toEqual(advanced)
     expect(carriedLoopState(result(initial), advanced)).toBe(advanced)
-    expect(() => carriedLoopState({ 'assess-round': { kind: 'mechanical', stdout: '{}' } } as never, initial)).toThrow(
-      'no readable loop state'
-    )
+    // The newest record by sequence number is the one carried, whichever step wrote it.
+    const gated = {
+      ...(result(initial, 1) as object),
+      'assess-gate': {
+        kind: 'mechanical',
+        stdout: JSON.stringify({ seq: 2, state: JSON.parse(encodeLoopState(advanced)) })
+      }
+    } as never
+    expect(carriedLoopState(gated, initial)).toEqual(advanced)
+    expect(() =>
+      carriedLoopState({ 'assess-round': { kind: 'mechanical', stdout: '{"seq":1}' } } as never, initial)
+    ).toThrow('no readable loop state')
   })
 
   for (const vendor of ['claude-code', 'codex'] as const) {
@@ -261,15 +274,15 @@ describe('the round assessment across a resume', () => {
       const file = join(root, 'run', 'checkpoints.sqlite')
       const control = createRunControl()
       const verdictsByRound = [changesRequested, approving]
-      let observed = 0
+      let round = 1
       const task = {
         worktreePath: worktree(),
         loopState: loopState(),
-        reviewRound: () => observed,
-        verdicts: () => verdictsByRound[observed - 1] ?? approving,
-        observe: () => {
-          observed += 1
-          return { kind: 'verdicts', round: observed, verdicts: verdictsByRound[observed - 1] ?? approving }
+        reviewRound: () => round,
+        verdicts: () => {
+          const verdicts = verdictsByRound[round - 1] ?? approving
+          round += 1
+          return verdicts
         }
       } as unknown as TaskInput
       const carriedBefore: LoopState[] = []
@@ -286,7 +299,6 @@ describe('the round assessment across a resume', () => {
               'vinaya.prepare-sources',
               'vinaya.choose-start',
               'vinaya.validate-developer-output',
-              'vinaya.validate-reviewer-outputs',
               'vinaya.run-security-scan',
               'vinaya.run-live-checks',
               'vinaya.classify-live-result',
@@ -294,6 +306,10 @@ describe('the round assessment across a resume', () => {
             ].map((name) => [name, () => ({ exitCode: 0 })])
           ),
           'harness.run-gates': () => ({ exitCode: 0 }),
+          'vinaya.classify-developer-output': real['vinaya.classify-developer-output']!,
+          'vinaya.assess-gate': real['vinaya.assess-gate']!,
+          'vinaya.classify-reviewer-outputs': real['vinaya.classify-reviewer-outputs']!,
+          'vinaya.validate-reviewer-outputs': () => heldReviews(round, verdictsByRound[round - 1] ?? approving),
           'vinaya.classify-gate-result': (context) => {
             classified += 1
             // The halt lands in the second round, after the first assessment recorded its state.
@@ -339,9 +355,10 @@ describe('the round assessment across a resume', () => {
       expect(resumed.reason).toBe('completed')
       expect(recorded).toHaveLength(2)
       // The second assessment started from the state the first recorded, not from the task's initial state.
+      // and from the second round's own gate assessment, which the resumed leg ran before it.
       expect(carriedBefore[1]!.rounds).toEqual(before.rounds)
-      expect(carriedBefore[1]!.pending).toEqual(before.pending)
-      expect(roundOf(carriedBefore[1]!)).toBe(roundOf(before))
+      expect(carriedBefore[1]!.pending?.round).toBe(2)
+      expect(roundOf(carriedBefore[1]!)).toBeGreaterThan(roundOf(before))
       expect(roundOf(carriedBefore[1]!)).toBeGreaterThan(roundOf(carriedBefore[0]!))
       expect(roundOf(recorded[1]!)).toBeGreaterThanOrEqual(roundOf(before))
     })

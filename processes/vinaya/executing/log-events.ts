@@ -14,6 +14,13 @@ import type { DriverExitReason } from '../../../apps/cli/src/lib/dev-review-loop
 // `log-inventory.ts`.
 
 const ASSESS_STEP = 'assess-round'
+/** The steps that record the shared assessment's events with their decision, in the order a round reaches them. */
+export const DECIDING_STEPS: readonly string[] = [
+  'validate-developer-output',
+  'assess-gate',
+  'validate-reviewer-outputs',
+  ASSESS_STEP
+]
 const LIVE_STEP = 'run-live-checks'
 const PUBLISH_STEP = 'publish-ready-for-merge'
 const DEVELOP_STEP = 'develop'
@@ -52,16 +59,19 @@ interface Assessment {
   events: DevReviewLoopEventInput[]
 }
 
-/** The assessment the assess-round step recorded, or null when it recorded none or something unreadable. */
-function readAssessment(steps: RecordedSteps): Assessment | null {
-  const stdout = steps[ASSESS_STEP]?.stdout
+/** The events a deciding step recorded with its decision, or null when it recorded none or something unreadable. */
+function readAssessment(steps: RecordedSteps, step: string = ASSESS_STEP): Assessment | null {
+  const stdout = steps[step]?.stdout
   if (!stdout) return null
   try {
     const parsed = JSON.parse(stdout) as { decision?: { type?: unknown; reason?: unknown }; events?: unknown }
     if (!Array.isArray(parsed.events) || typeof parsed.decision?.type !== 'string') return null
+    // The loop's own events, and the role attempt a reviewer step that gave no usable review leaves.
     const events = parsed.events.filter(
       (event): event is DevReviewLoopEventInput =>
-        typeof event === 'object' && event !== null && (event as { kind?: unknown }).kind === 'dev_review_loop'
+        typeof event === 'object' &&
+        event !== null &&
+        ['dev_review_loop', 'role_attempt'].includes(String((event as { kind?: unknown }).kind))
     )
     const decision =
       parsed.decision.type === 'pause' ? `pause(${String(parsed.decision.reason)})` : parsed.decision.type
@@ -146,14 +156,14 @@ export function createVinayaLogProducers(
   }
 
   /**
-   * The assessment's events. A publish decision waits for the live check: whether the approval stands is not
+   * A deciding step's events. A publish decision waits for the live check: whether the approval stands is not
    * known yet, so the events are logged by that step, and only the head they name is kept for a close.
    */
-  const assessed = (steps: RecordedSteps): LogEventInput[] => {
-    const assessment = readAssessment(steps)
+  const assessed = (steps: RecordedSteps, step: string): LogEventInput[] => {
+    const assessment = readAssessment(steps, step)
     if (assessment === null) return []
     lastDecision = assessment.decision
-    if (assessment.decision === 'publish') {
+    if (step === ASSESS_STEP && assessment.decision === 'publish') {
       for (const event of assessment.events) if (event.event === 'gate_result_read') finalHead = event.head
       return []
     }
@@ -191,15 +201,15 @@ export function createVinayaLogProducers(
       return []
     },
     nodeCompleted: ({ nodeId, steps }) =>
-      nodeId === ASSESS_STEP
-        ? assessed(steps)
+      DECIDING_STEPS.includes(nodeId)
+        ? assessed(steps, nodeId)
         : nodeId === LIVE_STEP
           ? liveChecked(steps)
           : nodeId === PUBLISH_STEP
             ? published(steps)
             : [],
     nodeFailed: ({ nodeId, steps }) =>
-      nodeId === ASSESS_STEP ? assessed(steps) : nodeId === LIVE_STEP ? liveChecked(steps) : [],
+      DECIDING_STEPS.includes(nodeId) ? assessed(steps, nodeId) : nodeId === LIVE_STEP ? liveChecked(steps) : [],
     runEnded: ({ outcome, cancelled }) => {
       if (cancelled) return [loop({ event: 'cancelled', round, by: 'principal' })]
       switch (outcome.reason) {

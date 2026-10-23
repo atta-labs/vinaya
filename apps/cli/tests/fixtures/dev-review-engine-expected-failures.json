@@ -8,54 +8,14 @@
       "reason": "A revision publishes without the developer round marker required by the round sequence."
     },
     {
-      "scenario": "mechanical-failure-repeats",
-      "guarantee": "INV-010",
-      "reason": "Repeated red gates exhaust the Flow revision counter instead of recording a repeat_failure pause."
-    },
-    {
-      "scenario": "reviewer-invalidity",
-      "guarantee": "INV-057",
-      "reason": "Under-reported objectives fail validation without a fresh retry or durable infrastructure pause."
-    },
-    {
-      "scenario": "reviewer-failure",
-      "guarantee": "INV-057",
-      "reason": "A missing reviewer result ends the run after one attempt, without a retry or pause record."
-    },
-    {
-      "scenario": "developer-failure",
-      "guarantee": "INV-013",
-      "reason": "Unknown addressed finding ids are accepted and the next reviewed round publishes; the turn acceptance gap also concerns INV-031."
-    },
-    {
-      "scenario": "required-source-failure",
-      "guarantee": "INV-125",
-      "reason": "A claimed required source with no delivery receipt is rejected and pauses the run, but after one Developer dispatch: the Engine runs no correction turn, where the portable corpus expects two."
-    },
-    {
-      "scenario": "context-pressure",
-      "guarantee": "INV-020",
-      "reason": "Red gates bypass the task time budget assessment and exhaust the Flow revision counter."
-    },
-    {
       "scenario": "cancellation",
       "guarantee": "INV-089",
       "reason": "The runner halt handle pauses; it neither consumes a cancel resolution nor records cancellation."
     },
     {
-      "scenario": "stale-objectives",
-      "guarantee": "INV-063",
-      "reason": "Changed objectives fail verdict rendering rather than producing the typed objectives_changed pause."
-    },
-    {
       "scenario": "stale-conflict",
       "guarantee": "INV-043",
       "reason": "A conflicting forge head reaches reviewers and publication."
-    },
-    {
-      "scenario": "isolation-refusal",
-      "guarantee": "INV-033",
-      "reason": "A refused publication on the wrong branch still reaches reviewers and final publication."
     }
   ]
 }

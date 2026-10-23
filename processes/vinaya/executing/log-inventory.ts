@@ -28,7 +28,8 @@ export type InventoryRow =
       reason: string
     })
 
-const FROM_ASSESSMENT = 'the events the assess-round step recorded in its result'
+const FROM_ASSESSMENT =
+  'the events the deciding steps (validate-developer-output, assess-gate, validate-reviewer-outputs, assess-round) recorded in their results'
 const HANDOFF_DEFERRAL =
   'deferred: produced once a ruling on a handed-off pause is consumed and the run continues from it; the handoff only raises the pause'
 const FROM_HANDOFF = 'the handoff function'
@@ -66,15 +67,14 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
   {
     family: 'dev_review_loop',
     events: ['unpushed_work_resume'],
-    status: 'dropped',
-    reason:
-      'The Flow has no mid-round driver resume: a developer step that pushed nothing fails output validation and ends the run.'
+    status: 'produced',
+    from: 'the validate-developer-output step: a turn sent back for a red gate that left the remote head unchanged and work unpushed, resumed once with the commit-and-push instructions'
   },
   {
     family: 'dev_review_loop',
     events: ['round_ended'],
     status: 'produced',
-    from: `${FROM_ASSESSMENT}; a round whose gate went red loops back before any assessment, so it writes none and the diffstat of that round is never invented`
+    from: `${FROM_ASSESSMENT}; a red gate is a gate observation like a green one, so its round ends with the diffstat of the head the gate read`
   },
   {
     family: 'dev_review_loop',
@@ -110,8 +110,7 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
   {
     family: 'role_attempt',
     events: ['attempted'],
-    status: 'dropped',
-    reason:
-      'The Engine path records each launch as a checkpointed step result, and the portable lifecycle sequence names no role attempt.'
+    status: 'produced',
+    from: 'the validate-reviewer-outputs step: one per reviewer role that gave no usable review on its fresh retry, before the infrastructure pause'
   }
 ]

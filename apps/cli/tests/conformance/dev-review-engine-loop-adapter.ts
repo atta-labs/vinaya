@@ -42,6 +42,7 @@ import { LOG_FOLDER_ONLY_ENV } from '../../src/lib/log-sink.js'
 import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache } from '../../src/lib/run-paths.js'
 import { cleanupAllReviewerIsolationArtifacts } from '../../src/lib/dev-review-loop/reviewer-isolation.js'
 import { heldVerdictPath } from '../../src/lib/dev-review-loop/reviewer-dispatch.js'
+import { handoffIdsInPrompt } from '../lib/dev-review-loop-harness.js'
 import type { Observation } from './dev-review-current-loop-adapter.js'
 
 /**
@@ -89,17 +90,18 @@ function records(dir: string): RecordLine[] {
     : []
 }
 
-/** A CLI-shaped child: delivers JSONL only after the executor closes stdin. */
+/** A CLI-shaped child: delivers JSONL only after the executor closes stdin; its output may read the prompt it was given. */
 function stubAgent(
   agent: Agent,
   role: Role,
-  output: unknown,
+  outputFor: (prompt: string) => unknown,
   code: number,
   finish: () => Promise<void>
 ): SpawnedProcessLike {
   const listeners: Array<(code: number | null) => void> = []
   let stdout: ((chunk: string) => void) | undefined
   let closed = false
+  let prompt = ''
   const close = (exit: number | null) => {
     if (closed) return
     closed = true
@@ -107,12 +109,15 @@ function stubAgent(
   }
   return {
     stdin: {
-      write: () => {},
+      write: (chunk: string) => {
+        prompt += chunk
+      },
       end: () => {
         setTimeout(async () => {
           try {
             await finish()
             if (closed) return
+            const output = outputFor(prompt)
             const session = `stub-${role}`
             const events =
               code !== 0
@@ -423,29 +428,30 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
         append(effectFile, { kind: 'spawn', role })
         const attempt = (counts[role] ?? 0) + 1
         counts[role] = attempt
-        let output: unknown
+        let output: (prompt: string) => unknown
         const isHumanPause =
           ['human-pause', 'resume', 'cancellation', 'operator-intervention-unauthenticated'].includes(id) && !continuing
         if (role === 'developer') {
-          output = {
+          // Like the standalone fake Developer, it cites every finding id its prompt hands over.
+          output = (prompt) => ({
             turnResult: {
               schemaVersion: 1,
               status: 'completed',
               summary: 'Done.',
               confidence: 95,
               confidenceExplanation: 'Stub result.',
-              addressedFindingIds: id === 'developer-failure' && attempt > 1 ? ['R9-XX-1'] : [],
+              addressedFindingIds: id === 'developer-failure' && attempt > 1 ? ['R9-XX-1'] : handoffIdsInPrompt(prompt),
               sourceUses:
                 id === 'required-source-failure' ? [{ source: SOURCE, use: 'claimed without a counted read' }] : [],
               reportedChecks: null
             }
-          }
+          })
         } else {
           const blocker =
             role === 'code-reviewer' &&
             (id === 'requested-changes' || id === 'developer-failure' || id === 'bounded-exhaustion') &&
             attempt === 1
-          output = {
+          const review = {
             reviewResult: {
               schemaVersion: 1,
               role,
@@ -482,7 +488,7 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
                   })
             }
           }
-          if (id === 'reviewer-failure' && role === 'security-reviewer') output = undefined
+          output = () => (id === 'reviewer-failure' && role === 'security-reviewer' ? undefined : review)
         }
         return stubAgent(agent, role, output, id === 'provider-failure' && role === 'developer' ? 1 : 0, async () => {
           if (role === 'developer' && id !== 'isolation-refusal') prOpen = true

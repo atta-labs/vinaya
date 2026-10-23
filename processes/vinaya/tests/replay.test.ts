@@ -60,7 +60,14 @@ function reviewOf(vendor: Vendor, step: Step): { reviewResult: Record<string, un
 
 /** The recorded stream with its final review replaced (a round's request-changes or a blocked review). */
 function withReview(vendor: Vendor, step: Step, review: Record<string, unknown>): Record<string, unknown>[] {
-  const recs = records(vendor, step)
+  return withReviewIn(vendor, records(vendor, step), review)
+}
+
+function withReviewIn(
+  vendor: Vendor,
+  recs: Record<string, unknown>[],
+  review: Record<string, unknown>
+): Record<string, unknown>[] {
   if (vendor === 'claude')
     return [...recs.slice(0, -1), { ...recs.at(-1), structured_output: { reviewResult: review } }]
   const at = recs.length - 1 - [...recs].reverse().findIndex(isAgentMessage)
@@ -84,7 +91,46 @@ const blocked = (vendor: Vendor) => {
   }
 }
 
-function agent(lines: readonly Record<string, unknown>[], onPrompt: (prompt: string) => void): SpawnedProcessLike {
+/**
+ * A reviewer's recorded stream bound to this run's review, as a live reviewer binds it: the role, head and
+ * manifest digest its prompt names replace the ones the live run recorded.
+ */
+function boundToPrompt(vendor: Vendor, step: Step, recs: Record<string, unknown>[], prompt: string) {
+  if (step === 'develop') return citingHandoff(vendor, recs, prompt)
+  const binding = /headSha (\S+), and manifestDigest (\S+)\./.exec(prompt)
+  if (binding === null) return recs
+  const output =
+    vendor === 'claude'
+      ? (recs.at(-1) as { structured_output: { reviewResult: Record<string, unknown> } }).structured_output
+      : (JSON.parse(([...recs].reverse().find(isAgentMessage) as { item: { text: string } }).item.text) as {
+          reviewResult: Record<string, unknown>
+        })
+  const review = output.reviewResult
+  return withReviewIn(vendor, recs, { ...review, headSha: binding[1], manifestDigest: binding[2] })
+}
+
+/** A Developer's recorded stream whose turn result cites every finding id its prompt hands over, as a live one does. */
+function citingHandoff(vendor: Vendor, recs: Record<string, unknown>[], prompt: string): Record<string, unknown>[] {
+  const ids = [...new Set([...prompt.matchAll(/^- (R\d+-(?:CR|SEC)-\d+)(?::|$)/gm)].map((m) => m[1]!))]
+  if (ids.length === 0) return recs
+  const cite = (output: { turnResult: Record<string, unknown> }) => ({
+    turnResult: { ...output.turnResult, addressedFindingIds: ids }
+  })
+  if (vendor === 'claude') {
+    const last = recs.at(-1) as { structured_output: { turnResult: Record<string, unknown> } }
+    return [...recs.slice(0, -1), { ...last, structured_output: cite(last.structured_output) }]
+  }
+  const at = recs.length - 1 - [...recs].reverse().findIndex(isAgentMessage)
+  const item = recs[at]?.item as { text: string }
+  const out = [...recs]
+  out[at] = { ...recs[at], item: { ...item, text: JSON.stringify(cite(JSON.parse(item.text))) } }
+  return out
+}
+
+function agent(
+  lines: (prompt: string) => readonly Record<string, unknown>[],
+  onPrompt: (prompt: string) => void
+): SpawnedProcessLike {
   const close: Array<(code: number | null) => void> = []
   let stdout: ((chunk: string) => void) | undefined
   let prompt = ''
@@ -97,7 +143,11 @@ function agent(lines: readonly Record<string, unknown>[], onPrompt: (prompt: str
       end: () => {
         onPrompt(prompt)
         setTimeout(() => {
-          stdout?.(lines.map((line) => JSON.stringify(line)).join('\n') + '\n')
+          stdout?.(
+            `${lines(prompt)
+              .map((line) => JSON.stringify(line))
+              .join('\n')}\n`
+          )
           for (const listener of close) listener(0)
         }, 0)
       }
@@ -251,13 +301,21 @@ async function replay(scenario: Scenario) {
       const step = STEP_OF_ROLE[role ?? ''] as Step
       rounds[step] += 1
       if (step === 'develop') prOpen = true
+      // A later Developer turn publishes its fix as a new head, as a live one does.
+      if (step === 'develop' && rounds.develop > 1) {
+        writeFileSync(join(worktree, 'docs.md'), `new paragraph, revision ${rounds.develop}\n`)
+        git(worktree, 'commit', '-q', '-am', `Docs: revise the paragraph (${rounds.develop})`)
+      }
       const entry = { step, args: [...spawnArgs], env: options?.env ?? {}, prompt: '' }
       spawns.push(entry)
       const review = step === 'code-review' ? scenario.codeReview?.[rounds[step]] : undefined
       const lines = review ? withReview(scenario.vendor, step, review) : records(scenario.vendor, step)
-      return agent(lines, (prompt) => {
-        entry.prompt = prompt
-      })
+      return agent(
+        (prompt) => boundToPrompt(scenario.vendor, step, lines, prompt),
+        (prompt) => {
+          entry.prompt = prompt
+        }
+      )
     }) as never
   })
   const cliCalls = existsSync(join(runtimeDir, 'cli-calls.jsonl'))

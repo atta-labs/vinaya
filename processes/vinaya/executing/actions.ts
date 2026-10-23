@@ -5,11 +5,15 @@ import {
   assessRound,
   parseLiveTestPlanItems,
   readLiveRecord,
+  recordDeveloperAttempt,
   withLiveRecord,
+  type Confidence,
   type DevReviewLoopEventInput,
   type LoopState,
   type Observations,
+  type PauseReason,
   type ReviewInputManifest,
+  type RoundStats,
   type TaskClock,
   type VerdictObservation
 } from '@attalabs/aeg-core'
@@ -38,9 +42,18 @@ import {
   findOpenPrForBranch,
   type reviewPolicyForLoop
 } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
-import { DispatchSandboxRefused } from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
+import {
+  DispatchSandboxRefused,
+  driverDecidedPauseEvents,
+  MAX_GATE_STALLED_TURNS
+} from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
 import { cleanupAllReviewerIsolationArtifacts } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-isolation'
-import { normalizeSourceIdentity } from '../../../apps/cli/src/lib/dev-review-loop/turn-result'
+import {
+  DeveloperTurnResultPause,
+  normalizeSourceIdentity,
+  PERMISSIBLE_RULING_DECISIONS,
+  pauseForAcceptedResult
+} from '../../../apps/cli/src/lib/dev-review-loop/turn-result'
 import {
   describeInactiveControls,
   enforcementControlsActive,
@@ -64,17 +77,30 @@ import {
   defaultRunSecurityScanSubprocess,
   defaultUpdatePrBody,
   deferredEntriesForRound,
+  describeConfidencePauseDetail,
   handoffFindings
 } from '../../../apps/cli/src/lib/dev-review-loop'
 import { loadTrustAnchorConfig } from '../../../apps/cli/src/lib/config'
 import { readWorktreeHead } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import {
+  buildManifestRecord,
   decideSecurityScan,
   discardHeldVerdicts,
+  persistManifestRecord,
+  ReviewerInfrastructureFailure,
+  ReviewerResultRejected,
   writeHeldVerdict,
+  type RoundVerdictParse,
   type SecurityScanOutcome,
   type SecurityScanRun
 } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
+import {
+  noPushPauseDetail,
+  readUnpushedWorkDetail,
+  unpushedFailureMessage,
+  unpushedWorkResumeDetail,
+  type UnpushedWork
+} from '../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
 import {
   LIVE_RUN_TIMEOUT_MS,
   livePassedAtHead,
@@ -98,15 +124,39 @@ import {
   type DeferredFindingsIssueRef
 } from '../../../apps/cli/src/lib/forge-write'
 import {
-  parseDeveloperTurnResult,
+  validateDeveloperTurnResult,
+  type DeveloperTurnResult,
   type DeveloperTurnSchemaContext
 } from '../../../apps/cli/src/lib/developer-turn-result'
-import { parseReviewResult, type ReviewResult } from '../../../apps/cli/src/lib/review-result'
+import {
+  classifyReviewOutcome,
+  manifestDigest,
+  parseReviewResult,
+  reviewBlockerNeedsRuling,
+  type ReviewResult,
+  type ReviewRunFacts
+} from '../../../apps/cli/src/lib/review-result'
 
 // The mechanical actions, decisions and role launchers of the developer
 // review Flow. Each action adapts one function the review loop already
 // has; the adaptation here is only argument and result shaping, exercised
-// with stubs.
+// with stubs. Every round outcome is the shared assessment's (`assessRound`):
+// an action builds the observation, records the decision the assessment
+// returned, and its exit code only routes on it.
+
+/** One objective as the round's reviewers were dispatched against it. */
+export interface DispatchedObjective {
+  id: string
+  text: string
+}
+
+/** What one round's reviewers are dispatched against: the review-input manifest snapshot and the objectives it versions. */
+export interface ReviewRoundInputs {
+  manifest: ReviewInputManifest
+  objectives: readonly DispatchedObjective[]
+  /** The objectives as the reviewer prompt renders them, read with the rest of the snapshot. */
+  objectivesText?: string
+}
 
 /** What the bound functions need that the recorded step results cannot supply. */
 export interface TaskInput {
@@ -118,7 +168,7 @@ export interface TaskInput {
   issueNumber: number
   worktreePath: string
   developerContext: DeveloperTurnSchemaContext
-  /** The loop state the first `assessRound` starts from; later assessments start from the previous assessment's recorded state. */
+  /** The loop state the first assessment starts from; later ones start from the newest state a deciding step recorded. */
   loopState: LoopState
   clock?: TaskClock
   /** The round's review round number, as `handoffFindings` counts it. */
@@ -127,8 +177,11 @@ export interface TaskInput {
   seedRound?: (round: number) => void
   /** The review-input manifest of the task head as it stands now, or null when it cannot be built. */
   currentManifest?: () => ReviewInputManifest | null
-  /** What the round's gate and verdicts amount to, read from the recorded results. */
-  observe: (results: Readonly<Record<string, StepNodeResult>>) => Observations
+  /**
+   * The round's review inputs, taken once when its reviewers are dispatched: the manifest snapshot every reviewer
+   * prompt, held verdict and publication of the round reads, persisted best-effort to the control store.
+   */
+  reviewInputs?: (round: number) => ReviewRoundInputs
   /**
    * The reviewer prompt for `role`, built over this round's staged candidate and the security-scan step's
    * recorded outcome (absent in stub runs).
@@ -141,15 +194,21 @@ export interface TaskInput {
   candidateDir?: () => string | null
   /** The task's frozen brief, whose `[live]` Test Plan lines the live-check step runs. */
   frozenBrief?: () => string
-  /** The reviewers' verdicts for the round, read from the recorded results. */
+  /** The reviewers' verdicts for the round, read from the recorded results; advances the round. */
   verdicts: (results: Readonly<Record<string, StepNodeResult>>) => readonly VerdictObservation[]
   /**
    * The `publishRound` input for the pull request and judged head found when the step runs: the
    * pull request does not exist when the task starts, and the head moves with every revision.
    */
   publish: (at: PublishTarget) => PublishInput
-  /** Renders one reviewer's validated result as the comment text held for publication. */
-  renderVerdict: (role: HeldVerdictRole, review: ReviewResult) => string
+  /** One reviewer's accepted result as the round's verdict observation and the comment held for publication; throws `ReviewerResultRejected` for a result no rule accepts. */
+  buildVerdict: (role: HeldVerdictRole, review: ReviewResult, inputs: ReviewRoundInputs) => RoundVerdictParse
+  /** The branch's head on the remote, or null when it cannot be read. */
+  remoteHead?: () => string | null
+  /** The task worktree's unpushed work (`readUnpushedWorkDetail`); the worktree itself is read when absent. */
+  readUnpushedWork?: () => UnpushedWork
+  /** The refusal the Developer's last publication in this turn met, or null when none is pending. */
+  publicationRefusal?: () => string | null
   /** Replacements for the forge and filesystem functions the actions call, for a run that must not reach them. */
   bound?: Partial<BoundFunctions>
   /** The one function every pausing exit calls; the runner supplies it, bound to its run control. */
@@ -171,6 +230,8 @@ export interface PublishTarget {
   prNumber: number
   expectedHead: string
   round: number
+  /** The manifest snapshot the round's reviewers were dispatched against; absent when no dispatch is recorded. */
+  manifest?: ReviewInputManifest
 }
 
 export type HeldVerdictRole = 'reviewer' | 'security'
@@ -214,44 +275,62 @@ interface Binding {
   build: (task: TaskInput) => ProcessAction
 }
 
-/**
- * The gate observation for `round`, read from the recorded gate step's result (green when it exited zero,
- * its wall time) and the task worktree's diff against main, with the Developer's stated confidence.
- * Throws when the gate step has no recorded result, or recorded a red one: the Flow reaches the
- * assessment only after a green gate, so a red one here is a wiring fault, never a judgement.
- */
-export function gateObservation(
-  worktreePath: string,
-  round: number,
-  results: Readonly<Record<string, StepNodeResult>>
-): Observations {
-  const gate = results['run-mechanical-gates']
-  if (!gate) throw new Error('assess-round found no recorded result for the gate step run-mechanical-gates')
-  const green = gate.exitCode === 0
-  if (!green) throw new Error(`assess-round reached after a red gate (run-mechanical-gates exited ${gate.exitCode})`)
-  const git = (...args: string[]) => execFileSync('git', args, { cwd: worktreePath, encoding: 'utf8' }).trim()
-  const head = git('rev-parse', 'HEAD')
-  const baseHead = git('merge-base', 'origin/main', head)
-  const short = git('diff', '--shortstat', baseHead, head)
-  const count = (pattern: RegExp) => Number(pattern.exec(short)?.[1] ?? 0)
-  const turn = agentOutput(results, 'develop') as {
-    turnResult?: { confidence?: number; confidenceExplanation?: string }
-  }
-  const value = turn?.turnResult?.confidence
-  return {
-    kind: 'gate',
-    round,
-    green,
-    confidence: typeof value === 'number' ? { value, reason: turn.turnResult?.confidenceExplanation } : 'absent',
-    stats: {
-      baseHead,
-      head,
-      filesChanged: count(/(\d+) files? changed/),
-      insertions: count(/(\d+) insertions?/),
-      deletions: count(/(\d+) deletions?/),
-      wallMs: gate.kind === 'mechanical' ? gate.durationMs : 0
-    }
-  }
+type Results = Readonly<Record<string, StepNodeResult>>
+
+// --- the loop record the deciding steps carry ---------------------------------
+
+/** The steps whose recorded result carries the loop state, each with the sequence number it was recorded under. */
+export const STATE_STEPS = ['validate-developer-output', 'assess-gate', 'assess-round', 'run-live-checks'] as const
+
+/** Why the Developer is dispatched again, as the step that sent it back recorded it. */
+export type SendBackKind =
+  | 'correction'
+  | 'open-pull-request'
+  | 'gate-red'
+  | 'low-confidence'
+  | 'ask-confidence'
+  | 'unpushed'
+  | 'review'
+  | 'live-red'
+
+export interface SendBack {
+  kind: SendBackKind
+  /** The branch head on the remote when the Developer was sent back; a turn that leaves it unchanged pushed nothing. */
+  headBefore?: string | null
+  /** The typed failures of a rejected turn result, for its one correction turn. */
+  failures?: string[]
+  /** The finding ids the rejected turn could cite, kept for its correction turn. */
+  knownFindingIds?: string[]
+  /** Whether the rejected turn answered review findings, so its correction must too. */
+  answersFindings?: boolean
+  /** The worktree head the rejected turn left, which its correction turn must not move. */
+  head?: string | null
+  /** What the rejected turn itself was answering: its corrected result is judged as that turn's. */
+  corrects?: SendBack | null
+}
+
+/** The driver's own bounds within a round, carried with the loop state so a resumed run keeps them. */
+export interface RoundCounters {
+  /** Whether this stall's one unpushed-work resume was spent. */
+  unpushedResumeAttempted: boolean
+  /** Consecutive Developer turns that left a red head unchanged. */
+  gateStalledStreak: number
+  /** Set when a sent-back turn left the remote head unchanged with nothing unpushed: the next gate read decides whether it stalled. */
+  stallCheck: { headBefore: string; refusal: string | null } | null
+}
+
+const NO_COUNTERS: RoundCounters = { unpushedResumeAttempted: false, gateStalledStreak: 0, stallCheck: null }
+
+/** One deciding step's record, as read back from its result. */
+export interface LoopRecord {
+  step: string
+  seq: number
+  state: LoopState
+  counters: RoundCounters
+  /** Why this step sent the Developer back, when it did. */
+  sendBack: SendBack | null
+  /** What the Developer turn this step validated was answering, when it validated one. */
+  answered: SendBackKind | null
 }
 
 const MAP_TAG = '__map'
@@ -269,36 +348,366 @@ export function decodeLoopState(text: string): LoopState {
   ) as LoopState
 }
 
+const stdoutOf = (result: StepNodeResult | undefined): string | null =>
+  result && 'stdout' in result ? String(result.stdout) : null
+
 /**
- * The loop state the next assessment starts from: the state recorded in the previous assessment's step result,
- * or `initial` before any assessment ran. The recorded state is the checkpointed one, so a resumed run carries it
- * forward; a round number below `initial`'s never replaces it. A recorded result with no readable state throws,
- * since falling back to `initial` would silently restart the round count.
+ * The newest record a deciding step left, by sequence number; null before any. A result that names a sequence
+ * number but carries no readable state throws, since reading past it would silently restart the round count.
  */
-export function carriedLoopState(results: Readonly<Record<string, StepNodeResult>>, initial: LoopState): LoopState {
-  const previous = results['assess-round']
-  if (!previous || !('stdout' in previous)) return initial
-  let recorded: LoopState | undefined
-  try {
-    const parsed = JSON.parse(String(previous.stdout)) as { state?: unknown }
-    if (parsed.state !== undefined) recorded = decodeLoopState(JSON.stringify(parsed.state))
-  } catch {
-    // Reported below with the rest of the unreadable cases.
-  }
-  if (!recorded) throw new Error('assess-round found a previous assessment result with no readable loop state')
-  // A live check that withdrew the approval of that very assessment recorded the state the next assessment starts from.
-  const live = results['run-live-checks']
-  if (live && 'stdout' in live) {
+export function latestRecord(results: Results): LoopRecord | null {
+  let latest: LoopRecord | null = null
+  for (const step of STATE_STEPS) {
+    const stdout = stdoutOf(results[step])
+    if (stdout === null || stdout.trim() === '') continue
+    let parsed: Record<string, unknown>
     try {
-      const parsed = JSON.parse(String(live.stdout)) as { state?: unknown; from?: unknown }
-      if (parsed.state !== undefined && parsed.from === roundOf(recorded))
-        recorded = decodeLoopState(JSON.stringify(parsed.state))
+      parsed = JSON.parse(stdout) as Record<string, unknown>
     } catch {
-      // A live result with no readable state leaves the assessment's own.
+      continue
+    }
+    if (typeof parsed.seq !== 'number') continue
+    let state: LoopState | undefined
+    try {
+      if (parsed.state !== undefined) state = decodeLoopState(JSON.stringify(parsed.state))
+    } catch {
+      state = undefined
+    }
+    if (state === undefined) throw new Error(`${step} recorded a result with no readable loop state`)
+    if (latest !== null && parsed.seq <= latest.seq) continue
+    latest = {
+      step,
+      seq: parsed.seq,
+      state,
+      counters: { ...NO_COUNTERS, ...(parsed.counters as Partial<RoundCounters> | undefined) },
+      sendBack: (parsed.sendBack as SendBack | undefined) ?? null,
+      answered: (parsed.answered as SendBackKind | undefined) ?? null
     }
   }
+  return latest
+}
+
+const roundOf = (state: LoopState): number => Math.max(state.rounds.length, state.pending?.round ?? 0)
+
+/**
+ * The loop state the next assessment starts from: the newest state a deciding step recorded, or `initial` before
+ * any did. The recorded state is the checkpointed one, so a resumed run carries it forward; a round number below
+ * `initial`'s never replaces it.
+ */
+export function carriedLoopState(results: Results, initial: LoopState): LoopState {
+  const recorded = latestRecord(results)?.state
+  if (recorded === undefined) return initial
   return roundOf(recorded) < roundOf(initial) ? initial : recorded
 }
+
+/** The sequence number the next record is written under. */
+function nextSeq(results: Results): number {
+  return (latestRecord(results)?.seq ?? 0) + 1
+}
+
+/** A deciding step's record as its result's stdout. */
+function recordOutput(
+  results: Results,
+  state: LoopState,
+  fields: {
+    counters?: RoundCounters
+    sendBack?: SendBack | null
+    answered?: SendBackKind | null
+    decision?: { type: string; reason?: string; detail?: string }
+    events?: readonly unknown[]
+    [extra: string]: unknown
+  }
+): string {
+  return JSON.stringify({
+    ...fields,
+    seq: nextSeq(results),
+    state: JSON.parse(encodeLoopState(state)),
+    counters: fields.counters ?? NO_COUNTERS,
+    sendBack: fields.sendBack ?? null,
+    answered: fields.answered ?? null,
+    events: fields.events ?? []
+  })
+}
+
+/** The step's exit codes: forward, or back (to the Developer, or to the reviewers' dispatch). */
+const FORWARD = 0
+const BACK = 1
+
+/** A pause the handoff makes durable; throws when no handoff is wired, since a pause nobody records would be lost. */
+function pauseThrough(task: TaskInput, step: string, request: PauseRequest): void {
+  if (!task.handoff) throw new Error(`${step} decided a pause but no handoff is wired to make it durable`)
+  task.handoff.pause(request)
+}
+
+/** The round's statistics at the worktree's head against its merge base with main; unknown values when git cannot say. */
+export function worktreeStats(worktreePath: string, wallMs: number): RoundStats {
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: worktreePath, encoding: 'utf8' }).trim()
+  try {
+    const head = git('rev-parse', 'HEAD')
+    const baseHead = git('merge-base', 'origin/main', head)
+    const short = git('diff', '--shortstat', baseHead, head)
+    const count = (pattern: RegExp) => Number(pattern.exec(short)?.[1] ?? 0)
+    return {
+      baseHead,
+      head,
+      filesChanged: count(/(\d+) files? changed/),
+      insertions: count(/(\d+) insertions?/),
+      deletions: count(/(\d+) deletions?/),
+      wallMs
+    }
+  } catch {
+    return { baseHead: 'unknown', head: 'unknown', filesChanged: 0, insertions: 0, deletions: 0, wallMs }
+  }
+}
+
+/** The events an agent step recorded, without the exit marker a tolerant launch adds. */
+function agentEvents(result: StepNodeResult | undefined): unknown[] {
+  if (result?.kind !== 'agent-spawn') return []
+  return result.events.filter((event) => agentExitOf(event) === null)
+}
+
+/** The event a tolerant launch appends when the agent process exited non-zero, so the step completes and is judged. */
+export const AGENT_EXIT_EVENT = 'vinaya.agent_exit'
+
+function agentExitOf(event: unknown): number | null {
+  let record = event
+  if (typeof event === 'string') {
+    try {
+      record = JSON.parse(event)
+    } catch {
+      return null
+    }
+  }
+  const candidate = record as { type?: unknown; exit_code?: unknown } | null
+  return candidate?.type === AGENT_EXIT_EVENT && typeof candidate.exit_code === 'number' ? candidate.exit_code : null
+}
+
+/** The final structured record an agent step reported, or undefined for a step that is not one. */
+export function agentOutput(results: Results, step: string): unknown {
+  const result = results[step]
+  if (result?.kind !== 'agent-spawn') return undefined
+  return structuredResult(agentEvents(result))
+}
+
+/** What a reviewer step's run showed, as `classifyReviewOutcome` reads it. */
+export function reviewRunFacts(results: Results, step: string): ReviewRunFacts {
+  const result = results[step]
+  if (result === undefined)
+    return { cancelled: false, resumed: false, terminal: null, errors: [], hasResult: false, raw: undefined }
+  const exits = result.kind === 'agent-spawn' ? result.events.map(agentExitOf).filter((code) => code !== null) : []
+  const raw = agentOutput(results, step)
+  return {
+    cancelled: false,
+    // The reviewer steps never continue a session: every launch is a fresh one.
+    resumed: false,
+    terminal: null,
+    errors: [
+      ...exits.map((code) => `the reviewer process exited with code ${code}`),
+      ...(result.exitCode !== 0 ? [`the reviewer step exited with code ${result.exitCode}`] : [])
+    ],
+    hasResult: raw !== undefined,
+    raw
+  }
+}
+
+/** The confidence the newest Developer turn stated, or absent when it stated none. */
+function stated(results: Results): Confidence {
+  const turn = agentOutput(results, 'develop') as {
+    turnResult?: { status?: unknown; confidence?: number; confidenceExplanation?: string }
+  }
+  const value = turn?.turnResult?.confidence
+  return turn?.turnResult?.status === 'completed' && typeof value === 'number'
+    ? { value, reason: turn.turnResult?.confidenceExplanation }
+    : 'absent'
+}
+
+/** The failure a red gate step reported, as the assessment matches it; undefined when it printed nothing to name. */
+export function gateFailure(gate: StepNodeResult): string | undefined {
+  const text = (stdoutOf(gate) ?? '').trim()
+  return text === '' ? undefined : text.slice(-4000)
+}
+
+/**
+ * The assessment's events with a repeated round start left out: a round the Developer revisits after a red gate
+ * or a low-confidence turn keeps its number, and starts once.
+ */
+function withoutRepeatedStart(
+  before: LoopState,
+  round: number,
+  events: DevReviewLoopEventInput[]
+): DevReviewLoopEventInput[] {
+  const started = before.rounds.some((record) => record.round === round) || before.pending?.round === round
+  return started ? events.filter((event) => event.event !== 'round_started') : events
+}
+
+/** The finding ids the newest revision handoff gave the Developer. */
+function handedOverIds(results: Results): string[] {
+  const stdout = stdoutOf(results['build-revision-handoff'])
+  if (!stdout) return []
+  try {
+    const parsed = JSON.parse(stdout) as Array<{ id?: unknown }>
+    return Array.isArray(parsed) ? parsed.flatMap((entry) => (typeof entry.id === 'string' ? [entry.id] : [])) : []
+  } catch {
+    return []
+  }
+}
+
+/** The loop id the round's records name. */
+const loopIdOf = (state: LoopState): string => state.config.loopId
+
+// --- the Developer's turn result ----------------------------------------------
+
+type Judged = { ok: true; result: DeveloperTurnResult } | { ok: false; failures: string[] }
+
+/**
+ * The controller's acceptance of the newest Developer turn result: the schema and the semantic rules against this
+ * turn's own context, the round-1 and handoff rules, and a citation only behind a delivery receipt the controller
+ * recorded — never the Developer's word.
+ */
+function judgeTurn(
+  task: TaskInput,
+  results: Results,
+  round: number,
+  knownFindingIds: readonly string[],
+  answersFindings: boolean
+): Judged {
+  const validation = validateDeveloperTurnResult(agentOutput(results, 'develop'), {
+    knownFindingIds,
+    requiredSources: task.developerContext.requiredSources,
+    permissibleDecisions: PERMISSIBLE_RULING_DECISIONS
+  })
+  if (!validation.ok) return { ok: false, failures: validation.errors }
+  const result = validation.result
+  const failures: string[] = []
+  if (result.status === 'completed') {
+    if (round === 1 && result.addressedFindingIds.length > 0)
+      failures.push('addressedFindingIds: must be empty in round 1 — no review has handed over findings yet')
+    if (answersFindings && knownFindingIds.length > 0 && result.addressedFindingIds.length === 0)
+      failures.push('addressedFindingIds: required — name the finding ids from this handoff that this turn addressed')
+    const counted = new Set(
+      countedSourceIds(
+        readSourceDeliveryReceipts(sourceReceiptsPath(sourceStoreDir(task.runtimeDir, task.issueNumber)))
+      ).map(normalizeSourceIdentity)
+    )
+    for (const use of result.sourceUses ?? [])
+      if (!counted.has(normalizeSourceIdentity(use.source)))
+        failures.push(
+          `sourceUses: ${use.source} has no delivery receipt the controller recorded — a page counts once read with the fetch_documentation tool; a citation of a source never delivered is not accepted`
+        )
+  }
+  return failures.length > 0 ? { ok: false, failures } : { ok: true, result }
+}
+
+const safeRead = <T>(read: (() => T) | undefined): T | null => {
+  if (read === undefined) return null
+  try {
+    return read()
+  } catch {
+    return null
+  }
+}
+
+/** The worktree head, or null when it cannot be read. */
+function worktreeHeadOf(task: TaskInput): string | null {
+  return safeRead(() => (task.bound?.readWorktreeHead ?? readWorktreeHead)(task.worktreePath))
+}
+
+/** Records that both reviewers are due; the reviewer steps themselves launch after this one. */
+export function dispatchReviewers(): { exitCode: number; stdout: string } {
+  return ok('code-review,security-review')
+}
+
+const ok = (stdout = ''): { exitCode: number; stdout: string } => ({ exitCode: 0, stdout })
+
+// --- the round's review dispatch ----------------------------------------------
+
+/** What the dispatch step recorded: the round, the attempt and the inputs its reviewers were dispatched against. */
+export interface RecordedDispatch {
+  round: number
+  attempt: number
+  inputs: ReviewRoundInputs | null
+}
+
+/** The newest reviewer dispatch the run recorded, or null before any. */
+export function recordedDispatch(results: Results): RecordedDispatch | null {
+  const stdout = stdoutOf(results['dispatch-reviewers'])
+  if (!stdout) return null
+  try {
+    const parsed = JSON.parse(stdout) as Partial<RecordedDispatch>
+    return typeof parsed.round === 'number' && typeof parsed.attempt === 'number'
+      ? { round: parsed.round, attempt: parsed.attempt, inputs: parsed.inputs ?? null }
+      : null
+  } catch {
+    return null
+  }
+}
+
+/** The manifest snapshot the newest reviewer dispatch was taken against, or undefined before any. */
+export function dispatchedManifest(results: Results): ReviewInputManifest | undefined {
+  return recordedDispatch(results)?.inputs?.manifest
+}
+
+/** What the reviewer-output step decided: hold the verdicts, retry the reviewers, dispatch them again or pause. */
+export type ReviewNext = 'hold' | 'retry' | 'redispatch' | 'pause'
+
+interface RecordedReviews {
+  round: number
+  attempt: number
+  next: ReviewNext
+  /** Each role's accepted verdict this round, kept across a fresh retry of its sibling. */
+  accepted: Partial<Record<HeldVerdictRole, RoundVerdictParse>>
+}
+
+function recordedReviews(results: Results): RecordedReviews | null {
+  const stdout = stdoutOf(results['validate-reviewer-outputs'])
+  if (!stdout) return null
+  try {
+    const parsed = JSON.parse(stdout) as Partial<RecordedReviews>
+    return typeof parsed.round === 'number' && typeof parsed.next === 'string'
+      ? {
+          round: parsed.round,
+          attempt: parsed.attempt ?? 1,
+          next: parsed.next as ReviewNext,
+          accepted: parsed.accepted ?? {}
+        }
+      : null
+  } catch {
+    return null
+  }
+}
+
+/** The verdict observations the reviewer-output step held for the round; throws when it held none. */
+export function recordedVerdicts(results: Results): VerdictObservation[] {
+  const reviews = recordedReviews(results)
+  const reviewer = reviews?.accepted.reviewer
+  const security = reviews?.accepted.security
+  if (reviews?.next !== 'hold' || reviewer === undefined || security === undefined)
+    throw new Error('no verdicts were held for the round: the reviewer-output step recorded none')
+  return [reviewer.observation, security.observation]
+}
+
+/** The review-input fields whose change pauses the round, each with the pause it is; a head or base change is not one. */
+const MANIFEST_PAUSES: ReadonlyArray<[keyof ReturnType<typeof buildManifestRecord>, PauseReason]> = [
+  ['objectivesVersion', 'objectives_changed'],
+  ['rulingOrdinal', 'ruling_posted'],
+  ['briefHash', 'brief_superseded'],
+  ['policyDigest', 'policy_changed']
+]
+
+/** The manifest fields that differ between the dispatched snapshot and the inputs as they read now, via `buildManifestRecord`. */
+export function changedReviewInputs(
+  dispatched: ReviewInputManifest,
+  current: ReviewInputManifest
+): (keyof ReturnType<typeof buildManifestRecord>)[] {
+  const identity = { repository: '', pr: 0, branch: '', round: 0, recordedAt: '' }
+  const before = buildManifestRecord(dispatched, identity)
+  const now = buildManifestRecord(current, identity)
+  return (Object.keys(before) as (keyof typeof before)[]).filter(
+    (key) => JSON.stringify(before[key]) !== JSON.stringify(now[key])
+  )
+}
+
+// --- the live check -----------------------------------------------------------
 
 /** What the assess-round step recorded: its decision, the Log events and the state it ended on, and the findings it set aside so far. */
 export interface RecordedAssessment {
@@ -309,7 +718,7 @@ export interface RecordedAssessment {
 }
 
 /** The assessment the assess-round step recorded; throws when it recorded none or something unreadable. */
-export function readAssessment(results: Readonly<Record<string, StepNodeResult>>): RecordedAssessment {
+export function readAssessment(results: Results): RecordedAssessment {
   const assessed = results['assess-round']
   if (!assessed || !('stdout' in assessed)) throw new Error('no recorded result for the assess-round step')
   let parsed: Partial<RecordedAssessment> & { state?: unknown }
@@ -331,11 +740,11 @@ export function readAssessment(results: Readonly<Record<string, StepNodeResult>>
 }
 
 /** The findings set aside through the rounds so far, from the last assessment's record; empty before any. */
-function recordedDeferredFindings(results: Readonly<Record<string, StepNodeResult>>): DeferredFindingEntry[] {
-  const previous = results['assess-round']
-  if (!previous || !('stdout' in previous)) return []
+function recordedDeferredFindings(results: Results): DeferredFindingEntry[] {
+  const stdout = stdoutOf(results['assess-round'])
+  if (!stdout) return []
   try {
-    const parsed = JSON.parse(String(previous.stdout)) as { deferredFindings?: unknown }
+    const parsed = JSON.parse(stdout) as { deferredFindings?: unknown }
     return Array.isArray(parsed.deferredFindings) ? (parsed.deferredFindings as DeferredFindingEntry[]) : []
   } catch {
     return []
@@ -343,11 +752,11 @@ function recordedDeferredFindings(results: Readonly<Record<string, StepNodeResul
 }
 
 /** The completion events the live-check step held back until publication — the journal's close; none before it ran. */
-function heldCompletionEvents(results: Readonly<Record<string, StepNodeResult>>): DevReviewLoopEventInput[] {
-  const live = results['run-live-checks']
-  if (!live || !('stdout' in live)) return []
+function heldCompletionEvents(results: Results): DevReviewLoopEventInput[] {
+  const stdout = stdoutOf(results['run-live-checks'])
+  if (!stdout) return []
   try {
-    const parsed = JSON.parse(String(live.stdout)) as { outcome?: unknown; deferred?: unknown }
+    const parsed = JSON.parse(stdout) as { outcome?: unknown; deferred?: unknown }
     return parsed.outcome === 'publish' && Array.isArray(parsed.deferred)
       ? (parsed.deferred as DevReviewLoopEventInput[])
       : []
@@ -362,13 +771,11 @@ export function isLiveWithdrawn(examined: StepNodeResult): boolean {
 }
 
 /** The security scan outcome the scan step recorded, or undefined when it recorded none. */
-export function recordedScanOutcome(
-  results: Readonly<Record<string, StepNodeResult>>
-): SecurityScanOutcome | undefined {
-  const scan = results['run-security-scan']
-  if (!scan || !('stdout' in scan)) return undefined
+export function recordedScanOutcome(results: Results): SecurityScanOutcome | undefined {
+  const stdout = stdoutOf(results['run-security-scan'])
+  if (stdout === null) return undefined
   try {
-    return JSON.parse(String(scan.stdout)) as SecurityScanOutcome
+    return JSON.parse(stdout) as SecurityScanOutcome
   } catch {
     return undefined
   }
@@ -384,21 +791,15 @@ function worktreeChangedPaths(worktreePath: string): readonly string[] {
     .filter((line) => line.length > 0)
 }
 
-const roundOf = (state: LoopState): number => Math.max(state.rounds.length, state.pending?.round ?? 0)
+// --- the decisions ------------------------------------------------------------
 
-const ok = (stdout = ''): { exitCode: number; stdout: string } => ({ exitCode: 0, stdout })
-
-/** The final structured record an agent step reported, or undefined for a step that is not one. */
-export function agentOutput(results: Readonly<Record<string, StepNodeResult>>, step: string): unknown {
-  const result = results[step]
-  if (result?.kind !== 'agent-spawn') return undefined
-  return structuredResult(result.events)
+/** A deciding step's recorded exit result sends the run back when it exited one. */
+export function isSentBack(examined: StepNodeResult): boolean {
+  return examined.exitCode === BACK
 }
 
-/** The gate step's recorded exit result is red when it did not exit zero. */
-export function isGateRed(examined: StepNodeResult): boolean {
-  return examined.exitCode !== 0
-}
+/** The gate decision reads the gate assessment's exit result: back to the Developer, or on to the reviewers. */
+export const isGateRed = isSentBack
 
 /** The reconcile step's exit code when no pull request is open for the branch yet. */
 export const EXIT_NO_OPEN_PR = 0
@@ -415,16 +816,439 @@ export function isRevisionRequested(examined: StepNodeResult): boolean {
   return examined.exitCode !== 0
 }
 
-/** Records whether the gate step ended red; the decision on this step reads the gate's own exit result. */
+/** Records how the gate assessment routed; the decision on this step reads the assessment's own exit result. */
 export function classifyGateResult(context: ActionContext): { exitCode: number; stdout: string } {
-  const gate = context.results['run-mechanical-gates']
-  if (!gate) throw new Error('classify-gate-result ran before the gate step recorded a result')
-  return ok(isGateRed(gate) ? 'red' : 'green')
+  const assessed = context.results['assess-gate']
+  if (!assessed) throw new Error('classify-gate-result ran before the gate assessment recorded a result')
+  return ok(isSentBack(assessed) ? 'developer' : 'reviewers')
 }
 
-/** Records that both reviewers are due; the reviewer steps themselves launch after this one. */
-export function dispatchReviewers(): { exitCode: number; stdout: string } {
-  return ok('code-review,security-review')
+/** Records how the Developer output's validation routed. */
+export function classifyDeveloperOutput(context: ActionContext): { exitCode: number; stdout: string } {
+  const validated = context.results['validate-developer-output']
+  if (!validated) throw new Error('classify-developer-output ran before the Developer output was validated')
+  return ok(isSentBack(validated) ? 'developer' : 'gates')
+}
+
+/** Records how the reviewer outputs' validation routed. */
+export function classifyReviewerOutputs(context: ActionContext): { exitCode: number; stdout: string } {
+  const validated = context.results['validate-reviewer-outputs']
+  if (!validated) throw new Error('classify-reviewer-outputs ran before the reviewer outputs were validated')
+  return ok(isSentBack(validated) ? 'reviewers' : 'assessment')
+}
+
+/** The Developer's turn just validated: its result judged, then — for a sent-back turn — whether its push landed. */
+function validateDeveloperOutput(task: TaskInput, context: ActionContext): { exitCode: number; stdout: string } {
+  const { results } = context
+  const previous = latestRecord(results)
+  let state = carriedLoopState(results, task.loopState)
+  const counters = previous?.counters ?? NO_COUNTERS
+  const answered = previous?.sendBack ?? null
+  const round = task.reviewRound()
+  const events: DevReviewLoopEventInput[] = []
+  const out = (
+    exitCode: number,
+    fields: { counters?: RoundCounters; sendBack?: SendBack | null; decision?: { type: string; reason?: string } }
+  ) => ({
+    exitCode,
+    stdout: recordOutput(results, state, {
+      counters: counters,
+      ...fields,
+      answered: original?.kind ?? null,
+      events,
+      decision: fields.decision ?? { type: exitCode === FORWARD ? 'accepted' : 'dispatch_developer' }
+    })
+  })
+  /** A decided pause: logged as the standalone loop logs one, made durable, and routed to where its resume continues. */
+  const pause = (reason: PauseReason, reasonCode: string, detail: string, error?: unknown) => {
+    events.push(
+      ...driverDecidedPauseEvents(
+        loopIdOf(state),
+        state,
+        round,
+        worktreeStats(task.worktreePath, 0),
+        reasonCode
+      ).filter((event) => event.event !== 'round_ended')
+    )
+    pauseThrough(task, 'validate-developer-output', { reason, detail, ...(error === undefined ? {} : { error }) })
+    // Its resume dispatches the turn this one answered again, never a second correction.
+    return out(BACK, { counters: NO_COUNTERS, sendBack: original, decision: { type: 'pause', reason } })
+  }
+  /** An assessed mechanical failure of an attempt that produced no head; a pause when the assessment decides one. */
+  const assessFailure = (failure: string) => {
+    const assessed = assessRound(
+      state,
+      { kind: 'mechanical_failure', round, failure, stats: worktreeStats(task.worktreePath, 0) },
+      task.clock
+    )
+    state = assessed.state
+    events.push(...assessed.events)
+    if (assessed.decision.type !== 'pause') return null
+    pauseThrough(task, 'validate-developer-output', {
+      reason: assessed.decision.reason,
+      detail: assessed.decision.detail ?? assessed.decision.reason
+    })
+    return out(BACK, { counters: NO_COUNTERS, sendBack: original, decision: assessed.decision })
+  }
+
+  // The turn result first: a rejected one earns one correction turn of the same session, then pauses.
+  const correcting = answered?.kind === 'correction'
+  // What the turn answers once corrected: the send-back of the turn whose result was rejected.
+  const original = correcting ? (answered.corrects ?? null) : answered
+  const answersFindings = correcting ? answered.answersFindings === true : answered?.kind === 'review'
+  const knownFindingIds = correcting ? (answered.knownFindingIds ?? []) : answersFindings ? handedOverIds(results) : []
+  task.developerContext = { ...task.developerContext, knownFindingIds }
+  const head = worktreeHeadOf(task)
+  let judged = judgeTurn(task, results, round, knownFindingIds, answersFindings)
+  if (judged.ok && correcting && answered.head !== undefined && head !== answered.head)
+    judged = {
+      ok: false,
+      failures: [`turnResult: stale — the head moved from ${answered.head} to ${head} during the correction turn`]
+    }
+  if (!judged.ok) {
+    if (correcting) {
+      const rejection = new DeveloperTurnResultPause(
+        'rejected',
+        `the Developer's turn result was rejected twice in round ${round} (first: ${(answered.failures ?? []).join('; ')}; then: ${judged.failures.join('; ')})`
+      )
+      return pause(rejection.pauseReason, rejection.reasonCode, rejection.message, rejection)
+    }
+    return out(BACK, {
+      sendBack: {
+        kind: 'correction',
+        failures: judged.failures,
+        knownFindingIds,
+        answersFindings,
+        head,
+        corrects: answered
+      },
+      decision: { type: 'correction' }
+    })
+  }
+  // A finished Developer attempt: the same failure read again after it is a second attempt's.
+  state = recordDeveloperAttempt(state)
+  const escalation = pauseForAcceptedResult(judged.result)
+  if (escalation !== null) return pause(escalation.pauseReason, escalation.reasonCode, escalation.message, escalation)
+  // A corrected result stands for the turn it corrected: that turn's own pull request and push are judged next.
+
+  // No pull request after the turn: resumed once with the push-and-open instructions, then an infrastructure pause.
+  const pr = safeRead(() => (task.bound?.findOpenPrForBranch ?? findOpenPrForBranch)(task.branch))
+  if (pr === null) {
+    if (original?.kind === 'open-pull-request') {
+      const detail = `no open pull request for ${task.branch} after resuming once with the push-and-open instructions`
+      return pause('infrastructure', 'infrastructure', detail, new Error(detail))
+    }
+    return out(BACK, { sendBack: { kind: 'open-pull-request' } })
+  }
+
+  // A turn sent back for a red gate or for unpushed work must have moved the branch's remote head.
+  if ((original?.kind !== 'gate-red' && original?.kind !== 'unpushed') || typeof original.headBefore !== 'string')
+    return out(FORWARD, { counters })
+  const headBefore = original.headBefore
+  const remote = safeRead(task.remoteHead)
+  if (remote !== null && remote !== headBefore) return out(FORWARD, { counters: NO_COUNTERS })
+  const readUnpushed = () => (task.readUnpushedWork ?? (() => readUnpushedWorkDetail(task.worktreePath)))()
+  if (original.kind === 'unpushed') {
+    // The one resume did not land either: a push that did not land is a mechanical failure, then `no_push`.
+    const still = readUnpushed()
+    if (still.aheadCount > 0) {
+      const paused = assessFailure(unpushedFailureMessage(task.branch, headBefore, still))
+      if (paused !== null) return paused
+    }
+    if (still.dirtyFiles.length === 0 && still.aheadCount === 0 && remote === headBefore)
+      return out(FORWARD, { counters: { ...counters, stallCheck: null } })
+    return pause('no_push', 'no_push', noPushPauseDetail(task.branch, still))
+  }
+  const refusal = safeRead(task.publicationRefusal)
+  if (!counters.unpushedResumeAttempted && refusal === null) {
+    const unpushed = readUnpushed()
+    if (unpushed.dirtyFiles.length > 0 || unpushed.aheadCount > 0) {
+      if (unpushed.aheadCount > 0) {
+        const paused = assessFailure(unpushedFailureMessage(task.branch, headBefore, unpushed))
+        if (paused !== null) return paused
+      }
+      events.push({
+        kind: 'dev_review_loop',
+        payload: {},
+        loop_id: loopIdOf(state),
+        event: 'unpushed_work_resume',
+        round,
+        branch: task.branch,
+        detail: unpushedWorkResumeDetail(unpushed)
+      } as DevReviewLoopEventInput)
+      return out(BACK, {
+        counters: { ...counters, unpushedResumeAttempted: true },
+        sendBack: { kind: 'unpushed', headBefore }
+      })
+    }
+  }
+  // Nothing unpushed and nothing moved: the next gate read of this head decides whether the turn stalled.
+  return out(FORWARD, { counters: { ...counters, stallCheck: { headBefore, refusal } } })
+}
+
+/** The gate step's result, observed by the assessment: a red gate is a gate observation like a green one. */
+function assessGate(task: TaskInput, context: ActionContext): { exitCode: number; stdout: string } {
+  const { results } = context
+  const gate = results['run-mechanical-gates']
+  if (!gate) throw new Error('assess-gate found no recorded result for the gate step run-mechanical-gates')
+  const previous = latestRecord(results)
+  const before = carriedLoopState(results, task.loopState)
+  let state = before
+  const counters = previous?.counters ?? NO_COUNTERS
+  const round = task.reviewRound()
+  const green = gate.exitCode === 0
+  const failure = green ? undefined : gateFailure(gate)
+  const stats = worktreeStats(task.worktreePath, gate.kind === 'mechanical' ? gate.durationMs : 0)
+  const events: DevReviewLoopEventInput[] = []
+  const headNow = () => safeRead(task.remoteHead) ?? stats.head
+  const out = (
+    exitCode: number,
+    decision: { type: string; reason?: string; detail?: string },
+    fields: { counters?: RoundCounters; sendBack?: SendBack | null } = {}
+  ) => ({
+    exitCode,
+    stdout: recordOutput(results, state, { counters: NO_COUNTERS, ...fields, events, decision })
+  })
+  const paused = (decision: { reason: PauseReason; detail?: string }, sendBack: SendBack, error?: unknown) => {
+    pauseThrough(task, 'assess-gate', {
+      reason: decision.reason,
+      detail: decision.detail ?? decision.reason,
+      ...(error === undefined ? {} : { error })
+    })
+    return out(BACK, { type: 'pause', ...decision }, { sendBack })
+  }
+
+  // A sent-back turn that moved nothing, read again red: a stalled turn, never a new gate observation.
+  const stall = counters.stallCheck
+  if (stall !== null && !green) {
+    const streak = counters.gateStalledStreak + 1
+    const named =
+      stall.refusal !== null
+        ? `publication refused: ${stall.refusal}`
+        : failure !== undefined
+          ? `failing check(s): ${failure}`
+          : null
+    const detail = `head ${stall.headBefore} unchanged after dispatch; ${
+      named ?? 'no named failure for this head — the developer pushed nothing for the gate to judge'
+    }`
+    const sendBack: SendBack = { kind: 'gate-red', headBefore: stall.headBefore }
+    if (named !== null) {
+      const assessed = assessRound(state, { kind: 'mechanical_failure', round, failure: detail, stats }, task.clock)
+      state = assessed.state
+      events.push(...assessed.events)
+      if (assessed.decision.type === 'pause') return paused(assessed.decision, sendBack)
+    }
+    // A stall is no gate observation: the stall's one unpushed-work resume stays spent.
+    if (streak < MAX_GATE_STALLED_TURNS)
+      return out(
+        BACK,
+        { type: 'dispatch_developer' },
+        { counters: { ...counters, gateStalledStreak: streak, stallCheck: null }, sendBack }
+      )
+    events.push(...driverDecidedPauseEvents(loopIdOf(state), state, round, stats, 'infrastructure'))
+    return paused({ reason: 'infrastructure', detail }, sendBack, new Error(detail))
+  }
+
+  const confidence = round >= 2 && green ? stated(results) : undefined
+  const observation: Observations = {
+    kind: 'gate',
+    round,
+    green,
+    ...(confidence === undefined ? {} : { confidence }),
+    stats,
+    ...(failure === undefined ? {} : { failure })
+  }
+  const assessed = assessRound(state, observation, task.clock)
+  state = assessed.state
+  events.push(...withoutRepeatedStart(before, round, assessed.events))
+  const { decision } = assessed
+  if (decision.type === 'dispatch_reviewers') return out(FORWARD, decision)
+  if (decision.type === 'ask_confidence') return out(BACK, decision, { sendBack: { kind: 'ask-confidence' } })
+  const sendBack: SendBack = green ? { kind: 'low-confidence' } : { kind: 'gate-red', headBefore: headNow() }
+  if (decision.type === 'pause') {
+    const detail =
+      decision.reason === 'confidence' && decision.detail === undefined
+        ? describeConfidencePauseDetail(confidence ?? 'absent')
+        : decision.detail
+    return paused({ reason: decision.reason, ...(detail === undefined ? {} : { detail }) }, sendBack)
+  }
+  return out(BACK, decision, { sendBack })
+}
+
+/** The reviewer steps' results, each classified; a retry, a re-dispatch or a pause when either gave no usable review. */
+function validateReviewerOutputs(task: TaskInput, context: ActionContext): { exitCode: number; stdout: string } {
+  const { results } = context
+  const dispatch = recordedDispatch(results)
+  const round = dispatch?.round ?? task.reviewRound()
+  const attempt = dispatch?.attempt ?? 1
+  const inputs = dispatch?.inputs ?? null
+  const state = carriedLoopState(results, task.loopState)
+  const prior = recordedReviews(results)
+  // A role accepted on an earlier attempt of this round keeps its verdict across its sibling's fresh retry.
+  const accepted: Partial<Record<HeldVerdictRole, RoundVerdictParse>> =
+    prior !== null && prior.round === round && prior.next === 'retry' ? { ...prior.accepted } : {}
+  const missing: Array<{ role: HeldVerdictRole; detail: string; rejected: ReviewerResultRejected | null }> = []
+  const events: unknown[] = []
+  const out = (exitCode: number, next: ReviewNext, decision: { type: string; reason?: string; detail?: string }) => ({
+    exitCode,
+    stdout: JSON.stringify({ round, attempt, next, accepted, events, decision })
+  })
+  for (const [step, role] of [
+    ['code-review', 'reviewer'],
+    ['security-review', 'security']
+  ] as const) {
+    if (inputs === null) {
+      // A run with no recorded dispatch inputs (a stub run) reads the shape alone.
+      const parsed = parseReviewResult(agentOutput(results, step))
+      if (!parsed.ok) {
+        missing.push({
+          role,
+          detail: `${step} output failed ${parsed.stage} validation: ${parsed.errors.join('; ')}`,
+          rejected: null
+        })
+        continue
+      }
+      accepted[role] = task.buildVerdict(role, parsed.result, { manifest: {} as ReviewInputManifest, objectives: [] })
+      continue
+    }
+    const outcome = classifyReviewOutcome(reviewRunFacts(results, step), {
+      role: role === 'reviewer' ? 'code-reviewer' : 'security-reviewer',
+      headSha: inputs.manifest.headSha,
+      manifestDigest: manifestDigest(inputs.manifest),
+      objectiveIds: inputs.objectives.map((objective) => objective.id),
+      runId: loopIdOf(state),
+      round,
+      attempt
+    })
+    const review: ReviewResult | null =
+      outcome.kind === 'review'
+        ? outcome.result
+        : outcome.blocked !== undefined && reviewBlockerNeedsRuling(outcome.blocked.blocker.kind)
+          ? outcome.blocked
+          : null
+    if (review === null) {
+      if (accepted[role] === undefined && outcome.kind === 'no_review')
+        missing.push({
+          role,
+          detail: `attempt ${attempt}: no review (${outcome.reason}) — ${outcome.detail}`,
+          rejected: null
+        })
+      continue
+    }
+    try {
+      accepted[role] = task.buildVerdict(role, review, inputs)
+    } catch (error) {
+      if (!(error instanceof ReviewerResultRejected)) throw error
+      if (accepted[role] === undefined)
+        missing.push({ role, detail: `attempt ${attempt}: no review (rejected) — ${error.message}`, rejected: error })
+    }
+  }
+
+  if (missing.length > 0) {
+    // One fresh retry of the round's review; a second miss pauses with nothing held and the round unchanged.
+    if (attempt < 2) return out(BACK, 'retry', { type: 'retry' })
+    const first = missing[0]!
+    const failure =
+      first.rejected ??
+      new ReviewerInfrastructureFailure(
+        first.role,
+        missing.filter((miss) => miss.role === first.role).map((miss) => miss.detail)
+      )
+    for (const miss of missing)
+      events.push({
+        kind: 'role_attempt',
+        event: 'attempted',
+        payload: {},
+        actor: miss.role,
+        attempt,
+        effect_id: `${loopIdOf(state)}:${round}:${attempt}:${miss.role}`,
+        model: null,
+        outcome: miss.rejected !== null ? 'incomplete' : 'infrastructure_failed',
+        usage: null,
+        duration_ms: 0
+      })
+    events.push(
+      ...driverDecidedPauseEvents(
+        loopIdOf(state),
+        state,
+        round,
+        worktreeStats(task.worktreePath, 0),
+        'infrastructure'
+      ).filter((event) => event.event !== 'round_ended')
+    )
+    pauseThrough(task, 'validate-reviewer-outputs', {
+      reason: 'infrastructure',
+      detail: failure.message,
+      error: failure
+    })
+    return out(BACK, 'pause', { type: 'pause', reason: 'infrastructure' })
+  }
+
+  // Both reviews stand only for inputs that did not move while the reviewers ran.
+  if (inputs !== null && task.currentManifest !== undefined) {
+    const current = safeRead(task.currentManifest)
+    const changed = current === null ? null : changedReviewInputs(inputs.manifest, current)
+    if (changed === null || changed.length > 0) {
+      ;(task.bound?.discardHeldVerdicts ?? discardHeldVerdicts)(task.runtimeDir, task.issueNumber, round)
+      for (const role of Object.keys(accepted) as HeldVerdictRole[]) delete accepted[role]
+      const typed = changed === null ? undefined : MANIFEST_PAUSES.find(([field]) => changed.includes(field))
+      if (changed === null || typed !== undefined) {
+        const reason: PauseReason = typed?.[1] ?? 'infrastructure'
+        const detail =
+          changed === null
+            ? 'the review inputs could not be read again before the verdicts were held, so neither verdict is kept'
+            : `${typed![0]} changed while the round-${round} reviewers ran (dispatched ${String(buildManifestRecord(inputs.manifest, { repository: '', pr: 0, branch: '', round, recordedAt: '' })[typed![0]])}, now ${String(buildManifestRecord(current!, { repository: '', pr: 0, branch: '', round, recordedAt: '' })[typed![0]])}); both verdicts are discarded`
+        events.push(
+          ...driverDecidedPauseEvents(
+            loopIdOf(state),
+            state,
+            round,
+            worktreeStats(task.worktreePath, 0),
+            reason
+          ).filter((event) => event.event !== 'round_ended')
+        )
+        pauseThrough(task, 'validate-reviewer-outputs', {
+          reason,
+          detail,
+          ...(reason === 'infrastructure' ? { error: new Error(detail) } : {})
+        })
+        return out(BACK, 'pause', { type: 'pause', reason })
+      }
+      // The head or its base moved: both verdicts judged another head, so the round's reviewers run again.
+      return out(BACK, 'redispatch', { type: 'redispatch', detail: changed.join(', ') })
+    }
+  }
+
+  // Nothing is held until both verdicts stand, so a round never holds one reviewer's verdict alone.
+  const write = task.bound?.writeHeldVerdict ?? writeHeldVerdict
+  for (const role of ['reviewer', 'security'] as const)
+    write(task.runtimeDir, task.issueNumber, round, role, accepted[role]!.rendered)
+  return out(FORWARD, 'hold', { type: 'hold' })
+}
+
+/** The round's verdicts, observed by the assessment, which decides the round. */
+function assessVerdictsAction(task: TaskInput, context: ActionContext): { exitCode: number; stdout: string } {
+  const { results } = context
+  const state0 = carriedLoopState(results, task.loopState)
+  const round = task.reviewRound()
+  const verdicts = recordedVerdicts(results)
+  const assessment = assessRound(state0, { kind: 'verdicts', round, verdicts }, task.clock)
+  const { decision, state } = assessment
+  // The findings set aside rather than let block, round by round, for the publish step to track.
+  const deferredFindings = [
+    ...recordedDeferredFindings(results).filter((entry) => entry.round !== round),
+    ...deferredEntriesForRound(round, verdicts)
+  ]
+  const stdout = recordOutput(results, state, {
+    decision,
+    events: assessment.events,
+    deferredFindings,
+    sendBack: decision.type === 'publish' ? null : { kind: 'review' }
+  })
+  if (decision.type === 'pause')
+    // The pause is a decision, not a failure: it is handed off and the run halts at this step's boundary.
+    pauseThrough(task, 'assess-round', { reason: decision.reason, detail: decision.detail ?? decision.reason })
+  return { exitCode: decision.type === 'publish' ? 0 : 1, stdout }
 }
 
 export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
@@ -519,33 +1343,17 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
     }
   },
   'vinaya.validate-developer-output': {
-    adapts: [parseDeveloperTurnResult],
-    build: (task) => (context) => {
-      const validation = parseDeveloperTurnResult(agentOutput(context.results, 'develop'), task.developerContext)
-      // The Flow has no human-handoff step, so an invalid turn ends the run as failed.
-      if (!validation.ok)
-        throw new Error(`Developer output failed ${validation.stage} validation: ${validation.errors.join('; ')}`)
-      // A citation counts only behind a delivery receipt the controller recorded, never the Developer's word.
-      if (validation.result.status === 'completed') {
-        const counted = new Set(
-          countedSourceIds(
-            readSourceDeliveryReceipts(sourceReceiptsPath(sourceStoreDir(task.runtimeDir, task.issueNumber)))
-          ).map(normalizeSourceIdentity)
-        )
-        const unread = (validation.result.sourceUses ?? []).filter(
-          (use) => !counted.has(normalizeSourceIdentity(use.source))
-        )
-        if (unread.length > 0)
-          throw new Error(
-            `Developer output cites required source(s) with no delivery receipt the controller recorded: ${unread.map((use) => use.source).join(', ')}`
-          )
-      }
-      return ok()
-    }
+    adapts: [validateDeveloperTurnResult, recordDeveloperAttempt, readUnpushedWorkDetail, assessRound],
+    build: (task) => (context) => validateDeveloperOutput(task, context)
   },
+  'vinaya.classify-developer-output': { adapts: [classifyDeveloperOutput], build: () => classifyDeveloperOutput },
   'harness.run-gates': {
     adapts: [runCliChecks],
-    build: (task) => async () => {
+    build: (task) => async (context) => {
+      // A turn that only re-stated its confidence changed nothing: the head's gate result stands as read.
+      const previous = context.results['run-mechanical-gates']
+      if (previous && latestRecord(context.results)?.answered === 'ask-confidence')
+        return { exitCode: previous.exitCode, stdout: stdoutOf(previous) ?? '' }
       const gates = await runCliChecks(
         task.cliEntry,
         task.worktreePath,
@@ -554,6 +1362,7 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       return { exitCode: gates.passed ? 0 : 1, stdout: gates.output }
     }
   },
+  'vinaya.assess-gate': { adapts: [assessRound], build: (task) => (context) => assessGate(task, context) },
   'vinaya.classify-gate-result': { adapts: [classifyGateResult], build: () => classifyGateResult },
   'vinaya.run-security-scan': {
     adapts: [decideSecurityScan, defaultRunSecurityScanSubprocess, resolveTrustAnchorSecurityScanCommand],
@@ -577,73 +1386,27 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       return ok(JSON.stringify(outcome))
     }
   },
-  'vinaya.dispatch-reviewers': { adapts: [dispatchReviewers], build: () => dispatchReviewers },
-  'vinaya.validate-reviewer-outputs': {
-    adapts: [parseReviewResult, writeHeldVerdict],
+  'vinaya.dispatch-reviewers': {
+    adapts: [dispatchReviewers, persistManifestRecord],
     build: (task) => (context) => {
-      const write = task.bound?.writeHeldVerdict ?? writeHeldVerdict
-      const held: Array<[HeldVerdictRole, ReviewResult]> = []
-      for (const [step, role] of [
-        ['code-review', 'reviewer'],
-        ['security-review', 'security']
-      ] as const) {
-        const validation = parseReviewResult(agentOutput(context.results, step))
-        if (!validation.ok)
-          throw new Error(`${step} output failed ${validation.stage} validation: ${validation.errors.join('; ')}`)
-        held.push([role, validation.result])
-      }
-      // Nothing is held until both verdicts validated, so a round never holds one reviewer's verdict alone.
       const round = task.reviewRound()
-      for (const [role, review] of held)
-        write(task.runtimeDir, task.issueNumber, round, role, task.renderVerdict(role, review))
-      return ok()
+      const previous = recordedDispatch(context.results)
+      const reviews = recordedReviews(context.results)
+      // A fresh retry keeps the round's snapshot; a new round, a re-dispatch after moved inputs or a resumed pause takes one.
+      const retry =
+        previous !== null && previous.round === round && reviews?.round === round && reviews.next === 'retry'
+      const inputs = retry ? previous.inputs : (task.reviewInputs?.(round) ?? null)
+      return ok(JSON.stringify({ round, attempt: retry ? previous.attempt + 1 : 1, inputs }))
     }
   },
+  'vinaya.validate-reviewer-outputs': {
+    adapts: [classifyReviewOutcome, writeHeldVerdict, buildManifestRecord],
+    build: (task) => (context) => validateReviewerOutputs(task, context)
+  },
+  'vinaya.classify-reviewer-outputs': { adapts: [classifyReviewerOutputs], build: () => classifyReviewerOutputs },
   'vinaya.assess-round': {
     adapts: [assessRound],
-    build: (task) => {
-      return (context) => {
-        let state = carriedLoopState(context.results, task.loopState)
-        // assessRound reads a round as a gate observation, then the verdicts; the Flow reaches this step only
-        // after a green gate, so the gate observation is recorded here first when the state has no pending round.
-        const observation = task.observe(context.results)
-        const gateEvents: unknown[] = []
-        if (observation.kind === 'verdicts' && (state.pending === null || state.pending.round !== observation.round)) {
-          const gate = assessRound(
-            state,
-            gateObservation(task.worktreePath, observation.round, context.results),
-            task.clock
-          )
-          state = gate.state
-          gateEvents.push(...gate.events)
-        }
-        const assessment = assessRound(state, observation, task.clock)
-        state = assessment.state
-        const { decision } = assessment
-        // The gate's events come first, as the standalone loop records them, then the verdicts'.
-        const events = [...gateEvents, ...assessment.events]
-        // The Log events the assessment produced travel in the step's result; the log producers read them back.
-        // The findings set aside rather than let block, round by round, for the publish step to track.
-        const deferredFindings = [
-          ...recordedDeferredFindings(context.results).filter(
-            (entry) => observation.kind !== 'verdicts' || entry.round !== observation.round
-          ),
-          ...(observation.kind === 'verdicts' ? deferredEntriesForRound(observation.round, observation.verdicts) : [])
-        ]
-        const stdout = JSON.stringify({
-          decision,
-          events,
-          state: JSON.parse(encodeLoopState(state)),
-          deferredFindings
-        })
-        if (decision.type === 'pause') {
-          // The pause is a decision, not a failure: it is handed off and the run halts at this step's boundary.
-          if (!task.handoff) throw new Error('assess-round decided a pause but no handoff is wired to make it durable')
-          task.handoff.pause({ reason: decision.reason, detail: decision.detail ?? decision.reason })
-        }
-        return { exitCode: decision.type === 'publish' ? 0 : 1, stdout }
-      }
-    }
+    build: (task) => (context) => assessVerdictsAction(task, context)
   },
   'vinaya.build-revision-handoff': {
     adapts: [handoffFindings],
@@ -690,7 +1453,6 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
         )
       }
       const failures = commands.length === 0 ? [] : await runLiveGate(task, head, commands)
-      const from = roundOf(assessment.state)
       if (failures.length === 0) {
         // The approval stands: the journal's close waits for the publish step, everything else is logged now.
         const routed = routeCompletionEvents(assessment.events, 'publish')
@@ -699,8 +1461,7 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
             outcome: 'publish',
             head,
             events: routed.toLogNow,
-            deferred: routed.toDeferUntilPublish,
-            from
+            deferred: routed.toDeferUntilPublish
           })
         )
       }
@@ -710,15 +1471,14 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       const atCap = round >= assessment.state.config.maxRounds
       const withdrawn = withdrawApprovedRound(assessment.events, assessment.state, atCap)
       const routed = routeCompletionEvents(withdrawn.events, atCap ? 'pause' : 'dispatch_developer')
-      const stdout = JSON.stringify({
+      const stdout = recordOutput(context.results, withdrawn.state, {
         outcome: atCap ? 'pause' : 'revise',
         head,
         failures,
         withdrawal: renderLiveWithdrawal(head, failures),
         events: routed.toLogNow,
         deferred: routed.toDeferUntilPublish,
-        state: JSON.parse(encodeLoopState(withdrawn.state)),
-        from
+        sendBack: { kind: 'live-red' }
       })
       // At the round cap the failed line is the principal item: the withdrawn round pauses `max_rounds`, logged as
       // a `principal_item` pause, and the handoff makes it durable, as the standalone loop does. A line the host
@@ -754,9 +1514,10 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       if (pr === null) throw new Error(`harness.publish found no open pull request for branch ${task.branch}`)
       const expectedHead = readHead(task.worktreePath)
       if (expectedHead === null) throw new Error(`harness.publish could not read the head of ${task.worktreePath}`)
+      const results = context?.results ?? {}
       // The findings the rounds set aside are tracked in one Issue for the pull request; a run that
       // set none aside opens nothing.
-      const deferredFindings = recordedDeferredFindings(context?.results ?? {})
+      const deferredFindings = recordedDeferredFindings(results)
       const deferredIssue =
         deferredFindings.length > 0
           ? (task.bound?.writeDeferredFindingsIssue ?? upsertDeferredFindingsIssue)({
@@ -764,12 +1525,19 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
               entries: deferredFindings
             })
           : undefined
+      // The publication carries the manifest the round's reviewers were dispatched against, never one rebuilt now.
+      const manifest = dispatchedManifest(results)
       publish(task.runtimeDir, {
-        ...task.publish({ prNumber: pr.number, expectedHead, round: task.reviewRound() }),
+        ...task.publish({
+          prNumber: pr.number,
+          expectedHead,
+          round: task.reviewRound(),
+          ...(manifest === undefined ? {} : { manifest })
+        }),
         ...(deferredIssue === undefined ? {} : { deferredIssue })
       })
       // The publication succeeded: the journal's close, held back by the live-check step, is this step's to hand on.
-      return ok(JSON.stringify({ events: heldCompletionEvents(context?.results ?? {}) }))
+      return ok(JSON.stringify({ events: heldCompletionEvents(results) }))
     }
   }
 }
@@ -869,7 +1637,9 @@ export function createActions(task: TaskInput): ActionRegistry {
 /** Deciding step id to its boolean, read from the examined step's exit result. */
 export const decisions: DecisionRegistry = {
   'choose-start': isDevelopmentDue,
+  'classify-developer-output': isSentBack,
   'classify-gate-result': isGateRed,
+  'classify-reviewer-outputs': isSentBack,
   'build-revision-handoff': isRevisionRequested,
   'classify-live-result': isLiveWithdrawn
 }

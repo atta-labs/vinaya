@@ -7,6 +7,8 @@ import { parse } from 'yaml'
 import {
   assessRound,
   buildHeader,
+  buildReviewInputManifest,
+  DEFAULT_REVIEW_POLICY,
   DevReviewLoopEventSchema,
   HandoffEventSchema,
   initialLoopState,
@@ -29,7 +31,14 @@ import {
   type LogTranslator
 } from '../../../harness/dev-process/logging/translate'
 import { loadRoleGrants, ROLE_NAMES } from '../../../harness/adapters/agents/manifest'
-import { ACTION_BINDINGS, createActions, createRoleLaunchers, decisions, type TaskInput } from '../executing/actions'
+import {
+  ACTION_BINDINGS,
+  createActions,
+  createRoleLaunchers,
+  decisions,
+  encodeLoopState,
+  type TaskInput
+} from '../executing/actions'
 import { AGENT_STEP_ROLES, createVinayaLogProducers, handoffHaltReason } from '../executing/log-events'
 import { LOG_INVENTORY } from '../executing/log-inventory'
 import { createHandoff } from '../executing/handoff'
@@ -77,10 +86,15 @@ describe('the log inventory', () => {
     expect(named.filter((name) => !known.has(name))).toEqual([])
   })
 
-  test('the dropped rows are exactly attempted and unpushed_work_resume, each with a reason', () => {
+  test('no row is dropped: the role attempt and the unpushed-work resume are written by the deciding steps', () => {
     const dropped = LOG_INVENTORY.flatMap((row) => (row.status === 'dropped' ? [row] : []))
-    expect(dropped.flatMap((row) => row.events).sort()).toEqual(['attempted', 'unpushed_work_resume'])
-    for (const row of dropped) expect(row.reason.length).toBeGreaterThan(20)
+    expect(dropped).toEqual([])
+    const from = (family: string, event: string) =>
+      rowsFor(family, event).map((row) => (row.status === 'produced' ? row.from : row.status))
+    expect(from('role_attempt', 'attempted')).toEqual([expect.stringMatching(/^the validate-reviewer-outputs step/)])
+    expect(from('dev_review_loop', 'unpushed_work_resume')).toEqual([
+      expect.stringMatching(/^the validate-developer-output step/)
+    ])
   })
 
   test('the deferred row is exactly handoff resolved, with the exact deferral reason', () => {
@@ -243,13 +257,19 @@ function setup(scenario: Scenario = {}) {
   const assess = [...(scenario.assess ?? assessments([true]))]
   const next = <T>(queue: T[]): T => (queue.length > 1 ? (queue.shift() as T) : (queue[0] as T))
 
-  const real = createActions({} as TaskInput)
+  const real = createActions({ reviewRound: () => 1 } as unknown as TaskInput)
+  let lastGate = 0
   const stubs: ActionRegistry = Object.fromEntries(
     Object.keys(ACTION_BINDINGS).map((name) => [
       name,
       async (context) => {
         scenario.onAction?.(context.nodeId)
-        if (name === 'harness.run-gates') return { exitCode: next(gates) }
+        if (name === 'harness.run-gates') {
+          lastGate = next(gates)
+          return { exitCode: lastGate }
+        }
+        // The gate's assessment here is the assess-round stub's: a red gate only sends the Developer back.
+        if (name === 'vinaya.assess-gate') return { exitCode: lastGate === 0 ? 0 : 1 }
         if (name === 'vinaya.assess-round') return next(assess)
         if (name === 'vinaya.run-live-checks') return approvedLive(context.results)
         if (name === 'harness.publish') {
@@ -542,6 +562,117 @@ describe('the producers cover every end a run can come to', () => {
       steps.flatMap((step) => (step.type === 'agent' && step.role ? [[step.id, step.role]] : []))
     )
     expect(AGENT_STEP_ROLES).toEqual(flowAgents)
+  })
+})
+
+describe('the deciding steps write their own rows', () => {
+  const pausing = { pause: () => ({}), bindToPullRequest: () => null } as unknown as TaskInput['handoff']
+  const written = (step: string, result: { exitCode: number; stdout?: string }) => {
+    const events = createVinayaLogProducers(config).nodeCompleted?.({
+      nodeId: step,
+      runId: 'r',
+      attempt: 1,
+      steps: { [step]: { exitCode: result.exitCode, stdout: result.stdout ?? '', stderr: '' } }
+    })
+    for (const [seq, event] of (events ?? []).entries()) {
+      const parsed = schemaFor(event.kind).safeParse({ ...event, ...envelope(seq) })
+      if (!parsed.success) throw new Error(`${String(event.event)} does not parse: ${parsed.error.message}`)
+    }
+    note(events)
+    return (events ?? []).map((event) => `${event.kind}/${event.event}`)
+  }
+
+  test('a reviewer with no usable review on its fresh retry writes its role attempt, then the pause', async () => {
+    const task = {
+      runtimeDir: mkdtempSync(`${tmpdir()}/log-reviewers-`),
+      issueNumber: 1570,
+      worktreePath: '/missing',
+      loopState: initialLoopState(config),
+      reviewRound: () => 1,
+      handoff: pausing,
+      buildVerdict: () => {
+        throw new Error('no review is accepted here')
+      },
+      bound: { writeHeldVerdict: () => {}, discardHeldVerdicts: () => {} }
+    } as unknown as TaskInput
+    const manifest = buildReviewInputManifest({
+      headSha: 'h',
+      baseSha: 'b',
+      briefContent: 'brief',
+      objectivesVersion: null,
+      rulingOrdinal: 0,
+      policy: DEFAULT_REVIEW_POLICY
+    })
+    const missing = { kind: 'agent-spawn', exitCode: 0, events: [] }
+    const result = await (
+      createActions(task)['vinaya.validate-reviewer-outputs'] as NonNullable<ActionRegistry[string]>
+    )({
+      nodeId: 'validate-reviewer-outputs',
+      action: 'vinaya.validate-reviewer-outputs',
+      results: {
+        'dispatch-reviewers': {
+          kind: 'mechanical',
+          exitCode: 0,
+          stdout: JSON.stringify({ round: 1, attempt: 2, inputs: { manifest, objectives: [] } })
+        },
+        'code-review': missing,
+        'security-review': missing
+      } as never
+    })
+    expect(written('validate-reviewer-outputs', result)).toEqual([
+      'role_attempt/attempted',
+      'role_attempt/attempted',
+      'dev_review_loop/stop_condition_met',
+      'dev_review_loop/paused',
+      'dev_review_loop/journal_finalized'
+    ])
+  })
+
+  test('a red-gate turn that left work unpushed writes its one resume', async () => {
+    const turn = {
+      turnResult: {
+        schemaVersion: 1,
+        status: 'completed',
+        summary: 'Done.',
+        confidence: 90,
+        confidenceExplanation: 'Stub.',
+        addressedFindingIds: [],
+        sourceUses: [],
+        reportedChecks: null
+      }
+    }
+    const task = {
+      runtimeDir: mkdtempSync(`${tmpdir()}/log-unpushed-`),
+      issueNumber: 1570,
+      branch: 'task/issue-1570',
+      worktreePath: '/missing',
+      developerContext: { knownFindingIds: [], requiredSources: [] },
+      loopState: initialLoopState(config),
+      reviewRound: () => 1,
+      remoteHead: () => 'head-0',
+      readUnpushedWork: () => ({ dirtyFiles: ['a.ts'], aheadCount: 0 }),
+      bound: {
+        findOpenPrForBranch: () => ({ number: 70, branch: 'task/issue-1570' }),
+        readWorktreeHead: () => 'head-1'
+      }
+    } as unknown as TaskInput
+    const sentBack = JSON.stringify({
+      seq: 1,
+      state: JSON.parse(encodeLoopState(initialLoopState(config))),
+      sendBack: { kind: 'gate-red', headBefore: 'head-0' }
+    })
+    const result = await (
+      createActions(task)['vinaya.validate-developer-output'] as NonNullable<ActionRegistry[string]>
+    )({
+      nodeId: 'validate-developer-output',
+      action: 'vinaya.validate-developer-output',
+      results: {
+        'assess-gate': { kind: 'mechanical', exitCode: 1, stdout: sentBack },
+        develop: { kind: 'agent-spawn', exitCode: 0, events: [turn] }
+      } as never
+    })
+    expect(result.exitCode).toBe(1)
+    expect(written('validate-developer-output', result)).toEqual(['dev_review_loop/unpushed_work_resume'])
   })
 })
 

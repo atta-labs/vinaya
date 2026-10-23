@@ -28,13 +28,23 @@ steps:
     type: mechanical
     action: vinaya.choose-start
     depends_on: [prepare-sources]
-    decision: { examine: reconcile-external-state, if_true: develop, if_false: run-mechanical-gates, max_revisions: 1 }
+    decision: { examine: reconcile-external-state, if_true: develop, if_false: run-mechanical-gates, max_revisions: 3 }
+  # Every round outcome below is the shared assessment's (`assessRound`): each deciding step records the observation
+  # it built and the decision the assessment returned, and the decision only routes on it. Exit 1 sends the run back
+  # (to the Developer, or to the reviewers' dispatch); a pause halts the run through the handoff and routes where its
+  # resume continues. The checked-in ceilings are placeholders: the runner renders this Flow into the run's own folder
+  # with every `max_revisions` set to the review policy's `maxRounds` before the run starts.
   - { id: validate-developer-output, type: mechanical, action: vinaya.validate-developer-output, depends_on: [develop] }
+  - id: classify-developer-output
+    type: mechanical
+    action: vinaya.classify-developer-output
+    decision: { examine: validate-developer-output, if_true: develop, if_false: run-mechanical-gates, max_revisions: 3 }
   - { id: run-mechanical-gates, type: mechanical, action: harness.run-gates }
+  - { id: assess-gate, type: mechanical, action: vinaya.assess-gate }
   - id: classify-gate-result
     type: mechanical
     action: vinaya.classify-gate-result
-    decision: { examine: run-mechanical-gates, if_true: develop, if_false: run-security-scan, max_revisions: 3 }
+    decision: { examine: assess-gate, if_true: develop, if_false: run-security-scan, max_revisions: 3 }
   # The configured agent-configuration scan runs here, outside both reviewers' sandboxes, before either is dispatched.
   - { id: run-security-scan, type: mechanical, action: vinaya.run-security-scan }
   - { id: dispatch-reviewers, type: mechanical, action: vinaya.dispatch-reviewers }
@@ -55,15 +65,19 @@ steps:
     max_turns: 100
     depends_on: [dispatch-reviewers]
   - { id: validate-reviewer-outputs, type: mechanical, action: vinaya.validate-reviewer-outputs, depends_on: [code-review, security-review] }
+  - id: classify-reviewer-outputs
+    type: mechanical
+    action: vinaya.classify-reviewer-outputs
+    decision: { examine: validate-reviewer-outputs, if_true: dispatch-reviewers, if_false: assess-round, max_revisions: 3 }
   - { id: assess-round, type: mechanical, action: vinaya.assess-round }
   - id: build-revision-handoff
     type: mechanical
     action: vinaya.build-revision-handoff
-    decision: { examine: assess-round, if_true: develop, if_false: run-live-checks, max_revisions: 5 }
+    decision: { examine: assess-round, if_true: develop, if_false: run-live-checks, max_revisions: 3 }
   # Both reviewers approved: the task's [live] Test Plan lines run on the approved head before it is published.
   - { id: run-live-checks, type: mechanical, action: vinaya.run-live-checks }
   - id: classify-live-result
     type: mechanical
     action: vinaya.classify-live-result
-    decision: { examine: run-live-checks, if_true: develop, if_false: publish-ready-for-merge, max_revisions: 5 }
+    decision: { examine: run-live-checks, if_true: develop, if_false: publish-ready-for-merge, max_revisions: 3 }
   - { id: publish-ready-for-merge, type: mechanical, action: harness.publish }
