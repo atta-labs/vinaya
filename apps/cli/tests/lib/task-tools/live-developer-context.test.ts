@@ -8,7 +8,7 @@ import {
   commitAndPushPrompt,
   createLiveDeveloperContext,
   createLivePublicationState,
-  type LiveDeveloperContextLoopDeps,
+  defaultPushTaskBranch,
   type LiveDeveloperContextParams,
   publishDeveloperTurn,
   pushedCommitRangeBase
@@ -21,8 +21,6 @@ import {
   makeWorld,
   OUTSIDE,
   OWN,
-  type PushInput,
-  type PushResult,
   WORKFLOW,
   type World
 } from './live-developer-context-world'
@@ -405,5 +403,31 @@ describe('the unpublished-turn prompt', () => {
     expect(prompt).toContain('lint failed')
     expect(prompt).toContain('Fix the cause of that refusal')
     expect(commitAndPushPrompt(null, 'Publish through the tools.')).not.toContain('refused by the pre-push hook')
+  })
+})
+
+describe('the Broker-governed push', () => {
+  // INV-037: with no launch record to authenticate against, the push is refused and nothing is pushed.
+  test('INV-037: a push with no developer launch record is refused before git runs', () => {
+    let pushed = false
+    const result = defaultPushTaskBranch(
+      {
+        task: 987_654_321,
+        branch: BRANCH,
+        sha: 'commit-1',
+        touchedPaths: [OWN],
+        surface: null,
+        round: 1,
+        agent: 'claude',
+        repo: null,
+        worktreePath: '/nonexistent'
+      },
+      () => {
+        pushed = true
+      }
+    )
+    expect(result).toMatchObject({ ok: false, hook: false })
+    if (!result.ok) expect(result.refusal).toContain('no developer launch record for task 987654321')
+    expect(pushed).toBe(false)
   })
 })
