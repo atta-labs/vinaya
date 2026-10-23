@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import { recordedHandoff } from './handoff-fakes'
+import { handoffHaltReason } from '../executing/log-events'
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
@@ -31,7 +33,9 @@ import { loopHistoryFromComments } from '../../../apps/cli/src/lib/dev-review-lo
 import {
   acquireDriverLockAtomic,
   readDriverLock,
-  writeDriverLock
+  readPauseState,
+  writeDriverLock,
+  writePauseState
 } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import {
   buildVerdictFromReview,
@@ -181,6 +185,7 @@ function stubRun(scenario: Scenario = {}, runtimeDir = mkdtempSync(join(tmpdir()
       }
     ])
   )
+  const handoff = recordedHandoff()
   const options: EngineRunOptions = {
     args: { task: TASK, agent, dryRun: false },
     process: loaded,
@@ -188,6 +193,7 @@ function stubRun(scenario: Scenario = {}, runtimeDir = mkdtempSync(join(tmpdir()
     runtimeDir,
     loopId: 'lifecycle-test',
     taskInput: { branch: 'task/issue-7' } as TaskInput,
+    handoffDeps: handoff.deps,
     actions,
     sink: {
       log: (event: unknown) => events.push(event as never),
@@ -210,7 +216,7 @@ function stubRun(scenario: Scenario = {}, runtimeDir = mkdtempSync(join(tmpdir()
     return existsSync(path) ? readFileSync(path, 'utf8') : ''
   }
   const trace = (path: string): RunTrace => JSON.parse(readFileSync(path, 'utf8')) as RunTrace
-  return { options, calls, events, actionRuns, spawns, runtimeDir, driverLog, trace }
+  return { options, calls, events, actionRuns, spawns, runtimeDir, driverLog, trace, handoff }
 }
 
 /** Halts the run from inside an action, then lets the action succeed. */
@@ -280,12 +286,12 @@ describe('one Engine runner per task', () => {
     expect(held).toEqual([expect.objectContaining({ pid: process.pid })])
   })
 
+  // A pause decision as the assess-round step reports it: recorded in the step's result, the run halted for it.
   const decided =
-    (reason: string): ProcessAction =>
+    (reason: string, control: RunControl): ProcessAction =>
     () => {
-      throw Object.assign(new Error(`The round paused for a human: ${reason}`), {
-        stdout: JSON.stringify({ decision: { type: 'pause', reason }, events: [] })
-      })
+      control.halt(handoffHaltReason(reason))
+      return { exitCode: 1, stdout: JSON.stringify({ decision: { type: 'pause', reason }, events: [] }) }
     }
   // Each way a run can end, the same rule on both runners: the standalone loop calls `keepDriverLock` with the
   // exit it describes here, the Engine runner with the exit its own result maps to.
@@ -304,19 +310,19 @@ describe('one Engine runner per task', () => {
     },
     {
       name: 'a pause only a Principal decides',
-      scenario: () => ({ actions: { 'vinaya.assess-round': decided('escalation') } }),
+      scenario: (control) => ({ actions: { 'vinaya.assess-round': decided('escalation', control) } }),
       standalone: { kind: 'pause', reason: 'escalation', watched: false },
       kept: false
     },
     {
       name: 'an infrastructure pause',
-      scenario: () => ({ actions: { 'vinaya.assess-round': decided('infrastructure') } }),
+      scenario: (control) => ({ actions: { 'vinaya.assess-round': decided('infrastructure', control) } }),
       standalone: { kind: 'pause', reason: 'infrastructure', watched: false },
       kept: true
     },
     {
       name: 'a stale-driver pause',
-      scenario: () => ({ actions: { 'vinaya.assess-round': decided('stale_driver') } }),
+      scenario: (control) => ({ actions: { 'vinaya.assess-round': decided('stale_driver', control) } }),
       standalone: { kind: 'pause', reason: 'stale_driver', watched: false },
       kept: true
     },
@@ -638,7 +644,7 @@ describe('recovering a re-run', () => {
       }
     })
     const result = await runEngine(run.options)
-    expect(result.exitCode).toBe(1)
+    expect(result.exitCode).toBe(2)
     expect(run.spawns).toEqual([])
     expect(Object.keys(run.actionRuns)).toEqual([])
     expect(run.driverLog()).toContain('not dispatching')
@@ -654,7 +660,7 @@ describe('recovering a re-run', () => {
       }
     })
     const result = await runEngine(run.options)
-    expect(result.exitCode).toBe(1)
+    expect(result.exitCode).toBe(2)
     expect(run.spawns).toEqual([])
   })
 
@@ -888,14 +894,14 @@ describe('the ceiling each role launches with', () => {
   test('bounds a launch that never ends: the Developer by the override, then a reviewer by its own', async () => {
     const developer = stubRun({ hang: ['developer'], lifecycle: { dispatchConfig: { timeoutMs: 60 } } })
     const first = await runEngine(developer.options)
-    expect(first.exitCode).toBe(1)
+    expect(first.exitCode).toBe(2)
     const failedStep = (run: ReturnType<typeof stubRun>, path: string, node: string) =>
       run.trace(path).steps.find((step) => step.nodeId === node)?.error
     expect(failedStep(developer, first.tracePath, 'develop')).toMatch(/'developer'.*exceeded its 60ms timeout/)
 
     const reviewer = stubRun({ hang: ['code-reviewer'], lifecycle: { dispatchConfig: { reviewerTimeoutMs: 60 } } })
     const second = await runEngine(reviewer.options)
-    expect(second.exitCode).toBe(1)
+    expect(second.exitCode).toBe(2)
     expect(reviewer.spawns).toContain('develop')
     expect(failedStep(reviewer, second.tracePath, 'code-review')).toMatch(/'code-reviewer'.*exceeded its 60ms timeout/)
   })
@@ -978,17 +984,40 @@ describe('the heartbeat and the exit record', () => {
       }
     })
     const result = await runEngine(run.options)
-    expect(result.exitCode).toBe(1)
+    // The error is handed off as an infrastructure pause, so the exit says paused, not error.
+    expect(result.exitCode).toBe(2)
     const exits = exitsOf(run.events)
     expect(exits).toHaveLength(1)
-    expect(exits[0]).toMatchObject({
-      reason: 'error',
-      last_decision: 'error',
-      exit_code: 1,
-      error_class: 'step_failed'
-    })
+    expect(exits[0]).toMatchObject({ reason: 'paused', last_decision: 'pause(infrastructure)' })
+    expect(exits[0]).not.toHaveProperty('error_class')
     expect(clock.timers[0]?.stopped).toBe(true)
-    expect(run.driverLog()).toContain('driver_exited: reason=error last_decision=error')
+    expect(run.driverLog()).toContain('driver exited (paused, pause(infrastructure))')
+  })
+
+  test('a pause raised before any pull request existed is bound to the one the reconcile step then finds', async () => {
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'lifecycle-'))
+    writePauseState(runtimeDir, {
+      task: TASK,
+      round: 1,
+      head: 'abc',
+      branch: 'task/issue-7',
+      prNumber: null,
+      reason: 'escalation',
+      pausedAt: '2026-01-01T00:00:00.000Z'
+    })
+    const run = stubRun(
+      {
+        actions: {
+          'vinaya.reconcile-external-state': () => ({
+            exitCode: 0,
+            stdout: JSON.stringify({ number: 70, branch: 'task/issue-7' })
+          })
+        }
+      },
+      runtimeDir
+    )
+    await runEngine(run.options)
+    expect(readPauseState(runtimeDir, TASK)).toMatchObject({ prNumber: 70, reason: 'escalation' })
   })
 
   test('narrates the run to the per-task driver log', async () => {

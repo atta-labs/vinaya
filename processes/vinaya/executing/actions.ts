@@ -15,6 +15,7 @@ import { generateCodexConfig } from '../../../harness/adapters/agents/codex/conf
 import { loadRoleGrants, ROLE_NAMES, withModel } from '../../../harness/adapters/agents/manifest'
 import { structuredResult } from '../../../harness/adapters/agents/structured-result'
 import { pullRequestCheckEnv, type PullRequestView } from './pull-request-env'
+import type { Handoff, InputVersions } from './handoff'
 import { runCliChecks } from '../../../harness/gates/run-checks'
 import type { GeneratedAgentConfig, GeneratorPaths } from '../../../harness/adapters/agents/policy'
 import {
@@ -80,6 +81,10 @@ export interface TaskInput {
   renderVerdict: (role: HeldVerdictRole, review: ReviewResult) => string
   /** Replacements for the forge and filesystem functions the actions call, for a run that must not reach them. */
   bound?: Partial<BoundFunctions>
+  /** The one function every pausing exit calls; the runner supplies it, bound to its run control. */
+  handoff?: Handoff
+  /** The brief, objectives, ruling and policy versions an escalation record binds its ruling to; throws when they cannot be read. */
+  inputVersions?: () => InputVersions
 }
 
 /** What only the moment of publication knows. */
@@ -322,7 +327,9 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
         // The Log events the assessment produced travel in the step's result; the log producers read them back.
         const stdout = JSON.stringify({ decision, events, state: JSON.parse(encodeLoopState(state)) })
         if (decision.type === 'pause') {
-          throw Object.assign(new Error(`The round paused for a human: ${decision.reason}`), { stdout })
+          // The pause is a decision, not a failure: it is handed off and the run halts at this step's boundary.
+          if (!task.handoff) throw new Error('assess-round decided a pause but no handoff is wired to make it durable')
+          task.handoff.pause({ reason: decision.reason, detail: decision.detail ?? decision.reason })
         }
         return { exitCode: decision.type === 'publish' ? 0 : 1, stdout }
       }

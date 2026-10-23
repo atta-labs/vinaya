@@ -26,6 +26,15 @@ export const AGENT_STEP_ROLES: Readonly<Record<string, string>> = {
 /** The code the driver's exit record gives a run that ended on a failed step. */
 export const STEP_FAILED = 'step_failed'
 
+const HANDOFF_HALT_PREFIX = 'handoff:'
+
+/** The halt reason a run control carries when the handoff halted it for `reason`. */
+export const handoffHaltReason = (reason: string): string => `${HANDOFF_HALT_PREFIX}${reason}`
+
+/** The pause reason a halt reason names, or null for a halt the handoff did not raise. */
+const handoffCodeOf = (haltReason: string | undefined): string | null =>
+  haltReason?.startsWith(HANDOFF_HALT_PREFIX) ? haltReason.slice(HANDOFF_HALT_PREFIX.length) : null
+
 /** How a leg ended, as the driver's exit record states it. */
 export interface LegExit {
   reason: DriverExitReason
@@ -130,8 +139,12 @@ export function createVinayaLogProducers(
       switch (outcome.reason) {
         case 'completed':
           return []
-        case 'paused':
-          return [paused('halt')]
+        case 'paused': {
+          // A decided pause already wrote its own `paused`; a pause the handoff raised for an error wrote none.
+          if (lastDecision?.startsWith('pause(')) return []
+          const code = handoffCodeOf(outcome.haltReason)
+          return code === null ? [paused('halt')] : [paused(code), ...closeJournal()]
+        }
         case 'exhausted':
           return [
             loop({ event: 'stop_condition_met', round, condition: 'max_rounds' }),
@@ -150,8 +163,10 @@ export function createVinayaLogProducers(
       switch (outcome.reason) {
         case 'completed':
           return { reason: 'finished', lastDecision: 'publish', exitCode: 0 }
-        case 'paused':
-          return { reason: 'paused', lastDecision: 'pause(halt)' }
+        case 'paused': {
+          if (lastDecision?.startsWith('pause(')) return { reason: 'paused', lastDecision }
+          return { reason: 'paused', lastDecision: `pause(${handoffCodeOf(outcome.haltReason) ?? 'halt'})` }
+        }
         case 'exhausted':
           return { reason: 'paused', lastDecision: 'pause(max_rounds)' }
         default:

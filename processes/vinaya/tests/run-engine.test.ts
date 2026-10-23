@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { recordedHandoff } from './handoff-fakes'
 import { Database } from 'bun:sqlite'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
@@ -165,6 +166,7 @@ function stubRun(scenario: { failAt?: string; haltAt?: string; hostFails?: boole
   calls: string[]
   observed: NodeLifecycle[]
   runtimeDir: string
+  handoff: ReturnType<typeof recordedHandoff>
 } {
   const calls: string[] = []
   const emitted: unknown[] = []
@@ -196,13 +198,17 @@ function stubRun(scenario: { failAt?: string; haltAt?: string; hostFails?: boole
       }
     ])
   )
+  const handoff = recordedHandoff()
   const options: EngineRunOptions = {
     args: { task: 7, agent: 'claude', dryRun: false },
     process: loaded,
     repoRoot,
     runtimeDir,
     loopId: 'loop-under-test',
-    taskInput: {} as TaskInput,
+    taskInput: {
+      inputVersions: () => ({ briefHash: null, objectivesVersion: null, rulingOrdinal: 0, policyDigest: 'test' })
+    } as unknown as TaskInput,
+    handoffDeps: handoff.deps,
     actions,
     sink: {
       log: (event: unknown) => {
@@ -231,7 +237,7 @@ function stubRun(scenario: { failAt?: string; haltAt?: string; hostFails?: boole
       return stubAgent(role, AGENT_LINES[role] ?? [])
     }
   }
-  return { options, emitted, calls, observed, runtimeDir }
+  return { options, emitted, calls, observed, runtimeDir, handoff }
 }
 
 const readTrace = (path: string): RunTrace => JSON.parse(readFileSync(path, 'utf8')) as RunTrace
@@ -322,12 +328,19 @@ describe('a stub run on the Engine path', () => {
   })
 
   test('closes the host and drains the sink when a step fails', async () => {
-    const { options, calls } = stubRun({ failAt: 'run-mechanical-gates' })
+    const { options, calls, handoff } = stubRun({ failAt: 'run-mechanical-gates' })
     const result = await runEngine(options)
-    expect(result.exitCode).toBe(1)
+    // A step that throws is an infrastructure pause the runner halts, not a failed run: records first, then one comment.
+    expect(handoff.calls).toEqual([
+      'escalation:infrastructure',
+      'pause-state:infrastructure',
+      'comment:issue:infrastructure'
+    ])
+    expect(readTrace(result.tracePath).pauseReason).toBe('infrastructure')
+    expect(result.exitCode).toBe(2)
     expect(calls.filter((call) => call === 'host-close')).toHaveLength(3)
     expect(calls.filter((call) => call === 'drain')).toHaveLength(1)
-    expect(readTrace(result.tracePath).outcome).not.toBe('completed')
+    expect(readTrace(result.tracePath).outcome).toBe('paused')
   })
 
   test('a step whose action throws records its message and stack in the trace', async () => {
@@ -350,7 +363,7 @@ describe('a stub run on the Engine path', () => {
   test('drains the sink when the host cannot start, and launches no agent', async () => {
     const { options, calls } = stubRun({ hostFails: true })
     const result = await runEngine(options)
-    expect(result.exitCode).toBe(1)
+    expect(result.exitCode).toBe(2)
     expect(calls.filter((call) => call.startsWith('spawn:'))).toEqual([])
     expect(calls.filter((call) => call === 'drain')).toHaveLength(1)
     expect(readTrace(result.tracePath).error).toBe('no socket')

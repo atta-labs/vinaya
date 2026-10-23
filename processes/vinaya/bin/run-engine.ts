@@ -37,7 +37,8 @@ import {
   type LegOutcome,
   type NodeLifecycle
 } from '../../../harness/dev-process/logging/translate'
-import { createVinayaLogProducers, STEP_FAILED } from '../executing/log-events'
+import { createVinayaLogProducers, handoffHaltReason, STEP_FAILED } from '../executing/log-events'
+import { createHandoff, liveHandoffDeps, type Handoff, type HandoffDeps } from '../executing/handoff'
 import {
   fetchCiConclusion,
   readWorktreeHead,
@@ -68,7 +69,7 @@ import {
   RequiredSourcesUnavailable,
   realSourceProviderDeps
 } from '../../../apps/cli/src/lib/source-provider'
-import { extractSourceRevision } from '@attalabs/aeg-core'
+import { briefHash as briefHashOf, extractSourceRevision, policyDigest as policyDigestOf } from '@attalabs/aeg-core'
 import {
   reviewerDevToolContext,
   type DevToolContext,
@@ -76,7 +77,7 @@ import {
 } from '../../../apps/cli/src/lib/task-tools/dev-tools-server'
 import { createReadSourceTool } from '../../../apps/cli/src/lib/task-tools/read-source'
 import { validatePrBodyForCreate } from '../../../apps/cli/src/commands/pr'
-import { createLogSink, LOG_FOLDER_ONLY_ENV, type LogSinkDeps } from '../../../apps/cli/src/lib/log-sink'
+import { createLogSink, drainLogSink, LOG_FOLDER_ONLY_ENV, type LogSinkDeps } from '../../../apps/cli/src/lib/log-sink'
 import { setEngineLogIdentity } from './engine-log-identity'
 import {
   chooseStart,
@@ -274,6 +275,8 @@ export interface RunTrace {
   loopId: string
   outcome: string
   error?: string
+  /** The reason the handoff paused the run for, when it did. */
+  pauseReason?: string
   steps: TraceStep[]
   verdicts: Record<string, unknown>
 }
@@ -313,14 +316,26 @@ export function createTraceRecorder(
       step.exitCode = exitCode
       if (error !== undefined) step.error = error
     },
-    finish(outcome: string, results: Readonly<Record<string, StepNodeResult>>, error?: string): RunTrace {
+    finish(
+      outcome: string,
+      results: Readonly<Record<string, StepNodeResult>>,
+      error?: string,
+      pauseReason?: string
+    ): RunTrace {
       for (const [nodeId, result] of Object.entries(results)) {
         const last = open(nodeId)
         if (last && last.exitCode === null) last.exitCode = result.exitCode
       }
       const verdicts: Record<string, unknown> = {}
       for (const step of REVIEW_STEPS) verdicts[step] = parseReviewResult(agentOutput(results, step))
-      return { ...meta, outcome, ...(error === undefined ? {} : { error }), steps, verdicts }
+      return {
+        ...meta,
+        outcome,
+        ...(error === undefined ? {} : { error }),
+        ...(pauseReason === undefined ? {} : { pauseReason }),
+        steps,
+        verdicts
+      }
     }
   }
 }
@@ -385,6 +400,8 @@ export interface EngineRunOptions {
   revision?: string
   /** What the runner does around the run; every member defaults to the live behaviour. */
   lifecycle?: EngineLifecycleOptions
+  /** Replaces the writers and forge posts a pause hands off to; for a run that must not reach them. */
+  handoffDeps?: HandoffDeps
 }
 
 export interface EngineLifecycleOptions {
@@ -436,9 +453,12 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
   const translator = createLogTranslator(producers, options.sink.log as unknown as EmitLogEvent)
   const logPath = loopLogPathFor(null, args.task, options.runtimeDir)
   const narrate = (line: string): void => appendLoopLogLine(logPath, `${new Date().toISOString()}  ${line}`)
+  let pausedFor: string | undefined
   const writeTrace = (outcome: string, results: Record<string, StepNodeResult>, error?: string): void => {
     // The trace carries tool output verbatim, so only its owner reads it.
-    writeFileSync(tracePath, `${JSON.stringify(trace.finish(outcome, results, error), null, 2)}\n`, { mode: 0o600 })
+    writeFileSync(tracePath, `${JSON.stringify(trace.finish(outcome, results, error, pausedFor), null, 2)}\n`, {
+      mode: 0o600
+    })
     chmodSync(tracePath, 0o600)
     out(`trace ${tracePath}`)
   }
@@ -503,6 +523,58 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
           narrate(`received ${signal}; stopping the run and ending its agents`)
           control.halt(signal)
         })
+
+  // Every pausing exit — a pause decision and an error alike — ends here: records, one comment, then the halt.
+  const taskForHandoff = options.taskInput
+  const handoff: Handoff = createHandoff(
+    {
+      task: args.task,
+      branch: taskForHandoff?.branch ?? '',
+      runtimeDir: options.runtimeDir,
+      runId: options.loopId,
+      agent: args.agent,
+      ...(args.model ? { model: args.model } : {}),
+      round: () => taskForHandoff?.reviewRound?.() ?? 1,
+      head: () => {
+        try {
+          return (taskForHandoff?.worktreePath ? readWorktreeHead(taskForHandoff.worktreePath) : null) ?? 'unknown'
+        } catch {
+          return 'unknown'
+        }
+      },
+      prNumber: () => {
+        if (prNumber > 0) return prNumber
+        // The Developer may have opened the pull request since the reconcile step looked.
+        const find = taskForHandoff?.bound?.findOpenPrForBranch
+        try {
+          return find && taskForHandoff?.branch ? (find(taskForHandoff.branch)?.number ?? null) : null
+        } catch {
+          return null
+        }
+      },
+      versions: () => {
+        if (!taskForHandoff?.inputVersions) throw new Error('no input versions are wired for this run')
+        return taskForHandoff.inputVersions()
+      },
+      halt: (reason) => {
+        pausedFor = reason
+        control.halt(handoffHaltReason(reason))
+      }
+    },
+    options.loopId,
+    options.handoffDeps ?? liveHandoffDeps(log)
+  )
+  if (taskForHandoff) taskForHandoff.handoff = handoff
+  /** An error the run could not absorb is a pause for the infrastructure, never a failed run. */
+  const handOffError = (message: string): LegOutcome => {
+    const round = taskForHandoff?.reviewRound?.() ?? 1
+    handoff.pause({
+      reason: 'infrastructure',
+      detail: `an uncaught error ended round ${round}'s own processing: ${message}`,
+      error: new Error(message)
+    })
+    return { reason: 'paused', haltReason: handoffHaltReason('infrastructure') }
+  }
 
   const hosts: Array<Pick<DevToolsHost, 'close'>> = []
   let checkpointer: SqliteCheckpointer | undefined
@@ -586,7 +658,11 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
           if (context.nodeId === 'reconcile-external-state') {
             try {
               const found = (JSON.parse(result.stdout ?? 'null') as { number?: unknown } | null)?.number
-              if (typeof found === 'number') prNumber = found
+              if (typeof found === 'number') {
+                prNumber = found
+                // A pause raised before this pull request existed now belongs to it.
+                handoff.bindToPullRequest(found)
+              }
             } catch {}
           }
           return result
@@ -683,12 +759,17 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
         ? resumeProcessRun(runOptions, identity)
         : startProcessRun(runOptions, identity))
       legOutcome = outcome as unknown as LegOutcome
+      if (outcome.reason === 'failed') {
+        // A step that threw is handed off like any other pause, keeping what the checkpoint holds.
+        error = outcome.error
+        legOutcome = { ...legOutcome, ...handOffError(outcome.error) }
+      }
     }
     translator.endLeg(legOutcome as LegOutcome)
   } catch (thrown) {
     if (currentNode === 'publish-ready-for-merge') writeFileSync(interruptedPublicationPath, 'interrupted\n')
     error = thrown instanceof Error ? thrown.message : String(thrown)
-    legOutcome = { reason: 'failed', error }
+    legOutcome = handOffError(error)
     translator.endLeg(legOutcome)
   } finally {
     if ((legOutcome as LegOutcome | null)?.reason === 'failed' && currentNode === 'publish-ready-for-merge')
@@ -727,7 +808,7 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
     string,
     StepNodeResult
   >
-  const reason = (outcome as RunOutcome | null)?.reason ?? (legOutcome as LegOutcome | null)?.reason ?? 'failed'
+  const reason = (legOutcome as LegOutcome | null)?.reason ?? (outcome as RunOutcome | null)?.reason ?? 'failed'
   writeTrace(reason, results, error)
   const exitCode =
     signalled !== null ? SIGNAL_EXIT_CODE[signalled] : reason === 'completed' ? 0 : reason === 'paused' ? 2 : 1
@@ -1032,6 +1113,21 @@ export async function liveTaskInput(
       publishRound: forge.publishRound
     },
     loopState: initialLoopState(config),
+    // Read when a pause is raised. A failed Issue read propagates: recording a ruling baseline of zero would
+    // let any earlier ruling authenticate this pause's resume, so no escalation record is written instead.
+    inputVersions: () => {
+      const pr = forge.findOpenPrForBranch(branch)
+      let objectivesVersion: string | null = null
+      try {
+        objectivesVersion = forge.resolveIssueObjectives(args.task).version
+      } catch {}
+      return {
+        briefHash: briefHashOf(forge.fetchFrozenBrief(args.task)),
+        objectivesVersion,
+        rulingOrdinal: pr ? forge.fetchNewestRulingOrdinal(pr.number) : forge.fetchNewestIssueRulingOrdinal(args.task),
+        policyDigest: policyDigestOf(policy)
+      }
+    },
     reviewRound: () => round,
     // A re-run numbers its first round after the rounds the forge already holds; never backwards.
     seedRound: (next) => {
@@ -1289,6 +1385,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       round: taskInput.reviewRound()
     })
   })
+  // The handoff's escalation record logs through the default sink, which nothing else drains.
+  await drainLogSink()
   return result.exitCode
 }
 
