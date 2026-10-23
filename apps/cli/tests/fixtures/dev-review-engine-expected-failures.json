@@ -58,16 +58,6 @@
       "reason": "A conflicting forge head reaches reviewers and publication."
     },
     {
-      "scenario": "uncertain-effect-crash",
-      "guarantee": "INV-021",
-      "reason": "merged_ready is emitted before the publication callback fails, with no durable crash pause."
-    },
-    {
-      "scenario": "publication-replay",
-      "guarantee": "INV-041",
-      "reason": "Re-entry after a publication crash dispatches the developer again and emits merged_ready for both legs."
-    },
-    {
       "scenario": "isolation-refusal",
       "guarantee": "INV-033",
       "reason": "A refused publication on the wrong branch still reaches reviewers and final publication."

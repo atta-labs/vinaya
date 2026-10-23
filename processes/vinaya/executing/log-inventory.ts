@@ -80,7 +80,7 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
     family: 'dev_review_loop',
     events: ['journal_finalized'],
     status: 'produced',
-    from: `${FROM_ASSESSMENT}; a failed or exhausted leg closes the journal from the head and totals those events carried, and writes none when no round was ever assessed`
+    from: 'the publish step, once the publication succeeded: result merged_ready, written from the close the assessment recorded and never while the assessment is read; a pause, a failed or exhausted leg, or a publication that failed ends its leg with result stopped from the head and totals the events carried, and writes none when no round was ever assessed'
   },
   {
     family: 'dev_review_loop',

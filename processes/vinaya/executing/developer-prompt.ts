@@ -122,16 +122,35 @@ function pushRefusalPrompt(facts: DeveloperPromptFacts): string | null {
   return facts.lastPushRefusal ? commitAndPushPrompt(facts.lastPushRefusal, publishingInstructionLine()) : null
 }
 
-/** Why the Developer runs again: first turn, a red gate on its last head, or the round's review findings. */
-export function developerTurnKind(results: Readonly<Record<string, StepNodeResult>>): 'first' | 'gate-red' | 'review' {
+/**
+ * The account the live-check step gave of a failed `[live]` line on `headSha`, or null when its last result
+ * was not a failure on that head — a result recorded for an earlier head is not this turn's reason.
+ */
+export function liveWithdrawalOf(results: Readonly<Record<string, StepNodeResult>>, headSha: string): string | null {
+  const live = results['run-live-checks']
+  if (live?.kind !== 'mechanical' || live.exitCode === 0) return null
+  try {
+    const parsed = JSON.parse(live.stdout) as { head?: unknown; withdrawal?: unknown }
+    return parsed.head === headSha && typeof parsed.withdrawal === 'string' ? parsed.withdrawal : null
+  } catch {
+    return null
+  }
+}
+
+/** Why the Developer runs again: first turn, a red gate on its last head, a failed live line, or the round's review findings. */
+export function developerTurnKind(
+  results: Readonly<Record<string, StepNodeResult>>,
+  headSha?: string
+): 'first' | 'gate-red' | 'live-red' | 'review' {
   if (results.develop === undefined) return 'first'
   const gate = results['run-mechanical-gates']
-  return gate !== undefined && gate.exitCode !== 0 ? 'gate-red' : 'review'
+  if (gate !== undefined && gate.exitCode !== 0) return 'gate-red'
+  return headSha !== undefined && liveWithdrawalOf(results, headSha) !== null ? 'live-red' : 'review'
 }
 
 /** The loop's later-round prompt text: what to fix, the finding ids to cite, and how to publish the fix. */
 function revisionPromptText(
-  kind: 'gate-red' | 'review',
+  kind: 'gate-red' | 'live-red' | 'review',
   facts: DeveloperPromptFacts,
   results: Readonly<Record<string, StepNodeResult>>
 ): string {
@@ -143,7 +162,9 @@ function revisionPromptText(
           'The checks (`vinaya check --all`) are red on the last head. Fix the failing check(s).',
           ...gateOutput.map((gate) => `\`${gate.reference}\` output (tail):\n\n${gate.summary}`)
         ].join('\n\n')
-      : `Round ${facts.round} review findings:\n\n${facts.heldReview ?? '(no held review was found for the previous round)'}\n`,
+      : kind === 'live-red'
+        ? (liveWithdrawalOf(results, facts.headSha) ?? '')
+        : `Round ${facts.round} review findings:\n\n${facts.heldReview ?? '(no held review was found for the previous round)'}\n`,
     handoff.length > 0
       ? `Finding ids in this handoff — cite the ones you address in your turn result's \`addressedFindingIds\`:\n${handoff.map((f) => `- ${f.id}: ${f.description}`).join('\n')}`
       : '',
@@ -184,7 +205,7 @@ export function developerPrompt(
     budgets: [`review rounds: ${facts.policy.maxRounds}`, `task minutes: ${facts.policy.maxTaskMinutes}`],
     stopConditions: ['Honor every stop condition in the frozen brief.']
   })
-  const kind = developerTurnKind(results)
+  const kind = developerTurnKind(results, facts.headSha)
   const join = (parts: readonly (string | null)[]) =>
     parts.filter((part): part is string => part !== null && part.length > 0).join('\n\n')
   if (kind === 'first')

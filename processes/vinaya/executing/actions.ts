@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   assessRound,
+  parseLiveTestPlanItems,
+  readLiveRecord,
+  withLiveRecord,
+  type DevReviewLoopEventInput,
   type LoopState,
   type Observations,
   type ReviewInputManifest,
@@ -33,9 +37,43 @@ import {
   findOpenPrForBranch
 } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
 import { publishRound, type PublishInput } from '../../../apps/cli/src/lib/dev-review-loop/publication'
-import { handoffFindings } from '../../../apps/cli/src/lib/dev-review-loop'
+import {
+  defaultRunSecurityScanSubprocess,
+  defaultUpdatePrBody,
+  deferredEntriesForRound,
+  handoffFindings
+} from '../../../apps/cli/src/lib/dev-review-loop'
+import { loadTrustAnchorConfig } from '../../../apps/cli/src/lib/config'
 import { readWorktreeHead } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
-import { writeHeldVerdict } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
+import {
+  decideSecurityScan,
+  discardHeldVerdicts,
+  writeHeldVerdict,
+  type SecurityScanOutcome,
+  type SecurityScanRun
+} from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
+import {
+  LIVE_RUN_TIMEOUT_MS,
+  livePassedAtHead,
+  liveVendorsNamed,
+  prepareRealLiveCheckout,
+  renderLiveWithdrawal,
+  runLiveChecks,
+  runRealLiveCommand,
+  vendorSignedIn,
+  withdrawApprovedRound,
+  type LiveCheckoutPreparer,
+  type LiveFailure,
+  type LiveRunner
+} from '../../../apps/cli/src/lib/dev-review-loop/live-check'
+import { routeCompletionEvents } from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
+import { resolveTrustAnchorSecurityScanCommand } from '../../../apps/cli/src/lib/dev-review-loop/security-scan-command'
+import { fetchPrBody } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
+import {
+  upsertDeferredFindingsIssue,
+  type DeferredFindingEntry,
+  type DeferredFindingsIssueRef
+} from '../../../apps/cli/src/lib/forge-write'
 import {
   parseDeveloperTurnResult,
   type DeveloperTurnSchemaContext
@@ -68,8 +106,20 @@ export interface TaskInput {
   currentManifest?: () => ReviewInputManifest | null
   /** What the round's gate and verdicts amount to, read from the recorded results. */
   observe: (results: Readonly<Record<string, StepNodeResult>>) => Observations
-  /** The reviewer prompt for `role`, built over this round's staged candidate (absent in stub runs). */
-  reviewerPrompt?: (role: 'reviewer' | 'security') => string
+  /**
+   * The reviewer prompt for `role`, built over this round's staged candidate and the security-scan step's
+   * recorded outcome (absent in stub runs).
+   */
+  reviewerPrompt?: (
+    role: 'reviewer' | 'security',
+    results: Readonly<Record<string, StepNodeResult>>
+  ) => string | Promise<string>
+  /** The round's staged, head-verified candidate copy the security scan runs over, or null when none could be staged. */
+  candidateDir?: () => string | null
+  /** The task's frozen brief, whose `[live]` Test Plan lines the live-check step runs. */
+  frozenBrief?: () => string
+  /** The repository root a live-check checkout is cut from. */
+  repoRoot?: string
   /** The reviewers' verdicts for the round, read from the recorded results. */
   verdicts: (results: Readonly<Record<string, StepNodeResult>>) => readonly VerdictObservation[]
   /**
@@ -107,6 +157,22 @@ export interface BoundFunctions {
   readWorktreeHead: typeof readWorktreeHead
   writeHeldVerdict: typeof writeHeldVerdict
   publishRound: typeof publishRound
+  /** The configured security-scan argv, or null when the repository sets none. */
+  resolveSecurityScanCommand: () => readonly string[] | null
+  /** Runs the scanner over the candidate directory. */
+  runSecurityScan: (command: readonly string[], cwd: string) => SecurityScanRun
+  /** The paths the task branch changes against main. */
+  changedPaths: (worktreePath: string) => readonly string[]
+  /** The pull request's body. */
+  fetchPrBody: (prNumber: number) => string
+  updatePrBody: typeof defaultUpdatePrBody
+  runLiveCommand: LiveRunner
+  liveVendorSignedIn: (vendor: Parameters<typeof vendorSignedIn>[0]) => boolean
+  liveRunTimeoutMs: number
+  prepareLiveCheckout: LiveCheckoutPreparer
+  discardHeldVerdicts: typeof discardHeldVerdicts
+  /** Opens or updates the pull request's one deferred-findings Issue. */
+  writeDeferredFindingsIssue: (input: { prNumber: number; entries: DeferredFindingEntry[] }) => DeferredFindingsIssueRef
 }
 
 interface Binding {
@@ -187,7 +253,102 @@ export function carriedLoopState(results: Readonly<Record<string, StepNodeResult
     // Reported below with the rest of the unreadable cases.
   }
   if (!recorded) throw new Error('assess-round found a previous assessment result with no readable loop state')
+  // A live check that withdrew the approval of that very assessment recorded the state the next assessment starts from.
+  const live = results['run-live-checks']
+  if (live && 'stdout' in live) {
+    try {
+      const parsed = JSON.parse(String(live.stdout)) as { state?: unknown; from?: unknown }
+      if (parsed.state !== undefined && parsed.from === roundOf(recorded))
+        recorded = decodeLoopState(JSON.stringify(parsed.state))
+    } catch {
+      // A live result with no readable state leaves the assessment's own.
+    }
+  }
   return roundOf(recorded) < roundOf(initial) ? initial : recorded
+}
+
+/** What the assess-round step recorded: its decision, the Log events and the state it ended on, and the findings it set aside so far. */
+export interface RecordedAssessment {
+  decision: { type: string; reason?: string; detail?: string }
+  events: DevReviewLoopEventInput[]
+  state: LoopState
+  deferredFindings: DeferredFindingEntry[]
+}
+
+/** The assessment the assess-round step recorded; throws when it recorded none or something unreadable. */
+export function readAssessment(results: Readonly<Record<string, StepNodeResult>>): RecordedAssessment {
+  const assessed = results['assess-round']
+  if (!assessed || !('stdout' in assessed)) throw new Error('no recorded result for the assess-round step')
+  let parsed: Partial<RecordedAssessment> & { state?: unknown }
+  try {
+    parsed = JSON.parse(String(assessed.stdout))
+  } catch (error) {
+    throw new Error(
+      `the assess-round result is not readable: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+  if (!parsed.decision || !Array.isArray(parsed.events) || parsed.state === undefined)
+    throw new Error('the assess-round result has no decision, events or state')
+  return {
+    decision: parsed.decision,
+    events: parsed.events,
+    state: decodeLoopState(JSON.stringify(parsed.state)),
+    deferredFindings: Array.isArray(parsed.deferredFindings) ? parsed.deferredFindings : []
+  }
+}
+
+/** The findings set aside through the rounds so far, from the last assessment's record; empty before any. */
+function recordedDeferredFindings(results: Readonly<Record<string, StepNodeResult>>): DeferredFindingEntry[] {
+  const previous = results['assess-round']
+  if (!previous || !('stdout' in previous)) return []
+  try {
+    const parsed = JSON.parse(String(previous.stdout)) as { deferredFindings?: unknown }
+    return Array.isArray(parsed.deferredFindings) ? (parsed.deferredFindings as DeferredFindingEntry[]) : []
+  } catch {
+    return []
+  }
+}
+
+/** The completion events the live-check step held back until publication — the journal's close; none before it ran. */
+function heldCompletionEvents(results: Readonly<Record<string, StepNodeResult>>): DevReviewLoopEventInput[] {
+  const live = results['run-live-checks']
+  if (!live || !('stdout' in live)) return []
+  try {
+    const parsed = JSON.parse(String(live.stdout)) as { outcome?: unknown; deferred?: unknown }
+    return parsed.outcome === 'publish' && Array.isArray(parsed.deferred)
+      ? (parsed.deferred as DevReviewLoopEventInput[])
+      : []
+  } catch {
+    return []
+  }
+}
+
+/** The live-check step's exit result asks for the Developer when it did not exit zero. */
+export function isLiveWithdrawn(examined: StepNodeResult): boolean {
+  return examined.exitCode !== 0
+}
+
+/** The security scan outcome the scan step recorded, or undefined when it recorded none. */
+export function recordedScanOutcome(
+  results: Readonly<Record<string, StepNodeResult>>
+): SecurityScanOutcome | undefined {
+  const scan = results['run-security-scan']
+  if (!scan || !('stdout' in scan)) return undefined
+  try {
+    return JSON.parse(String(scan.stdout)) as SecurityScanOutcome
+  } catch {
+    return undefined
+  }
+}
+
+/** The paths `worktreePath`'s head changes against its merge base with main; empty when git cannot say. */
+function worktreeChangedPaths(worktreePath: string): readonly string[] {
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: worktreePath, encoding: 'utf8' }).trim()
+  const head = git('rev-parse', 'HEAD')
+  return git('diff', '--name-only', `${git('merge-base', 'origin/main', head)}...${head}`)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
 }
 
 const roundOf = (state: LoopState): number => Math.max(state.rounds.length, state.pending?.round ?? 0)
@@ -279,6 +440,28 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
     }
   },
   'vinaya.classify-gate-result': { adapts: [classifyGateResult], build: () => classifyGateResult },
+  'vinaya.run-security-scan': {
+    adapts: [decideSecurityScan, defaultRunSecurityScanSubprocess, resolveTrustAnchorSecurityScanCommand],
+    build: (task) => () => {
+      // The scan runs here, before either reviewer is dispatched and outside both reviewers' sandboxes. Its
+      // outcome reaches the security reviewer's prompt only, and a scan that cannot run never stops the round.
+      let outcome: SecurityScanOutcome
+      try {
+        const command = (
+          task.bound?.resolveSecurityScanCommand ?? (() => resolveTrustAnchorSecurityScanCommand(loadTrustAnchorConfig))
+        )()
+        outcome = decideSecurityScan({
+          command,
+          changedPaths: command === null ? [] : (task.bound?.changedPaths ?? worktreeChangedPaths)(task.worktreePath),
+          candidateDir: task.candidateDir?.() ?? null,
+          runScan: task.bound?.runSecurityScan ?? defaultRunSecurityScanSubprocess
+        })
+      } catch (error) {
+        outcome = { kind: 'failed', reason: error instanceof Error ? error.message : String(error) }
+      }
+      return ok(JSON.stringify(outcome))
+    }
+  },
   'vinaya.dispatch-reviewers': { adapts: [dispatchReviewers], build: () => dispatchReviewers },
   'vinaya.validate-reviewer-outputs': {
     adapts: [parseReviewResult, writeHeldVerdict],
@@ -325,7 +508,19 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
         // The gate's events come first, as the standalone loop records them, then the verdicts'.
         const events = [...gateEvents, ...assessment.events]
         // The Log events the assessment produced travel in the step's result; the log producers read them back.
-        const stdout = JSON.stringify({ decision, events, state: JSON.parse(encodeLoopState(state)) })
+        // The findings set aside rather than let block, round by round, for the publish step to track.
+        const deferredFindings = [
+          ...recordedDeferredFindings(context.results).filter(
+            (entry) => observation.kind !== 'verdicts' || entry.round !== observation.round
+          ),
+          ...(observation.kind === 'verdicts' ? deferredEntriesForRound(observation.round, observation.verdicts) : [])
+        ]
+        const stdout = JSON.stringify({
+          decision,
+          events,
+          state: JSON.parse(encodeLoopState(state)),
+          deferredFindings
+        })
         if (decision.type === 'pause') {
           // The pause is a decision, not a failure: it is handed off and the run halts at this step's boundary.
           if (!task.handoff) throw new Error('assess-round decided a pause but no handoff is wired to make it durable')
@@ -360,9 +555,80 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       return ok(JSON.stringify(handoffFindings(task.reviewRound(), ...task.verdicts(context.results))))
     }
   },
+  'vinaya.run-live-checks': {
+    adapts: [runLiveChecks, routeCompletionEvents],
+    build: (task) => async (context) => {
+      const assessment = readAssessment(context.results)
+      if (assessment.decision.type !== 'publish')
+        throw new Error(`run-live-checks reached after a ${assessment.decision.type} decision, not a publish`)
+      const readHead = task.bound?.readWorktreeHead ?? readWorktreeHead
+      const head = readHead(task.worktreePath)
+      if (head === null) throw new Error(`run-live-checks could not read the head of ${task.worktreePath}`)
+      if (task.frozenBrief === undefined) throw new Error('run-live-checks has no frozen brief wired to read')
+      // Fails closed: a brief that cannot be read, or whose `[live]` lines cannot be learned, stops the run.
+      let commands: string[]
+      try {
+        commands = parseLiveTestPlanItems(task.frozenBrief())
+      } catch (error) {
+        throw new Error(
+          `the live check could not read the frozen brief's [live] lines at ${head}: ${error instanceof Error ? error.message : String(error)}`
+        )
+      }
+      const failures = commands.length === 0 ? [] : await runLiveGate(task, head, commands)
+      const from = roundOf(assessment.state)
+      if (failures.length === 0) {
+        // The approval stands: the journal's close waits for the publish step, everything else is logged now.
+        const routed = routeCompletionEvents(assessment.events, 'publish')
+        return ok(
+          JSON.stringify({
+            outcome: 'publish',
+            head,
+            events: routed.toLogNow,
+            deferred: routed.toDeferUntilPublish,
+            from
+          })
+        )
+      }
+      // A failed line withdraws the approval: the round's held verdicts are never published.
+      const round = task.reviewRound()
+      ;(task.bound?.discardHeldVerdicts ?? discardHeldVerdicts)(task.runtimeDir, task.issueNumber, round)
+      const atCap = round >= assessment.state.config.maxRounds
+      const withdrawn = withdrawApprovedRound(assessment.events, assessment.state, atCap)
+      const routed = routeCompletionEvents(withdrawn.events, atCap ? 'pause' : 'dispatch_developer')
+      const stdout = JSON.stringify({
+        outcome: atCap ? 'pause' : 'revise',
+        head,
+        failures,
+        withdrawal: renderLiveWithdrawal(head, failures),
+        events: routed.toLogNow,
+        deferred: routed.toDeferUntilPublish,
+        state: JSON.parse(encodeLoopState(withdrawn.state)),
+        from
+      })
+      if (atCap) {
+        if (!task.handoff) throw new Error('run-live-checks decided a pause but no handoff is wired to make it durable')
+        task.handoff.pause({
+          reason: 'max_rounds',
+          detail: `max rounds: ${assessment.state.config.maxRounds} — both reviewers approved ${head}, but its \`[live]\` line(s) failed: ${failures.map((f) => `\`${f.command}\` (${f.detail})`).join(', ')}`
+        })
+      } else {
+        // The round advances exactly as it does for a reviewer's blocking finding.
+        task.seedRound?.(round + 1)
+      }
+      return { exitCode: 1, stdout }
+    }
+  },
+  'vinaya.classify-live-result': {
+    adapts: [isLiveWithdrawn],
+    build: () => (context) => {
+      const live = context.results['run-live-checks']
+      if (!live) throw new Error('classify-live-result ran before the live-check step recorded a result')
+      return ok(isLiveWithdrawn(live) ? 'withdrawn' : 'approved')
+    }
+  },
   'harness.publish': {
-    adapts: [publishRound],
-    build: (task) => () => {
+    adapts: [publishRound, upsertDeferredFindingsIssue],
+    build: (task) => (context) => {
       const findPr = task.bound?.findOpenPrForBranch ?? findOpenPrForBranch
       const readHead = task.bound?.readWorktreeHead ?? readWorktreeHead
       const publish = task.bound?.publishRound ?? publishRound
@@ -370,10 +636,77 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       if (pr === null) throw new Error(`harness.publish found no open pull request for branch ${task.branch}`)
       const expectedHead = readHead(task.worktreePath)
       if (expectedHead === null) throw new Error(`harness.publish could not read the head of ${task.worktreePath}`)
-      publish(task.runtimeDir, task.publish({ prNumber: pr.number, expectedHead, round: task.reviewRound() }))
-      return ok()
+      // The findings the rounds set aside are tracked in one Issue for the pull request; a run that
+      // set none aside opens nothing.
+      const deferredFindings = recordedDeferredFindings(context?.results ?? {})
+      const deferredIssue =
+        deferredFindings.length > 0
+          ? (task.bound?.writeDeferredFindingsIssue ?? upsertDeferredFindingsIssue)({
+              prNumber: pr.number,
+              entries: deferredFindings
+            })
+          : undefined
+      publish(task.runtimeDir, {
+        ...task.publish({ prNumber: pr.number, expectedHead, round: task.reviewRound() }),
+        ...(deferredIssue === undefined ? {} : { deferredIssue })
+      })
+      // The publication succeeded: the journal's close, held back by the live-check step, is this step's to hand on.
+      return ok(JSON.stringify({ events: heldCompletionEvents(context?.results ?? {}) }))
     }
   }
+}
+
+/**
+ * Runs every `[live]` line the host can run on the approved `head`, in a fresh checkout of it, and writes
+ * the outcomes to the pull request's live record. Returns the lines that failed. A line already recorded
+ * passed at this head does not run again; a record that cannot be written is left for the next run.
+ */
+async function runLiveGate(task: TaskInput, head: string, commands: readonly string[]): Promise<LiveFailure[]> {
+  const bound = task.bound
+  const pr = (bound?.findOpenPrForBranch ?? findOpenPrForBranch)(task.branch)
+  const readBody = bound?.fetchPrBody ?? fetchPrBody
+  let body: string | null
+  try {
+    body = pr === null ? null : readBody(pr.number)
+  } catch {
+    body = null
+  }
+  const previous = body === null ? [] : readLiveRecord(body)
+  if (livePassedAtHead(commands, head, previous)) return []
+  const signedIn = bound?.liveVendorSignedIn ?? ((vendor) => vendorSignedIn(vendor))
+  // A checkout is prepared only when some line can run here.
+  const anyRunnable = commands.some((command) => liveVendorsNamed(command).every(signedIn))
+  const repoRoot = task.repoRoot ?? task.worktreePath
+  const checkout = anyRunnable ? await (bound?.prepareLiveCheckout ?? prepareRealLiveCheckout)(repoRoot, head) : null
+  let result: Awaited<ReturnType<typeof runLiveChecks>>
+  try {
+    result = await runLiveChecks({
+      commands,
+      head,
+      cwd: checkout !== null && 'cwd' in checkout ? checkout.cwd : repoRoot,
+      previous,
+      cannotRun:
+        checkout !== null && 'error' in checkout
+          ? `the review loop could not prepare a clean checkout of this head (${checkout.error})`
+          : null,
+      signedIn,
+      run: bound?.runLiveCommand ?? runRealLiveCommand,
+      timeoutMs: bound?.liveRunTimeoutMs ?? LIVE_RUN_TIMEOUT_MS
+    })
+  } finally {
+    if (checkout !== null && 'dispose' in checkout) checkout.dispose()
+  }
+  if (pr !== null) {
+    try {
+      const current = readBody(pr.number)
+      const next = withLiveRecord(current, result.entries)
+      if (next !== current)
+        await (bound?.updatePrBody ?? defaultUpdatePrBody)({ prNumber: pr.number, body: next, repo: null })
+    } catch {
+      // The record is the driver's alone and the next run writes it.
+    }
+  }
+  return result.failures
 }
 
 /** The action registry for one task: each binding's action, built over that task's input. */
@@ -385,7 +718,8 @@ export function createActions(task: TaskInput): ActionRegistry {
 export const decisions: DecisionRegistry = {
   'choose-start': isDevelopmentDue,
   'classify-gate-result': isGateRed,
-  'build-revision-handoff': isRevisionRequested
+  'build-revision-handoff': isRevisionRequested,
+  'classify-live-result': isLiveWithdrawn
 }
 
 const executing = join(import.meta.dir)

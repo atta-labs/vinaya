@@ -87,6 +87,16 @@
         "reason": "The unit tests of driver-lifecycle.ts, landed in the same change."
       },
       {
+        "path": "apps/cli/src/lib/dev-review-loop/security-scan-command.ts",
+        "kind": "implementation",
+        "reason": "The security-scan command resolver, lifted out of the loop so the standalone loop and the Engine runner read the scanner from the same trust anchor through one function."
+      },
+      {
+        "path": "apps/cli/tests/lib/dev-review-loop/security-scan-command.test.ts",
+        "kind": "test",
+        "reason": "The unit tests of security-scan-command.ts, landed in the same change."
+      },
+      {
         "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts",
         "kind": "implementation",
         "reason": "Landed after the baseline revision as the publication precondition gate; the current loop.md section \"Publishing each Developer turn (both agents, only through the driver-run tools)\" describes its use by publish_changes."
@@ -1582,11 +1592,17 @@
         {
           "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts",
           "symbol": "lintReviewerPrompt"
+        },
+        {
+          "path": "apps/cli/src/lib/dev-review-loop/security-scan-command.ts",
+          "symbol": "resolveTrustAnchorSecurityScanCommand"
         }
       ],
       "tests": [
         "apps/cli/tests/lib/dev-review-loop/reviewer-dispatch.test.ts",
-        "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts"
+        "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/security-scan-command.test.ts",
+        "processes/vinaya/tests/completion.test.ts"
       ],
       "loopSpec": ["Rounds"],
       "reason": "Deterministic prompt rendering.",
@@ -3490,7 +3506,8 @@
       ],
       "tests": [
         "apps/cli/tests/lib/dev-review-loop/live-check.test.ts",
-        "apps/cli/tests/lib/dev-review-loop/live-gate-fail-closed.test.ts"
+        "apps/cli/tests/lib/dev-review-loop/live-gate-fail-closed.test.ts",
+        "processes/vinaya/tests/completion.test.ts"
       ],
       "loopSpec": ["The live check"],
       "reason": "A check that needs real signed-in agent sessions is machine-judgeable but skipped in the Developer's sandbox, the push hook and CI; running it inside the loop catches its failure before the Principal does, and running it only on an approved head keeps unreviewed code away from the host's sign-ins.",
@@ -4016,7 +4033,7 @@
       },
       "spec": {
         "path": "aeg-root/enforcement.md",
-        "locator": "Ring 1 — Branch Rules (what turns the forge red)"
+        "locator": "Ring 1 \u2014 Branch Rules (what turns the forge red)"
       },
       "status": "open",
       "classification": "named-defect",
@@ -4031,7 +4048,7 @@
       },
       "spec": {
         "path": "aeg-root/documentation-coherence.md",
-        "locator": "Reader-facing readability — no unresolvable symbols"
+        "locator": "Reader-facing readability \u2014 no unresolvable symbols"
       },
       "status": "open",
       "classification": "named-defect",
@@ -4196,7 +4213,7 @@
       },
       "spec": {
         "path": "aeg-root/roles/planner/reference.md",
-        "locator": "Readiness gate — verify ALL inputs are present and reachable BEFORE planning a single task"
+        "locator": "Readiness gate \u2014 verify ALL inputs are present and reachable BEFORE planning a single task"
       },
       "status": "open",
       "classification": "named-defect",

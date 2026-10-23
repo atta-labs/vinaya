@@ -44,6 +44,7 @@ tests/lib/dev-review-loop/gate-reading.test.ts
 tests/lib/dev-review-loop/journal-history.test.ts
 tests/lib/dev-review-loop/pause-resume.test.ts
 tests/lib/dev-review-loop/round-assess.test.ts
+tests/lib/dev-review-loop/security-scan-command.test.ts
 tests/lib/dev-review-loop/inproc-2.test.ts
 tests/lib/dev-review-loop/inproc-4.test.ts
 tests/lib/dev-review-loop/inproc-6.test.ts

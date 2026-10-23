@@ -126,11 +126,16 @@ export function reviewerRulings(deps: {
   return [...issueRulings, ...prRulings]
 }
 
-/** The reviewer prompt for `role` over a staged input; a missing staging renders the prompt without input paths. */
+/**
+ * The reviewer prompt for `role` over a staged input; a missing staging renders the prompt without input paths,
+ * and a missing doctrine renders it without the role's doctrine block. `facts.configScan` reaches the security
+ * prompt only.
+ */
 export function renderVinayaReviewerPrompt(
   role: 'reviewer' | 'security',
   facts: ReviewerPromptFacts,
-  staged: VinayaStagedReviewInput | null
+  staged: VinayaStagedReviewInput | null,
+  roleDoctrine: string | null = null
 ): string {
-  return renderReviewerDispatchPrompt(role, facts, null, staged?.paths ?? null)
+  return renderReviewerDispatchPrompt(role, facts, roleDoctrine, staged?.paths ?? null)
 }

@@ -92,10 +92,12 @@ describe('the dry run', () => {
         shimPath: '/runs/1/dev-bridge.sh'
       })
       expect(lines[0]).toBe(`process ${loaded.identity.id}@${loaded.identity.version} digest ${loaded.digest}`)
-      expect(lines.filter((line) => line.startsWith('step '))).toHaveLength(15)
+      expect(lines.filter((line) => line.startsWith('step '))).toHaveLength(18)
       const bound = lines.filter((line) => line.startsWith('bound '))
-      expect(bound).toHaveLength(12)
-      expect(bound).toContain('bound publish-ready-for-merge harness.publish: publishRound')
+      expect(bound).toHaveLength(15)
+      expect(bound).toContain(
+        'bound publish-ready-for-merge harness.publish: publishRound, upsertDeferredFindingsIssue'
+      )
       expect(bound).toContain(
         'bound validate-reviewer-outputs vinaya.validate-reviewer-outputs: parseReviewResult, writeHeldVerdict'
       )
@@ -204,10 +206,13 @@ function stubRun(scenario: { failAt?: string; haltAt?: string; hostFails?: boole
       'vinaya.validate-developer-output',
       'harness.run-gates',
       'vinaya.classify-gate-result',
+      'vinaya.run-security-scan',
       'vinaya.dispatch-reviewers',
       'vinaya.validate-reviewer-outputs',
       'vinaya.assess-round',
       'vinaya.build-revision-handoff',
+      'vinaya.run-live-checks',
+      'vinaya.classify-live-result',
       'harness.publish'
     ].map((name) => [
       name,
@@ -281,12 +286,15 @@ describe('a stub run on the Engine path', () => {
       'validate-developer-output',
       'run-mechanical-gates',
       'classify-gate-result',
+      'run-security-scan',
       'dispatch-reviewers',
       'code-review',
       'security-review',
       'validate-reviewer-outputs',
       'assess-round',
       'build-revision-handoff',
+      'run-live-checks',
+      'classify-live-result',
       'publish-ready-for-merge'
     ])
     expect(trace.steps.every((step) => step.exitCode === 0)).toBe(true)
