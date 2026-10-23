@@ -53,6 +53,7 @@ import {
   tracedActions,
   developerSourceStoreDir,
   dryRunLines,
+  withReviewerWorkingDirectory,
   engineLiveDevToolsContext,
   liveTaskInput,
   parseArgs,
@@ -943,6 +944,29 @@ describe('the tool host serves the reviewer roles as well as the Developer', () 
     ['claude-code', 'role-mcp.json'],
     ['codex', 'config.toml']
   ] as const) {
+    test(`each reviewer ${vendor} launch runs in that attempt's scratch directory`, () => {
+      const generatedRoot = mkdtempSync(join(tmpdir(), 'engine-reviewer-cwd-'))
+      const roles = createRoleLaunchers({ vendor, generatedRoot })
+      const seen: Array<{ cwd?: string; args: string[] }> = []
+      const wrapped = withReviewerWorkingDirectory(
+        (_command, args, options) => {
+          seen.push({ ...(options?.cwd ? { cwd: options.cwd } : {}), args: [...args] })
+          return stubAgent('reviewer', [])
+        },
+        generatedRoot,
+        (role) => `/scratch/${role}/attempt-2`
+      )
+      for (const role of ['code-reviewer', 'security-reviewer'] as const) {
+        const launcher = roles[role]
+        if (!launcher) throw new Error(`missing ${role} launcher`)
+        wrapped(launcher.command, launcher.buildArgs({ permission: `${role}/grants.yaml`, maxTurns: 100 }), {
+          env: launcher.env ?? {},
+          cwd: '/repo'
+        })
+      }
+      expect(seen.map(({ cwd }) => cwd)).toEqual(['/scratch/reviewer/attempt-2', '/scratch/security/attempt-2'])
+    })
+
     test(`each reviewer's ${vendor} launch names its own host`, () => {
       const generatedRoot = mkdtempSync(join(tmpdir(), 'engine-launch-shapes-'))
       createRoleLaunchers({

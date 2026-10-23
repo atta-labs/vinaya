@@ -1,4 +1,5 @@
 import {
+  buildReviewerScratch,
   buildVerifiedReviewerCandidate,
   reviewerCandidateInputPaths,
   writeReviewerCandidateInputs,
@@ -25,6 +26,8 @@ export interface VinayaStagedReviewInput {
 /** Stages the review input for a round, once; null when the judged head could not be staged. */
 export interface VinayaReviewInputStager {
   stage: (round: number) => VinayaStagedReviewInput | null
+  /** A fresh copy for one role attempt, including that attempt's own input paths. */
+  stageAttempt: (round: number, role: 'reviewer' | 'security', attempt: number) => VinayaStagedReviewInput | null
 }
 
 /** What staging one round's reviewer candidate reads; each is called only when a round is first staged. */
@@ -74,6 +77,7 @@ export function createVinayaReviewInputStager(deps: VinayaReviewInputDeps): Vina
     }
   }
   let staged: { round: number; input: VinayaStagedReviewInput | null } | null = null
+  const attempts = new Map<string, VinayaStagedReviewInput | null>()
   return {
     stage(round) {
       if (staged !== null && staged.round === round) return staged.input
@@ -97,6 +101,15 @@ export function createVinayaReviewInputStager(deps: VinayaReviewInputDeps): Vina
         input = { dir, paths: written ? reviewerCandidateInputPaths(dir) : null }
       }
       staged = { round, input }
+      return input
+    },
+    stageAttempt(round, role, attempt) {
+      const key = `${round}:${role}:${attempt}`
+      if (attempts.has(key)) return attempts.get(key) ?? null
+      const candidate = this.stage(round)
+      const dir = candidate ? buildReviewerScratch(deps.root, deps.task, round, role, attempt, candidate.dir) : null
+      const input = dir === null ? null : { dir, paths: candidate?.paths ? reviewerCandidateInputPaths(dir) : null }
+      attempts.set(key, input)
       return input
     }
   }

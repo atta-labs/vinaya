@@ -94,6 +94,8 @@ interface Observed {
   world: World
   spawns: Record<Role, number>
   prompts: Record<Role, string[]>
+  launchDirectories: Record<Role, string[]>
+  sessionIds: Record<Role, string[]>
   /** Every Log event the run wrote, as `<kind>/<event>`. */
   events: string[]
   rawEvents: Array<Record<string, unknown>>
@@ -123,7 +125,7 @@ const handoffIds = (prompt: string): string[] => [
 ]
 
 /** The CLI-shaped child a vendor launches: its stream is delivered after the executor closes stdin. */
-function stubChild(agent: Agent, launch: (prompt: string) => Launch): SpawnedProcessLike {
+function stubChild(agent: Agent, sessionId: string, launch: (prompt: string) => Launch): SpawnedProcessLike {
   const closeListeners: Array<(code: number | null) => void> = []
   let stdout: ((chunk: string) => void) | undefined
   let prompt = ''
@@ -139,11 +141,13 @@ function stubChild(agent: Agent, launch: (prompt: string) => Launch): SpawnedPro
           const lines =
             agent === 'claude'
               ? [
-                  { type: 'system', session_id: 's' },
-                  ...(output === undefined ? [] : [{ type: 'result', session_id: 's', structured_output: output }])
+                  { type: 'system', session_id: sessionId },
+                  ...(output === undefined
+                    ? []
+                    : [{ type: 'result', session_id: sessionId, structured_output: output }])
                 ]
               : [
-                  { type: 'thread.started', thread_id: 's' },
+                  { type: 'thread.started', thread_id: sessionId },
                   ...(output === undefined
                     ? []
                     : [{ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(output) } }]),
@@ -366,6 +370,8 @@ async function run(agent: Agent, scenario: Scenario = {}): Promise<Observed> {
   }
   const spawns: Record<Role, number> = { developer: 0, 'code-reviewer': 0, 'security-reviewer': 0 }
   const prompts: Record<Role, string[]> = { developer: [], 'code-reviewer': [], 'security-reviewer': [] }
+  const launchDirectories: Record<Role, string[]> = { developer: [], 'code-reviewer': [], 'security-reviewer': [] }
+  const sessionIds: Record<Role, string[]> = { developer: [], 'code-reviewer': [], 'security-reviewer': [] }
   const rawEvents: Array<Record<string, unknown>> = []
   const facts = (): DeveloperPromptFacts => ({
     brief,
@@ -401,7 +407,10 @@ async function run(agent: Agent, scenario: Scenario = {}): Promise<Observed> {
       const role = roleOf(agent, args, options?.env)
       spawns[role] += 1
       const attempt = spawns[role]
-      return stubChild(agent, (prompt) => {
+      const sessionId = `${agent}-${role}-${attempt}`
+      launchDirectories[role].push(options?.cwd ?? '')
+      sessionIds[role].push(sessionId)
+      return stubChild(agent, sessionId, (prompt) => {
         prompts[role].push(prompt)
         if (role === 'developer') {
           world.prOpen = true
@@ -427,6 +436,8 @@ async function run(agent: Agent, scenario: Scenario = {}): Promise<Observed> {
     world,
     spawns,
     prompts,
+    launchDirectories,
+    sessionIds,
     rawEvents,
     events: rawEvents.map((event) => `${String(event.kind)}/${String(event.event)}`),
     steps,
@@ -622,7 +633,7 @@ for (const agent of AGENTS) {
   })
 
   describe(`a reviewer with no usable review is retried fresh (${agent})`, () => {
-    test('an invalid review is classified and retried, never thrown, and the retry stands', async () => {
+    test('two attempts use distinct scratch directories and session ids, and the retry stands', async () => {
       const observed = await run(agent, {
         reviewer: (role, attempt, world) =>
           role === 'code-reviewer' && attempt === 1
@@ -633,6 +644,10 @@ for (const agent of AGENTS) {
       })
       expect(observed.outcome).toBe('completed')
       expect(observed.spawns['code-reviewer']).toBe(2)
+      expect(new Set(observed.launchDirectories['code-reviewer']).size).toBe(2)
+      expect(new Set(observed.sessionIds['code-reviewer']).size).toBe(2)
+      const reviewerTrace = JSON.stringify(observed.trace.steps.filter((step) => step.nodeId === 'code-review'))
+      for (const sessionId of observed.sessionIds['code-reviewer']) expect(reviewerTrace).toContain(sessionId)
       expect(records(observed, 'validate-reviewer-outputs').map((record) => record.next)).toEqual(['retry', 'hold'])
     })
 
