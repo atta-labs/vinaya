@@ -97,6 +97,16 @@
         "reason": "The unit tests of security-scan-command.ts, landed in the same change."
       },
       {
+        "path": "apps/cli/src/lib/dev-review-loop/unpushed-work.ts",
+        "kind": "implementation",
+        "reason": "The reader of a Developer's unpushed work and the texts naming it, lifted out of the loop so the standalone loop and the Engine runner decide a turn that pushed nothing from the same reading of the worktree."
+      },
+      {
+        "path": "apps/cli/tests/lib/dev-review-loop/unpushed-work.test.ts",
+        "kind": "test",
+        "reason": "The unit tests of unpushed-work.ts, landed in the same change."
+      },
+      {
         "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts",
         "kind": "implementation",
         "reason": "Landed after the baseline revision as the publication precondition gate; the current loop.md section \"Publishing each Developer turn (both agents, only through the driver-run tools)\" describes its use by publish_changes."
@@ -1042,13 +1052,14 @@
       "scenarios": ["developer-failure"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/dev-review-loop.ts",
-          "symbol": "defaultReadUnpushedWorkDetail"
+          "path": "apps/cli/src/lib/dev-review-loop/unpushed-work.ts",
+          "symbol": "readUnpushedWorkDetail"
         }
       ],
       "tests": [
         "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts",
-        "apps/cli/tests/lib/dev-review-loop/refused-publication-wait.test.ts"
+        "apps/cli/tests/lib/dev-review-loop/refused-publication-wait.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/unpushed-work.test.ts"
       ],
       "loopSpec": ["Unpushed work is resumed once, then `no_push`"],
       "reason": "Decided from observed repository state, never the developer's reply.",

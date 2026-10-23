@@ -25,11 +25,13 @@ import { enforcementControlsActive } from '../../../apps/cli/src/lib/enforcement
 import { probeAgentSandbox } from '../../../apps/cli/src/lib/worker-boundary'
 import { handoffFindings } from '../../../apps/cli/src/lib/dev-review-loop'
 import { runCliChecks } from '../../../harness/gates/run-checks'
-import { parseDeveloperTurnResult } from '../../../apps/cli/src/lib/developer-turn-result'
-import { parseReviewResult } from '../../../apps/cli/src/lib/review-result'
+import { validateDeveloperTurnResult } from '../../../apps/cli/src/lib/developer-turn-result'
+import { classifyReviewOutcome } from '../../../apps/cli/src/lib/review-result'
 import {
   ACTION_BINDINGS,
+  classifyDeveloperOutput,
   classifyGateResult,
+  classifyReviewerOutputs,
   createActions,
   createRoleLaunchers,
   decisions,
@@ -75,9 +77,12 @@ describe('bindings cover the Flow', () => {
     expect(adapts('vinaya.prepare-run')?.[1]).toBe(createTaskWorktree)
     expect(adapts('vinaya.reconcile-external-state')?.[0]).toBe(findOpenPrForBranch)
     expect(adapts('vinaya.prepare-sources')?.[0]).toBe(fetchSourceRevision)
-    expect(adapts('vinaya.validate-developer-output')?.[0]).toBe(parseDeveloperTurnResult)
+    expect(adapts('vinaya.validate-developer-output')?.[0]).toBe(validateDeveloperTurnResult)
+    expect(adapts('vinaya.classify-developer-output')?.[0]).toBe(classifyDeveloperOutput)
     expect(adapts('harness.run-gates')?.[0]).toBe(runCliChecks)
-    expect(adapts('vinaya.validate-reviewer-outputs')?.[0]).toBe(parseReviewResult)
+    expect(adapts('vinaya.assess-gate')?.[0]).toBe(assessRound)
+    expect(adapts('vinaya.validate-reviewer-outputs')?.[0]).toBe(classifyReviewOutcome)
+    expect(adapts('vinaya.classify-reviewer-outputs')?.[0]).toBe(classifyReviewerOutputs)
     expect(adapts('vinaya.assess-round')?.[0]).toBe(assessRound)
     expect(adapts('vinaya.build-revision-handoff')?.[0]).toBe(handoffFindings)
     expect(adapts('harness.publish')?.[0]).toBe(publishRound)
@@ -134,7 +139,7 @@ describe('bindings read run state when their step runs', () => {
       runtimeDir: '/runtime',
       issueNumber: 9,
       reviewRound: () => 3,
-      renderVerdict: (role: string) => `rendered ${role}`,
+      buildVerdict: (role: string) => ({ observation: { role }, rendered: `rendered ${role}` }),
       bound: {
         writeHeldVerdict: (root: string, issue: number, round: number, role: string, text: string) =>
           void held.push([root, issue, round, role, text])
@@ -152,16 +157,21 @@ describe('bindings read run state when their step runs', () => {
     ])
   })
 
-  test('an invalid reviewer output holds nothing', () => {
+  test('an invalid reviewer output holds nothing and is retried, never thrown', () => {
     const held: unknown[] = []
     const task = {
       reviewRound: () => 1,
-      renderVerdict: () => '',
+      buildVerdict: (role: string) => ({ observation: { role }, rendered: '' }),
       bound: { writeHeldVerdict: () => void held.push(1) }
     } as unknown as TaskInput
-    const validate = createActions(task)['vinaya.validate-reviewer-outputs'] as (context: never) => unknown
+    const validate = createActions(task)['vinaya.validate-reviewer-outputs'] as (context: never) => {
+      exitCode: number
+      stdout: string
+    }
     const results = { 'code-review': agentResult(review('code-reviewer')), 'security-review': agentResult({}) }
-    expect(() => validate({ results } as never)).toThrow('security-review output failed')
+    const result = validate({ results } as never)
+    expect(result.exitCode).toBe(1)
+    expect((JSON.parse(result.stdout) as { next: string }).next).toBe('retry')
     expect(held).toEqual([])
   })
 })
@@ -188,19 +198,30 @@ function setup(scenario: Scenario = {}) {
   const spawns: string[] = []
   const killed: string[] = []
   const gates = [...(scenario.gates ?? [0])]
+  let lastGate = 0
   const assessments = [...(scenario.assessments ?? [0])]
   const next = (queue: number[]) => (queue.length > 1 ? (queue.shift() as number) : (queue[0] ?? 0))
 
-  const real = createActions({} as TaskInput)
+  const real = createActions({ reviewRound: () => 1 } as unknown as TaskInput)
   const actions: ActionRegistry = Object.fromEntries(
     Object.keys(ACTION_BINDINGS).map((name) => [
       name,
       async (context) => {
         stepCalls[context.nodeId] = (stepCalls[context.nodeId] ?? 0) + 1
         scenario.onAction?.(context.nodeId)
-        if (name === 'harness.run-gates') return { exitCode: next(gates) }
+        if (name === 'harness.run-gates') {
+          lastGate = next(gates)
+          return { exitCode: lastGate }
+        }
+        // The gate assessment's own decision is replaced: a red gate sends the Developer back.
+        if (name === 'vinaya.assess-gate') return { exitCode: lastGate === 0 ? 0 : 1 }
         if (name === 'vinaya.assess-round') return { exitCode: next(assessments) }
-        if (name === 'vinaya.classify-gate-result' || name === 'vinaya.dispatch-reviewers') {
+        if (
+          name === 'vinaya.classify-gate-result' ||
+          name === 'vinaya.classify-developer-output' ||
+          name === 'vinaya.classify-reviewer-outputs' ||
+          name === 'vinaya.dispatch-reviewers'
+        ) {
           return (real[name] as NonNullable<ActionRegistry[string]>)(context)
         }
         return { exitCode: 0 }

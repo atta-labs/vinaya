@@ -171,6 +171,12 @@ import {
   sh
 } from './dev-review-loop/gate-reading.js'
 import {
+  noPushPauseDetail,
+  readUnpushedWorkDetail,
+  unpushedFailureMessage as sharedUnpushedFailureMessage,
+  unpushedWorkResumeDetail
+} from './dev-review-loop/unpushed-work.js'
+import {
   checkTaskDispatchReadiness,
   createTaskWorktree,
   createTaskWorktreeFromRemote,
@@ -1231,43 +1237,6 @@ export function assertValidLoopEvent(e: DevReviewLoopEventInput): void {
   )
 }
 
-/**
- * O2: the loop keeps no control file in the worktree — the Developer's turn
- * result arrives as structured output, and the driver's own records live under
- * the round's Developer folder inside the task's folder — so this reads the
- * worktree's own `git status --porcelain` with no exemption at all: a stray
- * file of any name is ordinary untracked work, never specially ignored.
- */
-function defaultReadUnpushedWorkDetail(worktreePath: string): { dirtyFiles: string[]; aheadCount: number } {
-  let dirtyFiles: string[] = []
-  try {
-    // Deliberately NOT `sh()`: its own blanket `.trim()` on the whole output
-    // destroys porcelain's own leading space on line 1 when the status code
-    // there is ` M` (unstaged modify) — the single most common code — before
-    // this function's own fixed-width slice ever runs. `execFileSync` here
-    // keeps every byte porcelain actually printed.
-    const raw = execFileSync('git', ['-C', worktreePath, 'status', '--porcelain'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-    dirtyFiles = raw
-      .split('\n')
-      .filter((line) => line.length > 3)
-      .map((line) => line.slice(3))
-  } catch {
-    // Worktree unreadable — nothing to report.
-  }
-  let aheadCount = 0
-  try {
-    const count = sh('git', ['-C', worktreePath, 'rev-list', '--count', '@{u}..HEAD'])
-    const parsed = Number.parseInt(count.trim(), 10)
-    aheadCount = Number.isFinite(parsed) ? parsed : 0
-  } catch {
-    // No upstream tracking ref (or the worktree is unreadable) — zero, not a throw.
-  }
-  return { dirtyFiles, aheadCount }
-}
-
 /** O7: the worktree's current branch, or `null` when unreadable (detached HEAD, or the worktree is gone). */
 function defaultReadWorktreeBranch(worktreePath: string): string | null {
   try {
@@ -2313,18 +2282,6 @@ async function defaultRefreshPrEvidence(input: {
 }
 
 /**
- * The `no_push` pause's detail: the branch, then only what is really
- * unpushed — the dirty file(s), and the count of commits ahead of the remote
- * when there are any. Never a claim about commits when there are none.
- */
-function noPushPauseDetail(branch: string, unpushed: { dirtyFiles: string[]; aheadCount: number }): string {
-  const parts = [`branch ${branch}`]
-  if (unpushed.dirtyFiles.length > 0) parts.push(`dirty file(s): ${unpushed.dirtyFiles.join(', ')}`)
-  if (unpushed.aheadCount > 0) parts.push(`${unpushed.aheadCount} commit(s) ahead of the remote`)
-  return parts.join('; ')
-}
-
-/**
  * O1/O3: `assessRound`'s own `'confidence'` pause (`packages/aeg-core`, out
  * of this task's Surface — the guard itself is untouched) carries no
  * `detail` at all for either branch that reaches it (a re-asked turn that
@@ -2605,7 +2562,7 @@ export function defaultDeps(): LoopDeps {
     gatePollMaxAttempts: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS', 120),
     gatePollIntervalMs: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS', 15_000),
     readWorktreeHead,
-    readUnpushedWorkDetail: defaultReadUnpushedWorkDetail,
+    readUnpushedWorkDetail,
     readWorktreeBranch: defaultReadWorktreeBranch,
     gitWorktreeChangedPaths: defaultGitWorktreeChangedPaths,
     readDefaultBranchTip: defaultReadDefaultBranchTip,
@@ -5278,27 +5235,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       return sharedCommitAndPushPrompt(publicationState.lastPushRefusal, publishingInstructionLine())
     }
 
-    /** Shared by the journal event and the PR comment below, so the two never describe the same stall differently. */
-    function unpushedWorkResumeDetail(unpushed: { dirtyFiles: string[]; aheadCount: number }): string {
-      return unpushed.dirtyFiles.length > 0
-        ? `dirty file(s): ${unpushed.dirtyFiles.join(', ')}`
-        : `${unpushed.aheadCount} commit(s) ahead of the remote, worktree clean`
-    }
-
-    /**
-     * The mechanical failure of an attempt whose push never landed, as a
-     * message — everything this driver can observe of one, which is
-     * everything it will ever have: the refusal text itself (a pre-push hook
-     * refusing, the remote refusing) exists only inside the developer's own
-     * session, and what survives the turn is the head that did not move plus
-     * `readUnpushedWorkDetail`'s reading of the worktree. Fed to `assessRound`
-     * as a `mechanical_failure` observation, where the same normalised
-     * signature that matches two red gates matches two of these; also what
-     * the resulting pause names, so the message a reader gets is this exact
-     * text.
-     */
+    /** The shared `unpushedFailureMessage`, on this loop's own branch. */
     function unpushedFailureMessage(head: string, unpushed: { dirtyFiles: string[]; aheadCount: number }): string {
-      return `push never landed on ${branch}: head ${head} unchanged; ${unpushedWorkResumeDetail(unpushed)}`
+      return sharedUnpushedFailureMessage(branch, head, unpushed)
     }
 
     /**

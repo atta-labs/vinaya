@@ -9,7 +9,11 @@ import {
 import { publishingInstructionLine } from '../../../apps/cli/src/lib/dev-review-loop'
 import { renderDeveloperDoctrineBlock } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
 import { commitAndPushPrompt } from '../../../apps/cli/src/lib/task-tools/live-developer-context'
-import { turnResultInstruction } from '../../../apps/cli/src/lib/dev-review-loop/turn-result'
+import {
+  turnResultCorrectionPrompt,
+  turnResultInstruction
+} from '../../../apps/cli/src/lib/dev-review-loop/turn-result'
+import { latestRecord, type SendBack } from './actions'
 
 // What today's review loop sends its Developer each round, built from the same exported functions
 // (`renderDeveloperDoctrineBlock`, `publishingInstructionLine`, `turnResultInstruction`, the context-packet
@@ -137,20 +141,91 @@ export function liveWithdrawalOf(results: Readonly<Record<string, StepNodeResult
   }
 }
 
-/** Why the Developer runs again: first turn, a red gate on its last head, a failed live line, or the round's review findings. */
+/** Why the Developer is dispatched again, as the newest deciding step recorded it; null when none did. */
+export function latestSendBack(results: Readonly<Record<string, StepNodeResult>>): SendBack | null {
+  try {
+    return latestRecord(results)?.sendBack ?? null
+  } catch {
+    return null
+  }
+}
+
+/** What the Developer's turn answers: its first turn, or the reason the newest deciding step sent it back. */
+export type DeveloperTurnKind =
+  | 'first'
+  | 'gate-red'
+  | 'live-red'
+  | 'review'
+  | 'correction'
+  | 'open-pull-request'
+  | 'unpushed'
+  | 'ask-confidence'
+
+/** Why the Developer runs again: first turn, a red gate on its last head, a failed live line, a rejected turn result, no push, or the round's review findings. */
 export function developerTurnKind(
   results: Readonly<Record<string, StepNodeResult>>,
   headSha?: string
-): 'first' | 'gate-red' | 'live-red' | 'review' {
-  if (results.develop === undefined) return 'first'
-  const gate = results['run-mechanical-gates']
-  if (gate !== undefined && gate.exitCode !== 0) return 'gate-red'
-  return headSha !== undefined && liveWithdrawalOf(results, headSha) !== null ? 'live-red' : 'review'
+): DeveloperTurnKind {
+  const sendBack = latestSendBack(results)
+  // A run that attached to an open pull request may send its Developer back before any Developer step ran.
+  if (results.develop === undefined && sendBack === null) return 'first'
+  switch (sendBack?.kind) {
+    case 'correction':
+    case 'open-pull-request':
+    case 'unpushed':
+    case 'ask-confidence':
+    case 'gate-red':
+      return sendBack.kind
+    case 'live-red':
+      return headSha !== undefined && liveWithdrawalOf(results, headSha) !== null ? 'live-red' : 'review'
+    case 'review':
+    case 'low-confidence':
+      return 'review'
+    default: {
+      const gate = results['run-mechanical-gates']
+      if (gate !== undefined && gate.exitCode !== 0) return 'gate-red'
+      return headSha !== undefined && liveWithdrawalOf(results, headSha) !== null ? 'live-red' : 'review'
+    }
+  }
 }
+
+/** The texts of a turn that only answers the driver, never a new turn of work; null for a revision. */
+function answerPromptText(
+  kind: DeveloperTurnKind,
+  facts: DeveloperPromptFacts,
+  results: Readonly<Record<string, StepNodeResult>>
+): string | null {
+  const sendBack = latestSendBack(results)
+  const doctrineLine = `Per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`): ${publishingInstructionLine()}`
+  switch (kind) {
+    case 'correction':
+      return turnResultCorrectionPrompt(sendBack?.failures ?? [], {
+        round: facts.round,
+        attempt: 1,
+        head: sendBack?.head ?? null,
+        knownFindingIds: sendBack?.knownFindingIds ?? []
+      })
+    case 'open-pull-request':
+      return join([
+        'Your previous turn left no commit on this branch yet, and no open pull request.',
+        issueRulingsBlock(facts.issueRulings),
+        doctrineLine
+      ])
+    case 'unpushed':
+      return commitAndPushPrompt(facts.lastPushRefusal ?? null, publishingInstructionLine())
+    case 'ask-confidence':
+      return 'The driver holds no accepted `completed` turn result for this round, so it has no confidence to read. Change and publish nothing; report your turn result for the work already on this branch.'
+    default:
+      return null
+  }
+}
+
+const join = (parts: readonly (string | null)[]) =>
+  parts.filter((part): part is string => part !== null && part.length > 0).join('\n\n')
 
 /** The loop's later-round prompt text: what to fix, the finding ids to cite, and how to publish the fix. */
 function revisionPromptText(
-  kind: 'gate-red' | 'live-red' | 'review',
+  kind: DeveloperTurnKind,
   facts: DeveloperPromptFacts,
   results: Readonly<Record<string, StepNodeResult>>
 ): string {
@@ -206,8 +281,6 @@ export function developerPrompt(
     stopConditions: ['Honor every stop condition in the frozen brief.']
   })
   const kind = developerTurnKind(results, facts.headSha)
-  const join = (parts: readonly (string | null)[]) =>
-    parts.filter((part): part is string => part !== null && part.length > 0).join('\n\n')
   if (kind === 'first')
     return join([
       facts.sources.block,
@@ -231,8 +304,9 @@ export function developerPrompt(
     facts.sources.block,
     renderContextPacket(packet),
     resumeContextBlock(facts.resume),
-    pushRefusalPrompt(facts),
-    revisionPromptText(kind, facts, results),
+    ...(answerPromptText(kind, facts, results) === null
+      ? [pushRefusalPrompt(facts), revisionPromptText(kind, facts, results)]
+      : [answerPromptText(kind, facts, results)]),
     turnResultInstruction(facts.round)
   ])
 }

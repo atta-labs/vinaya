@@ -15,6 +15,7 @@ import { createActions, type TaskInput } from '../executing/actions'
 import { developerPrompt, type DeveloperPromptFacts } from '../executing/developer-prompt'
 import { createVinayaLogProducers } from '../executing/log-events'
 import { recordedHandoff } from './handoff-fakes'
+import { confidentTurn, heldReviews, vendorLines } from './round-fakes'
 
 const PROCESS = loadProcess(resolve(import.meta.dir, '..'))
 const AGENTS: readonly Agent[] = ['claude', 'codex']
@@ -84,10 +85,7 @@ const mech = (exitCode: number, stdout = '') => ({ kind: 'mechanical', exitCode,
 function stubChild(agent: Agent): SpawnedProcessLike {
   const closeListeners: Array<(code: number | null) => void> = []
   let stdout: ((chunk: string) => void) | undefined
-  const lines =
-    agent === 'claude'
-      ? ['{"type":"system","session_id":"s"}', '{"type":"result","session_id":"s"}']
-      : ['{"type":"thread.started","thread_id":"s"}', '{"type":"turn.completed"}']
+  const lines = vendorLines(agent, confidentTurn)
   return {
     stdin: {
       write: () => {},
@@ -169,13 +167,11 @@ async function runFlow(agent: Agent, scenario: Scenario = {}): Promise<Observed>
       seedRound: (next: number) => {
         round = Math.max(round, next)
       },
-      observe: () => ({ kind: 'verdicts', round, verdicts }),
       verdicts: () => {
         round += 1
         return verdicts
       },
       publish: (at: Record<string, unknown>) => ({ task: 9, ...at }),
-      renderVerdict: () => 'rendered verdict',
       frozenBrief: () => briefWith(scenario.live ?? []),
       candidateDir: () => wt,
       inputVersions: () => ({ briefHash: null, objectivesVersion: null, rulingOrdinal: 0, policyDigest: 'test' }),
@@ -216,7 +212,10 @@ async function runFlow(agent: Agent, scenario: Scenario = {}): Promise<Observed>
     const real = createActions(task)
     const results: Observed['results'] = {}
     const completionSteps = new Set([
+      'vinaya.classify-developer-output',
+      'vinaya.assess-gate',
       'vinaya.classify-gate-result',
+      'vinaya.classify-reviewer-outputs',
       'vinaya.run-security-scan',
       'vinaya.dispatch-reviewers',
       'vinaya.assess-round',
@@ -238,7 +237,11 @@ async function runFlow(agent: Agent, scenario: Scenario = {}): Promise<Observed>
       ].map((name) => [
         name,
         async (context) => {
-          const action = completionSteps.has(name) ? real[name]! : async () => ({ exitCode: 0, stdout: '' })
+          const action = completionSteps.has(name)
+            ? real[name]!
+            : name === 'vinaya.validate-reviewer-outputs'
+              ? async () => heldReviews(round, verdicts)
+              : async () => ({ exitCode: 0, stdout: '' })
           const result = await action(context)
           results[context.nodeId] = { exitCode: result.exitCode, stdout: result.stdout ?? '' }
           return result

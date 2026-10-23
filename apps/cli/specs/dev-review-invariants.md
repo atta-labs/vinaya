@@ -185,6 +185,20 @@ every other leg `stopped` (`INV-021`, `INV-041`), and opens the deferred-finding
 Issue from the publish step. The scan's command resolver is
 `dev-review-loop/security-scan-command.ts`, shared by both runners.
 
+<!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"path": "apps/cli/src/lib/dev-review-loop/unpushed-work.ts", -->
+The Engine runner decides every round through the shared assessment as well:
+a red gate is a gate observation (`INV-010`, `INV-016`), the time budget is
+checked on gate and mechanical-failure observations (`INV-020`), a confidence
+below 50 or a missing one is the assessment's extra turn (`INV-011`), a
+rejected turn result earns one correction turn (`INV-013`, `INV-031`,
+`INV-125`), a reviewer with no usable review gets one fresh attempt
+(`INV-057`), the review-input manifest is one snapshot per round, re-read
+before anything is held (`INV-062`, `INV-063`), a turn that publishes nothing
+is resumed once and stalls are bounded (`INV-023`, `INV-033`, `INV-042`), and
+the Flow's ceilings come from the review policy's round cap (`INV-005`). The
+reader of a Developer's unpushed work is `dev-review-loop/unpushed-work.ts`,
+shared by both runners, where `INV-042`'s source now points.
+
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop/round-assess.ts contains:export async function waitForOwnLoopLine( -->
 <!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"id": "INV-111", -->
 Telemetry entries are therefore classified on their own terms (`INV-111`

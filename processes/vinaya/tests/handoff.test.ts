@@ -17,6 +17,7 @@ import {
 import { createActions, type TaskInput } from '../executing/actions'
 import { createHandoff, type Handoff, type HandoffRun } from '../executing/handoff'
 import { handoffHaltReason } from '../executing/log-events'
+import { heldReviews } from './round-fakes'
 import { recordedHandoff } from './handoff-fakes'
 
 const TASK = 9
@@ -124,9 +125,11 @@ function assessing(handoff: Handoff, rounds: VerdictObservation[][]) {
       maxTaskMinutes: 0
     }),
     handoff,
-    observe: () => ({ kind: 'verdicts', round: round + 1, verdicts: rounds[round] })
+    reviewRound: () => round + 1
   } as unknown as TaskInput
-  const action = createActions(task)['vinaya.assess-round'] as unknown as Action
+  const actions = createActions(task)
+  const gateAction = actions['vinaya.assess-gate'] as unknown as Action
+  const action = actions['vinaya.assess-round'] as unknown as Action
   const develop = {
     kind: 'agent-spawn',
     nodeId: 'develop',
@@ -141,12 +144,14 @@ function assessing(handoff: Handoff, rounds: VerdictObservation[][]) {
     stderr: '',
     durationMs: 5
   }
-  let previous: unknown
+  const results: Record<string, unknown> = { develop, 'run-mechanical-gates': gate }
+  // Each round: the gate assessed first, then the verdicts the reviewer step held for it.
   return async () => {
-    const results: Record<string, unknown> = { develop, 'run-mechanical-gates': gate }
-    if (previous) results['assess-round'] = previous
+    const gated = await gateAction({ results } as never)
+    results['assess-gate'] = { kind: 'mechanical', nodeId: 'assess-gate', ...gated }
+    results['validate-reviewer-outputs'] = { kind: 'mechanical', ...heldReviews(round + 1, rounds[round]!) }
     const result = await action({ results } as never)
-    previous = { kind: 'mechanical', nodeId: 'assess-round', ...result }
+    results['assess-round'] = { kind: 'mechanical', nodeId: 'assess-round', ...result }
     round += 1
     return result
   }

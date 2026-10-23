@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import {
   initialLoopState,
   buildReviewInputManifest,
@@ -11,14 +12,13 @@ import {
   type DevReviewLoopEventInput,
   type LoopConfig,
   type LoopState,
-  type Observations,
-  type ReviewInputManifest,
-  type VerdictObservation
+  type ReviewInputManifest
 } from '@attalabs/aeg-core'
 import {
   createRunControl,
   type RunControl,
   type RunOutcome,
+  type SpawnedProcessLike,
   type SpawnFn,
   type StepNodeResult
 } from '@atta/executor-agent-spawn'
@@ -139,7 +139,8 @@ import { fetchLoopHistory } from '../../../apps/cli/src/lib/dev-review-loop/jour
 import {
   buildVerdictFromReview,
   heldVerdictPath,
-  latestHeldCleanVerdict
+  latestHeldCleanVerdict,
+  persistManifestRecord
 } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { RUNTIME_DIR_ENV_KEY, runtimeDirForRepoAsync } from '../../../apps/cli/src/lib/run-paths'
 import {
@@ -165,15 +166,20 @@ import { resolveRoleDoctrineText } from '../../../apps/cli/src/roles/plan'
 import { developerPrompt, type DeveloperPromptFacts } from '../executing/developer-prompt'
 import {
   ACTION_BINDINGS,
+  AGENT_EXIT_EVENT,
   agentOutput,
   createActions,
+  recordedDispatch,
   recordedScanOutcome,
+  recordedVerdicts,
   type BoundFunctions,
   createRoleLaunchers,
   sandboxProbePlanFor,
   type HeldVerdictRole,
+  type ReviewRoundInputs,
   type TaskInput
 } from '../executing/actions'
+import { readUnpushedWorkDetail, type UnpushedWork } from '../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
 
 // The Engine path for one task: the Vinaya process run on the packed executor
 // instead of the standalone review loop. Choosing this entry point is the
@@ -343,6 +349,81 @@ export async function dryRunLines(options: {
     lines.push(`shim ${role}: ${options.shimPath}`)
   }
   return lines
+}
+
+/** Where a run's own Flow is written: the checked-in one with the run's policy ceilings, under its run directory. */
+export const renderedFlowPath = (runDir: string): string => join(runDir, 'dev-review.flow.yaml')
+
+/**
+ * The process with its Flow rendered for one run: every decision's `max_revisions` set to the review policy's
+ * `maxRounds`, written under the run directory, and that file the process's Flow. The checked-in Flow keeps literal
+ * numbers, which the loader requires; the run compiles the rendered one. A cap that is not a positive whole number
+ * leaves the process as it is, since no Flow can carry it.
+ */
+export function withPolicyCeilings(loaded: LoadedProcess, runDir: string, maxRounds: number): LoadedProcess {
+  if (!Number.isInteger(maxRounds) || maxRounds < 1) return loaded
+  const flow = parseYaml(readFileSync(loaded.flowPath, 'utf8')) as {
+    steps: Array<{ decision?: { max_revisions?: number } }>
+  }
+  for (const step of flow.steps) if (step.decision) step.decision.max_revisions = maxRounds
+  mkdirSync(runDir, { recursive: true })
+  const flowPath = renderedFlowPath(runDir)
+  writeFileSync(flowPath, stringifyYaml(flow))
+  return { ...loaded, flowPath }
+}
+
+/**
+ * A launch that lets a reviewer process exit non-zero without failing its step: the exit is appended to its output
+ * as one `AGENT_EXIT_EVENT` record and reported as zero, so the reviewer-output step classifies the attempt
+ * (`classifyReviewOutcome`) and retries it as the standalone loop does. Every other launch, and a killed process,
+ * is passed through as it is.
+ */
+export function tolerateReviewerExit(
+  spawnFn: SpawnFn,
+  isReviewer: (args: readonly string[], env: Readonly<Record<string, string | undefined>> | undefined) => boolean
+): SpawnFn {
+  return (command, args, options) => {
+    const child = spawnFn(command, args, options)
+    if (!isReviewer(args, options?.env)) return child
+    const stdoutListeners: Array<(chunk: Buffer | string) => void> = []
+    const closeListeners: Array<(code: number | null) => void> = []
+    // One close handler on the process: the marker reaches the output before any listener learns of the exit.
+    child.on('close', (code) => {
+      if (code !== null && code !== 0) {
+        const marker = `${JSON.stringify({ type: AGENT_EXIT_EVENT, exit_code: code })}\n`
+        for (const write of stdoutListeners) write(marker)
+      }
+      for (const listener of closeListeners) listener(code === null ? null : 0)
+    })
+    const wrapped: SpawnedProcessLike = {
+      stdin: child.stdin,
+      stderr: child.stderr,
+      stdout: child.stdout && {
+        on: (event: 'data', listener: (chunk: Buffer | string) => void) => {
+          stdoutListeners.push(listener)
+          child.stdout?.on(event, listener)
+        }
+      },
+      on: ((event: 'close' | 'error', listener: (value: never) => void) => {
+        if (event === 'close') closeListeners.push(listener as (code: number | null) => void)
+        else child.on('error', listener as (err: Error) => void)
+      }) as SpawnedProcessLike['on'],
+      kill: (signal?: NodeJS.Signals) => child.kill(signal)
+    }
+    // The reaper and the executor read the process id from the launch itself.
+    const pid = (child as { pid?: unknown }).pid
+    return (typeof pid === 'number' ? Object.assign(wrapped, { pid }) : wrapped) as SpawnedProcessLike
+  }
+}
+
+/** Whether a launch is one of the reviewer roles' generated launches under `generatedRoot`. */
+export function isReviewerLaunch(generatedRoot: string) {
+  const roots = ['code-reviewer', 'security-reviewer'].map((role) => join(generatedRoot, role))
+  return (args: readonly string[], env: Readonly<Record<string, string | undefined>> | undefined): boolean =>
+    roots.some(
+      (root) =>
+        (env?.CODEX_HOME !== undefined && env.CODEX_HOME === root) || args.some((arg) => arg.startsWith(`${root}/`))
+    )
 }
 
 /** One execution of a step, in the order the Engine started them. */
@@ -761,6 +842,17 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
     const saver = new SqliteCheckpointer({ path: checkpointPath(runDir), revision, model: args.model })
     checkpointer = saver
     const identity = runIdentityOfTask(args.task)
+    // The run compiles its own Flow, ceilings from the review policy; an unreadable policy leaves the checked-in one,
+    // and the prepare-run step pauses on that policy before any decision is reached.
+    const runProcess = (): LoadedProcess => {
+      let maxRounds: number | undefined
+      try {
+        maxRounds = options.taskInput?.reviewPolicy?.()?.maxRounds
+      } catch {
+        maxRounds = undefined
+      }
+      return maxRounds === undefined ? options.process : withPolicyCeilings(options.process, runDir, maxRounds)
+    }
     const runLeg = async (): Promise<void> => {
       outcome = null
       error = undefined
@@ -810,7 +902,7 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
       } else {
         const developerFacts = options.developerFacts
         const runOptions: ProcessRunOptions = {
-          process: options.process,
+          process: runProcess(),
           question: `Task ${args.task}`,
           bindings: { actions, decisions: (await import('../executing/actions')).decisions, roles },
           checkpointer: saver,
@@ -839,7 +931,7 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
                 }
               }
             : {}),
-          spawnFn: reaper.spawnFn,
+          spawnFn: tolerateReviewerExit(reaper.spawnFn, isReviewerLaunch(join(runDir, 'generated'))),
           control,
           onEvent: (event) => {
             const lifecycleEvent = event as NodeLifecycle
@@ -1088,6 +1180,8 @@ export async function liveTaskInput(
     resolveReviewerDoctrine?: (role: 'reviewer' | 'security') => Promise<string | null>
     /** Replaces the functions the security scan, live check and deferred-findings Issue call, for a run that must not reach them. */
     completion?: Partial<BoundFunctions>
+    /** The repository (`owner/repo`) the round's manifest record names. */
+    repository?: string
     reviewSources?: Partial<
       Pick<VinayaReviewInputDeps, 'judgedHead' | 'readHead' | 'baseOf' | 'brief' | 'prBody' | 'diff' | 'priorFindings'>
     >
@@ -1129,28 +1223,37 @@ export async function liveTaskInput(
     if (head === null) throw new Error(`could not read the head of ${worktreePath}`)
     return head
   }
-  const built = (role: HeldVerdictRole, review: ReviewResult) =>
+  // One snapshot of the review inputs per dispatch of a round's reviewers: every reviewer prompt, held verdict and
+  // publication of the round reads it, so a head or a ruling that moves after it is taken never reaches them.
+  const reviewInputs = (reviewRound: number): ReviewRoundInputs => {
+    const manifest = manifestAt(judgedHead())
+    const resolved = forge.resolveIssueObjectives(args.task)
+    const pr = forge.findOpenPrForBranch(branch)
+    // Best-effort: a record that cannot be written never costs the round.
+    persistManifestRecord(runtimeDir, args.task, manifest, {
+      repository: lookups.repository ?? 'unknown',
+      pr: pr?.number ?? 0,
+      branch,
+      round: reviewRound,
+      recordedAt: new Date().toISOString()
+    })
+    return {
+      manifest,
+      objectives: resolved.objectives.map((objective) => ({ id: objective.id, text: objective.text })),
+      objectivesText: resolved.text
+    }
+  }
+  const buildVerdict = (role: HeldVerdictRole, review: ReviewResult, inputs: ReviewRoundInputs) =>
     buildVerdictFromReview(
       role,
       review,
       args.agent === 'claude' ? 'claude' : 'codex',
       args.task,
       { exitCode: 0, durationMs: 0, usage: null } as never,
-      manifestAt(judgedHead()),
+      inputs.manifest,
       policyNow(),
-      forge.resolveIssueObjectives(args.task).objectives
+      inputs.objectives
     )
-  const verdictsOf = (results: Readonly<Record<string, StepNodeResult>>): VerdictObservation[] =>
-    (
-      [
-        ['code-review', 'reviewer'],
-        ['security-review', 'security']
-      ] as const
-    ).map(([step, role]) => {
-      const parsed = parseReviewResult(agentOutput(results, step))
-      if (!parsed.ok) throw new Error(`${step} output failed ${parsed.stage} validation: ${parsed.errors.join('; ')}`)
-      return built(role, parsed.result).observation
-    })
   // One staged review input per round: a copy of the task head plus the brief, PR body, diff and prior findings.
   const reviewInput = createVinayaReviewInputStager({
     root: runtimeDir,
@@ -1179,10 +1282,13 @@ export async function liveTaskInput(
     } catch {
       doctrine = null
     }
-    const objectives = forge.resolveIssueObjectives(args.task)
+    // The round's snapshot binds the prompt; a prompt rendered with no recorded dispatch reads the inputs as they stand.
+    const dispatched = recordedDispatch(results)?.inputs ?? null
+    const objectives = dispatched ?? null
+    const live = objectives === null ? forge.resolveIssueObjectives(args.task) : null
     const facts: ReviewerPromptFacts = {
-      objectives: objectives.text,
-      resolvedObjectives: objectives.objectives,
+      objectives: dispatched?.objectivesText ?? live?.text ?? '',
+      resolvedObjectives: dispatched?.objectives ?? live?.objectives ?? [],
       // As the standalone loop's review round: the Issue's rulings after the brief then the pull request's,
       // and the forge's CI conclusion for the judged head (`fetchCiConclusion`).
       rulings: reviewerRulings({
@@ -1193,7 +1299,7 @@ export async function liveTaskInput(
       }),
       ciConclusion: forge.fetchCiConclusion(judgedHead()),
       revision: forge.fetchSourceRevision(args.task),
-      manifest: manifestAt(judgedHead()),
+      manifest: dispatched?.manifest ?? manifestAt(judgedHead()),
       policy: policyNow(),
       // The scan outcome reaches the security prompt only.
       ...(role === 'security' ? { configScan: recordedScanOutcome(results) } : {})
@@ -1301,19 +1407,22 @@ export async function liveTaskInput(
         return null
       }
     },
-    observe: (results): Observations => ({ kind: 'verdicts', round, verdicts: verdictsOf(results) }),
+    reviewInputs,
+    buildVerdict,
     verdicts: (results) => {
-      const verdicts = verdictsOf(results)
+      const verdicts = recordedVerdicts(results)
       round += 1
       return verdicts
     },
-    renderVerdict: (role, review) => built(role, review).rendered,
-    publish: (at) => ({
+    remoteHead: () => forge.resolveHead(branch),
+    readUnpushedWork: () => readUnpushedWorkDetail(worktreePath),
+    publish: ({ manifest, ...at }) => ({
       task: args.task,
       ...at,
       journal: forge.fetchLoopHistory(at.prNumber),
       policy: policyNow(),
-      manifest: manifestAt(at.expectedHead)
+      // The round's snapshot; a held verdict published with no recorded dispatch is bound to the head it judged.
+      manifest: manifest ?? manifestAt(at.expectedHead)
     })
   }
 }
@@ -1409,25 +1518,9 @@ export function liveDeveloperFacts(input: {
   }
 }
 
-/** The worktree's unpublished work, as the loop reads it (`git status --porcelain`, commits ahead of upstream). */
-export function readUnpublishedWork(worktreePath: string): { dirtyFiles: string[]; aheadCount: number } | null {
-  if (!existsSync(worktreePath)) return null
-  let dirtyFiles: string[] = []
-  try {
-    dirtyFiles = execFileSync('git', ['-C', worktreePath, 'status', '--porcelain'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-      .split('\n')
-      .filter((line) => line.length > 3)
-      .map((line) => line.slice(3))
-  } catch {}
-  let aheadCount = 0
-  try {
-    const parsed = Number.parseInt(sh('git', ['-C', worktreePath, 'rev-list', '--count', '@{u}..HEAD']), 10)
-    aheadCount = Number.isFinite(parsed) ? parsed : 0
-  } catch {}
-  return { dirtyFiles, aheadCount }
+/** The worktree's unpublished work, read with the standalone loop's own reader; null when the worktree is gone. */
+export function readUnpublishedWork(worktreePath: string): UnpushedWork | null {
+  return existsSync(worktreePath) ? readUnpushedWorkDetail(worktreePath) : null
 }
 
 /** A round's held review verdicts, rendered as the loop hands them on: the reviewer's, then the security reviewer's. */
@@ -1500,16 +1593,21 @@ async function runLive(args: EngineArgs, loaded: LoadedProcess, repoRoot: string
   const sink = createEngineLogSink()
   const loopId = randomUUID()
   process.env.VINAYA_RUN = loopId
-  const taskInput = await liveTaskInput(args, repoRoot, runtimeDir, loopId)
+  const repo = liveRepo()
+  const taskInput = await liveTaskInput(args, repoRoot, runtimeDir, loopId, {
+    ...(repo ? { repository: `${repo.owner}/${repo.repo}` } : {})
+  })
   const liveContext = engineLiveDevToolsContext({
     branch: taskInput.branch,
     worktreePath: taskInput.worktreePath,
     task: args.task,
     runtimeDir,
     agent: args.agent,
-    repo: liveRepo(),
+    repo,
     round: taskInput.reviewRound
   })
+  // A turn whose last publication a driver tool refused has no push coming: the stall names the refusal.
+  taskInput.publicationRefusal = () => liveContext.state.turnPublicationRefusal
   const result = await runEngine({
     args,
     process: loaded,

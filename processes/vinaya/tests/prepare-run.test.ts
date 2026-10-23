@@ -336,8 +336,10 @@ describe('an empty fetch issues no source receipt on the Engine path', () => {
     const fetched = await live.context.fetchDocumentation({ url: URL_SOURCE })
     const setupped = setup({
       runtimeDir,
-      developerContext: { knownFindingIds: [], requiredSources: [URL_SOURCE] }
+      developerContext: { knownFindingIds: [], requiredSources: [URL_SOURCE] },
+      reviewRound: () => 1
     })
+    setupped.task.bound = { ...setupped.task.bound, findOpenPrForBranch: () => ({ number: 70, branch: BRANCH }) }
     const validate = () =>
       (createActions(setupped.task)['vinaya.validate-developer-output'] as unknown as Action)({
         results: { develop: { kind: 'agent-spawn', nodeId: 'develop', exitCode: 0, events: [completedTurn] } }
@@ -350,7 +352,12 @@ describe('an empty fetch issues no source receipt on the Engine path', () => {
     expect(fetched.ok).toBe(true)
     if (fetched.ok) expect(fetched.result.receipt).toMatchObject({ recorded: false })
     expect(existsSync(sourceReceiptsPath(developerSourceStoreDir(runtimeDir, TASK)))).toBe(false)
-    expect(() => validate()).toThrow('no delivery receipt the controller recorded')
+    // Rejected, never thrown: the turn is sent back for its one correction, naming the missing receipt.
+    const rejected = (await validate()) as { exitCode: number; stdout: string }
+    expect(rejected.exitCode).toBe(1)
+    const record = JSON.parse(rejected.stdout) as { sendBack: { kind: string; failures: string[] } }
+    expect(record.sendBack.kind).toBe('correction')
+    expect(record.sendBack.failures.join(' ')).toContain('no delivery receipt the controller recorded')
   })
 
   test('real content records a receipt, and the citation is accepted', async () => {

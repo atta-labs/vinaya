@@ -78,13 +78,18 @@ for (const vendor of ['claude-code', 'codex'] as const)
         const gateQueue = [...gates]
         const assessQueue = [...assessments]
         const next = (q: number[]) => (q.length > 1 ? (q.shift() as number) : (q[0] ?? 0))
+        let lastGate = 0
         const actions: ActionRegistry = Object.fromEntries(
           Object.keys(ACTION_BINDINGS).map((name) => [
             name,
             async () => {
-              if (name === 'harness.run-gates') return { exitCode: next(gateQueue) }
+              if (name === 'harness.run-gates') {
+                lastGate = next(gateQueue)
+                return { exitCode: lastGate }
+              }
+              // The gate assessment's decision is replaced: a red gate sends the Developer back.
+              if (name === 'vinaya.assess-gate') return { exitCode: lastGate === 0 ? 0 : 1 }
               if (name === 'vinaya.assess-round') return { exitCode: next(assessQueue) }
-              if (name === 'vinaya.classify-gate-result') return { exitCode: 0 }
               return { exitCode: 0 }
             }
           ])

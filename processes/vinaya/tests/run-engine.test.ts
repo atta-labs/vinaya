@@ -37,7 +37,14 @@ import { loadProcess } from '../../../harness/dev-process/loader/load-process'
 import type { ActionRegistry } from '../../../harness/dev-process/engine-runtime/run-process'
 import type { NodeLifecycle } from '../../../harness/dev-process/logging/translate'
 import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-tools-registration'
-import { classifyGateResult, createActions, dispatchReviewers, type TaskInput } from '../executing/actions'
+import {
+  classifyDeveloperOutput,
+  classifyGateResult,
+  classifyReviewerOutputs,
+  createActions,
+  dispatchReviewers,
+  type TaskInput
+} from '../executing/actions'
 import { heldVerdictPath, writeHeldVerdict } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import type { DeveloperPromptFacts } from '../executing/developer-prompt'
 import {
@@ -92,14 +99,14 @@ describe('the dry run', () => {
         shimPath: '/runs/1/dev-bridge.sh'
       })
       expect(lines[0]).toBe(`process ${loaded.identity.id}@${loaded.identity.version} digest ${loaded.digest}`)
-      expect(lines.filter((line) => line.startsWith('step '))).toHaveLength(18)
+      expect(lines.filter((line) => line.startsWith('step '))).toHaveLength(21)
       const bound = lines.filter((line) => line.startsWith('bound '))
-      expect(bound).toHaveLength(15)
+      expect(bound).toHaveLength(18)
       expect(bound).toContain(
         'bound publish-ready-for-merge harness.publish: publishRound, upsertDeferredFindingsIssue'
       )
       expect(bound).toContain(
-        'bound validate-reviewer-outputs vinaya.validate-reviewer-outputs: parseReviewResult, writeHeldVerdict'
+        'bound validate-reviewer-outputs vinaya.validate-reviewer-outputs: classifyReviewOutcome, writeHeldVerdict, buildManifestRecord'
       )
       const launches = lines.filter((line) => line.startsWith('launch '))
       expect(launches.map((line) => line.split(':')[0])).toEqual([
@@ -204,11 +211,14 @@ function stubRun(scenario: { failAt?: string; haltAt?: string; hostFails?: boole
       'vinaya.prepare-sources',
       'vinaya.choose-start',
       'vinaya.validate-developer-output',
+      'vinaya.classify-developer-output',
       'harness.run-gates',
+      'vinaya.assess-gate',
       'vinaya.classify-gate-result',
       'vinaya.run-security-scan',
       'vinaya.dispatch-reviewers',
       'vinaya.validate-reviewer-outputs',
+      'vinaya.classify-reviewer-outputs',
       'vinaya.assess-round',
       'vinaya.build-revision-handoff',
       'vinaya.run-live-checks',
@@ -220,6 +230,8 @@ function stubRun(scenario: { failAt?: string; haltAt?: string; hostFails?: boole
         if (scenario.haltAt === context.nodeId) control.halt('stop here')
         if (scenario.failAt === context.nodeId) throw new Error('the action broke')
         if (name === 'vinaya.classify-gate-result') return classifyGateResult(context)
+        if (name === 'vinaya.classify-developer-output') return classifyDeveloperOutput(context)
+        if (name === 'vinaya.classify-reviewer-outputs') return classifyReviewerOutputs(context)
         if (name === 'vinaya.dispatch-reviewers') return dispatchReviewers()
         return { exitCode: 0 }
       }
@@ -284,13 +296,16 @@ describe('a stub run on the Engine path', () => {
       'choose-start',
       'develop',
       'validate-developer-output',
+      'classify-developer-output',
       'run-mechanical-gates',
+      'assess-gate',
       'classify-gate-result',
       'run-security-scan',
       'dispatch-reviewers',
       'code-review',
       'security-review',
       'validate-reviewer-outputs',
+      'classify-reviewer-outputs',
       'assess-round',
       'build-revision-handoff',
       'run-live-checks',
@@ -620,10 +635,10 @@ describe('agent-step failures and the live task context', () => {
     const held: string[] = []
     const validate = createActions({
       ...input,
-      renderVerdict: (role: string) => `held ${role}`,
+      buildVerdict: (role: string) => ({ observation: { role }, rendered: `held ${role}` }),
       reviewRound: () => 1,
       bound: { writeHeldVerdict }
-    } as TaskInput)['vinaya.validate-reviewer-outputs'] as (context: never) => unknown
+    } as unknown as TaskInput)['vinaya.validate-reviewer-outputs'] as (context: never) => unknown
     const review = (role: string) => ({
       kind: 'agent-spawn',
       nodeId: role,
