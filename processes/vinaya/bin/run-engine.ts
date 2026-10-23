@@ -1077,7 +1077,6 @@ export async function liveTaskInput(
     fetchTitle?: (n: number) => string
     fetchLabels?: (n: number) => string[]
     policy?: typeof reviewPolicyForLoop
-    /** Replaces the forge and git reads the review input is staged from, for a run that must not reach them. */
     /** Replaces forge reads and writes, for a run that must not reach the forge. */
     forge?: Partial<EngineForge>
     reviewSources?: Partial<
@@ -1200,12 +1199,13 @@ export async function liveTaskInput(
     get loopState(): LoopState {
       if (loopState !== null) return loopState
       // Recovery reads this before the Flow starts. An unreadable policy must not throw here: the state is built from
-      // the default caps without being kept, and prepare-run then pauses on the policy with its own detail.
+      // the default caps and kept so later writes are not lost,
+      // and prepare-run then pauses on the policy with its own detail.
       let policy: ReturnType<typeof reviewPolicyForLoop>
       try {
         policy = policyNow()
       } catch {
-        return initialLoopState({
+        loopState = initialLoopState({
           loopId,
           task: args.task,
           reviewers: ['reviewer', 'security'],
@@ -1213,6 +1213,7 @@ export async function liveTaskInput(
           maxRounds: DEFAULT_REVIEW_POLICY.maxRounds,
           maxTaskMinutes: DEFAULT_REVIEW_POLICY.maxTaskMinutes
         })
+        return loopState
       }
       const config: LoopConfig = {
         loopId,
