@@ -14,7 +14,7 @@
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop.ts",
-        "sha256": "77080218ac68319eaaf7ad537e89f1ddf6e7b7c39ade336610d7720ba692c982"
+        "sha256": "4e27e35f445293c0023c49957c4cbf782945bd9a600d164c2e600d8da8d12e26"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/developer-dispatch.ts",
@@ -26,11 +26,11 @@
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/driver-lifecycle.ts",
-        "sha256": "1b067f668d3755571cc5c1de5bab4b7cabac72cbf004f86929bba4c7c4942030"
+        "sha256": "d612b3b86b32ed6e78f9bf4947f702246acb40a6d00717766e2a88a01ac2a184"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/gate-reading.ts",
-        "sha256": "f2c04ddb18c2dd3581101075f35de27ff0eea311d3dbc5038d0ec579123dd94e"
+        "sha256": "fca1c9a974f00ea2c97ec74596b0d11c47e4a1852684a17a6e001921320146ea"
       },
       {
         "path": "apps/cli/src/lib/dev-review-loop/journal-history.ts",
