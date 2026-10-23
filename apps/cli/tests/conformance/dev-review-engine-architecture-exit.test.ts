@@ -385,7 +385,7 @@ const ENGINE_DELETION_OWNERS: Readonly<Record<string, readonly string[]>> = {
 const ENGINE_ALLOWED_GUARANTEES = new Set(Object.values(ENGINE_DELETION_OWNERS).flat())
 const ENGINE_AGENTS = ['claude', 'codex'] as const
 // This ceiling may only fall together with removal of resolved fixture entries.
-const ENGINE_FAILURE_CEILING = 19
+const ENGINE_FAILURE_CEILING = 16
 interface EngineFailure {
   scenario: string
   guarantee: string

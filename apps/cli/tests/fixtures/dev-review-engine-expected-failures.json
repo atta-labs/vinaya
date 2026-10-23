@@ -33,11 +33,6 @@
       "reason": "Unknown addressed finding ids are accepted and the next reviewed round publishes; the turn acceptance gap also concerns INV-031."
     },
     {
-      "scenario": "provider-failure",
-      "guarantee": "INV-023",
-      "reason": "A failed provider step ends the run without recording or spending the infrastructure retry."
-    },
-    {
       "scenario": "required-source-failure",
       "guarantee": "INV-125",
       "reason": "A claimed required source with no delivery receipt is accepted and reaches review and publication."
@@ -46,16 +41,6 @@
       "scenario": "context-pressure",
       "guarantee": "INV-020",
       "reason": "Red gates bypass the task time budget assessment and exhaust the Flow revision counter."
-    },
-    {
-      "scenario": "bounded-exhaustion",
-      "guarantee": "INV-005",
-      "reason": "The round cap is assessed but its pause has no durable state or pause comment."
-    },
-    {
-      "scenario": "human-pause",
-      "guarantee": "INV-076",
-      "reason": "An escalation decision has no durable pause or escalation record, handoff event or pause comment."
     },
     {
       "scenario": "resume",

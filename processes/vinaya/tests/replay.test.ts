@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { recordedHandoff } from './handoff-fakes'
 import { execFileSync } from 'node:child_process'
 import {
   existsSync,
@@ -215,6 +216,7 @@ async function replay(scenario: Scenario) {
   const spawns: Array<{ step: Step; args: string[]; env: Record<string, string | undefined>; prompt: string }> = []
   const rounds: Record<Step, number> = { develop: 0, 'code-review': 0, 'security-review': 0 }
   const events: Array<{ event?: string; kind?: string }> = []
+  const handoff = recordedHandoff()
   const result = await runEngine({
     args,
     process: loaded,
@@ -222,6 +224,7 @@ async function replay(scenario: Scenario) {
     runtimeDir,
     loopId: 'replay-loop',
     taskInput,
+    handoffDeps: handoff.deps,
     sink: { log: (event: never) => void events.push(event), drain: async () => {} },
     startHost: async () => ({ close: async () => {} }),
     devToolsContext: {} as never,
@@ -257,8 +260,12 @@ async function replay(scenario: Scenario) {
         .filter(Boolean)
         .map((line) => JSON.parse(line) as { args: string[]; cwd: string; pr: string | null; branch: string | null })
     : []
-  const trace = JSON.parse(readFileSync(result.tracePath, 'utf8')) as { outcome: string; error?: string }
-  return { root, runtimeDir, worktree, before, result, trace, spawns, forgeCalls, published, cliCalls, events }
+  const trace = JSON.parse(readFileSync(result.tracePath, 'utf8')) as {
+    outcome: string
+    error?: string
+    pauseReason?: string
+  }
+  return { root, runtimeDir, worktree, before, result, trace, spawns, forgeCalls, published, cliCalls, events, handoff }
 }
 
 const generated = (runtimeDir: string, role: string, file: string) =>
@@ -355,8 +362,13 @@ for (const vendor of ['claude', 'codex'] as const)
 
     test('a blocked reviewer pauses the run for a human, and nothing is published', async () => {
       const run = await replay({ vendor, codeReview: { 1: blocked(vendor) } })
-      expect(run.trace.outcome).not.toBe('completed')
-      expect(run.trace.error ?? JSON.stringify(run.trace)).toContain('paused for a human')
+      expect(run.trace.outcome).toBe('paused')
+      expect(run.trace.pauseReason).toBe('escalation')
+      expect(run.handoff.calls).toEqual([
+        'escalation:escalation',
+        'pause-state:escalation',
+        expect.stringMatching(/^comment:pr:escalation$/)
+      ])
       expect(run.published).toEqual([])
     })
 

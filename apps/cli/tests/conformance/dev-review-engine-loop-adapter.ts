@@ -26,7 +26,16 @@ import {
 } from '../../../../processes/vinaya/bin/run-engine.js'
 import { createDeveloperDevToolContext } from '../../src/lib/task-tools/developer-dev-tools-context.js'
 import { manifestDigest } from '../../src/lib/review-result.js'
-import { clearDriverLock, readDriverLock, readPauseState } from '../../src/lib/dev-review-loop/pause-resume.js'
+import {
+  clearDriverLock,
+  pauseMarker,
+  readDriverLock,
+  readPauseState,
+  writeEscalationRecord
+} from '../../src/lib/dev-review-loop/pause-resume.js'
+import { liveHandoffDeps, type HandoffDeps } from '../../../../processes/vinaya/executing/handoff.js'
+import { LOG_FOLDER_ONLY_ENV } from '../../src/lib/log-sink.js'
+import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache } from '../../src/lib/run-paths.js'
 import { cleanupAllReviewerIsolationArtifacts } from '../../src/lib/dev-review-loop/reviewer-isolation.js'
 import { heldVerdictPath } from '../../src/lib/dev-review-loop/reviewer-dispatch.js'
 import type { Observation } from './dev-review-current-loop-adapter.js'
@@ -152,11 +161,22 @@ export async function runEngineScenario(id: string, agent: Agent): Promise<Obser
   mkdirSync(stubHome)
   writeFileSync(join(stubHome, 'auth.json'), '{}\n')
   process.env.CODEX_HOME = stubHome
+  // The handoff's control-store writes land in this scenario's runtime folder, and its Log events stay local.
+  const savedRuntime = process.env[RUNTIME_DIR_ENV_KEY]
+  const savedFolderOnly = process.env[LOG_FOLDER_ONLY_ENV]
+  process.env[RUNTIME_DIR_ENV_KEY] = runtimeDir
+  process.env[LOG_FOLDER_ONLY_ENV] = '1'
+  resetRuntimeDirCache()
   try {
     return await drive(id, agent, root, runtimeDir)
   } finally {
     if (savedHome === undefined) delete process.env.CODEX_HOME
     else process.env.CODEX_HOME = savedHome
+    if (savedRuntime === undefined) delete process.env[RUNTIME_DIR_ENV_KEY]
+    else process.env[RUNTIME_DIR_ENV_KEY] = savedRuntime
+    resetRuntimeDirCache()
+    if (savedFolderOnly === undefined) delete process.env[LOG_FOLDER_ONLY_ENV]
+    else process.env[LOG_FOLDER_ONLY_ENV] = savedFolderOnly
     cleanupAllReviewerIsolationArtifacts(runtimeDir, TASK)
     rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
@@ -332,6 +352,23 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
         }
       ])
     )
+  // The handoff's records are the real writers'; only the forge post and the Log delivery are faked.
+  const handoffDeps: HandoffDeps = {
+    ...liveHandoffDeps((event) => append(eventFile, event)),
+    writeEscalationRecord: (facts) => {
+      const record = writeEscalationRecord(facts)
+      append(eventFile, { kind: 'handoff', event: 'raised' })
+      return record
+    },
+    postPauseComment: (_task, _round, _head, _pr, reason) => {
+      append(effectFile, { kind: 'comment', marker: pauseMarker(reason) })
+      return { attempts: 1, posted: true }
+    },
+    postIssuePauseComment: (_task, _branch, _round, reason) => {
+      append(effectFile, { kind: 'comment', marker: pauseMarker(reason) })
+      return { attempts: 1, posted: true }
+    }
+  }
   const counts: Partial<Record<Role, number>> = {}
   const traces: RunTrace[] = []
   const facts = (): DeveloperPromptFacts => ({
@@ -359,6 +396,7 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
       runtimeDir,
       loopId: 'corpus',
       taskInput: task,
+      handoffDeps,
       actions: recordedActionsForRun(),
       sink: { log: (event) => append(eventFile, event), drain: async () => {} },
       startHost: async () => ({ close: async () => {} }),
@@ -494,7 +532,7 @@ function observeEngineRun(runtimeDir: string, traces: RunTrace[], preparationErr
         : last?.outcome === 'completed'
           ? 'publish'
           : last?.outcome === 'paused'
-            ? 'pause:halt'
+            ? `pause:${last.pauseReason ?? 'halt'}`
             : decision?.type === 'pause'
               ? `pause:${decision.reason}`
               : `ended:${last?.outcome}`,

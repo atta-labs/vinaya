@@ -8,6 +8,7 @@ import {
   assessRound,
   buildHeader,
   DevReviewLoopEventSchema,
+  HandoffEventSchema,
   initialLoopState,
   RoleAttemptEventSchema,
   type LoopState,
@@ -29,8 +30,10 @@ import {
 } from '../../../harness/dev-process/logging/translate'
 import { loadRoleGrants, ROLE_NAMES } from '../../../harness/adapters/agents/manifest'
 import { ACTION_BINDINGS, createActions, createRoleLaunchers, decisions, type TaskInput } from '../executing/actions'
-import { AGENT_STEP_ROLES, createVinayaLogProducers } from '../executing/log-events'
+import { AGENT_STEP_ROLES, createVinayaLogProducers, handoffHaltReason } from '../executing/log-events'
 import { LOG_INVENTORY } from '../executing/log-inventory'
+import { createHandoff } from '../executing/handoff'
+import { recordedHandoff } from './handoff-fakes'
 
 const processFolder = resolve(import.meta.dir, '..')
 const loaded = loadProcess(processFolder)
@@ -60,7 +63,7 @@ describe('the log inventory', () => {
     ]
     expect(uncovered).toEqual([])
     expect(loopEventNames).toHaveLength(15)
-    expect(LOG_INVENTORY).toHaveLength(17)
+    expect(LOG_INVENTORY).toHaveLength(18)
   })
 
   test('no row names an event the schemas do not have', () => {
@@ -74,26 +77,31 @@ describe('the log inventory', () => {
     expect(named.filter((name) => !known.has(name))).toEqual([])
   })
 
-  test('the dropped rows are exactly attempted, unpushed_work_resume and infrastructure_retry, each with a reason', () => {
+  test('the dropped rows are exactly attempted and unpushed_work_resume, each with a reason', () => {
     const dropped = LOG_INVENTORY.flatMap((row) => (row.status === 'dropped' ? [row] : []))
-    expect(dropped.flatMap((row) => row.events).sort()).toEqual([
-      'attempted',
-      'infrastructure_retry',
-      'unpushed_work_resume'
-    ])
+    expect(dropped.flatMap((row) => row.events).sort()).toEqual(['attempted', 'unpushed_work_resume'])
     for (const row of dropped) expect(row.reason.length).toBeGreaterThan(20)
   })
 
-  test('the deferred rows are exactly handoff raised and resolved, with the exact deferral reason', () => {
+  test('the deferred row is exactly handoff resolved, with the exact deferral reason', () => {
     const deferred = LOG_INVENTORY.flatMap((row) => (row.status === 'deferred' ? [row] : []))
     expect(deferred).toEqual([
       {
         family: 'handoff',
-        events: ['raised', 'resolved'],
+        events: ['resolved'],
         status: 'deferred',
         reason:
-          'deferred: produced once an assess-round `pause` decision becomes an Engine pause awaiting a human handoff; today the binding throws on that decision'
+          'deferred: produced once a ruling on a handed-off pause is consumed and the run continues from it; the handoff only raises the pause'
       }
+    ])
+  })
+
+  test('the handoff rows and the infrastructure-retry row are produced by the handoff function', () => {
+    const produced = (family: string, event: string) =>
+      rowsFor(family, event).map((row) => (row.status === 'produced' ? row.from : row.status))
+    expect(produced('handoff', 'raised')).toEqual([expect.stringMatching(/^the handoff function/)])
+    expect(produced('dev_review_loop', 'infrastructure_retry')).toEqual([
+      expect.stringMatching(/^the handoff function/)
     ])
   })
 })
@@ -288,6 +296,7 @@ const note = (events: LogEventInput[] | undefined) => {
 function schemaFor(kind: unknown) {
   if (kind === 'dev_review_loop') return DevReviewLoopEventSchema
   if (kind === 'role_attempt') return RoleAttemptEventSchema
+  if (kind === 'handoff') return HandoffEventSchema
   throw new Error(`The Engine path emitted an event of the unexpected family ${String(kind)}`)
 }
 
@@ -454,6 +463,38 @@ describe('the producers cover every end a run can come to', () => {
     expect(run.exit(context)).toEqual({ reason: 'paused', lastDecision: 'pause(confidence)' })
   })
 
+  test('a leg a handoff halted for an error ends on that pause reason', () => {
+    const run = producers()
+    const crashed = {
+      outcome: { reason: 'paused', haltReason: handoffHaltReason('infrastructure') },
+      cancelled: false,
+      steps: {}
+    } as const
+    expect(names(run.runEnded?.(crashed))).toEqual(['paused'])
+    expect(run.exit(crashed)).toEqual({ reason: 'paused', lastDecision: 'pause(infrastructure)' })
+    const halted = { outcome: { reason: 'paused', haltReason: 'stop here' }, cancelled: false, steps: {} } as const
+    expect(run.exit(halted)).toEqual({ reason: 'paused', lastDecision: 'pause(halt)' })
+  })
+
+  test('a decided pause the handoff halted is not written a second time', () => {
+    const run = producers()
+    const pause = JSON.stringify({
+      decision: { type: 'pause', reason: 'escalation' },
+      events: [{ kind: 'dev_review_loop', loop_id: 'loop-test', event: 'paused', payload: {} }]
+    })
+    const recorded = { 'assess-round': { exitCode: 1, stdout: pause, stderr: '' } }
+    expect(names(run.nodeCompleted?.({ nodeId: 'assess-round', runId: 'r', attempt: 1, steps: recorded }))).toEqual([
+      'paused'
+    ])
+    const context = {
+      outcome: { reason: 'paused', haltReason: handoffHaltReason('escalation') },
+      cancelled: false,
+      steps: recorded
+    } as const
+    expect(names(run.runEnded?.(context))).toEqual([])
+    expect(run.exit(context)).toEqual({ reason: 'paused', lastDecision: 'pause(escalation)' })
+  })
+
   test('each way a leg ends names its exit', () => {
     const run = producers()
     const exit = (reason: 'completed' | 'paused' | 'exhausted') =>
@@ -478,6 +519,57 @@ describe('the producers cover every end a run can come to', () => {
       steps.flatMap((step) => (step.type === 'agent' && step.role ? [[step.id, step.role]] : []))
     )
     expect(AGENT_STEP_ROLES).toEqual(flowAgents)
+  })
+})
+
+describe('the handoff writes its rows', () => {
+  test('one raised for the escalation record and one infrastructure_retry for a pause comment that took several attempts', () => {
+    const recorded = recordedHandoff()
+    const events: Array<Record<string, unknown>> = []
+    // The real escalation writer logs one raised event once its records are written; the stand-in does the same.
+    const deps = {
+      ...recorded.deps,
+      writeEscalationRecord: (facts: Parameters<typeof recorded.deps.writeEscalationRecord>[0]) => {
+        const record = recorded.deps.writeEscalationRecord(facts)
+        events.push({
+          kind: 'handoff',
+          event: 'raised',
+          payload: {},
+          class: 'authority',
+          reason: facts.reason,
+          requested_decision: facts.detail ?? null
+        })
+        return record
+      },
+      log: (event: unknown) => void events.push(event as Record<string, unknown>)
+    }
+    recorded.postResult = { attempts: 3, posted: true }
+    const runtimeDir = mkdtempSync(`${tmpdir()}/handoff-log-`)
+    createHandoff(
+      {
+        task: 1570,
+        branch: 'task/issue-1570',
+        runtimeDir,
+        runId: 'r',
+        agent: 'claude',
+        round: () => 1,
+        head: () => 'h',
+        prNumber: () => 70,
+        versions: () => ({ briefHash: null, objectivesVersion: null, rulingOrdinal: 0, policyDigest: 'p' }),
+        halt: () => {}
+      },
+      config.loopId,
+      deps
+    ).pause({ reason: 'escalation', detail: 'needs a call' })
+    expect(events.map((event) => `${event.kind}/${event.event}`)).toEqual([
+      'handoff/raised',
+      'dev_review_loop/infrastructure_retry'
+    ])
+    for (const [seq, event] of events.entries()) {
+      const parsed = schemaFor(event.kind).safeParse({ ...event, ...envelope(seq) })
+      if (!parsed.success) throw new Error(`${String(event.event)} does not parse: ${parsed.error.message}`)
+      seen.add(`${event.kind}/${event.event}`)
+    }
   })
 })
 
