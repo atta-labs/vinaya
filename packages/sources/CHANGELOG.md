@@ -1,5 +1,18 @@
 # @atta/vinaya-sources
 
+## 0.41.0
+
+### Minor Changes
+
+- 8ec463b: Add the `./commands` and `./config-reference` subpath exports, each loading only its data module.
+
+### Patch Changes
+
+- Updated dependencies [d4b97e7]
+  - @attalabs/aeg-core@0.41.0
+  - @attalabs/aeg-forge-state@0.41.0
+  - @attalabs/aeg-types@0.41.0
+
 ## 0.40.0
 
 ### Minor Changes

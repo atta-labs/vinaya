@@ -1,5 +1,13 @@
 # @atta/aeg-core
 
+## 0.41.0
+
+### Patch Changes
+
+- d4b97e7: Resolve dispatch and verification targets from the repository where each tool is invoked.
+- @attalabs/aeg-forge-state@0.41.0
+  - @attalabs/aeg-types@0.41.0
+
 ## 0.40.0
 
 ### Minor Changes
