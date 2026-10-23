@@ -4,7 +4,6 @@ import { randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { MemorySaver } from '@langchain/langgraph'
 import {
   initialLoopState,
   buildReviewInputManifest,
@@ -15,6 +14,7 @@ import {
 } from '@attalabs/aeg-core'
 import type { RunControl, RunOutcome, SpawnFn, StepNodeResult } from '@atta/executor-agent-spawn'
 import { loadProcess, type LoadedProcess } from '../../../harness/dev-process/loader/load-process'
+import { SqliteCheckpointer } from '../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
 import {
   startProcessRun,
   type ActionRegistry,
@@ -327,7 +327,21 @@ export interface EngineRunOptions {
   developerFacts?: () => Promise<DeveloperPromptFacts>
   /** The Linux host opt-in: the generated Claude settings allow Unix sockets and the variable is forwarded to the agent. */
   allowUnixSockets?: boolean
+  /** The code revision recorded on every checkpoint; defaults to the HEAD of `repoRoot`, the checkout the runner runs from. */
+  revision?: string
 }
+
+/** The HEAD of the checkout at `repoRoot`, or `unknown` when it is not a git checkout. */
+function checkoutRevision(repoRoot: string): string {
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8', stdio: 'pipe' }).trim()
+  } catch {
+    return 'unknown'
+  }
+}
+
+/** The file a run's checkpoints are kept in, under its run directory. */
+export const checkpointPath = (runDir: string): string => join(runDir, 'checkpoints.sqlite')
 
 export interface EngineRunResult {
   outcome: RunOutcome | null
@@ -351,6 +365,7 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
   )
   const developerFacts = options.developerFacts
   let host: Pick<DevToolsHost, 'close'> | undefined
+  let checkpointer: SqliteCheckpointer | undefined
   let outcome: RunOutcome | null = null
   let error: string | undefined
   try {
@@ -375,11 +390,16 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
     })
     const base = options.actions ?? createActions(options.taskInput)
     const actions = recordingActions(tracedActions(base, trace), translator)
+    checkpointer = new SqliteCheckpointer({
+      path: checkpointPath(runDir),
+      revision: options.revision ?? checkoutRevision(options.repoRoot),
+      model: args.model
+    })
     const runOptions: ProcessRunOptions = {
       process: options.process,
       question: `Task ${args.task}`,
       bindings: { actions, decisions: (await import('../executing/actions')).decisions, roles },
-      checkpointer: new MemorySaver(),
+      checkpointer,
       workingDirectoryRoot: options.repoRoot,
       // A revision continues the Developer's own session, as the standalone loop resumes it.
       continueSessions: ['develop'],
@@ -421,7 +441,11 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
     try {
       await host?.close()
     } finally {
-      await options.sink.drain()
+      try {
+        await options.sink.drain()
+      } finally {
+        checkpointer?.close()
+      }
     }
   }
   const results = (outcome && 'checkpoint' in outcome ? (outcome.checkpoint?.results ?? {}) : {}) as Record<
