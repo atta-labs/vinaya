@@ -2,14 +2,21 @@
 
 Status: draft
 
-Both the standalone loop and the Engine runner construct the Developer's live
-tool context through `task-tools/live-developer-context.ts`. The shared module
-owns the publication precondition boundary, pushed-range selection,
-unpublished-turn detection, and refusal prompt; each runner supplies its live
-state explicitly. The Engine also starts a role-scoped tool host for the
-Developer, code reviewer, and security reviewer, so reviewers read the same
-controller-pinned source manifest through `read_source` on either agent launch
-shape.
+Both the standalone loop and the Engine runner build the Developer's live tool
+context from `task-tools/live-developer-context.ts`. That module owns the
+publication path: the precondition check against the task's frozen Surface and
+the turn's recorded head, the pushed commit range, the Broker-governed push
+(with the rebase-onto-tip and lease push), the refusal that a refused push
+leaves committed and unpushed, the duplicate-open refusal, the beyond-Surface
+record, and the prompt that quotes a refusal. Each runner supplies its own
+values for it explicitly — the standalone loop its per-dispatch state, the
+Engine the state of its one run — and the Engine records the head a turn starts
+from at the start of each Developer step. Under write attribution the driver's
+own tool calls write the protected control records.
+
+The Engine also starts a role-scoped tool host for the Developer, the code
+reviewer and the security reviewer, so a reviewer reads the controller-pinned
+source manifest through `read_source` on either agent launch shape.
 
 The frozen review-input manifest is protocol version 2. In addition to base,
 head, brief hash, objectives version, ruling ordinal, and policy digest, it

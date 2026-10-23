@@ -2,10 +2,37 @@ import { describe, expect, test } from 'bun:test'
 import { recordedHandoff } from './handoff-fakes'
 import { Database } from 'bun:sqlite'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
+import { failedCheckLogsOnHead } from '../../../apps/cli/src/lib/dev-review-loop'
+import { gitObjectReader, prepareSources } from '../../../apps/cli/src/lib/source-provider'
+import { sourceReceiptsPath } from '../../../apps/cli/src/lib/source-manifest'
+import type { FetchDocumentationDeps } from '../../../apps/cli/src/lib/task-tools/fetch-documentation'
+import { taskControlDir } from '../../../apps/cli/src/lib/worker-boundary'
+import {
+  BASE,
+  BRANCH,
+  brokerPush,
+  fakeDeps,
+  makeWorld,
+  OUTSIDE,
+  OWN,
+  WORKFLOW,
+  type World
+} from '../../../apps/cli/tests/lib/task-tools/live-developer-context-world'
+import { developerPrompt } from '../executing/developer-prompt'
+import { createRoleLaunchers } from '../executing/actions'
 import { loadProcess } from '../../../harness/dev-process/loader/load-process'
 import type { ActionRegistry } from '../../../harness/dev-process/engine-runtime/run-process'
 import type { NodeLifecycle } from '../../../harness/dev-process/logging/translate'
@@ -19,6 +46,7 @@ import {
   tracedActions,
   developerSourceStoreDir,
   dryRunLines,
+  engineLiveDevToolsContext,
   liveTaskInput,
   parseArgs,
   runEngine,
@@ -31,12 +59,6 @@ const loaded = loadProcess(resolve(import.meta.dir, '..'))
 const repoRoot = resolve(import.meta.dir, '../../..')
 
 describe('arguments', () => {
-  test('the runner delegates publication commands to the shared live context', () => {
-    const source = readFileSync(join(import.meta.dir, '..', 'bin', 'run-engine.ts'), 'utf8')
-    expect(source).not.toContain("git('push'")
-    expect(source).not.toContain("['pr', 'create'")
-    expect(source).toContain('createEngineLiveDeveloperContext')
-  })
   test('a task number and an agent are required', () => {
     expect(parseArgs(['--task', '12', '--agent', 'codex'])).toEqual({ task: 12, agent: 'codex', dryRun: false })
     expect(parseArgs(['--task', '3', '--agent', 'claude', '--dry-run']).dryRun).toBe(true)
@@ -622,4 +644,299 @@ describe('agent-step failures and the live task context', () => {
     expect(readdirSync(root).sort()).toEqual(before)
     expect(before).toEqual(['.git', '.worktrees', 'a.txt'])
   })
+})
+
+// --- the Developer's live dev-tool context -----------------------------------
+
+const HEADER = 'Fix(cli): Share live context'
+const PR_BODY = '## Report\n\nbody'
+
+function liveContext(world: World, overrides: Partial<ReturnType<typeof fakeDeps>> = {}, task = 8) {
+  const runtimeDir = mkdtempSync(join(tmpdir(), 'engine-live-context-'))
+  const live = engineLiveDevToolsContext({
+    branch: BRANCH,
+    worktreePath: '/worktree',
+    task,
+    runtimeDir,
+    agent: 'claude',
+    repo: null,
+    round: () => 1,
+    deps: { ...fakeDeps(world), ...overrides }
+  })
+  return { live, runtimeDir }
+}
+
+describe('the Engine builds its Developer context from the shared live context', () => {
+  test('the runner builds that context through the shared module and keeps no push or pull-request open of its own', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'bin', 'run-engine.ts'), 'utf8')
+    expect(source).toContain('createLiveDeveloperContext(')
+    expect(source).not.toMatch(/['"]push['"]/)
+    expect(source).not.toMatch(/['"]pr['"],\s*['"]create['"]/)
+    expect(source).not.toContain('createEngineLiveDeveloperContext')
+  })
+
+  test('a publication runs the shared module: its commit, Broker push and pull-request open, never git or gh', async () => {
+    const world = makeWorld()
+    const { live } = liveContext(world)
+    await live.beginTurn()
+    // The turn's start recorded the head it publishes against and the branch base.
+    expect(live.state.turnPreHead).toBe('head-0')
+    expect(live.state.publicationExpectedBase).toBe(BASE)
+    const published = await live.context.publishChanges(HEADER)
+    expect(published).toMatchObject({ ok: true, result: { pushedHead: 'commit-1' } })
+    expect(world.commits).toEqual([HEADER])
+    expect(world.pushes.map((push) => push.sha)).toEqual(['commit-1'])
+    expect(world.pushes[0]).toMatchObject({ task: 8, branch: BRANCH, agent: 'claude', round: 1 })
+    const opened = await live.context.openPullRequest('[t] 8 — Title', PR_BODY)
+    expect(opened).toEqual({ ok: true, result: { prNumber: 7 } })
+    expect(world.opened).toHaveLength(1)
+  })
+
+  test('a head that moved during the turn is refused against the recorded pre-turn head', async () => {
+    const world = makeWorld()
+    const { live } = liveContext(world)
+    await live.beginTurn()
+    world.head = 'committed-by-the-developer'
+    const result = await live.context.publishChanges(HEADER)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.output).toContain('head moved')
+    expect(world.commits).toEqual([])
+    expect(world.pushes).toEqual([])
+  })
+
+  test('the next turn records its own starting head', async () => {
+    const world = makeWorld()
+    const { live } = liveContext(world)
+    await live.beginTurn()
+    await live.context.publishChanges(HEADER)
+    world.head = 'after-review'
+    await live.beginTurn()
+    expect(live.state.turnPreHead).toBe('after-review')
+  })
+
+  test('the pushed range starts at the remote head, so a push authorizes exactly the commits after it', async () => {
+    const world = makeWorld({ remote: 'remote-1', head: 'remote-1' })
+    const { live } = liveContext(world)
+    await live.beginTurn()
+    await live.context.publishChanges(HEADER)
+    expect(world.rangeBases.length).toBeGreaterThan(0)
+    expect(world.rangeBases.every((base) => base === 'remote-1')).toBe(true)
+    expect(world.pushes[0]?.touchedPaths).toEqual([OWN])
+  })
+
+  test('a path beyond the Surface is recorded in the opened pull request body', async () => {
+    const world = makeWorld({ changed: [OWN, OUTSIDE] })
+    const { live } = liveContext(world)
+    await live.beginTurn()
+    await live.context.publishChanges(HEADER)
+    await live.context.openPullRequest('[t] 8 — Title', PR_BODY)
+    expect(world.opened[0]?.body).toContain('AEG:BEYOND-SURFACE')
+    expect(world.opened[0]?.body).toContain(OUTSIDE)
+  })
+
+  test('records are written under write attribution: the driver tool call is not reported, a worker write is', async () => {
+    const world = makeWorld()
+    const { live, runtimeDir } = liveContext(world)
+    const control = taskControlDir(runtimeDir, 8)
+    mkdirSync(control, { recursive: true })
+    world.push = (input) => {
+      // The Broker records the effect while the driver's own tool call runs.
+      writeFileSync(join(control, 'effect.json'), input.sha)
+      return { ok: true }
+    }
+    await live.beginTurn()
+    await live.context.publishChanges(HEADER)
+    expect(live.changedProtectedPaths()).toEqual([])
+    writeFileSync(join(control, 'worker.json'), 'written between tool calls')
+    expect(live.changedProtectedPaths()).toContain(control)
+  })
+
+  test('a protected path the Surface does not name is refused by the Broker, leaving the work committed', async () => {
+    const world = makeWorld({ changed: [OWN, WORKFLOW] })
+    const { live, runtimeDir } = liveContext(world)
+    world.push = brokerPush(() => runtimeDir)
+    await live.beginTurn()
+    const result = await live.context.publishChanges(HEADER)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.output).toContain('protected administrative policy path')
+    expect(world.commits).toEqual([HEADER])
+    expect(world.remote).toBe('head-0')
+  })
+
+  test('a refused push leaves the work committed and unpushed, and the next Developer prompt quotes the refusal', async () => {
+    const world = makeWorld()
+    world.pushResults.push({ ok: false, refusal: '(fail) tests/a.test.ts > breaks', hook: true })
+    const { live } = liveContext(world)
+    await live.beginTurn()
+    const refused = await live.context.publishChanges(HEADER)
+    expect(refused.ok).toBe(false)
+    expect(world.commits).toEqual([HEADER])
+    expect(world.remote).toBe('head-0')
+    expect(live.state.lastPushRefusal).toBe('(fail) tests/a.test.ts > breaks')
+    const prompt = developerPrompt('x', { ...FACTS, lastPushRefusal: live.state.lastPushRefusal }, {})
+    expect(prompt).toContain('Your last `publish_changes` for this branch was refused by the pre-push hook')
+    expect(prompt).toContain('(fail) tests/a.test.ts > breaks')
+    expect(developerPrompt('x', FACTS, {})).not.toContain('refused by the pre-push hook')
+    // The retry pushes the committed work without a second commit.
+    const retried = await live.context.publishChanges(HEADER)
+    expect(retried.ok).toBe(true)
+    expect(world.commits).toEqual([HEADER])
+    expect(live.state.lastPushRefusal).toBeNull()
+  })
+
+  test('a clean worktree with an open pull request publishes nothing', async () => {
+    const world = makeWorld({ dirty: [], pr: { number: 7 }, prBody: PR_BODY })
+    const { live } = liveContext(world)
+    await live.beginTurn()
+    expect(await live.context.publishChanges(HEADER)).toMatchObject({ ok: true, result: { pushedHead: 'head-0' } })
+    expect(world.commits).toEqual([])
+    expect(world.pushes).toEqual([])
+    expect(world.opened).toEqual([])
+  })
+
+  test('a restart with the pull request open attaches without a second commit, push or open', async () => {
+    const world = makeWorld({ dirty: [], pr: { number: 7 }, prBody: PR_BODY })
+    // A new process: a new context with no state from the earlier run.
+    const { live } = liveContext(world)
+    await live.beginTurn()
+    expect((await live.context.publishChanges(HEADER)).ok).toBe(true)
+    const again = await live.context.openPullRequest('[t] 8 — Title', PR_BODY)
+    expect(again.ok).toBe(false)
+    if (!again.ok) expect(again.error.check).toBe('pr-exists')
+    expect(world.commits).toEqual([])
+    expect(world.pushes).toEqual([])
+    expect(world.opened).toEqual([])
+  })
+
+  test('read_pull_request returns the log tail of a failed check', async () => {
+    const world = makeWorld({ pr: { number: 7 } })
+    world.view = {
+      prNumber: 7,
+      state: 'OPEN',
+      head: 'head-0',
+      checks: [],
+      reviews: [],
+      body: PR_BODY,
+      failedChecks: failedCheckLogsOnHead(
+        'head-0',
+        () => [{ name: 'unit', id: 41 }],
+        () => 'expected 1, received 2'
+      )
+    }
+    const { live } = liveContext(world)
+    const view = await live.context.readPullRequest()
+    expect(view.ok).toBe(true)
+    if (view.ok)
+      expect(view.result.failedChecks).toEqual([{ check: 'unit', runId: 41, logTail: 'expected 1, received 2' }])
+  })
+
+  describe('fetch_documentation', () => {
+    const page = (body: string): FetchDocumentationDeps => ({
+      resolve: async () => [{ address: '93.184.215.14', family: 4 }],
+      request: async () => ({
+        status: 200,
+        headers: { 'content-type': 'text/markdown' },
+        body: new TextEncoder().encode(body),
+        framed: true
+      }),
+      now: () => new Date('2026-10-14T00:00:00.000Z')
+    })
+
+    test('issues a source receipt for real content, in the task source store', async () => {
+      const world = makeWorld()
+      const { live, runtimeDir } = liveContext(world, {
+        fetchDocumentationDeps: page(`# Hooks\n\n${'Documentation. '.repeat(100)}`)
+      })
+      const result = await live.context.fetchDocumentation({ url: 'https://docs.example.com/hooks' })
+      expect(result.ok).toBe(true)
+      if (result.ok) expect(result.result.receipt).toMatchObject({ recorded: true })
+      const receipts = readFileSync(sourceReceiptsPath(developerSourceStoreDir(runtimeDir, 8)), 'utf8')
+      expect(receipts).toContain('https://docs.example.com/hooks')
+    })
+
+    test('issues none for a near-empty page', async () => {
+      const world = makeWorld()
+      const { live, runtimeDir } = liveContext(world, { fetchDocumentationDeps: page('tiny') })
+      const result = await live.context.fetchDocumentation({ url: 'https://docs.example.com/hooks' })
+      expect(result.ok).toBe(true)
+      if (result.ok) expect(result.result.receipt).toMatchObject({ recorded: false })
+      expect(existsSync(sourceReceiptsPath(developerSourceStoreDir(runtimeDir, 8)))).toBe(false)
+    })
+  })
+})
+
+// --- the reviewers reach their tool host -------------------------------------
+
+const SPEC = 'specs/isolation.md'
+
+describe('the tool host serves the reviewer roles as well as the Developer', () => {
+  test('starts a host per role, and each reviewer reads a pinned source through read_source', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'engine-read-source-'))
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim()
+    git('init', '-q')
+    git('config', 'user.email', 'test@example.com')
+    git('config', 'user.name', 'test')
+    git('config', 'commit.gpgsign', 'false')
+    mkdirSync(join(repo, 'specs'))
+    writeFileSync(join(repo, SPEC), '# Isolation\n\nThe writable roots.\n')
+    git('add', '.')
+    git('commit', '-q', '-m', 'base')
+    const { options, runtimeDir } = stubRun()
+    await prepareSources({
+      brief: `## Objectives\n\nO1. Something.\n\n## Documentation\n\n- ${SPEC} — the mechanism it governs (O1)\n\n## Premises\n`,
+      round: 1,
+      base: git('rev-parse', 'HEAD'),
+      storeDir: developerSourceStoreDir(runtimeDir, 7),
+      deps: {
+        readObject: gitObjectReader(repo),
+        fetch: {
+          resolve: async () => [],
+          request: async () => {
+            throw new Error('no network')
+          },
+          now: () => new Date()
+        },
+        now: () => new Date()
+      }
+    })
+    const served: Record<string, NonNullable<Parameters<EngineRunOptions['startHost']>[0]['context']>> = {}
+    await runEngine({
+      ...options,
+      taskInput: { ...options.taskInput, worktreePath: repo } as unknown as TaskInput,
+      startHost: async (host) => {
+        served[host.role] = host.context
+        return { close: async () => {} }
+      }
+    })
+    expect(Object.keys(served).sort()).toEqual(['code-reviewer', 'developer', 'security'])
+    for (const role of ['code-reviewer', 'security']) {
+      const read = await served[role]?.readSource?.({ sourceId: SPEC })
+      expect(read?.ok).toBe(true)
+      if (read?.ok) expect(read.result.content).toContain('The writable roots.')
+    }
+  })
+
+  for (const [vendor, file] of [
+    ['claude-code', 'role-mcp.json'],
+    ['codex', 'config.toml']
+  ] as const) {
+    test(`each reviewer's ${vendor} launch names its own host`, () => {
+      const generatedRoot = mkdtempSync(join(tmpdir(), 'engine-launch-shapes-'))
+      createRoleLaunchers({
+        vendor,
+        generatedRoot,
+        mcpCommands: {
+          developer: '/shims/developer.sh',
+          'code-reviewer': '/shims/code-reviewer.sh',
+          'security-reviewer': '/shims/security-reviewer.sh'
+        }
+      })
+      for (const role of ['developer', 'code-reviewer', 'security-reviewer']) {
+        const config = readFileSync(join(generatedRoot, role, file), 'utf8')
+        expect(config).toContain(`/shims/${role}.sh`)
+        for (const other of ['developer', 'code-reviewer', 'security-reviewer'].filter((name) => name !== role))
+          expect(config).not.toContain(`/shims/${other}.sh`)
+      }
+    })
+  }
 })

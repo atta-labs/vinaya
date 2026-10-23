@@ -1,14 +1,12 @@
 #!/usr/bin/env bun
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import {
   initialLoopState,
   buildReviewInputManifest,
-  parseIssueSurface,
-  type IssueSurface,
   type DevReviewLoopEventInput,
   type LoopConfig,
   type Observations,
@@ -47,13 +45,12 @@ import {
 import { developerBranchFor } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
 import { publishRound } from '../../../apps/cli/src/lib/dev-review-loop/publication'
 import {
-  addedDiffLines,
-  findCredentialPatterns,
   LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV,
   linuxUnixSocketFilterOptIn,
   protectedPathsForTurn,
   startTurnWriteAttribution,
-  taskControlDir
+  taskControlDir,
+  type TurnWriteAttribution
 } from '../../../apps/cli/src/lib/worker-boundary'
 import { configPath } from '../../../apps/cli/src/lib/config'
 import {
@@ -76,7 +73,6 @@ import {
   type DevToolResult
 } from '../../../apps/cli/src/lib/task-tools/dev-tools-server'
 import { createReadSourceTool } from '../../../apps/cli/src/lib/task-tools/read-source'
-import { validatePrBodyForCreate } from '../../../apps/cli/src/commands/pr'
 import { createLogSink, drainLogSink, LOG_FOLDER_ONLY_ENV, type LogSinkDeps } from '../../../apps/cli/src/lib/log-sink'
 import { setEngineLogIdentity } from './engine-log-identity'
 import {
@@ -106,10 +102,15 @@ import { getProcessSnapshot, readLaunchRecord, terminateChildWithGrace } from '.
 import { loadConfig } from '../../../apps/cli/src/lib/config'
 import { startDevToolsHost, type DevToolsHost } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
 import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-tools-registration'
-import { createEngineLiveDeveloperContext } from '../../../apps/cli/src/lib/task-tools/live-developer-context'
-import { createFetchDocumentationTool } from '../../../apps/cli/src/lib/task-tools/fetch-documentation'
-import { readFailedCheckLogs, readJobLogTail } from '../../../apps/cli/src/lib/task-tools/pr-facts'
-import { fetchFailingCheckRuns } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+import {
+  attributeDriverToolCalls,
+  createLivePublicationState,
+  createLiveDeveloperContext,
+  type LiveDeveloperContextLoopDeps,
+  type LivePublicationScope,
+  type LivePublicationState,
+  resolvePublicationBase
+} from '../../../apps/cli/src/lib/task-tools/live-developer-context'
 import {
   checkTaskDispatchReadiness,
   createTaskWorktree,
@@ -131,14 +132,18 @@ import {
   latestHeldCleanVerdict
 } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { RUNTIME_DIR_ENV_KEY, runtimeDirForRepoAsync } from '../../../apps/cli/src/lib/run-paths'
-import { defaultPatchIdOf } from '../../../apps/cli/src/lib/dev-review-loop'
+import {
+  defaultDeps,
+  defaultGitWorktreeUntrackedPaths,
+  defaultPatchIdOf,
+  ownChangesRangeBase,
+  worktreeCheckEnv
+} from '../../../apps/cli/src/lib/dev-review-loop'
 import { parseReviewResult, type ReviewResult } from '../../../apps/cli/src/lib/review-result'
 import type { ReviewerPromptFacts } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { agentEnvAllowlist } from '../../../harness/adapters/agents/launch-env'
 import { grantVariables } from '../../../harness/adapters/agents/variables'
-import { ghPullRequestView, pullRequestCheckEnv } from '../executing/pull-request-env'
-import { runCli, runCliChecks } from '../../../harness/gates/run-checks'
-import { refreshPrEvidence } from '../executing/refresh-evidence'
+import { ghPullRequestView } from '../executing/pull-request-env'
 import {
   createVinayaReviewInputStager,
   renderVinayaReviewerPrompt,
@@ -394,6 +399,8 @@ export interface EngineRunOptions {
   execPath?: string
   /** The Developer's prompt facts, read each time its step starts; absent leaves the prompt as the Flow renders it. */
   developerFacts?: () => Promise<DeveloperPromptFacts>
+  /** Told when the Developer step starts, so the live context records the head and base that turn publishes against. */
+  beginDeveloperTurn?: () => Promise<void>
   /** The Linux host opt-in: the generated Claude settings allow Unix sockets and the variable is forwarded to the agent. */
   allowUnixSockets?: boolean
   /** The code revision recorded on every checkpoint; defaults to the HEAD of `repoRoot`, the checkout the runner runs from. */
@@ -447,7 +454,6 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
   const runDir = runDirectory(options.runtimeDir, args.task)
   mkdirSync(runDir, { recursive: true })
   const tracePath = join(runDir, 'trace.json')
-  const interruptedPublicationPath = join(runDir, 'publication-interrupted')
   const trace = createTraceRecorder({ task: args.task, agent: args.agent, loopId: options.loopId })
   const producers = createVinayaLogProducers({ loopId: options.loopId, task: args.task })
   const translator = createLogTranslator(producers, options.sink.log as unknown as EmitLogEvent)
@@ -582,21 +588,6 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
   let legOutcome: LegOutcome | null = null
   let error: string | undefined
   try {
-    if (existsSync(interruptedPublicationPath)) {
-      options.sink.log({
-        kind: 'dev_review_loop',
-        payload: {},
-        loop_id: options.loopId,
-        event: 'journal_finalized',
-        rounds: options.taskInput.reviewRound(),
-        total_wall_ms: 0,
-        time_to_green_ms: null,
-        files_changed_total: 0,
-        final_head: readWorktreeHead(options.taskInput.worktreePath) ?? 'unknown',
-        result: 'stopped'
-      } as never)
-      unlinkSync(interruptedPublicationPath)
-    }
     const storeDir = developerSourceStoreDir(options.runtimeDir, args.task)
     const reviewerContext = reviewerDevToolContext(async (readInput) => {
       const manifest = readRequiredSourceManifest(storeDir)
@@ -647,14 +638,9 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
       Object.entries(base).map(([name, action]) => [
         name,
         async (context: Parameters<typeof action>[0]) => {
+          // Each Developer turn records the head it starts from, as the standalone loop does.
+          if (context.nodeId === 'develop') await options.beginDeveloperTurn?.()
           const result = await action(context)
-          if (
-            context.nodeId === 'validate-developer-output' &&
-            options.taskInput?.branch &&
-            options.taskInput.bound?.findOpenPrForBranch?.(options.taskInput.branch) === null
-          ) {
-            control.halt('the Developer publication was refused before a pull request opened')
-          }
           if (context.nodeId === 'reconcile-external-state') {
             try {
               const found = (JSON.parse(result.stdout ?? 'null') as { number?: unknown } | null)?.number
@@ -767,13 +753,10 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
     }
     translator.endLeg(legOutcome as LegOutcome)
   } catch (thrown) {
-    if (currentNode === 'publish-ready-for-merge') writeFileSync(interruptedPublicationPath, 'interrupted\n')
     error = thrown instanceof Error ? thrown.message : String(thrown)
     legOutcome = handOffError(error)
     translator.endLeg(legOutcome)
   } finally {
-    if ((legOutcome as LegOutcome | null)?.reason === 'failed' && currentNode === 'publish-ready-for-merge')
-      writeFileSync(interruptedPublicationPath, 'interrupted\n')
     stopSignals()
     // No agent outlives the run: whatever a halted or finished launch left running is ended with its group.
     await reaper.reap(lifecycle.killGraceMs)
@@ -835,104 +818,81 @@ function refusal<T>(check: string, output: string): DevToolResult<T> {
   }
 }
 
-/** Inputs the shared live Developer context binds to this Engine run. */
+/**
+ * The Developer's live dev-tool context for this Engine run: the module the standalone loop builds its own
+ * from, bound to this run's task, worktree and publication state. `beginTurn` records the head and base a
+ * Developer turn starts from and builds that turn's context, as the standalone loop does at each dispatch.
+ */
 export function engineLiveDevToolsContext(input: {
   branch: string
   worktreePath: string
   task: number
-  cliEntry: string
   runtimeDir: string
-  recordedHead?: string | null
-  surface?: IssueSurface | null
-  round?: number
-}): DevToolContext {
-  const { branch, worktreePath, cliEntry } = input
-  const git = (...args: string[]) => sh('git', args, worktreePath)
-  const attempt = async <T>(check: string, run: () => T | Promise<T>): Promise<DevToolResult<T>> => {
-    try {
-      return { ok: true, result: await run() }
-    } catch (error) {
-      const stderr = (error as { stderr?: string }).stderr
-      return refusal(check, stderr ? String(stderr) : error instanceof Error ? error.message : String(error))
-    }
-  }
-  const changedPaths = (): string[] => {
-    const base = git('merge-base', 'origin/main', 'HEAD')
-    const paths = new Set([
-      ...git('diff', '--name-only', base).split('\n'),
-      ...git('ls-files', '--others', '--exclude-standard').split('\n')
-    ])
-    paths.delete('')
-    return [...paths]
-  }
-  const readPullRequestView = async (number: number) =>
-    attempt('read_pull_request', () => {
-      const raw = JSON.parse(
-        sh('gh', ['pr', 'view', String(number), '--json', 'number,state,headRefOid,statusCheckRollup,body'])
-      ) as Record<string, unknown>
-      return {
-        prNumber: number,
-        state: String(raw.state),
-        head: String(raw.headRefOid),
-        checks: (raw.statusCheckRollup ?? []) as never,
-        reviews: [],
-        body: String(raw.body ?? ''),
-        failedChecks: readFailedCheckLogs(
-          fetchFailingCheckRuns(String(raw.headRefOid)).filter((run) => run.detail === undefined),
-          readJobLogTail
-        )
-      }
-    })
-  const storeDir = developerSourceStoreDir(input.runtimeDir ?? input.worktreePath, input.task)
-  const attribution = startTurnWriteAttribution(
-    protectedPathsForTurn({
-      runtimeDir: input.runtimeDir,
-      task: input.task,
-      round: input.round ?? 1,
-      role: 'developer',
-      vinayaConfigPath: configPath()
-    }),
-    [taskControlDir(input.runtimeDir, input.task), sourceReceiptsPath(storeDir)]
-  )
-  return createEngineLiveDeveloperContext({
-    branch,
+  agent: Agent
+  repo: { owner: string; repo: string } | null
+  round: () => number
+  /** The loop operations the context reads; the real ones unless a test supplies its own. */
+  deps?: LiveDeveloperContextLoopDeps
+}): {
+  context: DevToolContext
+  beginTurn: () => Promise<void>
+  state: LivePublicationState
+  /** The protected paths written since the turn began that no driver tool call wrote. */
+  changedProtectedPaths: () => string[]
+} {
+  const deps = input.deps ?? defaultDeps()
+  const state = createLivePublicationState(null)
+  const storeDir = developerSourceStoreDir(input.runtimeDir, input.task)
+  const scope: LivePublicationScope = {
+    d: deps,
     task: input.task,
-    recordedHead: input.recordedHead ?? null,
-    surface: input.surface ?? null,
-    git,
-    forge: (...args) => sh('gh', args),
-    changedPaths,
-    protectedChangedPaths: attribution.changedPaths,
-    driverToolCall: attribution.driverToolCall,
-    findOpenPullRequest: () => findOpenPrForBranch(branch),
-    readPullRequestView,
-    findCredentialPatterns: (header, stagedDiff) =>
-      [
-        ...findCredentialPatterns(header, 'the proposed commit header'),
-        ...findCredentialPatterns(addedDiffLines(stagedDiff), 'the staged diff')
-      ].map((found) => found.pattern),
-    validatePullRequestBody: async (body, title) => {
-      const errors = await validatePrBodyForCreate({
-        body,
-        title: title ?? `Task ${input.task}`,
-        changedFiles: changedPaths(),
-        branch,
-        baseBranch: 'main'
-      })
-      return errors.length === 0
-        ? { ok: true }
-        : { ok: false, reason: errors.map((e) => `${e.check}: ${e.message}`).join('; ') }
-    },
-    refreshEvidence: (prNumber) =>
-      attempt('refresh_evidence', () =>
-        refreshPrEvidence({ cliEntry, worktreePath, prNumber: () => prNumber, readHead: readWorktreeHead, runCli })
-      ),
-    runChecks: () => attempt('run_checks', () => runCliChecks(cliEntry, worktreePath, pullRequestCheckEnv(branch))),
-    fetchDocumentation: createFetchDocumentationTool({
-      receiptsPath: sourceReceiptsPath(storeDir),
-      manifest: () => readRequiredSourceManifest(storeDir)
-    })
-  })
+    branch: input.branch,
+    repo: input.repo,
+    worktree: input.worktreePath,
+    runtimeRoot: input.runtimeDir,
+    loopLogPath: loopLogPathFor(null, input.task, input.runtimeDir),
+    state
+  }
+  let attribution: TurnWriteAttribution
+  const buildTurnContext = (): DevToolContext => {
+    attribution = startTurnWriteAttribution(
+      protectedPathsForTurn({
+        runtimeDir: input.runtimeDir,
+        task: input.task,
+        round: input.round(),
+        role: 'developer',
+        vinayaConfigPath: configPath()
+      }),
+      [taskControlDir(input.runtimeDir, input.task), sourceReceiptsPath(storeDir)]
+    )
+    return attributeDriverToolCalls(
+      createLiveDeveloperContext({
+        ...scope,
+        agent: input.agent,
+        round: input.round,
+        helpers: { ownChangesRangeBase, defaultGitWorktreeUntrackedPaths, worktreeCheckEnv }
+      }),
+      attribution.driverToolCall
+    )
+  }
+  let turn = buildTurnContext()
+  const beginTurn = async (): Promise<void> => {
+    turn = buildTurnContext()
+    state.turnPreHead = deps.readWorktreeHead(input.worktreePath)
+    state.turnPublicationRefusal = null
+    state.turnPublicationAttempted = false
+    await resolvePublicationBase(scope, state.turnPreHead)
+  }
+  const context: DevToolContext = {
+    publishChanges: (header) => turn.publishChanges(header),
+    openPullRequest: (title, body) => turn.openPullRequest(title, body),
+    updatePullRequestBody: (body) => turn.updatePullRequestBody(body),
+    refreshEvidence: () => turn.refreshEvidence(),
+    readPullRequest: () => turn.readPullRequest(),
+    runChecks: () => turn.runChecks(),
+    fetchDocumentation: (request) => turn.fetchDocumentation(request)
+  }
+  return { context, beginTurn, state, changedProtectedPaths: () => attribution.changedPaths() }
 }
 
 /** The CLI entry script under `repoRoot`: the shim's bridge and the gate checks both run it. */
@@ -1170,6 +1130,8 @@ export function liveDeveloperFacts(input: {
   branch: string
   worktreePath: string
   round: () => number
+  /** The refusal the Developer's last publication met, read each time the step starts. */
+  lastPushRefusal?: () => string | null
 }): () => Promise<DeveloperPromptFacts> {
   const { task, repoRoot, runtimeDir, branch, worktreePath } = input
   const forge: EngineForge = { ...liveForge, ...input.forge }
@@ -1228,6 +1190,7 @@ export function liveDeveloperFacts(input: {
         }
       })(),
       keptWork: readUnpublishedWork(worktreePath),
+      lastPushRefusal: input.lastPushRefusal?.() ?? null,
       resume: {
         task,
         branch,
@@ -1351,7 +1314,15 @@ export async function main(argv: readonly string[]): Promise<number> {
   const loopId = randomUUID()
   process.env.VINAYA_RUN = loopId
   const taskInput = await liveTaskInput(args, repoRoot, runtimeDir, loopId)
-  const parsedSurface = parseIssueSurface(fetchFrozenBrief(args.task))
+  const liveContext = engineLiveDevToolsContext({
+    branch: taskInput.branch,
+    worktreePath: taskInput.worktreePath,
+    task: args.task,
+    runtimeDir,
+    agent: args.agent,
+    repo: liveRepo(),
+    round: taskInput.reviewRound
+  })
   const result = await runEngine({
     args,
     process: loaded,
@@ -1367,23 +1338,16 @@ export async function main(argv: readonly string[]): Promise<number> {
       runtimeDir,
       branch: taskInput.branch,
       worktreePath: taskInput.worktreePath,
-      round: taskInput.reviewRound
+      round: taskInput.reviewRound,
+      lastPushRefusal: () => liveContext.state.lastPushRefusal
     }),
     allowUnixSockets: linuxUnixSocketFilterOptIn(),
     lifecycle: {
       dispatchConfig: loadConfig()?.dispatch,
       recovery: liveRecovery({ args, runtimeDir, taskInput })
     },
-    devToolsContext: engineLiveDevToolsContext({
-      branch: taskInput.branch,
-      worktreePath: taskInput.worktreePath,
-      task: args.task,
-      cliEntry: taskInput.cliEntry,
-      runtimeDir,
-      recordedHead: readWorktreeHead(taskInput.worktreePath),
-      surface: parsedSurface.ok ? parsedSurface.value : null,
-      round: taskInput.reviewRound()
-    })
+    devToolsContext: liveContext.context,
+    beginDeveloperTurn: liveContext.beginTurn
   })
   // The handoff's escalation record logs through the default sink, which nothing else drains.
   await drainLogSink()
