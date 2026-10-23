@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path'
 import {
   initialLoopState,
   buildReviewInputManifest,
+  DEFAULT_REVIEW_POLICY,
   type DevReviewLoopEventInput,
   type LoopConfig,
   type LoopState,
@@ -1088,8 +1089,8 @@ export async function liveTaskInput(
   // Tranche tasks live on `task/<tranche>/<n>`, backlog tasks on `task/issue-<n>`.
   const branch = developerBranchFor(args.task, lookups.fetchTitle, lookups.fetchLabels)
   const worktreePath = join(repoRoot, '.worktrees', branch)
-  // The policy is read when first needed, never when this input is built: the prepare-run step reads it first, so a
-  // failed read pauses through the handoff instead of throwing before the run starts.
+  // The policy is read when first needed, never when this input is built: an unreadable policy pauses through the
+  // handoff (the prepare-run step reports it) instead of throwing before the run starts.
   let readPolicy: ReturnType<typeof reviewPolicyForLoop> | null = null
   const policyNow = (): ReturnType<typeof reviewPolicyForLoop> => {
     if (readPolicy === null) readPolicy = (lookups.policy ?? reviewPolicyForLoop)()
@@ -1197,7 +1198,22 @@ export async function liveTaskInput(
       publishRound: forge.publishRound
     },
     get loopState(): LoopState {
-      const policy = policyNow()
+      if (loopState !== null) return loopState
+      // Recovery reads this before the Flow starts. An unreadable policy must not throw here: the state is built from
+      // the default caps without being kept, and prepare-run then pauses on the policy with its own detail.
+      let policy: ReturnType<typeof reviewPolicyForLoop>
+      try {
+        policy = policyNow()
+      } catch {
+        return initialLoopState({
+          loopId,
+          task: args.task,
+          reviewers: ['reviewer', 'security'],
+          models: {},
+          maxRounds: DEFAULT_REVIEW_POLICY.maxRounds,
+          maxTaskMinutes: DEFAULT_REVIEW_POLICY.maxTaskMinutes
+        })
+      }
       const config: LoopConfig = {
         loopId,
         task: args.task,
@@ -1206,7 +1222,7 @@ export async function liveTaskInput(
         maxRounds: policy.maxRounds,
         maxTaskMinutes: policy.maxTaskMinutes
       }
-      if (loopState === null) loopState = initialLoopState(config)
+      loopState = initialLoopState(config)
       return loopState
     },
     set loopState(next: LoopState) {
