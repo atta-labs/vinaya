@@ -222,6 +222,22 @@ function envelope(seq: number) {
   })
 }
 
+/** The live-check step's result for an approved head: the assessment's events, the journal's close held for the publish step. */
+function approvedLive(results: Readonly<Record<string, unknown>>) {
+  const assessed = JSON.parse((results['assess-round'] as { stdout?: string } | undefined)?.stdout ?? '{}') as {
+    events: { event: string }[]
+  }
+  return {
+    exitCode: 0,
+    stdout: JSON.stringify({
+      outcome: 'publish',
+      events: assessed.events.filter((e) => e.event !== 'journal_finalized'),
+      deferred: assessed.events.filter((e) => e.event === 'journal_finalized'),
+      from: 0
+    })
+  }
+}
+
 function setup(scenario: Scenario = {}) {
   const gates = [...(scenario.gates ?? [0])]
   const assess = [...(scenario.assess ?? assessments([true]))]
@@ -235,6 +251,13 @@ function setup(scenario: Scenario = {}) {
         scenario.onAction?.(context.nodeId)
         if (name === 'harness.run-gates') return { exitCode: next(gates) }
         if (name === 'vinaya.assess-round') return next(assess)
+        if (name === 'vinaya.run-live-checks') return approvedLive(context.results)
+        if (name === 'harness.publish') {
+          const live = JSON.parse(
+            (context.results['run-live-checks'] as { stdout?: string } | undefined)?.stdout ?? '{}'
+          )
+          return { exitCode: 0, stdout: JSON.stringify({ events: live.deferred ?? [] }) }
+        }
         if (name === 'vinaya.classify-gate-result' || name === 'vinaya.dispatch-reviewers') {
           return (real[name] as NonNullable<ActionRegistry[string]>)(context)
         }

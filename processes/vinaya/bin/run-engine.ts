@@ -161,11 +161,14 @@ import {
   type VinayaReviewInputDeps,
   type VinayaStagedReviewInput
 } from '../executing/review-input'
+import { resolveRoleDoctrineText } from '../../../apps/cli/src/roles/plan'
 import { developerPrompt, type DeveloperPromptFacts } from '../executing/developer-prompt'
 import {
   ACTION_BINDINGS,
   agentOutput,
   createActions,
+  recordedScanOutcome,
+  type BoundFunctions,
   createRoleLaunchers,
   sandboxProbePlanFor,
   type HeldVerdictRole,
@@ -827,8 +830,10 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
                     developerPrompt(rendered, await developerFacts(), results, context),
                   ...(options.taskInput?.reviewerPrompt
                     ? {
-                        'code-review': async () => options.taskInput.reviewerPrompt!('reviewer'),
-                        'security-review': async () => options.taskInput.reviewerPrompt!('security')
+                        'code-review': async (_rendered, results) =>
+                          options.taskInput.reviewerPrompt!('reviewer', results),
+                        'security-review': async (_rendered, results) =>
+                          options.taskInput.reviewerPrompt!('security', results)
                       }
                     : {})
                 }
@@ -1079,6 +1084,10 @@ export async function liveTaskInput(
     policy?: typeof reviewPolicyForLoop
     /** Replaces forge reads and writes, for a run that must not reach the forge. */
     forge?: Partial<EngineForge>
+    /** Replaces the role doctrine resolver the reviewer prompts take their doctrine from. */
+    resolveReviewerDoctrine?: (role: 'reviewer' | 'security') => Promise<string | null>
+    /** Replaces the functions the security scan, live check and deferred-findings Issue call, for a run that must not reach them. */
+    completion?: Partial<BoundFunctions>
     reviewSources?: Partial<
       Pick<VinayaReviewInputDeps, 'judgedHead' | 'readHead' | 'baseOf' | 'brief' | 'prBody' | 'diff' | 'priorFindings'>
     >
@@ -1158,8 +1167,18 @@ export async function liveTaskInput(
     diff: (base, head) => sh('git', ['diff', `${base}...${head}`], worktreePath),
     ...lookups.reviewSources
   })
-  const reviewerPrompt = (role: HeldVerdictRole): string => {
+  const reviewerPrompt = async (
+    role: HeldVerdictRole,
+    results: Readonly<Record<string, StepNodeResult>>
+  ): Promise<string> => {
     const staged = reviewInput.stage(round)
+    // The role's doctrine, resolved as the standalone loop resolves it; a failed resolution renders none.
+    let doctrine: string | null = null
+    try {
+      doctrine = await (lookups.resolveReviewerDoctrine ?? resolveRoleDoctrineText)(role)
+    } catch {
+      doctrine = null
+    }
     const objectives = forge.resolveIssueObjectives(args.task)
     const facts: ReviewerPromptFacts = {
       objectives: objectives.text,
@@ -1175,12 +1194,16 @@ export async function liveTaskInput(
       ciConclusion: forge.fetchCiConclusion(judgedHead()),
       revision: forge.fetchSourceRevision(args.task),
       manifest: manifestAt(judgedHead()),
-      policy: policyNow()
+      policy: policyNow(),
+      // The scan outcome reaches the security prompt only.
+      ...(role === 'security' ? { configScan: recordedScanOutcome(results) } : {})
     }
-    return renderVinayaReviewerPrompt(role, facts, staged)
+    return renderVinayaReviewerPrompt(role, facts, staged, doctrine)
   }
   return {
     reviewerPrompt,
+    candidateDir: () => reviewInput.stage(round)?.dir ?? null,
+    frozenBrief: () => forge.fetchFrozenBrief(args.task),
     stageReviewInput: (n) => reviewInput.stage(n),
     runtimeDir,
     cliEntry: cliEntryOf(repoRoot),
@@ -1194,7 +1217,9 @@ export async function liveTaskInput(
       fetchSourceRevision: forge.fetchSourceRevision,
       pullRequestView: forge.pullRequestView,
       findOpenPrForBranch: forge.findOpenPrForBranch,
-      publishRound: forge.publishRound
+      publishRound: forge.publishRound,
+      fetchPrBody: forge.prBody,
+      ...lookups.completion
     },
     get loopState(): LoopState {
       if (loopState !== null) return loopState

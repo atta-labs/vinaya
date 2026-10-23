@@ -451,12 +451,15 @@ describe('re-running a task', () => {
       'choose-start',
       'run-mechanical-gates',
       'classify-gate-result',
+      'run-security-scan',
       'dispatch-reviewers',
       'code-review',
       'security-review',
       'validate-reviewer-outputs',
       'assess-round',
       'build-revision-handoff',
+      'run-live-checks',
+      'classify-live-result',
       'publish-ready-for-merge'
     ])
   })

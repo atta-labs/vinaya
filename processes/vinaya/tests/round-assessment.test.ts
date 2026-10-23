@@ -287,6 +287,9 @@ describe('the round assessment across a resume', () => {
               'vinaya.choose-start',
               'vinaya.validate-developer-output',
               'vinaya.validate-reviewer-outputs',
+              'vinaya.run-security-scan',
+              'vinaya.run-live-checks',
+              'vinaya.classify-live-result',
               'harness.publish'
             ].map((name) => [name, () => ({ exitCode: 0 })])
           ),

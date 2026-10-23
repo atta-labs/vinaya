@@ -34,7 +34,9 @@ steps:
   - id: classify-gate-result
     type: mechanical
     action: vinaya.classify-gate-result
-    decision: { examine: run-mechanical-gates, if_true: develop, if_false: dispatch-reviewers, max_revisions: 3 }
+    decision: { examine: run-mechanical-gates, if_true: develop, if_false: run-security-scan, max_revisions: 3 }
+  # The configured agent-configuration scan runs here, outside both reviewers' sandboxes, before either is dispatched.
+  - { id: run-security-scan, type: mechanical, action: vinaya.run-security-scan }
   - { id: dispatch-reviewers, type: mechanical, action: vinaya.dispatch-reviewers }
   - id: code-review
     type: agent
@@ -57,5 +59,11 @@ steps:
   - id: build-revision-handoff
     type: mechanical
     action: vinaya.build-revision-handoff
-    decision: { examine: assess-round, if_true: develop, if_false: publish-ready-for-merge, max_revisions: 5 }
+    decision: { examine: assess-round, if_true: develop, if_false: run-live-checks, max_revisions: 5 }
+  # Both reviewers approved: the task's [live] Test Plan lines run on the approved head before it is published.
+  - { id: run-live-checks, type: mechanical, action: vinaya.run-live-checks }
+  - id: classify-live-result
+    type: mechanical
+    action: vinaya.classify-live-result
+    decision: { examine: run-live-checks, if_true: develop, if_false: publish-ready-for-merge, max_revisions: 5 }
   - { id: publish-ready-for-merge, type: mechanical, action: harness.publish }

@@ -177,6 +177,14 @@ exit record, the driver lock's keep-or-clear rule and the journal seeding
 (`INV-116`, `INV-106`, `INV-101`) are named in
 `dev-review-loop/driver-lifecycle.ts`, where the register's sources now point.
 
+The Engine runner also completes a task through the standalone functions: it runs
+the security scan before the reviewers and hands its output to the security
+prompt only (`INV-070`), runs the `[live]` Test Plan lines of an approved head
+(`INV-164`), writes `merged_ready` only after a successful publish and ends
+every other leg `stopped` (`INV-021`, `INV-041`), and opens the deferred-findings
+Issue from the publish step. The scan's command resolver is
+`dev-review-loop/security-scan-command.ts`, shared by both runners.
+
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop/round-assess.ts contains:export async function waitForOwnLoopLine( -->
 <!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"id": "INV-111", -->
 Telemetry entries are therefore classified on their own terms (`INV-111`

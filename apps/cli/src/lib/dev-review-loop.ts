@@ -48,7 +48,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
-import { configPath, loadTrustAnchorConfig, resolveSecurityScanCommand } from './config.js'
+import { configPath, loadTrustAnchorConfig } from './config.js'
 import { buildDeveloperDeltaPacket, buildDeveloperFullPacket, renderContextPacket } from './context-packet.js'
 import {
   addedDiffLines,
@@ -344,6 +344,7 @@ import {
   driverDevBridgeInvocation
 } from './task-tools/dev-tools-registration.js'
 import { fetchLoopHistory } from './dev-review-loop/journal-history.js'
+import { resolveTrustAnchorSecurityScanCommand } from './dev-review-loop/security-scan-command.js'
 import {
   LIVE_RUN_TIMEOUT_MS,
   type LiveCheckoutPreparer,
@@ -1047,16 +1048,6 @@ function defaultGitUnifiedDiff(from: string, to: string): string | null {
 const SECURITY_SCAN_TIMEOUT_MS = 120_000
 /** The scanner subprocess's output-buffer cap, so a runaway scanner can never flood the driver's memory (the prompt itself is capped separately, tighter, by `capSecurityScanOutput`). */
 const SECURITY_SCAN_MAX_BUFFER_BYTES = 8 * 1024 * 1024
-
-/**
- * The configured scanner argv from the DEFAULT-BRANCH trust anchor — the
- * same source `reviewPolicy()`/`principalAllowlist()` read, never the pull
- * request's own checkout, so a pull request cannot choose the subprocess that
- * runs in the driver's environment by editing its own `vinaya.config.json`.
- */
-function defaultResolveSecurityScanCommand(): readonly string[] | null {
-  return resolveSecurityScanCommand(loadTrustAnchorConfig())
-}
 
 /** The pull request's changed paths, `git diff --name-only <base>...<head>` (the PR's own diff against its merge base). `[]` on any git failure — the scan is then `not_applicable` rather than run against paths that could not be read. */
 function defaultGitChangedPaths(base: string, head: string): readonly string[] {
@@ -2030,7 +2021,7 @@ async function defaultStartDevTools(input: {
 }
 
 /** O2/O3: `gh pr edit --body-file` to replace the open PR's body (the `update_pull_request_body` tool's forge write). */
-async function defaultUpdatePrBody(input: {
+export async function defaultUpdatePrBody(input: {
   prNumber: number
   body: string
   repo: { owner: string; repo: string } | null
@@ -2592,7 +2583,7 @@ export function defaultDeps(): LoopDeps {
     gitFetch: defaultGitFetch,
     gitDiffShortstat: defaultGitDiffShortstat,
     gitUnifiedDiff: defaultGitUnifiedDiff,
-    resolveSecurityScanCommand: defaultResolveSecurityScanCommand,
+    resolveSecurityScanCommand: () => resolveTrustAnchorSecurityScanCommand(loadTrustAnchorConfig),
     gitChangedPaths: defaultGitChangedPaths,
     runSecurityScanSubprocess: defaultRunSecurityScanSubprocess,
     resolveTaskSurface: defaultResolveTaskSurface,
@@ -2672,7 +2663,7 @@ export function defaultDeps(): LoopDeps {
  * two never disagree on the finding itself. Empty when the round deferred
  * nothing (O3).
  */
-function deferredEntriesForRound(round: number, verdicts: VerdictObservation[]): DeferredFindingEntry[] {
+export function deferredEntriesForRound(round: number, verdicts: VerdictObservation[]): DeferredFindingEntry[] {
   const entries: DeferredFindingEntry[] = []
   for (const v of verdicts) {
     for (const f of v.findings) {

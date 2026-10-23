@@ -14,6 +14,8 @@ import type { DriverExitReason } from '../../../apps/cli/src/lib/dev-review-loop
 // `log-inventory.ts`.
 
 const ASSESS_STEP = 'assess-round'
+const LIVE_STEP = 'run-live-checks'
+const PUBLISH_STEP = 'publish-ready-for-merge'
 const DEVELOP_STEP = 'develop'
 
 /** The Flow's agent steps and the role each launches. */
@@ -69,6 +71,30 @@ function readAssessment(steps: RecordedSteps): Assessment | null {
   }
 }
 
+interface LiveOutcome {
+  /** What the live-check step decided: the head stands for publication, goes back to the Developer, or pauses. */
+  decision: string
+  /** The events to log now: the assessment's, with an approval a failed line withdrew already rewritten. */
+  events: DevReviewLoopEventInput[]
+}
+
+/** The live-check step's recorded outcome, or null when it recorded none or something unreadable. */
+function readLiveOutcome(steps: RecordedSteps): LiveOutcome | null {
+  const stdout = steps[LIVE_STEP]?.stdout
+  if (!stdout) return null
+  try {
+    const parsed = JSON.parse(stdout) as { outcome?: unknown; events?: unknown }
+    if (typeof parsed.outcome !== 'string' || !Array.isArray(parsed.events)) return null
+    const decision = parsed.outcome === 'revise' ? 'dispatch_developer' : parsed.outcome
+    return {
+      decision: decision === 'pause' ? 'pause(max_rounds)' : decision,
+      events: parsed.events as DevReviewLoopEventInput[]
+    }
+  } catch {
+    return null
+  }
+}
+
 /** Producers for one run of the Flow, with the state a run builds up across its legs. */
 export function createVinayaLogProducers(
   config: Pick<LoopConfig, 'loopId' | 'task'>
@@ -104,12 +130,9 @@ export function createVinayaLogProducers(
     ]
   }
 
-  /** The assessment's events, with the totals a later journal close needs taken from them. */
-  const assessed = (steps: RecordedSteps): LogEventInput[] => {
-    const assessment = readAssessment(steps)
-    if (assessment === null) return []
-    lastDecision = assessment.decision
-    for (const event of assessment.events) {
+  /** Takes the totals a later journal close needs from `events`, and returns them as Log events. */
+  const absorbed = (events: readonly DevReviewLoopEventInput[]): LogEventInput[] => {
+    for (const event of events) {
       if (event.event === 'gate_result_read') finalHead = event.head
       if (event.event === 'round_ended') {
         roundsEnded += 1
@@ -119,7 +142,42 @@ export function createVinayaLogProducers(
       }
       if (event.event === 'journal_finalized') finalized = true
     }
-    return assessment.events as unknown as LogEventInput[]
+    return events as unknown as LogEventInput[]
+  }
+
+  /**
+   * The assessment's events. A publish decision waits for the live check: whether the approval stands is not
+   * known yet, so the events are logged by that step, and only the head they name is kept for a close.
+   */
+  const assessed = (steps: RecordedSteps): LogEventInput[] => {
+    const assessment = readAssessment(steps)
+    if (assessment === null) return []
+    lastDecision = assessment.decision
+    if (assessment.decision === 'publish') {
+      for (const event of assessment.events) if (event.event === 'gate_result_read') finalHead = event.head
+      return []
+    }
+    return absorbed(assessment.events)
+  }
+
+  /** The live check's outcome: the events it settled on, with the journal's close left for the publish step. */
+  const liveChecked = (steps: RecordedSteps): LogEventInput[] => {
+    const outcome = readLiveOutcome(steps)
+    if (outcome === null) return []
+    lastDecision = outcome.decision
+    return absorbed(outcome.events)
+  }
+
+  /** The journal's close, written only once the publication succeeded: the publish step hands on what it held. */
+  const published = (steps: RecordedSteps): LogEventInput[] => {
+    const stdout = steps[PUBLISH_STEP]?.stdout
+    if (!stdout) return []
+    try {
+      const parsed = JSON.parse(stdout) as { events?: unknown }
+      return Array.isArray(parsed.events) ? absorbed(parsed.events as DevReviewLoopEventInput[]) : []
+    } catch {
+      return []
+    }
   }
 
   return {
@@ -132,8 +190,16 @@ export function createVinayaLogProducers(
       if (nodeId === DEVELOP_STEP) round = Math.max(1, started)
       return []
     },
-    nodeCompleted: ({ nodeId, steps }) => (nodeId === ASSESS_STEP ? assessed(steps) : []),
-    nodeFailed: ({ nodeId, steps }) => (nodeId === ASSESS_STEP ? assessed(steps) : []),
+    nodeCompleted: ({ nodeId, steps }) =>
+      nodeId === ASSESS_STEP
+        ? assessed(steps)
+        : nodeId === LIVE_STEP
+          ? liveChecked(steps)
+          : nodeId === PUBLISH_STEP
+            ? published(steps)
+            : [],
+    nodeFailed: ({ nodeId, steps }) =>
+      nodeId === ASSESS_STEP ? assessed(steps) : nodeId === LIVE_STEP ? liveChecked(steps) : [],
     runEnded: ({ outcome, cancelled }) => {
       if (cancelled) return [loop({ event: 'cancelled', round, by: 'principal' })]
       switch (outcome.reason) {
