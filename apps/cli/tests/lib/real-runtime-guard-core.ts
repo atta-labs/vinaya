@@ -7,7 +7,9 @@
  * nothing from `src/`, so it adds no dependent to any module's test selection.
  *
  * Every file whose mtime/ctime, and every directory whose birth time, is at or
- * after this process's own start was written during this run. Two paths are exempt, only when `VINAYA_TASK` says a
+ * after this process's own start was written during this run. The controller's
+ * recomputable test-plan cache is always exempt because it is written before
+ * the test command starts. Two further paths are exempt only when `VINAYA_TASK` says a
  * dispatched run is live, because that run legitimately writes them while its
  * own suite runs: `tasks-execution/<VINAYA_TASK>` and `tasks-execution/unscoped`.
  * A task whose `tasks-execution/<task>/driver.pid.json` names a running process
@@ -50,8 +52,9 @@ export function realRuntimeDir(): string {
 
 export function exemptPrefixes(env: NodeJS.ProcessEnv): string[] {
   const task = env.VINAYA_TASK
-  if (!task) return []
-  return [join('tasks-execution', task), join('tasks-execution', 'unscoped')]
+  const controllerCache = join('tasks-execution', 'unscoped', 'output', 'test-run-cache.json')
+  if (!task) return [controllerCache]
+  return [join('tasks-execution', task), join('tasks-execution', 'unscoped'), controllerCache]
 }
 
 function pidRunning(pid: unknown): boolean {

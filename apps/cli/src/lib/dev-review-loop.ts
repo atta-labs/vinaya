@@ -65,9 +65,7 @@ import {
 import {
   activeBudgetMs,
   assessRound,
-  beyondSurfacePaths,
   briefHash as briefHashOf,
-  carryLiveRecord,
   parseLiveTestPlanItems,
   readLiveRecord,
   withLiveRecord,
@@ -82,9 +80,7 @@ import {
   isConcludedJournal,
   type IssueSurface,
   globCoversPath,
-  isProtectedAdminPath,
   manifestAsEchoed,
-  normalizeTouchedPath,
   nextRoundNumber,
   pauseBoundRulingFromResolution,
   parseIssueSurface,
@@ -107,7 +103,6 @@ import {
   type RoundStats,
   type TaskClock,
   type VerdictObservation,
-  withBeyondSurfaceBlock,
   extractSourceRevision
 } from '@attalabs/aeg-core'
 import {
@@ -117,7 +112,6 @@ import {
   dispatchRole as realDispatchRole,
   type DispatchHandle,
   isAgentVendor,
-  readLaunchRecord,
   readResumeRecord as realReadResumeRecord,
   realDispatchTeeRecoveryDeps,
   type ResumeRecord,
@@ -199,7 +193,6 @@ import {
   fetchSourceRevision,
   findOpenPrForBranch,
   LaunchContinuityLost,
-  type DeveloperModelRun,
   readDeveloperModelRuns,
   recoverDeveloperLaunch,
   recordDeveloperModelRun,
@@ -302,21 +295,32 @@ import type { DeveloperTurnResult } from './developer-turn-result.js'
 import { buildReport, gh, resolveMergeBase, runReportForOpenPr } from './pr-report-engine.js'
 import { reassertPrBodyPremise } from '../checks/bin/check-pr-premise-reassert.js'
 import type { PremiseReassertResult } from '../checks/premise-reassert-logic.js'
-import { fastForwardedOntoDefaultTip } from './dev-review-loop/developer-publication.js'
 import { postForgeEffectOnce, publishRound, unboundFields } from './dev-review-loop/publication.js'
 import { patchIdAt } from './patch-id.js'
-import { createDeveloperDevToolContext, type DeveloperDevToolDeps } from './task-tools/developer-dev-tools-context.js'
 import {
-  devToolError,
-  type DevPullRequestView,
-  type DevToolContext,
-  reviewerDevToolContext
-} from './task-tools/dev-tools-server.js'
+  attributeDriverToolCalls as sharedAttributeDriverToolCalls,
+  commitAndPushPrompt as sharedCommitAndPushPrompt,
+  createLiveDeveloperContext,
+  createLivePublicationState,
+  defaultPushTaskBranch as sharedDefaultPushTaskBranch,
+  defaultPushTaskBranchWithLease as sharedDefaultPushTaskBranchWithLease,
+  developerRunIdFor,
+  LeasePushRejected,
+  PushHookRefusal,
+  firstErrorLine,
+  type LivePublicationScope,
+  publishDeveloperTurn as sharedPublishDeveloperTurn,
+  readPublicationBase as sharedReadPublicationBase,
+  resolvePublicationBase as sharedResolvePublicationBase,
+  syncBeyondSurfaceRecord as sharedSyncBeyondSurfaceRecord,
+  withBeyondSurfaceRecord as sharedWithBeyondSurfaceRecord
+} from './task-tools/live-developer-context.js'
+import { type DevPullRequestView, type DevToolContext, reviewerDevToolContext } from './task-tools/dev-tools-server.js'
 import { createReadSourceTool } from './task-tools/read-source.js'
 import type { GrantedRole } from './task-tools/role-grants.js'
 import { type FailedCheckLog, readFailedCheckLogs, readJobLogTail } from './task-tools/pr-facts.js'
 import { startDevToolsHost } from './task-tools/dev-tools-host.js'
-import { createFetchDocumentationTool, type FetchDocumentationDeps } from './task-tools/fetch-documentation.js'
+import type { FetchDocumentationDeps } from './task-tools/fetch-documentation.js'
 import {
   appendSourceDeliveryReceipt,
   injectedDeliveryReceipts,
@@ -1555,10 +1559,7 @@ export function defaultRestoreWorktreeHead(worktreePath: string, head: string): 
   return gitOk(worktreePath, ['rev-parse', 'HEAD']) === head
 }
 
-/** The exclusive lower bound for paths attributed to one branch push. */
-export function pushedCommitRangeBase(remoteHead: string | null, branchBase: string | null): string | null {
-  return remoteHead ?? branchBase
-}
+export { pushedCommitRangeBase } from './task-tools/live-developer-context.js'
 
 /**
  * The lower bound that measures only the task's own changes: `pushedBase`
@@ -1676,15 +1677,6 @@ function traceHasRefusingHook(trace: string, names: ReadonlySet<string>): boolea
     }
   }
   return false
-}
-
-function firstErrorLine(output: string, fallback: string): string {
-  return (
-    output
-      .split('\n')
-      .map((line) => line.trim())
-      .find(Boolean) ?? fallback
-  )
 }
 
 type PublicationRefusal = {
@@ -1843,33 +1835,8 @@ function defaultCommitWorktree(worktreePath: string, header: string): CommitWork
   return { ok: true, sha: sh('git', ['-C', worktreePath, 'rev-parse', 'HEAD']).trim() }
 }
 
-/** The developer launch record's `runId`, or `null` when no usable record names this task — what the broker context is authenticated from (O3). */
-function developerRunIdFor(
-  agent: AgentVendor,
-  repo: { owner: string; repo: string } | null,
-  task: number
-): string | null {
-  const parsed = readLaunchRecord('developer', agent, repo, task)
-  return parsed.status === 'ok' ? parsed.record.runId : null
-}
-
-/** A lease push git refused because the remote branch is no longer at the expected head. */
-class LeasePushRejected extends Error {
-  constructor(readonly output: string) {
-    super(output)
-    this.name = 'LeasePushRejected'
-  }
-}
-
 /** git's own words for a push it refused because the remote ref moved. */
 const LEASE_REJECTED = /\(stale info\)|\[rejected\]|\(fetch first\)|non-fast-forward/
-
-class PushHookRefusal extends Error {
-  constructor(readonly output: string) {
-    super(firstErrorLine(output, 'pre-push hook refused with no captured output'))
-    this.name = 'PushHookRefusal'
-  }
-}
 
 /** A push's captured output is read in full: a hook that runs a whole suite prints far more than Node's default 1 MiB buffer, and a killed push would read as a failure outside the hook. */
 const PUSH_OUTPUT_MAX_BUFFER = 256 * 1024 * 1024
@@ -1961,109 +1928,24 @@ export function pushBranchClassified(worktreePath: string, branch: string, lease
 
 /**
  * O3/O4: pushes the task branch through the Broker's governed `branch-push`
- * operation. The invocation context is authenticated from the Developer's own
- * launch record — never a hand-built context — so the push is authorized for
- * this task and recorded as an effect. The push runs from the task worktree
- * so the repository's own pre-push hook runs exactly where a Developer's push
- * once did; a hook that refuses makes `execFileSync` throw, and its own
- * refusal text (stderr) is returned as `refusal` (O4), never raised.
+ * operation (`defaultPushTaskBranch`, shared with the Engine runner).
  */
 function defaultPushTaskBranch(
   input: Parameters<LoopDeps['pushTaskBranch']>[0]
 ): { ok: true } | { ok: false; refusal: string; hook: boolean } {
-  const result = pushTaskBranchThroughBroker(input, 'branch-push')
-  return result.ok ? { ok: true } : { ok: false, refusal: result.refusal, hook: result.hook }
+  return sharedDefaultPushTaskBranch(input, pushBranchClassified)
 }
 
 /**
  * O2: the driver's own force-with-lease push of the task branch after it
  * rebased that branch onto the default branch's tip, through the Broker's
- * `branch-lease-push` operation — authenticated from the Developer's launch
- * record exactly like `defaultPushTaskBranch`, and refused by the Broker for
- * any target outside `refs/heads/task/`. The lease names the remote head read
- * before the publish, so a remote branch that moved since is never
- * overwritten. No Developer tool reaches this.
+ * `branch-lease-push` operation (`defaultPushTaskBranchWithLease`, shared with
+ * the Engine runner).
  */
 function defaultPushTaskBranchWithLease(
   input: Parameters<LoopDeps['pushTaskBranchWithLease']>[0]
 ): { ok: true } | { ok: false; refusal: string; hook: boolean; lease: boolean } {
-  const result = pushTaskBranchThroughBroker(input, 'branch-lease-push', input.expectedRemoteHead)
-  return result.ok ? { ok: true } : result
-}
-
-/**
- * Both task-branch pushes through the Broker: authenticated from the
- * Developer's own launch record — never a hand-built context — so the push is
- * authorized for this task and recorded as an effect. The push runs from the
- * task worktree so the repository's own pre-push hook runs exactly where a
- * Developer's push once did; a hook refusal is returned with its own text
- * (O4), never raised.
- */
-function pushTaskBranchThroughBroker(
-  input: Parameters<LoopDeps['pushTaskBranch']>[0],
-  operation: 'branch-push' | 'branch-lease-push',
-  lease?: string
-): { ok: true } | { ok: false; refusal: string; hook: boolean; lease: boolean } {
-  const runId = developerRunIdFor(input.agent, input.repo, input.task)
-  if (runId === null) {
-    return {
-      ok: false,
-      refusal: `no developer launch record for task ${input.task} to authenticate the push against`,
-      hook: false,
-      lease: false
-    }
-  }
-  let context: ReturnType<typeof authenticateWorkerInvocation>
-  try {
-    context = authenticateWorkerInvocation(
-      { VINAYA_ROLE: 'developer', VINAYA_TASK: String(input.task), VINAYA_RUN_ID: runId },
-      realDispatchTeeRecoveryDeps()
-    )
-  } catch (err) {
-    return { ok: false, refusal: err instanceof Error ? err.message : String(err), hook: false, lease: false }
-  }
-  try {
-    requestEffect(defaultControlStoreDeps(controlStoreRoot), context, {
-      operation,
-      target: scopeTarget(input.task, `refs/heads/${input.branch}`),
-      inputVersion: input.round,
-      touchedPaths: input.touchedPaths,
-      surfaceCoversPath: (path) => input.surface?.in.some((glob) => globCoversPath(glob, path)) ?? false,
-      key: `${operation}-${input.sha}`,
-      payload: input.sha,
-      poster: () => {
-        pushBranchClassified(input.worktreePath, input.branch, lease)
-        return input.sha
-      },
-      reconcile: () => {
-        let head: string | null
-        try {
-          head = resolveHead(input.branch)
-        } catch {
-          head = null
-        }
-        return head === input.sha ? { outcome: 'confirmed', url: input.sha } : { outcome: 'absent' }
-      }
-    })
-    return { ok: true }
-  } catch (err) {
-    // A pre-push hook refusal surfaces as the poster's push throwing with the
-    // hook's own output on the error; any broker/credential refusal surfaces
-    // the same way. Either is a failed push, returned for the existing
-    // mechanical-failure path to carry (O4), never raised.
-    const message =
-      err instanceof PushHookRefusal || err instanceof LeasePushRejected
-        ? err.output
-        : err instanceof Error
-          ? err.message
-          : String(err)
-    return {
-      ok: false,
-      refusal: message.trim() || 'the push was refused with no captured output',
-      hook: err instanceof PushHookRefusal,
-      lease: err instanceof LeasePushRejected
-    }
-  }
+  return sharedDefaultPushTaskBranchWithLease(input, pushBranchClassified)
 }
 
 /**
@@ -2658,7 +2540,7 @@ function defaultTerminateInFlightLaunchesOnShutdown(
   for (const role of IN_FLIGHT_SHUTDOWN_ROLES) realTerminateLaunchedChildOnShutdown(role, agent, repo, task)
 }
 
-function defaultDeps(): LoopDeps {
+export function defaultDeps(): LoopDeps {
   return {
     dispatchRole: realDispatchRole,
     resolveHead,
@@ -3905,7 +3787,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // fresh `LoopState`, so without this the next round would re-send the
         // developer at a finding or a failure that had already repeated.
         repeatMemory: { blockingFindings: state.lastBlockingFindings, lastFailure: state.lastFailure },
-        publicationExpectedBase,
+        publicationExpectedBase: publicationState.publicationExpectedBase,
         developerHandoff,
         // The task's own clock, carried forward unchanged (`taskStartedAt`) and
         // accumulated (`phaseMs`), so the next driver to take this task over
@@ -4045,51 +3927,20 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     let mechanicalRetryRecoverySurvivesOneReset = gateStalledStreak > 0
     /** O2: true once this stall episode has already used its one unpushed-work resume — reset alongside `gateStalledStreak`, by every genuine `gate` observation, so a LATER stall gets its own resume. */
     let unpushedResumeAttempted = false
-    /** O4/O6: the conflicting file(s) from the last mergeability read, consumed by the very next `dispatch_developer` prompt, then cleared — never a CI-red retry (never sets `pendingGateRedRetry`), so the head-change-wait that follows always re-checks the gate fresh rather than replaying `lastFailingChecks`. */
-    let pendingConflictFiles: string[] | null = null
-    /**
-     * O7: the worktree head captured right before the current Developer
-     * dispatch — what the publication step's own head check (the Developer
-     * left its work uncommitted) is read against. `null` when no worktree
-     * exists yet for this dispatch — a driver running on a different host than
-     * the Developer's own machine, or a worktree this driver's own O1
-     * creation attempt (`createTaskWorktree`) could not establish.
-     */
-    let turnPreHead: string | null = null
+    /** The developer stop identity captured right before the current Developer dispatch. */
     let turnPreStop: string | null = null
     /**
-     * O7: the branch's base, recorded on the first publication and checked
-     * against on every later one — a base that changed between turns means the
-     * branch was re-pointed, which the publication step refuses. Recorded
-     * lazily (not at loop start) so a fresh round-1 run with no head yet never
-     * has to resolve one.
+     * What one Developer turn's publication carries from tool call to tool
+     * call, owned by the shared live Developer context: the worktree head
+     * captured right before the dispatch (`turnPreHead`, `null` when no
+     * worktree exists yet), the branch's recorded base and fast-forward tip,
+     * the conflicting files the next dispatch's prompt names, the last push
+     * refusal, and whether the turn attempted a publication and how its last
+     * attempt ended.
      */
-    let publicationExpectedBase: string | null =
+    const publicationState = createLivePublicationState(
       recoveredLoopState.status === 'ok' ? recoveredLoopState.value.publicationExpectedBase : null
-    /**
-     * The default branch's tip the Developer fast-forwarded its worktree onto,
-     * until the next landed push: the turn's changed paths are measured from
-     * it, never from the task branch's older remote head, which would count the
-     * default branch's own files as the task's.
-     */
-    let publicationFastForwardBase: string | null = null
-    /**
-     * O4: the pre-push hook's own refusal text from the most recent refused
-     * driver push, carried into the existing mechanical-failure path's message
-     * so a reader sees why the push never landed. Cleared on a landed push.
-     */
-    let lastPushRefusal: string | null = null
-    /**
-     * The refusal a driver publication tool returned on the turn's LAST
-     * publication attempt (`check: output`), or `null` when the turn made no
-     * attempt or its last one landed. Reset at every dispatch; fed by every
-     * refusal source through the one callback — a Surface or header refusal
-     * and a pre-push hook refusal alike — and read by the head-change wait to
-     * skip a wait for a push that cannot come.
-     */
-    let turnPublicationRefusal: string | null = null
-    /** Whether the current Developer dispatch called any driver publication tool. */
-    let turnPublicationAttempted = false
+    )
     /**
      * O1/O2: the protected-path hashes taken right before a dispatch
      * (`snapshotTurnConfinement`, below) — compared again once that SAME
@@ -4251,8 +4102,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           texts.push({ text: written, location: "the Developer's own turn output (its messages and tool invocations)" })
       }
       const worktree = worktreePathForBranch()
-      if (turnPreHead !== null && existsSync(worktree)) {
-        const diff = d.gitWorktreeDiffText(worktree, turnPreHead)
+      if (publicationState.turnPreHead !== null && existsSync(worktree)) {
+        const diff = d.gitWorktreeDiffText(worktree, publicationState.turnPreHead)
         if (diff) {
           const added = addedDiffLines(diff)
           if (added) texts.push({ text: added, location: 'the diff lines this turn added to the worktree' })
@@ -4341,33 +4192,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * cannot be read, so a list the agent wrote never survives a read failure.
      */
     async function withBeyondSurfaceRecord(body: string): Promise<string> {
-      const surface = d.resolveTaskSurface ? d.resolveTaskSurface(task) : null
-      if (!surface) return withBeyondSurfaceBlock(body, [])
-      const worktree = worktreePathForBranch()
-      try {
-        const head = d.readWorktreeHead(worktree)
-        if (head === null) return withBeyondSurfaceBlock(body, [])
-        const base = await d.gitMergeBase(head)
-        return withBeyondSurfaceBlock(body, beyondSurfacePaths(d.gitWorktreeChangedPaths(worktree, base), surface))
-      } catch {
-        return withBeyondSurfaceBlock(body, [])
-      }
+      return sharedWithBeyondSurfaceRecord(liveContextScope(), body)
     }
 
     /** Rewrite the open pull request's `AEG:BEYOND-SURFACE` block after the branch moved — a no-op with no open pull request or no change to the block. Never throws: a failed write is logged, and the next body write records it. */
     async function syncBeyondSurfaceRecord(pr: number | null): Promise<void> {
-      if (pr === null) return
-      try {
-        const body = d.fetchPrBody(pr)
-        const next = await withBeyondSurfaceRecord(body)
-        if (next !== body) await d.updatePrBody({ prNumber: pr, body: next, repo })
-      } catch (err) {
-        appendRoleLine(
-          loopLogPath,
-          'dev-review-loop',
-          `beyond_surface_update_failed: ${err instanceof Error ? err.message : String(err)}`
-        )
-      }
+      return sharedSyncBeyondSurfaceRecord(liveContextScope(), pr)
     }
 
     async function recordDeveloperModel(roundNum: number): Promise<void> {
@@ -4559,12 +4389,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // the Developer left its work uncommitted (the head did not move). A
       // fresh round-1 turn whose worktree the Developer's own Step 0 is still
       // creating records `null`, and the head check is then inactive.
-      turnPreHead = devWorktreeDir ? d.readWorktreeHead(devWorktreeDir) : null
-      turnPublicationRefusal = null
-      turnPublicationAttempted = false
-      const priorBase = publicationExpectedBase
-      await resolvePublicationBase(turnPreHead)
-      if (publicationExpectedBase !== priorBase) persistCurrentLoopState(currentPhase ?? 'dispatch_developer')
+      publicationState.turnPreHead = devWorktreeDir ? d.readWorktreeHead(devWorktreeDir) : null
+      publicationState.turnPublicationRefusal = null
+      publicationState.turnPublicationAttempted = false
+      const priorBase = publicationState.publicationExpectedBase
+      await resolvePublicationBase(publicationState.turnPreHead)
+      if (publicationState.publicationExpectedBase !== priorBase)
+        persistCurrentLoopState(currentPhase ?? 'dispatch_developer')
       turnPreStop = d.fetchDeveloperStop(task)?.identity ?? null
       // O1/O2: the protected-path snapshot this turn's after-dispatch check
       // (`dispatchDeveloper`, below) compares against — taken here, right
@@ -5142,30 +4973,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * attempt never moves that expectation. Never throws.
      */
     async function readPublicationBase(worktreeHead: string | null): Promise<string | null> {
-      if (worktreeHead === null) return publicationExpectedBase
-      try {
-        return await d.gitMergeBase(worktreeHead)
-      } catch {
-        return null
-      }
+      return sharedReadPublicationBase(liveContextScope(), worktreeHead)
     }
 
-    /**
-     * O7: read the task branch's base and record it as the expected base when
-     * none is recorded yet or it descends from the recorded one — the base a
-     * merge from the default branch legitimately moves forward. Called only at
-     * a Developer turn start and after a publication that pushed, never from
-     * the publication check's input, so a refused rebase cannot advance it.
-     * A base that changes any other way means the branch was re-pointed, which
-     * the publication check refuses. Never throws.
-     */
+    /** Reads the base and records it as the expected base when none is recorded or it descends from the recorded one (`resolvePublicationBase`). */
     async function resolvePublicationBase(worktreeHead: string | null): Promise<string | null> {
-      if (worktreeHead === null) return publicationExpectedBase
-      const base = await readPublicationBase(worktreeHead)
-      if (base !== null && (publicationExpectedBase === null || d.gitIsAncestor(publicationExpectedBase, base))) {
-        publicationExpectedBase = base
-      }
-      return base
+      return sharedResolvePublicationBase(liveContextScope(), worktreeHead)
     }
 
     /**
@@ -5192,19 +5005,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * the driver, and `runChecks` can run long.
      */
     function attributeDriverToolCalls(context: DevToolContext): DevToolContext {
-      const attributed = <T>(call: () => Promise<T>): Promise<T> => {
+      return sharedAttributeDriverToolCalls(context, (call) => {
         const attribution = turnConfinementByRole.get('developer')
         return attribution ? attribution.driverToolCall(call) : call()
-      }
-      return {
-        publishChanges: (header) => attributed(() => context.publishChanges(header)),
-        openPullRequest: (title, body) => attributed(() => context.openPullRequest(title, body)),
-        updatePullRequestBody: (body) => attributed(() => context.updatePullRequestBody(body)),
-        refreshEvidence: () => attributed(() => context.refreshEvidence()),
-        readPullRequest: () => context.readPullRequest(),
-        runChecks: () => context.runChecks(),
-        fetchDocumentation: (input) => attributed(() => context.fetchDocumentation(input))
-      }
+      })
     }
 
     /** This task's controller-owned source store — the required-source manifest, its snapshots and every delivery receipt, under `control/`. */
@@ -5289,494 +5093,27 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       return prepared.manifest
     }
 
-    function buildDeveloperDevToolContext(roundNum: number): DevToolContext {
-      const worktree = worktreePathForBranch()
-      const prNumberNow = (): number | null => d.findOpenPrForBranch(branch)?.number ?? null
-      const modelRuns = (): DeveloperModelRun[] => readDeveloperModelRuns(root, task)
-      const issueTitle = (): string => {
-        try {
-          return d.fetchIssueTitle(task)
-        } catch {
-          return `[task ${task}]`
-        }
+    function liveContextScope(): LivePublicationScope {
+      return {
+        d,
+        task,
+        branch,
+        repo,
+        worktree: worktreePathForBranch(),
+        runtimeRoot: root,
+        loopLogPath,
+        state: publicationState
       }
-      const safeRemoteHead = (): string | null => {
-        try {
-          return d.resolveHead(branch)
-        } catch {
-          return null
-        }
-      }
-      // One comparison point for every publication check: the default-branch
-      // commit the turn merged in, else the conflict-retry's `origin/main`,
-      // else the last pushed head. `extraPaths` are paths the turn rolled back
-      // to an older default-branch state, which the merged commit cannot show.
-      const defaultRemoteUrl = repo ? `https://github.com/${repo.owner}/${repo.repo}.git` : null
-      const publicationRange = (remoteHead: string | null): { base: string | null; extraPaths: string[] } => {
-        const pushedBase =
-          publicationFastForwardBase ??
-          ownChangesRangeBase(worktree, pushedCommitRangeBase(remoteHead, publicationExpectedBase))
-        const merged = d.readMergedDefaultCommit(worktree, pushedBase, defaultRemoteUrl)
-        if (merged) return { base: merged.commit, extraPaths: merged.regressedPaths }
-        return { base: pendingConflictFiles !== null ? 'origin/main' : pushedBase, extraPaths: [] }
-      }
-      const publicationChangedPaths = (range: { base: string | null; extraPaths: string[] }): string[] => [
-        ...new Set([...(range.base ? d.gitWorktreeChangedPaths(worktree, range.base) : []), ...range.extraPaths])
-      ]
-      const worktreeChangedPaths = (): string[] => {
-        const unpushed = d.readUnpushedWorkDetail(worktree)
-        const range = publicationRange(safeRemoteHead())
-        const diffPaths = publicationChangedPaths(range)
-        const extraDirtyPaths = range.base ? defaultGitWorktreeUntrackedPaths(worktree) : unpushed.dirtyFiles
-        return [...new Set([...diffPaths, ...extraDirtyPaths])]
-      }
-      const prChangedPaths = async (): Promise<string[] | null> => {
-        const head = d.readWorktreeHead(worktree)
-        if (head === null) return null
-        let base: string
-        try {
-          base = await d.gitMergeBase(head)
-        } catch {
-          return null
-        }
-        const paths = d.gitWorktreeChangedPaths(worktree, base)
-        const dirty = d.readUnpushedWorkDetail(worktree).dirtyFiles
-        const changed = [...new Set([...paths, ...dirty])]
-        return changed.length > 0 ? changed : null
-      }
-      let driverUnpushedCommit: { sha: string; parent: string | null } | null = null
-      // The base of `driverUnpushedCommit` — a merge commit the driver made
-      // moves it past the recorded base, and retrying that same head is no
-      // re-pointed branch.
-      let driverUnpushedCommitBase: string | null = null
-      // The remote's default-branch tip, read only when the head moved and
-      // equals it — the one case the fast-forward exception can accept.
-      const readFastForwardTip = (
-        worktreeHead: string | null
-      ): { sha: string; recordedHeadIsAncestor: boolean } | null => {
-        if (worktreeHead === null || turnPreHead === null || worktreeHead === turnPreHead) return null
-        const tip = d.readDefaultBranchTip(defaultRemoteUrl)
-        if (tip === null || tip !== worktreeHead) return null
-        let recordedHeadIsAncestor = false
-        try {
-          recordedHeadIsAncestor = d.gitIsAncestor(turnPreHead, tip)
-        } catch {
-          recordedHeadIsAncestor = false
-        }
-        return { sha: tip, recordedHeadIsAncestor }
-      }
-      // The protected administrative paths among `paths` the task's Surface
-      // does not cover — exactly what the Broker's protected-path check refuses.
-      const blockingPaths = (paths: readonly string[], surface: IssueSurface | null): string[] =>
-        paths.filter(
-          (path) =>
-            isProtectedAdminPath(path) &&
-            !(surface?.in.some((glob) => globCoversPath(glob, normalizeTouchedPath(path))) ?? false)
-        )
-      // A main-drift rebase or lease push that could not land: nothing was
-      // pushed, and the Developer is told to merge the default branch at that
-      // tip, the same instruction a merge conflict carries.
-      const mainDriftConflict = (tip: string, files: readonly string[], reason: string) => {
-        const fileList =
-          files.length > 0 ? files.map((file) => `- ${file}`).join('\n') : '(no specific file could be determined)'
-        const text = [
-          `The default branch moved a protected path this task never changed, so the driver tried to rebase \`${branch}\` onto main ${tip} and could not: ${reason}. Nothing was pushed.`,
-          `Merge the default branch at that tip without committing it: run \`git merge --no-commit ${tip}\` from this worktree, resolve the conflicting file(s) below, then call \`publish_changes\` again — it makes the merge commit. Conflicting file(s):`,
-          fileList
-        ].join('\n\n')
-        lastPushRefusal = text
-        return {
-          ok: false as const,
-          error: devToolError(
-            'conflict',
-            'same_attempt',
-            'not_committed',
-            'main-drift-rebase',
-            text,
-            `Run \`git merge --no-commit ${tip}\`, resolve the conflicting file(s), then call publish_changes again.`
-          )
-        }
-      }
-      // A refused push: the pre-push hook's own text goes back to the
-      // Developer; any other refusal (a Broker refusal, a git failure) is
-      // raised, as it always was.
-      const pushRefused = (push: { refusal: string; hook: boolean }) => {
-        if (!push.hook) throw new Error(`task branch push failed outside the pre-push hook: ${push.refusal}`)
-        lastPushRefusal = push.refusal
-        return {
-          ok: false as const,
-          error: devToolError(
-            'policy_refusal',
-            'same_attempt',
-            'not_committed',
-            'pre-push-hook',
-            push.refusal,
-            'Fix what the pre-push hook refused, then call publish_changes again.'
-          )
-        }
-      }
-      const deps: DeveloperDevToolDeps = {
-        readPublicationCheckInput: async () => {
-          const worktreeHead = d.readWorktreeHead(worktree)
-          const base = await readPublicationBase(worktreeHead)
-          const defaultBranchTip = readFastForwardTip(worktreeHead)
-          // A fast-forward onto the default branch's tip re-records the base
-          // and the head at that tip, here, so this check and every later one
-          // in the turn compare against it and measure changed paths from it.
-          if (fastForwardedOntoDefaultTip({ worktreeHead, recordedHead: turnPreHead, base, defaultBranchTip })) {
-            const tip = defaultBranchTip!.sha
-            turnPreHead = tip
-            publicationExpectedBase = tip
-            publicationFastForwardBase = tip
-          }
-          return {
-            worktreeBranch: d.readWorktreeBranch(worktree),
-            expectedBranch: branch,
-            worktreeHead,
-            recordedHead: turnPreHead,
-            remoteHead: safeRemoteHead(),
-            driverUnpushedCommit,
-            defaultBranchTip,
-            base,
-            expectedBase:
-              driverUnpushedCommit !== null &&
-              worktreeHead === driverUnpushedCommit.sha &&
-              driverUnpushedCommitBase !== null
-                ? driverUnpushedCommitBase
-                : publicationExpectedBase,
-            changedPaths: worktreeChangedPaths(),
-            surface: d.resolveTaskSurface ? d.resolveTaskSurface(task) : null
-          }
-        },
-        commitAndPush: async (header) => {
-          const headerCredentials = findCredentialPatterns(header, 'the proposed commit header')
-          if (headerCredentials.length > 0) {
-            return {
-              ok: false,
-              error: devToolError(
-                'policy_refusal',
-                'same_attempt',
-                'not_started',
-                'credential-scan',
-                `recognized credential pattern(s) in commit header: ${headerCredentials.map((finding) => finding.pattern).join(', ')}`,
-                'Remove the credential-shaped value from the commit header.'
-              )
-            }
-          }
-          const remoteHeadBefore = safeRemoteHead()
-          if (d.readUnpushedWorkDetail(worktree).dirtyFiles.length > 0) d.buildVendoredCliIfMissing(worktree)
-          const scanBase = publicationRange(remoteHeadBefore).base
-          if (scanBase === null) {
-            return {
-              ok: false,
-              error: devToolError(
-                'dependency_unavailable',
-                'same_attempt',
-                'not_started',
-                'credential-scan',
-                'the branch base could not be resolved before publication',
-                'Restore the branch base and call publish_changes again.'
-              )
-            }
-          }
-          const diff = d.gitWorktreeDiffText(worktree, scanBase)
-          if (diff === null) {
-            return {
-              ok: false,
-              error: devToolError(
-                'dependency_unavailable',
-                'same_attempt',
-                'not_started',
-                'credential-scan',
-                'the added diff lines could not be read before publication',
-                'Restore a readable worktree and call publish_changes again.'
-              )
-            }
-          }
-          const credentials = findCredentialPatterns(addedDiffLines(diff), 'the added worktree diff')
-          if (credentials.length > 0) {
-            return {
-              ok: false,
-              error: devToolError(
-                'policy_refusal',
-                'same_attempt',
-                'not_started',
-                'credential-scan',
-                `recognized credential pattern(s): ${credentials.map((finding) => finding.pattern).join(', ')}`,
-                'Remove the credential-shaped addition before publishing.'
-              )
-            }
-          }
-          const unpushed = d.readUnpushedWorkDetail(worktree)
-          if (unpushed.dirtyFiles.length > 0) {
-            const committed = d.commitWorktree(worktree, header)
-            if (!committed.ok) {
-              return {
-                ok: false,
-                error: devToolError(
-                  'policy_refusal',
-                  'same_attempt',
-                  'not_started',
-                  committed.check,
-                  committed.output,
-                  'Fix what the commit hook refused, then call publish_changes again.'
-                )
-              }
-            }
-          }
-          const localHead = d.readWorktreeHead(worktree)
-          if (localHead !== null && localHead !== remoteHeadBefore) {
-            // A commit made by this tool remains valid work if the push hook
-            // refuses. Remember it so the next call can retry that same head.
-            if (unpushed.dirtyFiles.length > 0) {
-              turnPreHead = localHead
-              driverUnpushedCommit = { sha: localHead, parent: remoteHeadBefore }
-              driverUnpushedCommitBase = await readPublicationBase(localHead)
-            }
-            const surface = d.resolveTaskSurface ? d.resolveTaskSurface(task) : null
-            let changedPaths = publicationChangedPaths(publicationRange(remoteHeadBefore))
-            // Measured against the default branch's tip as the remote reports
-            // it: a path equal to that tip is no task change, and a blocking
-            // protected path only the default branch moved is drift the driver
-            // rebases away rather than refusing. An unreadable tip, or a
-            // classification git cannot answer, keeps every path counted.
-            const tip = d.readDefaultBranchTip(defaultRemoteUrl)
-            const classified =
-              tip === null
-                ? null
-                : d.classifyAgainstDefaultTip(worktree, localHead, tip, changedPaths, defaultRemoteUrl)
-            if (classified !== null) {
-              const sameAsTip = new Set(classified.sameAsTip)
-              changedPaths = changedPaths.filter((path) => !sameAsTip.has(path))
-            }
-            const blocking = blockingPaths(changedPaths, surface)
-            const mainDrift = new Set(classified?.mainDrift ?? [])
-            const pushInput = {
-              task,
-              branch,
-              sha: localHead,
-              touchedPaths: changedPaths,
-              surface,
-              round: roundNum,
-              agent: dispatchAgent,
-              repo,
-              worktreePath: worktree
-            }
-            if (tip !== null && blocking.length > 0 && blocking.every((path) => mainDrift.has(path))) {
-              const rebased = d.rebaseOntoDefaultTip(worktree, tip, defaultRemoteUrl)
-              if (!rebased.ok) return mainDriftConflict(tip, rebased.conflictFiles, rebased.reason)
-              const rebasedInput = {
-                ...pushInput,
-                sha: rebased.head,
-                touchedPaths: d.gitWorktreeChangedPaths(worktree, tip)
-              }
-              const push =
-                remoteHeadBefore === null
-                  ? { ...d.pushTaskBranch(rebasedInput), lease: false }
-                  : d.pushTaskBranchWithLease({ ...rebasedInput, expectedRemoteHead: remoteHeadBefore })
-              if (!push.ok) {
-                // Nothing landed: the branch goes back to the head the
-                // Developer published from, so the recorded head and base
-                // still describe it and the next publication starts over.
-                const restored = d.restoreWorktreeHead(worktree, localHead)
-                const restoreNote = restored
-                  ? ''
-                  : `; the worktree could not be moved back from the rebased ${rebased.head} to ${localHead}, so run \`git reset --keep ${localHead}\` before publishing again`
-                if (push.lease) {
-                  return mainDriftConflict(
-                    tip,
-                    [],
-                    `the lease push was refused because the remote branch is no longer at ${remoteHeadBefore}: ${push.refusal}${restoreNote}`
-                  )
-                }
-                if (!restored && push.hook) return pushRefused({ ...push, refusal: `${push.refusal}${restoreNote}` })
-                return pushRefused(push)
-              }
-              // The rebased head landed on the tip: re-record the head and the
-              // base there, as the fast-forward rule does, so the next
-              // publication check compares against them.
-              turnPreHead = rebased.head
-              publicationExpectedBase = tip
-              publicationFastForwardBase = tip
-              appendDriverLine(
-                loopLogPath,
-                `Rebased ${branch} onto main ${tip} (${localHead} → ${rebased.head}) and pushed${remoteHeadBefore === null ? '' : ' with lease'}`,
-                'done'
-              )
-            } else {
-              const push = d.pushTaskBranch(pushInput)
-              if (!push.ok) return pushRefused(push)
-            }
-            lastPushRefusal = null
-          }
-          driverUnpushedCommit = null
-          driverUnpushedCommitBase = null
-          publicationFastForwardBase = null
-          const pushedHead = d.readWorktreeHead(worktree) ?? localHead ?? ''
-          // A successful commit+push advances the worktree head. Move the
-          // recorded pre-turn head forward to it so a SECOND (and third)
-          // `publish_changes` in the same turn sees an unmoved head
-          // (`checkPublicationPreconditions` compares `worktreeHead` against
-          // `recordedHead`) rather than refusing on the very commit this tool
-          // just made — a Developer may publish more than once per turn.
-          if (pushedHead) turnPreHead = pushedHead
-          // The publication pushed, so a base it moved forward (a merge from
-          // the default branch) becomes the one later checks expect.
-          if (pushedHead) await resolvePublicationBase(pushedHead)
-          await syncBeyondSurfaceRecord(prNumberNow())
-          return { ok: true, result: { pushedHead } }
-        },
-        validatePrBody: async (body, title) => {
-          const bodyCredentials = findCredentialPatterns(body, 'the proposed PR body')
-          if (bodyCredentials.length > 0) {
-            return {
-              ok: false,
-              reason: `credential-scan: recognized credential pattern(s): ${bodyCredentials.map((finding) => finding.pattern).join(', ')}`
-            }
-          }
-          const changedFiles = await prChangedPaths()
-          if (changedFiles === null) {
-            return { ok: false, reason: 'could not resolve the task’s changed files against its PR base' }
-          }
-          const errors = await d.validatePrBodyForCreate({
-            body,
-            title: title ?? issueTitle(),
-            changedFiles,
-            branch,
-            baseBranch: 'main'
-          })
-          return errors.length === 0
-            ? { ok: true }
-            : { ok: false, reason: errors.map((e) => `${e.check}: ${e.message}`).join('; ') }
-        },
-        openPullRequest: async (title, body) => {
-          const titleCredentials = findCredentialPatterns(title, 'the proposed PR title')
-          if (titleCredentials.length > 0) {
-            return {
-              ok: false,
-              error: devToolError(
-                'policy_refusal',
-                'same_attempt',
-                'not_started',
-                'credential-scan',
-                `recognized credential pattern(s) in PR title: ${titleCredentials.map((finding) => finding.pattern).join(', ')}`,
-                'Remove the credential-shaped value from the PR title.'
-              )
-            }
-          }
-          const existingPr = prNumberNow()
-          if (existingPr !== null) {
-            return {
-              ok: false,
-              error: devToolError(
-                'conflict',
-                'same_attempt',
-                'not_started',
-                'pr-exists',
-                `pull request ${existingPr} is already open for branch ${branch}`,
-                'Use update_pull_request_body to replace its body.'
-              )
-            }
-          }
-          const prNumber = d.openTaskPullRequest({
-            task,
-            branch,
-            title,
-            // A record of `[live]` runs is the driver's alone: none exists before the pull request does.
-            body: carryLiveRecord(await withBeyondSurfaceRecord(withDeveloperModelsLine(body, modelRuns())), null),
-            round: roundNum,
-            agent: dispatchAgent,
-            repo
-          })
-          if (prNumber === null) {
-            return {
-              ok: false,
-              error: devToolError(
-                'internal',
-                'new_attempt',
-                'uncertain',
-                'pr-open',
-                'the pull-request open could not be confirmed',
-                'Reconcile the forge state before calling open_pull_request again.'
-              )
-            }
-          }
-          return { ok: true, result: { prNumber } }
-        },
-        updatePullRequestBody: async (body) => {
-          const prNumber = prNumberNow()
-          if (prNumber === null) {
-            return {
-              ok: false,
-              error: devToolError(
-                'dependency_unavailable',
-                'same_attempt',
-                'not_started',
-                'no-open-pr',
-                `no open pull request for branch ${branch}`,
-                'Open the pull request with open_pull_request first.'
-              )
-            }
-          }
-          // The `AEG:LIVE` record is the driver's: the live body's record is
-          // carried over, so an agent edit to it never survives. A live body
-          // that cannot be read keeps none — the next live run writes it.
-          let currentBody: string | null
-          try {
-            currentBody = d.fetchPrBody(prNumber)
-          } catch {
-            currentBody = null
-          }
-          await d.updatePrBody({
-            prNumber,
-            body: carryLiveRecord(
-              await withBeyondSurfaceRecord(withDeveloperModelsLine(body, modelRuns())),
-              currentBody
-            ),
-            repo
-          })
-          return { ok: true, result: { prNumber } }
-        },
-        refreshEvidence: async () => {
-          const prNumber = prNumberNow()
-          if (prNumber === null) {
-            return {
-              ok: false,
-              error: devToolError(
-                'dependency_unavailable',
-                'same_attempt',
-                'not_started',
-                'no-open-pr',
-                `no open pull request for branch ${branch}`,
-                'Open the pull request with open_pull_request first.'
-              )
-            }
-          }
-          const result = await d.refreshPrEvidence({ worktreePath: worktree, prNumber, round: roundNum, repo })
-          await syncBeyondSurfaceRecord(prNumber)
-          return { ok: true, result }
-        },
-        readPullRequest: async () => ({ ok: true, result: await d.readPrView({ branch, repo }) }),
-        runChecks: async () => {
-          const pr = await d.readPrView({ branch, repo })
-          const env = worktreeCheckEnv({ branch, prNumber: pr.prNumber, body: pr.body, head: pr.head })
-          return { ok: true, result: await d.runWorktreeChecks(worktree, env) }
-        },
-        fetchDocumentation: createFetchDocumentationTool({
-          receiptsPath: documentationReceiptsPathForTask(),
-          manifest: () => readRequiredSourceManifest(sourceStoreForTask()),
-          ...(d.fetchDocumentationDeps ? { deps: d.fetchDocumentationDeps } : {})
-        }),
-        onPublicationAttempt: (result) => {
-          turnPublicationAttempted = true
-          turnPublicationRefusal = result.ok
-            ? null
-            : `${result.error.errorClass}/${result.error.retryDisposition}/${result.error.effectState}: ${result.error.check}: ${result.error.output}`
-        }
-      }
-      return createDeveloperDevToolContext(deps)
     }
 
+    function buildDeveloperDevToolContext(roundNum: number): DevToolContext {
+      return createLiveDeveloperContext({
+        ...liveContextScope(),
+        agent: dispatchAgent,
+        round: () => roundNum,
+        helpers: { ownChangesRangeBase, defaultGitWorktreeUntrackedPaths, worktreeCheckEnv }
+      })
+    }
     /**
      * O1/O2/O3/O4/O5/O7: the driver's own publication of a Developer turn —
      * run right after every dispatch returns and before any poll. Commits the
@@ -5799,38 +5136,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // `createDeveloperDevToolContext`). This step only DETECTS work the turn
       // left unpublished and re-asks the SAME session to call the tool; it
       // writes nothing to the forge itself.
-      const worktree = worktreePathForBranch()
-      // No worktree here — a driver running on a different host than the
-      // Developer's own machine, or this driver's own round-1 `createTaskWorktree`
-      // call has not run/failed. Nothing to detect from here; the existing
-      // poll machinery still covers a branch another host published.
-      if (!existsSync(worktree)) return { kind: 'nothing' }
-
-      const existingPr = d.findOpenPrForBranch(branch)
-      const unpushed = d.readUnpushedWorkDetail(worktree)
-      // A stopped round-1 Developer belongs to the existing escalation path,
-      // not the publication re-ask. It may have left a clean worktree and no PR.
-      const currentStop = d.fetchDeveloperStop(task)
-      if (currentStop !== null && currentStop.identity !== turnPreStop) return { kind: 'nothing' }
-      if (unpushed.dirtyFiles.length === 0 && unpushed.aheadCount === 0 && !existingPr) {
-        return { kind: 'nothing' }
-      }
-      // Nothing left unpublished — a clean worktree, nothing ahead of the
-      // remote, a pull request already open: the agent published through the
-      // tools, and there is nothing to re-ask.
-      if (unpushed.dirtyFiles.length === 0 && unpushed.aheadCount === 0 && existingPr) {
-        return { kind: 'nothing' }
-      }
-
-      // Work the turn left unpublished — re-ask the same session to publish it
-      // through the tool. Bounded the same way a refused publication already is
-      // (`dispatchDeveloper`): after the bound, the unmoved head is left to the
-      // existing poll/`no_push` safety net.
-      const missingPr = existingPr ? '' : '; no open pull request'
-      return publicationRefusal(
-        'unpublished-work',
-        `work the turn left unpublished — ${noPushPauseDetail(branch, unpushed)}${missingPr}`
-      )
+      return sharedPublishDeveloperTurn({
+        worktreePath: worktreePathForBranch(),
+        branch,
+        turnPreStop,
+        findOpenPullRequest: () => d.findOpenPrForBranch(branch),
+        readUnpushedWork: d.readUnpushedWorkDetail,
+        fetchDeveloperStop: () => d.fetchDeveloperStop(task),
+        noPushDetail: noPushPauseDetail,
+        refusal: publicationRefusal
+      }) as PublishTurnResult
     }
 
     /**
@@ -5969,13 +5284,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
     /** Mid-round unpushed-work resume — distinct from `pushAndOpenPrompt` (round-1 entry, no head at all yet): this branch already has commits on the remote, the developer's LATEST turn just left work the driver could not publish. Names the pre-push hook's own refusal (O4) when one is pending. */
     function commitAndPushPrompt(): string {
-      const refusalBlock = lastPushRefusal
-        ? `\n\nYour last \`publish_changes\` for this branch was refused by the pre-push hook:\n\n${lastPushRefusal}\n\nFix the cause of that refusal before calling \`publish_changes\` again.`
-        : ''
-      return [
-        'Your previous turn left work that is not yet on the remote.',
-        `Per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`): ${publishingInstructionLine()}${refusalBlock}`
-      ].join('\n\n')
+      return sharedCommitAndPushPrompt(publicationState.lastPushRefusal, publishingInstructionLine())
     }
 
     /** Shared by the journal event and the PR comment below, so the two never describe the same stall differently. */
@@ -7772,7 +7081,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // bound and sending one nonsense prompt per cycle). Cleared only
           // where it's genuinely resolved — the mergeability re-reads at the
           // `dispatch_reviewers`/`publish` sites, below.
-          const conflictFiles = pendingConflictFiles
+          const conflictFiles = publicationState.pendingConflictFiles
           let gateAfterUnchangedHeadRerun: Awaited<ReturnType<typeof waitForGreenGate>> | null = null
           if (!firstPass) {
             // O2: findings citation only makes sense on the genuine
@@ -7842,7 +7151,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // has no push coming: one read of the head (the poll's first
             // attempt) replaces the full head-change budget, and the stall
             // below names the refusal.
-            const refusedPublication = turnPublicationRefusal
+            const refusedPublication = publicationState.turnPublicationRefusal
             const changedHead =
               headBeforeDispatch !== null
                 ? await pollUntil(
@@ -7850,7 +7159,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                       const h = d.resolveHead(branch)
                       return h !== headBeforeDispatch ? h : null
                     },
-                    refusedPublication !== null || !turnPublicationAttempted ? 1 : d.gatePollMaxAttempts,
+                    refusedPublication !== null || !publicationState.turnPublicationAttempted
+                      ? 1
+                      : d.gatePollMaxAttempts,
                     d.gatePollIntervalMs,
                     d.sleep,
                     'devReviewLoop: head-change wait timed out'
@@ -8107,10 +7418,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // CI wait, never after one.
           const mergeableBeforeGate = await pollMergeableState(prNumber)
           if (mergeableBeforeGate === 'CONFLICTING') {
-            pendingConflictFiles = await withRateLimitWait(() => d.fetchConflictingFiles('main', branch))
+            publicationState.pendingConflictFiles = await withRateLimitWait(() =>
+              d.fetchConflictingFiles('main', branch)
+            )
             continue
           }
-          pendingConflictFiles = null
+          publicationState.pendingConflictFiles = null
 
           // A red that is a GitHub rate limit and nothing else is waited out
           // and rerun here, before any observation: it is never the
@@ -8202,14 +7515,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // pause below — this round's reviewers never ran).
           const mergeableForReview = await pollMergeableState(prNumber)
           if (mergeableForReview === 'CONFLICTING') {
-            pendingConflictFiles = await withRateLimitWait(() => d.fetchConflictingFiles('main', branch))
+            publicationState.pendingConflictFiles = await withRateLimitWait(() =>
+              d.fetchConflictingFiles('main', branch)
+            )
             decision = { type: 'dispatch_developer' }
             continue
           }
           // Genuinely resolved (or never conflicting) — clear the retry flag
           // so a later conflict starts its own fresh stall count rather than
           // inheriting this one's file list.
-          pendingConflictFiles = null
+          publicationState.pendingConflictFiles = null
 
           const head = d.resolveHead(branch)
           const ciConclusion = d.fetchCiConclusion(head)
@@ -8770,7 +8085,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // (`publish`) that is no longer real — dropped rather than logged
             // against whichever LATER round genuinely publishes next.
             pendingCompletionEvents = []
-            pendingConflictFiles = await withRateLimitWait(() => d.fetchConflictingFiles('main', branch))
+            publicationState.pendingConflictFiles = await withRateLimitWait(() =>
+              d.fetchConflictingFiles('main', branch)
+            )
             decision = { type: 'dispatch_developer' }
             // The held-verdict files this round's `heldResultIdentity` named
             // were just discarded above — nothing is held any more.
@@ -8778,7 +8095,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             persistCurrentLoopState(decision.type)
             continue
           }
-          pendingConflictFiles = null
+          publicationState.pendingConflictFiles = null
 
           // O8 (round 2 review, BLOCKER): re-check staleness here too — a
           // clean `dispatch_reviewers` → `publish` transition reaches this

@@ -8,6 +8,7 @@ import {
 } from '../../../apps/cli/src/lib/context-packet'
 import { publishingInstructionLine } from '../../../apps/cli/src/lib/dev-review-loop'
 import { renderDeveloperDoctrineBlock } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
+import { commitAndPushPrompt } from '../../../apps/cli/src/lib/task-tools/live-developer-context'
 import { turnResultInstruction } from '../../../apps/cli/src/lib/dev-review-loop/turn-result'
 
 // What today's review loop sends its Developer each round, built from the same exported functions
@@ -37,6 +38,8 @@ export interface DeveloperPromptFacts {
   issueRulings: readonly string[]
   /** Unpublished work already in the task worktree, or null when there is none. */
   keptWork: { dirtyFiles: readonly string[]; aheadCount: number } | null
+  /** The pre-push hook's refusal of the Developer's last publication, quoted back so the next turn fixes its cause; absent or null when none is pending. */
+  lastPushRefusal?: string | null
   /** What a resumed session is told about where it is. */
   resume: { task: number; branch: string; worktree: string; remoteHead: string | null }
   /** The previous round's held review verdicts, rendered (reviewer, then security). */
@@ -114,6 +117,11 @@ export function resumeContextBlock(resume: DeveloperPromptFacts['resume']): stri
   ].join('\n')
 }
 
+/** The standalone loop's commit-and-push prompt, naming the refusal the last publication met; null when there is none. */
+function pushRefusalPrompt(facts: DeveloperPromptFacts): string | null {
+  return facts.lastPushRefusal ? commitAndPushPrompt(facts.lastPushRefusal, publishingInstructionLine()) : null
+}
+
 /** Why the Developer runs again: first turn, a red gate on its last head, or the round's review findings. */
 export function developerTurnKind(results: Readonly<Record<string, StepNodeResult>>): 'first' | 'gate-red' | 'review' {
   if (results.develop === undefined) return 'first'
@@ -186,6 +194,7 @@ export function developerPrompt(
       `When your work is ready, ${publishingInstructionLine()}`,
       issueRulingsBlock(facts.issueRulings),
       keptWorkNote(facts.keptWork),
+      pushRefusalPrompt(facts),
       turnResultInstruction(facts.round),
       renderContextPacket(retained),
       facts.brief
@@ -201,6 +210,7 @@ export function developerPrompt(
     facts.sources.block,
     renderContextPacket(packet),
     resumeContextBlock(facts.resume),
+    pushRefusalPrompt(facts),
     revisionPromptText(kind, facts, results),
     turnResultInstruction(facts.round)
   ])

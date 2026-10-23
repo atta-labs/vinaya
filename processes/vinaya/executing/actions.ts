@@ -396,6 +396,8 @@ export function createRoleLaunchers(options: {
   generatedRoot: string
   variables?: Record<string, string>
   mcpCommand?: string
+  /** A role-specific bridge command; takes precedence over the shared command. */
+  mcpCommands?: Readonly<Record<string, string>>
   /** Replaces a `process-supplied` model in every role's grants for this run. */
   model?: string
   /** Claude's sandbox may use Unix sockets (the Linux host opt-in); the Codex adapter has no such filter. */
@@ -414,7 +416,7 @@ export function createRoleLaunchers(options: {
       generatedDir,
       outputSchemaPath,
       outputSchema: JSON.parse(readFileSync(outputSchemaPath, 'utf8')),
-      mcpCommand: options.mcpCommand,
+      mcpCommand: options.mcpCommands?.[role] ?? options.mcpCommand,
       variables: options.variables,
       allowUnixSockets: options.allowUnixSockets
     }

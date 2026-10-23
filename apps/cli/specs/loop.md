@@ -2,6 +2,22 @@
 
 Status: draft
 
+Both the standalone loop and the Engine runner build the Developer's live tool
+context from `task-tools/live-developer-context.ts`. That module owns the
+publication path: the precondition check against the task's frozen Surface and
+the turn's recorded head, the pushed commit range, the Broker-governed push
+(with the rebase-onto-tip and lease push), the refusal that a refused push
+leaves committed and unpushed, the duplicate-open refusal, the beyond-Surface
+record, and the prompt that quotes a refusal. Each runner supplies its own
+values for it explicitly — the standalone loop its per-dispatch state, the
+Engine the state of its one run — and the Engine records the head a turn starts
+from at the start of each Developer step. Under write attribution the driver's
+own tool calls write the protected control records.
+
+The Engine also starts a role-scoped tool host for the Developer, the code
+reviewer and the security reviewer, so a reviewer reads the controller-pinned
+source manifest through `read_source` on either agent launch shape.
+
 The frozen review-input manifest is protocol version 2. In addition to base,
 head, brief hash, objectives version, ruling ordinal, and policy digest, it
 carries `pauseBoundRuling`: either `null` when the round did not follow a
@@ -595,7 +611,7 @@ Both reviewers' prompts carry the manifest's digest, each source's identity, wha
 <!-- AEG:CLAIM: apps/cli/src/lib/task-tools/fetch-documentation.ts contains:finalUrl: document.finalUrl, -->
 <!-- AEG:CLAIM: apps/cli/src/lib/task-tools/fetch-documentation.ts contains:contentType: document.contentType, -->
 <!-- AEG:CLAIM: apps/cli/src/lib/source-manifest.ts contains:pinned: 'refuse', -->
-<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:fetchDocumentation: (input) => attributed(() => context.fetchDocumentation(input)) -->
+<!-- AEG:CLAIM: apps/cli/src/lib/task-tools/live-developer-context.ts contains:fetchDocumentation: (input) => driverToolCall(() => context.fetchDocumentation(input)) -->
 Either agent reads a required page through the driver's `fetch_documentation` dev tool. The driver fetches the page outside the sandbox and, when it counts as a read — the final response succeeded (2xx), came from a public address, declared its body's length (`Content-Length` or chunked — a body that ended only because the connection closed could have been cut off, so it is returned but never receipted), carried an allowed text content type and returned at least `DOCUMENTATION_READ_MIN_SIZE` bytes (for a `text/html` page, of visible text: `visibleTextSize` removes script and style elements, then tags, and collapses whitespace) — records the delivery against the run's manifest: the receipt names the manifest entry by normalized source identity (the requested URL without fragment or trailing slash), the final URL, status, content type, size, the digest the manifest pinned and the digest delivered. A redirect to another public host still counts. When the delivered digest differs from the pinned one the receipt says `mismatch`, and the revision policy decides (`SOURCE_REVISION_POLICY`): a `pinned` source refuses the other revision — it is a different source, and the delivery does not count — while a `volatile` page counts the fresh revision with the mismatch recorded. A page the manifest does not name is returned with no delivery recorded. So a Codex Developer needs neither `curl` nor an allowlisted host to receive a required source, and the Codex sandbox's network allowlist gains no documentation host.
 <!-- AEG:CLAIM: apps/cli/src/lib/task-tools/fetch-documentation.ts contains:export const DOCUMENTATION_READ_MIN_SIZE = 1000 -->
 <!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:export { DOCUMENTATION_READ_MIN_SIZE } -->
