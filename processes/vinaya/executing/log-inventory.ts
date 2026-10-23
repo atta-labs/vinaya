@@ -30,7 +30,8 @@ export type InventoryRow =
 
 const FROM_ASSESSMENT = 'the events the assess-round step recorded in its result'
 const HANDOFF_DEFERRAL =
-  'deferred: produced once an assess-round `pause` decision becomes an Engine pause awaiting a human handoff; today the binding throws on that decision'
+  'deferred: produced once a ruling on a handed-off pause is consumed and the run continues from it; the handoff only raises the pause'
+const FROM_HANDOFF = 'the handoff function'
 
 export const LOG_INVENTORY: readonly InventoryRow[] = [
   { family: 'dev_review_loop', events: ['loop_started'], status: 'produced', from: FROM_ASSESSMENT },
@@ -84,8 +85,8 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
   {
     family: 'dev_review_loop',
     events: ['infrastructure_retry'],
-    status: 'dropped',
-    reason: 'The Engine path retries nothing: a step that fails fails the run, so there is no retry episode to count.'
+    status: 'produced',
+    from: `${FROM_HANDOFF}: a pause comment that took more than one attempt or never landed; no other step is retried`
   },
   {
     family: 'dev_review_loop',
@@ -99,7 +100,13 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
     status: 'produced',
     from: 'the runner: one when the run ends, whatever way it ends'
   },
-  { family: 'handoff', events: ['raised', 'resolved'], status: 'deferred', reason: HANDOFF_DEFERRAL },
+  {
+    family: 'handoff',
+    events: ['raised'],
+    status: 'produced',
+    from: `${FROM_HANDOFF}: the escalation record it writes logs one raised event, and none when the same pause is handed off again`
+  },
+  { family: 'handoff', events: ['resolved'], status: 'deferred', reason: HANDOFF_DEFERRAL },
   {
     family: 'role_attempt',
     events: ['attempted'],
