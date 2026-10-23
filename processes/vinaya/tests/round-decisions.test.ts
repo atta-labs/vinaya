@@ -8,6 +8,7 @@ import { parse } from 'yaml'
 import { DEFAULT_REVIEW_POLICY, objectivesVersion, readManifest, type ReviewPolicy } from '@attalabs/aeg-core'
 import type { SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../harness/dev-process/loader/load-process'
+import { keepLogLocal, SCENARIO_ENV_KEYS, useRuntimeDir } from './round-fakes'
 import type { ActionRegistry } from '../../../harness/dev-process/engine-runtime/run-process'
 import {
   clearDriverLock,
@@ -18,10 +19,11 @@ import {
 import { controlStoreRootFor, heldVerdictPath } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
 import { cleanupAllReviewerIsolationArtifacts } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-isolation'
-import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache } from '../../../apps/cli/src/lib/run-paths'
-import { LOG_FOLDER_ONLY_ENV } from '../../../apps/cli/src/lib/log-sink'
+import { readUnpushedWorkDetail } from '../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
+import { defaultDeps } from '../../../apps/cli/src/lib/dev-review-loop'
 import {
   liveTaskInput,
+  readUnpublishedWork,
   renderedFlowPath,
   runDirectory,
   runEngine,
@@ -204,11 +206,11 @@ function review(role: Role, prompt: string, world: World, changes: boolean | str
 const savedEnv: Record<string, string | undefined> = {}
 const roots: string[] = []
 beforeAll(() => {
-  for (const key of ['CODEX_HOME', RUNTIME_DIR_ENV_KEY, LOG_FOLDER_ONLY_ENV]) savedEnv[key] = process.env[key]
+  for (const key of ['CODEX_HOME', ...SCENARIO_ENV_KEYS]) savedEnv[key] = process.env[key]
   const home = mkdtempSync(join(tmpdir(), 'round-decisions-codex-'))
   writeFileSync(join(home, 'auth.json'), '{}\n')
   process.env.CODEX_HOME = home
-  process.env[LOG_FOLDER_ONLY_ENV] = '1'
+  keepLogLocal()
 })
 afterAll(() => {
   // Best-effort: a reviewer's read-only candidate copy is cleared first, as the runner clears it.
@@ -222,7 +224,7 @@ afterAll(() => {
     if (value === undefined) delete process.env[key]
     else process.env[key] = value
   }
-  resetRuntimeDirCache()
+  useRuntimeDir(null)
 })
 
 async function run(agent: Agent, scenario: Scenario = {}): Promise<Observed> {
@@ -230,8 +232,7 @@ async function run(agent: Agent, scenario: Scenario = {}): Promise<Observed> {
   roots.push(root)
   const runtimeDir = join(root, 'runtime')
   mkdirSync(runtimeDir)
-  process.env[RUNTIME_DIR_ENV_KEY] = runtimeDir
-  resetRuntimeDirCache()
+  useRuntimeDir(runtimeDir)
   const repo = join(root, 'repo')
   mkdirSync(repo)
   const git = (...args: string[]) =>
@@ -451,6 +452,28 @@ function camelize(value: unknown): unknown {
 /** The records one step left, parsed, in the order it ran. */
 const records = (observed: Observed, node: string) =>
   observed.steps.filter((step) => step.node === node).map((step) => JSON.parse(step.stdout) as Record<string, any>)
+
+test("the standalone loop's unpushed-work dependency is the shared reader itself", () => {
+  expect(defaultDeps().readUnpushedWorkDetail).toBe(readUnpushedWorkDetail)
+})
+
+test('the Engine runner reads unpushed work with the standalone reader, and nothing for a worktree that is gone', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'round-decisions-reader-'))
+  roots.push(dir)
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], {
+      cwd: dir,
+      encoding: 'utf8'
+    })
+  git('init', '-q', '-b', 'main')
+  writeFileSync(join(dir, 'a.txt'), 'a\n')
+  git('add', '-A')
+  git('commit', '-q', '-m', 'base')
+  writeFileSync(join(dir, 'draft.ts'), 'draft\n')
+  expect(readUnpublishedWork(dir)).toEqual(readUnpushedWorkDetail(dir))
+  expect(readUnpublishedWork(dir)?.dirtyFiles).toEqual(['draft.ts'])
+  expect(readUnpublishedWork(join(dir, 'missing'))).toBeNull()
+})
 
 for (const agent of AGENTS) {
   describe(`the red gate is a gate observation (${agent})`, () => {

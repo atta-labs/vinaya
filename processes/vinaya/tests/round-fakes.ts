@@ -1,4 +1,6 @@
 import type { VerdictObservation } from '@attalabs/aeg-core'
+import { LOG_FOLDER_ONLY_ENV } from '../../../apps/cli/src/lib/log-sink'
+import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache } from '../../../apps/cli/src/lib/run-paths'
 
 // Recorded results the round's deciding steps read, for tests that replace the steps that would write them.
 
@@ -50,4 +52,18 @@ export function heldReviews(
       decision: { type: 'hold' }
     })
   }
+}
+
+/** The environment a scenario run sets, so a test restores it afterwards. */
+export const SCENARIO_ENV_KEYS: readonly string[] = [RUNTIME_DIR_ENV_KEY, LOG_FOLDER_ONLY_ENV]
+
+/** Points the control-store writers at `dir`, or clears the cached runtime directory when null. */
+export function useRuntimeDir(dir: string | null): void {
+  if (dir !== null) process.env[RUNTIME_DIR_ENV_KEY] = dir
+  resetRuntimeDirCache()
+}
+
+/** Keeps every Log event a run writes in its local folder. */
+export function keepLogLocal(): void {
+  process.env[LOG_FOLDER_ONLY_ENV] = '1'
 }

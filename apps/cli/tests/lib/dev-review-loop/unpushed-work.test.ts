@@ -9,8 +9,6 @@ import {
   unpushedFailureMessage,
   unpushedWorkResumeDetail
 } from '../../../src/lib/dev-review-loop/unpushed-work.js'
-import { defaultDeps } from '../../../src/lib/dev-review-loop.js'
-import { readUnpublishedWork } from '../../../../../processes/vinaya/bin/run-engine.js'
 
 const roots: string[] = []
 afterEach(() => {
@@ -84,22 +82,5 @@ describe('the texts that name unpushed work', () => {
     expect(unpushedFailureMessage('task/x/1', 'abc1234', { dirtyFiles: [], aheadCount: 1 })).toBe(
       'push never landed on task/x/1: head abc1234 unchanged; 1 commit(s) ahead of the remote, worktree clean'
     )
-  })
-})
-
-describe('both runners read unpushed work through the one reader', () => {
-  test("the standalone loop's dependency is the shared reader itself", () => {
-    expect(defaultDeps().readUnpushedWorkDetail).toBe(readUnpushedWorkDetail)
-  })
-
-  test('the Engine runner reads the same worktree the same way, and nothing for a worktree that is gone', () => {
-    const { dir, git } = trackedClone()
-    writeFileSync(join(dir, 'b.txt'), 'b\n')
-    git('add', '-A')
-    git('commit', '-q', '-m', 'ahead')
-    writeFileSync(join(dir, 'draft.ts'), 'draft\n')
-    expect(readUnpublishedWork(dir)).toEqual(readUnpushedWorkDetail(dir))
-    expect(readUnpublishedWork(dir)).toEqual({ dirtyFiles: ['draft.ts'], aheadCount: 1 })
-    expect(readUnpublishedWork(join(dir, 'missing'))).toBeNull()
   })
 })
