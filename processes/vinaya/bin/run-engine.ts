@@ -1,12 +1,14 @@
 #!/usr/bin/env bun
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import {
   initialLoopState,
   buildReviewInputManifest,
+  parseIssueSurface,
+  type IssueSurface,
   type DevReviewLoopEventInput,
   type LoopConfig,
   type Observations,
@@ -47,11 +49,16 @@ import {
   addedDiffLines,
   findCredentialPatterns,
   LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV,
-  linuxUnixSocketFilterOptIn
+  linuxUnixSocketFilterOptIn,
+  protectedPathsForTurn,
+  startTurnWriteAttribution,
+  taskControlDir
 } from '../../../apps/cli/src/lib/worker-boundary'
+import { configPath } from '../../../apps/cli/src/lib/config'
 import {
   appendSourceDeliveryReceipt,
   injectedDeliveryReceipts,
+  readRequiredSourceManifest,
   requiredSourcesPromptBlock,
   sourceReceiptsPath,
   sourceStoreDir
@@ -62,7 +69,12 @@ import {
   realSourceProviderDeps
 } from '../../../apps/cli/src/lib/source-provider'
 import { extractSourceRevision } from '@attalabs/aeg-core'
-import type { DevToolContext, DevToolResult } from '../../../apps/cli/src/lib/task-tools/dev-tools-server'
+import {
+  reviewerDevToolContext,
+  type DevToolContext,
+  type DevToolResult
+} from '../../../apps/cli/src/lib/task-tools/dev-tools-server'
+import { createReadSourceTool } from '../../../apps/cli/src/lib/task-tools/read-source'
 import { validatePrBodyForCreate } from '../../../apps/cli/src/commands/pr'
 import { createLogSink, LOG_FOLDER_ONLY_ENV, type LogSinkDeps } from '../../../apps/cli/src/lib/log-sink'
 import { setEngineLogIdentity } from './engine-log-identity'
@@ -93,7 +105,10 @@ import { getProcessSnapshot, readLaunchRecord, terminateChildWithGrace } from '.
 import { loadConfig } from '../../../apps/cli/src/lib/config'
 import { startDevToolsHost, type DevToolsHost } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
 import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-tools-registration'
-import { createDeveloperDevToolContext } from '../../../apps/cli/src/lib/task-tools/developer-dev-tools-context'
+import { createEngineLiveDeveloperContext } from '../../../apps/cli/src/lib/task-tools/live-developer-context'
+import { createFetchDocumentationTool } from '../../../apps/cli/src/lib/task-tools/fetch-documentation'
+import { readFailedCheckLogs, readJobLogTail } from '../../../apps/cli/src/lib/task-tools/pr-facts'
+import { fetchFailingCheckRuns } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import {
   checkTaskDispatchReadiness,
   createTaskWorktree,
@@ -415,6 +430,7 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
   const runDir = runDirectory(options.runtimeDir, args.task)
   mkdirSync(runDir, { recursive: true })
   const tracePath = join(runDir, 'trace.json')
+  const interruptedPublicationPath = join(runDir, 'publication-interrupted')
   const trace = createTraceRecorder({ task: args.task, agent: args.agent, loopId: options.loopId })
   const producers = createVinayaLogProducers({ loopId: options.loopId, task: args.task })
   const translator = createLogTranslator(producers, options.sink.log as unknown as EmitLogEvent)
@@ -488,27 +504,66 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
           control.halt(signal)
         })
 
-  let host: Pick<DevToolsHost, 'close'> | undefined
+  const hosts: Array<Pick<DevToolsHost, 'close'>> = []
   let checkpointer: SqliteCheckpointer | undefined
   let outcome: RunOutcome | null = null
   let legOutcome: LegOutcome | null = null
   let error: string | undefined
   try {
-    const socketPath = devToolsSocketPath(`engine-${args.task}`)
-    host = await options.startHost({
-      socketPath,
-      serverVersion: 'engine-run-1',
-      context: options.devToolsContext,
-      role: 'developer'
+    if (existsSync(interruptedPublicationPath)) {
+      options.sink.log({
+        kind: 'dev_review_loop',
+        payload: {},
+        loop_id: options.loopId,
+        event: 'journal_finalized',
+        rounds: options.taskInput.reviewRound(),
+        total_wall_ms: 0,
+        time_to_green_ms: null,
+        files_changed_total: 0,
+        final_head: readWorktreeHead(options.taskInput.worktreePath) ?? 'unknown',
+        result: 'stopped'
+      } as never)
+      unlinkSync(interruptedPublicationPath)
+    }
+    const storeDir = developerSourceStoreDir(options.runtimeDir, args.task)
+    const reviewerContext = reviewerDevToolContext(async (readInput) => {
+      const manifest = readRequiredSourceManifest(storeDir)
+      if (manifest === null) return refusal('read_source', 'the required-source manifest is unavailable')
+      return createReadSourceTool({
+        storeDir,
+        manifestDigest: manifest.digest,
+        readObject: realSourceProviderDeps(options.taskInput.worktreePath).readObject
+      })(readInput)
     })
-    const shimPath = join(runDir, 'dev-bridge.sh')
-    writeFileSync(shimPath, shimContent(socketPath, options.execPath ?? process.execPath, cliEntryOf(options.repoRoot)))
-    chmodSync(shimPath, 0o755)
+    const roleHosts = [
+      { role: 'developer' as const, context: options.devToolsContext, file: 'developer-dev-bridge.sh' },
+      { role: 'code-reviewer' as const, context: reviewerContext, file: 'code-reviewer-dev-bridge.sh' },
+      { role: 'security' as const, context: reviewerContext, file: 'security-dev-bridge.sh' }
+    ]
+    const mcpCommands: Record<string, string> = {}
+    for (const roleHost of roleHosts) {
+      const socketPath = devToolsSocketPath(`engine-${args.task}-${roleHost.role}`)
+      hosts.push(
+        await options.startHost({
+          socketPath,
+          serverVersion: 'engine-run-1',
+          context: roleHost.context,
+          role: roleHost.role
+        })
+      )
+      const shimPath = join(runDir, roleHost.file)
+      writeFileSync(
+        shimPath,
+        shimContent(socketPath, options.execPath ?? process.execPath, cliEntryOf(options.repoRoot))
+      )
+      chmodSync(shimPath, 0o755)
+      mcpCommands[roleHost.role === 'security' ? 'security-reviewer' : roleHost.role] = shimPath
+    }
     const roles = createRoleLaunchers({
       vendor: vendorOf(args.agent),
       generatedRoot: join(runDir, 'generated'),
       variables: options.taskInput?.worktreePath ? grantVariables(options.taskInput.worktreePath, runDir) : undefined,
-      mcpCommand: shimPath,
+      mcpCommands,
       model: args.model,
       allowUnixSockets: options.allowUnixSockets === true,
       stageCodexLogin: true,
@@ -521,6 +576,13 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
         name,
         async (context: Parameters<typeof action>[0]) => {
           const result = await action(context)
+          if (
+            context.nodeId === 'validate-developer-output' &&
+            options.taskInput?.branch &&
+            options.taskInput.bound?.findOpenPrForBranch?.(options.taskInput.branch) === null
+          ) {
+            control.halt('the Developer publication was refused before a pull request opened')
+          }
           if (context.nodeId === 'reconcile-external-state') {
             try {
               const found = (JSON.parse(result.stdout ?? 'null') as { number?: unknown } | null)?.number
@@ -624,10 +686,13 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
     }
     translator.endLeg(legOutcome as LegOutcome)
   } catch (thrown) {
+    if (currentNode === 'publish-ready-for-merge') writeFileSync(interruptedPublicationPath, 'interrupted\n')
     error = thrown instanceof Error ? thrown.message : String(thrown)
     legOutcome = { reason: 'failed', error }
     translator.endLeg(legOutcome)
   } finally {
+    if ((legOutcome as LegOutcome | null)?.reason === 'failed' && currentNode === 'publish-ready-for-merge')
+      writeFileSync(interruptedPublicationPath, 'interrupted\n')
     stopSignals()
     // No agent outlives the run: whatever a halted or finished launch left running is ended with its group.
     await reaper.reap(lifecycle.killGraceMs)
@@ -649,7 +714,7 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
     const lockOutcome = releaseDriverLock(options.runtimeDir, args.task, lockExitOf(exit))
     narrate(`driver exited (${exit.reason}, ${exit.lastDecision}); driver lock ${lockOutcome}`)
     try {
-      await host?.close()
+      await Promise.all(hosts.map((host) => host.close()))
     } finally {
       try {
         await options.sink.drain()
@@ -689,12 +754,16 @@ function refusal<T>(check: string, output: string): DevToolResult<T> {
   }
 }
 
-/** The gate-backed tools the Developer calls, over plain git and gh run here, outside its sandbox. */
-function liveDevToolsContext(input: {
+/** Inputs the shared live Developer context binds to this Engine run. */
+export function engineLiveDevToolsContext(input: {
   branch: string
   worktreePath: string
   task: number
   cliEntry: string
+  runtimeDir: string
+  recordedHead?: string | null
+  surface?: IssueSurface | null
+  round?: number
 }): DevToolContext {
   const { branch, worktreePath, cliEntry } = input
   const git = (...args: string[]) => sh('git', args, worktreePath)
@@ -715,63 +784,53 @@ function liveDevToolsContext(input: {
     paths.delete('')
     return [...paths]
   }
-  const prNumber = (): number => {
-    const pr = findOpenPrForBranch(branch)
-    if (pr === null) throw new Error(`no open pull request for branch ${branch}`)
-    return pr.number
-  }
-  const readPullRequest = async () =>
+  const readPullRequestView = async (number: number) =>
     attempt('read_pull_request', () => {
-      const pr = findOpenPrForBranch(branch)
-      if (pr === null)
-        return { prNumber: null, state: null, head: null, checks: null, reviews: null, body: null, failedChecks: [] }
       const raw = JSON.parse(
-        sh('gh', ['pr', 'view', String(pr.number), '--json', 'number,state,headRefOid,statusCheckRollup,body'])
+        sh('gh', ['pr', 'view', String(number), '--json', 'number,state,headRefOid,statusCheckRollup,body'])
       ) as Record<string, unknown>
       return {
-        prNumber: pr.number,
+        prNumber: number,
         state: String(raw.state),
         head: String(raw.headRefOid),
         checks: (raw.statusCheckRollup ?? []) as never,
         reviews: [],
         body: String(raw.body ?? ''),
-        failedChecks: []
+        failedChecks: readFailedCheckLogs(
+          fetchFailingCheckRuns(String(raw.headRefOid)).filter((run) => run.detail === undefined),
+          readJobLogTail
+        )
       }
     })
-  return createDeveloperDevToolContext({
-    readPublicationCheckInput: () => {
-      const base = git('merge-base', 'origin/main', 'HEAD')
-      return {
-        worktreeBranch: git('rev-parse', '--abbrev-ref', 'HEAD'),
-        expectedBranch: branch,
-        worktreeHead: readWorktreeHead(worktreePath),
-        recordedHead: null,
-        base,
-        expectedBase: base,
-        changedPaths: changedPaths(),
-        surface: null
-      }
-    },
-    commitAndPush: (header) =>
-      attempt('publish_changes', () => {
-        // The loop's pre-push credential scan: the header and the added lines, before anything leaves.
-        const found = [
-          ...findCredentialPatterns(header, 'the proposed commit header'),
-          ...(() => {
-            git('add', '-A')
-            return findCredentialPatterns(addedDiffLines(git('diff', '--cached', '-U0')), 'the staged diff')
-          })()
-        ]
-        if (found.length > 0) {
-          git('reset', '-q')
-          throw new Error(`recognized credential pattern(s): ${found.map((f) => f.pattern).join(', ')}`)
-        }
-        git('commit', '--allow-empty-message', '-m', header)
-        git('push', 'origin', `HEAD:refs/heads/${branch}`)
-        return { pushedHead: git('rev-parse', 'HEAD') }
-      }),
-    // The loop's own body gate, over the files the branch changed: a body the brief-schema checks refuse is never opened.
-    validatePrBody: async (body, title) => {
+  const storeDir = developerSourceStoreDir(input.runtimeDir ?? input.worktreePath, input.task)
+  const attribution = startTurnWriteAttribution(
+    protectedPathsForTurn({
+      runtimeDir: input.runtimeDir,
+      task: input.task,
+      round: input.round ?? 1,
+      role: 'developer',
+      vinayaConfigPath: configPath()
+    }),
+    [taskControlDir(input.runtimeDir, input.task), sourceReceiptsPath(storeDir)]
+  )
+  return createEngineLiveDeveloperContext({
+    branch,
+    task: input.task,
+    recordedHead: input.recordedHead ?? null,
+    surface: input.surface ?? null,
+    git,
+    forge: (...args) => sh('gh', args),
+    changedPaths,
+    protectedChangedPaths: attribution.changedPaths,
+    driverToolCall: attribution.driverToolCall,
+    findOpenPullRequest: () => findOpenPrForBranch(branch),
+    readPullRequestView,
+    findCredentialPatterns: (header, stagedDiff) =>
+      [
+        ...findCredentialPatterns(header, 'the proposed commit header'),
+        ...findCredentialPatterns(addedDiffLines(stagedDiff), 'the staged diff')
+      ].map((found) => found.pattern),
+    validatePullRequestBody: async (body, title) => {
       const errors = await validatePrBodyForCreate({
         body,
         title: title ?? `Task ${input.task}`,
@@ -783,23 +842,15 @@ function liveDevToolsContext(input: {
         ? { ok: true }
         : { ok: false, reason: errors.map((e) => `${e.check}: ${e.message}`).join('; ') }
     },
-    openPullRequest: (title, body) =>
-      attempt('open_pull_request', () => {
-        sh('gh', ['pr', 'create', '--head', branch, '--base', 'main', '--title', title, '--body', body])
-        return { prNumber: prNumber() }
-      }),
-    updatePullRequestBody: (body) =>
-      attempt('update_pull_request_body', () => {
-        const number = prNumber()
-        sh('gh', ['pr', 'edit', String(number), '--body', body])
-        return { prNumber: number }
-      }),
-    refreshEvidence: () =>
+    refreshEvidence: (prNumber) =>
       attempt('refresh_evidence', () =>
-        refreshPrEvidence({ cliEntry, worktreePath, prNumber, readHead: readWorktreeHead, runCli })
+        refreshPrEvidence({ cliEntry, worktreePath, prNumber: () => prNumber, readHead: readWorktreeHead, runCli })
       ),
-    readPullRequest,
-    runChecks: () => attempt('run_checks', () => runCliChecks(cliEntry, worktreePath, pullRequestCheckEnv(branch)))
+    runChecks: () => attempt('run_checks', () => runCliChecks(cliEntry, worktreePath, pullRequestCheckEnv(branch))),
+    fetchDocumentation: createFetchDocumentationTool({
+      receiptsPath: sourceReceiptsPath(storeDir),
+      manifest: () => readRequiredSourceManifest(storeDir)
+    })
   })
 }
 
@@ -1204,6 +1255,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   const loopId = randomUUID()
   process.env.VINAYA_RUN = loopId
   const taskInput = await liveTaskInput(args, repoRoot, runtimeDir, loopId)
+  const parsedSurface = parseIssueSurface(fetchFrozenBrief(args.task))
   const result = await runEngine({
     args,
     process: loaded,
@@ -1226,11 +1278,15 @@ export async function main(argv: readonly string[]): Promise<number> {
       dispatchConfig: loadConfig()?.dispatch,
       recovery: liveRecovery({ args, runtimeDir, taskInput })
     },
-    devToolsContext: liveDevToolsContext({
+    devToolsContext: engineLiveDevToolsContext({
       branch: taskInput.branch,
       worktreePath: taskInput.worktreePath,
       task: args.task,
-      cliEntry: taskInput.cliEntry
+      cliEntry: taskInput.cliEntry,
+      runtimeDir,
+      recordedHead: readWorktreeHead(taskInput.worktreePath),
+      surface: parsedSurface.ok ? parsedSurface.value : null,
+      round: taskInput.reviewRound()
     })
   })
   return result.exitCode

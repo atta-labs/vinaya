@@ -30,6 +30,12 @@ const loaded = loadProcess(resolve(import.meta.dir, '..'))
 const repoRoot = resolve(import.meta.dir, '../../..')
 
 describe('arguments', () => {
+  test('the runner delegates publication commands to the shared live context', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'bin', 'run-engine.ts'), 'utf8')
+    expect(source).not.toContain("git('push'")
+    expect(source).not.toContain("['pr', 'create'")
+    expect(source).toContain('createEngineLiveDeveloperContext')
+  })
   test('a task number and an agent are required', () => {
     expect(parseArgs(['--task', '12', '--agent', 'codex'])).toEqual({ task: 12, agent: 'codex', dryRun: false })
     expect(parseArgs(['--task', '3', '--agent', 'claude', '--dry-run']).dryRun).toBe(true)
@@ -210,8 +216,8 @@ function stubRun(scenario: { failAt?: string; haltAt?: string; hostFails?: boole
     startHost: async (host) => {
       calls.push('host-start')
       if (scenario.hostFails) throw new Error('no socket')
-      expect(host.socketPath).toBe(devToolsSocketPath('engine-7'))
-      expect(host.role).toBe('developer')
+      expect(host.socketPath).toBe(devToolsSocketPath(`engine-7-${host.role}`))
+      expect(['developer', 'code-reviewer', 'security']).toContain(host.role)
       return { close: async () => void calls.push('host-close') }
     },
     devToolsContext: {} as never,
@@ -289,9 +295,9 @@ describe('a stub run on the Engine path', () => {
     const { options, calls } = stubRun()
     const result = await runEngine(options)
     expect(calls.indexOf('host-start')).toBeLessThan(calls.indexOf('spawn:develop'))
-    const shim = join(options.runtimeDir, 'engine-runs', '7', 'dev-bridge.sh')
+    const shim = join(options.runtimeDir, 'engine-runs', '7', 'developer-dev-bridge.sh')
     expect(readFileSync(shim, 'utf8')).toBe(
-      shimContent(devToolsSocketPath('engine-7'), process.execPath, join(repoRoot, 'apps/cli/src/index.ts'))
+      shimContent(devToolsSocketPath('engine-7-developer'), process.execPath, join(repoRoot, 'apps/cli/src/index.ts'))
     )
     expect(statSync(shim).mode & 0o111).not.toBe(0)
     expect(result.exitCode).toBe(0)
@@ -311,7 +317,7 @@ describe('a stub run on the Engine path', () => {
   test('closes the host and drains the sink when the run succeeds', async () => {
     const { options, calls } = stubRun()
     await runEngine(options)
-    expect(calls.filter((call) => call === 'host-close')).toHaveLength(1)
+    expect(calls.filter((call) => call === 'host-close')).toHaveLength(3)
     expect(calls.indexOf('host-close')).toBeLessThan(calls.indexOf('drain'))
   })
 
@@ -319,7 +325,7 @@ describe('a stub run on the Engine path', () => {
     const { options, calls } = stubRun({ failAt: 'run-mechanical-gates' })
     const result = await runEngine(options)
     expect(result.exitCode).toBe(1)
-    expect(calls.filter((call) => call === 'host-close')).toHaveLength(1)
+    expect(calls.filter((call) => call === 'host-close')).toHaveLength(3)
     expect(calls.filter((call) => call === 'drain')).toHaveLength(1)
     expect(readTrace(result.tracePath).outcome).not.toBe('completed')
   })
@@ -337,7 +343,7 @@ describe('a stub run on the Engine path', () => {
     const result = await runEngine(options)
     expect(result.exitCode).toBe(2)
     expect(readTrace(result.tracePath).outcome).toBe('paused')
-    expect(calls.filter((call) => call === 'host-close')).toHaveLength(1)
+    expect(calls.filter((call) => call === 'host-close')).toHaveLength(3)
     expect(calls.filter((call) => call === 'drain')).toHaveLength(1)
   })
 

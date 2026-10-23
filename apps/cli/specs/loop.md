@@ -2,6 +2,15 @@
 
 Status: draft
 
+Both the standalone loop and the Engine runner construct the Developer's live
+tool context through `task-tools/live-developer-context.ts`. The shared module
+owns the publication precondition boundary, pushed-range selection,
+unpublished-turn detection, and refusal prompt; each runner supplies its live
+state explicitly. The Engine also starts a role-scoped tool host for the
+Developer, code reviewer, and security reviewer, so reviewers read the same
+controller-pinned source manifest through `read_source` on either agent launch
+shape.
+
 The frozen review-input manifest is protocol version 2. In addition to base,
 head, brief hash, objectives version, ruling ordinal, and policy digest, it
 carries `pauseBoundRuling`: either `null` when the round did not follow a

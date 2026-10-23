@@ -284,7 +284,7 @@ pinned, and the entries they touched:
   no standalone behavior to register.
 - **The beyond-Surface publication rule** (section 16.12). Publication never
   refuses a path beyond the Surface and the controller rebuilds its record;
-  the standalone loop already does both (`INV-033`, `INV-068`), and protected
+  both runners do both through the shared live Developer context (`INV-033`, `INV-068`), and protected
   paths stay refused unless the frozen scope names them (`INV-120`,
   `INV-137`).
 - **Two secret classes** (section 16.15). Controller-held secrets never enter

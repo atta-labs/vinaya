@@ -305,7 +305,13 @@ import type { PremiseReassertResult } from '../checks/premise-reassert-logic.js'
 import { fastForwardedOntoDefaultTip } from './dev-review-loop/developer-publication.js'
 import { postForgeEffectOnce, publishRound, unboundFields } from './dev-review-loop/publication.js'
 import { patchIdAt } from './patch-id.js'
-import { createDeveloperDevToolContext, type DeveloperDevToolDeps } from './task-tools/developer-dev-tools-context.js'
+import type { DeveloperDevToolDeps } from './task-tools/developer-dev-tools-context.js'
+import {
+  commitAndPushPrompt as sharedCommitAndPushPrompt,
+  createLiveDeveloperContext,
+  publishDeveloperTurn as sharedPublishDeveloperTurn,
+  pushedCommitRangeBase
+} from './task-tools/live-developer-context.js'
 import {
   devToolError,
   type DevPullRequestView,
@@ -1555,10 +1561,7 @@ export function defaultRestoreWorktreeHead(worktreePath: string, head: string): 
   return gitOk(worktreePath, ['rev-parse', 'HEAD']) === head
 }
 
-/** The exclusive lower bound for paths attributed to one branch push. */
-export function pushedCommitRangeBase(remoteHead: string | null, branchBase: string | null): string | null {
-  return remoteHead ?? branchBase
-}
+export { pushedCommitRangeBase } from './task-tools/live-developer-context.js'
 
 /**
  * The lower bound that measures only the task's own changes: `pushedBase`
@@ -5774,7 +5777,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             : `${result.error.errorClass}/${result.error.retryDisposition}/${result.error.effectState}: ${result.error.check}: ${result.error.output}`
         }
       }
-      return createDeveloperDevToolContext(deps)
+      return createLiveDeveloperContext(deps)
     }
 
     /**
@@ -5799,38 +5802,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // `createDeveloperDevToolContext`). This step only DETECTS work the turn
       // left unpublished and re-asks the SAME session to call the tool; it
       // writes nothing to the forge itself.
-      const worktree = worktreePathForBranch()
-      // No worktree here — a driver running on a different host than the
-      // Developer's own machine, or this driver's own round-1 `createTaskWorktree`
-      // call has not run/failed. Nothing to detect from here; the existing
-      // poll machinery still covers a branch another host published.
-      if (!existsSync(worktree)) return { kind: 'nothing' }
-
-      const existingPr = d.findOpenPrForBranch(branch)
-      const unpushed = d.readUnpushedWorkDetail(worktree)
-      // A stopped round-1 Developer belongs to the existing escalation path,
-      // not the publication re-ask. It may have left a clean worktree and no PR.
-      const currentStop = d.fetchDeveloperStop(task)
-      if (currentStop !== null && currentStop.identity !== turnPreStop) return { kind: 'nothing' }
-      if (unpushed.dirtyFiles.length === 0 && unpushed.aheadCount === 0 && !existingPr) {
-        return { kind: 'nothing' }
-      }
-      // Nothing left unpublished — a clean worktree, nothing ahead of the
-      // remote, a pull request already open: the agent published through the
-      // tools, and there is nothing to re-ask.
-      if (unpushed.dirtyFiles.length === 0 && unpushed.aheadCount === 0 && existingPr) {
-        return { kind: 'nothing' }
-      }
-
-      // Work the turn left unpublished — re-ask the same session to publish it
-      // through the tool. Bounded the same way a refused publication already is
-      // (`dispatchDeveloper`): after the bound, the unmoved head is left to the
-      // existing poll/`no_push` safety net.
-      const missingPr = existingPr ? '' : '; no open pull request'
-      return publicationRefusal(
-        'unpublished-work',
-        `work the turn left unpublished — ${noPushPauseDetail(branch, unpushed)}${missingPr}`
-      )
+      return sharedPublishDeveloperTurn({
+        worktreePath: worktreePathForBranch(),
+        branch,
+        turnPreStop,
+        findOpenPullRequest: () => d.findOpenPrForBranch(branch),
+        readUnpushedWork: d.readUnpushedWorkDetail,
+        fetchDeveloperStop: () => d.fetchDeveloperStop(task),
+        noPushDetail: noPushPauseDetail,
+        refusal: publicationRefusal
+      }) as PublishTurnResult
     }
 
     /**
@@ -5969,13 +5950,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
     /** Mid-round unpushed-work resume — distinct from `pushAndOpenPrompt` (round-1 entry, no head at all yet): this branch already has commits on the remote, the developer's LATEST turn just left work the driver could not publish. Names the pre-push hook's own refusal (O4) when one is pending. */
     function commitAndPushPrompt(): string {
-      const refusalBlock = lastPushRefusal
-        ? `\n\nYour last \`publish_changes\` for this branch was refused by the pre-push hook:\n\n${lastPushRefusal}\n\nFix the cause of that refusal before calling \`publish_changes\` again.`
-        : ''
-      return [
-        'Your previous turn left work that is not yet on the remote.',
-        `Per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`): ${publishingInstructionLine()}${refusalBlock}`
-      ].join('\n\n')
+      return sharedCommitAndPushPrompt(lastPushRefusal, publishingInstructionLine())
     }
 
     /** Shared by the journal event and the PR comment below, so the two never describe the same stall differently. */
