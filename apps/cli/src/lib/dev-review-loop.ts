@@ -155,6 +155,7 @@ import {
 import { detectVendoredVinaya } from './self-host.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import {
+  checkPremiseAtHead,
   describeFailingCheckRun,
   fetchCiConclusion,
   fetchConflictingFiles,
@@ -164,8 +165,9 @@ import {
   fetchPrState,
   gitCommitsTouchingDriverPaths,
   type FailingCheckRun,
-  type MergeableState,
+  pollMergeableState,
   readWorktreeHead,
+  renderConflictPrompt,
   rerunFailedWorkflowJobs,
   resolveHead,
   sh
@@ -299,7 +301,6 @@ import {
 } from './dev-review-loop/turn-result.js'
 import type { DeveloperTurnResult } from './developer-turn-result.js'
 import { buildReport, gh, resolveMergeBase, runReportForOpenPr } from './pr-report-engine.js'
-import { reassertPrBodyPremise } from '../checks/bin/check-pr-premise-reassert.js'
 import type { PremiseReassertResult } from '../checks/premise-reassert-logic.js'
 import { postForgeEffectOnce, publishRound, unboundFields } from './dev-review-loop/publication.js'
 import { patchIdAt } from './patch-id.js'
@@ -5321,17 +5322,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       )
     }
 
-    /** O4/O6: the loop's own conflict prompt — names the conflicting file(s) so the developer does not have to re-derive mergeability itself. */
-    function renderConflictPrompt(files: readonly string[]): string {
-      const fileList =
-        files.length > 0 ? files.map((f) => `- ${f}`).join('\n') : '(no specific file could be determined)'
-      return [
-        'This branch is behind the base in a way that conflicts — it cannot merge as-is.',
-        `Start a merge without committing it: run \`git merge --no-commit origin/main\` from this worktree, resolve the conflicting file(s) below, then ${publishingInstructionLine()} The publish_changes tool makes the merge commit, so do not run git commit or rebase yourself. Conflicting file(s):`,
-        fileList
-      ].join('\n\n')
-    }
-
     /**
      * O2/O3/O9: run once, right after the developer's round-1 turn ends and
      * BEFORE any poll for a pull request — the poll never starts against a
@@ -5653,27 +5643,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       return { baseHead, head, filesChanged, insertions, deletions, wallMs: d.now() - roundStartMs }
     }
 
-    /**
-     * The dispatch gate's premise re-assertion against `prNumber`'s LIVE
-     * body — `null` on any failure to even fetch it (an ordinary forge-read
-     * hiccup, one this driver never exits over) OR when the body carries no
-     * `Premise:` block at all; both are dormant, never a reason to treat the
-     * premise itself as failed. Wrapped here, not inside
-     * `reassertPrBodyPremise` itself, because that function's own contract
-     * is pure-ish (a supplied body in, a verdict out) — the live
-     * `fetchPrBody` round-trip is this call site's own addition, and its
-     * failure mode belongs here.
-     */
-    function checkPremiseAtHead(pr: number): PremiseReassertResult | null {
-      let body: string
-      try {
-        body = d.fetchPrBody(pr)
-      } catch {
-        return null
-      }
-      return reassertPrBodyPremise(body)
-    }
-
     async function waitForGreenGate(
       roundStartMs: number,
       head: string = d.resolveHead(branch)
@@ -5798,20 +5767,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         )
       }
       return result.failures
-    }
-
-    /** O4/O5/O7: the forge's own mergeable state, polled off `UNKNOWN` within the existing gate poll budget — never read as clean and never as conflicting. A budget exhaustion is treated as `CONFLICTING`, never as clean: this gates a reviewer dispatch or a publish, and silently proceeding on an unresolved answer is the one failure mode O4/O5 exist to prevent. */
-    async function pollMergeableState(prNumber: number): Promise<MergeableState> {
-      return await pollUntil(
-        () => {
-          const m = d.fetchMergeableState(prNumber)
-          return m === 'UNKNOWN' ? null : m
-        },
-        d.gatePollMaxAttempts,
-        d.gatePollIntervalMs,
-        d.sleep,
-        () => `devReviewLoop: mergeability for PR #${prNumber} never resolved off UNKNOWN within the poll budget.`
-      ).catch(() => 'CONFLICTING' as const)
     }
 
     /**
@@ -7034,7 +6989,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // after it carries that ruling ahead of whatever the round asks.
               issueRulingsOwed ? issueRulingsBlock() : null,
               conflictFiles !== null
-                ? renderConflictPrompt(conflictFiles)
+                ? renderConflictPrompt(conflictFiles, publishingInstructionLine())
                 : resumedDispatch
                   ? `Principal ruling on this pause:\n\n${lastReviewContext}\n`
                   : isGateRedRetry
@@ -7250,7 +7205,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 refusedPublication === null
               ) {
                 const gateAtStall = await waitForGreenGate(roundStartMs, headBeforeDispatch)
-                const premiseAtStall = checkPremiseAtHead(prNumber)
+                const premiseAtStall = checkPremiseAtHead(prNumber, d.fetchPrBody)
                 const premiseLinesAtStall =
                   premiseAtStall !== null && !premiseAtStall.pass ? premiseAtStall.errors.map((e) => e.message) : []
                 if (gateAtStall.green && premiseLinesAtStall.length === 0) {
@@ -7346,7 +7301,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // this branch runs (fresh round-1 entry, a conflict-retry, or a
           // genuine next round), so a conflicting head is sent back before any
           // CI wait, never after one.
-          const mergeableBeforeGate = await pollMergeableState(prNumber)
+          const mergeableBeforeGate = await pollMergeableState(prNumber, d)
           if (mergeableBeforeGate === 'CONFLICTING') {
             publicationState.pendingConflictFiles = await withRateLimitWait(() =>
               d.fetchConflictingFiles('main', branch)
@@ -7373,7 +7328,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // this one). Best-effort, like `runEvidenceReport`: a body-fetch
           // failure here is its own infrastructure hiccup, never grounds to
           // treat the premise itself as failed.
-          const premiseResult: PremiseReassertResult | null = checkPremiseAtHead(prNumber)
+          const premiseResult: PremiseReassertResult | null = checkPremiseAtHead(prNumber, d.fetchPrBody)
           const premiseFailed = premiseResult !== null && !premiseResult.pass
           const premiseFailureLines = premiseResult !== null ? premiseResult.errors.map((e) => e.message) : []
           const gateGreen = gate.green && !premiseFailed
@@ -7443,7 +7398,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // reviewer starts and no CI is waited on for this head. Round
           // number does not advance (same discipline as the infrastructure
           // pause below — this round's reviewers never ran).
-          const mergeableForReview = await pollMergeableState(prNumber)
+          const mergeableForReview = await pollMergeableState(prNumber, d)
           if (mergeableForReview === 'CONFLICTING') {
             publicationState.pendingConflictFiles = await withRateLimitWait(() =>
               d.fetchConflictingFiles('main', branch)
@@ -8008,7 +7963,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // discarded (never published against a head that cannot merge);
           // the developer is resumed to resolve, and round does not advance,
           // so the NEXT reviewer dispatch judges the resolved head.
-          const mergeableForPublish = await pollMergeableState(prNumber)
+          const mergeableForPublish = await pollMergeableState(prNumber, d)
           if (mergeableForPublish === 'CONFLICTING') {
             discardHeldVerdicts(root, task, round)
             // This round's deferred completion events described an outcome

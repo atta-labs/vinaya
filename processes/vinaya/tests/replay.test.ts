@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { recordedHandoff } from './handoff-fakes'
+import { QUIET_FORGE_GATES } from './round-fakes'
 import { execFileSync } from 'node:child_process'
 import {
   existsSync,
@@ -234,6 +235,7 @@ async function replay(scenario: Scenario) {
     fetchNewestIssueRulingOrdinal: () => 0,
     fetchSourceRevision: () => 'abc',
     fetchCiConclusion: () => 'green',
+    ...QUIET_FORGE_GATES,
     fetchIssueRulingsAfterBrief: () => [],
     fetchRulings: () => [],
     fetchLoopHistory: () => fetchLoopHistory(null),

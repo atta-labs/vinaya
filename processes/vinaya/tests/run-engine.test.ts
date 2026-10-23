@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { recordedHandoff } from './handoff-fakes'
+import { PASSING_FORGE_GATES } from './round-fakes'
 import { Database } from 'bun:sqlite'
 import { execFileSync } from 'node:child_process'
 import {
@@ -100,9 +101,14 @@ describe('the dry run', () => {
         shimPath: '/runs/1/dev-bridge.sh'
       })
       expect(lines[0]).toBe(`process ${loaded.identity.id}@${loaded.identity.version} digest ${loaded.digest}`)
-      expect(lines.filter((line) => line.startsWith('step '))).toHaveLength(21)
+      expect(lines.filter((line) => line.startsWith('step '))).toHaveLength(25)
       const bound = lines.filter((line) => line.startsWith('bound '))
-      expect(bound).toHaveLength(18)
+      expect(bound).toHaveLength(22)
+      expect(bound).toContain(
+        'bound check-mergeability vinaya.check-mergeability: pollMergeableState, fetchConflictingFiles, assessRound'
+      )
+      expect(bound).toContain('bound read-forge-ci vinaya.read-forge-ci: fetchCiConclusion, rerunFailedWorkflowJobs')
+      expect(bound).toContain('bound check-premise vinaya.check-premise: checkPremiseAtHead')
       expect(bound).toContain(
         'bound publish-ready-for-merge harness.publish: publishRound, upsertDeferredFindingsIssue'
       )
@@ -214,6 +220,7 @@ function stubRun(scenario: { failAt?: string; haltAt?: string; hostFails?: boole
       'vinaya.validate-developer-output',
       'vinaya.classify-developer-output',
       'harness.run-gates',
+      ...Object.keys(PASSING_FORGE_GATES),
       'vinaya.assess-gate',
       'vinaya.classify-gate-result',
       'vinaya.run-security-scan',
@@ -299,6 +306,10 @@ describe('a stub run on the Engine path', () => {
       'validate-developer-output',
       'classify-developer-output',
       'run-mechanical-gates',
+      'check-mergeability',
+      'classify-mergeability',
+      'read-forge-ci',
+      'check-premise',
       'assess-gate',
       'classify-gate-result',
       'run-security-scan',

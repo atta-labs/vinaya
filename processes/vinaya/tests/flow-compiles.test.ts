@@ -32,7 +32,7 @@ describe('Vinaya process packed runtime boundary', () => {
     const steps = flow.steps as Array<{ type: string; role?: string; permission?: string }>
     const agents = steps.filter((step) => step.type === 'agent')
     expect(plan.graph.nodes).toBeDefined()
-    expect(Object.keys(plan.graph.nodes)).toHaveLength(21)
+    expect(Object.keys(plan.graph.nodes)).toHaveLength(25)
     for (const step of agents) {
       expect(step.permission).toBe(`${step.role}/grants.yaml`)
       const roleFolder = join(dirname(loaded.flowPath), step.role!)
@@ -45,5 +45,26 @@ describe('Vinaya process packed runtime boundary', () => {
           : reviewResultJsonSchema(step.role as 'code-reviewer' | 'security-reviewer')
       expect(actualSchema).toEqual(expectedSchema)
     }
+  })
+
+  test('after the local gates, the forge gates run in the standalone round order before any reviewer is dispatched', () => {
+    const loaded = loadProcess(resolve(import.meta.dir, '..'))
+    const flow = camelize(parse(readFileSync(loaded.flowPath, 'utf8'))) as StepsFlow
+    const ids = (flow.steps as Array<{ id: string }>).map((step) => step.id)
+    const order = ['run-mechanical-gates', 'check-mergeability', 'read-forge-ci', 'check-premise', 'assess-gate']
+    expect(ids.filter((id) => order.includes(id))).toEqual(order)
+    expect(ids.indexOf('check-premise')).toBeLessThan(ids.indexOf('dispatch-reviewers'))
+    // A conflicting head goes back to the Developer before any CI wait; a mergeable one goes on to the CI read.
+    const classify = (flow.steps as Array<{ id: string; decision?: Record<string, unknown> }>).find(
+      (step) => step.id === 'classify-mergeability'
+    )
+    expect(classify?.decision).toMatchObject({
+      examine: 'check-mergeability',
+      ifTrue: 'develop',
+      ifFalse: 'read-forge-ci'
+    })
+    expect(ids.indexOf('classify-mergeability')).toBe(ids.indexOf('check-mergeability') + 1)
+    const plan = compileFlow(flow, 'Compile the Vinaya process')
+    for (const id of order) expect(Object.keys(plan.graph.nodes)).toContain(id)
   })
 })

@@ -1074,7 +1074,7 @@
       "scenarios": ["stale-evidence"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/dev-review-loop.ts",
+          "path": "apps/cli/src/lib/dev-review-loop/gate-reading.ts",
           "symbol": "pollMergeableState"
         }
       ],
@@ -1096,7 +1096,7 @@
       "scenarios": ["stale-evidence"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/dev-review-loop.ts",
+          "path": "apps/cli/src/lib/dev-review-loop/gate-reading.ts",
           "symbol": "renderConflictPrompt"
         }
       ],
@@ -2263,7 +2263,7 @@
       "scenarios": ["stale-evidence"],
       "sources": [
         {
-          "path": "apps/cli/src/lib/dev-review-loop.ts",
+          "path": "apps/cli/src/lib/dev-review-loop/gate-reading.ts",
           "symbol": "checkPremiseAtHead"
         }
       ],
@@ -3605,7 +3605,7 @@
       "id": "DEF-06",
       "summary": "The conflict prompt instructed merge/rebase and git push; it now directs an uncommitted merge published through publish_changes.",
       "code": {
-        "path": "apps/cli/src/lib/dev-review-loop.ts",
+        "path": "apps/cli/src/lib/dev-review-loop/gate-reading.ts",
         "locator": "renderConflictPrompt"
       },
       "spec": {

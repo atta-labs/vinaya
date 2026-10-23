@@ -15,7 +15,7 @@ import { createActions, type TaskInput } from '../executing/actions'
 import { developerPrompt, type DeveloperPromptFacts } from '../executing/developer-prompt'
 import { createVinayaLogProducers } from '../executing/log-events'
 import { recordedHandoff } from './handoff-fakes'
-import { confidentTurn, heldReviews, vendorLines } from './round-fakes'
+import { confidentTurn, heldReviews, PASSING_FORGE_GATES, vendorLines } from './round-fakes'
 
 const PROCESS = loadProcess(resolve(import.meta.dir, '..'))
 const AGENTS: readonly Agent[] = ['claude', 'codex']
@@ -232,6 +232,7 @@ async function runFlow(agent: Agent, scenario: Scenario = {}): Promise<Observed>
         'vinaya.choose-start',
         'vinaya.validate-developer-output',
         'harness.run-gates',
+        ...Object.keys(PASSING_FORGE_GATES),
         'vinaya.validate-reviewer-outputs',
         ...completionSteps
       ].map((name) => [

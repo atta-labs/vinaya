@@ -8,7 +8,7 @@ import { parse } from 'yaml'
 import { DEFAULT_REVIEW_POLICY, objectivesVersion, readManifest, type ReviewPolicy } from '@attalabs/aeg-core'
 import type { SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../harness/dev-process/loader/load-process'
-import { keepLogLocal, SCENARIO_ENV_KEYS, useRuntimeDir } from './round-fakes'
+import { keepLogLocal, QUIET_FORGE_GATES, SCENARIO_ENV_KEYS, useRuntimeDir } from './round-fakes'
 import type { ActionRegistry } from '../../../harness/dev-process/engine-runtime/run-process'
 import {
   clearDriverLock,
@@ -298,6 +298,7 @@ async function run(agent: Agent, scenario: Scenario = {}): Promise<Observed> {
     fetchNewestIssueRulingOrdinal: () => 0,
     fetchSourceRevision: () => 'revision',
     fetchCiConclusion: () => 'green',
+    ...QUIET_FORGE_GATES,
     fetchIssueRulingsAfterBrief: () => [],
     fetchRulings: () => [],
     fetchLoopHistory: () => ({
@@ -821,7 +822,7 @@ for (const agent of AGENTS) {
         policy: { maxRounds: 2 },
         reviewer: (role, attempt) => (role === 'code-reviewer' && attempt === 1 ? 'request-changes' : 'approve')
       })
-      expect(ceilings(observed)).toEqual([2, 2, 2, 2, 2, 2])
+      expect(ceilings(observed)).toEqual([2, 2, 2, 2, 2, 2, 2])
       expect(observed.outcome).toBe('completed')
       expect(observed.published.map((input) => input.round)).toEqual([2])
     })
@@ -851,8 +852,8 @@ for (const agent of AGENTS) {
         })
       const two = await failing(2)
       const three = await failing(3)
-      expect(ceilings(two)).toEqual([2, 2, 2, 2, 2, 2])
-      expect(ceilings(three)).toEqual([3, 3, 3, 3, 3, 3])
+      expect(ceilings(two)).toEqual([2, 2, 2, 2, 2, 2, 2])
+      expect(ceilings(three)).toEqual([3, 3, 3, 3, 3, 3, 3])
       expect(two.outcome).toBe('exhausted')
       expect(three.outcome).toBe('exhausted')
       expect(two.spawns.developer).toBe(3)

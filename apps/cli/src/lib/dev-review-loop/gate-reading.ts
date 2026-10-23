@@ -1,7 +1,10 @@
 /**
  * `dev-review-loop`'s gate-reading concern — every forge/git read about a head's mechanical readiness:
- * mechanical CI conclusion, mergeability, base-head staleness, and a
- * developer's own worktree head. Reads only, save one forge write: rerunning a
+ * mechanical CI conclusion, mergeability (and the conflict prompt that names
+ * a conflict's files), the premise re-check at the head, base-head
+ * staleness, and a developer's own worktree head — shared by the standalone
+ * loop and the Engine Flow's forge-gate steps, each passing its own values
+ * explicitly. Reads only, save one forge write: rerunning a
  * failed workflow run's failed jobs (`rerunFailedWorkflowJobs`), made beside
  * the check-run reader that names the run — moved out of `apps/cli/src/lib/dev-review-loop.ts`
  * verbatim; `dev-review-loop.ts` stays the composition root, re-exporting
@@ -17,6 +20,9 @@ import {
   REVIEW_WORKFLOW_PATH
 } from '../managed-workflow-paths.js'
 import { REVIEW_GATE_CHECK_RUN_NAME, REVIEW_GATE_WORKFLOW_NAME } from '../review-gate-check-name.js'
+import { reassertPrBodyPremise } from '../../checks/bin/check-pr-premise-reassert.js'
+import type { PremiseReassertResult } from '../../checks/premise-reassert-logic.js'
+import { pollUntil } from './round-assess.js'
 
 /** Env-overridable, same idiom `dev-review-loop.ts`'s own `gatePollEnvOverride` uses — a fixture needs sub-millisecond backoff, real usage needs real spacing between retries. */
 function shEnvOverride(name: string, fallback: number): number {
@@ -422,6 +428,30 @@ export function fetchMergeableState(prNumber: number): MergeableState {
   return parsed.mergeable === 'MERGEABLE' || parsed.mergeable === 'CONFLICTING' ? parsed.mergeable : 'UNKNOWN'
 }
 
+/** The gate poll budget both runners read a forge answer within: the attempts, the spacing between them, and the sleep that spaces them. */
+export interface GatePoll {
+  gatePollMaxAttempts: number
+  gatePollIntervalMs: number
+  sleep: (ms: number) => Promise<void>
+}
+
+/** O4/O5/O7: the forge's own mergeable state, polled off `UNKNOWN` within the existing gate poll budget — never read as clean and never as conflicting. A budget exhaustion is treated as `CONFLICTING`, never as clean: this gates a reviewer dispatch or a publish, and silently proceeding on an unresolved answer is the one failure mode O4/O5 exist to prevent. */
+export async function pollMergeableState(
+  prNumber: number,
+  d: GatePoll & { fetchMergeableState: (prNumber: number) => MergeableState }
+): Promise<MergeableState> {
+  return await pollUntil(
+    () => {
+      const m = d.fetchMergeableState(prNumber)
+      return m === 'UNKNOWN' ? null : m
+    },
+    d.gatePollMaxAttempts,
+    d.gatePollIntervalMs,
+    d.sleep,
+    () => `devReviewLoop: mergeability for PR #${prNumber} never resolved off UNKNOWN within the poll budget.`
+  ).catch(() => 'CONFLICTING' as const)
+}
+
 /**
  * issue-711 O4: the forge's own three-value pull-request state (`gh pr view
  * --json state`) — `OPEN` covers every in-progress state a pause can be
@@ -487,6 +517,42 @@ export function fetchConflictingFiles(baseBranch: string, headBranch: string): s
     const stdout = (err as { stdout?: string }).stdout ?? ''
     return parseMergeTreeConflictFiles(stdout)
   }
+}
+
+/** O4/O6: the loop's own conflict prompt — names the conflicting file(s) so the developer does not have to re-derive mergeability itself. `publishingInstruction` is the publishing-instruction clause every Developer prompt ends with. */
+export function renderConflictPrompt(files: readonly string[], publishingInstruction: string): string {
+  const fileList = files.length > 0 ? files.map((f) => `- ${f}`).join('\n') : '(no specific file could be determined)'
+  return [
+    'This branch is behind the base in a way that conflicts — it cannot merge as-is.',
+    `Start a merge without committing it: run \`git merge --no-commit origin/main\` from this worktree, resolve the conflicting file(s) below, then ${publishingInstruction} The publish_changes tool makes the merge commit, so do not run git commit or rebase yourself. Conflicting file(s):`,
+    fileList
+  ].join('\n\n')
+}
+
+// --- premise ------------------------------------------------
+
+/**
+ * The dispatch gate's premise re-assertion against `pr`'s LIVE
+ * body — `null` on any failure to even fetch it (an ordinary forge-read
+ * hiccup, one this driver never exits over) OR when the body carries no
+ * `Premise:` block at all; both are dormant, never a reason to treat the
+ * premise itself as failed. Wrapped here, not inside
+ * `reassertPrBodyPremise` itself, because that function's own contract
+ * is pure-ish (a supplied body in, a verdict out) — the live
+ * `fetchPrBody` round-trip is this call site's own addition, and its
+ * failure mode belongs here.
+ */
+export function checkPremiseAtHead(
+  pr: number,
+  fetchPrBody: (prNumber: number) => string
+): PremiseReassertResult | null {
+  let body: string
+  try {
+    body = fetchPrBody(pr)
+  } catch {
+    return null
+  }
+  return reassertPrBodyPremise(body)
 }
 
 // --- base-head staleness ------------------------------------------------

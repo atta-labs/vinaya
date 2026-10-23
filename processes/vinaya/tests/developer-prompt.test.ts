@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { briefHash, policyDigest } from '@attalabs/aeg-core'
+import { briefHash, initialLoopState, policyDigest } from '@attalabs/aeg-core'
 import type { StepNodeResult } from '@atta/executor-agent-spawn'
 import {
   buildDeveloperDeltaPacket,
@@ -8,7 +8,9 @@ import {
 } from '../../../apps/cli/src/lib/context-packet'
 import { developerContinuationFacts, publishingInstructionLine } from '../../../apps/cli/src/lib/dev-review-loop'
 import { renderDeveloperDoctrineBlock } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
+import { renderConflictPrompt } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import { turnResultInstruction } from '../../../apps/cli/src/lib/dev-review-loop/turn-result'
+import { encodeLoopState } from '../executing/actions'
 import { type DeveloperPromptFacts, developerPrompt } from '../executing/developer-prompt'
 
 const FACTS: DeveloperPromptFacts = {
@@ -170,5 +172,95 @@ describe("the Engine Developer's prompt is today's loop prompt", () => {
     expect(prompt).toContain('The checks (`vinaya check --all`) are red on the last head. Fix the failing check(s).')
     expect(prompt).toContain('✗ closes-n: fail')
     expect(prompt).toContain('Resuming task Issue #7.')
+  })
+})
+
+/** A deciding step's record of sending the Developer back, as the actions write it. */
+function sentBack(sendBack: Record<string, unknown>, seq = 3): StepNodeResult {
+  const state = initialLoopState({
+    loopId: 'l',
+    task: 7,
+    reviewers: ['reviewer', 'security'],
+    models: {},
+    maxRounds: 4,
+    maxTaskMinutes: 90
+  })
+  return mech(
+    1,
+    JSON.stringify({
+      seq,
+      state: JSON.parse(encodeLoopState(state)),
+      counters: {},
+      sendBack,
+      answered: null,
+      events: [],
+      decision: { type: 'dispatch_developer' }
+    })
+  )
+}
+
+/** The loop's later-round prompt over `promptText` with no handoff findings or failing checks carried. */
+function loopLaterRound(f: DeveloperPromptFacts, promptText: string): string {
+  const packet = buildDeveloperDeltaPacket({
+    retainedPacket: retained(f),
+    previousSessionId: SESSION,
+    changedFacts: [{ ref: 'head', version: `sha:${f.headSha}` }],
+    ...developerContinuationFacts({
+      status: 'ok',
+      value: { developerHandoff: { findings: [], failingChecks: [] } }
+    } as never),
+    constraints: ['Continue the same frozen brief on the same task branch.', publishingInstructionLine()]
+  })
+  const resume = [
+    `Resuming task Issue #${f.resume.task}.`,
+    `Branch: \`${f.resume.branch}\``,
+    `Worktree: \`${f.resume.worktree}\``,
+    `Remote head: ${f.resume.remoteHead}`
+  ].join('\n')
+  return join([f.sources.block, renderContextPacket(packet), resume, promptText, turnResultInstruction(f.round)])
+}
+
+const ADDRESS_LINE = `Address the findings above per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`), then ${publishingInstructionLine()} Publish the fix as a new commit on this SAME branch — do not open a new pull request.`
+
+describe("the Engine Developer's prompt after a forge gate sent it back", () => {
+  test('after a conflict it carries only the delta: the loop conflict text naming the files, then the turn-result instruction', () => {
+    const results = {
+      develop: mech(0),
+      'run-mechanical-gates': mech(0),
+      'check-mergeability': sentBack({ kind: 'conflict', headBefore: 'h1', files: ['src/a.ts', 'src/b.ts'] })
+    }
+    const prompt = developerPrompt('x', FACTS, results, { resumeSessionId: SESSION })
+    const conflict = renderConflictPrompt(['src/a.ts', 'src/b.ts'], publishingInstructionLine())
+    expect(prompt).toBe(loopLaterRound(FACTS, [conflict, ADDRESS_LINE].join('\n\n')))
+    expect(prompt).toContain('- src/a.ts\n- src/b.ts')
+    expect(prompt.indexOf(conflict)).toBeLessThan(prompt.indexOf(turnResultInstruction(FACTS.round)))
+    // Never the brief, nor its Documentation section.
+    expect(prompt).not.toContain('# Frozen brief')
+    expect(prompt).not.toContain('Do the one thing.')
+    expect(prompt).not.toContain('## Documentation')
+  })
+
+  test('after a red CI read it names the failing check runs as the loop does', () => {
+    const results = {
+      develop: mech(0),
+      'run-mechanical-gates': mech(0),
+      'read-forge-ci': mech(
+        0,
+        JSON.stringify({
+          head: 'h1',
+          conclusion: 'red',
+          failingChecks: ['unit (run 9)', 'lint (run 10)'],
+          rerunHeads: [],
+          rerunRunIds: []
+        })
+      ),
+      'assess-gate': sentBack({ kind: 'gate-red', headBefore: 'h1' })
+    }
+    const prompt = developerPrompt('x', FACTS, results, { resumeSessionId: SESSION })
+    expect(prompt).toContain(
+      'CI is red on the last head. Failing check-run(s): unit (run 9), lint (run 10). Fix the failing check(s).'
+    )
+    expect(prompt).not.toContain('The checks (`vinaya check --all`) are red')
+    expect(prompt).not.toContain('# Frozen brief')
   })
 })
