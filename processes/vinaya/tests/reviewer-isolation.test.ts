@@ -2,3 +2,4 @@
 // Keep the brief's focused test entry point while the detailed cases stay beside their units.
 import './review-input.test'
 import './run-engine.test'
+import './round-decisions.test'
