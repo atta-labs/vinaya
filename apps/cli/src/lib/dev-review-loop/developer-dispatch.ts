@@ -913,6 +913,24 @@ export function ownRepoPrForBranch(list: readonly OpenPrListing[], branch: strin
 }
 
 /** `null` when no open PR from this repository carries `branch` as its head yet — polled, never treated as a final answer on one read. */
+/**
+ * `findOpenPrForBranch`, but a failed forge call throws with its own message instead of reading as "none open":
+ * `null` means the forge answered and listed no open pull request for `branch`.
+ */
+export function findOpenPrForBranchStrict(branch: string): PrRef | null {
+  const out = sh('gh', [
+    'pr',
+    'list',
+    '--head',
+    branch,
+    '--state',
+    'open',
+    '--json',
+    'number,headRefName,isCrossRepository'
+  ])
+  return ownRepoPrForBranch(JSON.parse(out) as OpenPrListing[], branch)
+}
+
 export function findOpenPrForBranch(branch: string): PrRef | null {
   try {
     const out = sh('gh', [

@@ -452,11 +452,12 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
   },
   {
     // Shared by the standalone loop and the Engine runner.
-    name: 'devReviewLoop driver lifecycle — the liveness heartbeat and the single exit record',
+    name: 'devReviewLoop driver lifecycle — the liveness heartbeat, the single exit record and the conflict re-entry',
     files: [DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH],
     requires: [
       { kind: 'dev_review_loop', event: 'driver_heartbeat' },
-      { kind: 'dev_review_loop', event: 'driver_exited' }
+      { kind: 'dev_review_loop', event: 'driver_exited' },
+      { kind: 'dev_review_loop', event: 'conflict_reentry' }
     ]
   },
   {
@@ -588,11 +589,11 @@ describe('log coverage — every schema event maps to a producer boundary', () =
     familyEventsFromSchema(schemaSource, exportName, kind)
   )
 
-  it('sanity: the schema really does declare 32 kind/event pairs across 10 families today', () => {
+  it('sanity: the schema really does declare 33 kind/event pairs across 10 families today', () => {
     // A change to this number is a real schema change (a family or event
     // added/removed) — update it alongside PRODUCER_BOUNDARIES /
     // LOG_COVERAGE_EXEMPTIONS in the same diff, never silently.
-    expect(allDeclaredEvents.length).toBe(32)
+    expect(allDeclaredEvents.length).toBe(33)
   })
 
   it('every declared kind/event pair is required by a producer boundary, or named in LOG_COVERAGE_EXEMPTIONS', () => {

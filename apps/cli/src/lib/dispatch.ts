@@ -3244,6 +3244,69 @@ export function terminateLaunchedChildOnShutdown(
   })
 }
 
+/**
+ * Writes the Developer launch record for a turn a runner launched itself — the
+ * Engine runner's executor spawns the vendor child, so `dispatchRole` never
+ * writes one. The Broker authenticates the Developer's pushes against this
+ * record, exactly as for a `dispatchRole` launch. Returns the run id the turn
+ * is recorded under.
+ */
+export function recordRunnerDeveloperLaunch(input: {
+  agent: AgentVendor
+  repo: { owner: string; repo: string } | null
+  task: number
+  round: number | null
+}): string {
+  const runId = randomUUID()
+  writeLaunchRecord({
+    runId,
+    role: 'developer',
+    agent: input.agent,
+    repo: input.repo,
+    task: input.task,
+    pr: null,
+    round: input.round,
+    attempt: nextAttempt('developer', input.agent, input.repo, input.task),
+    effectId: randomUUID(),
+    dispatcherPid: process.pid,
+    childPid: null,
+    childStartedAt: null,
+    childCommand: null,
+    host: osHostname(),
+    startedAt: new Date().toISOString(),
+    status: 'launched',
+    resumeId: null,
+    boundAt: null,
+    finishedAt: null,
+    failureReason: null
+  })
+  return runId
+}
+
+/**
+ * Closes the Developer launch record a runner wrote with `recordRunnerDeveloperLaunch`, once that turn's agent
+ * has finished: completed, with the vendor session bound, so a later run resumes that exact session instead of
+ * reading the turn as an interrupted launch. A record for another run is left as it is.
+ */
+export function completeRunnerDeveloperLaunch(input: {
+  agent: AgentVendor
+  repo: { owner: string; repo: string } | null
+  task: number
+  runId: string
+  resumeId: string | null
+}): void {
+  const parsed = readLaunchRecord('developer', input.agent, input.repo, input.task)
+  if (parsed.status !== 'ok' || parsed.record.runId !== input.runId) return
+  const now = new Date().toISOString()
+  writeLaunchRecord({
+    ...parsed.record,
+    status: 'completed',
+    resumeId: input.resumeId,
+    boundAt: input.resumeId === null ? parsed.record.boundAt : now,
+    finishedAt: now
+  })
+}
+
 /** The next per-scope attempt number — one past the prior launch record for this scope, or `1` when none exists or it is corrupt (a corrupt prior never blocks a fresh attempt from starting). */
 function nextAttempt(
   role: Role,

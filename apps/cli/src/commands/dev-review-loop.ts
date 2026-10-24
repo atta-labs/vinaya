@@ -8,8 +8,8 @@
  * and `--resume` build the SAME `LoopInput` union into the SAME one
  * `devReviewLoop` call, and `--cancel` makes the SAME one
  * `cancelDevReviewLoop` call, so every invocation of this command still
- * makes exactly one lib call regardless of which flag was given. Five lib
- * calls in total (`loadConfig`, `isAgentVendor`, `devReviewLoop`,
+ * makes exactly one lib call regardless of which flag was given. Six lib
+ * calls in total (`loadConfig`, `isAgentVendor`, `devReviewLoop`, `runDriverLoop`,
  * `cancelDevReviewLoop`, `printJson`), the same argv-plumbing shape
  * `dispatch`'s own command takes (`apps/cli/specs/surface.md`) — exempt
  * under the same `sharedCommandShell` retirement target, not a compliant
@@ -20,13 +20,17 @@
  * "The command": "`dev-review-loop` below is `task run`'s own debug/direct
  * entry"), never the watching driver (`runDriverLoop`). `vinaya task run`
  * (`commands/task-run.ts`) is the one "normal," unattended entry O4's
- * watching behaviour lands on.
+ * watching behaviour lands on. The one exception is `--task <n> --watch`,
+ * which only a stale published-pull-request watcher hands itself off to
+ * (`handOffStaleWatchingDriver`): it runs the watching driver, carrying the
+ * spent conflict re-entries (`--conflict-reentries <n>`) and, once they are
+ * spent, the bound's pause detail (`--pause-on-conflict <detail>`) forward.
  */
 
 import { colourLoopLine, isAgentVendor, type AgentVendor } from '../lib/dispatch.js'
 import { loadConfig } from '../lib/config.js'
 import { printJson } from '../lib/envelope.js'
-import { cancelDevReviewLoop, devReviewLoop, type LoopInput } from '../lib/dev-review-loop.js'
+import { cancelDevReviewLoop, devReviewLoop, type LoopInput, runDriverLoop } from '../lib/dev-review-loop.js'
 
 type ParsedArgs = {
   task: number | undefined
@@ -35,6 +39,9 @@ type ParsedArgs = {
   agent: string | undefined
   model: string | undefined
   json: boolean
+  watch: boolean
+  conflictReentries: number | undefined
+  pauseOnConflict: string | undefined
 }
 
 function parseArgs(args: string[]): ParsedArgs {
@@ -44,6 +51,9 @@ function parseArgs(args: string[]): ParsedArgs {
   let agent: string | undefined
   let model: string | undefined
   let json = false
+  let watch = false
+  let conflictReentries: number | undefined
+  let pauseOnConflict: string | undefined
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
     // `--issue` is `--task`'s exact synonym: the
@@ -59,8 +69,11 @@ function parseArgs(args: string[]): ParsedArgs {
     else if (a === '--agent') agent = args[++i]
     else if (a === '--model') model = args[++i]
     else if (a === '--json') json = true
+    else if (a === '--watch') watch = true
+    else if (a === '--conflict-reentries') conflictReentries = Number(args[++i])
+    else if (a === '--pause-on-conflict') pauseOnConflict = args[++i]
   }
-  return { task, resumePr, cancelPr, agent, model, json }
+  return { task, resumePr, cancelPr, agent, model, json, watch, conflictReentries, pauseOnConflict }
 }
 
 export async function devReviewLoopCommand(args: string[]): Promise<void> {
@@ -125,7 +138,28 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
     input = { task: parsed.task, agent, ...(parsed.model ? { model: parsed.model } : {}), json: parsed.json }
   }
 
-  const result = await devReviewLoop(input)
+  if (parsed.watch && 'resumePr' in input) {
+    process.stderr.write('vinaya dev-review-loop: --watch runs only with --task <n>\n')
+    process.exit(1)
+  }
+  if (
+    parsed.conflictReentries !== undefined &&
+    (!Number.isInteger(parsed.conflictReentries) || parsed.conflictReentries < 0)
+  ) {
+    process.stderr.write('vinaya dev-review-loop: --conflict-reentries <n> requires a non-negative integer\n')
+    process.exit(1)
+  }
+  const result = parsed.watch
+    ? await runDriverLoop(
+        input,
+        {},
+        {},
+        {
+          ...(parsed.conflictReentries !== undefined ? { conflictReentries: parsed.conflictReentries } : {}),
+          ...(parsed.pauseOnConflict !== undefined ? { pauseOnConflict: parsed.pauseOnConflict } : {})
+        }
+      )
+    : await devReviewLoop(input)
 
   if (parsed.json) {
     printJson({ finalDecision: result.finalDecision, prNumber: result.prNumber, task: result.task })
@@ -140,6 +174,10 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
         process.stdout
       )}\n`
     )
+  } else if (result.finalDecision.type === 'ended') {
+    process.stdout.write(
+      `${colourLoopLine(`vinaya dev-review-loop: task ${result.task}, PR #${result.prNumber} — ended (${result.finalDecision.reason})`, process.stdout)}\n`
+    )
   }
 
   // O2: a paused loop exits non-zero — the pause comment/state are already
@@ -151,5 +189,5 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'dev-review-loop': { date: '2026-09-15', callsToday: 6, retiresVia: 'sharedCommandShell' }
+  'dev-review-loop': { date: '2026-09-15', callsToday: 7, retiresVia: 'sharedCommandShell' }
 }

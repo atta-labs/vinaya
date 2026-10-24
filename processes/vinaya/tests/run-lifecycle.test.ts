@@ -64,7 +64,13 @@ import {
   takeDriverLock,
   type RecoveryDeps
 } from '../bin/run-lifecycle'
-import { runEngine, type EngineLifecycleOptions, type EngineRunOptions, type RunTrace } from '../bin/run-engine'
+import {
+  heldPullRequestConflictsLive,
+  runEngine,
+  type EngineLifecycleOptions,
+  type EngineRunOptions,
+  type RunTrace
+} from '../bin/run-engine'
 
 const loaded = loadProcess(resolve(import.meta.dir, '..'))
 const repoRoot = resolve(import.meta.dir, '../../..')
@@ -301,7 +307,7 @@ describe('one Engine runner per task', () => {
     standalone: DriverLockExit
     kept: boolean
   }> = [
-    { name: 'a publish', scenario: () => ({}), standalone: { kind: 'publish' }, kept: false },
+    { name: 'a publish', scenario: () => ({}), standalone: { kind: 'publish', watched: false }, kept: false },
     {
       name: 'a halt',
       scenario: (control) => ({ actions: { 'harness.run-gates': () => haltThen(control, 'stop') } }),
@@ -418,6 +424,54 @@ describe('re-running a task', () => {
     expect(readDriverLock(first.runtimeDir, TASK)).toBeNull()
   })
 
+  test('a checkpoint resume keeps the round it stopped in: the journal never seeds the next round', async () => {
+    const control = createRunControl()
+    const first = stubRun({
+      control,
+      actions: { 'harness.run-gates': () => haltThen(control, 'stop') }
+    })
+    expect((await runEngine(first.options)).exitCode).toBe(2)
+    const second = stubRun({}, first.runtimeDir)
+    const seededRounds: number[] = []
+    second.options.taskInput = {
+      branch: 'task/issue-7',
+      loopState: initialLoopState({ loopId: 'l', task: TASK, reviewers: [], models: {}, maxRounds: 5 } as never),
+      reviewRound: () => 1,
+      seedRound: (n: number) => void seededRounds.push(n)
+    } as unknown as TaskInput
+    second.options.lifecycle = {
+      ...second.options.lifecycle,
+      recovery: recoveryDeps({
+        fetchLoopHistory: () =>
+          loopHistoryFromComments(
+            [{ body: '<!-- aeg:developer:round-1 -->\nHead: h1', author: 'principal' }],
+            ['principal'],
+            () => 'unknown'
+          ),
+        loopState: () => (second.options.taskInput as TaskInput).loopState
+      })
+    }
+    second.options.heldPullRequestConflicts = async () => false
+    await runEngine(second.options)
+    expect(second.driverLog()).toContain('resuming the run from its checkpoint')
+    expect(seededRounds).toEqual([])
+  })
+
+  test('a checkpoint whose pull request is now in conflict is not resumed: a fresh run sends the Developer back', async () => {
+    const control = createRunControl()
+    const first = stubRun({
+      control,
+      actions: { 'harness.run-gates': () => haltThen(control, 'stop') }
+    })
+    expect((await runEngine(first.options)).exitCode).toBe(2)
+    const second = stubRun({}, first.runtimeDir)
+    second.options.heldPullRequestConflicts = async () => true
+    await runEngine(second.options)
+    expect(second.driverLog()).toContain('instead of resuming the checkpoint')
+    expect(second.driverLog()).not.toContain('resuming the run from its checkpoint')
+    expect(second.spawns[0]).toBe('develop')
+  })
+
   test('a run whose checkpoint records a completed run has nothing to run', async () => {
     const first = stubRun()
     await runEngine(first.options)
@@ -466,6 +520,8 @@ describe('re-running a task', () => {
       'build-revision-handoff',
       'run-live-checks',
       'classify-live-result',
+      'check-publish-mergeability',
+      'classify-publish-mergeability',
       'publish-ready-for-merge'
     ])
   })
@@ -721,6 +777,7 @@ describe('recovering a re-run', () => {
         patchIdOf: () => 'same-patch'
       })
     }
+    run.options.heldPullRequestConflicts = async () => false
     const result = await runEngine(run.options)
     expect(result.exitCode).toBe(0)
     expect(run.spawns).toEqual([])
@@ -728,6 +785,35 @@ describe('recovering a re-run', () => {
     expect(Object.keys(run.actionRuns)).toEqual(['publish-ready-for-merge'])
     expect(run.driverLog()).toContain('held clean verdict from round 1 still covers the head')
     expect(run.trace(result.tracePath).outcome).toBe('completed')
+  })
+
+  test('a held clean verdict whose pull request is in conflict is not published; the run goes through the Flow', async () => {
+    const run = stubRun()
+    holdCleanPair(run.runtimeDir, 1, manifestAt('1'.repeat(40)))
+    run.options.lifecycle = {
+      ...run.options.lifecycle,
+      recovery: recoveryDeps({
+        heldVerdict: () => latestHeldCleanVerdict(run.runtimeDir, TASK),
+        currentManifest: () => manifestAt('2'.repeat(40)),
+        patchIdOf: () => 'same-patch'
+      })
+    }
+    run.options.heldPullRequestConflicts = async () => true
+    await runEngine(run.options)
+    expect(run.driverLog()).toContain('held clean verdict not published: the pull request is in conflict')
+    expect(run.driverLog()).not.toContain('still covers the head; publishing it')
+    expect(Object.keys(run.actionRuns)).not.toEqual(['publish-ready-for-merge'])
+  })
+
+  test('the live conflict probe reads a mergeable pull request as mergeable when the task sets no poll budget', async () => {
+    const probe = heldPullRequestConflictsLive({
+      branch: 'task/issue-7',
+      bound: {
+        findOpenPrForBranch: () => ({ number: 31, branch: 'task/issue-7' }),
+        fetchMergeableState: () => 'MERGEABLE'
+      }
+    } as unknown as TaskInput)
+    expect(await probe()).toBe(false)
   })
 
   test('a held verdict that no longer covers the head is not reused', () => {

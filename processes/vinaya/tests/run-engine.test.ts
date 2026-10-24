@@ -10,6 +10,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  rmSync,
   statSync,
   writeFileSync
 } from 'node:fs'
@@ -47,6 +48,10 @@ import {
   type TaskInput
 } from '../executing/actions'
 import { heldVerdictPath, writeHeldVerdict } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
+import { MAX_AUTOMATIC_CONFLICT_REENTRIES } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+import { loopLogPathFor } from '../../../apps/cli/src/lib/loop-log'
+import { SqliteCheckpointer } from '../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
+import { currentRunGeneration, runIdentityOfTask } from '../bin/run-lifecycle'
 import type { DeveloperPromptFacts } from '../executing/developer-prompt'
 import {
   checkpointPath,
@@ -61,7 +66,9 @@ import {
   runEngine,
   shimContent,
   type EngineRunOptions,
-  type RunTrace
+  type RunTrace,
+  targetRepoRoot,
+  withTurnSchema
 } from '../bin/run-engine'
 
 const loaded = loadProcess(resolve(import.meta.dir, '..'))
@@ -101,9 +108,12 @@ describe('the dry run', () => {
         shimPath: '/runs/1/dev-bridge.sh'
       })
       expect(lines[0]).toBe(`process ${loaded.identity.id}@${loaded.identity.version} digest ${loaded.digest}`)
-      expect(lines.filter((line) => line.startsWith('step '))).toHaveLength(25)
+      expect(lines.filter((line) => line.startsWith('step '))).toHaveLength(27)
       const bound = lines.filter((line) => line.startsWith('bound '))
-      expect(bound).toHaveLength(22)
+      expect(bound).toHaveLength(24)
+      expect(bound).toContain(
+        'bound check-publish-mergeability vinaya.check-publish-mergeability: pollMergeableState, fetchConflictingFiles, discardHeldVerdicts'
+      )
       expect(bound).toContain(
         'bound check-mergeability vinaya.check-mergeability: pollMergeableState, fetchConflictingFiles, assessRound'
       )
@@ -322,6 +332,8 @@ describe('a stub run on the Engine path', () => {
       'build-revision-handoff',
       'run-live-checks',
       'classify-live-result',
+      'check-publish-mergeability',
+      'classify-publish-mergeability',
       'publish-ready-for-merge'
     ])
     expect(trace.steps.every((step) => step.exitCode === 0)).toBe(true)
@@ -484,6 +496,113 @@ async function spawnedWith(extra: Partial<EngineRunOptions>) {
   })
   return spawned
 }
+
+describe('a published pull request that falls into conflict with the default branch', () => {
+  type Read = { state: 'OPEN' | 'MERGED' | 'CLOSED'; mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN' }
+  /** A stub run whose first run opens PR #70; each later run attaches to it, and its first mergeability read is the conflict the re-entry answers. */
+  function publishedRun(reads: Read[]) {
+    const run = stubRun()
+    let reconciles = 0
+    let conflictToAnswer = false
+    const base = run.options.actions!
+    run.options.actions = {
+      ...base,
+      'vinaya.reconcile-external-state': async () => {
+        reconciles += 1
+        if (reconciles === 1) return { exitCode: 0 }
+        conflictToAnswer = true
+        return { exitCode: 1, stdout: JSON.stringify({ number: 70 }) }
+      },
+      'vinaya.check-mergeability': async (context) => {
+        if (!conflictToAnswer) return base['vinaya.check-mergeability']!(context)
+        conflictToAnswer = false
+        return { exitCode: 1 }
+      }
+    }
+    run.options.taskInput = {
+      ...run.options.taskInput,
+      branch: 'task/issue-7',
+      bound: { findOpenPrForBranch: () => ({ number: 70 }) }
+    } as unknown as TaskInput
+    let read = -1
+    const current = () => reads[Math.min(read, reads.length - 1)]!
+    run.options.lifecycle = {
+      handleSignals: false,
+      publishedWatch: {
+        fetchPrState: () => {
+          read += 1
+          return current().state
+        },
+        fetchMergeableState: () => current().mergeable,
+        pollMs: 0,
+        sleep: async () => {}
+      }
+    }
+    const generation = () => {
+      const saver = new SqliteCheckpointer({
+        path: checkpointPath(join(run.runtimeDir, 'engine-runs', '7')),
+        revision: 'x'
+      })
+      try {
+        return currentRunGeneration(saver, 7)
+      } finally {
+        saver.close()
+      }
+    }
+    return { ...run, generation }
+  }
+  const spawned = (calls: string[], step: string) => calls.filter((call) => call === `spawn:${step}`).length
+  const reentries = (emitted: unknown[]) =>
+    emitted.filter((event) => (event as { event?: string }).event === 'conflict_reentry') as Array<{ attempt: number }>
+
+  test('a completed run whose pull request turns CONFLICTING starts a fresh run at the Developer, then publishes again', async () => {
+    const run = publishedRun([
+      { state: 'OPEN', mergeable: 'UNKNOWN' },
+      { state: 'OPEN', mergeable: 'CONFLICTING' },
+      { state: 'MERGED', mergeable: 'MERGEABLE' }
+    ])
+    const result = await runEngine(run.options)
+    expect(result.exitCode).toBe(0)
+    // The fresh run attached to the open pull request and dispatched the Developer for the conflict, then both reviews.
+    expect(spawned(run.calls, 'develop')).toBe(2)
+    expect(spawned(run.calls, 'code-review')).toBe(2)
+    expect(spawned(run.calls, 'security-review')).toBe(2)
+    const steps = readTrace(result.tracePath).steps.map((step) => step.nodeId)
+    expect(steps.filter((step) => step === 'publish-ready-for-merge')).toHaveLength(2)
+    // The completed checkpoint was never resumed: the re-entry ran under the next run identity.
+    expect(run.generation()).toBe(2)
+    expect(reentries(run.emitted)).toEqual([
+      expect.objectContaining({ pr: 70, attempt: 1, bound: MAX_AUTOMATIC_CONFLICT_REENTRIES })
+    ])
+    const driverLog = readFileSync(loopLogPathFor(null, 7, run.runtimeDir), 'utf8')
+    expect(driverLog).toContain(`starting a fresh run (${runIdentityOfTask(7, 2).runId})`)
+    expect(driverLog).toContain('PR #70 was merged; ending')
+  })
+
+  test('a published pull request that is closed ends the runner with no re-entry', async () => {
+    const run = publishedRun([{ state: 'CLOSED', mergeable: 'MERGEABLE' }])
+    const result = await runEngine(run.options)
+    expect(result.exitCode).toBe(0)
+    expect(spawned(run.calls, 'develop')).toBe(1)
+    expect(reentries(run.emitted)).toEqual([])
+  })
+
+  test('past the re-entry bound the runner pauses for a person through the ordinary pause, and ends', async () => {
+    const run = publishedRun([{ state: 'OPEN', mergeable: 'CONFLICTING' }])
+    const result = await runEngine(run.options)
+    expect(result.exitCode).toBe(2)
+    expect(reentries(run.emitted).map((event) => event.attempt)).toEqual(
+      Array.from({ length: MAX_AUTOMATIC_CONFLICT_REENTRIES }, (_, i) => i + 1)
+    )
+    expect(spawned(run.calls, 'develop')).toBe(MAX_AUTOMATIC_CONFLICT_REENTRIES + 1)
+    expect(run.handoff.calls).toEqual([
+      'escalation:repeat_failure',
+      'pause-state:repeat_failure',
+      'comment:pr:repeat_failure'
+    ])
+    expect(readTrace(result.tracePath).pauseReason).toBe('repeat_failure')
+  })
+})
 
 describe("the Developer's prompt", () => {
   test('carries the frozen brief, the context packet and the turn-result instruction, not only the task number', async () => {
@@ -686,6 +805,9 @@ describe('agent-step failures and the live task context', () => {
 const HEADER = 'Fix(cli): Share live context'
 const PR_BODY = '## Report\n\nbody'
 
+const recordedLaunches: Array<{ task: number; agent: string; round: number | null }> = []
+const completedLaunches: Array<{ runId: string; resumeId: string | null }> = []
+
 function liveContext(world: World, overrides: Partial<ReturnType<typeof fakeDeps>> = {}, task = 8) {
   const runtimeDir = mkdtempSync(join(tmpdir(), 'engine-live-context-'))
   const live = engineLiveDevToolsContext({
@@ -696,7 +818,14 @@ function liveContext(world: World, overrides: Partial<ReturnType<typeof fakeDeps
     agent: 'claude',
     repo: null,
     round: () => 1,
-    deps: { ...fakeDeps(world), ...overrides }
+    deps: { ...fakeDeps(world), ...overrides },
+    recordLaunch: (input) => {
+      recordedLaunches.push(input)
+      return `run-${recordedLaunches.length}`
+    },
+    completeLaunch: (input) => {
+      completedLaunches.push(input)
+    }
   })
   return { live, runtimeDir }
 }
@@ -997,4 +1126,73 @@ describe('the tool host serves the reviewer roles as well as the Developer', () 
       }
     })
   }
+})
+
+describe('the repository a run works in', () => {
+  test('is the git top level of the starting directory, not the folder the runner ships in', () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'engine-target-repo-')))
+    execFileSync('git', ['init', '-q'], { cwd: dir })
+    mkdirSync(join(dir, 'nested'))
+    expect(targetRepoRoot(join(dir, 'nested'))).toBe(dir)
+    expect(targetRepoRoot(join(dir, 'nested'))).not.toBe(resolve(import.meta.dir, '../../..'))
+    rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('a Developer turn on the Engine path', () => {
+  test('records the launch the Broker authenticates its pushes against', async () => {
+    const before = recordedLaunches.length
+    const { live } = liveContext(makeWorld(), {}, 31)
+    await live.beginTurn()
+    expect(recordedLaunches.length).toBe(before + 1)
+    expect(recordedLaunches.at(-1)).toMatchObject({ task: 31, agent: 'claude', round: 1 })
+  })
+})
+
+describe('the Developer launch schema', () => {
+  const launcher = (args: string[]) => ({ command: 'agent', allowedPermissions: [], buildArgs: () => [...args] })
+  test('Claude gets the current turn schema inline at every launch', () => {
+    let sources = ['`a.md`']
+    const wrapped = withTurnSchema(launcher(['-p', '--json-schema', '{"static":true}']), '/unused', () => ({ sources }))
+    expect(wrapped.buildArgs({} as never)).toEqual(['-p', '--json-schema', JSON.stringify({ sources: ['`a.md`'] })])
+    sources = ['`b.md`']
+    expect(wrapped.buildArgs({} as never)[2]).toBe(JSON.stringify({ sources: ['`b.md`'] }))
+  })
+  test('Codex gets a rewritten schema file at every launch', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'turn-schema-'))
+    const wrapped = withTurnSchema(launcher(['exec', '--output-schema', '/static.json']), dir, () => ({ n: 1 }))
+    const args = wrapped.buildArgs({} as never)
+    expect(args[2]).toBe(join(dir, 'turn-output.schema.json'))
+    expect(JSON.parse(readFileSync(args[2] as string, 'utf8'))).toEqual({ n: 1 })
+    rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('closing a Developer turn on the Engine path', () => {
+  test('closes the launch it began, with the vendor session, once', async () => {
+    const { live } = liveContext(makeWorld(), {}, 32)
+    await live.beginTurn()
+    const runId = `run-${recordedLaunches.length}`
+    live.completeTurn('session-abc')
+    live.completeTurn('session-abc')
+    expect(completedLaunches.filter((c) => c.runId === runId)).toEqual([
+      expect.objectContaining({ runId, resumeId: 'session-abc' })
+    ])
+  })
+})
+
+describe('the CLI entry commands run from inside the Engine runner', () => {
+  test('is the one the runner names, not the runner script itself', async () => {
+    const { cliEntryPath, CLI_ENTRY_ENV } = await import('../../../apps/cli/src/lib/cli-entry')
+    const before = process.env[CLI_ENTRY_ENV]
+    process.env[CLI_ENTRY_ENV] = '/opt/vinaya/apps/cli/src/index.ts'
+    try {
+      expect(cliEntryPath()).toBe('/opt/vinaya/apps/cli/src/index.ts')
+      delete process.env[CLI_ENTRY_ENV]
+      expect(cliEntryPath()).toBe(process.argv[1] as string)
+    } finally {
+      if (before === undefined) delete process.env[CLI_ENTRY_ENV]
+      else process.env[CLI_ENTRY_ENV] = before
+    }
+  })
 })

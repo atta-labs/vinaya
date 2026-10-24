@@ -333,7 +333,8 @@ describe('the watching driver resumes a rate-limit pause at the reset it recorde
         resumes.push(input.resumePr)
         return { finalDecision: { type: 'publish' }, prNumber: 7, task: 1449 }
       },
-      fetchPrState: () => 'OPEN',
+      // Open while the pause is watched; merged once the resumed run has published it.
+      fetchPrState: () => (resumes.length > 0 ? 'MERGED' : 'OPEN'),
       fetchNewestRulingOrdinal: () => 0,
       readPauseState: () => held,
       readResolutionRecord: () => null,

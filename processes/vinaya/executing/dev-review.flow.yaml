@@ -90,5 +90,12 @@ steps:
   - id: classify-live-result
     type: mechanical
     action: vinaya.classify-live-result
-    decision: { examine: run-live-checks, if_true: develop, if_false: publish-ready-for-merge, max_revisions: 3 }
+    decision: { examine: run-live-checks, if_true: develop, if_false: check-publish-mergeability, max_revisions: 3 }
+  # Mergeability is read again before publication: an approved head that fell into conflict with the default branch
+  # while the reviewers worked is never published; it goes back to the Developer with the conflicting files.
+  - { id: check-publish-mergeability, type: mechanical, action: vinaya.check-publish-mergeability }
+  - id: classify-publish-mergeability
+    type: mechanical
+    action: vinaya.classify-publish-mergeability
+    decision: { examine: check-publish-mergeability, if_true: develop, if_false: publish-ready-for-merge, max_revisions: 3 }
   - { id: publish-ready-for-merge, type: mechanical, action: harness.publish }

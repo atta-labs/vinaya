@@ -24,7 +24,16 @@ import {
   readEffect,
   writeEffect
 } from '@attalabs/aeg-core'
-import { type LoopDeps, readResolutionRecord } from '../../../src/lib/dev-review-loop'
+import {
+  type DriverWatchDeps,
+  type LoopDeps,
+  type LoopInput,
+  type LoopResult,
+  readResolutionRecord,
+  driverCarryArgs,
+  runDriverLoop
+} from '../../../src/lib/dev-review-loop'
+import { MAX_AUTOMATIC_CONFLICT_REENTRIES } from '../../../src/lib/dev-review-loop/gate-reading'
 import type { DispatchHandle } from '../../../src/lib/dispatch'
 import { drainLogSink } from '../../../src/lib/log-sink'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../../src/lib/dev-review-loop/round-assess'
@@ -992,5 +1001,278 @@ describe('writeEscalationRecord / resolveEscalation — the handoff Log family (
     })
 
     expect(handoffEvents(world).filter((e) => e.event === 'resolved')).toHaveLength(1)
+  })
+})
+
+// --- issue-1621: a published pull request that falls into conflict with main ---
+
+describe('runDriverLoop — the watching driver re-enters a published pull request that falls into conflict', () => {
+  it('re-enters once with no ruling: the Developer receives the conflicting files, and the gates and both reviews run again before it publishes', async () => {
+    const world = makeWorld()
+    world.afterPublish = 'watch'
+    const developerPrompts: string[] = []
+    const base = makeInProcessDeps(world)
+    const loopDeps: Partial<LoopDeps> = {
+      dispatchRole: async (role, agent, prompt, opts) => {
+        if (role === 'developer') {
+          developerPrompts.push(prompt)
+          // The conflict turn merges the default branch in and pushes a new head that merges cleanly.
+          if (prompt.includes('behind the base in a way that conflicts')) {
+            world.head = 'c'.repeat(40)
+            world.worktreeHead = world.head
+            world.mergeable = 'MERGEABLE'
+            world.conflictingFiles = []
+          }
+        }
+        return base.dispatchRole!(role, agent, prompt, opts)
+      }
+    }
+    let ticks = 0
+    const result = await runDriverLoopInProcess(world, { task: world.task, agent: 'claude' }, loopDeps, {
+      sleep: async () => {
+        ticks += 1
+        // The default branch moves under the published pull request while the driver watches it.
+        if (world.publishedRounds.length === 1 && world.mergeable === 'MERGEABLE' && ticks === 2) {
+          world.mergeable = 'CONFLICTING'
+          world.conflictingFiles = ['apps/cli/src/lib/x.ts']
+        }
+        // Once it has published again, the pull request merges.
+        if (world.publishedRounds.length === 2) world.prState = 'MERGED'
+      }
+    })
+
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    // No ruling was posted or needed.
+    expect(world.rulingOrdinal).toBe(0)
+    const conflictPrompts = developerPrompts.filter((p) => p.includes('behind the base in a way that conflicts'))
+    expect(conflictPrompts).toHaveLength(1)
+    expect(conflictPrompts[0]).toContain('apps/cli/src/lib/x.ts')
+    expect(conflictPrompts[0]).toContain('git merge --no-commit origin/main')
+    // Both reviews ran again on the resolved head, and it published a second time.
+    expect(world.dispatchCountByRole['code-reviewer']).toBe(2)
+    expect(world.dispatchCountByRole.security).toBe(2)
+    expect(world.publishedRounds).toHaveLength(2)
+    // The re-entry is narrated in the Log, once.
+    expect(world.watchEvents).toEqual([
+      expect.objectContaining({
+        event: 'conflict_reentry',
+        pr: world.prNumber,
+        attempt: 1,
+        bound: MAX_AUTOMATIC_CONFLICT_REENTRIES
+      })
+    ])
+    // The driver lock was held through the watch and released once the pull request merged.
+    expect(readDriverLock(world.runtimeDir, world.task)).toBeNull()
+  })
+})
+
+describe('runDriverLoop — the published pull request watch', () => {
+  function publishedWatch(
+    reads: Array<{ state: 'OPEN' | 'MERGED' | 'CLOSED'; mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN' }>
+  ) {
+    const calls: LoopInput[] = []
+    const cleared: number[] = []
+    const events: unknown[] = []
+    const published: LoopResult = { finalDecision: { type: 'publish' }, prNumber: 42, task: 1621 }
+    // One entry per watch tick: the tick reads the state, then the mergeability of the same entry.
+    let read = -1
+    const current = () => reads[Math.min(read, reads.length - 1)]!
+    const watch: Partial<DriverWatchDeps> = {
+      devReviewLoop: async (input) => {
+        calls.push(input)
+        if (input.pauseOnConflict !== undefined)
+          return {
+            finalDecision: { type: 'pause', reason: 'repeat_failure', detail: input.pauseOnConflict },
+            prNumber: 42,
+            task: 1621
+          }
+        return published
+      },
+      fetchPrState: () => {
+        read += 1
+        return current().state
+      },
+      fetchMergeableState: () => current().mergeable,
+      readPauseState: () => null,
+      logEvent: (event) => {
+        events.push(event)
+      },
+      clearDriverLock: (_root, task) => {
+        cleared.push(task)
+      },
+      gitRevParseOriginMain: () => 'start',
+      runtimeDir: () => '/nonexistent',
+      sleep: async () => {},
+      watchPollIntervalMs: 0
+    }
+    return { calls, cleared, events, watch }
+  }
+
+  it('keeps watching after a publish and returns it once the pull request is merged, releasing the lock', async () => {
+    const h = publishedWatch([
+      { state: 'OPEN', mergeable: 'MERGEABLE' },
+      { state: 'OPEN', mergeable: 'MERGEABLE' },
+      { state: 'MERGED', mergeable: 'MERGEABLE' }
+    ])
+    const result = await runDriverLoop({ task: 1621, agent: 'claude' }, {}, h.watch)
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    expect(h.calls).toHaveLength(1)
+    expect(h.cleared).toEqual([1621])
+  })
+
+  it('ends `closed` when the published pull request is closed', async () => {
+    const h = publishedWatch([{ state: 'CLOSED', mergeable: 'MERGEABLE' }])
+    const result = await runDriverLoop({ task: 1621, agent: 'claude' }, {}, h.watch)
+    expect(result.finalDecision).toEqual({ type: 'ended', reason: 'closed' })
+    expect(h.cleared).toEqual([1621])
+  })
+
+  it('never reads UNKNOWN as a conflict: it reads again on the next poll', async () => {
+    const h = publishedWatch([
+      { state: 'OPEN', mergeable: 'UNKNOWN' },
+      { state: 'OPEN', mergeable: 'UNKNOWN' },
+      { state: 'MERGED', mergeable: 'UNKNOWN' }
+    ])
+    await runDriverLoop({ task: 1621, agent: 'claude' }, {}, h.watch)
+    expect(h.calls).toHaveLength(1)
+    expect(h.events).toEqual([])
+  })
+
+  it('re-enters as `task run` would, under its own lock token, never through --resume', async () => {
+    const h = publishedWatch([
+      { state: 'OPEN', mergeable: 'CONFLICTING' },
+      { state: 'MERGED', mergeable: 'MERGEABLE' }
+    ])
+    await runDriverLoop({ task: 1621, agent: 'codex', model: 'gpt-5.6' }, {}, h.watch)
+    expect(h.calls).toHaveLength(2)
+    const reentry = h.calls[1]!
+    expect('resumePr' in reentry).toBe(false)
+    expect(reentry).toMatchObject({ task: 1621, agent: 'codex', model: 'gpt-5.6' })
+    expect(reentry.retainDriverLock).toBe(h.calls[0]!.retainDriverLock)
+    expect(reentry.pauseOnConflict).toBeUndefined()
+  })
+
+  it('bounds the automatic re-entries: past the bound the run pauses for a person and the watch ends', async () => {
+    const h = publishedWatch([{ state: 'OPEN', mergeable: 'CONFLICTING' }])
+    const result = await runDriverLoop({ task: 1621, agent: 'claude' }, {}, h.watch)
+    // The first run, the bounded re-entries, then the one that pauses.
+    expect(h.calls).toHaveLength(MAX_AUTOMATIC_CONFLICT_REENTRIES + 2)
+    expect(h.calls.slice(1, -1).every((call) => call.pauseOnConflict === undefined)).toBe(true)
+    expect(h.calls.at(-1)!.pauseOnConflict).toContain('PR #42 fell into conflict')
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'repeat_failure' })
+    expect(h.events.map((e) => (e as { attempt: number }).attempt)).toEqual(
+      Array.from({ length: MAX_AUTOMATIC_CONFLICT_REENTRIES }, (_, i) => i + 1)
+    )
+    expect(h.cleared).toEqual([1621])
+  })
+
+  it('hands a stale watch to a fresh WATCHING driver, after counting and narrating the re-entry, carrying the count forward', async () => {
+    const h = publishedWatch([{ state: 'OPEN', mergeable: 'CONFLICTING' }])
+    const reexecs: string[][] = []
+    const exits: number[] = []
+    let baseReads = 0
+    const result = await runDriverLoop(
+      { task: 1621, agent: 'claude', model: 'opus' },
+      {},
+      {
+        ...h.watch,
+        // The default branch moved over the driver's own code after it started.
+        gitRevParseOriginMain: () => (baseReads++ === 0 ? 'start' : 'moved'),
+        gitCommitsTouchingDriverPaths: () => ['abc apps/cli/src/lib/dev-review-loop.ts'],
+        pullDefaultBranch: () => ({ ok: true }),
+        reexecSelf: (args) => {
+          reexecs.push(args)
+          return 0
+        },
+        exitProcess: ((code: number) => {
+          exits.push(code)
+        }) as never
+      },
+      { conflictReentries: 1 }
+    )
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    // Only the first run happened in this process; the re-entry is the fresh driver's.
+    expect(h.calls).toHaveLength(1)
+    expect(reexecs).toEqual([
+      [
+        'dev-review-loop',
+        '--task',
+        '1621',
+        '--watch',
+        '--conflict-reentries',
+        '2',
+        '--agent',
+        'claude',
+        '--model',
+        'opus'
+      ]
+    ])
+    expect(exits).toEqual([0])
+    expect(h.events).toEqual([expect.objectContaining({ event: 'conflict_reentry', attempt: 2 })])
+  })
+
+  it('hands a stale watch whose bound is spent to a fresh driver that pauses on the conflict', async () => {
+    const h = publishedWatch([{ state: 'OPEN', mergeable: 'CONFLICTING' }])
+    const reexecs: string[][] = []
+    let baseReads = 0
+    await runDriverLoop(
+      { task: 1621, agent: 'claude' },
+      {},
+      {
+        ...h.watch,
+        gitRevParseOriginMain: () => (baseReads++ === 0 ? 'start' : 'moved'),
+        gitCommitsTouchingDriverPaths: () => ['abc packages/aeg-core/src/x.ts'],
+        pullDefaultBranch: () => ({ ok: true }),
+        reexecSelf: (args) => {
+          reexecs.push(args)
+          return 0
+        },
+        exitProcess: (() => {}) as never
+      },
+      { conflictReentries: MAX_AUTOMATIC_CONFLICT_REENTRIES }
+    )
+    expect(h.events).toEqual([])
+    const args = reexecs[0]!
+    expect(args.slice(0, 6)).toEqual([
+      'dev-review-loop',
+      '--task',
+      '1621',
+      '--watch',
+      '--conflict-reentries',
+      String(MAX_AUTOMATIC_CONFLICT_REENTRIES)
+    ])
+    expect(args[args.indexOf('--pause-on-conflict') + 1]).toContain('PR #42 fell into conflict')
+  })
+
+  it('a handed-off driver keeps the carried count: its next conflict counts on from it', async () => {
+    const h = publishedWatch([
+      { state: 'OPEN', mergeable: 'CONFLICTING' },
+      { state: 'MERGED', mergeable: 'MERGEABLE' }
+    ])
+    await runDriverLoop({ task: 1621, agent: 'claude' }, {}, h.watch, { conflictReentries: 2 })
+    expect(h.events).toEqual([expect.objectContaining({ event: 'conflict_reentry', attempt: 3 })])
+  })
+
+  it("a handed-off driver carrying the bound's pause pauses on its first run and ends its watch", async () => {
+    const h = publishedWatch([{ state: 'OPEN', mergeable: 'CONFLICTING' }])
+    const result = await runDriverLoop({ task: 1621, agent: 'claude' }, {}, h.watch, {
+      conflictReentries: MAX_AUTOMATIC_CONFLICT_REENTRIES,
+      pauseOnConflict: 'bound spent'
+    })
+    expect(h.calls).toHaveLength(1)
+    expect(h.calls[0]!.pauseOnConflict).toBe('bound spent')
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'repeat_failure' })
+    expect(h.cleared).toEqual([1621])
+  })
+
+  it('driverCarryArgs renders the --watch argv', () => {
+    expect(driverCarryArgs({})).toEqual(['--watch', '--conflict-reentries', '0'])
+    expect(driverCarryArgs({ conflictReentries: 3, pauseOnConflict: 'd' })).toEqual([
+      '--watch',
+      '--conflict-reentries',
+      '3',
+      '--pause-on-conflict',
+      'd'
+    ])
   })
 })
