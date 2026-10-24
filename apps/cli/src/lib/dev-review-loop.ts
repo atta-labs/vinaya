@@ -134,7 +134,8 @@ import {
 import { controlStoreRoot } from './effects.js'
 import { resolveRoleDoctrineText } from '../roles/plan.js'
 import { validatePrBodyForCreate } from '../commands/pr.js'
-import { createLogSink, drainLogSink, resolveLogAppendPath } from './log-sink.js'
+import { createLogSink, drainLogSink, resolveLogAppendPath, type LogSinkDeps } from './log-sink.js'
+import { crossRunnerRefusal } from './task-run-engine.js'
 import {
   createDriverExitRecorder,
   DRIVER_HEARTBEAT_INTERVAL_MS,
@@ -595,6 +596,8 @@ export type LoopDeps = {
    * destination live, as they are logged.
    */
   resolveLogAppendPath: (repo: { owner: string; repo: string } | null, issue: number) => string | Promise<string>
+  /** Overrides for this run's own loop-event sink (`createLogSink`); absent, the sink's defaults. */
+  logSink?: Partial<LogSinkDeps>
   repoRoot: () => string
   gitRevParseOriginMain: () => string
   /** True when `ancestor` is contained in `descendant`'s history. */
@@ -2850,6 +2853,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         `devReviewLoop --resume: no held pause state found for task ${closesTask} (PR #${resumePr}) — nothing to resume.`
       )
     }
+    // A pause the Engine runner recorded is the Engine's to continue, never this loop's.
+    const otherRunner = crossRunnerRefusal(closesTask, 'standalone', root)
+    if (otherRunner !== null) throw new Error(`devReviewLoop --resume: ${otherRunner}`)
     if (held.prNumber === null) {
       // A pause recorded before any pull request existed, with one open now:
       // bound to it first, so this run — and every later reader — continues on
@@ -3135,7 +3141,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   // run-start marker and a line saying the sweep is running land in the
   // loop log AND on stderr first. A driver that still has many folders
   // left to classify must never look silent while it works through them.
-  const { log, runId, drain: drainLoopLogSink } = createLogSink()
+  const { log, runId, drain: drainLoopLogSink } = createLogSink(d.logSink)
   if (!process.env.VINAYA_RUN_ID) process.env.VINAYA_RUN_ID = runId
   // O3: two independent sink instances can both have a `log()` call in
   // flight when this driver is about to exit — this closure's own
@@ -8198,6 +8204,8 @@ export type CancelDeps = {
   findOpenPrForBranch: typeof findOpenPrForBranch
   runtimeDir: () => string
   resolveLogAppendPath: (repo: { owner: string; repo: string } | null, issue: number) => string | Promise<string>
+  /** Overrides for the cancel event's own sink (`createLogSink`); absent, the sink's defaults. */
+  logSink?: Partial<LogSinkDeps>
   resolveRepo: () => Promise<{ owner: string; repo: string } | null>
   terminateInFlightLaunchesOnShutdown: (
     task: number,
@@ -8416,7 +8424,7 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   // destination once, on its first write, so in a long-lived process whose
   // first write resolved another repo this line would land away from
   // `cancelOutboxPath` and the wait below would run out its bound.
-  const cancelSink = createLogSink({ resolveRepo: async () => repo })
+  const cancelSink = createLogSink({ ...d.logSink, resolveRepo: async () => repo })
   try {
     cancelSink.log(cancelEvent)
     await waitForOwnLoopLine(cancelOutboxPath, priorSize, cancelSink.runId, cancelEvent, d.sleep)

@@ -50,6 +50,7 @@ export interface LegExit {
   reason: DriverExitReason
   /** The decision the exit record names: `publish`, `pause(<reason>)`, `cancel` or `error`. */
   lastDecision: string
+  /** The code the exit record carries; as on the standalone driver, a finished or failed run carries none. */
   exitCode?: number
   /** True when the run ended on a failed step rather than a decision. */
   failedStep?: boolean
@@ -106,11 +107,38 @@ function readLiveOutcome(steps: RecordedSteps): LiveOutcome | null {
   }
 }
 
+/** The loop state fields a resumed leg's restart events name, as the deciding steps record them. */
+interface RecordedLoopState {
+  config: Pick<LoopConfig, 'task' | 'maxRounds' | 'reviewers' | 'models'>
+  pending: { round: number; stats: { baseHead: string } } | null
+}
+
+/** The newest loop state a deciding step recorded, by sequence number; null before any. */
+function recordedLoopState(steps: RecordedSteps): RecordedLoopState | null {
+  let newest: { seq: number; state: RecordedLoopState } | null = null
+  for (const step of DECIDING_STEPS) {
+    const stdout = steps[step]?.stdout
+    if (!stdout) continue
+    try {
+      const parsed = JSON.parse(stdout) as { seq?: unknown; state?: RecordedLoopState }
+      if (typeof parsed.seq !== 'number' || typeof parsed.state?.config !== 'object') continue
+      if (newest === null || parsed.seq > newest.seq) newest = { seq: parsed.seq, state: parsed.state }
+    } catch {
+      // An unreadable record names no state.
+    }
+  }
+  return newest?.state ?? null
+}
+
 /** Producers for one run of the Flow, with the state a run builds up across its legs. */
 export function createVinayaLogProducers(
-  config: Pick<LoopConfig, 'loopId' | 'task'>
+  config: Pick<LoopConfig, 'loopId' | 'task'> & {
+    /** The base a resumed leg's restarted round names when the recorded state carries none. */
+    baseHead?: () => string | null
+  }
 ): LogProducers & { exit: (context: RunEndContext) => LegExit } {
   let round = 1
+  let restarting = false
   let lastDecision: string | null = null
   let finalHead: string | null = null
   let roundsEnded = 0
@@ -123,6 +151,29 @@ export function createVinayaLogProducers(
 
   const paused = (reasonCode: string): LogEventInput =>
     loop({ event: 'paused', round, reason: 'principal_item', reason_code: reasonCode })
+
+  /**
+   * A resumed leg starts its loop and its round again before its first event, as a restarted standalone driver
+   * does; it names them from the recorded loop state, and says nothing when no state was recorded yet.
+   */
+  const restarted = (steps: RecordedSteps, events: LogEventInput[]): LogEventInput[] => {
+    if (!restarting || events.length === 0) return events
+    restarting = false
+    const state = recordedLoopState(steps)
+    if (state === null) return events
+    const baseHead = state.pending?.stats.baseHead ?? config.baseHead?.() ?? null
+    return [
+      loop({
+        event: 'loop_started',
+        task: state.config.task,
+        policy: { max_rounds: state.config.maxRounds, reviewers: state.config.reviewers, models: state.config.models }
+      }),
+      ...(baseHead === null
+        ? []
+        : [loop({ event: 'round_started', round: state.pending?.round ?? round, base_head: baseHead })]),
+      ...events
+    ]
+  }
 
   /** Closes the journal from what the assessment events carried; says nothing when no round was ever assessed. */
   const closeJournal = (): LogEventInput[] => {
@@ -194,6 +245,7 @@ export function createVinayaLogProducers(
   return {
     legStarted: ({ resumed }) => {
       lastDecision = null
+      restarting = resumed
       return resumed ? [loop({ event: 'resumed', round, by: 'principal' })] : []
     },
     // The driver's liveness is the timed heartbeat the runner emits and its exit record; no node writes either.
@@ -202,15 +254,21 @@ export function createVinayaLogProducers(
       return []
     },
     nodeCompleted: ({ nodeId, steps }) =>
-      DECIDING_STEPS.includes(nodeId)
-        ? assessed(steps, nodeId)
-        : nodeId === LIVE_STEP
-          ? liveChecked(steps)
-          : nodeId === PUBLISH_STEP
-            ? published(steps)
-            : [],
+      restarted(
+        steps,
+        DECIDING_STEPS.includes(nodeId)
+          ? assessed(steps, nodeId)
+          : nodeId === LIVE_STEP
+            ? liveChecked(steps)
+            : nodeId === PUBLISH_STEP
+              ? published(steps)
+              : []
+      ),
     nodeFailed: ({ nodeId, steps }) =>
-      DECIDING_STEPS.includes(nodeId) ? assessed(steps, nodeId) : nodeId === LIVE_STEP ? liveChecked(steps) : [],
+      restarted(
+        steps,
+        DECIDING_STEPS.includes(nodeId) ? assessed(steps, nodeId) : nodeId === LIVE_STEP ? liveChecked(steps) : []
+      ),
     runEnded: ({ outcome, cancelled }) => {
       if (cancelled) return [loop({ event: 'cancelled', round, by: 'principal' })]
       switch (outcome.reason) {
@@ -239,7 +297,7 @@ export function createVinayaLogProducers(
       if (cancelled) return { reason: 'signal', lastDecision: 'cancel' }
       switch (outcome.reason) {
         case 'completed':
-          return { reason: 'finished', lastDecision: 'publish', exitCode: 0 }
+          return { reason: 'finished', lastDecision: 'publish' }
         case 'paused': {
           if (lastDecision?.startsWith('pause(')) return { reason: 'paused', lastDecision }
           return { reason: 'paused', lastDecision: `pause(${handoffCodeOf(outcome.haltReason) ?? 'halt'})` }
@@ -248,7 +306,7 @@ export function createVinayaLogProducers(
           return { reason: 'paused', lastDecision: 'pause(max_rounds)' }
         default:
           if (lastDecision?.startsWith('pause(')) return { reason: 'paused', lastDecision }
-          return { reason: 'error', lastDecision: 'error', exitCode: 1, failedStep: true }
+          return { reason: 'error', lastDecision: 'error', failedStep: true }
       }
     }
   }

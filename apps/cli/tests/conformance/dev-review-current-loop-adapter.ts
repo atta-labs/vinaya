@@ -16,6 +16,7 @@ import {
   taskFromPrBody
 } from '../../src/lib/dev-review-loop.js'
 import { readDriverLock, readPauseState, writeDriverLock } from '../../src/lib/dev-review-loop/pause-resume.js'
+import type { LogSinkDeps } from '../../src/lib/log-sink.js'
 import {
   CLEAN_REVIEWER,
   CLEAN_SECURITY,
@@ -80,9 +81,18 @@ export interface Observation {
   roundStartsByRound: Record<string, number>
   /** `journal_finalized` results in emission order. */
   journalResults: string[]
+  /** Every Log line the run recorded for its task, in file order — present only when a sink was injected. */
+  logLines?: Array<Record<string, unknown>>
 }
 
 type Driver = () => Promise<Observation>
+
+/** Sink overrides injected for the current scenario run (`runStandaloneScenario`); absent, the loop's own defaults. */
+let injectedLogSink: Partial<LogSinkDeps> | undefined
+
+function runLoop(world: LoopWorld, input?: LoopInput, overrides: Partial<LoopDeps> = {}): Promise<LoopResult> {
+  return runLoopInProcess(world, input, { ...(injectedLogSink ? { logSink: injectedLogSink } : {}), ...overrides })
+}
 
 const SHA_NEW_HEAD = 'd'.repeat(40)
 
@@ -197,14 +207,15 @@ export function observe(world: LoopWorld, decision: string, refusal: string | nu
     },
     events,
     roundStartsByRound,
-    journalResults
+    journalResults,
+    ...(injectedLogSink ? { logLines: lines } : {})
   }
 }
 
 /** Runs the loop once and observes it, turning a thrown entry point into a `refused` decision. */
 async function runAndObserve(world: LoopWorld, input?: LoopInput, overrides: Partial<LoopDeps> = {}) {
   try {
-    const result = await runLoopInProcess(world, input, overrides)
+    const result = await runLoop(world, input, overrides)
     return observe(world, decisionOf(result))
   } catch (err) {
     return observe(world, 'refused', err instanceof Error ? err.message : String(err))
@@ -224,6 +235,7 @@ function cancelInProcess(world: LoopWorld) {
         fetchNewestRulingAuthor: () => world.rulingAuthor,
         runtimeDir: () => world.runtimeDir,
         resolveRepo: async () => null,
+        ...(injectedLogSink ? { logSink: injectedLogSink } : {}),
         terminateInFlightLaunchesOnShutdown: () => {},
         sleep: (ms) => new Promise((r) => setTimeout(r, ms > 0 ? 1 : 0))
       }
@@ -398,7 +410,7 @@ const DRIVERS: Record<string, Driver> = {
 
   resume: async () => {
     const world = makeWorld({ roleOutcomes: { 1: { reviewer: ESCALATE_REVIEWER } } })
-    await runLoopInProcess(world)
+    await runLoop(world)
     seedRuling(world)
     world.roleOutcomes[1]!.reviewer = undefined
     return runAndObserve(world, { resumePr: world.prNumber, agent: 'claude' })
@@ -406,14 +418,14 @@ const DRIVERS: Record<string, Driver> = {
 
   cancellation: async () => {
     const world = makeWorld({ roleOutcomes: { 1: { reviewer: ESCALATE_REVIEWER } } })
-    await runLoopInProcess(world)
+    await runLoop(world)
     seedRuling(world)
     return cancelAndObserve(world)
   },
 
   'operator-intervention-unauthenticated': async () => {
     const world = makeWorld({ roleOutcomes: { 1: { reviewer: ESCALATE_REVIEWER } } })
-    await runLoopInProcess(world)
+    await runLoop(world)
     return cancelAndObserve(world)
   },
 
@@ -455,7 +467,7 @@ const DRIVERS: Record<string, Driver> = {
   'publication-replay': async () => {
     const world = makeWorld()
     const overrides = publishCrashesOnce(world)
-    await runLoopInProcess(world, undefined, overrides)
+    await runLoop(world, undefined, overrides)
     endDriverProcess(world)
     return runAndObserve(world, undefined, overrides)
   },
@@ -477,3 +489,15 @@ const DRIVERS: Record<string, Driver> = {
 export const SCENARIO_DRIVERS: Record<string, Driver> = Object.fromEntries(
   Object.entries(DRIVERS).map(([id, driver]) => [id, isolatedFromSpool(driver)])
 )
+
+/** Runs one scenario with `logSink` as the overrides of every sink the loop and its cancel create. */
+export async function runStandaloneScenario(id: string, logSink?: Partial<LogSinkDeps>): Promise<Observation> {
+  const driver = SCENARIO_DRIVERS[id]
+  if (!driver) throw new Error(`no standalone driver for scenario ${id}`)
+  injectedLogSink = logSink
+  try {
+    return await driver()
+  } finally {
+    injectedLogSink = undefined
+  }
+}

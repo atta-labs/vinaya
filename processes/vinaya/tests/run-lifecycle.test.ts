@@ -978,7 +978,9 @@ describe('the heartbeat and the exit record', () => {
     expect(clock.timers[0]?.stopped).toBe(true)
     const exits = exitsOf(run.events)
     expect(exits).toHaveLength(1)
-    expect(exits[0]).toMatchObject({ reason: 'finished', last_decision: 'publish', exit_code: 0, task: TASK })
+    // As on the standalone driver, a finished run's exit record carries no exit code.
+    expect(exits[0]).toMatchObject({ reason: 'finished', last_decision: 'publish', task: TASK })
+    expect(exits[0]).not.toHaveProperty('exit_code')
     expect(run.events.at(-1)?.event).toBe('driver_exited')
   })
 
