@@ -6,14 +6,12 @@ import { easeInOutQuad, progressBetween } from '@/ui/lib/math'
 import { NextLink } from '@/ui/lib/next-link'
 import { cn } from '@/ui/lib/utils'
 import { Heading, Text } from '@/ui/shared'
-import { ELEMENT_ICONS } from '../../_components/icons'
+import { NamedIcon } from '../../_components/icons'
 import { HOME_LOOP } from '../../_components/landing/FeatureSections'
 import { useEnterProgress, useNarrow, useReducedMotion } from '../../_components/landing/LandingInteractions'
 import { StudioMock } from '../../_components/landing/StudioSection'
 import { WRAP } from './process-styles'
 import { usePinnedProgress } from './use-pinned-progress'
-
-const StudioIcon = ELEMENT_ICONS['studio']
 
 // The bridge between stage 2 and stage 3, one screen that pins for four: the first sentence, Studio and the second
 // sentence sit side by side on one horizontal track, joined by a line, and scrolling moves the track through them.
@@ -68,7 +66,7 @@ function StudioPanel({ events, narrow }: { events: number; narrow: boolean }) {
             Built into the harness
           </Text>
           <span className='flex items-center gap-3.5'>
-            <StudioIcon className='size-9 sm:size-12' />
+            <NamedIcon name='Studio' className='size-9 sm:size-12' />
             <Heading level={3} weight='normal' variant='title'>
               Studio
             </Heading>

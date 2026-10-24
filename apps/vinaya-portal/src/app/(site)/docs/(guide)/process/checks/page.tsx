@@ -9,6 +9,7 @@ export default function ChecksCatalogPage() {
       <DocHead
         half='process'
         title='Checks catalog'
+        href='/docs/process/checks'
         line='All 37 core checks in one table: what each refuses, where it first runs, and which gate it implements.'
       />
       <DocSection title='All checks'>

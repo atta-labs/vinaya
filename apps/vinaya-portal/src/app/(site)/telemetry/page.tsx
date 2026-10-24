@@ -1,9 +1,6 @@
 import { FolderDown, Funnel, Database, CircleHelp } from 'lucide-react'
 import { FeaturePage } from '../_components/feature-page/FeaturePage'
 import { TelemetryLive } from '../_components/feature-page/live'
-import { ELEMENT_ICONS } from '../_components/icons'
-
-const TelemetryIcon = ELEMENT_ICONS['telemetry']
 
 export const metadata = { title: 'Telemetry · Vinaya' }
 
@@ -12,7 +9,6 @@ export default function TelemetryPage() {
     <FeaturePage
       n={2}
       name='Telemetry'
-      icon={(className) => <TelemetryIcon className={className} />}
       lead='What the Log adds up to: how long each task took, what the reviewers caught, how often the checks said no.'
       tags={['vinaya sync', 'Local cache', 'Ten questions, plus a confidence comparison', 'Unknown, never zero']}
       docsHref='/docs/features/telemetry'

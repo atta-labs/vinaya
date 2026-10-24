@@ -1,9 +1,6 @@
 import { ScanEye, Lightbulb, UserCheck } from 'lucide-react'
 import { FeaturePage } from '../_components/feature-page/FeaturePage'
 import { ImproverLive } from '../_components/feature-page/live'
-import { ELEMENT_ICONS } from '../_components/icons'
-
-const SelfImprovementIcon = ELEMENT_ICONS['self-improvement']
 
 export const metadata = { title: 'Self-improvement · Vinaya' }
 
@@ -12,7 +9,6 @@ export default function SelfImprovementPage() {
     <FeaturePage
       n={4}
       name='Self-improvement'
-      icon={(className) => <SelfImprovementIcon className={className} />}
       lead='The Improver reads the reports and proposes changes to the process. A person approves, and each one goes back to product.'
       tags={['The Improver', 'Reads the Log', 'You approve', 'Any process']}
       docsHref='/docs/features/self-improvement'

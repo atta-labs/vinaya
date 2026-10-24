@@ -7,19 +7,12 @@ import { clamp01 } from '@/ui/lib/math'
 import { NextLink } from '@/ui/lib/next-link'
 import { cn } from '@/ui/lib/utils'
 import { Heading, Text } from '@/ui/shared'
-import { ELEMENT_ICONS } from '../icons'
+import { NamedIcon } from '../icons'
 import { useEnterProgress, useNarrow, usePinProgress, useReducedMotion, useSeen } from './LandingInteractions'
 import { LandingSection } from './LandingSection'
 import { LOOP_EVENT_COUNT, type LoopScript } from './LoopMonitor'
 import { STUDIO_STEPS, type StudioMilestone, StudioMock, type StudioTask } from './StudioSection'
 import { Terminal, type TerminalLine } from './Terminal'
-
-const ConfigurationIcon = ELEMENT_ICONS['configuration']
-const DevProcessIcon = ELEMENT_ICONS['dev-process']
-const LogIcon = ELEMENT_ICONS['log']
-const SelfImprovementIcon = ELEMENT_ICONS['self-improvement']
-const StudioIcon = ELEMENT_ICONS['studio']
-const TelemetryIcon = ELEMENT_ICONS['telemetry']
 
 // Home's five features, one full-width section each. The motion is the portal's own: scroll drives it (Studio pins like
 // StudioSection, the Log types as it comes up the screen). Under reduced motion every section shows its end state.
@@ -48,14 +41,7 @@ function FeatureLink({ href, children, className }: { href: string; children: Re
   )
 }
 
-// Each feature's drawn icon, beside its title.
-const FEATURE_ICONS: Record<string, typeof LogIcon> = {
-  Log: LogIcon,
-  Telemetry: TelemetryIcon,
-  Studio: StudioIcon,
-  'Self-improvement': SelfImprovementIcon,
-  Configuration: ConfigurationIcon
-}
+// Each feature's drawn icon sits beside its title.
 const TITLE_ICON = 'size-10 min-[900px]:size-[clamp(3rem,4.2vw,3.75rem)]'
 
 /** A feature's words: its place in the five, its name, its line and the way to its page. */
@@ -78,12 +64,11 @@ function FeatureCopy({
   /** A tighter stack, for a section that has to fit one phone screen. */
   compact?: boolean
 }) {
-  const Icon = FEATURE_ICONS[name]
   return (
     <div className={cn('flex min-w-0 flex-col items-start', compact ? 'gap-3 min-[900px]:gap-5' : 'gap-5')}>
       <Text as='span' variant='eyebrow' tone='muted'>{`0${n} / 05`}</Text>
       <span className='flex items-center gap-4 min-[900px]:gap-5'>
-        {Icon && <Icon className={TITLE_ICON} />}
+        <NamedIcon name={name} className={TITLE_ICON} />
         <Heading level={3} weight='normal' variant='headline'>
           {name}
         </Heading>
@@ -101,11 +86,11 @@ function FeatureCopy({
 }
 
 const INDEX = [
-  ['log', 'Log', 'Written down as it happens', LogIcon],
-  ['telemetry', 'Telemetry', 'What the Log adds up to', TelemetryIcon],
-  ['studio', 'Studio', 'A live dashboard of every task and review', StudioIcon],
-  ['self-improvement', 'Self-improve', 'The reports turn into changes you approve', SelfImprovementIcon],
-  ['configuration', 'Configuration', 'One file turns the harness on', ConfigurationIcon]
+  ['log', 'Log', 'Written down as it happens'],
+  ['telemetry', 'Telemetry', 'What the Log adds up to'],
+  ['studio', 'Studio', 'A live dashboard of every task and review'],
+  ['self-improvement', 'Self-improve', 'The reports turn into changes you approve'],
+  ['configuration', 'Configuration', 'One file turns the harness on']
 ] as const
 
 /** The five, as an index under the heading: five columns on a wide screen, full-width rows on a phone. They fade in,
@@ -121,7 +106,7 @@ function FeatureIndex() {
       aria-label='The five features'
       className='flex flex-col border-t border-foreground min-[900px]:grid min-[900px]:grid-cols-5 min-[900px]:border-b min-[900px]:border-b-border/50'
     >
-      {INDEX.map(([id, name, line, Icon], i) => (
+      {INDEX.map(([id, name, line], i) => (
         <NextLink
           key={id}
           href={`#${id}`}
@@ -143,7 +128,7 @@ function FeatureIndex() {
           </span>
           <span className='flex flex-col gap-1 min-[900px]:gap-3.5'>
             <span className='flex items-start gap-3 min-[900px]:gap-2.5 xl:gap-3'>
-              <Icon className='size-8 min-[900px]:-mt-0.5 min-[900px]:size-7 xl:size-9' />
+              <NamedIcon name={name} className='size-8 min-[900px]:-mt-0.5 min-[900px]:size-7 xl:size-9' />
               <Text as='span' variant='title' className='min-w-0 min-[900px]:whitespace-nowrap [hyphens:none]'>
                 {name}
               </Text>
@@ -804,7 +789,7 @@ function DevProcessSection() {
         <div className='flex flex-col gap-3 min-[900px]:flex-row min-[900px]:flex-wrap min-[900px]:items-end min-[900px]:justify-between min-[900px]:gap-x-16 min-[900px]:gap-y-6'>
           <div className='flex min-w-0 flex-col items-start gap-3 min-[900px]:gap-4'>
             <span className='flex items-center gap-4 min-[900px]:gap-5'>
-              <DevProcessIcon className={TITLE_ICON} />
+              <NamedIcon name='Dev Process' className={TITLE_ICON} />
               <Heading level={3} weight='normal' variant='headline'>
                 Dev Process
               </Heading>

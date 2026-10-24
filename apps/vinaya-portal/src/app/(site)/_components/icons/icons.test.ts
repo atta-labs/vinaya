@@ -2,7 +2,10 @@ import { describe, expect, it } from 'bun:test'
 import { JSDOM } from 'jsdom'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { ELEMENT_ICONS, iconForHref } from './registry'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { DOCS_NAV } from '../../docs/_lib/portal-docs'
+import { ELEMENT_ICONS, iconForHref, iconForName, iconForPage } from './registry'
 
 function render(key: keyof typeof ELEMENT_ICONS, still = true) {
   return renderToStaticMarkup(createElement(ELEMENT_ICONS[key], { still }))
@@ -93,5 +96,48 @@ describe('custom icon rendering', () => {
     expect(iconForHref('/docs/features/log/event-contract')).toBeUndefined()
     expect(iconForHref('/docs/features/studio/mission-control')).toBeUndefined()
     expect(iconForHref('/docs/features/configuration/trust')).toBeUndefined()
+  })
+
+  it('finds the icon a product, agent or subject name names, and none for any other name', () => {
+    expect(iconForName('Log')).toBe(ELEMENT_ICONS.log)
+    expect(iconForName('Self-improvement')).toBe(ELEMENT_ICONS['self-improvement'])
+    expect(iconForName('Self-improve')).toBe(ELEMENT_ICONS['self-improvement'])
+    expect(iconForName('The Vinaya harness')).toBe(ELEMENT_ICONS['vinaya-harness'])
+    expect(iconForName('The Vinaya process')).toBe(ELEMENT_ICONS['vinaya-process'])
+    expect(iconForName('Dev Process')).toBe(ELEMENT_ICONS['dev-process'])
+    expect(iconForName('Security Reviewer')).toBe(ELEMENT_ICONS['security-reviewer'])
+    expect(iconForName(' Tranche Archivist ')).toBe(ELEMENT_ICONS['tranche-archivist'])
+    expect(iconForName('Using it')).toBe(ELEMENT_ICONS['using-it'])
+    expect(iconForName('Start')).toBe(ELEMENT_ICONS['get-started'])
+    for (const name of ['Principal', 'Overview', 'Architect → Planner', 'Event contract', 'constructor', '']) {
+      expect(iconForName(name)).toBeUndefined()
+    }
+  })
+
+  it('gives every docs sidebar section and docs set its icon by name', () => {
+    for (const group of DOCS_NAV) {
+      expect(iconForName(group.title)).toBeDefined()
+      for (const section of group.sections) expect(iconForName(section.title)).toBeDefined()
+    }
+  })
+
+  it('gives a docs page the icon of its address, else of its title', () => {
+    expect(iconForPage({ href: '/docs/start', title: 'Overview' })).toBe(ELEMENT_ICONS['vinaya-harness'])
+    expect(iconForPage({ href: '/docs/process/roles', title: 'Roles' })).toBeUndefined()
+    expect(iconForPage({ href: '/docs/process/integration', title: 'Integration' })).toBe(ELEMENT_ICONS.integration)
+    expect(iconForPage({ href: '/docs/process/checks', title: 'Checks catalog' })).toBeUndefined()
+  })
+
+  it('names an icon for every agent role in the docs roles table, and none for the person', () => {
+    const roles = readFileSync(join(import.meta.dir, '../../../../content/docs-tree/1.2.5-roles.md'), 'utf8')
+      .split('\n')
+      .filter((line) => line.startsWith('| ') && !line.startsWith('| Role') && !line.startsWith('| ---'))
+      .map((line) => line.split('|')[1]!.trim())
+      .filter((cell) => !cell.includes('→') && cell !== 'Hand-off')
+    expect(roles).toContain('Security Reviewer')
+    for (const role of roles) {
+      if (role === 'Principal') expect(iconForName(role)).toBeUndefined()
+      else expect(iconForName(role)).toBeDefined()
+    }
   })
 })

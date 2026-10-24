@@ -1,9 +1,6 @@
 import { Braces, Send, SquarePlus, EyeOff } from 'lucide-react'
 import { FeaturePage } from '../_components/feature-page/FeaturePage'
 import { LogLive } from '../_components/feature-page/live'
-import { ELEMENT_ICONS } from '../_components/icons'
-
-const LogIcon = ELEMENT_ICONS['log']
 
 export const metadata = { title: 'Log · Vinaya' }
 
@@ -12,7 +9,6 @@ export default function LogPage() {
     <FeaturePage
       n={1}
       name='Log'
-      icon={(className) => <LogIcon className={className} />}
       lead='Every check, review and decision, written down as it happens, with who made it.'
       tags={['Typed events', 'Live delivery', 'Folder or server', 'Custom events']}
       docsHref='/docs/features/log'

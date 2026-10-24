@@ -88,3 +88,29 @@ export function iconForHref(href: string): Icon | undefined {
   const element = DOCS_PAGE[href.split('#')[0] ?? href]
   return element ? ELEMENT_ICONS[element] : undefined
 }
+
+/** Names that differ from their element's key once lower-cased and hyphenated. */
+const NAME_ALIASES: Record<string, Element> = {
+  start: 'get-started',
+  agents: 'agent',
+  'self-improve': 'self-improvement'
+}
+
+/**
+ * The icon of the product, agent or subject a name names ("Log", "Security Reviewer", "The Vinaya harness",
+ * "Using it"), or none for a name with no drawing. Every heading, card, table cell and menu item that shows
+ * a name finds its icon here.
+ */
+export function iconForName(name: string): Icon | undefined {
+  const key = name
+    .trim()
+    .toLowerCase()
+    .replace(/^the\s+/, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+  const element = Object.hasOwn(ELEMENT_ICONS, key) ? (key as Element) : NAME_ALIASES[key]
+  return element ? ELEMENT_ICONS[element] : undefined
+}
+
+/** A docs page's icon: the element its address is about, else the one its title names. */
+export const iconForPage = (page: { href: string; title: string }) => iconForHref(page.href) ?? iconForName(page.title)

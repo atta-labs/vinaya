@@ -12,7 +12,6 @@ export default function ConfigurationPage() {
     <FeaturePage
       n={5}
       name='Configuration'
-      icon={(className) => <ConfigurationIcon className={className} />}
       lead='One file, vinaya.config.json, sets it all up. An empty file is a full harness; add a key only to change what runs.'
       tags={['vinaya.config.json', 'All optional', 'Harness keys', 'Trust anchor']}
       docsHref='/docs/features/configuration'
