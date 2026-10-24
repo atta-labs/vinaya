@@ -128,6 +128,7 @@ import {
 } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { appendLoopLogLine, appendRunStartMarker, loopLogPathFor } from '../../../apps/cli/src/lib/loop-log'
 import { CLI_ENTRY_ENV } from '../../../apps/cli/src/lib/cli-entry'
+import { pollMergeableState } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import { developerTurnResultJsonSchema } from '../../../apps/cli/src/lib/developer-turn-result'
 import {
   getProcessSnapshot,
@@ -616,6 +617,8 @@ export interface EngineRunOptions {
   developerFacts?: () => Promise<DeveloperPromptFacts>
   /** Told when the Developer step starts, so the live context records the head and base that turn publishes against. */
   beginDeveloperTurn?: () => Promise<void>
+  /** Whether the pull request a held verdict would publish is in conflict; the live forge read unless a test supplies its own. */
+  heldPullRequestConflicts?: () => Promise<boolean>
   /** Called with the Developer's vendor session once its turn's agent has finished. */
   completeDeveloperTurn?: (resumeId: string | null) => void
   /** The Linux host opt-in: the generated Claude settings allow Unix sockets and the variable is forwarded to the agent. */
@@ -1013,9 +1016,18 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         throw new Error(recovery.refusal)
       }
       translator.beginLeg({ resumed: choice.kind === 'resume' })
+      // A held verdict is published only while its pull request is not in conflict: a conflicting head runs the
+      // Flow, whose mergeability step sends it back to the Developer before any publication.
+      const heldUsable =
+        choice.kind !== 'completed' &&
+        recovery?.held !== undefined &&
+        recovery.held !== null &&
+        !(await (options.heldPullRequestConflicts ?? heldPullRequestConflictsLive(options.taskInput))())
+      if (choice.kind !== 'completed' && recovery?.held && !heldUsable)
+        narrate('held clean verdict not published: the pull request is in conflict with the default branch')
       if (choice.kind === 'completed') {
         legOutcome = { reason: 'completed' }
-      } else if (recovery?.held) {
+      } else if (recovery?.held && heldUsable) {
         // A clean verdict pair still bound to the current head is published as it stands: no review is dispatched again.
         narrate(`held clean verdict from round ${recovery.held.round} still covers the head; publishing it`)
         options.taskInput?.seedRound?.(recovery.held.round)
@@ -1984,5 +1996,19 @@ export function withTurnSchema(
       }
       return args
     }
+  }
+}
+
+/** The live read behind a held verdict's conflict guard: the task's open pull request, polled for mergeability as the Flow's own step polls it. */
+export function heldPullRequestConflictsLive(task: TaskInput | undefined): () => Promise<boolean> {
+  return async () => {
+    if (!task) return false
+    const pr = (task.bound?.findOpenPrForBranch ?? findOpenPrForBranch)(task.branch)
+    if (pr === null) return false
+    const state = await pollMergeableState(pr.number, {
+      ...(task.gatePoll ?? {}),
+      fetchMergeableState: task.bound?.fetchMergeableState ?? fetchMergeableState
+    } as Parameters<typeof pollMergeableState>[1])
+    return state === 'CONFLICTING'
   }
 }

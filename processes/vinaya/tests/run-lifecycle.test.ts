@@ -723,6 +723,7 @@ describe('recovering a re-run', () => {
         patchIdOf: () => 'same-patch'
       })
     }
+    run.options.heldPullRequestConflicts = async () => false
     const result = await runEngine(run.options)
     expect(result.exitCode).toBe(0)
     expect(run.spawns).toEqual([])
@@ -730,6 +731,24 @@ describe('recovering a re-run', () => {
     expect(Object.keys(run.actionRuns)).toEqual(['publish-ready-for-merge'])
     expect(run.driverLog()).toContain('held clean verdict from round 1 still covers the head')
     expect(run.trace(result.tracePath).outcome).toBe('completed')
+  })
+
+  test('a held clean verdict whose pull request is in conflict is not published; the run goes through the Flow', async () => {
+    const run = stubRun()
+    holdCleanPair(run.runtimeDir, 1, manifestAt('1'.repeat(40)))
+    run.options.lifecycle = {
+      ...run.options.lifecycle,
+      recovery: recoveryDeps({
+        heldVerdict: () => latestHeldCleanVerdict(run.runtimeDir, TASK),
+        currentManifest: () => manifestAt('2'.repeat(40)),
+        patchIdOf: () => 'same-patch'
+      })
+    }
+    run.options.heldPullRequestConflicts = async () => true
+    await runEngine(run.options)
+    expect(run.driverLog()).toContain('held clean verdict not published: the pull request is in conflict')
+    expect(run.driverLog()).not.toContain('still covers the head; publishing it')
+    expect(Object.keys(run.actionRuns)).not.toEqual(['publish-ready-for-merge'])
   })
 
   test('a held verdict that no longer covers the head is not reused', () => {
