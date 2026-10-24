@@ -37,7 +37,13 @@ import {
   writeEscalationRecord
 } from '../../src/lib/dev-review-loop/pause-resume.js'
 import { liveHandoffDeps, type HandoffDeps } from '../../../../processes/vinaya/executing/handoff.js'
-import { liveResumeDeps, type ResumeDeps } from '../../../../processes/vinaya/bin/run-lifecycle.js'
+import {
+  abortableSleep,
+  liveResumeDeps,
+  type ResumeDeps,
+  type RulingWatch
+} from '../../../../processes/vinaya/bin/run-lifecycle.js'
+import { cancelDevReviewLoop, taskFromPrBody } from '../../src/lib/dev-review-loop.js'
 import {
   createLogSink,
   drainLogSink,
@@ -61,7 +67,8 @@ import type { Observation } from './dev-review-current-loop-adapter.js'
  * A ruling-resumed scenario goes through the runner's `--resume` entry, which
  * authenticates the ruling and claims the resolution with the real control
  * store; a restart re-enters the start boundary with the same run files and
- * changed forge facts; cancellation requests use the runner's halt handle.
+ * changed forge facts; a cancellation is the Operator's shared cancel, run
+ * beside a paused run whose own ruling watch then ends it.
  * Missing behavior stays observable rather than being implemented by this
  * test adapter.
  */
@@ -176,11 +183,23 @@ function roleOf(agent: Agent, args: string[], env: Record<string, string | undef
   return role as Role
 }
 
-/** One isolated scenario, returning only recorded output and performed effects. */
+/** What a scenario's inspection reads of the run before its files are removed. */
+export interface EngineScenarioRun {
+  runtimeDir: string
+  task: number
+  pr: number
+  agent: Agent
+}
+
+/**
+ * One isolated scenario, returning only recorded output and performed effects. `inspect` runs once the scenario
+ * has ended, while its run files are still there, inside the scenario's own environment.
+ */
 export async function runEngineScenario(
   id: string,
   agent: Agent,
-  logSink?: Partial<LogSinkDeps>
+  logSink?: Partial<LogSinkDeps>,
+  inspect?: (run: EngineScenarioRun) => Promise<void> | void
 ): Promise<Observation> {
   const root = mkdtempSync(join(tmpdir(), 'engine-corpus-'))
   const runtimeDir = join(root, 'runtime')
@@ -201,16 +220,16 @@ export async function runEngineScenario(
   // A dispatched session's spool would take the default sink's lines away from this scenario's folder.
   const savedSpool = process.env.VINAYA_LOG_SPOOL_DIR
   delete process.env.VINAYA_LOG_SPOOL_DIR
-  if (logSink) {
-    for (const key of OWNED_ENV_KEYS) if (key !== RUNTIME_DIR_ENV_KEY) delete process.env[key]
-    process.env.VINAYA_TASK = String(TASK)
-    process.env.AEG_REPO = FIXTURE_REPO
-  }
+  for (const key of OWNED_ENV_KEYS) if (key !== RUNTIME_DIR_ENV_KEY) delete process.env[key]
+  process.env.VINAYA_TASK = String(TASK)
+  process.env.AEG_REPO = FIXTURE_REPO
   resetRuntimeDirCache()
   resetDefaultLogSinkContext()
   const savedCwd = process.cwd()
   try {
-    return await drive(id, agent, root, runtimeDir, logSink)
+    const observation = await drive(id, agent, root, runtimeDir, logSink)
+    await inspect?.({ runtimeDir, task: TASK, pr: PR, agent })
+    return observation
   } finally {
     process.chdir(savedCwd)
     if (savedSpool !== undefined) process.env.VINAYA_LOG_SPOOL_DIR = savedSpool
@@ -469,7 +488,7 @@ async function drive(
     resume: { task: TASK, branch: BRANCH, worktree, remoteHead: head },
     heldReview: null
   })
-  const execute = async (cancel = false, args: EngineArgs = { task: TASK, agent, dryRun: false }) => {
+  const execute = async (args: EngineArgs = { task: TASK, agent, dryRun: false }, watch?: RulingWatch) => {
     const control = createRunControl()
     const options: EngineRunOptions = {
       args,
@@ -484,12 +503,9 @@ async function drive(
       startHost: async () => ({ close: async () => {} }),
       devToolsContext: devTools,
       control,
-      cancellationRequested: () => cancel,
+      ...(watch ? { lifecycle: { watch } } : {}),
       out: () => {},
       developerFacts: async () => facts(),
-      observe: (event) => {
-        if (cancel && event.type === 'node:start') control.halt('cancel')
-      },
       spawnFn: (_command, args, spawnOptions) => {
         const role = roleOf(agent, args, spawnOptions?.env)
         append(effectFile, { kind: 'spawn', role })
@@ -574,7 +590,6 @@ async function drive(
     const result = await runEngine(options)
     traces.push(JSON.parse(readFileSync(result.tracePath, 'utf8')) as RunTrace)
   }
-  await execute()
   // A re-run is a fresh subprocess: the runner of the leg before is gone, and so is whatever lock it kept.
   const runnerGone = () => clearDriverLock(runtimeDir, TASK)
   // The forge a `--resume` reads: the real control store and pause record, a fake pull request and rulings.
@@ -594,6 +609,48 @@ async function drive(
     fetchNewestRulingAuthor: () => (ruling ? 'principal' : null),
     fetchNewestIssueRulingAuthor: () => null
   }
+  /**
+   * The run pauses for the Principal and watches for the decision; the Operator's shared cancel, beside it,
+   * consumes the cancel resolution and fences the started effects, and the run's watch reads it and ends.
+   */
+  const cancelInItsWatch = async () => {
+    const watching = execute(undefined, { deps: resumeDeps, pollMs: 20, sleep: abortableSleep })
+    for (let i = 0; i < 500 && readPauseState(runtimeDir, TASK) === null; i++)
+      await new Promise((r) => setTimeout(r, 10))
+    // The cancel's own Log line, written through the shared sink to this scenario's folder, as a separate process's.
+    const cancelSink = logSink ?? ownLogFolder(runtimeDir)
+    // The cancel is another process's: none of the run's own Log identity (its host, its pull request) is its.
+    const runIdentity = { host: process.env.VINAYA_HOST, pr: process.env.VINAYA_PR }
+    delete process.env.VINAYA_HOST
+    delete process.env.VINAYA_PR
+    try {
+      await cancelOnTheOperatorsBehalf(cancelSink)
+    } finally {
+      if (runIdentity.host !== undefined) process.env.VINAYA_HOST = runIdentity.host
+      if (runIdentity.pr !== undefined) process.env.VINAYA_PR = runIdentity.pr
+    }
+    await watching
+    for (const line of recordedLogLines(cancelSink)) if (line.event === 'cancelled') append(eventFile, line)
+  }
+  const cancelOnTheOperatorsBehalf = (cancelSink: Partial<LogSinkDeps>) =>
+    cancelDevReviewLoop(
+      { cancelPr: PR, agent },
+      {
+        fetchPrBody: forge.prBody.bind(null, PR),
+        taskFromPrBody,
+        readPauseState,
+        fetchRulings: () => ['Cancel it.'],
+        fetchNewestRulingOrdinal: () => 1,
+        fetchNewestRulingAuthor: () => 'principal',
+        runtimeDir: () => runtimeDir,
+        resolveRepo: async () => null,
+        logSink: cancelSink,
+        terminateInFlightLaunchesOnShutdown: () => {},
+        sleep: (ms) => new Promise((r) => setTimeout(r, ms > 0 ? 1 : 0))
+      }
+    )
+  if (id === 'cancellation') await cancelInItsWatch()
+  else await execute()
   let refused: unknown
   if (id === 'publication-replay') {
     runnerGone()
@@ -610,18 +667,13 @@ async function drive(
         runtimeDir,
         deps: resumeDeps,
         run: async (resolved) => {
-          await execute(false, resolved)
+          await execute(resolved)
           return { outcome: null, exitCode: 0, tracePath: '' }
         }
       })
     } catch (error) {
       refused = error
     }
-  }
-  if (id === 'cancellation') {
-    runnerGone()
-    ruling = true
-    await execute(true)
   }
   // The default sink's lines (the handoff records) drain last, as the live runner drains them after a run.
   if (logSink) await drainLogSink()
@@ -643,6 +695,12 @@ function recordingSink(eventFile: string, logSink: Partial<LogSinkDeps> | undefi
       await shared?.drain()
     }
   }
+}
+
+/** A sink recording to the scenario's own Log folder, for a run given no sink of its own. */
+function ownLogFolder(runtimeDir: string): Partial<LogSinkDeps> {
+  const folder = { kind: 'folder' as const, folder: join(runtimeDir, 'cancel-logs') }
+  return { resolveLogDestination: () => folder, unresolvedLogDestination: () => folder }
 }
 
 /** Every Log line the injected sink recorded for the task, read from the folder that sink names. */

@@ -113,22 +113,14 @@ import {
   emitDriverHeartbeat
 } from '../../../apps/cli/src/lib/dev-review-loop/driver-lifecycle'
 import {
-  fenceStartedEffectsAsUncertain,
   clearDriverLock,
-  escalationPrOf,
   isDriverPidAlive,
-  readPauseState,
-  resolveEscalation
+  readPauseState
 } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { appendLoopLogLine, appendRunStartMarker, loopLogPathFor } from '../../../apps/cli/src/lib/loop-log'
 import { getProcessSnapshot, readLaunchRecord, terminateChildWithGrace } from '../../../apps/cli/src/lib/dispatch'
 import { loadConfig } from '../../../apps/cli/src/lib/config'
-import {
-  clearEngineCancellation,
-  crossRunnerRefusal,
-  engineCancellationRequested,
-  recordTaskRunner
-} from '../../../apps/cli/src/lib/task-run-engine'
+import { crossRunnerRefusal, recordTaskRunner } from '../../../apps/cli/src/lib/task-run-engine'
 import { startDevToolsHost, type DevToolsHost } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
 import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-tools-registration'
 import {
@@ -599,8 +591,6 @@ export interface EngineRunOptions {
   observe?: (event: NodeLifecycle) => void
   spawnFn?: SpawnFn
   control?: RunControl
-  /** True when the halt was an authenticated Operator cancellation. */
-  cancellationRequested?: () => boolean
   out?: (line: string) => void
   execPath?: string
   /** The Developer's prompt facts, read each time its step starts; absent leaves the prompt as the Flow renders it. */
@@ -741,6 +731,8 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   let currentNode: string | null = null
   let prNumber = 0
   let signalled: 'SIGINT' | 'SIGTERM' | null = null
+  /** Set when the ruling watch found the pause resolved as a cancel: the run ends and leaves no lock. */
+  let cancelledByWatch = false
   let described = 'starting'
   let stopHeartbeat: () => void = () => {}
   const recordExit = createDriverExitRecorder({
@@ -1044,31 +1036,6 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           ? resumeProcessRun(runOptions, identity)
           : startProcessRun(runOptions, identity))
         legOutcome = outcome as unknown as LegOutcome
-        if (control.signal.aborted && options.cancellationRequested?.() === true) {
-          const cancellation = handoff.pause({
-            reason: 'escalation',
-            detail: 'the Operator cancelled the run'
-          })
-          if (!cancellation.escalationId) throw new Error('the cancellation handoff wrote no escalation record')
-          const resolved = resolveEscalation(
-            args.task,
-            cancellation.escalationId,
-            escalationPrOf(readPauseState(options.runtimeDir, args.task)!),
-            'cancel',
-            'principal',
-            'engine-run-control'
-          )
-          fenceStartedEffectsAsUncertain(args.task, resolved.epoch)
-          log({
-            kind: 'dev_review_loop',
-            payload: {},
-            loop_id: options.loopId,
-            event: 'cancelled',
-            round: taskForHandoff?.reviewRound?.() ?? 1,
-            by: 'principal'
-          })
-          legOutcome = { reason: 'cancelled' } as unknown as LegOutcome
-        }
         if (outcome.reason === 'failed') {
           // A step that threw is handed off like any other pause, keeping what the checkpoint holds.
           error = outcome.error
@@ -1089,8 +1056,11 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       narrate('the run is halted; watching for a newer ruling or a cancel')
       const watched = await watchForRuling(options.runtimeDir, args.task, lifecycle.watch, stopWatching.signal, narrate)
       if (watched.kind === 'ruled') narrate(`a newer ruling resumed escalation ${watched.escalationId}`)
-      else if (watched.kind === 'cancelled') narrate('the pause was cancelled; ending')
-      else if (watched.kind === 'consumed') narrate('another process claimed the resolution and owns the run; ending')
+      else if (watched.kind === 'cancelled') {
+        // The Operator's cancel consumed the resolution and fenced the effects; the run only ends.
+        cancelledByWatch = true
+        narrate('the pause was cancelled; ending')
+      } else if (watched.kind === 'consumed') narrate('another process claimed the resolution and owns the run; ending')
       else if (watched.kind === 'refused') narrate(`the resolution was refused: ${watched.message}`)
       if (watched.kind !== 'ruled') break
       control = createRunControl()
@@ -1123,9 +1093,9 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     })
     for (const event of deferredHandoffEvents) log(event)
     deferredHandoffEvents.length = 0
-    const cancelled = options.cancellationRequested?.() === true
     let lockOutcome: ReturnType<typeof releaseDriverLock> | 'cleared'
-    if (cancelled) {
+    if (cancelledByWatch) {
+      legOutcome = { reason: 'cancelled' } as unknown as LegOutcome
       clearDriverLock(options.runtimeDir, args.task)
       lockOutcome = 'cleared'
     } else {
@@ -1750,14 +1720,16 @@ export function configureEngineLogEnvironment(env: NodeJS.ProcessEnv = process.e
   delete env[LOG_FOLDER_ONLY_ENV]
 }
 
+/** Refuses a fresh Engine start on a task whose held pause another runner recorded, naming that runner. */
+export function refuseAnotherRunnersPause(runtimeDir: string, task: number): void {
+  if (readPauseState(runtimeDir, task) === null) return
+  const refusal = crossRunnerRefusal(task, 'atta-engine', runtimeDir)
+  if (refusal !== null) throw new Error(`run-engine: ${refusal}`)
+}
+
 /** Runs one task on the Engine against the live forge, git and Log. */
 async function runLive(args: EngineArgs, loaded: LoadedProcess, repoRoot: string, runtimeDir: string): Promise<number> {
-  // A pause another runner holds is that runner's to continue.
-  const heldByAnother =
-    readPauseState(runtimeDir, args.task) === null ? null : crossRunnerRefusal(args.task, 'atta-engine', runtimeDir)
-  if (heldByAnother !== null) throw new Error(`run-engine: ${heldByAnother}`)
-  // A cancel a former run of the task was asked for never reads as this run's.
-  clearEngineCancellation(args.task, runtimeDir)
+  refuseAnotherRunnersPause(runtimeDir, args.task)
   configureEngineLogEnvironment()
   setEngineLogIdentity(loaded)
   const sink = createEngineLogSink()
@@ -1803,8 +1775,7 @@ async function runLive(args: EngineArgs, loaded: LoadedProcess, repoRoot: string
       watch: { deps: liveResumeDeps, pollMs: rulingPollMs(), sleep: abortableSleep }
     },
     devToolsContext: liveContext.context,
-    beginDeveloperTurn: liveContext.beginTurn,
-    cancellationRequested: () => engineCancellationRequested(args.task, runtimeDir)
+    beginDeveloperTurn: liveContext.beginTurn
   })
   // The handoff's escalation record logs through the default sink, which nothing else drains.
   await drainLogSink()

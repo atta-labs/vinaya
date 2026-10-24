@@ -53,7 +53,7 @@ import {
   WrongTargetResolutionError
 } from '../dev-review-loop/pause-resume.js'
 import { log } from '../log-sink.js'
-import { readTaskRunner, requestEngineCancellation } from '../task-run-engine.js'
+import { readTaskRunner } from '../task-run-engine.js'
 import { resolveIssueForRef, type TaskToolCallResult } from './handlers.js'
 import { readEscalationPacket } from './read.js'
 import type { CallerContext } from './server.js'
@@ -80,18 +80,14 @@ export type TaskCancelDeps = {
   log: typeof log
   /** The runner the task's run recorded (`readTaskRunner`); absent, the standalone runner. */
   runner?: (task: number, root: string) => 'standalone' | 'atta-engine'
-  /** Tells a live Engine run its halt is a cancel, so it ends rather than keeps its pause. */
-  requestEngineCancel?: (task: number, root: string) => void
-  /** Halts a live Engine run's run control, which ends its agents with it. */
-  signalEngine?: (pid: number) => void
   isPidAlive?: (pid: number) => boolean
   sleep?: (ms: number) => Promise<void>
-  /** How long a halted Engine run gets to end its agents and exit. */
+  /** How long a live Engine run gets to see the cancel in its ruling watch and end. */
   engineStopTimeoutMs?: number
 }
 
-/** What a halted Engine run gets, by default, to end its agents and exit. */
-export const ENGINE_STOP_TIMEOUT_MS = 30_000
+/** One Engine ruling-watch poll and a grace period: the bound for a live Engine run to see a cancel and end. */
+export const ENGINE_STOP_TIMEOUT_MS = 45_000
 const ENGINE_STOP_POLL_MS = 100
 
 export const defaultTaskCancelDeps: TaskCancelDeps = {
@@ -105,27 +101,29 @@ export const defaultTaskCancelDeps: TaskCancelDeps = {
   hostname: osHostname,
   log,
   runner: readTaskRunner,
-  requestEngineCancel: requestEngineCancellation,
-  signalEngine: (pid) => process.kill(pid, 'SIGTERM'),
   isPidAlive: isDriverPidAlive,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 /**
- * Aborts a live Engine run through its run control: the request marks the halt as a cancel, the signal halts the
- * run, and the run ends every agent it launched before it exits. True once it has exited within the bound.
+ * Waits, bounded, for a live Engine run to end once the shared cancel has resolved its pause: the run's own ruling
+ * watch reads the cancel, halts, ends its agents and releases the driver lock. Nothing here signals a process, so a
+ * pid the system reused since the lock was written is never touched. True once that lock is gone or replaced.
  */
-async function abortEngineRun(deps: TaskCancelDeps, task: number, root: string, pid: number): Promise<boolean> {
-  const alive = deps.isPidAlive ?? isDriverPidAlive
+async function awaitEngineStop(
+  deps: TaskCancelDeps,
+  task: number,
+  root: string,
+  held: { pid: number; startedAt: string }
+): Promise<boolean> {
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
-  ;(deps.requestEngineCancel ?? requestEngineCancellation)(task, root)
-  ;(deps.signalEngine ?? ((target: number) => process.kill(target, 'SIGTERM')))(pid)
   const deadline = Date.now() + (deps.engineStopTimeoutMs ?? ENGINE_STOP_TIMEOUT_MS)
-  while (alive(pid)) {
+  for (;;) {
+    const lock = readDriverLock(root, task)
+    if (lock === null || lock.pid !== held.pid || lock.startedAt !== held.startedAt) return true
     if (Date.now() >= deadline) return false
     await sleep(ENGINE_STOP_POLL_MS)
   }
-  return true
 }
 
 /**
@@ -247,7 +245,7 @@ export function createTaskCancelHandler(
     appendRoleLine(loopLogPathFor(null, issue, root), 'operator', `task_cancel requested: ${parsed.data.reason}`)
 
     try {
-      // An Engine run is cancelled by the same cancel as a standalone one; a live Engine run is then halted too.
+      // An Engine run is cancelled by the same cancel as a standalone one; a live Engine run then ends on its own.
       const engineLock =
         (deps.runner ?? (() => 'standalone'))(issue, root) === 'atta-engine' ? readDriverLock(root, issue) : null
       const liveEngine =
@@ -255,7 +253,7 @@ export function createTaskCancelHandler(
       const result = await deps.cancelDevReviewLoop(
         escalationPr === null ? { cancelTask: issue, agent } : { cancelPr: escalationPr, agent }
       )
-      const engineStopped = liveEngine === null ? true : await abortEngineRun(deps, issue, root, liveEngine.pid)
+      const engineStopped = liveEngine === null ? true : await awaitEngineStop(deps, issue, root, liveEngine)
       const resolutionRead = readResolution(controlStoreDeps, issue, result.escalationId)
       const resolution = resolutionRead.status === 'ok' ? resolutionRead.value : null
       const outcome: TaskCancelOutcome =

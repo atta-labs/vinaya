@@ -32,14 +32,13 @@ const STRUCTURAL_EXCLUSIONS: Readonly<Record<string, string>> = {
   'uncertain-effect-crash':
     'crash path: standalone logs an uncaught crash (driver_exited first), the Engine a deliberate pause',
   'publication-replay': 'restart: standalone reruns the loop and its round, the Engine resumes from its checkpoint',
-  resume: 'restart: standalone reruns the loop and its round, the Engine resumes from its checkpoint',
-  cancellation:
-    'cancellation: standalone cancels the paused run from another process, the Engine halts its live resumed leg'
+  resume: 'restart: standalone reruns the loop and its round, the Engine resumes from its checkpoint'
 }
 
 /**
  * Open defects in the register that the standalone loop still shows and the Engine does not, each named with what
- * the replay leaves out of the standalone Log for a scenario the corpus maps to it.
+ * the replay leaves out of the standalone Log for a scenario the corpus maps to it. Each must still remove a line:
+ * a mapping whose defect standalone no longer shows fails the replay.
  */
 const STANDALONE_DEFECTS: Readonly<Record<string, (lines: Line[]) => Line[]>> = {
   // A round revisited after a red gate starts again in standalone's Log; the Engine starts each round once.
@@ -158,6 +157,9 @@ describe('standalone and Engine Log replay', () => {
       const recorded = await runStandaloneScenario(scenario.id, RECORDING_SINK)
       const known = scenario.expectedDefect === undefined ? undefined : STANDALONE_DEFECTS[scenario.expectedDefect]
       const standalone = known ? known(recorded.logLines ?? []) : (recorded.logLines ?? [])
+      // Only a defect standalone still shows is left out: once it is fixed, its mapping here is stale and fails.
+      if (known && standalone.length === (recorded.logLines ?? []).length)
+        all.push(`${scenario.id} ${scenario.expectedDefect}: standalone no longer shows the defect; remove its mapping`)
       for (const agent of ['claude', 'codex'] as const) {
         const engine = (await runEngineScenario(scenario.id, agent, RECORDING_SINK)).logLines ?? []
         if (STRUCTURAL_EXCLUSIONS[scenario.id] !== undefined) {

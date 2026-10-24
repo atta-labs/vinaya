@@ -7,7 +7,6 @@ import { acquireOwnership, defaultControlStoreDeps, readEffect, readResolution, 
 import { cancelDevReviewLoop, taskFromPrBody } from '../../../src/lib/dev-review-loop.js'
 import {
   escalationIdFor,
-  isDriverPidAlive,
   readDriverLock,
   readPauseState,
   writeDriverLock
@@ -16,7 +15,6 @@ import { engineRunNote, runnerReadingFor } from '../../../src/lib/task-status.js
 import { runTask, type RunTaskDeps } from '../../../src/lib/task-run.js'
 import {
   crossRunnerRefusal,
-  engineCancellationRequested,
   engineRunDirectory,
   engineRunnerScriptPath,
   readTaskRunner,
@@ -25,8 +23,10 @@ import {
 } from '../../../src/lib/task-run-engine.js'
 import { createTaskCancelHandler } from '../../../src/lib/task-tools/cancel.js'
 import { readEscalationPacket } from '../../../src/lib/task-tools/read.js'
-import { resumeContinuation } from '../../../src/lib/task-tools/resume.js'
+import { createTaskResumeHandler, resumeContinuation } from '../../../src/lib/task-tools/resume.js'
 import { claimResume, liveResumeDeps } from '../../../../../processes/vinaya/bin/run-lifecycle.js'
+import { parseResumeArgs, refuseAnotherRunnersPause } from '../../../../../processes/vinaya/bin/run-engine.js'
+import { runEngineScenario, type EngineScenarioRun } from '../../conformance/dev-review-engine-loop-adapter.js'
 import {
   makeWorld,
   outboxLines,
@@ -98,29 +98,47 @@ function fixtureDeps(overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
 }
 
 /**
- * A stand-in for a live Engine run: it launches one stub agent through the Engine's own child reaper and, on the
- * signal that halts a run, ends that agent's process group before it exits, as the Engine runner does.
+ * A stand-in for a live Engine run paused in its ruling watch. It launches one stub agent through the Engine's own
+ * child reaper and runs the Engine's own `watchForRuling` over the task's records; when the watch reads a cancel it
+ * ends the agent's process group and releases the driver lock, as the Engine runner does.
  */
-async function startStubEngine(dir: string): Promise<{ engine: number; agent: number }> {
+async function startWatchingEngine(
+  dir: string,
+  runtimeDir: string,
+  task: number
+): Promise<{ engine: number; agent: number }> {
   const lifecycle = join(import.meta.dir, '../../../../../processes/vinaya/bin/run-lifecycle.ts')
-  const script = join(dir, 'stub-engine.ts')
+  const pauseResume = join(import.meta.dir, '../../../src/lib/dev-review-loop/pause-resume.ts')
+  const script = join(dir, 'watching-engine.ts')
   const agentFile = join(dir, 'agent.pid')
   writeFileSync(
     script,
     `
       import { writeFileSync } from 'node:fs'
-      import { createChildReaper, onShutdownSignals } from ${JSON.stringify(lifecycle)}
+      import { abortableSleep, createChildReaper, liveResumeDeps, watchForRuling } from ${JSON.stringify(lifecycle)}
+      import { clearDriverLock } from ${JSON.stringify(pauseResume)}
       const reaper = createChildReaper()
       const agent = reaper.spawnFn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {})
       writeFileSync(${JSON.stringify(agentFile)}, String(agent.pid))
-      onShutdownSignals(async () => {
-        await reaper.reap(200)
-        process.exit(143)
-      })
-      setInterval(() => {}, 1000)
+      const deps = {
+        ...liveResumeDeps,
+        fetchRulings: () => [],
+        fetchIssueRulings: () => [],
+        fetchNewestRulingOrdinal: () => 0,
+        fetchNewestIssueRulingOrdinal: () => 0,
+        fetchNewestRulingAuthor: () => null,
+        fetchNewestIssueRulingAuthor: () => null
+      }
+      const watched = await watchForRuling(${JSON.stringify(runtimeDir)}, ${task}, { deps, pollMs: 20, sleep: abortableSleep }, new AbortController().signal)
+      await reaper.reap(200)
+      if (watched.kind === 'cancelled') clearDriverLock(${JSON.stringify(runtimeDir)}, ${task})
+      process.exit(0)
     `
   )
-  const child = spawn(process.execPath, [script], { stdio: 'ignore', env: { ...stripVinayaEnv(), HOME: dir } })
+  const child = spawn(process.execPath, [script], {
+    stdio: 'ignore',
+    env: { ...stripVinayaEnv(), HOME: dir, VINAYA_RUNTIME_DIR: runtimeDir }
+  })
   children.push(child.pid!)
   // Bounded: a stand-in that outlives its test is killed outright.
   const budget = setTimeout(() => child.kill('SIGKILL'), 30_000)
@@ -275,9 +293,104 @@ describe('task_resume', () => {
     })
   })
 
-  it('refuses a run paused on one runner when the other runner resumes it, naming the recorded runner', async () => {
-    // Paused on the standalone runner: the Engine's resume refuses before it reads or consumes anything.
+  /** Drives the task_resume handler over a held pause, with a ruling posted, capturing the continuation it launches. */
+  async function resumeThroughOperator(runtimeDir: string, task: number) {
+    const launched: Array<ReturnType<typeof resumeContinuation>> = []
+    const handler = createTaskResumeHandler({
+      runtimeDir: () => runtimeDir,
+      resolveIssueForRef: () => task,
+      fetchRulings: () => ['Go ahead.'],
+      fetchNewestRulingAuthor: () => 'principal',
+      fetchNewestRulingOrdinal: () => 1,
+      fetchIssueRulings: () => ['Go ahead.'],
+      fetchNewestIssueRulingAuthor: () => 'principal',
+      fetchNewestIssueRulingOrdinal: () => 1,
+      resolveEscalation: () => {
+        throw new Error('a pause with a pull request is consumed by its continuation, never by task_resume')
+      },
+      store: { claim: (record) => ({ claimed: true, record }), update: () => {}, release: () => {} },
+      isPidAlive: () => false,
+      // The launch the default launcher would make, recorded rather than spawned.
+      launch: async (target) => {
+        launched.push(resumeContinuation(target, readTaskRunner(target.issue, runtimeDir), 'vinaya'))
+        return { status: 'confirmed', pid: null }
+      },
+      now: () => new Date().toISOString(),
+      log: () => {}
+    })
+    const result = await handler({ task: { issue: task } }, { caller: { id: 'operator-1' } })
+    return { result, launched }
+  }
+
+  it('task_resume continues an Engine pause on the Engine runner, with an argv the Engine accepts', async () => {
+    let checked = false
+    await runEngineScenario('human-pause', 'codex', undefined, async ({ runtimeDir, task, pr }: EngineScenarioRun) => {
+      const { result, launched } = await resumeThroughOperator(runtimeDir, task)
+      expect(result.ok).toBe(true)
+      expect(launched).toHaveLength(1)
+      const [continuation] = launched
+      expect(continuation!.command).toBe('bun')
+      expect(continuation!.argv[0]).toBe(engineRunnerScriptPath())
+      // The Engine's own `--resume` parser takes it: through the pull request, under the paused run's agent.
+      expect(parseResumeArgs(continuation!.argv.slice(1))).toEqual({ resume: pr, agent: 'codex' })
+      checked = true
+    })
+    expect(checked).toBe(true)
+    // A standalone pause continues through `dev-review-loop --resume`.
     const standalone = await pausedWorld()
+    const { launched } = await resumeThroughOperator(standalone.runtimeDir, standalone.task)
+    expect(launched).toEqual([
+      { command: 'vinaya', argv: ['dev-review-loop', '--resume', String(standalone.prNumber), '--agent', 'claude'] }
+    ])
+  }, 120_000)
+
+  it('refuses a run paused on the Engine runner when the standalone runner resumes or restarts it', async () => {
+    let checked = false
+    await runEngineScenario('human-pause', 'claude', undefined, async ({ runtimeDir, task, pr }: EngineScenarioRun) => {
+      // The Engine recorded itself when it took the driver lock; no test wrote this record.
+      expect(readTaskRunner(task, runtimeDir)).toBe('atta-engine')
+      const held = readPauseState(runtimeDir, task)
+      expect(held?.reason).toBe('escalation')
+      const world = { ...makeWorld({ task, prNumber: pr }), runtimeDir }
+      world.rulings = ['Go ahead.']
+      world.rulingOrdinal = 1
+      world.rulingAuthor = 'principal'
+      await expect(runLoopInProcess(world, { resumePr: pr, agent: 'claude' })).rejects.toThrow(
+        `task ${task}'s paused run was recorded on the atta-engine runner`
+      )
+      let standaloneStarts = 0
+      await expect(
+        runTask(
+          { issue: task, agent: 'claude', runner: 'standalone' },
+          fixtureDeps({
+            prepareIssueTask: async () => ({ issue: task }) as Awaited<ReturnType<RunTaskDeps['prepareIssueTask']>>,
+            findOpenPrForBranch: () => ({ number: pr }) as never,
+            hasPauseState: (issue) => readPauseState(runtimeDir, issue) !== null,
+            crossRunnerRefusal: (issue, runner) => crossRunnerRefusal(issue, runner, runtimeDir),
+            devReviewLoop: async () => {
+              standaloneStarts += 1
+              return { task, prNumber: pr, finalDecision: { type: 'publish' } }
+            }
+          })
+        )
+      ).rejects.toThrow('recorded on the atta-engine runner')
+      expect(standaloneStarts).toBe(0)
+      // Neither refusal consumed the pause's decision.
+      const resolution = readResolution(
+        defaultControlStoreDeps(() => join(runtimeDir, 'tasks-execution')),
+        task,
+        held!.escalationId ?? escalationIdFor(task, held!.round, held!.head)
+      )
+      expect(resolution.status).toBe('absent')
+      checked = true
+    })
+    expect(checked).toBe(true)
+  }, 120_000)
+
+  it('refuses a run paused on the standalone runner when the Engine resumes or starts it', async () => {
+    const standalone = await pausedWorld()
+    expect(readTaskRunner(standalone.task, standalone.runtimeDir)).toBe('standalone')
+    // `run-engine.ts --resume <pr>`: refused before anything is read or consumed.
     expect(() =>
       claimResume(
         standalone.runtimeDir,
@@ -285,38 +398,35 @@ describe('task_resume', () => {
         { ...liveResumeDeps, fetchPrBody: () => standalone.prBody, taskFromPrBody }
       )
     ).toThrow(`task ${standalone.task}'s paused run was recorded on the standalone runner`)
-    // Paused on the Engine runner: the standalone loop's resume refuses it.
-    const engine = await pausedWorld()
-    recordTaskRunner(engine.task, 'atta-engine', engine.runtimeDir)
-    await expect(runLoopInProcess(engine, { resumePr: engine.prNumber, agent: 'claude' })).rejects.toThrow(
-      `task ${engine.task}'s paused run was recorded on the atta-engine runner`
+    // A fresh `run-engine.ts --task <n>` start on the held pause is refused the same way.
+    expect(() => refuseAnotherRunnersPause(standalone.runtimeDir, standalone.task)).toThrow(
+      `task ${standalone.task}'s paused run was recorded on the standalone runner`
     )
-    // Neither refusal consumed the pause's decision.
-    for (const world of [standalone, engine]) {
-      const held = readPauseState(world.runtimeDir, world.task)!
-      const resolution = readResolution(
-        defaultControlStoreDeps(() => join(world.runtimeDir, 'tasks-execution')),
-        world.task,
-        held.escalationId ?? escalationIdFor(world.task, held.round, held.head)
-      )
-      expect(resolution.status).toBe('absent')
-    }
+    const held = readPauseState(standalone.runtimeDir, standalone.task)!
+    const resolution = readResolution(
+      defaultControlStoreDeps(() => join(standalone.runtimeDir, 'tasks-execution')),
+      standalone.task,
+      held.escalationId ?? escalationIdFor(standalone.task, held.round, held.head)
+    )
+    expect(resolution.status).toBe('absent')
   }, 60_000)
 })
 
 describe('task_cancel', () => {
-  async function cancelThroughOperator(world: LoopWorld) {
+  async function cancelThroughOperator(world: LoopWorld, options: { effect?: boolean; stopTimeoutMs?: number } = {}) {
     const controlStore = defaultControlStoreDeps(() => join(world.runtimeDir, 'tasks-execution'))
-    const owned = acquireOwnership(controlStore, world.task, 'fixture-effect')
-    if (!owned.acquired) throw new Error('fixture: no epoch')
-    writeEffect(controlStore, world.task, owned.epoch, 'in-flight-comment', {
-      operation: 'pr-comment',
-      target: `pr:${world.prNumber}`,
-      inputVersion: 1,
-      payloadDigest: 'digest-1',
-      status: 'started',
-      recordedAt: '2026-01-01T00:00:00.000Z'
-    })
+    if (options.effect !== false) {
+      const owned = acquireOwnership(controlStore, world.task, 'fixture-effect')
+      if (!owned.acquired) throw new Error('fixture: no epoch')
+      writeEffect(controlStore, world.task, owned.epoch, 'in-flight-comment', {
+        operation: 'pr-comment',
+        target: `pr:${world.prNumber}`,
+        inputVersion: 1,
+        payloadDigest: 'digest-1',
+        status: 'started',
+        recordedAt: '2026-01-01T00:00:00.000Z'
+      })
+    }
     const handler = createTaskCancelHandler({
       runtimeDir: () => world.runtimeDir,
       resolveIssueForRef: () => world.task,
@@ -342,7 +452,8 @@ describe('task_cancel', () => {
         ),
       hostname,
       log: () => {},
-      runner: readTaskRunner
+      runner: readTaskRunner,
+      ...(options.stopTimeoutMs === undefined ? {} : { engineStopTimeoutMs: options.stopTimeoutMs })
     })
     // A dispatched session's spool would take the cancel's Log line away from this world's folder.
     const spool = process.env.VINAYA_LOG_SPOOL_DIR
@@ -379,30 +490,51 @@ describe('task_cancel', () => {
     expect(resolution.status === 'ok' && resolution.value.decision).toBe('cancel')
     expect(effect.status === 'ok' && effect.value.status).toBe('uncertain')
     expect(cancelled).toHaveLength(1)
-    expect(engineCancellationRequested(world.task, world.runtimeDir)).toBe(false)
   }, 60_000)
 
-  it('cancels an Engine run: consumes the resolution, fences started effects, and halts it with no agent left', async () => {
+  it('cancels an Engine run: the shared cancel consumes and fences, and the run’s own watch ends it with no agent left', async () => {
     const world = await pausedWorld()
     recordTaskRunner(world.task, 'atta-engine', world.runtimeDir)
-    const stub = await startStubEngine(root())
-    const lock = readDriverLock(world.runtimeDir, world.task)
+    const engine = await startWatchingEngine(root(), world.runtimeDir, world.task)
     writeDriverLock(world.runtimeDir, world.task, {
-      ...(lock ?? { startedAt: new Date().toISOString(), host: hostname() }),
-      pid: stub.engine
-    } as never)
-    expect([alive(stub.engine), alive(stub.agent)]).toEqual([true, true])
+      pid: engine.engine,
+      startedAt: new Date().toISOString(),
+      token: 'engine-run'
+    })
+    expect([alive(engine.engine), alive(engine.agent)]).toEqual([true, true])
     const { result, resolution, effect, cancelled } = await cancelThroughOperator(world)
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.result).toMatchObject({ outcome: 'uncertain', fencedEffectKeys: ['in-flight-comment'] })
+    // One resolution, one fence, one cancelled line: the Engine adds no cancel of its own.
     expect(resolution.status === 'ok' && resolution.value.decision).toBe('cancel')
     expect(effect.status === 'ok' && effect.value.status).toBe('uncertain')
     expect(cancelled).toHaveLength(1)
-    // The run was told its halt is a cancel, and was halted: neither it nor its agent survives.
-    expect(engineCancellationRequested(world.task, world.runtimeDir)).toBe(true)
-    expect(isDriverPidAlive(stub.engine)).toBe(false)
-    for (let i = 0; i < 50 && alive(stub.agent); i++) await new Promise((r) => setTimeout(r, 20))
-    expect(alive(stub.agent)).toBe(false)
+    // The run read the cancel, released its lock and ended: neither it nor its agent survives.
+    expect(readDriverLock(world.runtimeDir, world.task)).toBeNull()
+    for (let i = 0; i < 100 && (alive(engine.engine) || alive(engine.agent)); i++)
+      await new Promise((r) => setTimeout(r, 20))
+    expect([alive(engine.engine), alive(engine.agent)]).toEqual([false, false])
+  }, 60_000)
+
+  it('never signals the process a kept Engine lock names, so a reused pid is left alone', async () => {
+    const world = await pausedWorld()
+    recordTaskRunner(world.task, 'atta-engine', world.runtimeDir)
+    // A process that is not the Engine run, holding the pid an exited run's kept lock names.
+    const unrelated = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      stdio: 'ignore',
+      env: { ...stripVinayaEnv(), HOME: root() }
+    })
+    children.push(unrelated.pid!)
+    const budget = setTimeout(() => unrelated.kill('SIGKILL'), 30_000)
+    budget.unref()
+    writeDriverLock(world.runtimeDir, world.task, { pid: unrelated.pid!, startedAt: new Date().toISOString() })
+    const { result, resolution } = await cancelThroughOperator(world, { effect: false, stopTimeoutMs: 300 })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // Resolved, but this call cannot confirm the run stopped: pending, and the other process is untouched.
+    expect(result.result.outcome).toBe('pending')
+    expect(resolution.status === 'ok' && resolution.value.decision).toBe('cancel')
+    expect(alive(unrelated.pid!)).toBe(true)
   }, 60_000)
 })

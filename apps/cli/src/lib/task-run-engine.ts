@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import type { AgentVendor } from './dispatch.js'
 import { isDriverPidAlive, readDriverLock } from './dev-review-loop/pause-resume.js'
@@ -98,24 +98,6 @@ export function engineContinuationCommand(target: Parameters<typeof engineContin
   return ['bun', ...engineContinuationArgv(target)].join(' ')
 }
 
-export function engineCancellationPath(task: number, root: string = runtimeDirForThisRepo()): string {
-  return join(engineRunDirectory(task, root), 'cancel-requested')
-}
-
-/** Ends a request a former cancel left, so a later run of the task is never read as cancelled. */
-export function clearEngineCancellation(task: number, root: string = runtimeDirForThisRepo()): void {
-  rmSync(engineCancellationPath(task, root), { force: true })
-}
-
-export function requestEngineCancellation(task: number, root: string = runtimeDirForThisRepo()): void {
-  const path = engineCancellationPath(task, root)
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, `${new Date().toISOString()}\n`, { mode: 0o600 })
-}
-
-export function engineCancellationRequested(task: number, root: string = runtimeDirForThisRepo()): boolean {
-  return existsSync(engineCancellationPath(task, root))
-}
 export type EngineRunnerDeps = {
   scriptPath: () => string
   exists: (path: string) => boolean
