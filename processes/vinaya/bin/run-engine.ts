@@ -989,7 +989,21 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       outcome = null
       error = undefined
       pausedFor = undefined
-      const choice = await chooseStart(saver, identity)
+      let choice = await chooseStart(saver, identity)
+      // A checkpoint resume continues past steps it already ran, the mergeability check among them: when the pull
+      // request is in conflict now, the run starts the next generation instead, as the conflict re-entry does, so the
+      // Flow's mergeability step sends the conflict back to the Developer before any publication.
+      if (
+        choice.kind === 'resume' &&
+        (await (options.heldPullRequestConflicts ?? heldPullRequestConflictsLive(options.taskInput))())
+      ) {
+        generation += 1
+        identity = runIdentityOfTask(args.task, generation)
+        narrate(
+          `the pull request is in conflict with the default branch: starting a fresh run (${identity.runId}) instead of resuming the checkpoint`
+        )
+        choice = await chooseStart(saver, identity)
+      }
       appendRunStartMarker(logPath, {
         role: 'engine-runner',
         pid: lifecycle.pid ?? process.pid,

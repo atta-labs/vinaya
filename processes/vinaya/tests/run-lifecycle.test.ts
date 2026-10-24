@@ -445,9 +445,25 @@ describe('re-running a task', () => {
         loopState: () => (second.options.taskInput as TaskInput).loopState
       })
     }
+    second.options.heldPullRequestConflicts = async () => false
     await runEngine(second.options)
     expect(second.driverLog()).toContain('resuming the run from its checkpoint')
     expect(seededRounds).toEqual([])
+  })
+
+  test('a checkpoint whose pull request is now in conflict is not resumed: a fresh run sends the Developer back', async () => {
+    const control = createRunControl()
+    const first = stubRun({
+      control,
+      actions: { 'harness.run-gates': () => haltThen(control, 'stop') }
+    })
+    expect((await runEngine(first.options)).exitCode).toBe(2)
+    const second = stubRun({}, first.runtimeDir)
+    second.options.heldPullRequestConflicts = async () => true
+    await runEngine(second.options)
+    expect(second.driverLog()).toContain('instead of resuming the checkpoint')
+    expect(second.driverLog()).not.toContain('resuming the run from its checkpoint')
+    expect(second.spawns[0]).toBe('develop')
   })
 
   test('a run whose checkpoint records a completed run has nothing to run', async () => {
