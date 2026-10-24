@@ -418,6 +418,38 @@ describe('re-running a task', () => {
     expect(readDriverLock(first.runtimeDir, TASK)).toBeNull()
   })
 
+  test('a checkpoint resume keeps the round it stopped in: the journal never seeds the next round', async () => {
+    const control = createRunControl()
+    const first = stubRun({
+      control,
+      actions: { 'harness.run-gates': () => haltThen(control, 'stop') }
+    })
+    expect((await runEngine(first.options)).exitCode).toBe(2)
+    const second = stubRun({}, first.runtimeDir)
+    const seededRounds: number[] = []
+    second.options.taskInput = {
+      branch: 'task/issue-7',
+      loopState: initialLoopState({ loopId: 'l', task: TASK, reviewers: [], models: {}, maxRounds: 5 } as never),
+      reviewRound: () => 1,
+      seedRound: (n: number) => void seededRounds.push(n)
+    } as unknown as TaskInput
+    second.options.lifecycle = {
+      ...second.options.lifecycle,
+      recovery: recoveryDeps({
+        fetchLoopHistory: () =>
+          loopHistoryFromComments(
+            [{ body: '<!-- aeg:developer:round-1 -->\nHead: h1', author: 'principal' }],
+            ['principal'],
+            () => 'unknown'
+          ),
+        loopState: () => (second.options.taskInput as TaskInput).loopState
+      })
+    }
+    await runEngine(second.options)
+    expect(second.driverLog()).toContain('resuming the run from its checkpoint')
+    expect(seededRounds).toEqual([])
+  })
+
   test('a run whose checkpoint records a completed run has nothing to run', async () => {
     const first = stubRun()
     await runEngine(first.options)

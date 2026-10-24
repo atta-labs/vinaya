@@ -1011,7 +1011,9 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       const recovery = lifecycle.recovery ? recoverRun(lifecycle.recovery) : null
       if (recovery !== null && options.taskInput) {
         options.taskInput.loopState = recovery.state
-        if (recovery.nextRound !== null) options.taskInput.seedRound?.(recovery.nextRound)
+        // A checkpoint resume continues inside the round it stopped in, so it keeps that round; only a fresh start
+        // on an existing branch begins the round after the journal's last.
+        if (recovery.nextRound !== null && choice.kind !== 'resume') options.taskInput.seedRound?.(recovery.nextRound)
       }
       if (recovery?.refusal) {
         narrate(`not dispatching: ${recovery.refusal}`)
