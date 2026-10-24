@@ -7,12 +7,19 @@ import { clamp01 } from '@/ui/lib/math'
 import { NextLink } from '@/ui/lib/next-link'
 import { cn } from '@/ui/lib/utils'
 import { Heading, Text } from '@/ui/shared'
-import { ConfigurationIcon, DevProcessIcon, LogIcon, SelfImprovementIcon, StudioIcon, TelemetryIcon } from '../icons'
+import { ELEMENT_ICONS } from '../icons'
 import { useEnterProgress, useNarrow, usePinProgress, useReducedMotion, useSeen } from './LandingInteractions'
 import { LandingSection } from './LandingSection'
 import { LOOP_EVENT_COUNT, type LoopScript } from './LoopMonitor'
 import { STUDIO_STEPS, type StudioMilestone, StudioMock, type StudioTask } from './StudioSection'
 import { Terminal, type TerminalLine } from './Terminal'
+
+const ConfigurationIcon = ELEMENT_ICONS['configuration']
+const DevProcessIcon = ELEMENT_ICONS['dev-process']
+const LogIcon = ELEMENT_ICONS['log']
+const SelfImprovementIcon = ELEMENT_ICONS['self-improvement']
+const StudioIcon = ELEMENT_ICONS['studio']
+const TelemetryIcon = ELEMENT_ICONS['telemetry']
 
 // Home's five features, one full-width section each. The motion is the portal's own: scroll drives it (Studio pins like
 // StudioSection, the Log types as it comes up the screen). Under reduced motion every section shows its end state.

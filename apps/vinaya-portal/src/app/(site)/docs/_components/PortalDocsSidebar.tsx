@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowRight, BookA, BookOpen, Route, Users } from 'lucide-react'
+import { ArrowRight } from 'lucide-react'
 import { usePathname } from 'next/navigation'
 import {
   SidebarContent,
@@ -64,19 +64,17 @@ function PageItem({ page, pathname }: { page: DocsPage; pathname: string }) {
   )
 }
 
-/** The icon beside each sidebar section's title: the element's own icon when the section is one, else a plain one. */
+/** Every section uses the same custom family as its subject page. */
 const SECTION_ELEMENT: Record<string, Element> = {
   Start: 'get-started',
   Features: 'features',
   'Dev Process': 'dev-process',
   Integration: 'integration',
-  CLI: 'cli'
-}
-const SECTION_PLAIN: Record<string, typeof BookOpen> = {
-  Guides: BookOpen,
-  Parts: Route,
-  'Using it': Users,
-  Reference: BookA
+  CLI: 'cli',
+  Parts: 'parts',
+  'Using it': 'using-it',
+  Guides: 'guides',
+  Reference: 'reference'
 }
 
 /** Each docs set's badge at the top of its sidebar: its element's icon and what it is. */
@@ -104,7 +102,7 @@ export function PortalDocsSidebar() {
           <span className='flex size-9 shrink-0 items-center justify-center rounded-md border border-sidebar-border bg-background text-sidebar-foreground'>
             {(() => {
               const Icon = ELEMENT_ICONS[HEAD[active.id]?.element ?? 'vinaya-harness']
-              return <Icon className={SMALL_ICON} />
+              return <Icon className={SMALL_ICON} still />
             })()}
           </span>
           <span className='flex min-w-0 flex-col'>
@@ -115,15 +113,14 @@ export function PortalDocsSidebar() {
       )}
       {active?.sections.map((section) => (
         <SidebarGroup key={section.title} className='py-3'>
-          <SidebarGroupLabel className='h-auto gap-2.5 px-2.5 pb-2 font-sans text-sm font-medium text-sidebar-foreground [&>svg]:size-4'>
+          <SidebarGroupLabel className='h-auto gap-2.5 px-2.5 pb-2 font-sans text-sm font-medium text-sidebar-foreground [&>svg]:size-5'>
             {(() => {
               const element = SECTION_ELEMENT[section.title]
               if (element) {
                 const Icon = ELEMENT_ICONS[element]
-                return <Icon className={SMALL_ICON} />
+                return <Icon className={SMALL_ICON} still />
               }
-              const Plain = SECTION_PLAIN[section.title] ?? BookOpen
-              return <Plain aria-hidden />
+              return null
             })()}
             {section.title}
           </SidebarGroupLabel>

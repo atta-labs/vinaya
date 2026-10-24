@@ -1,16 +1,16 @@
 import { ChevronDown } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { TopBarGroupSection, TopBarNavItem } from '@/ui/topbar'
-import {
-  ConfigurationIcon,
-  LogIcon,
-  SelfImprovementIcon,
-  StudioIcon,
-  TelemetryIcon,
-  VinayaHarnessIcon,
-  VinayaProcessIcon
-} from './icons'
+import { ELEMENT_ICONS } from './icons'
 import { ConfigScene, ImproveScene, LogScene, StudioScene, TelemetryScene } from './menu-previews'
+
+const ConfigurationIcon = ELEMENT_ICONS['configuration']
+const LogIcon = ELEMENT_ICONS['log']
+const SelfImprovementIcon = ELEMENT_ICONS['self-improvement']
+const StudioIcon = ELEMENT_ICONS['studio']
+const TelemetryIcon = ELEMENT_ICONS['telemetry']
+const VinayaHarnessIcon = ELEMENT_ICONS['vinaya-harness']
+const VinayaProcessIcon = ELEMENT_ICONS['vinaya-process']
 
 /**
  * The site's one navigation, shared by every top bar: the site's own, the docs

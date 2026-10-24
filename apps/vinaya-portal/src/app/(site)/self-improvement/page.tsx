@@ -1,6 +1,9 @@
+import { ScanEye, Lightbulb, UserCheck } from 'lucide-react'
 import { FeaturePage } from '../_components/feature-page/FeaturePage'
 import { ImproverLive } from '../_components/feature-page/live'
-import { ApprovalIcon, ImproverIcon, ProposalIcon, SelfImprovementIcon } from '../_components/icons'
+import { ELEMENT_ICONS } from '../_components/icons'
+
+const SelfImprovementIcon = ELEMENT_ICONS['self-improvement']
 
 export const metadata = { title: 'Self-improvement · Vinaya' }
 
@@ -23,19 +26,19 @@ export default function SelfImprovementPage() {
             title: 'It reads the Log',
             line: 'Across many runs: where rounds are lost, which gate catches most, what a task costs.',
             href: '/docs/features/self-improvement',
-            icon: (className) => <ImproverIcon className={className} />
+            icon: (className) => <ScanEye className={className} />
           },
           {
             title: 'It proposes a change',
             line: 'Each pattern becomes a proposal: to instructions, gates, settings or roles.',
             href: '/docs/features/self-improvement',
-            icon: (className) => <ProposalIcon className={className} />
+            icon: (className) => <Lightbulb className={className} />
           },
           {
             title: 'A person approves',
             line: 'An approved change becomes a new process version, and goes back to product.',
             href: '/docs/features/self-improvement',
-            icon: (className) => <ApprovalIcon className={className} />
+            icon: (className) => <UserCheck className={className} />
           }
         ]
       }}

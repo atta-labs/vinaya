@@ -97,9 +97,9 @@ Icons come from four places, and only these:
 
 | Icon | Source |
 | --- | --- |
-| A generic interface icon (arrow, check, chevron, copy, close, search) | [`lucide-react`](https://lucide.dev) |
+| Every other icon, including generic interface icons and a feature’s parts | [`lucide-react`](https://lucide.dev) |
 | A third-party brand (Linear, Jira, Claude, Anthropic, OpenAI's Codex, Apple, Linux, Asana, Cloudflare, Datadog, Grafana, LangGraph, GitHub in content) | `BrandIcon` in `apps/vinaya-portal/src/process/components/BrandIcon.tsx`, which paints [simple-icons](https://simpleicons.org) paths in `currentColor`. A new brand is added to its `Brand` type and its `paths` map. |
-| An element of the product itself (the harness, the process, the Log, the Studio, a feature, a docs page) | The product-icon registry: `ELEMENT_ICONS` in `apps/vinaya-portal/src/app/(site)/_components/icons/registry.ts`, whose drawings live beside it in that folder on the shared `Glyph`. A new element's icon is drawn in that folder and registered there; a page picks it from `ELEMENT_ICONS` (or `iconForHref`), never by importing a drawing directly. |
+| The products, the agents and the subjects of the Linear index, plus the roadmap junction | The product-icon registry: `ELEMENT_ICONS` in `apps/vinaya-portal/src/app/(site)/_components/icons/registry.ts`, whose drawings live beside it in that folder on the shared `Glyph`. A new product, agent or index subject’s icon is drawn in that folder and registered there; a page picks it from `ELEMENT_ICONS` (or `iconForHref`), never by importing a drawing directly. |
 | A mark the site's chrome shows — the company's own (Atta Labs and its products) and GitHub's | The marks folder, `apps/vinaya-portal/src/ui/footer/marks/` |
 
 No other icon library (`react-icons`, Heroicons, Phosphor, Tabler, `@radix-ui/react-icons`), and no icon drawn anywhere else: an inline `<svg>` in a page or component that is an icon belongs in the registry or the marks folder. A diagram, a chart or an illustration is not an icon; it still takes every colour from the variables above.

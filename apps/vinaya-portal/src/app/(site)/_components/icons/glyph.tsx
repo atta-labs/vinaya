@@ -26,14 +26,35 @@ export function Glyph({
   return (
     <svg viewBox={viewBox} fill='none' aria-hidden='true' className={cn('size-14 shrink-0', className)}>
       <g strokeWidth={LINE_WEIGHT * k}>
-        {Children.map(children, (child) =>
-          isValidElement<{ 'data-weight'?: string }>(child) && child.props['data-weight'] === 'mark'
-            ? cloneElement(child as React.ReactElement<{ strokeWidth?: number }>, { strokeWidth: MARK_WEIGHT * k })
-            : child
-        )}
+        <GlyphStrokes longerSide={Math.max(w, h)}>{children}</GlyphStrokes>
       </g>
     </svg>
   )
+}
+
+/** Apply family weights through moving groups, compensating scaled agent role signs. */
+export function GlyphStrokes({ children, longerSide }: { children: ReactNode; longerSide: number }) {
+  function weigh(nodes: ReactNode, scale: number): ReactNode {
+    return Children.map(nodes, (child) => {
+      if (
+        !isValidElement<{
+          children?: ReactNode
+          'data-weight'?: string
+          'data-role-sign'?: boolean
+          strokeWidth?: number
+        }>(child)
+      )
+        return child
+      const roleSign = child.props['data-role-sign']
+      const nextScale = roleSign ? scale / 0.80769 : scale
+      return cloneElement(child, {
+        ...(roleSign ? { strokeWidth: LINE_WEIGHT * nextScale } : {}),
+        ...(child.props['data-weight'] === 'mark' ? { strokeWidth: MARK_WEIGHT * nextScale } : {}),
+        ...(child.props.children !== undefined ? { children: weigh(child.props.children, nextScale) } : {})
+      })
+    })
+  }
+  return <>{weigh(children, longerSide / 56)}</>
 }
 
 /** An outline, at the Glyph's line weight. */

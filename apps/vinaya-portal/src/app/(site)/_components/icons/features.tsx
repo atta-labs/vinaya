@@ -1,57 +1,143 @@
-import { DOT, Glyph, LINE, MARK } from './glyph'
+'use client'
 
-// The five features' icons.
+import { motion } from 'motion/react'
+import { Glyph, LINE, MARK, DOT } from './glyph'
+import { iconMotion, useIconStill, type IconProps } from './icon-motion'
 
-export function LogIcon({ className }: { className?: string }) {
+export function LogIcon({ className, still = false }: IconProps) {
+  const paused = useIconStill(still)
   return (
-    <Glyph className={className} viewBox='8.259 7.259 39.481 41.481'>
-      <rect x='9' y='8' width='38' height='40' rx='4' {...LINE} />
-      <path d='M17 19h14M17 27h22M17 35h18' {...LINE} />
-      <circle cx='40' cy='19' r='3' {...DOT} />
-    </Glyph>
-  )
-}
-
-export function TelemetryIcon({ className }: { className?: string }) {
-  return (
-    <Glyph className={className} viewBox='8.296 8.296 39.407 39.407'>
-      <path d='M9 47h38' {...LINE} />
-      <rect x='12' y='31' width='7' height='12' rx='1.5' {...LINE} />
-      <rect x='24.5' y='20' width='7' height='23' rx='1.5' {...LINE} />
-      <rect x='37' y='9' width='7' height='34' rx='1.5' {...LINE} {...DOT} />
-    </Glyph>
-  )
-}
-
-export function StudioIcon({ className }: { className?: string }) {
-  return (
-    <Glyph className={className} viewBox='5.185 5.185 45.63 45.63'>
-      <rect x='6' y='6' width='44' height='34' rx='4' {...LINE} />
-      <path d='M20 50h16M28 40v10' {...LINE} />
-      <path d='M12 30l7-7 6 5 8-9' {...MARK} />
-      <circle cx='42' cy='14' r='3' {...DOT} />
-    </Glyph>
-  )
-}
-
-export function SelfImprovementIcon({ className }: { className?: string }) {
-  return (
-    // the eye that watches its own work, and the infinity for its pupil: it never stops looking, never stops improving
-    <Glyph className={className} viewBox='3.111 11.111 49.778 33.778'>
-      <path d='M4 28c7-11 15-16 24-16s17 5 24 16c-7 11-15 16-24 16S11 39 4 28z' {...LINE} />
+    <Glyph className={className} viewBox='4.572 1.493 14.856 19.935'>
+      <path {...LINE} d='M5 4H19V21H5Z' />
+      <path {...LINE} d='M8.5 11H15.5M8.5 14.5H15.5' />
+      <g>
+        <motion.path
+          {...MARK}
+          pathLength='1'
+          d='M8.5 18H12.5'
+          {...iconMotion('mv-draw', paused)}
+          key={paused ? 'still-1' : 'moving-1'}
+          strokeDasharray={paused ? undefined : 1}
+        />
+      </g>
       <path
-        d='M28 28c-3-3.5-5-5-7.5-5a5 5 0 0 0 0 10c2.5 0 4.5-1.5 7.5-5s5-5 7.5-5a5 5 0 0 1 0 10c-2.5 0-4.5-1.5-7.5-5z'
-        {...MARK}
+        {...LINE}
+        className='fill-background'
+        d='M13.20 6.07 L10.80 6.07 L9.60 4.00 L10.80 1.92 L13.20 1.92 L14.40 4.00Z'
       />
+      <path {...LINE} d='M10.68 4.00L13.32 4.00' />
     </Glyph>
   )
 }
 
-export function ConfigurationIcon({ className }: { className?: string }) {
+export function TelemetryIcon({ className, still = false }: IconProps) {
+  const paused = useIconStill(still)
   return (
-    <Glyph className={className} viewBox='7.185 5.185 41.63 45.63'>
-      <path d='M8 6h26l14 14v30H8zM34 6v14h14' {...LINE} />
-      <path d='M23 28l-5 6 5 6M33 28l5 6-5 6' {...MARK} />
+    <Glyph className={className} viewBox='2.571 3.8 18.857 17.735'>
+      <path {...LINE} d='M3 21H21M6 21V15M10.5 21V11M15 21V13' />
+      <motion.g
+        className='origin-bottom! [transform-box:fill-box]!'
+        {...iconMotion('mv-grow', paused)}
+        key={paused ? 'still-2' : 'moving-2'}
+      >
+        <path {...MARK} d='M19 21V9.2' />
+      </motion.g>
+      <motion.g {...iconMotion('mv-rise', paused)} key={paused ? 'still-3' : 'moving-3'}>
+        <path {...DOT} d='M19.00 3.80 L21.07 5.00 L21.07 7.40 L19.00 8.60 L16.92 7.40 L16.92 5.00Z' />
+      </motion.g>
+    </Glyph>
+  )
+}
+
+export function StudioIcon({ className, still = false }: IconProps) {
+  const paused = useIconStill(still)
+  return (
+    <Glyph className={className} viewBox='2.071 3.071 19.857 18.357'>
+      <path {...LINE} d='M2.5 3.5H21.5V17H2.5ZM9 21H15M12 17V21' />
+      <path {...LINE} d='M5 7.8H19M5 12.8H19' />
+      <motion.g {...iconMotion('mv-seq', paused, 0)} key={paused ? 'still-4' : 'moving-4'}>
+        <path
+          {...LINE}
+          className='fill-background'
+          d='M6.50 6.45 L7.66 7.12 L7.66 8.47 L6.50 9.15 L5.33 8.47 L5.33 7.12Z'
+        />
+      </motion.g>
+      <motion.g {...iconMotion('mv-seq', paused, 0.5)} key={paused ? 'still-5' : 'moving-5'}>
+        <path
+          {...LINE}
+          className='fill-background'
+          d='M11.00 6.45 L12.16 7.12 L12.16 8.47 L11.00 9.15 L9.83 8.47 L9.83 7.12Z'
+        />
+      </motion.g>
+      <motion.g {...iconMotion('mv-seq', paused, 1.0)} key={paused ? 'still-6' : 'moving-6'}>
+        <path
+          {...LINE}
+          className='fill-background'
+          d='M15.50 6.45 L16.66 7.12 L16.66 8.47 L15.50 9.15 L14.33 8.47 L14.33 7.12Z'
+        />
+      </motion.g>
+      <motion.g {...iconMotion('mv-seq', paused, 0.25)} key={paused ? 'still-7' : 'moving-7'}>
+        <path
+          {...LINE}
+          className='fill-background'
+          d='M6.50 11.45 L7.66 12.12 L7.66 13.47 L6.50 14.15 L5.33 13.47 L5.33 12.12Z'
+        />
+      </motion.g>
+      <motion.g {...iconMotion('mv-seq', paused, 0.75)} key={paused ? 'still-8' : 'moving-8'}>
+        <path
+          {...LINE}
+          className='fill-background'
+          d='M11.00 11.45 L12.16 12.12 L12.16 13.47 L11.00 14.15 L9.83 13.47 L9.83 12.12Z'
+        />
+      </motion.g>
+      <motion.g
+        className='origin-center! [transform-box:fill-box]!'
+        {...iconMotion('mv-new', paused, 1.25)}
+        key={paused ? 'still-9' : 'moving-9'}
+      >
+        <path {...DOT} d='M15.50 11.45 L16.66 12.12 L16.66 13.47 L15.50 14.15 L14.33 13.47 L14.33 12.12Z' />
+      </motion.g>
+    </Glyph>
+  )
+}
+
+export function SelfImprovementIcon({ className, still = false }: IconProps) {
+  const paused = useIconStill(still)
+  return (
+    <Glyph className={className} viewBox='1.052 7.152 21.896 9.697'>
+      <path {...LINE} d='M15.05 8.95A4.31 4.31 0 1 1 15.05 15.05L8.95 8.95A4.31 4.31 0 1 0 8.95 15.05Z' />
+      <motion.path
+        {...MARK}
+        pathLength='1'
+        d='M15.05 8.95A4.31 4.31 0 1 1 15.05 15.05L8.95 8.95A4.31 4.31 0 1 0 8.95 15.05Z'
+        {...iconMotion('mv-orbit', paused)}
+        key={paused ? 'still-10' : 'moving-10'}
+        strokeDasharray={paused ? undefined : 1}
+      />
+      <path
+        {...LINE}
+        className='fill-background'
+        d='M13.81 10.95 L13.81 13.05 L12.00 14.10 L10.18 13.05 L10.18 10.95 L12.00 9.90Z'
+      />
+      <path {...LINE} d='M12.00 13.15L12.00 10.84' />
+    </Glyph>
+  )
+}
+
+export function ConfigurationIcon({ className, still = false }: IconProps) {
+  const paused = useIconStill(still)
+  return (
+    <Glyph className={className} viewBox='2.571 3.972 18.857 15.280'>
+      <path {...LINE} d='M3 7H21M3 17H21' />
+      <path
+        {...LINE}
+        className='fill-background'
+        d='M10.25 5.70 L10.25 8.30 L8.00 9.60 L5.74 8.30 L5.74 5.70 L8.00 4.40Z'
+      />
+      <path {...LINE} d='M8.00 8.43L8.00 5.57' />
+      <motion.g {...iconMotion('mv-slide', paused)} key={paused ? 'still-11' : 'moving-11'}>
+        <path {...DOT} d='M17.30 14.74 L18.60 17.00 L17.30 19.25 L14.70 19.25 L13.40 17.00 L14.70 14.74Z' />
+      </motion.g>
     </Glyph>
   )
 }

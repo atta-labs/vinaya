@@ -1,6 +1,9 @@
+import { Braces, Send, SquarePlus, EyeOff } from 'lucide-react'
 import { FeaturePage } from '../_components/feature-page/FeaturePage'
 import { LogLive } from '../_components/feature-page/live'
-import { CustomEventsIcon, DeliveryIcon, EventContractIcon, LogIcon, RedactionIcon } from '../_components/icons'
+import { ELEMENT_ICONS } from '../_components/icons'
+
+const LogIcon = ELEMENT_ICONS['log']
 
 export const metadata = { title: 'Log · Vinaya' }
 
@@ -24,25 +27,25 @@ export default function LogPage() {
             title: 'Event contract',
             line: 'Ten closed families, a versioned header, strict fields. A line that does not fit is never written.',
             href: '/docs/features/log/event-contract',
-            icon: (className) => <EventContractIcon className={className} />
+            icon: (className) => <Braces className={className} />
           },
           {
             title: 'Delivery',
             line: 'Sent the moment it is written, to a folder or your own server. Never batched, never slows a run.',
             href: '/docs/features/log/delivery',
-            icon: (className) => <DeliveryIcon className={className} />
+            icon: (className) => <Send className={className} />
           },
           {
             title: 'Custom events',
             line: 'Declare your own events in logs.events. Vinaya checks each one and writes it like any other.',
             href: '/docs/features/log/custom-events',
-            icon: (className) => <CustomEventsIcon className={className} />
+            icon: (className) => <SquarePlus className={className} />
           },
           {
             title: 'Redaction and trust',
             line: 'Secrets are removed before a line is written, and again before it is sent or read back.',
             href: '/docs/features/log/redaction-and-trust',
-            icon: (className) => <RedactionIcon className={className} />
+            icon: (className) => <EyeOff className={className} />
           }
         ]
       }}

@@ -1,6 +1,9 @@
+import { Gauge, LayoutDashboard, FolderGit2 } from 'lucide-react'
 import { FeaturePage } from '../_components/feature-page/FeaturePage'
 import { StudioLive } from '../_components/feature-page/live'
-import { DashboardIcon, ManyRepositoriesIcon, MissionControlIcon, StudioIcon } from '../_components/icons'
+import { ELEMENT_ICONS } from '../_components/icons'
+
+const StudioIcon = ELEMENT_ICONS['studio']
 
 export const metadata = { title: 'Studio · Vinaya' }
 
@@ -24,19 +27,19 @@ export default function StudioPage() {
             title: 'Mission Control',
             line: 'Work in flight: what is happening, for how long, and who must act.',
             href: '/docs/features/studio/mission-control',
-            icon: (className) => <MissionControlIcon className={className} />
+            icon: (className) => <Gauge className={className} />
           },
           {
             title: 'Dashboard and statistics',
             line: 'Over time: planned work from the forge, and ten questions, plus a confidence comparison, answered from the Log.',
             href: '/docs/features/studio/dashboard-and-statistics',
-            icon: (className) => <DashboardIcon className={className} />
+            icon: (className) => <LayoutDashboard className={className} />
           },
           {
             title: 'Many repositories',
             line: 'Across repositories: every one an owner governs, on one page.',
             href: '/docs/features/studio/many-repositories',
-            icon: (className) => <ManyRepositoriesIcon className={className} />
+            icon: (className) => <FolderGit2 className={className} />
           }
         ]
       }}
