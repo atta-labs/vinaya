@@ -619,16 +619,16 @@ async function drive(
       await new Promise((r) => setTimeout(r, 10))
     // The cancel's own Log line, written through the shared sink to this scenario's folder, as a separate process's.
     const cancelSink = logSink ?? ownLogFolder(runtimeDir)
-    // The cancel is another process's: none of the run's own Log identity (its host, its pull request) is its.
-    const runIdentity = { host: process.env.VINAYA_HOST, pr: process.env.VINAYA_PR }
-    delete process.env.VINAYA_HOST
-    delete process.env.VINAYA_PR
-    try {
-      await cancelOnTheOperatorsBehalf(cancelSink)
-    } finally {
-      if (runIdentity.host !== undefined) process.env.VINAYA_HOST = runIdentity.host
-      if (runIdentity.pr !== undefined) process.env.VINAYA_PR = runIdentity.pr
-    }
+    // The cancel is another process's: its sink reads none of the run's own Log identity (its host, its pull request).
+    await cancelOnTheOperatorsBehalf({
+      ...cancelSink,
+      env: () => {
+        const env = { ...process.env }
+        delete env.VINAYA_HOST
+        delete env.VINAYA_PR
+        return env
+      }
+    })
     await watching
     for (const line of recordedLogLines(cancelSink)) if (line.event === 'cancelled') append(eventFile, line)
   }
