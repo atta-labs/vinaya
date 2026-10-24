@@ -397,7 +397,8 @@ async function drive(
     })
   } catch (error) {
     // Preparation precedes the Flow; observe its thrown refusal without inventing a run trace.
-    return observeEngineRun(runtimeDir, [], error, logSink !== undefined)
+    if (logSink) await drainLogSink()
+    return observeEngineRun(runtimeDir, [], error, logSink)
   }
   task.cliEntry = gateCli
   // The corpus repository has no installed hooks and no sandbox to probe: both controls are reported active.
@@ -622,13 +623,14 @@ async function drive(
     ruling = true
     await execute(true)
   }
-  return observeEngineRun(runtimeDir, traces, refused, logSink !== undefined)
+  // The default sink's lines (the handoff records) drain last, as the live runner drains them after a run.
+  if (logSink) await drainLogSink()
+  return observeEngineRun(runtimeDir, traces, refused, logSink)
 }
 
 /**
  * The run's sink: every event is kept for the observation and, when overrides
- * are injected, also written through the shared `createLogSink`; its drain
- * drains the default sink too, as the live runner does after a run.
+ * are injected, also written through the shared `createLogSink`.
  */
 function recordingSink(eventFile: string, logSink: Partial<LogSinkDeps> | undefined): EngineRunOptions['sink'] {
   const shared = logSink ? createLogSink(logSink) : null
@@ -638,16 +640,16 @@ function recordingSink(eventFile: string, logSink: Partial<LogSinkDeps> | undefi
       shared?.log(event as Parameters<typeof shared.log>[0])
     },
     drain: async () => {
-      if (!shared) return
-      await shared.drain()
-      await drainLogSink()
+      await shared?.drain()
     }
   }
 }
 
-/** Every Log line recorded for the task under the run's own Log folder. */
-function recordedLogLines(runtimeDir: string): RecordLine[] {
-  const logsRoot = join(runtimeDir, 'logs')
+/** Every Log line the injected sink recorded for the task, read from the folder that sink names. */
+function recordedLogLines(logSink: Partial<LogSinkDeps>): RecordLine[] {
+  const destination = logSink.unresolvedLogDestination?.(process.env)
+  if (destination?.kind !== 'folder') return []
+  const logsRoot = destination.folder
   if (!existsSync(logsRoot)) return []
   return readdirSync(logsRoot).flatMap((segment) => lines(join(logsRoot, segment, `${TASK}.ndjson`)))
 }
@@ -657,7 +659,7 @@ function observeEngineRun(
   runtimeDir: string,
   traces: RunTrace[],
   preparationError?: unknown,
-  recorded = false
+  logSink?: Partial<LogSinkDeps>
 ): Observation {
   const last = traces.at(-1)
   const recordedActions = lines(join(runtimeDir, 'actions.jsonl'))
@@ -730,7 +732,7 @@ function observeEngineRun(
     journalResults: events
       .filter((event) => event.kind === 'dev_review_loop' && event.event === 'journal_finalized')
       .map((event) => String(event.result)),
-    ...(recorded ? { logLines: recordedLogLines(runtimeDir) } : {})
+    ...(logSink ? { logLines: recordedLogLines(logSink) } : {})
   }
 }
 
