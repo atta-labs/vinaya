@@ -612,6 +612,7 @@ for (const agent of AGENTS) {
       const leases: Array<{ sha: string; expectedRemoteHead: string; touchedPaths: readonly string[] }> = []
       const live = engineLiveDevToolsContext({
         recordLaunch: () => 'test-run',
+        completeLaunch: () => {},
         branch: 'task/t/8',
         worktreePath: repo.root,
         task: 8,

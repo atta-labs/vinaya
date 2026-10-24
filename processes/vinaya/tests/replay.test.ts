@@ -276,9 +276,13 @@ async function replay(scenario: Scenario) {
   const events: Array<{ event?: string; kind?: string }> = []
   const handoff = recordedHandoff()
   let developerTurnsBegun = 0
+  const developerTurnsCompleted: Array<string | null> = []
   const result = await runEngine({
     beginDeveloperTurn: async () => {
       developerTurnsBegun += 1
+    },
+    completeDeveloperTurn: (resumeId) => {
+      developerTurnsCompleted.push(resumeId)
     },
     args,
     process: loaded,
@@ -349,7 +353,8 @@ async function replay(scenario: Scenario) {
     cliCalls,
     events,
     handoff,
-    developerTurnsBegun
+    developerTurnsBegun,
+    developerTurnsCompleted
   }
 }
 
@@ -381,6 +386,9 @@ for (const vendor of ['claude', 'codex'] as const)
       expect(run.spawns.map((s) => s.step)).toEqual(['develop', 'code-review', 'security-review'])
       // Each Developer launch begins a turn: its head and its launch record are written before the agent starts.
       expect(run.developerTurnsBegun).toBe(1)
+      // The turn's launch record is closed with the Developer's own vendor session, so a later run can resume it.
+      expect(run.developerTurnsCompleted).toHaveLength(1)
+      expect(typeof run.developerTurnsCompleted[0]).toBe('string')
       // The tool bridges start the CLI of the Vinaya install, never one under the task's repository.
       const bridges = readdirSync(runDirectory(run.runtimeDir, TASK)).filter((f) => f.endsWith('.sh'))
       expect(bridges.length).toBeGreaterThan(0)

@@ -806,6 +806,7 @@ const HEADER = 'Fix(cli): Share live context'
 const PR_BODY = '## Report\n\nbody'
 
 const recordedLaunches: Array<{ task: number; agent: string; round: number | null }> = []
+const completedLaunches: Array<{ runId: string; resumeId: string | null }> = []
 
 function liveContext(world: World, overrides: Partial<ReturnType<typeof fakeDeps>> = {}, task = 8) {
   const runtimeDir = mkdtempSync(join(tmpdir(), 'engine-live-context-'))
@@ -821,6 +822,9 @@ function liveContext(world: World, overrides: Partial<ReturnType<typeof fakeDeps
     recordLaunch: (input) => {
       recordedLaunches.push(input)
       return `run-${recordedLaunches.length}`
+    },
+    completeLaunch: (input) => {
+      completedLaunches.push(input)
     }
   })
   return { live, runtimeDir }
@@ -1161,5 +1165,18 @@ describe('the Developer launch schema', () => {
     expect(args[2]).toBe(join(dir, 'turn-output.schema.json'))
     expect(JSON.parse(readFileSync(args[2] as string, 'utf8'))).toEqual({ n: 1 })
     rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('closing a Developer turn on the Engine path', () => {
+  test('closes the launch it began, with the vendor session, once', async () => {
+    const { live } = liveContext(makeWorld(), {}, 32)
+    await live.beginTurn()
+    const runId = `run-${recordedLaunches.length}`
+    live.completeTurn('session-abc')
+    live.completeTurn('session-abc')
+    expect(completedLaunches.filter((c) => c.runId === runId)).toEqual([
+      expect.objectContaining({ runId, resumeId: 'session-abc' })
+    ])
   })
 })

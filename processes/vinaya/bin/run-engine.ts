@@ -22,6 +22,7 @@ import {
   type SpawnFn,
   type StepNodeResult
 } from '@atta/executor-agent-spawn'
+import { sessionIdOf } from '../../../harness/adapters/agents/structured-result'
 import { loadProcess, type LoadedProcess } from '../../../harness/dev-process/loader/load-process'
 import { SqliteCheckpointer } from '../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
 import {
@@ -126,6 +127,7 @@ import { developerTurnResultJsonSchema } from '../../../apps/cli/src/lib/develop
 import {
   getProcessSnapshot,
   readLaunchRecord,
+  completeRunnerDeveloperLaunch,
   recordRunnerDeveloperLaunch,
   terminateChildWithGrace
 } from '../../../apps/cli/src/lib/dispatch'
@@ -606,6 +608,8 @@ export interface EngineRunOptions {
   developerFacts?: () => Promise<DeveloperPromptFacts>
   /** Told when the Developer step starts, so the live context records the head and base that turn publishes against. */
   beginDeveloperTurn?: () => Promise<void>
+  /** Called with the Developer's vendor session once its turn's agent has finished. */
+  completeDeveloperTurn?: (resumeId: string | null) => void
   /** The Linux host opt-in: the generated Claude settings allow Unix sockets and the variable is forwarded to the agent. */
   allowUnixSockets?: boolean
   /** The code revision recorded on every checkpoint; defaults to the HEAD of `repoRoot`, the checkout the runner runs from. */
@@ -876,6 +880,11 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
       Object.entries(base).map(([name, action]) => [
         name,
         async (context: Parameters<typeof action>[0]) => {
+          // The step after the Developer's agent: its turn is over, so its launch record is closed with the session.
+          if (context.nodeId === 'validate-developer-output') {
+            const develop = context.results.develop as { sessionId?: string; events?: unknown[] } | undefined
+            options.completeDeveloperTurn?.(develop?.sessionId ?? sessionIdOf(develop?.events ?? []) ?? null)
+          }
           const result = await action(context)
           if (context.nodeId === 'reconcile-external-state') {
             try {
@@ -1173,9 +1182,13 @@ export function engineLiveDevToolsContext(input: {
   deps?: LiveDeveloperContextLoopDeps
   /** Writes the turn's Developer launch record; the real writer unless a test supplies its own. */
   recordLaunch?: typeof recordRunnerDeveloperLaunch
+  /** Closes the turn's Developer launch record; the real one unless a test supplies its own. */
+  completeLaunch?: typeof completeRunnerDeveloperLaunch
 }): {
   context: DevToolContext
   beginTurn: () => Promise<void>
+  /** Closes this turn's launch record, completed, with the Developer's vendor session bound. */
+  completeTurn: (resumeId: string | null) => void
   state: LivePublicationState
   /** The protected paths written since the turn began that no driver tool call wrote. */
   changedProtectedPaths: () => string[]
@@ -1216,10 +1229,22 @@ export function engineLiveDevToolsContext(input: {
     )
   }
   let turn = buildTurnContext()
+  let launchRunId: string | null = null
+  const completeTurn = (resumeId: string | null): void => {
+    if (launchRunId === null) return
+    ;(input.completeLaunch ?? completeRunnerDeveloperLaunch)({
+      agent: input.agent,
+      repo: input.repo,
+      task: input.task,
+      runId: launchRunId,
+      resumeId
+    })
+    launchRunId = null
+  }
   const beginTurn = async (): Promise<void> => {
     // The Broker authenticates this turn's pushes against a Developer launch record; the Engine's executor
     // spawns the agent itself, so the runner writes that record here.
-    ;(input.recordLaunch ?? recordRunnerDeveloperLaunch)({
+    launchRunId = (input.recordLaunch ?? recordRunnerDeveloperLaunch)({
       agent: input.agent,
       repo: input.repo,
       task: input.task,
@@ -1240,7 +1265,7 @@ export function engineLiveDevToolsContext(input: {
     runChecks: () => turn.runChecks(),
     fetchDocumentation: (request) => turn.fetchDocumentation(request)
   }
-  return { context, beginTurn, state, changedProtectedPaths: () => attribution.changedPaths() }
+  return { context, beginTurn, completeTurn, state, changedProtectedPaths: () => attribution.changedPaths() }
 }
 
 /** The CLI entry script under `repoRoot`: the shim's bridge and the gate checks both run it. */
@@ -1787,7 +1812,8 @@ async function runLive(args: EngineArgs, loaded: LoadedProcess, repoRoot: string
       publishedWatch: { fetchPrState, fetchMergeableState, pollMs: rulingPollMs(), sleep: abortableSleep }
     },
     devToolsContext: liveContext.context,
-    beginDeveloperTurn: liveContext.beginTurn
+    beginDeveloperTurn: liveContext.beginTurn,
+    completeDeveloperTurn: liveContext.completeTurn
   })
   // The handoff's escalation record logs through the default sink, which nothing else drains.
   await drainLogSink()
