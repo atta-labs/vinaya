@@ -35,6 +35,7 @@ import {
   type LoopWorld,
   type RoleOutcome
 } from '../dev-review-loop-harness.js'
+import { stripVinayaEnv } from '../process-fixture.js'
 
 const roots: string[] = []
 const children: number[] = []
@@ -119,8 +120,11 @@ async function startStubEngine(dir: string): Promise<{ engine: number; agent: nu
       setInterval(() => {}, 1000)
     `
   )
-  const child = spawn(process.execPath, [script], { stdio: 'ignore' })
+  const child = spawn(process.execPath, [script], { stdio: 'ignore', env: { ...stripVinayaEnv(), HOME: dir } })
   children.push(child.pid!)
+  // Bounded: a stand-in that outlives its test is killed outright.
+  const budget = setTimeout(() => child.kill('SIGKILL'), 30_000)
+  budget.unref()
   for (let i = 0; i < 200 && !existsSync(agentFile); i++) await new Promise((r) => setTimeout(r, 50))
   const agent = Number(readFileSync(agentFile, 'utf8'))
   children.push(agent)
