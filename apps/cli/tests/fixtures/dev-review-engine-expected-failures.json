@@ -1,11 +1,5 @@
 {
   "schemaVersion": 1,
   "description": "Observed Engine differences from the portable corpus. Entries may only be removed as their guarantees are implemented; the exit test pins the ceiling.",
-  "entries": [
-    {
-      "scenario": "cancellation",
-      "guarantee": "INV-089",
-      "reason": "The runner halt handle pauses; it neither consumes a cancel resolution nor records cancellation."
-    }
-  ]
+  "entries": []
 }

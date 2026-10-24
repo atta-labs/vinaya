@@ -18,7 +18,7 @@ import {
   assembleAndRenderBriefForIssue as realAssembleAndRenderBriefForIssue
 } from './brief-assembly.js'
 import { type loadConfig, loadTaskRunner, resolveTaskRunner, type TaskRunner } from './config.js'
-import { runTaskEngine, type EngineRunnerDeps } from './task-run-engine.js'
+import { recordTaskRunner, runTaskEngine, type EngineRunnerDeps } from './task-run-engine.js'
 import type { AgentVendor } from './dispatch.js'
 import {
   developerBranchFor as realDeveloperBranchFor,
@@ -209,6 +209,7 @@ export type RunTaskDeps = {
    * after the live-driver refusal and before the loop starts; never throws.
    */
   assignIssue: (issue: number) => void
+  recordRunner?: (issue: number, runner: TaskRunner) => void
   /** The widen-surface continuation's own seams, read only when `RunTaskInput.widenSurface` is given; absent, the real ones. */
   widen?: WidenSurfaceDeps
 }
@@ -304,6 +305,7 @@ export const defaultRunTaskDeps: RunTaskDeps = {
   devReviewLoop: realRunDriverLoop,
   resolveRepo: () => realResolveRepo(),
   assignIssue: (issue) => realAssignIssueAtRunStart(issue),
+  recordRunner: recordTaskRunner,
   widen: defaultWidenSurfaceDeps
 }
 
@@ -456,6 +458,7 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
   // detached child a `--background` start launches, and the Operator's
   // `task_start` tool all run `runTask` itself.
   deps.assignIssue(issue)
+  deps.recordRunner?.(issue, runner)
   if (runner === 'atta-engine') {
     const exitCode = await runTaskEngine(
       { task: issue, agent, ...(resolvedModel ? { model: resolvedModel } : {}) },

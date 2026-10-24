@@ -43,7 +43,9 @@ import { appendRoleLine, loopLogPathFor } from '../loop-log.js'
 import {
   escalationIdFor,
   escalationPrOf,
+  isDriverPidAlive,
   missingEscalationNextStep,
+  readDriverLock,
   readEscalationRecord,
   readPauseState,
   ReplayedResolutionError,
@@ -51,6 +53,7 @@ import {
   WrongTargetResolutionError
 } from '../dev-review-loop/pause-resume.js'
 import { log } from '../log-sink.js'
+import { readTaskRunner, requestEngineCancellation } from '../task-run-engine.js'
 import { resolveIssueForRef, type TaskToolCallResult } from './handlers.js'
 import { readEscalationPacket } from './read.js'
 import type { CallerContext } from './server.js'
@@ -75,6 +78,9 @@ export type TaskCancelDeps = {
   hostname: () => string
   /** The Vinaya Log chokepoint (`log-sink.ts`) — injectable so a fixture can capture the typed `operation` event this handler emits without touching the real, machine-global outbox. */
   log: typeof log
+  runner?: (task: number, root: string) => 'standalone' | 'atta-engine'
+  requestEngineCancel?: (task: number, root: string) => void
+  signalEngine?: (pid: number) => void
 }
 
 export const defaultTaskCancelDeps: TaskCancelDeps = {
@@ -86,7 +92,10 @@ export const defaultTaskCancelDeps: TaskCancelDeps = {
   fetchNewestIssueRulingOrdinal,
   cancelDevReviewLoop: (input) => cancelDevReviewLoop(input),
   hostname: osHostname,
-  log
+  log,
+  runner: readTaskRunner,
+  requestEngineCancel: requestEngineCancellation,
+  signalEngine: (pid) => process.kill(pid, 'SIGTERM')
 }
 
 /**
@@ -208,6 +217,30 @@ export function createTaskCancelHandler(
     appendRoleLine(loopLogPathFor(null, issue, root), 'operator', `task_cancel requested: ${parsed.data.reason}`)
 
     try {
+      if ((deps.runner ?? readTaskRunner)(issue, root) === 'atta-engine') {
+        const lock = readDriverLock(root, issue)
+        if (lock === null || !isDriverPidAlive(lock.pid)) {
+          emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
+          return fail(
+            taskToolError(
+              'precondition',
+              `task ${issue}'s recorded runner is atta-engine, but no live Engine run is held`
+            )
+          )
+        }
+        ;(deps.requestEngineCancel ?? requestEngineCancellation)(issue, root)
+        ;(deps.signalEngine ?? ((pid: number) => process.kill(pid, 'SIGTERM')))(lock.pid)
+        emitOperationEvent(deps.log, issue, target, 'ok', null)
+        return ok({
+          task: issue,
+          pr,
+          escalationId,
+          outcome: 'pending',
+          authenticatedBy: ctx.caller.id,
+          authenticatedFrom: 'operator-engine-cancel',
+          fencedEffectKeys: []
+        })
+      }
       const result = await deps.cancelDevReviewLoop(
         escalationPr === null ? { cancelTask: issue, agent } : { cancelPr: escalationPr, agent }
       )

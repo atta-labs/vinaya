@@ -112,10 +112,18 @@ import {
   defaultSetHeartbeat,
   emitDriverHeartbeat
 } from '../../../apps/cli/src/lib/dev-review-loop/driver-lifecycle'
-import { isDriverPidAlive } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+import {
+  fenceStartedEffectsAsUncertain,
+  clearDriverLock,
+  escalationPrOf,
+  isDriverPidAlive,
+  readPauseState,
+  resolveEscalation
+} from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { appendLoopLogLine, appendRunStartMarker, loopLogPathFor } from '../../../apps/cli/src/lib/loop-log'
 import { getProcessSnapshot, readLaunchRecord, terminateChildWithGrace } from '../../../apps/cli/src/lib/dispatch'
 import { loadConfig } from '../../../apps/cli/src/lib/config'
+import { engineCancellationRequested } from '../../../apps/cli/src/lib/task-run-engine'
 import { startDevToolsHost, type DevToolsHost } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
 import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-tools-registration'
 import {
@@ -584,6 +592,8 @@ export interface EngineRunOptions {
   observe?: (event: NodeLifecycle) => void
   spawnFn?: SpawnFn
   control?: RunControl
+  /** True when the halt was an authenticated Operator cancellation. */
+  cancellationRequested?: () => boolean
   out?: (line: string) => void
   execPath?: string
   /** The Developer's prompt facts, read each time its step starts; absent leaves the prompt as the Flow renders it. */
@@ -685,6 +695,12 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
   reapOnHalt()
   const stopWatching = new AbortController()
   const log = (event: DevReviewLoopEventInput): void => (options.sink.log as unknown as (event: unknown) => void)(event)
+  // Standalone's shared sink drains handoff records after the driver's own
+  // terminal events. Preserve that observable ordering on the Engine path.
+  const deferredHandoffEvents: DevReviewLoopEventInput[] = []
+  const handoffLog = (event: DevReviewLoopEventInput): void => {
+    deferredHandoffEvents.push(event)
+  }
   let currentNode: string | null = null
   let prNumber = 0
   let signalled: 'SIGINT' | 'SIGTERM' | null = null
@@ -765,7 +781,7 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
         }
       },
       options.loopId,
-      options.handoffDeps ?? liveHandoffDeps(log)
+      options.handoffDeps ? { ...options.handoffDeps, log: handoffLog } : liveHandoffDeps(handoffLog)
     )
   // A resumed leg hands its own pauses off afresh: one handoff answers for one leg.
   let handoff = makeHandoff()
@@ -977,6 +993,31 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
           ? resumeProcessRun(runOptions, identity)
           : startProcessRun(runOptions, identity))
         legOutcome = outcome as unknown as LegOutcome
+        if (control.signal.aborted && options.cancellationRequested?.() === true) {
+          const cancellation = handoff.pause({
+            reason: 'escalation',
+            detail: 'the Operator cancelled the run'
+          })
+          if (!cancellation.escalationId) throw new Error('the cancellation handoff wrote no escalation record')
+          const resolved = resolveEscalation(
+            args.task,
+            cancellation.escalationId,
+            escalationPrOf(readPauseState(options.runtimeDir, args.task)!),
+            'cancel',
+            'principal',
+            'engine-run-control'
+          )
+          fenceStartedEffectsAsUncertain(args.task, resolved.epoch)
+          log({
+            kind: 'dev_review_loop',
+            payload: {},
+            loop_id: options.loopId,
+            event: 'cancelled',
+            round: taskForHandoff?.reviewRound?.() ?? 1,
+            by: 'principal'
+          })
+          legOutcome = { reason: 'cancelled' } as unknown as LegOutcome
+        }
         if (outcome.reason === 'failed') {
           // A step that threw is handed off like any other pause, keeping what the checkpoint holds.
           error = outcome.error
@@ -1029,7 +1070,16 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
           : {}),
       ...(exit.failedStep ? { error: Object.assign(new Error('a step failed'), { code: STEP_FAILED }) } : {})
     })
-    const lockOutcome = releaseDriverLock(options.runtimeDir, args.task, lockExitOf(exit))
+    for (const event of deferredHandoffEvents) log(event)
+    deferredHandoffEvents.length = 0
+    const cancelled = options.cancellationRequested?.() === true
+    let lockOutcome: ReturnType<typeof releaseDriverLock> | 'cleared'
+    if (cancelled) {
+      clearDriverLock(options.runtimeDir, args.task)
+      lockOutcome = 'cleared'
+    } else {
+      lockOutcome = releaseDriverLock(options.runtimeDir, args.task, lockExitOf(exit))
+    }
     narrate(`driver exited (${exit.reason}, ${exit.lastDecision}); driver lock ${lockOutcome}`)
     try {
       await Promise.all(hosts.map((host) => host.close()))
@@ -1631,14 +1681,14 @@ export function liveRecovery(input: {
   }
 }
 
-/** Engine events use the shared sink with delivery restricted to its local folder. */
+/** Engine events use the same destination-resolving sink as the standalone runner. */
 export function createEngineLogSink(overrides: Partial<LogSinkDeps> = {}) {
-  return createLogSink({ ...overrides, folderOnly: true })
+  return createLogSink(overrides)
 }
 
-/** Apply before any Engine act so CLI children and their own children inherit local-only recording. */
+/** Remove the former local-only override so child processes resolve the configured destination too. */
 export function configureEngineLogEnvironment(env: NodeJS.ProcessEnv = process.env): void {
-  env[LOG_FOLDER_ONLY_ENV] = '1'
+  delete env[LOG_FOLDER_ONLY_ENV]
 }
 
 /** Runs one task on the Engine against the live forge, git and Log. */
@@ -1688,7 +1738,8 @@ async function runLive(args: EngineArgs, loaded: LoadedProcess, repoRoot: string
       watch: { deps: liveResumeDeps, pollMs: rulingPollMs(), sleep: abortableSleep }
     },
     devToolsContext: liveContext.context,
-    beginDeveloperTurn: liveContext.beginTurn
+    beginDeveloperTurn: liveContext.beginTurn,
+    cancellationRequested: () => engineCancellationRequested(args.task, runtimeDir)
   })
   // The handoff's escalation record logs through the default sink, which nothing else drains.
   await drainLogSink()

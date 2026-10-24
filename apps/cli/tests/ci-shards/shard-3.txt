@@ -110,3 +110,5 @@ tests/lib/dev-review-loop/inproc-7.test.ts
 tests/checks/runner.test.ts
 tests/commands/issue.test.ts
 tests/lib/dev-review-loop/inproc-5.test.ts
+tests/lib/task-tools/engine-runner-routing.test.ts
+tests/conformance/dev-review-log-parity.test.ts

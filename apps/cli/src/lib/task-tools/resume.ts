@@ -92,6 +92,7 @@ import {
   WrongTargetResolutionError
 } from '../dev-review-loop/pause-resume.js'
 import { runtimeDir } from '../dev-review-loop.js'
+import { engineRunnerScriptPath, readTaskRunner } from '../task-run-engine.js'
 import { newestPublishedRound } from '../task-status.js'
 import { widenSurfaceContinuationFor } from '../task-run.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
@@ -252,12 +253,26 @@ export function defaultResumeLaunch(
   // own branch. Both forms are commands the CLI already exposes, and the
   // agent AND model the paused run was dispatched under both travel with it.
   const argv =
-    target.pr === null
-      ? noPushResumeArgv(target.issue, target.branch, target.agent, target.model)
-      : ['dev-review-loop', '--resume', String(target.pr), '--agent', target.agent]
+    readTaskRunner(target.issue, runtimeDir()) === 'atta-engine'
+      ? [
+          engineRunnerScriptPath(),
+          '--resume',
+          '--task',
+          String(target.issue),
+          '--agent',
+          target.agent,
+          ...(target.model ? ['--model', target.model] : [])
+        ]
+      : target.pr === null
+        ? noPushResumeArgv(target.issue, target.branch, target.agent, target.model)
+        : ['dev-review-loop', '--resume', String(target.pr), '--agent', target.agent]
   let child: ChildProcess
   try {
-    child = launchDetached(program, argv, ['ignore', 'ignore', stderrFd])
+    child = launchDetached(readTaskRunner(target.issue, runtimeDir()) === 'atta-engine' ? 'bun' : program, argv, [
+      'ignore',
+      'ignore',
+      stderrFd
+    ])
   } finally {
     // Spawn dup's the fd into the child; our own copy is safe to close
     // immediately, whether spawn succeeded or threw synchronously.

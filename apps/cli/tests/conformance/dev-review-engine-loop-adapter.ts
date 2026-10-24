@@ -427,6 +427,7 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
       startHost: async () => ({ close: async () => {} }),
       devToolsContext: devTools,
       control,
+      cancellationRequested: () => cancel,
       out: () => {},
       developerFacts: async () => facts(),
       observe: (event) => {
@@ -594,9 +595,11 @@ function observeEngineRun(runtimeDir: string, traces: RunTrace[], preparationErr
           ? 'publish'
           : last?.outcome === 'paused'
             ? `pause:${last.pauseReason ?? 'halt'}`
-            : decision?.type === 'pause'
-              ? `pause:${decision.reason}`
-              : `ended:${last?.outcome}`,
+            : last?.outcome === 'cancelled'
+              ? 'cancelled'
+              : decision?.type === 'pause'
+                ? `pause:${decision.reason}`
+                : `ended:${last?.outcome}`,
     refusal:
       preparationError !== undefined
         ? preparationError instanceof Error
