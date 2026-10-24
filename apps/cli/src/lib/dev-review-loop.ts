@@ -41,6 +41,7 @@
  * so no existing import elsewhere in this codebase needed to change.
  */
 
+import { cliEntryPath } from './cli-entry.js'
 import { randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { guardedSpawnSync } from './driver-tool-guard.js'
@@ -2221,7 +2222,7 @@ export async function defaultRunWorktreeChecks(
   worktreePath: string,
   env: Record<string, string> = {}
 ): Promise<{ passed: boolean; output: string }> {
-  const res = guardedSpawnSync(process.argv[0] as string, [process.argv[1] as string, 'check', '--all'], {
+  const res = guardedSpawnSync(process.argv[0] as string, [cliEntryPath(), 'check', '--all'], {
     cwd: worktreePath,
     env: { ...process.env, ...env },
     maxBuffer: 64 * 1024 * 1024
@@ -2263,14 +2264,10 @@ async function defaultRefreshPrEvidence(input: {
   round: number
   repo: { owner: string; repo: string } | null
 }): Promise<{ head: string; checksPassed: boolean; evidence: string }> {
-  const res = guardedSpawnSync(
-    process.argv[0] as string,
-    [process.argv[1] as string, ...prReportRefreshArgs(input.prNumber)],
-    {
-      cwd: input.worktreePath,
-      maxBuffer: 64 * 1024 * 1024
-    }
-  )
+  const res = guardedSpawnSync(process.argv[0] as string, [cliEntryPath(), ...prReportRefreshArgs(input.prNumber)], {
+    cwd: input.worktreePath,
+    maxBuffer: 64 * 1024 * 1024
+  })
   const stdout = res.stdout ?? ''
   const output = `${stdout}${res.stderr ?? ''}`
   let head = ''
@@ -2415,7 +2412,7 @@ function defaultPullDefaultBranch(): { ok: true } | { ok: false; reason: string 
 
 /** O7: `process.argv[0]`/`[1]` are the interpreter and entry script this process itself was started with — re-spawning them with a fresh `args` tail reattaches under the exact same runtime, whether that's `bun apps/cli/src/index.ts` from source or a bundled `vinaya` binary. `stdio: 'inherit'` so the reattached run's own output reaches whatever terminal/log is watching this one. */
 function defaultReexecSelf(args: string[]): number | null {
-  const result = spawnSync(process.argv[0] as string, [process.argv[1] as string, ...args], { stdio: 'inherit' })
+  const result = spawnSync(process.argv[0] as string, [cliEntryPath(), ...args], { stdio: 'inherit' })
   if (result.error) return null
   return result.status ?? 1
 }

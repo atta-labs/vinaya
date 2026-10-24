@@ -25,6 +25,7 @@
  * the driver ends a Claude start whose server was reported failed or skipped.
  */
 
+import { cliEntryPath } from '../cli-entry.js'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -88,7 +89,7 @@ export function devToolsSocketPath(key: string): string {
  */
 export function driverDevBridgeInvocation(
   socketPath: string,
-  entry: string = process.argv[1] ?? 'vinaya'
+  entry: string = cliEntryPath() ?? 'vinaya'
 ): BridgeInvocation {
   return { command: process.execPath, args: [entry, 'task-tools', 'dev-bridge', '--socket', socketPath] }
 }

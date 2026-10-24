@@ -1180,3 +1180,19 @@ describe('closing a Developer turn on the Engine path', () => {
     ])
   })
 })
+
+describe('the CLI entry commands run from inside the Engine runner', () => {
+  test('is the one the runner names, not the runner script itself', async () => {
+    const { cliEntryPath, CLI_ENTRY_ENV } = await import('../../../apps/cli/src/lib/cli-entry')
+    const before = process.env[CLI_ENTRY_ENV]
+    process.env[CLI_ENTRY_ENV] = '/opt/vinaya/apps/cli/src/index.ts'
+    try {
+      expect(cliEntryPath()).toBe('/opt/vinaya/apps/cli/src/index.ts')
+      delete process.env[CLI_ENTRY_ENV]
+      expect(cliEntryPath()).toBe(process.argv[1] as string)
+    } finally {
+      if (before === undefined) delete process.env[CLI_ENTRY_ENV]
+      else process.env[CLI_ENTRY_ENV] = before
+    }
+  })
+})

@@ -123,6 +123,7 @@ import {
 } from '../../../apps/cli/src/lib/dev-review-loop/driver-lifecycle'
 import { isDriverPidAlive } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { appendLoopLogLine, appendRunStartMarker, loopLogPathFor } from '../../../apps/cli/src/lib/loop-log'
+import { CLI_ENTRY_ENV } from '../../../apps/cli/src/lib/cli-entry'
 import { developerTurnResultJsonSchema } from '../../../apps/cli/src/lib/developer-turn-result'
 import {
   getProcessSnapshot,
@@ -1829,6 +1830,8 @@ export function targetRepoRoot(cwd: string = process.cwd()): string {
 }
 
 export async function main(argv: readonly string[]): Promise<number> {
+  // This process hosts the CLI's code without being the CLI: commands it runs as the CLI start the install's entry.
+  process.env[CLI_ENTRY_ENV] = cliEntryOf(VINAYA_ROOT)
   const repoRoot = targetRepoRoot()
   const loaded = loadProcess(resolve(import.meta.dir, '..'))
   const runtimeDir = await liveRuntimeDir()
