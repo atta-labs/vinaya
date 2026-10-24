@@ -582,8 +582,10 @@ export interface LogSinkLike {
 export interface EngineRunOptions {
   args: EngineArgs
   process: LoadedProcess
-  /** The repository root the shim's CLI entry is found under. */
+  /** The repository the task runs in. */
   repoRoot: string
+  /** Where the shim's CLI entry is found: the Vinaya install. Defaults to `repoRoot`, which is the install when Vinaya runs on itself. */
+  cliRoot?: string
   runtimeDir: string
   loopId: string
   taskInput: TaskInput
@@ -863,8 +865,6 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
       Object.entries(base).map(([name, action]) => [
         name,
         async (context: Parameters<typeof action>[0]) => {
-          // Each Developer turn records the head it starts from, as the standalone loop does.
-          if (context.nodeId === 'develop') await options.beginDeveloperTurn?.()
           const result = await action(context)
           if (context.nodeId === 'reconcile-external-state') {
             try {
@@ -965,8 +965,12 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
           ...(developerFacts
             ? {
                 stepPrompts: {
-                  develop: async (rendered, results, context) =>
-                    developerPrompt(rendered, await developerFacts(), results, context),
+                  develop: async (rendered, results, context) => {
+                    // Each Developer turn records the head it starts from and its launch, as the standalone loop does
+                    // at each dispatch. `develop` is an agent step, so the action wrapper below never sees it.
+                    await options.beginDeveloperTurn?.()
+                    return developerPrompt(rendered, await developerFacts(), results, context)
+                  },
                   ...(options.taskInput?.reviewerPrompt
                     ? {
                         'code-review': async (_rendered, results) =>
@@ -1747,8 +1751,9 @@ async function runLive(args: EngineArgs, loaded: LoadedProcess, repoRoot: string
   const result = await runEngine({
     args,
     process: loaded,
+    repoRoot,
     // The shim's CLI entry lives in the Vinaya install, not in the task's repository.
-    repoRoot: VINAYA_ROOT,
+    cliRoot: VINAYA_ROOT,
     runtimeDir,
     loopId,
     taskInput,

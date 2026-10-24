@@ -275,7 +275,11 @@ async function replay(scenario: Scenario) {
   const rounds: Record<Step, number> = { develop: 0, 'code-review': 0, 'security-review': 0 }
   const events: Array<{ event?: string; kind?: string }> = []
   const handoff = recordedHandoff()
+  let developerTurnsBegun = 0
   const result = await runEngine({
+    beginDeveloperTurn: async () => {
+      developerTurnsBegun += 1
+    },
     args,
     process: loaded,
     repoRoot: root,
@@ -331,7 +335,21 @@ async function replay(scenario: Scenario) {
     error?: string
     pauseReason?: string
   }
-  return { root, runtimeDir, worktree, before, result, trace, spawns, forgeCalls, published, cliCalls, events, handoff }
+  return {
+    root,
+    runtimeDir,
+    worktree,
+    before,
+    result,
+    trace,
+    spawns,
+    forgeCalls,
+    published,
+    cliCalls,
+    events,
+    handoff,
+    developerTurnsBegun
+  }
 }
 
 const generated = (runtimeDir: string, role: string, file: string) =>
@@ -357,6 +375,8 @@ for (const vendor of ['claude', 'codex'] as const)
       expect(run.trace.outcome).toBe('completed')
       expect(run.result.exitCode).toBe(0)
       expect(run.spawns.map((s) => s.step)).toEqual(['develop', 'code-review', 'security-review'])
+      // Each Developer launch begins a turn: its head and its launch record are written before the agent starts.
+      expect(run.developerTurnsBegun).toBe(1)
       // The forge calls the runner makes, in order.
       expect(run.forgeCalls).toEqual([`readiness task/issue-${TASK}`, `worktree task/issue-${TASK}`, 'publish round 1'])
       expect(run.published).toEqual([
