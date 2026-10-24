@@ -1254,7 +1254,7 @@ export async function runDriverLoopInProcess(
     runDriverLoop(input, loopDeps, {
       // The forge merges what the driver published unless the fixture keeps it open (`afterPublish`).
       devReviewLoop: async (loopInput, deps) => {
-        const result = await devReviewLoop(loopInput, deps)
+        const result = await runLoopInProcess(world, loopInput, deps)
         if (result.finalDecision.type === 'publish' && world.afterPublish === 'merge') world.prState = 'MERGED'
         return result
       },
