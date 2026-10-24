@@ -67,7 +67,8 @@ import {
   shimContent,
   type EngineRunOptions,
   type RunTrace,
-  targetRepoRoot
+  targetRepoRoot,
+  withTurnSchema
 } from '../bin/run-engine'
 
 const loaded = loadProcess(resolve(import.meta.dir, '..'))
@@ -1141,5 +1142,24 @@ describe('a Developer turn on the Engine path', () => {
     await live.beginTurn()
     expect(recordedLaunches.length).toBe(before + 1)
     expect(recordedLaunches.at(-1)).toMatchObject({ task: 31, agent: 'claude', round: 1 })
+  })
+})
+
+describe('the Developer launch schema', () => {
+  const launcher = (args: string[]) => ({ command: 'agent', allowedPermissions: [], buildArgs: () => [...args] })
+  test('Claude gets the current turn schema inline at every launch', () => {
+    let sources = ['`a.md`']
+    const wrapped = withTurnSchema(launcher(['-p', '--json-schema', '{"static":true}']), '/unused', () => ({ sources }))
+    expect(wrapped.buildArgs({} as never)).toEqual(['-p', '--json-schema', JSON.stringify({ sources: ['`a.md`'] })])
+    sources = ['`b.md`']
+    expect(wrapped.buildArgs({} as never)[2]).toBe(JSON.stringify({ sources: ['`b.md`'] }))
+  })
+  test('Codex gets a rewritten schema file at every launch', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'turn-schema-'))
+    const wrapped = withTurnSchema(launcher(['exec', '--output-schema', '/static.json']), dir, () => ({ n: 1 }))
+    const args = wrapped.buildArgs({} as never)
+    expect(args[2]).toBe(join(dir, 'turn-output.schema.json'))
+    expect(JSON.parse(readFileSync(args[2] as string, 'utf8'))).toEqual({ n: 1 })
+    rmSync(dir, { recursive: true, force: true })
   })
 })

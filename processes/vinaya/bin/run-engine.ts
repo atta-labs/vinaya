@@ -28,7 +28,8 @@ import {
   resumeProcessRun,
   startProcessRun,
   type ActionRegistry,
-  type ProcessRunOptions
+  type ProcessRunOptions,
+  type RoleLauncher
 } from '../../../harness/dev-process/engine-runtime/run-process'
 import {
   createLogTranslator,
@@ -121,6 +122,7 @@ import {
 } from '../../../apps/cli/src/lib/dev-review-loop/driver-lifecycle'
 import { isDriverPidAlive } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { appendLoopLogLine, appendRunStartMarker, loopLogPathFor } from '../../../apps/cli/src/lib/loop-log'
+import { developerTurnResultJsonSchema } from '../../../apps/cli/src/lib/developer-turn-result'
 import {
   getProcessSnapshot,
   readLaunchRecord,
@@ -841,16 +843,25 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
       chmodSync(shimPath, 0o755)
       mcpCommands[roleHost.role === 'security' ? 'security-reviewer' : roleHost.role] = shimPath
     }
-    const roles = createRoleLaunchers({
-      vendor: vendorOf(args.agent),
-      generatedRoot: join(runDir, 'generated'),
-      variables: options.taskInput?.worktreePath ? grantVariables(options.taskInput.worktreePath, runDir) : undefined,
-      mcpCommands,
-      model: args.model,
-      allowUnixSockets: options.allowUnixSockets === true,
-      stageCodexLogin: true,
-      timeouts: roleTimeouts(lifecycle.dispatchConfig)
-    })
+    const roles: Record<string, RoleLauncher[string]> = {
+      ...createRoleLaunchers({
+        vendor: vendorOf(args.agent),
+        generatedRoot: join(runDir, 'generated'),
+        variables: options.taskInput?.worktreePath ? grantVariables(options.taskInput.worktreePath, runDir) : undefined,
+        mcpCommands,
+        model: args.model,
+        allowUnixSockets: options.allowUnixSockets === true,
+        stageCodexLogin: true,
+        timeouts: roleTimeouts(lifecycle.dispatchConfig)
+      })
+    }
+    // Each Developer launch carries the turn schema the standalone loop builds per turn: the task's current
+    // required sources and known finding ids, never the static role schema (which allows no source use).
+    if (options.taskInput?.developerContext && roles.developer) {
+      roles.developer = withTurnSchema(roles.developer, join(runDir, 'generated', 'developer'), () =>
+        developerTurnResultJsonSchema(options.taskInput.developerContext)
+      )
+    }
     // The Developer's sandbox is probed from the launch shape just generated, before the first agent step.
     if (options.taskInput && roles.developer) {
       const vendor = vendorOf(args.agent)
@@ -1831,4 +1842,31 @@ if (import.meta.main) {
       process.exit(1)
     }
   )
+}
+
+/**
+ * A role launcher whose output schema is rebuilt at every launch: inline for Claude (`--json-schema <json>`),
+ * a rewritten file for Codex (`--output-schema <path>`). Any other argument is unchanged.
+ */
+export function withTurnSchema(
+  launcher: RoleLauncher[string],
+  generatedDir: string,
+  schema: () => Record<string, unknown>
+): RoleLauncher[string] {
+  return {
+    ...launcher,
+    buildArgs: (input) => {
+      const args = [...launcher.buildArgs(input)]
+      const current = schema()
+      const inline = args.indexOf('--json-schema')
+      if (inline !== -1 && inline + 1 < args.length) args[inline + 1] = JSON.stringify(current)
+      const file = args.indexOf('--output-schema')
+      if (file !== -1 && file + 1 < args.length) {
+        const path = join(generatedDir, 'turn-output.schema.json')
+        writeFileSync(path, JSON.stringify(current))
+        args[file + 1] = path
+      }
+      return args
+    }
+  }
 }
