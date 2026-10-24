@@ -41,7 +41,8 @@ import {
   type TaskPhaseHistory
 } from '@attalabs/aeg-core'
 import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
-import { resolveTrustedPrincipals } from './config.js'
+import { resolveTrustedPrincipals, type TaskRunner } from './config.js'
+import { readEngineRun, readTaskRunner, type EngineRunReading } from './task-run-engine.js'
 import { findOpenPrForBranch, runtimeDir } from './dev-review-loop.js'
 import { DRIVER_LOCK_FILENAME, runPath, tasksExecutionRoot } from './run-paths.js'
 import { loopLogPathFor, loopsRoot, type LoopLogRepo } from './loop-log.js'
@@ -966,6 +967,23 @@ export type TaskStatusRow = {
    * is not paused.
    */
   pauseDisposition: PauseDisposition | null
+  /** The runner the task's run recorded; absent reads as the standalone runner. */
+  runner?: TaskRunner
+  /** For an Engine run, its run directory, checkpoint and driver lock, read by path; null for a standalone run. */
+  engine?: EngineRunReading | null
+}
+
+/** The runner a task's run recorded, and for an Engine run what its own run directory holds. */
+export function runnerReadingFor(issue: number, root: string): Pick<TaskStatusRow, 'runner' | 'engine'> {
+  const runner = readTaskRunner(issue, root)
+  return { runner, engine: runner === 'atta-engine' ? readEngineRun(issue, root) : null }
+}
+
+/** The state cell's note for an Engine run: whether its checkpoint is there to continue from and who holds its lock. */
+export function engineRunNote(engine: EngineRunReading | null | undefined): string {
+  if (!engine) return ''
+  const lock = engine.lock === null ? 'no lock' : `lock pid ${engine.lock.pid}${engine.lock.alive ? '' : ' (dead)'}`
+  return ` · Engine run, ${engine.checkpoint ? 'checkpoint kept' : 'no checkpoint'}, ${lock}`
 }
 
 /**
@@ -1268,7 +1286,7 @@ function cellsFor(row: TaskStatusRow): string[] {
     `[${row.tranche}] ${row.id}`,
     `#${row.issue}`,
     row.pr ? `#${row.pr.number}` : NO_VALUE,
-    renderStateText(row.state, row.pauseDisposition),
+    `${renderStateText(row.state, row.pauseDisposition)}${engineRunNote(row.engine)}`,
     row.round === null ? NO_VALUE : String(row.round),
     phaseCell(row),
     inPhaseCell(row),
@@ -1629,7 +1647,8 @@ function buildRow(
       // The disposition is what a PAUSE is waiting for — carried only for a row
       // that reads `paused` (whether derived so or recovered from a killed
       // pause above), and already computed, never read twice.
-      pauseDisposition: state.kind === 'paused' ? disposition : null
+      pauseDisposition: state.kind === 'paused' ? disposition : null,
+      ...runnerReadingFor(ref.issue, root)
     }
   }
 }

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   assessRound,
@@ -21,7 +21,7 @@ import type { RoleBinaryConfig, StepNodeResult } from '@atta/executor-agent-spaw
 import { generateClaudeSettings } from '../../../harness/adapters/agents/claude-code/settings'
 import { generateCodexConfig } from '../../../harness/adapters/agents/codex/config'
 import { loadRoleGrants, ROLE_NAMES, withModel } from '../../../harness/adapters/agents/manifest'
-import { structuredResult } from '../../../harness/adapters/agents/structured-result'
+import { sessionIdOf, structuredResult } from '../../../harness/adapters/agents/structured-result'
 import { pullRequestCheckEnv, type PullRequestView } from './pull-request-env'
 import type { Handoff, InputVersions, PauseRequest } from './handoff'
 import { runCliChecks } from '../../../harness/gates/run-checks'
@@ -75,6 +75,7 @@ import {
   type PrepareSourcesResult
 } from '../../../apps/cli/src/lib/source-provider'
 import { probeAgentSandbox, type SandboxProbePlan } from '../../../apps/cli/src/lib/worker-boundary'
+import { ensureRunDir, runPath } from '../../../apps/cli/src/lib/run-paths'
 import {
   postForgeEffectOnce,
   publishRound,
@@ -85,6 +86,7 @@ import {
   defaultRunSecurityScanSubprocess,
   defaultUpdatePrBody,
   deferredEntriesForRound,
+  deriveVerdictPauseDetail,
   describeConfidencePauseDetail,
   handoffFindings
 } from '../../../apps/cli/src/lib/dev-review-loop'
@@ -198,6 +200,8 @@ export interface TaskInput {
   seedRound?: (round: number) => void
   /** The review-input manifest of the task head as it stands now, or null when it cannot be built. */
   currentManifest?: () => ReviewInputManifest | null
+  /** The command of the objectives edit that moved the objectives, or null when no edit can be found. */
+  objectivesEdit?: () => string | null
   /**
    * The round's review inputs, taken once when its reviewers are dispatched: the manifest snapshot every reviewer
    * prompt, held verdict and publication of the round reads, persisted best-effort to the control store.
@@ -225,7 +229,12 @@ export interface TaskInput {
    */
   publish: (at: PublishTarget) => PublishInput
   /** One reviewer's accepted result as the round's verdict observation and the comment held for publication; throws `ReviewerResultRejected` for a result no rule accepts. */
-  buildVerdict: (role: HeldVerdictRole, review: ReviewResult, inputs: ReviewRoundInputs) => RoundVerdictParse
+  buildVerdict: (
+    role: HeldVerdictRole,
+    review: ReviewResult,
+    inputs: ReviewRoundInputs,
+    sessionId?: string
+  ) => RoundVerdictParse
   /** The branch's head on the remote, or null when it cannot be read. */
   remoteHead?: () => string | null
   /** The task worktree's unpushed work (`readUnpushedWorkDetail`); the worktree itself is read when absent. */
@@ -531,13 +540,21 @@ export function agentOutput(results: Results, step: string): unknown {
   return structuredResult(agentEvents(result))
 }
 
+/** A Claude stream event (`system`, `result`, …) rather than a result: each names the session it belongs to. */
+function isClaudeSessionEvent(record: unknown): boolean {
+  const event = record as { type?: unknown; session_id?: unknown } | null
+  return typeof event?.type === 'string' && typeof event.session_id === 'string'
+}
+
 /** What a reviewer step's run showed, as `classifyReviewOutcome` reads it. */
 export function reviewRunFacts(results: Results, step: string): ReviewRunFacts {
   const result = results[step]
   if (result === undefined)
     return { cancelled: false, resumed: false, terminal: null, errors: [], hasResult: false, raw: undefined }
   const exits = result.kind === 'agent-spawn' ? result.events.map(agentExitOf).filter((code) => code !== null) : []
-  const raw = agentOutput(results, step)
+  const output = agentOutput(results, step)
+  // A Claude stream that ended on one of its own session events carried no structured result at all.
+  const raw = isClaudeSessionEvent(output) ? undefined : output
   return {
     cancelled: false,
     // The reviewer steps never continue a session: every launch is a fresh one.
@@ -698,6 +715,8 @@ interface RecordedReviews {
   next: ReviewNext
   /** Each role's accepted verdict this round, kept across a fresh retry of its sibling. */
   accepted: Partial<Record<HeldVerdictRole, RoundVerdictParse>>
+  /** Each earlier attempt's miss this round, named again when the round's last attempt misses too. */
+  missed: Array<{ role: HeldVerdictRole; detail: string }>
 }
 
 function recordedReviews(results: Results): RecordedReviews | null {
@@ -710,7 +729,8 @@ function recordedReviews(results: Results): RecordedReviews | null {
           round: parsed.round,
           attempt: parsed.attempt ?? 1,
           next: parsed.next as ReviewNext,
-          accepted: parsed.accepted ?? {}
+          accepted: parsed.accepted ?? {},
+          missed: parsed.missed ?? []
         }
       : null
   } catch {
@@ -904,13 +924,7 @@ function validateDeveloperOutput(task: TaskInput, context: ActionContext): { exi
   /** A decided pause: logged as the standalone loop logs one, made durable, and routed to where its resume continues. */
   const pause = (reason: PauseReason, reasonCode: string, detail: string, error?: unknown) => {
     events.push(
-      ...driverDecidedPauseEvents(
-        loopIdOf(state),
-        state,
-        round,
-        worktreeStats(task.worktreePath, 0),
-        reasonCode
-      ).filter((event) => event.event !== 'round_ended')
+      ...driverDecidedPauseEvents(loopIdOf(state), state, round, worktreeStats(task.worktreePath, 0), reasonCode)
     )
     pauseThrough(task, 'validate-developer-output', { reason, detail, ...(error === undefined ? {} : { error }) })
     // Its resume dispatches the turn this one answered again, never a second correction.
@@ -951,7 +965,8 @@ function validateDeveloperOutput(task: TaskInput, context: ActionContext): { exi
     if (correcting) {
       const rejection = new DeveloperTurnResultPause(
         'rejected',
-        `the Developer's turn result was rejected twice in round ${round} (first: ${(answered.failures ?? []).join('; ')}; then: ${judged.failures.join('; ')})`
+        // Worded as the standalone loop words it: the rejected turn and its one correction.
+        `the Developer's turn result was rejected twice in round ${round} (attempt 1: ${(answered.failures ?? []).join('; ')}; attempt 2: ${judged.failures.join('; ')})`
       )
       return pause(rejection.pauseReason, rejection.reasonCode, rejection.message, rejection)
     }
@@ -1078,9 +1093,12 @@ function assessGate(task: TaskInput, context: ActionContext): { exitCode: number
     const named =
       stall.refusal !== null
         ? `publication refused: ${stall.refusal}`
-        : failure !== undefined
+        : !localGreen && failure !== undefined
           ? `failing check(s): ${failure}`
-          : null
+          : ciRed && ci.failingChecks.length > 0
+            ? // Named as the standalone loop names the forge's own failing check-runs.
+              `failing check-run(s): ${ci.failingChecks.join(', ')}`
+            : null
     const detail = `head ${stall.headBefore} unchanged after dispatch; ${
       named ?? 'no named failure for this head — the developer pushed nothing for the gate to judge'
     }`
@@ -1128,6 +1146,23 @@ function assessGate(task: TaskInput, context: ActionContext): { exitCode: number
   return out(BACK, decision, { sendBack })
 }
 
+/**
+ * Keeps a finished sibling's verdict at `rounds/<n>/<role>-kept-on-pause.md` — never the held-verdict file, which
+ * only a round both roles finished holds — and returns the note the pause names it with; null when it cannot be
+ * written.
+ */
+function keepSiblingVerdict(task: TaskInput, round: number, role: HeldVerdictRole, verdict: RoundVerdictParse) {
+  const file = `${role}-kept-on-pause.md`
+  try {
+    ensureRunDir(runPath(task.runtimeDir, task.issueNumber, { area: 'round', round }), task.runtimeDir)
+    writeFileSync(runPath(task.runtimeDir, task.issueNumber, { area: 'round', round, file }), verdict.rendered, 'utf8')
+  } catch {
+    return null
+  }
+  const findings = verdict.observation.findings.length
+  return `the ${role === 'reviewer' ? 'code reviewer' : 'security reviewer'} finished this round (${verdict.observation.verdict}, ${findings} finding(s)), kept at rounds/${round}/${file}`
+}
+
 /** The reviewer steps' results, each classified; a retry, a re-dispatch or a pause when either gave no usable review. */
 function validateReviewerOutputs(task: TaskInput, context: ActionContext): { exitCode: number; stdout: string } {
   const { results } = context
@@ -1138,13 +1173,21 @@ function validateReviewerOutputs(task: TaskInput, context: ActionContext): { exi
   const state = carriedLoopState(results, task.loopState)
   const prior = recordedReviews(results)
   // A role accepted on an earlier attempt of this round keeps its verdict across its sibling's fresh retry.
-  const accepted: Partial<Record<HeldVerdictRole, RoundVerdictParse>> =
-    prior !== null && prior.round === round && prior.next === 'retry' ? { ...prior.accepted } : {}
+  const retried = prior !== null && prior.round === round && prior.next === 'retry'
+  const accepted: Partial<Record<HeldVerdictRole, RoundVerdictParse>> = retried ? { ...prior.accepted } : {}
   const missing: Array<{ role: HeldVerdictRole; detail: string; rejected: ReviewerResultRejected | null }> = []
   const events: unknown[] = []
   const out = (exitCode: number, next: ReviewNext, decision: { type: string; reason?: string; detail?: string }) => ({
     exitCode,
-    stdout: JSON.stringify({ round, attempt, next, accepted, events, decision })
+    stdout: JSON.stringify({
+      round,
+      attempt,
+      next,
+      accepted,
+      missed: [...(retried ? prior.missed : []), ...missing.map(({ role, detail }) => ({ role, detail }))],
+      events,
+      decision
+    })
   })
   for (const [step, role] of [
     ['code-review', 'reviewer'],
@@ -1164,6 +1207,9 @@ function validateReviewerOutputs(task: TaskInput, context: ActionContext): { exi
       accepted[role] = task.buildVerdict(role, parsed.result, { manifest: {} as ReviewInputManifest, objectives: [] })
       continue
     }
+    // The vendor session the attempt ran in, named in a miss as the standalone loop names it.
+    const sessionId = sessionIdOf(agentEvents(results[step]))
+    const session = sessionId ?? '(unknown)'
     const outcome = classifyReviewOutcome(reviewRunFacts(results, step), {
       role: role === 'reviewer' ? 'code-reviewer' : 'security-reviewer',
       headSha: inputs.manifest.headSha,
@@ -1183,17 +1229,21 @@ function validateReviewerOutputs(task: TaskInput, context: ActionContext): { exi
       if (accepted[role] === undefined && outcome.kind === 'no_review')
         missing.push({
           role,
-          detail: `attempt ${attempt}: no review (${outcome.reason}) — ${outcome.detail}`,
+          detail: `attempt ${attempt} (session ${session}): no review (${outcome.reason}) — ${outcome.detail}`,
           rejected: null
         })
       continue
     }
     try {
-      accepted[role] = task.buildVerdict(role, review, inputs)
+      accepted[role] = task.buildVerdict(role, review, inputs, sessionId)
     } catch (error) {
       if (!(error instanceof ReviewerResultRejected)) throw error
       if (accepted[role] === undefined)
-        missing.push({ role, detail: `attempt ${attempt}: no review (rejected) — ${error.message}`, rejected: error })
+        missing.push({
+          role,
+          detail: `attempt ${attempt} (session ${session}): no review (rejected) — ${error.message}`,
+          rejected: error
+        })
     }
   }
 
@@ -1203,19 +1253,28 @@ function validateReviewerOutputs(task: TaskInput, context: ActionContext): { exi
     const first = missing[0]!
     const failure =
       first.rejected ??
-      new ReviewerInfrastructureFailure(
-        first.role,
-        missing.filter((miss) => miss.role === first.role).map((miss) => miss.detail)
-      )
+      new ReviewerInfrastructureFailure(first.role, [
+        ...(retried ? prior.missed : []).filter((miss) => miss.role === first.role).map((miss) => miss.detail),
+        ...missing.filter((miss) => miss.role === first.role).map((miss) => miss.detail)
+      ])
+    // A sibling that finished while this one delivered no review is kept beside the round, never held, and named.
+    const keptNotes = (first.rejected === null ? (Object.keys(accepted) as HeldVerdictRole[]) : []).flatMap((role) => {
+      const note = keepSiblingVerdict(task, round, role, accepted[role]!)
+      return note === null ? [] : [note]
+    })
     for (const miss of missing)
       events.push({
         kind: 'role_attempt',
         event: 'attempted',
         payload: {},
         actor: miss.role,
-        attempt,
+        // As on the standalone driver: no attempt number at this site, and the model the role was dispatched under.
+        attempt: null,
         effect_id: `${loopIdOf(state)}:${round}:${attempt}:${miss.role}`,
-        model: null,
+        model:
+          (state.config.models as Readonly<Record<string, string>>)[
+            miss.role === 'reviewer' ? 'code-reviewer' : miss.role
+          ] ?? null,
         outcome: miss.rejected !== null ? 'incomplete' : 'infrastructure_failed',
         usage: null,
         duration_ms: 0
@@ -1231,7 +1290,7 @@ function validateReviewerOutputs(task: TaskInput, context: ActionContext): { exi
     )
     pauseThrough(task, 'validate-reviewer-outputs', {
       reason: 'infrastructure',
-      detail: failure.message,
+      detail: [failure.message, ...keptNotes].join(' — '),
       error: failure
     })
     return out(BACK, 'pause', { type: 'pause', reason: 'infrastructure' })
@@ -1250,15 +1309,9 @@ function validateReviewerOutputs(task: TaskInput, context: ActionContext): { exi
         const detail =
           changed === null
             ? 'the review inputs could not be read again before the verdicts were held, so neither verdict is kept'
-            : `${typed![0]} changed while the round-${round} reviewers ran (dispatched ${String(buildManifestRecord(inputs.manifest, { repository: '', pr: 0, branch: '', round, recordedAt: '' })[typed![0]])}, now ${String(buildManifestRecord(current!, { repository: '', pr: 0, branch: '', round, recordedAt: '' })[typed![0]])}); both verdicts are discarded`
+            : inputsChangedDetail(task, reason, inputs.manifest, current!, round)
         events.push(
-          ...driverDecidedPauseEvents(
-            loopIdOf(state),
-            state,
-            round,
-            worktreeStats(task.worktreePath, 0),
-            reason
-          ).filter((event) => event.event !== 'round_ended')
+          ...driverDecidedPauseEvents(loopIdOf(state), state, round, worktreeStats(task.worktreePath, 0), reason)
         )
         pauseThrough(task, 'validate-reviewer-outputs', {
           reason,
@@ -1277,6 +1330,34 @@ function validateReviewerOutputs(task: TaskInput, context: ActionContext): { exi
   for (const role of ['reviewer', 'security'] as const)
     write(task.runtimeDir, task.issueNumber, round, role, accepted[role]!.rendered)
   return out(FORWARD, 'hold', { type: 'hold' })
+}
+
+/** Why a moved review input paused the round, worded as the standalone loop words each. */
+function inputsChangedDetail(
+  task: TaskInput,
+  reason: PauseReason,
+  dispatched: ReviewInputManifest,
+  current: ReviewInputManifest,
+  round: number
+): string {
+  switch (reason) {
+    case 'objectives_changed': {
+      const command =
+        safeRead(task.objectivesEdit) ??
+        `vinaya issue objectives edit ${task.issueNumber} ... (edit comment not found on re-read)`
+      return `objectives moved from ${dispatched.objectivesVersion ?? 'none'} to ${current.objectivesVersion ?? 'none'} between reviewer dispatch and assessment — superseded by \`${command}\``
+    }
+    case 'brief_superseded':
+      return `the frozen brief was superseded between reviewer dispatch and assessment — brief hash moved from ${dispatched.briefHash ?? 'none'} to ${current.briefHash ?? 'none'}`
+    case 'policy_changed':
+      return `the review policy changed between reviewer dispatch and assessment — policy digest moved from ${dispatched.policyDigest} to ${current.policyDigest}`
+    default: {
+      const field = MANIFEST_PAUSES.find(([, pause]) => pause === reason)![0]
+      const record = (manifest: ReviewInputManifest) =>
+        String(buildManifestRecord(manifest, { repository: '', pr: 0, branch: '', round, recordedAt: '' })[field])
+      return `${field} changed while the round-${round} reviewers ran (dispatched ${record(dispatched)}, now ${record(current)}); both verdicts are discarded`
+    }
+  }
 }
 
 /** The round's verdicts, observed by the assessment, which decides the round. */
@@ -1298,9 +1379,16 @@ function assessVerdictsAction(task: TaskInput, context: ActionContext): { exitCo
     deferredFindings,
     sendBack: decision.type === 'publish' ? null : { kind: 'review' }
   })
-  if (decision.type === 'pause')
+  if (decision.type === 'pause') {
+    // An escalation or a reappearance names its cause from the round's facts, as the standalone loop's does.
+    const escalated = (role: VerdictObservation['role']) =>
+      verdicts.some((verdict) => verdict.role === role && verdict.verdict === 'ESCALATE')
+    const detail =
+      decision.detail ??
+      deriveVerdictPauseDetail(decision.reason, assessment.events, escalated('reviewer'), escalated('security'))
     // The pause is a decision, not a failure: it is handed off and the run halts at this step's boundary.
-    pauseThrough(task, 'assess-round', { reason: decision.reason, detail: decision.detail ?? decision.reason })
+    pauseThrough(task, 'assess-round', { reason: decision.reason, detail: detail ?? decision.reason })
+  }
   return { exitCode: decision.type === 'publish' ? 0 : 1, stdout }
 }
 

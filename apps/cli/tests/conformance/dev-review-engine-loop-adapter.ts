@@ -38,11 +38,18 @@ import {
 } from '../../src/lib/dev-review-loop/pause-resume.js'
 import { liveHandoffDeps, type HandoffDeps } from '../../../../processes/vinaya/executing/handoff.js'
 import { liveResumeDeps, type ResumeDeps } from '../../../../processes/vinaya/bin/run-lifecycle.js'
-import { LOG_FOLDER_ONLY_ENV } from '../../src/lib/log-sink.js'
+import {
+  createLogSink,
+  drainLogSink,
+  LOG_FOLDER_ONLY_ENV,
+  resetDefaultLogSinkContext,
+  type LogSinkDeps
+} from '../../src/lib/log-sink.js'
 import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache } from '../../src/lib/run-paths.js'
 import { cleanupAllReviewerIsolationArtifacts } from '../../src/lib/dev-review-loop/reviewer-isolation.js'
 import { heldVerdictPath } from '../../src/lib/dev-review-loop/reviewer-dispatch.js'
-import { handoffIdsInPrompt } from '../lib/dev-review-loop-harness.js'
+import { handoffIdsInPrompt, OWNED_ENV_KEYS } from '../lib/dev-review-loop-harness.js'
+import { FIXTURE_REPO } from '../lib/process-fixture.js'
 import type { Observation } from './dev-review-current-loop-adapter.js'
 
 /**
@@ -59,8 +66,10 @@ import type { Observation } from './dev-review-current-loop-adapter.js'
  * test adapter.
  */
 const PROCESS = loadProcess(resolve(import.meta.dir, '../../../../processes/vinaya'))
-const TASK = 7
-const BRANCH = 'task/issue-7'
+// The task and pull request the standalone harness's world names.
+const TASK = 9001
+const BRANCH = `task/issue-${TASK}`
+const PR = 123
 const SOURCE = 'https://example.com/required-source'
 const ROLES = ['developer', 'code-reviewer', 'security-reviewer'] as const
 type Role = (typeof ROLES)[number]
@@ -91,6 +100,12 @@ function records(dir: string): RecordLine[] {
 }
 
 /** A CLI-shaped child: delivers JSONL only after the executor closes stdin; its output may read the prompt it was given. */
+const STUB_SESSIONS: Record<Role, string> = {
+  developer: 'dev-session-1',
+  'code-reviewer': 'rev-session-1',
+  'security-reviewer': 'sec-session-1'
+}
+
 function stubAgent(
   agent: Agent,
   role: Role,
@@ -118,7 +133,8 @@ function stubAgent(
             await finish()
             if (closed) return
             const output = outputFor(prompt)
-            const session = `stub-${role}`
+            // The sessions the standalone world names each role's dispatch with.
+            const session = STUB_SESSIONS[role]
             const events =
               code !== 0
                 ? []
@@ -161,7 +177,11 @@ function roleOf(agent: Agent, args: string[], env: Record<string, string | undef
 }
 
 /** One isolated scenario, returning only recorded output and performed effects. */
-export async function runEngineScenario(id: string, agent: Agent): Promise<Observation> {
+export async function runEngineScenario(
+  id: string,
+  agent: Agent,
+  logSink?: Partial<LogSinkDeps>
+): Promise<Observation> {
   const root = mkdtempSync(join(tmpdir(), 'engine-corpus-'))
   const runtimeDir = join(root, 'runtime')
   mkdirSync(runtimeDir)
@@ -176,10 +196,30 @@ export async function runEngineScenario(id: string, agent: Agent): Promise<Obser
   const savedFolderOnly = process.env[LOG_FOLDER_ONLY_ENV]
   process.env[RUNTIME_DIR_ENV_KEY] = runtimeDir
   process.env[LOG_FOLDER_ONLY_ENV] = '1'
+  // A recorded run names its own task and the repository the standalone harness pins, and no outer identity.
+  const savedIdentity = Object.fromEntries(OWNED_ENV_KEYS.map((key) => [key, process.env[key]]))
+  // A dispatched session's spool would take the default sink's lines away from this scenario's folder.
+  const savedSpool = process.env.VINAYA_LOG_SPOOL_DIR
+  delete process.env.VINAYA_LOG_SPOOL_DIR
+  if (logSink) {
+    for (const key of OWNED_ENV_KEYS) if (key !== RUNTIME_DIR_ENV_KEY) delete process.env[key]
+    process.env.VINAYA_TASK = String(TASK)
+    process.env.AEG_REPO = FIXTURE_REPO
+  }
   resetRuntimeDirCache()
+  resetDefaultLogSinkContext()
+  const savedCwd = process.cwd()
   try {
-    return await drive(id, agent, root, runtimeDir)
+    return await drive(id, agent, root, runtimeDir, logSink)
   } finally {
+    process.chdir(savedCwd)
+    if (savedSpool !== undefined) process.env.VINAYA_LOG_SPOOL_DIR = savedSpool
+    for (const key of OWNED_ENV_KEYS) {
+      if (key === RUNTIME_DIR_ENV_KEY) continue
+      if (savedIdentity[key] === undefined) delete process.env[key]
+      else process.env[key] = savedIdentity[key]
+    }
+    resetDefaultLogSinkContext()
     if (savedHome === undefined) delete process.env.CODEX_HOME
     else process.env.CODEX_HOME = savedHome
     if (savedRuntime === undefined) delete process.env[RUNTIME_DIR_ENV_KEY]
@@ -192,7 +232,13 @@ export async function runEngineScenario(id: string, agent: Agent): Promise<Obser
   }
 }
 
-async function drive(id: string, agent: Agent, root: string, runtimeDir: string): Promise<Observation> {
+async function drive(
+  id: string,
+  agent: Agent,
+  root: string,
+  runtimeDir: string,
+  logSink: Partial<LogSinkDeps> | undefined
+): Promise<Observation> {
   const repo = join(root, 'repo')
   mkdirSync(repo)
   const git = (...args: string[]) =>
@@ -210,6 +256,8 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
   git('worktree', 'add', '-q', '-b', BRANCH, worktree)
   if (id === 'isolation-refusal') git('-C', worktree, 'checkout', '-q', '-b', 'task/other/1')
   const head = git('rev-parse', 'HEAD')
+  // A recorded run works from its own repository, as the standalone harness's world does.
+  if (logSink) process.chdir(repo)
   const eventFile = join(runtimeDir, 'events.jsonl')
   const effectFile = join(runtimeDir, 'forge.jsonl')
   const actionFile = join(runtimeDir, 'actions.jsonl')
@@ -220,7 +268,9 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
     gateCli,
     `const gate = await Bun.file(${JSON.stringify(gateState)}).json(); console.log(gate.output); process.exit(gate.code)\n`
   )
-  const red = id === 'mechanical-failure-repeats' || id === 'mechanical-failure-recovers' || id === 'context-pressure'
+  const red = id === 'mechanical-failure-recovers' || id === 'context-pressure'
+  // As in the standalone world, this head's red gate is the forge's own failing CI check-run.
+  const ciRed = id === 'mechanical-failure-repeats'
   writeFileSync(
     gateState,
     JSON.stringify({ code: red ? 1 : 0, output: red ? 'check failed: sample' : 'checks passed' })
@@ -247,20 +297,21 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
   const forge: EngineForge = {
     checkTaskDispatchReadiness: () => ({ ready: true, output: 'ready' }),
     createTaskWorktree: () => worktree,
-    findOpenPrForBranch: () => (prOpen ? { number: 70, branch: BRANCH } : null),
+    findOpenPrForBranch: () => (prOpen ? { number: PR, branch: BRANCH } : null),
     fetchFrozenBrief: () => brief,
+    // Objectives that move mid-round carry the edit that moved them, as in the standalone world.
     resolveIssueObjectives: () => ({
       objectives: currentObjectives(),
       text: currentObjectives()
         .map((o) => `${o.id}. ${o.text}`)
         .join('\n'),
-      version: objectivesVersion(currentObjectives()),
-      edit: null
+      version: moved ? 'midroundversion' : objectivesVersion(currentObjectives()),
+      edit: moved ? { previous: objectives, now: currentObjectives(), reason: 'mid-round change' } : null
     }),
     fetchNewestRulingOrdinal: () => (ruling ? 1 : 0),
     fetchNewestIssueRulingOrdinal: () => 0,
     fetchSourceRevision: () => head,
-    fetchCiConclusion: () => (json(gateState)?.code === 0 ? 'green' : 'red'),
+    fetchCiConclusion: () => (!ciRed && json(gateState)?.code === 0 ? 'green' : 'red'),
     fetchIssueRulingsAfterBrief: () => [],
     fetchRulings: () => (ruling ? ['Go ahead.'] : []),
     fetchLoopHistory: () => ({
@@ -273,19 +324,19 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
     }),
     resolveHead: () => head,
     resolveDeveloperDoctrineText: () => Promise.resolve('Execute the frozen brief.'),
-    prBody: () => 'Closes #7',
+    prBody: () => `Closes #${TASK}`,
     pullRequestView: () => ({
-      number: 70,
-      body: 'Closes #7',
+      number: PR,
+      body: `Closes #${TASK}`,
       headRefOid: head,
       state: 'OPEN',
       mergeable: id === 'stale-conflict' ? 'CONFLICTING' : 'MERGEABLE'
     }),
-    fetchFailingCheckRuns: () => [],
+    fetchFailingCheckRuns: () => (ciRed ? [{ id: 1, name: 'Vinaya CI', conclusion: 'failure' }] : []) as never,
     fetchFailedCheckWorkflowRunIds: () => [],
     rerunFailedWorkflowJobs: () => {},
     fetchMergeableState: () => (id === 'stale-conflict' ? 'CONFLICTING' : 'MERGEABLE'),
-    fetchConflictingFiles: () => (id === 'stale-conflict' ? ['sample.ts'] : []),
+    fetchConflictingFiles: () => (id === 'stale-conflict' ? ['apps/cli/src/lib/x.ts'] : []),
     postMarkedComment: (_kind, _ref, marker) => {
       append(effectFile, { kind: 'comment', marker })
       return `https://example.com/comment/${encodeURIComponent(marker)}`
@@ -346,7 +397,7 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
     })
   } catch (error) {
     // Preparation precedes the Flow; observe its thrown refusal without inventing a run trace.
-    return observeEngineRun(runtimeDir, [], error)
+    return observeEngineRun(runtimeDir, [], error, logSink !== undefined)
   }
   task.cliEntry = gateCli
   // The corpus repository has no installed hooks and no sandbox to probe: both controls are reported active.
@@ -355,8 +406,13 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
     localGateControl: () => ({ control: 'local-gate', active: true, detail: '', remedy: '' }),
     probeAgentSandbox: async () => ({ ok: true })
   }
-  if (id === 'required-source-failure') task.developerContext = { ...task.developerContext, requiredSources: [SOURCE] }
-  if (id === 'context-pressure') task.clock = { elapsedMs: 1000, byPhaseMs: { developer: 1000 } }
+  // As in the standalone world, the brief names one required source, delivered but never read by the turn.
+  if (id === 'required-source-failure')
+    task.prepareSources = async () => ({
+      manifest: { sources: [{ requirementText: SOURCE }] } as never,
+      unavailable: []
+    })
+  if (id === 'context-pressure') task.clock = { elapsedMs: 1000, byPhaseMs: { dispatch_developer: 1000 } }
   const recordedActionsForRun = () =>
     Object.fromEntries(
       Object.entries(createActions(task)).map(([name, action]) => [
@@ -399,7 +455,7 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
   const facts = (): DeveloperPromptFacts => ({
     brief,
     objectives: { objectives, version: objectivesVersion(objectives) },
-    rulings: forge.fetchRulings(70),
+    rulings: forge.fetchRulings(PR),
     rulingOrdinal: ruling ? 1 : 0,
     policy,
     baseSha: head,
@@ -423,7 +479,7 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
       taskInput: task,
       handoffDeps,
       actions: recordedActionsForRun(),
-      sink: { log: (event) => append(eventFile, event), drain: async () => {} },
+      sink: recordingSink(eventFile, logSink),
       startHost: async () => ({ close: async () => {} }),
       devToolsContext: devTools,
       control,
@@ -448,8 +504,8 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
               schemaVersion: 1,
               status: 'completed',
               summary: 'Done.',
-              confidence: 95,
-              confidenceExplanation: 'Stub result.',
+              confidence: 90,
+              confidenceExplanation: 'the fixture work is done',
               addressedFindingIds: id === 'developer-failure' && attempt > 1 ? ['R9-XX-1'] : handoffIdsInPrompt(prompt),
               sourceUses:
                 id === 'required-source-failure' ? [{ source: SOURCE, use: 'claimed without a counted read' }] : [],
@@ -485,7 +541,7 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
                       ? [
                           {
                             severity: 'BLOCKER',
-                            file: 'sample.ts',
+                            file: 'smoke.ts',
                             line: 1,
                             description: 'a blocking finding the developer must address'
                           }
@@ -501,7 +557,8 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
           output = () => (id === 'reviewer-failure' && role === 'security-reviewer' ? undefined : review)
         }
         return stubAgent(agent, role, output, id === 'provider-failure' && role === 'developer' ? 1 : 0, async () => {
-          if (role === 'developer' && id !== 'isolation-refusal') prOpen = true
+          // A turn rejected for an unread source never opens the pull request, as in the standalone world.
+          if (role === 'developer' && id !== 'isolation-refusal' && id !== 'required-source-failure') prOpen = true
           if (role === 'developer' && id === 'isolation-refusal')
             append(effectFile, {
               kind: 'tool-result',
@@ -527,7 +584,7 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
       append(eventFile, { kind: 'handoff', event: 'resolved' })
       return resolved
     },
-    fetchPrBody: forge.prBody.bind(null, 70),
+    fetchPrBody: forge.prBody.bind(null, PR),
     findOpenPrForBranch: forge.findOpenPrForBranch,
     fetchRulings: () => (ruling ? ['Go ahead.'] : []),
     fetchIssueRulings: () => (ruling ? ['Go ahead.'] : []),
@@ -548,7 +605,7 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
     ruling = id === 'resume'
     try {
       await resumeEngine({
-        args: { resume: 70, agent },
+        args: { resume: PR, agent },
         runtimeDir,
         deps: resumeDeps,
         run: async (resolved) => {
@@ -565,11 +622,43 @@ async function drive(id: string, agent: Agent, root: string, runtimeDir: string)
     ruling = true
     await execute(true)
   }
-  return observeEngineRun(runtimeDir, traces, refused)
+  return observeEngineRun(runtimeDir, traces, refused, logSink !== undefined)
+}
+
+/**
+ * The run's sink: every event is kept for the observation and, when overrides
+ * are injected, also written through the shared `createLogSink`; its drain
+ * drains the default sink too, as the live runner does after a run.
+ */
+function recordingSink(eventFile: string, logSink: Partial<LogSinkDeps> | undefined): EngineRunOptions['sink'] {
+  const shared = logSink ? createLogSink(logSink) : null
+  return {
+    log: (event) => {
+      append(eventFile, event)
+      shared?.log(event as Parameters<typeof shared.log>[0])
+    },
+    drain: async () => {
+      if (!shared) return
+      await shared.drain()
+      await drainLogSink()
+    }
+  }
+}
+
+/** Every Log line recorded for the task under the run's own Log folder. */
+function recordedLogLines(runtimeDir: string): RecordLine[] {
+  const logsRoot = join(runtimeDir, 'logs')
+  if (!existsSync(logsRoot)) return []
+  return readdirSync(logsRoot).flatMap((segment) => lines(join(logsRoot, segment, `${TASK}.ndjson`)))
 }
 
 /** Normalize actual preparation refusals and saved run records into the shared observation. */
-function observeEngineRun(runtimeDir: string, traces: RunTrace[], preparationError?: unknown): Observation {
+function observeEngineRun(
+  runtimeDir: string,
+  traces: RunTrace[],
+  preparationError?: unknown,
+  recorded = false
+): Observation {
   const last = traces.at(-1)
   const recordedActions = lines(join(runtimeDir, 'actions.jsonl'))
   const assessed = recordedActions
@@ -640,7 +729,8 @@ function observeEngineRun(runtimeDir: string, traces: RunTrace[], preparationErr
     roundStartsByRound,
     journalResults: events
       .filter((event) => event.kind === 'dev_review_loop' && event.event === 'journal_finalized')
-      .map((event) => String(event.result))
+      .map((event) => String(event.result)),
+    ...(recorded ? { logLines: recordedLogLines(runtimeDir) } : {})
   }
 }
 

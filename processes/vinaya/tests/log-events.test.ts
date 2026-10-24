@@ -476,7 +476,7 @@ describe('the producers cover every end a run can come to', () => {
     const ends = run.runEnded?.(context)
     expect(names(ends)).toEqual(['paused'])
     expect(ends?.[0]?.reason_code).toBe('infrastructure')
-    expect(run.exit(context)).toEqual({ reason: 'error', lastDecision: 'error', exitCode: 1, failedStep: true })
+    expect(run.exit(context)).toEqual({ reason: 'error', lastDecision: 'error', failedStep: true })
   })
 
   test('a crash after a real round end closes the journal from that round and writes no second round_ended', () => {
@@ -542,7 +542,7 @@ describe('the producers cover every end a run can come to', () => {
     const run = producers()
     const exit = (reason: 'completed' | 'paused' | 'exhausted') =>
       run.exit({ outcome: { reason }, cancelled: false, steps: {} })
-    expect(exit('completed')).toEqual({ reason: 'finished', lastDecision: 'publish', exitCode: 0 })
+    expect(exit('completed')).toEqual({ reason: 'finished', lastDecision: 'publish' })
     expect(exit('paused')).toEqual({ reason: 'paused', lastDecision: 'pause(halt)' })
     expect(exit('exhausted')).toEqual({ reason: 'paused', lastDecision: 'pause(max_rounds)' })
   })

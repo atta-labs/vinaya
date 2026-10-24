@@ -18,13 +18,16 @@ synchronous process-exit recording and worker spooling: no folder file, no
 server retry outbox and no server request. An absent setting retains the
 existing default folder behaviour.
 
-The Engine runner constructs the shared `createLogSink` with `folderOnly: true`.
-It keeps a permitted `logs.folder`, or uses `<runtimeDir>/logs` when a server
-URL is configured. It never appends to the server retry outbox or delivers
-server requests. `logs: false` takes precedence over this restriction.
-The Engine also passes the folder restriction through its subprocess
-environment, including CLI checks, check children and agent launches, so
-ordinary shared sinks in those processes cannot select a server destination.
+The Engine runner constructs the same shared `createLogSink` as the standalone
+loop, so its events reach whatever destination the config names, a server
+included. Its Log matches standalone's event for event and field for field: the
+conformance replay (`dev-review-log-parity.test.ts`) runs every corpus scenario
+through both runners into recording sinks and compares the lines, apart from the
+run identity fields it names and the scenarios it lists as structural
+exclusions. The runner clears any folder-only restriction from its subprocess
+environment, so CLI checks and their children resolve the configured
+destination too. A sink given `folderOnly` still keeps a permitted
+`logs.folder`, or uses `<runtimeDir>/logs` when a server URL is configured.
 
 ## The envelope: `schema: 1`, `2`, `3` and `4`
 

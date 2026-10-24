@@ -18,7 +18,7 @@ import {
   assembleAndRenderBriefForIssue as realAssembleAndRenderBriefForIssue
 } from './brief-assembly.js'
 import { type loadConfig, loadTaskRunner, resolveTaskRunner, type TaskRunner } from './config.js'
-import { recordTaskRunner, runTaskEngine, type EngineRunnerDeps } from './task-run-engine.js'
+import { crossRunnerRefusal, recordTaskRunner, runTaskEngine, type EngineRunnerDeps } from './task-run-engine.js'
 import type { AgentVendor } from './dispatch.js'
 import {
   developerBranchFor as realDeveloperBranchFor,
@@ -209,7 +209,10 @@ export type RunTaskDeps = {
    * after the live-driver refusal and before the loop starts; never throws.
    */
   assignIssue: (issue: number) => void
+  /** Records the runner a run actually used, once it is known; absent, nothing is recorded. */
   recordRunner?: (issue: number, runner: TaskRunner) => void
+  /** Why `runner` may not continue the task's held pause — another runner recorded it — or null when it may. */
+  crossRunnerRefusal?: (issue: number, runner: TaskRunner) => string | null
   /** The widen-surface continuation's own seams, read only when `RunTaskInput.widenSurface` is given; absent, the real ones. */
   widen?: WidenSurfaceDeps
 }
@@ -306,6 +309,7 @@ export const defaultRunTaskDeps: RunTaskDeps = {
   resolveRepo: () => realResolveRepo(),
   assignIssue: (issue) => realAssignIssueAtRunStart(issue),
   recordRunner: recordTaskRunner,
+  crossRunnerRefusal: (issue, runner) => crossRunnerRefusal(issue, runner),
   widen: defaultWidenSurfaceDeps
 }
 
@@ -454,18 +458,30 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
   // (`bindPauseToPullRequest`) and continues from it. With no pull request
   // open yet, such a pause continues through the fresh-attach route below.
   const shouldResumeFromPause = existingPr !== null && deps.hasPauseState(issue)
+  // A held pause belongs to the runner that recorded it: neither runner continues the other's.
+  const heldByAnother = (selected: TaskRunner) => {
+    const refusal = deps.crossRunnerRefusal?.(issue, selected) ?? null
+    return refusal !== null && deps.hasPauseState(issue) ? refusal : null
+  }
+  const refusedBy = heldByAnother(runner)
+  if (refusedBy !== null) throw new RunTaskError(`runTask: ${refusedBy}`)
   // Every start path reaches this one call: the foreground command, the
   // detached child a `--background` start launches, and the Operator's
   // `task_start` tool all run `runTask` itself.
   deps.assignIssue(issue)
-  deps.recordRunner?.(issue, runner)
   if (runner === 'atta-engine') {
     const exitCode = await runTaskEngine(
       { task: issue, agent, ...(resolvedModel ? { model: resolvedModel } : {}) },
-      deps.engine
+      deps.engine,
+      // Recorded once the Engine is known to start, so a fallback is never recorded as an Engine run.
+      () => deps.recordRunner?.(issue, 'atta-engine')
     )
     if (exitCode !== null) return { exitCode, task: issue, branch, prUrl: null, prNumber: null, finalDecision: null }
+    // The Engine is unavailable: the standalone loop continues only a pause the standalone runner holds.
+    const refusedFallback = heldByAnother('standalone')
+    if (refusedFallback !== null) throw new RunTaskError(`runTask: ${refusedFallback}`)
   }
+  deps.recordRunner?.(issue, 'standalone')
   const loopResult = await deps.devReviewLoop(
     shouldResumeFromPause
       ? { resumePr: existingPr.number, agent, ...(resolvedModel ? { model: resolvedModel } : {}) }

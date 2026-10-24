@@ -1169,7 +1169,7 @@ export class InProcessExit extends Error {
  * the log sink a deterministic repo segment and keeps the trust-anchor read off
  * any real repository, alongside the isolated `$HOME` (see `withWorldEnv`).
  */
-const OWNED_ENV_KEYS = [
+export const OWNED_ENV_KEYS = [
   'VINAYA_RUNTIME_DIR',
   'VINAYA_TASK',
   'VINAYA_ROUND',

@@ -92,7 +92,7 @@ import {
   WrongTargetResolutionError
 } from '../dev-review-loop/pause-resume.js'
 import { runtimeDir } from '../dev-review-loop.js'
-import { engineRunnerScriptPath, readTaskRunner } from '../task-run-engine.js'
+import { engineContinuationArgv, readTaskRunner } from '../task-run-engine.js'
 import { newestPublishedRound } from '../task-status.js'
 import { widenSurfaceContinuationFor } from '../task-run.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
@@ -222,6 +222,26 @@ export const RESUME_COMMAND_ENV = 'VINAYA_TASK_RUN_COMMAND'
 export type { LaunchResult }
 
 /**
+ * The continuation a resume launches, chosen by the runner the task's run recorded: an Engine run continues on the
+ * Engine runner, through its pull request or else its checkpoint; a standalone run through `dev-review-loop
+ * --resume`, or `task run` for a pause with no pull request.
+ */
+export function resumeContinuation(
+  target: { pr: number | null; agent: AgentVendor; issue: number; branch: string; model?: string },
+  runner: 'standalone' | 'atta-engine',
+  program: string
+): { command: string; argv: string[] } {
+  if (runner === 'atta-engine') return { command: 'bun', argv: engineContinuationArgv(target) }
+  return {
+    command: program,
+    argv:
+      target.pr === null
+        ? noPushResumeArgv(target.issue, target.branch, target.agent, target.model)
+        : ['dev-review-loop', '--resume', String(target.pr), '--agent', target.agent]
+  }
+}
+
+/**
  * `root` defaults to the SAME resolution `devReviewLoop` itself uses but is
  * overridable so a test can point the confirm-wait at a temporary tree;
  * `timeoutMs` likewise, so a fixture can drive a REAL continuation slower
@@ -252,27 +272,10 @@ export function defaultResumeLaunch(
   // tranche task is addressed `task run <tranche> <n>`, read off this pause's
   // own branch. Both forms are commands the CLI already exposes, and the
   // agent AND model the paused run was dispatched under both travel with it.
-  const argv =
-    readTaskRunner(target.issue, runtimeDir()) === 'atta-engine'
-      ? [
-          engineRunnerScriptPath(),
-          '--resume',
-          '--task',
-          String(target.issue),
-          '--agent',
-          target.agent,
-          ...(target.model ? ['--model', target.model] : [])
-        ]
-      : target.pr === null
-        ? noPushResumeArgv(target.issue, target.branch, target.agent, target.model)
-        : ['dev-review-loop', '--resume', String(target.pr), '--agent', target.agent]
+  const { command, argv } = resumeContinuation(target, readTaskRunner(target.issue, root), program)
   let child: ChildProcess
   try {
-    child = launchDetached(readTaskRunner(target.issue, runtimeDir()) === 'atta-engine' ? 'bun' : program, argv, [
-      'ignore',
-      'ignore',
-      stderrFd
-    ])
+    child = launchDetached(command, argv, ['ignore', 'ignore', stderrFd])
   } finally {
     // Spawn dup's the fd into the child; our own copy is safe to close
     // immediately, whether spawn succeeded or threw synchronously.

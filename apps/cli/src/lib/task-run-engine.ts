@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { dirname, join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import type { AgentVendor } from './dispatch.js'
+import { isDriverPidAlive, readDriverLock } from './dev-review-loop/pause-resume.js'
 import { packageRoot } from './package-root.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo } from './run-paths.js'
 import type { TaskRunner } from './config.js'
@@ -43,8 +43,68 @@ export function recordTaskRunner(
   renameSync(temporary, path)
 }
 
+/**
+ * The refusal a runner gives a held pause another runner recorded, naming the recorded one; null when the pause is
+ * this runner's own. A run with no recorded runner is a standalone run.
+ */
+export function crossRunnerRefusal(task: number, runner: TaskRunner, root: string = runtimeDirForThisRepo()) {
+  const recorded = readTaskRunner(task, root)
+  return recorded === runner
+    ? null
+    : `task ${task}'s paused run was recorded on the ${recorded} runner, and the ${runner} runner never continues another runner's run — resume it on ${recorded}.`
+}
+
+/** One task's Engine run directory: `<runtimeDir>/engine-runs/<task>`, where the Engine keeps its checkpoints. */
+export function engineRunDirectory(task: number, root: string = runtimeDirForThisRepo()): string {
+  return join(root, 'engine-runs', String(task))
+}
+
+/** What the Operator reads of an Engine run: its run directory, whether a checkpoint is there, and the driver lock. */
+export type EngineRunReading = {
+  runDirectory: string
+  checkpoint: boolean
+  lock: { pid: number; alive: boolean } | null
+}
+
+/** The Engine run's own files, read by path: the run directory, its checkpoint file and the task's driver lock. */
+export function readEngineRun(task: number, root: string = runtimeDirForThisRepo()): EngineRunReading {
+  const runDirectory = engineRunDirectory(task, root)
+  const lock = readDriverLock(root, task)
+  return {
+    runDirectory,
+    checkpoint: existsSync(join(runDirectory, 'checkpoints.sqlite')),
+    lock: lock === null ? null : { pid: lock.pid, alive: isDriverPidAlive(lock.pid) }
+  }
+}
+
+/** The continuation of a halted Engine run: `--resume <pr>` through its pull request, else its task's checkpoint. */
+export function engineContinuationArgv(target: {
+  issue: number
+  pr: number | null
+  agent: AgentVendor
+  model?: string
+}): string[] {
+  return [
+    engineRunnerScriptPath(),
+    ...(target.pr === null ? ['--task', String(target.issue)] : ['--resume', String(target.pr)]),
+    '--agent',
+    target.agent,
+    ...(target.model ? ['--model', target.model] : [])
+  ]
+}
+
+/** The same continuation as a command a person runs. */
+export function engineContinuationCommand(target: Parameters<typeof engineContinuationArgv>[0]): string {
+  return ['bun', ...engineContinuationArgv(target)].join(' ')
+}
+
 export function engineCancellationPath(task: number, root: string = runtimeDirForThisRepo()): string {
-  return join(root, 'engine-runs', String(task), 'cancel-requested')
+  return join(engineRunDirectory(task, root), 'cancel-requested')
+}
+
+/** Ends a request a former cancel left, so a later run of the task is never read as cancelled. */
+export function clearEngineCancellation(task: number, root: string = runtimeDirForThisRepo()): void {
+  rmSync(engineCancellationPath(task, root), { force: true })
 }
 
 export function requestEngineCancellation(task: number, root: string = runtimeDirForThisRepo()): void {
@@ -81,10 +141,14 @@ export function engineRunnerScriptPath(): string {
   return resolve(packageRoot(import.meta.url), '../../processes/vinaya/bin/run-engine.ts')
 }
 
-/** Starts the workspace script by path; a published CLI without it keeps the standalone loop. */
+/**
+ * Starts the workspace script by path; a published CLI without it keeps the standalone loop. `starting` runs once
+ * the Engine is known to start, before it does.
+ */
 export async function runTaskEngine(
   input: EngineRunInput,
-  overrides: Partial<EngineRunnerDeps> = {}
+  overrides: Partial<EngineRunnerDeps> = {},
+  starting: () => void = () => {}
 ): Promise<number | null> {
   const deps = { ...defaultEngineRunnerDeps, ...overrides }
   const script = deps.scriptPath()
@@ -92,6 +156,7 @@ export async function runTaskEngine(
     deps.notice(ENGINE_FALLBACK_NOTICE)
     return null
   }
+  starting()
   return deps.spawn(
     [
       'bun',

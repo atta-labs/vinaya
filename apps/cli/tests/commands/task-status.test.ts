@@ -752,7 +752,10 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
         codeReview: null,
         security: null
       },
-      pauseDisposition: null
+      pauseDisposition: null,
+      // No runner recorded: a standalone run, with no Engine run directory to read.
+      runner: 'standalone',
+      engine: null
     })
     expect(parsed.data.tasks[3]).toEqual({
       tranche: 'demo',
