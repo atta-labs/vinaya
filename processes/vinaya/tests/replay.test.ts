@@ -19,7 +19,7 @@ import type { SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { fetchLoopHistory } from '../../../apps/cli/src/lib/dev-review-loop/journal-history'
 import { heldVerdictPath } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { loadProcess } from '../../../harness/dev-process/loader/load-process'
-import { type EngineForge, liveDeveloperFacts, liveTaskInput, runEngine } from '../bin/run-engine'
+import { type EngineForge, liveDeveloperFacts, liveTaskInput, runDirectory, runEngine } from '../bin/run-engine'
 
 // An end-to-end replay of one task on the Engine path: the real packed Engine, the real runner
 // (`runEngine`, `liveTaskInput`, `liveDeveloperFacts`), the real action bindings, the real adapters and the
@@ -283,6 +283,7 @@ async function replay(scenario: Scenario) {
     args,
     process: loaded,
     repoRoot: root,
+    cliRoot: VINAYA_INSTALL,
     runtimeDir,
     loopId: 'replay-loop',
     taskInput,
@@ -352,6 +353,9 @@ async function replay(scenario: Scenario) {
   }
 }
 
+/** A Vinaya install that is not the task's repository, as when Vinaya is adopted elsewhere. */
+const VINAYA_INSTALL = '/opt/vinaya-install'
+
 const generated = (runtimeDir: string, role: string, file: string) =>
   readFileSync(join(runtimeDir, 'engine-runs', String(TASK), 'generated', role, file), 'utf8')
 
@@ -377,6 +381,14 @@ for (const vendor of ['claude', 'codex'] as const)
       expect(run.spawns.map((s) => s.step)).toEqual(['develop', 'code-review', 'security-review'])
       // Each Developer launch begins a turn: its head and its launch record are written before the agent starts.
       expect(run.developerTurnsBegun).toBe(1)
+      // The tool bridges start the CLI of the Vinaya install, never one under the task's repository.
+      const bridges = readdirSync(runDirectory(run.runtimeDir, TASK)).filter((f) => f.endsWith('.sh'))
+      expect(bridges.length).toBeGreaterThan(0)
+      for (const bridge of bridges) {
+        const text = readFileSync(join(runDirectory(run.runtimeDir, TASK), bridge), 'utf8')
+        expect(text).toContain(join(VINAYA_INSTALL, 'apps', 'cli', 'src', 'index.ts'))
+        expect(text).not.toContain(join(run.root, 'apps', 'cli'))
+      }
       // The forge calls the runner makes, in order.
       expect(run.forgeCalls).toEqual([`readiness task/issue-${TASK}`, `worktree task/issue-${TASK}`, 'publish round 1'])
       expect(run.published).toEqual([

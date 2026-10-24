@@ -836,7 +836,7 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
       const shimPath = join(runDir, roleHost.file)
       writeFileSync(
         shimPath,
-        shimContent(socketPath, options.execPath ?? process.execPath, cliEntryOf(options.repoRoot))
+        shimContent(socketPath, options.execPath ?? process.execPath, cliEntryOf(options.cliRoot ?? options.repoRoot))
       )
       chmodSync(shimPath, 0o755)
       mcpCommands[roleHost.role === 'security' ? 'security-reviewer' : roleHost.role] = shimPath
