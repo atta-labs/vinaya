@@ -165,13 +165,6 @@ const KNOWN_FAILURES: readonly KnownFailure[] = [
     platform: 'linux',
     denial:
       'check --all runs inside the sandbox, where the confined secret scanner (atta-labs/secret-scan) cannot run and errors — the dominant denial on a Linux CI runner, whose ambient GH_TOKEN otherwise flows in and lets the forge-reading checks authenticate (unlike macOS, where the denied gh token store additionally blocks them). Removing it is folded into the O3/O4 forge-staging escalation (Issue #1034)'
-  },
-  {
-    id: 'git-grep',
-    agent: 'codex',
-    platform: 'linux',
-    denial:
-      'git grep exits 1 with no matches inside the Codex Linux sandbox while the same repository-indexed search passes in the unsandboxed control'
   }
 ]
 
@@ -421,7 +414,15 @@ for (const agent of AGENTS) {
         }
         env.PR_BODY = body
       }
-      const result = await session.run(command, env)
+      let result = await session.run(command, env)
+      // A Linux runner has once returned git-grep's no-match exit before the
+      // same Codex sandbox command passed on the next clean runner. Repeat
+      // this read-only probe once: a persistent boundary denial still fails,
+      // while a one-off repository-index visibility race does not become a
+      // KNOWN_FAILURES entry that the next green run immediately rejects.
+      if (entry.id === 'git-grep' && agent === 'codex' && platform === 'linux' && result.exitCode !== 0) {
+        result = await session.run(command, env)
+      }
       const listed = knownFailure(entry.id, agent, platform)
       console.info(
         `[${agent}] ${entry.id}: exit ${result.exitCode}${listed ? ' (listed as a known failure)' : ''} — ${command}`
