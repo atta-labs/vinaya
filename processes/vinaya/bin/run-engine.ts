@@ -617,6 +617,8 @@ export interface EngineRunOptions {
   developerFacts?: () => Promise<DeveloperPromptFacts>
   /** Told when the Developer step starts, so the live context records the head and base that turn publishes against. */
   beginDeveloperTurn?: () => Promise<void>
+  /** Called when a newer ruling resumes the halted run, so the next Developer turn carries the rulings' text. */
+  onRulingResume?: () => void
   /** Whether the pull request a held verdict would publish is in conflict; the live forge read unless a test supplies its own. */
   heldPullRequestConflicts?: () => Promise<boolean>
   /** Called with the Developer's vendor session once its turn's agent has finished. */
@@ -1160,8 +1162,10 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       if (!lifecycle.watch || legOutcome?.reason !== 'paused' || signalled !== null) break
       narrate('the run is halted; watching for a newer ruling or a cancel')
       const watched = await watchForRuling(options.runtimeDir, args.task, lifecycle.watch, stopWatching.signal, narrate)
-      if (watched.kind === 'ruled') narrate(`a newer ruling resumed escalation ${watched.escalationId}`)
-      else if (watched.kind === 'cancelled') {
+      if (watched.kind === 'ruled') {
+        narrate(`a newer ruling resumed escalation ${watched.escalationId}`)
+        options.onRulingResume?.()
+      } else if (watched.kind === 'cancelled') {
         // The Operator's cancel consumed the resolution and fenced the effects; the run only ends.
         cancelledByWatch = true
         narrate('the pause was cancelled; ending')
@@ -1709,6 +1713,8 @@ export function liveDeveloperFacts(input: {
   round: () => number
   /** The refusal the Developer's last publication met, read each time the step starts. */
   lastPushRefusal?: () => string | null
+  /** Whether this turn is the first after a resume from a ruling; reading it clears it. */
+  takeRulingsOwed?: () => boolean
 }): () => Promise<DeveloperPromptFacts> {
   const { task, repoRoot, runtimeDir, branch, worktreePath } = input
   const forge: EngineForge = { ...liveForge, ...input.forge }
@@ -1768,6 +1774,7 @@ export function liveDeveloperFacts(input: {
       })(),
       keptWork: readUnpublishedWork(worktreePath),
       lastPushRefusal: input.lastPushRefusal?.() ?? null,
+      rulingsOwed: input.takeRulingsOwed?.() ?? false,
       resume: {
         task,
         branch,
@@ -1861,7 +1868,15 @@ export function refuseAnotherRunnersPause(runtimeDir: string, task: number): voi
 }
 
 /** Runs one task on the Engine against the live forge, git and Log. */
-async function runLive(args: EngineArgs, loaded: LoadedProcess, repoRoot: string, runtimeDir: string): Promise<number> {
+async function runLive(
+  args: EngineArgs,
+  loaded: LoadedProcess,
+  repoRoot: string,
+  runtimeDir: string,
+  opts: { rulingsOwed?: boolean } = {}
+): Promise<number> {
+  // The first Developer turn after a resume from a ruling carries the rulings' text, once.
+  const rulings = { owed: opts.rulingsOwed === true }
   refuseAnotherRunnersPause(runtimeDir, args.task)
   configureEngineLogEnvironment()
   setEngineLogIdentity(loaded)
@@ -1896,6 +1911,11 @@ async function runLive(args: EngineArgs, loaded: LoadedProcess, repoRoot: string
     sink,
     startHost: startDevToolsHost,
     developerFacts: liveDeveloperFacts({
+      takeRulingsOwed: () => {
+        const owed = rulings.owed
+        rulings.owed = false
+        return owed
+      },
       task: args.task,
       repoRoot,
       runtimeDir,
@@ -1912,6 +1932,9 @@ async function runLive(args: EngineArgs, loaded: LoadedProcess, repoRoot: string
       publishedWatch: { fetchPrState, fetchMergeableState, pollMs: rulingPollMs(), sleep: abortableSleep }
     },
     devToolsContext: liveContext.context,
+    onRulingResume: () => {
+      rulings.owed = true
+    },
     beginDeveloperTurn: liveContext.beginTurn,
     completeDeveloperTurn: liveContext.completeTurn
   })
@@ -1941,7 +1964,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       runtimeDir,
       run: async (resolved) => ({
         outcome: null,
-        exitCode: await runLive(resolved, loaded, repoRoot, runtimeDir),
+        exitCode: await runLive(resolved, loaded, repoRoot, runtimeDir, { rulingsOwed: true }),
         tracePath: ''
       })
     })

@@ -125,6 +125,21 @@ describe("the Engine Developer's prompt is today's loop prompt", () => {
     )
   })
 
+  test('the first turn after a resume from a ruling carries the rulings in their own words, once', () => {
+    const ruled = {
+      ...ROUND2,
+      issueRulings: ['Choose option A: set the probe line to golf.'],
+      rulings: ['Accept the narrower scope.'],
+      rulingsOwed: true
+    }
+    const owed = developerPrompt('x', ruled, reviewResults, { resumeSessionId: SESSION })
+    expect(owed).toContain('Choose option A: set the probe line to golf.')
+    expect(owed).toContain('Accept the narrower scope.')
+    const later = developerPrompt('x', { ...ruled, rulingsOwed: false }, reviewResults, { resumeSessionId: SESSION })
+    expect(later).not.toContain('Choose option A: set the probe line to golf.')
+    expect(later).toBe(loopReviewRound({ ...ruled, rulingsOwed: false }))
+  })
+
   test('round 1 carries each block, in the loop order', () => {
     const prompt = developerPrompt('x', FACTS, {})
     const order = [
