@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import {
   beyondSurfacePaths,
@@ -366,7 +367,10 @@ export function createLiveDeveloperContext(params: LiveDeveloperContextParams): 
         }
       }
       const unpushed = d.readUnpushedWorkDetail(worktree)
-      if (unpushed.dirtyFiles.length > 0) {
+      // A merge of the default branch resolved to the branch's own content
+      // leaves no dirty file but still needs its merge commit.
+      const committing = unpushed.dirtyFiles.length > 0 || mergeInProgress(worktree)
+      if (committing) {
         const committed = d.commitWorktree(worktree, header)
         if (!committed.ok) {
           return {
@@ -386,7 +390,7 @@ export function createLiveDeveloperContext(params: LiveDeveloperContextParams): 
       if (localHead !== null && localHead !== remoteHeadBefore) {
         // A commit made by this tool remains valid work if the push hook
         // refuses. Remember it so the next call can retry that same head.
-        if (unpushed.dirtyFiles.length > 0) {
+        if (committing) {
           state.turnPreHead = localHead
           driverUnpushedCommit = { sha: localHead, parent: remoteHeadBefore }
           driverUnpushedCommitBase = await readPublicationBase(scope, localHead)
@@ -950,4 +954,14 @@ export function commitAndPushPrompt(lastPushRefusal: string | null, publishingIn
     'Your previous turn left work that is not yet on the remote.',
     `Per your role doctrine (\`bun apps/cli/src/index.ts doctrine --role developer --print\`): ${publishingInstruction}${refusalBlock}`
   ].join('\n\n')
+}
+
+/** Whether `worktree` is mid-merge: `MERGE_HEAD` exists, so the next commit concludes that merge. */
+export function mergeInProgress(worktree: string): boolean {
+  try {
+    execFileSync('git', ['-C', worktree, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
 }

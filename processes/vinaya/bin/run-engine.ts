@@ -1289,6 +1289,8 @@ export async function liveTaskInput(
     completion?: Partial<BoundFunctions>
     /** The repository (`owner/repo`) the round's manifest record names. */
     repository?: string
+    /** Where the CLI the checks run from lives; defaults to `repoRoot`. The live runner passes the Vinaya install, which differs from the task's repository when Vinaya is adopted elsewhere. */
+    cliRoot?: string
     reviewSources?: Partial<
       Pick<VinayaReviewInputDeps, 'judgedHead' | 'readHead' | 'baseOf' | 'brief' | 'prBody' | 'diff' | 'priorFindings'>
     >
@@ -1423,7 +1425,7 @@ export async function liveTaskInput(
     frozenBrief: () => forge.fetchFrozenBrief(args.task),
     stageReviewInput: (n) => reviewInput.stage(n),
     runtimeDir,
-    cliEntry: cliEntryOf(repoRoot),
+    cliEntry: cliEntryOf(lookups.cliRoot ?? repoRoot),
     branch,
     issueNumber: args.task,
     worktreePath,
@@ -1713,6 +1715,7 @@ async function runLive(args: EngineArgs, loaded: LoadedProcess, repoRoot: string
   process.env.VINAYA_RUN = loopId
   const repo = liveRepo()
   const taskInput = await liveTaskInput(args, repoRoot, runtimeDir, loopId, {
+    cliRoot: VINAYA_ROOT,
     ...(repo ? { repository: `${repo.owner}/${repo.repo}` } : {})
   })
   const liveContext = engineLiveDevToolsContext({
@@ -1729,7 +1732,8 @@ async function runLive(args: EngineArgs, loaded: LoadedProcess, repoRoot: string
   const result = await runEngine({
     args,
     process: loaded,
-    repoRoot,
+    // The shim's CLI entry lives in the Vinaya install, not in the task's repository.
+    repoRoot: VINAYA_ROOT,
     runtimeDir,
     loopId,
     taskInput,
@@ -1759,8 +1763,16 @@ async function runLive(args: EngineArgs, loaded: LoadedProcess, repoRoot: string
   return result.exitCode
 }
 
+/** The Vinaya install this runner ships in: where the CLI and the process folder live. */
+const VINAYA_ROOT = resolve(import.meta.dir, '../../..')
+
+/** The repository the task runs in: the git top level of the directory the runner was started from, which is not the Vinaya install when Vinaya is adopted elsewhere. */
+export function targetRepoRoot(cwd: string = process.cwd()): string {
+  return sh('git', ['rev-parse', '--show-toplevel'], cwd).trim()
+}
+
 export async function main(argv: readonly string[]): Promise<number> {
-  const repoRoot = resolve(import.meta.dir, '../../..')
+  const repoRoot = targetRepoRoot()
   const loaded = loadProcess(resolve(import.meta.dir, '..'))
   const runtimeDir = await liveRuntimeDir()
   if (argv.includes('--resume')) {

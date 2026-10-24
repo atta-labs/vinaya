@@ -10,6 +10,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  rmSync,
   statSync,
   writeFileSync
 } from 'node:fs'
@@ -65,7 +66,8 @@ import {
   runEngine,
   shimContent,
   type EngineRunOptions,
-  type RunTrace
+  type RunTrace,
+  targetRepoRoot
 } from '../bin/run-engine'
 
 const loaded = loadProcess(resolve(import.meta.dir, '..'))
@@ -1113,4 +1115,15 @@ describe('the tool host serves the reviewer roles as well as the Developer', () 
       }
     })
   }
+})
+
+describe('the repository a run works in', () => {
+  test('is the git top level of the starting directory, not the folder the runner ships in', () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'engine-target-repo-')))
+    execFileSync('git', ['init', '-q'], { cwd: dir })
+    mkdirSync(join(dir, 'nested'))
+    expect(targetRepoRoot(join(dir, 'nested'))).toBe(dir)
+    expect(targetRepoRoot(join(dir, 'nested'))).not.toBe(resolve(import.meta.dir, '../../..'))
+    rmSync(dir, { recursive: true, force: true })
+  })
 })

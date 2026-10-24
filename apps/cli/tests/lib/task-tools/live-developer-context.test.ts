@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { failedCheckLogsOnHead } from '../../../src/lib/dev-review-loop'
@@ -10,6 +11,7 @@ import {
   createLivePublicationState,
   defaultPushTaskBranch,
   type LiveDeveloperContextParams,
+  mergeInProgress,
   publishDeveloperTurn,
   pushedCommitRangeBase
 } from '../../../src/lib/task-tools/live-developer-context'
@@ -429,5 +431,33 @@ describe('the Broker-governed push', () => {
     expect(result).toMatchObject({ ok: false, hook: false })
     if (!result.ok) expect(result.refusal).toContain('no developer launch record for task 987654321')
     expect(pushed).toBe(false)
+  })
+})
+
+describe('mergeInProgress', () => {
+  test('a default-branch merge resolved to the branch side still reads as in progress, and committing concludes it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-merge-probe-'))
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8' })
+    git('init', '-q', '-b', 'main')
+    writeFileSync(join(dir, 'probe.md'), 'base\n')
+    git('add', '-A')
+    git('commit', '-qm', 'base')
+    git('checkout', '-qb', 'task')
+    writeFileSync(join(dir, 'probe.md'), 'ours\n')
+    git('commit', '-qam', 'ours')
+    git('checkout', '-q', 'main')
+    writeFileSync(join(dir, 'probe.md'), 'theirs\n')
+    git('commit', '-qam', 'theirs')
+    git('checkout', '-q', 'task')
+    expect(() => git('merge', '--no-commit', 'main')).toThrow()
+    writeFileSync(join(dir, 'probe.md'), 'ours\n')
+    git('add', '-A')
+    expect(git('status', '--porcelain').trim()).toBe('')
+    expect(mergeInProgress(dir)).toBe(true)
+    git('commit', '-qm', 'merge main')
+    expect(mergeInProgress(dir)).toBe(false)
+    expect(git('rev-list', '--parents', '-n', '1', 'HEAD').trim().split(' ')).toHaveLength(3)
+    rmSync(dir, { recursive: true, force: true })
   })
 })
