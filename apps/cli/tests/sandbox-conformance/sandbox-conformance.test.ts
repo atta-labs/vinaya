@@ -414,15 +414,7 @@ for (const agent of AGENTS) {
         }
         env.PR_BODY = body
       }
-      let result = await session.run(command, env)
-      // A Linux runner has once returned git-grep's no-match exit before the
-      // same Codex sandbox command passed on the next clean runner. Repeat
-      // this read-only probe once: a persistent boundary denial still fails,
-      // while a one-off repository-index visibility race does not become a
-      // KNOWN_FAILURES entry that the next green run immediately rejects.
-      if (entry.id === 'git-grep' && agent === 'codex' && platform === 'linux' && result.exitCode !== 0) {
-        result = await session.run(command, env)
-      }
+      const result = await session.run(command, env)
       const listed = knownFailure(entry.id, agent, platform)
       console.info(
         `[${agent}] ${entry.id}: exit ${result.exitCode}${listed ? ' (listed as a known failure)' : ''} — ${command}`

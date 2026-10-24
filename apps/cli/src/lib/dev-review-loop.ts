@@ -8646,7 +8646,8 @@ function handOffStaleWatchingDriver(
   continuation: LoopInput,
   task: number,
   driverLockToken: string,
-  w: DriverWatchDeps
+  w: DriverWatchDeps,
+  watch?: DriverCarry
 ): boolean {
   const currentBaseHead = w.gitRevParseOriginMain()
   if (currentBaseHead === baseHeadAtStart) return false
@@ -8657,6 +8658,10 @@ function handOffStaleWatchingDriver(
     ? [
         'dev-review-loop',
         ...('resumePr' in continuation ? ['--resume', String(continuation.resumePr)] : ['--task', String(task)]),
+        // A published pull request's watch is handed to a fresh WATCHING
+        // driver, carrying its re-entry count (and a spent bound's pause)
+        // forward, so the hand-off neither drops the watch nor resets the bound.
+        ...(watch ? driverCarryArgs(watch) : []),
         '--agent',
         continuation.agent,
         ...(continuation.model ? ['--model', continuation.model] : [])
@@ -8691,6 +8696,25 @@ function handOffStaleWatchingDriver(
   // keeps injected test exits from falling through to an old-code resume.
   w.exitProcess(exitCode)
   return true
+}
+
+/**
+ * What a stale published-pull-request watch hands its fresh driver
+ * (`handOffStaleWatchingDriver`): the automatic conflict re-entries already
+ * spent on the pull request, and — once they are spent — the bound's pause
+ * detail, which the fresh driver's first run pauses on instead of sending the
+ * Developer back again.
+ */
+export type DriverCarry = { conflictReentries?: number; pauseOnConflict?: string }
+
+/** Pure: the `dev-review-loop --watch` argv that carries `carry` into the fresh watching driver. */
+export function driverCarryArgs(carry: DriverCarry): string[] {
+  return [
+    '--watch',
+    '--conflict-reentries',
+    String(carry.conflictReentries ?? 0),
+    ...(carry.pauseOnConflict !== undefined ? ['--pause-on-conflict', carry.pauseOnConflict] : [])
+  ]
 }
 
 /**
@@ -9067,7 +9091,9 @@ async function watchPrePrPauseThenResume(
  * Developer back with the conflicting files through the existing conflict
  * send-back; the gates and both reviews run again on the new head before
  * anything publishes. A base that moved over this driver's own code hands the
- * task to a fresh process first (`handOffStaleWatchingDriver`), so it resumes on current code, never by rewriting history.
+ * task to a fresh watching driver first (`handOffStaleWatchingDriver`, after
+ * this re-entry is counted and narrated, carrying the count), so it resumes on
+ * current code, never by rewriting history, and the watch and the bound survive.
  *
  * Each re-entry is counted against `MAX_AUTOMATIC_CONFLICT_REENTRIES` and
  * narrated in the per-task driver log and the Log (`conflict_reentry`). Once
@@ -9110,8 +9136,6 @@ async function watchPublishedPullRequest(
     if (read === 'merged' || read === 'closed') return { kind: 'ended', reason: read }
     if (read === 'conflicting') {
       const continuation: LoopInput = { task, agent, ...(model ? { model } : {}) }
-      if (handOffStaleWatchingDriver(baseHeadAtStart, continuation, task, driverLockToken, w))
-        return { kind: 'unwatched' }
       const boundSpent = reentries.count >= MAX_AUTOMATIC_CONFLICT_REENTRIES
       if (boundSpent) {
         appendDriverLine(
@@ -9131,14 +9155,24 @@ async function watchPublishedPullRequest(
         w.logEvent(event)
         narrateDriverEvent(loopLogPath, event, [], task)
       }
+      const pauseOnConflict = boundSpent
+        ? conflictReentryBoundDetail(prNumber, MAX_AUTOMATIC_CONFLICT_REENTRIES)
+        : undefined
+      // Counted and narrated first, so a hand-off to current code carries
+      // this re-entry, and the count, into the fresh watching driver.
+      if (
+        handOffStaleWatchingDriver(baseHeadAtStart, continuation, task, driverLockToken, w, {
+          conflictReentries: reentries.count,
+          ...(pauseOnConflict !== undefined ? { pauseOnConflict } : {})
+        })
+      )
+        return { kind: 'unwatched' }
       try {
         const result = await w.devReviewLoop(
           {
             ...continuation,
             retainDriverLock: driverLockToken,
-            ...(boundSpent
-              ? { pauseOnConflict: conflictReentryBoundDetail(prNumber, MAX_AUTOMATIC_CONFLICT_REENTRIES) }
-              : {})
+            ...(pauseOnConflict !== undefined ? { pauseOnConflict } : {})
           },
           loopDeps
         )
@@ -9168,7 +9202,8 @@ async function watchPublishedPullRequest(
 export async function runDriverLoop(
   input: LoopInput,
   loopDeps: Partial<LoopDeps> = {},
-  watchDeps: Partial<DriverWatchDeps> = {}
+  watchDeps: Partial<DriverWatchDeps> = {},
+  carry: DriverCarry = {}
 ): Promise<DriverResult> {
   const w: DriverWatchDeps = { ...defaultDriverWatchDeps(), ...watchDeps }
   // Existing in-process loop fixtures already inject this git read through
@@ -9190,9 +9225,23 @@ export async function runDriverLoop(
   const baseHeadAtStart = w.gitRevParseOriginMain()
   const rateLimitBudget: RateLimitResumeBudget = { round: -1, count: 0 }
   // This driver's automatic conflict re-entries of its published pull
-  // request, counted across every publish it watches.
-  const conflictReentries = { count: 0 }
-  let result = await w.devReviewLoop({ ...input, retainDriverLock: driverLockToken }, loopDeps)
+  // request, counted across every publish it watches — and across a stale
+  // watcher's hand-off, which carries the count into this fresh driver.
+  const conflictReentries = { count: carry.conflictReentries ?? 0 }
+  let result = await w.devReviewLoop(
+    {
+      ...input,
+      retainDriverLock: driverLockToken,
+      ...(carry.pauseOnConflict !== undefined ? { pauseOnConflict: carry.pauseOnConflict } : {})
+    },
+    loopDeps
+  )
+  if (carry.pauseOnConflict !== undefined && result.finalDecision.type === 'pause') {
+    // A handed-off watch whose re-entry bound was already spent: this run
+    // paused for a person, so the watch ends on that pause.
+    w.clearDriverLock(w.runtimeDir(), result.task)
+    return result
+  }
   for (;;) {
     if (result.finalDecision.type === 'publish' && result.prNumber > 0) {
       const watched = await watchPublishedPullRequest(

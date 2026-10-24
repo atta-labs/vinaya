@@ -30,6 +30,7 @@ import {
   type LoopInput,
   type LoopResult,
   readResolutionRecord,
+  driverCarryArgs,
   runDriverLoop
 } from '../../../src/lib/dev-review-loop'
 import { MAX_AUTOMATIC_CONFLICT_REENTRIES } from '../../../src/lib/dev-review-loop/gate-reading'
@@ -1163,5 +1164,115 @@ describe('runDriverLoop — the published pull request watch', () => {
       Array.from({ length: MAX_AUTOMATIC_CONFLICT_REENTRIES }, (_, i) => i + 1)
     )
     expect(h.cleared).toEqual([1621])
+  })
+
+  it('hands a stale watch to a fresh WATCHING driver, after counting and narrating the re-entry, carrying the count forward', async () => {
+    const h = publishedWatch([{ state: 'OPEN', mergeable: 'CONFLICTING' }])
+    const reexecs: string[][] = []
+    const exits: number[] = []
+    let baseReads = 0
+    const result = await runDriverLoop(
+      { task: 1621, agent: 'claude', model: 'opus' },
+      {},
+      {
+        ...h.watch,
+        // The default branch moved over the driver's own code after it started.
+        gitRevParseOriginMain: () => (baseReads++ === 0 ? 'start' : 'moved'),
+        gitCommitsTouchingDriverPaths: () => ['abc apps/cli/src/lib/dev-review-loop.ts'],
+        pullDefaultBranch: () => ({ ok: true }),
+        reexecSelf: (args) => {
+          reexecs.push(args)
+          return 0
+        },
+        exitProcess: ((code: number) => {
+          exits.push(code)
+        }) as never
+      },
+      { conflictReentries: 1 }
+    )
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    // Only the first run happened in this process; the re-entry is the fresh driver's.
+    expect(h.calls).toHaveLength(1)
+    expect(reexecs).toEqual([
+      [
+        'dev-review-loop',
+        '--task',
+        '1621',
+        '--watch',
+        '--conflict-reentries',
+        '2',
+        '--agent',
+        'claude',
+        '--model',
+        'opus'
+      ]
+    ])
+    expect(exits).toEqual([0])
+    expect(h.events).toEqual([expect.objectContaining({ event: 'conflict_reentry', attempt: 2 })])
+  })
+
+  it('hands a stale watch whose bound is spent to a fresh driver that pauses on the conflict', async () => {
+    const h = publishedWatch([{ state: 'OPEN', mergeable: 'CONFLICTING' }])
+    const reexecs: string[][] = []
+    let baseReads = 0
+    await runDriverLoop(
+      { task: 1621, agent: 'claude' },
+      {},
+      {
+        ...h.watch,
+        gitRevParseOriginMain: () => (baseReads++ === 0 ? 'start' : 'moved'),
+        gitCommitsTouchingDriverPaths: () => ['abc packages/aeg-core/src/x.ts'],
+        pullDefaultBranch: () => ({ ok: true }),
+        reexecSelf: (args) => {
+          reexecs.push(args)
+          return 0
+        },
+        exitProcess: (() => {}) as never
+      },
+      { conflictReentries: MAX_AUTOMATIC_CONFLICT_REENTRIES }
+    )
+    expect(h.events).toEqual([])
+    const args = reexecs[0]!
+    expect(args.slice(0, 6)).toEqual([
+      'dev-review-loop',
+      '--task',
+      '1621',
+      '--watch',
+      '--conflict-reentries',
+      String(MAX_AUTOMATIC_CONFLICT_REENTRIES)
+    ])
+    expect(args[args.indexOf('--pause-on-conflict') + 1]).toContain('PR #42 fell into conflict')
+  })
+
+  it('a handed-off driver keeps the carried count: its next conflict counts on from it', async () => {
+    const h = publishedWatch([
+      { state: 'OPEN', mergeable: 'CONFLICTING' },
+      { state: 'MERGED', mergeable: 'MERGEABLE' }
+    ])
+    await runDriverLoop({ task: 1621, agent: 'claude' }, {}, h.watch, { conflictReentries: 2 })
+    expect(h.events).toEqual([expect.objectContaining({ event: 'conflict_reentry', attempt: 3 })])
+  })
+
+  it("a handed-off driver carrying the bound's pause pauses on its first run and ends its watch", async () => {
+    const h = publishedWatch([{ state: 'OPEN', mergeable: 'CONFLICTING' }])
+    const result = await runDriverLoop({ task: 1621, agent: 'claude' }, {}, h.watch, {
+      conflictReentries: MAX_AUTOMATIC_CONFLICT_REENTRIES,
+      pauseOnConflict: 'bound spent'
+    })
+    expect(h.calls).toHaveLength(1)
+    expect(h.calls[0]!.pauseOnConflict).toBe('bound spent')
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'repeat_failure' })
+    expect(h.cleared).toEqual([1621])
+  })
+
+  it('driverCarryArgs renders the --watch argv', () => {
+    expect(driverCarryArgs({})).toEqual(['--watch', '--conflict-reentries', '0'])
+    expect(driverCarryArgs({ conflictReentries: 3, pauseOnConflict: 'd' })).toEqual([
+      '--watch',
+      '--conflict-reentries',
+      '3',
+      '--pause-on-conflict',
+      'd'
+    ])
   })
 })
