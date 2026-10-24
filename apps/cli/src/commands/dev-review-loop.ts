@@ -8,8 +8,8 @@
  * and `--resume` build the SAME `LoopInput` union into the SAME one
  * `devReviewLoop` call, and `--cancel` makes the SAME one
  * `cancelDevReviewLoop` call, so every invocation of this command still
- * makes exactly one lib call regardless of which flag was given. Five lib
- * calls in total (`loadConfig`, `isAgentVendor`, `devReviewLoop`,
+ * makes exactly one lib call regardless of which flag was given. Six lib
+ * calls in total (`loadConfig`, `isAgentVendor`, `devReviewLoop`, `runDriverLoop`,
  * `cancelDevReviewLoop`, `printJson`), the same argv-plumbing shape
  * `dispatch`'s own command takes (`apps/cli/specs/surface.md`) — exempt
  * under the same `sharedCommandShell` retirement target, not a compliant
@@ -189,5 +189,5 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'dev-review-loop': { date: '2026-09-15', callsToday: 6, retiresVia: 'sharedCommandShell' }
+  'dev-review-loop': { date: '2026-09-15', callsToday: 7, retiresVia: 'sharedCommandShell' }
 }
