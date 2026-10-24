@@ -1397,7 +1397,7 @@ function assessVerdictsAction(task: TaskInput, context: ActionContext): { exitCo
 // --- the forge gates: mergeability, CI and the premise, in the standalone round order ---------------
 
 /** The poll budget the forge-gate steps read within: the task's own, else the standalone loop's. */
-function gatePollOf(task: TaskInput): GatePoll {
+export function gatePollOf(task: TaskInput): GatePoll {
   if (task.gatePoll !== undefined) return task.gatePoll
   const { gatePollMaxAttempts, gatePollIntervalMs, sleep } = defaultDeps()
   return { gatePollMaxAttempts, gatePollIntervalMs, sleep }

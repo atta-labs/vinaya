@@ -64,7 +64,13 @@ import {
   takeDriverLock,
   type RecoveryDeps
 } from '../bin/run-lifecycle'
-import { runEngine, type EngineLifecycleOptions, type EngineRunOptions, type RunTrace } from '../bin/run-engine'
+import {
+  heldPullRequestConflictsLive,
+  runEngine,
+  type EngineLifecycleOptions,
+  type EngineRunOptions,
+  type RunTrace
+} from '../bin/run-engine'
 
 const loaded = loadProcess(resolve(import.meta.dir, '..'))
 const repoRoot = resolve(import.meta.dir, '../../..')
@@ -797,6 +803,17 @@ describe('recovering a re-run', () => {
     expect(run.driverLog()).toContain('held clean verdict not published: the pull request is in conflict')
     expect(run.driverLog()).not.toContain('still covers the head; publishing it')
     expect(Object.keys(run.actionRuns)).not.toEqual(['publish-ready-for-merge'])
+  })
+
+  test('the live conflict probe reads a mergeable pull request as mergeable when the task sets no poll budget', async () => {
+    const probe = heldPullRequestConflictsLive({
+      branch: 'task/issue-7',
+      bound: {
+        findOpenPrForBranch: () => ({ number: 31, branch: 'task/issue-7' }),
+        fetchMergeableState: () => 'MERGEABLE'
+      }
+    } as unknown as TaskInput)
+    expect(await probe()).toBe(false)
   })
 
   test('a held verdict that no longer covers the head is not reused', () => {

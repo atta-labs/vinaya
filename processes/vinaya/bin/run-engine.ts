@@ -199,6 +199,7 @@ import {
   AGENT_EXIT_EVENT,
   agentOutput,
   createActions,
+  gatePollOf,
   recordedDispatch,
   recordedScanOutcome,
   recordedVerdicts,
@@ -2045,9 +2046,9 @@ export function heldPullRequestConflictsLive(task: TaskInput | undefined): () =>
     const pr = (task.bound?.findOpenPrForBranch ?? findOpenPrForBranch)(task.branch)
     if (pr === null) return false
     const state = await pollMergeableState(pr.number, {
-      ...(task.gatePoll ?? {}),
+      ...gatePollOf(task),
       fetchMergeableState: task.bound?.fetchMergeableState ?? fetchMergeableState
-    } as Parameters<typeof pollMergeableState>[1])
+    })
     return state === 'CONFLICTING'
   }
 }
