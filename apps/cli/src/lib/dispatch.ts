@@ -3244,6 +3244,45 @@ export function terminateLaunchedChildOnShutdown(
   })
 }
 
+/**
+ * Writes the Developer launch record for a turn a runner launched itself — the
+ * Engine runner's executor spawns the vendor child, so `dispatchRole` never
+ * writes one. The Broker authenticates the Developer's pushes against this
+ * record, exactly as for a `dispatchRole` launch. Returns the run id the turn
+ * is recorded under.
+ */
+export function recordRunnerDeveloperLaunch(input: {
+  agent: AgentVendor
+  repo: { owner: string; repo: string } | null
+  task: number
+  round: number | null
+}): string {
+  const runId = randomUUID()
+  writeLaunchRecord({
+    runId,
+    role: 'developer',
+    agent: input.agent,
+    repo: input.repo,
+    task: input.task,
+    pr: null,
+    round: input.round,
+    attempt: nextAttempt('developer', input.agent, input.repo, input.task),
+    effectId: randomUUID(),
+    dispatcherPid: process.pid,
+    childPid: null,
+    childStartedAt: null,
+    childCommand: null,
+    host: osHostname(),
+    startedAt: new Date().toISOString(),
+    status: 'launched',
+    resumeId: null,
+    boundAt: null,
+    finishedAt: null,
+    failureReason: null
+  })
+  return runId
+}
+
 /** The next per-scope attempt number — one past the prior launch record for this scope, or `1` when none exists or it is corrupt (a corrupt prior never blocks a fresh attempt from starting). */
 function nextAttempt(
   role: Role,

@@ -121,7 +121,12 @@ import {
 } from '../../../apps/cli/src/lib/dev-review-loop/driver-lifecycle'
 import { isDriverPidAlive } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { appendLoopLogLine, appendRunStartMarker, loopLogPathFor } from '../../../apps/cli/src/lib/loop-log'
-import { getProcessSnapshot, readLaunchRecord, terminateChildWithGrace } from '../../../apps/cli/src/lib/dispatch'
+import {
+  getProcessSnapshot,
+  readLaunchRecord,
+  recordRunnerDeveloperLaunch,
+  terminateChildWithGrace
+} from '../../../apps/cli/src/lib/dispatch'
 import { loadConfig } from '../../../apps/cli/src/lib/config'
 import { startDevToolsHost, type DevToolsHost } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
 import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-tools-registration'
@@ -1151,6 +1156,8 @@ export function engineLiveDevToolsContext(input: {
   round: () => number
   /** The loop operations the context reads; the real ones unless a test supplies its own. */
   deps?: LiveDeveloperContextLoopDeps
+  /** Writes the turn's Developer launch record; the real writer unless a test supplies its own. */
+  recordLaunch?: typeof recordRunnerDeveloperLaunch
 }): {
   context: DevToolContext
   beginTurn: () => Promise<void>
@@ -1195,6 +1202,14 @@ export function engineLiveDevToolsContext(input: {
   }
   let turn = buildTurnContext()
   const beginTurn = async (): Promise<void> => {
+    // The Broker authenticates this turn's pushes against a Developer launch record; the Engine's executor
+    // spawns the agent itself, so the runner writes that record here.
+    ;(input.recordLaunch ?? recordRunnerDeveloperLaunch)({
+      agent: input.agent,
+      repo: input.repo,
+      task: input.task,
+      round: input.round()
+    })
     turn = buildTurnContext()
     state.turnPreHead = deps.readWorktreeHead(input.worktreePath)
     state.turnPublicationRefusal = null

@@ -804,6 +804,8 @@ describe('agent-step failures and the live task context', () => {
 const HEADER = 'Fix(cli): Share live context'
 const PR_BODY = '## Report\n\nbody'
 
+const recordedLaunches: Array<{ task: number; agent: string; round: number | null }> = []
+
 function liveContext(world: World, overrides: Partial<ReturnType<typeof fakeDeps>> = {}, task = 8) {
   const runtimeDir = mkdtempSync(join(tmpdir(), 'engine-live-context-'))
   const live = engineLiveDevToolsContext({
@@ -814,7 +816,11 @@ function liveContext(world: World, overrides: Partial<ReturnType<typeof fakeDeps
     agent: 'claude',
     repo: null,
     round: () => 1,
-    deps: { ...fakeDeps(world), ...overrides }
+    deps: { ...fakeDeps(world), ...overrides },
+    recordLaunch: (input) => {
+      recordedLaunches.push(input)
+      return `run-${recordedLaunches.length}`
+    }
   })
   return { live, runtimeDir }
 }
@@ -1125,5 +1131,15 @@ describe('the repository a run works in', () => {
     expect(targetRepoRoot(join(dir, 'nested'))).toBe(dir)
     expect(targetRepoRoot(join(dir, 'nested'))).not.toBe(resolve(import.meta.dir, '../../..'))
     rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('a Developer turn on the Engine path', () => {
+  test('records the launch the Broker authenticates its pushes against', async () => {
+    const before = recordedLaunches.length
+    const { live } = liveContext(makeWorld(), {}, 31)
+    await live.beginTurn()
+    expect(recordedLaunches.length).toBe(before + 1)
+    expect(recordedLaunches.at(-1)).toMatchObject({ task: 31, agent: 'claude', round: 1 })
   })
 })

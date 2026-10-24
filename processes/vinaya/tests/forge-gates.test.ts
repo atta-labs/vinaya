@@ -611,6 +611,7 @@ for (const agent of AGENTS) {
       const world = makeWorld({ head: repo.taskHead, remote: 'remote-0', dirty: [], changed: [OWN, WORKFLOW] })
       const leases: Array<{ sha: string; expectedRemoteHead: string; touchedPaths: readonly string[] }> = []
       const live = engineLiveDevToolsContext({
+        recordLaunch: () => 'test-run',
         branch: 'task/t/8',
         worktreePath: repo.root,
         task: 8,
