@@ -40,6 +40,7 @@ import {
   createTaskWorktree,
   fetchSourceRevision,
   findOpenPrForBranch,
+  findOpenPrForBranchStrict,
   type reviewPolicyForLoop
 } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
 import {
@@ -1316,10 +1317,31 @@ function gatePollOf(task: TaskInput): GatePoll {
 
 /** The pull request the forge gates judge; throws when none is open, since every gate step runs after one was. */
 function openPullRequestOf(task: TaskInput, step: string): number {
-  const pr = (task.bound?.findOpenPrForBranch ?? findOpenPrForBranch)(task.branch)
-  if (pr === null) throw new Error(`${step} found no open pull request for branch ${task.branch}`)
-  return pr.number
+  // A test or a run that supplies its own lookup keeps it; the live one tells a failed forge call apart from an
+  // empty answer, retries the failure, and names it if it persists.
+  const find = task.bound?.findOpenPrForBranch
+  if (find && find !== findOpenPrForBranch) {
+    const pr = find(task.branch)
+    if (pr === null) throw new Error(`${step} found no open pull request for branch ${task.branch}`)
+    return pr.number
+  }
+  let lastError = ''
+  for (let attempt = 1; attempt <= OPEN_PR_LOOKUP_ATTEMPTS; attempt += 1) {
+    try {
+      const pr = findOpenPrForBranchStrict(task.branch)
+      if (pr === null) throw new Error(`${step} found no open pull request for branch ${task.branch}`)
+      return pr.number
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+      if (lastError.startsWith(`${step} found no open pull request`)) throw error
+      if (attempt < OPEN_PR_LOOKUP_ATTEMPTS) Bun.sleepSync(OPEN_PR_LOOKUP_SPACING_MS)
+    }
+  }
+  throw new Error(`${step} could not list the open pull requests for branch ${task.branch}: ${lastError}`)
 }
+
+const OPEN_PR_LOOKUP_ATTEMPTS = 3
+const OPEN_PR_LOOKUP_SPACING_MS = 5_000
 
 /** The head the forge gates judge: the worktree's, else the branch's on the remote. */
 function judgedHeadOf(task: TaskInput): string {
