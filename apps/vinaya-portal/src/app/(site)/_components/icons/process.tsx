@@ -1,34 +1,86 @@
-import { DOT, Glyph, LINE, MARK } from './glyph'
+'use client'
 
-// The Vinaya process and its parts.
+import { motion } from 'motion/react'
+import { useId } from 'react'
+import { cn } from '@/ui/lib/utils'
+import { AgentFrame, type AgentRole, AgentSign } from './agents'
+import { Glyph, LINE, MARK } from './glyph'
+import { type IconProps, useIconStill } from './icon-motion'
 
-export function VinayaProcessIcon({ className }: { className?: string }) {
+const LONG_FLOW: AgentRole[] = [
+  'architect',
+  'planner',
+  'developer',
+  'security-reviewer',
+  'reviewer',
+  'archivist',
+  'tranche-archivist'
+]
+const SHORT_FLOW: AgentRole[] = ['planner', 'operator', 'tranche-archivist']
+
+// Each flow's holds and moves are independent from its crossfade in the shared cycle.
+const longTimes = [
+  0, 0.04688, 0.075, 0.11562, 0.14375, 0.18438, 0.2125, 0.25313, 0.28125, 0.32188, 0.35, 0.39063, 0.41875, 0.45938, 1
+]
+const longX = [0, 0, -45, -45, -90, -90, -135, -135, -180, -180, -225, -225, -270, -270, -270]
+const shortTimes = [0, 0.64688, 0.69375, 0.72188, 0.7625, 0.79062, 0.83125, 1]
+const shortX = [0, 0, 0, -45, -45, -90, -90, -90]
+
+function Flow({ short = false }: { short?: boolean }) {
   return (
-    <Glyph className={className} viewBox='6.222 8.222 43.556 39.556'>
-      <circle cx='12' cy='28' r='5' {...LINE} />
-      <circle cx='28' cy='28' r='5' {...LINE} />
-      <circle cx='44' cy='28' r='5' {...LINE} {...DOT} />
-      <path d='M17 28h6M33 28h6' {...LINE} />
-      <path d='M7 9h42M7 47h42' {...LINE} strokeDasharray='2 5' />
-    </Glyph>
+    <motion.g
+      initial={{ x: 0, opacity: short ? 0 : 1 }}
+      animate={{ x: short ? shortX : longX, opacity: short ? [0, 0, 1, 1, 0] : [1, 1, 0, 0, 1] }}
+      transition={{
+        x: { duration: 32, repeat: Number.POSITIVE_INFINITY, ease: 'linear', times: short ? shortTimes : longTimes },
+        opacity: {
+          duration: 32,
+          repeat: Number.POSITIVE_INFINITY,
+          ease: 'linear',
+          times: short ? [0, 0.64688, 0.65938, 0.9875, 1] : [0, 0.63438, 0.64688, 0.9875, 1]
+        }
+      }}
+    >
+      {(short ? SHORT_FLOW : LONG_FLOW).map((role, index) => (
+        <g key={role} transform={`translate(${index * 45} 0)`}>
+          <AgentSign role={role} monochrome paused />
+        </g>
+      ))}
+    </motion.g>
   )
 }
 
-export function IntegrationIcon({ className }: { className?: string }) {
-  return (
-    <Glyph className={className} viewBox='5.185 7.185 45.63 41.63'>
-      <rect x='6' y='8' width='18' height='40' rx='4' {...LINE} />
-      <rect x='32' y='8' width='18' height='40' rx='4' {...LINE} />
-      <path d='M18 28h20' {...MARK} />
-    </Glyph>
-  )
+function hexagon(x: number, radius: number) {
+  return Array.from({ length: 6 }, (_, index) => {
+    const angle = ((index * 60 - 90) * Math.PI) / 180
+    return `${x + radius * Math.cos(angle)},${33 + radius * Math.sin(angle)}`
+  }).join(' ')
 }
 
-export function GatesIcon({ className }: { className?: string }) {
+export function VinayaProcessIcon({ className, still = false }: IconProps) {
+  const paused = useIconStill(still)
+  const clip = useId()
   return (
-    <Glyph className={className} viewBox='5.185 5.185 45.63 45.63'>
-      <path d='M28 6l22 8v12c0 13-9 21-22 24-13-3-22-11-22-24V14z' {...LINE} />
-      <path d='M19 28l7 7 12-13' {...MARK} />
+    <Glyph className={cn('overflow-hidden', className)} viewBox='1.037 1.037 53.926 53.926'>
+      <defs>
+        <clipPath id={clip}>
+          <polygon points={hexagon(28, 20)} />
+        </clipPath>
+      </defs>
+      <polygon {...LINE} points={hexagon(-17, 21)} />
+      <polygon {...LINE} points={hexagon(73, 21)} />
+      <path {...MARK} d='M2.59 33H8.41M47.59 33H53.41' />
+      <AgentFrame paused={paused} />
+      <g clipPath={`url(#${clip})`}>
+        {paused ? (
+          <AgentSign role='architect' monochrome paused />
+        ) : (
+          <>
+            <Flow />
+            <Flow short />
+          </>
+        )}
+      </g>
     </Glyph>
   )
 }

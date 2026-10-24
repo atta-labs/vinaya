@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowRight, BookA, BookOpen, Route, Users } from 'lucide-react'
+import { ArrowRight } from 'lucide-react'
 import { usePathname } from 'next/navigation'
 import {
   SidebarContent,
@@ -13,7 +13,7 @@ import {
 } from '@/ui/components'
 import { NextLink } from '@/ui/lib/next-link'
 import { cn } from '@/ui/lib/utils'
-import { ELEMENT_ICONS, type Element, SMALL_ICON } from '../../_components/icons'
+import { iconForName, SMALL_ICON } from '../../_components/icons'
 import { DOCS_NAV, type DocsPage, groupForPath } from '../_lib/portal-docs'
 
 /** One sidebar entry; a page's children show while you are in that section. */
@@ -33,8 +33,15 @@ function PageItem({ page, pathname }: { page: DocsPage; pathname: string }) {
             : 'text-sidebar-foreground/65 hover:text-sidebar-foreground'
         )}
       >
-        {/* Only sections have icons; a page's title lines up with its section's title, past the icon. */}
-        <span className='pl-7.5'>{page.title}</span>
+        {/* A page that names a product, agent or subject shows its icon in the gutter under its section's icon; every
+            title lines up with its section's title, past the icon. */}
+        <span className='flex items-center gap-2.5'>
+          {(() => {
+            const Icon = iconForName(page.title)
+            return Icon ? <Icon className={SMALL_ICON} still /> : <span className='w-5 shrink-0' aria-hidden />
+          })()}
+          {page.title}
+        </span>
       </SidebarMenuButton>
       {inSection && page.children && (
         <SidebarMenu className='mt-0.5 ml-10 gap-0.5 border-l border-sidebar-border pl-2'>
@@ -53,7 +60,13 @@ function PageItem({ page, pathname }: { page: DocsPage; pathname: string }) {
                       : 'text-sidebar-foreground/60 hover:text-sidebar-foreground'
                   )}
                 >
-                  <span>{child.title}</span>
+                  <span className='flex items-center gap-2'>
+                    {(() => {
+                      const Icon = iconForName(child.title)
+                      return Icon ? <Icon className={`${SMALL_ICON} size-4`} still /> : null
+                    })()}
+                    {child.title}
+                  </span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             )
@@ -64,25 +77,10 @@ function PageItem({ page, pathname }: { page: DocsPage; pathname: string }) {
   )
 }
 
-/** The icon beside each sidebar section's title: the element's own icon when the section is one, else a plain one. */
-const SECTION_ELEMENT: Record<string, Element> = {
-  Start: 'get-started',
-  Features: 'features',
-  'Dev Process': 'dev-process',
-  Integration: 'integration',
-  CLI: 'cli'
-}
-const SECTION_PLAIN: Record<string, typeof BookOpen> = {
-  Guides: BookOpen,
-  Parts: Route,
-  'Using it': Users,
-  Reference: BookA
-}
-
-/** Each docs set's badge at the top of its sidebar: its element's icon and what it is. */
-const HEAD: Record<string, { element: Element; line: string }> = {
-  start: { element: 'vinaya-harness', line: 'Docs · works with any process' },
-  process: { element: 'vinaya-process', line: 'Docs · the default process' }
+/** Each docs set's badge at the top of its sidebar: the icon its title names, and what it is. */
+const HEAD_LINE: Record<string, string> = {
+  start: 'Docs · works with any process',
+  process: 'Docs · the default process'
 }
 
 /**
@@ -103,27 +101,23 @@ export function PortalDocsSidebar() {
         >
           <span className='flex size-9 shrink-0 items-center justify-center rounded-md border border-sidebar-border bg-background text-sidebar-foreground'>
             {(() => {
-              const Icon = ELEMENT_ICONS[HEAD[active.id]?.element ?? 'vinaya-harness']
-              return <Icon className={SMALL_ICON} />
+              const Icon = iconForName(active.title)
+              return Icon ? <Icon className={SMALL_ICON} still /> : null
             })()}
           </span>
           <span className='flex min-w-0 flex-col'>
             <span className='font-sans text-sm font-medium tracking-tight text-sidebar-foreground'>{active.title}</span>
-            <span className='truncate font-sans text-xs text-sidebar-foreground/60'>{HEAD[active.id]?.line}</span>
+            <span className='truncate font-sans text-xs text-sidebar-foreground/60'>{HEAD_LINE[active.id]}</span>
           </span>
         </NextLink>
       )}
       {active?.sections.map((section) => (
         <SidebarGroup key={section.title} className='py-3'>
-          <SidebarGroupLabel className='h-auto gap-2.5 px-2.5 pb-2 font-sans text-sm font-medium text-sidebar-foreground [&>svg]:size-4'>
+          <SidebarGroupLabel className='h-auto gap-2.5 px-2.5 pb-2 font-sans text-sm font-medium text-sidebar-foreground [&>svg]:size-5'>
+            {/* Every section uses the same custom family as its subject page. */}
             {(() => {
-              const element = SECTION_ELEMENT[section.title]
-              if (element) {
-                const Icon = ELEMENT_ICONS[element]
-                return <Icon className={SMALL_ICON} />
-              }
-              const Plain = SECTION_PLAIN[section.title] ?? BookOpen
-              return <Plain aria-hidden />
+              const Icon = iconForName(section.title)
+              return Icon ? <Icon className={SMALL_ICON} still /> : null
             })()}
             {section.title}
           </SidebarGroupLabel>

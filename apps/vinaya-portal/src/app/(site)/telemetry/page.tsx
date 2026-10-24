@@ -1,6 +1,6 @@
+import { FolderDown, Funnel, Database, CircleHelp } from 'lucide-react'
 import { FeaturePage } from '../_components/feature-page/FeaturePage'
 import { TelemetryLive } from '../_components/feature-page/live'
-import { CacheIcon, NormaliserIcon, QuestionsIcon, TelemetryIcon, TelemetrySourceIcon } from '../_components/icons'
 
 export const metadata = { title: 'Telemetry · Vinaya' }
 
@@ -9,7 +9,6 @@ export default function TelemetryPage() {
     <FeaturePage
       n={2}
       name='Telemetry'
-      icon={(className) => <TelemetryIcon className={className} />}
       lead='What the Log adds up to: how long each task took, what the reviewers caught, how often the checks said no.'
       tags={['vinaya sync', 'Local cache', 'Ten questions, plus a confidence comparison', 'Unknown, never zero']}
       docsHref='/docs/features/telemetry'
@@ -24,25 +23,25 @@ export default function TelemetryPage() {
             title: 'Source',
             line: 'Pages through your folder or server, whichever the Log writes to. Reading never changes it.',
             href: '/docs/features/telemetry',
-            icon: (className) => <TelemetrySourceIcon className={className} />
+            icon: (className) => <FolderDown className={className} />
           },
           {
             title: 'Normaliser',
             line: 'Turns each line into a row, or sets it aside, with the same check the sender uses.',
             href: '/docs/features/telemetry',
-            icon: (className) => <NormaliserIcon className={className} />
+            icon: (className) => <Funnel className={className} />
           },
           {
             title: 'Cache',
             line: 'Keeps the rows by event identity, so reading a line twice adds nothing.',
             href: '/docs/features/telemetry',
-            icon: (className) => <CacheIcon className={className} />
+            icon: (className) => <Database className={className} />
           },
           {
             title: 'Questions',
             line: 'Each answers with a figure, or with "unknown" and the reason.',
             href: '/docs/features/telemetry',
-            icon: (className) => <QuestionsIcon className={className} />
+            icon: (className) => <CircleHelp className={className} />
           }
         ]
       }}

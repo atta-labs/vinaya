@@ -23,12 +23,12 @@ import {
 import { NextLink } from '@/ui/lib/next-link'
 import { cn } from '@/ui/lib/utils'
 import { Heading, Text } from '@/ui/shared'
-import { iconForHref } from '../../_components/icons'
+import { iconForName, iconForPage, SMALL_ICON } from '../../_components/icons'
 import { type DocsPage, HARNESS_KEYS, PROCESS_KEYS, sectionId } from '../_lib/portal-docs'
 import { CopyPageButton } from './CopyPageButton'
 import { DocAccordion, DocCode, DocTabs } from './DocBlocks'
 import { FlowDiagram, WholeDiagramButton } from './FlowDiagrams'
-import { CommandList, ConfigKeys } from './PortalDoc'
+import { CommandList, ConfigKeys, PageTitle } from './PortalDoc'
 import { StickyDocHeader } from './StickyDocHeader'
 
 const CONTENT_DIR = join(process.cwd(), 'src', 'content', 'docs-tree')
@@ -42,6 +42,19 @@ const textOf = (node: ReactNode): string =>
       : node && typeof node === 'object' && 'props' in node
         ? textOf((node.props as { children?: ReactNode }).children)
         : ''
+
+/** A heading's or cell's text, led by the icon of the product, agent or subject it names, if it names one. */
+const named = (children: ReactNode, className?: string): ReactNode => {
+  const Icon = iconForName(textOf(children))
+  return Icon ? (
+    <span className='inline-flex items-center gap-2 align-middle'>
+      <Icon className={cn('shrink-0', SMALL_ICON, className)} still />
+      <span>{children}</span>
+    </span>
+  ) : (
+    children
+  )
+}
 
 /** Splits a block body on `=== Label` lines into labelled parts. */
 const splitOn = (body: string, marker: RegExp) => {
@@ -117,27 +130,29 @@ function Block({ lang, body }: { lang: string; body: string }) {
       .map((l) => l.match(/^-\s*\[([^\]]+)\]\(([^)]+)\)\s*(.*)$/))
       .filter((m): m is RegExpMatchArray => m !== null)
     // Icons only when every card in the block has one, so a block never mixes cards with and without.
-    const withIcons = cards.every(([, , href]) => iconForHref(href ?? ''))
+    const cardIcon = ([, title, href]: RegExpMatchArray) => iconForPage({ href: href ?? '', title: title ?? '' })
+    const withIcons = cards.every(cardIcon)
     return (
       <div className='my-2 grid gap-3 sm:grid-cols-2'>
-        {cards.map(([, title, href, line]) => (
-          <NextLink key={href} variant='unstyled' href={href ?? '#'} className='block'>
-            <Card variant='link' className='h-full'>
-              <CardHeader className='flex-row items-start gap-3.5 p-4'>
-                {(() => {
-                  const Icon = withIcons ? iconForHref(href ?? '') : undefined
-                  return Icon ? <Icon className='size-9' /> : null
-                })()}
-                <span className='flex min-w-0 flex-col gap-1'>
-                  <CardTitle size='md' weight='medium' family='sans'>
-                    {title}
-                  </CardTitle>
-                  {line && <CardDescription>{line}</CardDescription>}
-                </span>
-              </CardHeader>
-            </Card>
-          </NextLink>
-        ))}
+        {cards.map((card) => {
+          const [, title, href, line] = card
+          const Icon = withIcons ? cardIcon(card) : undefined
+          return (
+            <NextLink key={href} variant='unstyled' href={href ?? '#'} className='block'>
+              <Card variant='link' className='h-full'>
+                <CardHeader className='flex-row items-start gap-3.5 p-4'>
+                  {Icon && <Icon className='size-9' />}
+                  <span className='flex min-w-0 flex-col gap-1'>
+                    <CardTitle size='md' weight='medium' family='sans'>
+                      {title}
+                    </CardTitle>
+                    {line && <CardDescription>{line}</CardDescription>}
+                  </span>
+                </CardHeader>
+              </Card>
+            </NextLink>
+          )
+        })}
       </div>
     )
   }
@@ -187,7 +202,7 @@ const components: Components = {
       tone='foreground'
       className='scroll-mt-16 pt-8'
     >
-      {children}
+      {named(children, 'size-6')}
     </Heading>
   ),
   h3: ({ children }) => (
@@ -200,7 +215,7 @@ const components: Components = {
       tone='foreground'
       className='scroll-mt-16 pt-4'
     >
-      {children}
+      {named(children)}
     </Heading>
   ),
   h4: ({ children }) => <p className='pt-2 font-sans font-medium text-foreground'>{children}</p>,
@@ -236,8 +251,8 @@ const components: Components = {
   thead: ({ children }) => <TableHeader>{children}</TableHeader>,
   tbody: ({ children }) => <TableBody>{children}</TableBody>,
   tr: ({ children }) => <TableRow>{children}</TableRow>,
-  th: ({ children }) => <TableHead className='whitespace-nowrap'>{children}</TableHead>,
-  td: ({ children }) => <TableCell className='whitespace-normal'>{children}</TableCell>,
+  th: ({ children }) => <TableHead className='whitespace-nowrap'>{named(children)}</TableHead>,
+  td: ({ children }) => <TableCell className='whitespace-normal'>{named(children)}</TableCell>,
   blockquote: ({ children }) => (
     <blockquote className='border-l-2 border-border pl-4 text-muted-foreground'>{children}</blockquote>
   )
@@ -280,7 +295,7 @@ export async function MarkdownDoc({ page, eyebrow }: { page: DocsPage & { source
         </Text>
         <div className='flex items-start justify-between gap-4'>
           <Heading level={1} weight='normal' variant='page' family='sans' tone='foreground'>
-            {page.title}
+            <PageTitle title={page.title} href={page.href} />
           </Heading>
           <CopyPageButton />
         </div>

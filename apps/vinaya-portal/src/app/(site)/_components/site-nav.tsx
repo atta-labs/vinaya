@@ -1,15 +1,7 @@
 import { ChevronDown } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { TopBarGroupSection, TopBarNavItem } from '@/ui/topbar'
-import {
-  ConfigurationIcon,
-  LogIcon,
-  SelfImprovementIcon,
-  StudioIcon,
-  TelemetryIcon,
-  VinayaHarnessIcon,
-  VinayaProcessIcon
-} from './icons'
+import { NamedIcon } from './icons'
 import { ConfigScene, ImproveScene, LogScene, StudioScene, TelemetryScene } from './menu-previews'
 
 /**
@@ -36,7 +28,7 @@ const PRODUCT_SECTIONS: TopBarGroupSection[] = [
       {
         label: 'Log',
         href: '/log',
-        icon: <LogIcon className={LIST_ICON} />,
+        icon: <NamedIcon name='Log' className={LIST_ICON} />,
         description: 'Every act, written down',
         preview: {
           title: 'Every check, review and decision, written down',
@@ -47,7 +39,7 @@ const PRODUCT_SECTIONS: TopBarGroupSection[] = [
       {
         label: 'Telemetry',
         href: '/telemetry',
-        icon: <TelemetryIcon className={LIST_ICON} />,
+        icon: <NamedIcon name='Telemetry' className={LIST_ICON} />,
         description: 'The Log, counted',
         preview: {
           title: 'What the Log adds up to',
@@ -58,7 +50,7 @@ const PRODUCT_SECTIONS: TopBarGroupSection[] = [
       {
         label: 'Studio',
         href: '/studio',
-        icon: <StudioIcon className={LIST_ICON} />,
+        icon: <NamedIcon name='Studio' className={LIST_ICON} />,
         description: 'Your agents, right now',
         preview: {
           title: 'See every agent and every task, live',
@@ -69,7 +61,7 @@ const PRODUCT_SECTIONS: TopBarGroupSection[] = [
       {
         label: 'Self-improvement',
         href: '/self-improvement',
-        icon: <SelfImprovementIcon className={LIST_ICON} />,
+        icon: <NamedIcon name='Self-improvement' className={LIST_ICON} />,
         description: 'Proposed, then approved',
         preview: {
           title: 'The process gets better by itself',
@@ -80,7 +72,7 @@ const PRODUCT_SECTIONS: TopBarGroupSection[] = [
       {
         label: 'Configuration',
         href: '/configuration',
-        icon: <ConfigurationIcon className={LIST_ICON} />,
+        icon: <NamedIcon name='Configuration' className={LIST_ICON} />,
         description: 'One file sets it up',
         preview: {
           title: 'One file turns the harness on',
@@ -102,13 +94,13 @@ const DOCS_SECTIONS: TopBarGroupSection[] = [
       {
         label: 'The Vinaya harness',
         href: '/docs/start',
-        icon: <VinayaHarnessIcon className='size-12' />,
+        icon: <NamedIcon name='The Vinaya harness' className='size-12' />,
         description: 'Install it, the CLI, the features'
       },
       {
         label: 'The Vinaya process',
         href: '/docs/process',
-        icon: <VinayaProcessIcon className='size-12' />,
+        icon: <NamedIcon name='The Vinaya process' className='size-12' />,
         description: 'Think, execute, retrospect'
       }
     ]

@@ -3,7 +3,19 @@
 import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { usePathname } from 'next/navigation'
 import { NextLink } from '@/ui/lib/next-link'
-import { pageNeighbours } from '../_lib/portal-docs'
+import { iconForPage, SMALL_ICON } from '../../_components/icons'
+import { type DocsPage, pageNeighbours } from '../_lib/portal-docs'
+
+/** A neighbour's title, with the icon of the element it names. */
+function PageName({ page, end }: { page: DocsPage; end?: boolean }) {
+  const Icon = iconForPage(page)
+  return (
+    <span className={`flex items-center gap-2 font-sans text-base text-foreground ${end ? 'justify-end' : ''}`}>
+      {Icon && <Icon className={SMALL_ICON} still />}
+      {page.title}
+    </span>
+  )
+}
 
 /** The previous and next page in reading order, at the end of every docs page. */
 export function DocsPager() {
@@ -17,7 +29,7 @@ export function DocsPager() {
           <span className='flex items-center gap-1 font-mono text-xs uppercase tracking-widest text-muted-foreground'>
             <ArrowLeft className='size-3' aria-hidden /> Previous
           </span>
-          <span className='font-sans text-base text-foreground'>{prev.title}</span>
+          <PageName page={prev} />
         </NextLink>
       ) : (
         <span className='hidden flex-1 sm:block' />
@@ -27,7 +39,7 @@ export function DocsPager() {
           <span className='flex items-center gap-1 font-mono text-xs uppercase tracking-widest text-muted-foreground'>
             Next <ArrowRight className='size-3' aria-hidden />
           </span>
-          <span className='font-sans text-base text-foreground'>{next.title}</span>
+          <PageName page={next} end />
         </NextLink>
       )}
     </nav>
