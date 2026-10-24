@@ -43,7 +43,9 @@ import { appendRoleLine, loopLogPathFor } from '../loop-log.js'
 import {
   escalationIdFor,
   escalationPrOf,
+  isDriverPidAlive,
   missingEscalationNextStep,
+  readDriverLock,
   readEscalationRecord,
   readPauseState,
   ReplayedResolutionError,
@@ -51,6 +53,7 @@ import {
   WrongTargetResolutionError
 } from '../dev-review-loop/pause-resume.js'
 import { log } from '../log-sink.js'
+import { readTaskRunner } from '../task-run-engine.js'
 import { resolveIssueForRef, type TaskToolCallResult } from './handlers.js'
 import { readEscalationPacket } from './read.js'
 import type { CallerContext } from './server.js'
@@ -75,7 +78,17 @@ export type TaskCancelDeps = {
   hostname: () => string
   /** The Vinaya Log chokepoint (`log-sink.ts`) — injectable so a fixture can capture the typed `operation` event this handler emits without touching the real, machine-global outbox. */
   log: typeof log
+  /** The runner the task's run recorded (`readTaskRunner`); absent, the standalone runner. */
+  runner?: (task: number, root: string) => 'standalone' | 'atta-engine'
+  isPidAlive?: (pid: number) => boolean
+  sleep?: (ms: number) => Promise<void>
+  /** How long a live Engine run gets to see the cancel in its ruling watch and end. */
+  engineStopTimeoutMs?: number
 }
+
+/** One Engine ruling-watch poll and a grace period: the bound for a live Engine run to see a cancel and end. */
+export const ENGINE_STOP_TIMEOUT_MS = 45_000
+const ENGINE_STOP_POLL_MS = 100
 
 export const defaultTaskCancelDeps: TaskCancelDeps = {
   runtimeDir,
@@ -86,7 +99,31 @@ export const defaultTaskCancelDeps: TaskCancelDeps = {
   fetchNewestIssueRulingOrdinal,
   cancelDevReviewLoop: (input) => cancelDevReviewLoop(input),
   hostname: osHostname,
-  log
+  log,
+  runner: readTaskRunner,
+  isPidAlive: isDriverPidAlive,
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Waits, bounded, for a live Engine run to end once the shared cancel has resolved its pause: the run's own ruling
+ * watch reads the cancel, halts, ends its agents and releases the driver lock. Nothing here signals a process, so a
+ * pid the system reused since the lock was written is never touched. True once that lock is gone or replaced.
+ */
+async function awaitEngineStop(
+  deps: TaskCancelDeps,
+  task: number,
+  root: string,
+  held: { pid: number; startedAt: string }
+): Promise<boolean> {
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+  const deadline = Date.now() + (deps.engineStopTimeoutMs ?? ENGINE_STOP_TIMEOUT_MS)
+  for (;;) {
+    const lock = readDriverLock(root, task)
+    if (lock === null || lock.pid !== held.pid || lock.startedAt !== held.startedAt) return true
+    if (Date.now() >= deadline) return false
+    await sleep(ENGINE_STOP_POLL_MS)
+  }
 }
 
 /**
@@ -208,15 +245,21 @@ export function createTaskCancelHandler(
     appendRoleLine(loopLogPathFor(null, issue, root), 'operator', `task_cancel requested: ${parsed.data.reason}`)
 
     try {
+      // An Engine run is cancelled by the same cancel as a standalone one; a live Engine run then ends on its own.
+      const engineLock =
+        (deps.runner ?? (() => 'standalone'))(issue, root) === 'atta-engine' ? readDriverLock(root, issue) : null
+      const liveEngine =
+        engineLock !== null && (deps.isPidAlive ?? isDriverPidAlive)(engineLock.pid) ? engineLock : null
       const result = await deps.cancelDevReviewLoop(
         escalationPr === null ? { cancelTask: issue, agent } : { cancelPr: escalationPr, agent }
       )
+      const engineStopped = liveEngine === null ? true : await awaitEngineStop(deps, issue, root, liveEngine)
       const resolutionRead = readResolution(controlStoreDeps, issue, result.escalationId)
       const resolution = resolutionRead.status === 'ok' ? resolutionRead.value : null
       const outcome: TaskCancelOutcome =
         result.fencedEffectKeys.length > 0
           ? 'uncertain'
-          : peekedEscalation && peekedEscalation.host !== deps.hostname()
+          : !engineStopped || (peekedEscalation && peekedEscalation.host !== deps.hostname())
             ? 'pending'
             : 'confirmed'
       emitOperationEvent(deps.log, issue, target, 'ok', null)

@@ -203,6 +203,8 @@ function fakeForge(over: Partial<ResumeDeps> = {}) {
   }
   const deps: ResumeDeps = {
     ...liveResumeDeps,
+    // Every pause here is an Engine run's own; the cross-runner refusal is the routing suite's.
+    crossRunnerRefusal: () => null,
     readEscalationRecord: () => forge.escalation,
     readResolution: () => forge.resolution,
     resolveEscalation: (_task, escalationId, expectedPr, decision, by, from) => {

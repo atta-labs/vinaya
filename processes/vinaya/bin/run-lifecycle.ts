@@ -69,6 +69,7 @@ import {
   readPublishedPullRequest
 } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
+import { crossRunnerRefusal } from '../../../apps/cli/src/lib/task-run-engine'
 import type { HeldCleanVerdict } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import type { ParsedLaunch } from '../../../apps/cli/src/lib/dispatch'
 import type { LegExit } from '../executing/log-events'
@@ -263,9 +264,12 @@ export interface ResumeDeps {
   liveDriver: (root: string, task: number) => LockHolder | null
   /** The infrastructure retries the control store holds for the task; `null` when it cannot be read. */
   infrastructureRetries: (task: number) => number | null
+  /** Why the Engine may not continue the task's pause — another runner recorded it — or null when it may; absent, none. */
+  crossRunnerRefusal?: (root: string, task: number) => string | null
 }
 
 export const liveResumeDeps: ResumeDeps = {
+  crossRunnerRefusal: (root, task) => crossRunnerRefusal(task, 'atta-engine', root),
   readPauseState,
   readEscalationRecord: (task, escalationId) => readEscalationRecord(task, escalationId),
   readResolution: readResolutionRecord,
@@ -446,6 +450,9 @@ export function claimResume(root: string, request: ResumeRequest, deps: ResumeDe
   const { pr } = request
   const task = deps.taskFromPrBody(deps.fetchPrBody(pr))
   if (task === null) return refuse(`PR #${pr}'s body carries no \`Closes #N\` reference — cannot derive its task.`)
+  // Refused before anything is read or consumed: a pause another runner recorded is that runner's to continue.
+  const otherRunner = deps.crossRunnerRefusal?.(root, task) ?? null
+  if (otherRunner !== null) return refuse(otherRunner)
   const driver = deps.liveDriver(root, task)
   if (driver !== null) return refuse(refusal(task, driver))
   let held = deps.readPauseState(root, task)

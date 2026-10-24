@@ -53,6 +53,7 @@ import {
 } from '../task-status.js'
 import { tasksExecutionRoot } from '../run-paths.js'
 import { widenSurfaceContinuationFor } from '../task-run.js'
+import { engineContinuationCommand, readTaskRunner } from '../task-run-engine.js'
 import { describeUsageLimitPause } from '../dev-review-loop/round-assess.js'
 
 // --- Observed<T> -------------------------------------------------------------
@@ -249,7 +250,19 @@ export function readEscalationPacket(root: string, task: number): TaskEscalation
     permittedNextActions: [
       ...profile.nextActions,
       ...(widenSurface === null ? [] : [`To widen the Surface the Developer asked for (Planner): ${widenSurface}`]),
-      `Or run: ${pause.prNumber === null ? noPushResumeCommandFor(pause.task, pause.branch, pause.agent, pause.model) : resumeCommandFor(pause.prNumber)}`
+      // An Engine run continues on the Engine runner, which the standalone commands refuse.
+      `Or run: ${
+        readTaskRunner(pause.task, root) === 'atta-engine'
+          ? engineContinuationCommand({
+              issue: pause.task,
+              pr: pause.prNumber,
+              agent: pause.agent === 'codex' ? 'codex' : 'claude',
+              ...(pause.model ? { model: pause.model } : {})
+            })
+          : pause.prNumber === null
+            ? noPushResumeCommandFor(pause.task, pause.branch, pause.agent, pause.model)
+            : resumeCommandFor(pause.prNumber)
+      }`
     ],
     runIdentity: escalation ? { runId: escalation.runId, pid: escalation.pid, host: escalation.host } : null,
     inputVersions: escalation

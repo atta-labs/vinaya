@@ -9,7 +9,7 @@ import {
   type LogSinkDeps
 } from '../../src/lib/log-sink.js'
 import { VinayaConfigSchema, type VinayaConfig } from '../../src/lib/config.js'
-import { createEngineLogSink } from '../../../../processes/vinaya/bin/run-engine.js'
+import { configureEngineLogEnvironment, createEngineLogSink } from '../../../../processes/vinaya/bin/run-engine.js'
 import { buildCheckEnv } from '../../src/checks/runner.js'
 import { spawnBudgetedAsync, stripVinayaEnv } from './process-fixture.js'
 
@@ -99,22 +99,60 @@ describe('Log recording restrictions', () => {
     expect(result.kind).toBe('none')
   })
 
-  it('Engine writes local lines with a configured URL and leaves the server outbox empty', async () => {
-    const test = fixture({ logs: { url: 'http://127.0.0.1:1' } })
-    const sink = createEngineLogSink(test.deps)
-    sink.log(EVENT)
-    await sink.drain()
-    sink.logSync(EVENT)
-    expect(
-      readFileSync(join(test.folder, 'example-test', '42.ndjson'), 'utf8')
-        .trim()
-        .split('\n')
-    ).toHaveLength(2)
-    expect(existsSync(test.outbox)).toBe(false)
-    expect(test.serverDestinations()).toBe(0)
+  it('Engine delivers to a configured server destination through the shared sink', async () => {
+    const requests: string[] = []
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        requests.push(await req.text())
+        return new Response('ok')
+      }
+    })
+    try {
+      const root = mkdtempSync(join(tmpdir(), 'engine-log-server-'))
+      roots.push(root)
+      const url = `http://127.0.0.1:${server.port}/ingest`
+      const sinkPath = join(import.meta.dir, '../../src/lib/log-sink.ts')
+      const runnerPath = join(import.meta.dir, '../../../../processes/vinaya/bin/run-engine.ts')
+      const script = join(root, 'engine-sink.ts')
+      writeFileSync(
+        script,
+        `
+          import { resolveLogDestinationFrom } from ${JSON.stringify(sinkPath)}
+          import { createEngineLogSink } from ${JSON.stringify(runnerPath)}
+          const config = { logs: { url: ${JSON.stringify(url)} } }
+          const sink = createEngineLogSink({
+            readConfig: () => config,
+            env: () => ({ VINAYA_TASK: '42', VINAYA_ROLE: 'developer' }),
+            resolveRepo: async () => ({ owner: 'example', repo: 'test' }),
+            resolveLogDestination: (_repo, env, folderOnly) =>
+              resolveLogDestinationFrom({
+                localConfig: config,
+                trustAnchorConfig: config,
+                unattended: true,
+                env,
+                defaultFolder: ${JSON.stringify(join(root, 'logs'))},
+                folderOnly
+              })
+          })
+          sink.log(${JSON.stringify(EVENT)})
+          await sink.drain()
+          await new Promise((r) => setTimeout(r, 400))
+        `
+      )
+      const result = await spawnBudgetedAsync([process.execPath, script], {
+        cwd: root,
+        env: { ...stripVinayaEnv(), HOME: root, AEG_REPO: 'example/test' }
+      })
+      expect(result.status).toBe(0)
+      expect(requests.join('\n')).toContain('"effect_id":"test"')
+      expect(existsSync(join(root, 'logs'))).toBe(false)
+    } finally {
+      server.stop()
+    }
   })
 
-  it('keeps a configured local folder when Engine restricts server delivery', () => {
+  it('keeps a configured local folder when a sink restricts server delivery', () => {
     const result = resolveLogDestinationFrom({
       localConfig: { logs: { folder: '/local/logs' } },
       trustAnchorConfig: { logs: { folder: '/local/logs' } },
@@ -126,59 +164,16 @@ describe('Log recording restrictions', () => {
     expect(result).toEqual({ kind: 'folder', folder: '/local/logs' })
   })
 
-  it('check children inherit the Engine restriction even when their declared env tries to relax it', () => {
+  it('check children inherit a folder-only restriction even when their declared env tries to relax it', () => {
     expect(buildCheckEnv(undefined, { [LOG_FOLDER_ONLY_ENV]: '1' })).toEqual({ [LOG_FOLDER_ONLY_ENV]: '1' })
     expect(buildCheckEnv({ [LOG_FOLDER_ONLY_ENV]: '0' }, { [LOG_FOLDER_ONLY_ENV]: '1' })[LOG_FOLDER_ONLY_ENV]).toBe('1')
     expect(buildCheckEnv(undefined, {})).toEqual({})
   })
 
-  it('Engine run_checks subprocesses use ordinary shared sinks without server delivery or outbox writes', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'engine-log-child-'))
-    roots.push(root)
-    writeFileSync(join(root, 'vinaya.config.json'), JSON.stringify({ logs: { url: 'http://127.0.0.1:1' } }))
-    const sinkPath = join(import.meta.dir, '../../src/lib/log-sink.ts')
-    const runnerPath = join(import.meta.dir, '../../../../processes/vinaya/bin/run-engine.ts')
-    const checksPath = join(import.meta.dir, '../../../../harness/gates/run-checks.ts')
-    const cli = join(root, 'fixture-cli.ts')
-    writeFileSync(
-      cli,
-      `
-        import { log, logSync, drainLogSink } from ${JSON.stringify(sinkPath)}
-        let requests = 0
-        globalThis.fetch = async () => { requests++; return new Response('ok') }
-        if (process.argv.slice(2).join(' ') !== 'check --all') throw new Error('unexpected check argv')
-        log(${JSON.stringify(EVENT)})
-        await drainLogSink()
-        logSync(${JSON.stringify(EVENT)})
-        console.log(JSON.stringify({ requests }))
-      `
-    )
-    const parent = join(root, 'engine-parent.ts')
-    writeFileSync(
-      parent,
-      `
-        import { configureEngineLogEnvironment } from ${JSON.stringify(runnerPath)}
-        import { runCliChecks } from ${JSON.stringify(checksPath)}
-        configureEngineLogEnvironment()
-        const result = await runCliChecks(${JSON.stringify(cli)}, ${JSON.stringify(root)}, {})
-        if (!result.passed) throw new Error(result.output)
-        console.log(result.output)
-      `
-    )
-    const result = await spawnBudgetedAsync([process.execPath, parent], {
-      cwd: root,
-      env: {
-        ...stripVinayaEnv(),
-        HOME: root,
-        AEG_REPO: 'example/test',
-        VINAYA_TASK: '42',
-        VINAYA_RUNTIME_DIR: join(root, 'runtime')
-      }
-    })
-    expect(result.status).toBe(0)
-    expect(result.stderr).not.toContain('Error')
-    expect(readFileSync(join(root, 'runtime/logs/example-test/42.ndjson'), 'utf8').trim().split('\n')).toHaveLength(2)
-    expect(existsSync(join(root, '.vinaya/outbox'))).toBe(false)
-    expect(result.stdout).toContain('"requests":0')
+  it('Engine runs leave their CLI children free to resolve the configured destination', () => {
+    const env: NodeJS.ProcessEnv = { [LOG_FOLDER_ONLY_ENV]: '1' }
+    configureEngineLogEnvironment(env)
+    expect(env[LOG_FOLDER_ONLY_ENV]).toBeUndefined()
+    expect(buildCheckEnv(undefined, env)[LOG_FOLDER_ONLY_ENV]).toBeUndefined()
   })
 })

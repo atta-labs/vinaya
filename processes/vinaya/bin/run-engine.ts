@@ -121,7 +121,11 @@ import {
   defaultSetHeartbeat,
   emitDriverHeartbeat
 } from '../../../apps/cli/src/lib/dev-review-loop/driver-lifecycle'
-import { isDriverPidAlive } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+import {
+  clearDriverLock,
+  isDriverPidAlive,
+  readPauseState
+} from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { appendLoopLogLine, appendRunStartMarker, loopLogPathFor } from '../../../apps/cli/src/lib/loop-log'
 import { CLI_ENTRY_ENV } from '../../../apps/cli/src/lib/cli-entry'
 import { developerTurnResultJsonSchema } from '../../../apps/cli/src/lib/developer-turn-result'
@@ -133,6 +137,7 @@ import {
   terminateChildWithGrace
 } from '../../../apps/cli/src/lib/dispatch'
 import { loadConfig } from '../../../apps/cli/src/lib/config'
+import { crossRunnerRefusal, recordTaskRunner } from '../../../apps/cli/src/lib/task-run-engine'
 import { startDevToolsHost, type DevToolsHost } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
 import { devToolsSocketPath } from '../../../apps/cli/src/lib/task-tools/dev-tools-registration'
 import {
@@ -155,6 +160,7 @@ import {
   fetchNewestRulingOrdinal,
   findOpenPrForBranch,
   resolveDeveloperDoctrineText,
+  describeObjectivesEdit,
   resolveIssueObjectives,
   reviewPolicyForLoop
 } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
@@ -198,6 +204,7 @@ import {
   type BoundFunctions,
   createRoleLaunchers,
   sandboxProbePlanFor,
+  worktreeStats,
   type HeldVerdictRole,
   type ReviewRoundInputs,
   type TaskInput
@@ -662,8 +669,32 @@ export interface EngineRunResult {
   tracePath: string
 }
 
-/** Runs the task on the Engine. The host is closed and the sink drained on every way out. */
+/**
+ * Runs the task on the Engine, its Log events naming the task, the `loop`
+ * host and, once found, the pull request, as the standalone driver's do; the
+ * caller's own values are restored afterwards.
+ */
 export async function runEngine(options: EngineRunOptions): Promise<EngineRunResult> {
+  const saved = { task: process.env.VINAYA_TASK, host: process.env.VINAYA_HOST, pr: process.env.VINAYA_PR }
+  process.env.VINAYA_TASK = String(options.args.task)
+  if (saved.host === undefined) process.env.VINAYA_HOST = 'loop'
+  delete process.env.VINAYA_PR
+  try {
+    return await runEngineLegs(options)
+  } finally {
+    for (const [key, value] of [
+      ['VINAYA_TASK', saved.task],
+      ['VINAYA_HOST', saved.host],
+      ['VINAYA_PR', saved.pr]
+    ] as const) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+}
+
+/** Runs the task's legs. The host is closed and the sink drained on every way out. */
+async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult> {
   const out = options.out ?? ((line: string) => process.stdout.write(`${line}\n`))
   const { args } = options
   const lifecycle = options.lifecycle ?? {}
@@ -672,7 +703,11 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
   mkdirSync(runDir, { recursive: true })
   const tracePath = join(runDir, 'trace.json')
   const trace = createTraceRecorder({ task: args.task, agent: args.agent, loopId: options.loopId })
-  const producers = createVinayaLogProducers({ loopId: options.loopId, task: args.task })
+  const producers = createVinayaLogProducers({
+    loopId: options.loopId,
+    task: args.task,
+    baseHead: () => (options.taskInput ? worktreeStats(options.taskInput.worktreePath, 0).baseHead : null)
+  })
   const translator = createLogTranslator(producers, options.sink.log as unknown as EmitLogEvent)
   const logPath = loopLogPathFor(null, args.task, options.runtimeDir)
   const narrate = (line: string): void => appendLoopLogLine(logPath, `${new Date().toISOString()}  ${line}`)
@@ -701,6 +736,8 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
     writeTrace('refused', {}, lock.message)
     return { outcome: null, exitCode: 1, tracePath }
   }
+  // The task's run is this runner's from here: the Operator routes its controls by this record.
+  recordTaskRunner(args.task, 'atta-engine', options.runtimeDir)
 
   // Each leg of a run has a run control of its own: a halted one cannot be run again.
   let control = options.control ?? createRunControl()
@@ -711,9 +748,17 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
   reapOnHalt()
   const stopWatching = new AbortController()
   const log = (event: DevReviewLoopEventInput): void => (options.sink.log as unknown as (event: unknown) => void)(event)
+  // Standalone's shared sink drains handoff records after the driver's own
+  // terminal events. Preserve that observable ordering on the Engine path.
+  const deferredHandoffEvents: DevReviewLoopEventInput[] = []
+  const handoffLog = (event: DevReviewLoopEventInput): void => {
+    deferredHandoffEvents.push(event)
+  }
   let currentNode: string | null = null
   let prNumber = 0
   let signalled: 'SIGINT' | 'SIGTERM' | null = null
+  /** Set when the ruling watch found the pause resolved as a cancel: the run ends and leaves no lock. */
+  let cancelledByWatch = false
   let described = 'starting'
   let stopHeartbeat: () => void = () => {}
   const recordExit = createDriverExitRecorder({
@@ -751,6 +796,20 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
           control.halt(signal)
           stopWatching.abort()
         })
+
+  // A pull request any step finds is the run's from then on: its later Log events name it, as standalone's do.
+  const notePullRequest = (pr: number): void => {
+    prNumber = pr
+    process.env.VINAYA_PR = String(pr)
+  }
+  const bound = options.taskInput?.bound
+  const unwrappedFindPr = bound?.findOpenPrForBranch
+  if (bound && unwrappedFindPr)
+    bound.findOpenPrForBranch = (branch) => {
+      const found = unwrappedFindPr(branch)
+      if (found !== null) notePullRequest(found.number)
+      return found
+    }
 
   // Every pausing exit — a pause decision and an error alike — ends here: records, one comment, then the halt.
   const taskForHandoff = options.taskInput
@@ -792,7 +851,7 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
         }
       },
       options.loopId,
-      options.handoffDeps ?? liveHandoffDeps(log)
+      options.handoffDeps ? { ...options.handoffDeps, log: handoffLog } : liveHandoffDeps(handoffLog)
     )
   // A resumed leg hands its own pauses off afresh: one handoff answers for one leg.
   let handoff = makeHandoff()
@@ -891,7 +950,7 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
             try {
               const found = (JSON.parse(result.stdout ?? 'null') as { number?: unknown } | null)?.number
               if (typeof found === 'number') {
-                prNumber = found
+                notePullRequest(found)
                 // A pause raised before this pull request existed now belongs to it.
                 handoff.bindToPullRequest(found)
               }
@@ -1090,8 +1149,11 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
       narrate('the run is halted; watching for a newer ruling or a cancel')
       const watched = await watchForRuling(options.runtimeDir, args.task, lifecycle.watch, stopWatching.signal, narrate)
       if (watched.kind === 'ruled') narrate(`a newer ruling resumed escalation ${watched.escalationId}`)
-      else if (watched.kind === 'cancelled') narrate('the pause was cancelled; ending')
-      else if (watched.kind === 'consumed') narrate('another process claimed the resolution and owns the run; ending')
+      else if (watched.kind === 'cancelled') {
+        // The Operator's cancel consumed the resolution and fenced the effects; the run only ends.
+        cancelledByWatch = true
+        narrate('the pause was cancelled; ending')
+      } else if (watched.kind === 'consumed') narrate('another process claimed the resolution and owns the run; ending')
       else if (watched.kind === 'refused') narrate(`the resolution was refused: ${watched.message}`)
       if (watched.kind !== 'ruled') break
       control = createRunControl()
@@ -1122,8 +1184,18 @@ export async function runEngine(options: EngineRunOptions): Promise<EngineRunRes
           : {}),
       ...(exit.failedStep ? { error: Object.assign(new Error('a step failed'), { code: STEP_FAILED }) } : {})
     })
-    const lockOutcome = releaseDriverLock(options.runtimeDir, args.task, lockExitOf(exit))
+    for (const event of deferredHandoffEvents) log(event)
+    deferredHandoffEvents.length = 0
+    let lockOutcome: ReturnType<typeof releaseDriverLock> | 'cleared'
+    if (cancelledByWatch) {
+      legOutcome = { reason: 'cancelled' } as unknown as LegOutcome
+      clearDriverLock(options.runtimeDir, args.task)
+      lockOutcome = 'cleared'
+    } else {
+      lockOutcome = releaseDriverLock(options.runtimeDir, args.task, lockExitOf(exit))
+    }
     narrate(`driver exited (${exit.reason}, ${exit.lastDecision}); driver lock ${lockOutcome}`)
+    if (bound && unwrappedFindPr) bound.findOpenPrForBranch = unwrappedFindPr
     try {
       await Promise.all(hosts.map((host) => host.close()))
     } finally {
@@ -1408,13 +1480,13 @@ export async function liveTaskInput(
       objectivesText: resolved.text
     }
   }
-  const buildVerdict = (role: HeldVerdictRole, review: ReviewResult, inputs: ReviewRoundInputs) =>
+  const buildVerdict = (role: HeldVerdictRole, review: ReviewResult, inputs: ReviewRoundInputs, sessionId?: string) =>
     buildVerdictFromReview(
       role,
       review,
       args.agent === 'claude' ? 'claude' : 'codex',
       args.task,
-      { exitCode: 0, durationMs: 0, usage: null } as never,
+      { exitCode: 0, durationMs: 0, usage: null, ...(sessionId === undefined ? {} : { resumeId: sessionId }) } as never,
       inputs.manifest,
       policyNow(),
       inputs.objectives
@@ -1505,6 +1577,11 @@ export async function liveTaskInput(
     },
     get loopState(): LoopState {
       if (loopState !== null) return loopState
+      // The Log's role names and models, exactly as the standalone loop records them in `loop_started`.
+      const loopRoles: Pick<LoopConfig, 'reviewers' | 'models'> = {
+        reviewers: ['code-reviewer', 'security'],
+        models: { developer: args.model ?? args.agent, 'code-reviewer': args.agent, security: args.agent }
+      }
       // Recovery reads this before the Flow starts. An unreadable policy must not throw here: the state is built from
       // the default caps and kept so later writes are not lost,
       // and prepare-run then pauses on the policy with its own detail.
@@ -1515,8 +1592,7 @@ export async function liveTaskInput(
         loopState = initialLoopState({
           loopId,
           task: args.task,
-          reviewers: ['reviewer', 'security'],
-          models: {},
+          ...loopRoles,
           maxRounds: DEFAULT_REVIEW_POLICY.maxRounds,
           maxTaskMinutes: DEFAULT_REVIEW_POLICY.maxTaskMinutes
         })
@@ -1525,8 +1601,7 @@ export async function liveTaskInput(
       const config: LoopConfig = {
         loopId,
         task: args.task,
-        reviewers: ['reviewer', 'security'],
-        models: {},
+        ...loopRoles,
         maxRounds: policy.maxRounds,
         maxTaskMinutes: policy.maxTaskMinutes
       }
@@ -1582,6 +1657,10 @@ export async function liveTaskInput(
       } catch {
         return null
       }
+    },
+    objectivesEdit: () => {
+      const { edit } = forge.resolveIssueObjectives(args.task)
+      return edit ? describeObjectivesEdit(args.task, edit) : null
     },
     reviewInputs,
     buildVerdict,
@@ -1752,18 +1831,26 @@ export function liveRecovery(input: {
   }
 }
 
-/** Engine events use the shared sink with delivery restricted to its local folder. */
+/** Engine events use the same destination-resolving sink as the standalone runner. */
 export function createEngineLogSink(overrides: Partial<LogSinkDeps> = {}) {
-  return createLogSink({ ...overrides, folderOnly: true })
+  return createLogSink(overrides)
 }
 
-/** Apply before any Engine act so CLI children and their own children inherit local-only recording. */
+/** Remove the former local-only override so child processes resolve the configured destination too. */
 export function configureEngineLogEnvironment(env: NodeJS.ProcessEnv = process.env): void {
-  env[LOG_FOLDER_ONLY_ENV] = '1'
+  delete env[LOG_FOLDER_ONLY_ENV]
+}
+
+/** Refuses a fresh Engine start on a task whose held pause another runner recorded, naming that runner. */
+export function refuseAnotherRunnersPause(runtimeDir: string, task: number): void {
+  if (readPauseState(runtimeDir, task) === null) return
+  const refusal = crossRunnerRefusal(task, 'atta-engine', runtimeDir)
+  if (refusal !== null) throw new Error(`run-engine: ${refusal}`)
 }
 
 /** Runs one task on the Engine against the live forge, git and Log. */
 async function runLive(args: EngineArgs, loaded: LoadedProcess, repoRoot: string, runtimeDir: string): Promise<number> {
+  refuseAnotherRunnersPause(runtimeDir, args.task)
   configureEngineLogEnvironment()
   setEngineLogIdentity(loaded)
   const sink = createEngineLogSink()
