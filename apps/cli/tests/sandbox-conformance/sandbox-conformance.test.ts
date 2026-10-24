@@ -165,6 +165,13 @@ const KNOWN_FAILURES: readonly KnownFailure[] = [
     platform: 'linux',
     denial:
       'check --all runs inside the sandbox, where the confined secret scanner (atta-labs/secret-scan) cannot run and errors — the dominant denial on a Linux CI runner, whose ambient GH_TOKEN otherwise flows in and lets the forge-reading checks authenticate (unlike macOS, where the denied gh token store additionally blocks them). Removing it is folded into the O3/O4 forge-staging escalation (Issue #1034)'
+  },
+  {
+    id: 'git-grep',
+    agent: 'codex',
+    platform: 'linux',
+    denial:
+      'git grep exits 1 with no matches inside the Codex Linux sandbox while the same repository-indexed search passes in the unsandboxed control'
   }
 ]
 
