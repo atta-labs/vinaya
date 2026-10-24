@@ -106,6 +106,8 @@ export function generateCodexConfig(grants: RoleGrants, paths: GeneratorPaths): 
     'codex',
     'exec',
     '--dangerously-bypass-hook-trust',
+    // A reviewer reads a staged copy that is not a git repository; Codex refuses such a directory without this.
+    '--skip-git-repo-check',
     '--config',
     'approval_policy="never"',
     // JSONL events on stdout: the executor frames stdout as one JSON record per line, and Codex's plain

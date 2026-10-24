@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { recordedHandoff } from './handoff-fakes'
 import { PASSING_FORGE_GATES } from './round-fakes'
 import { Database } from 'bun:sqlite'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
@@ -34,7 +34,7 @@ import {
   type World
 } from '../../../apps/cli/tests/lib/task-tools/live-developer-context-world'
 import { developerPrompt } from '../executing/developer-prompt'
-import { createRoleLaunchers } from '../executing/actions'
+import { AGENT_EXIT_EVENT, createRoleLaunchers } from '../executing/actions'
 import { loadProcess } from '../../../harness/dev-process/loader/load-process'
 import type { ActionRegistry } from '../../../harness/dev-process/engine-runtime/run-process'
 import type { NodeLifecycle } from '../../../harness/dev-process/logging/translate'
@@ -68,7 +68,8 @@ import {
   type EngineRunOptions,
   type RunTrace,
   targetRepoRoot,
-  withTurnSchema
+  withTurnSchema,
+  tolerateReviewerExit
 } from '../bin/run-engine'
 
 const loaded = loadProcess(resolve(import.meta.dir, '..'))
@@ -1194,5 +1195,24 @@ describe('the CLI entry commands run from inside the Engine runner', () => {
       if (before === undefined) delete process.env[CLI_ENTRY_ENV]
       else process.env[CLI_ENTRY_ENV] = before
     }
+  })
+})
+
+describe('a reviewer launch that exits non-zero', () => {
+  test('reports the exit with the tail of its stderr, so the pause names the reason', async () => {
+    const launch = tolerateReviewerExit(
+      (command, args, options) => spawn(command, [...args], { ...options, stdio: ['pipe', 'pipe', 'pipe'] }) as never,
+      () => true
+    )
+    const child = launch('sh', ['-c', 'echo "Not inside a trusted directory" >&2; exit 1'], { cwd: tmpdir(), env: process.env })
+    const out: string[] = []
+    child.stdout?.on('data', (chunk) => void out.push(chunk.toString()))
+    const code = await new Promise<number | null>((resolve) => child.on('close', resolve))
+    expect(code).toBe(0)
+    expect(JSON.parse(out.join('').trim())).toEqual({
+      type: AGENT_EXIT_EVENT,
+      exit_code: 1,
+      stderr: 'Not inside a trusted directory'
+    })
   })
 })

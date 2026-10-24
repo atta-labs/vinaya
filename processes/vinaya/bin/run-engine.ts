@@ -410,6 +410,8 @@ export function withPolicyCeilings(loaded: LoadedProcess, runDir: string, maxRou
  * (`classifyReviewOutcome`) and retries it as the standalone loop does. Every other launch, and a killed process,
  * is passed through as it is.
  */
+const STDERR_TAIL_CHARS = 500
+
 export function tolerateReviewerExit(
   spawnFn: SpawnFn,
   isReviewer: (args: readonly string[], env: Readonly<Record<string, string | undefined>> | undefined) => boolean
@@ -419,10 +421,16 @@ export function tolerateReviewerExit(
     if (!isReviewer(args, options?.env)) return child
     const stdoutListeners: Array<(chunk: Buffer | string) => void> = []
     const closeListeners: Array<(code: number | null) => void> = []
+    // The last of what the process wrote to stderr, so a failed launch names its own reason.
+    let stderrTail = ''
+    child.stderr?.on('data', (chunk: Buffer | string) => {
+      stderrTail = (stderrTail + chunk.toString()).slice(-STDERR_TAIL_CHARS)
+    })
     // One close handler on the process: the marker reaches the output before any listener learns of the exit.
     child.on('close', (code) => {
       if (code !== null && code !== 0) {
-        const marker = `${JSON.stringify({ type: AGENT_EXIT_EVENT, exit_code: code })}\n`
+        const stderr = stderrTail.trim()
+        const marker = `${JSON.stringify({ type: AGENT_EXIT_EVENT, exit_code: code, ...(stderr === '' ? {} : { stderr }) })}\n`
         for (const write of stdoutListeners) write(marker)
       }
       for (const listener of closeListeners) listener(code === null ? null : 0)

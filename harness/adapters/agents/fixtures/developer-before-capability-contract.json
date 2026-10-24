@@ -30,6 +30,7 @@
       "codex",
       "exec",
       "--dangerously-bypass-hook-trust",
+      "--skip-git-repo-check",
       "--config",
       "approval_policy=\"never\"",
       "--json",

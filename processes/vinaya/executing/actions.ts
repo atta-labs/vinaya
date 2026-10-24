@@ -522,7 +522,8 @@ function agentEvents(result: StepNodeResult | undefined): unknown[] {
 /** The event a tolerant launch appends when the agent process exited non-zero, so the step completes and is judged. */
 export const AGENT_EXIT_EVENT = 'vinaya.agent_exit'
 
-function agentExitOf(event: unknown): number | null {
+/** A reviewer process's non-zero exit, with the tail of what it wrote to stderr when it wrote anything. */
+function agentExitOf(event: unknown): { code: number; stderr?: string } | null {
   let record = event
   if (typeof event === 'string') {
     try {
@@ -531,8 +532,11 @@ function agentExitOf(event: unknown): number | null {
       return null
     }
   }
-  const candidate = record as { type?: unknown; exit_code?: unknown } | null
-  return candidate?.type === AGENT_EXIT_EVENT && typeof candidate.exit_code === 'number' ? candidate.exit_code : null
+  const candidate = record as { type?: unknown; exit_code?: unknown; stderr?: unknown } | null
+  if (candidate?.type !== AGENT_EXIT_EVENT || typeof candidate.exit_code !== 'number') return null
+  return typeof candidate.stderr === 'string' && candidate.stderr !== ''
+    ? { code: candidate.exit_code, stderr: candidate.stderr }
+    : { code: candidate.exit_code }
 }
 
 /** The final structured record an agent step reported, or undefined for a step that is not one. */
@@ -563,7 +567,11 @@ export function reviewRunFacts(results: Results, step: string): ReviewRunFacts {
     resumed: false,
     terminal: null,
     errors: [
-      ...exits.map((code) => `the reviewer process exited with code ${code}`),
+      ...exits.map((exit) =>
+        exit?.stderr === undefined
+          ? `the reviewer process exited with code ${exit?.code}`
+          : `the reviewer process exited with code ${exit.code}: ${exit.stderr}`
+      ),
       ...(result.exitCode !== 0 ? [`the reviewer step exited with code ${result.exitCode}`] : [])
     ],
     hasResult: raw !== undefined,
