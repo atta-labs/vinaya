@@ -54,7 +54,12 @@ export function exemptPrefixes(env: NodeJS.ProcessEnv): string[] {
   const task = env.VINAYA_TASK
   const controllerCache = join('tasks-execution', 'unscoped', 'output', 'test-run-cache.json')
   if (!task) return [controllerCache]
-  return [join('tasks-execution', task), join('engine-runs', task), join('tasks-execution', 'unscoped'), controllerCache]
+  return [
+    join('tasks-execution', task),
+    join('engine-runs', task),
+    join('tasks-execution', 'unscoped'),
+    controllerCache
+  ]
 }
 
 function pidRunning(pid: unknown): boolean {
