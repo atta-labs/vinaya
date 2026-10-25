@@ -34,6 +34,7 @@
         "@atta/typescript-config": "workspace:*",
         "@attalabs/aeg-core": "workspace:*",
         "@attalabs/aeg-forge-state": "workspace:*",
+        "@attalabs/aeg-types": "workspace:*",
         "@attalabs/vinaya-sources": "workspace:*",
         "@types/bun": "latest",
         "@types/react": "^19.0.0",
@@ -103,6 +104,7 @@
       "dependencies": {
         "@atta/engine": "file:../apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz",
         "@atta/executor-agent-spawn": "file:../apps/cli/tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz",
+        "@attalabs/aeg-types": "workspace:*",
         "yaml": "2.9.0",
         "zod": "3.25.76",
       },

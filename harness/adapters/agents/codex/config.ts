@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { DEV_TOOLS_TOOL_TIMEOUT_SEC } from '@attalabs/aeg-types/dev-tools'
 import type { RoleGrants } from '../manifest'
 import {
   normalizedCapabilities,
@@ -76,7 +77,7 @@ export function generateCodexConfig(grants: RoleGrants, paths: GeneratorPaths): 
     'enabled = true',
     `command = ${quote(paths.mcpCommand ?? 'vinaya-dev-bridge')}`,
     'args = []',
-    'tool_timeout_sec = 120',
+    `tool_timeout_sec = ${DEV_TOOLS_TOOL_TIMEOUT_SEC}`,
     `enabled_tools = ${JSON.stringify(mcpTools)}`,
     'default_tools_approval_mode = "approve"',
     '',

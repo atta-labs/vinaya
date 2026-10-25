@@ -1000,6 +1000,16 @@ export type SelectionOptions = {
    */
   cliEntrypoint?: string
   /**
+   * Repo-root-relative path of the CLI's configuration loader module — the
+   * file that reads the repository-root `vinaya.config.json`. Under
+   * `depth: 'one'` a change to that root file selects only the CLI tests whose
+   * own direct edges reach this module, never the CLI's whole suite. Defaults
+   * to this repository's real loader, `apps/cli/src/lib/config.ts`;
+   * overridable so a test can point it at a throwaway fixture's own loader,
+   * the same way `cliEntrypoint` is.
+   */
+  configLoader?: string
+  /**
    * How far the reachability walk may travel past a test's own first-level
    * imports before it stops counting as "affected".
    * `'transitive'` — the default, and every caller's behaviour before this
@@ -1021,9 +1031,14 @@ export type SelectionOptions = {
 /** This repository's real CLI entrypoint, repo-root-relative — {@link SelectionOptions.cliEntrypoint}'s default. */
 export const DEFAULT_CLI_ENTRYPOINT = 'apps/cli/src/index.ts'
 
+/** This repository's real CLI configuration loader, repo-root-relative — {@link SelectionOptions.configLoader}'s default. */
+export const DEFAULT_CONFIG_LOADER = 'apps/cli/src/lib/config.ts'
+
 /**
  * The repository-root configuration file whose change selects the CLI's
- * whole suite (see the rule's own comment in `selectAffectedTestFiles`).
+ * whole suite under the transitive walk, and the configuration loader's
+ * direct importers under depth one (see the rule's own comment in
+ * `selectAffectedTestFiles`).
  * Named rather than inlined so a test asserts against the same string this
  * module matches on.
  */
@@ -1288,9 +1303,21 @@ export function selectAffectedTestFiles(
   // the local log folder. The whole CLI suite is the answer because the file
   // is the whole CLI's input; the rule matches this one path exactly, never
   // a `vinaya.config.json` sitting in a fixture directory and never another
-  // root-level JSON file.
+  // root-level JSON file. That is the transitive walk's answer, CI's own.
+  // Under `depth: 'one'` (the pre-push hook) it narrows to the CLI tests whose
+  // own direct edges reach the configuration loader module — the same
+  // depth-one edge every other change gets there — so a push touching the
+  // root file stays inside the publish tool's time limit, and the whole suite
+  // for it stays CI's job.
   const rootConfigChanged = absChanged.has(join(repoRoot, ROOT_CONFIG_FILENAME))
   const cliPackage = packages.find((pkg) => cliEntrypoint.startsWith(`${pkg.dir}/`)) ?? null
+  const configLoaderFacts: ChangeFacts = {
+    files: new Set([join(repoRoot, options.configLoader ?? DEFAULT_CONFIG_LOADER)]),
+    packages: new Set(),
+    nonSourcePackages: new Set(),
+    packageOfFile: changeFacts.packageOfFile,
+    affects: () => true
+  }
 
   // Tests whose input is the repository TREE, not their own imports. Their
   // `scan:` edges are added to the graph here rather than to a configured list,
@@ -1372,7 +1399,9 @@ export function selectAffectedTestFiles(
         alwaysRunRegexes.some((re) => re.test(test.slice(repoRoot.length + 1))) ||
         addedOrRenamed.has(test) ||
         triggeredScanners.has(test) ||
-        (rootConfigChanged && pkg === cliPackage)
+        (rootConfigChanged &&
+          pkg === cliPackage &&
+          (options.depth !== 'one' || reaches(`${ALL_PREFIX}${test}`, edges, configLoaderFacts, 1)))
       if (forced || (anythingChanged && reaches(`${ALL_PREFIX}${test}`, edges, changeFacts, maxDepth))) {
         selected.push(test)
       }

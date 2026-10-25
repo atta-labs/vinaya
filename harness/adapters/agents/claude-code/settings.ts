@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { DEV_TOOLS_TOOL_TIMEOUT_SEC } from '@attalabs/aeg-types/dev-tools'
 import { mcpRule, type RoleGrants } from '../manifest'
 import {
   normalizedCapabilities,
@@ -70,7 +71,12 @@ export function generateClaudeSettings(grants: RoleGrants, paths: GeneratorPaths
   }
   const mcp = {
     mcpServers: {
-      vinaya_dev_tools: { type: 'stdio', command: paths.mcpCommand ?? 'vinaya-dev-bridge', args: [] }
+      vinaya_dev_tools: {
+        type: 'stdio',
+        command: paths.mcpCommand ?? 'vinaya-dev-bridge',
+        args: [],
+        timeout: DEV_TOOLS_TOOL_TIMEOUT_SEC * 1000
+      }
     }
   }
   const launch = [
