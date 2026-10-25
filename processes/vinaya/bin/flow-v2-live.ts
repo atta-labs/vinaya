@@ -5,7 +5,7 @@ import type { DevReviewLoopEventInput } from '@attalabs/aeg-core'
 import { type DevToolContext, devToolError } from '../../../apps/cli/src/lib/task-tools/dev-tools-server'
 import { storagePushEvent } from '../../../apps/cli/src/lib/flow-v2-events'
 import { gitPath, readLastPushResult } from '../../../apps/cli/src/lib/pre-push-failed-tests'
-import { PUSH_MODE_MARKER } from '../../../apps/cli/src/lib/pre-push-mode-logic'
+import { PUSH_MODE_MARKER, storageMarkerText } from '../../../apps/cli/src/lib/pre-push-mode-logic'
 import type { ReadyGateResult, StagedPullRequest, V2Functions } from '../executing/v2-actions'
 
 // The live wiring of review locally, push once (version 2 of the developer-review Flow) for the Engine runner: the
@@ -40,12 +40,16 @@ export function stagedPullRequestStore(runDir: string): {
   }
 }
 
-/** Marks the worktree's pushes as storage pushes (the hook confirms no pull request is open before honouring it). */
-export function beginStoragePushes(worktreePath: string): void {
+/**
+ * Marks the worktree's pushes as this run's storage pushes. The marker names the run, its task branch and its
+ * process: the hook honours it only on that branch while that process is alive (and confirms no pull request is
+ * open), so a marker a crashed or finished run left behind never touches a later push.
+ */
+export function beginStoragePushes(worktreePath: string, run: { runId: string; branch: string; pid?: number }): void {
   const path = gitPath(worktreePath, PUSH_MODE_MARKER)
   if (!path) return
   mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, 'storage\n')
+  writeFileSync(path, storageMarkerText({ runId: run.runId, branch: run.branch, pid: run.pid ?? process.pid }))
 }
 
 /** Ends storage pushes for the worktree: its pushes run the selected tests again. */
@@ -64,6 +68,8 @@ export function withV2DevTools(
   base: DevToolContext,
   options: {
     worktreePath: string
+    /** The run the storage marker belongs to. */
+    runId: string
     store: ReturnType<typeof stagedPullRequestStore>
     findOpenPullRequest: () => { number: number } | null
     onStoragePush: (head: string) => void
@@ -72,7 +78,7 @@ export function withV2DevTools(
      * `run_checks` runs these while no pull request is open, since the checks that need one cannot pass yet.
      */
     runLocalChecks?: (env: Record<string, string>) => { passed: boolean; output: string }
-    branch?: string
+    branch: string
     /**
      * The body checks the pull request's opening will run, run when the body is staged: a body they refuse is
      * refused now, in the Developer's own turn, rather than after both reviewers approved.
@@ -91,7 +97,7 @@ export function withV2DevTools(
     ...base,
     publishChanges: async (header) => {
       const storage = openPr() === null
-      if (storage) beginStoragePushes(options.worktreePath)
+      if (storage) beginStoragePushes(options.worktreePath, { runId: options.runId, branch: options.branch })
       const result = await base.publishChanges(header)
       if (storage && result.ok) options.onStoragePush(result.result.pushedHead)
       return result
@@ -125,7 +131,7 @@ export function withV2DevTools(
       if (openPr() !== null || !options.runLocalChecks) return base.runChecks()
       const staged = options.store.read()
       const result = options.runLocalChecks({
-        ...(options.branch ? { BRANCH: options.branch } : {}),
+        BRANCH: options.branch,
         ...(staged ? { PR_BODY: staged.body } : {})
       })
       return { ok: true, result }
@@ -179,6 +185,22 @@ export function runReadyGateLive(input: {
   now?: () => number
 }): ReadyGateResult {
   const now = input.now ?? (() => Date.now())
+  // The hook runs on the working tree, so the tree must be exactly the approved commit: same head, nothing uncommitted.
+  const gitEnv: NodeJS.ProcessEnv = { ...process.env }
+  for (const key of Object.keys(gitEnv)) if (key.startsWith('GIT_')) delete gitEnv[key]
+  const read = (args: string[]) => spawnSync('git', args, { cwd: input.worktreePath, env: gitEnv, encoding: 'utf8' })
+  const actualHead = read(['rev-parse', 'HEAD'])
+  const status = read(['status', '--porcelain'])
+  const drift =
+    actualHead.status !== 0 || actualHead.stdout.trim() !== input.head
+      ? `the worktree head is ${actualHead.stdout.trim() || 'unreadable'}, not the approved head ${input.head}`
+      : status.status !== 0
+        ? 'the worktree status could not be read'
+        : status.stdout.trim() !== ''
+          ? `the worktree holds uncommitted changes:\n${status.stdout.trim()}`
+          : null
+  if (drift !== null)
+    return { passed: false, output: `ready push refused: ${drift}`, selection: null, failed: 'all', wallMs: 0 }
   const hook = prePushHookPath(input.worktreePath)
   if (hook === null) return { passed: true, output: 'no pre-push hook to run', selection: null, failed: [], wallMs: 0 }
   const started = now()

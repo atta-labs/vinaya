@@ -697,9 +697,9 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
   // is the push made after both reviewers approved, with the tests it
   // selected and how many failed; `failed_tests_rerun` is a push that ran only
   // the tests a refused push failed plus those its fix affects; `pr_opened`
-  // and `ci_result_read` happen once per approval. `phase_time` is written by
-  // both flows: the wall time one step spent, by phase, so the flows' time
-  // per phase is measured from the Log.
+  // and `ci_result_read` happen once per approval. `phase_time` is the wall
+  // time one step spent, by phase. All seven are written by version 2 runs
+  // only, so a version 1 run's Log is unchanged.
   z
     .object({
       ...loopShared,

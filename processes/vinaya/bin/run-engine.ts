@@ -224,7 +224,13 @@ import {
 } from '../executing/actions'
 import { createV2Actions, V2_ACTION_BINDINGS, V2_DECISIONS } from '../executing/v2-actions'
 import { runCli } from '../../../harness/gates/run-checks'
-import { liveV2Functions, stagedPullRequestStore, storagePushLogEvent, withV2DevTools } from './flow-v2-live'
+import {
+  endStoragePushes,
+  liveV2Functions,
+  stagedPullRequestStore,
+  storagePushLogEvent,
+  withV2DevTools
+} from './flow-v2-live'
 import { readUnpushedWorkDetail, type UnpushedWork } from '../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
 import { realLocalGateControl } from '../../../apps/cli/src/lib/local-gate-control'
 import {
@@ -411,6 +417,21 @@ export function recordedRunFlow(runtimeDir: string, task: number): string | unde
     return value.schemaVersion === 1 && typeof value.flow === 'string' && value.flow !== '' ? value.flow : undefined
   } catch {
     return undefined
+  }
+}
+
+/**
+ * The flow a fresh run (not a resume) runs: the one it names, else none — the process's default. A recorded flow is
+ * never inherited by a fresh run; when it differs from what the run takes, the note says how to continue it.
+ */
+export function freshRunFlow(
+  named: string | undefined,
+  recorded: string | undefined
+): { flow?: string; note?: string } {
+  if (named !== undefined) return { flow: named }
+  if (recorded === undefined || recorded === 'v1') return {}
+  return {
+    note: `run-engine: this task last ran flow ${recorded}; this fresh run takes the process's default flow — pass --flow ${recorded} to continue it.`
   }
 }
 
@@ -820,6 +841,11 @@ export interface EngineRunOptions {
   beginDeveloperTurn?: () => Promise<void>
   /** Called when a newer ruling resumes the halted run, so the next Developer turn carries the rulings' text. */
   onRulingResume?: () => void
+  /**
+   * Called whenever the run stops working: before it watches a pause (a halt, the round cap, a cancel) and once
+   * more as it ends, however it ends. Version 2 ends its storage pushes here, so no later push skips the tests.
+   */
+  onRunHalted?: () => void
   /** Whether the pull request a held verdict would publish is in conflict; the live forge read unless a test supplies its own. */
   heldPullRequestConflicts?: () => Promise<boolean>
   /** Called with the Developer's vendor session once its turn's agent has finished. */
@@ -945,6 +971,8 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     out(`trace ${path}`)
   }
 
+  // The run's first driver-log line names the flow it runs, so a reader never has to infer it.
+  narrate(`engine runner: task ${args.task}, flow ${options.process.flowKey}`)
   // One runner per task: a held lock ends this start before anything is dispatched.
   const lock = takeDriverLock(options.runtimeDir, args.task, {
     pid: lifecycle.pid ?? process.pid,
@@ -1421,6 +1449,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       if (exhausted)
         handoff.pause({ reason: 'max_rounds', detail: 'the round cap is reached: a ruling grants a fresh run' })
       if (!lifecycle.watch || (legOutcome?.reason !== 'paused' && !exhausted) || signalled !== null) break
+      options.onRunHalted?.()
       narrate('the run is halted; watching for a newer ruling or a cancel')
       const watched = await watchForRuling(options.runtimeDir, args.task, lifecycle.watch, stopWatching.signal, narrate)
       if (watched.kind === 'ruled') {
@@ -1451,6 +1480,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     translator.endLeg(legOutcome)
   } finally {
     stopSignals()
+    options.onRunHalted?.()
     // No agent outlives the run: whatever a halted or finished launch left running is ended with its group.
     await reaper.reap(lifecycle.killGraceMs)
     // The exit is recorded once, before the sink drains, and the lock is kept or cleared by the shared rule.
@@ -2174,6 +2204,9 @@ async function runLive(
   })
   // A turn whose last publication a driver tool refused has no push coming: the stall names the refusal.
   taskInput.publicationRefusal = () => liveContext.state.turnPublicationRefusal
+  // Whatever storage marker an earlier run left in this worktree (a crash, a pause) ends now, for every flow: only
+  // this run's own `publish_changes` writes a fresh one, and only in version 2.
+  endStoragePushes(taskInput.worktreePath)
   // Version 2 (review locally, push once): storage pushes, a staged pull request, the ready push and CI once.
   let devToolsContext = liveContext.context
   if (loaded.flowKey === 'v2') {
@@ -2191,6 +2224,7 @@ async function runLive(
     })
     devToolsContext = withV2DevTools(liveContext.context, {
       worktreePath: taskInput.worktreePath,
+      runId: loopId,
       store,
       findOpenPullRequest,
       onStoragePush: (head) =>
@@ -2261,6 +2295,7 @@ async function runLive(
     onRulingResume: () => {
       rulings.owed = true
     },
+    onRunHalted: () => endStoragePushes(taskInput.worktreePath),
     beginDeveloperTurn: liveContext.beginTurn,
     completeDeveloperTurn: liveContext.completeTurn
   })
@@ -2455,10 +2490,10 @@ export async function main(argv: readonly string[]): Promise<number> {
     return result.exitCode
   }
   const parsed = parseArgs(argv)
-  // A run that names no flow continues the flow the task's run recorded (a fresh `task run` after a pause before any
-  // pull request is that continuation); a task with no record gets the process's default.
-  const recordedFlow = parsed.flow ?? recordedRunFlow(runtimeDir, parsed.task)
-  const args: EngineArgs = recordedFlow ? { ...parsed, flow: recordedFlow } : parsed
+  // A fresh run takes the flow it names, else the process's default; only a resume continues a recorded flow.
+  const fresh = freshRunFlow(parsed.flow, recordedRunFlow(runtimeDir, parsed.task))
+  if (fresh.note) process.stderr.write(`${fresh.note}\n`)
+  const args: EngineArgs = parsed
   const loaded = loadProcess(processFolder, args.flow ? { flow: args.flow } : {})
   const runDir = runDirectory(runtimeDir, args.task)
   if (args.dryRun) {

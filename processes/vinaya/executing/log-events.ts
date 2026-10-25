@@ -160,15 +160,19 @@ export function createVinayaLogProducers(
   const now = config.now ?? (() => Date.now())
   const nodeStarts = new Map<string, number>()
 
-  /** The time the node spent, counted toward its phase; and, in version 2, the local checks' own event. */
+  /**
+   * Version 2 only: the time the node spent, counted toward its phase, and the local checks' own event. Version 1's
+   * Log is unchanged, so its runs never write an event a log server not yet redeployed would reject.
+   */
   const timed = (nodeId: string, steps: RecordedSteps): LogEventInput[] => {
+    if (config.flow !== 'v2') return []
     const started = nodeStarts.get(nodeId)
     if (started === undefined) return []
     nodeStarts.delete(nodeId)
     const wallMs = Math.max(0, now() - started)
     const loopRef = { loopId: config.loopId, round }
     const events = [phaseTimeEvent(loopRef, phaseOfStep(nodeId), nodeId, wallMs) as unknown as LogEventInput]
-    if (config.flow === 'v2' && nodeId === GATE_STEP) {
+    if (nodeId === GATE_STEP) {
       const gate = steps[GATE_STEP]
       events.push(
         localChecksRunEvent(loopRef, config.head?.() ?? null, gate?.exitCode === 0, wallMs) as unknown as LogEventInput

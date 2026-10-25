@@ -377,10 +377,9 @@ describe('a stub run on the Engine path', () => {
     expect(drain).toBeGreaterThan(lastLog)
     expect(calls.filter((call) => call === 'drain')).toHaveLength(1)
     const kinds = emitted.map((event) => `${(event as { kind: string }).kind}.${(event as { event: string }).event}`)
-    // The stub assessment records no round, so beside each step's time the only event is the single exit record: no
-    // node writes a heartbeat.
-    expect(kinds).toContain('dev_review_loop.phase_time')
-    expect(kinds.filter((kind) => kind !== 'dev_review_loop.phase_time')).toEqual(['dev_review_loop.driver_exited'])
+    // The stub assessment records no round, so the only event is the single exit record: no node writes a heartbeat,
+    // and a version 1 run writes no step time (`phase_time` is version 2's alone).
+    expect(kinds).toEqual(['dev_review_loop.driver_exited'])
   })
 
   test('starts the host before the Developer and writes the executable shim', async () => {
@@ -452,6 +451,21 @@ describe('a stub run on the Engine path', () => {
     const log = readFileSync(loopLogPathFor(null, 7, options.runtimeDir), 'utf8')
     expect(log).toMatch(/Z {2}> Developer {3}Requesting tool publish_changes$/m)
     expect(log).toMatch(/Z {2}\+ Loop {3}The driver finished\.$/m)
+  })
+
+  test("the driver log's first line names the flow the run runs", async () => {
+    const { options } = stubRun()
+    await runEngine(options)
+    const first = readFileSync(loopLogPathFor(null, 7, options.runtimeDir), 'utf8').split('\n')[0] ?? ''
+    expect(first).toContain(`flow ${options.process.flowKey}`)
+  })
+
+  test('tells the run it halted when it pauses, so version 2 ends its storage pushes', async () => {
+    const { options } = stubRun({ haltAt: 'validate-developer-output' })
+    let halted = 0
+    const result = await runEngine({ ...options, onRunHalted: () => halted++ })
+    expect(result.exitCode).toBe(2)
+    expect(halted).toBeGreaterThan(0)
   })
 
   test('a renderer that throws leaves the step results, the trace and the Log rows unchanged', async () => {

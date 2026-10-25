@@ -11,10 +11,11 @@
  *   upstream (which storage pushes already moved to the head).
  * - `default` — every other push, exactly as before.
  *
- * The mode comes from `VINAYA_PUSH_MODE`, else from the worktree's own marker
- * (`git rev-parse --git-path vinaya/push-mode`, written by the review loop
- * for a run of version 2, removed when its pull request opens), else
- * `default`. Contract with the generated hook (`artifacts.ts`'s
+ * `VINAYA_PUSH_MODE` names `ready` or `default` only. Storage mode comes
+ * from the worktree's own marker alone (`git rev-parse --git-path
+ * vinaya/push-mode`, written by a run of version 2 and removed when that run
+ * pauses, ends or opens its pull request), honoured only on that run's task
+ * branch while its process is alive; anything else is `default`. Contract with the generated hook (`artifacts.ts`'s
  * `prePushBody`): prints the mode on STDOUT; exits 1, with the reason on
  * STDERR, when a storage push is not allowed.
  */
@@ -55,6 +56,14 @@ function main(): void {
     envMode: process.env.VINAYA_PUSH_MODE,
     marker,
     branch,
+    isPidAlive: (pid) => {
+      try {
+        process.kill(pid, 0)
+        return true
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === 'EPERM'
+      }
+    },
     openPullRequests: () => liveOpenPullRequests(repoRoot, branch)
   })
   if (!resolved.ok) {

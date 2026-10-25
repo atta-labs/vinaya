@@ -19,6 +19,7 @@ import {
   recordedRunFlow,
   recordRunFlow,
   resumeFlow,
+  freshRunFlow,
   recordedCheckpointModel,
   resumeEngine,
   runEngine,
@@ -585,6 +586,15 @@ describe('the flow a resume runs with', () => {
     expect(resumeFlow('v2', undefined)).toBe('v2')
     expect(resumeFlow(undefined, undefined)).toBeUndefined()
     expect(() => resumeFlow('v1', 'v2')).toThrow('never switches to v1')
+  })
+
+  test('a fresh run never inherits a recorded flow: it takes the named one, else the default, with a note', () => {
+    expect(freshRunFlow(undefined, 'v2').flow).toBeUndefined()
+    expect(freshRunFlow(undefined, 'v2').note).toContain('pass --flow v2 to continue it')
+    expect(freshRunFlow('v2', undefined)).toEqual({ flow: 'v2' })
+    expect(freshRunFlow('v1', 'v2')).toEqual({ flow: 'v1' })
+    expect(freshRunFlow(undefined, undefined)).toEqual({})
+    expect(freshRunFlow(undefined, 'v1')).toEqual({})
   })
 
   test('a run records its flow under its run directory and a resume reads it back', () => {

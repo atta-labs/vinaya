@@ -103,7 +103,7 @@ export type RerunInputs = {
   fullSelection: string[]
   /** Test files selected for the files changed between `record.head` and `head` alone. */
   affectedSince: string[]
-  /** Whether a path still exists — a failed test file deleted since is dropped. */
+  /** Whether a path still exists — a failed test file deleted since sends the push back to its full selection. */
   exists: (path: string) => boolean
 }
 
@@ -124,15 +124,21 @@ export function chooseTests(inputs: RerunInputs): SelectionNote {
   }
   if (!record || record.failed === 'all') return full
   if (record.branch !== branch || !inputs.recordIsAncestor) return full
-  const rerunFailed = record.failed.filter(inputs.exists)
-  const selected = [...new Set([...rerunFailed, ...inputs.affectedSince])].sort()
+  // A refusal was recorded, so this push must run something: a failed file deleted since (which would let the push
+  // pass having run nothing it refused for), or a re-run that comes out empty, takes the full selection instead.
+  if (!record.failed.every(inputs.exists)) return full
+  const rerunFailed = [...record.failed]
+  // Deletions count as changes (they widen what is affected), but a deleted test file is never itself run.
+  const affectedSince = inputs.affectedSince.filter(inputs.exists).sort()
+  const selected = [...new Set([...rerunFailed, ...affectedSince])].sort()
+  if (selected.length === 0) return full
   return {
     version: 1,
     mode: 'rerun',
     head,
     rerunOf: record.head,
     rerunFailed,
-    affectedSince: [...inputs.affectedSince].sort(),
+    affectedSince,
     fullCount: fullSelection.length,
     selected
   }
@@ -212,9 +218,9 @@ export function isAncestor(repoRoot: string, ancestor: string, head: string): bo
   }
 }
 
-/** Absolute paths of files added, copied, modified or renamed between two commits. */
+/** Absolute paths of files added, copied, modified, renamed or deleted between two commits. */
 export function changedBetween(repoRoot: string, from: string, to: string): string[] {
-  const out = git(repoRoot, ['diff', '--name-only', '--diff-filter=ACMR', from, to]) ?? ''
+  const out = git(repoRoot, ['diff', '--name-only', '--diff-filter=ACMRD', from, to]) ?? ''
   return out
     .split('\n')
     .map((s) => s.trim())

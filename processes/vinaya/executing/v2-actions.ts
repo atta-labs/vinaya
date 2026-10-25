@@ -9,6 +9,7 @@ import {
 import { discardHeldVerdicts } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { checkPremiseAtHead } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import type { SelectionNote } from '../../../apps/cli/src/lib/pre-push-failed-tests'
+import { readUnpushedWorkDetail } from '../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
 import {
   BACK,
   carriedLoopState,
@@ -20,6 +21,7 @@ import {
   pauseThrough,
   readAssessment,
   readForgeCi,
+  recordedDispatch,
   recordOutput,
   safeRead,
   type TaskInput,
@@ -159,14 +161,37 @@ function sendBackAfterApproval(
   }
 }
 
-/** The approval this step continues: run-live-checks recorded the approved head, else the assessment did. */
+/**
+ * The head both reviewers approved: the one the round's reviewer dispatch named (its review inputs' manifest), else
+ * — a run with no recorded inputs — the worktree's. Throws when the step follows anything but an approval.
+ */
 function approvedHead(task: TaskInput, results: Results, step: string): string {
   const assessment = readAssessment(results)
   if (assessment.decision.type !== 'publish')
     throw new Error(`${step} reached after a ${assessment.decision.type} decision, not an approval`)
+  const judged = recordedDispatch(results)?.inputs?.manifest.headSha
+  if (judged) return judged
   const head = worktreeHeadOf(task)
   if (head === null) throw new Error(`${step} could not read the head of ${task.worktreePath}`)
   return head
+}
+
+/**
+ * Why the worktree is not exactly the approved commit, or null when it is: its head moved since approval, or it
+ * holds uncommitted changes. The ready push tests the approved commit and nothing else.
+ */
+function worktreeDriftFrom(task: TaskInput, approved: string): string | null {
+  const head = worktreeHeadOf(task)
+  if (head !== approved) return `the worktree head is ${head ?? 'unreadable'}, not the approved head ${approved}`
+  let dirty: string[]
+  try {
+    dirty = (task.readUnpushedWork ?? (() => readUnpushedWorkDetail(task.worktreePath)))().dirtyFiles
+  } catch {
+    return 'the worktree status could not be read'
+  }
+  if (dirty.length > 0)
+    return `the worktree holds uncommitted changes (${dirty.slice(0, 10).join(', ')}${dirty.length > 10 ? ', …' : ''})`
+  return null
 }
 
 const loopOf = (task: TaskInput, results: Results) => ({
@@ -199,6 +224,16 @@ export async function readyPush(
   const head = approvedHead(task, results, 'ready-push')
   const remote = safeRead(task.remoteHead)
   const loop = loopOf(task, results)
+  const drift = worktreeDriftFrom(task, head)
+  if (drift !== null) {
+    return sendBackAfterApproval(
+      task,
+      results,
+      'ready-refused',
+      `both reviewers approved ${head}, but ${drift}. The ready push tests exactly the approved commit: commit and publish your work with publish_changes so the reviewers judge it, then finish your turn.`,
+      { outcome: 'refused', head, events: [] }
+    )
+  }
   if (remote !== head) {
     return sendBackAfterApproval(
       task,

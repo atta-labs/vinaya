@@ -351,10 +351,10 @@ function expectValid(run: ReturnType<typeof setup>): string[] {
     if (!parsed.success) throw new Error(`${String(enveloped.event)} does not parse: ${parsed.error.message}`)
   }
   note(run.translator.produced as LogEventInput[])
-  // Every step also logs the time it spent (`phase_time`); the sequences below are the round's own events.
+  // Version 1's Log is unchanged: no step logs the time it spent (`phase_time` is version 2's alone).
   const all = run.emitted.map((entry) => String(entry.event.event))
-  expect(all).toContain('phase_time')
-  return all.filter((name) => name !== 'phase_time')
+  expect(all).not.toContain('phase_time')
+  return all
 }
 
 const heartbeat = 'driver_heartbeat'
@@ -465,6 +465,21 @@ describe('the producers cover every end a run can come to', () => {
     note(events)
     return (events ?? []).map((event) => String(event.event))
   }
+
+  test("phase_time is version 2's alone: a version 1 run's steps write none", () => {
+    const steps = { 'run-mechanical-gates': { exitCode: 0, stdout: '' } } as never
+    let clock = 0
+    for (const [flow, expected] of [
+      ['v1', []],
+      [undefined, []],
+      ['v2', ['phase_time', 'local_checks_run']]
+    ] as const) {
+      const run = createVinayaLogProducers({ ...config, ...(flow ? { flow } : {}), now: () => (clock += 10) })
+      run.nodeStarted?.({ nodeId: 'run-mechanical-gates', attempt: 1 } as never)
+      const produced = names(run.nodeCompleted?.({ nodeId: 'run-mechanical-gates', steps } as never))
+      expect(produced.filter((name) => name === 'phase_time' || name === 'local_checks_run')).toEqual([...expected])
+    }
+  })
 
   test('a cancelled leg writes cancelled, and its exit is by signal', () => {
     const context = { outcome: { reason: 'failed', error: 'x' }, cancelled: true, steps: {} } as const

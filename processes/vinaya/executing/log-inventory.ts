@@ -140,7 +140,7 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
     family: 'dev_review_loop',
     events: ['phase_time'],
     status: 'produced',
-    from: 'every step of either flow, when it completes or fails: the wall time it spent, counted toward its phase'
+    from: 'every step of a version 2 run (never version 1), when it completes or fails: the wall time it spent, counted toward its phase'
   },
   {
     family: 'handoff',

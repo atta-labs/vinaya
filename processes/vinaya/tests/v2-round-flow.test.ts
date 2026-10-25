@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { ALL_TESTS, AGENTS, PR, records, runV2, setUpWorld, tearDownWorld } from './v2-world'
+import { rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { ALL_TESTS, AGENTS, confident, PR, records, TASK, runV2, setUpWorld, tearDownWorld } from './v2-world'
 
 // Version 2 of the developer-review Flow (review locally, push once), end to end on the real runner, Flow and
 // actions with fakes for the forge, the ready push and the agents: approve in round 1; revise then approve; a ready
@@ -96,5 +98,57 @@ describe('CI red after the pull request opened', () => {
     const ci = observed.rawEvents.filter((e) => e.event === 'ci_result_read').map((e) => e.conclusion)
     expect(ci).toEqual(['red', 'green'])
     expect(observed.published).toHaveLength(1)
+  })
+})
+
+describe('the ready push tests exactly the approved commit', () => {
+  test('a head moved after approval is refused without running the tests, and goes back through review', async () => {
+    let moved = false
+    const observed = await runV2('claude', {
+      after: {
+        'assess-round': (world) => {
+          if (moved) return
+          moved = true
+          world.commit(true)
+        }
+      }
+    })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.spawns.developer).toBe(2)
+    expect(observed.spawns['code-reviewer']).toBe(2)
+    // The moved head never reached the hook: the only ready run is the one after the second approval.
+    expect(observed.world.readyRuns).toHaveLength(1)
+    const refused = observed.steps.find(
+      (step) => step.node === 'ready-push' && step.stdout.includes('not the approved head')
+    )
+    expect(refused).toBeDefined()
+  })
+
+  test('uncommitted changes after approval are refused without running the tests', async () => {
+    let dirtied = false
+    const observed = await runV2('claude', {
+      after: {
+        'assess-round': (world) => {
+          if (dirtied) return
+          dirtied = true
+          writeFileSync(join(world.worktree, 'stray.ts'), 'export const stray = 1\n')
+        }
+      },
+      developer: (_attempt, world) => ({
+        output: confident(90),
+        act: () => {
+          rmSync(join(world.worktree, 'stray.ts'), { force: true })
+          world.commit(true)
+          world.staged = { title: 'Feat(sample): Do the thing', body: `Closes #${TASK}` }
+          world.remoteAfterTurn.push(world.remote)
+        }
+      })
+    })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.world.readyRuns).toHaveLength(1)
+    const refused = observed.steps.find(
+      (step) => step.node === 'ready-push' && step.stdout.includes('uncommitted changes')
+    )
+    expect(refused).toBeDefined()
   })
 })

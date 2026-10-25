@@ -7,6 +7,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  changedBetween,
   chooseTests,
   type FailedTestsRecord,
   parseFailedTestFiles,
@@ -80,13 +81,25 @@ const base = {
 }
 
 describe('chooseTests', () => {
-  it('runs the failed files that still exist plus the files affected since the refused commit', () => {
-    const note = chooseTests({ ...base, record: record() })
+  it('runs the failed files plus the files affected since the refused commit', () => {
+    const note = chooseTests({ ...base, record: record({ failed: ['/r/a.test.ts'] }) })
     expect(note.mode).toBe('rerun')
     expect(note.selected).toEqual(['/r/a.test.ts', '/r/c.test.ts'])
     expect(note.rerunOf).toBe('old')
     expect(note.rerunFailed).toEqual(['/r/a.test.ts'])
     expect(note.fullCount).toBe(4)
+  })
+
+  it('a failed test file deleted since runs the full selection, never a re-run without it', () => {
+    const note = chooseTests({ ...base, record: record({ failed: ['/r/gone.test.ts'] }), affectedSince: [] })
+    expect(note.mode).toBe('full')
+    expect(note.selected).toEqual(FULL)
+  })
+
+  it('a recorded refusal whose re-run comes out empty runs the full selection', () => {
+    const note = chooseTests({ ...base, record: record({ failed: [] }), affectedSince: [] })
+    expect(note.mode).toBe('full')
+    expect(note.selected).toEqual(FULL)
   })
 
   it('no record runs the full selection', () => {
@@ -173,5 +186,17 @@ describe('pre-push-record-tests (real git repository)', () => {
     ).toBe(0)
     expect(existsSync(recordPath)).toBe(false)
     expect(JSON.parse(readFileSync(resultPath, 'utf8')).outcome).toBe('passed')
+  })
+})
+
+describe('changedBetween (real git repository)', () => {
+  it('counts a deleted file among the changes', () => {
+    const dir = fixtureRepo()
+    const git = (args: string[]) =>
+      spawnSyncBudgeted('git', args, { cwd: dir, env: cleanEnv(), encoding: 'utf8' }).stdout?.toString().trim() ?? ''
+    const from = git(['rev-parse', 'HEAD'])
+    git(['rm', '-q', 'a.txt'])
+    git(['commit', '-q', '-m', 'delete'])
+    expect(changedBetween(dir, from, git(['rev-parse', 'HEAD']))).toEqual([join(dir, 'a.txt')])
   })
 })
