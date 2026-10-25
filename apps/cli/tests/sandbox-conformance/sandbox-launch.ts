@@ -495,7 +495,8 @@ export function openEngineSandboxSession(agent: Agent, role = 'developer'): Sand
           ...(generated.sandbox.network.allowAllUnixSockets === true ? { allowAllUnixSockets: true } : {})
         },
         filesystem: {
-          denyRead: generated.sandbox.filesystem.denyRead ?? [],
+          // The agent socket's directory can repeat a home route (the canary agent sits under `.ssh`); name each path once.
+          denyRead: [...new Set(generated.sandbox.filesystem.denyRead ?? [])],
           allowRead: generated.sandbox.filesystem.allowRead ?? [],
           allowWrite: generated.sandbox.filesystem.allowWrite,
           denyWrite: generated.sandbox.filesystem.denyWrite ?? []
