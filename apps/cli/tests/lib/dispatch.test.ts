@@ -73,6 +73,7 @@ import {
   missingSubscriptionLoginReason,
   REVIEWER_RESUME_REFUSED_REASON,
   isReviewerResume,
+  logIdentityEnv,
   codexBoundaryFailureReason,
   confinedTurboEnv,
   developerWrittenTextFromVendorOutput,
@@ -615,6 +616,35 @@ describe('dispatchRole — a successful dispatch', () => {
       '-'
     ])
     expect(readFileSync(stdinOut, 'utf8')).toBe(PROMPT_FILE_CONTENT)
+  })
+})
+
+describe('logIdentityEnv — the run identity a dispatched role carries', () => {
+  it("forwards the run's set runner, process and runtime variables and nothing else", () => {
+    expect(
+      logIdentityEnv({
+        VINAYA_PROCESS_ID: 'vinaya',
+        VINAYA_PROCESS_VERSION: '0.1.0',
+        VINAYA_PROCESS_DIGEST: 'd'.repeat(64),
+        VINAYA_RUNNER_ID: 'standalone',
+        VINAYA_RUNNER_VERSION: '1.2.3',
+        VINAYA_RUNTIME: 'claude',
+        VINAYA_ROLE: 'developer',
+        SECRET: 'x'
+      })
+    ).toEqual({
+      VINAYA_PROCESS_ID: 'vinaya',
+      VINAYA_PROCESS_VERSION: '0.1.0',
+      VINAYA_PROCESS_DIGEST: 'd'.repeat(64),
+      VINAYA_RUNNER_ID: 'standalone',
+      VINAYA_RUNNER_VERSION: '1.2.3',
+      VINAYA_RUNTIME: 'claude'
+    })
+  })
+
+  it('forwards nothing for a process no run launched, and drops empty values', () => {
+    expect(logIdentityEnv({ PATH: '/bin' })).toEqual({})
+    expect(logIdentityEnv({ VINAYA_RUNNER_ID: '' })).toEqual({})
   })
 })
 

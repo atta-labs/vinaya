@@ -2051,7 +2051,7 @@ async function runLive(
   const rulings = { owed: opts.rulingsOwed === true }
   refuseAnotherRunnersPause(runtimeDir, args.task)
   configureEngineLogEnvironment()
-  setEngineLogIdentity(loaded)
+  setEngineLogIdentity(loaded, args.agent)
   const sink = createEngineLogSink()
   const loopId = randomUUID()
   process.env.VINAYA_RUN = loopId

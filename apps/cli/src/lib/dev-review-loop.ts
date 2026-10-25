@@ -48,6 +48,7 @@ import { guardedSpawnSync } from './driver-tool-guard.js'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
 import { configPath, loadTrustAnchorConfig } from './config.js'
 import { buildDeveloperDeltaPacket, buildDeveloperFullPacket, renderContextPacket } from './context-packet.js'
@@ -153,6 +154,7 @@ import {
   seedLoopHistory
 } from './dev-review-loop/driver-lifecycle.js'
 import { ensureRunDir, markProcessUnattended, runPath } from './run-paths.js'
+import { packageRoot } from './package-root.js'
 import { defaultTaskSweepAsyncDeps, sweepModernTasksAsync } from './task-sweep.js'
 import {
   appendDriverLine,
@@ -2830,6 +2832,48 @@ export function publishingInstructionLine(): string {
   return 'publish only through the driver-run tools, which run outside your sandbox and hold the gates: `publish_changes` (pass your one-line `Type(scope): Description` commit header) to commit and push the task branch, `open_pull_request` (pass the full PR-report body) to open the pull request when none is open, `update_pull_request_body`/`refresh_evidence` for a body-only change, `read_pull_request` to read its state, its checks and the job-log tail of each failed check, and `run_checks` to run `vinaya check --all`; you hold no `gh`/`git push` credential and the driver does not commit, push or open on your behalf.'
 }
 
+/**
+ * Names this standalone run as the producer of every Log event it writes and
+ * every event a process it launches writes: runner `standalone` at this CLI's
+ * own package version, and the Vinaya process definition's id, `version` and
+ * digest, read from its `process.yaml` through the process loader exactly as
+ * the Engine runner reads them. The process definition and its loader sit
+ * beside the CLI only in a checkout of this repository, and the loader is
+ * imported from that checkout rather than bundled; a published CLI has
+ * neither, so its process version and digest stay unset and read `null`,
+ * never an invented value. Only a run calls this — a `vinaya` command a
+ * person runs with no run keeps the header's own defaults.
+ */
+export async function setStandaloneLogIdentity(
+  env: NodeJS.ProcessEnv = process.env,
+  cliRoot: string = packageRoot(import.meta.url)
+): Promise<void> {
+  const packagePath = join(cliRoot, 'package.json')
+  const pkg: unknown = JSON.parse(readFileSync(packagePath, 'utf8'))
+  if (
+    typeof pkg !== 'object' ||
+    pkg === null ||
+    !('version' in pkg) ||
+    typeof pkg.version !== 'string' ||
+    pkg.version === ''
+  ) {
+    throw new Error(`Cannot resolve the Vinaya CLI version from ${packagePath}`)
+  }
+  env.VINAYA_RUNNER_ID = 'standalone'
+  env.VINAYA_RUNNER_VERSION = pkg.version
+  const checkout = resolve(cliRoot, '../..')
+  const loaderPath = join(checkout, 'harness', 'dev-process', 'loader', 'load-process.ts')
+  const processFolder = join(checkout, 'processes', 'vinaya')
+  if (!existsSync(join(checkout, '.git')) || !existsSync(loaderPath) || !existsSync(processFolder)) return
+  const { loadProcess } = (await import(pathToFileURL(loaderPath).href)) as {
+    loadProcess: (folder: string) => { identity: { id: string; version: string }; digest: string }
+  }
+  const loaded = loadProcess(processFolder)
+  env.VINAYA_PROCESS_ID = loaded.identity.id
+  env.VINAYA_PROCESS_VERSION = loaded.identity.version
+  env.VINAYA_PROCESS_DIGEST = loaded.digest
+}
+
 export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = {}): Promise<LoopResult> {
   // Round 2 review (MAJOR) / security review (MEDIUM): a driver runs with no
   // human watching, so it must resolve `runtimeDir` through the
@@ -2838,6 +2882,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   // classification is already true for this process and for every child that
   // inherits its environment.
   markProcessUnattended()
+  // Named before this run writes any event, on the fresh and the resume entry
+  // alike, so its own events and every inheriting child's name the producer.
+  await setStandaloneLogIdentity()
   const d: LoopDeps = { ...defaultDeps(), ...deps }
   const root = d.runtimeDir()
 
@@ -2915,6 +2962,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // and is never carried over.
     agentSwitched = input.agent !== undefined && held.agent !== undefined && input.agent !== held.agent
     dispatchAgent = input.agent ?? (held.agent as AgentVendor)
+    process.env.VINAYA_RUNTIME = dispatchAgent
     dispatchModel = agentSwitched ? input.model : (input.model ?? held.model)
     if (readDeveloperModelRuns(root, closesTask).length === 0 && held.agent !== undefined) {
       writeDeveloperModelRuns(root, closesTask, [
@@ -3149,6 +3197,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   } else {
     task = input.task
     branch = d.developerBranchFor(task)
+    process.env.VINAYA_RUNTIME = dispatchAgent
   }
 
   // O1: this run's own narration begins here, before the start-of-run

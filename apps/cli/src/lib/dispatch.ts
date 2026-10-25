@@ -4161,6 +4161,26 @@ export function confinedTurboEnv(scratchDir: string): Record<string, string> {
   }
 }
 
+/** The variables a run sets to name the runner, process and agent runtime its Log events come from. */
+export const LOG_IDENTITY_ENV_KEYS = [
+  'VINAYA_PROCESS_ID',
+  'VINAYA_PROCESS_VERSION',
+  'VINAYA_PROCESS_DIGEST',
+  'VINAYA_RUNNER_ID',
+  'VINAYA_RUNNER_VERSION',
+  'VINAYA_RUNTIME'
+] as const
+
+/** The set, non-empty `LOG_IDENTITY_ENV_KEYS` of `sourceEnv` — nothing for a process no run launched. */
+export function logIdentityEnv(sourceEnv: Readonly<Record<string, string | undefined>>): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const key of LOG_IDENTITY_ENV_KEYS) {
+    const value = sourceEnv[key]
+    if (value !== undefined && value !== '') env[key] = value
+  }
+  return env
+}
+
 /** Why a reviewer dispatch that asks to resume a session is refused. */
 export const REVIEWER_RESUME_REFUSED_REASON =
   'a code or security reviewer runs only on a fresh, non-resumed session; resuming a reviewer session, to repair its output or for any other reason, is refused'
@@ -5249,7 +5269,14 @@ export async function dispatchRole(
       // (gh offline or unauthenticated) — falling back to the default while
       // the controller honoured a configured value, and so reading a tree
       // nobody wrote to. It also saves the child a network round trip.
-      [RUNTIME_DIR_ENV_KEY]: runtimeDirForRepo(repo)
+      [RUNTIME_DIR_ENV_KEY]: runtimeDirForRepo(repo),
+      // The run's producer identity, when a run named one (the standalone
+      // driver's `setStandaloneLogIdentity`): the role's own `vinaya` calls
+      // and hooks log under the same runner, process and runtime as its
+      // driver, and its runtime is the agent this dispatch starts. Unset
+      // outside a run, so a hand dispatch keeps the defaults.
+      ...logIdentityEnv(process.env),
+      ...(process.env.VINAYA_RUNTIME ? { VINAYA_RUNTIME: agent } : {})
     }
     const codexEnvExtras = agent === 'codex' ? codexSpawnEnvExtras(agent, codexHomeDir, codexScratchDir) : null
     const child = spawn(spawnCommand, spawnCommandArgs, {

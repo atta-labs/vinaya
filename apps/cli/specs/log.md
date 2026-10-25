@@ -119,6 +119,35 @@ name themselves. `processAndRunnerOf(meta)` returns these objects for schema
 `4`; a schema `1`–`3` line reads as process `{ id: 'vinaya', version: null,
 digest: null }` on runner `{ id: 'standalone', version: null }`.
 
+**Who sets them.** A run sets all six variables on its own process at its
+start, before it writes any event, and every process it launches inherits
+them; neither the sink nor `buildHeader` invents a value.
+
+- **Standalone loop.** `devReviewLoop` calls `setStandaloneLogIdentity` first
+  thing, on the fresh entry and the `--resume` entry alike, so `task run` and
+  `dev-review-loop --resume` both name it: `VINAYA_RUNNER_ID` is `standalone`,
+  `VINAYA_RUNNER_VERSION` is the CLI's own package version, and
+  `VINAYA_PROCESS_ID`, `VINAYA_PROCESS_VERSION` and `VINAYA_PROCESS_DIGEST`
+  are the Vinaya process definition's `id`, `version` and digest, read from
+  `processes/vinaya/process.yaml` by `loadProcess`. The process definition
+  sits beside the CLI only in a checkout of this repository; a published CLI
+  has none, so its process version and digest stay `null`. `VINAYA_RUNTIME`
+  is the agent the run dispatches, once the entry has resolved it: the
+  `--agent` given, or on a resume without one, the agent the pause recorded.
+  <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop.ts contains:export async function setStandaloneLogIdentity( -->
+- **Engine runner.** `setEngineLogIdentity` sets runner `atta-engine` at the
+  installed Engine's version, the loaded process's id, version and digest,
+  and `VINAYA_RUNTIME` to the agent the run dispatches.
+  <!-- AEG:CLAIM: processes/vinaya/bin/engine-log-identity.ts contains:env.VINAYA_RUNTIME = runtime -->
+- **Dispatched roles.** An agent session starts on a named allowlist of the
+  parent environment, so `dispatchRole` hands it the run's set identity
+  variables explicitly (`logIdentityEnv`), with `VINAYA_RUNTIME` naming the
+  agent that dispatch starts. A dispatch outside a run carries none of them.
+  <!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:export function logIdentityEnv( -->
+- **No run.** A `vinaya` command a person runs by hand, or a CI job, sets
+  none of them, so its events keep runner `standalone`, process `vinaya` and
+  `null` for every version, digest and runtime.
+
 ## The header, on every line
 
 ```

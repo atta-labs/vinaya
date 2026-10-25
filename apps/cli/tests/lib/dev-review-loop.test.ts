@@ -78,6 +78,7 @@ import {
   type ObjectivesEditSource,
   parseObjectivesEditComment,
   sanitizeUncaughtErrorForPublicPause,
+  setStandaloneLogIdentity,
   renderDeveloperRoundComment,
   renderReviewerPrompt,
   type ReviewerPromptFacts,
@@ -1263,6 +1264,97 @@ describe('devReviewLoop — the developer flow still works on the loop-created b
     },
     45000
   )
+})
+
+describe('devReviewLoop — every event names the standalone runner, the Vinaya process and the dispatched runtime', () => {
+  function identitiesOf(lines: Array<Record<string, unknown>>): unknown[] {
+    return lines.map((l) => {
+      const meta = l.meta as { process: unknown; runner: unknown; runtime: unknown }
+      return { process: meta.process, runner: meta.runner, runtime: meta.runtime }
+    })
+  }
+
+  it('reads the process version and digest from process.yaml and the runner version from the CLI package', async () => {
+    const cliVersion = (JSON.parse(readFileSync(join(CLI_ROOT, 'package.json'), 'utf8')) as { version: string }).version
+    const processYaml = readFileSync(join(CLI_ROOT, '..', '..', 'processes', 'vinaya', 'process.yaml'), 'utf8')
+    const declaredVersion = processYaml.match(/^version:\s*(\S+)\s*$/m)?.[1]
+    expect(declaredVersion).toBe('0.1.0')
+    const env: NodeJS.ProcessEnv = {}
+    await setStandaloneLogIdentity(env)
+    expect(env).toEqual({
+      VINAYA_PROCESS_ID: 'vinaya',
+      VINAYA_PROCESS_VERSION: declaredVersion,
+      VINAYA_PROCESS_DIGEST: expect.stringMatching(/^[0-9a-f]{64}$/),
+      VINAYA_RUNNER_ID: 'standalone',
+      VINAYA_RUNNER_VERSION: cliVersion
+    })
+  })
+
+  it('names only the runner for a CLI with no process definition beside it, leaving the process version and digest unknown', async () => {
+    const cliRoot = join(tempDir('vinaya-drl-published-'), 'node_modules', '@attalabs', 'vinaya')
+    mkdirSync(cliRoot, { recursive: true })
+    writeFileSync(join(cliRoot, 'package.json'), JSON.stringify({ version: '9.9.9' }))
+    const env: NodeJS.ProcessEnv = {}
+    await setStandaloneLogIdentity(env, cliRoot)
+    expect(env).toEqual({ VINAYA_RUNNER_ID: 'standalone', VINAYA_RUNNER_VERSION: '9.9.9' })
+  })
+
+  it('a fresh start and a resume after a ruling both log every event under that identity', async () => {
+    // The identity the setter names, which the test above proves against
+    // process.yaml and the CLI package.
+    const named: NodeJS.ProcessEnv = {}
+    await setStandaloneLogIdentity(named)
+    expect(named.VINAYA_PROCESS_VERSION).toBe('0.1.0')
+    const expectedIdentity = {
+      process: { id: 'vinaya', version: named.VINAYA_PROCESS_VERSION, digest: named.VINAYA_PROCESS_DIGEST },
+      runner: { id: 'standalone', version: named.VINAYA_RUNNER_VERSION },
+      runtime: 'claude'
+    }
+    const world = makeWorld({
+      developerPushed: true,
+      roleOutcomes: {
+        1: {
+          reviewer: {
+            findings: '',
+            report: 'ESCALATE: authority\nSUMMARY: needs a call.\n',
+            objectives: null,
+            sessionId: 'rev-1'
+          }
+        }
+      }
+    })
+    const outerRunner = process.env.VINAYA_RUNNER_ID
+    const outerRuntime = process.env.VINAYA_RUNTIME
+    const paused = await runLoopInProcess(world)
+    expect(paused.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+    const freshLines = ipOutboxLines(world)
+    expect(freshLines.some((l) => l.event === 'loop_started')).toBe(true)
+    expect(new Set(identitiesOf(freshLines).map((i) => JSON.stringify(i)))).toEqual(
+      new Set([JSON.stringify(expectedIdentity)])
+    )
+    // The run's identity is the in-process driver's for its own life only: this
+    // test process gets back whatever it carried before, set or not.
+    expect(process.env.VINAYA_RUNNER_ID).toBe(outerRunner)
+    expect(process.env.VINAYA_RUNTIME).toBe(outerRuntime)
+
+    world.rulings = ['Go ahead and fix it.']
+    world.rulingOrdinal = 1
+    world.rulingAuthor = 'daniboomerang'
+    world.roleOutcomes[1]!.reviewer = undefined
+    writeFileSync(
+      join(ipTaskRunDir(world), 'driver.pid.json'),
+      JSON.stringify({ pid: deadPid(), startedAt: new Date(0).toISOString() }),
+      'utf8'
+    )
+    // No `--agent`: the resume reads the agent the paused run recorded.
+    const resumed = await runLoopInProcess(world, { resumePr: world.prNumber })
+    expect(resumed.finalDecision.type).toBe('publish')
+    const resumeLines = ipOutboxLines(world).slice(freshLines.length)
+    expect(resumeLines.some((l) => l.event === 'loop_started')).toBe(true)
+    expect(new Set(identitiesOf(resumeLines).map((i) => JSON.stringify(i)))).toEqual(
+      new Set([JSON.stringify(expectedIdentity)])
+    )
+  })
 })
 
 describe('devReviewLoop — round 1 clean, ends on publish', () => {
