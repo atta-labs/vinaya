@@ -47,7 +47,7 @@ export function FeaturePage(props: FeaturePageProps) {
           Feature 0{n} / 05
         </Text>
         <div className='flex flex-wrap items-center gap-5 sm:gap-7'>
-          <NamedIcon name={name} className='size-16 sm:size-22 [&_*]:[stroke-width:1.6]' />
+          <NamedIcon name={name} className='size-16 sm:size-22' />
           <h1 className='font-sans text-6xl leading-none tracking-tighter sm:text-8xl'>{name}</h1>
         </div>
         <p className='max-w-3xl text-xl leading-snug text-muted-foreground sm:text-2xl'>{lead}</p>
@@ -157,10 +157,7 @@ export function FeaturePage(props: FeaturePageProps) {
         {prev ? (
           <NextLink href={prev.href} variant='unstyled' className={cn(CARD_LINK, 'flex flex-col gap-1.5 p-6.5')}>
             <span className='font-mono text-sm text-muted-foreground'>← 0{prev.n} / 05</span>
-            <span className='flex items-center gap-3 text-2xl tracking-tight'>
-              <NamedIcon name={prev.name} className='size-8' still />
-              {prev.name}
-            </span>
+            <span className='text-2xl tracking-tight'>{prev.name}</span>
           </NextLink>
         ) : (
           <span />
@@ -172,10 +169,7 @@ export function FeaturePage(props: FeaturePageProps) {
             className={cn(CARD_LINK, 'flex flex-col items-end gap-1.5 p-6.5 text-right')}
           >
             <span className='font-mono text-sm text-muted-foreground'>0{next.n} / 05 →</span>
-            <span className='flex items-center gap-3 text-2xl tracking-tight'>
-              {next.name}
-              <NamedIcon name={next.name} className='size-8' still />
-            </span>
+            <span className='text-2xl tracking-tight'>{next.name}</span>
           </NextLink>
         )}
       </nav>

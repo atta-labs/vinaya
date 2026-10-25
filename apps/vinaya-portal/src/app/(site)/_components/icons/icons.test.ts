@@ -45,10 +45,11 @@ describe('custom icon rendering', () => {
     expect(render('operator', false)).not.toEqual(render('operator'))
   })
 
-  it('shows only the first feature sign in each cell when still', () => {
-    const groups = [...svg('features').querySelectorAll('[opacity]')]
-    expect(groups.filter((group) => group.getAttribute('opacity') === '1')).toHaveLength(3)
-    expect(groups.filter((group) => group.getAttribute('opacity') === '0')).toHaveLength(12)
+  it('shows one dot in each cell, and no feature signs, when still', () => {
+    const drawing = svg('features')
+    expect(drawing.querySelectorAll('circle')).toHaveLength(3)
+    expect(drawing.querySelectorAll('circle.fill-ring')).toHaveLength(1)
+    expect(drawing.querySelectorAll('[opacity]')).toHaveLength(0)
   })
 
   it('keeps the process accent on the joining line and the still sign on Architect', () => {
@@ -123,7 +124,7 @@ describe('custom icon rendering', () => {
 
   it('gives a docs page the icon of its address, else of its title', () => {
     expect(iconForPage({ href: '/docs/start', title: 'Overview' })).toBe(ELEMENT_ICONS['vinaya-harness'])
-    expect(iconForPage({ href: '/docs/process/roles', title: 'Roles' })).toBeUndefined()
+    expect(iconForPage({ href: '/docs/process/roles', title: 'Roles' })).toBe(ELEMENT_ICONS.agent)
     expect(iconForPage({ href: '/docs/process/integration', title: 'Integration' })).toBe(ELEMENT_ICONS.integration)
     expect(iconForPage({ href: '/docs/process/checks', title: 'Checks catalog' })).toBeUndefined()
   })

@@ -12,7 +12,7 @@ import {
 } from '@/ui/components'
 import { NextLink } from '@/ui/lib/next-link'
 import { Heading, Text } from '@/ui/shared'
-import { iconForName, iconForPage, SMALL_ICON } from '../../_components/icons'
+import { iconForPage } from '../../_components/icons'
 import { DOCS_NAV, type DocsGroup, sectionId, topKey } from '../_lib/portal-docs'
 import { CommandBlock } from '../(standalone)/cli/_components/CommandBlock'
 import { commandSlug } from '../(standalone)/cli/_components/command-slug'
@@ -92,7 +92,6 @@ export function DocHead({
 
 /** A section of prose: a heading (anchored, listed under "On this page") and its paragraphs or lists. */
 export function DocSection({ title, children }: { title: string; children: ReactNode }) {
-  const Icon = iconForName(title)
   return (
     <section className='flex flex-col gap-4 py-6'>
       <Heading
@@ -104,14 +103,7 @@ export function DocSection({ title, children }: { title: string; children: React
         tone='foreground'
         className='scroll-mt-8'
       >
-        {Icon ? (
-          <span className='inline-flex items-center gap-2'>
-            <Icon className={`shrink-0 ${SMALL_ICON}`} still />
-            <span>{title}</span>
-          </span>
-        ) : (
-          title
-        )}
+        {title}
       </Heading>
       <div className='flex flex-col gap-4 font-sans text-base leading-7 text-foreground/90'>{children}</div>
     </section>

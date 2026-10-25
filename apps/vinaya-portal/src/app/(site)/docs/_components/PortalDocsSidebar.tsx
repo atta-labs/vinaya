@@ -33,13 +33,10 @@ function PageItem({ page, pathname }: { page: DocsPage; pathname: string }) {
             : 'text-sidebar-foreground/65 hover:text-sidebar-foreground'
         )}
       >
-        {/* A page that names a product, agent or subject shows its icon in the gutter under its section's icon; every
-            title lines up with its section's title, past the icon. */}
+        {/* Only the section headings carry icons; a page link never does, so what can be clicked reads apart from
+            what cannot. Every title lines up with its section's title, past the heading's icon. */}
         <span className='flex items-center gap-2.5'>
-          {(() => {
-            const Icon = iconForName(page.title)
-            return Icon ? <Icon className={SMALL_ICON} still /> : <span className='w-5 shrink-0' aria-hidden />
-          })()}
+          <span className='w-5 shrink-0' aria-hidden />
           {page.title}
         </span>
       </SidebarMenuButton>
@@ -60,13 +57,7 @@ function PageItem({ page, pathname }: { page: DocsPage; pathname: string }) {
                       : 'text-sidebar-foreground/60 hover:text-sidebar-foreground'
                   )}
                 >
-                  <span className='flex items-center gap-2'>
-                    {(() => {
-                      const Icon = iconForName(child.title)
-                      return Icon ? <Icon className={`${SMALL_ICON} size-4`} still /> : null
-                    })()}
-                    {child.title}
-                  </span>
+                  {child.title}
                 </SidebarMenuButton>
               </SidebarMenuItem>
             )

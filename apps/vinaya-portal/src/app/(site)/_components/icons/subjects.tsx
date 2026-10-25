@@ -8,14 +8,14 @@ export function IntegrationIcon({ className, still = false }: IconProps) {
   const paused = useIconStill(still)
   return (
     <Glyph className={className} viewBox='4.972 2.064 14.057 19.965'>
-      <motion.g {...iconMotion('mv-plug', paused)} key={paused ? 'still-1' : 'moving-1'}>
+      <motion.g key={paused ? 'still-1' : 'moving-1'} {...iconMotion('mv-plug', paused)}>
         <path {...LINE} d='M18.60 12.60 L15.30 18.31 L8.70 18.31 L5.40 12.60 L8.70 6.88 L15.30 6.88Z' />
         <path {...MARK} d='M9.5 2.6V6.9M14.5 2.6V6.9' />
       </motion.g>
       <motion.g
+        key={paused ? 'still-2' : 'moving-2'}
         className='origin-[12px_21.6px]! [transform-box:view-box]!'
         {...iconMotion('mv-cable', paused)}
-        key={paused ? 'still-2' : 'moving-2'}
       >
         <path {...LINE} d='M12 18.3V21.6' />
       </motion.g>
@@ -32,9 +32,9 @@ export function ThinkingIcon({ className, still = false }: IconProps) {
         d='M12 2.5A6.5 6.5 0 0 0 7.6 13.8C8.6 14.8 9.2 15.8 9.2 17.2H14.8C14.8 15.8 15.4 14.8 16.4 13.8A6.5 6.5 0 0 0 12 2.5ZM9.6 20.5H14.4'
       />
       <motion.g
+        key={paused ? 'still-3' : 'moving-3'}
         className='origin-center! [transform-box:fill-box]!'
         {...iconMotion('mv-glow', paused)}
-        key={paused ? 'still-3' : 'moving-3'}
       >
         <path {...MARK} d='M12.00 7.00 L14.25 8.30 L14.25 10.90 L12.00 12.20 L9.74 10.90 L9.74 8.30Z' />
       </motion.g>
@@ -47,9 +47,9 @@ export function ExecutingIcon({ className, still = false }: IconProps) {
   return (
     <Glyph className={className} viewBox='3.571 2.371 16.858 19.258'>
       <motion.g
+        key={paused ? 'still-4' : 'moving-4'}
         className='origin-[12px_12px]! [transform-box:view-box]!'
         {...iconMotion('mv-spin', paused)}
-        key={paused ? 'still-4' : 'moving-4'}
       >
         <path
           {...LINE}
@@ -69,11 +69,11 @@ export function RetrospectingIcon({ className, still = false }: IconProps) {
       <path {...LINE} d='M15.4 15.4L21 21' />
       <g>
         <motion.path
+          key={paused ? 'still-5' : 'moving-5'}
           {...MARK}
           pathLength='1'
           d='M7.2 10.2L9.2 12.2L12.9 8.3'
           {...iconMotion('mv-draw', paused)}
-          key={paused ? 'still-5' : 'moving-5'}
           strokeDasharray={paused ? undefined : 1}
         />
       </g>
@@ -87,7 +87,7 @@ export function GatesIcon({ className, still = false }: IconProps) {
     <Glyph className={className} viewBox='2.571 3.571 18.857 17.964'>
       <path {...LINE} d='M3 21V6H6V4H10V6H14V4H18V6H21V21' />
       <path {...LINE} d='M8 21V13.5L12 9.5L16 13.5V21' />
-      <motion.g {...iconMotion('mv-drop', paused)} key={paused ? 'still-6' : 'moving-6'}>
+      <motion.g key={paused ? 'still-6' : 'moving-6'} {...iconMotion('mv-drop', paused)}>
         <path {...MARK} d='M10.2 12.2V21M12 10.6V21M13.8 12.2V21' />
       </motion.g>
     </Glyph>
@@ -99,9 +99,9 @@ export function UsingItIcon({ className, still = false }: IconProps) {
   return (
     <Glyph className={className} viewBox='4.572 2.371 14.856 19.058'>
       <motion.g
+        key={paused ? 'still-7' : 'moving-7'}
         className='origin-[12px_2.8px]! [transform-box:view-box]!'
         {...iconMotion('mv-swing', paused)}
-        key={paused ? 'still-7' : 'moving-7'}
       >
         <path {...LINE} d='M5 6.5H19V21H5ZM10 6.5L12 2.8L14 6.5' />
         <path {...MARK} d='M12.00 9.00 L14.59 10.50 L14.59 13.50 L12.00 15.00 L9.40 13.50 L9.40 10.50Z' />
@@ -120,7 +120,7 @@ export function GuidesIcon({ className, still = false }: IconProps) {
         d='M2.5 5C5.8 4 9 4.5 12 6.5C15 4.5 18.2 4 21.5 5V19.5C18.2 18.5 15 19 12 21C9 19 5.8 18.5 2.5 19.5ZM12 6.5V21'
       />
       <path {...MARK} d='M16.5 5V10.5' />
-      <motion.g {...iconMotion('mv-bob', paused)} key={paused ? 'still-8' : 'moving-8'}>
+      <motion.g key={paused ? 'still-8' : 'moving-8'} {...iconMotion('mv-bob', paused)}>
         <path {...DOT} d='M16.50 10.40 L18.05 11.30 L18.05 13.10 L16.50 14.00 L14.94 13.10 L14.94 11.30Z' />
       </motion.g>
     </Glyph>
@@ -132,7 +132,7 @@ export function ReferenceIcon({ className, still = false }: IconProps) {
   return (
     <Glyph className={className} viewBox='4.072 2.571 15.856 18.857'>
       <path {...LINE} d='M4.5 3H19.5V21H4.5Z' />
-      <motion.g {...iconMotion('mv-step', paused)} key={paused ? 'still-9' : 'moving-9'}>
+      <motion.g key={paused ? 'still-9' : 'moving-9'} {...iconMotion('mv-step', paused)}>
         <path {...DOT} d='M8.20 6.70 L9.32 7.35 L9.32 8.65 L8.20 9.30 L7.07 8.65 L7.07 7.35Z' />
       </motion.g>
       <path {...LINE} d='M8.20 10.70 L9.32 11.35 L9.32 12.65 L8.20 13.30 L7.07 12.65 L7.07 11.35Z' />
@@ -145,10 +145,10 @@ export function ReferenceIcon({ className, still = false }: IconProps) {
 export function PartsIcon({ className, still = false }: IconProps) {
   const paused = useIconStill(still)
   return (
-    <Glyph className={className} viewBox='1.208 0 21.584 21.900'>
+    <Glyph className={className} viewBox='-1.5 -2.55 27 27'>
       <path {...LINE} d='M6.80 0.40 L12.00 3.40 L12.00 9.40 L6.80 12.40 L1.60 9.40 L1.60 3.40Z' />
       <path {...LINE} d='M17.19 0.40 L22.39 3.40 L22.39 9.40 L17.19 12.40 L12.00 9.40 L12.00 3.40Z' />
-      <motion.g {...iconMotion('mv-snap', paused)} key={paused ? 'still-10' : 'moving-10'}>
+      <motion.g key={paused ? 'still-10' : 'moving-10'} {...iconMotion('mv-snap', paused)}>
         <path {...MARK} d='M12.00 9.40 L17.19 12.40 L17.19 18.40 L12.00 21.40 L6.80 18.40 L6.80 12.40Z' />
       </motion.g>
     </Glyph>

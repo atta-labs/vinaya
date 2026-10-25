@@ -93,6 +93,7 @@ export function iconForHref(href: string): Icon | undefined {
 const NAME_ALIASES: Record<string, Element> = {
   start: 'get-started',
   agents: 'agent',
+  roles: 'agent',
   'self-improve': 'self-improvement'
 }
 

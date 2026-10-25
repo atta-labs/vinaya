@@ -10,40 +10,40 @@ export function AgentFrame({ paused }: { paused: boolean }) {
     <>
       <path {...LINE} d='M28.00 12.00 L46.18 22.50 L46.18 43.50 L28.00 54.00 L9.81 43.50 L9.81 22.50Z' />
       <motion.g
+        key={paused ? 'still-1' : 'moving-1'}
         className='origin-[19.816px_16.725px]! [transform-box:view-box]!'
         {...iconMotion('antL', paused)}
-        key={paused ? 'still-1' : 'moving-1'}
       >
         <path {...LINE} d='M19.81 16.72L7.51 7.35' />
-        <g className='origin-[4.944px_5.400px]! [transform-box:view-box]!'>
+        <g className='origin-[5.811px_6.400px]! [transform-box:view-box]!'>
           <path
             {...LINE}
             className='fill-background'
-            d='M4.94 2.00 L7.88 3.70 L7.88 7.10 L4.94 8.80 L2.00 7.10 L2.00 3.70Z'
+            d='M5.81 2.00 L9.62 4.20 L9.62 8.60 L5.81 10.80 L2.00 8.60 L2.00 4.20Z'
           />
-          <motion.g {...iconMotion('pupil', paused)} key={paused ? 'still-2' : 'moving-2'}>
-            <circle fill='currentColor' stroke='none' cx='4.944' cy='5.400' r='1.25' />
+          <motion.g key={paused ? 'still-2' : 'moving-2'} {...iconMotion('pupil', paused)}>
+            <circle fill='currentColor' stroke='none' cx='5.811' cy='6.400' r='1.7' />
           </motion.g>
         </g>
       </motion.g>
       <motion.g
+        key={paused ? 'still-3' : 'moving-3'}
         className='origin-[36.184px_16.725px]! [transform-box:view-box]!'
         {...iconMotion('antR', paused)}
-        key={paused ? 'still-3' : 'moving-3'}
       >
         <path {...LINE} d='M36.18 16.72L48.48 7.35' />
         <motion.g
-          className='origin-[51.056px_5.400px]! [transform-box:view-box]!'
-          {...iconMotion('eyeR', paused)}
           key={paused ? 'still-4' : 'moving-4'}
+          className='origin-[50.189px_6.400px]! [transform-box:view-box]!'
+          {...iconMotion('eyeR', paused)}
         >
           <path
             {...LINE}
             className='fill-background'
-            d='M51.05 2.00 L54.00 3.70 L54.00 7.10 L51.05 8.80 L48.11 7.10 L48.11 3.70Z'
+            d='M50.19 2.00 L54.00 4.20 L54.00 8.60 L50.19 10.80 L46.38 8.60 L46.38 4.20Z'
           />
-          <motion.g {...iconMotion('pupil', paused)} key={paused ? 'still-5' : 'moving-5'}>
-            <circle fill='currentColor' stroke='none' cx='51.056' cy='5.400' r='1.25' />
+          <motion.g key={paused ? 'still-5' : 'moving-5'} {...iconMotion('pupil', paused)}>
+            <circle fill='currentColor' stroke='none' cx='50.189' cy='6.400' r='1.7' />
           </motion.g>
         </motion.g>
       </motion.g>
@@ -77,9 +77,9 @@ export function AgentSign({
           <g data-role-sign transform='translate(28 33) scale(0.80769) translate(-28 -28)'>
             <path {...LINE} d='M20 40V16' />
             <motion.g
+              key={paused ? 'still-6' : 'moving-6'}
               className='origin-left! [transform-box:fill-box]!'
               {...iconMotion('a-flag', paused)}
-              key={paused ? 'still-6' : 'moving-6'}
             >
               <path {...(monochrome ? LINE : MARK)} d='M20 17H36L32 22.5L36 28H20' />
             </motion.g>
@@ -91,41 +91,41 @@ export function AgentSign({
         <GlyphStrokes longerSide={53.926}>
           <g data-role-sign transform='translate(28 33) scale(0.80769) translate(-28 -28)'>
             <motion.g
+              key={paused ? 'still-7' : 'moving-7'}
               className='origin-[27px_29px]! [transform-box:view-box]!'
               {...iconMotion('pl1', paused)}
-              key={paused ? 'still-7' : 'moving-7'}
             >
               <path {...LINE} d='M24.68 25.03L21.91 20.28' />
               <circle {...LINE} cx='20' cy='17' r='3.8' />
             </motion.g>
             <motion.g
+              key={paused ? 'still-8' : 'moving-8'}
               className='origin-[27px_29px]! [transform-box:view-box]!'
               {...iconMotion('pl2', paused)}
-              key={paused ? 'still-8' : 'moving-8'}
             >
               <path {...LINE} d='M31.27 27.29L36.34 25.26' />
               <circle {...LINE} cx='39.5' cy='24' r='3.4' />
             </motion.g>
             <motion.g
+              key={paused ? 'still-9' : 'moving-9'}
               className='origin-[27px_29px]! [transform-box:view-box]!'
               {...iconMotion('pl3', paused)}
-              key={paused ? 'still-9' : 'moving-9'}
             >
               <path {...LINE} d='M30.17 32.33L34.16 36.54' />
               <circle {...LINE} cx='36.5' cy='39' r='3.4' />
             </motion.g>
             <motion.g
+              key={paused ? 'still-10' : 'moving-10'}
               className='origin-[27px_29px]! [transform-box:view-box]!'
               {...iconMotion('pl4', paused)}
-              key={paused ? 'still-10' : 'moving-10'}
             >
               <path {...LINE} d='M23.44 31.91L18.79 35.72' />
               <circle {...LINE} cx='16' cy='38' r='3.6' />
             </motion.g>
             <motion.g
+              key={paused ? 'still-11' : 'moving-11'}
               className='origin-[27px_29px]! [transform-box:view-box]!'
               {...iconMotion('pl5', paused)}
-              key={paused ? 'still-11' : 'moving-11'}
             >
               <path {...LINE} d='M29.12 24.92L32.43 18.52' />
               <circle {...LINE} cx='34' cy='15.5' r='3.4' />
@@ -142,11 +142,11 @@ export function AgentSign({
             <path {...LINE} d='M22 22L15 29L22 36M34 22L41 29L34 36' />
             <g>
               <motion.path
+                key={paused ? 'still-12' : 'moving-12'}
                 {...(monochrome ? LINE : MARK)}
                 pathLength='1'
                 d='M30.5 19L25.5 39'
                 {...iconMotion('a-draw', paused)}
-                key={paused ? 'still-12' : 'moving-12'}
                 strokeDasharray={paused ? undefined : 1}
               />
             </g>
@@ -159,11 +159,11 @@ export function AgentSign({
           <g data-role-sign transform='translate(28 33) scale(0.80769) translate(-28 -28)'>
             <g>
               <motion.path
+                key={paused ? 'still-13' : 'moving-13'}
                 {...(monochrome ? LINE : MARK)}
                 pathLength='1'
                 d='M17 29L24.5 36.5L39 22'
                 {...iconMotion('a-draw', paused)}
-                key={paused ? 'still-13' : 'moving-13'}
                 strokeDasharray={paused ? undefined : 1}
               />
             </g>
@@ -175,7 +175,7 @@ export function AgentSign({
         <GlyphStrokes longerSide={53.926}>
           <g data-role-sign transform='translate(28 33) scale(0.80769) translate(-28 -28)'>
             <path {...LINE} d='M28 15L39 19V27C39 34 34.5 39 28 41C21.5 39 17 34 17 27V19Z' />
-            <motion.g {...iconMotion('a-blink', paused)} key={paused ? 'still-14' : 'moving-14'}>
+            <motion.g key={paused ? 'still-14' : 'moving-14'} {...iconMotion('a-blink', paused)}>
               <circle {...(monochrome ? { fill: 'currentColor', stroke: 'none' } : DOT)} cx='28' cy='26.5' r='3' />
               <path {...(monochrome ? LINE : MARK)} d='M28 29.5V33.5' />
             </motion.g>
@@ -187,16 +187,16 @@ export function AgentSign({
         <GlyphStrokes longerSide={53.926}>
           <g data-role-sign transform='translate(28 33) scale(0.80769) translate(-28 -28)'>
             <motion.path
+              key={paused ? 'still-15' : 'moving-15'}
               {...(monochrome ? LINE : MARK)}
               d='M23 18L31 23L31 33L23 38Z'
               {...iconMotion('a-opl', paused)}
-              key={paused ? 'still-15' : 'moving-15'}
             />
             <motion.path
+              key={paused ? 'still-16' : 'moving-16'}
               {...(monochrome ? LINE : MARK)}
               d='M31 23L39 28L39 28L31 33Z'
               {...iconMotion('a-opr', paused)}
-              key={paused ? 'still-16' : 'moving-16'}
             />
           </g>
         </GlyphStrokes>
@@ -209,9 +209,9 @@ export function AgentSign({
             <rect {...LINE} x='16' y='19' width='6.5' height='22' rx='1.2' />
             <rect {...LINE} x='24.5' y='22' width='6.5' height='19' rx='1.2' />
             <motion.g
+              key={paused ? 'still-17' : 'moving-17'}
               className='origin-bottom-left! [transform-box:fill-box]!'
               {...iconMotion('a-fall', paused)}
-              key={paused ? 'still-17' : 'moving-17'}
             >
               <rect {...(monochrome ? LINE : MARK)} x='34.5' y='20' width='6.5' height='21' rx='1.2' />
             </motion.g>
@@ -224,11 +224,11 @@ export function AgentSign({
           <g data-role-sign transform='translate(28 33) scale(0.80769) translate(-28 -28)'>
             <g>
               <motion.path
+                key={paused ? 'still-18' : 'moving-18'}
                 {...(monochrome ? LINE : MARK)}
                 pathLength='1'
                 d='M13 22L28 12L43 22Z'
                 {...iconMotion('a-draw', paused)}
-                key={paused ? 'still-18' : 'moving-18'}
                 strokeDasharray={paused ? undefined : 1}
               />
             </g>
