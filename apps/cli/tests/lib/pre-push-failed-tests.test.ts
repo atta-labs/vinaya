@@ -2,7 +2,6 @@
 // that commit; the next push runs only those plus the files affected by what
 // changed since. Pure decisions are tested directly; the recorder is driven
 // for real against a throwaway git repository.
-import { execFileSync } from 'node:child_process'
 import { describe, expect, it } from 'bun:test'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -14,6 +13,7 @@ import {
   parseRecord,
   recordFromRun
 } from '../../src/lib/pre-push-failed-tests'
+import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 const RECORDER = join(import.meta.dir, '..', '..', 'src', 'lib', 'pre-push-record-tests.ts')
 
@@ -126,14 +126,17 @@ describe('recordFromRun / parseRecord', () => {
 })
 
 function cleanEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, ...extra }
+  const env: NodeJS.ProcessEnv = { ...stripVinayaEnv(), ...extra }
   for (const k of Object.keys(env)) if (k.startsWith('GIT_')) delete env[k]
   return env
 }
 
 function fixtureRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-failed-tests-'))
-  const run = (args: string[]) => execFileSync('git', args, { cwd: dir, env: cleanEnv(), stdio: 'ignore' })
+  const run = (args: string[]) => {
+    const r = spawnSyncBudgeted('git', args, { cwd: dir, env: cleanEnv(), encoding: 'utf8' })
+    expect(r.status).toBe(0)
+  }
   run(['init', '-q', '-b', 'task/7'])
   run(['config', 'user.email', 'fixture@example.invalid'])
   run(['config', 'user.name', 'fixture'])
@@ -148,7 +151,13 @@ describe('pre-push-record-tests (real git repository)', () => {
     const dir = fixtureRepo()
     const log = join(dir, 'log.txt')
     writeFileSync(log, BUN_LOG)
-    execFileSync('bun', [RECORDER, 'failed', log, '12'], { cwd: dir, env: cleanEnv({ VINAYA_PUSH_MODE: 'ready' }) })
+    expect(
+      spawnSyncBudgeted('bun', [RECORDER, 'failed', log, '12'], {
+        cwd: dir,
+        env: cleanEnv({ VINAYA_PUSH_MODE: 'ready' }),
+        encoding: 'utf8'
+      }).status
+    ).toBe(0)
     const recordPath = join(dir, '.git', 'vinaya', 'pre-push-failed-tests.json')
     const resultPath = join(dir, '.git', 'vinaya', 'pre-push-last-result.json')
     const written = JSON.parse(readFileSync(recordPath, 'utf8'))
@@ -159,7 +168,9 @@ describe('pre-push-record-tests (real git repository)', () => {
     expect(result.outcome).toBe('failed')
     expect(result.elapsedSeconds).toBe(12)
 
-    execFileSync('bun', [RECORDER, 'passed', '', '0'], { cwd: dir, env: cleanEnv() })
+    expect(
+      spawnSyncBudgeted('bun', [RECORDER, 'passed', '', '0'], { cwd: dir, env: cleanEnv(), encoding: 'utf8' }).status
+    ).toBe(0)
     expect(existsSync(recordPath)).toBe(false)
     expect(JSON.parse(readFileSync(resultPath, 'utf8')).outcome).toBe('passed')
   })
