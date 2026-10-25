@@ -937,7 +937,9 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       ...createRoleLaunchers({
         vendor: vendorOf(args.agent),
         generatedRoot: join(runDir, 'generated'),
-        variables: options.taskInput?.worktreePath ? grantVariables(options.taskInput.worktreePath, runDir, options.repoRoot) : undefined,
+        variables: options.taskInput?.worktreePath
+          ? grantVariables(options.taskInput.worktreePath, runDir, options.repoRoot)
+          : undefined,
         mcpCommands,
         model: args.model,
         allowUnixSockets: options.allowUnixSockets === true,
