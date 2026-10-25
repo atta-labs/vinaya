@@ -856,6 +856,9 @@ for (const agent of AGENTS) {
       expect(ceilings(three)).toEqual([3, 3, 3, 3, 3, 3, 3, 3])
       expect(two.outcome).toBe('exhausted')
       expect(three.outcome).toBe('exhausted')
+      // The spent budget is a durable pause: its comment asks for the ruling that continues the run.
+      expect(two.markers).toEqual([pauseMarker('max_rounds')])
+      expect(three.markers).toEqual([pauseMarker('max_rounds')])
       expect(two.spawns.developer).toBe(3)
       expect(three.spawns.developer).toBe(4)
     })

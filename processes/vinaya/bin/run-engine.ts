@@ -1198,7 +1198,12 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         if (taskForHandoff) taskForHandoff.handoff = handoff
         continue
       }
-      if (!lifecycle.watch || legOutcome?.reason !== 'paused' || signalled !== null) break
+      // The Flow spent a decision's revision budget (the review policy's round cap): a pause like any other, made
+      // durable by the handoff, so its comment asks for the ruling the watch below then picks up.
+      const exhausted = legOutcome?.reason === 'exhausted' && signalled === null
+      if (exhausted)
+        handoff.pause({ reason: 'max_rounds', detail: 'the round cap is reached: a ruling grants a fresh run' })
+      if (!lifecycle.watch || (legOutcome?.reason !== 'paused' && !exhausted) || signalled !== null) break
       narrate('the run is halted; watching for a newer ruling or a cancel')
       const watched = await watchForRuling(options.runtimeDir, args.task, lifecycle.watch, stopWatching.signal, narrate)
       if (watched.kind === 'ruled') {
@@ -1211,6 +1216,13 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       } else if (watched.kind === 'consumed') narrate('another process claimed the resolution and owns the run; ending')
       else if (watched.kind === 'refused') narrate(`the resolution was refused: ${watched.message}`)
       if (watched.kind !== 'ruled') break
+      // An exhausted checkpoint would exhaust again at once: the ruling continues as a fresh run of the next
+      // generation, which attaches to the open pull request with a fresh revision budget.
+      if (exhausted) {
+        generation += 1
+        identity = runIdentityOfTask(args.task, generation)
+        narrate(`the ruling continues past the round cap as a fresh run (${identity.runId})`)
+      }
       control = createRunControl()
       reapOnHalt()
       handoff = makeHandoff()
