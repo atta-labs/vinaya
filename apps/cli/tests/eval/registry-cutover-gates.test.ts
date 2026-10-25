@@ -2,8 +2,8 @@
 // cutover-gate coverage table, parsed from the repository mirror, has exactly
 // one valid row, in number order, naming the table's evidence, its source in
 // the evaluation program and in the Engine specification, and the statements
-// gates 14, 15 and 17 require. It aggregates with the other shards and claims
-// nothing about any other kind.
+// gates 14, 15 and 17 require, and the evidence for each backend it lists. It
+// aggregates with the other shards and claims nothing about any other kind.
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -46,6 +46,7 @@ type RawRow = Record<string, unknown> & {
   contract: string
   decisionRule: string
   cutoverGate: Record<string, unknown>
+  backendEvidence: Record<string, unknown>
 }
 const rawShard = JSON.parse(readFileSync(SHARD_FILE, 'utf8')) as { kinds: string[]; components: RawRow[] }
 
@@ -195,6 +196,23 @@ describe('the cutover-gates shard', () => {
       loaded.value.components.filter((entry) => entry.location.startsWith('shards/cutover-gates.json#'))
     ).toHaveLength(17)
   })
+
+  it('records, on each row, evidence for exactly the backends it lists, and gate 16 proved on the Engine', () => {
+    for (const row of shard.components) {
+      expect({ id: row.id, backends: Object.keys(row.backendEvidence ?? {}) }).toEqual({
+        id: row.id,
+        backends: row.backends
+      })
+    }
+    const gate = (n: number) => shard.components.find((row) => row.id === `cutover-gate:gate-${n}`)
+    expect(gate(16)?.backendEvidence).toEqual({
+      engine: { test: 'apps/cli/tests/conformance/packed-runtime-public-run-control.test.ts' }
+    })
+    const operatorEntry = gate(11)?.backendEvidence?.engine
+    expect(operatorEntry !== undefined && 'owed' in operatorEntry && operatorEntry.owed).toContain(
+      'Operator on one host'
+    )
+  })
 })
 
 describe('the cutover-gate check fails on what it must', () => {
@@ -263,6 +281,16 @@ describe('the cutover-gate check fails on what it must', () => {
       ['gate-15', 'statement'],
       ['gate-17', 'statement']
     ])
+  })
+
+  it('reports a row with no evidence entry for a backend it lists', () => {
+    const content = clone(rawShard)
+    delete (content.components[2]!.backendEvidence as Record<string, unknown>).engine
+    const report = check(content)
+    expect(report.invalid.map((r) => [r.code, r.path])).toEqual([
+      ['missing_field', `${LOCATION}#components[2].backendEvidence.engine`]
+    ])
+    expect(report.invalid[0]?.detail).toContain('cutover-gate:gate-3')
   })
 
   it('claims nothing about a kind the shard does not declare', () => {

@@ -38,6 +38,11 @@
         "detail": "Code, plus an import check that the Engine path references only public packed exports and never drives the graph outside public run control."
       },
       "backends": ["engine"],
+      "backendEvidence": {
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
       "cadence": ["every-affected-change"],
       "migrationGate": "§14: module 6.17 cuts over only when cutover gate 1 is satisfied by its named evidence.",
@@ -89,6 +94,14 @@
         "detail": "Code: classification and pause-reason assertions."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
       "cadence": ["every-affected-change"],
       "migrationGate": "§14: module 6.7 cuts over only when cutover gate 2 is satisfied by its named evidence.",
@@ -140,6 +153,14 @@
         "detail": "Code: classification and pause-reason assertions."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
       "cadence": ["every-affected-change"],
       "migrationGate": "§14: module 6.7 cuts over only when cutover gate 3 is satisfied by its named evidence.",
@@ -191,6 +212,14 @@
         "detail": "Code: one typed outcome per conformance case, on both adapters."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.3 cuts over only when cutover gate 4 is satisfied by its named evidence.",
@@ -248,6 +277,14 @@
         "detail": "Controller receipts and manifest digests; completion refused when a required source lacks a receipt-backed `sourceUses` entry."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.2 cuts over only when cutover gate 5 is satisfied by its named evidence.",
@@ -299,6 +336,14 @@
         "detail": "Trace predicate on tool name and arguments, plus an outcome check on the resulting state."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.6 cuts over only when cutover gate 6 is satisfied by its named evidence.",
@@ -356,6 +401,14 @@
         "detail": "Forge-fake ledger: every effect exactly once with a verified postcondition; zero effects in shadow mode; the beyond-Surface record equals the branch's actual beyond-Surface paths after every write."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
       "cadence": ["every-affected-change", "scheduled-live", "pre-release", "canary"],
       "migrationGate": "§14: module 6.13 cuts over only when cutover gate 7 is satisfied by its named evidence.",
@@ -413,6 +466,14 @@
         "detail": "Code: review-validity, manifest and audit assertions."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.8 cuts over only when cutover gate 8 is satisfied by its named evidence.",
@@ -464,6 +525,14 @@
         "detail": "Forge-fake ledger: every effect exactly once with a verified postcondition; zero effects in shadow mode; the beyond-Surface record equals the branch's actual beyond-Surface paths after every write."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "test": "apps/cli/tests/conformance/dev-review-engine-shadow.test.ts"
+        }
+      },
       "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
       "cadence": ["every-affected-change", "scheduled-live", "pre-release", "canary"],
       "migrationGate": "§14: module 6.13 cuts over only when cutover gate 9 is satisfied by its named evidence.",
@@ -515,6 +584,14 @@
         "detail": "Event-set and redaction assertions."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.16 cuts over only when cutover gate 10 is satisfied by its named evidence.",
@@ -566,6 +643,14 @@
         "detail": "Checkpoint and control-state assertions; a process-tree check for cancellation."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "Owed to the Operator on one host project, which owns this row and proves it in its own exit check."
+        },
+        "engine": {
+          "owed": "Owed to the Operator on one host project, which owns this row and proves it in its own exit check."
+        }
+      },
       "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.14 cuts over only when cutover gate 11 is satisfied by its named evidence.",
@@ -617,6 +702,14 @@
         "detail": "As §6.9: binary per item, a pinned calibrated model grader only where code cannot judge, human adjudication of clean-set blocking findings."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.10 cuts over only when cutover gate 12 is satisfied by its named evidence.",
@@ -668,6 +761,14 @@
         "detail": "Code: the new run pinned to standalone; continued runs reach their unrolled terminal state; restarted runs start from the reconciled state; the cross-backend resume refused with a typed reason; the rehearsal record retained."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
       "cadence": ["every-affected-change", "scheduled-live", "pre-release"],
       "migrationGate": "§14: module 6.20 cuts over only when cutover gate 13 is satisfied by its named evidence.",
@@ -719,6 +820,14 @@
         "detail": "Code: no forbidden effect, a typed refusal, and an audit event for every rejected call."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: every §6.15 case green on the Engine backend before cutover. No known-failure entry is admitted for this gate.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when cutover gate 14 is satisfied by its named evidence.",
@@ -770,6 +879,14 @@
         "detail": "Code: no forbidden effect, a typed refusal, and an audit event for every rejected call."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: every §6.15 case green on the Engine backend before cutover. No known-failure entry is admitted for this gate.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when cutover gate 15 is satisfied by its named evidence.",
@@ -821,6 +938,11 @@
         "detail": "Code, plus an import check that the Engine path references only public packed exports and never drives the graph outside public run control."
       },
       "backends": ["engine"],
+      "backendEvidence": {
+        "engine": {
+          "test": "apps/cli/tests/conformance/packed-runtime-public-run-control.test.ts"
+        }
+      },
       "decisionRule": "Satisfied when the named evidence is green on the Engine backend before cutover.",
       "cadence": ["every-affected-change"],
       "migrationGate": "§14: module 6.17 cuts over only when cutover gate 16 is satisfied by its named evidence.",
@@ -872,6 +994,14 @@
         "detail": "Code: approval validity and binding assertions."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Satisfied when the cutover authorization evidence suite passes. The decision itself stays the Principal's; its evidence is the cutover authorization suite (§6.24).",
       "cadence": ["every-affected-change"],
       "migrationGate": "§14: module 6.24 cuts over only when cutover gate 17 is satisfied by its named evidence.",

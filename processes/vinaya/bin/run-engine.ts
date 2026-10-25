@@ -182,7 +182,7 @@ import {
   latestHeldCleanVerdict,
   persistManifestRecord
 } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
-import { RUNTIME_DIR_ENV_KEY, runtimeDirForRepoAsync } from '../../../apps/cli/src/lib/run-paths'
+import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache, runtimeDirForRepoAsync } from '../../../apps/cli/src/lib/run-paths'
 import {
   defaultDeps,
   defaultGitWorktreeUntrackedPaths,
@@ -210,6 +210,7 @@ import {
   agentOutput,
   createActions,
   gatePollOf,
+  readAssessment,
   recordedDispatch,
   recordedScanOutcome,
   recordedVerdicts,
@@ -225,13 +226,24 @@ import { createV2Actions, V2_ACTION_BINDINGS, V2_DECISIONS } from '../executing/
 import { runCli } from '../../../harness/gates/run-checks'
 import { liveV2Functions, stagedPullRequestStore, storagePushLogEvent, withV2DevTools } from './flow-v2-live'
 import { readUnpushedWorkDetail, type UnpushedWork } from '../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
+import { realLocalGateControl } from '../../../apps/cli/src/lib/local-gate-control'
+import {
+  createShadowRecorder,
+  refusedAttemptsPath,
+  shadowBoundFunctions,
+  shadowDevToolContext,
+  shadowHandoffDeps,
+  shadowRuntimeDirRefusal,
+  writeShadowRecord,
+  type ShadowRecord
+} from '../executing/shadow'
 
 // The Engine path for one task: the Vinaya process run on the packed executor
 // instead of the standalone review loop. Choosing this entry point is the
 // whole switch — task run selects this script as a subprocess, keeping
 // Engine packages outside the CLI source.
 //
-//   bun processes/vinaya/bin/run-engine.ts --task <n> --agent <claude|codex> [--dry-run]
+//   bun processes/vinaya/bin/run-engine.ts --task <n> --agent <claude|codex> [--dry-run] [--shadow <dir>]
 
 export type Agent = 'claude' | 'codex'
 
@@ -243,9 +255,12 @@ export interface EngineArgs {
   model?: string
   /** The flow key the run chooses (`v1`, `v2`); absent takes the process's default flow. */
   flow?: string
+  /** The runtime directory of a shadow run of the task, beside its live run; absent runs the task live. */
+  shadow?: string
 }
 
-const USAGE = 'Usage: run-engine.ts --task <n> --agent <claude|codex> [--model <id>] [--flow <key>] [--dry-run]'
+const USAGE =
+  'Usage: run-engine.ts --task <n> --agent <claude|codex> [--model <id>] [--flow <key>] [--dry-run] [--shadow <dir>]'
 
 /** A flow key as the process contract spells one. */
 const FLOW_KEY = /^[a-z0-9][a-z0-9-]*$/
@@ -256,6 +271,7 @@ export function parseArgs(argv: readonly string[]): EngineArgs {
   let dryRun = false
   let model: string | undefined
   let flow: string | undefined
+  let shadow: string | undefined
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]
     if (flag === '--dry-run') dryRun = true
@@ -263,6 +279,10 @@ export function parseArgs(argv: readonly string[]): EngineArgs {
       const value = argv[++i] ?? ''
       if (!FLOW_KEY.test(value)) throw new Error(`--flow takes a flow key such as v1 or v2. ${USAGE}`)
       flow = value
+    } else if (flag === '--shadow') {
+      const value = argv[++i] ?? ''
+      if (value === '' || value.startsWith('--')) throw new Error(`--shadow takes a runtime directory. ${USAGE}`)
+      shadow = value
     } else if (flag === '--task') {
       const value = argv[++i] ?? ''
       if (!/^[1-9][0-9]*$/.test(value)) throw new Error(`--task takes a positive integer. ${USAGE}`)
@@ -278,7 +298,14 @@ export function parseArgs(argv: readonly string[]): EngineArgs {
     } else throw new Error(`Unknown argument "${flag}". ${USAGE}`)
   }
   if (task === undefined || agent === undefined) throw new Error(USAGE)
-  return { task, agent, dryRun, ...(model ? { model } : {}), ...(flow ? { flow } : {}) }
+  return {
+    task,
+    agent,
+    dryRun,
+    ...(model ? { model } : {}),
+    ...(flow ? { flow } : {}),
+    ...(shadow ? { shadow } : {})
+  }
 }
 
 export interface ResumeArgs {
@@ -807,6 +834,8 @@ export interface EngineRunOptions {
   handoffDeps?: HandoffDeps
   /** Replaces the driver log's agent-stream renderer or event narration; the standalone loop's own by default. */
   narration?: { rendererFor?: AgentRendererFor; narrateEvent?: typeof narrateDriverEvent }
+  /** The key the role hosts' sockets are derived from; `engine-<task>` unless a run beside the live one needs its own. */
+  hostKey?: string
 }
 
 export interface EngineLifecycleOptions {
@@ -1087,7 +1116,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     ]
     const mcpCommands: Record<string, string> = {}
     for (const roleHost of roleHosts) {
-      const socketPath = devToolsSocketPath(`engine-${args.task}-${roleHost.role}`)
+      const socketPath = devToolsSocketPath(`${options.hostKey ?? `engine-${args.task}`}-${roleHost.role}`)
       hosts.push(
         await options.startHost({
           socketPath,
@@ -2240,6 +2269,157 @@ async function runLive(
   return result.exitCode
 }
 
+export interface ShadowEngineRunOptions extends EngineRunOptions {
+  /** The task's live runtime directory, which the shadow run's own (`runtimeDir`) must never be. */
+  liveRuntimeDir: string
+}
+
+/**
+ * Runs the task on the Engine in shadow mode: the real Flow, actions, gates and agents, with every forge-writing
+ * bound function, pause post and Developer publication tool replaced by a refusing recorder
+ * (`executing/shadow.ts`). The run's lock, files and role-host sockets are its own; its decision and refused-attempt
+ * list are written to its own run directory. Refuses to start in the task's live runtime directory.
+ */
+export async function runShadowEngine(
+  options: ShadowEngineRunOptions
+): Promise<EngineRunResult & { record: ShadowRecord; recordPath: string }> {
+  const { liveRuntimeDir, ...run } = options
+  const refused = shadowRuntimeDirRefusal(run.runtimeDir, liveRuntimeDir)
+  if (refused !== null) throw new Error(`run-engine: ${refused}`)
+  const runDir = runDirectory(run.runtimeDir, run.args.task)
+  const recorder = createShadowRecorder(refusedAttemptsPath(runDir))
+  run.taskInput.bound = shadowBoundFunctions(run.taskInput.bound, recorder)
+  const result = await runEngine({
+    ...run,
+    devToolsContext: shadowDevToolContext(run.devToolsContext, recorder),
+    handoffDeps: shadowHandoffDeps(run.handoffDeps ?? liveHandoffDeps(() => {}), recorder),
+    hostKey: run.hostKey ?? `engine-shadow-${run.args.task}`
+  })
+  let trace: Partial<RunTrace> = {}
+  try {
+    trace = JSON.parse(readFileSync(result.tracePath, 'utf8')) as RunTrace
+  } catch {}
+  const results = (
+    result.outcome && 'checkpoint' in result.outcome ? (result.outcome.checkpoint?.results ?? {}) : {}
+  ) as Record<string, StepNodeResult>
+  let decision: ShadowRecord['decision'] = null
+  try {
+    const { type, reason } = readAssessment(results).decision
+    decision = reason === undefined ? { type } : { type, reason }
+  } catch {}
+  const record: ShadowRecord = {
+    task: run.args.task,
+    loopId: run.loopId,
+    outcome: trace.outcome ?? 'failed',
+    pauseReason: trace.pauseReason ?? null,
+    decision,
+    exitCode: result.exitCode,
+    refused: recorder.attempts()
+  }
+  return { ...result, record, recordPath: writeShadowRecord(runDir, record) }
+}
+
+/**
+ * The shadow run's own copy of the task worktree, under its runtime directory: a clone of the repository whose
+ * remote-tracking refs are the live checkout's, with the task branch checked out at the live worktree's head (the
+ * default branch when the task has no worktree yet) in `.worktrees/<branch>`. Its push URL names no remote. Uncommitted
+ * changes in the live worktree are not copied. Returns the copy's root; an existing copy is reused.
+ */
+export function prepareShadowCheckout(input: { repoRoot: string; branch: string; shadowRuntimeDir: string }): string {
+  const checkout = join(input.shadowRuntimeDir, 'checkout')
+  if (!existsSync(checkout)) {
+    sh('git', ['clone', '--quiet', '--no-checkout', input.repoRoot, checkout])
+    sh(
+      'git',
+      ['fetch', '--quiet', '--no-tags', input.repoRoot, '+refs/remotes/origin/*:refs/remotes/origin/*'],
+      checkout
+    )
+    sh('git', ['remote', 'set-url', '--push', 'origin', 'shadow-mode-never-pushes'], checkout)
+  }
+  const worktree = join(checkout, '.worktrees', input.branch)
+  if (!existsSync(worktree)) {
+    const liveWorktree = join(input.repoRoot, '.worktrees', input.branch)
+    const start = existsSync(liveWorktree)
+      ? sh('git', ['rev-parse', 'HEAD'], liveWorktree)
+      : sh('git', ['rev-parse', 'refs/remotes/origin/main'], checkout)
+    sh('git', ['worktree', 'add', '--quiet', '-B', input.branch, worktree, start], checkout)
+  }
+  return checkout
+}
+
+/** Runs one shadow run of a live task beside its live run: its own runtime directory, worktree copy, lock and Log folder. */
+async function runShadowLive(
+  args: EngineArgs & { shadow: string },
+  loaded: LoadedProcess,
+  repoRoot: string,
+  liveRuntimeDir: string
+): Promise<number> {
+  const runtimeDir = resolve(args.shadow)
+  const refused = shadowRuntimeDirRefusal(runtimeDir, liveRuntimeDir)
+  if (refused !== null) throw new Error(`run-engine: ${refused}`)
+  mkdirSync(runtimeDir, { recursive: true })
+  // Every runtime-directory lookup in this process, the default Log sink's folder among them, is the shadow run's own.
+  process.env[RUNTIME_DIR_ENV_KEY] = runtimeDir
+  process.env[LOG_FOLDER_ONLY_ENV] = '1'
+  resetRuntimeDirCache()
+  setEngineLogIdentity(loaded, args.agent)
+  const loopId = randomUUID()
+  process.env.VINAYA_RUN = loopId
+  const repo = liveRepo()
+  const branch = developerBranchFor(args.task)
+  const checkout = prepareShadowCheckout({ repoRoot, branch, shadowRuntimeDir: runtimeDir })
+  const taskInput = await liveTaskInput(args, checkout, runtimeDir, loopId, {
+    cliRoot: VINAYA_ROOT,
+    ...(repo ? { repository: `${repo.owner}/${repo.repo}` } : {})
+  })
+  // The enforcement controls are the live repository's: the copy installs no hooks of its own.
+  taskInput.bound = { ...taskInput.bound, localGateControl: () => realLocalGateControl(repoRoot) }
+  const shadowContext = engineLiveDevToolsContext({
+    branch: taskInput.branch,
+    worktreePath: taskInput.worktreePath,
+    task: args.task,
+    runtimeDir,
+    agent: args.agent,
+    repo,
+    round: taskInput.reviewRound,
+    // A launch record authenticates a turn's pushes; a shadow turn pushes nothing, so it writes none.
+    recordLaunch: () => randomUUID(),
+    completeLaunch: () => {}
+  })
+  taskInput.publicationRefusal = () => shadowContext.state.turnPublicationRefusal
+  const folder = { kind: 'folder' as const, folder: join(runtimeDir, 'logs') }
+  const result = await runShadowEngine({
+    args,
+    process: loaded,
+    repoRoot: checkout,
+    cliRoot: VINAYA_ROOT,
+    runtimeDir,
+    liveRuntimeDir,
+    loopId,
+    taskInput,
+    sink: createEngineLogSink({ resolveLogDestination: () => folder, unresolvedLogDestination: () => folder }),
+    startHost: startDevToolsHost,
+    developerFacts: liveDeveloperFacts({
+      takeRulingsOwed: () => false,
+      task: args.task,
+      repoRoot: checkout,
+      runtimeDir,
+      branch: taskInput.branch,
+      worktreePath: taskInput.worktreePath,
+      round: taskInput.reviewRound,
+      lastPushRefusal: () => shadowContext.state.lastPushRefusal
+    }),
+    allowUnixSockets: linuxUnixSocketFilterOptIn(),
+    lifecycle: { dispatchConfig: loadConfig()?.dispatch },
+    devToolsContext: shadowContext.context,
+    beginDeveloperTurn: shadowContext.beginTurn,
+    completeDeveloperTurn: shadowContext.completeTurn
+  })
+  await drainLogSink()
+  process.stdout.write(`shadow ${result.recordPath}\n`)
+  return result.exitCode
+}
+
 /** The Vinaya install this runner ships in: where the CLI and the process folder live. */
 const VINAYA_ROOT = resolve(import.meta.dir, '../../..')
 
@@ -2291,6 +2471,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     for (const line of lines) process.stdout.write(`${line}\n`)
     return 0
   }
+  if (args.shadow !== undefined) return runShadowLive({ ...args, shadow: args.shadow }, loaded, repoRoot, runtimeDir)
   return runLive(args, loaded, repoRoot, runtimeDir)
 }
 

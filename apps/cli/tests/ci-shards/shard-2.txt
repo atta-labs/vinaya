@@ -85,6 +85,7 @@ tests/lib/test-env-log-tokens.test.ts
 tests/eval/staging.test.ts
 tests/eval/registry-contract-kinds.test.ts
 tests/eval/exit-check.test.ts
+tests/eval/engine-evidence.test.ts
 tests/lib/dev-review-loop/live-check.test.ts
 tests/eval/tool-selection-suite.test.ts
 tests/eval/source-citation-suite.test.ts

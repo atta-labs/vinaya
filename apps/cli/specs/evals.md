@@ -110,6 +110,19 @@ Validation returns the value or `{ ok: false, refusal }` with a typed `code`, th
 
 <!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/registry.ts contains:export const PROCESS_LAYERED = ['L5', 'L6'] as const -->
 
+### Backend evidence
+
+A fault-and-attack or cutover-gate row also carries `backendEvidence`: one entry for each backend its `backends` field lists, and no other. An entry is one of two shapes:
+
+- **`{ "test": "<path>" }`** — the test file that proves the row on that backend, as a path from the repository root. It is accepted only when the file exists in the repository and contains the row's full registry id, `fault-attack:<order>-<slug>` or `cutover-gate:gate-<n>`, as a whole id: the short name alone does not count, and neither does a longer id the full id begins, as `cutover-gate:gate-16` begins with `cutover-gate:gate-1`. A test file is bound to a row only when it asserts the row's behaviour on that backend; a task case marked `present` declares the case and proves nothing.
+- **`{ "owed": "<reason>" }`** — the proof does not exist yet, with a one-line reason. The rows owned by the Operator on one host project owe their evidence to that project and say so.
+
+A test that runs only when an opt-in live environment variable is set — such as `VINAYA_SANDBOX_CONFORMANCE`, the sandbox conformance switch — is marked `"liveGated": { "variable": "<name>" }`. It proves its row only once the entry also records `liveProbePullRequest`, the pull request whose body carries the pasted live probe output; until then the live run is owed.
+
+The registry refuses, when it loads: a row of either kind without `backendEvidence` or without an entry for a backend it lists (`missing_field`); an entry for a backend the row does not list, a `backendEvidence` on a row of any other kind, or a field outside the two shapes (`unknown_value`); an entry naming both a test and an owed reason, or an owed reason over more than one line (`wrong_type`); a test path that is not a path from the repository root, or a live-gate variable that is not an environment variable name (`bad_name`); a named file that does not exist (`evidence_file_missing`); and a file that does not contain the row's full id (`evidence_id_absent`). Each refusal names the row id, and a file refusal names the file. The loader reads the files from the repository by default; a caller may pass its own reader.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/registry.ts contains:export const EVIDENCE_KINDS = ['fault-attack', 'cutover-gate'] as const -->
+
 ### Shards and aggregation
 
 Component rows live in shard files under `apps/cli/tests/eval/registry/shards/`. Each shard names itself after its file and declares the component kinds it covers; a row of any other kind is refused (`kind_not_declared`). `readShardDirectory` finds the shards by listing that directory — every `.json` file, in name order — so a later shard is a new file and touches nothing shared. `aggregateShards` validates each shard against the catalog and joins their rows; a component id that appears twice, within one shard or across two, is refused (`duplicate_component`) naming both locations, as `shards/<file>.json#components[<n>]`. `loadRegistry` reads the catalog and the directory and does both.
@@ -162,6 +175,20 @@ It reports, by kind, the components covered, the empty fields and the unmapped c
 - the empty-field and unmapped counts are both zero.
 
 A failure names its cause: `shard_absent`, `kind_missing`, `duplicate_id`, `empty_field`, `no_module`, `module_unnamed`, `universe_missing`, `universe_extra`, `count_mismatch`, `exclusion_stale` or `exclusion_covered`. The test plants each gap on a copy of the real data and edits no shard.
+
+The report also gives, for the fault-and-attack and cutover-gate kinds, the Engine evidence of the rows that list the Engine backend: how many are evidenced, how many owe it, and each owed row id. A row owes it when its Engine entry is owed, or names a live-gated test with no live run recorded. Owed evidence never changes the pass result: the exit claims the registry is complete, and proof still owed is reported, not refused. The excluded rows are reported apart, as owed to the Operator on one host project, and never counted as owed Engine evidence of this registry.
+
+### Owed Engine evidence
+
+`apps/cli/tests/eval/engine-evidence-owed.json` lists, by full id, every row of this registry that owes Engine evidence; the Operator-owned rows are never on it. `checkOwedEngineEvidence` compares the list with the rows, and `apps/cli/tests/eval/engine-evidence.test.ts` runs it on the real data and prints the owed count. The list is shrink-only:
+
+- an owed row missing from the list fails (`owed_unlisted`);
+- a listed row that now has its Engine evidence fails until it is removed (`listed_evidenced`);
+- a listed row that names no row (`listed_unknown`), is owed to the Operator (`listed_operator`) or is listed twice (`listed_twice`) fails;
+- the list cannot gain a row: the test pins its ceiling at the list's current length, so a row past the ceiling fails (`list_grew`), and a row that leaves lowers the ceiling in the same change;
+- a live-gated row stays listed until its entry records the pull request carrying the pasted live probe output; removing it before then fails (`live_run_unrecorded`).
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-eval/exit-check.ts contains:export function checkOwedEngineEvidence( -->
 
 ## Layer G — neutral cases and generic graders
 

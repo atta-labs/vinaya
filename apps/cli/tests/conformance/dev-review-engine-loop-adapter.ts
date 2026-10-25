@@ -9,8 +9,9 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { buildReviewInputManifest, DEFAULT_REVIEW_POLICY, objectivesVersion } from '@attalabs/aeg-core'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../../harness/dev-process/loader/load-process.js'
@@ -18,10 +19,14 @@ import { setEngineLogIdentity } from '../../../../processes/vinaya/bin/engine-lo
 import { LOG_IDENTITY_ENV_KEYS } from '../../src/lib/dispatch.js'
 import { createActions } from '../../../../processes/vinaya/executing/actions.js'
 import type { DeveloperPromptFacts } from '../../../../processes/vinaya/executing/developer-prompt.js'
+import { probeAgentSandbox, type SandboxProbeRun } from '../../src/lib/worker-boundary.js'
+import type { DevToolContext } from '../../src/lib/task-tools/dev-tools-server.js'
 import {
+  liveDeveloperFacts,
   liveTaskInput,
   resumeEngine,
   runEngine,
+  runShadowEngine,
   type Agent,
   type EngineArgs,
   type EngineForge,
@@ -77,12 +82,81 @@ import type { Observation } from './dev-review-current-loop-adapter.js'
 const PROCESS = loadProcess(resolve(import.meta.dir, '../../../../processes/vinaya'))
 // The task and pull request the standalone harness's world names.
 const TASK = 9001
+/** The task every Engine scenario runs. */
+export const ENGINE_SCENARIO_TASK = TASK
 const BRANCH = `task/issue-${TASK}`
 const PR = 123
 const SOURCE = 'https://example.com/required-source'
 const ROLES = ['developer', 'code-reviewer', 'security-reviewer'] as const
 type Role = (typeof ROLES)[number]
 type RecordLine = Record<string, unknown>
+
+/**
+ * The faults no corpus scenario produces, each run through the same world as a corpus scenario: only the faked
+ * external input the fault names differs.
+ */
+export const FAULT_IDS = [
+  'developer-process-death',
+  'reviewer-process-death',
+  'stream-truncation',
+  'malformed-stream-lines',
+  'provider-timeout',
+  'stale-head',
+  'source-mutation',
+  'reviewer-cross-talk',
+  'controller-secret',
+  'confinement-missing',
+  'confinement-fails-on-first-use'
+]
+/** Where a fault run keeps the prompts it handed each role, and the source reads each role made, in its runtime directory. */
+export const PROMPTS_FILE = 'prompts.jsonl'
+export const SOURCE_READS_FILE = 'source-reads.jsonl'
+/** The repository source a source mutation's brief names. */
+export const PINNED_SOURCE = '`sample.ts`'
+/** The head a stale-head run's reviewers judged: one the branch has moved on from, never the round's head. */
+export const STALE_HEAD = 'f'.repeat(40)
+/** A provider-timeout run's Developer ceiling, in milliseconds. */
+export const PROVIDER_TIMEOUT_MS = 500
+/** Reasoning a controller-secret run's Developer streams, and controller-held values its environment carries. */
+export const REASONING_CANARY = 'raw-reasoning-canary-7f3a'
+export const CONTROLLER_SECRETS: Readonly<Record<string, string>> = {
+  GH_TOKEN: 'ghp_controllerSecretCanary0001',
+  GITHUB_TOKEN: 'ghs_controllerSecretCanary0002',
+  VINAYA_LOG_TOKEN: 'log-token-controller-canary-0003'
+}
+
+/** The stream each role's stub ends with, by run: a fault touches only the role and the attempts it names. */
+function streamOf(id: string, role: Role, attempt: number): StubStream {
+  if (id === 'developer-process-death' && role === 'developer' && attempt === 1) return 'death'
+  if (id === 'reviewer-process-death' && role === 'security-reviewer') return 'death'
+  if (id === 'stream-truncation' && role === 'developer') return 'truncated'
+  if (id === 'malformed-stream-lines' && role === 'developer') return 'malformed'
+  if (id === 'provider-timeout' && role === 'developer') return 'hang'
+  return 'normal'
+}
+
+/**
+ * What the host's sandbox probe reports in a confinement fault, in each vendor's own shape: a host with no
+ * confinement at all, whose sandbox never starts, and a host whose sandbox starts and fails the probe's command.
+ */
+const REFUSED_SANDBOX_PROBES: Record<string, (agent: 'claude' | 'codex') => SandboxProbeRun> = {
+  'confinement-missing': (agent) =>
+    agent === 'claude'
+      ? claudeProbeToolResult('sandbox unavailable: bubblewrap (bwrap) is not installed on this host')
+      : { exitCode: 127, stdout: '', stderr: 'bwrap: command not found', timedOut: false },
+  'confinement-fails-on-first-use': (agent) =>
+    agent === 'claude'
+      ? claudeProbeToolResult('bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted')
+      : { exitCode: 1, stdout: '', stderr: 'bwrap: setting up uid map: Permission denied', timedOut: false }
+}
+
+function claudeProbeToolResult(error: string): SandboxProbeRun {
+  const toolResult = {
+    type: 'user',
+    message: { content: [{ type: 'tool_result', content: error, is_error: true }] }
+  }
+  return { exitCode: 0, stdout: `${JSON.stringify(toolResult)}\n`, stderr: '', timedOut: false }
+}
 
 function append(path: string, value: unknown): void {
   appendFileSync(path, `${JSON.stringify(value)}\n`)
@@ -98,6 +172,20 @@ function lines(path: string): RecordLine[] {
 }
 function json(path: string): RecordLine | null {
   return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as RecordLine) : null
+}
+/** Every file under a run's runtime directory, by relative path, with its content's digest. */
+export function runtimeSnapshot(runtimeDir: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  const walk = (at: string) => {
+    for (const entry of readdirSync(at, { withFileTypes: true })) {
+      const path = join(at, entry.name)
+      if (entry.isDirectory()) walk(path)
+      else if (entry.isFile())
+        out[relative(runtimeDir, path)] = createHash('sha256').update(readFileSync(path)).digest('hex')
+    }
+  }
+  walk(runtimeDir)
+  return out
 }
 function records(dir: string): RecordLine[] {
   return existsSync(dir)
@@ -115,12 +203,25 @@ const STUB_SESSIONS: Record<Role, string> = {
   'security-reviewer': 'sec-session-1'
 }
 
+/**
+ * How a stub's process ends its stream: a normal turn; a death mid-turn (its session opened, then killed by a
+ * signal, no result); its last line cut short; its result line replaced by lines that are not JSON; or no
+ * output and no exit at all, until the executor kills it. A stub may also stream the vendor's own reasoning
+ * event, carrying `reasoning`, before its result.
+ */
+export type StubStream = 'normal' | 'death' | 'truncated' | 'malformed' | 'hang'
+
+/** Lines a malformed stream carries in place of its result line. */
+export const MALFORMED_STREAM_LINES = ['{"type": "result", "structured_output": {"turnResult":', 'not json at all']
+
 function stubAgent(
   agent: Agent,
   role: Role,
   outputFor: (prompt: string) => unknown,
   code: number,
-  finish: () => Promise<void>
+  finish: () => Promise<void>,
+  stream: StubStream = 'normal',
+  reasoning?: string
 ): SpawnedProcessLike {
   const listeners: Array<(code: number | null) => void> = []
   let stdout: ((chunk: string) => void) | undefined
@@ -140,28 +241,49 @@ function stubAgent(
         setTimeout(async () => {
           try {
             await finish()
-            if (closed) return
+            if (closed || stream === 'hang') return
             const output = outputFor(prompt)
             // The sessions the standalone world names each role's dispatch with.
             const session = STUB_SESSIONS[role]
-            const events =
-              code !== 0
+            const opening =
+              agent === 'claude'
+                ? { type: 'system', session_id: session }
+                : { type: 'thread.started', thread_id: session }
+            const thinking =
+              reasoning === undefined
                 ? []
                 : agent === 'claude'
                   ? [
-                      { type: 'system', session_id: session },
-                      ...(output === undefined
-                        ? []
-                        : [{ type: 'result', session_id: session, structured_output: output }])
+                      {
+                        type: 'assistant',
+                        session_id: session,
+                        message: { content: [{ type: 'thinking', thinking: reasoning }] }
+                      }
                     ]
-                  : [
-                      { type: 'thread.started', thread_id: session },
-                      ...(output === undefined
-                        ? []
-                        : [{ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(output) } }]),
-                      { type: 'turn.completed' }
-                    ]
-            for (const event of events) stdout?.(`${JSON.stringify(event)}\n`)
+                  : [{ type: 'item.completed', item: { type: 'reasoning', text: reasoning } }]
+            const result =
+              output === undefined
+                ? []
+                : agent === 'claude'
+                  ? [{ type: 'result', session_id: session, structured_output: output }]
+                  : [{ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(output) } }]
+            const closing = agent === 'claude' ? [] : [{ type: 'turn.completed' }]
+            if (stream === 'death') {
+              stdout?.(`${JSON.stringify(opening)}\n`)
+              close(null)
+              return
+            }
+            const lines =
+              code !== 0 ? [] : [opening, ...thinking, ...result, ...closing].map((event) => JSON.stringify(event))
+            if (stream === 'truncated') {
+              const last = lines.pop() ?? ''
+              lines.push(last.slice(0, Math.floor(last.length / 2)))
+              stdout?.(lines.join('\n'))
+            } else if (stream === 'malformed') {
+              const resultAt = 1 + thinking.length
+              lines.splice(resultAt, result.length, ...MALFORMED_STREAM_LINES)
+              for (const line of lines) stdout?.(`${line}\n`)
+            } else for (const line of lines) stdout?.(`${line}\n`)
             close(code)
           } catch {
             close(1)
@@ -193,15 +315,22 @@ export interface EngineScenarioRun {
   agent: Agent
 }
 
+/** A scenario run in shadow mode (`runShadowEngine`), beside a live run whose runtime directory is `liveRuntimeDir`. */
+export interface EngineShadowMode {
+  liveRuntimeDir: string
+}
+
 /**
  * One isolated scenario, returning only recorded output and performed effects. `inspect` runs once the scenario
- * has ended, while its run files are still there, inside the scenario's own environment.
+ * has ended, while its run files are still there, inside the scenario's own environment. Given `shadow`, every run
+ * of the scenario is a shadow run; the scenario's world and its fakes are the same.
  */
 export async function runEngineScenario(
   id: string,
   agent: Agent,
   logSink?: Partial<LogSinkDeps>,
-  inspect?: (run: EngineScenarioRun) => Promise<void> | void
+  inspect?: (run: EngineScenarioRun) => Promise<void> | void,
+  shadow?: EngineShadowMode
 ): Promise<Observation> {
   const root = mkdtempSync(join(tmpdir(), 'engine-corpus-'))
   const runtimeDir = join(root, 'runtime')
@@ -230,12 +359,19 @@ export async function runEngineScenario(
   resetRuntimeDirCache()
   resetDefaultLogSinkContext()
   const savedCwd = process.cwd()
+  // A controller-secret run's controller holds secrets in its own environment, as a live runner's does.
+  const savedSecrets = Object.fromEntries(Object.keys(CONTROLLER_SECRETS).map((key) => [key, process.env[key]]))
+  if (id === 'controller-secret') Object.assign(process.env, CONTROLLER_SECRETS)
   try {
-    const observation = await drive(id, agent, root, runtimeDir, logSink)
+    const observation = await drive(id, agent, root, runtimeDir, logSink, shadow)
     await inspect?.({ runtimeDir, task: TASK, pr: PR, agent })
     return observation
   } finally {
     process.chdir(savedCwd)
+    for (const [key, value] of Object.entries(savedSecrets)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
     if (savedSpool !== undefined) process.env.VINAYA_LOG_SPOOL_DIR = savedSpool
     for (const key of OWNED_ENV_KEYS) {
       if (key === RUNTIME_DIR_ENV_KEY) continue
@@ -260,7 +396,8 @@ async function drive(
   agent: Agent,
   root: string,
   runtimeDir: string,
-  logSink: Partial<LogSinkDeps> | undefined
+  logSink: Partial<LogSinkDeps> | undefined,
+  shadow: EngineShadowMode | undefined
 ): Promise<Observation> {
   const repo = join(root, 'repo')
   mkdirSync(repo)
@@ -281,6 +418,10 @@ async function drive(
   const head = git('rev-parse', 'HEAD')
   // A recorded run works from its own repository, as the standalone harness's world does.
   if (logSink) process.chdir(repo)
+  const promptFile = join(runtimeDir, PROMPTS_FILE)
+  const sourceFile = join(runtimeDir, SOURCE_READS_FILE)
+  // The reviewer hosts' contexts the Engine starts, by host role: a reviewer stub reads its sources through them.
+  const reviewerContexts = new Map<string, DevToolContext>()
   const eventFile = join(runtimeDir, 'events.jsonl')
   const effectFile = join(runtimeDir, 'forge.jsonl')
   const actionFile = join(runtimeDir, 'actions.jsonl')
@@ -313,7 +454,11 @@ async function drive(
     ...(id === 'bounded-exhaustion' ? { maxRounds: 1 } : {}),
     ...(id === 'context-pressure' ? { maxTaskMinutes: 1e-9 } : {})
   }
-  const brief = `# Frozen brief\n\n## Objectives\n\n${objectives.map((o) => `${o.id}. ${o.text}`).join('\n')}\n\n**Revision:** ${head}\n`
+  // A source mutation's brief names one repository source, pinned at the revision the brief records.
+  const documentation = id === 'source-mutation' ? `\n## Documentation\n\n- ${PINNED_SOURCE} — the value (O1)\n` : ''
+  const brief = `# Frozen brief\n\n## Objectives\n\n${objectives.map((o) => `${o.id}. ${o.text}`).join('\n')}\n\n**Revision:** ${head}\n${documentation}`
+  // A stale head: both reviewers return verdicts bound to a head the branch has since moved on from.
+  const judgedHead = id === 'stale-head' ? STALE_HEAD : head
   const currentObjectives = () => (moved ? [...objectives, { id: 'O2', text: 'Also do this.' }] : objectives)
   let publications = 0
   let prOpen = id === 'restart'
@@ -428,7 +573,13 @@ async function drive(
   task.bound = {
     ...task.bound,
     localGateControl: () => ({ control: 'local-gate', active: true, detail: '', remedy: '' }),
-    probeAgentSandbox: async () => ({ ok: true })
+    probeAgentSandbox: async (plan) => {
+      const refusedProbe = REFUSED_SANDBOX_PROBES[id]
+      // A confinement fault runs the real probe reader over the host's refused probe, as on a Linux host.
+      return refusedProbe
+        ? probeAgentSandbox(plan, { platform: 'linux', run: async () => refusedProbe(plan.agent) })
+        : { ok: true }
+    }
   }
   // As in the standalone world, the brief names one required source, delivered but never read by the turn.
   if (id === 'required-source-failure')
@@ -504,18 +655,45 @@ async function drive(
       handoffDeps,
       actions: recordedActionsForRun(),
       sink: recordingSink(eventFile, logSink),
-      startHost: async () => ({ close: async () => {} }),
+      startHost: async (host) => {
+        if (host.role !== 'developer') reviewerContexts.set(host.role, host.context)
+        return { close: async () => {} }
+      },
       devToolsContext: devTools,
       control,
-      ...(watch ? { lifecycle: { watch } } : {}),
+      ...(watch || id === 'provider-timeout'
+        ? {
+            lifecycle: {
+              ...(watch ? { watch } : {}),
+              ...(id === 'provider-timeout' ? { dispatchConfig: { timeoutMs: PROVIDER_TIMEOUT_MS } } : {})
+            }
+          }
+        : {}),
       out: () => {},
-      developerFacts: async () => facts(),
+      developerFacts:
+        id === 'source-mutation'
+          ? async () => {
+              const live = await liveDeveloperFacts({
+                forge,
+                policy: () => policy,
+                task: TASK,
+                repoRoot: repo,
+                runtimeDir,
+                branch: BRANCH,
+                worktreePath: worktree,
+                round: task.reviewRound
+              })()
+              append(sourceFile, { role: 'developer', evidence: live.sources.evidence })
+              return live
+            }
+          : async () => facts(),
       spawnFn: (_command, args, spawnOptions) => {
         const role = roleOf(agent, args, spawnOptions?.env)
         append(effectFile, { kind: 'spawn', role })
         const attempt = (counts[role] ?? 0) + 1
         counts[role] = attempt
         let output: (prompt: string) => unknown
+        const stream = streamOf(id, role, attempt)
         const isHumanPause =
           ['human-pause', 'resume', 'cancellation', 'operator-intervention-unauthenticated'].includes(id) && !continuing
         if (role === 'developer') {
@@ -529,7 +707,11 @@ async function drive(
               confidenceExplanation: 'the fixture work is done',
               addressedFindingIds: id === 'developer-failure' && attempt > 1 ? ['R9-XX-1'] : handoffIdsInPrompt(prompt),
               sourceUses:
-                id === 'required-source-failure' ? [{ source: SOURCE, use: 'claimed without a counted read' }] : [],
+                id === 'required-source-failure'
+                  ? [{ source: SOURCE, use: 'claimed without a counted read' }]
+                  : id === 'source-mutation'
+                    ? [{ source: PINNED_SOURCE, use: 'read the pinned value' }]
+                    : [],
               reportedChecks: null
             }
           })
@@ -541,12 +723,13 @@ async function drive(
           const review = {
             reviewResult: {
               schemaVersion: 1,
-              role,
+              // Cross-talk: the code reviewer hands back the security reviewer's verdict as its own.
+              role: id === 'reviewer-cross-talk' && role === 'code-reviewer' ? 'security-reviewer' : role,
               status: isHumanPause && role === 'code-reviewer' ? 'blocked' : 'completed',
-              headSha: head,
+              headSha: judgedHead,
               manifestDigest: manifestDigest(
                 buildReviewInputManifest({
-                  headSha: head,
+                  headSha: judgedHead,
                   baseSha: head,
                   briefContent: brief,
                   objectivesVersion: objectivesVersion(objectives),
@@ -577,21 +760,48 @@ async function drive(
           }
           output = () => (id === 'reviewer-failure' && role === 'security-reviewer' ? undefined : review)
         }
-        return stubAgent(agent, role, output, id === 'provider-failure' && role === 'developer' ? 1 : 0, async () => {
-          // A turn rejected for an unread source never opens the pull request, as in the standalone world.
-          if (role === 'developer' && id !== 'isolation-refusal' && id !== 'required-source-failure') prOpen = true
-          if (role === 'developer' && id === 'isolation-refusal')
-            append(effectFile, {
-              kind: 'tool-result',
-              result: await devTools.publishChanges('Test(cli): Exercise publication')
-            })
-          if (role === 'developer' && id === 'mechanical-failure-recovers' && attempt >= 2)
-            writeFileSync(gateState, JSON.stringify({ code: 0, output: 'checks passed' }))
-          if (role !== 'developer' && id === 'stale-objectives') moved = true
-        })
+        const answer = output
+        // A fault run keeps every prompt it handed a role, for its inspection.
+        output = (prompt) => {
+          if (FAULT_IDS.includes(id)) append(promptFile, { role, prompt })
+          return answer(prompt)
+        }
+        return stubAgent(
+          agent,
+          role,
+          output,
+          id === 'provider-failure' && role === 'developer' ? 1 : 0,
+          async () => {
+            // A turn rejected for an unread source never opens the pull request, as in the standalone world.
+            if (role === 'developer' && id !== 'isolation-refusal' && id !== 'required-source-failure') prOpen = true
+            if (role === 'developer' && id === 'isolation-refusal')
+              append(effectFile, {
+                kind: 'tool-result',
+                result: await devTools.publishChanges('Test(cli): Exercise publication')
+              })
+            if (role === 'developer' && id === 'mechanical-failure-recovers' && attempt >= 2)
+              writeFileSync(gateState, JSON.stringify({ code: 0, output: 'checks passed' }))
+            if (role !== 'developer' && id === 'stale-objectives') moved = true
+            // The source moves on the default branch after the Developer's turn: the brief's pin stays where it was.
+            if (role === 'developer' && id === 'source-mutation' && attempt === 1) {
+              writeFileSync(join(repo, 'sample.ts'), 'export const value = 2\n')
+              git('commit', '-q', '-am', 'mutate the source')
+              git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+            }
+            if (role !== 'developer' && id === 'source-mutation') {
+              const host = role === 'code-reviewer' ? 'code-reviewer' : 'security'
+              const read = await reviewerContexts.get(host)?.readSource?.({ sourceId: 'sample.ts' })
+              append(sourceFile, { role, read: read ?? null })
+            }
+          },
+          stream,
+          id === 'controller-secret' ? REASONING_CANARY : undefined
+        )
       }
     }
-    const result = await runEngine(options)
+    const result = shadow
+      ? await runShadowEngine({ ...options, liveRuntimeDir: shadow.liveRuntimeDir })
+      : await runEngine(options)
     traces.push(JSON.parse(readFileSync(result.tracePath, 'utf8')) as RunTrace)
   }
   // A re-run is a fresh subprocess: the runner of the leg before is gone, and so is whatever lock it kept.

@@ -2,8 +2,8 @@
 // program's canonical fault-and-attack matrix, parsed from the repository
 // mirror, has exactly one valid row carrying the table's suite, layers,
 // expected typed outcome and cutover outcome, and the statement its cutover
-// outcome requires. It aggregates with the other shards and claims nothing
-// about any other kind.
+// outcome requires, and the evidence for each backend it lists. It aggregates
+// with the other shards and claims nothing about any other kind.
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -47,7 +47,9 @@ type RawRow = Record<string, unknown> & {
   suite: string[]
   contract: string
   decisionRule: string
+  backends: string[]
   faultAttack: Record<string, unknown>
+  backendEvidence: Record<string, unknown>
 }
 const rawShard = JSON.parse(readFileSync(SHARD_FILE, 'utf8')) as { kinds: string[]; components: RawRow[] }
 
@@ -181,6 +183,19 @@ describe('the fault-attack shard', () => {
       loaded.value.components.filter((entry) => entry.location.startsWith('shards/fault-attack.json#'))
     ).toHaveLength(58)
   })
+
+  it('records, on each row, evidence for exactly the backends it lists, owed to the Operator on its excluded rows', () => {
+    for (const row of shard.components) {
+      expect({ id: row.id, backends: Object.keys(row.backendEvidence ?? {}) }).toEqual({
+        id: row.id,
+        backends: row.backends
+      })
+      if (!EXCLUDED.has(row.id.slice('fault-attack:'.length))) continue
+      for (const entry of Object.values(row.backendEvidence ?? {})) {
+        expect('owed' in entry && entry.owed).toContain('Operator on one host')
+      }
+    }
+  })
 })
 
 describe('the fault-attack check fails on what it must', () => {
@@ -264,6 +279,18 @@ describe('the fault-attack check fails on what it must', () => {
         holds: true
       })
     }
+  })
+
+  it('reports a row with no evidence entry for a backend it lists, or one for a backend it does not list', () => {
+    const content = clone(rawShard)
+    delete (content.components[0] as RawRow).backendEvidence.standalone
+    ;(content.components[1] as RawRow).backends = ['engine']
+    const report = check(content)
+    expect(report.invalid.map((r) => [r.code, r.path])).toEqual([
+      ['missing_field', `${LOCATION}#components[0].backendEvidence.standalone`],
+      ['unknown_value', `${LOCATION}#components[1].backendEvidence.standalone`]
+    ])
+    expect(report.invalid[0]?.detail).toContain('fault-attack:01-developer-process-death')
   })
 
   it('claims nothing about a kind the shard does not declare', () => {

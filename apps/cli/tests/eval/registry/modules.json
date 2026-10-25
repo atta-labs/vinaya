@@ -976,7 +976,7 @@
       "suite": ["engine-boundary.l3@1"],
       "tasks": {
         "positive": {
-          "present": "Current partial proof: packed-runtime-consumer.test.ts installs the vendored artifacts, compiles a steps-shaped Flow through public exports and proves the packed graph builder accepts the consumer's injected executor. Gate-16 completion test: packed-runtime-public-run-control.test.ts starts with that executor through public start, then halts, inspects, resumes through public resume and cancels."
+          "present": "packed-runtime-consumer.test.ts installs the vendored artifacts, compiles a steps-shaped Flow through public exports and proves the packed graph builder accepts the consumer's injected executor. packed-runtime-public-run-control.test.ts is the delivered gate-16 evidence: it starts with a caller-supplied executor through public start, then halts, inspects the checkpoint, resumes through public resume without re-running a finished step, and cancels a second run through public run control."
         },
         "negative": {
           "present": "Lifecycle events and checkpoint transitions compared with the same Flow run under the default executor show no difference."
@@ -985,7 +985,7 @@
           "present": "An import check refuses any Engine-path reference outside the public packed exports, or any drive of the graph outside public run control."
         },
         "recovery": {
-          "present": "When Atta Engine delivers caller-supplied executor support on public start and resume, packed-runtime-public-run-control.test.ts verifies public resume continues from the same checkpoint as under the default executor."
+          "present": "packed-runtime-public-run-control.test.ts verifies public resume with the caller-supplied executor continues from the same checkpoint transitions as under the default executor."
         },
         "adversarial": {
           "notApplicable": "§6.17 is a consumption boundary; no adversarial input applies."
@@ -996,7 +996,7 @@
         "detail": "Code, plus an import check that the Engine path references only public packed exports and never drives the graph outside public run control."
       },
       "backends": ["engine"],
-      "decisionRule": "Deterministic 100%. Expected to fail until Atta Engine delivers gate 16; the gap is an external cutover dependency recorded in the capability matrix, never in the standalone defect register.",
+      "decisionRule": "Deterministic 100%. Atta Engine has delivered gate 16: packed-runtime-public-run-control.test.ts is its evidence, recorded in the capability matrix. A failure there is an external cutover dependency owned by Atta Engine, never an entry in the standalone defect register.",
       "cadence": ["every-affected-change"],
       "migrationGate": "§14: both backends execute its suites (engine-boundary.l3@1); on its deterministic suites the Engine backend passes every mandatory case and every standalone failure is named by a registered expected defect, comparison evidence only; its suites run in the regression floor or the live schedule on both backends until cutover and on the Engine backend afterwards; each of its §13 rows satisfies its declared cutover outcome. Recommended order: step 1, the Engine run-control boundary."
     },
