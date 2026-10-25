@@ -14,6 +14,8 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { buildReviewInputManifest, DEFAULT_REVIEW_POLICY, objectivesVersion } from '@attalabs/aeg-core'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../../harness/dev-process/loader/load-process.js'
+import { setEngineLogIdentity } from '../../../../processes/vinaya/bin/engine-log-identity.js'
+import { LOG_IDENTITY_ENV_KEYS } from '../../src/lib/dispatch.js'
 import { createActions } from '../../../../processes/vinaya/executing/actions.js'
 import type { DeveloperPromptFacts } from '../../../../processes/vinaya/executing/developer-prompt.js'
 import {
@@ -223,6 +225,8 @@ export async function runEngineScenario(
   for (const key of OWNED_ENV_KEYS) if (key !== RUNTIME_DIR_ENV_KEY) delete process.env[key]
   process.env.VINAYA_TASK = String(TASK)
   process.env.AEG_REPO = FIXTURE_REPO
+  // The run names its producer as the live Engine runner does before its first event.
+  setEngineLogIdentity(PROCESS, agent)
   resetRuntimeDirCache()
   resetDefaultLogSinkContext()
   const savedCwd = process.cwd()
@@ -619,13 +623,15 @@ async function drive(
       await new Promise((r) => setTimeout(r, 10))
     // The cancel's own Log line, written through the shared sink to this scenario's folder, as a separate process's.
     const cancelSink = logSink ?? ownLogFolder(runtimeDir)
-    // The cancel is another process's: its sink reads none of the run's own Log identity (its host, its pull request).
+    // The cancel is another process's: its sink reads none of the run's own Log identity (its host, its pull request,
+    // its runner, process and runtime).
     await cancelOnTheOperatorsBehalf({
       ...cancelSink,
       env: () => {
         const env = { ...process.env }
         delete env.VINAYA_HOST
         delete env.VINAYA_PR
+        for (const key of LOG_IDENTITY_ENV_KEYS) delete env[key]
         return env
       }
     })

@@ -81,6 +81,9 @@ const IDENTITY = new Set<string>([
 /** The fixture-world fields: each adapter's repository has its own diff, so only whether each is present is compared. */
 const WORLD = new Set<string>(['files_changed', 'insertions', 'deletions', 'files_changed_total'])
 
+/** The runner each event names: each runner names itself and its own version, so only whether each is present is compared. The process and runtime stay equal. */
+const RUNNER = new Set<string>(['meta.runner.id', 'meta.runner.version'])
+
 /**
  * Identity tokens inside text: a commit sha, a vendor session and the agent the run was dispatched under. A session
  * a runner could not name stays `(unknown)`, so a missing one is still a difference.
@@ -132,7 +135,7 @@ function differences(engineLines: Line[], standaloneLines: Line[]): string[] {
     flatten(s, '', fs)
     for (const key of new Set([...fe.keys(), ...fs.keys()]))
       if (
-        IDENTITY.has(key) || WORLD.has(key)
+        IDENTITY.has(key) || WORLD.has(key) || RUNNER.has(key)
           ? present(fe.get(key)) !== present(fs.get(key))
           : JSON.stringify(fe.get(key)) !== JSON.stringify(fs.get(key))
       )
