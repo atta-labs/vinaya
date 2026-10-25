@@ -86,6 +86,8 @@ function deps(overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
     // live-driver refusal; the refusal tests below override it to prove a
     // refused run never touches the Issue.
     assignIssue: () => {},
+    // The standalone runner, whatever runner the repository's own config names.
+    runnerConfig: () => null,
     ...overrides
   }
 }

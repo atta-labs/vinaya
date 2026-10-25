@@ -113,7 +113,9 @@ function runTaskDeps(world: LoopWorld, deps: Partial<LoopDeps>, watch: Partial<D
     resolveModelForDispatch: () => undefined,
     devReviewLoop: (input) => runDriverLoopInProcess(world, input, deps, watch),
     resolveRepo: async () => null,
-    assignIssue: () => {}
+    assignIssue: () => {},
+    // The standalone runner, whatever runner the repository's own config names.
+    runnerConfig: () => null
   }
 }
 
