@@ -41,7 +41,6 @@ const REASONS: Record<string, { words: string; person: boolean }> = {
   policy_changed: { words: 'the review policy changed during the round', person: false },
   sandbox_refused: { words: "the agent's sandbox could not run a command on this host", person: true },
   missing_source: { words: 'a required source could not be prepared', person: true },
-  checkpoint_refused: { words: 'the run’s checkpoint could not be resumed', person: true },
   principal_stop: { words: 'an item needs a person to decide', person: true },
   escalated: { words: 'a role escalated a question', person: true }
 }

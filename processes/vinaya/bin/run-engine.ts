@@ -1154,8 +1154,10 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     const refuseCheckpoint = (refusal: CheckpointRefusal): void => {
       checkpointRefused = true
       narrate(`not resuming: the checkpoint is refused (${refusal.code}): ${refusal.detail}`)
-      handoff.pause({ reason: 'checkpoint_refused', detail: checkpointRefusalDetail(refusal) })
-      legOutcome = { reason: 'paused', haltReason: handoffHaltReason('checkpoint_refused') }
+      // The host-repair pause: addressed to the Operator, never retried or watched, continued by the ordinary start
+      // once the checkpoint is repaired or set aside. Its detail leads with the typed code that names the cause.
+      handoff.pause({ reason: 'sandbox_refused', detail: checkpointRefusalDetail(refusal) })
+      legOutcome = { reason: 'paused', haltReason: handoffHaltReason('sandbox_refused') }
     }
     // The vendor's usage limit, read from the agent's own output when a launch ends on it: the leg pauses for the
     // reset rather than failing, and the run control stops the Flow at the next boundary.

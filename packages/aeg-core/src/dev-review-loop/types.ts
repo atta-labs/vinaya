@@ -248,17 +248,6 @@ export type Observations =
  * by the controller's source provider; `detail` names each unavailable
  * source with its typed reason (`RequiredSourceMissingReason`). Addressed to
  * the Planner, whose correction of the task's sources is what resolves it.
- *
- * `'checkpoint_refused'`: an Engine run's checkpoint could not be resumed —
- * the file or a row in it cannot be read, it records neither its format nor
- * its Engine runtime version, or either version is one the running Engine
- * cannot read — so no step runs and the run never silently starts over.
- * Runner-decided before the first step; `detail` leads with the typed code
- * (`checkpoint_corrupt`, `checkpoint_version_unrecorded`,
- * `checkpoint_format_incompatible`, `runtime_version_incompatible`).
- * Addressed to the Operator: like `'sandbox_refused'` it is outside the
- * automatic-recovery set and spends no infrastructure retry, and once the
- * checkpoint is repaired or set aside the ordinary start continues the task.
  */
 export type PauseReason =
   | 'escalation'
@@ -278,7 +267,6 @@ export type PauseReason =
   | 'policy_changed'
   | 'sandbox_refused'
   | 'missing_source'
-  | 'checkpoint_refused'
 
 export type Decision =
   | { type: 'dispatch_developer'; reason?: 'confidence' }

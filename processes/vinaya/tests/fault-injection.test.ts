@@ -518,13 +518,14 @@ for (const vendor of VENDORS)
           const { watch, state } = fakeWatch()
           const second = await replay({ vendor, world: first.world, lifecycle: { watch, handleSignals: false } })
           expect(second.trace.outcome).toBe('paused')
-          expect(second.trace.pauseReason).toBe('checkpoint_refused')
+          // The host-repair pause, its detail leading with the typed code that names the cause.
+          expect(second.trace.pauseReason).toBe('sandbox_refused')
           expect(readPauseState(first.world.runtimeDir, TASK)?.detail?.startsWith(`${code}: `)).toBe(true)
           expect(driverLog(first.world).slice(logBefore)).toContain(`the checkpoint is refused (${code})`)
           expect(second.handoff.calls).toEqual([
-            'escalation:checkpoint_refused',
-            'pause-state:checkpoint_refused',
-            'comment:pr:checkpoint_refused'
+            'escalation:sandbox_refused',
+            'pause-state:sandbox_refused',
+            'comment:pr:sandbox_refused'
           ])
           // No step ran, no agent launched, the checkpoint is untouched and the run was not started over.
           expect(readLedger(first.world.runtimeDir).nodeEvents).toHaveLength(eventsBefore)
@@ -576,12 +577,13 @@ for (const vendor of VENDORS)
           const { watch, state } = fakeWatch()
           const second = await replay({ vendor, world: first.world, lifecycle: { watch, handleSignals: false } })
           expect(second.trace.outcome).toBe('paused')
-          expect(second.trace.pauseReason).toBe('checkpoint_refused')
+          expect(second.trace.pauseReason).toBe('sandbox_refused')
           const held = readPauseState(first.world.runtimeDir, TASK)
+          expect(held?.reason).toBe('sandbox_refused')
           expect(held?.detail?.startsWith('checkpoint_corrupt: ')).toBe(true)
           // An Operator-remediation pause: addressed to the Operator, never retried as infrastructure or watched.
-          expect(isHostRepairPause('checkpoint_refused')).toBe(true)
-          expect(PAUSE_REASON_PROFILE.checkpoint_refused.requestedAuthority).toBe('operator')
+          expect(isHostRepairPause('sandbox_refused')).toBe(true)
+          expect(PAUSE_REASON_PROFILE.sandbox_refused.requestedAuthority).toBe('operator')
           expect(held?.infrastructureRetries ?? 0).toBe(0)
           expect(state.sleeps).toEqual([])
           expect(readLedger(first.world.runtimeDir).nodeEvents).toHaveLength(eventsBefore)
