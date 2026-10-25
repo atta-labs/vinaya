@@ -18,6 +18,8 @@ import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from './process
 import {
   createLogSink,
   folderFallbackStatePath,
+  LOG_DESTINATION_ANCHOR_MAX_RETRIES,
+  LOG_DESTINATION_ANCHOR_RETRY_INTERVAL_MS,
   OUTBOX_MAX_BYTES,
   readFolderFallbackState,
   recordFolderFallback,
@@ -1607,4 +1609,200 @@ await drainOutboxToWebhook(404, ${JSON.stringify(server.url)})`
       server.stop()
     }
   }, 60_000)
+})
+
+describe('log-sink — a missed trust-anchor read is retried and the run switches to the server (O1, O2, O3, O4)', () => {
+  const LOG_SINK_MODULE = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
+
+  // Run in a child with its own HOME: the switch's server drain reads the
+  // machine's retry queue, which must never be this test process's real one.
+  it('events before the switch land once in the folder, events after it reach the server, no log() waits on the retry, and the fallback is announced once', async () => {
+    const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-anchor-retry-')))
+    const home = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-anchor-retry-home-')))
+    spawnSync('git', ['init', '--quiet'], { cwd })
+    spawnSync('git', ['remote', 'add', 'origin', 'git@github.com:test-owner/test-repo.git'], { cwd })
+    const folder = join(cwd, 'runtime', 'logs')
+    const posted: Array<Record<string, any>> = []
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        for (const l of (await req.text()).split('\n').filter(Boolean)) posted.push(JSON.parse(l))
+        return new Response('ok')
+      }
+    })
+    const url = `http://127.0.0.1:${server.port}/ingest`
+    const script = join(cwd, 'anchor-retry.ts')
+    writeFileSync(
+      script,
+      `import { createLogSink, LOG_DESTINATION_ANCHOR_RETRY_INTERVAL_MS } from ${JSON.stringify(LOG_SINK_MODULE)}
+let clock = Date.parse('2026-10-25T00:00:00.000Z')
+let resolutions = 0
+const stderr = []
+// The first resolution is the missed read; the retry answers the matching
+// config after 300ms, so a log() that waited on it would show.
+const sink = createLogSink({
+  env: () => ({ VINAYA_ROLE: 'developer', VINAYA_TASK: '404' }),
+  now: () => new Date(clock),
+  resolveRepo: async () => ({ owner: 'test-owner', repo: 'test-repo' }),
+  resolveBranchIssue: async () => null,
+  stderr: (m) => stderr.push(m),
+  resolveLogDestination: () => {
+    resolutions++
+    if (resolutions === 1) {
+      return {
+        kind: 'folder',
+        folder: ${JSON.stringify(folder)},
+        fallbackReason: { kind: 'anchor-unreadable', intendedUrl: ${JSON.stringify(url)} }
+      }
+    }
+    return new Promise((r) => setTimeout(() => r({ kind: 'server', url: ${JSON.stringify(url)} }), 300))
+  }
+})
+const event = (id) => ({
+  kind: 'dispatch', event: 'dispatched', payload: {}, target_role: 'developer',
+  model: 'sonnet', effect_id: id, prompt_hash: 'sha256:abc'
+})
+sink.log(event('before-1'))
+await sink.drain()
+sink.log(event('before-2'))
+await sink.drain()
+clock += LOG_DESTINATION_ANCHOR_RETRY_INTERVAL_MS
+const started = Date.now()
+sink.log(event('during-1'))
+sink.log(event('during-2'))
+await sink.drain()
+const waitedMs = Date.now() - started
+await new Promise((r) => setTimeout(r, 500))
+sink.log(event('after-1'))
+sink.log(event('after-2'))
+await sink.drain()
+console.log(JSON.stringify({ resolutions, stderr, waitedMs }))
+`
+    )
+    try {
+      const r = await spawnBudgetedAsync(
+        ['bun', script],
+        { cwd, env: { ...stripVinayaEnv(), HOME: home } },
+        undefined,
+        'anchor-retry'
+      )
+      expect(r.status).toBe(0)
+      const out = JSON.parse(r.stdout.trim().split('\n').at(-1) as string) as {
+        resolutions: number
+        stderr: string[]
+        waitedMs: number
+      }
+      // One first resolution and one retry — the second in-flight-window
+      // event started no second retry.
+      expect(out.resolutions).toBe(2)
+      // The events logged while the retry was in flight landed without
+      // waiting for its 300ms answer.
+      expect(out.waitedMs).toBeLessThan(250)
+
+      const folderIds = readFileSync(join(folder, 'test-owner-test-repo', '404.ndjson'), 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => JSON.parse(l).effect_id)
+      expect(folderIds).toEqual(['before-1', 'before-2', 'during-1', 'during-2'])
+      expect(posted.map((l) => l.effect_id)).toEqual(['after-1', 'after-2'])
+      const queue = join(home, '.vinaya', 'outbox', 'test-owner-test-repo', '404.ndjson')
+      expect(existsSync(queue) ? readFileSync(queue, 'utf8').trim() : '').toBe('')
+
+      // The fallback was announced once and recorded once, never again for
+      // the retry or the switch.
+      expect(out.stderr).toHaveLength(1)
+      expect(out.stderr[0]).toContain('not delivering to the configured log server')
+      const driverLog = readFileSync(join(cwd, 'runtime', 'tasks-execution', '404', 'output', 'driver.log'), 'utf8')
+      expect(driverLog.split('\n').filter((l) => l.includes('[log] '))).toHaveLength(1)
+    } finally {
+      server.stop()
+    }
+  }, 60_000)
+
+  it('a retry that misses again keeps the folder, and the retries stop at their bound', async () => {
+    const { dir, deps } = testDeps()
+    let clock = Date.parse('2026-10-25T00:00:00.000Z')
+    let resolutions = 0
+    const stderr: string[] = []
+    const sink = createLogSink({
+      ...deps,
+      now: () => new Date(clock),
+      stderr: (m) => stderr.push(m),
+      resolveLogDestination: () => {
+        resolutions++
+        return {
+          kind: 'folder',
+          folder: join(dir, 'outbox'),
+          fallbackReason: { kind: 'anchor-unreadable', intendedUrl: 'https://logs.example.com/ingest' }
+        }
+      }
+    })
+    for (let i = 0; i < LOG_DESTINATION_ANCHOR_MAX_RETRIES + 3; i++) {
+      // Two events per interval: only the first may start a retry.
+      sink.log({ ...DISPATCHED, effect_id: `e${i}a` })
+      sink.log({ ...DISPATCHED, effect_id: `e${i}b` })
+      await sink.drain()
+      await flush()
+      clock += LOG_DESTINATION_ANCHOR_RETRY_INTERVAL_MS
+    }
+    expect(resolutions).toBe(1 + LOG_DESTINATION_ANCHOR_MAX_RETRIES)
+    const lines = readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson'), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+    expect(lines).toHaveLength(2 * (LOG_DESTINATION_ANCHOR_MAX_RETRIES + 3))
+    expect(stderr).toHaveLength(1)
+  })
+
+  it('a retry that reads a different url ends the retries and keeps the folder', async () => {
+    const { dir, deps } = testDeps()
+    let clock = Date.parse('2026-10-25T00:00:00.000Z')
+    let resolutions = 0
+    const sink = createLogSink({
+      ...deps,
+      now: () => new Date(clock),
+      resolveLogDestination: () => {
+        resolutions++
+        return {
+          kind: 'folder',
+          folder: join(dir, 'outbox'),
+          fallbackReason: {
+            kind: resolutions === 1 ? 'anchor-unreadable' : 'anchor-mismatch',
+            intendedUrl: 'https://logs.example.com/ingest'
+          }
+        }
+      }
+    })
+    for (let i = 0; i < 4; i++) {
+      sink.log({ ...DISPATCHED, effect_id: `e${i}` })
+      await sink.drain()
+      await flush()
+      clock += LOG_DESTINATION_ANCHOR_RETRY_INTERVAL_MS
+    }
+    expect(resolutions).toBe(2)
+    const lines = readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson'), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+    expect(lines).toHaveLength(4)
+  })
+
+  it('a destination that was never a missed read is never re-resolved', async () => {
+    const { deps } = testDeps()
+    let clock = Date.parse('2026-10-25T00:00:00.000Z')
+    let resolutions = 0
+    const base = deps.resolveLogDestination as NonNullable<LogSinkDeps['resolveLogDestination']>
+    const sink = createLogSink({
+      ...deps,
+      now: () => new Date(clock),
+      resolveLogDestination: (repo, env, folderOnly) => {
+        resolutions++
+        return base(repo, env, folderOnly)
+      }
+    })
+    for (let i = 0; i < 3; i++) {
+      sink.log({ ...DISPATCHED, effect_id: `e${i}` })
+      await sink.drain()
+      clock += LOG_DESTINATION_ANCHOR_RETRY_INTERVAL_MS
+    }
+    expect(resolutions).toBe(1)
+  })
 })

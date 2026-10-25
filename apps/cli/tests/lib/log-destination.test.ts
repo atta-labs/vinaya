@@ -25,6 +25,7 @@ import {
 } from '../../src/lib/config.js'
 import {
   createLogSink,
+  createTrustAnchorCache,
   describeFolderFallback,
   drainLogSpool,
   logsCredentialMissing,
@@ -1059,5 +1060,129 @@ describe('drainLogSpool (O6) — the driver delivers a confined dispatch spool a
     symlinkSync(realElsewhere, spool)
     expect(drainLogSpool(spool, dest, { owner: 'atta-labs', repo: 'vinaya' }, 1034)).toBe(0)
     expect(existsSync(join(dest, 'atta-labs-vinaya', '1034.ndjson'))).toBe(false)
+  })
+})
+
+// --- a missed trust-anchor read is retried, bounded (O1, O2, O4) -----------
+
+describe('createTrustAnchorCache — a missed read is retried, an answer is kept', () => {
+  const URL = 'https://logs.example.com/ingest'
+  const LOCAL = { logs: { url: URL } } as VinayaConfig
+  const BOUNDS = { retryIntervalMs: 1000, maxRetries: 3 }
+
+  /** A cache over a scripted read and a hand-moved clock; `reads` counts the reads it started. */
+  function scripted(answers: Array<VinayaConfig | null>): {
+    cache: ReturnType<typeof createTrustAnchorCache>
+    reads: () => number
+    advance: (ms: number) => void
+  } {
+    let clock = 0
+    let reads = 0
+    const cache = createTrustAnchorCache(
+      async () => answers[Math.min(reads++, answers.length - 1)] ?? null,
+      () => clock,
+      BOUNDS
+    )
+    return { cache, reads: () => reads, advance: (ms) => (clock += ms) }
+  }
+
+  const decide = (trustAnchorConfig: VinayaConfig | null, env: NodeJS.ProcessEnv = {}, unattended = true) =>
+    resolveLogDestinationFrom({ localConfig: LOCAL, trustAnchorConfig, unattended, env, defaultFolder: DEFAULT_FOLDER })
+
+  it('a null read followed by a matching one switches the destination to the server', async () => {
+    const { cache, reads, advance } = scripted([null, LOCAL])
+    expect(decide(await cache.get('/repo'))).toEqual({
+      kind: 'folder',
+      folder: DEFAULT_FOLDER,
+      fallbackReason: { kind: 'anchor-unreadable', intendedUrl: URL }
+    })
+    // Before the interval the miss is served from the cache: no new read.
+    expect(await cache.get('/repo')).toBeNull()
+    expect(reads()).toBe(1)
+    advance(BOUNDS.retryIntervalMs)
+    expect(decide(await cache.get('/repo'))).toEqual({ kind: 'server', url: URL, headers: undefined })
+    expect(reads()).toBe(2)
+  })
+
+  it('a successful read is kept for good — never read again', async () => {
+    const { cache, reads, advance } = scripted([LOCAL, null])
+    expect(await cache.get('/repo')).toEqual(LOCAL)
+    advance(BOUNDS.retryIntervalMs * 10)
+    expect(await cache.get('/repo')).toEqual(LOCAL)
+    expect(reads()).toBe(1)
+  })
+
+  it('a read that keeps missing until the retries are spent stays on the folder', async () => {
+    const { cache, reads, advance } = scripted([null])
+    for (let i = 0; i < BOUNDS.maxRetries + 4; i++) {
+      expect(decide(await cache.get('/repo'))).toMatchObject({
+        kind: 'folder',
+        fallbackReason: { kind: 'anchor-unreadable' }
+      })
+      advance(BOUNDS.retryIntervalMs)
+    }
+    expect(reads()).toBe(1 + BOUNDS.maxRetries)
+  })
+
+  it('a read in flight is shared, and each repository keeps its own retries', async () => {
+    let release: (value: VinayaConfig | null) => void = () => {}
+    let reads = 0
+    const cache = createTrustAnchorCache(
+      () => {
+        reads++
+        return new Promise((r) => {
+          release = r
+        })
+      },
+      () => 0,
+      BOUNDS
+    )
+    const a = cache.get('/a')
+    const b = cache.get('/a')
+    await new Promise((r) => setTimeout(r, 0))
+    release(LOCAL)
+    expect(await a).toEqual(LOCAL)
+    expect(await b).toEqual(LOCAL)
+    expect(reads).toBe(1)
+    const other = cache.get('/b')
+    await new Promise((r) => setTimeout(r, 0))
+    release(null)
+    expect(await other).toBeNull()
+    expect(reads).toBe(2)
+  })
+
+  it('a read that throws counts as a miss and is retried', async () => {
+    let clock = 0
+    let reads = 0
+    const cache = createTrustAnchorCache(
+      async () => {
+        if (reads++ === 0) throw new Error('gh vanished')
+        return LOCAL
+      },
+      () => clock,
+      BOUNDS
+    )
+    expect(await cache.get('/repo')).toBeNull()
+    clock += BOUNDS.retryIntervalMs
+    expect(await cache.get('/repo')).toEqual(LOCAL)
+  })
+
+  it('a retried read naming a different url, or none, resolves as before; so do an attended and a CI caller', async () => {
+    const { cache, advance } = scripted([null, { logs: { url: 'https://other.example.com/ingest' } } as VinayaConfig])
+    await cache.get('/repo')
+    advance(BOUNDS.retryIntervalMs)
+    expect(decide(await cache.get('/repo'))).toEqual({
+      kind: 'folder',
+      folder: DEFAULT_FOLDER,
+      fallbackReason: { kind: 'anchor-mismatch', intendedUrl: URL }
+    })
+    expect(decide({} as VinayaConfig)).toEqual({
+      kind: 'folder',
+      folder: DEFAULT_FOLDER,
+      fallbackReason: { kind: 'anchor-mismatch', intendedUrl: URL }
+    })
+    // An attended caller never asks the anchor; a CI job with a miss records nothing.
+    expect(decide(null, {}, false)).toEqual({ kind: 'server', url: URL, headers: undefined })
+    expect(decide(null, { GITHUB_ACTIONS: 'true' })).toMatchObject({ kind: 'none' })
   })
 })

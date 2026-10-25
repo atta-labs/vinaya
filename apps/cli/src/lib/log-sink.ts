@@ -193,11 +193,13 @@ export type LogSinkDeps = {
    * The `logs` setting's resolved destination for this process (O1/O4) —
    * `vinaya.config.json`'s `logs`, trust-anchor-gated for an unattended
    * caller exactly as `runtimeDir` already is, falling back to a folder
-   * under this repository's own `runtimeDir` when unset. Called at most
-   * once per sink instance (the sink's shared context) — a `url`
-   * destination can require a network read (`loadTrustAnchorConfigAsync`)
-   * an unattended caller must not repeat on every event. May answer
-   * synchronously or asynchronously; the sink awaits either.
+   * under this repository's own `runtimeDir` when unset. Called once per
+   * sink instance (the sink's shared context), and again only while that
+   * answer is an `anchor-unreadable` fallback — in the background, at most
+   * once per `LOG_DESTINATION_ANCHOR_RETRY_INTERVAL_MS` and
+   * `LOG_DESTINATION_ANCHOR_MAX_RETRIES` times — so a `url` destination's
+   * network read (`loadTrustAnchorConfigAsync`) is never repeated on every
+   * event. May answer synchronously or asynchronously; the sink awaits either.
    */
   resolveLogDestination: (
     repo: RepoRef | null,
@@ -235,10 +237,11 @@ export const LOG_CONTEXT_LOOKUP_DEADLINE_MS = 3000
  *
  * `LOG_CONTEXT_LOOKUP_DEADLINE_MS` bounds a per-event lookup (the branch, the
  * repo, the doctrine): every line waits on it, so it must be short, and its
- * fallback merely under-attributes one event. This read runs at most ONCE per
- * process and is cached (`processTrustAnchor`); its fallback is not "one event
- * loses a field" but "the ENTIRE run's telemetry is silently rerouted from the
- * configured server to the local folder." A developer's Mac clears the
+ * fallback merely under-attributes one event. This read is cached per process
+ * (`processTrustAnchor`) — an answer for good, a miss only until its bounded
+ * retry is due — and its fallback is not "one event loses a field" but "the
+ * run's telemetry is rerouted from the configured server to the local folder"
+ * until a retry answers. A developer's Mac clears the
  * `gh api` contents read for the default-branch config in a few seconds
  * (keychain-backed auth cold-start plus a home-network round-trip), where a
  * datacenter VPS clears it in well under one — so a 3s bound cleared on the VPS
@@ -454,24 +457,82 @@ export function resolveLogDestinationFrom(input: {
  * the round trip this function's caller can no longer skip still happens at
  * most once per sink instance.
  */
-// The default branch's config cannot change within one process, so it is read
-// once per process PER REPOSITORY, not once per sink: the loop driver alone
-// holds several sinks (its own, one per dispatched role, the module default),
-// and each extra read is one more child process whose exit the pinned Bun can
-// lose. Keyed by the resolved repository root the sink already carries, so a
-// process that logs from two repositories — a `bun:test` runner loading many
-// test files, each driving its own fixture repository — reads each
-// repository's config exactly once (O3) and never serves one repository's
-// config to another (O1). A `null` root (a directory in no git repository at
-// all) keys one shared slot, where the trust-anchor read answers `null`
-// regardless of where it ran, so no two such directories can cross.
-const processTrustAnchorByRepo = new Map<string | null, Promise<VinayaConfig | null>>()
+// The default branch's config cannot change within one process, so a read that
+// ANSWERED is kept once per process PER REPOSITORY, not once per sink: the loop
+// driver alone holds several sinks (its own, one per dispatched role, the
+// module default), and each extra read is one more child process whose exit
+// the pinned Bun can lose. Keyed by the resolved repository root the sink
+// already carries, so a process that logs from two repositories — a `bun:test`
+// runner loading many test files, each driving its own fixture repository —
+// reads each repository's config exactly once (O3) and never serves one
+// repository's config to another (O1). A `null` root (a directory in no git
+// repository at all) keys one shared slot, where the trust-anchor read answers
+// `null` regardless of where it ran, so no two such directories can cross.
+//
+// A read that MISSED (`null`: offline, unauthenticated, slower than its
+// deadline) is not kept for the process the way an answer is — one slow `gh`
+// at startup used to decide the whole run's destination. The miss is served
+// from the cache until `LOG_DESTINATION_ANCHOR_RETRY_INTERVAL_MS` has passed
+// since it settled; the next ask after that starts one fresh read, at most
+// `LOG_DESTINATION_ANCHOR_MAX_RETRIES` of them per repository, so a run with no
+// network spawns a handful of `gh` children, never one per event. Once the
+// retries are spent the miss is final: today's fallback.
+
+/** How long a missed trust-anchor read is served from the cache before the next ask reads again — and how often a sink on an `anchor-unreadable` fallback re-resolves its destination (`createLogSink`). */
+export const LOG_DESTINATION_ANCHOR_RETRY_INTERVAL_MS = 30_000
+
+/** Fresh reads a missed trust-anchor read gets per repository after the first, and re-resolutions a sink makes after its first; past this the fallback stands for the process. */
+export const LOG_DESTINATION_ANCHOR_MAX_RETRIES = 5
+
+type TrustAnchorSlot = { reading: Promise<VinayaConfig | null>; retries: number; missedAt: number | null }
+
+/**
+ * The per-repository trust-anchor cache behind `processTrustAnchor`, built
+ * from its read and its clock so the retry rule is testable without `gh`: an
+ * answer is served for the cache's life, a read in flight is shared, and a
+ * miss is served until its retry is due (above). Never rejects — a read that
+ * throws counts as a miss.
+ */
+export function createTrustAnchorCache(
+  read: () => Promise<VinayaConfig | null>,
+  now: () => number = Date.now,
+  bounds: { retryIntervalMs: number; maxRetries: number } = {
+    retryIntervalMs: LOG_DESTINATION_ANCHOR_RETRY_INTERVAL_MS,
+    maxRetries: LOG_DESTINATION_ANCHOR_MAX_RETRIES
+  }
+): { get: (repoRoot: string | null) => Promise<VinayaConfig | null>; clear: () => void } {
+  const slots = new Map<string | null, TrustAnchorSlot>()
+  const start = (repoRoot: string | null, retries: number): Promise<VinayaConfig | null> => {
+    const slot: TrustAnchorSlot = {
+      reading: Promise.resolve()
+        .then(read)
+        .catch(() => null),
+      retries,
+      missedAt: null
+    }
+    slots.set(repoRoot, slot)
+    // Registered before any caller's own continuation, so a caller that sees
+    // this miss already finds it timestamped.
+    slot.reading.then((config) => {
+      if (config === null) slot.missedAt = now()
+    })
+    return slot.reading
+  }
+  return {
+    get: (repoRoot) => {
+      const slot = slots.get(repoRoot)
+      if (slot === undefined) return start(repoRoot, 0)
+      if (slot.missedAt === null) return slot.reading
+      if (slot.retries >= bounds.maxRetries || now() - slot.missedAt < bounds.retryIntervalMs) return slot.reading
+      return start(repoRoot, slot.retries + 1)
+    },
+    clear: () => slots.clear()
+  }
+}
+
+const processTrustAnchorByRepo = createTrustAnchorCache(safeLoadTrustAnchorConfig)
 function processTrustAnchor(repoRoot: string | null): Promise<VinayaConfig | null> {
-  const cached = processTrustAnchorByRepo.get(repoRoot)
-  if (cached !== undefined) return cached
-  const reading = safeLoadTrustAnchorConfig()
-  processTrustAnchorByRepo.set(repoRoot, reading)
-  return reading
+  return processTrustAnchorByRepo.get(repoRoot)
 }
 
 /**
@@ -1568,26 +1629,74 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   // The same context once it has settled, for `logSync`, which cannot await
   // it — `undefined` until the warm-up (or a first `log()`) has finished.
   let settledContext: SinkContext | undefined
+  // The env the context was first resolved with, reused by a re-resolution
+  // (below) so a retry decides the destination for the same caller.
+  let contextEnv: NodeJS.ProcessEnv = {}
+  const resolveDestination = async (repo: RepoRef | null, env: NodeJS.ProcessEnv): Promise<ResolvedLogDestination> =>
+    deps.readConfig()?.logs === false
+      ? { kind: 'none', reason: 'logs: false disables Log recording' }
+      : await deps.resolveLogDestination(repo, env, deps.folderOnly)
   const context = (): Promise<SinkContext> => {
     if (contextCache === undefined) {
       const env = deps.env()
+      contextEnv = env
       contextCache = Promise.all([
         withDeadline(resolveRepoOnce(), LOG_CONTEXT_LOOKUP_DEADLINE_MS, null),
         doctrine()
       ]).then(async ([resolved, doctrineValue]) => {
         const repo = resolved && isSafeRepoSegment(resolved.owner) && isSafeRepoSegment(resolved.repo) ? resolved : null
-        settledContext = {
-          repo,
-          doctrine: doctrineValue,
-          destination:
-            deps.readConfig()?.logs === false
-              ? { kind: 'none', reason: 'logs: false disables Log recording' }
-              : await deps.resolveLogDestination(repo, env, deps.folderOnly)
-        }
+        settledContext = { repo, doctrine: doctrineValue, destination: await resolveDestination(repo, env) }
+        destinationRetryDueAt = deps.now().getTime() + LOG_DESTINATION_ANCHOR_RETRY_INTERVAL_MS
         return settledContext
       })
     }
     return contextCache
+  }
+
+  // A context settled on an `anchor-unreadable` fallback is not final: the
+  // trust-anchor read that missed is retried (`createTrustAnchorCache`), and
+  // this sink re-resolves its destination to see whether it answered. The
+  // re-resolution runs in the background — started from a `log()` write, never
+  // awaited by one — at most once per retry interval and
+  // `LOG_DESTINATION_ANCHOR_MAX_RETRIES` times. Only a server answer switches
+  // the destination: the memoized context is replaced, so every write that runs
+  // after the switch lands in the server's retry queue, and since writes run
+  // one at a time in call order (`writeChain`), the folder holds a prefix of
+  // the run and the server the rest — none written twice. The folder's events
+  // stay where they are for `vinaya log send`. Any other answer (another miss,
+  // a mismatch, no `logs.url`) leaves the fallback as it was; a non-miss ends
+  // the retries, since the cache keeps that answer for good.
+  let destinationRetries = 0
+  let destinationRetryDueAt = 0
+  let destinationRetryInFlight = false
+  const retryDestinationIfDue = (ctx: SinkContext): void => {
+    if (ctx.destination.kind !== 'folder' || ctx.destination.fallbackReason?.kind !== 'anchor-unreadable') return
+    if (destinationRetryInFlight || destinationRetries >= LOG_DESTINATION_ANCHOR_MAX_RETRIES) return
+    if (deps.now().getTime() < destinationRetryDueAt) return
+    destinationRetryInFlight = true
+    destinationRetries++
+    const generation = contextCache
+    Promise.resolve()
+      .then(() => resolveDestination(ctx.repo, contextEnv))
+      .then(
+        (destination) => {
+          // A `resetContext()` in the meantime owns the context now.
+          if (contextCache !== generation) return
+          if (destination.kind === 'server') {
+            settledContext = { ...ctx, destination }
+            contextCache = Promise.resolve(settledContext)
+            return
+          }
+          if (destination.kind !== 'folder' || destination.fallbackReason?.kind !== 'anchor-unreadable') {
+            destinationRetries = LOG_DESTINATION_ANCHOR_MAX_RETRIES
+          }
+        },
+        () => undefined
+      )
+      .finally(() => {
+        destinationRetryInFlight = false
+        destinationRetryDueAt = deps.now().getTime() + LOG_DESTINATION_ANCHOR_RETRY_INTERVAL_MS
+      })
   }
 
   /**
@@ -1605,6 +1714,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   const resetContext = (): void => {
     contextCache = undefined
     settledContext = undefined
+    destinationRetries = 0
   }
 
   // Every `url`-destination append schedules a drain of the local retry
@@ -1807,6 +1917,13 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
       const call = snapshot()
       const write = async (): Promise<void> => {
         const ctx = await context()
+        // Never awaited: a due re-resolution of an `anchor-unreadable`
+        // fallback runs beside this write, which lands where `ctx` says.
+        try {
+          retryDestinationIfDue(ctx)
+        } catch {
+          // A retry that cannot even start never costs this event its write.
+        }
         // Checked BEFORE the branch lookup below, never after: a process
         // recording nothing must spend no `git rev-parse`, and above all
         // no credentialed `gh issue list`, resolving an attribution no
