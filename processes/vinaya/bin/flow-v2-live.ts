@@ -91,7 +91,6 @@ export function withV2DevTools(
       return {
         ok: true,
         result: {
-          prNumber: 0,
           staged: true,
           note: 'Saved. In this flow the pull request opens after both reviewers approve and the ready push passes; finish your turn.'
         } as unknown as { prNumber: number }
@@ -103,7 +102,12 @@ export function withV2DevTools(
       options.store.write({ title: staged?.title ?? '', body })
       return {
         ok: true,
-        result: { prNumber: 0, staged: true } as unknown as { prNumber: number }
+        result: {
+          staged: true,
+          note: 'Saved; the driver opens the pull request with this body after approval.'
+        } as unknown as {
+          prNumber: number
+        }
       }
     }
   }
