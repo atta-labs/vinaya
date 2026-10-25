@@ -378,6 +378,25 @@ describe('LogEventSchema — dev_review_loop family', () => {
     expect(LogEventSchema.safeParse(line).success).toBe(false)
   })
 
+  it('parses a conflict_reentry line, and refuses one with no pull request or a zero attempt (#1621)', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'conflict_reentry' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      task: 1621,
+      pr: 1700,
+      attempt: 1,
+      bound: 3
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+    const { pr: _pr, ...withoutPr } = line
+    expect(LogEventSchema.safeParse(withoutPr).success).toBe(false)
+    expect(LogEventSchema.safeParse({ ...line, attempt: 0 }).success).toBe(false)
+  })
+
   it('parses a driver_heartbeat line with a pull request (#949, O1/O3)', () => {
     const line = {
       meta,

@@ -178,8 +178,9 @@ describe('the driver exit record', () => {
 })
 
 describe('whether the driver lock is kept on exit', () => {
-  it('clears it after a publish', () => {
-    expect(keepDriverLock({ kind: 'publish' })).toBe(false)
+  it('clears it after a publish, and keeps it while the watching driver watches the published pull request', () => {
+    expect(keepDriverLock({ kind: 'publish', watched: false })).toBe(false)
+    expect(keepDriverLock({ kind: 'publish', watched: true })).toBe(true)
   })
 
   it('keeps it for an infrastructure pause and a stale-driver pause', () => {

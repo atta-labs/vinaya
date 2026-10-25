@@ -14,6 +14,7 @@ import {
   DispatchSignInRefused,
   MAX_INFRASTRUCTURE_RETRIES
 } from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
+import { renderNoPushStopComment, renderPauseComment } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { createActions, type TaskInput } from '../executing/actions'
 import { createHandoff, type Handoff, type HandoffRun } from '../executing/handoff'
 import { handoffHaltReason } from '../executing/log-events'
@@ -224,6 +225,80 @@ for (const agent of ['claude', 'codex'] as const) {
       expect(control.halted).toBe(true)
       expect(result).toMatchObject({ commentPosted: true, infrastructureRetries: 1, retryBudgetSpent: false })
       expect(readPauseState(runtimeDir, TASK)?.infrastructureRetries).toBe(1)
+    })
+
+    test('a forge read that fails once still leaves the escalation record a ruling resolves', () => {
+      const runtimeDir = mkdtempSync(join(tmpdir(), 'handoff-run-'))
+      const recorded = recordedHandoff()
+      const reported: string[] = []
+      let reads = 0
+      const handoff = createHandoff(
+        {
+          task: TASK,
+          branch: BRANCH,
+          runtimeDir,
+          runId: 'run-1',
+          agent,
+          round: () => 2,
+          head: () => 'abc123',
+          prNumber: () => 70,
+          versions: () => {
+            reads += 1
+            if (reads === 1) throw new Error('HTTP 502 from the forge')
+            return { briefHash: 'b', objectivesVersion: 'o', rulingOrdinal: 0, policyDigest: 'p' }
+          },
+          halt: () => {}
+        },
+        'loop-1',
+        { ...recorded.deps, report: (line) => void reported.push(line), sleepSync: () => {} }
+      )
+      handoff.pause({ reason: 'escalation', detail: 'needs a call' })
+      expect(recorded.calls[0]).toBe('escalation:escalation')
+      expect(reported).toEqual([
+        'the escalation record for this pause could not be written (attempt 1 of 3): HTTP 502 from the forge'
+      ])
+    })
+
+    test('the pause comment names the Engine resume command, with and without a pull request', () => {
+      for (const pr of [70, null]) {
+        const runtimeDir = mkdtempSync(join(tmpdir(), 'handoff-run-'))
+        const recorded = recordedHandoff()
+        const bodies: string[] = []
+        const deps = {
+          ...recorded.deps,
+          postPauseComment: (...args: Parameters<typeof recorded.deps.postPauseComment>) => {
+            const [, , , prNumber, reason, detail, invocation] = args
+            bodies.push(renderPauseComment(prNumber, reason, detail, invocation))
+            return recorded.deps.postPauseComment(...args)
+          },
+          postIssuePauseComment: (...args: Parameters<typeof recorded.deps.postIssuePauseComment>) => {
+            const [task, branch, , reason, detail, invocation, ordinal] = args
+            bodies.push(renderNoPushStopComment(task, branch, reason, detail, invocation, ordinal))
+            return recorded.deps.postIssuePauseComment(...args)
+          }
+        }
+        const control = createRunControl()
+        const handoff = createHandoff(
+          {
+            task: TASK,
+            branch: BRANCH,
+            runtimeDir,
+            runId: 'run-1',
+            agent,
+            round: () => 2,
+            head: () => 'abc123',
+            prNumber: () => pr,
+            versions: () => ({ briefHash: 'b', objectivesVersion: 'o', rulingOrdinal: 0, policyDigest: 'p' }),
+            halt: (reason) => control.halt(handoffHaltReason(reason))
+          },
+          'loop-1',
+          deps
+        )
+        handoff.pause({ reason: 'escalation', detail: 'needs a call' })
+        expect(bodies).toHaveLength(1)
+        expect(bodies[0]).toContain(`vinaya task run --issue ${TASK} --agent ${agent} --runner atta-engine`)
+        expect(bodies[0]).not.toContain('dev-review-loop --resume')
+      }
     })
 
     test('a pause handed off twice in one run writes its records and its comment once', () => {

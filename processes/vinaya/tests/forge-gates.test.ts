@@ -527,6 +527,25 @@ for (const agent of AGENTS) {
     })
   })
 
+  describe(`the mergeability step before publication (${agent})`, () => {
+    test('an approved head that fell into conflict is not published: the Developer resolves it and both reviews run again', async () => {
+      const observed = await run(agent, {
+        ci: ['green'],
+        // Mergeable when the reviewers are dispatched, conflicting once they approve, then mergeable again.
+        mergeable: ['MERGEABLE', 'CONFLICTING', 'MERGEABLE'],
+        conflictFiles: ['sample.ts'],
+        prBody: `Closes #${TASK}`,
+        failedRunIds: [],
+        rerunTurnsGreen: false
+      })
+      expect(observed.outcome).toBe('completed')
+      expect(stepsNamed(observed, 'check-publish-mergeability').map((step) => step.exitCode)).toEqual([1, 0])
+      expect(observed.spawns).toEqual({ developer: 2, 'code-reviewer': 2, 'security-reviewer': 2 })
+      expect(observed.published).toBe(1)
+      expect(observed.developerPrompts[1]).toContain(renderConflictPrompt(['sample.ts'], publishingInstructionLine()))
+    })
+  })
+
   describe(`the premise step (${agent})`, () => {
     test('a stale Premise pin at the head pauses through the handoff before any reviewer', async () => {
       const observed = await run(agent, {
@@ -592,6 +611,8 @@ for (const agent of AGENTS) {
       const world = makeWorld({ head: repo.taskHead, remote: 'remote-0', dirty: [], changed: [OWN, WORKFLOW] })
       const leases: Array<{ sha: string; expectedRemoteHead: string; touchedPaths: readonly string[] }> = []
       const live = engineLiveDevToolsContext({
+        recordLaunch: () => 'test-run',
+        completeLaunch: () => {},
         branch: 'task/t/8',
         worktreePath: repo.root,
         task: 8,

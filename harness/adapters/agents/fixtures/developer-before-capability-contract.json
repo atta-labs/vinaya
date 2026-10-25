@@ -30,6 +30,7 @@
       "codex",
       "exec",
       "--dangerously-bypass-hook-trust",
+      "--skip-git-repo-check",
       "--config",
       "approval_policy=\"never\"",
       "--json",
@@ -38,7 +39,8 @@
       "-"
     ],
     "env": {
-      "CODEX_HOME": "/gen/developer"
+      "CODEX_HOME": "/gen/developer",
+      "npm_config_cache": "/scratch/npm-cache"
     },
     "files": {
       "config.toml": "sandbox_mode = \"workspace-write\"\nweb_search = \"disabled\"\n\n[features]\nshell_tool = true\nmulti_agent = true\nhooks = true\n\n[tools]\nweb_search = false\nview_image = true\n\n[sandbox_workspace_write]\nwritable_roots = [\"/wt\", \"/scratch\", \"/bun\", \"/git\"]\nnetwork_access = true\n\n[features.network_proxy]\nenabled = true\n\n[features.network_proxy.domains]\n\"github.com\" = \"allow\"\n\"api.github.com\" = \"allow\"\n\"raw.githubusercontent.com\" = \"allow\"\n\"codeload.github.com\" = \"allow\"\n\"objects.githubusercontent.com\" = \"allow\"\n\"registry.npmjs.org\" = \"allow\"\n\"api.anthropic.com\" = \"allow\"\n\n[mcp_servers.vinaya_dev_tools]\nenabled = true\ncommand = \"/bridge\"\nargs = []\ntool_timeout_sec = 120\nenabled_tools = [\"fetch_documentation\",\"run_checks\",\"publish_changes\",\"open_pull_request\",\"update_pull_request_body\",\"refresh_evidence\",\"read_pull_request\"]\ndefault_tools_approval_mode = \"approve\"\n\n[[hooks.PreToolUse]]\nmatcher = \"^(Bash|apply_patch|update_plan|view_image|web_fetch|spawn_agent|send_input|resume_agent|wait_agent|close_agent)$\"\n\n[[hooks.PreToolUse.hooks]]\ntype = \"command\"\ncommand = \"node \\\"/gen/developer/hooks/pre-tool-use.mjs\\\"\"\ntimeout = 30\n",

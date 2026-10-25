@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import {
   buildReviewerScratch,
   buildVerifiedReviewerCandidate,
@@ -76,12 +77,16 @@ export function createVinayaReviewInputStager(deps: VinayaReviewInputDeps): Vina
       return `(${what} could not be fetched this round: ${error instanceof Error ? error.message : String(error)})`
     }
   }
-  let staged: { round: number; input: VinayaStagedReviewInput | null } | null = null
+  let staged: { round: number; head: string; input: VinayaStagedReviewInput | null } | null = null
   const attempts = new Map<string, VinayaStagedReviewInput | null>()
+  // A cached copy is reused only while it is still on disk: a fresh run in the same process (a conflict re-entry)
+  // clears stale reviewer copies at its start, and the head it judges may have moved since.
+  const present = (input: VinayaStagedReviewInput | null): boolean => input === null || existsSync(input.dir)
   return {
     stage(round) {
-      if (staged !== null && staged.round === round) return staged.input
       const head = deps.judgedHead()
+      if (staged !== null && staged.round === round && staged.head === head && present(staged.input))
+        return staged.input
       // The head is read before and after the copy; a worktree that moved mid-copy yields no candidate.
       const dir = build(deps.root, deps.task, round, deps.worktreePath, head, deps.readHead)
       let input: VinayaStagedReviewInput | null = null
@@ -100,13 +105,14 @@ export function createVinayaReviewInputStager(deps: VinayaReviewInputDeps): Vina
         })
         input = { dir, paths: written ? reviewerCandidateInputPaths(dir) : null }
       }
-      staged = { round, input }
+      staged = { round, head, input }
       return input
     },
     stageAttempt(round, role, attempt) {
-      const key = `${round}:${role}:${attempt}`
-      if (attempts.has(key)) return attempts.get(key) ?? null
       const candidate = this.stage(round)
+      const key = `${round}:${role}:${attempt}:${candidate?.dir ?? ''}`
+      const cached = attempts.get(key)
+      if (cached !== undefined && present(cached)) return cached
       const dir = candidate ? buildReviewerScratch(deps.root, deps.task, round, role, attempt, candidate.dir) : null
       const input = dir === null ? null : { dir, paths: candidate?.paths ? reviewerCandidateInputPaths(dir) : null }
       attempts.set(key, input)

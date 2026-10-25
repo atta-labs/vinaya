@@ -318,6 +318,8 @@ describe('runDriverLoop — which pauses recorded before a pull request it watch
         continuations.push(input)
         return { finalDecision: { type: 'publish' }, prNumber: openPr ?? 42, task: 1165 }
       },
+      // The published pull request is merged at once, so the driver's watch of it ends there.
+      fetchPrState: () => 'MERGED',
       readPauseState: () => pause,
       readResolutionRecord: () => null,
       findOpenPrForBranch: (branch) => (openPr === null ? null : { number: openPr, branch }),

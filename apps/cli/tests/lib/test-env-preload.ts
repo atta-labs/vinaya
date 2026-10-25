@@ -45,7 +45,7 @@
  * `it(...)`, both of which run AFTER this preload and are untouched by it.
  */
 import { afterAll } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { exemptPrefixes, PROCESS_START_MS, realRuntimeDir, touchedSince } from './real-runtime-guard-core'
@@ -72,24 +72,53 @@ for (const key of [
 }
 
 /**
- * `VINAYA_RUNTIME_DIR` — a dispatched session carries it (the driver hands its
- * runtime directory down), a CI runner or an operator's shell does not. Left
- * unset, anything a test reaches through `runtimeDirForThisRepo()` — the
- * test-run cache `pr report` writes, a driver log — resolves to the real
- * `~/.vinaya/runtime/<owner>-<repo>`, so the same suite wrote into the real
- * directory on CI and an operator's machine while staying clean in a
- * dispatched run. Pointing it at a private temporary directory makes every
- * environment behave like the dispatched one. A test that needs the default
- * resolution (or a different directory) sets or deletes the key itself, as
- * the ones that already run with it set do. `real-runtime-guard.test.ts`
+ * `VINAYA_RUNTIME_DIR` — always a private temporary directory for the tests.
+ * Left as it was, anything a test reaches through `runtimeDirForThisRepo()` —
+ * the test-run cache `pr report` writes, a driver log — resolves to a real
+ * runtime directory: `~/.vinaya/runtime/<owner>-<repo>` when unset, and in a
+ * dispatched session the very directory the driver handed down, so a
+ * Developer's own test run wrote its fixtures' narration into the live task's
+ * driver log. A test that needs the default resolution (or a different
+ * directory) sets or deletes the key itself. `real-runtime-guard.test.ts`
  * still fails a test that reaches the real directory some other way, such as
  * a spawned child with `VINAYA_*` stripped.
  */
-let privateRuntimeDir: string | null = null
-if (!process.env.VINAYA_RUNTIME_DIR) {
-  privateRuntimeDir = mkdtempSync(join(tmpdir(), 'vinaya-test-runtime-'))
-  process.env.VINAYA_RUNTIME_DIR = privateRuntimeDir
+// A sandboxed run names a temporary directory it has not created yet (Claude's sandbox: `/tmp/claude`). Where none
+// can be made at all, the run keeps the directory it was handed rather than failing before any test starts.
+function makePrivateRuntimeDir(): string | null {
+  try {
+    mkdirSync(tmpdir(), { recursive: true })
+    return mkdtempSync(join(tmpdir(), 'vinaya-test-runtime-'))
+  } catch {
+    return null
+  }
 }
+const privateRuntimeDir = makePrivateRuntimeDir()
+if (privateRuntimeDir !== null) process.env.VINAYA_RUNTIME_DIR = privateRuntimeDir
+
+/**
+ * `Bun.spawn`/`Bun.spawnSync` called without an `env` give the child the
+ * environment this process STARTED with, not `process.env` as this file just
+ * set it: a CLI a test spawns that way still saw the inherited runtime
+ * directory and wrote its Log there. Defaulting them to the current
+ * `process.env` makes every child see what the test process sees.
+ */
+const spawnWithCurrentEnv = <F extends (...args: never[]) => unknown>(original: F): F =>
+  ((first: unknown, second?: unknown) => {
+    if (Array.isArray(first)) {
+      const options = (second ?? {}) as { env?: unknown }
+      return (original as unknown as (...a: unknown[]) => unknown)(
+        first,
+        options.env === undefined ? { ...options, env: process.env } : options
+      )
+    }
+    const options = first as { env?: unknown }
+    return (original as unknown as (...a: unknown[]) => unknown)(
+      options.env === undefined ? { ...options, env: process.env } : options
+    )
+  }) as unknown as F
+Bun.spawn = spawnWithCurrentEnv(Bun.spawn)
+Bun.spawnSync = spawnWithCurrentEnv(Bun.spawnSync)
 
 /**
  * Once, after every test file this process ran: remove the private runtime
@@ -99,7 +128,7 @@ if (!process.env.VINAYA_RUNTIME_DIR) {
  * covered, whichever files it was given.
  */
 afterAll(() => {
-  if (privateRuntimeDir) rmSync(privateRuntimeDir, { recursive: true, force: true })
+  if (privateRuntimeDir !== null) rmSync(privateRuntimeDir, { recursive: true, force: true })
   const leaked = touchedSince(realRuntimeDir(), PROCESS_START_MS, exemptPrefixes(process.env))
   if (leaked.length > 0) {
     throw new Error(`tests wrote into the real runtime directory: ${leaked.join(' ')}`)

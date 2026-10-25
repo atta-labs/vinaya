@@ -40,6 +40,7 @@ import {
   createTaskWorktree,
   fetchSourceRevision,
   findOpenPrForBranch,
+  findOpenPrForBranchStrict,
   type reviewPolicyForLoop
 } from '../../../apps/cli/src/lib/dev-review-loop/developer-dispatch'
 import {
@@ -327,7 +328,8 @@ export const STATE_STEPS = [
   'check-mergeability',
   'assess-gate',
   'assess-round',
-  'run-live-checks'
+  'run-live-checks',
+  'check-publish-mergeability'
 ] as const
 
 /** Why the Developer is dispatched again, as the step that sent it back recorded it. */
@@ -520,7 +522,8 @@ function agentEvents(result: StepNodeResult | undefined): unknown[] {
 /** The event a tolerant launch appends when the agent process exited non-zero, so the step completes and is judged. */
 export const AGENT_EXIT_EVENT = 'vinaya.agent_exit'
 
-function agentExitOf(event: unknown): number | null {
+/** A reviewer process's non-zero exit, with the tail of what it wrote to stderr when it wrote anything. */
+function agentExitOf(event: unknown): { code: number; stderr?: string } | null {
   let record = event
   if (typeof event === 'string') {
     try {
@@ -529,8 +532,11 @@ function agentExitOf(event: unknown): number | null {
       return null
     }
   }
-  const candidate = record as { type?: unknown; exit_code?: unknown } | null
-  return candidate?.type === AGENT_EXIT_EVENT && typeof candidate.exit_code === 'number' ? candidate.exit_code : null
+  const candidate = record as { type?: unknown; exit_code?: unknown; stderr?: unknown } | null
+  if (candidate?.type !== AGENT_EXIT_EVENT || typeof candidate.exit_code !== 'number') return null
+  return typeof candidate.stderr === 'string' && candidate.stderr !== ''
+    ? { code: candidate.exit_code, stderr: candidate.stderr }
+    : { code: candidate.exit_code }
 }
 
 /** The final structured record an agent step reported, or undefined for a step that is not one. */
@@ -561,7 +567,11 @@ export function reviewRunFacts(results: Results, step: string): ReviewRunFacts {
     resumed: false,
     terminal: null,
     errors: [
-      ...exits.map((code) => `the reviewer process exited with code ${code}`),
+      ...exits.map((exit) =>
+        exit?.stderr === undefined
+          ? `the reviewer process exited with code ${exit?.code}`
+          : `the reviewer process exited with code ${exit.code}: ${exit.stderr}`
+      ),
       ...(result.exitCode !== 0 ? [`the reviewer step exited with code ${result.exitCode}`] : [])
     ],
     hasResult: raw !== undefined,
@@ -1395,7 +1405,7 @@ function assessVerdictsAction(task: TaskInput, context: ActionContext): { exitCo
 // --- the forge gates: mergeability, CI and the premise, in the standalone round order ---------------
 
 /** The poll budget the forge-gate steps read within: the task's own, else the standalone loop's. */
-function gatePollOf(task: TaskInput): GatePoll {
+export function gatePollOf(task: TaskInput): GatePoll {
   if (task.gatePoll !== undefined) return task.gatePoll
   const { gatePollMaxAttempts, gatePollIntervalMs, sleep } = defaultDeps()
   return { gatePollMaxAttempts, gatePollIntervalMs, sleep }
@@ -1403,10 +1413,31 @@ function gatePollOf(task: TaskInput): GatePoll {
 
 /** The pull request the forge gates judge; throws when none is open, since every gate step runs after one was. */
 function openPullRequestOf(task: TaskInput, step: string): number {
-  const pr = (task.bound?.findOpenPrForBranch ?? findOpenPrForBranch)(task.branch)
-  if (pr === null) throw new Error(`${step} found no open pull request for branch ${task.branch}`)
-  return pr.number
+  // A test or a run that supplies its own lookup keeps it; the live one tells a failed forge call apart from an
+  // empty answer, retries the failure, and names it if it persists.
+  const find = task.bound?.findOpenPrForBranch
+  if (find && find !== findOpenPrForBranch) {
+    const pr = find(task.branch)
+    if (pr === null) throw new Error(`${step} found no open pull request for branch ${task.branch}`)
+    return pr.number
+  }
+  let lastError = ''
+  for (let attempt = 1; attempt <= OPEN_PR_LOOKUP_ATTEMPTS; attempt += 1) {
+    try {
+      const pr = findOpenPrForBranchStrict(task.branch)
+      if (pr === null) throw new Error(`${step} found no open pull request for branch ${task.branch}`)
+      return pr.number
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+      if (lastError.startsWith(`${step} found no open pull request`)) throw error
+      if (attempt < OPEN_PR_LOOKUP_ATTEMPTS) Bun.sleepSync(OPEN_PR_LOOKUP_SPACING_MS)
+    }
+  }
+  throw new Error(`${step} could not list the open pull requests for branch ${task.branch}: ${lastError}`)
 }
+
+const OPEN_PR_LOOKUP_ATTEMPTS = 3
+const OPEN_PR_LOOKUP_SPACING_MS = 5_000
 
 /** The head the forge gates judge: the worktree's, else the branch's on the remote. */
 function judgedHeadOf(task: TaskInput): string {
@@ -1491,6 +1522,48 @@ async function checkMergeability(
     )
   events.push(...driverDecidedPauseEvents(loopIdOf(state), state, round, stats, 'infrastructure'))
   return paused({ reason: 'infrastructure', detail }, new Error(detail))
+}
+
+/**
+ * The forge's mergeability, read again before publication as the standalone loop reads it: reviewers can work long
+ * enough for an approved head to fall into conflict with the default branch. A conflicting head is never published:
+ * the round's held verdicts are discarded, the completion events the live-check step deferred for this publication
+ * are never handed on, the round does not advance, and the Developer is sent back with the conflicting files, so the
+ * next reviewer dispatch judges the resolved head. An unresolved conflict is then bounded by the mergeability step
+ * the resolved head passes through on its way back to the reviewers.
+ */
+async function checkPublishMergeability(
+  task: TaskInput,
+  context: ActionContext
+): Promise<{ exitCode: number; stdout: string }> {
+  const { results } = context
+  const prNumber = openPullRequestOf(task, 'check-publish-mergeability')
+  const mergeable = await pollMergeableState(prNumber, {
+    ...gatePollOf(task),
+    fetchMergeableState: task.bound?.fetchMergeableState ?? fetchMergeableState
+  })
+  if (mergeable !== 'CONFLICTING') return ok(JSON.stringify({ mergeable }))
+  const files = (task.bound?.fetchConflictingFiles ?? fetchConflictingFiles)('main', task.branch)
+  ;(task.bound?.discardHeldVerdicts ?? discardHeldVerdicts)(task.runtimeDir, task.issueNumber, task.reviewRound())
+  const previous = latestRecord(results)
+  const head = safeRead(task.remoteHead) ?? judgedHeadOf(task)
+  return {
+    exitCode: BACK,
+    stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
+      counters: { ...(previous?.counters ?? NO_COUNTERS), stallCheck: null },
+      sendBack: { kind: 'conflict', headBefore: head, files },
+      decision: { type: 'dispatch_developer' },
+      mergeable,
+      files
+    })
+  }
+}
+
+/** Records how the pre-publication mergeability step routed; the decision on this step reads that step's exit result. */
+export function classifyPublishMergeability(context: ActionContext): { exitCode: number; stdout: string } {
+  const checked = context.results['check-publish-mergeability']
+  if (!checked) throw new Error('classify-publish-mergeability ran before the mergeability step recorded a result')
+  return ok(isSentBack(checked) ? 'developer' : 'publish')
 }
 
 /** Records how the mergeability step routed; the decision on this step reads that step's own exit result. */
@@ -1911,6 +1984,14 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       return ok(isLiveWithdrawn(live) ? 'withdrawn' : 'approved')
     }
   },
+  'vinaya.check-publish-mergeability': {
+    adapts: [pollMergeableState, fetchConflictingFiles, discardHeldVerdicts],
+    build: (task) => (context) => checkPublishMergeability(task, context)
+  },
+  'vinaya.classify-publish-mergeability': {
+    adapts: [classifyPublishMergeability],
+    build: () => classifyPublishMergeability
+  },
   'harness.publish': {
     adapts: [publishRound, upsertDeferredFindingsIssue],
     build: (task) => (context) => {
@@ -2049,7 +2130,8 @@ export const decisions: DecisionRegistry = {
   'classify-gate-result': isGateRed,
   'classify-reviewer-outputs': isSentBack,
   'build-revision-handoff': isRevisionRequested,
-  'classify-live-result': isLiveWithdrawn
+  'classify-live-result': isLiveWithdrawn,
+  'classify-publish-mergeability': isSentBack
 }
 
 const executing = join(import.meta.dir)

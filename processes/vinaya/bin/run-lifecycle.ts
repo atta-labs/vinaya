@@ -62,6 +62,12 @@ import {
   writeDriverLock,
   type PauseState
 } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
+import {
+  type MergeableState,
+  type PrOpenState,
+  type PublishedPullRequestRead,
+  readPublishedPullRequest
+} from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
 import { crossRunnerRefusal } from '../../../apps/cli/src/lib/task-run-engine'
 import type { HeldCleanVerdict } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
@@ -130,9 +136,13 @@ export function releaseDriverLock(root: string, task: number, exit: DriverLockEx
   return 'cleared'
 }
 
-/** How the driver lock sees a leg's exit: a publish, a decided pause, or a crash. A halt is a pause no one else needs to repair. */
+/**
+ * How the driver lock sees a leg's exit: a publish, a decided pause, or a crash. A halt is a pause no one else needs
+ * to repair. The runner releases the lock only once its watch of a published pull request is over, so a publish is
+ * never a watched one by then.
+ */
 export function lockExitOf(exit: LegExit): DriverLockExit {
-  if (exit.reason === 'finished') return { kind: 'publish' }
+  if (exit.reason === 'finished') return { kind: 'publish', watched: false }
   if (exit.reason === 'error') return { kind: 'crash', hostRepair: false }
   const decided = /^pause\((.*)\)$/.exec(exit.lastDecision)
   return { kind: 'pause', reason: decided?.[1] ?? 'halt', watched: false }
@@ -140,12 +150,62 @@ export function lockExitOf(exit: LegExit): DriverLockExit {
 
 // --- re-run choice -------------------------------------------------------------
 
-/** One run identity per task, so a runner started later finds the checkpoints of the one before it. */
-export const runIdentityOfTask = (task: number): RunIdentity => runIdentityForRunId(`engine-task-${task}`)
+/**
+ * The run identity of a task's `generation`th run. The first keeps the task's one identity, so a runner started later
+ * finds the checkpoints of the one before it. A run that completed has nothing left to run, so each automatic conflict
+ * re-entry of its published pull request starts the next generation under an identity of its own, and every other
+ * task's identity is unchanged.
+ */
+export const runIdentityOfTask = (task: number, generation = 1): RunIdentity =>
+  runIdentityForRunId(generation <= 1 ? `engine-task-${task}` : `engine-task-${task}-reentry-${generation - 1}`)
 
 /** The recorded provenance of the newest checkpoint, when the saver keeps one. */
 export interface ProvenanceReader {
   latestProvenance?: (threadId: string) => { revision: string; model: string } | undefined
+}
+
+/** The task's newest run generation with a checkpoint: the one a runner started later continues. 1 when there is none. */
+export function currentRunGeneration(reader: ProvenanceReader, task: number): number {
+  let generation = 1
+  while (reader.latestProvenance?.(runIdentityOfTask(task, generation + 1).threadId) !== undefined) generation += 1
+  return generation
+}
+
+// --- the published pull request's watch ----------------------------------------
+
+/** The forge reads the watch of a published pull request makes, and how often. */
+export interface PublishedWatch {
+  fetchPrState: (prNumber: number) => PrOpenState
+  fetchMergeableState: (prNumber: number) => MergeableState
+  pollMs: number
+  sleep: (ms: number, stop: AbortSignal) => Promise<void>
+}
+
+/** How the watch of a published pull request ended: merged, closed, conflicting with the default branch, or stopped. */
+export type PublishedWatchResult = 'merged' | 'closed' | 'conflicting' | 'stopped'
+
+/**
+ * After a run that published: reads the pull request until it is merged or closed, or until the forge reports it
+ * conflicting with the default branch (`readPublishedPullRequest`, the standalone watcher's read). `UNKNOWN` is read
+ * again on the next poll, never taken as conflicting or clean, and a read that fails is tried again; neither ends it.
+ */
+export async function watchPublishedPullRequest(
+  prNumber: number,
+  watch: PublishedWatch,
+  stop: AbortSignal,
+  narrate: (line: string) => void = () => {}
+): Promise<PublishedWatchResult> {
+  while (!stop.aborted) {
+    let read: PublishedPullRequestRead = 'watching'
+    try {
+      read = readPublishedPullRequest(prNumber, watch)
+    } catch (error) {
+      narrate(`a forge read failed: ${error instanceof Error ? error.message : String(error)}; trying again`)
+    }
+    if (read !== 'watching') return read
+    await watch.sleep(watch.pollMs, stop)
+  }
+  return 'stopped'
 }
 
 export type StartChoice =
@@ -153,6 +213,8 @@ export type StartChoice =
   | { kind: 'resume'; identity: RunIdentity; checkpointRevision: string | undefined }
   /** The checkpoint records a run that already completed: there is nothing to continue. */
   | { kind: 'completed'; identity: RunIdentity }
+  /** The checkpoint records a run that spent its round budget: resuming it has nothing to run either. */
+  | { kind: 'exhausted'; identity: RunIdentity }
 
 /** Resumes the task's checkpoint when one exists, and otherwise starts fresh. */
 export async function chooseStart(
@@ -163,6 +225,7 @@ export async function chooseStart(
   if (!checkpoint) return { kind: 'fresh', identity }
   const recorded = await readRunOutcome(checkpointer, identity)
   if (recorded?.reason === 'completed') return { kind: 'completed', identity }
+  if (recorded?.reason === 'exhausted') return { kind: 'exhausted', identity }
   return {
     kind: 'resume',
     identity,

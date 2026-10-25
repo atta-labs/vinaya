@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DEFAULT_REVIEW_POLICY } from '@attalabs/aeg-core'
@@ -61,15 +61,15 @@ describe('the Vinaya review input', () => {
     expect(readFileSync(staged.paths?.priorFindings as string, 'utf8')).toBe(
       'This is round 1 — there is no prior round.'
     )
-    // The same round is not restaged; the next round is.
+    // The same round at the same head is not restaged (only the head is read to confirm it); the next round is.
     expect(stager.stage(1)).toBe(staged)
-    expect(calls).toEqual(['head', 'base true', 'diff', 'brief', 'prBody'])
+    expect(calls).toEqual(['head', 'base true', 'diff', 'brief', 'prBody', 'head'])
     // Round 2 stages the findings round 1 held, as the standalone loop does.
     writeHeldVerdict(root, 9, 1, 'reviewer', 'REVIEWER round-1 finding F1')
     writeHeldVerdict(root, 9, 1, 'security', 'SECURITY round-1 finding S1')
     const second = stager.stage(2)
     expect(second?.dir).not.toBe(staged.dir)
-    expect(calls.length).toBe(10)
+    expect(calls.length).toBe(11)
     const prior = readFileSync(second?.paths?.priorFindings as string, 'utf8')
     expect(prior).toContain('REVIEWER round-1 finding F1')
     expect(prior).toContain('SECURITY round-1 finding S1')
@@ -256,5 +256,32 @@ describe('reviewerRulings', () => {
     })
     expect(rulings).toEqual(['pr 42 ruling'])
     expect(warned.join('')).toContain('gh down')
+  })
+})
+
+describe('a staged review input reused across runs in one process', () => {
+  test('is rebuilt when its copy was removed or the judged head moved', () => {
+    const { worktree, head } = repoWithCommit()
+    const root = mkdtempSync(join(tmpdir(), 'review-input-root-'))
+    let judged = head
+    const stager = createVinayaReviewInputStager({
+      root,
+      task: 9,
+      worktreePath: worktree,
+      judgedHead: () => judged,
+      readHead: () => judged,
+      baseOf: () => 'base-sha',
+      brief: () => 'the brief',
+      prBody: () => 'the body',
+      diff: (base, h) => `diff ${base}...${h}`
+    })
+    const first = stager.stageAttempt(1, 'reviewer', 1)
+    expect(first).not.toBeNull()
+    rmSync(first?.dir as string, { recursive: true, force: true })
+    const again = stager.stageAttempt(1, 'reviewer', 1)
+    expect(existsSync(again?.dir as string)).toBe(true)
+    const before = stager.stage(1)
+    judged = 'a-moved-head'
+    expect(stager.stage(1)).not.toBe(before)
   })
 })

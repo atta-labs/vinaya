@@ -202,6 +202,16 @@ describe('narrate — other records', () => {
     expect(exit({ reason: 'signal' })?.kind).toBe('failed')
   })
 
+  it('a conflict re-entry of a published pull request names the pull request and how many of the bound it spent', () => {
+    expect(narrate({ ...loop, event: 'conflict_reentry', task: 7, pr: 70, attempt: 1, bound: 3 })).toEqual({
+      kind: 'working',
+      text: 'Pull request #70 fell into conflict with the default branch after it was published: the loop re-entered by itself to send it back to the Developer (re-entry 1 of 3).'
+    })
+    expect(narrate({ ...loop, event: 'conflict_reentry', pr: 'x' })?.text).toMatch(
+      /^The pull request fell into conflict/
+    )
+  })
+
   it('no line carries a symbol other than the dash, a time or a path', () => {
     const lines = [
       ...narrated('three-rounds-recurring-finding'),

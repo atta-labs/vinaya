@@ -205,13 +205,22 @@ export function pauseMarker(reason: PauseReason): string {
  * `deriveVerdictPauseDetail`, and every driver-decided pause's own inline
  * `detail:` field) — this function renders whatever it is handed.
  */
+/**
+ * Who the paused run was and how to continue it: the agent and model, and the runner when it is not the standalone
+ * loop. An Atta Engine run resumes through `vinaya task run … --runner atta-engine`, never `dev-review-loop
+ * --resume`, so its pause names that command (`resumeCommand`) and its no-pull-request form carries the runner.
+ */
+export type PauseInvocation = { agent: string; model?: string; runner?: 'atta-engine'; resumeCommand?: string }
+
 export function renderPauseComment(
   prNumber: number,
   reason: PauseReason,
   detail?: string,
-  invocation?: { agent: string; model?: string }
+  invocation?: PauseInvocation
 ): string {
-  const resume = `vinaya dev-review-loop --resume ${prNumber}${invocation ? ` --agent ${invocation.agent}` : ''}${invocation?.model ? ` --model ${invocation.model}` : ''}`
+  const resume =
+    invocation?.resumeCommand ??
+    `vinaya dev-review-loop --resume ${prNumber}${invocation ? ` --agent ${invocation.agent}` : ''}${invocation?.model ? ` --model ${invocation.model}` : ''}`
   return [
     `The dev-review-loop paused: ${reason}${detail ? ` — ${detail}` : ''}.`,
     '',
@@ -248,13 +257,24 @@ export function renderPauseComment(
  * branch that parses as neither falls back to the Issue form, the only address
  * derivable from a task number alone.
  */
-export function noPushResumeArgv(task: number, branch: string, agent?: string, model?: string): string[] {
+export function noPushResumeArgv(
+  task: number,
+  branch: string,
+  agent?: string,
+  model?: string,
+  runner?: 'atta-engine'
+): string[] {
   const identity = parseTaskBranchIdentity(branch)
   const address =
     identity?.kind === 'tranche'
       ? ['task', 'run', identity.tranche, identity.taskId]
       : ['task', 'run', '--issue', String(task)]
-  return [...address, ...(agent ? ['--agent', agent] : []), ...(model ? ['--model', model] : [])]
+  return [
+    ...address,
+    ...(agent ? ['--agent', agent] : []),
+    ...(model ? ['--model', model] : []),
+    ...(runner ? ['--runner', runner] : [])
+  ]
 }
 
 /** A token that needs no shell quoting at all — the shape every real tranche slug, agent and model already has. */
@@ -281,8 +301,14 @@ function shellQuote(token: string): string {
 }
 
 /** `task-status.ts`'s `resumeCommandFor` for the case where there is no pull request to anchor a `--resume` to: the one continuation a before-any-push pause actually has. Rendered from `noPushResumeArgv` — the identical argv `task_resume` spawns — shell-quoted element by element, so the pause comment here, `task-tools/read.ts`'s `permittedNextActions` and the launcher all name one command and a hostile tranche segment cannot turn the printed form into something else. */
-export function noPushResumeCommandFor(task: number, branch: string, agent?: string, model?: string): string {
-  return `vinaya ${noPushResumeArgv(task, branch, agent, model).map(shellQuote).join(' ')}`
+export function noPushResumeCommandFor(
+  task: number,
+  branch: string,
+  agent?: string,
+  model?: string,
+  runner?: 'atta-engine'
+): string {
+  return `vinaya ${noPushResumeArgv(task, branch, agent, model, runner).map(shellQuote).join(' ')}`
 }
 
 /**
@@ -309,7 +335,7 @@ export function renderNoPushStopComment(
   branch: string,
   reason: PauseReason,
   detail?: string,
-  invocation?: { agent: string; model?: string },
+  invocation?: PauseInvocation,
   rulingOrdinal?: number
 ): string {
   // Built by `principalRulingMarker`, never interpolated here: the ordinal the
@@ -328,7 +354,7 @@ export function renderNoPushStopComment(
       `No Principal ruling is needed, and the loop does not retry this by itself: ${SANDBOX_REFUSED_COMMENT_REMEDY} Once the host is repaired, continue with:`,
       '',
       '```',
-      noPushResumeCommandFor(task, branch, invocation?.agent, invocation?.model),
+      noPushResumeCommandFor(task, branch, invocation?.agent, invocation?.model, invocation?.runner),
       '```'
     ].join('\n')
   }
@@ -341,7 +367,7 @@ export function renderNoPushStopComment(
       'No Principal ruling is needed. Once the limit has reset, continue with:',
       '',
       '```',
-      noPushResumeCommandFor(task, branch, invocation?.agent, invocation?.model),
+      noPushResumeCommandFor(task, branch, invocation?.agent, invocation?.model, invocation?.runner),
       '```'
     ].join('\n')
   }
@@ -359,7 +385,7 @@ export function renderNoPushStopComment(
     'Then continue with:',
     '',
     '```',
-    noPushResumeCommandFor(task, branch, invocation?.agent, invocation?.model),
+    noPushResumeCommandFor(task, branch, invocation?.agent, invocation?.model, invocation?.runner),
     '```',
     '',
     "The Operator's own `task_resume` clears this pause too, reading that same ruling from this Issue; `task_cancel` ends it instead."
@@ -414,7 +440,7 @@ export function postIssuePauseComment(
   round: number,
   reason: PauseReason,
   detail?: string,
-  invocation?: { agent: string; model?: string },
+  invocation?: PauseInvocation,
   rulingOrdinal?: number
 ): PauseCommentPostResult {
   const publicDetail = detail === undefined ? undefined : sanitizePublicPauseDetail(detail)
@@ -522,7 +548,7 @@ export function postPauseComment(
   prNumber: number,
   reason: PauseReason,
   detail?: string,
-  invocation?: { agent: string; model?: string }
+  invocation?: PauseInvocation
 ): PauseCommentPostResult {
   // Sanitized HERE, unconditionally — the caller's `detail` may be the raw machine-local
   // string a `decision.detail` field carries (a subprocess's stderr, a

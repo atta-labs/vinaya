@@ -22,13 +22,15 @@ import {
   type SpawnFn,
   type StepNodeResult
 } from '@atta/executor-agent-spawn'
+import { sessionIdOf } from '../../../harness/adapters/agents/structured-result'
 import { loadProcess, type LoadedProcess } from '../../../harness/dev-process/loader/load-process'
 import { SqliteCheckpointer } from '../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
 import {
   resumeProcessRun,
   startProcessRun,
   type ActionRegistry,
-  type ProcessRunOptions
+  type ProcessRunOptions,
+  type RoleLauncher
 } from '../../../harness/dev-process/engine-runtime/run-process'
 import {
   createLogTranslator,
@@ -40,11 +42,14 @@ import {
 import { createVinayaLogProducers, handoffHaltReason, STEP_FAILED } from '../executing/log-events'
 import { createHandoff, liveHandoffDeps, type Handoff, type HandoffDeps } from '../executing/handoff'
 import {
+  conflictReentryBoundDetail,
   fetchCiConclusion,
   fetchConflictingFiles,
   fetchFailedCheckWorkflowRunIds,
   fetchFailingCheckRuns,
   fetchMergeableState,
+  fetchPrState,
+  MAX_AUTOMATIC_CONFLICT_REENTRIES,
   readWorktreeHead,
   rerunFailedWorkflowJobs,
   resolveHead
@@ -88,6 +93,7 @@ import {
   chooseStart,
   claimResume,
   createChildReaper,
+  currentRunGeneration,
   liveResumeDeps,
   lockExitOf,
   onShutdownSignals,
@@ -102,11 +108,14 @@ import {
   SIGNAL_EXIT_CODE,
   takeDriverLock,
   watchForRuling,
+  watchPublishedPullRequest,
+  type PublishedWatch,
   type RecoveryDeps,
   type ResumeDeps,
   type RulingWatch
 } from './run-lifecycle'
 import {
+  conflictReentryEvent,
   createDriverExitRecorder,
   DRIVER_HEARTBEAT_INTERVAL_MS,
   defaultSetHeartbeat,
@@ -118,7 +127,16 @@ import {
   readPauseState
 } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { appendLoopLogLine, appendRunStartMarker, loopLogPathFor } from '../../../apps/cli/src/lib/loop-log'
-import { getProcessSnapshot, readLaunchRecord, terminateChildWithGrace } from '../../../apps/cli/src/lib/dispatch'
+import { CLI_ENTRY_ENV } from '../../../apps/cli/src/lib/cli-entry'
+import { pollMergeableState } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
+import { developerTurnResultJsonSchema } from '../../../apps/cli/src/lib/developer-turn-result'
+import {
+  getProcessSnapshot,
+  readLaunchRecord,
+  completeRunnerDeveloperLaunch,
+  recordRunnerDeveloperLaunch,
+  terminateChildWithGrace
+} from '../../../apps/cli/src/lib/dispatch'
 import { loadConfig } from '../../../apps/cli/src/lib/config'
 import { crossRunnerRefusal, recordTaskRunner } from '../../../apps/cli/src/lib/task-run-engine'
 import { startDevToolsHost, type DevToolsHost } from '../../../apps/cli/src/lib/task-tools/dev-tools-host'
@@ -181,6 +199,7 @@ import {
   AGENT_EXIT_EVENT,
   agentOutput,
   createActions,
+  gatePollOf,
   recordedDispatch,
   recordedScanOutcome,
   recordedVerdicts,
@@ -279,7 +298,7 @@ export function recordedCheckpointModel(runtimeDir: string, task: number): strin
   if (!existsSync(file)) return undefined
   const saver = new SqliteCheckpointer({ path: file, revision: 'unknown' })
   try {
-    const model = saver.latestProvenance(runIdentityOfTask(task).threadId)?.model
+    const model = saver.latestProvenance(runIdentityOfTask(task, currentRunGeneration(saver, task)).threadId)?.model
     return model === '' ? undefined : model
   } finally {
     saver.close()
@@ -391,6 +410,8 @@ export function withPolicyCeilings(loaded: LoadedProcess, runDir: string, maxRou
  * (`classifyReviewOutcome`) and retries it as the standalone loop does. Every other launch, and a killed process,
  * is passed through as it is.
  */
+const STDERR_TAIL_CHARS = 500
+
 export function tolerateReviewerExit(
   spawnFn: SpawnFn,
   isReviewer: (args: readonly string[], env: Readonly<Record<string, string | undefined>> | undefined) => boolean
@@ -400,10 +421,16 @@ export function tolerateReviewerExit(
     if (!isReviewer(args, options?.env)) return child
     const stdoutListeners: Array<(chunk: Buffer | string) => void> = []
     const closeListeners: Array<(code: number | null) => void> = []
+    // The last of what the process wrote to stderr, so a failed launch names its own reason.
+    let stderrTail = ''
+    child.stderr?.on('data', (chunk: Buffer | string) => {
+      stderrTail = (stderrTail + chunk.toString()).slice(-STDERR_TAIL_CHARS)
+    })
     // One close handler on the process: the marker reaches the output before any listener learns of the exit.
     child.on('close', (code) => {
       if (code !== null && code !== 0) {
-        const marker = `${JSON.stringify({ type: AGENT_EXIT_EVENT, exit_code: code })}\n`
+        const stderr = stderrTail.trim()
+        const marker = `${JSON.stringify({ type: AGENT_EXIT_EVENT, exit_code: code, ...(stderr === '' ? {} : { stderr }) })}\n`
         for (const write of stdoutListeners) write(marker)
       }
       for (const listener of closeListeners) listener(code === null ? null : 0)
@@ -439,18 +466,23 @@ export function isReviewerLaunch(generatedRoot: string) {
     )
 }
 
-/** Gives each reviewer launch the scratch directory prepared for that role's current attempt. */
+/**
+ * Gives each reviewer launch the scratch directory prepared for that role's current attempt, and the Developer its
+ * task worktree: the Flow's agent steps all start at the target repository's root, which is the default branch's
+ * checkout, never where the Developer works.
+ */
 export function withReviewerWorkingDirectory(
   spawnFn: SpawnFn,
   generatedRoot: string,
-  directoryFor: (role: HeldVerdictRole) => string | null
+  directoryFor: (role: HeldVerdictRole | 'developer') => string | null
 ): SpawnFn {
   const roots = {
     reviewer: join(generatedRoot, 'code-reviewer'),
-    security: join(generatedRoot, 'security-reviewer')
+    security: join(generatedRoot, 'security-reviewer'),
+    developer: join(generatedRoot, 'developer')
   } as const
   return (command, args, options) => {
-    const role = (Object.entries(roots) as Array<[HeldVerdictRole, string]>).find(
+    const role = (Object.entries(roots) as Array<[HeldVerdictRole | 'developer', string]>).find(
       ([, root]) => options?.env?.CODEX_HOME === root || args.some((arg) => arg.startsWith(`${root}/`))
     )?.[0]
     const directory = role ? directoryFor(role) : null
@@ -577,8 +609,10 @@ export interface LogSinkLike {
 export interface EngineRunOptions {
   args: EngineArgs
   process: LoadedProcess
-  /** The repository root the shim's CLI entry is found under. */
+  /** The repository the task runs in. */
   repoRoot: string
+  /** Where the shim's CLI entry is found: the Vinaya install. Defaults to `repoRoot`, which is the install when Vinaya runs on itself. */
+  cliRoot?: string
   runtimeDir: string
   loopId: string
   taskInput: TaskInput
@@ -597,6 +631,12 @@ export interface EngineRunOptions {
   developerFacts?: () => Promise<DeveloperPromptFacts>
   /** Told when the Developer step starts, so the live context records the head and base that turn publishes against. */
   beginDeveloperTurn?: () => Promise<void>
+  /** Called when a newer ruling resumes the halted run, so the next Developer turn carries the rulings' text. */
+  onRulingResume?: () => void
+  /** Whether the pull request a held verdict would publish is in conflict; the live forge read unless a test supplies its own. */
+  heldPullRequestConflicts?: () => Promise<boolean>
+  /** Called with the Developer's vendor session once its turn's agent has finished. */
+  completeDeveloperTurn?: (resumeId: string | null) => void
   /** The Linux host opt-in: the generated Claude settings allow Unix sockets and the variable is forwarded to the agent. */
   allowUnixSockets?: boolean
   /** The code revision recorded on every checkpoint; defaults to the HEAD of `repoRoot`, the checkout the runner runs from. */
@@ -623,6 +663,11 @@ export interface EngineLifecycleOptions {
   handleSignals?: boolean
   /** After a halt that left a pause, waits for a newer ruling or a cancel and continues the run on a ruling; absent ends the runner at the halt. */
   watch?: RulingWatch
+  /**
+   * After a run that completed, watches its pull request until it is merged or closed, and starts a fresh run on a
+   * conflict with the default branch; absent ends the runner at completion.
+   */
+  publishedWatch?: PublishedWatch
 }
 
 /** The HEAD of the checkout at `repoRoot`, or `unknown` when it is not a git checkout. */
@@ -686,13 +731,18 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   const logPath = loopLogPathFor(null, args.task, options.runtimeDir)
   const narrate = (line: string): void => appendLoopLogLine(logPath, `${new Date().toISOString()}  ${line}`)
   let pausedFor: string | undefined
-  const writeTrace = (outcome: string, results: Record<string, StepNodeResult>, error?: string): void => {
+  const writeTrace = (
+    outcome: string,
+    results: Record<string, StepNodeResult>,
+    error?: string,
+    path: string = tracePath
+  ): void => {
     // The trace carries tool output verbatim, so only its owner reads it.
-    writeFileSync(tracePath, `${JSON.stringify(trace.finish(outcome, results, error, pausedFor), null, 2)}\n`, {
+    writeFileSync(path, `${JSON.stringify(trace.finish(outcome, results, error, pausedFor), null, 2)}\n`, {
       mode: 0o600
     })
-    chmodSync(tracePath, 0o600)
-    out(`trace ${tracePath}`)
+    chmodSync(path, 0o600)
+    out(`trace ${path}`)
   }
 
   // One runner per task: a held lock ends this start before anything is dispatched.
@@ -707,8 +757,10 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     narrate(`engine runner ${lock.message}`)
     out(`engine runner ${lock.message}`)
     await options.sink.drain()
-    writeTrace('refused', {}, lock.message)
-    return { outcome: null, exitCode: 1, tracePath }
+    // The running driver owns `trace.json`; a refused start records itself beside it, never over it.
+    const refusedPath = join(runDir, 'trace-refused.json')
+    writeTrace('refused', {}, lock.message, refusedPath)
+    return { outcome: null, exitCode: 1, tracePath: refusedPath }
   }
   // The task's run is this runner's from here: the Operator routes its controls by this record.
   recordTaskRunner(args.task, 'atta-engine', options.runtimeDir)
@@ -787,6 +839,15 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
 
   // Every pausing exit — a pause decision and an error alike — ends here: records, one comment, then the halt.
   const taskForHandoff = options.taskInput
+  /** The open pull request on the run's branch, or null when none is or it cannot be read. */
+  const openPullRequest = (): number | null => {
+    const find = taskForHandoff?.bound?.findOpenPrForBranch
+    try {
+      return find && taskForHandoff?.branch ? (find(taskForHandoff.branch)?.number ?? null) : null
+    } catch {
+      return null
+    }
+  }
   const makeHandoff = (): Handoff =>
     createHandoff(
       {
@@ -804,16 +865,8 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
             return 'unknown'
           }
         },
-        prNumber: () => {
-          if (prNumber > 0) return prNumber
-          // The Developer may have opened the pull request since the reconcile step looked.
-          const find = taskForHandoff?.bound?.findOpenPrForBranch
-          try {
-            return find && taskForHandoff?.branch ? (find(taskForHandoff.branch)?.number ?? null) : null
-          } catch {
-            return null
-          }
-        },
+        // The Developer may have opened the pull request since the reconcile step looked.
+        prNumber: () => (prNumber > 0 ? prNumber : openPullRequest()),
         versions: () => {
           if (!taskForHandoff?.inputVersions) throw new Error('no input versions are wired for this run')
           return taskForHandoff.inputVersions()
@@ -875,21 +928,32 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       const shimPath = join(runDir, roleHost.file)
       writeFileSync(
         shimPath,
-        shimContent(socketPath, options.execPath ?? process.execPath, cliEntryOf(options.repoRoot))
+        shimContent(socketPath, options.execPath ?? process.execPath, cliEntryOf(options.cliRoot ?? options.repoRoot))
       )
       chmodSync(shimPath, 0o755)
       mcpCommands[roleHost.role === 'security' ? 'security-reviewer' : roleHost.role] = shimPath
     }
-    const roles = createRoleLaunchers({
-      vendor: vendorOf(args.agent),
-      generatedRoot: join(runDir, 'generated'),
-      variables: options.taskInput?.worktreePath ? grantVariables(options.taskInput.worktreePath, runDir) : undefined,
-      mcpCommands,
-      model: args.model,
-      allowUnixSockets: options.allowUnixSockets === true,
-      stageCodexLogin: true,
-      timeouts: roleTimeouts(lifecycle.dispatchConfig)
-    })
+    const roles: Record<string, RoleLauncher[string]> = {
+      ...createRoleLaunchers({
+        vendor: vendorOf(args.agent),
+        generatedRoot: join(runDir, 'generated'),
+        variables: options.taskInput?.worktreePath
+          ? grantVariables(options.taskInput.worktreePath, runDir, options.repoRoot)
+          : undefined,
+        mcpCommands,
+        model: args.model,
+        allowUnixSockets: options.allowUnixSockets === true,
+        stageCodexLogin: true,
+        timeouts: roleTimeouts(lifecycle.dispatchConfig)
+      })
+    }
+    // Each Developer launch carries the turn schema the standalone loop builds per turn: the task's current
+    // required sources and known finding ids, never the static role schema (which allows no source use).
+    if (options.taskInput?.developerContext && roles.developer) {
+      roles.developer = withTurnSchema(roles.developer, join(runDir, 'generated', 'developer'), () =>
+        developerTurnResultJsonSchema(options.taskInput.developerContext)
+      )
+    }
     // The Developer's sandbox is probed from the launch shape just generated, before the first agent step.
     if (options.taskInput && roles.developer) {
       const vendor = vendorOf(args.agent)
@@ -904,8 +968,11 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       Object.entries(base).map(([name, action]) => [
         name,
         async (context: Parameters<typeof action>[0]) => {
-          // Each Developer turn records the head it starts from, as the standalone loop does.
-          if (context.nodeId === 'develop') await options.beginDeveloperTurn?.()
+          // The step after the Developer's agent: its turn is over, so its launch record is closed with the session.
+          if (context.nodeId === 'validate-developer-output') {
+            const develop = context.results.develop as { sessionId?: string; events?: unknown[] } | undefined
+            options.completeDeveloperTurn?.(develop?.sessionId ?? sessionIdOf(develop?.events ?? []) ?? null)
+          }
           const result = await action(context)
           if (context.nodeId === 'reconcile-external-state') {
             try {
@@ -925,7 +992,11 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     const revision = options.revision ?? checkoutRevision(options.repoRoot)
     const saver = new SqliteCheckpointer({ path: checkpointPath(runDir), revision, model: args.model })
     checkpointer = saver
-    const identity = runIdentityOfTask(args.task)
+    // The task's newest run: a completed one is watched, and a conflict on its pull request starts the next.
+    let generation = currentRunGeneration(saver, args.task)
+    let identity = runIdentityOfTask(args.task, generation)
+    // This runner's automatic conflict re-entries of the published pull request.
+    let conflictReentries = 0
     // The run compiles its own Flow, ceilings from the review policy; an unreadable policy leaves the checked-in one,
     // and the prepare-run step pauses on that policy before any decision is reached.
     const runProcess = (): LoadedProcess => {
@@ -941,7 +1012,21 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       outcome = null
       error = undefined
       pausedFor = undefined
-      const choice = await chooseStart(saver, identity)
+      let choice = await chooseStart(saver, identity)
+      // A checkpoint resume continues past steps it already ran, the mergeability check among them: when the pull
+      // request is in conflict now, the run starts the next generation instead, as the conflict re-entry does, so the
+      // Flow's mergeability step sends the conflict back to the Developer before any publication.
+      if (
+        choice.kind === 'resume' &&
+        (await (options.heldPullRequestConflicts ?? heldPullRequestConflictsLive(options.taskInput))())
+      ) {
+        generation += 1
+        identity = runIdentityOfTask(args.task, generation)
+        narrate(
+          `the pull request is in conflict with the default branch: starting a fresh run (${identity.runId}) instead of resuming the checkpoint`
+        )
+        choice = await chooseStart(saver, identity)
+      }
       appendRunStartMarker(logPath, {
         role: 'engine-runner',
         pid: lifecycle.pid ?? process.pid,
@@ -954,7 +1039,9 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           ? `resuming the run from its checkpoint (${identity.runId})`
           : choice.kind === 'completed'
             ? 'the checkpoint records a completed run; nothing to run'
-            : `no checkpoint; starting fresh${branch ? ` on branch ${branch}` : ''}`
+            : choice.kind === 'exhausted'
+              ? 'the checkpoint records a run that spent its round budget; a ruling continues it as a fresh run'
+              : `no checkpoint; starting fresh${branch ? ` on branch ${branch}` : ''}`
       )
       const moved = choice.kind === 'resume' ? revisionMovedLine(choice.checkpointRevision, revision) : null
       if (moved !== null) narrate(moved)
@@ -963,16 +1050,29 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       const recovery = lifecycle.recovery ? recoverRun(lifecycle.recovery) : null
       if (recovery !== null && options.taskInput) {
         options.taskInput.loopState = recovery.state
-        if (recovery.nextRound !== null) options.taskInput.seedRound?.(recovery.nextRound)
+        // A checkpoint resume continues inside the round it stopped in, so it keeps that round; only a fresh start
+        // on an existing branch begins the round after the journal's last.
+        if (recovery.nextRound !== null && choice.kind !== 'resume') options.taskInput.seedRound?.(recovery.nextRound)
       }
       if (recovery?.refusal) {
         narrate(`not dispatching: ${recovery.refusal}`)
         throw new Error(recovery.refusal)
       }
       translator.beginLeg({ resumed: choice.kind === 'resume' })
+      // A held verdict is published only while its pull request is not in conflict: a conflicting head runs the
+      // Flow, whose mergeability step sends it back to the Developer before any publication.
+      const heldUsable =
+        choice.kind !== 'completed' &&
+        recovery?.held !== undefined &&
+        recovery.held !== null &&
+        !(await (options.heldPullRequestConflicts ?? heldPullRequestConflictsLive(options.taskInput))())
+      if (choice.kind !== 'completed' && choice.kind !== 'exhausted' && recovery?.held && !heldUsable)
+        narrate('held clean verdict not published: the pull request is in conflict with the default branch')
       if (choice.kind === 'completed') {
         legOutcome = { reason: 'completed' }
-      } else if (recovery?.held) {
+      } else if (choice.kind === 'exhausted') {
+        legOutcome = { reason: 'exhausted' }
+      } else if (recovery?.held && heldUsable) {
         // A clean verdict pair still bound to the current head is published as it stands: no review is dispatched again.
         narrate(`held clean verdict from round ${recovery.held.round} still covers the head; publishing it`)
         options.taskInput?.seedRound?.(recovery.held.round)
@@ -1002,8 +1102,12 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           ...(developerFacts
             ? {
                 stepPrompts: {
-                  develop: async (rendered, results, context) =>
-                    developerPrompt(rendered, await developerFacts(), results, context),
+                  develop: async (rendered, results, context) => {
+                    // Each Developer turn records the head it starts from and its launch, as the standalone loop does
+                    // at each dispatch. `develop` is an agent step, so the action wrapper below never sees it.
+                    await options.beginDeveloperTurn?.()
+                    return developerPrompt(rendered, await developerFacts(), results, context)
+                  },
                   ...(options.taskInput?.reviewerPrompt
                     ? {
                         'code-review': async (_rendered, results) =>
@@ -1016,10 +1120,10 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
               }
             : {}),
           spawnFn: tolerateReviewerExit(
-            withReviewerWorkingDirectory(
-              reaper.spawnFn,
-              join(runDir, 'generated'),
-              (role) => options.taskInput?.reviewerWorkingDirectory?.(role) ?? null
+            withReviewerWorkingDirectory(reaper.spawnFn, join(runDir, 'generated'), (role) =>
+              role === 'developer'
+                ? (options.taskInput?.worktreePath ?? null)
+                : (options.taskInput?.reviewerWorkingDirectory?.(role) ?? null)
             ),
             isReviewerLaunch(join(runDir, 'generated'))
           ),
@@ -1052,17 +1156,77 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         legOutcome = handOffError(error)
         translator.endLeg(legOutcome)
       }
-      if (!lifecycle.watch || legOutcome?.reason !== 'paused' || signalled !== null) break
+      if (lifecycle.publishedWatch && legOutcome?.reason === 'completed' && signalled === null) {
+        const published = prNumber > 0 ? prNumber : openPullRequest()
+        if (published === null) break
+        narrate(`watching PR #${published} after its publication, until it is merged or closed`)
+        const read = await watchPublishedPullRequest(published, lifecycle.publishedWatch, stopWatching.signal, narrate)
+        if (read !== 'conflicting') {
+          narrate(read === 'stopped' ? 'the watch was stopped; ending' : `PR #${published} was ${read}; ending`)
+          break
+        }
+        if (conflictReentries >= MAX_AUTOMATIC_CONFLICT_REENTRIES) {
+          // The bound is spent: a person decides, through the ordinary pause and its comment.
+          narrate(
+            `PR #${published} fell into conflict with the default branch again, and its ${MAX_AUTOMATIC_CONFLICT_REENTRIES} automatic re-entries are spent; pausing for a person`
+          )
+          handoff = makeHandoff()
+          if (taskForHandoff) taskForHandoff.handoff = handoff
+          handoff.pause({
+            reason: 'repeat_failure',
+            detail: conflictReentryBoundDetail(published, MAX_AUTOMATIC_CONFLICT_REENTRIES)
+          })
+          legOutcome = { reason: 'paused', haltReason: handoffHaltReason('repeat_failure') }
+          break
+        }
+        conflictReentries += 1
+        log(
+          conflictReentryEvent({
+            loopId: options.loopId,
+            task: args.task,
+            prNumber: published,
+            attempt: conflictReentries,
+            bound: MAX_AUTOMATIC_CONFLICT_REENTRIES
+          })
+        )
+        // A completed checkpoint has nothing left to run: the re-entry is a fresh run of the next generation, which
+        // attaches to the open pull request and sends the Developer back with the conflicting files.
+        generation += 1
+        identity = runIdentityOfTask(args.task, generation)
+        narrate(
+          `PR #${published} fell into conflict with the default branch after it was published: starting a fresh run (${identity.runId}) to send it back to the Developer (re-entry ${conflictReentries} of ${MAX_AUTOMATIC_CONFLICT_REENTRIES})`
+        )
+        control = createRunControl()
+        reapOnHalt()
+        handoff = makeHandoff()
+        if (taskForHandoff) taskForHandoff.handoff = handoff
+        continue
+      }
+      // The Flow spent a decision's revision budget (the review policy's round cap): a pause like any other, made
+      // durable by the handoff, so its comment asks for the ruling the watch below then picks up.
+      const exhausted = legOutcome?.reason === 'exhausted' && signalled === null
+      if (exhausted)
+        handoff.pause({ reason: 'max_rounds', detail: 'the round cap is reached: a ruling grants a fresh run' })
+      if (!lifecycle.watch || (legOutcome?.reason !== 'paused' && !exhausted) || signalled !== null) break
       narrate('the run is halted; watching for a newer ruling or a cancel')
       const watched = await watchForRuling(options.runtimeDir, args.task, lifecycle.watch, stopWatching.signal, narrate)
-      if (watched.kind === 'ruled') narrate(`a newer ruling resumed escalation ${watched.escalationId}`)
-      else if (watched.kind === 'cancelled') {
+      if (watched.kind === 'ruled') {
+        narrate(`a newer ruling resumed escalation ${watched.escalationId}`)
+        options.onRulingResume?.()
+      } else if (watched.kind === 'cancelled') {
         // The Operator's cancel consumed the resolution and fenced the effects; the run only ends.
         cancelledByWatch = true
         narrate('the pause was cancelled; ending')
       } else if (watched.kind === 'consumed') narrate('another process claimed the resolution and owns the run; ending')
       else if (watched.kind === 'refused') narrate(`the resolution was refused: ${watched.message}`)
       if (watched.kind !== 'ruled') break
+      // An exhausted checkpoint would exhaust again at once: the ruling continues as a fresh run of the next
+      // generation, which attaches to the open pull request with a fresh revision budget.
+      if (exhausted) {
+        generation += 1
+        identity = runIdentityOfTask(args.task, generation)
+        narrate(`the ruling continues past the round cap as a fresh run (${identity.runId})`)
+      }
       control = createRunControl()
       reapOnHalt()
       handoff = makeHandoff()
@@ -1160,9 +1324,15 @@ export function engineLiveDevToolsContext(input: {
   round: () => number
   /** The loop operations the context reads; the real ones unless a test supplies its own. */
   deps?: LiveDeveloperContextLoopDeps
+  /** Writes the turn's Developer launch record; the real writer unless a test supplies its own. */
+  recordLaunch?: typeof recordRunnerDeveloperLaunch
+  /** Closes the turn's Developer launch record; the real one unless a test supplies its own. */
+  completeLaunch?: typeof completeRunnerDeveloperLaunch
 }): {
   context: DevToolContext
   beginTurn: () => Promise<void>
+  /** Closes this turn's launch record, completed, with the Developer's vendor session bound. */
+  completeTurn: (resumeId: string | null) => void
   state: LivePublicationState
   /** The protected paths written since the turn began that no driver tool call wrote. */
   changedProtectedPaths: () => string[]
@@ -1203,7 +1373,27 @@ export function engineLiveDevToolsContext(input: {
     )
   }
   let turn = buildTurnContext()
+  let launchRunId: string | null = null
+  const completeTurn = (resumeId: string | null): void => {
+    if (launchRunId === null) return
+    ;(input.completeLaunch ?? completeRunnerDeveloperLaunch)({
+      agent: input.agent,
+      repo: input.repo,
+      task: input.task,
+      runId: launchRunId,
+      resumeId
+    })
+    launchRunId = null
+  }
   const beginTurn = async (): Promise<void> => {
+    // The Broker authenticates this turn's pushes against a Developer launch record; the Engine's executor
+    // spawns the agent itself, so the runner writes that record here.
+    launchRunId = (input.recordLaunch ?? recordRunnerDeveloperLaunch)({
+      agent: input.agent,
+      repo: input.repo,
+      task: input.task,
+      round: input.round()
+    })
     turn = buildTurnContext()
     state.turnPreHead = deps.readWorktreeHead(input.worktreePath)
     state.turnPublicationRefusal = null
@@ -1219,7 +1409,7 @@ export function engineLiveDevToolsContext(input: {
     runChecks: () => turn.runChecks(),
     fetchDocumentation: (request) => turn.fetchDocumentation(request)
   }
-  return { context, beginTurn, state, changedProtectedPaths: () => attribution.changedPaths() }
+  return { context, beginTurn, completeTurn, state, changedProtectedPaths: () => attribution.changedPaths() }
 }
 
 /** The CLI entry script under `repoRoot`: the shim's bridge and the gate checks both run it. */
@@ -1298,6 +1488,8 @@ export async function liveTaskInput(
     completion?: Partial<BoundFunctions>
     /** The repository (`owner/repo`) the round's manifest record names. */
     repository?: string
+    /** Where the CLI the checks run from lives; defaults to `repoRoot`. The live runner passes the Vinaya install, which differs from the task's repository when Vinaya is adopted elsewhere. */
+    cliRoot?: string
     reviewSources?: Partial<
       Pick<VinayaReviewInputDeps, 'judgedHead' | 'readHead' | 'baseOf' | 'brief' | 'prBody' | 'diff' | 'priorFindings'>
     >
@@ -1432,7 +1624,7 @@ export async function liveTaskInput(
     frozenBrief: () => forge.fetchFrozenBrief(args.task),
     stageReviewInput: (n) => reviewInput.stage(n),
     runtimeDir,
-    cliEntry: cliEntryOf(repoRoot),
+    cliEntry: cliEntryOf(lookups.cliRoot ?? repoRoot),
     branch,
     issueNumber: args.task,
     worktreePath,
@@ -1576,6 +1768,8 @@ export function liveDeveloperFacts(input: {
   round: () => number
   /** The refusal the Developer's last publication met, read each time the step starts. */
   lastPushRefusal?: () => string | null
+  /** Whether this turn is the first after a resume from a ruling; reading it clears it. */
+  takeRulingsOwed?: () => boolean
 }): () => Promise<DeveloperPromptFacts> {
   const { task, repoRoot, runtimeDir, branch, worktreePath } = input
   const forge: EngineForge = { ...liveForge, ...input.forge }
@@ -1635,6 +1829,7 @@ export function liveDeveloperFacts(input: {
       })(),
       keptWork: readUnpublishedWork(worktreePath),
       lastPushRefusal: input.lastPushRefusal?.() ?? null,
+      rulingsOwed: input.takeRulingsOwed?.() ?? false,
       resume: {
         task,
         branch,
@@ -1728,7 +1923,15 @@ export function refuseAnotherRunnersPause(runtimeDir: string, task: number): voi
 }
 
 /** Runs one task on the Engine against the live forge, git and Log. */
-async function runLive(args: EngineArgs, loaded: LoadedProcess, repoRoot: string, runtimeDir: string): Promise<number> {
+async function runLive(
+  args: EngineArgs,
+  loaded: LoadedProcess,
+  repoRoot: string,
+  runtimeDir: string,
+  opts: { rulingsOwed?: boolean } = {}
+): Promise<number> {
+  // The first Developer turn after a resume from a ruling carries the rulings' text, once.
+  const rulings = { owed: opts.rulingsOwed === true }
   refuseAnotherRunnersPause(runtimeDir, args.task)
   configureEngineLogEnvironment()
   setEngineLogIdentity(loaded)
@@ -1737,6 +1940,7 @@ async function runLive(args: EngineArgs, loaded: LoadedProcess, repoRoot: string
   process.env.VINAYA_RUN = loopId
   const repo = liveRepo()
   const taskInput = await liveTaskInput(args, repoRoot, runtimeDir, loopId, {
+    cliRoot: VINAYA_ROOT,
     ...(repo ? { repository: `${repo.owner}/${repo.repo}` } : {})
   })
   const liveContext = engineLiveDevToolsContext({
@@ -1754,12 +1958,19 @@ async function runLive(args: EngineArgs, loaded: LoadedProcess, repoRoot: string
     args,
     process: loaded,
     repoRoot,
+    // The shim's CLI entry lives in the Vinaya install, not in the task's repository.
+    cliRoot: VINAYA_ROOT,
     runtimeDir,
     loopId,
     taskInput,
     sink,
     startHost: startDevToolsHost,
     developerFacts: liveDeveloperFacts({
+      takeRulingsOwed: () => {
+        const owed = rulings.owed
+        rulings.owed = false
+        return owed
+      },
       task: args.task,
       repoRoot,
       runtimeDir,
@@ -1772,18 +1983,33 @@ async function runLive(args: EngineArgs, loaded: LoadedProcess, repoRoot: string
     lifecycle: {
       dispatchConfig: loadConfig()?.dispatch,
       recovery: liveRecovery({ args, runtimeDir, taskInput }),
-      watch: { deps: liveResumeDeps, pollMs: rulingPollMs(), sleep: abortableSleep }
+      watch: { deps: liveResumeDeps, pollMs: rulingPollMs(), sleep: abortableSleep },
+      publishedWatch: { fetchPrState, fetchMergeableState, pollMs: rulingPollMs(), sleep: abortableSleep }
     },
     devToolsContext: liveContext.context,
-    beginDeveloperTurn: liveContext.beginTurn
+    onRulingResume: () => {
+      rulings.owed = true
+    },
+    beginDeveloperTurn: liveContext.beginTurn,
+    completeDeveloperTurn: liveContext.completeTurn
   })
   // The handoff's escalation record logs through the default sink, which nothing else drains.
   await drainLogSink()
   return result.exitCode
 }
 
+/** The Vinaya install this runner ships in: where the CLI and the process folder live. */
+const VINAYA_ROOT = resolve(import.meta.dir, '../../..')
+
+/** The repository the task runs in: the git top level of the directory the runner was started from, which is not the Vinaya install when Vinaya is adopted elsewhere. */
+export function targetRepoRoot(cwd: string = process.cwd()): string {
+  return sh('git', ['rev-parse', '--show-toplevel'], cwd).trim()
+}
+
 export async function main(argv: readonly string[]): Promise<number> {
-  const repoRoot = resolve(import.meta.dir, '../../..')
+  // This process hosts the CLI's code without being the CLI: commands it runs as the CLI start the install's entry.
+  process.env[CLI_ENTRY_ENV] = cliEntryOf(VINAYA_ROOT)
+  const repoRoot = targetRepoRoot()
   const loaded = loadProcess(resolve(import.meta.dir, '..'))
   const runtimeDir = await liveRuntimeDir()
   if (argv.includes('--resume')) {
@@ -1793,7 +2019,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       runtimeDir,
       run: async (resolved) => ({
         outcome: null,
-        exitCode: await runLive(resolved, loaded, repoRoot, runtimeDir),
+        exitCode: await runLive(resolved, loaded, repoRoot, runtimeDir, { rulingsOwed: true }),
         tracePath: ''
       })
     })
@@ -1822,4 +2048,45 @@ if (import.meta.main) {
       process.exit(1)
     }
   )
+}
+
+/**
+ * A role launcher whose output schema is rebuilt at every launch: inline for Claude (`--json-schema <json>`),
+ * a rewritten file for Codex (`--output-schema <path>`). Any other argument is unchanged.
+ */
+export function withTurnSchema(
+  launcher: RoleLauncher[string],
+  generatedDir: string,
+  schema: () => Record<string, unknown>
+): RoleLauncher[string] {
+  return {
+    ...launcher,
+    buildArgs: (input) => {
+      const args = [...launcher.buildArgs(input)]
+      const current = schema()
+      const inline = args.indexOf('--json-schema')
+      if (inline !== -1 && inline + 1 < args.length) args[inline + 1] = JSON.stringify(current)
+      const file = args.indexOf('--output-schema')
+      if (file !== -1 && file + 1 < args.length) {
+        const path = join(generatedDir, 'turn-output.schema.json')
+        writeFileSync(path, JSON.stringify(current))
+        args[file + 1] = path
+      }
+      return args
+    }
+  }
+}
+
+/** The live read behind a held verdict's conflict guard: the task's open pull request, polled for mergeability as the Flow's own step polls it. */
+export function heldPullRequestConflictsLive(task: TaskInput | undefined): () => Promise<boolean> {
+  return async () => {
+    if (!task) return false
+    const pr = (task.bound?.findOpenPrForBranch ?? findOpenPrForBranch)(task.branch)
+    if (pr === null) return false
+    const state = await pollMergeableState(pr.number, {
+      ...gatePollOf(task),
+      fetchMergeableState: task.bound?.fetchMergeableState ?? fetchMergeableState
+    })
+    return state === 'CONFLICTING'
+  }
 }

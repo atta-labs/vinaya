@@ -19,7 +19,7 @@ import type { SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { fetchLoopHistory } from '../../../apps/cli/src/lib/dev-review-loop/journal-history'
 import { heldVerdictPath } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import { loadProcess } from '../../../harness/dev-process/loader/load-process'
-import { type EngineForge, liveDeveloperFacts, liveTaskInput, runEngine } from '../bin/run-engine'
+import { type EngineForge, liveDeveloperFacts, liveTaskInput, runDirectory, runEngine } from '../bin/run-engine'
 
 // An end-to-end replay of one task on the Engine path: the real packed Engine, the real runner
 // (`runEngine`, `liveTaskInput`, `liveDeveloperFacts`), the real action bindings, the real adapters and the
@@ -275,10 +275,19 @@ async function replay(scenario: Scenario) {
   const rounds: Record<Step, number> = { develop: 0, 'code-review': 0, 'security-review': 0 }
   const events: Array<{ event?: string; kind?: string }> = []
   const handoff = recordedHandoff()
+  let developerTurnsBegun = 0
+  const developerTurnsCompleted: Array<string | null> = []
   const result = await runEngine({
+    beginDeveloperTurn: async () => {
+      developerTurnsBegun += 1
+    },
+    completeDeveloperTurn: (resumeId) => {
+      developerTurnsCompleted.push(resumeId)
+    },
     args,
     process: loaded,
     repoRoot: root,
+    cliRoot: VINAYA_INSTALL,
     runtimeDir,
     loopId: 'replay-loop',
     taskInput,
@@ -331,8 +340,26 @@ async function replay(scenario: Scenario) {
     error?: string
     pauseReason?: string
   }
-  return { root, runtimeDir, worktree, before, result, trace, spawns, forgeCalls, published, cliCalls, events, handoff }
+  return {
+    root,
+    runtimeDir,
+    worktree,
+    before,
+    result,
+    trace,
+    spawns,
+    forgeCalls,
+    published,
+    cliCalls,
+    events,
+    handoff,
+    developerTurnsBegun,
+    developerTurnsCompleted
+  }
 }
+
+/** A Vinaya install that is not the task's repository, as when Vinaya is adopted elsewhere. */
+const VINAYA_INSTALL = '/opt/vinaya-install'
 
 const generated = (runtimeDir: string, role: string, file: string) =>
   readFileSync(join(runtimeDir, 'engine-runs', String(TASK), 'generated', role, file), 'utf8')
@@ -357,6 +384,19 @@ for (const vendor of ['claude', 'codex'] as const)
       expect(run.trace.outcome).toBe('completed')
       expect(run.result.exitCode).toBe(0)
       expect(run.spawns.map((s) => s.step)).toEqual(['develop', 'code-review', 'security-review'])
+      // Each Developer launch begins a turn: its head and its launch record are written before the agent starts.
+      expect(run.developerTurnsBegun).toBe(1)
+      // The turn's launch record is closed with the Developer's own vendor session, so a later run can resume it.
+      expect(run.developerTurnsCompleted).toHaveLength(1)
+      expect(typeof run.developerTurnsCompleted[0]).toBe('string')
+      // The tool bridges start the CLI of the Vinaya install, never one under the task's repository.
+      const bridges = readdirSync(runDirectory(run.runtimeDir, TASK)).filter((f) => f.endsWith('.sh'))
+      expect(bridges.length).toBeGreaterThan(0)
+      for (const bridge of bridges) {
+        const text = readFileSync(join(runDirectory(run.runtimeDir, TASK), bridge), 'utf8')
+        expect(text).toContain(join(VINAYA_INSTALL, 'apps', 'cli', 'src', 'index.ts'))
+        expect(text).not.toContain(join(run.root, 'apps', 'cli'))
+      }
       // The forge calls the runner makes, in order.
       expect(run.forgeCalls).toEqual([`readiness task/issue-${TASK}`, `worktree task/issue-${TASK}`, 'publish round 1'])
       expect(run.published).toEqual([

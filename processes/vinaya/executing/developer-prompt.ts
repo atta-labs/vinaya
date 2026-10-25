@@ -45,6 +45,8 @@ export interface DeveloperPromptFacts {
   keptWork: { dirtyFiles: readonly string[]; aheadCount: number } | null
   /** The pre-push hook's refusal of the Developer's last publication, quoted back so the next turn fixes its cause; absent or null when none is pending. */
   lastPushRefusal?: string | null
+  /** True for the first Developer turn after the run resumed from a Principal ruling. */
+  rulingsOwed?: boolean
   /** What a resumed session is told about where it is. */
   resume: { task: number; branch: string; worktree: string; remoteHead: string | null }
   /** The previous round's held review verdicts, rendered (reviewer, then security). */
@@ -103,6 +105,13 @@ function forgeCiSummary(failingChecks: readonly string[]): string {
   return `CI is red on the last head. Failing check-run(s): ${
     failingChecks.length > 0 ? failingChecks.join(', ') : '(unknown)'
   }. Fix the failing check(s).`
+}
+
+/** The Principal rulings on the task's pull request, in their own words; null when there are none. */
+export function pullRequestRulingsBlock(rulings: readonly string[]): string | null {
+  return rulings.length === 0
+    ? null
+    : `Principal rulings on this pull request:\n\n${rulings.map((r, i) => `${i + 1}. ${r}`).join('\n')}\n`
 }
 
 /** The loop's `issueRulingsBlock`: the Issue's rulings after the brief, or null when there are none. */
@@ -322,6 +331,11 @@ export function developerPrompt(
     facts.sources.block,
     renderContextPacket(packet),
     resumeContextBlock(facts.resume),
+    // The turn after a resume from a ruling carries the rulings' own words, not only their ordinal in the
+    // packet: a ruling the Developer cannot read answers nothing.
+    // Only the first turn after a resume from a ruling, as the loop's own dispatch carries it once.
+    facts.rulingsOwed === true && kind !== 'open-pull-request' ? issueRulingsBlock(facts.issueRulings) : null,
+    facts.rulingsOwed === true ? pullRequestRulingsBlock(facts.rulings) : null,
     ...(answerPromptText(kind, facts, results) === null
       ? [pushRefusalPrompt(facts), revisionPromptText(kind, facts, results)]
       : [answerPromptText(kind, facts, results)]),

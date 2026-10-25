@@ -296,6 +296,7 @@ describe('role-grant vendor parity', () => {
       expect(generatedFile(codex, 'hooks/pre-tool-use.mjs')).toContain('permissionDecision')
       expect(codex.launch).toContain('--dangerously-bypass-hook-trust')
       expect(codex.launch).toContain('--json')
+      expect(codex.launch).toContain('--skip-git-repo-check')
       expect(generatedFile(codex, 'config.toml')).toContain(
         'matcher = "^(Bash|apply_patch|update_plan|view_image|web_fetch|spawn_agent|send_input|resume_agent|wait_agent|close_agent)$"'
       )

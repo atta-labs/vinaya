@@ -28,4 +28,12 @@ describe('grantVariables', () => {
     expect(vars.GIT_COMMON_DIR).toBe(join(missing, '.git'))
     expect(existsSync(vars.SCRATCH as string)).toBe(true)
   })
+
+  test('a worktree that does not exist yet takes the common directory of its repository', () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), 'grant-repo-')))
+    execFileSync('git', ['init', '-q', repo])
+    const runDir = mkdtempSync(join(tmpdir(), 'grant-run-'))
+    const vars = grantVariables(join(repo, '.worktrees', 'task', 'issue-9'), runDir, repo)
+    expect(vars.GIT_COMMON_DIR).toBe(join(repo, '.git'))
+  })
 })

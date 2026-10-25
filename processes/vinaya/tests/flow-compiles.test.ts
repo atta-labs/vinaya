@@ -32,7 +32,7 @@ describe('Vinaya process packed runtime boundary', () => {
     const steps = flow.steps as Array<{ type: string; role?: string; permission?: string }>
     const agents = steps.filter((step) => step.type === 'agent')
     expect(plan.graph.nodes).toBeDefined()
-    expect(Object.keys(plan.graph.nodes)).toHaveLength(25)
+    expect(Object.keys(plan.graph.nodes)).toHaveLength(27)
     for (const step of agents) {
       expect(step.permission).toBe(`${step.role}/grants.yaml`)
       const roleFolder = join(dirname(loaded.flowPath), step.role!)
@@ -66,5 +66,25 @@ describe('Vinaya process packed runtime boundary', () => {
     expect(ids.indexOf('classify-mergeability')).toBe(ids.indexOf('check-mergeability') + 1)
     const plan = compileFlow(flow, 'Compile the Vinaya process')
     for (const id of order) expect(Object.keys(plan.graph.nodes)).toContain(id)
+  })
+
+  test('mergeability is read again before publication, and a conflicting head goes back to the Developer', () => {
+    const loaded = loadProcess(resolve(import.meta.dir, '..'))
+    const flow = camelize(parse(readFileSync(loaded.flowPath, 'utf8'))) as StepsFlow
+    const steps = flow.steps as Array<{ id: string; decision?: Record<string, unknown> }>
+    const ids = steps.map((step) => step.id)
+    expect(ids.slice(-3)).toEqual([
+      'check-publish-mergeability',
+      'classify-publish-mergeability',
+      'publish-ready-for-merge'
+    ])
+    expect(steps.find((step) => step.id === 'classify-live-result')?.decision).toMatchObject({
+      ifFalse: 'check-publish-mergeability'
+    })
+    expect(steps.find((step) => step.id === 'classify-publish-mergeability')?.decision).toMatchObject({
+      examine: 'check-publish-mergeability',
+      ifTrue: 'develop',
+      ifFalse: 'publish-ready-for-merge'
+    })
   })
 })

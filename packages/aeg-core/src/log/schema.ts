@@ -673,6 +673,22 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       phase: z.string()
     })
     .strict(),
+  // An approved, published pull request that fell into conflict with the
+  // default branch, re-entered by the watching driver with no ruling: the
+  // Developer is sent back to merge the default branch in, and the gates and
+  // both reviews run again on the new head. `attempt` counts this driver's
+  // re-entries for `pr`, from 1; `bound` is the most it makes before it
+  // pauses for a person. A NEW, additive member.
+  z
+    .object({
+      ...loopShared,
+      event: z.literal('conflict_reentry'),
+      task: z.number().int(),
+      pr: z.number().int().positive(),
+      attempt: z.number().int().positive(),
+      bound: z.number().int().positive()
+    })
+    .strict(),
   // (O2/O3) Emitted exactly once when a review-loop driver process
   // ends, on every exit path the driver already traces in its role log
   // (a re-exec hand-off, an uncaught error, an OS signal) plus a normal

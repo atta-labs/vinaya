@@ -324,6 +324,8 @@ describe('an empty fetch issues no source receipt on the Engine path', () => {
   const fetchThenValidate = async (body: string) => {
     const runtimeDir = mkdtempSync(join(tmpdir(), 'prepare-run-fetch-'))
     const live = engineLiveDevToolsContext({
+      recordLaunch: () => 'test-run',
+      completeLaunch: () => {},
       branch: BRANCH,
       worktreePath: '/worktree',
       task: TASK,

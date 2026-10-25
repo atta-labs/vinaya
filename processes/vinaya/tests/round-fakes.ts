@@ -70,12 +70,17 @@ export function keepLogLocal(): void {
   process.env[LOG_FOLDER_ONLY_ENV] = '1'
 }
 
-/** The forge-gate steps, each replaced by one that passes: a mergeable head, a CI read that decides nothing, a premise that holds. */
+/**
+ * The forge-gate steps, each replaced by one that passes: a mergeable head, a CI read that decides nothing, a premise
+ * that holds, and a head still mergeable when it is published.
+ */
 export const PASSING_FORGE_GATES: ActionRegistry = {
   'vinaya.check-mergeability': () => ({ exitCode: 0 }),
   'vinaya.classify-mergeability': () => ({ exitCode: 0 }),
   'vinaya.read-forge-ci': () => ({ exitCode: 0 }),
-  'vinaya.check-premise': () => ({ exitCode: 0 })
+  'vinaya.check-premise': () => ({ exitCode: 0 }),
+  'vinaya.check-publish-mergeability': () => ({ exitCode: 0 }),
+  'vinaya.classify-publish-mergeability': () => ({ exitCode: 0 })
 }
 
 /** The forge reads and writes the forge-gate steps make, answering a mergeable head with nothing failed. */

@@ -15,7 +15,8 @@ import {
   reconcileLaunch,
   type ReconcileLaunchDeps,
   renderDeveloperDoctrineBlock,
-  TaskWorktreeDivergedError
+  TaskWorktreeDivergedError,
+  retryOnConfigLock
 } from '../../../src/lib/dev-review-loop/developer-dispatch'
 import { ownChangesRangeBase } from '../../../src/lib/dev-review-loop'
 import type { LaunchRecord, ParsedLaunch } from '../../../src/lib/dispatch'
@@ -730,5 +731,36 @@ describe('createTaskWorktreeFromRemote', () => {
     )
     expect(git(repoDir, 'rev-parse', 'task/x/2')).toBe(localHead)
     expect(existsSync(join(repoDir, '.worktrees', 'task/x/2'))).toBe(false)
+  })
+})
+
+describe('retryOnConfigLock', () => {
+  it('waits out a held .git/config lock, then writes', () => {
+    let calls = 0
+    const waits: number[] = []
+    const result = retryOnConfigLock(
+      () => {
+        calls += 1
+        if (calls < 3) throw new Error('error: could not lock config file .git/config: File exists')
+        return 'written'
+      },
+      (ms) => void waits.push(ms)
+    )
+    expect(result).toBe('written')
+    expect(waits).toEqual([500, 500])
+  })
+
+  it('any other failure is thrown at once', () => {
+    let calls = 0
+    expect(() =>
+      retryOnConfigLock(
+        () => {
+          calls += 1
+          throw new Error('fatal: not a git repository')
+        },
+        () => {}
+      )
+    ).toThrow('not a git repository')
+    expect(calls).toBe(1)
   })
 })

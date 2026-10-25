@@ -476,6 +476,40 @@ export function fetchPrState(prNumber: number): PrOpenState {
   return parsed.state === 'MERGED' || parsed.state === 'CLOSED' ? parsed.state : 'OPEN'
 }
 
+// --- the published pull request's watch ---------------------------------------
+
+/**
+ * How many times one watching driver re-enters a published pull request that
+ * fell into conflict with the default branch. Past it the driver pauses for a
+ * person instead (`repeat_failure`), so a base that keeps moving under the
+ * same files never loops the Developer unattended. Shared by both runners.
+ */
+export const MAX_AUTOMATIC_CONFLICT_REENTRIES = 3
+
+/** What one watch tick over a published pull request read: an end, a conflict to re-enter, or nothing yet. */
+export type PublishedPullRequestRead = 'merged' | 'closed' | 'conflicting' | 'watching'
+
+/**
+ * One watch tick over a published pull request: its state first (merged or
+ * closed ends the watch), then its forge mergeability (`fetchMergeableState`).
+ * `UNKNOWN` — the forge still computing it — is never read as conflicting or
+ * as clean: the tick reports `watching`, and the next tick reads it again.
+ */
+export function readPublishedPullRequest(
+  prNumber: number,
+  d: { fetchPrState: (prNumber: number) => PrOpenState; fetchMergeableState: (prNumber: number) => MergeableState }
+): PublishedPullRequestRead {
+  const state = d.fetchPrState(prNumber)
+  if (state === 'MERGED') return 'merged'
+  if (state === 'CLOSED') return 'closed'
+  return d.fetchMergeableState(prNumber) === 'CONFLICTING' ? 'conflicting' : 'watching'
+}
+
+/** The pause detail a spent conflict re-entry bound leaves: what happened, and that a person decides. */
+export function conflictReentryBoundDetail(prNumber: number, bound: number): string {
+  return `PR #${prNumber} fell into conflict with the default branch again after it was published, and this driver has already re-entered it automatically ${bound} time${bound === 1 ? '' : 's'} (the bound) — a person decides whether to resolve it again, or how`
+}
+
 /**
  * Pure: `git merge-tree --write-tree`'s own `CONFLICT (...): ... in <path>`
  * lines — unit-testable with no git call. Sorted and de-duplicated so a

@@ -8,7 +8,8 @@ import {
   shellTokens,
   type GeneratedAgentConfig,
   type GeneratorPaths,
-  type HookPolicy
+  type HookPolicy,
+  scratchCacheEnv
 } from '../policy'
 
 const quote = (value: string): string => JSON.stringify(value)
@@ -106,6 +107,8 @@ export function generateCodexConfig(grants: RoleGrants, paths: GeneratorPaths): 
     'codex',
     'exec',
     '--dangerously-bypass-hook-trust',
+    // A reviewer reads a staged copy that is not a git repository; Codex refuses such a directory without this.
+    '--skip-git-repo-check',
     '--config',
     'approval_policy="never"',
     // JSONL events on stdout: the executor frames stdout as one JSON record per line, and Codex's plain
@@ -122,7 +125,7 @@ export function generateCodexConfig(grants: RoleGrants, paths: GeneratorPaths): 
     launch,
     // `codex exec resume <id> …` continues that thread, as the CLI's own Codex dispatch resumes its Developer.
     resumeLaunch: [launch[0] as string, launch[1] as string, 'resume', RESUME_SESSION_PLACEHOLDER, ...launch.slice(2)],
-    env: { CODEX_HOME: paths.generatedDir },
+    env: { CODEX_HOME: paths.generatedDir, ...scratchCacheEnv(writableRoots, paths.variables) },
     files: {
       'config.toml': configToml,
       'rules/role.rules': execpolicy,

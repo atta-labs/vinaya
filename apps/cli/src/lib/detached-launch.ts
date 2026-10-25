@@ -12,6 +12,7 @@
  * it. No `nohup` and no shell wrapper stands in for it.
  */
 
+import { cliEntryPath } from './cli-entry.js'
 import { type ChildProcess, spawn, type StdioOptions } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { isDriverPidAlive, readDriverLock } from './dev-review-loop/pause-resume.js'
@@ -23,7 +24,7 @@ export function launchDetached(program: string, args: string[], stdio: StdioOpti
 
 /** Re-invokes the exact interpreter and entry script this process was started with, detached — so a launch behaves the same whether the caller ran `bun apps/cli/src/index.ts` from source or a published `vinaya` binary. */
 export function launchSelfDetached(argv: string[], stdio: StdioOptions): ChildProcess {
-  return launchDetached(process.argv[0] as string, [process.argv[1] as string, ...argv], stdio)
+  return launchDetached(process.argv[0] as string, [cliEntryPath(), ...argv], stdio)
 }
 
 /**
