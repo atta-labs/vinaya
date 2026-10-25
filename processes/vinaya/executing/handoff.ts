@@ -1,6 +1,7 @@
 import type { DevReviewLoopEventInput, EscalationRecord, PauseReason } from '@attalabs/aeg-core'
 import {
   bindPauseToPullRequest,
+  noPushResumeCommandFor,
   postIssuePauseComment,
   postPauseComment,
   readPauseState,
@@ -60,7 +61,16 @@ export interface HandoffDeps {
   bindPauseToPullRequest: typeof bindPauseToPullRequest
   /** Writes one Log event. */
   log: (event: DevReviewLoopEventInput) => void
+  /** Reports a line to the run's own output; absent, standard error. */
+  report?: (line: string) => void
+  /** Waits between attempts; absent, a blocking sleep. */
+  sleepSync?: (ms: number) => void
 }
+
+const ESCALATION_RECORD_ATTEMPTS = 3
+const ESCALATION_RECORD_RETRY_MS = 2000
+const defaultReport = (line: string) => process.stderr.write(`${line}\n`)
+const defaultSleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 
 export const liveHandoffDeps = (log: HandoffDeps['log']): HandoffDeps => ({
   writeEscalationRecord,
@@ -140,25 +150,34 @@ export function createHandoff(run: HandoffRun, loopId: string, deps: HandoffDeps
           : prior
       let escalation: EscalationRecord | null = null
       let rulingOrdinal: number | undefined
-      // The records come first, escalation then pause, before anything is posted.
-      // The escalation record is best-effort: the pause record is what a resume needs.
-      try {
-        const versions = run.versions()
-        rulingOrdinal = versions.rulingOrdinal
-        escalation = deps.writeEscalationRecord({
-          task: run.task,
-          round,
-          head,
-          branch: run.branch,
-          pr,
-          runId: run.runId,
-          agent: run.agent,
-          reason: request.reason,
-          detail: request.detail,
-          evidence: request.evidence,
-          ...versions
-        })
-      } catch {}
+      // The records come first, escalation then pause, before anything is posted. A ruling resolves only an
+      // escalation that has its record, and the versions it binds are forge reads, so a failed attempt is retried
+      // before the pause goes ahead without one, and the failure is reported rather than dropped.
+      for (let attempt = 1; escalation === null && attempt <= ESCALATION_RECORD_ATTEMPTS; attempt++) {
+        try {
+          const versions = run.versions()
+          rulingOrdinal = versions.rulingOrdinal
+          escalation = deps.writeEscalationRecord({
+            task: run.task,
+            round,
+            head,
+            branch: run.branch,
+            pr,
+            runId: run.runId,
+            agent: run.agent,
+            reason: request.reason,
+            detail: request.detail,
+            evidence: request.evidence,
+            ...versions
+          })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          ;(deps.report ?? defaultReport)(
+            `the escalation record for this pause could not be written (attempt ${attempt} of ${ESCALATION_RECORD_ATTEMPTS}): ${message}`
+          )
+          if (attempt < ESCALATION_RECORD_ATTEMPTS) (deps.sleepSync ?? defaultSleepSync)(ESCALATION_RECORD_RETRY_MS)
+        }
+      }
       let commentPosted = false
       try {
         deps.writePauseState(run.runtimeDir, {
@@ -175,7 +194,13 @@ export function createHandoff(run: HandoffRun, loopId: string, deps: HandoffDeps
           escalationId: escalation?.escalationId,
           infrastructureRetries
         })
-        const invocation = { agent: run.agent, ...(run.model ? { model: run.model } : {}) }
+        // An Engine run continues through `task run --runner atta-engine`, with or without a pull request.
+        const invocation = {
+          agent: run.agent,
+          ...(run.model ? { model: run.model } : {}),
+          runner: 'atta-engine' as const,
+          resumeCommand: noPushResumeCommandFor(run.task, run.branch, run.agent, run.model, 'atta-engine')
+        }
         const posted =
           pr === null
             ? deps.postIssuePauseComment(

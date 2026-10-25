@@ -466,18 +466,23 @@ export function isReviewerLaunch(generatedRoot: string) {
     )
 }
 
-/** Gives each reviewer launch the scratch directory prepared for that role's current attempt. */
+/**
+ * Gives each reviewer launch the scratch directory prepared for that role's current attempt, and the Developer its
+ * task worktree: the Flow's agent steps all start at the target repository's root, which is the default branch's
+ * checkout, never where the Developer works.
+ */
 export function withReviewerWorkingDirectory(
   spawnFn: SpawnFn,
   generatedRoot: string,
-  directoryFor: (role: HeldVerdictRole) => string | null
+  directoryFor: (role: HeldVerdictRole | 'developer') => string | null
 ): SpawnFn {
   const roots = {
     reviewer: join(generatedRoot, 'code-reviewer'),
-    security: join(generatedRoot, 'security-reviewer')
+    security: join(generatedRoot, 'security-reviewer'),
+    developer: join(generatedRoot, 'developer')
   } as const
   return (command, args, options) => {
-    const role = (Object.entries(roots) as Array<[HeldVerdictRole, string]>).find(
+    const role = (Object.entries(roots) as Array<[HeldVerdictRole | 'developer', string]>).find(
       ([, root]) => options?.env?.CODEX_HOME === root || args.some((arg) => arg.startsWith(`${root}/`))
     )?.[0]
     const directory = role ? directoryFor(role) : null
@@ -726,13 +731,18 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   const logPath = loopLogPathFor(null, args.task, options.runtimeDir)
   const narrate = (line: string): void => appendLoopLogLine(logPath, `${new Date().toISOString()}  ${line}`)
   let pausedFor: string | undefined
-  const writeTrace = (outcome: string, results: Record<string, StepNodeResult>, error?: string): void => {
+  const writeTrace = (
+    outcome: string,
+    results: Record<string, StepNodeResult>,
+    error?: string,
+    path: string = tracePath
+  ): void => {
     // The trace carries tool output verbatim, so only its owner reads it.
-    writeFileSync(tracePath, `${JSON.stringify(trace.finish(outcome, results, error, pausedFor), null, 2)}\n`, {
+    writeFileSync(path, `${JSON.stringify(trace.finish(outcome, results, error, pausedFor), null, 2)}\n`, {
       mode: 0o600
     })
-    chmodSync(tracePath, 0o600)
-    out(`trace ${tracePath}`)
+    chmodSync(path, 0o600)
+    out(`trace ${path}`)
   }
 
   // One runner per task: a held lock ends this start before anything is dispatched.
@@ -747,8 +757,10 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     narrate(`engine runner ${lock.message}`)
     out(`engine runner ${lock.message}`)
     await options.sink.drain()
-    writeTrace('refused', {}, lock.message)
-    return { outcome: null, exitCode: 1, tracePath }
+    // The running driver owns `trace.json`; a refused start records itself beside it, never over it.
+    const refusedPath = join(runDir, 'trace-refused.json')
+    writeTrace('refused', {}, lock.message, refusedPath)
+    return { outcome: null, exitCode: 1, tracePath: refusedPath }
   }
   // The task's run is this runner's from here: the Operator routes its controls by this record.
   recordTaskRunner(args.task, 'atta-engine', options.runtimeDir)
@@ -1102,10 +1114,10 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
               }
             : {}),
           spawnFn: tolerateReviewerExit(
-            withReviewerWorkingDirectory(
-              reaper.spawnFn,
-              join(runDir, 'generated'),
-              (role) => options.taskInput?.reviewerWorkingDirectory?.(role) ?? null
+            withReviewerWorkingDirectory(reaper.spawnFn, join(runDir, 'generated'), (role) =>
+              role === 'developer'
+                ? (options.taskInput?.worktreePath ?? null)
+                : (options.taskInput?.reviewerWorkingDirectory?.(role) ?? null)
             ),
             isReviewerLaunch(join(runDir, 'generated'))
           ),

@@ -101,9 +101,13 @@ const tokenize = (line) => {
     started = false
     dynamic = false
   }
-  const pushStatement = () => {
+  // A statement followed by \`&&\` is marked: what comes next runs only if it succeeded.
+  const pushStatement = (andThen = false) => {
     pushWord()
-    if (argv.length) statements.push(argv)
+    if (argv.length) {
+      if (andThen) argv.andThen = true
+      statements.push(argv)
+    }
     argv = []
   }
   for (let index = 0; index < line.length; index += 1) {
@@ -148,7 +152,7 @@ const tokenize = (line) => {
     if (char === ';' || char === '(' || char === ')') { pushStatement(); continue }
     if (char === '&') {
       if (next === '>' || word.endsWith('>') || word.endsWith('<')) { word += char; started = true; continue }
-      pushStatement()
+      pushStatement(next === '&')
       if (next === '&') index += 1
       else background = true
       continue
@@ -250,6 +254,8 @@ const analyze = (parsed) => {
     if (head === 'cd' || head === 'pushd' || head === 'popd') {
       const target = argv.filter((arg, at) => at > 0 && !arg.startsWith('-') || arg === '-')[0]
       if (head !== 'cd' || target === undefined || target === '-' || rest.some((word) => word.dynamic)) dirUnknown = true
+      // \`cd X && …\`: the rest runs only in X. Any other separator may run it where the shell already was.
+      else if (words.andThen) dirs = dirs.map((dir) => resolve(dir, target))
       else dirs = [...dirs, ...dirs.map((dir) => resolve(dir, target))]
       continue
     }

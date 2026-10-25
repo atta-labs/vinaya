@@ -1085,7 +1085,7 @@ describe('the tool host serves the reviewer roles as well as the Developer', () 
     ['claude-code', 'role-mcp.json'],
     ['codex', 'config.toml']
   ] as const) {
-    test(`each reviewer ${vendor} launch runs in that attempt's scratch directory`, () => {
+    test(`each reviewer ${vendor} launch runs in that attempt's scratch directory, the Developer in its worktree`, () => {
       const generatedRoot = mkdtempSync(join(tmpdir(), 'engine-reviewer-cwd-'))
       const roles = createRoleLaunchers({ vendor, generatedRoot })
       const seen: Array<{ cwd?: string; args: string[] }> = []
@@ -1095,9 +1095,9 @@ describe('the tool host serves the reviewer roles as well as the Developer', () 
           return stubAgent('reviewer', [])
         },
         generatedRoot,
-        (role) => `/scratch/${role}/attempt-2`
+        (role) => (role === 'developer' ? '/wt/task' : `/scratch/${role}/attempt-2`)
       )
-      for (const role of ['code-reviewer', 'security-reviewer'] as const) {
+      for (const role of ['developer', 'code-reviewer', 'security-reviewer'] as const) {
         const launcher = roles[role]
         if (!launcher) throw new Error(`missing ${role} launcher`)
         wrapped(launcher.command, launcher.buildArgs({ permission: `${role}/grants.yaml`, maxTurns: 100 }), {
@@ -1105,7 +1105,11 @@ describe('the tool host serves the reviewer roles as well as the Developer', () 
           cwd: '/repo'
         })
       }
-      expect(seen.map(({ cwd }) => cwd)).toEqual(['/scratch/reviewer/attempt-2', '/scratch/security/attempt-2'])
+      expect(seen.map(({ cwd }) => cwd)).toEqual([
+        '/wt/task',
+        '/scratch/reviewer/attempt-2',
+        '/scratch/security/attempt-2'
+      ])
     })
 
     test(`each reviewer's ${vendor} launch names its own host`, () => {
@@ -1204,7 +1208,10 @@ describe('a reviewer launch that exits non-zero', () => {
       (command, args, options) => spawn(command, [...args], { ...options, stdio: ['pipe', 'pipe', 'pipe'] }) as never,
       () => true
     )
-    const child = launch('sh', ['-c', 'echo "Not inside a trusted directory" >&2; exit 1'], { cwd: tmpdir(), env: process.env })
+    const child = launch('sh', ['-c', 'echo "Not inside a trusted directory" >&2; exit 1'], {
+      cwd: tmpdir(),
+      env: process.env
+    })
     const out: string[] = []
     child.stdout?.on('data', (chunk) => void out.push(chunk.toString()))
     const code = await new Promise<number | null>((resolve) => child.on('close', resolve))

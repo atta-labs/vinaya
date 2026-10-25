@@ -699,13 +699,43 @@ export function createTaskWorktree(branch: string, opts: { branchHasTaskCommits?
   if (!worktreeExisted) {
     sh('git', ['worktree', 'add', worktreeDir, '-b', branch, '--no-track', 'origin/main'])
   }
-  sh('git', ['config', 'push.autoSetupRemote', 'true'])
+  // Shared repository config: tasks started together contend for its lock, so a held lock is waited out.
+  if (configValue('push.autoSetupRemote') !== 'true')
+    retryOnConfigLock(() => sh('git', ['config', 'push.autoSetupRemote', 'true']))
   if (!worktreeExisted) {
     sh('git', ['push', '--no-verify', 'origin', `origin/main:refs/heads/${branch}`])
   } else if (opts.branchHasTaskCommits !== false || !resetEmptyTaskWorktree(branch, worktreeDir)) {
     reconcileExistingTaskWorktree(branch, worktreeDir)
   }
-  sh('git', ['-C', worktreeDir, 'branch', '-u', `origin/${branch}`])
+  retryOnConfigLock(() => sh('git', ['-C', worktreeDir, 'branch', '-u', `origin/${branch}`]))
+}
+
+/** One repository config value, or null when it is unset. */
+function configValue(key: string): string | null {
+  try {
+    return sh('git', ['config', '--get', key]).trim()
+  } catch {
+    return null
+  }
+}
+
+const CONFIG_LOCK_ATTEMPTS = 5
+const CONFIG_LOCK_RETRY_MS = 500
+
+/** Runs a git config write, retrying while another process holds `.git/config`'s lock. */
+export function retryOnConfigLock<T>(
+  write: () => T,
+  sleep: (ms: number) => void = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+): T {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return write()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (attempt >= CONFIG_LOCK_ATTEMPTS || !/could not lock config file/.test(message)) throw error
+      sleep(CONFIG_LOCK_RETRY_MS)
+    }
+  }
 }
 
 /**

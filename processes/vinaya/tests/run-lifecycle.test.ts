@@ -240,7 +240,12 @@ describe('one Engine runner per task', () => {
     const run = stubRun()
     writeDriverLock(run.runtimeDir, TASK, { pid: 4242, startedAt: '2026-01-02T03:04:05.000Z', token: 'other' })
     run.options.lifecycle = { ...run.options.lifecycle, isPidAlive: (pid) => pid === 4242 }
+    // The running driver's own trace is left as it is.
+    const holderTrace = join(run.runtimeDir, 'engine-runs', String(TASK), 'trace.json')
+    mkdirSync(dirname(holderTrace), { recursive: true })
+    writeFileSync(holderTrace, '{"outcome":"running"}\n')
     const result = await runEngine(run.options)
+    expect(readFileSync(holderTrace, 'utf8')).toBe('{"outcome":"running"}\n')
     expect(result.exitCode).toBe(1)
     expect(run.spawns).toEqual([])
     expect(Object.keys(run.actionRuns)).toEqual([])
