@@ -283,18 +283,20 @@ describe('the global exit check', () => {
     expect(report.pass).toBe(true)
     const gates = report.kinds['cutover-gate'].engine
     const faultRows = report.kinds['fault-attack'].engine
+    const notOwedGates = ['cutover-gate:gate-9', 'cutover-gate:gate-16', 'cutover-gate:gate-11']
     expect(gates).toEqual({
-      evidenced: 1,
-      owed: 15,
+      evidenced: 2,
+      owed: 14,
       owedIds: registry.components
         .map(({ row }) => row.id)
-        .filter(
-          (id) => id.startsWith('cutover-gate:') && id !== 'cutover-gate:gate-16' && id !== 'cutover-gate:gate-11'
-        )
+        .filter((id) => id.startsWith('cutover-gate:') && !notOwedGates.includes(id))
     })
-    expect(faultRows?.evidenced).toBe(0)
-    expect(faultRows?.owed).toBe(56)
-    expect(faultRows?.owedIds).toHaveLength(56)
+    expect(faultRows?.evidenced).toBe(1)
+    expect(faultRows?.owed).toBe(55)
+    expect(faultRows?.owedIds).toHaveLength(55)
+    // Shadow mode's row and gate are proved on the Engine by the shadow conformance suite.
+    expect(faultRows?.owedIds).not.toContain('fault-attack:29-shadow-mode-mutation')
+    expect(gates?.owedIds).not.toContain('cutover-gate:gate-9')
     expect(report.kinds.port.engine).toBeUndefined()
     console.log(
       `Engine evidence — cutover-gate: ${gates?.evidenced} evidenced, ${gates?.owed} owed; fault-attack: ${faultRows?.evidenced} evidenced, ${faultRows?.owed} owed; owed to the Operator on one host: ${report.operatorOwed.length}`

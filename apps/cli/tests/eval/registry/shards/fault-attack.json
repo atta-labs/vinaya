@@ -1583,7 +1583,7 @@
           "owed": "No test that names this row's full id proves it on the standalone backend yet."
         },
         "engine": {
-          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+          "test": "apps/cli/tests/conformance/dev-review-engine-shadow.test.ts"
         }
       },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",

@@ -22,6 +22,7 @@ import {
   liveTaskInput,
   resumeEngine,
   runEngine,
+  runShadowEngine,
   type Agent,
   type EngineArgs,
   type EngineForge,
@@ -77,6 +78,8 @@ import type { Observation } from './dev-review-current-loop-adapter.js'
 const PROCESS = loadProcess(resolve(import.meta.dir, '../../../../processes/vinaya'))
 // The task and pull request the standalone harness's world names.
 const TASK = 9001
+/** The task every Engine scenario runs. */
+export const ENGINE_SCENARIO_TASK = TASK
 const BRANCH = `task/issue-${TASK}`
 const PR = 123
 const SOURCE = 'https://example.com/required-source'
@@ -193,15 +196,22 @@ export interface EngineScenarioRun {
   agent: Agent
 }
 
+/** A scenario run in shadow mode (`runShadowEngine`), beside a live run whose runtime directory is `liveRuntimeDir`. */
+export interface EngineShadowMode {
+  liveRuntimeDir: string
+}
+
 /**
  * One isolated scenario, returning only recorded output and performed effects. `inspect` runs once the scenario
- * has ended, while its run files are still there, inside the scenario's own environment.
+ * has ended, while its run files are still there, inside the scenario's own environment. Given `shadow`, every run
+ * of the scenario is a shadow run; the scenario's world and its fakes are the same.
  */
 export async function runEngineScenario(
   id: string,
   agent: Agent,
   logSink?: Partial<LogSinkDeps>,
-  inspect?: (run: EngineScenarioRun) => Promise<void> | void
+  inspect?: (run: EngineScenarioRun) => Promise<void> | void,
+  shadow?: EngineShadowMode
 ): Promise<Observation> {
   const root = mkdtempSync(join(tmpdir(), 'engine-corpus-'))
   const runtimeDir = join(root, 'runtime')
@@ -231,7 +241,7 @@ export async function runEngineScenario(
   resetDefaultLogSinkContext()
   const savedCwd = process.cwd()
   try {
-    const observation = await drive(id, agent, root, runtimeDir, logSink)
+    const observation = await drive(id, agent, root, runtimeDir, logSink, shadow)
     await inspect?.({ runtimeDir, task: TASK, pr: PR, agent })
     return observation
   } finally {
@@ -260,7 +270,8 @@ async function drive(
   agent: Agent,
   root: string,
   runtimeDir: string,
-  logSink: Partial<LogSinkDeps> | undefined
+  logSink: Partial<LogSinkDeps> | undefined,
+  shadow: EngineShadowMode | undefined
 ): Promise<Observation> {
   const repo = join(root, 'repo')
   mkdirSync(repo)
@@ -591,7 +602,9 @@ async function drive(
         })
       }
     }
-    const result = await runEngine(options)
+    const result = shadow
+      ? await runShadowEngine({ ...options, liveRuntimeDir: shadow.liveRuntimeDir })
+      : await runEngine(options)
     traces.push(JSON.parse(readFileSync(result.tracePath, 'utf8')) as RunTrace)
   }
   // A re-run is a fresh subprocess: the runner of the leg before is gone, and so is whatever lock it kept.
