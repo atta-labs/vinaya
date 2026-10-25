@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { readDriverLock } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { join, resolve } from 'node:path'
 import ts from 'typescript'
 import { DEV_TOOL_NAMES, READ_SOURCE_TOOL } from '../../../apps/cli/src/lib/task-tools/dev-tools-server'
@@ -231,7 +232,8 @@ describe('the shadow runtime directory', () => {
     await expect(runShadowEngine(options as unknown as ShadowEngineRunOptions)).rejects.toThrow(
       "the task's live runtime directory"
     )
-    expect(readdirSync(live)).toEqual([])
+    for (const written of ['engine-runs', 'tasks-execution']) expect(existsSync(join(live, written))).toBe(false)
+    expect(readDriverLock(live, 7)).toBeNull()
   })
 })
 
