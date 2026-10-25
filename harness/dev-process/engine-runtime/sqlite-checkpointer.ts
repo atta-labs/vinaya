@@ -1,6 +1,8 @@
 import { Database } from 'bun:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
+import enginePackage from '@atta/engine/package.json' with { type: 'json' }
+import executorPackage from '@atta/executor-agent-spawn/package.json' with { type: 'json' }
 import type { RunnableConfig } from '@langchain/core/runnables'
 import {
   BaseCheckpointSaver,
@@ -13,7 +15,16 @@ import {
 // A checkpoint saver that keeps a run's checkpoints in one SQLite file, so a
 // runner process started later on the same file resumes the run from its last
 // completed step. Every checkpoint row records the code revision of the
-// checkout that wrote it and the model the run was started with.
+// checkout that wrote it, the model the run was started with, the checkpoint
+// format version and the Engine runtime version. A file or a row this saver
+// cannot read is reported as `CheckpointCorruptError`, never as an ordinary
+// failure.
+
+/** The layout of a checkpoint row and its serialized state; raised when either changes in a way an older reader cannot read. */
+export const CHECKPOINT_FORMAT_VERSION = 1
+
+/** The packed Engine runtime that writes and resumes checkpoints: the Engine and its executor, each at its version. */
+export const ENGINE_RUNTIME_VERSION = `${enginePackage.name}@${enginePackage.version} ${executorPackage.name}@${executorPackage.version}`
 
 /** Channel carrying packets sent to nodes but not yet processed; the checkpoint omits them. */
 const TASKS_CHANNEL = '__pregel_tasks'
@@ -31,6 +42,98 @@ export interface CheckpointProvenance {
   revision: string
   /** The model the run was started with; empty when the run left the vendor's default. */
   model: string
+  /** The checkpoint format version it was written in; null for a row written before the version was recorded. */
+  formatVersion: number | null
+  /** The Engine runtime version that wrote it; null for a row written before the version was recorded. */
+  runtimeVersion: string | null
+}
+
+/** Why a runner refuses to resume a checkpoint. */
+export type CheckpointRefusalCode =
+  | 'checkpoint_corrupt'
+  | 'checkpoint_version_unrecorded'
+  | 'checkpoint_format_incompatible'
+  | 'runtime_version_incompatible'
+
+export interface CheckpointRefusal {
+  code: CheckpointRefusalCode
+  detail: string
+}
+
+/** A checkpoint file, or a row in it, that this saver cannot read. */
+export class CheckpointCorruptError extends Error {
+  readonly code = 'checkpoint_corrupt' as const
+  constructor(
+    readonly path: string,
+    cause: unknown
+  ) {
+    super(`the checkpoint file ${path} cannot be read: ${cause instanceof Error ? cause.message : String(cause)}`)
+    this.name = 'CheckpointCorruptError'
+  }
+}
+
+/** The versions a `name@version name@version` runtime string names, by package; null when the string is not one. */
+function runtimePackages(runtime: string): Map<string, string> | null {
+  const packages = new Map<string, string>()
+  for (const part of runtime.split(' ')) {
+    const at = part.lastIndexOf('@')
+    if (at <= 0) return null
+    packages.set(part.slice(0, at), part.slice(at + 1))
+  }
+  return packages.size > 0 ? packages : null
+}
+
+/** Whether `running` is in the caret range of `recorded`: the same major, or for 0.x the same minor, or for 0.0.x the same patch. */
+function caretCompatible(recorded: string, running: string): boolean {
+  const was = /^(\d+)\.(\d+)\.(\d+)/.exec(recorded)
+  const now = /^(\d+)\.(\d+)\.(\d+)/.exec(running)
+  if (was === null || now === null || was[1] !== now[1]) return false
+  if (was[1] !== '0') return true
+  if (was[2] !== now[2]) return false
+  return was[2] !== '0' || was[3] === now[3]
+}
+
+/**
+ * Why a runner at `running` refuses to resume a checkpoint recorded under `recorded`, or null when it resumes it. A
+ * moved code revision or model never refuses: only a checkpoint that records neither version, is in another format, or
+ * was written by an Engine runtime outside the running one's caret range.
+ */
+export function checkpointRefusal(
+  recorded: Pick<CheckpointProvenance, 'formatVersion' | 'runtimeVersion'>,
+  running: { formatVersion: number; runtimeVersion: string } = {
+    formatVersion: CHECKPOINT_FORMAT_VERSION,
+    runtimeVersion: ENGINE_RUNTIME_VERSION
+  }
+): CheckpointRefusal | null {
+  if (recorded.formatVersion === null && recorded.runtimeVersion === null) {
+    return {
+      code: 'checkpoint_version_unrecorded',
+      detail: `the checkpoint records neither its format version nor the Engine runtime that wrote it; this runner reads format ${running.formatVersion} under ${running.runtimeVersion}`
+    }
+  }
+  if (recorded.formatVersion !== running.formatVersion) {
+    return {
+      code: 'checkpoint_format_incompatible',
+      detail: `the checkpoint is in format ${recorded.formatVersion ?? 'unrecorded'}; this runner reads format ${running.formatVersion}`
+    }
+  }
+  const was = recorded.runtimeVersion === null ? null : runtimePackages(recorded.runtimeVersion)
+  const now = runtimePackages(running.runtimeVersion)
+  const compatible =
+    was !== null &&
+    now !== null &&
+    was.size === now.size &&
+    [...now].every(([name, version]) => {
+      const prior = was.get(name)
+      return prior !== undefined && caretCompatible(prior, version)
+    })
+  if (!compatible) {
+    return {
+      code: 'runtime_version_incompatible',
+      detail: `the checkpoint was written by ${recorded.runtimeVersion ?? 'an unrecorded Engine runtime'}; this runner is ${running.runtimeVersion}`
+    }
+  }
+  return null
 }
 
 export interface SqliteCheckpointerOptions {
@@ -40,6 +143,10 @@ export interface SqliteCheckpointerOptions {
   revision: string
   /** The model recorded on every checkpoint this saver writes. */
   model?: string
+  /** The format version recorded on every checkpoint; the current one unless a test writes another. */
+  formatVersion?: number
+  /** The Engine runtime version recorded on every checkpoint; the running one unless a test writes another. */
+  runtimeVersion?: string
 }
 
 interface CheckpointRow {
@@ -52,6 +159,8 @@ interface CheckpointRow {
   metadata: Uint8Array
   revision: string
   model: string
+  format_version: number | null
+  runtime_version: string | null
 }
 
 interface WriteRow {
@@ -61,17 +170,46 @@ interface WriteRow {
   value: Uint8Array
 }
 
+type ProvenanceRow = Pick<CheckpointRow, 'revision' | 'model' | 'format_version' | 'runtime_version'>
+const PROVENANCE_COLUMNS = 'revision, model, format_version, runtime_version'
+const provenanceOfRow = (row: ProvenanceRow): CheckpointProvenance => ({
+  revision: row.revision,
+  model: row.model,
+  formatVersion: row.format_version,
+  runtimeVersion: row.runtime_version
+})
+
 export class SqliteCheckpointer extends BaseCheckpointSaver {
   private readonly db: Database
+  private readonly path: string
   private readonly revision: string
   private readonly model: string
+  private readonly formatVersion: number
+  private readonly runtimeVersion: string
 
+  /** Opens or creates the file; throws `CheckpointCorruptError` when it is not a checkpoint file this saver can read. */
   constructor(options: SqliteCheckpointerOptions) {
     super()
     mkdirSync(dirname(options.path), { recursive: true })
-    this.db = new Database(options.path, { create: true })
+    this.path = options.path
     this.revision = options.revision
     this.model = options.model ?? ''
+    this.formatVersion = options.formatVersion ?? CHECKPOINT_FORMAT_VERSION
+    this.runtimeVersion = options.runtimeVersion ?? ENGINE_RUNTIME_VERSION
+    try {
+      this.db = new Database(options.path, { create: true })
+    } catch (error) {
+      throw new CheckpointCorruptError(options.path, error)
+    }
+    try {
+      this.createTables()
+    } catch (error) {
+      this.db.close()
+      throw new CheckpointCorruptError(options.path, error)
+    }
+  }
+
+  private createTables(): void {
     this.db.exec('PRAGMA journal_mode = WAL')
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS checkpoints (
@@ -84,6 +222,8 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
         metadata BLOB NOT NULL,
         revision TEXT NOT NULL,
         model TEXT NOT NULL,
+        format_version INTEGER,
+        runtime_version TEXT,
         PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
       );
       CREATE TABLE IF NOT EXISTS writes (
@@ -98,6 +238,15 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
         PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id, task_id, idx)
       );
     `)
+    // A file written before the versions were recorded gains their columns; its own rows record neither.
+    const columns = new Set(
+      this.db
+        .query<{ name: string }, []>('PRAGMA table_info(checkpoints)')
+        .all()
+        .map((column) => column.name)
+    )
+    if (!columns.has('format_version')) this.db.exec('ALTER TABLE checkpoints ADD COLUMN format_version INTEGER')
+    if (!columns.has('runtime_version')) this.db.exec('ALTER TABLE checkpoints ADD COLUMN runtime_version TEXT')
   }
 
   /** Closes the file; the saver is unusable afterwards. */
@@ -105,37 +254,61 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
     this.db.close()
   }
 
-  /** The revision and model of the thread's latest checkpoint, or undefined when it has none. */
+  /** The revision, model and versions of the thread's latest checkpoint, or undefined when it has none. */
   latestProvenance(threadId: string, checkpointNs = ''): CheckpointProvenance | undefined {
-    const row = this.db
-      .query<{ revision: string; model: string }, [string, string]>(
-        `SELECT revision, model FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = ?
-         ORDER BY checkpoint_id DESC LIMIT 1`
-      )
-      .get(threadId, checkpointNs)
-    return row ? { revision: row.revision, model: row.model } : undefined
+    const row = this.read(() =>
+      this.db
+        .query<ProvenanceRow, [string, string]>(
+          `SELECT ${PROVENANCE_COLUMNS} FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = ?
+           ORDER BY checkpoint_id DESC LIMIT 1`
+        )
+        .get(threadId, checkpointNs)
+    )
+    return row ? provenanceOfRow(row) : undefined
   }
 
-  /** The revision and model recorded on one checkpoint. */
+  /** The revision, model and versions recorded on one checkpoint. */
   provenanceOf(threadId: string, checkpointId: string, checkpointNs = ''): CheckpointProvenance | undefined {
-    const row = this.db
-      .query<{ revision: string; model: string }, [string, string, string]>(
-        'SELECT revision, model FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = ? AND checkpoint_id = ?'
-      )
-      .get(threadId, checkpointNs, checkpointId)
-    return row ? { revision: row.revision, model: row.model } : undefined
+    const row = this.read(() =>
+      this.db
+        .query<ProvenanceRow, [string, string, string]>(
+          `SELECT ${PROVENANCE_COLUMNS} FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = ? AND checkpoint_id = ?`
+        )
+        .get(threadId, checkpointNs, checkpointId)
+    )
+    return row ? provenanceOfRow(row) : undefined
+  }
+
+  /** One read of the file; a file it cannot read is reported as corrupt. */
+  private read<T>(query: () => T): T {
+    try {
+      return query()
+    } catch (error) {
+      throw new CheckpointCorruptError(this.path, error)
+    }
   }
 
   private writesOf(threadId: string, ns: string, checkpointId: string): WriteRow[] {
-    return this.db
-      .query<WriteRow, [string, string, string]>(
-        `SELECT task_id, channel, type, value FROM writes
-         WHERE thread_id = ? AND checkpoint_ns = ? AND checkpoint_id = ? ORDER BY task_id, idx`
-      )
-      .all(threadId, ns, checkpointId)
+    return this.read(() =>
+      this.db
+        .query<WriteRow, [string, string, string]>(
+          `SELECT task_id, channel, type, value FROM writes
+           WHERE thread_id = ? AND checkpoint_ns = ? AND checkpoint_id = ? ORDER BY task_id, idx`
+        )
+        .all(threadId, ns, checkpointId)
+    )
   }
 
+  /** The tuple a row holds; a row whose state cannot be read back is corrupt. */
   private async tupleOf(row: CheckpointRow): Promise<CheckpointTuple> {
+    try {
+      return await this.readTuple(row)
+    } catch (error) {
+      throw error instanceof CheckpointCorruptError ? error : new CheckpointCorruptError(this.path, error)
+    }
+  }
+
+  private async readTuple(row: CheckpointRow): Promise<CheckpointTuple> {
     const { thread_id: threadId, checkpoint_ns: ns, checkpoint_id: checkpointId } = row
     const pendingSends = row.parent_id
       ? await Promise.all(
@@ -174,18 +347,20 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
     if (threadId === undefined) return undefined
     const ns = (config.configurable?.checkpoint_ns as string | undefined) ?? ''
     const checkpointId = (config.configurable?.checkpoint_id ?? config.configurable?.thread_ts) as string | undefined
-    const row = checkpointId
-      ? this.db
-          .query<CheckpointRow, [string, string, string]>(
-            'SELECT * FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = ? AND checkpoint_id = ?'
-          )
-          .get(threadId, ns, checkpointId)
-      : this.db
-          .query<CheckpointRow, [string, string]>(
-            `SELECT * FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = ?
-             ORDER BY checkpoint_id DESC LIMIT 1`
-          )
-          .get(threadId, ns)
+    const row = this.read(() =>
+      checkpointId
+        ? this.db
+            .query<CheckpointRow, [string, string, string]>(
+              'SELECT * FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = ? AND checkpoint_id = ?'
+            )
+            .get(threadId, ns, checkpointId)
+        : this.db
+            .query<CheckpointRow, [string, string]>(
+              `SELECT * FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = ?
+               ORDER BY checkpoint_id DESC LIMIT 1`
+            )
+            .get(threadId, ns)
+    )
     return row ? this.tupleOf(row) : undefined
   }
 
@@ -215,15 +390,22 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
       clauses.push('checkpoint_id < ?')
       params.push(before)
     }
-    const rows = this.db
-      .query<CheckpointRow, string[]>(
-        `SELECT * FROM checkpoints ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
-         ORDER BY checkpoint_id DESC`
-      )
-      .all(...params)
+    const rows = this.read(() =>
+      this.db
+        .query<CheckpointRow, string[]>(
+          `SELECT * FROM checkpoints ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+           ORDER BY checkpoint_id DESC`
+        )
+        .all(...params)
+    )
     let remaining = options?.limit
     for (const row of rows) {
-      const metadata = (await this.serde.loadsTyped(row.type, row.metadata)) as Record<string, unknown>
+      let metadata: Record<string, unknown>
+      try {
+        metadata = (await this.serde.loadsTyped(row.type, row.metadata)) as Record<string, unknown>
+      } catch (error) {
+        throw new CheckpointCorruptError(this.path, error)
+      }
       if (options?.filter && !Object.entries(options.filter).every(([key, value]) => metadata[key] === value)) continue
       if (remaining !== undefined) {
         if (remaining <= 0) break
@@ -245,8 +427,9 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
     this.db
       .query(
         `INSERT OR REPLACE INTO checkpoints
-         (thread_id, checkpoint_ns, checkpoint_id, parent_id, type, checkpoint, metadata, revision, model)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (thread_id, checkpoint_ns, checkpoint_id, parent_id, type, checkpoint, metadata, revision, model,
+          format_version, runtime_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         threadId,
@@ -257,7 +440,9 @@ export class SqliteCheckpointer extends BaseCheckpointSaver {
         serialized,
         serializedMetadata,
         this.revision,
-        this.model
+        this.model,
+        this.formatVersion,
+        this.runtimeVersion
       )
     return { configurable: { thread_id: threadId, checkpoint_ns: ns, checkpoint_id: checkpoint.id } }
   }

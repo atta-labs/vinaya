@@ -292,9 +292,10 @@ describe('the global exit check', () => {
           (id) => id.startsWith('cutover-gate:') && id !== 'cutover-gate:gate-16' && id !== 'cutover-gate:gate-11'
         )
     })
-    expect(faultRows?.evidenced).toBe(0)
-    expect(faultRows?.owed).toBe(56)
-    expect(faultRows?.owedIds).toHaveLength(56)
+    // The run-control and governed-effects rows the Engine runner's fault-injection scenarios prove.
+    expect(faultRows?.evidenced).toBe(9)
+    expect(faultRows?.owed).toBe(47)
+    expect(faultRows?.owedIds).toHaveLength(47)
     expect(report.kinds.port.engine).toBeUndefined()
     console.log(
       `Engine evidence — cutover-gate: ${gates?.evidenced} evidenced, ${gates?.owed} owed; fault-attack: ${faultRows?.evidenced} evidenced, ${faultRows?.owed} owed; owed to the Operator on one host: ${report.operatorOwed.length}`

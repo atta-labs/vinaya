@@ -14,7 +14,7 @@ import {
   type ModuleCatalog,
   suiteId
 } from '../../src/lib/dev-review-eval/registry'
-import { OPERATOR_EXIT_EXCLUSIONS } from '../../src/lib/dev-review-eval/exit-check'
+import { engineEvidenceOf, OPERATOR_EXIT_EXCLUSIONS } from '../../src/lib/dev-review-eval/exit-check'
 import {
   FAULT_ATTACK_HEADING,
   type FaultAttackEntry,
@@ -297,5 +297,76 @@ describe('the fault-attack check fails on what it must', () => {
     const report = check(rawShard, { ...universes, 'cutover-gate': ['gate-17'], role: ['developer'] })
     expect(report.kinds).toEqual(['fault-attack'])
     expect(report.complete).toBe(true)
+  })
+})
+
+/** The run-control and governed-effects rows the Engine runner's fault-injection scenarios prove, under both vendors. */
+const ENGINE_FAULT_INJECTION_ROWS = [
+  'fault-attack:03-controller-process-death',
+  'fault-attack:07-provider-rate-or-usage-limit',
+  'fault-attack:08-version-incompatibility-on-resume',
+  'fault-attack:09-checkpoint-corruption',
+  'fault-attack:10-cancellation-races',
+  'fault-attack:12-forge-latency',
+  'fault-attack:13-duplicate-delivery',
+  'fault-attack:14-remote-success-local-acknowledgement-lost',
+  'fault-attack:19-forged-or-stale-beyond-surface-record'
+] as const
+const ENGINE_FAULT_INJECTION_PROOF = 'processes/vinaya/tests/fault-injection.test.ts'
+/** The rows above still owing their Engine evidence. Remove a row when its proof lands; never add one. */
+const ENGINE_FAULT_INJECTION_OWED: readonly string[] = []
+/** The most rows the list above may hold. Lower it with the list; never raise it. */
+const ENGINE_FAULT_INJECTION_OWED_CEILING = 0
+
+type LoadedRow = Parameters<typeof engineEvidenceOf>[0]
+
+/** The rows, of those given, whose Engine evidence is not a recorded proof. */
+const owedEngineRows = (rows: readonly { id: string; row: LoadedRow }[]): string[] =>
+  rows.filter(({ row }) => engineEvidenceOf(row)?.state !== 'evidenced').map(({ id }) => id)
+
+describe('the Engine fault-injection rows', () => {
+  const rows = ENGINE_FAULT_INJECTION_ROWS.map((id) => {
+    const row = shard.components.find((component) => component.id === id)
+    if (row === undefined) throw new Error(`${id} is not a row of the fault-attack shard`)
+    return { id, row }
+  })
+
+  it('each records its Engine evidence, and the rows still owed shrink only; prints the count owed', () => {
+    const owed = owedEngineRows(rows)
+    console.log(
+      `Engine fault-injection rows: ${rows.length}; owed Engine evidence: ${owed.length} (ceiling ${ENGINE_FAULT_INJECTION_OWED_CEILING})`
+    )
+    expect(owed).toEqual([...ENGINE_FAULT_INJECTION_OWED])
+    expect(ENGINE_FAULT_INJECTION_OWED.length).toBeLessThanOrEqual(ENGINE_FAULT_INJECTION_OWED_CEILING)
+    for (const { id, row } of rows) {
+      if (ENGINE_FAULT_INJECTION_OWED.includes(id)) continue
+      expect({ id, evidence: engineEvidenceOf(row) }).toEqual({
+        id,
+        evidence: { state: 'evidenced', test: ENGINE_FAULT_INJECTION_PROOF }
+      })
+    }
+  })
+
+  it('fails while any of them has no recorded Engine evidence', () => {
+    const [first, ...rest] = rows
+    if (first === undefined) throw new Error('the list names no row')
+    const unproved = {
+      id: first.id,
+      row: { ...first.row, backendEvidence: { ...first.row.backendEvidence, engine: { owed: 'No proof yet.' } } }
+    }
+    expect(owedEngineRows([unproved, ...rest])).toEqual([first.id])
+    expect(owedEngineRows([unproved, ...rest])).not.toEqual([...ENGINE_FAULT_INJECTION_OWED])
+  })
+
+  it('are must-pass rows the Operator project does not own; its consumed-ruling and human-wait rows stay excluded', () => {
+    for (const { id } of rows) {
+      expect({
+        id,
+        cutover: rawShard.components.find((raw) => raw.id === id)?.faultAttack.cutover,
+        excluded: EXCLUDED.has(id.slice('fault-attack:'.length))
+      }).toEqual({ id, cutover: 'must-pass', excluded: false })
+    }
+    expect(EXCLUDED.has('11-consumed-or-stale-ruling-replayed')).toBe(true)
+    expect(EXCLUDED.has('51-human-wait-principal-ruling-pause')).toBe(true)
   })
 })

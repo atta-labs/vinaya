@@ -707,11 +707,12 @@ export function isAutomaticRecoveryPause(reason: PauseReason): boolean {
 /**
  * A pause the driver never resumes by itself but the ordinary start
  * (`vinaya task run`) continues with no ruling once the host is repaired: a
- * sandbox capability refusal. Outside the automatic-recovery set, so neither
- * the watcher's retry nor `MAX_INFRASTRUCTURE_RETRIES` applies to it.
+ * sandbox capability refusal, or an Engine checkpoint the runner refused.
+ * Outside the automatic-recovery set, so neither the watcher's retry nor
+ * `MAX_INFRASTRUCTURE_RETRIES` applies to it.
  */
 export function isHostRepairPause(reason: PauseReason): boolean {
-  return reason === 'sandbox_refused'
+  return reason === 'sandbox_refused' || reason === 'checkpoint_refused'
 }
 
 /**
@@ -1050,6 +1051,15 @@ export const PAUSE_REASON_PROFILE: Record<
     nextActions: [
       'Correct the task’s `## Documentation` section — cite a public page or an in-repository spec in place of a private or unreadable source — or restore the missing repository path.',
       'Then resume: the controller prepares every required source again before the next Developer turn.'
+    ]
+  },
+  checkpoint_refused: {
+    requestedAuthority: 'operator',
+    attemptedRecovery:
+      'none — a checkpoint that cannot be read, records no versions, or was written by an Engine runtime this one cannot read does not recover by itself, so the runner ran no step, did not start the run over, and will not resume it on its own. `detail` leads with the typed code.',
+    nextActions: [
+      'For `checkpoint_corrupt` or `checkpoint_version_unrecorded`, move the run’s `checkpoints.sqlite` aside; for a format or runtime mismatch, run the task with the Engine runtime the checkpoint names, or move the file aside.',
+      'Then start the task again with `vinaya task run` on that host: no ruling is needed, and the pause is resolved once as it continues.'
     ]
   }
 }
