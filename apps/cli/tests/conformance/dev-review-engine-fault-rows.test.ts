@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative } from 'node:path'
+import { dirname, join } from 'node:path'
 import { runDirectory, type Agent, type RunTrace } from '../../../../processes/vinaya/bin/run-engine.js'
 import { engineEvidenceOf } from '../../src/lib/dev-review-eval/exit-check.js'
 import { loadRegistry } from '../../src/lib/dev-review-eval/registry.js'
@@ -15,7 +15,6 @@ import {
   type PauseState
 } from '../../src/lib/dev-review-loop/pause-resume.js'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../src/lib/dev-review-loop/round-assess.js'
-import type { LogSinkDeps } from '../../src/lib/log-sink.js'
 import { taskEscalationReadHandler } from '../../src/lib/task-tools/handlers.js'
 import { readEscalationPacket, readTaskLoopStateObserved } from '../../src/lib/task-tools/read.js'
 import type { Observation } from './dev-review-current-loop-adapter.js'
@@ -28,6 +27,7 @@ import {
   PROVIDER_TIMEOUT_MS,
   REASONING_CANARY,
   runEngineScenario,
+  runtimeSnapshot,
   SOURCE_READS_FILE,
   STALE_HEAD,
   type EngineScenarioRun
@@ -123,23 +123,9 @@ const lines = (text: string): Record<string, unknown>[] =>
     .map((line) => JSON.parse(line) as Record<string, unknown>)
 const readText = (path: string): string => (existsSync(path) ? readFileSync(path, 'utf8') : '')
 
-/** Every file under `dir`, by relative path, with its content's digest. */
-function snapshot(dir: string): Record<string, string> {
-  const out: Record<string, string> = {}
-  const walk = (at: string) => {
-    for (const entry of readdirSync(at, { withFileTypes: true })) {
-      const path = join(at, entry.name)
-      if (entry.isDirectory()) walk(path)
-      else if (entry.isFile()) out[relative(dir, path)] = createHash('sha256').update(readFileSync(path)).digest('hex')
-    }
-  }
-  walk(dir)
-  return out
-}
-
 /** The Operator's reads of a paused run, through its read tool and the read interface behind it. */
 function operatorReads(run: EngineScenarioRun): OperatorReads {
-  const before = snapshot(run.runtimeDir)
+  const before = runtimeSnapshot(run.runtimeDir)
   const escalationRead = taskEscalationReadHandler({ task: { issue: run.task } })
   // A read handed fields that name a decision: the read tool's input carries no such field, and it changes nothing.
   const mutatingInput = taskEscalationReadHandler({
@@ -152,7 +138,7 @@ function operatorReads(run: EngineScenarioRun): OperatorReads {
   const loopState = readTaskLoopStateObserved(run.runtimeDir, run.task).value
   const pause = readPauseState(run.runtimeDir, run.task)
   const record = pause?.escalationId === undefined ? null : readEscalationRecord(run.task, pause.escalationId)
-  const after = snapshot(run.runtimeDir)
+  const after = runtimeSnapshot(run.runtimeDir)
   return {
     before,
     after,
@@ -189,7 +175,7 @@ beforeAll(async () => {
   for (const spec of RUN_SPECS) {
     for (const agent of AGENTS) {
       const warnings: string[] = []
-      let sink: Partial<LogSinkDeps> | undefined
+      let sink: Parameters<typeof runEngineScenario>[2]
       if (spec.sink === 'recording') {
         const folder = { kind: 'folder' as const, folder: join(scratch, `${spec.key}-${agent}-logs`) }
         sink = { resolveLogDestination: () => folder, unresolvedLogDestination: () => folder }

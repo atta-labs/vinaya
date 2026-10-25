@@ -9,8 +9,9 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { buildReviewInputManifest, DEFAULT_REVIEW_POLICY, objectivesVersion } from '@attalabs/aeg-core'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../../harness/dev-process/loader/load-process.js'
@@ -171,6 +172,20 @@ function lines(path: string): RecordLine[] {
 }
 function json(path: string): RecordLine | null {
   return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as RecordLine) : null
+}
+/** Every file under a run's runtime directory, by relative path, with its content's digest. */
+export function runtimeSnapshot(runtimeDir: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  const walk = (at: string) => {
+    for (const entry of readdirSync(at, { withFileTypes: true })) {
+      const path = join(at, entry.name)
+      if (entry.isDirectory()) walk(path)
+      else if (entry.isFile())
+        out[relative(runtimeDir, path)] = createHash('sha256').update(readFileSync(path)).digest('hex')
+    }
+  }
+  walk(runtimeDir)
+  return out
 }
 function records(dir: string): RecordLine[] {
   return existsSync(dir)
