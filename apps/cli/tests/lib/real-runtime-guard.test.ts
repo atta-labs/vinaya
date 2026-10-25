@@ -11,10 +11,10 @@
  * leaked path — a failing run's summary lists titles, not assertion output.
  */
 import { describe, expect, it } from 'bun:test'
-import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 import { exemptPrefixes, PROCESS_START_MS, realRuntimeDir, touchedSince } from './real-runtime-guard-core'
 
 /** Taken at module load so the test's own TITLE names the leaked paths. */
@@ -74,6 +74,8 @@ describe('real runtime directory guard', () => {
         writeFileSync(join(root, 'tasks-execution', task, 'driver.pid.json'), lock(pid))
         writeFileSync(join(root, 'tasks-execution', task, 'state'), 'x')
         writeFileSync(join(root, 'logs', `${task}.ndjson`), 'x')
+        mkdirSync(join(root, 'engine-runs', task), { recursive: true })
+        writeFileSync(join(root, 'engine-runs', task, 'checkpoints.sqlite'), 'x')
       }
       writeFileSync(join(root, 'logs', 'other.ndjson'), 'x')
       const found = touchedSince(root, Date.now() - 60_000, [])
@@ -94,9 +96,29 @@ describe('real runtime directory guard', () => {
       probe,
       "import { it } from 'bun:test'\nit('prints', () => console.log('RUNTIME=' + process.env.VINAYA_RUNTIME_DIR))\n"
     )
-    const out = spawnSync('bun', ['test', '--preload', './tests/lib/test-env-preload.ts', probe], {
+    const out = spawnSyncBudgeted('bun', ['test', '--preload', './tests/lib/test-env-preload.ts', probe], {
       cwd: join(import.meta.dir, '../..'),
-      env: { ...process.env, VINAYA_RUNTIME_DIR: inherited },
+      env: { ...stripVinayaEnv(), VINAYA_RUNTIME_DIR: inherited },
+      encoding: 'utf8'
+    })
+    const line = `${out.stdout}${out.stderr}`.match(/RUNTIME=(\S+)/)?.[1]
+    expect(line).toBeDefined()
+    expect(line).not.toBe(inherited)
+    expect(line).toContain('vinaya-test-runtime-')
+    rmSync(inherited, { recursive: true, force: true })
+  })
+
+  // The pre-push hook runs the selected test files from the repository root, where only the root bunfig applies.
+  it('gives a test run from the repository root the same private runtime directory', () => {
+    const inherited = mkdtempSync(join(tmpdir(), 'inherited-runtime-'))
+    const probe = join(mkdtempSync(join(tmpdir(), 'runtime-probe-')), 'probe.test.ts')
+    writeFileSync(
+      probe,
+      "import { it } from 'bun:test'\nit('prints', () => console.log('RUNTIME=' + process.env.VINAYA_RUNTIME_DIR))\n"
+    )
+    const out = spawnSyncBudgeted('bun', ['test', '--timeout=30000', '--', probe], {
+      cwd: join(import.meta.dir, '../../../..'),
+      env: { ...stripVinayaEnv(), VINAYA_RUNTIME_DIR: inherited },
       encoding: 'utf8'
     })
     const line = `${out.stdout}${out.stderr}`.match(/RUNTIME=(\S+)/)?.[1]

@@ -54,7 +54,7 @@ export function exemptPrefixes(env: NodeJS.ProcessEnv): string[] {
   const task = env.VINAYA_TASK
   const controllerCache = join('tasks-execution', 'unscoped', 'output', 'test-run-cache.json')
   if (!task) return [controllerCache]
-  return [join('tasks-execution', task), join('tasks-execution', 'unscoped'), controllerCache]
+  return [join('tasks-execution', task), join('engine-runs', task), join('tasks-execution', 'unscoped'), controllerCache]
 }
 
 function pidRunning(pid: unknown): boolean {
@@ -79,7 +79,9 @@ export function liveTaskPrefixes(root: string): string[] {
   for (const task of tasks) {
     try {
       const lock = JSON.parse(readFileSync(join(root, 'tasks-execution', task, 'driver.pid.json'), 'utf-8'))
-      if (pidRunning(lock?.pid)) out.push(join('tasks-execution', task), join('logs', `${task}.ndjson`))
+      // A live Engine run also writes its checkpoints under `engine-runs/<task>`.
+      if (pidRunning(lock?.pid))
+        out.push(join('tasks-execution', task), join('engine-runs', task), join('logs', `${task}.ndjson`))
     } catch {
       // no readable lock — not live
     }
