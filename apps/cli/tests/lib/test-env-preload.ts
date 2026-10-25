@@ -72,24 +72,19 @@ for (const key of [
 }
 
 /**
- * `VINAYA_RUNTIME_DIR` — a dispatched session carries it (the driver hands its
- * runtime directory down), a CI runner or an operator's shell does not. Left
- * unset, anything a test reaches through `runtimeDirForThisRepo()` — the
- * test-run cache `pr report` writes, a driver log — resolves to the real
- * `~/.vinaya/runtime/<owner>-<repo>`, so the same suite wrote into the real
- * directory on CI and an operator's machine while staying clean in a
- * dispatched run. Pointing it at a private temporary directory makes every
- * environment behave like the dispatched one. A test that needs the default
- * resolution (or a different directory) sets or deletes the key itself, as
- * the ones that already run with it set do. `real-runtime-guard.test.ts`
+ * `VINAYA_RUNTIME_DIR` — always a private temporary directory for the tests.
+ * Left as it was, anything a test reaches through `runtimeDirForThisRepo()` —
+ * the test-run cache `pr report` writes, a driver log — resolves to a real
+ * runtime directory: `~/.vinaya/runtime/<owner>-<repo>` when unset, and in a
+ * dispatched session the very directory the driver handed down, so a
+ * Developer's own test run wrote its fixtures' narration into the live task's
+ * driver log. A test that needs the default resolution (or a different
+ * directory) sets or deletes the key itself. `real-runtime-guard.test.ts`
  * still fails a test that reaches the real directory some other way, such as
  * a spawned child with `VINAYA_*` stripped.
  */
-let privateRuntimeDir: string | null = null
-if (!process.env.VINAYA_RUNTIME_DIR) {
-  privateRuntimeDir = mkdtempSync(join(tmpdir(), 'vinaya-test-runtime-'))
-  process.env.VINAYA_RUNTIME_DIR = privateRuntimeDir
-}
+const privateRuntimeDir: string = mkdtempSync(join(tmpdir(), 'vinaya-test-runtime-'))
+process.env.VINAYA_RUNTIME_DIR = privateRuntimeDir
 
 /**
  * Once, after every test file this process ran: remove the private runtime
@@ -99,7 +94,7 @@ if (!process.env.VINAYA_RUNTIME_DIR) {
  * covered, whichever files it was given.
  */
 afterAll(() => {
-  if (privateRuntimeDir) rmSync(privateRuntimeDir, { recursive: true, force: true })
+  rmSync(privateRuntimeDir, { recursive: true, force: true })
   const leaked = touchedSince(realRuntimeDir(), PROCESS_START_MS, exemptPrefixes(process.env))
   if (leaked.length > 0) {
     throw new Error(`tests wrote into the real runtime directory: ${leaked.join(' ')}`)

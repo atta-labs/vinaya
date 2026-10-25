@@ -11,6 +11,7 @@
  * leaked path — a failing run's summary lists titles, not assertion output.
  */
 import { describe, expect, it } from 'bun:test'
+import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -83,5 +84,25 @@ describe('real runtime directory guard', () => {
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+
+  // A dispatched session hands its real runtime directory down; the tests it runs must still never write there.
+  it('gives a test process a private runtime directory even when one is inherited', () => {
+    const inherited = mkdtempSync(join(tmpdir(), 'inherited-runtime-'))
+    const probe = join(mkdtempSync(join(tmpdir(), 'runtime-probe-')), 'probe.test.ts')
+    writeFileSync(
+      probe,
+      "import { it } from 'bun:test'\nit('prints', () => console.log('RUNTIME=' + process.env.VINAYA_RUNTIME_DIR))\n"
+    )
+    const out = spawnSync('bun', ['test', '--preload', './tests/lib/test-env-preload.ts', probe], {
+      cwd: join(import.meta.dir, '../..'),
+      env: { ...process.env, VINAYA_RUNTIME_DIR: inherited },
+      encoding: 'utf8'
+    })
+    const line = `${out.stdout}${out.stderr}`.match(/RUNTIME=(\S+)/)?.[1]
+    expect(line).toBeDefined()
+    expect(line).not.toBe(inherited)
+    expect(line).toContain('vinaya-test-runtime-')
+    rmSync(inherited, { recursive: true, force: true })
   })
 })
