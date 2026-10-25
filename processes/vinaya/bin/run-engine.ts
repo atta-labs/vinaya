@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import {
   initialLoopState,
@@ -126,7 +127,14 @@ import {
   isDriverPidAlive,
   readPauseState
 } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
-import { appendLoopLogLine, appendRunStartMarker, loopLogPathFor } from '../../../apps/cli/src/lib/loop-log'
+import {
+  appendLoopLogLine,
+  appendRoleLine,
+  appendRunStartMarker,
+  loopLogPathFor,
+  narrateDriverEvent
+} from '../../../apps/cli/src/lib/loop-log'
+import { type AgentStreamRenderer, createAgentStreamRenderer } from '../../../apps/cli/src/lib/agent-stream'
 import { CLI_ENTRY_ENV } from '../../../apps/cli/src/lib/cli-entry'
 import { pollMergeableState } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
 import { developerTurnResultJsonSchema } from '../../../apps/cli/src/lib/developer-turn-result'
@@ -135,6 +143,8 @@ import {
   readLaunchRecord,
   completeRunnerDeveloperLaunch,
   recordRunnerDeveloperLaunch,
+  renderClaudeEvent,
+  renderCodexEvent,
   terminateChildWithGrace
 } from '../../../apps/cli/src/lib/dispatch'
 import { loadConfig } from '../../../apps/cli/src/lib/config'
@@ -466,6 +476,17 @@ export function isReviewerLaunch(generatedRoot: string) {
     )
 }
 
+/** The role whose generated launch a spawn is, matched by its `CODEX_HOME` or a path argument under that role's root. */
+function launchRoleOf<Role extends string>(
+  roots: Readonly<Record<Role, string>>,
+  args: readonly string[],
+  env: Readonly<Record<string, string | undefined>> | undefined
+): Role | undefined {
+  return (Object.entries(roots) as Array<[Role, string]>).find(
+    ([, root]) => env?.CODEX_HOME === root || args.some((arg) => arg.startsWith(`${root}/`))
+  )?.[0]
+}
+
 /**
  * Gives each reviewer launch the scratch directory prepared for that role's current attempt, and the Developer its
  * task worktree: the Flow's agent steps all start at the target repository's root, which is the default branch's
@@ -482,11 +503,88 @@ export function withReviewerWorkingDirectory(
     developer: join(generatedRoot, 'developer')
   } as const
   return (command, args, options) => {
-    const role = (Object.entries(roots) as Array<[HeldVerdictRole | 'developer', string]>).find(
-      ([, root]) => options?.env?.CODEX_HOME === root || args.some((arg) => arg.startsWith(`${root}/`))
-    )?.[0]
+    const role = launchRoleOf(roots, args, options?.env)
     const directory = role ? directoryFor(role) : null
     return spawnFn(command, args, directory ? { ...options, cwd: directory } : options)
+  }
+}
+
+/** Builds the renderer for one agent launch from the vendor and the directory the launch runs in. */
+export type AgentRendererFor = (agent: Agent, worktree: string) => AgentStreamRenderer
+
+/** The standalone dispatch's own renderer: the vendor's translator, falling back to its `renderEvent`. */
+const standaloneRendererFor: AgentRendererFor = (agent, worktree) =>
+  createAgentStreamRenderer(
+    agent,
+    { worktree, home: homedir() },
+    agent === 'claude' ? renderClaudeEvent : renderCodexEvent
+  )
+
+/**
+ * Tees each agent launch's stdout into the task's driver log while the agent runs, as the standalone dispatch does:
+ * each complete line through that launch's agent-stream renderer, each rendered line written with `appendRoleLine`
+ * under the role name the standalone dispatch gives it. The tee is a second `data` listener, so the executor's own
+ * reader still gets every byte; a line that fails to render, and any other failure here, is dropped. A launch that is
+ * none of the roles' generated launches is passed through untouched.
+ */
+export function withAgentNarration(
+  spawnFn: SpawnFn,
+  generatedRoot: string,
+  narration: { agent: Agent; logPath: string; rendererFor?: AgentRendererFor }
+): SpawnFn {
+  const roots = {
+    developer: join(generatedRoot, 'developer'),
+    'code-reviewer': join(generatedRoot, 'code-reviewer'),
+    security: join(generatedRoot, 'security-reviewer')
+  } as const
+  return (command, args, options) => {
+    const child = spawnFn(command, args, options)
+    try {
+      const role = launchRoleOf(roots, args, options?.env)
+      if (role === undefined || !child.stdout) return child
+      const renderer = (narration.rendererFor ?? standaloneRendererFor)(narration.agent, options?.cwd ?? process.cwd())
+      const decoder = new StringDecoder('utf8')
+      // Whatever has arrived since the last complete line: a chunk can split one.
+      let carry = ''
+      child.stdout.on('data', (chunk: Buffer | string) => {
+        try {
+          carry += typeof chunk === 'string' ? chunk : decoder.write(chunk)
+          const lines = carry.split('\n')
+          carry = lines.pop() ?? ''
+          for (const line of lines) {
+            if (line.trim().length === 0) continue
+            try {
+              for (const { words, mark, details } of renderer.render(JSON.parse(line) as Record<string, unknown>))
+                appendRoleLine(narration.logPath, role, words, details, mark)
+            } catch {
+              // Not a JSON line, or a renderer that refused it: narration never ends the run it observes.
+            }
+          }
+        } catch {}
+      })
+    } catch {}
+    return child
+  }
+}
+
+/**
+ * The runner's Log sink, each event narrated into the driver log right after it is emitted, with the events
+ * narrated before it as context: what the standalone loop's `logEvents` does after each event it writes. The
+ * translator and the runner share the one wrapped sink, so no event is narrated twice; a narration failure is dropped.
+ */
+export function narratingLog(
+  log: (event: unknown) => void,
+  logPath: string,
+  task: number,
+  narrateEvent: typeof narrateDriverEvent = narrateDriverEvent
+): (event: unknown) => void {
+  const narrated: unknown[] = []
+  return (event) => {
+    log(event)
+    try {
+      narrateEvent(logPath, event, narrated, task)
+    } catch {}
+    narrated.push(event)
   }
 }
 
@@ -645,6 +743,8 @@ export interface EngineRunOptions {
   lifecycle?: EngineLifecycleOptions
   /** Replaces the writers and forge posts a pause hands off to; for a run that must not reach them. */
   handoffDeps?: HandoffDeps
+  /** Replaces the driver log's agent-stream renderer or event narration; the standalone loop's own by default. */
+  narration?: { rendererFor?: AgentRendererFor; narrateEvent?: typeof narrateDriverEvent }
 }
 
 export interface EngineLifecycleOptions {
@@ -727,8 +827,15 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     task: args.task,
     baseHead: () => (options.taskInput ? worktreeStats(options.taskInput.worktreePath, 0).baseHead : null)
   })
-  const translator = createLogTranslator(producers, options.sink.log as unknown as EmitLogEvent)
   const logPath = loopLogPathFor(null, args.task, options.runtimeDir)
+  // The translator's rows and the runner's own reach the sink through this one wrapper, each narrated once.
+  const sinkLog = narratingLog(
+    options.sink.log as unknown as (event: unknown) => void,
+    logPath,
+    args.task,
+    options.narration?.narrateEvent
+  )
+  const translator = createLogTranslator(producers, sinkLog as unknown as EmitLogEvent)
   const narrate = (line: string): void => appendLoopLogLine(logPath, `${new Date().toISOString()}  ${line}`)
   let pausedFor: string | undefined
   const writeTrace = (
@@ -773,7 +880,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     control.signal.addEventListener('abort', () => void reaper.reap(lifecycle.killGraceMs), { once: true })
   reapOnHalt()
   const stopWatching = new AbortController()
-  const log = (event: DevReviewLoopEventInput): void => (options.sink.log as unknown as (event: unknown) => void)(event)
+  const log = (event: DevReviewLoopEventInput): void => sinkLog(event)
   // Standalone's shared sink drains handoff records after the driver's own
   // terminal events. Preserve that observable ordering on the Engine path.
   const deferredHandoffEvents: DevReviewLoopEventInput[] = []
@@ -1120,10 +1227,18 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
               }
             : {}),
           spawnFn: tolerateReviewerExit(
-            withReviewerWorkingDirectory(reaper.spawnFn, join(runDir, 'generated'), (role) =>
-              role === 'developer'
-                ? (options.taskInput?.worktreePath ?? null)
-                : (options.taskInput?.reviewerWorkingDirectory?.(role) ?? null)
+            withReviewerWorkingDirectory(
+              // Innermost, so the tee sees the directory the launch runs in and the agent's own stdout.
+              withAgentNarration(reaper.spawnFn, join(runDir, 'generated'), {
+                agent: args.agent,
+                logPath,
+                rendererFor: options.narration?.rendererFor
+              }),
+              join(runDir, 'generated'),
+              (role) =>
+                role === 'developer'
+                  ? (options.taskInput?.worktreePath ?? null)
+                  : (options.taskInput?.reviewerWorkingDirectory?.(role) ?? null)
             ),
             isReviewerLaunch(join(runDir, 'generated'))
           ),
