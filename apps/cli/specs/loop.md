@@ -290,7 +290,12 @@ still lives under the machine-local Vinaya home regardless
 separate deps — `LoopDeps.runtimeDir` and `LoopDeps.resolveLogAppendPath`
 (the exact path THIS process's own `log()` calls will land at, for polling
 its own line landing) — they were one, which is how this driver's own
-per-task files ended up inside the telemetry outbox to begin with.
+per-task files ended up inside the telemetry outbox to begin with. That path
+is resolved once, at loop start; when the loop's own sink later switches from
+an `anchor-unreadable` folder fallback to the server (a retried trust-anchor
+read confirmed it, `apps/cli/specs/log.md`), `logEvents` polls the sink's
+`switchedAppendPath` instead, so no event waits out its landing timeout on a
+file the sink no longer writes.
 
 `vinaya task sweep --include-legacy` is the one reader of a folder an
 earlier layout left behind — a run in flight when
