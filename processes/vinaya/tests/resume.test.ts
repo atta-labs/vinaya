@@ -260,6 +260,35 @@ function watching(deps: ResumeDeps, onPoll: (poll: number) => void = () => {}): 
 
 for (const agent of AGENTS) {
   describe(`a halted Engine run on ${agent}`, () => {
+    test('a refused step runs again on resume; a step that completed normally does not', async () => {
+      const { forge, deps } = fakeForge()
+      let refused = false
+      const watch = watching(deps, (poll) => {
+        if (poll === 1) forge.post()
+      })
+      const first = stubRun({
+        agent,
+        watch,
+        actions: {
+          'vinaya.prepare-sources': () => {
+            if (refused) return { exitCode: 0 }
+            refused = true
+            const detail = 'a required source could not be read'
+            first.options.taskInput.handoff?.pause({ reason: 'missing_source', detail })
+            return { exitCode: 1, stdout: detail, refused: true }
+          }
+        }
+      })
+      const result = await runEngine(first.options)
+      expect(result.exitCode).toBe(0)
+      expect(forge.claims).toHaveLength(1)
+      // The refusal was not recorded, so the resume ran it again before the Developer was dispatched.
+      expect(first.actionRuns['prepare-sources']).toBe(2)
+      expect(first.actionRuns['prepare-run']).toBe(1)
+      expect(first.actionRuns['reconcile-external-state']).toBe(1)
+      expect(first.spawns).toEqual(['develop', 'code-review', 'security-review'])
+    })
+
     test('a ruling posted to the forge resumes the run once, from its checkpoint', async () => {
       const { forge, deps } = fakeForge()
       let failed = false

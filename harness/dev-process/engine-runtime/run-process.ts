@@ -7,6 +7,7 @@ import {
   type AgentSpawnGraphStateValue,
   type MechanicalNodeResult,
   type RoleBinaryConfig,
+  RunHaltedError,
   type RunControl,
   type RunIdentity,
   type RunOutcome,
@@ -54,6 +55,11 @@ export interface ActionResult {
   exitCode: number
   stdout?: string
   stderr?: string
+  /**
+   * The step refused and paused the run: it halts without being recorded as completed, so a resume runs it again
+   * once its cause is fixed. A step that completed, even with a non-zero exit code, leaves this unset.
+   */
+  refused?: boolean
 }
 
 export type ProcessAction = (context: ActionContext) => Promise<ActionResult> | ActionResult
@@ -158,6 +164,7 @@ function assertBindingsCover(steps: FlowStep[], bindings: ProcessBindings): void
 
 function nodeExecutor(
   actions: ActionRegistry,
+  control: RunControl | undefined,
   config: AgentSpawnExecutorConfig,
   spawnFn: SpawnFn | undefined,
   stepPrompts: Readonly<Record<string, StepPrompt>> = {},
@@ -169,6 +176,8 @@ function nodeExecutor(
       if (!action) throw new Error(`Action "${node.action}" (step "${node.id}") has no entry in the action registry`)
       const startedAt = Date.now()
       const outcome = await action({ nodeId: node.id, action: node.action, results: state.results, signal })
+      // A refusal halts at this step's own boundary: no result is written, so the checkpoint still holds it pending.
+      if (outcome.refused === true) throw new RunHaltedError(node.id, control?.haltReason)
       const result: MechanicalNodeResult = {
         nodeId: node.id,
         kind: 'mechanical',
@@ -249,6 +258,7 @@ function prepare(options: ProcessRunOptions): PreparedLeg {
     config,
     executor: nodeExecutor(
       options.bindings.actions,
+      options.control,
       config,
       options.spawnFn,
       options.stepPrompts,

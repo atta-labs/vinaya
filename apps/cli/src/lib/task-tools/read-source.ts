@@ -178,7 +178,19 @@ function pinnedContent(
     }
   } else if (ref.startsWith('git:')) {
     const path = entry.canonicalUri.replace(/^repository:/, '')
-    const object = manifest.base === null ? null : options.readObject(manifest.base, path)
+    let object: ReturnType<ReadRepositoryObject>
+    try {
+      object = manifest.base === null ? null : options.readObject(manifest.base, path)
+    } catch (error) {
+      // The repository itself could not be read: the source is not missing, its reader is.
+      return refuse(
+        'dependency_unavailable',
+        'never',
+        'source-reader-unavailable',
+        error instanceof Error ? error.message : String(error),
+        'Judge without it and say in your report that the repository could not be read.'
+      )
+    }
     bytes = object !== null && `git:${object.type}:${object.id}` === ref ? object.content : null
   }
   if (bytes === null || sha256Digest(bytes) !== entry.contentDigest) {

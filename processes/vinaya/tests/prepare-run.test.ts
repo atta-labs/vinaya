@@ -3,12 +3,21 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initialLoopState } from '@attalabs/aeg-core'
-import { createRunControl } from '@atta/executor-agent-spawn'
+import { createRunControl, type RunControl } from '@atta/executor-agent-spawn'
+import { MemorySaver } from '@langchain/langgraph'
+import { loadProcess } from '../../../harness/dev-process/loader/load-process'
+import {
+  resumeProcessRun,
+  startProcessRun,
+  type ProcessAction,
+  type ProcessRunOptions
+} from '../../../harness/dev-process/engine-runtime/run-process'
 import { isHostRepairPause, readPauseState } from '../../../apps/cli/src/lib/dev-review-loop/pause-resume'
 import { DispatchSandboxRefused } from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
 import type { EnforcementControl } from '../../../apps/cli/src/lib/enforcement-controls'
 import type { PreparedSource, RequiredSourceManifest } from '../../../apps/cli/src/lib/source-manifest'
 import { sourceReceiptsPath } from '../../../apps/cli/src/lib/source-manifest'
+import { SourceReaderUnavailable } from '../../../apps/cli/src/lib/source-provider'
 import type { FetchDocumentationDeps } from '../../../apps/cli/src/lib/task-tools/fetch-documentation'
 import type { SandboxProbePlan } from '../../../apps/cli/src/lib/worker-boundary'
 import { BRANCH, fakeDeps, makeWorld } from '../../../apps/cli/tests/lib/task-tools/live-developer-context-world'
@@ -32,12 +41,9 @@ const missingGate: EnforcementControl = {
   remedy: 'run `vinaya install`.'
 }
 
-/** One run of the Flow's preparation steps over a runtime folder of its own, its pauses handed off and recorded. */
-function setup(overrides: Partial<TaskInput> = {}) {
-  const runtimeDir = overrides.runtimeDir ?? mkdtempSync(join(tmpdir(), 'prepare-run-'))
-  const control = createRunControl()
-  const recorded = recordedHandoff()
-  const handoff = createHandoff(
+/** A handoff whose pauses are recorded and halt `control`. */
+function handoffFor(runtimeDir: string, control: RunControl, recorded: ReturnType<typeof recordedHandoff>) {
+  return createHandoff(
     {
       task: TASK,
       branch: BRANCH,
@@ -58,6 +64,14 @@ function setup(overrides: Partial<TaskInput> = {}) {
     'loop-1',
     recorded.deps
   )
+}
+
+/** One run of the Flow's preparation steps over a runtime folder of its own, its pauses handed off and recorded. */
+function setup(overrides: Partial<TaskInput> = {}) {
+  const runtimeDir = overrides.runtimeDir ?? mkdtempSync(join(tmpdir(), 'prepare-run-'))
+  const control = createRunControl()
+  const recorded = recordedHandoff()
+  const handoff = handoffFor(runtimeDir, control, recorded)
   const calls: string[] = []
   const task = {
     runtimeDir,
@@ -187,6 +201,116 @@ describe('prepare-run verifies the enforcement controls', () => {
   })
 })
 
+// The run's first two steps on the Engine runner: prepare-run, then a step that reads the task worktree.
+const PREPARE_FLOW = `schema_version: "2.0"
+id: prepare-flow
+display_name: Prepare
+description: Prepare-run, then a read of the worktree.
+experimental: true
+benchmarked: false
+defaults:
+  model: process-supplied
+agents: []
+steps:
+  - { id: prepare-run, type: mechanical, action: vinaya.prepare-run }
+  - { id: read-worktree, type: mechanical, action: test.read-worktree }
+`
+
+/** Runs PREPARE_FLOW on the Engine runner until prepare-run refuses, fixes the cause, then resumes the run. */
+async function refuseThenResume(refuse: (task: TaskInput) => void, fix: (task: TaskInput) => void) {
+  const folder = mkdtempSync(join(tmpdir(), 'prepare-run-flow-'))
+  writeFileSync(join(folder, 'flow.yaml'), PREPARE_FLOW)
+  mkdirSync(join(folder, 'worker'))
+  writeFileSync(join(folder, 'worker', 'grants.yaml'), 'role: worker\n')
+  writeFileSync(join(folder, 'process.yaml'), 'id: prepare\nversion: "1"\nflow: flow.yaml\nroles:\n  - worker\n')
+  const setupped = setup()
+  const { task, calls, runtimeDir } = setupped
+  task.bound = {
+    ...task.bound,
+    // The fake creates the worktree the later step reads.
+    createTaskWorktree: () => {
+      calls.push('worktree')
+      mkdirSync(task.worktreePath, { recursive: true })
+    }
+  }
+  refuse(task)
+  const reads: boolean[] = []
+  const prepareRun = createActions(task)['vinaya.prepare-run'] as ProcessAction
+  const options: ProcessRunOptions = {
+    process: loadProcess(folder),
+    question: 'task 10',
+    bindings: {
+      actions: {
+        'vinaya.prepare-run': (context) => prepareRun(context),
+        'test.read-worktree': () => {
+          reads.push(existsSync(task.worktreePath))
+          return { exitCode: existsSync(task.worktreePath) ? 0 : 1 }
+        }
+      },
+      decisions: {},
+      roles: {}
+    },
+    checkpointer: new MemorySaver(),
+    workingDirectoryRoot: folder,
+    control: setupped.control
+  }
+  const paused = await startProcessRun(options)
+  const pausedCalls = [...calls]
+  fix(task)
+  // The resume is a fresh leg: its own control, and a handoff that halts it.
+  const control = createRunControl()
+  task.handoff = handoffFor(runtimeDir, control, setupped.recorded)
+  const resumed = await resumeProcessRun({ ...options, control }, paused.identity)
+  return { paused, pausedCalls, resumed, reads, calls, setupped }
+}
+
+describe('a refused prepare-run runs again when the Engine run resumes', () => {
+  test('inactive enforcement controls refuse; once fixed, the resume runs prepare-run and creates the worktree', async () => {
+    const run = await refuseThenResume(
+      (task) => {
+        task.bound = { ...task.bound, localGateControl: () => missingGate }
+      },
+      (task) => {
+        task.bound = { ...task.bound, localGateControl: () => activeGate }
+      }
+    )
+    expect(run.paused.reason).toBe('paused')
+    // Nothing read the worktree behind the refusal, and the refusal was not recorded as prepare-run's result.
+    expect(run.pausedCalls).toEqual([])
+    if (run.paused.reason === 'paused') expect(run.paused.checkpoint?.results['prepare-run']).toBeUndefined()
+    expect(run.resumed.reason).toBe('completed')
+    expect(run.calls).toEqual(['readiness', 'worktree'])
+    // The worktree existed before the later step read it.
+    expect(run.reads).toEqual([true])
+  })
+
+  test('an unready dispatch pauses instead of running on; once ready, the resume creates the worktree', async () => {
+    let ready = false
+    let readinessChecks = 0
+    const run = await refuseThenResume(
+      (task) => {
+        task.bound = {
+          ...task.bound,
+          checkTaskDispatchReadiness: () => {
+            readinessChecks += 1
+            return ready ? { ready: true, output: 'ready' } : { ready: false, output: 'task 9 has not merged' }
+          }
+        }
+      },
+      () => {
+        ready = true
+      }
+    )
+    expect(run.paused.reason).toBe('paused')
+    expect(run.pausedCalls).toEqual([])
+    expect(run.setupped.recorded.calls).toContain('pause-state:escalation')
+    expect(run.resumed.reason).toBe('completed')
+    expect(readinessChecks).toBe(2)
+    expect(run.calls).toEqual(['worktree'])
+    expect(run.reads).toEqual([true])
+  })
+})
+
 describe('prepare-run proves the agent sandbox', () => {
   for (const vendor of ['claude-code', 'codex'] as const) {
     test(`a probe that cannot run a command pauses sandbox_refused for the Operator (${vendor})`, async () => {
@@ -284,6 +408,24 @@ describe('prepare-sources pauses on a source it cannot read', () => {
     expect(setupped.control.halted).toBe(true)
     // The turn is never judged against sources it was not given.
     expect(setupped.task.developerContext.requiredSources).toEqual([])
+  })
+
+  test('a missing worktree pauses as an infrastructure stop naming its path, never as a missing source', async () => {
+    const missing = join(mkdtempSync(join(tmpdir(), 'prepare-sources-gone-')), 'worktree')
+    const setupped = setup({
+      prepareSources: async () => {
+        throw new SourceReaderUnavailable(missing, 'the worktree does not exist')
+      }
+    })
+    const result = (await setupped.run('vinaya.prepare-sources')) as Result & { refused?: boolean }
+    expect(result.exitCode).toBe(1)
+    expect(result.refused).toBe(true)
+    expect(result.stdout).toContain(missing)
+    const held = paused(setupped.runtimeDir)
+    expect(held).toMatchObject({ reason: 'infrastructure' })
+    expect(held!.detail).toContain(missing)
+    expect(setupped.recorded.calls).not.toContain('pause-state:missing_source')
+    expect(setupped.control.halted).toBe(true)
   })
 
   test('readable sources become the sources the Developer turn is judged against', async () => {

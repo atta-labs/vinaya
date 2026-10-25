@@ -492,6 +492,21 @@ function pauseThrough(task: TaskInput, step: string, request: PauseRequest): voi
   task.handoff.pause(request)
 }
 
+/**
+ * A precondition step's refusal: the pause made durable, and a result marked refused, so the run halts with the step
+ * unrecorded and the resume after its cause is fixed runs it again. A deciding step's pause is recorded instead: its
+ * record carries the decision the resume continues from.
+ */
+function refuseThrough(
+  task: TaskInput,
+  step: string,
+  request: PauseRequest
+): { exitCode: number; stdout: string; refused: true } {
+  if (!task.handoff) throw new Error(`${step} refused (${request.reason}) but no handoff is wired to make it durable`)
+  task.handoff.pause(request)
+  return { exitCode: 1, stdout: request.detail, refused: true }
+}
+
 /** The round's statistics at the worktree's head against its merge base with main; unknown values when git cannot say. */
 export function worktreeStats(worktreePath: string, wallMs: number): RoundStats {
   const git = (...args: string[]) => execFileSync('git', args, { cwd: worktreePath, encoding: 'utf8' }).trim()
@@ -1674,7 +1689,7 @@ async function readForgeCi(task: TaskInput, context: ActionContext): Promise<{ e
  * (`checkPremiseAtHead`). A stale pin pauses through the handoff before any reviewer is dispatched; a body that
  * cannot be read, or carries no `Premise:` block, is dormant.
  */
-function checkPremise(task: TaskInput): { exitCode: number; stdout: string } {
+function checkPremise(task: TaskInput): { exitCode: number; stdout: string; refused?: true } {
   const prNumber = openPullRequestOf(task, 'check-premise')
   const result = checkPremiseAtHead(prNumber, task.bound?.fetchPrBody ?? fetchPrBody)
   if (result === null || result.pass) return ok(JSON.stringify({ premise: result === null ? 'dormant' : 'holds' }))
@@ -1684,7 +1699,8 @@ function checkPremise(task: TaskInput): { exitCode: number; stdout: string } {
     reason: 'escalation',
     detail: `a Premise pin no longer holds at ${head ?? 'the task head'}, so no reviewer is dispatched: ${failures.join('; ')}`
   })
-  return { exitCode: 1, stdout: JSON.stringify({ premise: 'stale', head, failures }) }
+  // A refusal: the re-pinned Premise is checked again when the run resumes.
+  return { exitCode: 1, stdout: JSON.stringify({ premise: 'stale', head, failures }), refused: true }
 }
 
 /**
@@ -1729,13 +1745,9 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
       probeAgentSandbox
     ],
     build: (task) => async () => {
-      // Every refusal below is a pause through the handoff, never a thrown start: the run halts at this step's boundary.
-      const refuse = (request: PauseRequest): { exitCode: number; stdout: string } => {
-        if (!task.handoff)
-          throw new Error(`prepare-run refused (${request.reason}) but no handoff is wired to make it durable`)
-        task.handoff.pause(request)
-        return { exitCode: 1, stdout: request.detail }
-      }
+      // Every refusal below is a pause through the handoff, never a thrown start: the run halts at this step's boundary,
+      // the step unrecorded, so the resume after the cause is fixed runs it again and creates the worktree.
+      const refuse = (request: PauseRequest) => refuseThrough(task, 'prepare-run', request)
       // The policy is read here, not when the run's input is built, so a failed read pauses instead of refusing entry.
       try {
         task.reviewPolicy?.()
@@ -1760,7 +1772,11 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
         return refuse({ reason: 'infrastructure', detail, error: new Error(detail) })
       }
       const readiness = (task.bound?.checkTaskDispatchReadiness ?? checkTaskDispatchReadiness)(task.branch)
-      if (!readiness.ready) return { exitCode: 1, stdout: readiness.output }
+      if (!readiness.ready)
+        return refuse({
+          reason: 'escalation',
+          detail: `the task is not ready to dispatch, so no worktree is created: ${readiness.output}`
+        })
       ;(task.bound?.createTaskWorktree ?? createTaskWorktree)(task.branch)
       // The sandbox is proved by running a real command in it, before the first agent step.
       const plan = task.sandboxPlan?.() ?? null
@@ -1792,15 +1808,27 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
     adapts: [fetchSourceRevision, prepareSources],
     build: (task) => async () => {
       const revision = (task.bound?.fetchSourceRevision ?? fetchSourceRevision)(task.issueNumber)
-      const prepared = await task.prepareSources?.()
+      let prepared: Awaited<ReturnType<NonNullable<TaskInput['prepareSources']>>> | undefined
+      try {
+        prepared = await task.prepareSources?.()
+      } catch (error) {
+        // The reader itself failed — a missing worktree, a git that cannot run — so no source was judged missing.
+        const reason = error instanceof Error ? error.message : String(error)
+        return refuseThrough(task, 'prepare-sources', {
+          reason: 'infrastructure',
+          detail: `the required sources could not be read: ${reason}`,
+          error
+        })
+      }
       if (prepared === undefined) return ok(revision)
       // A source the turn would have to take on memory pauses the run before the Developer is dispatched.
       if (prepared.unavailable.length > 0) {
-        if (!task.handoff)
-          throw new Error('prepare-sources found an unreadable source but no handoff is wired to make it durable')
         const unavailable = new RequiredSourcesUnavailable(prepared.unavailable)
-        task.handoff.pause({ reason: 'missing_source', detail: unavailable.message, error: unavailable })
-        return { exitCode: 1, stdout: unavailable.message }
+        return refuseThrough(task, 'prepare-sources', {
+          reason: 'missing_source',
+          detail: unavailable.message,
+          error: unavailable
+        })
       }
       // The turn is judged against the sources the brief names, as the standalone loop does.
       task.developerContext = {

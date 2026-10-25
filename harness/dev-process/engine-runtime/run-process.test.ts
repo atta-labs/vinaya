@@ -172,6 +172,39 @@ describe('engine runtime', () => {
     expect(calls.prepare).toBe(1)
   })
 
+  test('a step that refuses is not recorded: the resume runs it again, and only it', async () => {
+    const control = createRunControl()
+    const { options, calls, spawned } = harness()
+    let refusing = true
+    options.bindings = {
+      ...options.bindings,
+      actions: {
+        ...options.bindings.actions,
+        'sample.check': () => {
+          calls.check = (calls.check ?? 0) + 1
+          if (!refusing) return { exitCode: 0 }
+          control.halt('refused')
+          return { exitCode: 1, refused: true }
+        }
+      },
+      decisions: { check: () => false }
+    }
+    options.control = control
+    const paused = await startProcessRun(options)
+    expect(paused.reason).toBe('paused')
+    if (paused.reason === 'paused') {
+      expect(paused.haltReason).toBe('refused')
+      // The checkpoint holds the refused step pending, never its result.
+      expect(paused.checkpoint?.results.check).toBeUndefined()
+    }
+    refusing = false
+    const resumed = await resumeProcessRun({ ...options, control: undefined }, paused.identity)
+    expect(resumed.reason).toBe('completed')
+    // The step that refused ran again; the steps before it, completed, did not.
+    expect(calls).toEqual({ prepare: 1, check: 2, finish: 1 })
+    expect(spawned).toEqual(['worker-agent'])
+  })
+
   test('a Flow action with no registry entry is refused by name before any step runs', async () => {
     const { options, calls, spawned } = harness()
     const { 'sample.check': _omitted, ...actions } = options.bindings.actions

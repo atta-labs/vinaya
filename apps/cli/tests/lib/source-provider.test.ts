@@ -46,6 +46,7 @@ import {
   prepareSources,
   REQUIRED_SOURCE_POLICY,
   RequiredSourcesUnavailable,
+  SourceReaderUnavailable,
   type SourceProviderDeps
 } from '../../src/lib/source-provider.js'
 import {
@@ -192,6 +193,26 @@ describe('a repository source is pinned by its git object at the frozen base, wi
     })
     expect(unavailable[0]?.unavailable?.reason).toBe('missing_in_repository')
     expect(unavailable[0]?.deliveryMode).toBe('unavailable')
+  })
+
+  it('a worktree path that does not exist is an infrastructure stop naming the path, not a missing source', async () => {
+    const { base } = repository()
+    const missing = join(tempDir('source-gone-'), 'worktree')
+    const read = prepareSources({
+      brief: brief('specs/isolation.md'),
+      round: 1,
+      base,
+      storeDir: tempDir('source-store-'),
+      deps: deps(noNetwork, gitObjectReader(missing))
+    })
+    await expect(read).rejects.toBeInstanceOf(SourceReaderUnavailable)
+    await expect(read).rejects.toThrow(missing)
+    await expect(read).rejects.toThrow('the worktree does not exist')
+  })
+
+  it('a directory git cannot read is an infrastructure stop, not a missing source', () => {
+    const notARepository = tempDir('source-not-a-repo-')
+    expect(() => gitObjectReader(notARepository)('HEAD', 'specs/isolation.md')).toThrow(SourceReaderUnavailable)
   })
 })
 
