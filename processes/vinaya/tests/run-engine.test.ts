@@ -164,18 +164,18 @@ const STEP_OF_ROLE: Record<string, string> = {
 
 function stubAgent(_role: string, lines: string[]): SpawnedProcessLike {
   const closeListeners: Array<(code: number | null) => void> = []
-  let stdout: ((chunk: string) => void) | undefined
+  const stdout: Array<(chunk: string) => void> = []
   return {
     stdin: {
       write: () => {},
       end: () => {
         setTimeout(() => {
-          for (const line of lines) stdout?.(`${line}\n`)
+          for (const line of lines) for (const listener of stdout) listener(`${line}\n`)
           for (const listener of closeListeners) listener(0)
         }, 0)
       }
     },
-    stdout: { on: (_event, listener) => (stdout = listener as (chunk: string) => void) },
+    stdout: { on: (_event, listener) => void stdout.push(listener as (chunk: string) => void) },
     stderr: { on: () => {} },
     on: ((event: string, listener: (code: number | null) => void) => {
       if (event === 'close') closeListeners.push(listener)
@@ -428,6 +428,40 @@ describe('a stub run on the Engine path', () => {
     expect(readTrace(result.tracePath).outcome).toBe('paused')
     expect(calls.filter((call) => call === 'host-close')).toHaveLength(3)
     expect(calls.filter((call) => call === 'drain')).toHaveLength(1)
+  })
+
+  test("narrates the agents' lines and the Log events into the task's driver log", async () => {
+    const { options } = stubRun()
+    await runEngine(options)
+    const log = readFileSync(loopLogPathFor(null, 7, options.runtimeDir), 'utf8')
+    expect(log).toMatch(/Z {2}> Developer {3}Requesting tool publish_changes$/m)
+    expect(log).toMatch(/Z {2}\+ Loop {3}The driver finished\.$/m)
+  })
+
+  test('a renderer that throws leaves the step results, the trace and the Log rows unchanged', async () => {
+    const steady = stubRun()
+    const steadyResult = await runEngine(steady.options)
+    const broken = stubRun()
+    const thrower = () => {
+      throw new Error('narration broke')
+    }
+    const brokenResult = await runEngine({
+      ...broken.options,
+      narration: { rendererFor: () => ({ render: thrower }), narrateEvent: thrower }
+    })
+    expect(brokenResult.exitCode).toBe(steadyResult.exitCode)
+    const { steps, ...rest } = readTrace(brokenResult.tracePath)
+    const { steps: steadySteps, ...steadyRest } = readTrace(steadyResult.tracePath)
+    expect(rest).toEqual(steadyRest)
+    // The agents' streams reached their steps exactly as before.
+    expect(steps).toEqual(steadySteps)
+    expect(broken.emitted).toEqual(steady.emitted)
+    // Nothing the broken narration would have written reached the driver log.
+    expect(readFileSync(loopLogPathFor(null, 7, broken.options.runtimeDir), 'utf8')).not.toContain('Developer')
+    // A renderer that cannot even be built is dropped the same way.
+    const unbuilt = stubRun()
+    const unbuiltResult = await runEngine({ ...unbuilt.options, narration: { rendererFor: thrower } })
+    expect(readTrace(unbuiltResult.tracePath).steps).toEqual(steadySteps)
   })
 
   test('drains the sink when the host cannot start, and launches no agent', async () => {
