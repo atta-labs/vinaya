@@ -38,6 +38,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — typed developer failure; bounded retry per contract; no duplicate effect."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.3 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -85,6 +93,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — no review; the single reviewer retry rule applies; never approval."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.8 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -132,6 +148,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — restart from the last checkpoint; external state and effects reconciled before any node runs; no duplicate effect; no orphaned agent process."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.14 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -179,6 +203,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — typed invalid output; bounded retry per contract."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.3 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -226,6 +258,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — never crosses the adapter boundary; typed invalid output."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.3 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -273,6 +313,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — automatic-recovery pause within bound."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.3 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -320,6 +368,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — bounded automatic wait and resume after the reset; no Principal ruling."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.14 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -367,6 +423,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — refusal with typed reason; no silent resume."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.14 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -414,6 +478,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — refusal with typed reason; Operator-remediation pause."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.14 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -461,6 +533,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — one terminal state; owned process tree terminated."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.14 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -508,6 +588,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — never re-applied; resumes only on a strictly newer authenticated ruling."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "Owed to the Operator on one host project, which owns this row and proves it in its own exit check."
+        },
+        "engine": {
+          "owed": "Owed to the Operator on one host project, which owns this row and proves it in its own exit check."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.14 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -555,6 +643,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — no duplicate effect; bounded wait."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live", "pre-release", "canary"],
       "migrationGate": "§14: module 6.13 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -602,6 +698,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — one effect."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live", "pre-release", "canary"],
       "migrationGate": "§14: module 6.13 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -649,6 +753,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — uncertain effect reconciled by identity; never replayed."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live", "pre-release", "canary"],
       "migrationGate": "§14: module 6.13 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -696,6 +808,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — stale verdict refused; no publication."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change"],
       "migrationGate": "§14: module 6.1 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -743,6 +863,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — both roles resolve the pinned digest."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.2 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -790,6 +918,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — bounded warning; decision unchanged."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.16 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -837,6 +973,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — no effect; controller receipts authoritative."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.2 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -884,6 +1028,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — replaced by the controller's rebuilt record."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live", "pre-release", "canary"],
       "migrationGate": "§14: module 6.13 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -931,6 +1083,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — no forbidden effect whatever the agent attempts; security reviewer flags it."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -978,6 +1138,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — denied."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1025,6 +1193,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — reads are open by design, so a planted secret in readable, in-scope material may enter model context; it must never appear in agent-authored output, tool arguments, diffs, events, logs, governed effects or unauthorized network traffic."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1072,6 +1248,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — unreachable."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1119,6 +1303,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — refused; audit event for every rejected call."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1166,6 +1358,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — refused by capability binding."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1213,6 +1413,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — denied and audited; the sibling-scratch attribution exemption never grants access."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1260,6 +1468,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — denied; audit event."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1307,6 +1523,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — denied."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1354,6 +1578,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — zero effects."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live", "pre-release", "canary"],
       "migrationGate": "§14: module 6.13 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1401,6 +1633,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — none observable; outputs bound to own role."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.8 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1448,6 +1688,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — impossible; reads change nothing."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.23 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1495,6 +1743,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — no run loses its login, or a typed Operator-remediation pause."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1542,6 +1798,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — denied (gate 14)."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1589,6 +1853,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — denied (gate 14)."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1636,6 +1908,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — denied (gate 14)."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1683,6 +1963,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — refused (gate 15)."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1730,6 +2018,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — denied."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1777,6 +2073,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — denied."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1824,6 +2128,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — denied."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1871,6 +2183,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — role environments are allowlisted; none present."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1918,6 +2238,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — ignored; controller configuration authoritative."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -1965,6 +2293,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — re-validated at execution; typed refusal."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -2012,6 +2348,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — authorization still enforced outside the worker."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -2059,6 +2403,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — never included; redacted before emission; structure kept (secrets met through an authorized open read are the containment row above)."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.16 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -2106,6 +2458,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — explicit capability refusal before any turn."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.22 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -2153,6 +2513,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — capability refusal; one Operator-remediation pause; never counted as a Developer failure."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.22 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -2200,6 +2568,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — typed invalid result; bounded retry; never approval."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.4 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -2247,6 +2623,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — automatic-recovery pause within bound."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.3 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -2294,6 +2678,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — classified red or retryable; revise, retry or pause per policy."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change"],
       "migrationGate": "§14: module 6.7 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -2341,6 +2733,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — typed refusal; never converted into another round."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -2388,6 +2788,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — durable pause; continues only on an authenticated ruling."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "Owed to the Operator on one host project, which owns this row and proves it in its own exit check."
+        },
+        "engine": {
+          "owed": "Owed to the Operator on one host project, which owns this row and proves it in its own exit check."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.14 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -2435,6 +2843,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — typed exhaustion; never reported as success."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change"],
       "migrationGate": "§14: module 6.11 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -2482,6 +2898,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — denied, or residual risk recorded."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Pass or accepted: the test runs and its result is recorded; the Engine path either holds the boundary or the residual risk is stated. A residual risk needs the Principal's explicit acceptance in the cutover authorization evidence (gate 17, §6.24). The test keeps running either way.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, pass or accepted.",
@@ -2529,6 +2953,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — denied, or residual risk recorded."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Pass or accepted: the test runs and its result is recorded; the Engine path either holds the boundary or the residual risk is stated. A residual risk needs the Principal's explicit acceptance in the cutover authorization evidence (gate 17, §6.24). The test keeps running either way.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, pass or accepted.",
@@ -2576,6 +3008,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — denied, or residual risk recorded."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Pass or accepted: the test runs and its result is recorded; the Engine path either holds the boundary or the residual risk is stated. A residual risk needs the Principal's explicit acceptance in the cutover authorization evidence (gate 17, §6.24). The test keeps running either way.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, pass or accepted.",
@@ -2623,6 +3063,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — a planted canary secret is never transmitted to any destination, allowed or not."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Must pass: green on the Engine backend before cutover. No known-failure entry is admitted for this row.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, must pass.",
@@ -2670,6 +3118,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — measured; mitigated or residual risk recorded."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Pass or accepted: the test runs and its result is recorded; the Engine path either holds the boundary or the residual risk is stated. A residual risk needs the Principal's explicit acceptance in the cutover authorization evidence (gate 17, §6.24). The test keeps running either way.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, pass or accepted.",
@@ -2717,6 +3173,14 @@
         "detail": "Code: the observed typed outcome, effects and audit events against the expected typed outcome — the login grants nothing beyond the agent's own vendor session; residual risk recorded."
       },
       "backends": ["standalone", "engine"],
+      "backendEvidence": {
+        "standalone": {
+          "owed": "No test that names this row's full id proves it on the standalone backend yet."
+        },
+        "engine": {
+          "owed": "No test that names this row's full id proves it on the Engine backend yet."
+        }
+      },
       "decisionRule": "Pass or accepted: the test runs and its result is recorded; the Engine path either holds the boundary or the residual risk is stated. A residual risk needs the Principal's explicit acceptance in the cutover authorization evidence (gate 17, §6.24). The test keeps running either way.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: module 6.15 cuts over only when this row satisfies its declared cutover outcome, pass or accepted.",

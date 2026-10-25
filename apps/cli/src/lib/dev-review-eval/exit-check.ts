@@ -3,14 +3,19 @@
  * aggregated registry rows and the universes the caller derives, claiming
  * zero uncovered components across the complete kind set. Each shard's own
  * check proves completeness for its kinds alone; only this check claims the
- * exit. It reads no file and is run by a test, not imported by the CLI. Its
- * specification is `apps/cli/specs/evals.md`, "Global exit check".
+ * exit. It also reports, per kind, the rows proved on the Engine and those
+ * still owing that proof; owed proof never fails the exit. Beside it,
+ * `checkOwedEngineEvidence` holds the shrink-only list of owed Engine
+ * evidence to the rows. Neither reads a file; both are run by tests, not
+ * imported by the CLI. The specification is `apps/cli/specs/evals.md`,
+ * "Global exit check" and "Owed Engine evidence".
  */
 
 import {
   COMPONENT_KINDS,
   type ComponentKind,
   type ComponentRow,
+  EVIDENCE_KINDS,
   isPlaceholder,
   type ModuleCatalog,
   REQUIRED_FIELDS,
@@ -115,7 +120,43 @@ export interface ExitKindReport {
   emptyFields: number
   /** Universe members with no row, plus rows naming no live catalog module. */
   unmapped: number
+  /** On a kind whose rows carry backend evidence: the rows proved on the Engine and those owing that proof. */
+  engine?: EngineEvidenceReport
 }
+
+/** The Engine evidence of one kind's rows listing the Engine backend. Owed proof is reported, never refused. */
+export interface EngineEvidenceReport {
+  /** Rows whose Engine entry names a test file that proves them. */
+  evidenced: number
+  /** Rows whose Engine proof is owed, or whose live-gated test has no live run recorded. */
+  owed: number
+  /** The owed rows' ids, in registry order. */
+  owedIds: string[]
+}
+
+/**
+ * Where a row's Engine proof stands. A live-gated test proves its row only
+ * once its entry records the pull request carrying the pasted live probe
+ * output; until then the live run is owed.
+ */
+export type EngineEvidenceState =
+  | { state: 'evidenced'; test: string }
+  | { state: 'owed'; reason: string }
+  | { state: 'live-run-owed'; test: string; variable: string }
+
+/** A row's Engine evidence state; `undefined` when the row does not list the Engine backend. */
+export function engineEvidenceOf(row: ComponentRow): EngineEvidenceState | undefined {
+  if (!row.backends.includes('engine')) return undefined
+  const entry = row.backendEvidence?.engine
+  if (entry === undefined) return { state: 'owed', reason: 'the row carries no Engine evidence entry' }
+  if ('owed' in entry) return { state: 'owed', reason: entry.owed }
+  if (entry.liveGated !== undefined && entry.liveGated.liveProbePullRequest === undefined) {
+    return { state: 'live-run-owed', test: entry.test, variable: entry.liveGated.variable }
+  }
+  return { state: 'evidenced', test: entry.test }
+}
+
+const carriesEvidence = (kind: ComponentKind): boolean => (EVIDENCE_KINDS as readonly string[]).includes(kind)
 
 export interface ExitInput {
   catalog: ModuleCatalog
@@ -140,6 +181,11 @@ export interface ExitReport {
   kinds: Record<ComponentKind, ExitKindReport>
   emptyFields: number
   unmapped: number
+  /**
+   * The excluded rows, `<kind>:<name>`: owed to the Operator on one host
+   * project, never counted as owed Engine evidence of this registry.
+   */
+  operatorOwed: string[]
   causes: ExitCause[]
 }
 
@@ -176,7 +222,12 @@ export function checkExit(input: ExitInput): ExitReport {
   const causes: ExitCause[] = []
   const cause = (code: ExitCauseCode, detail: string) => causes.push({ code, detail })
   const kinds = Object.fromEntries(
-    COMPONENT_KINDS.map((k) => [k, { covered: 0, emptyFields: 0, unmapped: 0 }])
+    COMPONENT_KINDS.map((k) => [
+      k,
+      carriesEvidence(k)
+        ? { covered: 0, emptyFields: 0, unmapped: 0, engine: { evidenced: 0, owed: 0, owedIds: [] } }
+        : { covered: 0, emptyFields: 0, unmapped: 0 }
+    ])
   ) as Record<ComponentKind, ExitKindReport>
   const exclusions = (input.exclusions ?? OPERATOR_EXIT_EXCLUSIONS).filter((entry) =>
     COMPONENT_KINDS.includes(entry.kind as ComponentKind)
@@ -219,6 +270,15 @@ export function checkExit(input: ExitInput): ExitReport {
     const names = rowsByKind.get(row.kind) ?? new Set<string>()
     names.add(nameOf(row))
     rowsByKind.set(row.kind, names)
+
+    const engine = report.engine === undefined ? undefined : engineEvidenceOf(row)
+    if (report.engine !== undefined && engine !== undefined) {
+      if (engine.state === 'evidenced') report.engine.evidenced++
+      else {
+        report.engine.owed++
+        report.engine.owedIds.push(row.id)
+      }
+    }
 
     const empty = emptyFieldsOf(row)
     report.emptyFields += empty.length
@@ -278,5 +338,96 @@ export function checkExit(input: ExitInput): ExitReport {
 
   const emptyFields = COMPONENT_KINDS.reduce((n, k) => n + kinds[k].emptyFields, 0)
   const unmapped = COMPONENT_KINDS.reduce((n, k) => n + kinds[k].unmapped, 0)
-  return { pass: causes.length === 0 && emptyFields === 0 && unmapped === 0, kinds, emptyFields, unmapped, causes }
+  const operatorOwed = exclusions.map((entry) => `${entry.kind}:${entry.name}`)
+  return {
+    pass: causes.length === 0 && emptyFields === 0 && unmapped === 0,
+    kinds,
+    emptyFields,
+    unmapped,
+    operatorOwed,
+    causes
+  }
+}
+
+// ── The shrink-only list of owed Engine evidence ────────────────────────────
+
+export type OwedListCauseCode =
+  | 'owed_unlisted'
+  | 'live_run_unrecorded'
+  | 'listed_evidenced'
+  | 'listed_unknown'
+  | 'listed_operator'
+  | 'listed_twice'
+  | 'list_grew'
+
+export interface OwedListCause {
+  code: OwedListCauseCode
+  detail: string
+}
+
+export interface OwedListInput {
+  /** Every row with its location, as aggregated. */
+  components: readonly { location: string; row: ComponentRow }[]
+  /** The owed list as read: row ids, `<kind>:<name>`. */
+  listed: readonly string[]
+  /** The most rows the list may hold: it shrinks as proof lands and never gains a row. */
+  ceiling: number
+  /** Rows owed to the Operator on one host project; defaults to the Operator-owned list. */
+  exclusions?: readonly ExitExclusion[]
+}
+
+export interface OwedListReport {
+  pass: boolean
+  /** The rows of this registry owing Engine proof, derived from their evidence entries. */
+  owed: string[]
+  causes: OwedListCause[]
+}
+
+/**
+ * Compares the owed list with the rows: every row owing Engine proof is
+ * listed, and no listed row has its proof, is owed to the Operator on one
+ * host project, or names no row. A live-gated row stays listed until its
+ * entry records the pull request carrying the pasted live probe output.
+ */
+export function checkOwedEngineEvidence(input: OwedListInput): OwedListReport {
+  const causes: OwedListCause[] = []
+  const cause = (code: OwedListCauseCode, detail: string) => causes.push({ code, detail })
+  const operatorRows = new Set(
+    (input.exclusions ?? OPERATOR_EXIT_EXCLUSIONS).map((entry) => `${entry.kind}:${entry.name}`)
+  )
+  const states = new Map<string, EngineEvidenceState>()
+  for (const { row } of input.components) {
+    if (!carriesEvidence(row.kind) || operatorRows.has(row.id)) continue
+    const state = engineEvidenceOf(row)
+    if (state !== undefined) states.set(row.id, state)
+  }
+  const owed = [...states].filter(([, state]) => state.state !== 'evidenced').map(([id]) => id)
+
+  const listed = new Set<string>()
+  for (const id of input.listed) {
+    if (listed.has(id)) cause('listed_twice', `${id} appears on the owed list more than once`)
+    listed.add(id)
+    const state = states.get(id)
+    if (operatorRows.has(id)) {
+      cause('listed_operator', `${id} is owed to the Operator on one host project, not listed as owed Engine evidence`)
+    } else if (state === undefined) {
+      cause('listed_unknown', `${id} is on the owed list but names no row listing the Engine backend`)
+    } else if (state.state === 'evidenced') {
+      cause('listed_evidenced', `${id} now has Engine evidence in ${state.test}; remove it from the owed list`)
+    }
+  }
+  for (const id of owed) {
+    if (listed.has(id)) continue
+    const state = states.get(id) as EngineEvidenceState
+    if (state.state === 'live-run-owed') {
+      cause(
+        'live_run_unrecorded',
+        `${id} is proved by ${state.test} only when ${state.variable} is set; it leaves the owed list only once its Engine entry records liveProbePullRequest, the pull request carrying the pasted live probe output`
+      )
+    } else cause('owed_unlisted', `${id} owes Engine evidence and is missing from the owed list`)
+  }
+  if (input.listed.length > input.ceiling) {
+    cause('list_grew', `the owed list holds ${input.listed.length} rows, above its ceiling of ${input.ceiling}`)
+  }
+  return { pass: causes.length === 0, owed, causes }
 }

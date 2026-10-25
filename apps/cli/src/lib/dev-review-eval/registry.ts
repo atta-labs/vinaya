@@ -9,7 +9,10 @@
  * aggregated by listing their directory, so a later shard adds a file and
  * touches nothing shared. Every row — module or component — carries its own
  * source document, revision and section, and stores all ten fields itself: a
- * component never inherits a field from its module.
+ * component never inherits a field from its module. A fault-and-attack or
+ * cutover-gate row also carries, for each backend it lists, the test file that
+ * proves it there or the proof owed; a named file must exist and contain the
+ * row's full id.
  *
  * Validation refuses with a typed reason naming the offending field, in the
  * shape `contracts.ts` uses. Shard completeness compares one shard against the
@@ -17,8 +20,9 @@
  * declares and no other; it is not the program's global exit check.
  */
 
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { basename, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { EVALUATION_LAYERS, type EvaluationLayer, GRADER_LAYERS, type GraderLayer } from './contracts'
 
 // ── Vocabulary ──────────────────────────────────────────────────────────────
@@ -82,6 +86,9 @@ export type GraderKind = (typeof GRADER_KINDS)[number]
 export const TASK_CASES = ['positive', 'negative', 'refusal', 'recovery', 'adversarial'] as const
 export type TaskCaseName = (typeof TASK_CASES)[number]
 
+/** The kinds whose rows record, backend by backend, the test that proves them or the proof still owed. */
+export const EVIDENCE_KINDS = ['fault-attack', 'cutover-gate'] as const satisfies readonly ComponentKind[]
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 /** Where a row's content comes from: a repository document, its revision and a heading in it. */
@@ -105,6 +112,27 @@ export interface GraderField {
   kinds: GraderKind[]
   detail: string
 }
+
+/**
+ * A test that runs only when an opt-in live environment variable is set. It
+ * proves its row only once a live run's output is recorded: the pull request
+ * whose body carries the pasted live probe output.
+ */
+export interface LiveGate {
+  /** The environment variable that switches the test on. */
+  variable: string
+  /** The pull request carrying the pasted live probe output; absent while the live run is owed. */
+  liveProbePullRequest?: number
+}
+
+/**
+ * One backend's evidence for a row: the repository test file that proves the
+ * row on that backend and names the row's full id, or the proof owed and why.
+ */
+export type BackendEvidence = { test: string; liveGated?: LiveGate } | { owed: string }
+
+/** A row's evidence: one entry for each backend the row lists, and no other. */
+export type BackendEvidenceEntries = Partial<Record<Backend, BackendEvidence>>
 
 /** The ten required fields, every one carrying a value. */
 export interface RequiredFields {
@@ -168,6 +196,8 @@ export interface ComponentRow extends RequiredFields {
   /** Further catalog modules this component also names, never its own `module`. */
   additionalModules?: string[]
   source: RowSource
+  /** On a fault-and-attack or cutover-gate row, and only there: the evidence for each backend it lists. */
+  backendEvidence?: BackendEvidenceEntries
 }
 
 /** One shard file: the component kinds it covers and its rows. */
@@ -210,6 +240,8 @@ export type RegistryRefusalCode =
   | 'kind_not_declared'
   | 'duplicate_component'
   | 'unreadable'
+  | 'evidence_file_missing'
+  | 'evidence_id_absent'
 
 /** Why a value was refused. `path` names the field, dotted from the root, prefixed by the file it came from. */
 export interface RegistryRefusal {
@@ -519,9 +551,130 @@ export function validateModuleCatalog(input: unknown, location = ''): RegistryRe
   return run(() => catalog(input, location))
 }
 
+// ── Backend evidence ────────────────────────────────────────────────────────
+
+/** Reads a file by its path from the repository root; `undefined` when no such file exists. */
+export type EvidenceFiles = (path: string) => string | undefined
+
+/** The root of the repository this module lives in. */
+export const REPOSITORY_ROOT = fileURLToPath(new URL('../../../../../', import.meta.url))
+
+/** Reads evidence files from the checkout at `root`. */
+export function repositoryFiles(root: string = REPOSITORY_ROOT): EvidenceFiles {
+  return (path) => {
+    const file = join(root, path)
+    return existsSync(file) && statSync(file).isFile() ? readFileSync(file, 'utf8') : undefined
+  }
+}
+
+/** A path from the repository root: no leading slash, no `.` or `..` segment, no backslash or space. */
+const REPOSITORY_PATH = /^(?!\/)(?!(?:.*\/)?\.{1,2}(?:\/|$))[^\\\s]+$/
+const ENV_VARIABLE = /^[A-Z][A-Z0-9_]*$/
+
+/** Whether `content` names `id` whole — never only as the start of a longer id, as `gate-1` starts `gate-16`. */
+export function namesRowId(content: string, id: string): boolean {
+  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(?<![A-Za-z0-9-])${escaped}(?![A-Za-z0-9-])`).test(content)
+}
+
+function liveGate(input: unknown, path: string): LiveGate {
+  const obj = record(input, path)
+  const extra = Object.keys(obj).find((key) => key !== 'variable' && key !== 'liveProbePullRequest')
+  if (extra !== undefined) refuse('unknown_value', at(path, extra), `${at(path, extra)} is not a field of a live gate`)
+  const variablePath = at(path, 'variable')
+  const variable = text(field(obj, 'variable', path), variablePath)
+  if (!ENV_VARIABLE.test(variable)) {
+    refuse(
+      'bad_name',
+      variablePath,
+      `${variablePath} must name an environment variable, got ${JSON.stringify(variable)}`
+    )
+  }
+  const gate: LiveGate = { variable }
+  if (obj.liveProbePullRequest !== undefined) {
+    gate.liveProbePullRequest = integer(obj.liveProbePullRequest, at(path, 'liveProbePullRequest'), 1)
+  }
+  return gate
+}
+
+function evidenceEntry(input: unknown, path: string, id: string, files: EvidenceFiles): BackendEvidence {
+  const obj = record(input, path)
+  if ('test' in obj && 'owed' in obj) refuse('wrong_type', path, `${path} names a test or owes the proof, never both`)
+  if (!('test' in obj) && !('owed' in obj)) {
+    refuse('missing_field', path, `${path} must name a test file or state the proof owed`)
+  }
+  const allowed = 'test' in obj ? ['test', 'liveGated'] : ['owed']
+  const extra = Object.keys(obj).find((key) => !allowed.includes(key))
+  if (extra !== undefined) {
+    refuse('unknown_value', at(path, extra), `${at(path, extra)} is not a field of this evidence entry`)
+  }
+  if ('owed' in obj) {
+    const owedPath = at(path, 'owed')
+    const reason = text(obj.owed, owedPath)
+    if (/[\r\n]/.test(reason)) refuse('wrong_type', owedPath, `${owedPath} must give its reason on one line`)
+    return { owed: reason }
+  }
+  const testPath = at(path, 'test')
+  const file = text(obj.test, testPath)
+  if (!REPOSITORY_PATH.test(file)) {
+    refuse('bad_name', testPath, `${testPath} must be a path from the repository root, got ${JSON.stringify(file)}`)
+  }
+  const content = files(file)
+  if (content === undefined) {
+    refuse(
+      'evidence_file_missing',
+      testPath,
+      `${id} names evidence file ${file}, which does not exist in the repository`
+    )
+  }
+  if (!namesRowId(content, id)) {
+    refuse(
+      'evidence_id_absent',
+      testPath,
+      `${id} names evidence file ${file}, which does not contain the full id ${id}`
+    )
+  }
+  const entry: { test: string; liveGated?: LiveGate } = { test: file }
+  if (obj.liveGated !== undefined) entry.liveGated = liveGate(obj.liveGated, at(path, 'liveGated'))
+  return entry
+}
+
+/** One evidence entry for each backend the row lists; an entry for a backend it does not list is refused. */
+function backendEvidence(
+  input: unknown,
+  path: string,
+  id: string,
+  backends: readonly Backend[],
+  files: EvidenceFiles
+): BackendEvidenceEntries {
+  const obj = record(input, path)
+  const extra = Object.keys(obj).find((key) => !(backends as readonly string[]).includes(key))
+  if (extra !== undefined) {
+    refuse(
+      'unknown_value',
+      at(path, extra),
+      `${id} does not list the ${extra} backend, so ${at(path, extra)} evidences nothing`
+    )
+  }
+  const out: BackendEvidenceEntries = {}
+  for (const backend of backends) {
+    const entryPath = at(path, backend)
+    if (obj[backend] === undefined) {
+      refuse('missing_field', entryPath, `${id} lists the ${backend} backend and carries no evidence entry for it`)
+    }
+    out[backend] = evidenceEntry(obj[backend], entryPath, id, files)
+  }
+  return out
+}
+
 // ── Component rows ──────────────────────────────────────────────────────────
 
-function componentRow(input: unknown, path: string, modules: ReadonlyMap<string, ModuleEntry>): ComponentRow {
+function componentRow(
+  input: unknown,
+  path: string,
+  modules: ReadonlyMap<string, ModuleEntry>,
+  files: EvidenceFiles
+): ComponentRow {
   const obj = record(input, path)
   const kind = oneOf(field(obj, 'kind', path), at(path, 'kind'), COMPONENT_KINDS)
   const id = text(field(obj, 'id', path), at(path, 'id'))
@@ -584,6 +737,16 @@ function componentRow(input: unknown, path: string, modules: ReadonlyMap<string,
     }
     ;(row as unknown as Record<string, unknown>)[key] = value
   }
+  const evidencePath = at(path, 'backendEvidence')
+  if ((EVIDENCE_KINDS as readonly string[]).includes(kind)) {
+    row.backendEvidence = backendEvidence(field(obj, 'backendEvidence', path), evidencePath, id, row.backends, files)
+  } else if (obj.backendEvidence !== undefined) {
+    refuse(
+      'unknown_value',
+      evidencePath,
+      `${evidencePath} is carried only by a ${EVIDENCE_KINDS.join(' or ')} row, not by a ${kind} one`
+    )
+  }
   return row
 }
 
@@ -591,12 +754,14 @@ function moduleIndex(catalog: ModuleCatalog): Map<string, ModuleEntry> {
   return new Map(catalog.modules.map((module) => [module.id, module]))
 }
 
+/** Validates one row; a test file its evidence names is read through `files`, from the repository by default. */
 export function validateComponentRow(
   input: unknown,
   catalog: ModuleCatalog,
-  location = ''
+  location = '',
+  files: EvidenceFiles = repositoryFiles()
 ): RegistryResult<ComponentRow> {
-  return run(() => componentRow(input, location, moduleIndex(catalog)))
+  return run(() => componentRow(input, location, moduleIndex(catalog), files))
 }
 
 // ── Shards and aggregation ──────────────────────────────────────────────────
@@ -616,14 +781,19 @@ function shardHeader(obj: Record<string, unknown>, location: string): { shard: s
   return { shard, kinds }
 }
 
-function shard(input: unknown, location: string, modules: ReadonlyMap<string, ModuleEntry>): Shard {
+function shard(
+  input: unknown,
+  location: string,
+  modules: ReadonlyMap<string, ModuleEntry>,
+  files: EvidenceFiles
+): Shard {
   const obj = record(input, location)
   const { shard: name, kinds } = shardHeader(obj, location)
   const rowsPath = at(location, 'components')
   const raw = field(obj, 'components', location)
   if (!Array.isArray(raw)) refuse('wrong_type', rowsPath, `${rowsPath} must be an array`)
   const components = raw.map((value, index) => {
-    const row = componentRow(value, at(rowsPath, index), modules)
+    const row = componentRow(value, at(rowsPath, index), modules, files)
     if (!kinds.includes(row.kind)) {
       refuse(
         'kind_not_declared',
@@ -636,8 +806,13 @@ function shard(input: unknown, location: string, modules: ReadonlyMap<string, Mo
   return { shard: name, kinds, components }
 }
 
-export function validateShard(input: unknown, catalog: ModuleCatalog, location = ''): RegistryResult<Shard> {
-  return run(() => shard(input, location, moduleIndex(catalog)))
+export function validateShard(
+  input: unknown,
+  catalog: ModuleCatalog,
+  location = '',
+  files: EvidenceFiles = repositoryFiles()
+): RegistryResult<Shard> {
+  return run(() => shard(input, location, moduleIndex(catalog), files))
 }
 
 /**
@@ -645,7 +820,11 @@ export function validateShard(input: unknown, catalog: ModuleCatalog, location =
  * id appearing twice — in one shard or in two — is refused, naming both
  * locations.
  */
-export function aggregateShards(catalog: ModuleCatalog, inputs: readonly ShardInput[]): RegistryResult<Registry> {
+export function aggregateShards(
+  catalog: ModuleCatalog,
+  inputs: readonly ShardInput[],
+  files: EvidenceFiles = repositoryFiles()
+): RegistryResult<Registry> {
   return run(() => {
     const modules = moduleIndex(catalog)
     const shards: Shard[] = []
@@ -653,7 +832,7 @@ export function aggregateShards(catalog: ModuleCatalog, inputs: readonly ShardIn
     const seen = new Map<string, string>()
     const names = new Map<string, string>()
     for (const input of inputs) {
-      const value = shard(input.content, input.location, modules)
+      const value = shard(input.content, input.location, modules, files)
       const priorShard = names.get(value.shard)
       if (priorShard !== undefined) {
         refuse(
@@ -707,13 +886,20 @@ function parseJson(file: string, location: string): unknown {
   }
 }
 
-/** Reads the catalog file and every shard in the directory, and aggregates them. */
-export function loadRegistry(modulesFile: string, shardsDir: string): RegistryResult<Registry> {
+/**
+ * Reads the catalog file and every shard in the directory, and aggregates
+ * them; every evidence file a row names is read through `files`.
+ */
+export function loadRegistry(
+  modulesFile: string,
+  shardsDir: string,
+  files: EvidenceFiles = repositoryFiles()
+): RegistryResult<Registry> {
   const catalogResult = run(() => catalog(parseJson(modulesFile, basename(modulesFile)), basename(modulesFile)))
   if (!catalogResult.ok) return catalogResult
   const inputs = readShardDirectory(shardsDir)
   if (!inputs.ok) return inputs
-  return aggregateShards(catalogResult.value, inputs.value)
+  return aggregateShards(catalogResult.value, inputs.value, files)
 }
 
 // ── Shard completeness ──────────────────────────────────────────────────────
@@ -746,7 +932,8 @@ export function checkShardCompleteness(
   input: unknown,
   catalog: ModuleCatalog,
   universes: Partial<Record<ComponentKind, readonly string[]>>,
-  location = ''
+  location = '',
+  files: EvidenceFiles = repositoryFiles()
 ): RegistryResult<ShardCompleteness> {
   return run(() => {
     const modules = moduleIndex(catalog)
@@ -766,7 +953,7 @@ export function checkShardCompleteness(
     const covered = new Map<ComponentKind, Set<string>>(kinds.map((kind) => [kind, new Set<string>()]))
     raw.forEach((value, index) => {
       const rowPath = at(rowsPath, index)
-      const result = run(() => componentRow(value, rowPath, modules))
+      const result = run(() => componentRow(value, rowPath, modules, files))
       if (!result.ok) invalid.push(result.refusal)
       // Coverage is read from the row's own kind and id even when another field is refused.
       const loose = typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
