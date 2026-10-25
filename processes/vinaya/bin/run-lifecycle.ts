@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { hostname } from 'node:os'
 import {
   type EscalationRecord,
@@ -19,7 +20,18 @@ import {
   type SpawnFn
 } from '@atta/executor-agent-spawn'
 import type { BaseCheckpointSaver } from '@langchain/langgraph'
-import { resolveDispatchTimeoutMs } from '../../../apps/cli/src/lib/dispatch'
+import {
+  CheckpointCorruptError,
+  type CheckpointProvenance,
+  type CheckpointRefusal,
+  checkpointRefusal
+} from '../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
+import {
+  detectUsageLimit,
+  getProcessSnapshot,
+  resolveDispatchTimeoutMs,
+  type UsageLimit
+} from '../../../apps/cli/src/lib/dispatch'
 import {
   classifyChildLiveness,
   fetchIssueRulings,
@@ -68,7 +80,13 @@ import {
   type PublishedPullRequestRead,
   readPublishedPullRequest
 } from '../../../apps/cli/src/lib/dev-review-loop/gate-reading'
-import { MAX_INFRASTRUCTURE_RETRIES } from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
+import {
+  isUsageLimitPauseDetail,
+  MAX_AUTOMATIC_RATE_LIMIT_RESUMES,
+  MAX_INFRASTRUCTURE_RETRIES,
+  usageLimitResetFromDetail,
+  usageLimitWaitMs
+} from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
 import { crossRunnerRefusal } from '../../../apps/cli/src/lib/task-run-engine'
 import type { HeldCleanVerdict } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
 import type { ParsedLaunch } from '../../../apps/cli/src/lib/dispatch'
@@ -161,7 +179,7 @@ export const runIdentityOfTask = (task: number, generation = 1): RunIdentity =>
 
 /** The recorded provenance of the newest checkpoint, when the saver keeps one. */
 export interface ProvenanceReader {
-  latestProvenance?: (threadId: string) => { revision: string; model: string } | undefined
+  latestProvenance?: (threadId: string) => CheckpointProvenance | undefined
 }
 
 /** The task's newest run generation with a checkpoint: the one a runner started later continues. 1 when there is none. */
@@ -215,23 +233,45 @@ export type StartChoice =
   | { kind: 'completed'; identity: RunIdentity }
   /** The checkpoint records a run that spent its round budget: resuming it has nothing to run either. */
   | { kind: 'exhausted'; identity: RunIdentity }
+  /** The checkpoint cannot be resumed by this runner: no step runs, and the run is never started over in its place. */
+  | { kind: 'refused'; identity: RunIdentity; refusal: CheckpointRefusal }
 
-/** Resumes the task's checkpoint when one exists, and otherwise starts fresh. */
+/**
+ * Resumes the task's checkpoint when one exists, and otherwise starts fresh. A checkpoint whose recorded format or
+ * Engine runtime version this runner cannot read, or that records neither, is refused before its state is read; one
+ * that cannot be read at all is refused as corrupt. A moved code revision alone resumes.
+ */
 export async function chooseStart(
   checkpointer: BaseCheckpointSaver & ProvenanceReader,
   identity: RunIdentity
+): Promise<StartChoice> {
+  try {
+    const provenance = checkpointer.latestProvenance?.(identity.threadId)
+    const refusal = provenance === undefined ? null : checkpointRefusal(provenance)
+    if (refusal !== null) return { kind: 'refused', identity, refusal }
+    return await chooseReadableStart(checkpointer, identity, provenance)
+  } catch (error) {
+    if (!(error instanceof CheckpointCorruptError)) throw error
+    return { kind: 'refused', identity, refusal: { code: error.code, detail: error.message } }
+  }
+}
+
+async function chooseReadableStart(
+  checkpointer: BaseCheckpointSaver & ProvenanceReader,
+  identity: RunIdentity,
+  provenance: CheckpointProvenance | undefined
 ): Promise<StartChoice> {
   const checkpoint = await readRunCheckpoint(checkpointer, identity)
   if (!checkpoint) return { kind: 'fresh', identity }
   const recorded = await readRunOutcome(checkpointer, identity)
   if (recorded?.reason === 'completed') return { kind: 'completed', identity }
   if (recorded?.reason === 'exhausted') return { kind: 'exhausted', identity }
-  return {
-    kind: 'resume',
-    identity,
-    checkpointRevision: checkpointer.latestProvenance?.(identity.threadId)?.revision
-  }
+  return { kind: 'resume', identity, checkpointRevision: provenance?.revision }
 }
+
+/** The pause detail of a refused checkpoint: its typed code first, so a reader routes on it. */
+export const checkpointRefusalDetail = (refusal: CheckpointRefusal): string =>
+  `${refusal.code}: ${refusal.detail}; no step ran and the run was not started over`
 
 /** The line a resume appends to the driver log when the code moved since the checkpoint was made; null when it did not. */
 export function revisionMovedLine(checkpointRevision: string | undefined, currentRevision: string): string | null {
@@ -329,11 +369,20 @@ export interface RulingWatch {
   /** How long to wait between two reads of the forge. */
   pollMs: number
   sleep: (ms: number, stop: AbortSignal) => Promise<void>
+  /** The clock a usage-limit reset is measured against; absent, the system clock. */
+  now?: () => number
+}
+
+/** What one runner has spent of the resumes it makes without a ruling, across its legs. */
+export interface AutomaticResumes {
+  usageLimit: number
 }
 
 export type WatchResult =
   /** A newer ruling arrived and this watch claimed its resolution: the run continues. */
   | { kind: 'ruled'; escalationId: string }
+  /** The agent's usage limit reset within its bound: the watch waited for it and continues the run with no ruling. */
+  | { kind: 'recovered'; escalationId: string }
   /** The pause was cancelled. */
   | { kind: 'cancelled' }
   /** Another process consumed the resolution first: it owns the run now. */
@@ -367,13 +416,19 @@ const authenticatedFromOrdinal = (held: PauseState, task: number, ordinal: numbe
  * claims the pause's resolution once with `resolveEscalation` — a loss to another claimant ends the watch without a
  * second resume — and returns so the caller continues the run from its checkpoint. A read that fails is tried again
  * on the next poll; it never ends the watch.
+ *
+ * A pause for an agent's usage limit whose reset is within the standalone loop's bound is the one exception that
+ * needs no ruling: the watch sleeps to the recorded reset, then claims the resolution as the runner's own, at most
+ * `MAX_AUTOMATIC_RATE_LIMIT_RESUMES` times per runner. Past that bound, or with no reset recorded, it waits for a
+ * ruling like any other pause.
  */
 export async function watchForRuling(
   root: string,
   task: number,
   watch: RulingWatch,
   stop: AbortSignal,
-  narrate: (line: string) => void = () => {}
+  narrate: (line: string) => void = () => {},
+  automatic: AutomaticResumes = { usageLimit: 0 }
 ): Promise<WatchResult> {
   const { deps } = watch
   const held = deps.readPauseState(root, task)
@@ -386,6 +441,35 @@ export async function watchForRuling(
       narrate(`a forge read failed: ${error instanceof Error ? error.message : String(error)}; trying again`)
       return fallback
     }
+  }
+  const waitMs = isUsageLimitPauseDetail(held.detail)
+    ? usageLimitWaitMs(usageLimitResetFromDetail(held.detail), (watch.now ?? Date.now)())
+    : null
+  if (waitMs !== null && automatic.usageLimit < MAX_AUTOMATIC_RATE_LIMIT_RESUMES) {
+    narrate(`the agent's usage limit resets within its bound; waiting ${waitMs} ms for the reset, then resuming`)
+    await watch.sleep(waitMs, stop)
+    if (stop.aborted) return { kind: 'stopped' }
+    const resolution = tolerate(() => deps.readResolution(task, escalationId), null)
+    if (resolution?.decision === 'cancel') return { kind: 'cancelled' }
+    if (resolution !== null) return { kind: 'consumed' }
+    automatic.usageLimit += 1
+    const pr = escalationPrOf(held)
+    try {
+      deps.resolveEscalation(
+        task,
+        escalationId,
+        pr,
+        'resume',
+        'driver-self',
+        `${pr ?? `issue-${task}`}-usage-limit-reset`
+      )
+    } catch (error) {
+      if (error instanceof ReplayedResolutionError) return { kind: 'consumed' }
+      if (error instanceof WrongTargetResolutionError) return { kind: 'refused', message: error.message }
+      // A resume that asks no Principal for anything has nothing to authenticate when the record is missing.
+      if (!(error instanceof StaleEscalationError)) throw error
+    }
+    return { kind: 'recovered', escalationId }
   }
   // A ruling "newer than the pause" is measured from the ordinal the escalation was raised under.
   let baseline: number | null = tolerate(
@@ -651,6 +735,33 @@ export function roleTimeouts(
   )
 }
 
+// --- provider usage limits ---------------------------------------------------------
+
+/**
+ * Wraps a spawn function so each agent launch's stdout is read, when the launch ends, the way the standalone dispatch
+ * reads it (`detectUsageLimit`): a launch that ended on the vendor's usage limit is reported to `onLimit` with the
+ * reset it named. The launch itself is unchanged.
+ */
+export function withUsageLimitWatch(
+  spawnFn: SpawnFn,
+  agent: AgentName,
+  onLimit: (limit: UsageLimit) => void,
+  now: () => number = Date.now
+): SpawnFn {
+  return (command, args, options) => {
+    const child = spawnFn(command, args, options)
+    let stdout = ''
+    child.stdout?.on('data', (chunk) => {
+      stdout += String(chunk)
+    })
+    child.on('close', (code) => {
+      const limit = detectUsageLimit(agent, stdout, code, now())
+      if (limit !== null) onLimit(limit)
+    })
+    return child
+  }
+}
+
 // --- no orphaned agent -------------------------------------------------------------
 
 export interface ChildReaper {
@@ -679,34 +790,120 @@ const signalGroup = (pgid: number, signal: NodeJS.Signals): void => {
   }
 }
 
+/** One agent process group a runner launched, as its group file records it: the group id and its leader's start time. */
+export interface RecordedGroup {
+  pgid: number
+  /** The leader's start time as `liveStartTime` reads it; null when it could not be read at launch. */
+  startedAt: string | null
+}
+
+/** Reads a process's start time; the live read unless a test supplies its own. */
+export type StartTimeOf = (pid: number) => string | null
+
+/**
+ * The kernel's start time of `pid` where `/proc` has it: field 22 of `/proc/<pid>/stat`, in clock ticks since
+ * boot, fixed for the life of the process. Linux `ps` derives `lstart` from the current time minus the uptime,
+ * so two reads of one process can differ by a second and a live agent would read as a reused pid. Elsewhere
+ * (macOS) `ps` reports a fixed `lstart`.
+ */
+export const liveStartTime: StartTimeOf = (pid) => {
+  let stat: string
+  try {
+    stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+  } catch {
+    return getProcessSnapshot(pid)?.startedAt ?? null
+  }
+  // The fields after the parenthesised command name, which may itself hold spaces: state is field 3.
+  const ticks = stat
+    .slice(stat.lastIndexOf(')') + 2)
+    .split(' ')
+    .at(22 - 3)
+  return ticks === undefined ? null : `ticks:${ticks}`
+}
+
+function readGroupFile(path: string): RecordedGroup[] {
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown
+    return Array.isArray(parsed)
+      ? parsed.filter(
+          (entry): entry is RecordedGroup =>
+            typeof entry?.pgid === 'number' && (typeof entry.startedAt === 'string' || entry.startedAt === null)
+        )
+      : []
+  } catch {
+    return []
+  }
+}
+
+/** Ends each group: the graceful signal, then the forced one to any member left after `graceMs`. */
+async function endGroups(groups: readonly number[], graceMs: number): Promise<void> {
+  for (const pgid of groups) signalGroup(pgid, 'SIGTERM')
+  const deadline = Date.now() + graceMs
+  while (groups.some(groupAlive) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20))
+  for (const pgid of groups) if (groupAlive(pgid)) signalGroup(pgid, 'SIGKILL')
+}
+
 /**
  * Wraps a spawn function so every agent starts in a process group of its own, and records the group. The
  * executor's abort signals only the agent it spawned, so what that agent started would outlive a halted run;
- * `reap` ends the whole group.
+ * `reap` ends the whole group. With a `groupFile`, each group is also written to that file in the run's folder
+ * as it is launched, and cleared once reaped, so a runner that dies without reaping leaves a record the next
+ * runner ends them by (`reapAbandonedGroups`).
  */
 export function createChildReaper(
   base: SpawnFn = (command, args, options) =>
-    spawn(command, args, { ...options, stdio: ['pipe', 'pipe', 'pipe'] }) as unknown as SpawnedProcessLike
+    spawn(command, args, { ...options, stdio: ['pipe', 'pipe', 'pipe'] }) as unknown as SpawnedProcessLike,
+  record: { groupFile?: string; startTimeOf?: StartTimeOf } = {}
 ): ChildReaper {
-  const launched = new Set<number>()
+  const launched = new Map<number, string | null>()
+  const writeRecord = (): void => {
+    if (record.groupFile === undefined) return
+    const groups: RecordedGroup[] = [...launched].map(([pgid, startedAt]) => ({ pgid, startedAt }))
+    writeFileSync(record.groupFile, `${JSON.stringify(groups)}\n`, { mode: 0o600 })
+  }
   const spawnFn: SpawnFn = (command, args, options) => {
     const child = base(command, args, { ...options, detached: true } as typeof options)
     const pid = (child as { pid?: unknown }).pid
-    if (typeof pid === 'number') launched.add(pid)
+    if (typeof pid === 'number') {
+      launched.set(pid, record.groupFile === undefined ? null : (record.startTimeOf ?? liveStartTime)(pid))
+      writeRecord()
+    }
     return child
   }
   return {
     spawnFn,
-    groups: () => [...launched],
+    groups: () => [...launched.keys()],
     reap: async (graceMs = 2000) => {
-      const live = [...launched].filter(groupAlive)
-      for (const pgid of live) signalGroup(pgid, 'SIGTERM')
-      const deadline = Date.now() + graceMs
-      while (live.some(groupAlive) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20))
-      for (const pgid of live) if (groupAlive(pgid)) signalGroup(pgid, 'SIGKILL')
+      await endGroups([...launched.keys()].filter(groupAlive), graceMs)
       launched.clear()
+      writeRecord()
     }
   }
+}
+
+/**
+ * Ends the agent process groups a runner that died left running, as its group file records them, and clears the
+ * file. Called once the task's driver lock is this runner's, so no live runner owns them. A group whose leader is
+ * alive is ended only when the leader's start time is the one recorded at launch — a reused process id is never
+ * signalled; a group whose leader has exited keeps its id reserved while any member lives, so it is the one launched.
+ * Returns the groups it ended.
+ */
+export async function reapAbandonedGroups(
+  groupFile: string,
+  graceMs = 2000,
+  startTimeOf: StartTimeOf = liveStartTime
+): Promise<number[]> {
+  if (!existsSync(groupFile)) return []
+  const abandoned = readGroupFile(groupFile)
+    .filter((group) => groupAlive(group.pgid))
+    .filter((group) => {
+      const leader = startTimeOf(group.pgid)
+      return leader === null || (group.startedAt !== null && leader === group.startedAt)
+    })
+    .map((group) => group.pgid)
+  await endGroups(abandoned, graceMs)
+  writeFileSync(groupFile, '[]\n', { mode: 0o600 })
+  return abandoned
 }
 
 /** The exit code a shell reports for a process ended by `signal`. */

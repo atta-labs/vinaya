@@ -25,7 +25,12 @@ import {
 } from '@atta/executor-agent-spawn'
 import { sessionIdOf } from '../../../harness/adapters/agents/structured-result'
 import { loadProcess, type LoadedProcess } from '../../../harness/dev-process/loader/load-process'
-import { SqliteCheckpointer } from '../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
+import {
+  CheckpointCorruptError,
+  type CheckpointRefusal,
+  SqliteCheckpointer
+} from '../../../harness/dev-process/engine-runtime/sqlite-checkpointer'
+import { DispatchUsageLimit, usageLimitPauseDetail } from '../../../apps/cli/src/lib/dev-review-loop/round-assess'
 import {
   resumeProcessRun,
   startProcessRun,
@@ -91,6 +96,8 @@ import { createLogSink, drainLogSink, LOG_FOLDER_ONLY_ENV, type LogSinkDeps } fr
 import { setEngineLogIdentity } from './engine-log-identity'
 import {
   abortableSleep,
+  type AutomaticResumes,
+  checkpointRefusalDetail,
   chooseStart,
   claimResume,
   createChildReaper,
@@ -99,6 +106,7 @@ import {
   lockExitOf,
   onShutdownSignals,
   realLaunchDeps,
+  reapAbandonedGroups,
   recoverRun,
   releaseDriverLock,
   resumeModel,
@@ -110,6 +118,7 @@ import {
   takeDriverLock,
   watchForRuling,
   watchPublishedPullRequest,
+  withUsageLimitWatch,
   type PublishedWatch,
   type RecoveryDeps,
   type ResumeDeps,
@@ -145,7 +154,8 @@ import {
   recordRunnerDeveloperLaunch,
   renderClaudeEvent,
   renderCodexEvent,
-  terminateChildWithGrace
+  terminateChildWithGrace,
+  type UsageLimit
 } from '../../../apps/cli/src/lib/dispatch'
 import { loadConfig } from '../../../apps/cli/src/lib/config'
 import { crossRunnerRefusal, recordTaskRunner } from '../../../apps/cli/src/lib/task-run-engine'
@@ -182,7 +192,7 @@ import {
   latestHeldCleanVerdict,
   persistManifestRecord
 } from '../../../apps/cli/src/lib/dev-review-loop/reviewer-dispatch'
-import { RUNTIME_DIR_ENV_KEY, runtimeDirForRepoAsync } from '../../../apps/cli/src/lib/run-paths'
+import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache, runtimeDirForRepoAsync } from '../../../apps/cli/src/lib/run-paths'
 import {
   defaultDeps,
   defaultGitWorktreeUntrackedPaths,
@@ -210,6 +220,7 @@ import {
   agentOutput,
   createActions,
   gatePollOf,
+  readAssessment,
   recordedDispatch,
   recordedScanOutcome,
   recordedVerdicts,
@@ -222,13 +233,24 @@ import {
   type TaskInput
 } from '../executing/actions'
 import { readUnpushedWorkDetail, type UnpushedWork } from '../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
+import { realLocalGateControl } from '../../../apps/cli/src/lib/local-gate-control'
+import {
+  createShadowRecorder,
+  refusedAttemptsPath,
+  shadowBoundFunctions,
+  shadowDevToolContext,
+  shadowHandoffDeps,
+  shadowRuntimeDirRefusal,
+  writeShadowRecord,
+  type ShadowRecord
+} from '../executing/shadow'
 
 // The Engine path for one task: the Vinaya process run on the packed executor
 // instead of the standalone review loop. Choosing this entry point is the
 // whole switch — task run selects this script as a subprocess, keeping
 // Engine packages outside the CLI source.
 //
-//   bun processes/vinaya/bin/run-engine.ts --task <n> --agent <claude|codex> [--dry-run]
+//   bun processes/vinaya/bin/run-engine.ts --task <n> --agent <claude|codex> [--dry-run] [--shadow <dir>]
 
 export type Agent = 'claude' | 'codex'
 
@@ -238,19 +260,26 @@ export interface EngineArgs {
   dryRun: boolean
   /** The agent model for every role whose grants say `process-supplied`; absent leaves the vendor's default. */
   model?: string
+  /** The runtime directory of a shadow run of the task, beside its live run; absent runs the task live. */
+  shadow?: string
 }
 
-const USAGE = 'Usage: run-engine.ts --task <n> --agent <claude|codex> [--model <id>] [--dry-run]'
+const USAGE = 'Usage: run-engine.ts --task <n> --agent <claude|codex> [--model <id>] [--dry-run] [--shadow <dir>]'
 
 export function parseArgs(argv: readonly string[]): EngineArgs {
   let task: number | undefined
   let agent: Agent | undefined
   let dryRun = false
   let model: string | undefined
+  let shadow: string | undefined
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]
     if (flag === '--dry-run') dryRun = true
-    else if (flag === '--task') {
+    else if (flag === '--shadow') {
+      const value = argv[++i] ?? ''
+      if (value === '' || value.startsWith('--')) throw new Error(`--shadow takes a runtime directory. ${USAGE}`)
+      shadow = value
+    } else if (flag === '--task') {
       const value = argv[++i] ?? ''
       if (!/^[1-9][0-9]*$/.test(value)) throw new Error(`--task takes a positive integer. ${USAGE}`)
       task = Number(value)
@@ -265,7 +294,7 @@ export function parseArgs(argv: readonly string[]): EngineArgs {
     } else throw new Error(`Unknown argument "${flag}". ${USAGE}`)
   }
   if (task === undefined || agent === undefined) throw new Error(USAGE)
-  return { task, agent, dryRun, ...(model ? { model } : {}) }
+  return { task, agent, dryRun, ...(model ? { model } : {}), ...(shadow ? { shadow } : {}) }
 }
 
 export interface ResumeArgs {
@@ -302,14 +331,26 @@ export function parseResumeArgs(argv: readonly string[]): ResumeArgs {
   return { resume, ...(agent ? { agent } : {}), ...(model ? { model } : {}) }
 }
 
-/** The model the newest checkpoint of the task's run recorded; undefined when the run has none or left the vendor's default. */
+/**
+ * The model the newest checkpoint of the task's run recorded; undefined when the run has none, left the vendor's
+ * default, or its checkpoint file cannot be read (the run itself refuses that checkpoint when it starts).
+ */
 export function recordedCheckpointModel(runtimeDir: string, task: number): string | undefined {
   const file = checkpointPath(runDirectory(runtimeDir, task))
   if (!existsSync(file)) return undefined
-  const saver = new SqliteCheckpointer({ path: file, revision: 'unknown' })
+  let saver: SqliteCheckpointer
+  try {
+    saver = new SqliteCheckpointer({ path: file, revision: 'unknown' })
+  } catch (error) {
+    if (error instanceof CheckpointCorruptError) return undefined
+    throw error
+  }
   try {
     const model = saver.latestProvenance(runIdentityOfTask(task, currentRunGeneration(saver, task)).threadId)?.model
     return model === '' ? undefined : model
+  } catch (error) {
+    if (error instanceof CheckpointCorruptError) return undefined
+    throw error
   } finally {
     saver.close()
   }
@@ -747,6 +788,8 @@ export interface EngineRunOptions {
   handoffDeps?: HandoffDeps
   /** Replaces the driver log's agent-stream renderer or event narration; the standalone loop's own by default. */
   narration?: { rendererFor?: AgentRendererFor; narrateEvent?: typeof narrateDriverEvent }
+  /** The key the role hosts' sockets are derived from; `engine-<task>` unless a run beside the live one needs its own. */
+  hostKey?: string
 }
 
 export interface EngineLifecycleOptions {
@@ -874,9 +917,15 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   // The task's run is this runner's from here: the Operator routes its controls by this record.
   recordTaskRunner(args.task, 'atta-engine', options.runtimeDir)
 
+  // A runner that died left its agents' groups recorded: they are ended before anything is dispatched again.
+  const groupFile = join(runDir, 'agent-groups.json')
+  const abandoned = await reapAbandonedGroups(groupFile, lifecycle.killGraceMs)
+  if (abandoned.length > 0)
+    narrate(`ended ${abandoned.length} agent process group(s) a runner that died left running: ${abandoned.join(', ')}`)
+
   // Each leg of a run has a run control of its own: a halted one cannot be run again.
   let control = options.control ?? createRunControl()
-  const reaper = createChildReaper(options.spawnFn)
+  const reaper = createChildReaper(options.spawnFn, { groupFile })
   // A halt ends the agents' whole process groups at once: the executor signals only the agent it spawned.
   const reapOnHalt = (): void =>
     control.signal.addEventListener('abort', () => void reaper.reap(lifecycle.killGraceMs), { once: true })
@@ -1025,7 +1074,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     ]
     const mcpCommands: Record<string, string> = {}
     for (const roleHost of roleHosts) {
-      const socketPath = devToolsSocketPath(`engine-${args.task}-${roleHost.role}`)
+      const socketPath = devToolsSocketPath(`${options.hostKey ?? `engine-${args.task}`}-${roleHost.role}`)
       hosts.push(
         await options.startHost({
           socketPath,
@@ -1099,11 +1148,56 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     )
     const actions = recordingActions(tracedActions(noting, trace), translator)
     const revision = options.revision ?? checkoutRevision(options.repoRoot)
-    const saver = new SqliteCheckpointer({ path: checkpointPath(runDir), revision, model: args.model })
-    checkpointer = saver
+    // A checkpoint file the saver cannot open is refused like an unreadable checkpoint: no step runs.
+    let refusedFile: CheckpointRefusal | null = null
+    let opened: SqliteCheckpointer | undefined
+    try {
+      opened = new SqliteCheckpointer({ path: checkpointPath(runDir), revision, model: args.model })
+    } catch (thrown) {
+      if (!(thrown instanceof CheckpointCorruptError)) throw thrown
+      refusedFile = { code: thrown.code, detail: thrown.message }
+    }
+    checkpointer = opened
+    const saver = opened as SqliteCheckpointer
     // The task's newest run: a completed one is watched, and a conflict on its pull request starts the next.
-    let generation = currentRunGeneration(saver, args.task)
+    let generation = 1
+    if (refusedFile === null) {
+      try {
+        generation = currentRunGeneration(saver, args.task)
+      } catch (thrown) {
+        if (!(thrown instanceof CheckpointCorruptError)) throw thrown
+        refusedFile = { code: thrown.code, detail: thrown.message }
+      }
+    }
     let identity = runIdentityOfTask(args.task, generation)
+    /** Set when the leg's checkpoint was refused: the run stops at its pause, which no ruling or retry repairs. */
+    let checkpointRefused = false
+    const refuseCheckpoint = (refusal: CheckpointRefusal): void => {
+      checkpointRefused = true
+      narrate(`not resuming: the checkpoint is refused (${refusal.code}): ${refusal.detail}`)
+      // The host-repair pause: addressed to the Operator, never retried or watched, continued by the ordinary start
+      // once the checkpoint is repaired or set aside. Its detail leads with the typed code that names the cause.
+      handoff.pause({ reason: 'sandbox_refused', detail: checkpointRefusalDetail(refusal) })
+      legOutcome = { reason: 'paused', haltReason: handoffHaltReason('sandbox_refused') }
+    }
+    // The vendor's usage limit, read from the agent's own output when a launch ends on it: the leg pauses for the
+    // reset rather than failing, and the run control stops the Flow at the next boundary.
+    let usageLimit: UsageLimit | null = null
+    const onUsageLimit = (limit: UsageLimit): void => {
+      usageLimit = limit
+      control.halt('usage_limit')
+    }
+    const usageLimitPause = (limit: UsageLimit): LegOutcome => {
+      const now = (lifecycle.now ?? (() => new Date()))().getTime()
+      narrate(`${limit.agent}'s usage limit was reached; pausing for the reset`)
+      handoff.pause({
+        reason: 'infrastructure',
+        detail: usageLimitPauseDetail(limit, now),
+        error: new DispatchUsageLimit(limit, 'an agent step')
+      })
+      return { reason: 'paused', haltReason: handoffHaltReason('infrastructure') }
+    }
+    const automaticResumes: AutomaticResumes = { usageLimit: 0 }
     // This runner's automatic conflict re-entries of the published pull request.
     let conflictReentries = 0
     // The run compiles its own Flow, ceilings from the review policy; an unreadable policy leaves the checked-in one,
@@ -1121,7 +1215,18 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       outcome = null
       error = undefined
       pausedFor = undefined
+      usageLimit = null
+      if (refusedFile !== null) {
+        refuseCheckpoint(refusedFile)
+        translator.endLeg(legOutcome as LegOutcome)
+        return
+      }
       let choice = await chooseStart(saver, identity)
+      if (choice.kind === 'refused') {
+        refuseCheckpoint(choice.refusal)
+        translator.endLeg(legOutcome as LegOutcome)
+        return
+      }
       // A checkpoint resume continues past steps it already ran, the mergeability check among them: when the pull
       // request is in conflict now, the run starts the next generation instead, as the conflict re-entry does, so the
       // Flow's mergeability step sends the conflict back to the Developer before any publication.
@@ -1231,11 +1336,15 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           spawnFn: tolerateReviewerExit(
             withReviewerWorkingDirectory(
               // Innermost, so the tee sees the directory the launch runs in and the agent's own stdout.
-              withAgentNarration(reaper.spawnFn, join(runDir, 'generated'), {
-                agent: args.agent,
-                logPath,
-                rendererFor: options.narration?.rendererFor
-              }),
+              withAgentNarration(
+                withUsageLimitWatch(reaper.spawnFn, args.agent, onUsageLimit),
+                join(runDir, 'generated'),
+                {
+                  agent: args.agent,
+                  logPath,
+                  rendererFor: options.narration?.rendererFor
+                }
+              ),
               join(runDir, 'generated'),
               (role) =>
                 role === 'developer'
@@ -1257,7 +1366,12 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           ? resumeProcessRun(runOptions, identity)
           : startProcessRun(runOptions, identity))
         legOutcome = outcome as unknown as LegOutcome
-        if (outcome.reason === 'failed') {
+        // The read is the closure's write, which the compiler's flow analysis does not follow.
+        const limited = usageLimit as UsageLimit | null
+        if (limited !== null) {
+          error = undefined
+          legOutcome = { ...legOutcome, ...usageLimitPause(limited) }
+        } else if (outcome.reason === 'failed') {
           // A step that threw is handed off like any other pause, keeping what the checkpoint holds.
           error = outcome.error
           legOutcome = { ...legOutcome, ...handOffError(outcome.error) }
@@ -1324,19 +1438,35 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       const exhausted = legOutcome?.reason === 'exhausted' && signalled === null
       if (exhausted)
         handoff.pause({ reason: 'max_rounds', detail: 'the round cap is reached: a ruling grants a fresh run' })
-      if (!lifecycle.watch || (legOutcome?.reason !== 'paused' && !exhausted) || signalled !== null) break
+      // A refused checkpoint is repaired outside the run, so nothing the watch could read continues it.
+      if (
+        !lifecycle.watch ||
+        (legOutcome?.reason !== 'paused' && !exhausted) ||
+        signalled !== null ||
+        checkpointRefused
+      )
+        break
       narrate('the run is halted; watching for a newer ruling or a cancel')
-      const watched = await watchForRuling(options.runtimeDir, args.task, lifecycle.watch, stopWatching.signal, narrate)
+      const watched = await watchForRuling(
+        options.runtimeDir,
+        args.task,
+        lifecycle.watch,
+        stopWatching.signal,
+        narrate,
+        automaticResumes
+      )
       if (watched.kind === 'ruled') {
         narrate(`a newer ruling resumed escalation ${watched.escalationId}`)
         options.onRulingResume?.()
+      } else if (watched.kind === 'recovered') {
+        narrate(`the usage limit reset: escalation ${watched.escalationId} resumes with no ruling`)
       } else if (watched.kind === 'cancelled') {
         // The Operator's cancel consumed the resolution and fenced the effects; the run only ends.
         cancelledByWatch = true
         narrate('the pause was cancelled; ending')
       } else if (watched.kind === 'consumed') narrate('another process claimed the resolution and owns the run; ending')
       else if (watched.kind === 'refused') narrate(`the resolution was refused: ${watched.message}`)
-      if (watched.kind !== 'ruled') break
+      if (watched.kind !== 'ruled' && watched.kind !== 'recovered') break
       // An exhausted checkpoint would exhaust again at once: the ruling continues as a fresh run of the next
       // generation, which attaches to the open pull request with a fresh revision budget.
       if (exhausted) {
@@ -2115,6 +2245,157 @@ async function runLive(
   return result.exitCode
 }
 
+export interface ShadowEngineRunOptions extends EngineRunOptions {
+  /** The task's live runtime directory, which the shadow run's own (`runtimeDir`) must never be. */
+  liveRuntimeDir: string
+}
+
+/**
+ * Runs the task on the Engine in shadow mode: the real Flow, actions, gates and agents, with every forge-writing
+ * bound function, pause post and Developer publication tool replaced by a refusing recorder
+ * (`executing/shadow.ts`). The run's lock, files and role-host sockets are its own; its decision and refused-attempt
+ * list are written to its own run directory. Refuses to start in the task's live runtime directory.
+ */
+export async function runShadowEngine(
+  options: ShadowEngineRunOptions
+): Promise<EngineRunResult & { record: ShadowRecord; recordPath: string }> {
+  const { liveRuntimeDir, ...run } = options
+  const refused = shadowRuntimeDirRefusal(run.runtimeDir, liveRuntimeDir)
+  if (refused !== null) throw new Error(`run-engine: ${refused}`)
+  const runDir = runDirectory(run.runtimeDir, run.args.task)
+  const recorder = createShadowRecorder(refusedAttemptsPath(runDir))
+  run.taskInput.bound = shadowBoundFunctions(run.taskInput.bound, recorder)
+  const result = await runEngine({
+    ...run,
+    devToolsContext: shadowDevToolContext(run.devToolsContext, recorder),
+    handoffDeps: shadowHandoffDeps(run.handoffDeps ?? liveHandoffDeps(() => {}), recorder),
+    hostKey: run.hostKey ?? `engine-shadow-${run.args.task}`
+  })
+  let trace: Partial<RunTrace> = {}
+  try {
+    trace = JSON.parse(readFileSync(result.tracePath, 'utf8')) as RunTrace
+  } catch {}
+  const results = (
+    result.outcome && 'checkpoint' in result.outcome ? (result.outcome.checkpoint?.results ?? {}) : {}
+  ) as Record<string, StepNodeResult>
+  let decision: ShadowRecord['decision'] = null
+  try {
+    const { type, reason } = readAssessment(results).decision
+    decision = reason === undefined ? { type } : { type, reason }
+  } catch {}
+  const record: ShadowRecord = {
+    task: run.args.task,
+    loopId: run.loopId,
+    outcome: trace.outcome ?? 'failed',
+    pauseReason: trace.pauseReason ?? null,
+    decision,
+    exitCode: result.exitCode,
+    refused: recorder.attempts()
+  }
+  return { ...result, record, recordPath: writeShadowRecord(runDir, record) }
+}
+
+/**
+ * The shadow run's own copy of the task worktree, under its runtime directory: a clone of the repository whose
+ * remote-tracking refs are the live checkout's, with the task branch checked out at the live worktree's head (the
+ * default branch when the task has no worktree yet) in `.worktrees/<branch>`. Its push URL names no remote. Uncommitted
+ * changes in the live worktree are not copied. Returns the copy's root; an existing copy is reused.
+ */
+export function prepareShadowCheckout(input: { repoRoot: string; branch: string; shadowRuntimeDir: string }): string {
+  const checkout = join(input.shadowRuntimeDir, 'checkout')
+  if (!existsSync(checkout)) {
+    sh('git', ['clone', '--quiet', '--no-checkout', input.repoRoot, checkout])
+    sh(
+      'git',
+      ['fetch', '--quiet', '--no-tags', input.repoRoot, '+refs/remotes/origin/*:refs/remotes/origin/*'],
+      checkout
+    )
+    sh('git', ['remote', 'set-url', '--push', 'origin', 'shadow-mode-never-pushes'], checkout)
+  }
+  const worktree = join(checkout, '.worktrees', input.branch)
+  if (!existsSync(worktree)) {
+    const liveWorktree = join(input.repoRoot, '.worktrees', input.branch)
+    const start = existsSync(liveWorktree)
+      ? sh('git', ['rev-parse', 'HEAD'], liveWorktree)
+      : sh('git', ['rev-parse', 'refs/remotes/origin/main'], checkout)
+    sh('git', ['worktree', 'add', '--quiet', '-B', input.branch, worktree, start], checkout)
+  }
+  return checkout
+}
+
+/** Runs one shadow run of a live task beside its live run: its own runtime directory, worktree copy, lock and Log folder. */
+async function runShadowLive(
+  args: EngineArgs & { shadow: string },
+  loaded: LoadedProcess,
+  repoRoot: string,
+  liveRuntimeDir: string
+): Promise<number> {
+  const runtimeDir = resolve(args.shadow)
+  const refused = shadowRuntimeDirRefusal(runtimeDir, liveRuntimeDir)
+  if (refused !== null) throw new Error(`run-engine: ${refused}`)
+  mkdirSync(runtimeDir, { recursive: true })
+  // Every runtime-directory lookup in this process, the default Log sink's folder among them, is the shadow run's own.
+  process.env[RUNTIME_DIR_ENV_KEY] = runtimeDir
+  process.env[LOG_FOLDER_ONLY_ENV] = '1'
+  resetRuntimeDirCache()
+  setEngineLogIdentity(loaded, args.agent)
+  const loopId = randomUUID()
+  process.env.VINAYA_RUN = loopId
+  const repo = liveRepo()
+  const branch = developerBranchFor(args.task)
+  const checkout = prepareShadowCheckout({ repoRoot, branch, shadowRuntimeDir: runtimeDir })
+  const taskInput = await liveTaskInput(args, checkout, runtimeDir, loopId, {
+    cliRoot: VINAYA_ROOT,
+    ...(repo ? { repository: `${repo.owner}/${repo.repo}` } : {})
+  })
+  // The enforcement controls are the live repository's: the copy installs no hooks of its own.
+  taskInput.bound = { ...taskInput.bound, localGateControl: () => realLocalGateControl(repoRoot) }
+  const shadowContext = engineLiveDevToolsContext({
+    branch: taskInput.branch,
+    worktreePath: taskInput.worktreePath,
+    task: args.task,
+    runtimeDir,
+    agent: args.agent,
+    repo,
+    round: taskInput.reviewRound,
+    // A launch record authenticates a turn's pushes; a shadow turn pushes nothing, so it writes none.
+    recordLaunch: () => randomUUID(),
+    completeLaunch: () => {}
+  })
+  taskInput.publicationRefusal = () => shadowContext.state.turnPublicationRefusal
+  const folder = { kind: 'folder' as const, folder: join(runtimeDir, 'logs') }
+  const result = await runShadowEngine({
+    args,
+    process: loaded,
+    repoRoot: checkout,
+    cliRoot: VINAYA_ROOT,
+    runtimeDir,
+    liveRuntimeDir,
+    loopId,
+    taskInput,
+    sink: createEngineLogSink({ resolveLogDestination: () => folder, unresolvedLogDestination: () => folder }),
+    startHost: startDevToolsHost,
+    developerFacts: liveDeveloperFacts({
+      takeRulingsOwed: () => false,
+      task: args.task,
+      repoRoot: checkout,
+      runtimeDir,
+      branch: taskInput.branch,
+      worktreePath: taskInput.worktreePath,
+      round: taskInput.reviewRound,
+      lastPushRefusal: () => shadowContext.state.lastPushRefusal
+    }),
+    allowUnixSockets: linuxUnixSocketFilterOptIn(),
+    lifecycle: { dispatchConfig: loadConfig()?.dispatch },
+    devToolsContext: shadowContext.context,
+    beginDeveloperTurn: shadowContext.beginTurn,
+    completeDeveloperTurn: shadowContext.completeTurn
+  })
+  await drainLogSink()
+  process.stdout.write(`shadow ${result.recordPath}\n`)
+  return result.exitCode
+}
+
 /** The Vinaya install this runner ships in: where the CLI and the process folder live. */
 const VINAYA_ROOT = resolve(import.meta.dir, '../../..')
 
@@ -2154,6 +2435,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     for (const line of lines) process.stdout.write(`${line}\n`)
     return 0
   }
+  if (args.shadow !== undefined) return runShadowLive({ ...args, shadow: args.shadow }, loaded, repoRoot, runtimeDir)
   return runLive(args, loaded, repoRoot, runtimeDir)
 }
 

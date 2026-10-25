@@ -28,7 +28,7 @@ import {
 const REGISTRY_DIR = join(import.meta.dir, 'registry')
 const OWED_FILE = join(import.meta.dir, 'engine-evidence-owed.json')
 /** The most rows the owed list may hold. Lower it as rows gain their proof; never raise it. */
-const OWED_CEILING = 71
+const OWED_CEILING = 42
 const GATE_16_PROOF = 'apps/cli/tests/conformance/packed-runtime-public-run-control.test.ts'
 const LIVE_VARIABLE = 'VINAYA_SANDBOX_CONFORMANCE'
 
