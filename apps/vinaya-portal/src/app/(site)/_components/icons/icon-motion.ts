@@ -112,6 +112,16 @@ const moves = {
     animate: { scaleY: [0.6, 1.15] },
     transition: { duration: 0.6, times: [0, 1], ease: [0.42, 0, 0.58, 1], repeatType: 'reverse' }
   },
+  // Dev Process: the branch draws, its head lands, both hold, then branch and head leave together over the same
+  // window; the branch is invisible while undrawn, so its round cap never leaves a dot behind.
+  'mv-branch': {
+    animate: { strokeDashoffset: [1, 1, 0, 0, 1, 1], opacity: [0, 0, 1, 1, 0, 0] },
+    transition: { duration: 3.6, times: [0, 0.08, 0.38, 0.84, 0.96, 1], ease: [0.5, 0, 0.3, 1] }
+  },
+  'mv-branch-head': {
+    animate: { opacity: [0, 0, 1, 1, 0, 0], scale: [0.2, 0.2, 1, 1, 0.2, 0.2] },
+    transition: { duration: 3.6, times: [0, 0.38, 0.48, 0.84, 0.96, 1], ease: [0.5, 0, 0.3, 1] }
+  },
   'mv-commit': {
     animate: { opacity: [0, 0, 1, 1, 0], scale: [0.2, 0.2, 1, 1, 1] },
     transition: { duration: 3, times: [0, 0.4, 0.55, 0.9, 1], ease: [0.5, 0, 0.3, 1.4] }

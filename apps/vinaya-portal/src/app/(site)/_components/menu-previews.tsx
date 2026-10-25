@@ -1,10 +1,11 @@
 'use client'
 
-import { Code, Eye, FileText, GitPullRequest, Shield } from 'lucide-react'
+import { FileText, GitPullRequest } from 'lucide-react'
 import { motion, useIsPresent, useReducedMotion } from 'motion/react'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { improveStats } from '@/process/fixtures/lifecycle'
 import { cn } from '@/ui/lib/utils'
+import { ELEMENT_ICONS } from './icons'
 import { colorHex } from '@/ui/lib/theme-color'
 import { Text } from '@/ui/shared'
 import { LOG_LINES } from './landing/FeatureSections'
@@ -186,16 +187,21 @@ const LOOP_EVENTS: readonly LoopEvent[] = [
 const LOOP_STEP = 260
 
 const CELL: Record<CellState, string> = {
-  pend: 'border-solid border-muted-foreground text-muted-foreground opacity-30',
-  run: 'border-dashed border-foreground text-foreground',
-  ok: 'border-solid border-success text-success',
-  bad: 'border-solid border-destructive text-destructive'
+  pend: 'text-muted-foreground opacity-30',
+  run: 'text-foreground',
+  ok: 'text-success',
+  bad: 'text-destructive'
 }
+const FRESH_CELL = 'scale-115'
+// The ring that marks the pull request when it has just opened.
 const FRESH = 'ring-2 ring-current ring-offset-2 ring-offset-card'
-const ROLE_ICON: Record<Role, ReactNode> = {
-  dev: <Code className='size-[13px]' />,
-  code: <Eye className='size-[13px]' />,
-  sec: <Shield className='size-[13px]' />
+// The role's own agent mark, no circle: the mark itself takes the cell's state colour, its accent detail included,
+// and moves while that role is running.
+const ROLE_MARK = 'size-full [&_.stroke-ring]:stroke-current [&_.fill-ring]:fill-current'
+const ROLE_ELEMENT = { dev: 'developer', code: 'reviewer', sec: 'security-reviewer' } as const
+function RoleMark({ role, state }: { role: Role; state: CellState }) {
+  const Icon = ELEMENT_ICONS[ROLE_ELEMENT[role]]
+  return <Icon className={ROLE_MARK} still={state !== 'run'} />
 }
 const LOOP_GRID = 'grid grid-cols-[160px_104px_104px_minmax(0,1fr)_26px] items-center gap-x-2'
 
@@ -203,9 +209,9 @@ function Cell({ state, fresh, children }: { state: CellState; fresh: boolean; ch
   return (
     <span
       className={cn(
-        'grid size-[26px] place-items-center rounded-full border-[1.5px] transition-[border-color,color,opacity,box-shadow] duration-300 motion-reduce:transition-none',
+        'grid size-[26px] place-items-center transition-[color,opacity,transform] duration-300 motion-reduce:transition-none',
         CELL[state],
-        fresh && FRESH
+        fresh && FRESH_CELL
       )}
     >
       {children}
@@ -265,7 +271,7 @@ export function StudioScene() {
                         state={round[role]}
                         fresh={last !== null && last[0] === ti && last[1] === ri && last[2].includes(role)}
                       >
-                        {ROLE_ICON[role]}
+                        <RoleMark role={role} state={round[role]} />
                       </Cell>
                     </span>
                   ))}

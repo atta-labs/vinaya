@@ -114,10 +114,12 @@ export function SelfImprovementIcon({ className, still = false }: IconProps) {
         {...iconMotion('mv-orbit', paused)}
         strokeDasharray={paused ? undefined : 1}
       />
+      {/* Flat-top, corners pointing into the two loops: the hexagon shares the loop's own mirror axes, so all four
+          strands meet it the same way. The screw line stands upright between its flat top and bottom. */}
       <path
         {...LINE}
         className='fill-background'
-        d='M13.81 10.95 L13.81 13.05 L12.00 14.10 L10.18 13.05 L10.18 10.95 L12.00 9.90Z'
+        d='M14.10 12.00 L13.05 13.81 L10.95 13.81 L9.90 12.00 L10.95 10.18 L13.05 10.18Z'
       />
       <path {...LINE} d='M12.00 13.15L12.00 10.84' />
     </Glyph>

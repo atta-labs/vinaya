@@ -405,7 +405,7 @@ export function DevProcessIcon({ className, still = false }: IconProps) {
           {...LINE}
           pathLength='1'
           d='M7 9.5C7 13 17 11 17 15V15.4'
-          {...iconMotion('mv-draw', paused)}
+          {...iconMotion('mv-branch', paused)}
           strokeDasharray={paused ? undefined : 1}
         />
       </g>
@@ -422,7 +422,7 @@ export function DevProcessIcon({ className, still = false }: IconProps) {
       <motion.g
         key={paused ? 'still-23' : 'moving-23'}
         className='origin-center! [transform-box:fill-box]!'
-        {...iconMotion('mv-commit', paused)}
+        {...iconMotion('mv-branch-head', paused)}
       >
         <path {...DOT} d='M17.00 15.40 L19.07 16.60 L19.07 19.00 L17.00 20.20 L14.92 19.00 L14.92 16.60Z' />
       </motion.g>
