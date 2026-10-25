@@ -62,7 +62,8 @@ export type ReviewerPromptFacts = {
   /** The `objectives` text, parsed — `[]` exactly when `objectives` is empty. Threaded into `buildVerdictFromReview`'s own `checkObjectiveIdCoverage` call, the same coverage rule `review post` already applies. */
   resolvedObjectives: readonly Objective[]
   rulings: string[]
-  ciConclusion: 'green' | 'red' | 'pending'
+  /** `not_run`: review locally, push once — no pull request and so no CI yet; CI runs once after both approve. */
+  ciConclusion: 'green' | 'red' | 'pending' | 'not_run'
   /** The frozen brief's own `**Revision:**` fact — `fetchSourceRevision`. */
   revision: string
   /**
@@ -401,7 +402,13 @@ export function buildReviewerPromptPieces(facts: ReviewerPromptFacts): readonly 
     driverPiece('\n\nHEAD: '),
     factPiece(facts.manifest.headSha),
     driverPiece('\nCI: '),
-    factPiece(facts.ciConclusion),
+    ...(facts.ciConclusion === 'not_run'
+      ? [
+          driverPiece(
+            'not run. This run reviews locally: no pull request exists yet, so no CI has run. CI runs once on the head both reviewers approve, and a red CI sends the work back. Judge the local commit and its diff.'
+          )
+        ]
+      : [factPiece(facts.ciConclusion)]),
     driverPiece('\nBRIEF REVISION: '),
     factPiece(facts.revision)
   ]

@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import type { DevReviewLoopEventInput } from '@attalabs/aeg-core'
-import type { DevToolContext } from '../../../apps/cli/src/lib/task-tools/dev-tools-server'
+import { type DevToolContext, devToolError } from '../../../apps/cli/src/lib/task-tools/dev-tools-server'
 import { storagePushEvent } from '../../../apps/cli/src/lib/flow-v2-events'
 import { gitPath, readLastPushResult } from '../../../apps/cli/src/lib/pre-push-failed-tests'
 import { PUSH_MODE_MARKER } from '../../../apps/cli/src/lib/pre-push-mode-logic'
@@ -67,6 +67,17 @@ export function withV2DevTools(
     store: ReturnType<typeof stagedPullRequestStore>
     findOpenPullRequest: () => { number: number } | null
     onStoragePush: (head: string) => void
+    /**
+     * The local checks the round's gate runs (`check --all --local`, the staged body as the pull-request body):
+     * `run_checks` runs these while no pull request is open, since the checks that need one cannot pass yet.
+     */
+    runLocalChecks?: (env: Record<string, string>) => { passed: boolean; output: string }
+    branch?: string
+    /**
+     * The body checks the pull request's opening will run, run when the body is staged: a body they refuse is
+     * refused now, in the Developer's own turn, rather than after both reviewers approved.
+     */
+    validateBody?: (title: string, body: string) => Promise<{ ok: true } | { ok: false; reason: string }>
   }
 ): DevToolContext {
   const openPr = (): { number: number } | null => {
@@ -87,6 +98,20 @@ export function withV2DevTools(
     },
     openPullRequest: async (title, body) => {
       if (openPr() !== null) return base.openPullRequest(title, body)
+      const validated = options.validateBody ? await options.validateBody(title, body) : { ok: true as const }
+      if (!validated.ok) {
+        return {
+          ok: false,
+          error: devToolError(
+            'policy_refusal',
+            'same_attempt',
+            'not_started',
+            'pr-body',
+            `the staged pull-request body fails the checks its opening runs: ${validated.reason}`,
+            'Fix the body and call open_pull_request again; nothing was saved.'
+          )
+        }
+      }
       options.store.write({ title, body })
       return {
         ok: true,
@@ -95,6 +120,15 @@ export function withV2DevTools(
           note: 'Saved. In this flow the pull request opens after both reviewers approve and the ready push passes; finish your turn.'
         } as unknown as { prNumber: number }
       }
+    },
+    runChecks: async () => {
+      if (openPr() !== null || !options.runLocalChecks) return base.runChecks()
+      const staged = options.store.read()
+      const result = options.runLocalChecks({
+        ...(options.branch ? { BRANCH: options.branch } : {}),
+        ...(staged ? { PR_BODY: staged.body } : {})
+      })
+      return { ok: true, result }
     },
     updatePullRequestBody: async (body) => {
       if (openPr() !== null) return base.updatePullRequestBody(body)

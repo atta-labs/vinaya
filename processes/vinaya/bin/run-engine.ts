@@ -222,6 +222,7 @@ import {
   type TaskInput
 } from '../executing/actions'
 import { createV2Actions, V2_ACTION_BINDINGS, V2_DECISIONS } from '../executing/v2-actions'
+import { runCli } from '../../../harness/gates/run-checks'
 import { liveV2Functions, stagedPullRequestStore, storagePushLogEvent, withV2DevTools } from './flow-v2-live'
 import { readUnpushedWorkDetail, type UnpushedWork } from '../../../apps/cli/src/lib/dev-review-loop/unpushed-work'
 
@@ -1793,10 +1794,10 @@ export async function liveTaskInput(
         fetchIssueRulingsAfterBrief: forge.fetchIssueRulingsAfterBrief,
         fetchRulings: forge.fetchRulings
       }),
-      // Version 2 reviews locally before any pull request (and so any CI) exists: the CI conclusion is pending.
+      // Version 2 reviews locally before any pull request (and so any CI) exists: CI has not run, by design.
       ciConclusion:
         args.flow === 'v2' && forge.findOpenPrForBranch(branch) === null
-          ? 'pending'
+          ? 'not_run'
           : forge.fetchCiConclusion(judgedHead()),
       revision: forge.fetchSourceRevision(args.task),
       manifest: dispatched?.manifest ?? manifestAt(judgedHead()),
@@ -2164,7 +2165,34 @@ async function runLive(
       store,
       findOpenPullRequest,
       onStoragePush: (head) =>
-        sink.log(storagePushLogEvent(loopId, taskInput.reviewRound(), taskInput.branch, head) as never)
+        sink.log(storagePushLogEvent(loopId, taskInput.reviewRound(), taskInput.branch, head) as never),
+      // The round's own local checks: what `run_checks` runs while no pull request is open.
+      runLocalChecks: (env) => {
+        const res = runCli(taskInput.cliEntry, taskInput.worktreePath, ['check', '--all', '--local'], env)
+        return { passed: res.status === 0, output: `${res.stdout}${res.stderr}` }
+      },
+      branch: taskInput.branch,
+      validateBody: async (title, body) => {
+        let changedFiles: string[]
+        try {
+          changedFiles = sh('git', ['diff', '--name-only', 'origin/main...HEAD'], taskInput.worktreePath)
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean)
+        } catch {
+          return { ok: false, reason: 'the task’s changed files could not be read against origin/main' }
+        }
+        const errors = await defaultDeps().validatePrBodyForCreate({
+          body,
+          title,
+          changedFiles,
+          branch: taskInput.branch,
+          baseBranch: 'main'
+        })
+        return errors.length === 0
+          ? { ok: true }
+          : { ok: false, reason: errors.map((e) => `${e.check}: ${e.message}`).join('; ') }
+      }
     })
   }
   const baseFacts = liveDeveloperFacts({
@@ -2246,7 +2274,11 @@ export async function main(argv: readonly string[]): Promise<number> {
     })
     return result.exitCode
   }
-  const args = parseArgs(argv)
+  const parsed = parseArgs(argv)
+  // A run that names no flow continues the flow the task's run recorded (a fresh `task run` after a pause before any
+  // pull request is that continuation); a task with no record gets the process's default.
+  const recordedFlow = parsed.flow ?? recordedRunFlow(runtimeDir, parsed.task)
+  const args: EngineArgs = recordedFlow ? { ...parsed, flow: recordedFlow } : parsed
   const loaded = loadProcess(processFolder, args.flow ? { flow: args.flow } : {})
   const runDir = runDirectory(runtimeDir, args.task)
   if (args.dryRun) {

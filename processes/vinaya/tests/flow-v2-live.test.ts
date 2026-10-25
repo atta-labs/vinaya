@@ -81,6 +81,44 @@ describe('withV2DevTools', () => {
     expect(pushes).toEqual([])
   })
 
+  test('run_checks runs the local checks with the staged body while no pull request is open', async () => {
+    const dir = repo()
+    const store = stagedPullRequestStore(join(dir, 'run'))
+    store.write({ title: 't', body: 'Closes #1' })
+    const seen: Record<string, string>[] = []
+    const calls: string[] = []
+    const base = { ...baseTools(calls), runChecks: async () => ({ ok: true, result: { passed: false, output: 'v1' } }) }
+    const tools = withV2DevTools(base as unknown as DevToolContext, {
+      worktreePath: dir,
+      store,
+      findOpenPullRequest: () => null,
+      onStoragePush: () => {},
+      branch: 'task/issue-1',
+      runLocalChecks: (env) => {
+        seen.push(env)
+        return { passed: true, output: 'local' }
+      }
+    })
+    expect(await tools.runChecks()).toEqual({ ok: true, result: { passed: true, output: 'local' } })
+    expect(seen).toEqual([{ BRANCH: 'task/issue-1', PR_BODY: 'Closes #1' }])
+  })
+
+  test('a staged body the opening checks refuse is refused at once, and nothing is saved', async () => {
+    const dir = repo()
+    const store = stagedPullRequestStore(join(dir, 'run'))
+    const tools = withV2DevTools(baseTools([]), {
+      worktreePath: dir,
+      store,
+      findOpenPullRequest: () => null,
+      onStoragePush: () => {},
+      validateBody: async () => ({ ok: false, reason: 'closes-n: no Closes line' })
+    })
+    const result = await tools.openPullRequest('t', 'no closes')
+    expect(result.ok).toBe(false)
+    expect(JSON.stringify(result)).toContain('closes-n: no Closes line')
+    expect(store.read()).toBeNull()
+  })
+
   test('the storage marker is written and removed', () => {
     const dir = repo()
     beginStoragePushes(dir)
