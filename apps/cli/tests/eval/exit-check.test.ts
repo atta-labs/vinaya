@@ -2,7 +2,9 @@
 // every kind, every shard, seventeen cutover gates, fifty-eight fault-and-attack
 // rows, every catalog module named, zero empty fields, zero unmapped — and
 // fails, naming its cause, for each planted gap on a copy of the real data.
-// No shard file is edited; the check is not imported by the CLI.
+// It reports the Engine evidence each kind has and owes without failing on
+// owed proof, and reports the Operator-owned rows apart. No shard file is
+// edited; the check is not imported by the CLI.
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -274,6 +276,49 @@ describe('the global exit check', () => {
       expect(entry.owner).toBe('Operator on one host')
       expect(entry.reason).toContain('Operator on one host')
     }
+  })
+
+  it('reports, per kind, the rows proved on the Engine and the rows owing it, and passes while proof is owed', () => {
+    const report = checkExit(real())
+    expect(report.pass).toBe(true)
+    const gates = report.kinds['cutover-gate'].engine
+    const faultRows = report.kinds['fault-attack'].engine
+    expect(gates).toEqual({
+      evidenced: 1,
+      owed: 15,
+      owedIds: registry.components
+        .map(({ row }) => row.id)
+        .filter(
+          (id) => id.startsWith('cutover-gate:') && id !== 'cutover-gate:gate-16' && id !== 'cutover-gate:gate-11'
+        )
+    })
+    expect(faultRows?.evidenced).toBe(0)
+    expect(faultRows?.owed).toBe(56)
+    expect(faultRows?.owedIds).toHaveLength(56)
+    expect(report.kinds.port.engine).toBeUndefined()
+    console.log(
+      `Engine evidence — cutover-gate: ${gates?.evidenced} evidenced, ${gates?.owed} owed; fault-attack: ${faultRows?.evidenced} evidenced, ${faultRows?.owed} owed; owed to the Operator on one host: ${report.operatorOwed.length}`
+    )
+
+    const allOwed = real()
+    for (const { row } of allOwed.components) {
+      if (row.backendEvidence?.engine !== undefined) row.backendEvidence.engine = { owed: 'planted' }
+    }
+    const planted = checkExit(allOwed)
+    expect(planted.pass).toBe(true)
+    expect(planted.kinds['cutover-gate'].engine?.owed).toBe(16)
+  })
+
+  it('reports the Operator-owned rows as owed to the Operator on one host, never as owed Engine evidence', () => {
+    const report = checkExit(real())
+    const componentExclusions = OPERATOR_EXIT_EXCLUSIONS.filter((entry) =>
+      (COMPONENT_KINDS as readonly string[]).includes(entry.kind)
+    ).map((entry) => `${entry.kind}:${entry.name}`)
+    expect(report.operatorOwed).toEqual(componentExclusions)
+    expect(report.operatorOwed).toHaveLength(41)
+    const engineOwed = new Set(COMPONENT_KINDS.flatMap((kind) => report.kinds[kind].engine?.owedIds ?? []))
+    for (const id of report.operatorOwed)
+      expect({ id, engineOwed: engineOwed.has(id) }).toEqual({ id, engineOwed: false })
   })
 
   it('fails for a stale exclusion or one whose registry row now matches the mirror', () => {
