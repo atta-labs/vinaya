@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 import { exemptPrefixes, PROCESS_START_MS, realRuntimeDir, touchedSince } from './real-runtime-guard-core'
+import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 /** Taken at module load so the test's own TITLE names the leaked paths. */
 const leakedAtLoad = touchedSince(realRuntimeDir(), PROCESS_START_MS, exemptPrefixes(process.env))
