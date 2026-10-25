@@ -11,11 +11,11 @@
  * leaked path — a failing run's summary lists titles, not assertion output.
  */
 import { describe, expect, it } from 'bun:test'
-import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { exemptPrefixes, PROCESS_START_MS, realRuntimeDir, touchedSince } from './real-runtime-guard-core'
+import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 /** Taken at module load so the test's own TITLE names the leaked paths. */
 const leakedAtLoad = touchedSince(realRuntimeDir(), PROCESS_START_MS, exemptPrefixes(process.env))
@@ -94,9 +94,9 @@ describe('real runtime directory guard', () => {
       probe,
       "import { it } from 'bun:test'\nit('prints', () => console.log('RUNTIME=' + process.env.VINAYA_RUNTIME_DIR))\n"
     )
-    const out = spawnSync('bun', ['test', '--preload', './tests/lib/test-env-preload.ts', probe], {
+    const out = spawnSyncBudgeted('bun', ['test', '--preload', './tests/lib/test-env-preload.ts', probe], {
       cwd: join(import.meta.dir, '../..'),
-      env: { ...process.env, VINAYA_RUNTIME_DIR: inherited },
+      env: { ...stripVinayaEnv(), VINAYA_RUNTIME_DIR: inherited },
       encoding: 'utf8'
     })
     const line = `${out.stdout}${out.stderr}`.match(/RUNTIME=(\S+)/)?.[1]
