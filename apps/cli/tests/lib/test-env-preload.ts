@@ -87,6 +87,30 @@ const privateRuntimeDir: string = mkdtempSync(join(tmpdir(), 'vinaya-test-runtim
 process.env.VINAYA_RUNTIME_DIR = privateRuntimeDir
 
 /**
+ * `Bun.spawn`/`Bun.spawnSync` called without an `env` give the child the
+ * environment this process STARTED with, not `process.env` as this file just
+ * set it: a CLI a test spawns that way still saw the inherited runtime
+ * directory and wrote its Log there. Defaulting them to the current
+ * `process.env` makes every child see what the test process sees.
+ */
+const spawnWithCurrentEnv = <F extends (...args: never[]) => unknown>(original: F): F =>
+  ((first: unknown, second?: unknown) => {
+    if (Array.isArray(first)) {
+      const options = (second ?? {}) as { env?: unknown }
+      return (original as unknown as (...a: unknown[]) => unknown)(
+        first,
+        options.env === undefined ? { ...options, env: process.env } : options
+      )
+    }
+    const options = first as { env?: unknown }
+    return (original as unknown as (...a: unknown[]) => unknown)(
+      options.env === undefined ? { ...options, env: process.env } : options
+    )
+  }) as unknown as F
+Bun.spawn = spawnWithCurrentEnv(Bun.spawn)
+Bun.spawnSync = spawnWithCurrentEnv(Bun.spawnSync)
+
+/**
  * Once, after every test file this process ran: remove the private runtime
  * directory above, and fail the run if any test wrote into the REAL runtime
  * directory (`real-runtime-guard-core.ts`). A preload `afterAll` is the one

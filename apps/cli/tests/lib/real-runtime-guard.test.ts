@@ -16,7 +16,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 import { exemptPrefixes, PROCESS_START_MS, realRuntimeDir, touchedSince } from './real-runtime-guard-core'
-import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 /** Taken at module load so the test's own TITLE names the leaked paths. */
 const leakedAtLoad = touchedSince(realRuntimeDir(), PROCESS_START_MS, exemptPrefixes(process.env))
@@ -123,6 +122,26 @@ describe('real runtime directory guard', () => {
       encoding: 'utf8'
     })
     const line = `${out.stdout}${out.stderr}`.match(/RUNTIME=(\S+)/)?.[1]
+    expect(line).toBeDefined()
+    expect(line).not.toBe(inherited)
+    expect(line).toContain('vinaya-test-runtime-')
+    rmSync(inherited, { recursive: true, force: true })
+  })
+
+  // Bun.spawn without an env hands a child the environment the test process started with, unless the preload fixes it.
+  it('gives a child a test spawns without an env the same private runtime directory', () => {
+    const inherited = mkdtempSync(join(tmpdir(), 'inherited-runtime-'))
+    const probe = join(mkdtempSync(join(tmpdir(), 'runtime-probe-')), 'probe.test.ts')
+    writeFileSync(
+      probe,
+      "import { it } from 'bun:test'\nit('prints', () => console.log(Bun.spawnSync(['sh', '-c', 'echo CHILD=$VINAYA_RUNTIME_DIR']).stdout.toString()))\n"
+    )
+    const out = spawnSyncBudgeted('bun', ['test', '--preload', './tests/lib/test-env-preload.ts', probe], {
+      cwd: join(import.meta.dir, '../..'),
+      env: { ...stripVinayaEnv(), VINAYA_RUNTIME_DIR: inherited },
+      encoding: 'utf8'
+    })
+    const line = `${out.stdout}${out.stderr}`.match(/CHILD=(\S+)/)?.[1]
     expect(line).toBeDefined()
     expect(line).not.toBe(inherited)
     expect(line).toContain('vinaya-test-runtime-')
